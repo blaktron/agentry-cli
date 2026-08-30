@@ -21,8 +21,8 @@ func newInitCmd() *cobra.Command {
 	var kind, name, namespace string
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
-		Short: "Scaffold a new agent workspace (agent.yaml, README, LICENSE, entrypoint)",
-		Long: "Scaffold a new agent workspace: a per-kind agent.yaml (PLAN §5.2), README.md,\n" +
+		Short: "Scaffold a new BriefAgent workspace (agent.yaml, README, LICENSE, entrypoint)",
+		Long: "Scaffold a new BriefAgent workspace: a per-kind agent.yaml (PLAN §5.2), README.md,\n" +
 			"a LICENSE placeholder note, and the kind's entrypoint file.\n\n" +
 			"Import wizards (--from=path|skill|mcp) are deferred to a later milestone.",
 		Args: cobra.MaximumNArgs(1),
@@ -34,8 +34,8 @@ func newInitCmd() *cobra.Command {
 			return runInit(cmd, dir, kind, name, namespace)
 		},
 	}
-	cmd.Flags().StringVar(&kind, "kind", string(manifest.KindSkill), "agent kind: skill | prompt-agent | mcp-server")
-	cmd.Flags().StringVar(&name, "name", "", "agent name (default: the directory basename)")
+	cmd.Flags().StringVar(&kind, "kind", string(manifest.KindSkill), "BriefAgent kind: skill | prompt-agent | mcp-server")
+	cmd.Flags().StringVar(&name, "name", "", "BriefAgent name (default: the directory basename)")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "owning namespace handle (default: derived from $USER)")
 	return cmd
 }
@@ -91,7 +91,7 @@ func runInit(cmd *cobra.Command, dir, kind, name, namespace string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "initialized %s agent %s/%s in %s\n", k, namespace, name, absDir)
+	_, _ = fmt.Fprintf(out, "initialized %s BriefAgent %s/%s in %s\n", k, namespace, name, absDir)
 	for _, p := range created {
 		_, _ = fmt.Fprintf(out, "  created %s\n", p)
 	}
@@ -153,7 +153,7 @@ name: %s
 namespace: %s
 kind: %s
 version: 0.1.0
-summary: "TODO one line (at most 140 chars) saying what this agent does"
+summary: "TODO one line (at most 140 chars) saying what this BriefAgent does"
 license: Apache-2.0
 `, name, namespace, k)
 
@@ -203,7 +203,7 @@ publish:
 func readmeMD(name, namespace string) string {
 	return fmt.Sprintf(`# %s
 
-TODO describe this agent. This file renders on the agent page and is
+TODO describe this BriefAgent. This file renders on the BriefAgent page and is
 required for public publishing (validation rule V7).
 
 ## Install

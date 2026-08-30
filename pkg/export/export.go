@@ -114,12 +114,21 @@ func MergeMCPConfig(existing []byte, name string, entry MCPServerEntry) ([]byte,
 // AgentsMDSection renders the AGENTS.md section for one installed
 // prompt-agent (§5.6 agents-md target).
 func AgentsMDSection(ns, name, version, summary, installPath string) string {
+	return AgentsMDSectionNote(ns, name, version, summary, installPath, "")
+}
+
+// AgentsMDSectionNote is AgentsMDSection plus an optional trailing note
+// line — the embedded-mode tools contract (RUNNER-PLAN §R5) rides here.
+func AgentsMDSectionNote(ns, name, version, summary, installPath, note string) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "## %s/%s (v%s)\n\n", ns, name, version)
 	if strings.TrimSpace(summary) != "" {
 		b.WriteString(summary + "\n\n")
 	}
 	_, _ = fmt.Fprintf(&b, "Files: %s\n", installPath)
+	if strings.TrimSpace(note) != "" {
+		b.WriteString("\n" + note + "\n")
+	}
 	return b.String()
 }
 
@@ -127,7 +136,12 @@ func AgentsMDSection(ns, name, version, summary, installPath string) string {
 // replacing any existing section for the same ns/name (any version) so
 // reinstalls and upgrades stay idempotent.
 func UpsertAgentsMDSection(existing []byte, ns, name, version, summary, installPath string) []byte {
-	section := strings.TrimRight(AgentsMDSection(ns, name, version, summary, installPath), "\n")
+	return UpsertAgentsMDSectionNote(existing, ns, name, version, summary, installPath, "")
+}
+
+// UpsertAgentsMDSectionNote is UpsertAgentsMDSection with the note line.
+func UpsertAgentsMDSectionNote(existing []byte, ns, name, version, summary, installPath, note string) []byte {
+	section := strings.TrimRight(AgentsMDSectionNote(ns, name, version, summary, installPath, note), "\n")
 	prefix := "## " + ns + "/" + name + " ("
 
 	content := strings.TrimRight(string(existing), "\n")

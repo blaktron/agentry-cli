@@ -1,0 +1,723 @@
+// `agentry run` (RUNNER-PLAN §R0): resolve → verify → materialize →
+// compile → enforce → run → receipt, one agent per invocation. First use
+// of a digest IS the install (RQ5): the verified workspace, the compiled
+// plan, and the pulled/built images all persist under ~/.agentry/runner
+// so later runs execute without re-deriving anything. The verify gate is
+// the same one `agentry install` applies — a run is an install that also
+// executes.
+package main
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/blaktron/agentry/pkg/apiclient"
+	pkgarchive "github.com/blaktron/agentry/pkg/archive"
+	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/trust"
+)
+
+// runOpts carries the run command's flags.
+type runOpts struct {
+	input         string
+	out           string
+	outputFormat  string
+	adapterName   string
+	local         string
+	pin           string
+	policyPath    string
+	timeout       int
+	maxTurns      int
+	yes           bool
+	allowUnsigned bool
+	prepare       bool
+	dryRun        bool
+	keepRunDir    bool
+	listAdapters  bool
+}
+
+// newRunCmd builds the run command.
+func newRunCmd() *cobra.Command {
+	var opts runOpts
+	cmd := &cobra.Command{
+		Use:   "run [ns/name[@range]]",
+		Short: "Verify, install, and execute one BriefAgent in an isolated container",
+		Long: "Run a single-purpose BriefAgent once (RUNNER-PLAN.md):\n\n" +
+			"  agentry run ns/name@^1.2 --input task.json --out ./reports\n\n" +
+			"Task input: --input FILE, else piped stdin, else an empty task. The result\n" +
+			"goes to stdout (--output-format text|json); reports the BriefAgent writes\n" +
+			"and the full receipts land in the output folder. Every failure class has its\n" +
+			"own exit code: 0 ok, 10 verify, 11 policy/secret, 12 compile, 13\n" +
+			"gateway/docker, 14 agent, 15 timeout, 16 budget, 17 output schema.\n\n" +
+			"First run of a release verifies it exactly like `agentry install` (digest +\n" +
+			"DSSE attestation; unsigned needs --allow-unsigned), then compiles the run\n" +
+			"plan and installs the gateway/harness/runner images. Later runs reuse all\n" +
+			"of it. --prepare stops after that install step; --dry-run prints the\n" +
+			"compiled plan and touches no docker. --local DIR runs an unpublished\n" +
+			"BriefAgent directory (treated as unsigned).\n\n" +
+			"Tools: BriefAgents get exactly the tools their manifest capabilities grant,\n" +
+			"served through a per-run Docker MCP Gateway (never from inside the agent\n" +
+			"container). The operator policy at ~/.agentry/runner/policy.yaml pins\n" +
+			"images and the model endpoint.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.listAdapters {
+				return printAdapters(cmd)
+			}
+			ref := ""
+			if len(args) == 1 {
+				ref = args[0]
+			}
+			return runRun(cmd, ref, opts)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&opts.input, "input", "", "task input file (default: piped stdin, else empty)")
+	f.StringVar(&opts.out, "out", "", "output folder for reports and receipts (default ./agentry-out/<ns>-<name>-<runid>)")
+	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope)")
+	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+"); see --list-adapters")
+	f.StringVar(&opts.local, "local", "", "run an unpublished BriefAgent DIRECTORY instead of a registry ref")
+	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
+	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
+	f.IntVar(&opts.timeout, "timeout", 0, "override the policy timeout (seconds)")
+	f.IntVar(&opts.maxTurns, "max-turns", -1, "override the policy tool-call budget (0 = unlimited)")
+	f.BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
+	f.BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "run a release with no registry attestation (required for --local)")
+	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
+	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
+	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
+	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
+	return cmd
+}
+
+// printAdapters lists registered and planned adapters.
+func printAdapters(cmd *cobra.Command) error {
+	out := cmd.OutOrStdout()
+	for _, n := range adapter.Names() {
+		suffix := ""
+		if n == adapter.DefaultName {
+			suffix = " (default)"
+		}
+		_, _ = fmt.Fprintf(out, "%s%s\n", n, suffix)
+	}
+	_, _ = fmt.Fprintln(out, "planned (RUNNER-PLAN M-R4): goose, claude, codex")
+	return nil
+}
+
+// runnerHome is ~/.agentry/runner, or $AGENTRY_RUNNER_HOME (tests and odd
+// deployments).
+func runnerHome() (string, error) {
+	if h := os.Getenv("AGENTRY_RUNNER_HOME"); h != "" {
+		return h, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locate home directory (set AGENTRY_RUNNER_HOME): %w", err)
+	}
+	return filepath.Join(home, ".agentry", "runner"), nil
+}
+
+// installMeta is <installDir>/install.json: what was verified, once, so
+// repeat runs of the same digest skip the network without skipping the
+// truth about how it was admitted.
+type installMeta struct {
+	Ref         string              `json:"ref"`
+	Namespace   string              `json:"namespace"`
+	Name        string              `json:"name"`
+	Version     string              `json:"version"`
+	Digest      string              `json:"digest"`
+	Source      string              `json:"source"`
+	Attestation receipt.Attestation `json:"attestation"`
+}
+
+// runRun executes the whole §R6 lifecycle.
+func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
+	if (ref == "") == (opts.local == "") {
+		return errors.New("pass exactly one of ns/name[@range] or --local DIR")
+	}
+	if opts.outputFormat != "text" && opts.outputFormat != "json" {
+		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
+	}
+	home, err := runnerHome()
+	if err != nil {
+		return err
+	}
+
+	policyPath := opts.policyPath
+	if policyPath == "" {
+		if policyPath, err = policy.DefaultPath(); err != nil {
+			return err
+		}
+	}
+	pol, polSHA, err := policy.EnsureDefault(policyPath)
+	if err != nil {
+		return engine.Classify(engine.ExitPolicy, err)
+	}
+
+	// Materialize: verified workspace + install metadata, cached per
+	// digest (§R5 standalone mode).
+	var meta *installMeta
+	var installDir string
+	if opts.local != "" {
+		meta, installDir, err = materializeLocal(cmd, opts.local, home, opts.allowUnsigned)
+	} else {
+		meta, installDir, err = materializeRegistry(cmd, ref, home, opts)
+	}
+	if err != nil {
+		return err
+	}
+	workspaceDir := filepath.Join(installDir, "workspace")
+	m, err := manifestFromWorkspace(workspaceDir)
+	if err != nil {
+		return engine.Classify(engine.ExitCompile, err)
+	}
+
+	// The §R5 capability gate: same semantics as install — egress/exec
+	// (or a widened contract vs the last accepted run) needs consent.
+	if err := confirmRunCapabilities(cmd, m, meta, installDir, opts); err != nil {
+		return engine.Classify(engine.ExitPolicy, err)
+	}
+
+	adapterName := opts.adapterName
+	if adapterName == "" {
+		adapterName = adapter.DefaultName
+	}
+	ad, err := adapter.Get(adapterName)
+	if err != nil {
+		return engine.Classify(engine.ExitCLI, err)
+	}
+
+	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName)
+	if err != nil {
+		return err
+	}
+
+	if opts.dryRun {
+		return printDryRun(cmd, plan, planDir)
+	}
+
+	// Gateway + harness + runner images: the RQ2/RQ5 install step.
+	docker := dockerx.New()
+	imageCtx := filepath.Join(home, "image")
+	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, pol.RunnerImageTag(runnerCLIVersion()), imageCtx, cmd.ErrOrStderr()); err != nil {
+		return engine.Classify(engine.ExitGateway, err)
+	}
+	if opts.prepare {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "prepared %s (plan %s, images installed) — run again without --prepare to execute\n",
+			plan.Ref, shortHash(plan))
+		return nil
+	}
+
+	runID, err := engine.NewRunID()
+	if err != nil {
+		return err
+	}
+	outDir, err := resolveOutDir(opts.out, meta, runID)
+	if err != nil {
+		return err
+	}
+
+	budgets := plan.Budgets
+	if opts.timeout > 0 {
+		budgets.TimeoutSeconds = opts.timeout
+	}
+	if opts.maxTurns >= 0 {
+		budgets.MaxTurns = opts.maxTurns
+	}
+
+	env, runErr := engine.Run(cmd.Context(), docker, engine.Params{
+		Plan:         plan,
+		PlanDir:      planDir,
+		WorkspaceSrc: workspaceDir,
+		RunRoot:      installDir,
+		OutDir:       outDir,
+		Task:         taskReader(cmd, opts.input),
+		Adapter:      ad,
+		Policy:       pol,
+		Budgets:      budgets,
+		Attestation:  meta.Attestation,
+		KeepRunDir:   opts.keepRunDir,
+		RunID:        runID,
+		Stderr:       cmd.ErrOrStderr(),
+	})
+	if env != nil {
+		printEnvelope(cmd, env, opts.outputFormat)
+	}
+	return runErr
+}
+
+// taskReader implements the §R2 input precedence: --input file > piped
+// stdin > empty. A TTY stdin is never read — an interactive terminal
+// sitting silent is not a task.
+func taskReader(cmd *cobra.Command, input string) io.Reader {
+	if input != "" {
+		f, err := os.Open(input) //nolint:gosec // user-named task file
+		if err != nil {
+			// Surfaced here rather than pre-validated: the engine treats
+			// a nil reader as an empty task, but a NAMED file that does
+			// not open must fail loudly.
+			return &errReader{err: err}
+		}
+		return f
+	}
+	if !stdinIsTTY(cmd.InOrStdin()) {
+		return cmd.InOrStdin()
+	}
+	return nil
+}
+
+// errReader defers a task-file open error into the engine's read path.
+type errReader struct{ err error }
+
+func (e *errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// printEnvelope writes the run result per --output-format. Text mode
+// prints only the agent's result (Unix composition, §R8); the envelope is
+// always in the output folder either way.
+func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
+	out := cmd.OutOrStdout()
+	if format == "json" {
+		b, err := env.Marshal()
+		if err == nil {
+			_, _ = out.Write(b)
+		}
+		return
+	}
+	var asString string
+	if err := json.Unmarshal(env.Result, &asString); err == nil {
+		if asString != "" {
+			_, _ = fmt.Fprintln(out, asString)
+		}
+	} else {
+		_, _ = fmt.Fprintln(out, string(env.Result))
+	}
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "reports and receipts: %s\n", env.OutDir)
+}
+
+// printDryRun prints the compiled plan (§R4: deterministic, hashable,
+// printable) without touching docker.
+func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
+	b, err := plan.MarshalCanonical()
+	if err != nil {
+		return err
+	}
+	_, _ = cmd.OutOrStdout().Write(b)
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "run plan sha256: %s\nplan dir: %s\n", shortHash(plan), planDir)
+	return nil
+}
+
+func shortHash(plan *spec.Plan) string {
+	h, err := plan.Hash()
+	if err != nil {
+		return "unhashable"
+	}
+	return h[:12]
+}
+
+// resolveOutDir picks and creates the output folder (RQ3).
+func resolveOutDir(flag string, meta *installMeta, runID string) (string, error) {
+	dir := flag
+	if dir == "" {
+		dir = filepath.Join("agentry-out", fmt.Sprintf("%s-%s-%s", meta.Namespace, meta.Name, runID))
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output dir: %w", err)
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", fmt.Errorf("create output dir: %w", err)
+	}
+	return abs, nil
+}
+
+// materializeRegistry resolves, verifies, and caches a registry release
+// (§R1: the same gate as install — digest, DSSE, --allow-unsigned).
+func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*installMeta, string, error) {
+	if _, err := manifest.ParseRef(ref); err != nil {
+		return nil, "", err
+	}
+	reg := registryURL()
+	token := credentialFor(reg)
+	client, err := newAPIClientChecked(cmd, reg, token)
+	if err != nil {
+		return nil, "", err
+	}
+	res, err := resolveRef(cmd.Context(), client, ref, true)
+	if err != nil {
+		return nil, "", err
+	}
+	if res.Yanked {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s/%s@%s is YANKED — running only because the version was pinned exactly\n",
+			res.Namespace, res.Name, res.Version)
+	}
+	if opts.pin != "" && res.Digest != opts.pin {
+		return nil, "", engine.Classify(engine.ExitVerify,
+			fmt.Errorf("--pin mismatch: registry resolved %s, pin requires %s", res.Digest, opts.pin))
+	}
+
+	installDir := filepath.Join(home, "agents", res.Namespace, res.Name,
+		fmt.Sprintf("%s-%s", res.Version, digestSuffix(res.Digest)))
+	if meta, ok := loadInstallMeta(installDir, res.Digest); ok {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "using verified install %s\n", installDir)
+		return meta, installDir, nil
+	}
+
+	archive, err := downloadArchive(cmd.Context(), reg, token, res)
+	if err != nil {
+		return nil, "", err
+	}
+	computed := sha256Digest(archive)
+	if computed != res.Digest {
+		return nil, "", engine.Classify(engine.ExitVerify,
+			fmt.Errorf("digest mismatch: registry says %s, archive is %s — refusing to run", res.Digest, computed))
+	}
+	att, err := verifyRunAttestation(cmd, reg, token, res, computed, opts.allowUnsigned)
+	if err != nil {
+		return nil, "", engine.Classify(engine.ExitVerify, err)
+	}
+
+	staging, err := os.MkdirTemp("", "agentry-run-*")
+	if err != nil {
+		return nil, "", fmt.Errorf("create staging dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+	if err := pkgarchive.Extract(bytes.NewReader(archive), staging, int64(len(archive)), installExtractLimits()); err != nil {
+		return nil, "", engine.Classify(engine.ExitVerify, fmt.Errorf("extract archive: %w", err))
+	}
+
+	meta := &installMeta{
+		Ref:       fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version),
+		Namespace: res.Namespace, Name: res.Name, Version: res.Version,
+		Digest: res.Digest, Source: "registry", Attestation: att,
+	}
+	if err := writeInstall(installDir, staging, meta); err != nil {
+		return nil, "", err
+	}
+	return meta, installDir, nil
+}
+
+// verifyRunAttestation mirrors the install gate (cmd_install.go) but also
+// returns the attestation facts the result envelope reports.
+func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.ResolveResult, archiveDigest string, allowUnsigned bool) (receipt.Attestation, error) {
+	attURL := ""
+	if res.AttestationUrl != nil {
+		attURL = *res.AttestationUrl
+	}
+	if attURL == "" {
+		attURL = fmt.Sprintf("/api/v1/agents/%s/%s/versions/%s/attestation", res.Namespace, res.Name, res.Version)
+	}
+	att := trust.VerifyAttestation(cmd.Context(), httpClient, reg, token, attURL, archiveDigest)
+	// Narration to stderr: run's stdout carries only the result (§R8).
+	errOut := cmd.ErrOrStderr()
+	switch att.State {
+	case trust.StateVerified:
+		_, _ = fmt.Fprintf(errOut, "attestation:   verified (key %s)\n", att.KeyID)
+		if att.FirstUse {
+			_, _ = fmt.Fprintln(errOut, "note: signing keys pinned on first use (TOFU) — run `agentry login` to pin deliberately")
+		}
+		return receipt.Attestation{State: "verified", KeyID: att.KeyID, Verified: true}, nil
+	case trust.StateUnsigned:
+		if !allowUnsigned {
+			return receipt.Attestation{}, fmt.Errorf("unsigned — registry offers no attestation for %s/%s@%s (%s); re-run with --allow-unsigned to run it anyway",
+				res.Namespace, res.Name, res.Version, att.Detail)
+		}
+		_, _ = fmt.Fprintf(errOut, "warning: unsigned — running %s/%s@%s because --allow-unsigned was given\n", res.Namespace, res.Name, res.Version)
+		return receipt.Attestation{State: "unsigned"}, nil
+	default:
+		hint := ""
+		if att.KeyRotated {
+			hint = " (the registry advertises signing key ids you have not pinned — re-pin deliberately if this rotation is expected)"
+		}
+		return receipt.Attestation{}, fmt.Errorf("attestation %s for %s/%s@%s: %s%s — refusing to run",
+			att.State, res.Namespace, res.Name, res.Version, att.Detail, hint)
+	}
+}
+
+// materializeLocal admits an unpublished package directory (§R5): parse +
+// validate the manifest, hash the tree, and cache like a registry install
+// keyed by that hash. Local trees are unsigned by definition, so the same
+// --allow-unsigned decision applies.
+func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) (*installMeta, string, error) {
+	if !allowUnsigned {
+		return nil, "", engine.Classify(engine.ExitVerify,
+			errors.New("--local packages are unsigned by definition; pass --allow-unsigned to run one"))
+	}
+	m, err := manifestFromWorkspace(dir)
+	if err != nil {
+		return nil, "", engine.Classify(engine.ExitCompile, err)
+	}
+	// Warnings (e.g. the V5 "*" egress flag) surface but do not block —
+	// same split the registry applies at publish; the RUN-time gate for
+	// wildcard egress is the policy check in the compiler (§R4).
+	errs := manifest.Validate(m)
+	for _, e := range errs {
+		if manifest.IsWarning(e) {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", e)
+		}
+	}
+	if blocking := manifest.Blocking(errs); len(blocking) > 0 {
+		msgs := make([]string, 0, len(blocking))
+		for _, e := range blocking {
+			msgs = append(msgs, e.Error())
+		}
+		return nil, "", engine.Classify(engine.ExitCompile,
+			fmt.Errorf("local package manifest invalid:\n  %s", strings.Join(msgs, "\n  ")))
+	}
+	digest, err := localTreeDigest(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	installDir := filepath.Join(home, "agents", m.Namespace, m.Name,
+		fmt.Sprintf("%s-%s", m.Version, digestSuffix(digest)))
+	meta := &installMeta{
+		Ref:       fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
+		Namespace: m.Namespace, Name: m.Name, Version: m.Version,
+		Digest: digest, Source: "local",
+		Attestation: receipt.Attestation{State: "local"},
+	}
+	if cached, ok := loadInstallMeta(installDir, digest); ok {
+		return cached, installDir, nil
+	}
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "local package %s (%s)\n", meta.Ref, digestSuffix(digest))
+	if err := writeInstall(installDir, dir, meta); err != nil {
+		return nil, "", err
+	}
+	return meta, installDir, nil
+}
+
+// writeInstall lands workspace + install.json under installDir.
+func writeInstall(installDir, srcTree string, meta *installMeta) error {
+	// A half-written install must not look installed: build aside, then
+	// rename into place.
+	if err := os.RemoveAll(installDir); err != nil {
+		return fmt.Errorf("clear install dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(installDir), 0o755); err != nil {
+		return fmt.Errorf("create install dir: %w", err)
+	}
+	tmp := installDir + ".partial"
+	if err := os.RemoveAll(tmp); err != nil {
+		return fmt.Errorf("clear partial install: %w", err)
+	}
+	if err := copyWorkspace(srcTree, filepath.Join(tmp, "workspace")); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal install metadata: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "install.json"), append(b, '\n'), 0o644); err != nil { //nolint:gosec // metadata, not secret
+		return fmt.Errorf("write install metadata: %w", err)
+	}
+	if err := os.Rename(tmp, installDir); err != nil {
+		return fmt.Errorf("finalize install dir: %w", err)
+	}
+	return nil
+}
+
+// loadInstallMeta reuses a cached verified install iff its recorded digest
+// matches what the registry (or tree hash) says now.
+func loadInstallMeta(installDir, wantDigest string) (*installMeta, bool) {
+	b, err := os.ReadFile(filepath.Join(installDir, "install.json")) //nolint:gosec // our install layout
+	if err != nil {
+		return nil, false
+	}
+	var meta installMeta
+	if err := json.Unmarshal(b, &meta); err != nil || meta.Digest != wantDigest {
+		return nil, false
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "workspace")); err != nil {
+		return nil, false
+	}
+	return &meta, true
+}
+
+// ensurePlan reuses the installed plan when nothing it depends on changed
+// (§R6/§R9), otherwise recompiles.
+func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, installDir, workspaceDir string,
+	pol *policy.Policy, polSHA, adapterName string,
+) (*spec.Plan, string, error) {
+	planDir := filepath.Join(installDir, "plan")
+	if b, err := os.ReadFile(filepath.Join(planDir, "plan.json")); err == nil { //nolint:gosec // our install layout
+		if plan, perr := spec.ParsePlan(b); perr == nil &&
+			plan.Digest == meta.Digest &&
+			plan.PolicySHA256 == polSHA &&
+			plan.Harness.Adapter == adapterName {
+			if verr := compile.VerifyFiles(plan, planDir); verr == nil {
+				return plan, planDir, nil
+			}
+			_, _ = fmt.Fprintln(errOut, "installed plan failed integrity check — recompiling")
+		}
+	}
+	if err := os.RemoveAll(planDir); err != nil {
+		return nil, "", fmt.Errorf("clear stale plan: %w", err)
+	}
+	plan, err := compile.Compile(compile.Inputs{
+		Manifest:     m,
+		Digest:       meta.Digest,
+		Source:       meta.Source,
+		WorkspaceDir: workspaceDir,
+		Policy:       pol,
+		PolicySHA:    polSHA,
+		AdapterName:  adapterName,
+		RunnerImage:  pol.RunnerImageTag(runnerCLIVersion()),
+	}, planDir)
+	if err != nil {
+		var refusal *compile.PolicyRefusal
+		if errors.As(err, &refusal) {
+			return nil, "", engine.Classify(engine.ExitPolicy, err)
+		}
+		return nil, "", engine.Classify(engine.ExitCompile, err)
+	}
+	return plan, planDir, nil
+}
+
+// confirmRunCapabilities applies the install-time consent semantics to
+// runs, keyed on the runner install dir: first run asks about egress/exec,
+// upgrades ask again only when the contract widened (§R1).
+func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installMeta, installDir string, opts runOpts) error {
+	// Everything here narrates to stderr: stdout is the run's result
+	// channel (§R8) and must stay pipeline-clean.
+	out := cmd.ErrOrStderr()
+	_, _ = fmt.Fprintf(out, "%s (%s)\n", meta.Ref, m.Kind)
+	if m.Summary != "" {
+		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
+	}
+	_, _ = fmt.Fprintln(out, "capabilities:")
+	for _, line := range capabilityLines(m.Capabilities) {
+		_, _ = fmt.Fprintf(out, "  %s\n", line)
+	}
+	key := installed.Key{
+		Registry: "runner", Namespace: meta.Namespace, Name: meta.Name,
+		Target: "runner", Dir: filepath.Dir(installDir),
+	}
+	state, serr := installed.Load()
+	if serr != nil {
+		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
+		state = installed.State{}
+	}
+	next := installed.Snapshot(m.Capabilities)
+	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Capabilities, opts.yes); err != nil {
+		return err
+	}
+	state.Upsert(key, meta.Version, next, false)
+	if err := installed.Save(state); err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v — the next run will re-ask about capabilities\n", err)
+	}
+	return nil
+}
+
+// manifestFromWorkspace parses agent.yaml at a tree root.
+func manifestFromWorkspace(dir string) (*manifest.Manifest, error) {
+	b, err := os.ReadFile(filepath.Join(dir, "agent.yaml")) //nolint:gosec // package root
+	if err != nil {
+		return nil, fmt.Errorf("read agent.yaml: %w", err)
+	}
+	m, err := manifest.Parse(b)
+	if err != nil {
+		return nil, fmt.Errorf("parse agent.yaml: %w", err)
+	}
+	return m, nil
+}
+
+// localTreeDigest hashes a package directory deterministically (sorted
+// relative paths + sizes + content) so --local runs are cache-keyed and
+// receipted just like archives, with "sha256:" kept for shape parity.
+func localTreeDigest(dir string) (string, error) {
+	h := sha256.New()
+	var files []string
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if info.Name() == ".git" || info.Name() == "agentry-out" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			return rerr
+		}
+		files = append(files, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("hash local tree: %w", err)
+	}
+	sort.Strings(files)
+	for _, rel := range files {
+		b, rerr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))) //nolint:gosec // hashing the user's named tree
+		if rerr != nil {
+			return "", fmt.Errorf("hash local tree: %w", rerr)
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", rel, len(b))
+		_, _ = h.Write(b)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// copyWorkspace copies a local package tree, skipping VCS and output dirs.
+func copyWorkspace(src, dest string) error {
+	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && (info.Name() == ".git" || info.Name() == "agentry-out") {
+			return filepath.SkipDir
+		}
+		rel, rerr := filepath.Rel(src, p)
+		if rerr != nil {
+			return rerr
+		}
+		target := filepath.Join(dest, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, rerr := os.ReadFile(p) //nolint:gosec // copying the user's named tree
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
+	if err != nil {
+		return fmt.Errorf("copy package tree: %w", err)
+	}
+	return nil
+}
+
+// digestSuffix shortens sha256:… for directory names.
+func digestSuffix(digest string) string {
+	s := strings.TrimPrefix(digest, "sha256:")
+	if len(s) > 12 {
+		s = s[:12]
+	}
+	return s
+}
+
+// runnerCLIVersion feeds the runner image tag derivation (§R7: a new CLI
+// version is what triggers a runner image rebuild).
+func runnerCLIVersion() string { return version.Version }

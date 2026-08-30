@@ -1,0 +1,288 @@
+// The MCP wire loop (RUNNER-PLAN §R3): newline-delimited JSON-RPC 2.0 on
+// stdio — one JSON object per line, no Content-Length framing — which is
+// the framing the Docker MCP Gateway speaks to the servers it launches.
+// Only the method subset a one-shot tool server needs is implemented:
+// initialize, the initialized notification, ping, tools/list, tools/call.
+//
+// Requests are handled serially on the read goroutine: a one-shot agent's
+// tool calls arrive one at a time anyway, and serial handling is what
+// lets the path checks in paths.go ignore check-to-use races. Response
+// writes still take a mutex so future parallelism cannot interleave two
+// half-written lines.
+
+package toolsrv
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"path/filepath"
+	"sync"
+)
+
+const (
+	// maxLineBytes bounds one JSON-RPC line. 4 MiB comfortably exceeds
+	// the largest legitimate request (a capped fs_write payload plus
+	// envelope) while refusing to buffer unbounded garbage.
+	maxLineBytes = 4 << 20
+	// defaultProtocolVersion is offered when the client names none. The
+	// server otherwise echoes the client's requested version: the gateway
+	// is the only client, and this surface has no version-specific
+	// behavior worth failing a handshake over.
+	defaultProtocolVersion = "2025-06-18"
+	serverName             = "agentry-runner-tools"
+	serverVersion          = "1"
+)
+
+// JSON-RPC 2.0 error codes (the spec's reserved range).
+const (
+	codeInvalidRequest = -32600
+	codeMethodNotFound = -32601
+	codeInvalidParams  = -32602
+	codeInternal       = -32603
+)
+
+// rpcRequest is one incoming message. ID is kept raw so string, number,
+// and null ids echo back byte-identically; a nil ID (absent member) marks
+// a notification.
+type rpcRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params"`
+}
+
+// rpcResponse is one outgoing message; exactly one of Result/Error is set.
+type rpcResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// server is one configured tool server: the granted tool table plus the
+// exec shim state, built once so tools/list and tools/call cannot drift
+// from each other mid-run.
+type server struct {
+	spec    *Spec
+	out     io.Writer
+	outMu   sync.Mutex
+	logw    io.Writer
+	tools   map[string]toolDef
+	order   []string
+	shimDir string
+	// shims maps a declared command to its shim symlink; a declared
+	// command absent from the image is absent here (tools.go).
+	shims map[string]string
+}
+
+func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
+	if logw == nil {
+		logw = io.Discard
+	}
+	s := &server{
+		spec:  spec,
+		out:   out,
+		logw:  logw,
+		tools: map[string]toolDef{},
+		shims: map[string]string{},
+	}
+	s.buildTools()
+	if err := s.buildShims(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// Serve runs the MCP loop until in closes (the gateway closing stdin is
+// the shutdown signal — no other lifecycle exists for a per-run server).
+// Diagnostics go to logw (stderr in the container); out carries protocol
+// lines only, because anything else on stdout corrupts the stream.
+func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
+	if err := validateSpec(spec); err != nil {
+		return err
+	}
+	s, err := newServer(spec, out, logw)
+	if err != nil {
+		return err
+	}
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		s.handleLine(line)
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("read mcp stream: %w", err)
+	}
+	return nil
+}
+
+// validateSpec refuses configurations the compiler should never have
+// produced. Failing before the first request means a bad spec surfaces as
+// a dead server the gateway health-check catches (§R6), not as tools that
+// half-work against wrong roots.
+func validateSpec(spec *Spec) error {
+	if spec == nil {
+		return errors.New("nil tool spec")
+	}
+	if spec.SpecVersion != SpecVersion {
+		return fmt.Errorf("tool spec version %q not supported (this server implements %q — rebuild the runner image or recompile the plan)",
+			spec.SpecVersion, SpecVersion)
+	}
+	if spec.WorkspaceDir == "" || !filepath.IsAbs(spec.WorkspaceDir) {
+		return fmt.Errorf("workspaceDir %q must be a non-empty absolute container path", spec.WorkspaceDir)
+	}
+	if spec.OutDir == "" || !filepath.IsAbs(spec.OutDir) {
+		return fmt.Errorf("outDir %q must be a non-empty absolute container path", spec.OutDir)
+	}
+	return nil
+}
+
+// handleLine dispatches one message. Malformed traffic never kills the
+// loop: a broken line with an id gets a JSON-RPC error, one without an id
+// gets a log line — the run should die on the agent's terms, not because
+// one message was garbage.
+func (s *server) handleLine(line []byte) {
+	var req rpcRequest
+	if err := json.Unmarshal(line, &req); err != nil {
+		// Unparseable JSON carries no extractable id to address an error
+		// to, so log and keep serving.
+		s.logf("dropping unparseable line: %v", err)
+		return
+	}
+	if req.Method == "" {
+		if len(req.ID) != 0 {
+			s.writeError(req.ID, codeInvalidRequest, "invalid request: missing method")
+		} else {
+			s.logf("dropping message with neither method nor id")
+		}
+		return
+	}
+	if len(req.ID) == 0 {
+		// A notification never gets a response (JSON-RPC 2.0); it also
+		// never triggers side effects here — the known one is a no-op and
+		// an unknown one is not silently executed work.
+		if req.Method != "notifications/initialized" {
+			s.logf("ignoring notification %q", req.Method)
+		}
+		return
+	}
+	switch req.Method {
+	case "initialize":
+		s.writeResult(req.ID, s.initializeResult(req.Params))
+	case "ping":
+		s.writeResult(req.ID, map[string]any{})
+	case "tools/list":
+		s.writeResult(req.ID, s.toolsListResult())
+	case "tools/call":
+		s.handleToolsCall(req)
+	default:
+		s.writeError(req.ID, codeMethodNotFound, "method not found: "+req.Method)
+	}
+}
+
+func (s *server) initializeResult(params json.RawMessage) map[string]any {
+	pv := defaultProtocolVersion
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err == nil && p.ProtocolVersion != "" {
+			pv = p.ProtocolVersion
+		}
+	}
+	return map[string]any{
+		"protocolVersion": pv,
+		"capabilities":    map[string]any{"tools": map[string]any{}},
+		"serverInfo":      map[string]any{"name": serverName, "version": serverVersion},
+	}
+}
+
+// toolsListResult advertises exactly the granted tools in registration
+// order — the §R11 invariant-4 surface: what is not here does not exist
+// as far as the model can tell.
+func (s *server) toolsListResult() map[string]any {
+	tools := make([]map[string]any, 0, len(s.order))
+	for _, name := range s.order {
+		d := s.tools[name]
+		tools = append(tools, map[string]any{
+			"name":        d.name,
+			"description": d.description,
+			"inputSchema": d.schema,
+		})
+	}
+	return map[string]any{"tools": tools}
+}
+
+func (s *server) handleToolsCall(req rpcRequest) {
+	var p struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil || p.Name == "" {
+		s.writeError(req.ID, codeInvalidParams, "tools/call params must include a tool name")
+		return
+	}
+	d, ok := s.tools[p.Name]
+	if !ok {
+		// An ungranted-but-known tool answers identically to a
+		// nonexistent one, on purpose: refusal would confirm the tool
+		// exists behind the grant.
+		s.writeError(req.ID, codeInvalidParams, "unknown tool: "+p.Name)
+		return
+	}
+	// A panicking tool must cost one errored call, not the server — the
+	// gateway treats a dead server as a dead run (§R8 exit 13).
+	defer func() {
+		if r := recover(); r != nil {
+			s.logf("tool %s panicked: %v", p.Name, r)
+			s.writeError(req.ID, codeInternal, fmt.Sprintf("tool %s failed internally", p.Name))
+		}
+	}()
+	text, isErr := d.call(p.Arguments)
+	s.writeResult(req.ID, map[string]any{
+		"content": []map[string]any{{"type": "text", "text": text}},
+		"isError": isErr,
+	})
+}
+
+func (s *server) writeResult(id json.RawMessage, result any) {
+	s.writeMsg(rpcResponse{JSONRPC: "2.0", ID: id, Result: result})
+}
+
+func (s *server) writeError(id json.RawMessage, code int, msg string) {
+	s.writeMsg(rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: msg}})
+}
+
+// writeMsg emits one response as one line. The mutex is insurance for a
+// future that handles calls concurrently: two interleaved half-lines
+// would corrupt the whole stream, so the invariant is enforced where the
+// bytes leave, not where the calls are scheduled.
+func (s *server) writeMsg(resp rpcResponse) {
+	b, err := json.Marshal(resp)
+	if err != nil {
+		s.logf("marshal response: %v", err)
+		return
+	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	if _, err := s.out.Write(append(b, '\n')); err != nil {
+		s.logf("write response: %v", err)
+	}
+}
+
+func (s *server) logf(format string, args ...any) {
+	_, _ = fmt.Fprintf(s.logw, "toolsrv: "+format+"\n", args...)
+}

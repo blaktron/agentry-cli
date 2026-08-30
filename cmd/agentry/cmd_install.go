@@ -39,7 +39,7 @@ func newInstallCmd() *cobra.Command {
 	var opts installOpts
 	cmd := &cobra.Command{
 		Use:   "install <ns/name[@range]>",
-		Short: "Resolve, download, verify, and export an agent to a runtime format",
+		Short: "Resolve, download, verify, and export a BriefAgent to a runtime format",
 		Long: "Resolve ns/name[@range] (§9.4), download the release archive, verify its\n" +
 			"sha256 digest AND its DSSE attestation signature (§8.8), show the declared\n" +
 			"capability contract (§5.4) diffed against the installed version, and export\n" +
@@ -65,7 +65,7 @@ func newInstallCmd() *cobra.Command {
 			return runInstall(cmd, args[0], opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.target, "target", "", "install target: claude-skill | mcp | agents-md (default: by agent kind)")
+	cmd.Flags().StringVar(&opts.target, "target", "", "install target: claude-skill | mcp | agents-md (default: by BriefAgent kind)")
 	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory (see help for per-target defaults)")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false,
@@ -167,7 +167,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		state = installed.State{}
 	}
 	nextCaps := installed.Snapshot(m.Capabilities)
-	if err := confirmCapabilityChange(cmd, &state, key, res.Version, nextCaps, m.Capabilities, opts.yes); err != nil {
+	if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Capabilities, opts.yes); err != nil {
 		return err
 	}
 
@@ -285,10 +285,13 @@ func verifyInstallAttestation(cmd *cobra.Command, reg, token string, res *apicli
 // directory: widened capabilities always ask (that is the case §11 names),
 // narrowed or unchanged ones say so and continue — re-asking an identical
 // question every upgrade is how a security prompt becomes a reflex.
-func confirmCapabilityChange(cmd *cobra.Command, state *installed.State, key installed.Key,
+//
+// The banner writer is explicit because callers disagree about stdout:
+// install narrates there, but `agentry run` reserves stdout for the result
+// (RUNNER-PLAN §R8) and sends this to stderr.
+func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed.State, key installed.Key,
 	version string, next installed.CapSnapshot, caps manifest.Capabilities, yes bool,
 ) error {
-	out := cmd.OutOrStdout()
 	prev := state.Find(key)
 	if prev == nil {
 		return confirmCapabilities(cmd, caps, yes)
@@ -321,7 +324,7 @@ func confirmCapabilityChange(cmd *cobra.Command, state *installed.State, key ins
 	prompt := fmt.Sprintf("this update to %s widens what %s/%s may do — continue? type \"yes\": ",
 		version, key.Namespace, key.Name)
 	return promptYes(cmd, prompt,
-		"this update widens the agent's declared capabilities; re-run with --yes to accept in non-interactive mode",
+		"this update widens the BriefAgent's declared capabilities; re-run with --yes to accept in non-interactive mode",
 		"install aborted (widened capability contract not accepted)")
 }
 
@@ -333,8 +336,8 @@ func confirmCapabilities(cmd *cobra.Command, caps manifest.Capabilities, yes boo
 		return nil
 	}
 	return promptYes(cmd,
-		"this agent declares network egress and/or exec — type \"yes\" to continue: ",
-		"this agent declares network egress and/or exec; re-run with --yes to accept in non-interactive mode",
+		"this BriefAgent declares network egress and/or exec — type \"yes\" to continue: ",
+		"this BriefAgent declares network egress and/or exec; re-run with --yes to accept in non-interactive mode",
 		"install aborted (capability contract not accepted)")
 }
 
@@ -468,7 +471,11 @@ func exportClaudeSkill(out io.Writer, staging string, p installPaths, m *manifes
 	if err != nil {
 		return fmt.Errorf("read skill entrypoint %s: %w", skillRel, err)
 	}
-	withFM := export.EnsureSkillFrontmatter(content, m.Name, m.Summary)
+	// Embedded mode (RUNNER-PLAN §R5): the host coding agent supplies the
+	// tools, so the capability contract compiles to its allowed-tools
+	// vocabulary here — the same contract the standalone runner enforces
+	// through the gateway.
+	withFM := export.SkillFrontmatterWithTools(content, m.Name, m.Summary, export.HostToolGrants(m.Capabilities))
 	if err := os.WriteFile(skillPath, withFM, 0o644); err != nil { //nolint:gosec // skill files are world-readable content
 		return fmt.Errorf("write skill entrypoint: %w", err)
 	}
@@ -530,7 +537,10 @@ func exportAgentsMD(out io.Writer, staging string, p installPaths, m *manifest.M
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", agentsPath, err)
 	}
-	updated := export.UpsertAgentsMDSection(existing, ns, m.Name, version, m.Summary, dest)
+	// Embedded mode (RUNNER-PLAN §R5): the section states which host
+	// built-ins the declared contract corresponds to.
+	updated := export.UpsertAgentsMDSectionNote(existing, ns, m.Name, version, m.Summary, dest,
+		export.HostToolsNote(m.Capabilities))
 	if err := os.WriteFile(agentsPath, updated, 0o644); err != nil { //nolint:gosec // project doc, not a secret
 		return fmt.Errorf("write %s: %w", agentsPath, err)
 	}

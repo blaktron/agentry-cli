@@ -1,0 +1,201 @@
+// Fake is the test double for Client: it records every call in order and
+// lets tests script failures and the agent container's behavior. The
+// engine's whole lifecycle — ordering, teardown-on-every-path, env/mount
+// resolution — is asserted against this recorder (RUNNER-DEVIATIONS DR-7:
+// no docker on the framework author's machine, so this coverage is the
+// execute path's proof until the acceptance scripts run on a real engine).
+package dockerx
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+)
+
+// FakeCall is one recorded client call.
+type FakeCall struct {
+	// Op is the method name (e.g. "RunDetached").
+	Op string
+	// Arg is the primary argument (image ref, network or container name).
+	Arg string
+	// Run is the RunSpec for Run* ops.
+	Run RunSpec
+}
+
+// Fake implements Client.
+type Fake struct {
+	mu    sync.Mutex
+	Calls []FakeCall
+
+	// AvailableErr fails Available.
+	AvailableErr error
+	// ExistingImages marks refs ImageExists reports true for.
+	ExistingImages map[string]bool
+	// FailPull/FailBuild/FailDetached script failures by ref/name.
+	FailPull     map[string]error
+	FailBuild    map[string]error
+	FailDetached map[string]error
+	// Foreground scripts RunForeground behavior keyed by container name
+	// prefix; nil behavior = exit 0, no output.
+	Foreground map[string]*FakeForeground
+	// LogsByName scripts Logs.
+	LogsByName map[string]string
+	// Leftover names PSByLabel returns (leak-check tests).
+	Leftover []string
+}
+
+// FakeForeground scripts one foreground container.
+type FakeForeground struct {
+	// Stdout is written to the caller's stdout writer.
+	Stdout string
+	// WantStdin, when set, asserts what the container received on stdin
+	// (recorded into GotStdin for the test to inspect).
+	GotStdin string
+	// ExitCode is returned.
+	ExitCode int
+	// Err is returned as a docker-level failure.
+	Err error
+	// Block, when set, waits for ctx cancellation and then returns
+	// (exit 137) — how tests exercise timeout/budget kills.
+	Block bool
+}
+
+// record appends a call.
+func (f *Fake) record(op, arg string, run RunSpec) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Calls = append(f.Calls, FakeCall{Op: op, Arg: arg, Run: run})
+}
+
+// Ops lists recorded operation names in order, "Op:Arg" formatted.
+func (f *Fake) Ops() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.Calls))
+	for i, c := range f.Calls {
+		out[i] = c.Op + ":" + c.Arg
+	}
+	return out
+}
+
+// FindRun returns the first Run* call whose name contains substr.
+func (f *Fake) FindRun(substr string) (RunSpec, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.Calls {
+		if strings.HasPrefix(c.Op, "Run") && strings.Contains(c.Run.Name, substr) {
+			return c.Run, true
+		}
+	}
+	return RunSpec{}, false
+}
+
+// Available implements Client.
+func (f *Fake) Available(context.Context) error {
+	f.record("Available", "", RunSpec{})
+	return f.AvailableErr
+}
+
+// ImageExists implements Client.
+func (f *Fake) ImageExists(_ context.Context, ref string) (bool, error) {
+	f.record("ImageExists", ref, RunSpec{})
+	return f.ExistingImages[ref], nil
+}
+
+// Pull implements Client.
+func (f *Fake) Pull(_ context.Context, ref string) error {
+	f.record("Pull", ref, RunSpec{})
+	return f.FailPull[ref]
+}
+
+// Build implements Client.
+func (f *Fake) Build(_ context.Context, dir, tag string, _ map[string]string) error {
+	f.record("Build", tag+"<-"+dir, RunSpec{})
+	return f.FailBuild[tag]
+}
+
+// NetworkCreate implements Client.
+func (f *Fake) NetworkCreate(_ context.Context, name string, internal bool, _ map[string]string) error {
+	f.record("NetworkCreate", fmt.Sprintf("%s(internal=%v)", name, internal), RunSpec{})
+	return nil
+}
+
+// NetworkConnect implements Client.
+func (f *Fake) NetworkConnect(_ context.Context, network, container string) error {
+	f.record("NetworkConnect", network+"<-"+container, RunSpec{})
+	return nil
+}
+
+// NetworkRemove implements Client.
+func (f *Fake) NetworkRemove(_ context.Context, name string) error {
+	f.record("NetworkRemove", name, RunSpec{})
+	return nil
+}
+
+// RunDetached implements Client.
+func (f *Fake) RunDetached(_ context.Context, r RunSpec) error {
+	f.record("RunDetached", r.Name, r)
+	for prefix, err := range f.FailDetached {
+		if strings.Contains(r.Name, prefix) {
+			return err
+		}
+	}
+	return nil
+}
+
+// RunForeground implements Client.
+func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+	f.record("RunForeground", r.Name, r)
+	var fg *FakeForeground
+	f.mu.Lock()
+	for prefix, b := range f.Foreground {
+		if strings.Contains(r.Name, prefix) {
+			fg = b
+			break
+		}
+	}
+	f.mu.Unlock()
+	if fg == nil {
+		return 0, nil
+	}
+	if stdin != nil {
+		b, _ := io.ReadAll(stdin)
+		f.mu.Lock()
+		fg.GotStdin = string(b)
+		f.mu.Unlock()
+	}
+	if fg.Stdout != "" {
+		_, _ = io.WriteString(stdout, fg.Stdout)
+	}
+	if fg.Block {
+		<-ctx.Done()
+		return 137, nil
+	}
+	return fg.ExitCode, fg.Err
+}
+
+// Stop implements Client.
+func (f *Fake) Stop(_ context.Context, name string, _ int) error {
+	f.record("Stop", name, RunSpec{})
+	return nil
+}
+
+// RemoveForce implements Client.
+func (f *Fake) RemoveForce(_ context.Context, name string) error {
+	f.record("RemoveForce", name, RunSpec{})
+	return nil
+}
+
+// PSByLabel implements Client.
+func (f *Fake) PSByLabel(_ context.Context, label string) ([]string, error) {
+	f.record("PSByLabel", label, RunSpec{})
+	return f.Leftover, nil
+}
+
+// Logs implements Client.
+func (f *Fake) Logs(_ context.Context, name string, _ int) (string, error) {
+	f.record("Logs", name, RunSpec{})
+	return f.LogsByName[name], nil
+}

@@ -1,0 +1,22 @@
+schemaVersion: "1"
+name: hello-report
+namespace: fixtures
+kind: skill
+version: 1.0.0
+summary: "Reads the workspace and writes a hello report — the E2E smoke agent"
+license: Apache-2.0
+tags: [fixture]
+
+entrypoints:
+  skill: SKILL.md
+
+capabilities:
+  filesystem:
+    read: workspace
+    write: none
+  network:
+    egress: none
+  exec: none
+
+publish:
+  include: [agent.yaml, SKILL.md, notes.txt]
