@@ -1,0 +1,202 @@
+// `agentry publish` (§11): submit a version and follow the pipeline to a
+// verdict. --tag submits an existing repo tag (git-tag source); without it
+// the CLI packs the deterministic archive locally and uploads it
+// (cli-upload source, §6.5). Progress is polled every 2s — SSE streaming is
+// deferred (§11 allows "SSE/poll").
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/blaktron/agentry/pkg/apiclient"
+	pkgarchive "github.com/blaktron/agentry/pkg/archive"
+	"github.com/blaktron/agentry/pkg/manifest"
+)
+
+// Publish poll cadence and budget (§11 "SSE/poll").
+const (
+	publishPollInterval = 2 * time.Second
+	publishPollBudget   = 5 * time.Minute
+)
+
+// newPublishCmd builds the publish command.
+func newPublishCmd() *cobra.Command {
+	var tag string
+	cmd := &cobra.Command{
+		Use:   "publish [dir]",
+		Short: "Submit a version for publication and follow the pipeline to a verdict",
+		Long: "Submit a version for publication (§7 state machine).\n\n" +
+			"With --tag vX.Y.Z the registry builds the archive from that repo tag\n" +
+			"(git-tag source). Without --tag the CLI packs the deterministic archive\n" +
+			"locally from publish.include and uploads it (cli-upload source); the\n" +
+			"server re-validates and re-packs — client packing is never trusted.\n\n" +
+			"Progress is polled every 2s until published, rejected, or needs_review\n" +
+			"(SSE streaming deferred). Exits non-zero on rejection.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := "."
+			if len(args) == 1 {
+				dir = args[0]
+			}
+			return runPublish(cmd, dir, tag)
+		},
+	}
+	cmd.Flags().StringVar(&tag, "tag", "", "existing repo tag vX.Y.Z to submit (git-tag source)")
+	return cmd
+}
+
+// runPublish submits the version and polls to a verdict.
+func runPublish(cmd *cobra.Command, dir, tag string) error {
+	m, err := readWorkspaceManifest(dir)
+	if err != nil {
+		return err
+	}
+
+	reg := registryURL()
+	token := credentialFor(reg)
+	if token == "" {
+		return fmt.Errorf("no credential for %s — run `agentry login` or set %s", reg, envToken)
+	}
+	client, err := newAPIClientChecked(cmd, reg, token)
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+
+	var resp *apiclient.SubmitVersionResponse
+	if tag != "" {
+		_, _ = fmt.Fprintf(out, "submitting %s/%s tag %s (git-tag source)\n", m.Namespace, m.Name, tag)
+		resp, err = client.SubmitVersionWithResponse(cmd.Context(), m.Namespace, m.Name,
+			apiclient.SubmitVersionJSONRequestBody{Tag: tag})
+	} else {
+		resp, err = submitUpload(cmd.Context(), client, out, dir, m)
+	}
+	if err != nil {
+		return err
+	}
+	if resp.JSON202 == nil {
+		return apiProblem("submit version", resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
+	}
+	v := resp.JSON202
+	_, _ = fmt.Fprintf(out, "version %s accepted (status %s) — waiting for the pipeline verdict\n", v.Version, v.Status)
+
+	return pollVerdict(cmd.Context(), client, out, m.Namespace, m.Name, v)
+}
+
+// submitUpload packs the deterministic archive locally (WalkWorkspace →
+// ResolveInclude → BuildArchive, §6.5) and POSTs it as multipart with the
+// client-computed digest for the server cross-check.
+func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, dir string, m *manifest.Manifest) (*apiclient.SubmitVersionResponse, error) {
+	files, err := pkgarchive.WalkWorkspace(dir)
+	if err != nil {
+		return nil, fmt.Errorf("walk workspace %s: %w", dir, err)
+	}
+	include := manifest.ResolveInclude(m.Publish.Include, files)
+	if len(include) == 0 {
+		return nil, fmt.Errorf("publish.include matches no files in %s (V4)", dir)
+	}
+	var archive bytes.Buffer
+	info, err := pkgarchive.BuildArchive(dir, include, &archive)
+	if err != nil {
+		return nil, fmt.Errorf("build archive: %w", err)
+	}
+	_, _ = fmt.Fprintf(out, "submitting %s/%s %s (cli-upload source): %d file(s), %d bytes, %s\n",
+		m.Namespace, m.Name, m.Version, len(info.Files), info.Size, info.Digest)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("archive", "agent.tar.zst")
+	if err != nil {
+		return nil, fmt.Errorf("build multipart body: %w", err)
+	}
+	if _, err := part.Write(archive.Bytes()); err != nil {
+		return nil, fmt.Errorf("write archive part: %w", err)
+	}
+	if err := mw.WriteField("digest", info.Digest); err != nil {
+		return nil, fmt.Errorf("write digest field: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, fmt.Errorf("finish multipart body: %w", err)
+	}
+
+	resp, err := client.SubmitVersionWithBodyWithResponse(ctx, m.Namespace, m.Name, mw.FormDataContentType(), &body)
+	if err != nil {
+		return nil, fmt.Errorf("upload version: %w", err)
+	}
+	return resp, nil
+}
+
+// pollVerdict polls the version until it reaches a terminal state, printing
+// every status change.
+func pollVerdict(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, ns, name string, v *apiclient.AgentVersion) error {
+	deadline := time.Now().Add(publishPollBudget)
+	last := v.Status
+	cur := v
+	for {
+		if done, err := verdict(out, ns, name, cur); done {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("version %s still %s after %s — check `agentry info %s/%s` later",
+				cur.Version, cur.Status, publishPollBudget, ns, name)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(publishPollInterval):
+		}
+		resp, err := client.GetVersionInfoWithResponse(ctx, ns, name, v.Version)
+		if err != nil {
+			return fmt.Errorf("poll version %s: %w", v.Version, err)
+		}
+		if resp.JSON200 == nil {
+			return apiProblem("poll version "+v.Version, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
+		}
+		cur = resp.JSON200
+		if cur.Status != last {
+			_, _ = fmt.Fprintf(out, "status: %s\n", cur.Status)
+			last = cur.Status
+		}
+	}
+}
+
+// verdict inspects a version status; done reports a terminal state and err
+// carries the failure (rejection) if any.
+func verdict(out io.Writer, ns, name string, v *apiclient.AgentVersion) (bool, error) {
+	reason := ""
+	if v.StatusReason != nil && *v.StatusReason != "" {
+		reason = *v.StatusReason
+	}
+	switch v.Status {
+	case "published":
+		_, _ = fmt.Fprintf(out, "published %s/%s@%s", ns, name, v.Version)
+		if v.ArchiveDigest != nil {
+			_, _ = fmt.Fprintf(out, " (%s)", *v.ArchiveDigest)
+		}
+		_, _ = fmt.Fprintln(out)
+		return true, nil
+	case "rejected":
+		if reason == "" {
+			reason = "see the scan report in the web UI"
+		}
+		return true, fmt.Errorf("version %s rejected: %s", v.Version, reason)
+	case "needs_review":
+		_, _ = fmt.Fprintf(out, "version %s needs human review", v.Version)
+		if reason != "" {
+			_, _ = fmt.Fprintf(out, " (%s)", reason)
+		}
+		_, _ = fmt.Fprintln(out, " — it will publish (or not) when a reviewer decides")
+		return true, nil
+	case "quarantined", "blocked", "yanked":
+		return true, fmt.Errorf("version %s ended in state %s: %s", v.Version, v.Status, reason)
+	default: // submitted, scanning, approved — keep polling
+		return false, nil
+	}
+}
