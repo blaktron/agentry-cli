@@ -159,7 +159,11 @@ func Save(st State) error {
 // capability histories, and a diff that conflated them would ask the wrong
 // question about the wrong files.
 type Key struct {
-	Registry, Namespace, Name, Target, Dir string
+	Registry  string `json:"registry" yaml:"registry"`
+	Namespace string `json:"namespace" yaml:"namespace"`
+	Name      string `json:"name" yaml:"name"`
+	Target    string `json:"target" yaml:"target"`
+	Dir       string `json:"dir" yaml:"dir"`
 }
 
 func (k Key) matches(r Record) bool {
