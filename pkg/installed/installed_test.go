@@ -145,7 +145,7 @@ func TestInstallStateRoundTrip(t *testing.T) {
 		FSWritePaths: []string{"out"}, Secrets: []string{"API_KEY"},
 	}
 	var st State
-	st.Upsert(key, "1.0.0", caps)
+	st.Upsert(key, "1.0.0", caps, true)
 	if err := Save(st); err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +161,9 @@ func TestInstallStateRoundTrip(t *testing.T) {
 	if rec.Version != "1.0.0" {
 		t.Errorf("version = %q", rec.Version)
 	}
+	if !rec.Managed {
+		t.Error("managed flag did not survive the round trip")
+	}
 	if d := DiffCapabilities(rec.Capabilities, caps); !d.Empty() {
 		t.Errorf("capabilities did not survive the round trip: %+v", d)
 	}
@@ -169,7 +172,7 @@ func TestInstallStateRoundTrip(t *testing.T) {
 	// two installations have independent capability histories.
 	other := key
 	other.Dir = "/other/place"
-	back.Upsert(other, "2.0.0", CapSnapshot{})
+	back.Upsert(other, "2.0.0", CapSnapshot{}, false)
 	if len(back.Records) != 2 {
 		t.Fatalf("records = %d, want 2", len(back.Records))
 	}

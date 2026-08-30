@@ -87,6 +87,12 @@ type Record struct {
 	Version      string      `yaml:"version" json:"version"`
 	InstalledAt  time.Time   `yaml:"installedAt" json:"installedAt"`
 	Capabilities CapSnapshot `yaml:"capabilities" json:"capabilities"`
+	// Managed is true when the CLIENT chose Dir from the target's default.
+	// Only a managed directory may be deleted on uninstall or cleared on
+	// reinstall — a directory the user named is theirs and may hold files no
+	// agentry client put there. Optional so files written before this field
+	// existed still load; absent means NOT managed (the safe reading).
+	Managed bool `yaml:"managed,omitempty" json:"managed,omitempty"`
 }
 
 // State is ~/.config/agentry/installed.yaml.
@@ -172,12 +178,14 @@ func (st *State) Find(k Key) *Record {
 	return nil
 }
 
-// Upsert records an installation.
-func (st *State) Upsert(k Key, version string, caps CapSnapshot) {
+// Upsert records an installation. managed says whether the client (not the
+// user) chose the directory; see Record.Managed.
+func (st *State) Upsert(k Key, version string, caps CapSnapshot, managed bool) {
 	rec := Record{
 		Registry: strings.TrimRight(k.Registry, "/"), Namespace: k.Namespace,
 		Name: k.Name, Target: k.Target, Dir: k.Dir,
 		Version: version, InstalledAt: time.Now().UTC(), Capabilities: caps,
+		Managed: managed,
 	}
 	if cur := st.Find(k); cur != nil {
 		*cur = rec

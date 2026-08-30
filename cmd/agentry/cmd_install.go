@@ -203,7 +203,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 
 	// Record only after the files actually landed: a manifest claiming an
 	// install that failed would suppress the next run's capability prompt.
-	state.Upsert(key, res.Version, nextCaps)
+	state.Upsert(key, res.Version, nextCaps, paths.managed)
 	if err := installed.Save(state); err != nil {
 		_, _ = fmt.Fprintf(errOut, "warning: %v — the next install of this agent will re-ask about capabilities\n", err)
 	}
