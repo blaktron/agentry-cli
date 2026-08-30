@@ -1,0 +1,15 @@
+schemaVersion: "1"
+name: wildcard
+namespace: fixtures
+kind: prompt-agent
+version: 1.0.0
+summary: "Declares unrestricted egress — must be refused unless policy allows"
+license: Apache-2.0
+tags: [fixture]
+
+capabilities:
+  network:
+    egress: "*"
+
+publish:
+  include: [agent.yaml, AGENT.md]

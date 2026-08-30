@@ -1,0 +1,287 @@
+// Package policy loads the operator policy (RUNNER-PLAN §R9) — the
+// machine-side half of every run plan. The manifest says what an agent
+// wants; the policy says what this operator's machine will provide: image
+// pins, the model endpoint and its egress allowlist, whether wildcard
+// egress is ever runnable, and where secret values come from. The policy
+// participates in the plan hash, so changing it invalidates installed
+// plans instead of silently changing what they mean.
+package policy
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Version is the current policy schema major.
+const Version = "1"
+
+// Default image pins. Tags, not digests: the CLI cannot know digest values
+// ahead of time, and inventing them would be worse than honesty — the
+// generated default file says, loudly, to pin digests. Versions match the
+// research annex survey of 2026-08-30.
+const (
+	DefaultGatewayImage = "docker/mcp-gateway:v0.43.3"
+	DefaultHarnessImage = "docker/docker-agent:v1.128.0"
+	DefaultGoBuilder    = "golang:1.27-alpine"
+)
+
+// Policy is the whole operator policy file (closed schema; unknown keys
+// are errors so a typo cannot silently disable a control).
+type Policy struct {
+	// PolicyVersion pins the schema ("1").
+	PolicyVersion string `yaml:"policyVersion"`
+	// Images pins every image the runner may pull or build.
+	Images Images `yaml:"images"`
+	// Model configures the LLM the default adapter drives.
+	Model Model `yaml:"model"`
+	// AllowWildcardEgress gates manifest `network.egress: "*"` (§R4).
+	// Default false: a wildcard agent is refused at compile time.
+	AllowWildcardEgress bool `yaml:"allowWildcardEgress"`
+	// SecretSource is where declared secret values are resolved from.
+	SecretSource SecretSource `yaml:"secretSource"`
+	// DataAccessServers maps a manifest dataAccess category to operator
+	// catalog server-entry YAML files to attach for agents declaring it
+	// (RUNNER-PLAN §R3; default empty).
+	DataAccessServers map[string][]string `yaml:"dataAccessServers,omitempty"`
+	// Budgets are the default hard stops, overridable per run (tighter
+	// only) by flags.
+	Budgets Budgets `yaml:"budgets"`
+}
+
+// Images pins the container images (§R9). Digest-pinned refs
+// (repo@sha256:…) are recommended in the generated default file.
+type Images struct {
+	// Gateway is the docker/mcp-gateway image.
+	Gateway string `yaml:"gateway"`
+	// HarnessDockerAgent is the docker-agent harness image.
+	HarnessDockerAgent string `yaml:"harnessDockerAgent"`
+	// GoBuilder builds the local runner image (§R7).
+	GoBuilder string `yaml:"goBuilder"`
+	// Runner overrides the local runner image tag ("" = derived from the
+	// CLI version).
+	Runner string `yaml:"runner,omitempty"`
+}
+
+// Model configures the operator-owned model endpoint (annex Q-R2: the key
+// is always the operator's; packages never carry or suggest credentials).
+type Model struct {
+	// Provider is the harness provider name (anthropic, openai, …).
+	Provider string `yaml:"provider"`
+	// Name is the model id.
+	Name string `yaml:"name"`
+	// APIKeyEnv names the host env var holding the API key. The value is
+	// injected only into the agent container and disclosed in receipts.
+	APIKeyEnv string `yaml:"apiKeyEnv"`
+	// BaseURL points provider-compatible adapters at a custom endpoint
+	// (e.g. a local OpenAI-compatible server); empty = provider default.
+	BaseURL string `yaml:"baseUrl,omitempty"`
+	// ProxyAllow is the llm-proxy CONNECT allowlist (host:port). This is
+	// the ONLY egress the agent container has (§R4); it must cover the
+	// model endpoint and nothing else.
+	ProxyAllow []string `yaml:"proxyAllow"`
+}
+
+// SecretSource resolves declared secret names to values (§R9, Q-R3).
+type SecretSource struct {
+	// Mode is "env" (host environment) or "envFile".
+	Mode string `yaml:"mode"`
+	// EnvFile is the dotenv path for mode envFile.
+	EnvFile string `yaml:"envFile,omitempty"`
+}
+
+// Budgets are the policy-default hard stops.
+type Budgets struct {
+	// TimeoutSeconds is the whole-run deadline (default 900).
+	TimeoutSeconds int `yaml:"timeoutSeconds"`
+	// MaxTurns caps tool-call events (default 60; 0 = unlimited).
+	MaxTurns int `yaml:"maxTurns"`
+}
+
+// Default returns the built-in policy.
+func Default() *Policy {
+	return &Policy{
+		PolicyVersion: Version,
+		Images: Images{
+			Gateway:            DefaultGatewayImage,
+			HarnessDockerAgent: DefaultHarnessImage,
+			GoBuilder:          DefaultGoBuilder,
+		},
+		Model: Model{
+			Provider:   "anthropic",
+			Name:       "claude-sonnet-4-5",
+			APIKeyEnv:  "ANTHROPIC_API_KEY",
+			ProxyAllow: []string{"api.anthropic.com:443"},
+		},
+		SecretSource: SecretSource{Mode: "env"},
+		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 60},
+	}
+}
+
+// DefaultPath is ~/.agentry/runner/policy.yaml.
+func DefaultPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locate home directory: %w", err)
+	}
+	return filepath.Join(home, ".agentry", "runner", "policy.yaml"), nil
+}
+
+// Load reads and validates a policy file, also returning the sha256 of the
+// exact bytes read (the plan's policySha256). Strict decoding: unknown
+// keys are errors.
+func Load(path string) (*Policy, string, error) {
+	b, err := os.ReadFile(path) //nolint:gosec // operator-chosen policy path
+	if err != nil {
+		return nil, "", err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	var p Policy
+	if err := dec.Decode(&p); err != nil {
+		return nil, "", fmt.Errorf("parse %s: %w", path, err)
+	}
+	// Exactly one YAML document: a trailing document would silently not
+	// apply, which for a policy file is a hole, not a convenience.
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, "", fmt.Errorf("parse %s: trailing YAML document", path)
+	}
+	if err := p.Validate(); err != nil {
+		return nil, "", fmt.Errorf("%s: %w", path, err)
+	}
+	sum := sha256.Sum256(b)
+	return &p, hex.EncodeToString(sum[:]), nil
+}
+
+// EnsureDefault writes the commented default policy file if path does not
+// exist, then loads it. First `agentry run` on a machine goes through
+// here, so the file the operator later edits is the file that ran.
+func EnsureDefault(path string) (*Policy, string, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, "", fmt.Errorf("create policy dir: %w", err)
+		}
+		if err := os.WriteFile(path, []byte(defaultFileText), 0o644); err != nil { //nolint:gosec // policy holds no secret values
+			return nil, "", fmt.Errorf("write default policy: %w", err)
+		}
+	}
+	return Load(path)
+}
+
+// Validate enforces the closed vocabulary. It runs at load time and again
+// (via Load) before every compile, so a hand-edited policy fails before a
+// container starts, with the field named.
+func (p *Policy) Validate() error {
+	if p.PolicyVersion != Version {
+		return fmt.Errorf("policyVersion %q not supported (want %q)", p.PolicyVersion, Version)
+	}
+	if p.Images.Gateway == "" || p.Images.HarnessDockerAgent == "" || p.Images.GoBuilder == "" {
+		return errors.New("images.gateway, images.harnessDockerAgent, and images.goBuilder are all required")
+	}
+	if p.Model.Provider == "" || p.Model.Name == "" {
+		return errors.New("model.provider and model.name are required")
+	}
+	if p.Model.APIKeyEnv == "" {
+		return errors.New("model.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)")
+	}
+	if len(p.Model.ProxyAllow) == 0 {
+		return errors.New("model.proxyAllow must list the model endpoint host:port (it is the agent container's only egress)")
+	}
+	for _, hp := range p.Model.ProxyAllow {
+		if strings.TrimSpace(hp) == "" || strings.ContainsAny(hp, " /") {
+			return fmt.Errorf("model.proxyAllow entry %q must be host or host:port", hp)
+		}
+	}
+	switch p.SecretSource.Mode {
+	case "env":
+		if p.SecretSource.EnvFile != "" {
+			return errors.New("secretSource.envFile is only valid with mode: envFile")
+		}
+	case "envFile":
+		if p.SecretSource.EnvFile == "" {
+			return errors.New("secretSource.envFile is required with mode: envFile")
+		}
+	default:
+		return fmt.Errorf("secretSource.mode %q must be env or envFile", p.SecretSource.Mode)
+	}
+	if p.Budgets.TimeoutSeconds <= 0 {
+		return errors.New("budgets.timeoutSeconds must be positive")
+	}
+	if p.Budgets.MaxTurns < 0 {
+		return errors.New("budgets.maxTurns must be >= 0 (0 = unlimited)")
+	}
+	return nil
+}
+
+// RunnerImageTag returns the local runner image tag: the policy override,
+// or a tag derived from the CLI version.
+func (p *Policy) RunnerImageTag(cliVersion string) string {
+	if p.Images.Runner != "" {
+		return p.Images.Runner
+	}
+	v := cliVersion
+	ok := v != ""
+	for _, r := range v {
+		safe := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_'
+		if !safe {
+			ok = false
+			break
+		}
+	}
+	if !ok {
+		v = "dev"
+	}
+	return "agentry-runner:" + v
+}
+
+// defaultFileText is the generated first-use policy. It must parse to
+// exactly Default() (a unit test holds it to that) and carry the warnings
+// an operator needs at the moment they edit it.
+const defaultFileText = `# SecureAgentry Runner operator policy (RUNNER-PLAN §R9).
+# This file is machine policy, not agent configuration: it pins the images
+# the runner may pull or build, names the model endpoint (and the ONLY
+# egress the agent container gets), and decides what declared capabilities
+# this machine will honor. Changing it invalidates installed run plans;
+# they recompile on next use.
+policyVersion: "1"
+
+images:
+  # Pin by digest (repo@sha256:...) once you have verified one. Tags are
+  # the out-of-box default only because digests cannot be invented.
+  gateway: docker/mcp-gateway:v0.43.3
+  harnessDockerAgent: docker/docker-agent:v1.128.0
+  goBuilder: golang:1.27-alpine
+
+model:
+  provider: anthropic
+  name: claude-sonnet-4-5
+  # The env var holding YOUR api key. Keys are operator-owned; packages
+  # never carry them.
+  apiKeyEnv: ANTHROPIC_API_KEY
+  # The llm-proxy CONNECT allowlist: the agent container can reach these
+  # host:port pairs and nothing else. Keep it to model endpoints.
+  proxyAllow:
+    - api.anthropic.com:443
+
+# Manifest 'network.egress: "*"' is refused unless you set this true.
+allowWildcardEgress: false
+
+secretSource:
+  # env: declared secret names resolve from the invoking environment.
+  # envFile: resolve from a dotenv file instead (mode: envFile + envFile: path).
+  mode: env
+
+budgets:
+  timeoutSeconds: 900
+  maxTurns: 60
+`

@@ -1,0 +1,773 @@
+// The six §R3 tool implementations and their JSON Schemas. Everything the
+// model can do to the workspace, the network, or a process goes through
+// one of these functions, so every enforcement promise the run plan makes
+// (paths grants, host allowlists, the exec shim, byte caps) has its
+// server-side half here — the container-level mounts and --block-network
+// are the other half, and the two must agree rather than trust each other.
+//
+// Design rule for error returns: a tool failure is an isError=true text
+// the MODEL reads and can react to, never a protocol error — with one
+// deliberate exception: a non-zero exit code from run_command is a normal
+// result, because an agent that cannot see failing exit codes cannot do
+// its job.
+
+package toolsrv
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+// Limits accessors: zero values in the compiled spec mean "package
+// default" (spec.go), so the compiler never has to hardcode numbers this
+// server also knows.
+
+func (l Limits) readCap() int64 {
+	if l.MaxReadBytes > 0 {
+		return l.MaxReadBytes
+	}
+	return DefaultMaxReadBytes
+}
+
+func (l Limits) writeCap() int64 {
+	if l.MaxWriteBytes > 0 {
+		return l.MaxWriteBytes
+	}
+	return DefaultMaxWriteBytes
+}
+
+func (l Limits) fetchCap() int64 {
+	if l.MaxFetchBytes > 0 {
+		return l.MaxFetchBytes
+	}
+	return DefaultMaxFetchBytes
+}
+
+func (l Limits) execOutCap() int64 {
+	if l.MaxExecOutputBytes > 0 {
+		return l.MaxExecOutputBytes
+	}
+	return DefaultMaxExecOutputBytes
+}
+
+func (l Limits) execTimeoutSec() int {
+	if l.ExecTimeoutSeconds > 0 {
+		return l.ExecTimeoutSeconds
+	}
+	return DefaultExecTimeoutSeconds
+}
+
+// toolDef is one registered tool: what tools/list advertises plus the
+// function tools/call dispatches to.
+type toolDef struct {
+	name        string
+	description string
+	schema      map[string]any
+	call        func(args json.RawMessage) (text string, isError bool)
+}
+
+// buildTools registers exactly the granted subset, iterating
+// GrantedTools() so the registration order — and therefore tools/list
+// order — is the one the compiler and the gateway allowlist share
+// (RUNNER-PLAN §R11 invariant 4: an undeclared capability's tool is
+// absent, not refusing).
+func (s *server) buildTools() {
+	add := func(name, desc string, schema map[string]any, call func(json.RawMessage) (string, bool)) {
+		s.order = append(s.order, name)
+		s.tools[name] = toolDef{name: name, description: desc, schema: schema, call: call}
+	}
+	for _, name := range s.spec.GrantedTools() {
+		switch name {
+		case ToolFSRead:
+			add(name, "Read a file from the agent workspace. Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+				fsReadSchema(), s.toolFSRead)
+		case ToolFSList:
+			add(name, "List one directory level of the agent workspace: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for the workspace root.",
+				fsListSchema(), s.toolFSList)
+		case ToolFSWrite:
+			add(name, "Write a file in the agent workspace, creating parent directories. Content larger than the server's byte limit is refused — split large writes.",
+				fsWriteSchema(), s.toolFSWrite)
+		case ToolFetch:
+			add(name, "Make an HTTP(S) request to an allowlisted host. Credentials go via the auth parameter, which injects a granted secret server-side; Authorization/Cookie headers are refused.",
+				fetchSchema(), s.toolFetch)
+		case ToolRunCommand:
+			add(name, "Run one declared command in the workspace with a PATH restricted to the declared commands. Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error.",
+				runCommandSchema(), s.toolRunCommand)
+		case ToolWriteReport:
+			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
+				writeReportSchema(), s.toolWriteReport)
+		}
+	}
+}
+
+// Schema helpers: MCP inputSchema is plain JSON Schema; building the maps
+// through these keeps the tool schemas below readable at a glance.
+
+func objSchema(props map[string]any, required ...string) map[string]any {
+	s := map[string]any{"type": "object", "properties": props}
+	if len(required) > 0 {
+		s["required"] = required
+	}
+	return s
+}
+
+func strProp(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
+
+func intProp(desc string) map[string]any {
+	return map[string]any{"type": "integer", "description": desc}
+}
+
+func boolProp(desc string) map[string]any {
+	return map[string]any{"type": "boolean", "description": desc}
+}
+
+func fsReadSchema() map[string]any {
+	return objSchema(map[string]any{
+		"path":     strProp("workspace-relative slash path of the file"),
+		"offset":   intProp("byte offset to start reading from (default 0)"),
+		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
+	}, "path")
+}
+
+func fsListSchema() map[string]any {
+	return objSchema(map[string]any{
+		"path": strProp("workspace-relative directory to list; empty or \".\" is the workspace root"),
+	})
+}
+
+func fsWriteSchema() map[string]any {
+	return objSchema(map[string]any{
+		"path":    strProp("workspace-relative slash path of the file to write"),
+		"content": strProp("full file content (text)"),
+	}, "path", "content")
+}
+
+func fetchSchema() map[string]any {
+	return objSchema(map[string]any{
+		"url":    strProp("http(s) URL on an allowlisted host"),
+		"method": strProp("HTTP method (GET, HEAD, POST, PUT, PATCH, DELETE); default GET"),
+		"headers": map[string]any{
+			"type":                 "object",
+			"additionalProperties": map[string]any{"type": "string"},
+			"description":          "extra request headers; Authorization, Proxy-Authorization, and Cookie are refused — use auth",
+		},
+		"body": strProp("request body"),
+		"auth": map[string]any{
+			"type":        "object",
+			"description": "inject a granted secret as an auth header; the secret value never enters model context",
+			"properties": map[string]any{
+				"env":    strProp("name of a granted secret environment variable"),
+				"scheme": map[string]any{"type": "string", "enum": []string{"bearer", "header"}, "description": "bearer (default) sets Authorization: Bearer <value>; header sets the named header to the raw value"},
+				"header": strProp("header name to set when scheme is \"header\""),
+			},
+			"required": []string{"env"},
+		},
+	}, "url")
+}
+
+func runCommandSchema() map[string]any {
+	return objSchema(map[string]any{
+		"command": strProp("a declared command name (bare name, no path)"),
+		"args": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "command arguments",
+		},
+		"stdin":          strProp("text piped to the command's stdin"),
+		"timeoutSeconds": intProp("kill the command after this many seconds; clamped to the server limit"),
+	}, "command")
+}
+
+func writeReportSchema() map[string]any {
+	return objSchema(map[string]any{
+		"path":    strProp("report path relative to the reports/ output folder"),
+		"content": strProp("report content (text)"),
+		"append":  boolProp("append to the report instead of replacing it"),
+	}, "path", "content")
+}
+
+// unmarshalArgs decodes tool arguments leniently: unknown fields are
+// tolerated (schema drift on the client side should degrade, not break),
+// absent arguments mean an empty object, and only malformed JSON errors.
+func unmarshalArgs(raw json.RawMessage, v any) error {
+	if len(raw) == 0 {
+		raw = []byte("{}")
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return fmt.Errorf("invalid arguments: %w", err)
+	}
+	return nil
+}
+
+// containsString is the small allowlist-membership helper the exec and
+// fetch gates share; exact match only, by design.
+func containsString(list []string, s string) bool {
+	for _, e := range list {
+		if e == s {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- fs_read ----
+
+func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Path     string `json:"path"`
+		Offset   int64  `json:"offset"`
+		MaxBytes int64  `json:"maxBytes"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "fs_read: " + err.Error(), true
+	}
+	if a.Path == "" {
+		return "fs_read: path is required", true
+	}
+	if a.Offset < 0 {
+		return "fs_read: offset must be >= 0", true
+	}
+	// Registration already gates on the grant; this re-check is the
+	// belt-and-braces rule spec.go states for the mount flags too.
+	if !s.spec.FSRead.Enabled {
+		return "fs_read: filesystem read is not granted", true
+	}
+	if !allowedByGrant(s.spec.FSRead.Paths, a.Path) {
+		return fmt.Sprintf("fs_read: %q is outside the granted paths", path.Clean(a.Path)), true
+	}
+	abs, err := resolveUnder(s.spec.WorkspaceDir, a.Path)
+	if err != nil {
+		return "fs_read: " + err.Error(), true
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return "fs_read: " + err.Error(), true
+	}
+	if fi.IsDir() {
+		return fmt.Sprintf("fs_read: %q is a directory (use fs_list)", path.Clean(a.Path)), true
+	}
+	limit := s.spec.Limits.readCap()
+	if a.MaxBytes > 0 && a.MaxBytes < limit {
+		limit = a.MaxBytes
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		return "fs_read: " + err.Error(), true
+	}
+	defer func() { _ = f.Close() }()
+	if a.Offset > 0 {
+		if _, err := f.Seek(a.Offset, io.SeekStart); err != nil {
+			return "fs_read: " + err.Error(), true
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit))
+	if err != nil {
+		return "fs_read: " + err.Error(), true
+	}
+	total := fi.Size()
+	truncated := a.Offset+int64(len(data)) < total
+	if truncated {
+		// The cap can split a multibyte rune; a split rune must not make
+		// a text file look binary, so shave at most an incomplete tail.
+		data = trimPartialRune(data)
+	}
+	if !utf8.Valid(data) {
+		// Feeding raw bytes to the model wastes context and invites
+		// mojibake loops; say what the file is instead.
+		return fmt.Sprintf("binary file; %d bytes", total), true
+	}
+	text := string(data)
+	if truncated {
+		text += fmt.Sprintf("\n[truncated at %d bytes of %d]", len(data), total)
+	}
+	return text, false
+}
+
+// trimPartialRune drops at most utf8.UTFMax-1 trailing bytes when they are
+// what stands between the buffer and UTF-8 validity — the signature of a
+// rune split by a byte cap, not of a binary file.
+func trimPartialRune(b []byte) []byte {
+	for i := 0; i < utf8.UTFMax-1 && len(b) > 0; i++ {
+		if utf8.Valid(b) {
+			return b
+		}
+		b = b[:len(b)-1]
+	}
+	return b
+}
+
+// ---- fs_list ----
+
+func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "fs_list: " + err.Error(), true
+	}
+	if !s.spec.FSRead.Enabled {
+		return "fs_list: filesystem read is not granted", true
+	}
+	rel := a.Path
+	if rel == "" {
+		rel = "."
+	}
+	rel = path.Clean(rel)
+	if rel == "." && len(s.spec.FSRead.Paths) > 0 {
+		// Paths mode: the workspace root itself is not granted, but the
+		// model still needs a way to discover what is — so listing the
+		// root lists the grant entries themselves (§R3).
+		var b strings.Builder
+		for i, entry := range s.spec.FSRead.Paths {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			e := path.Clean(entry)
+			line := e
+			if abs, err := resolveUnder(s.spec.WorkspaceDir, e); err == nil {
+				if fi, err := os.Stat(abs); err == nil {
+					if fi.IsDir() {
+						line = e + "/"
+					} else {
+						line = e + "\t" + strconv.FormatInt(fi.Size(), 10)
+					}
+				}
+			}
+			b.WriteString(line)
+		}
+		return b.String(), false
+	}
+	if rel != "." && !allowedByGrant(s.spec.FSRead.Paths, rel) {
+		return fmt.Sprintf("fs_list: %q is outside the granted paths", rel), true
+	}
+	abs, err := resolveUnder(s.spec.WorkspaceDir, rel)
+	if err != nil {
+		return "fs_list: " + err.Error(), true
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return "fs_list: " + err.Error(), true
+	}
+	if len(entries) == 0 {
+		return "(empty directory)", false
+	}
+	var b strings.Builder
+	for i, e := range entries {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		if e.IsDir() {
+			b.WriteString(e.Name() + "/")
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			b.WriteString(e.Name())
+			continue
+		}
+		b.WriteString(e.Name() + "\t" + strconv.FormatInt(fi.Size(), 10))
+	}
+	return b.String(), false
+}
+
+// ---- fs_write ----
+
+func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "fs_write: " + err.Error(), true
+	}
+	if a.Path == "" {
+		return "fs_write: path is required", true
+	}
+	// The workspace mount is :ro unless this grant exists; checking here
+	// too keeps the layers in agreement instead of in trust (spec.go).
+	if !s.spec.FSWrite.Enabled {
+		return "fs_write: filesystem write is not granted", true
+	}
+	if !allowedByGrant(s.spec.FSWrite.Paths, a.Path) {
+		return fmt.Sprintf("fs_write: %q is outside the granted paths", path.Clean(a.Path)), true
+	}
+	if limit := s.spec.Limits.writeCap(); int64(len(a.Content)) > limit {
+		// Refuse rather than truncate: a silently clipped file is worse
+		// than an error the model can react to by splitting the write.
+		return fmt.Sprintf("fs_write: content is %d bytes, over the %d-byte limit — split the write", len(a.Content), limit), true
+	}
+	abs, err := resolveUnder(s.spec.WorkspaceDir, a.Path)
+	if err != nil {
+		return "fs_write: " + err.Error(), true
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "fs_write: " + err.Error(), true
+	}
+	if err := os.WriteFile(abs, []byte(a.Content), 0o644); err != nil {
+		return "fs_write: " + err.Error(), true
+	}
+	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), path.Clean(a.Path)), false
+}
+
+// ---- fetch ----
+
+func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
+	var a struct {
+		URL     string            `json:"url"`
+		Method  string            `json:"method"`
+		Headers map[string]string `json:"headers"`
+		Body    string            `json:"body"`
+		Auth    *struct {
+			Env    string `json:"env"`
+			Scheme string `json:"scheme"`
+			Header string `json:"header"`
+		} `json:"auth"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "fetch: " + err.Error(), true
+	}
+	if a.URL == "" {
+		return "fetch: url is required", true
+	}
+	if !s.spec.Fetch.Enabled {
+		return "fetch: network egress is not granted", true
+	}
+	u, err := url.Parse(a.URL)
+	if err != nil {
+		return "fetch: invalid url: " + err.Error(), true
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Sprintf("fetch: scheme %q is not allowed (http and https only)", u.Scheme), true
+	}
+	if !s.fetchHostAllowed(u.Hostname()) {
+		return fmt.Sprintf("fetch: host %q is not in the egress allowlist", u.Hostname()), true
+	}
+	method := strings.ToUpper(a.Method)
+	if method == "" {
+		method = http.MethodGet
+	}
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return fmt.Sprintf("fetch: method %q is not allowed", method), true
+	}
+	var body io.Reader
+	if a.Body != "" {
+		body = strings.NewReader(a.Body)
+	}
+	req, err := http.NewRequest(method, a.URL, body)
+	if err != nil {
+		return "fetch: " + err.Error(), true
+	}
+	for k, v := range a.Headers {
+		switch strings.ToLower(k) {
+		case "authorization", "proxy-authorization", "cookie":
+			// Credential headers only via auth: that path reads the value
+			// from a granted env var, so the secret never has to pass
+			// through model context to be used (§R3).
+			return fmt.Sprintf("fetch: header %q is refused — pass credentials via the auth parameter", k), true
+		}
+		req.Header.Set(k, v)
+	}
+	if a.Auth != nil {
+		if a.Auth.Env == "" {
+			return "fetch: auth.env is required", true
+		}
+		if !containsString(s.spec.Fetch.SecretEnv, a.Auth.Env) {
+			return fmt.Sprintf("fetch: %q is not a granted secret env", a.Auth.Env), true
+		}
+		v := os.Getenv(a.Auth.Env)
+		if v == "" {
+			return fmt.Sprintf("fetch: secret %s not set", a.Auth.Env), true
+		}
+		switch a.Auth.Scheme {
+		case "", "bearer":
+			req.Header.Set("Authorization", "Bearer "+v)
+		case "header":
+			if a.Auth.Header == "" {
+				return "fetch: auth.header is required when auth.scheme is \"header\"", true
+			}
+			req.Header.Set(a.Auth.Header, v)
+		default:
+			return fmt.Sprintf("fetch: unknown auth.scheme %q (want bearer or header)", a.Auth.Scheme), true
+		}
+	}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+		// Redirects re-run the host gate hop by hop: an allowlisted host
+		// must not be usable as a bounce toward one that is not. This is
+		// the only place redirects are validated (spec.go Fetch comment);
+		// the container-level allowHosts backstops whatever slips.
+		CheckRedirect: func(r *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			if r.URL.Scheme != "http" && r.URL.Scheme != "https" {
+				return fmt.Errorf("redirect to scheme %q refused", r.URL.Scheme)
+			}
+			if !s.fetchHostAllowed(r.URL.Hostname()) {
+				return fmt.Errorf("redirect to host %q refused: not in the egress allowlist", r.URL.Hostname())
+			}
+			return nil
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return s.scrubSecrets("fetch: " + err.Error()), true
+	}
+	defer func() { _ = resp.Body.Close() }()
+	limit := s.spec.Limits.fetchCap()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return s.scrubSecrets("fetch: read response: " + err.Error()), true
+	}
+	truncated := int64(len(data)) > limit
+	if truncated {
+		data = data[:limit]
+	}
+	text := fmt.Sprintf("HTTP %s\ncontent-type: %s\n\n%s", resp.Status, resp.Header.Get("Content-Type"), data)
+	if truncated {
+		if resp.ContentLength >= 0 {
+			text += fmt.Sprintf("\n[truncated at %d bytes of %d]", limit, resp.ContentLength)
+		} else {
+			text += fmt.Sprintf("\n[truncated at %d bytes]", limit)
+		}
+	}
+	// A 4xx/5xx status is a normal result — the agent must see it to
+	// react; only transport and policy failures are isError above.
+	return s.scrubSecrets(text), false
+}
+
+// fetchHostAllowed is the server-side half of the egress control: exact,
+// case-insensitive hostname membership (or the policy-gated wildcard).
+// The gateway enforces the same list at container level; neither layer
+// assumes the other held.
+func (s *server) fetchHostAllowed(host string) bool {
+	if s.spec.Fetch.AllowAll {
+		return true
+	}
+	for _, h := range s.spec.Fetch.Hosts {
+		if strings.EqualFold(h, host) {
+			return true
+		}
+	}
+	return false
+}
+
+// scrubSecrets replaces every granted secret's value in text with a
+// [redacted:ENV] marker. Cheap defense in depth: an upstream that echoes
+// the credential (auth debuggers, error pages) must not teach it to the
+// model. The gateway's --block-secrets does the same at its layer.
+func (s *server) scrubSecrets(text string) string {
+	for _, env := range s.spec.Fetch.SecretEnv {
+		v := os.Getenv(env)
+		if v == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, v, "[redacted:"+env+"]")
+	}
+	return text
+}
+
+// ---- run_command ----
+
+// buildShims prepares the exec PATH jail once at server start: a fresh
+// temp dir holding one symlink per declared-and-present command. Children
+// run with PATH set to only this dir, so even a shell among the declared
+// commands can only resolve declared names (§R3; DR-1 records that the
+// rest of the image's binaries still exist — argv0 + PATH is the v1
+// control, not binary absence).
+func (s *server) buildShims() error {
+	if len(s.spec.Exec.Commands) == 0 {
+		return nil
+	}
+	// MkdirTemp rather than a fixed name: several servers in one process
+	// (tests) must not share or clobber each other's shims. The pid keeps
+	// the name attributable when inspecting a live container.
+	dir, err := os.MkdirTemp(os.TempDir(), fmt.Sprintf("agentry-shim-%d-", os.Getpid()))
+	if err != nil {
+		return fmt.Errorf("create exec shim dir: %w", err)
+	}
+	s.shimDir = dir
+	for _, name := range s.spec.Exec.Commands {
+		if name == "" || strings.ContainsAny(name, `/\`) {
+			// A name with a separator can never pass the call-time gate,
+			// so it gets no shim; declaring it was a manifest mistake.
+			s.logf("declared command %q is not a bare name; treating as absent", name)
+			continue
+		}
+		resolved, err := exec.LookPath(name)
+		if err != nil {
+			// Recorded by omission from s.shims; calling it reports
+			// "not present in image" rather than a confusing exec error.
+			s.logf("declared command %q not present in image: %v", name, err)
+			continue
+		}
+		link := filepath.Join(dir, name)
+		if err := os.Symlink(resolved, link); err != nil {
+			return fmt.Errorf("shim %s: %w", name, err)
+		}
+		s.shims[name] = link
+	}
+	return nil
+}
+
+func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Command        string   `json:"command"`
+		Args           []string `json:"args"`
+		Stdin          string   `json:"stdin"`
+		TimeoutSeconds int      `json:"timeoutSeconds"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "run_command: " + err.Error(), true
+	}
+	if a.Command == "" {
+		return "run_command: command is required", true
+	}
+	if len(s.spec.Exec.Commands) == 0 {
+		return "run_command: exec is not granted", true
+	}
+	if strings.ContainsAny(a.Command, `/\`) {
+		return fmt.Sprintf("run_command: %q is not a bare command name (path separators are refused)", a.Command), true
+	}
+	if !containsString(s.spec.Exec.Commands, a.Command) {
+		return fmt.Sprintf("run_command: %q is not in the declared exec allowlist", a.Command), true
+	}
+	shim, ok := s.shims[a.Command]
+	if !ok {
+		return fmt.Sprintf("run_command: command %q not present in image", a.Command), true
+	}
+	limitSec := s.spec.Limits.execTimeoutSec()
+	if a.TimeoutSeconds > 0 && a.TimeoutSeconds < limitSec {
+		limitSec = a.TimeoutSeconds
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(limitSec)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, shim, a.Args...)
+	cmd.Dir = s.spec.WorkspaceDir
+	// A minimal, explicit environment: PATH is the whole point of the
+	// shim; HOME and LANG exist because plenty of tools crash without
+	// them, and /tmp is the only writable non-mount in the container.
+	cmd.Env = []string{"PATH=" + s.shimDir, "HOME=/tmp", "LANG=C.UTF-8"}
+	if a.Stdin != "" {
+		cmd.Stdin = strings.NewReader(a.Stdin)
+	}
+	out := &capWriter{max: s.spec.Limits.execOutCap()}
+	cmd.Stdout, cmd.Stderr = out, out
+	// Without a WaitDelay, a grandchild holding the output pipe keeps
+	// Run blocked past the kill; five seconds of grace, then move on.
+	cmd.WaitDelay = 5 * time.Second
+	err := cmd.Run()
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
+		return fmt.Sprintf("run_command: %q timed out after %ds\n%s", a.Command, limitSec, out.text()), true
+	}
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return "exit code 0\n" + out.text(), false
+	case errors.As(err, &exitErr):
+		// Deliberately NOT isError: the exit code is information the
+		// agent acts on (§R3), not a tool malfunction.
+		return fmt.Sprintf("exit code %d\n%s", exitErr.ExitCode(), out.text()), false
+	default:
+		return "run_command: " + err.Error(), true
+	}
+}
+
+// capWriter keeps the first max bytes and counts the rest, so a chatty
+// command costs bounded memory and the note below can still say how much
+// was dropped. It never returns an error: erroring the pipe would kill
+// the command over its own verbosity.
+type capWriter struct {
+	max   int64
+	buf   bytes.Buffer
+	total int64
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	w.total += int64(n)
+	if room := w.max - int64(w.buf.Len()); room > 0 {
+		if int64(len(p)) > room {
+			p = p[:room]
+		}
+		w.buf.Write(p)
+	}
+	return n, nil
+}
+
+func (w *capWriter) text() string {
+	t := w.buf.String()
+	if w.total > int64(w.buf.Len()) {
+		t += fmt.Sprintf("\n[output truncated at %d bytes of %d]", w.buf.Len(), w.total)
+	}
+	return t
+}
+
+// ---- write_report ----
+
+func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		Append  bool   `json:"append"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "write_report: " + err.Error(), true
+	}
+	if a.Path == "" {
+		return "write_report: path is required", true
+	}
+	if limit := s.spec.Limits.writeCap(); int64(len(a.Content)) > limit {
+		return fmt.Sprintf("write_report: content is %d bytes, over the %d-byte limit — append in parts", len(a.Content), limit), true
+	}
+	// Reports root under the out mount (RQ3): created lazily so a run
+	// that writes no report leaves no empty reports/ dir behind.
+	root := filepath.Join(s.spec.OutDir, "reports")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "write_report: " + err.Error(), true
+	}
+	abs, err := resolveUnder(root, a.Path)
+	if err != nil {
+		return "write_report: " + err.Error(), true
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "write_report: " + err.Error(), true
+	}
+	if a.Append {
+		f, err := os.OpenFile(abs, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return "write_report: " + err.Error(), true
+		}
+		_, werr := f.Write([]byte(a.Content))
+		cerr := f.Close()
+		if werr != nil {
+			return "write_report: " + werr.Error(), true
+		}
+		if cerr != nil {
+			return "write_report: " + cerr.Error(), true
+		}
+	} else {
+		if err := os.WriteFile(abs, []byte(a.Content), 0o644); err != nil {
+			return "write_report: " + err.Error(), true
+		}
+	}
+	return fmt.Sprintf("report written: reports/%s (%d bytes)", path.Clean(a.Path), len(a.Content)), false
+}

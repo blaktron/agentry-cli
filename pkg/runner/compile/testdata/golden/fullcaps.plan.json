@@ -1,0 +1,174 @@
+{
+  "planVersion": "1",
+  "ref": "demo/full-caps@2.1.0",
+  "digest": "sha256:0123456789abcdef",
+  "source": "local",
+  "kind": "skill",
+  "summary": "Exercises every capability shape",
+  "policySha256": "fixedpolicysha",
+  "instruction": {
+    "sourcePath": "SKILL.md",
+    "sha256": "766d4ac3a1dc2a9b83d10dc41a61236d6eb0f1ba894a0801e548de5edb114a6a"
+  },
+  "capabilities": {
+    "egressMode": "hosts",
+    "egressHosts": [
+      "api.example.com",
+      "api.other.net"
+    ],
+    "fsReadMode": "workspace",
+    "fsWriteMode": "paths",
+    "fsWritePaths": [
+      "notes/summary.md",
+      "reports"
+    ],
+    "execCommands": [
+      "git",
+      "jq"
+    ],
+    "dataAccess": [
+      "tickets"
+    ]
+  },
+  "tools": [
+    "fs_read",
+    "fs_list",
+    "fs_write",
+    "fetch",
+    "run_command",
+    "write_report"
+  ],
+  "enforcement": {
+    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
+    "dataAccess": "declared tickets; no servers cataloged by policy (declaration recorded for audit)",
+    "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools image is not binary-minimal in v1 (RUNNER-DEVIATIONS DR-1)",
+    "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
+    "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
+    "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN"
+  },
+  "gateway": {
+    "image": "docker/mcp-gateway:v0.43.3",
+    "args": [
+      "--transport",
+      "streaming",
+      "--port",
+      "8811",
+      "--servers",
+      "agentry-tools",
+      "--catalog",
+      "/mcp/catalog.yaml",
+      "--registry",
+      "/mcp/registry.yaml",
+      "--config",
+      "/mcp/config.yaml",
+      "--tools-config",
+      "/mcp/tools.yaml",
+      "--secrets",
+      "/mcp/secrets.env",
+      "--block-network",
+      "--verify-signatures",
+      "--log-calls"
+    ],
+    "env": [
+      {
+        "name": "MCP_GATEWAY_AUTH_TOKEN",
+        "fromRunToken": true
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
+        "value": "@@RUN_WORKSPACE@@:@@RUN_OUT@@:@@RUN_CFG@@"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
+        "value": "@@RUN_OUT@@:@@RUN_WORKSPACE@@"
+      }
+    ],
+    "mounts": [
+      {
+        "source": "@@RUN_CFG@@/gateway",
+        "target": "/mcp",
+        "readOnly": true
+      },
+      {
+        "source": "/var/run/docker.sock",
+        "target": "/var/run/docker.sock"
+      }
+    ],
+    "servers": [
+      "agentry-tools"
+    ]
+  },
+  "harness": {
+    "adapter": "docker-agent",
+    "model": "anthropic/claude-sonnet-4-5",
+    "agent": {
+      "image": "docker/docker-agent:v1.128.0",
+      "argv": [
+        "run",
+        "--exec",
+        "--json",
+        "--safety",
+        "autonomous",
+        "/plan/agent.yaml",
+        "-"
+      ],
+      "env": [
+        {
+          "name": "MCP_GATEWAY_TOKEN",
+          "fromRunToken": true
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "fromHostEnv": "ANTHROPIC_API_KEY"
+        },
+        {
+          "name": "HTTPS_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "HTTP_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "NO_PROXY",
+          "value": "gateway,localhost,127.0.0.1"
+        },
+        {
+          "name": "TELEMETRY_ENABLED",
+          "value": "false"
+        }
+      ],
+      "mounts": [
+        {
+          "source": "@@RUN_CFG@@/harness",
+          "target": "/plan",
+          "readOnly": true
+        }
+      ],
+      "stdinTask": true
+    },
+    "resultKind": "text"
+  },
+  "proxy": {
+    "image": "agentry-runner:test",
+    "allow": [
+      "api.anthropic.com:443"
+    ]
+  },
+  "secrets": [
+    "EXAMPLE_TOKEN"
+  ],
+  "budgets": {
+    "timeoutSeconds": 900,
+    "maxTurns": 60
+  },
+  "output": {},
+  "files": {
+    "gateway/catalog.yaml": "3f880a06ed908268d974f5564357b88270ff4d0cd90237a238b59c79f985fb84",
+    "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
+    "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
+    "gateway/tools.yaml": "7654af3e922c4fb6f3f0f8351892d69f52388f0487aa99d6288a2a92041ecd2f",
+    "gateway/toolspec.json": "cb63513c69d9dce9a2976276292e6e0e9a55ff927288e956c1e5155c988b67f9",
+    "harness/agent.yaml": "b2add47b44aa7308d1992cb187ea009f54cc6faee1183e1ba5b268c21667296f"
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "planVersion": "1",
+  "ref": "demo/pure-text@1.0.0",
+  "digest": "sha256:0123456789abcdef",
+  "source": "local",
+  "kind": "prompt-agent",
+  "summary": "A pure text agent",
+  "policySha256": "fixedpolicysha",
+  "instruction": {
+    "sourcePath": "AGENT.md",
+    "sha256": "66c3d808ab2f9b1a61c6be93ec88dec3008092e647ab5315181076b87efe5567"
+  },
+  "capabilities": {
+    "egressMode": "none",
+    "fsReadMode": "none",
+    "fsWriteMode": "none"
+  },
+  "tools": [
+    "write_report"
+  ],
+  "enforcement": {
+    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
+    "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
+    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
+    "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "secrets": "none declared"
+  },
+  "gateway": {
+    "image": "docker/mcp-gateway:v0.43.3",
+    "args": [
+      "--transport",
+      "streaming",
+      "--port",
+      "8811",
+      "--servers",
+      "agentry-tools",
+      "--catalog",
+      "/mcp/catalog.yaml",
+      "--registry",
+      "/mcp/registry.yaml",
+      "--config",
+      "/mcp/config.yaml",
+      "--tools-config",
+      "/mcp/tools.yaml",
+      "--secrets",
+      "/mcp/secrets.env",
+      "--block-network",
+      "--verify-signatures",
+      "--log-calls"
+    ],
+    "env": [
+      {
+        "name": "MCP_GATEWAY_AUTH_TOKEN",
+        "fromRunToken": true
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
+        "value": "@@RUN_WORKSPACE@@:@@RUN_OUT@@:@@RUN_CFG@@"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
+        "value": "@@RUN_OUT@@"
+      }
+    ],
+    "mounts": [
+      {
+        "source": "@@RUN_CFG@@/gateway",
+        "target": "/mcp",
+        "readOnly": true
+      },
+      {
+        "source": "/var/run/docker.sock",
+        "target": "/var/run/docker.sock"
+      }
+    ],
+    "servers": [
+      "agentry-tools"
+    ]
+  },
+  "harness": {
+    "adapter": "docker-agent",
+    "model": "anthropic/claude-sonnet-4-5",
+    "agent": {
+      "image": "docker/docker-agent:v1.128.0",
+      "argv": [
+        "run",
+        "--exec",
+        "--json",
+        "--safety",
+        "autonomous",
+        "/plan/agent.yaml",
+        "-"
+      ],
+      "env": [
+        {
+          "name": "MCP_GATEWAY_TOKEN",
+          "fromRunToken": true
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "fromHostEnv": "ANTHROPIC_API_KEY"
+        },
+        {
+          "name": "HTTPS_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "HTTP_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "NO_PROXY",
+          "value": "gateway,localhost,127.0.0.1"
+        },
+        {
+          "name": "TELEMETRY_ENABLED",
+          "value": "false"
+        }
+      ],
+      "mounts": [
+        {
+          "source": "@@RUN_CFG@@/harness",
+          "target": "/plan",
+          "readOnly": true
+        }
+      ],
+      "stdinTask": true
+    },
+    "resultKind": "text"
+  },
+  "proxy": {
+    "image": "agentry-runner:test",
+    "allow": [
+      "api.anthropic.com:443"
+    ]
+  },
+  "budgets": {
+    "timeoutSeconds": 900,
+    "maxTurns": 60
+  },
+  "output": {},
+  "files": {
+    "gateway/catalog.yaml": "491abe6759c2db20ffecdf7964e89de2f957953fd60f49715d062b0edd2618fa",
+    "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
+    "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
+    "gateway/tools.yaml": "c68b002724402131eb0982b886626ec464f5613a920c62c456b13ac5f148d51b",
+    "gateway/toolspec.json": "b25aba4b60fd3dbe5b701581799d6f27a00e37d8f29b26e4252adbad1501a64a",
+    "harness/agent.yaml": "6f0231bbbb3ec6035a40de7500a7a825b29437e60504868d6b4d8006bcc1010d"
+  }
+}

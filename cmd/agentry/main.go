@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
 // defaultRegistryURL is the fallback registry when neither --registry nor the
@@ -31,6 +33,13 @@ var flags globalFlags
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "agentry: "+err.Error())
+		// `agentry run` classifies its failures (RUNNER-PLAN §R8) so
+		// pipelines and cron can branch on the exit code; everything
+		// else keeps the traditional 1.
+		var classified *engine.ClassifiedError
+		if errors.As(err, &classified) {
+			os.Exit(classified.Code)
+		}
 		os.Exit(1)
 	}
 }
@@ -39,7 +48,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "agentry",
-		Short:         "Agentry CLI — develop, validate, publish, and install single-purpose agents",
+		Short:         "Agentry CLI — develop, validate, publish, install, and run BriefAgents (single-purpose AI agents)",
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -55,10 +64,12 @@ func newRootCmd() *cobra.Command {
 		newLoginCmd(),
 		newPublishCmd(),
 		newInstallCmd(),
+		newRunCmd(),
 		newVerifyCmd(),
 		newSearchCmd(),
 		newInfoCmd(),
 		newYankCmd(),
+		newRunnerToolsCmd(),
 	)
 	return root
 }

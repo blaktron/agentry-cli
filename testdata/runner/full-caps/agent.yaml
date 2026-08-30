@@ -1,0 +1,24 @@
+schemaVersion: "1"
+name: full-caps
+namespace: fixtures
+kind: skill
+version: 1.0.0
+summary: "Exercises every capability shape and the output schema convention"
+license: Apache-2.0
+tags: [fixture]
+
+entrypoints:
+  skill: SKILL.md
+
+capabilities:
+  network:
+    egress: [api.example.com]
+  filesystem:
+    read: workspace
+    write: { paths: [scratch] }
+  exec: { commands: [jq] }
+  secrets: [FIXTURE_TOKEN]
+  dataAccess: [tickets]
+
+publish:
+  include: [agent.yaml, SKILL.md, output.schema.json]

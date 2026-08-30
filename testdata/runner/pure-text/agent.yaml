@@ -1,0 +1,15 @@
+schemaVersion: "1"
+name: pure-text
+namespace: fixtures
+kind: prompt-agent
+version: 1.0.0
+summary: "Answers from its prompt alone — declares no capabilities at all"
+license: Apache-2.0
+tags: [fixture]
+
+# The zero capability contract: no filesystem, no network, no exec, no
+# secrets. The runner grants such an agent exactly one tool (write_report)
+# and a networkless tools container.
+
+publish:
+  include: [agent.yaml, AGENT.md]

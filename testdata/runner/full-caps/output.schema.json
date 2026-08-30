@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["status", "summary"],
+  "properties": {
+    "status": { "type": "string", "enum": ["ok", "failed"] },
+    "summary": { "type": "string" }
+  }
+}
