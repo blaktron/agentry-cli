@@ -1,7 +1,9 @@
-// Interop exporters (§5.6): pure functions of (archive, manifest, target)
-// that emit the claude-skill, mcp, and agents-md install formats. Keeping
-// them side-effect free makes them table-testable without a registry.
-package main
+// Package export holds the interop exporters (§5.6): pure functions of
+// (archive, manifest, target) that emit the claude-skill, mcp, and agents-md
+// install formats. Keeping them side-effect free makes them table-testable
+// without a registry, and lets any client — the CLI, the desktop app —
+// produce byte-identical installs from the same inputs.
+package export
 
 import (
 	"bytes"
@@ -16,11 +18,11 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// ensureSkillFrontmatter returns content guaranteed to start with YAML
+// EnsureSkillFrontmatter returns content guaranteed to start with YAML
 // frontmatter. When the skill file already opens with a frontmatter fence it
 // is returned unchanged; otherwise `name` and `description` (mapped from the
 // manifest name and summary per §5.6) are prepended.
-func ensureSkillFrontmatter(content []byte, name, summary string) []byte {
+func EnsureSkillFrontmatter(content []byte, name, summary string) []byte {
 	if bytes.HasPrefix(content, []byte("---\n")) || bytes.HasPrefix(content, []byte("---\r\n")) {
 		return content
 	}
@@ -45,23 +47,23 @@ func ensureSkillFrontmatter(content []byte, name, summary string) []byte {
 	return out.Bytes()
 }
 
-// mcpServerEntry is one server stanza in a client's .mcp.json.
-type mcpServerEntry struct {
+// MCPServerEntry is one server stanza in a client's .mcp.json.
+type MCPServerEntry struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 }
 
-// mcpEntryFromManifest builds the .mcp.json stanza for an installed
+// MCPEntryFromManifest builds the .mcp.json stanza for an installed
 // mcp-server: command and args from entrypoints.mcp, and empty-value env
 // placeholders for every declared secret (§5.6). Args naming archive files
 // are re-rooted under extractedRel (slash-separated, "" = config file sits
 // next to the extracted files).
-func mcpEntryFromManifest(m *manifest.Manifest, extractedRel string, archiveFiles map[string]bool) (mcpServerEntry, error) {
+func MCPEntryFromManifest(m *manifest.Manifest, extractedRel string, archiveFiles map[string]bool) (MCPServerEntry, error) {
 	if m.Entrypoints.MCP == nil {
-		return mcpServerEntry{}, errors.New("manifest declares no mcp entrypoint")
+		return MCPServerEntry{}, errors.New("manifest declares no mcp entrypoint")
 	}
-	entry := mcpServerEntry{Command: m.Entrypoints.MCP.Command}
+	entry := MCPServerEntry{Command: m.Entrypoints.MCP.Command}
 	for _, a := range m.Entrypoints.MCP.Args {
 		if extractedRel != "" && archiveFiles[a] {
 			a = path.Join(extractedRel, a)
@@ -77,11 +79,11 @@ func mcpEntryFromManifest(m *manifest.Manifest, extractedRel string, archiveFile
 	return entry, nil
 }
 
-// mergeMCPConfig upserts one server entry into a .mcp.json document,
+// MergeMCPConfig upserts one server entry into a .mcp.json document,
 // preserving every existing server and any unknown top-level keys. The
 // output is deterministic (sorted keys, two-space indent, trailing newline),
 // so repeated merges are byte-idempotent.
-func mergeMCPConfig(existing []byte, name string, entry mcpServerEntry) ([]byte, error) {
+func MergeMCPConfig(existing []byte, name string, entry MCPServerEntry) ([]byte, error) {
 	root := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		if err := json.Unmarshal(existing, &root); err != nil {
@@ -109,9 +111,9 @@ func mergeMCPConfig(existing []byte, name string, entry mcpServerEntry) ([]byte,
 	return append(out, '\n'), nil
 }
 
-// agentsMDSection renders the AGENTS.md section for one installed
+// AgentsMDSection renders the AGENTS.md section for one installed
 // prompt-agent (§5.6 agents-md target).
-func agentsMDSection(ns, name, version, summary, installPath string) string {
+func AgentsMDSection(ns, name, version, summary, installPath string) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "## %s/%s (v%s)\n\n", ns, name, version)
 	if strings.TrimSpace(summary) != "" {
@@ -121,11 +123,11 @@ func agentsMDSection(ns, name, version, summary, installPath string) string {
 	return b.String()
 }
 
-// upsertAgentsMDSection appends the agent's section to an AGENTS.md document,
+// UpsertAgentsMDSection appends the agent's section to an AGENTS.md document,
 // replacing any existing section for the same ns/name (any version) so
 // reinstalls and upgrades stay idempotent.
-func upsertAgentsMDSection(existing []byte, ns, name, version, summary, installPath string) []byte {
-	section := strings.TrimRight(agentsMDSection(ns, name, version, summary, installPath), "\n")
+func UpsertAgentsMDSection(existing []byte, ns, name, version, summary, installPath string) []byte {
+	section := strings.TrimRight(AgentsMDSection(ns, name, version, summary, installPath), "\n")
 	prefix := "## " + ns + "/" + name + " ("
 
 	content := strings.TrimRight(string(existing), "\n")

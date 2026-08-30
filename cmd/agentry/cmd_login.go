@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
 // newLoginCmd builds the login command.
@@ -96,6 +98,6 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	// §11: "pins signing keys (TOFU)". Never fatal — an unsigned self-host
 	// registry is a legitimate configuration, and a key-fetch hiccup must not
 	// undo a login whose credential is already stored and verified.
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", pinSigningKeysAtLogin(cmd.Context(), reg))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", trust.PinAtLogin(cmd.Context(), httpClient, reg))
 	return nil
 }

@@ -1,16 +1,18 @@
-package main
-
-// Attestation verification (§8.8): fetch the registry's signing keys, pin
-// them on first use (TOFU) with key-id continuity warnings, and verify the
-// DSSE envelope offline against the archive digest. Verification uses the
-// same library code the server signs with (internal/scan), so the formats
-// cannot drift.
+// Package trust is the shared client-side provenance layer (§8.8): fetch a
+// registry's signing keys, pin them on first use (TOFU) with key-id
+// continuity warnings, and verify DSSE envelopes offline against an archive
+// digest. Verification uses the same library code the server signs with
+// (pkg/attest), so the formats cannot drift — and every client (CLI, desktop)
+// shares the SAME pin store under ~/.config/agentry/keys/<host>.yaml, so a
+// registry pinned by one client is pinned for all of them.
+package trust
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,18 +20,29 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry/pkg/attest"
+
+	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
 
-// signingKey is one entry from /.well-known/agentry/signing-keys.json.
-type signingKey struct {
+// SigningKey is one entry from /.well-known/agentry/signing-keys.json.
+type SigningKey struct {
 	KeyID     string `json:"keyId" yaml:"keyId"`
 	Algorithm string `json:"algorithm" yaml:"algorithm"`
 	PublicKey string `json:"publicKeyPem" yaml:"publicKeyPem"`
 }
 
-type signingKeySet struct {
-	Keys []signingKey `json:"keys" yaml:"keys"`
+// KeySet is a registry's advertised (or pinned) signing key set.
+type KeySet struct {
+	Keys []SigningKey `json:"keys" yaml:"keys"`
 }
+
+// Attestation states reported by VerifyAttestation.
+const (
+	StateVerified     = "verified"
+	StateUnsigned     = "unsigned"
+	StateUnverifiable = "unverifiable"
+	StateMismatch     = "mismatch"
+)
 
 // AttestationResult is what verify/install report about provenance.
 type AttestationResult struct {
@@ -53,31 +66,41 @@ type AttestationResult struct {
 	KeyRotated bool `json:"keyRotated,omitempty"`
 }
 
-// fetchSigningKeys reads the registry's key set.
-func fetchSigningKeys(ctx context.Context, registryURL string) (signingKeySet, error) {
+// orDefault guards against a nil client without silently adopting the
+// timeout-free http.DefaultClient semantics callers may not want; callers
+// should pass their own client.
+func orDefault(hc *http.Client) *http.Client {
+	if hc == nil {
+		return http.DefaultClient
+	}
+	return hc
+}
+
+// FetchKeys reads the registry's key set.
+func FetchKeys(ctx context.Context, hc *http.Client, registryURL string) (KeySet, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		strings.TrimRight(registryURL, "/")+"/.well-known/agentry/signing-keys.json", nil)
 	if err != nil {
-		return signingKeySet{}, err
+		return KeySet{}, err
 	}
-	res, err := httpClient.Do(req)
+	res, err := orDefault(hc).Do(req)
 	if err != nil {
-		return signingKeySet{}, fmt.Errorf("fetch signing keys: %w", err)
+		return KeySet{}, fmt.Errorf("fetch signing keys: %w", err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return signingKeySet{}, fmt.Errorf("signing keys: HTTP %d", res.StatusCode)
+		return KeySet{}, fmt.Errorf("signing keys: HTTP %d", res.StatusCode)
 	}
-	var set signingKeySet
+	var set KeySet
 	if err := json.NewDecoder(res.Body).Decode(&set); err != nil {
-		return signingKeySet{}, fmt.Errorf("decode signing keys: %w", err)
+		return KeySet{}, fmt.Errorf("decode signing keys: %w", err)
 	}
 	return set, nil
 }
 
-// pinnedKeysPath is where TOFU-pinned keys live, per registry host.
-func pinnedKeysPath(registryURL string) (string, error) {
-	dir, err := configDir()
+// PinnedKeysPath is where TOFU-pinned keys live, per registry host.
+func PinnedKeysPath(registryURL string) (string, error) {
+	dir, err := configdir.Dir()
 	if err != nil {
 		return "", err
 	}
@@ -88,29 +111,29 @@ func pinnedKeysPath(registryURL string) (string, error) {
 	return filepath.Join(dir, "keys", host+".yaml"), nil
 }
 
-// loadPinnedKeys reads the pinned set (empty when nothing is pinned yet).
-func loadPinnedKeys(registryURL string) (signingKeySet, error) {
-	path, err := pinnedKeysPath(registryURL)
+// LoadPinned reads the pinned set (empty when nothing is pinned yet).
+func LoadPinned(registryURL string) (KeySet, error) {
+	path, err := PinnedKeysPath(registryURL)
 	if err != nil {
-		return signingKeySet{}, err
+		return KeySet{}, err
 	}
 	data, err := os.ReadFile(path) //nolint:gosec // path derives from config dir
 	if err != nil {
 		if os.IsNotExist(err) {
-			return signingKeySet{}, nil
+			return KeySet{}, nil
 		}
-		return signingKeySet{}, err
+		return KeySet{}, err
 	}
-	var set signingKeySet
+	var set KeySet
 	if err := yaml.Unmarshal(data, &set); err != nil {
-		return signingKeySet{}, fmt.Errorf("pinned keys: %w", err)
+		return KeySet{}, fmt.Errorf("pinned keys: %w", err)
 	}
 	return set, nil
 }
 
-// savePinnedKeys writes the pinned set (0600).
-func savePinnedKeys(registryURL string, set signingKeySet) error {
-	path, err := pinnedKeysPath(registryURL)
+// SavePinned writes the pinned set (0600).
+func SavePinned(registryURL string, set KeySet) error {
+	path, err := PinnedKeysPath(registryURL)
 	if err != nil {
 		return err
 	}
@@ -124,23 +147,23 @@ func savePinnedKeys(registryURL string, set signingKeySet) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// pinSigningKeysAtLogin implements the §11 login row: "pins signing keys
-// (TOFU)". Pinning at login rather than at first verify is the whole point —
-// login is the moment a human deliberately chose this registry and typed a
-// credential for it, which is exactly when trust-on-first-use should be
-// established. Pinning later, at the first `verify` or `install`, silently
-// moves that decision to whichever download happens to come first.
+// PinAtLogin implements the §11 login row: "pins signing keys (TOFU)".
+// Pinning at login rather than at first verify is the whole point — login is
+// the moment a human deliberately chose this registry and typed a credential
+// for it, which is exactly when trust-on-first-use should be established.
+// Pinning later, at the first `verify` or `install`, silently moves that
+// decision to whichever download happens to come first.
 //
 // It returns a human-readable note describing what happened, and never fails
 // the login: a registry with signing switched off publishes an empty key set,
 // and that is a legitimate self-host configuration (§8.8), not a login error.
-func pinSigningKeysAtLogin(ctx context.Context, registryURL string) string {
-	existing, err := loadPinnedKeys(registryURL)
+func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string {
+	existing, err := LoadPinned(registryURL)
 	if err != nil {
 		return "could not read pinned signing keys: " + err.Error()
 	}
 
-	fetched, err := fetchSigningKeys(ctx, registryURL)
+	fetched, err := FetchKeys(ctx, hc, registryURL)
 	if err != nil {
 		return "could not fetch signing keys (" + err.Error() + "); they will be pinned on first verify"
 	}
@@ -149,76 +172,78 @@ func pinSigningKeysAtLogin(ctx context.Context, registryURL string) string {
 	}
 
 	if len(existing.Keys) == 0 {
-		if err := savePinnedKeys(registryURL, fetched); err != nil {
+		if err := SavePinned(registryURL, fetched); err != nil {
 			return "could not pin signing keys: " + err.Error()
 		}
 		return fmt.Sprintf("pinned %d signing key(s) on first use (TOFU)", len(fetched.Keys))
 	}
-	if sameKeyIDs(existing, fetched) {
+	if SameKeyIDs(existing, fetched) {
 		return fmt.Sprintf("signing keys unchanged (%d pinned)", len(existing.Keys))
 	}
 	// A changed key set at login is reported, never silently adopted:
 	// re-pinning on the strength of a fresh fetch would defeat the pin.
-	path, _ := pinnedKeysPath(registryURL)
+	path, _ := PinnedKeysPath(registryURL)
 	return "WARNING: the registry advertises signing key ids that differ from the pinned set — " +
 		"rotation or compromise. Verification will keep using the pinned keys; " +
 		"delete " + path + " to re-pin deliberately"
 }
 
-// verifyAttestation fetches and verifies the attestation for a version.
+// VerifyAttestation fetches and verifies the attestation for a version.
 // archiveDigest is the digest the client computed from the downloaded bytes,
 // so a verified attestation binds the signature to what is actually on disk.
-func verifyAttestation(ctx context.Context, registryURL, token, attestationURL, archiveDigest string) AttestationResult {
+// token, when non-empty, is attached as a bearer credential — but only to
+// requests going to the registry's own host, never to a CDN (§9.4).
+func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token, attestationURL, archiveDigest string) AttestationResult {
 	if attestationURL == "" {
-		return AttestationResult{State: "unsigned", Detail: "the registry published no attestation for this version"}
+		return AttestationResult{State: StateUnsigned, Detail: "the registry published no attestation for this version"}
 	}
 
 	// Fetch the envelope.
-	url := attestationURL
-	if !strings.HasPrefix(url, "http") {
-		url = strings.TrimRight(registryURL, "/") + url
+	u := attestationURL
+	if !strings.HasPrefix(u, "http") {
+		u = strings.TrimRight(registryURL, "/") + u
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return AttestationResult{State: "unverifiable", Detail: err.Error()}
+		return AttestationResult{State: StateUnverifiable, Detail: err.Error()}
 	}
-	if token != "" && sameHost(url, registryURL) {
+	if token != "" && sameHost(u, registryURL) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	res, err := httpClient.Do(req)
+	res, err := orDefault(hc).Do(req)
 	if err != nil {
-		return AttestationResult{State: "unverifiable", Detail: "fetch attestation: " + err.Error()}
+		return AttestationResult{State: StateUnverifiable, Detail: "fetch attestation: " + err.Error()}
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode == http.StatusNotFound {
-		return AttestationResult{State: "unsigned", Detail: "no attestation recorded for this version"}
+		return AttestationResult{State: StateUnsigned, Detail: "no attestation recorded for this version"}
 	}
 	if res.StatusCode != http.StatusOK {
-		return AttestationResult{State: "unverifiable", Detail: fmt.Sprintf("attestation: HTTP %d", res.StatusCode)}
+		return AttestationResult{State: StateUnverifiable, Detail: fmt.Sprintf("attestation: HTTP %d", res.StatusCode)}
 	}
 	var env attest.DSSEEnvelope
 	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
-		return AttestationResult{State: "unverifiable", Detail: "decode envelope: " + err.Error()}
+		return AttestationResult{State: StateUnverifiable, Detail: "decode envelope: " + err.Error()}
 	}
 
 	// Resolve the trusted key set: pinned first (TOFU), then the registry's
 	// published set (pinning it on first use).
 	out := AttestationResult{}
-	pinned, err := loadPinnedKeys(registryURL)
+	pinned, err := LoadPinned(registryURL)
 	if err != nil {
-		return AttestationResult{State: "unverifiable", Detail: err.Error()}
+		return AttestationResult{State: StateUnverifiable, Detail: err.Error()}
 	}
 	trusted := pinned
 	if len(trusted.Keys) == 0 {
-		fetched, err := fetchSigningKeys(ctx, registryURL)
+		fetched, err := FetchKeys(ctx, hc, registryURL)
 		if err != nil {
-			return AttestationResult{State: "unverifiable", Detail: err.Error()}
+			return AttestationResult{State: StateUnverifiable, Detail: err.Error()}
 		}
 		if len(fetched.Keys) == 0 {
-			return AttestationResult{State: "unverifiable", Detail: "registry publishes no signing keys"}
+			return AttestationResult{State: StateUnverifiable, Detail: "registry publishes no signing keys"}
 		}
-		if err := savePinnedKeys(registryURL, fetched); err != nil {
-			return AttestationResult{State: "unverifiable", Detail: "pin keys: " + err.Error()}
+		if err := SavePinned(registryURL, fetched); err != nil {
+			return AttestationResult{State: StateUnverifiable, Detail: "pin keys: " + err.Error()}
 		}
 		trusted = fetched
 		out.FirstUse = true
@@ -229,14 +254,14 @@ func verifyAttestation(ctx context.Context, registryURL, token, attestationURL, 
 	// rather than silently trusting the new key.
 	stmt, keyID, ok := tryVerify(env, trusted)
 	if !ok {
-		fetched, ferr := fetchSigningKeys(ctx, registryURL)
-		if ferr == nil && !sameKeyIDs(trusted, fetched) {
-			out.State = "unverifiable"
+		fetched, ferr := FetchKeys(ctx, hc, registryURL)
+		if ferr == nil && !SameKeyIDs(trusted, fetched) {
+			out.State = StateUnverifiable
 			out.KeyRotated = true
 			out.Detail = "signature does not match any pinned key; the registry now advertises different key ids (rotation or compromise) — re-pin deliberately"
 			return out
 		}
-		out.State = "mismatch"
+		out.State = StateMismatch
 		out.Detail = "no pinned key verifies this signature"
 		return out
 	}
@@ -244,13 +269,13 @@ func verifyAttestation(ctx context.Context, registryURL, token, attestationURL, 
 	// The signature is valid — now bind it to the bytes we downloaded.
 	wantDigest := strings.TrimPrefix(archiveDigest, "sha256:")
 	if len(stmt.Subject) == 0 || stmt.Subject[0].Digest["sha256"] != wantDigest {
-		out.State = "mismatch"
+		out.State = StateMismatch
 		out.Detail = "attestation subject digest does not match the downloaded archive"
 		out.KeyID = keyID
 		return out
 	}
 
-	out.State = "verified"
+	out.State = StateVerified
 	out.KeyID = keyID
 	out.Detail = "DSSE signature valid; subject digest matches the archive"
 	if pred, err := decodePredicate(stmt); err == nil {
@@ -260,7 +285,7 @@ func verifyAttestation(ctx context.Context, registryURL, token, attestationURL, 
 	return out
 }
 
-func tryVerify(env attest.DSSEEnvelope, set signingKeySet) (attest.InTotoStatement, string, bool) {
+func tryVerify(env attest.DSSEEnvelope, set KeySet) (attest.InTotoStatement, string, bool) {
 	for _, k := range set.Keys {
 		if stmt, err := attest.VerifyEnvelope(env, k.PublicKey); err == nil {
 			return stmt, k.KeyID, true
@@ -269,7 +294,8 @@ func tryVerify(env attest.DSSEEnvelope, set signingKeySet) (attest.InTotoStateme
 	return attest.InTotoStatement{}, "", false
 }
 
-func sameKeyIDs(a, b signingKeySet) bool {
+// SameKeyIDs reports whether two key sets advertise the same key ids.
+func SameKeyIDs(a, b KeySet) bool {
 	if len(a.Keys) != len(b.Keys) {
 		return false
 	}
@@ -285,6 +311,14 @@ func sameKeyIDs(a, b signingKeySet) bool {
 	return true
 }
 
+// sameHost reports whether two URLs share a host, so the bearer token is
+// only ever attached to the registry itself, never to a CDN (§9.4).
+func sameHost(a, b string) bool {
+	ua, err1 := url.Parse(a)
+	ub, err2 := url.Parse(b)
+	return err1 == nil && err2 == nil && ua.Host == ub.Host
+}
+
 // decodePredicate re-decodes the statement predicate into its typed form.
 func decodePredicate(stmt attest.InTotoStatement) (attest.PublishPredicate, error) {
 	raw, err := json.Marshal(stmt.Predicate)
@@ -296,12 +330,4 @@ func decodePredicate(stmt attest.InTotoStatement) (attest.PublishPredicate, erro
 		return attest.PublishPredicate{}, err
 	}
 	return pred, nil
-}
-
-// orNone renders an empty string as "none" for human output.
-func orNone(s string) string {
-	if s == "" {
-		return "none"
-	}
-	return s
 }

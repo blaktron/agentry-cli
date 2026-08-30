@@ -20,6 +20,10 @@ import (
 	"github.com/blaktron/agentry/pkg/apiclient"
 	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/export"
+	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
 // installOpts carries the install command's flags.
@@ -152,17 +156,17 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 
-	key := installKey{
-		registry: reg, namespace: res.Namespace, name: m.Name,
-		target: target, dir: paths.dest,
+	key := installed.Key{
+		Registry: reg, Namespace: res.Namespace, Name: m.Name,
+		Target: target, Dir: paths.dest,
 	}
-	state, serr := loadInstallState()
+	state, serr := installed.Load()
 	if serr != nil {
 		// Bookkeeping trouble must not block an install; it costs a prompt.
 		_, _ = fmt.Fprintf(errOut, "warning: %v — treating this as a first install\n", serr)
-		state = installState{}
+		state = installed.State{}
 	}
-	nextCaps := snapshotCapabilities(m.Capabilities)
+	nextCaps := installed.Snapshot(m.Capabilities)
 	if err := confirmCapabilityChange(cmd, &state, key, res.Version, nextCaps, m.Capabilities, opts.yes); err != nil {
 		return err
 	}
@@ -199,8 +203,8 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 
 	// Record only after the files actually landed: a manifest claiming an
 	// install that failed would suppress the next run's capability prompt.
-	state.record(key, res.Version, nextCaps)
-	if err := saveInstallState(state); err != nil {
+	state.Upsert(key, res.Version, nextCaps)
+	if err := installed.Save(state); err != nil {
 		_, _ = fmt.Fprintf(errOut, "warning: %v — the next install of this agent will re-ask about capabilities\n", err)
 	}
 	return nil
@@ -240,10 +244,10 @@ func verifyInstallAttestation(cmd *cobra.Command, reg, token string, res *apicli
 		// concluding "unsigned".
 		attURL = fmt.Sprintf("/api/v1/agents/%s/%s/versions/%s/attestation", res.Namespace, res.Name, res.Version)
 	}
-	att := verifyAttestation(cmd.Context(), reg, token, attURL, archiveDigest)
+	att := trust.VerifyAttestation(cmd.Context(), httpClient, reg, token, attURL, archiveDigest)
 
 	switch att.State {
-	case "verified":
+	case trust.StateVerified:
 		_, _ = fmt.Fprintf(out, "attestation:   verified (key %s)\n", att.KeyID)
 		if att.RulesetVer != "" {
 			_, _ = fmt.Fprintf(out, "  scanned with ruleset %s, judge %s\n", att.RulesetVer, orNone(att.JudgeModel))
@@ -253,7 +257,7 @@ func verifyInstallAttestation(cmd *cobra.Command, reg, token string, res *apicli
 		}
 		return nil
 
-	case "unsigned":
+	case trust.StateUnsigned:
 		if !allowUnsigned {
 			return fmt.Errorf("unsigned — registry offers no attestation for %s/%s@%s (%s); "+
 				"re-run with --allow-unsigned to install it anyway",
@@ -281,22 +285,22 @@ func verifyInstallAttestation(cmd *cobra.Command, reg, token string, res *apicli
 // directory: widened capabilities always ask (that is the case §11 names),
 // narrowed or unchanged ones say so and continue — re-asking an identical
 // question every upgrade is how a security prompt becomes a reflex.
-func confirmCapabilityChange(cmd *cobra.Command, state *installState, key installKey,
-	version string, next capSnapshot, caps manifest.Capabilities, yes bool,
+func confirmCapabilityChange(cmd *cobra.Command, state *installed.State, key installed.Key,
+	version string, next installed.CapSnapshot, caps manifest.Capabilities, yes bool,
 ) error {
 	out := cmd.OutOrStdout()
-	prev := state.findInstall(key)
+	prev := state.Find(key)
 	if prev == nil {
 		return confirmCapabilities(cmd, caps, yes)
 	}
 
-	diff := diffCapabilities(prev.Capabilities, next)
+	diff := installed.DiffCapabilities(prev.Capabilities, next)
 	_, _ = fmt.Fprintf(out, "installed: %s at %s\n", prev.Version, prev.Dir)
 	switch {
-	case diff.empty():
+	case diff.Empty():
 		_, _ = fmt.Fprintf(out, "capability diff vs %s: unchanged\n", prev.Version)
 		return nil
-	case !diff.widened():
+	case !diff.HasWidened():
 		_, _ = fmt.Fprintf(out, "capability diff vs %s: narrowed\n", prev.Version)
 		for _, line := range diff.Narrowed {
 			_, _ = fmt.Fprintf(out, "  - this update %s\n", line)
@@ -315,7 +319,7 @@ func confirmCapabilityChange(cmd *cobra.Command, state *installState, key instal
 		return nil
 	}
 	prompt := fmt.Sprintf("this update to %s widens what %s/%s may do — continue? type \"yes\": ",
-		version, key.namespace, key.name)
+		version, key.Namespace, key.Name)
 	return promptYes(cmd, prompt,
 		"this update widens the agent's declared capabilities; re-run with --yes to accept in non-interactive mode",
 		"install aborted (widened capability contract not accepted)")
@@ -464,7 +468,7 @@ func exportClaudeSkill(out io.Writer, staging string, p installPaths, m *manifes
 	if err != nil {
 		return fmt.Errorf("read skill entrypoint %s: %w", skillRel, err)
 	}
-	withFM := ensureSkillFrontmatter(content, m.Name, m.Summary)
+	withFM := export.EnsureSkillFrontmatter(content, m.Name, m.Summary)
 	if err := os.WriteFile(skillPath, withFM, 0o644); err != nil { //nolint:gosec // skill files are world-readable content
 		return fmt.Errorf("write skill entrypoint: %w", err)
 	}
@@ -485,7 +489,7 @@ func exportMCP(out io.Writer, staging string, p installPaths, m *manifest.Manife
 		return err
 	}
 
-	entry, err := mcpEntryFromManifest(m, extractedRel, treeFiles(staging))
+	entry, err := export.MCPEntryFromManifest(m, extractedRel, treeFiles(staging))
 	if err != nil {
 		return err
 	}
@@ -493,7 +497,7 @@ func exportMCP(out io.Writer, staging string, p installPaths, m *manifest.Manife
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
-	merged, err := mergeMCPConfig(existing, m.Name, entry)
+	merged, err := export.MergeMCPConfig(existing, m.Name, entry)
 	if err != nil {
 		return err
 	}
@@ -526,7 +530,7 @@ func exportAgentsMD(out io.Writer, staging string, p installPaths, m *manifest.M
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", agentsPath, err)
 	}
-	updated := upsertAgentsMDSection(existing, ns, m.Name, version, m.Summary, dest)
+	updated := export.UpsertAgentsMDSection(existing, ns, m.Name, version, m.Summary, dest)
 	if err := os.WriteFile(agentsPath, updated, 0o644); err != nil { //nolint:gosec // project doc, not a secret
 		return fmt.Errorf("write %s: %w", agentsPath, err)
 	}

@@ -105,6 +105,14 @@ func sha256Digest(b []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// orNone renders an empty string as "none" for human output.
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
 // sameHost reports whether two URLs share a host, so the bearer token is
 // only ever attached to the registry itself, never to a CDN (§9.4).
 func sameHost(a, b string) bool {

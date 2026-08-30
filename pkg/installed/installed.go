@@ -1,6 +1,6 @@
-// Install state and the capability diff (§11 install row: "show capability
-// summary (and DIFF vs currently installed version, requiring confirm on
-// widened capabilities in interactive mode; --yes for CI)").
+// Package installed is the shared install-state record and the capability
+// diff (§11 install row: "show capability summary (and DIFF vs currently
+// installed version, requiring confirm on widened capabilities)").
 //
 // The registry knows what an agent declares; only the machine knows what it
 // previously ACCEPTED. Without a local record, every reinstall re-asks the
@@ -10,10 +10,14 @@
 //
 // Location: ~/.config/agentry/installed.yaml — alongside config.yaml rather
 // than under ~/.local/state. AGENTRY_CONFIG_DIR already relocates everything
-// the CLI keeps on disk (config, pinned signing keys, cached rule bundles);
-// a second root would be a second thing to point at a container volume, and
-// nothing here is large or high-churn enough to earn that.
-package main
+// an agentry client keeps on disk (config, pinned signing keys, cached rule
+// bundles); a second root would be a second thing to point at a container
+// volume, and nothing here is large or high-churn enough to earn that.
+//
+// EVERY client (CLI, desktop) must read and write this same file, so a
+// capability diff on upgrade works regardless of which client did the
+// original install.
+package installed
 
 import (
 	"fmt"
@@ -26,36 +30,38 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
 
-// capSnapshot is the on-disk form of a §5.4 capability contract.
+// CapSnapshot is the on-disk form of a §5.4 capability contract.
 //
 // It is deliberately NOT manifest.Capabilities: that type's union fields
 // (Egress, FSAccess) carry their shape in unexported-by-tag form with custom
 // JSON codecs, so persisting it as YAML would silently drop the very fields
 // the diff turns on. A flat, explicit record is also a format this file owns
 // and can keep stable while the manifest evolves.
-type capSnapshot struct {
+type CapSnapshot struct {
 	// EgressHosts lists declared egress hosts; empty means none/undeclared.
-	EgressHosts []string `yaml:"egressHosts,omitempty"`
+	EgressHosts []string `yaml:"egressHosts,omitempty" json:"egressHosts,omitempty"`
 	// EgressNone records an explicit `egress: none` (vs. not declared).
-	EgressNone bool `yaml:"egressNone,omitempty"`
+	EgressNone bool `yaml:"egressNone,omitempty" json:"egressNone,omitempty"`
 	// FSRead/FSWrite are the declared modes ("", none, workspace, paths).
-	FSRead       string   `yaml:"fsRead,omitempty"`
-	FSReadPaths  []string `yaml:"fsReadPaths,omitempty"`
-	FSWrite      string   `yaml:"fsWrite,omitempty"`
-	FSWritePaths []string `yaml:"fsWritePaths,omitempty"`
+	FSRead       string   `yaml:"fsRead,omitempty" json:"fsRead,omitempty"`
+	FSReadPaths  []string `yaml:"fsReadPaths,omitempty" json:"fsReadPaths,omitempty"`
+	FSWrite      string   `yaml:"fsWrite,omitempty" json:"fsWrite,omitempty"`
+	FSWritePaths []string `yaml:"fsWritePaths,omitempty" json:"fsWritePaths,omitempty"`
 	// ExecCommands lists declared subprocess commands.
-	ExecCommands []string `yaml:"execCommands,omitempty"`
+	ExecCommands []string `yaml:"execCommands,omitempty" json:"execCommands,omitempty"`
 	// Secrets lists declared environment-variable NAMES (never values).
-	Secrets []string `yaml:"secrets,omitempty"`
+	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	// DataAccess lists declared semantic data categories.
-	DataAccess []string `yaml:"dataAccess,omitempty"`
+	DataAccess []string `yaml:"dataAccess,omitempty" json:"dataAccess,omitempty"`
 }
 
-// snapshotCapabilities flattens a manifest capability block for storage.
-func snapshotCapabilities(c manifest.Capabilities) capSnapshot {
-	s := capSnapshot{
+// Snapshot flattens a manifest capability block for storage.
+func Snapshot(c manifest.Capabilities) CapSnapshot {
+	s := CapSnapshot{
 		EgressHosts:  append([]string(nil), c.Network.Egress.Hosts...),
 		EgressNone:   c.Network.Egress.None,
 		FSRead:       string(c.Filesystem.Read.Mode),
@@ -71,41 +77,41 @@ func snapshotCapabilities(c manifest.Capabilities) capSnapshot {
 	return s
 }
 
-// installRecord is one installed (registry, agent, target, dir) tuple.
-type installRecord struct {
-	Registry     string      `yaml:"registry"`
-	Namespace    string      `yaml:"namespace"`
-	Name         string      `yaml:"name"`
-	Target       string      `yaml:"target"`
-	Dir          string      `yaml:"dir"`
-	Version      string      `yaml:"version"`
-	InstalledAt  time.Time   `yaml:"installedAt"`
-	Capabilities capSnapshot `yaml:"capabilities"`
+// Record is one installed (registry, agent, target, dir) tuple.
+type Record struct {
+	Registry     string      `yaml:"registry" json:"registry"`
+	Namespace    string      `yaml:"namespace" json:"namespace"`
+	Name         string      `yaml:"name" json:"name"`
+	Target       string      `yaml:"target" json:"target"`
+	Dir          string      `yaml:"dir" json:"dir"`
+	Version      string      `yaml:"version" json:"version"`
+	InstalledAt  time.Time   `yaml:"installedAt" json:"installedAt"`
+	Capabilities CapSnapshot `yaml:"capabilities" json:"capabilities"`
 }
 
-// installState is ~/.config/agentry/installed.yaml.
-type installState struct {
-	Records []installRecord `yaml:"records,omitempty"`
+// State is ~/.config/agentry/installed.yaml.
+type State struct {
+	Records []Record `yaml:"records,omitempty"`
 }
 
-// installStatePath returns the manifest path inside the config dir.
-func installStatePath() (string, error) {
-	dir, err := configDir()
+// StatePath returns the install-state path inside the config dir.
+func StatePath() (string, error) {
+	dir, err := configdir.Dir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "installed.yaml"), nil
 }
 
-// loadInstallState reads the install manifest; a missing file is empty state.
+// Load reads the install manifest; a missing file is empty state.
 //
-// A CORRUPT file is also treated as empty, with a warning from the caller
-// rather than an error: refusing to install because a bookkeeping file got
-// truncated would turn a cosmetic problem into an outage, and the worst case
-// is one extra confirmation prompt.
-func loadInstallState() (installState, error) {
-	var st installState
-	path, err := installStatePath()
+// A CORRUPT file is reported as an error so the caller can decide: the CLI
+// warns and treats it as empty, because refusing to install over a truncated
+// bookkeeping file would turn a cosmetic problem into an outage, and the
+// worst case is one extra confirmation prompt.
+func Load() (State, error) {
+	var st State
+	path, err := StatePath()
 	if err != nil {
 		return st, err
 	}
@@ -117,14 +123,14 @@ func loadInstallState() (installState, error) {
 		return st, fmt.Errorf("read %s: %w", path, err)
 	}
 	if err := yaml.Unmarshal(raw, &st); err != nil {
-		return installState{}, fmt.Errorf("parse %s: %w", path, err)
+		return State{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return st, nil
 }
 
-// saveInstallState writes the manifest (0600: it names local paths).
-func saveInstallState(st installState) error {
-	path, err := installStatePath()
+// Save writes the manifest (0600: it names local paths).
+func Save(st State) error {
+	path, err := StatePath()
 	if err != nil {
 		return err
 	}
@@ -141,23 +147,23 @@ func saveInstallState(st installState) error {
 	return nil
 }
 
-// installKey identifies one installation. The DIRECTORY is part of the key:
+// Key identifies one installation. The DIRECTORY is part of the key:
 // the same agent installed as a claude-skill in ~/.claude/skills and as an
 // mcp server in a project are two independent installations with independent
 // capability histories, and a diff that conflated them would ask the wrong
 // question about the wrong files.
-type installKey struct {
-	registry, namespace, name, target, dir string
+type Key struct {
+	Registry, Namespace, Name, Target, Dir string
 }
 
-func (k installKey) matches(r installRecord) bool {
-	return strings.TrimRight(r.Registry, "/") == strings.TrimRight(k.registry, "/") &&
-		r.Namespace == k.namespace && r.Name == k.name &&
-		r.Target == k.target && r.Dir == k.dir
+func (k Key) matches(r Record) bool {
+	return strings.TrimRight(r.Registry, "/") == strings.TrimRight(k.Registry, "/") &&
+		r.Namespace == k.Namespace && r.Name == k.Name &&
+		r.Target == k.Target && r.Dir == k.Dir
 }
 
-// findInstall returns the record for a key, or nil.
-func (st *installState) findInstall(k installKey) *installRecord {
+// Find returns the record for a key, or nil.
+func (st *State) Find(k Key) *Record {
 	for i := range st.Records {
 		if k.matches(st.Records[i]) {
 			return &st.Records[i]
@@ -166,33 +172,44 @@ func (st *installState) findInstall(k installKey) *installRecord {
 	return nil
 }
 
-// record upserts an installation.
-func (st *installState) record(k installKey, version string, caps capSnapshot) {
-	rec := installRecord{
-		Registry: strings.TrimRight(k.registry, "/"), Namespace: k.namespace,
-		Name: k.name, Target: k.target, Dir: k.dir,
+// Upsert records an installation.
+func (st *State) Upsert(k Key, version string, caps CapSnapshot) {
+	rec := Record{
+		Registry: strings.TrimRight(k.Registry, "/"), Namespace: k.Namespace,
+		Name: k.Name, Target: k.Target, Dir: k.Dir,
 		Version: version, InstalledAt: time.Now().UTC(), Capabilities: caps,
 	}
-	if cur := st.findInstall(k); cur != nil {
+	if cur := st.Find(k); cur != nil {
 		*cur = rec
 		return
 	}
 	st.Records = append(st.Records, rec)
 }
 
-// capDiff is the comparison between an installed contract and a new one.
-type capDiff struct {
-	// Widened lists strictly-more-permissive changes, phrased for a human.
-	Widened []string
-	// Narrowed lists strictly-less-permissive changes.
-	Narrowed []string
+// Remove deletes the record for a key, reporting whether one was present.
+func (st *State) Remove(k Key) bool {
+	for i := range st.Records {
+		if k.matches(st.Records[i]) {
+			st.Records = append(st.Records[:i], st.Records[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
-// widened reports whether anything requires confirmation.
-func (d capDiff) widened() bool { return len(d.Widened) > 0 }
+// Diff is the comparison between an installed contract and a new one.
+type Diff struct {
+	// Widened lists strictly-more-permissive changes, phrased for a human.
+	Widened []string `json:"widened,omitempty"`
+	// Narrowed lists strictly-less-permissive changes.
+	Narrowed []string `json:"narrowed,omitempty"`
+}
 
-// empty reports an identical contract.
-func (d capDiff) empty() bool { return len(d.Widened) == 0 && len(d.Narrowed) == 0 }
+// HasWidened reports whether anything requires confirmation.
+func (d Diff) HasWidened() bool { return len(d.Widened) > 0 }
+
+// Empty reports an identical contract.
+func (d Diff) Empty() bool { return len(d.Widened) == 0 && len(d.Narrowed) == 0 }
 
 // fsRank orders filesystem access declarations from least to most permissive.
 // Explicit "none" ranks BELOW undeclared: a manifest that says nothing has
@@ -200,11 +217,11 @@ func (d capDiff) empty() bool { return len(d.Widened) == 0 && len(d.Narrowed) ==
 // is still better than one that asks for access.
 var fsRank = map[string]int{"none": 0, "": 1, "paths": 2, "workspace": 3}
 
-// diffCapabilities compares the previously installed contract with the new
+// DiffCapabilities compares the previously installed contract with the new
 // one. Everything it reports is phrased the way §11 promises: "this update
 // adds network egress to evil.example".
-func diffCapabilities(old, next capSnapshot) capDiff {
-	var d capDiff
+func DiffCapabilities(old, next CapSnapshot) Diff {
+	var d Diff
 
 	// Network egress: the canonical widening.
 	added, removed := diffSets(old.EgressHosts, next.EgressHosts)
@@ -258,7 +275,7 @@ func diffCapabilities(old, next capSnapshot) capDiff {
 }
 
 // appendFSDiff records one filesystem direction's change.
-func (d *capDiff) appendFSDiff(dir, oldMode, newMode string, oldPaths, newPaths []string) {
+func (d *Diff) appendFSDiff(dir, oldMode, newMode string, oldPaths, newPaths []string) {
 	switch {
 	case fsRank[newMode] > fsRank[oldMode]:
 		d.Widened = append(d.Widened, fmt.Sprintf("widens filesystem %s from %s to %s",

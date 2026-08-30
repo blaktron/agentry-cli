@@ -13,6 +13,8 @@ import (
 
 	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
+
+	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
 
 // Environment variables understood by the CLI.
@@ -21,7 +23,7 @@ const (
 	// used by scripts/acceptance/m3-cli.sh).
 	envToken = "AGENTRY_TOKEN"
 	// envConfigDir relocates the config directory (default ~/.config/agentry).
-	envConfigDir = "AGENTRY_CONFIG_DIR"
+	envConfigDir = configdir.EnvVar
 	// envNoKeyring forces the config-file credential fallback even when an
 	// OS keychain is present (headless/CI use).
 	envNoKeyring = "AGENTRY_NO_KEYRING"
@@ -58,15 +60,9 @@ type cliConfig struct {
 }
 
 // configDir returns the CLI config directory, honoring envConfigDir.
+// Resolution lives in pkg/configdir so pkg/installed and pkg/trust share it.
 func configDir() (string, error) {
-	if d := os.Getenv(envConfigDir); d != "" {
-		return d, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locate home directory: %w", err)
-	}
-	return filepath.Join(home, ".config", "agentry"), nil
+	return configdir.Dir()
 }
 
 // configPath returns the config file path.

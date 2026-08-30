@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
 // exactVersionRe mirrors the API's VersionString pattern: verify only works
@@ -49,13 +51,13 @@ func newVerifyCmd() *cobra.Command {
 
 // verifyReport is the --json output shape.
 type verifyReport struct {
-	Ref            string             `json:"ref"`
-	Version        string             `json:"version"`
-	RegistryDigest string             `json:"registryDigest"`
-	ComputedDigest string             `json:"computedDigest"`
-	DigestMatch    bool               `json:"digestMatch"`
-	Attestation    *AttestationResult `json:"attestation,omitempty"`
-	Yanked         bool               `json:"yanked"`
+	Ref            string                   `json:"ref"`
+	Version        string                   `json:"version"`
+	RegistryDigest string                   `json:"registryDigest"`
+	ComputedDigest string                   `json:"computedDigest"`
+	DigestMatch    bool                     `json:"digestMatch"`
+	Attestation    *trust.AttestationResult `json:"attestation,omitempty"`
+	Yanked         bool                     `json:"yanked"`
 }
 
 // runVerify executes the verification.
@@ -101,7 +103,7 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 	if attURL == "" {
 		attURL = fmt.Sprintf("/api/v1/agents/%s/%s/versions/%s/attestation", res.Namespace, res.Name, res.Version)
 	}
-	att := verifyAttestation(cmd.Context(), reg, token, attURL, report.ComputedDigest)
+	att := trust.VerifyAttestation(cmd.Context(), httpClient, reg, token, attURL, report.ComputedDigest)
 	report.Attestation = &att
 
 	out := cmd.OutOrStdout()
