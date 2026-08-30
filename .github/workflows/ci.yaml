@@ -20,6 +20,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # The blaktron modules are private; the runner needs credentials to
+      # fetch github.com/blaktron/agentry. The token never lands in the repo.
+      - name: Authenticate for the private blaktron modules
+        env:
+          AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
+          go env -w GOPRIVATE='github.com/blaktron/*'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
@@ -34,4 +42,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Authenticate for the private blaktron modules
+        env:
+          AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
+          go env -w GOPRIVATE='github.com/blaktron/*'
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
