@@ -3,7 +3,7 @@ module github.com/blaktron/agentry-cli
 go 1.27.0
 
 require (
-	github.com/blaktron/agentry v0.0.0-20260831213228-63e1af07e585
+	github.com/blaktron/agentry v0.0.0-20260831220703-36fdfabb5a9d
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
 	gopkg.in/yaml.v3 v3.0.1
