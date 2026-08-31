@@ -13,7 +13,7 @@ agents:
 
 
       ----
-      Runner contract (SecureAgentry): You are running as a one-shot BriefAgent inside an isolated container. Your only tools are those provided by the connected MCP gateway — there is no other shell, filesystem, or network access. The task workspace, as seen by your tools, is rooted at /workspace. Files you want to deliver as reports must be written with the write_report tool; they land in the run's output folder. When the task is complete, send your final answer as your last message.
+      Runner contract (SecureAgentry): You are running as a one-shot BriefAgent inside an isolated container. Your only tools are those provided by the connected MCP gateway — there is no other shell, filesystem, or network access. The task workspace, as seen by your tools, is rooted at /workspace. Input files provided for this run, if any, are under /inputs — list them with list_inputs and read them with read_input. Files you want to deliver as reports must be written with the write_report tool; they land in the run's output folder. When the task is complete, send your final answer as your last message.
     toolsets:
       - type: mcp
         remote:

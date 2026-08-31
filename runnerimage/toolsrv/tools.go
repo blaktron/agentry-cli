@@ -107,6 +107,12 @@ func (s *server) buildTools() {
 		case ToolRunCommand:
 			add(name, "Run one declared command in the workspace with a PATH restricted to the declared commands. Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error.",
 				runCommandSchema(), s.toolRunCommand)
+		case ToolListInputs:
+			add(name, "List the read-only input files provided for this run: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for the inputs root; empty when no inputs were provided.",
+				listInputsSchema(), s.toolListInputs)
+		case ToolReadInput:
+			add(name, "Read one of the run's provided input files (read-only). Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+				readInputSchema(), s.toolReadInput)
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
 				writeReportSchema(), s.toolWriteReport)
@@ -192,6 +198,20 @@ func runCommandSchema() map[string]any {
 		"stdin":          strProp("text piped to the command's stdin"),
 		"timeoutSeconds": intProp("kill the command after this many seconds; clamped to the server limit"),
 	}, "command")
+}
+
+func listInputsSchema() map[string]any {
+	return objSchema(map[string]any{
+		"path": strProp("inputs-relative directory to list; empty or \".\" is the inputs root"),
+	})
+}
+
+func readInputSchema() map[string]any {
+	return objSchema(map[string]any{
+		"path":     strProp("inputs-relative slash path of the file"),
+		"offset":   intProp("byte offset to start reading from (default 0)"),
+		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
+	}, "path")
 }
 
 func writeReportSchema() map[string]any {
@@ -719,6 +739,119 @@ func (w *capWriter) text() string {
 		t += fmt.Sprintf("\n[output truncated at %d bytes of %d]", w.buf.Len(), w.total)
 	}
 	return t
+}
+
+// ---- list_inputs / read_input (RUNNER-PLAN-2 §P4) ----
+//
+// The inputs channel is operator-provided task material, mounted :ro and
+// exposed read-only here — a second read root beside the workspace, with
+// no grant list because handing the files to the run WAS the grant. The
+// same path safety and byte caps as the fs tools apply.
+
+func (s *server) toolListInputs(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Path string `json:"path"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "list_inputs: " + err.Error(), true
+	}
+	if s.spec.InputsDir == "" {
+		return "list_inputs: no inputs channel configured", true
+	}
+	rel := a.Path
+	if rel == "" {
+		rel = "."
+	}
+	abs, err := resolveUnder(s.spec.InputsDir, path.Clean(rel))
+	if err != nil {
+		return "list_inputs: " + err.Error(), true
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return "list_inputs: " + err.Error(), true
+	}
+	if len(entries) == 0 {
+		return "(no input files provided for this run)", false
+	}
+	var b strings.Builder
+	for i, e := range entries {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		if e.IsDir() {
+			b.WriteString(e.Name() + "/")
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			b.WriteString(e.Name())
+			continue
+		}
+		b.WriteString(e.Name() + "\t" + strconv.FormatInt(fi.Size(), 10))
+	}
+	return b.String(), false
+}
+
+func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Path     string `json:"path"`
+		Offset   int64  `json:"offset"`
+		MaxBytes int64  `json:"maxBytes"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "read_input: " + err.Error(), true
+	}
+	if a.Path == "" {
+		return "read_input: path is required", true
+	}
+	if a.Offset < 0 {
+		return "read_input: offset must be >= 0", true
+	}
+	if s.spec.InputsDir == "" {
+		return "read_input: no inputs channel configured", true
+	}
+	abs, err := resolveUnder(s.spec.InputsDir, a.Path)
+	if err != nil {
+		return "read_input: " + err.Error(), true
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return "read_input: " + err.Error(), true
+	}
+	if fi.IsDir() {
+		return fmt.Sprintf("read_input: %q is a directory (use list_inputs)", path.Clean(a.Path)), true
+	}
+	limit := s.spec.Limits.readCap()
+	if a.MaxBytes > 0 && a.MaxBytes < limit {
+		limit = a.MaxBytes
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		return "read_input: " + err.Error(), true
+	}
+	defer func() { _ = f.Close() }()
+	if a.Offset > 0 {
+		if _, err := f.Seek(a.Offset, io.SeekStart); err != nil {
+			return "read_input: " + err.Error(), true
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit))
+	if err != nil {
+		return "read_input: " + err.Error(), true
+	}
+	total := fi.Size()
+	truncated := a.Offset+int64(len(data)) < total
+	if truncated {
+		data = trimPartialRune(data)
+	}
+	if !utf8.Valid(data) {
+		return fmt.Sprintf("binary file; %d bytes", total), true
+	}
+	text := string(data)
+	if truncated {
+		text += fmt.Sprintf("\n[truncated at %d bytes of %d]", len(data), total)
+	}
+	return text, false
 }
 
 // ---- write_report ----

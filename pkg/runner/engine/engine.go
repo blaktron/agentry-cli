@@ -73,10 +73,17 @@ type Params struct {
 	OutDir string
 	// Task is the task input (may be nil for an empty task).
 	Task io.Reader
+	// InputPaths are operator-provided files/directories copied into the
+	// run's read-only inputs channel (RUNNER-PLAN-2 §P4).
+	InputPaths []string
 	// Adapter interprets the harness event stream.
 	Adapter adapter.Adapter
 	// Policy supplies the secret source.
 	Policy *policy.Policy
+	// SecretOverrides resolve declared secrets ahead of the policy source
+	// — the BriefAgent's MCP profile rides in here (P2 §P2); the engine
+	// itself stays profile-agnostic.
+	SecretOverrides map[string]string
 	// Budgets are the effective hard stops (plan defaults merged with
 	// any tighter run flags by the caller).
 	Budgets spec.Budgets

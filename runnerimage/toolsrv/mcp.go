@@ -147,6 +147,9 @@ func validateSpec(spec *Spec) error {
 	if spec.OutDir == "" || !filepath.IsAbs(spec.OutDir) {
 		return fmt.Errorf("outDir %q must be a non-empty absolute container path", spec.OutDir)
 	}
+	if spec.InputsDir != "" && !filepath.IsAbs(spec.InputsDir) {
+		return fmt.Errorf("inputsDir %q must be an absolute container path when set", spec.InputsDir)
+	}
 	return nil
 }
 

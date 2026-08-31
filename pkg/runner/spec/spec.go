@@ -33,6 +33,10 @@ const (
 	PHSecrets = "@@RUN_SECRETS@@"
 	// PHRunID is the run identifier (container names, labels).
 	PHRunID = "@@RUN_ID@@"
+	// PHInputs is the host path of the per-run read-only inputs dir
+	// (RUNNER-PLAN-2 §P4) — operator-provided files, mounted :ro into the
+	// tools container, empty when the run got no --file.
+	PHInputs = "@@RUN_INPUTS@@"
 )
 
 // Fixed container-side paths and network names shared by the compiler, the
@@ -42,6 +46,8 @@ const (
 	WorkspaceMount = "/workspace"
 	// OutMount is where tools see the output folder.
 	OutMount = "/out"
+	// InputsMount is where tools see the run-inputs channel (P2 §P4).
+	InputsMount = "/inputs"
 	// PlanMount is where the agent container sees its harness files.
 	PlanMount = "/plan"
 	// ToolSpecMount is where the tools container sees its spec file.

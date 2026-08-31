@@ -55,6 +55,27 @@ type Policy struct {
 	// Budgets are the default hard stops, overridable per run (tighter
 	// only) by flags.
 	Budgets Budgets `yaml:"budgets"`
+	// Profiles configures MCP-profile behavior (RUNNER-PLAN-2 §P2).
+	Profiles Profiles `yaml:"profiles,omitempty"`
+}
+
+// Profiles is the MCP-profile policy block.
+type Profiles struct {
+	// KeepByDefault is the default completion choice when neither the
+	// run flag nor guided setup decided: keep (true) or remove. A
+	// pointer so a policy file written before this field existed reads
+	// as "unset" (→ true), not as false.
+	KeepByDefault *bool `yaml:"keepByDefault,omitempty"`
+}
+
+// KeepProfilesByDefault resolves the default keep choice (unset → true:
+// authenticated resources are the point of profiles; discarding is the
+// explicit choice, P2 §P8).
+func (p *Policy) KeepProfilesByDefault() bool {
+	if p.Profiles.KeepByDefault == nil {
+		return true
+	}
+	return *p.Profiles.KeepByDefault
 }
 
 // Images pins the container images (§R9). Digest-pinned refs
@@ -123,7 +144,37 @@ func Default() *Policy {
 		},
 		SecretSource: SecretSource{Mode: "env"},
 		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 60},
+		Profiles:     Profiles{KeepByDefault: boolPtr(true)},
 	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// Save writes the policy back to path as generated YAML. Used by
+// `agentry setup` (P2 §P1); hand-written comments in an existing file are
+// not preserved, and the header says so.
+func Save(path string, p *Policy) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	buf.WriteString("# SecureAgentry Runner operator policy (RUNNER-PLAN §R9, RUNNER-PLAN-2 §P1).\n")
+	buf.WriteString("# Written by `agentry setup` — regenerated as a whole; comments are not preserved.\n")
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(p); err != nil {
+		return fmt.Errorf("marshal policy: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("marshal policy: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create policy dir: %w", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil { //nolint:gosec // policy holds no secret values
+		return fmt.Errorf("write policy: %w", err)
+	}
+	return nil
 }
 
 // DefaultPath is ~/.agentry/runner/policy.yaml.
@@ -284,4 +335,11 @@ secretSource:
 budgets:
   timeoutSeconds: 900
   maxTurns: 60
+
+profiles:
+  # A BriefAgent's MCP profile stores the keys/identities guided setup
+  # collected, per exact release. keepByDefault: true retains it after a
+  # run so the next run of the same version reuses the authenticated
+  # resources; per-run --keep-profile overrides.
+  keepByDefault: true
 `

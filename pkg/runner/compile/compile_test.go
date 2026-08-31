@@ -187,7 +187,7 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 		{
 			name:       "pure text",
 			caps:       "",
-			wantTools:  []string{"write_report"},
+			wantTools:  []string{"list_inputs", "read_input", "write_report"},
 			catalogHas: []string{"disableNetwork: true"},
 			catalogNot: []string{"allowHosts", ":/workspace"},
 		},
@@ -195,7 +195,7 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 			name: "read only workspace",
 			caps: "capabilities:\n  filesystem:\n    read: workspace\n",
 			wantTools: []string{
-				"fs_read", "fs_list", "write_report",
+				"fs_read", "fs_list", "list_inputs", "read_input", "write_report",
 			},
 			catalogHas: []string{"@@RUN_WORKSPACE@@:/workspace:ro", "disableNetwork: true"},
 			catalogNot: []string{"fs_write", ":/workspace:rw"},
@@ -204,7 +204,7 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 			name: "egress hosts",
 			caps: "capabilities:\n  network:\n    egress: [api.example.com]\n",
 			wantTools: []string{
-				"fetch", "write_report",
+				"fetch", "list_inputs", "read_input", "write_report",
 			},
 			catalogHas: []string{"allowHosts", "api.example.com:443"},
 			catalogNot: []string{"disableNetwork"},
@@ -213,7 +213,7 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 			name: "exec commands",
 			caps: "capabilities:\n  exec: { commands: [jq] }\n",
 			wantTools: []string{
-				"run_command", "write_report",
+				"run_command", "list_inputs", "read_input", "write_report",
 			},
 			catalogHas: []string{"disableNetwork: true"},
 		},
@@ -221,7 +221,7 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 			name: "write paths only",
 			caps: "capabilities:\n  filesystem:\n    write: { paths: [out.md] }\n",
 			wantTools: []string{
-				"fs_write", "write_report",
+				"fs_write", "list_inputs", "read_input", "write_report",
 			},
 			catalogHas: []string{"@@RUN_WORKSPACE@@/out.md:/workspace/out.md:rw"},
 			catalogNot: []string{"@@RUN_WORKSPACE@@:/workspace:ro"},
