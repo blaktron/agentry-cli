@@ -28,11 +28,11 @@ make check          # gofmt + vet + lint + tests + build
 
 ## Commands
 
-`init` · `validate` · `login` · `publish` · `install` · `run` · `verify` ·
-`search` · `info` · `yank` — run `agentry --help` for the full surface.
-Server-side end-to-end coverage lives in the main repo's
-`scripts/acceptance/m3-cli.sh`, which builds this CLI against a live
-registry.
+`init` · `validate` · `login` · `publish` · `install` · `setup` · `run` ·
+`profiles` · `verify` · `search` · `info` · `yank` — run `agentry --help`
+for the full surface. Server-side end-to-end coverage lives in the main
+repo's `scripts/acceptance/m3-cli.sh`, which builds this CLI against a
+live registry.
 
 ## The runner (`agentry run`)
 
@@ -68,8 +68,19 @@ Exit codes: `0` ok · `10` verify · `11` policy/secret · `12` compile ·
 `17` output schema. Task input: `--input FILE`, else piped stdin. Runs
 compose: `agentry run a ... | agentry run b ...`.
 
+Around the enforcement core (v2): **`agentry setup`** configures your LLM
+provider and stands up the gateway plane before any agent is involved;
+**MCP profiles** store a BriefAgent's keys and identities once per exact
+release (guided setup on first run; keep or remove on completion —
+`--keep-profile`, `agentry profiles list|remove`); **`--file`** hands a
+run external files read-only under `/inputs`; and
+**`agentry install --provider claude|codex|openclaw`** installs for a
+host agent application instead of the gateway path.
+
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
-Specification: [RUNNER-PLAN.md](RUNNER-PLAN.md); divergences:
+As-built architecture: [ARCHITECTURE.md](ARCHITECTURE.md). Immutable
+specifications: [RUNNER-PLAN.md](RUNNER-PLAN.md) and
+[RUNNER-PLAN-2.md](RUNNER-PLAN-2.md); divergences:
 [RUNNER-DEVIATIONS.md](RUNNER-DEVIATIONS.md); acceptance:
 `make accept-runner` (the docker E2E self-skips without a daemon).

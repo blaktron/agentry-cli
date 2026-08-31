@@ -36,6 +36,24 @@ func TestHashStableAndSensitive(t *testing.T) {
 	}
 }
 
+// TestEndpointURLs pins the exact on-network names: the compiler bakes
+// these strings into gateway files and harness definitions, so a change
+// here is a breaking change to every installed plan.
+func TestEndpointURLs(t *testing.T) {
+	if got := GatewayURL(); got != "http://gateway:8811/mcp" {
+		t.Errorf("GatewayURL = %q", got)
+	}
+	if got := ProxyURL(); got != "http://llm-proxy:3128" {
+		t.Errorf("ProxyURL = %q", got)
+	}
+}
+
+func TestParsePlanInvalidJSON(t *testing.T) {
+	if _, err := ParsePlan([]byte("{not json")); err == nil || !strings.Contains(err.Error(), "parse plan.json") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestParsePlanVersionGate(t *testing.T) {
 	b, err := samplePlan().MarshalCanonical()
 	if err != nil {

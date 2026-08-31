@@ -424,3 +424,204 @@ func TestNoSecretValuesInPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ---- dataAccess → operator-cataloged servers (§R3) ----
+
+const dataAccessYAML = `schemaVersion: "1"
+name: data-access
+namespace: demo
+kind: prompt-agent
+version: 1.0.0
+summary: "Declares semantic data access"
+capabilities:
+  dataAccess: [email, tickets]
+publish:
+  include: [agent.yaml, AGENT.md]
+`
+
+// writeServerEntry writes one gateway server-entry YAML file — the
+// {name: entry} shape policy.dataAccessServers points at.
+func writeServerEntry(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name+".yaml")
+	content := name + ":\n  description: operator-cataloged " + name + "\n  image: example/" + name + ":1.0.0\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// compileWithPolicy is compileFixture with a caller-shaped policy.
+func compileWithPolicy(t *testing.T, m *manifest.Manifest, ws string, pol *policy.Policy) (*spec.Plan, string, error) {
+	t.Helper()
+	planDir := t.TempDir()
+	plan, err := Compile(Inputs{
+		Manifest:     m,
+		Digest:       "sha256:0123456789abcdef",
+		Source:       "local",
+		WorkspaceDir: ws,
+		Policy:       pol,
+		PolicySHA:    "fixedpolicysha",
+		RunnerImage:  "agentry-runner:test",
+	}, planDir)
+	return plan, planDir, err
+}
+
+func TestDataAccessServersAttached(t *testing.T) {
+	m := parseManifest(t, dataAccessYAML)
+	ws := workspaceFor(t, m, nil)
+	pol := testPolicy()
+	pol.DataAccessServers = map[string][]string{
+		"tickets": {writeServerEntry(t, "jira-mcp")},
+		"email":   {writeServerEntry(t, "mail-mcp")},
+	}
+	plan, planDir, err := compileWithPolicy(t, m, ws, pol)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	// The plan's enabled-server list: companion server + cataloged ones,
+	// sorted.
+	wantServers := []string{"agentry-tools", "jira-mcp", "mail-mcp"}
+	if got := strings.Join(plan.Gateway.Servers, ","); got != strings.Join(wantServers, ",") {
+		t.Fatalf("servers = %q, want %q", got, wantServers)
+	}
+	// --servers argv must carry the same list.
+	joined := strings.Join(plan.Gateway.Args, " ")
+	if !strings.Contains(joined, "--servers agentry-tools,jira-mcp,mail-mcp") {
+		t.Errorf("gateway argv lacks the merged server list: %q", joined)
+	}
+
+	// catalog.yaml carries the operator entries verbatim next to the
+	// companion server; registry.yaml enables all three.
+	catalog, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"jira-mcp:", "image: example/jira-mcp:1.0.0", "mail-mcp:", "agentry-tools:"} {
+		if !strings.Contains(string(catalog), want) {
+			t.Errorf("catalog.yaml missing %q:\n%s", want, catalog)
+		}
+	}
+	registry, err := os.ReadFile(filepath.Join(planDir, "gateway", "registry.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"jira-mcp:", "mail-mcp:", "agentry-tools:"} {
+		if !strings.Contains(string(registry), want) {
+			t.Errorf("registry.yaml missing %q:\n%s", want, registry)
+		}
+	}
+
+	// The §R8 disclosure names the attached servers (plan-level check).
+	if got := plan.Enforcement["dataAccess"]; !strings.Contains(got, "declared email, tickets") ||
+		!strings.Contains(got, "operator-cataloged servers attached: jira-mcp, mail-mcp") {
+		t.Errorf("enforcement disclosure = %q", got)
+	}
+}
+
+func TestDataAccessServersDedupe(t *testing.T) {
+	m := parseManifest(t, dataAccessYAML)
+	ws := workspaceFor(t, m, nil)
+	pol := testPolicy()
+	shared := writeServerEntry(t, "shared-mcp")
+	// Both declared categories catalog the SAME server file: it must be
+	// attached once, not twice.
+	pol.DataAccessServers = map[string][]string{
+		"tickets": {shared},
+		"email":   {shared},
+	}
+	plan, _, err := compileWithPolicy(t, m, ws, pol)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	count := 0
+	for _, s := range plan.Gateway.Servers {
+		if s == "shared-mcp" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("shared server attached %d times in %v", count, plan.Gateway.Servers)
+	}
+}
+
+func TestDataAccessRefusals(t *testing.T) {
+	m := parseManifest(t, dataAccessYAML)
+	ws := workspaceFor(t, m, nil)
+
+	t.Run("reserved companion name", func(t *testing.T) {
+		pol := testPolicy()
+		path := filepath.Join(t.TempDir(), "evil.yaml")
+		if err := os.WriteFile(path, []byte("agentry-tools:\n  image: evil/impostor:1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pol.DataAccessServers = map[string][]string{"tickets": {path}}
+		_, _, err := compileWithPolicy(t, m, ws, pol)
+		var pr *PolicyRefusal
+		if !errors.As(err, &pr) || !strings.Contains(err.Error(), "reserved name") {
+			t.Fatalf("err = %v, want a reserved-name PolicyRefusal", err)
+		}
+	})
+	t.Run("missing server file", func(t *testing.T) {
+		pol := testPolicy()
+		pol.DataAccessServers = map[string][]string{"tickets": {filepath.Join(t.TempDir(), "absent.yaml")}}
+		_, _, err := compileWithPolicy(t, m, ws, pol)
+		var pr *PolicyRefusal
+		if !errors.As(err, &pr) || !strings.Contains(err.Error(), "server file") {
+			t.Fatalf("err = %v, want a PolicyRefusal naming the file", err)
+		}
+	})
+	t.Run("multi-entry file shape", func(t *testing.T) {
+		pol := testPolicy()
+		path := filepath.Join(t.TempDir(), "two.yaml")
+		if err := os.WriteFile(path, []byte("a:\n  image: x/a:1\nb:\n  image: x/b:1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pol.DataAccessServers = map[string][]string{"tickets": {path}}
+		_, _, err := compileWithPolicy(t, m, ws, pol)
+		var pr *PolicyRefusal
+		if !errors.As(err, &pr) || !strings.Contains(err.Error(), "single {name: entry} mapping") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("unparseable yaml", func(t *testing.T) {
+		pol := testPolicy()
+		path := filepath.Join(t.TempDir(), "bad.yaml")
+		if err := os.WriteFile(path, []byte(":\tnot yaml"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pol.DataAccessServers = map[string][]string{"tickets": {path}}
+		_, _, err := compileWithPolicy(t, m, ws, pol)
+		var pr *PolicyRefusal
+		if !errors.As(err, &pr) {
+			t.Fatalf("err = %v, want a PolicyRefusal", err)
+		}
+	})
+}
+
+// TestDataAccessUncatalogedIsAuditOnly pins the honest-posture fallback: a
+// declared category with no operator catalog attaches nothing and says so.
+func TestDataAccessUncatalogedIsAuditOnly(t *testing.T) {
+	m := parseManifest(t, dataAccessYAML)
+	ws := workspaceFor(t, m, nil)
+	pol := testPolicy()
+	pol.DataAccessServers = map[string][]string{"payments": {writeServerEntry(t, "pay-mcp")}} // different category
+	plan, _, err := compileWithPolicy(t, m, ws, pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Gateway.Servers) != 1 || plan.Gateway.Servers[0] != "agentry-tools" {
+		t.Fatalf("servers = %v, want only the companion server", plan.Gateway.Servers)
+	}
+	if got := plan.Enforcement["dataAccess"]; !strings.Contains(got, "no servers cataloged by policy") {
+		t.Errorf("enforcement disclosure = %q", got)
+	}
+}
+
+func TestPolicyRefusalError(t *testing.T) {
+	err := &PolicyRefusal{Reason: "wildcard egress"}
+	if got := err.Error(); got != "refused by policy: wildcard egress" {
+		t.Errorf("Error() = %q", got)
+	}
+}

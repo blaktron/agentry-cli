@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -179,4 +180,200 @@ func TestPermits(t *testing.T) {
 	if empty.permits("anything.example.com", "443") {
 		t.Error("zero-value proxy permitted a tunnel; it must deny everything")
 	}
+}
+
+// freePort reserves an ephemeral loopback port and releases it, so
+// ListenAndServe can be exercised on its real addr-string interface.
+func freePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	return addr
+}
+
+// TestListenAndServe drives the production entry point (not the
+// test-facing Handler) end to end: it must announce itself, bind the addr,
+// and carry a permitted tunnel.
+func TestListenAndServe(t *testing.T) {
+	echo := startEcho(t)
+	target := echo.Addr().String()
+	logs := &lockedBuf{}
+	p := &Proxy{Allow: []string{target}, Logw: logs}
+	addr := freePort(t)
+	go func() { _ = p.ListenAndServe(addr) }()
+
+	// The goroutine owns the bind; poll until the socket answers.
+	var conn net.Conn
+	var err error
+	for i := 0; i < 100; i++ {
+		conn, err = net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("proxy never came up on %s: %v", addr, err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+		t.Fatal(err)
+	}
+	br := bufio.NewReader(conn)
+	status, err := br.ReadString('\n')
+	if err != nil || !strings.HasPrefix(status, "HTTP/1.1 200") {
+		t.Fatalf("status = %q, err %v", status, err)
+	}
+	for {
+		l, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if l == "\r\n" {
+			break
+		}
+	}
+	if _, err := conn.Write([]byte("ping\n")); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := br.ReadString('\n'); err != nil || line != "ping\n" {
+		t.Fatalf("echo through ListenAndServe tunnel = (%q, %v)", line, err)
+	}
+	if !strings.Contains(logs.String(), "llm-proxy listening on "+addr) {
+		t.Errorf("startup line missing from receipts log: %q", logs.String())
+	}
+}
+
+// TestListenAndServeBadAddr pins the error return: a bind failure must
+// surface, not hang.
+func TestListenAndServeBadAddr(t *testing.T) {
+	p := &Proxy{}
+	if err := p.ListenAndServe("127.0.0.1:not-a-port"); err == nil {
+		t.Fatal("bad addr must error")
+	}
+}
+
+// TestConnectDialFailure pins the 502 branch: an allowlisted target that
+// cannot be reached is a bad gateway, not a silent hang.
+func TestConnectDialFailure(t *testing.T) {
+	// Reserve-and-release: the port is (almost certainly) closed now.
+	closed := freePort(t)
+	logs := &lockedBuf{}
+	addr := startProxy(t, &Proxy{Allow: []string{closed}, Logw: logs})
+	_, _, status := dialProxy(t, addr, http.MethodConnect, closed, closed)
+	if !strings.HasPrefix(status, "HTTP/1.1 502") {
+		t.Fatalf("status = %q, want 502", status)
+	}
+	if !strings.Contains(logs.String(), "allow "+closed) {
+		t.Errorf("allow line missing before the dial failure: %q", logs.String())
+	}
+}
+
+// TestConnectMalformedTarget pins the 400 branch for a CONNECT authority
+// with no port.
+func TestConnectMalformedTarget(t *testing.T) {
+	addr := startProxy(t, &Proxy{Allow: []string{"api.anthropic.com"}})
+	_, _, status := dialProxy(t, addr, http.MethodConnect, "portless.example.com", "portless.example.com")
+	if !strings.HasPrefix(status, "HTTP/1.1 400") {
+		t.Fatalf("status = %q, want 400", status)
+	}
+}
+
+// TestHijackUnsupported drives serveHTTP against a plain ResponseRecorder
+// (no Hijacker), which is the 500 branch a non-hijackable server would
+// take. The dial target must be live so the failure is hijack, not dial.
+func TestHijackUnsupported(t *testing.T) {
+	echo := startEcho(t)
+	target := echo.Addr().String()
+	logs := &lockedBuf{}
+	p := &Proxy{Allow: []string{target}, Logw: logs}
+	req := httptest.NewRequest(http.MethodConnect, "http://"+target, nil)
+	req.Host = target
+	rec := httptest.NewRecorder()
+	p.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "cannot hijack") {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+// TestSplitAllowEntry pins the entry grammar (port defaulting, whitespace).
+func TestSplitAllowEntry(t *testing.T) {
+	tests := []struct {
+		in, host, port string
+	}{
+		{"api.anthropic.com", "api.anthropic.com", "443"},
+		{"api.anthropic.com:8443", "api.anthropic.com", "8443"},
+		{"  spaced.example.com  ", "spaced.example.com", "443"},
+		{"127.0.0.1:9999", "127.0.0.1", "9999"},
+	}
+	for _, tc := range tests {
+		h, p := splitAllowEntry(tc.in)
+		if h != tc.host || p != tc.port {
+			t.Errorf("splitAllowEntry(%q) = (%q, %q), want (%q, %q)", tc.in, h, p, tc.host, tc.port)
+		}
+	}
+}
+
+// hijackRecorder is a ResponseRecorder that implements http.Hijacker,
+// handing serveHTTP either an error or a scripted client conn — the only
+// way to reach the post-dial failure branches without a kernel that
+// misbehaves on cue.
+type hijackRecorder struct {
+	*httptest.ResponseRecorder
+	conn net.Conn
+	err  error
+}
+
+func (h *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h.err != nil {
+		return nil, nil, h.err
+	}
+	rw := bufio.NewReadWriter(bufio.NewReader(h.conn), bufio.NewWriter(h.conn))
+	return h.conn, rw, nil
+}
+
+// brokenConn errors on first write — a client that vanished right after
+// its CONNECT.
+type brokenConn struct {
+	net.Conn // nil; only the methods below are reachable in the test
+}
+
+func (brokenConn) Write([]byte) (int, error)   { return 0, fmt.Errorf("client gone") }
+func (brokenConn) Read([]byte) (int, error)    { return 0, io.EOF }
+func (brokenConn) Close() error                { return nil }
+func (brokenConn) SetDeadline(time.Time) error { return nil }
+
+func TestConnectHijackFailurePaths(t *testing.T) {
+	echo := startEcho(t)
+	target := echo.Addr().String()
+	logs := &lockedBuf{}
+	p := &Proxy{Allow: []string{target}, Logw: logs}
+
+	// CONNECT targets are authority-form ("host:port", no scheme) — that is
+	// what a real client sends and what net/http parses into URL.Host.
+	t.Run("hijack itself fails", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodConnect, target, nil)
+		// Host header cleared: serveHTTP must fall back to the URL host.
+		req.Host = ""
+		rec := &hijackRecorder{ResponseRecorder: httptest.NewRecorder(), err: fmt.Errorf("no hijacking today")}
+		p.Handler().ServeHTTP(rec, req)
+		if !strings.Contains(logs.String(), "hijack failed") {
+			t.Errorf("logs = %q", logs.String())
+		}
+	})
+	t.Run("client write fails after hijack", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodConnect, target, nil)
+		req.Host = target
+		rec := &hijackRecorder{ResponseRecorder: httptest.NewRecorder(), conn: brokenConn{}}
+		// Must return (closing both sides), not panic or hang.
+		p.Handler().ServeHTTP(rec, req)
+	})
 }
