@@ -91,6 +91,24 @@ func TestHostToolsNote(t *testing.T) {
 	}
 }
 
+// TestAgentsMDSectionNoNote pins the note-free wrapper: same section, no
+// trailing Tools line — the shape pre-v2 callers still emit.
+func TestAgentsMDSectionNoNote(t *testing.T) {
+	got := AgentsMDSection("acme", "helper", "1.0.0", "Helps out", "agents/helper")
+	want := AgentsMDSectionNote("acme", "helper", "1.0.0", "Helps out", "agents/helper", "")
+	if got != want {
+		t.Errorf("AgentsMDSection = %q, want the note-free AgentsMDSectionNote %q", got, want)
+	}
+	for _, must := range []string{"## acme/helper (v1.0.0)", "Helps out", "Files: agents/helper"} {
+		if !strings.Contains(got, must) {
+			t.Errorf("section missing %q:\n%s", must, got)
+		}
+	}
+	if strings.Contains(got, "Tools (") {
+		t.Errorf("note-free section carries a tools note:\n%s", got)
+	}
+}
+
 func TestUpsertAgentsMDSectionNoteCarriesTools(t *testing.T) {
 	got := string(UpsertAgentsMDSectionNote(nil, "acme", "helper", "1.0.0", "Helps", "agents/helper",
 		"Tools (host built-ins per the declared capability contract): Read."))

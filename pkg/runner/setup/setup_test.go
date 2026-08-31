@@ -130,6 +130,167 @@ func TestGuidedProfileKeepDecidedSkipsQuestion(t *testing.T) {
 	}
 }
 
+// failingPrompter errors on the Nth interaction (1-based), counting Ask,
+// AskSecret, and Confirm together — how a closed stdin surfaces mid-flow.
+type failingPrompter struct {
+	failOn int
+	n      int
+	err    error
+}
+
+func (f *failingPrompter) step() error {
+	f.n++
+	if f.n >= f.failOn {
+		return f.err
+	}
+	return nil
+}
+
+func (f *failingPrompter) Ask(_, def string) (string, error)      { return def, f.step() }
+func (f *failingPrompter) AskSecret(string) (string, error)       { return "v", f.step() }
+func (f *failingPrompter) Confirm(_ string, d bool) (bool, error) { return d, f.step() }
+func (f *failingPrompter) Say(string)                             {}
+
+func TestConfigureModelPrompterFailures(t *testing.T) {
+	// Every interactive question must propagate a read failure instead of
+	// configuring a half-answered model block.
+	boom := errStub("stdin closed")
+	for failOn := 1; failOn <= 3; failOn++ {
+		pol := policy.Default()
+		p := &failingPrompter{failOn: failOn, err: boom}
+		if err := ConfigureModel(p, pol, ModelOpts{}); err == nil {
+			t.Errorf("failure on interaction %d was swallowed", failOn)
+		}
+	}
+	// Custom-endpoint question (base URL) is a fourth ask.
+	pol := policy.Default()
+	p := &failingPrompter{failOn: 4, err: boom}
+	if err := ConfigureModel(p, pol, ModelOpts{Provider: "custom"}); err == nil {
+		t.Error("base-url ask failure was swallowed")
+	}
+}
+
+// errStub is a trivial error type so the tests need no fmt.
+type errStub string
+
+func (e errStub) Error() string { return string(e) }
+
+func TestConfigureModelUnknownProviderTreatedAsCustom(t *testing.T) {
+	pol := policy.Default()
+	p := &scriptPrompter{}
+	err := ConfigureModel(p, pol, ModelOpts{
+		Provider: "acme-llm", Model: "m1", APIKeyEnv: "ACME_KEY",
+		BaseURL: "https://llm.acme.test:9443/v1", Yes: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.Provider != "acme-llm" || strings.Join(pol.Model.ProxyAllow, ",") != "llm.acme.test:9443" {
+		t.Fatalf("unlisted provider config: %+v", pol.Model)
+	}
+	found := false
+	for _, s := range p.said {
+		if strings.Contains(s, "not in the built-in table") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("operator was not told the provider is unlisted; said = %q", p.said)
+	}
+}
+
+func TestConfigureModelYesModeKeepsExistingProvider(t *testing.T) {
+	pol := policy.Default() // provider anthropic, model claude-sonnet-4-5
+	pol.Model.Name = "claude-custom-tune"
+	err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.Provider != "anthropic" || pol.Model.Name != "claude-custom-tune" {
+		t.Fatalf("--yes with no provider must keep the existing choice: %+v", pol.Model)
+	}
+}
+
+func TestConfigureModelNoModelChosen(t *testing.T) {
+	pol := policy.Default()
+	pol.Model.Provider, pol.Model.Name = "", "" // fresh policy, unlisted provider
+	err := ConfigureModel(&scriptPrompter{answers: []string{"weird-llm"}}, pol, ModelOpts{})
+	if err == nil || !strings.Contains(err.Error(), "no model chosen") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestGuidedProfilePrompterFailures(t *testing.T) {
+	boom := errStub("stdin closed")
+	if _, err := GuidedProfile(&failingPrompter{failOn: 1, err: boom}, GuidedProfileOpts{
+		Ref: "demo/x@1.0.0", Digest: "sha256:abc", Secrets: []string{"TOKEN"},
+	}); err == nil {
+		t.Error("AskSecret failure was swallowed")
+	}
+	if _, err := GuidedProfile(&failingPrompter{failOn: 1, err: boom}, GuidedProfileOpts{
+		Ref: "demo/x@1.0.0", Digest: "sha256:abc",
+	}); err == nil {
+		t.Error("Confirm failure was swallowed")
+	}
+}
+
+func TestGuidedProfileShowsContractAndDiscardChoice(t *testing.T) {
+	p := &scriptPrompter{confirm: false}
+	prof, err := GuidedProfile(p, GuidedProfileOpts{
+		Ref: "demo/x@1.0.0", Digest: "sha256:abcdef1234567890",
+		CapabilityLines: []string{"network: api.example.com", "secrets: TOKEN"},
+		DefaultKeep:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prof.Keep {
+		t.Fatal("confirm=false must record a discard choice")
+	}
+	said := strings.Join(p.said, "\n")
+	for _, want := range []string{"Declared contract:", "network: api.example.com", "abcdef123456", "removed when the run completes"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("guided setup output missing %q in:\n%s", want, said)
+		}
+	}
+}
+
+func TestProvidersAndDefaultsFor(t *testing.T) {
+	got := Providers()
+	if strings.Join(got, ",") != "anthropic,openai,google,custom" {
+		t.Errorf("Providers() = %v", got)
+	}
+	if d := DefaultsFor("openai"); d == nil || d.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Errorf("DefaultsFor(openai) = %+v", d)
+	}
+	if DefaultsFor("custom") != nil || DefaultsFor("nope") != nil {
+		t.Error("custom/unknown providers must have no table row")
+	}
+}
+
+func TestShortDigest(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"sha256:abcdef1234567890ffff", "abcdef123456"},
+		{"abcdef1234567890ffff", "abcdef123456"},
+		{"sha256:short", "short"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		if got := shortDigest(tc.in); got != tc.want {
+			t.Errorf("shortDigest(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDefaultOr(t *testing.T) {
+	if got := defaultOr("set", "def"); got != "set" {
+		t.Errorf("defaultOr kept %q", got)
+	}
+	if got := defaultOr("", "def"); got != "def" {
+		t.Errorf("defaultOr fell back to %q", got)
+	}
+}
+
 func TestHostPortOf(t *testing.T) {
 	tests := []struct {
 		in, want string

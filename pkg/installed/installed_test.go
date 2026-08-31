@@ -9,8 +9,58 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
+
+// TestSnapshotFlattensTheContract pins Snapshot: the manifest's union
+// shapes become the flat, comparable form the capability diff (and the
+// install/run consent gate) reads.
+func TestSnapshotFlattensTheContract(t *testing.T) {
+	m, err := manifest.Parse([]byte(`schemaVersion: "1"
+name: snap
+namespace: demo
+kind: prompt-agent
+version: 1.0.0
+summary: "snapshot fixture"
+capabilities:
+  network:
+    egress: [b.example.com, a.example.com]
+  filesystem:
+    read: workspace
+    write: { paths: [out] }
+  exec: { commands: [jq] }
+  secrets: [TOKEN]
+  dataAccess: [tickets]
+publish:
+  include: [agent.yaml]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := Snapshot(m.Capabilities)
+	if len(snap.EgressHosts) != 2 {
+		t.Errorf("egress hosts = %v", snap.EgressHosts)
+	}
+	if snap.FSRead != "workspace" || snap.FSWrite != "paths" {
+		t.Errorf("fs = %q/%q", snap.FSRead, snap.FSWrite)
+	}
+	if len(snap.FSWritePaths) != 1 || snap.FSWritePaths[0] != "out" {
+		t.Errorf("write paths = %v", snap.FSWritePaths)
+	}
+	if len(snap.ExecCommands) != 1 || snap.ExecCommands[0] != "jq" {
+		t.Errorf("exec commands = %v", snap.ExecCommands)
+	}
+	if len(snap.Secrets) != 1 || snap.Secrets[0] != "TOKEN" {
+		t.Errorf("secrets = %v", snap.Secrets)
+	}
+	// A snapshot of the same contract must equal itself: the diff gate
+	// compares snapshots, so any instability here would re-prompt forever.
+	if !DiffCapabilities(snap, Snapshot(m.Capabilities)).Empty() {
+		t.Error("snapshotting the same contract twice produced a diff")
+	}
+}
 
 func TestDiffCapabilitiesWidening(t *testing.T) {
 	tests := []struct {
