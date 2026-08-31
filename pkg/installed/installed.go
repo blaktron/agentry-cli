@@ -57,6 +57,10 @@ type CapSnapshot struct {
 	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	// DataAccess lists declared semantic data categories.
 	DataAccess []string `yaml:"dataAccess,omitempty" json:"dataAccess,omitempty"`
+	// MCPServers lists declared MCP servers as "source:package@version"
+	// (RUNNER-PLAN-3) — a new or changed server is a widening the consent
+	// gate must re-ask about.
+	MCPServers []string `yaml:"mcpServers,omitempty" json:"mcpServers,omitempty"`
 }
 
 // Snapshot flattens a manifest capability block for storage.
@@ -70,6 +74,9 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 		FSWritePaths: append([]string(nil), c.Filesystem.Write.Paths...),
 		ExecCommands: append([]string(nil), c.Exec.Commands...),
 		Secrets:      append([]string(nil), c.Secrets...),
+	}
+	for _, srv := range c.MCPServers {
+		s.MCPServers = append(s.MCPServers, srv.SourceID()+"@"+srv.Version)
 	}
 	for _, d := range c.DataAccess {
 		s.DataAccess = append(s.DataAccess, string(d))
@@ -281,6 +288,17 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 	}
 	for _, s := range removed {
 		d.Narrowed = append(d.Narrowed, "drops data access: "+s)
+	}
+
+	// Declared MCP servers (RUNNER-PLAN-3): a new server — or the same
+	// server at a different pin — is new tool surface and new supply
+	// chain, so it widens. A dropped one narrows.
+	added, removed = diffSets(old.MCPServers, next.MCPServers)
+	for _, s := range added {
+		d.Widened = append(d.Widened, "adds MCP server: "+s)
+	}
+	for _, s := range removed {
+		d.Narrowed = append(d.Narrowed, "drops MCP server: "+s)
 	}
 
 	return d

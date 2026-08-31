@@ -28,7 +28,7 @@ make check          # gofmt + vet + lint + tests + build
 
 ## Commands
 
-`init` · `validate` · `login` · `publish` · `install` · `setup` · `run` ·
+`init` · `validate` · `login` · `publish` · `install` · `setup` · `run` · `uninstall` ·
 `profiles` · `verify` · `search` · `info` · `yank` — run `agentry --help`
 for the full surface. Server-side end-to-end coverage lives in the main
 repo's `scripts/acceptance/m3-cli.sh`, which builds this CLI against a

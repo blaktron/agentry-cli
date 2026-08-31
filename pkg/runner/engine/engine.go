@@ -84,6 +84,10 @@ type Params struct {
 	// — the BriefAgent's MCP profile rides in here (P2 §P2); the engine
 	// itself stays profile-agnostic.
 	SecretOverrides map[string]string
+	// ServersDir is the signature's installed MCP-server store
+	// (RUNNER-PLAN-3), substituted for the PHServers placeholder.
+	// Required when the plan declares MCP servers; unused otherwise.
+	ServersDir string
 	// Budgets are the effective hard stops (plan defaults merged with
 	// any tighter run flags by the caller).
 	Budgets spec.Budgets

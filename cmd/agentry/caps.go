@@ -15,7 +15,7 @@ func capabilityLines(c manifest.Capabilities) []string {
 	if isZeroCapabilities(c) {
 		return []string{"none declared (pure text agent)"}
 	}
-	return []string{
+	lines := []string{
 		"network.egress: " + renderEgress(c.Network.Egress),
 		"filesystem.read: " + renderFSAccess(c.Filesystem.Read),
 		"filesystem.write: " + renderFSAccess(c.Filesystem.Write),
@@ -23,6 +23,19 @@ func capabilityLines(c manifest.Capabilities) []string {
 		"secrets: " + renderList(c.Secrets),
 		"dataAccess: " + renderDataAccess(c.DataAccess),
 	}
+	// Declared MCP servers (RUNNER-PLAN-3): one line each — the consent
+	// gate and guided setup must show exactly what will be installed.
+	for _, srv := range c.MCPServers {
+		line := "mcpServer: " + srv.SourceID() + "@" + srv.Version
+		if len(srv.Egress) > 0 {
+			line += " (egress: " + renderList(srv.Egress) + ")"
+		}
+		if len(srv.Secrets) > 0 {
+			line += " (secrets: " + renderList(srv.Secrets) + ")"
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // capabilityNeedsConfirm reports whether install must ask before proceeding:
@@ -36,7 +49,8 @@ func isZeroCapabilities(c manifest.Capabilities) bool {
 	return c.Network.Egress.IsZero() &&
 		c.Filesystem.Read.IsZero() && c.Filesystem.Write.IsZero() &&
 		c.Exec.IsZero() &&
-		len(c.Secrets) == 0 && len(c.DataAccess) == 0
+		len(c.Secrets) == 0 && len(c.DataAccess) == 0 &&
+		len(c.MCPServers) == 0
 }
 
 // renderEgress prints an egress declaration; "*" is flagged as policy-gated.
