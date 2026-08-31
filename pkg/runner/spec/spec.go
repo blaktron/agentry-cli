@@ -37,7 +37,17 @@ const (
 	// (RUNNER-PLAN-2 §P4) — operator-provided files, mounted :ro into the
 	// tools container, empty when the run got no --file.
 	PHInputs = "@@RUN_INPUTS@@"
+	// PHServers is the host path of the signature's installed MCP-server
+	// store (RUNNER-PLAN-3): profile/servers/, one subdirectory per
+	// declared server, mounted :ro into that server's runtime container.
+	PHServers = "@@RUN_SERVERS@@"
 )
+
+// MCPStorePrefix is the fixed in-container prefix a declared server's
+// dependency closure is installed under AND mounted at — the same path in
+// the builder and the runtime container, so interpreter paths (venv
+// shebangs, .bin shims) stay valid.
+const MCPStorePrefix = "/opt/agentry-mcp"
 
 // Fixed container-side paths and network names shared by the compiler, the
 // adapters, and the tools server configuration.
@@ -115,6 +125,10 @@ type Plan struct {
 	// Secrets lists the manifest secret env names (values are resolved at
 	// run time and never stored, §R4).
 	Secrets []string `json:"secrets,omitempty"`
+	// MCPServers are the declared, resolved MCP servers this plan loads
+	// alongside the tools server (RUNNER-PLAN-3). Empty for agents that
+	// declare none — such plans are byte-identical to pre-PLAN-3 output.
+	MCPServers []MCPServerSpec `json:"mcpServers,omitempty"`
 	// Budgets are the compiled defaults; run flags may tighten them and
 	// the receipt records what actually applied.
 	Budgets Budgets `json:"budgets"`
@@ -235,6 +249,38 @@ type Budgets struct {
 	// MaxTurns kills the run after this many tool-call events (exit 16);
 	// 0 = unlimited.
 	MaxTurns int `json:"maxTurns"`
+}
+
+// MCPServerSpec is one declared MCP server, resolved to its exact
+// artifacts (RUNNER-PLAN-3). The store contents live under the
+// signature's profile — per-machine — so the plan carries the RESOLUTION
+// (source, version, digest, launch argv), which is deterministic given
+// the manifest pins, and mounts the store via the PHServers placeholder.
+type MCPServerSpec struct {
+	// Name is the gateway catalog name ("mcp-" + sanitized package id).
+	Name string `json:"name"`
+	// Source is "npm" or "pypi"; Package and Version are the manifest pin.
+	Source  string `json:"source"`
+	Package string `json:"package"`
+	Version string `json:"version"`
+	// Integrity is the registry-advertised artifact integrity (npm SRI or
+	// "sha256:<hex>") recorded at resolve time; receipts disclose it.
+	Integrity string `json:"integrity,omitempty"`
+	// Image is the pinned runtime image the server runs in.
+	Image string `json:"image"`
+	// Command is the argv inside the runtime container (store-relative
+	// paths under MCPStorePrefix).
+	Command []string `json:"command"`
+	// StoreSubdir is the server's directory name under PHServers.
+	StoreSubdir string `json:"storeSubdir"`
+	// Tools optionally restricts the server to these tool names.
+	Tools []string `json:"tools,omitempty"`
+	// Egress is the server's own allowlist ("*" = unrestricted,
+	// policy-gated at compile like agent egress).
+	Egress []string `json:"egress,omitempty"`
+	// Secrets are the env names this server needs (values resolved at run
+	// time into the gateway secrets file under this server's keys).
+	Secrets []string `json:"secrets,omitempty"`
 }
 
 // OutputSpec is the optional structured-output convention (§R2).

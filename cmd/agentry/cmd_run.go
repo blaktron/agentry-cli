@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -217,7 +219,24 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return engine.Classify(engine.ExitCLI, err)
 	}
 
-	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName)
+	// Declared MCP servers (RUNNER-PLAN-3): resolve the manifest pins —
+	// offline when the signature's store already matches them — so the
+	// compiler can bake the launch specs into the plan. Installation into
+	// the store happens with the image install below; --dry-run stops at
+	// resolution and touches no docker.
+	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, digestSuffix(meta.Digest))
+	serversDir := mcpinstall.StoreDir(profDir)
+	var resolvedServers []mcpinstall.Resolved
+	var serverSpecs []spec.MCPServerSpec
+	if len(m.Capabilities.MCPServers) > 0 {
+		resolvedServers, err = ensureServerResolutions(cmd.Context(), cmd.ErrOrStderr(), serversDir, pol, m)
+		if err != nil {
+			return engine.Classify(engine.ExitVerify, err)
+		}
+		serverSpecs = mcpinstall.Specs(resolvedServers, m.Capabilities.MCPServers, pol.Images)
+	}
+
+	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName, serverSpecs)
 	if err != nil {
 		return err
 	}
@@ -230,6 +249,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	docker := dockerx.New()
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, pol.RunnerImageTag(runnerCLIVersion()), homeImageDir(home), cmd.ErrOrStderr()); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
+	}
+	if len(resolvedServers) > 0 {
+		if err := mcpinstall.EnsureInstalled(cmd.Context(), docker, resolvedServers, serversDir,
+			pol.MCPRegistries, pol.Images, cmd.ErrOrStderr()); err != nil {
+			return engine.Classify(engine.ExitGateway, err)
+		}
 	}
 
 	// The BriefAgent's MCP profile (RUNNER-PLAN-2 §P2/§P3): load or, on a
@@ -278,6 +303,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		Adapter:         ad,
 		Policy:          pol,
 		SecretOverrides: overrides,
+		ServersDir:      serversDir,
 		Budgets:         budgets,
 		Attestation:     meta.Attestation,
 		KeepRunDir:      opts.keepRunDir,
@@ -586,14 +612,15 @@ func loadInstallMeta(installDir, wantDigest string) (*installMeta, bool) {
 // ensurePlan reuses the installed plan when nothing it depends on changed
 // (§R6/§R9), otherwise recompiles.
 func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, installDir, workspaceDir string,
-	pol *policy.Policy, polSHA, adapterName string,
+	pol *policy.Policy, polSHA, adapterName string, serverSpecs []spec.MCPServerSpec,
 ) (*spec.Plan, string, error) {
 	planDir := filepath.Join(installDir, "plan")
 	if b, err := os.ReadFile(filepath.Join(planDir, "plan.json")); err == nil { //nolint:gosec // our install layout
 		if plan, perr := spec.ParsePlan(b); perr == nil &&
 			plan.Digest == meta.Digest &&
 			plan.PolicySHA256 == polSHA &&
-			plan.Harness.Adapter == adapterName {
+			plan.Harness.Adapter == adapterName &&
+			reflect.DeepEqual(plan.MCPServers, serverSpecs) {
 			if verr := compile.VerifyFiles(plan, planDir); verr == nil {
 				return plan, planDir, nil
 			}
@@ -612,6 +639,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 		PolicySHA:    polSHA,
 		AdapterName:  adapterName,
 		RunnerImage:  pol.RunnerImageTag(runnerCLIVersion()),
+		MCPServers:   serverSpecs,
 	}, planDir)
 	if err != nil {
 		var refusal *compile.PolicyRefusal
@@ -766,7 +794,9 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installMeta, m *manife
 		return nil, dir, false, fmt.Errorf("--keep-profile %q must be true or false", opts.keepProfile)
 	}
 
-	secrets := m.Capabilities.Secrets
+	// The union of agent-level and per-server secret names (RUNNER-PLAN-3):
+	// guided setup collects every key the release's gateway will need.
+	secrets := allSecretNames(m)
 	needGuided := opts.reconfigureProfile || (prof == nil && len(secrets) > 0)
 	if !needGuided {
 		if prof == nil && keepDecided && keep {

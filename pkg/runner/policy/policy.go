@@ -32,6 +32,13 @@ const (
 	DefaultGatewayImage = "docker/mcp-gateway:v0.43.3"
 	DefaultHarnessImage = "docker/docker-agent:v1.128.0"
 	DefaultGoBuilder    = "golang:1.27-alpine"
+	// Runtime images that install and run declared npm/PyPI MCP servers
+	// (RUNNER-PLAN-3 §P2).
+	DefaultNodeRuntime   = "node:22-alpine"
+	DefaultPythonRuntime = "python:3.12-alpine"
+	// Default trusted repositories for capabilities.mcpServers.
+	DefaultNPMRegistry  = "https://registry.npmjs.org"
+	DefaultPyPIRegistry = "https://pypi.org"
 )
 
 // Policy is the whole operator policy file (closed schema; unknown keys
@@ -57,6 +64,19 @@ type Policy struct {
 	Budgets Budgets `yaml:"budgets"`
 	// Profiles configures MCP-profile behavior (RUNNER-PLAN-2 §P2).
 	Profiles Profiles `yaml:"profiles,omitempty"`
+	// MCPRegistries is where declared capabilities.mcpServers resolve
+	// (RUNNER-PLAN-3 §P2): npm and PyPI by default, private mirrors here.
+	MCPRegistries MCPRegistries `yaml:"mcpRegistries,omitempty"`
+}
+
+// MCPRegistries names the trusted repositories for declared MCP servers.
+// Empty fields resolve to the public defaults at load time, so a policy
+// file written before this block existed keeps working unchanged.
+type MCPRegistries struct {
+	// NPM is the npm registry base URL (metadata + tarballs).
+	NPM string `yaml:"npm,omitempty"`
+	// PyPI is the PyPI base URL (JSON API at /pypi/, index at /simple).
+	PyPI string `yaml:"pypi,omitempty"`
 }
 
 // Profiles is the MCP-profile policy block.
@@ -90,6 +110,10 @@ type Images struct {
 	// Runner overrides the local runner image tag ("" = derived from the
 	// CLI version).
 	Runner string `yaml:"runner,omitempty"`
+	// NodeRuntime / PythonRuntime install and run declared npm/PyPI MCP
+	// servers (RUNNER-PLAN-3). Empty resolves to the pinned defaults.
+	NodeRuntime   string `yaml:"nodeRuntime,omitempty"`
+	PythonRuntime string `yaml:"pythonRuntime,omitempty"`
 }
 
 // Model configures the operator-owned model endpoint (annex Q-R2: the key
@@ -135,7 +159,10 @@ func Default() *Policy {
 			Gateway:            DefaultGatewayImage,
 			HarnessDockerAgent: DefaultHarnessImage,
 			GoBuilder:          DefaultGoBuilder,
+			NodeRuntime:        DefaultNodeRuntime,
+			PythonRuntime:      DefaultPythonRuntime,
 		},
+		MCPRegistries: MCPRegistries{NPM: DefaultNPMRegistry, PyPI: DefaultPyPIRegistry},
 		Model: Model{
 			Provider:   "anthropic",
 			Name:       "claude-sonnet-4-5",
@@ -206,6 +233,22 @@ func Load(path string) (*Policy, string, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, "", fmt.Errorf("parse %s: trailing YAML document", path)
 	}
+	// Fields added after a policy file was written resolve to their
+	// defaults rather than failing validation — additions must not brick
+	// existing machines (the file's sha still changes only when the
+	// OPERATOR edits it, so plan invalidation semantics are unchanged).
+	if p.Images.NodeRuntime == "" {
+		p.Images.NodeRuntime = DefaultNodeRuntime
+	}
+	if p.Images.PythonRuntime == "" {
+		p.Images.PythonRuntime = DefaultPythonRuntime
+	}
+	if p.MCPRegistries.NPM == "" {
+		p.MCPRegistries.NPM = DefaultNPMRegistry
+	}
+	if p.MCPRegistries.PyPI == "" {
+		p.MCPRegistries.PyPI = DefaultPyPIRegistry
+	}
 	if err := p.Validate(); err != nil {
 		return nil, "", fmt.Errorf("%s: %w", path, err)
 	}
@@ -270,6 +313,13 @@ func (p *Policy) Validate() error {
 	if p.Budgets.MaxTurns < 0 {
 		return errors.New("budgets.maxTurns must be >= 0 (0 = unlimited)")
 	}
+	for name, u := range map[string]string{
+		"mcpRegistries.npm": p.MCPRegistries.NPM, "mcpRegistries.pypi": p.MCPRegistries.PyPI,
+	} {
+		if u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			return fmt.Errorf("%s %q must be an http(s) URL", name, u)
+		}
+	}
 	return nil
 }
 
@@ -312,6 +362,9 @@ images:
   gateway: docker/mcp-gateway:v0.43.3
   harnessDockerAgent: docker/docker-agent:v1.128.0
   goBuilder: golang:1.27-alpine
+  # Runtimes for MCP servers a BriefAgent declares (capabilities.mcpServers).
+  nodeRuntime: node:22-alpine
+  pythonRuntime: python:3.12-alpine
 
 model:
   provider: anthropic
@@ -342,4 +395,11 @@ profiles:
   # run so the next run of the same version reuses the authenticated
   # resources; per-run --keep-profile overrides.
   keepByDefault: true
+
+mcpRegistries:
+  # Where capabilities.mcpServers resolve (RUNNER-PLAN-3). Point these at
+  # private mirrors to control the supply chain; the manifest pins exact
+  # versions and the install records resolved artifact digests either way.
+  npm: https://registry.npmjs.org
+  pypi: https://pypi.org
 `

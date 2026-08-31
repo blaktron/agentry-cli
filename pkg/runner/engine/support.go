@@ -30,6 +30,7 @@ type runDirs struct {
 	inputs      string // root/inputs — the :ro operator-inputs channel (P2 §P4)
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/secrets.env (0600, deleted on teardown)
+	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
 	outDir      string
 	receiptsDir string
 }
@@ -42,6 +43,7 @@ func (rd *runDirs) replacer() *strings.Replacer {
 		spec.PHCfg, rd.cfg,
 		spec.PHSecrets, rd.secretsPath,
 		spec.PHInputs, rd.inputs,
+		spec.PHServers, rd.serversDir,
 		spec.PHRunID, filepath.Base(rd.root),
 	)
 }
@@ -60,8 +62,12 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		// the gateway's /mcp mount — the compiled `--secrets
 		// /mcp/secrets.env` argv resolves to this file and nothing else.
 		secretsPath: filepath.Join(root, "cfg", "gateway", "secrets.env"),
+		serversDir:  p.ServersDir,
 		outDir:      p.OutDir,
 		receiptsDir: filepath.Join(p.OutDir, "receipts"),
+	}
+	if len(p.Plan.MCPServers) > 0 && rd.serversDir == "" {
+		return nil, Classify(ExitCLI, fmt.Errorf("plan declares MCP servers but no server store was provided"))
 	}
 	// inputs/ exists even when empty: the compiled catalog always mounts
 	// it :ro, and an absent bind source would fail the tools container.
@@ -173,18 +179,38 @@ func stageInputs(paths []string, dest string) error {
 // overrides (the MCP profile, P2 §P2) first, then the policy source.
 func writeSecretsFile(p Params, path string) error {
 	values := map[string]string{}
-	var missing []string
-	for _, name := range p.Plan.Secrets {
+	missingSet := map[string]bool{}
+	resolve := func(name string) (string, bool) {
 		v, ok := p.SecretOverrides[name]
 		if !ok || v == "" {
 			v, ok = lookupSecret(name, p.Policy.SecretSource)
 		}
 		if !ok || v == "" {
-			missing = append(missing, name)
-			continue
+			missingSet[name] = true
+			return "", false
 		}
-		values[compile.SecretKey(name)] = v
+		return v, true
 	}
+	for _, name := range p.Plan.Secrets {
+		if v, ok := resolve(name); ok {
+			values[compile.SecretKey(name)] = v
+		}
+	}
+	// Declared MCP servers' secrets (RUNNER-PLAN-3): same resolution
+	// order, keyed per server so each value is scoped to its own server
+	// and reaches nothing else.
+	for _, srv := range p.Plan.MCPServers {
+		for _, name := range srv.Secrets {
+			if v, ok := resolve(name); ok {
+				values[compile.ServerSecretKey(srv.Name, name)] = v
+			}
+		}
+	}
+	missing := make([]string, 0, len(missingSet))
+	for name := range missingSet {
+		missing = append(missing, name)
+	}
+	sort.Strings(missing)
 	if len(missing) > 0 {
 		return Classify(ExitPolicy, fmt.Errorf("declared secret(s) not resolvable from the MCP profile or the %s source: %s (run with --reconfigure-profile to set them)",
 			p.Policy.SecretSource.Mode, strings.Join(missing, ", ")))
