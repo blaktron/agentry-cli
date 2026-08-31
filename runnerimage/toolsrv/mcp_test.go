@@ -276,7 +276,7 @@ func TestValidateSpec(t *testing.T) {
 		{name: "nil", spec: nil, wantErr: "nil tool spec"},
 		{
 			name:    "wrong version",
-			spec:    &Spec{SpecVersion: "2", WorkspaceDir: abs, OutDir: abs},
+			spec:    &Spec{SpecVersion: "1", WorkspaceDir: abs, OutDir: abs},
 			wantErr: "not supported",
 		},
 		{

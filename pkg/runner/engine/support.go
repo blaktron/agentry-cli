@@ -27,6 +27,7 @@ import (
 type runDirs struct {
 	root        string // <RunRoot>/runs/<id>
 	workspace   string // root/workspace — the rw copy tools may mount
+	inputs      string // root/inputs — the :ro operator-inputs channel (P2 §P4)
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/secrets.env (0600, deleted on teardown)
 	outDir      string
@@ -40,6 +41,7 @@ func (rd *runDirs) replacer() *strings.Replacer {
 		spec.PHOut, rd.outDir,
 		spec.PHCfg, rd.cfg,
 		spec.PHSecrets, rd.secretsPath,
+		spec.PHInputs, rd.inputs,
 		spec.PHRunID, filepath.Base(rd.root),
 	)
 }
@@ -52,6 +54,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	rd := &runDirs{
 		root:      root,
 		workspace: filepath.Join(root, "workspace"),
+		inputs:    filepath.Join(root, "inputs"),
 		cfg:       filepath.Join(root, "cfg"),
 		// secrets.env lives INSIDE cfg/gateway because that directory is
 		// the gateway's /mcp mount — the compiled `--secrets
@@ -60,10 +63,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		outDir:      p.OutDir,
 		receiptsDir: filepath.Join(p.OutDir, "receipts"),
 	}
-	for _, dir := range []string{rd.workspace, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
+	// inputs/ exists even when empty: the compiled catalog always mounts
+	// it :ro, and an absent bind source would fail the tools container.
+	for _, dir := range []string{rd.workspace, rd.inputs, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
+	}
+	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
+		return nil, err
 	}
 	// secrets.env dies unconditionally; the rest of the run dir only
 	// when not kept for debugging (§R11 invariant 6; KeepRunDir never
@@ -120,15 +128,57 @@ func renderPlanFiles(planDir string, rd *runDirs) error {
 	return nil
 }
 
+// stageInputs copies operator-named files/directories into the run's
+// read-only inputs channel, basename-rooted (P2 §P4). A named path that
+// does not exist refuses the run — a silently absent input is a debugging
+// session, not a convenience.
+func stageInputs(paths []string, dest string) error {
+	seen := map[string]bool{}
+	for _, src := range paths {
+		abs, err := filepath.Abs(src)
+		if err != nil {
+			return Classify(ExitCLI, fmt.Errorf("resolve input %s: %w", src, err))
+		}
+		fi, err := os.Stat(abs)
+		if err != nil {
+			return Classify(ExitCLI, fmt.Errorf("input file: %w", err))
+		}
+		base := filepath.Base(abs)
+		if seen[base] {
+			return Classify(ExitCLI, fmt.Errorf("two inputs share the basename %q — rename one (inputs are basename-rooted under %s)", base, spec.InputsMount))
+		}
+		seen[base] = true
+		target := filepath.Join(dest, base)
+		if fi.IsDir() {
+			if err := copyTree(abs, target); err != nil {
+				return Classify(ExitCLI, fmt.Errorf("stage input dir %s: %w", src, err))
+			}
+			continue
+		}
+		data, err := os.ReadFile(abs) //nolint:gosec // operator-named input file
+		if err != nil {
+			return Classify(ExitCLI, fmt.Errorf("stage input %s: %w", src, err))
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
+			return Classify(ExitCLI, fmt.Errorf("stage input %s: %w", src, err))
+		}
+	}
+	return nil
+}
+
 // writeSecretsFile resolves every declared secret and writes the gateway
 // secrets file. Missing ⇒ refuse before any container starts, naming the
 // variable (§R4 secrets row, exit 11) — a silently-degraded agent is the
-// failure mode this exists to prevent.
+// failure mode this exists to prevent. Resolution order: the caller's
+// overrides (the MCP profile, P2 §P2) first, then the policy source.
 func writeSecretsFile(p Params, path string) error {
 	values := map[string]string{}
 	var missing []string
 	for _, name := range p.Plan.Secrets {
-		v, ok := lookupSecret(name, p.Policy.SecretSource)
+		v, ok := p.SecretOverrides[name]
+		if !ok || v == "" {
+			v, ok = lookupSecret(name, p.Policy.SecretSource)
+		}
 		if !ok || v == "" {
 			missing = append(missing, name)
 			continue
@@ -136,7 +186,7 @@ func writeSecretsFile(p Params, path string) error {
 		values[compile.SecretKey(name)] = v
 	}
 	if len(missing) > 0 {
-		return Classify(ExitPolicy, fmt.Errorf("declared secret(s) not resolvable from %s source: %s",
+		return Classify(ExitPolicy, fmt.Errorf("declared secret(s) not resolvable from the MCP profile or the %s source: %s (run with --reconfigure-profile to set them)",
 			p.Policy.SecretSource.Mode, strings.Join(missing, ", ")))
 	}
 	keys := make([]string, 0, len(values))

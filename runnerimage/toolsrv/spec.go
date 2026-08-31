@@ -9,8 +9,12 @@
 // the parent package enforces that.
 package toolsrv
 
-// SpecVersion is the current tool-server spec schema version.
-const SpecVersion = "1"
+// SpecVersion is the current tool-server spec schema version. "2" added
+// the run-inputs channel (RUNNER-PLAN-2 §P4); the server refuses other
+// versions, so a stale runner image meets a newer compiler loudly — and
+// the image tag derives from the CLI version, so rebuilds happen on their
+// own at upgrade time.
+const SpecVersion = "2"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -32,6 +36,14 @@ type Spec struct {
 	// OutDir is the container path of the run's output folder mount
 	// (conventionally /out). write_report is rooted at OutDir/reports.
 	OutDir string `json:"outDir"`
+	// InputsDir is the container path of the read-only run-inputs mount
+	// (conventionally /inputs; RUNNER-PLAN-2 §P4). Inputs are
+	// operator-provided task material — a channel like stdin, not a
+	// manifest capability — so list_inputs/read_input are granted
+	// whenever the dir is configured, and the mount's :ro flag plus the
+	// absence of any write tool keep the channel one-way. Empty means the
+	// channel is not configured and its tools are absent.
+	InputsDir string `json:"inputsDir,omitempty"`
 	// FSRead gates fs_read and fs_list.
 	FSRead Access `json:"fsRead"`
 	// FSWrite gates fs_write.
@@ -120,6 +132,8 @@ const (
 	ToolFSWrite     = "fs_write"
 	ToolFetch       = "fetch"
 	ToolRunCommand  = "run_command"
+	ToolListInputs  = "list_inputs"
+	ToolReadInput   = "read_input"
 	ToolWriteReport = "write_report"
 )
 
@@ -140,6 +154,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if len(s.Exec.Commands) > 0 {
 		names = append(names, ToolRunCommand)
+	}
+	if s.InputsDir != "" {
+		names = append(names, ToolListInputs, ToolReadInput)
 	}
 	names = append(names, ToolWriteReport)
 	return names

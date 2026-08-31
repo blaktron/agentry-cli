@@ -270,6 +270,85 @@ func TestRunKeepRunDirStillDeletesSecrets(t *testing.T) {
 	}
 }
 
+// TestInputsStagedIntoRun pins RUNNER-PLAN-2 §P4: --file items land under
+// runs/<id>/inputs, basename-rooted, and the rendered plan carries no
+// unresolved inputs placeholder.
+func TestInputsStagedIntoRun(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	inputFile := filepath.Join(t.TempDir(), "incident.json")
+	if err := os.WriteFile(inputFile, []byte(`{"id":42}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inputDir := filepath.Join(t.TempDir(), "attachments")
+	if err := os.MkdirAll(inputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inputDir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p.InputPaths = []string{inputFile, inputDir}
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatal(err)
+	}
+	runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
+	for _, rel := range []string{"inputs/incident.json", "inputs/attachments/a.txt"} {
+		if _, err := os.Stat(filepath.Join(runDir, rel)); err != nil {
+			t.Errorf("staged input missing: %s (%v)", rel, err)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(runDir, "cfg", "gateway", "catalog.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), runDir+"/inputs:/inputs:ro") {
+		t.Errorf("rendered catalog lacks the ro inputs mount:\n%s", b)
+	}
+}
+
+func TestInputsDuplicateBasenameRefused(t *testing.T) {
+	p, f := fixture(t)
+	d1, d2 := t.TempDir(), t.TempDir()
+	for _, d := range []string{d1, d2} {
+		if err := os.WriteFile(filepath.Join(d, "same.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.InputPaths = []string{filepath.Join(d1, "same.txt"), filepath.Join(d2, "same.txt")}
+	_, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "basename") {
+		t.Fatalf("duplicate basenames must refuse with exit %d, got %v", ExitCLI, err)
+	}
+}
+
+// TestSecretOverridesBeatEnvironment pins the P2 §P2 resolution order: the
+// MCP profile's value (SecretOverrides) satisfies a secret the environment
+// does not have.
+func TestSecretOverridesBeatEnvironment(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	_ = os.Unsetenv("ENGINE_TEST_TOKEN")
+	p.SecretOverrides = map[string]string{"ENGINE_TEST_TOKEN": "from-profile"}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("override should satisfy the secret: %v", err)
+	}
+	if env.Status != "ok" {
+		t.Fatalf("status = %s", env.Status)
+	}
+	// The override value must obey invariant 3 exactly like env-sourced
+	// values: never in any container env or argv.
+	for _, c := range f.Calls {
+		for k, v := range c.Run.Env {
+			if strings.Contains(v, "from-profile") {
+				t.Errorf("profile secret leaked into %s env %s", c.Run.Name, k)
+			}
+		}
+	}
+}
+
 func TestMissingSecretRefusesBeforeDocker(t *testing.T) {
 	p, f := fixture(t)
 	_ = os.Unsetenv("ENGINE_TEST_TOKEN")

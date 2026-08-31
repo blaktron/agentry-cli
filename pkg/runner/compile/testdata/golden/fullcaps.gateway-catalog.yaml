@@ -15,6 +15,7 @@ registry:
       - '@@RUN_WORKSPACE@@:/workspace:ro'
       - '@@RUN_WORKSPACE@@/notes/summary.md:/workspace/notes/summary.md:rw'
       - '@@RUN_WORKSPACE@@/reports:/workspace/reports:rw'
+      - '@@RUN_INPUTS@@:/inputs:ro'
       - '@@RUN_OUT@@:/out:rw'
     allowHosts:
       - api.example.com:443

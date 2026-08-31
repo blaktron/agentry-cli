@@ -46,12 +46,14 @@ run_dry() { # fixture -> plan json on stdout
 fail() { echo "FAIL: $*" >&2; exit 1; }
 note() { echo "ok: $*"; }
 
-# --- pure-text: only write_report; networkless tools container -------------
+# --- pure-text: I/O channels only; networkless tools container --------------
 PLAN=$(run_dry pure-text)
 echo "$PLAN" | grep -q '"planVersion": "1"' || fail "pure-text: plan version"
 echo "$PLAN" | grep -q '"write_report"'     || fail "pure-text: write_report grant"
+echo "$PLAN" | grep -q '"list_inputs"'      || fail "pure-text: inputs channel missing (RUNNER-PLAN-2 §P4)"
 echo "$PLAN" | grep -q '"fs_read"'          && fail "pure-text: fs_read must be absent"
 echo "$PLAN" | grep -q -- '--block-network' || fail "pure-text: gateway must always pass --block-network"
+echo "$PLAN" | grep -q '@@RUN_INPUTS@@'     || fail "pure-text: inputs placeholder missing from plan env"
 note "pure-text plan"
 
 # --- determinism: same inputs, byte-identical plans -------------------------

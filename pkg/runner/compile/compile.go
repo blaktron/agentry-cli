@@ -65,10 +65,12 @@ const contractPostscript = "\n\n----\n" +
 	"Runner contract (SecureAgentry): You are running as a one-shot BriefAgent inside " +
 	"an isolated container. Your only tools are those provided by the connected MCP " +
 	"gateway — there is no other shell, filesystem, or network access. The task " +
-	"workspace, as seen by your tools, is rooted at " + spec.WorkspaceMount + ". Files " +
-	"you want to deliver as reports must be written with the write_report tool; they " +
-	"land in the run's output folder. When the task is complete, send your final " +
-	"answer as your last message.\n"
+	"workspace, as seen by your tools, is rooted at " + spec.WorkspaceMount + ". Input " +
+	"files provided for this run, if any, are under " + spec.InputsMount + " — list " +
+	"them with list_inputs and read them with read_input. Files you want to deliver " +
+	"as reports must be written with the write_report tool; they land in the run's " +
+	"output folder. When the task is complete, send your final answer as your last " +
+	"message.\n"
 
 // Compile builds the plan and writes the generated file set under planDir:
 //
@@ -335,6 +337,10 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		SpecVersion:  toolsrv.SpecVersion,
 		WorkspaceDir: spec.WorkspaceMount,
 		OutDir:       spec.OutMount,
+		// The inputs channel is always configured (RUNNER-PLAN-2 §P4):
+		// whether a given run provides files is a run-time fact, and the
+		// engine mounts an empty directory when none were.
+		InputsDir: spec.InputsMount,
 		FSRead: toolsrv.Access{
 			Enabled: caps.FSReadMode != "none",
 			Paths:   caps.FSReadPaths,
@@ -383,7 +389,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary) spec.Gate
 			// resolve under these roots; writable binds need exact
 			// entries. Separator ":" — verified empirically at M-R2.
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
-				Value: strings.Join([]string{spec.PHWorkspace, spec.PHOut, spec.PHCfg}, ":")},
+				Value: strings.Join([]string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs}, ":")},
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
 				Value: strings.Join(writable, ":")},
 		},
@@ -466,6 +472,9 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 
 	vols := []string{spec.PHCfg + "/gateway/toolspec.json:" + spec.ToolSpecMount + ":ro"}
 	vols = append(vols, workspaceVolumes(caps)...)
+	// The run-inputs channel (P2 §P4): read-only by mount AND by tool
+	// surface; the output/receipts volume stays separate below.
+	vols = append(vols, spec.PHInputs+":"+spec.InputsMount+":ro")
 	vols = append(vols, spec.PHOut+":"+spec.OutMount+":rw")
 	e.set("volumes", strListNode(vols))
 

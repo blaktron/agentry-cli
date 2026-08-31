@@ -34,28 +34,33 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
 // runOpts carries the run command's flags.
 type runOpts struct {
-	input         string
-	out           string
-	outputFormat  string
-	adapterName   string
-	local         string
-	pin           string
-	policyPath    string
-	timeout       int
-	maxTurns      int
-	yes           bool
-	allowUnsigned bool
-	prepare       bool
-	dryRun        bool
-	keepRunDir    bool
-	listAdapters  bool
+	input              string
+	out                string
+	outputFormat       string
+	adapterName        string
+	local              string
+	pin                string
+	policyPath         string
+	timeout            int
+	maxTurns           int
+	yes                bool
+	allowUnsigned      bool
+	prepare            bool
+	dryRun             bool
+	keepRunDir         bool
+	listAdapters       bool
+	files              []string
+	keepProfile        string // "": unset; "true"/"false": the flag decided
+	reconfigureProfile bool
 }
 
 // newRunCmd builds the run command.
@@ -109,6 +114,9 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
+	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
+	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the BriefAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
+	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	return cmd
 }
 
@@ -220,10 +228,18 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
 	docker := dockerx.New()
-	imageCtx := filepath.Join(home, "image")
-	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, pol.RunnerImageTag(runnerCLIVersion()), imageCtx, cmd.ErrOrStderr()); err != nil {
+	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, pol.RunnerImageTag(runnerCLIVersion()), homeImageDir(home), cmd.ErrOrStderr()); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
+
+	// The BriefAgent's MCP profile (RUNNER-PLAN-2 §P2/§P3): load or, on a
+	// terminal, run guided setup. Part of the install step, so --prepare
+	// includes it; --dry-run (above) never prompts.
+	prof, profDir, keep, err := ensureProfile(cmd, home, meta, m, pol, opts)
+	if err != nil {
+		return engine.Classify(engine.ExitPolicy, err)
+	}
+
 	if opts.prepare {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "prepared %s (plan %s, images installed) — run again without --prepare to execute\n",
 			plan.Ref, shortHash(plan))
@@ -247,26 +263,39 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		budgets.MaxTurns = opts.maxTurns
 	}
 
+	var overrides map[string]string
+	if prof != nil {
+		overrides = prof.Secrets
+	}
 	env, runErr := engine.Run(cmd.Context(), docker, engine.Params{
-		Plan:         plan,
-		PlanDir:      planDir,
-		WorkspaceSrc: workspaceDir,
-		RunRoot:      installDir,
-		OutDir:       outDir,
-		Task:         taskReader(cmd, opts.input),
-		Adapter:      ad,
-		Policy:       pol,
-		Budgets:      budgets,
-		Attestation:  meta.Attestation,
-		KeepRunDir:   opts.keepRunDir,
-		RunID:        runID,
-		Stderr:       cmd.ErrOrStderr(),
+		Plan:            plan,
+		PlanDir:         planDir,
+		WorkspaceSrc:    workspaceDir,
+		RunRoot:         installDir,
+		OutDir:          outDir,
+		Task:            taskReader(cmd, opts.input),
+		InputPaths:      opts.files,
+		Adapter:         ad,
+		Policy:          pol,
+		SecretOverrides: overrides,
+		Budgets:         budgets,
+		Attestation:     meta.Attestation,
+		KeepRunDir:      opts.keepRunDir,
+		RunID:           runID,
+		Stderr:          cmd.ErrOrStderr(),
 	})
 	if env != nil {
 		printEnvelope(cmd, env, opts.outputFormat)
 	}
+	// The run completed its lifecycle (success or failure): apply the
+	// profile's keep/remove choice (P2 §P2).
+	finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
 	return runErr
 }
+
+// homeImageDir is where the embedded runner-image build context
+// materializes under the runner home.
+func homeImageDir(home string) string { return filepath.Join(home, "image") }
 
 // taskReader implements the §R2 input precedence: --input file > piped
 // stdin > empty. A TTY stdin is never read — an interactive terminal
@@ -707,6 +736,104 @@ func copyWorkspace(src, dest string) error {
 		return fmt.Errorf("copy package tree: %w", err)
 	}
 	return nil
+}
+
+// ensureProfile loads — or, on a terminal, guides the creation of — the
+// BriefAgent's MCP profile for this signature (RUNNER-PLAN-2 §P2/§P3).
+// Returns the profile (nil when none applies), its directory, and the
+// effective keep choice: flag > stored profile > policy default.
+func ensureProfile(cmd *cobra.Command, home string, meta *installMeta, m *manifest.Manifest,
+	pol *policy.Policy, opts runOpts,
+) (*profile.Profile, string, bool, error) {
+	dir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, digestSuffix(meta.Digest))
+	prof, err := profile.Load(dir)
+	if err != nil {
+		return nil, dir, false, err
+	}
+
+	keep := pol.KeepProfilesByDefault()
+	keepDecided := false
+	switch opts.keepProfile {
+	case "":
+		if prof != nil {
+			keep = prof.Keep
+		}
+	case "true":
+		keep, keepDecided = true, true
+	case "false":
+		keep, keepDecided = false, true
+	default:
+		return nil, dir, false, fmt.Errorf("--keep-profile %q must be true or false", opts.keepProfile)
+	}
+
+	secrets := m.Capabilities.Secrets
+	needGuided := opts.reconfigureProfile || (prof == nil && len(secrets) > 0)
+	if !needGuided {
+		if prof == nil && keepDecided && keep {
+			// Nothing to collect, but the operator explicitly asked to
+			// keep a profile: record the choice for future schema growth
+			// (P2 §P3).
+			prof = profile.New(meta.Ref, meta.Digest, true, nil)
+			if err := prof.Save(dir); err != nil {
+				return nil, dir, false, err
+			}
+		}
+		return prof, dir, keep, nil
+	}
+
+	if !stdinIsTTY(cmd.InOrStdin()) {
+		if opts.reconfigureProfile {
+			return nil, dir, false, errors.New("--reconfigure-profile needs an interactive terminal (the desktop app configures profiles as a form)")
+		}
+		// Non-interactive first run: v1 semantics — secrets resolve from
+		// the policy source; no profile is created and nothing degrades
+		// silently (a missing secret still refuses with exit 11).
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: no MCP profile for %s and no terminal for guided setup — secrets resolve from the %s source\n",
+			meta.Ref, pol.SecretSource.Mode)
+		return nil, dir, keep, nil
+	}
+
+	prompter := &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+	newProf, err := setup.GuidedProfile(prompter, setup.GuidedProfileOpts{
+		Ref:             meta.Ref,
+		Digest:          meta.Digest,
+		CapabilityLines: capabilityLines(m.Capabilities),
+		Secrets:         secrets,
+		DefaultKeep:     keep,
+		KeepDecided:     keepDecided,
+	})
+	if err != nil {
+		return nil, dir, false, err
+	}
+	if prof != nil {
+		newProf.CreatedAt = prof.CreatedAt
+	}
+	if err := newProf.Save(dir); err != nil {
+		return nil, dir, false, err
+	}
+	return newProf, dir, newProf.Keep, nil
+}
+
+// finishProfile applies the completion choice after a run's lifecycle
+// finished, success or failure (P2 §P2): keep → persist + stamp; remove →
+// the profile dies with the run.
+func finishProfile(errOut io.Writer, prof *profile.Profile, dir string, keep bool) {
+	if prof == nil {
+		return
+	}
+	if keep {
+		prof.Keep = true
+		if err := prof.Touch(dir); err != nil {
+			_, _ = fmt.Fprintf(errOut, "warning: %v\n", err)
+		}
+		return
+	}
+	if err := profile.Remove(dir); err != nil {
+		_, _ = fmt.Fprintf(errOut, "warning: %v\n", err)
+		return
+	}
+	_, _ = fmt.Fprintln(errOut, "MCP profile removed (run completed with keep-profile=false)")
 }
 
 // digestSuffix shortens sha256:… for directory names.

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,9 +30,47 @@ import (
 // installOpts carries the install command's flags.
 type installOpts struct {
 	target        string
+	provider      string
 	dir           string
 	yes           bool
 	allowUnsigned bool
+}
+
+// providerTargets maps the per-provider install entry points
+// (RUNNER-PLAN-2 §P5) onto the §5.6 targets: the BriefAgent then runs on
+// that application's own MCP servers and built-in tools, never through the
+// docker gateway path.
+var providerTargets = map[string]string{
+	"claude":   manifest.InterfaceClaudeSkill,
+	"codex":    manifest.InterfaceAgentsMD,
+	"openclaw": manifest.InterfaceClaudeSkill, // OpenClaw consumes Claude-format skills today
+}
+
+// providerNames lists the accepted --provider values, sorted for messages.
+func providerNames() []string {
+	names := make([]string, 0, len(providerTargets))
+	for n := range providerTargets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// resolveProviderTarget applies --provider, enforcing mutual exclusion
+// with --target before any network call.
+func resolveProviderTarget(opts *installOpts) error {
+	if opts.provider == "" {
+		return nil
+	}
+	if opts.target != "" {
+		return errors.New("--provider and --target are mutually exclusive (a provider IS a target choice)")
+	}
+	t, ok := providerTargets[strings.ToLower(opts.provider)]
+	if !ok {
+		return fmt.Errorf("unknown --provider %q (want %s)", opts.provider, strings.Join(providerNames(), ", "))
+	}
+	opts.target = t
+	return nil
 }
 
 // newInstallCmd builds the install command.
@@ -66,6 +105,7 @@ func newInstallCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.target, "target", "", "install target: claude-skill | mcp | agents-md (default: by BriefAgent kind)")
+	cmd.Flags().StringVar(&opts.provider, "provider", "", "install for an agent application: claude | codex | openclaw (picks the target; RUNNER-PLAN-2 §P5)")
 	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory (see help for per-target defaults)")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false,
@@ -94,6 +134,9 @@ func validateTarget(target string) error {
 // runInstall executes the install flow.
 func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	if _, err := manifest.ParseRef(ref); err != nil {
+		return err
+	}
+	if err := resolveProviderTarget(&opts); err != nil {
 		return err
 	}
 	if err := validateTarget(opts.target); err != nil {
