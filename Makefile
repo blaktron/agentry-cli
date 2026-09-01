@@ -1,4 +1,4 @@
-# agentry CLI (SecureAgentry). Depends on the main module
+# agentry CLI (Agentry). Depends on the main module
 # github.com/blaktron/agentry (private): builders need
 #   export GOPRIVATE=github.com/blaktron/*
 # and git credentials for github.com/blaktron (a PAT via credential helper or

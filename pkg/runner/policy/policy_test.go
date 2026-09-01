@@ -89,7 +89,7 @@ func TestSaveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(raw), "# SecureAgentry Runner operator policy") ||
+	if !strings.HasPrefix(string(raw), "# Agentry Runner operator policy") ||
 		!strings.Contains(string(raw), "comments are not preserved") {
 		t.Errorf("generated header missing:\n%s", raw)
 	}

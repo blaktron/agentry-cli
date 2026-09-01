@@ -8,7 +8,7 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "AGENT.md",
-    "sha256": "db21a9f2e1fbe9069e93f46773423e8b278c9c6ac0ad926393b6e72092d15716"
+    "sha256": "eebb1c0b47efa9c662d8d88f821d4bb7120120899024473d3cc11e504151b919"
   },
   "capabilities": {
     "egressMode": "none",
@@ -142,11 +142,11 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "f2556f4a9a6f36bbab3208876fdc8ccc382df861b5026471641564a2a6c73e1f",
+    "gateway/catalog.yaml": "16566064e68942b6b561951544f7d7f2c43e6a148b4f3b1d71d3e71a1fb62cdb",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "88a8dc133a5f0fbdac4dac0486123c3273a0436b6b86594cd73c7881e618304f",
     "gateway/toolspec.json": "a7d760e230f0e15c3a83474a2eeddbb3d05f1579fc9b6d852bb227491321aee1",
-    "harness/agent.yaml": "9d5f681357e48af82893604b305785d3527b313e42fd1ee3b64c92a7139ecf13"
+    "harness/agent.yaml": "2c9d6ae4a5a67ad76d2d2d38f75b34f4d0646ee3be2f5e8bab48499544c83afc"
   }
 }

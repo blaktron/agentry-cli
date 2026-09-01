@@ -325,7 +325,7 @@ func TestInstructionRules(t *testing.T) {
 		if !strings.Contains(s, "Do the skill task well.") {
 			t.Error("skill body missing from instruction")
 		}
-		if !strings.Contains(s, "Runner contract (SecureAgentry)") {
+		if !strings.Contains(s, "Runner contract (Agentry)") {
 			t.Error("runner contract postscript missing")
 		}
 	})

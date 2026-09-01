@@ -1,4 +1,4 @@
-// Package toolsrv implements the SecureAgentry companion tools server
+// Package toolsrv implements the Agentry companion tools server
 // (RUNNER-PLAN §R3): one MCP stdio server whose tool surface is constructed
 // from the manifest's capability contract. An undeclared capability means
 // the tool is ABSENT from tools/list, not present-but-refusing — the model

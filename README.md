@@ -1,6 +1,6 @@
-# agentry — the SecureAgentry CLI
+# agentry — the Agentry CLI
 
-The command-line client for [SecureAgentry](https://secureagentry.net):
+The command-line client for [Agentry](https://secureagentry.net):
 publish, install, verify, and **run** BriefAgents — single-purpose AI
 agents. Every install checks the archive digest and DSSE signature before
 anything lands on your machine, and `agentry validate` runs the same

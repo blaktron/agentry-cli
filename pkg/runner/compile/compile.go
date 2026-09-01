@@ -67,7 +67,7 @@ const OutputSchemaFile = "output.schema.json"
 // instruction (§R2). Golden tests pin it; changing it changes every plan
 // hash, which is the point.
 const contractPostscript = "\n\n----\n" +
-	"Runner contract (SecureAgentry): You are running as a one-shot BriefAgent inside " +
+	"Runner contract (Agentry): You are running as a one-shot BriefAgent inside " +
 	"an isolated container. Your only tools are those provided by the connected MCP " +
 	"gateway — there is no other shell, filesystem, or network access. The task " +
 	"workspace, as seen by your tools, is rooted at " + spec.WorkspaceMount + ". Input " +
@@ -558,7 +558,7 @@ func ServerSecretKey(serverName, envName string) string {
 // contract translated into the gateway's server-entry vocabulary.
 func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, runnerImage string) *yaml.Node {
 	e := yamlMap{}
-	e.set("description", strNode("SecureAgentry BriefAgent tools server (generated per run)"))
+	e.set("description", strNode("Agentry BriefAgent tools server (generated per run)"))
 	e.set("title", strNode("BriefAgent Tools"))
 	e.set("type", strNode("server"))
 	e.set("image", strNode(runnerImage))

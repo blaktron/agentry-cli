@@ -185,7 +185,7 @@ func Save(path string, p *Policy) error {
 		return err
 	}
 	var buf bytes.Buffer
-	buf.WriteString("# SecureAgentry Runner operator policy (RUNNER-PLAN §R9, RUNNER-PLAN-2 §P1).\n")
+	buf.WriteString("# Agentry Runner operator policy (RUNNER-PLAN §R9, RUNNER-PLAN-2 §P1).\n")
 	buf.WriteString("# Written by `agentry setup` — regenerated as a whole; comments are not preserved.\n")
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -348,7 +348,7 @@ func (p *Policy) RunnerImageTag(cliVersion string) string {
 // defaultFileText is the generated first-use policy. It must parse to
 // exactly Default() (a unit test holds it to that) and carry the warnings
 // an operator needs at the moment they edit it.
-const defaultFileText = `# SecureAgentry Runner operator policy (RUNNER-PLAN §R9).
+const defaultFileText = `# Agentry Runner operator policy (RUNNER-PLAN §R9).
 # This file is machine policy, not agent configuration: it pins the images
 # the runner may pull or build, names the model endpoint (and the ONLY
 # egress the agent container gets), and decides what declared capabilities
