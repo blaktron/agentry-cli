@@ -148,6 +148,14 @@ type fakeAgent struct {
 // CLI hits, plus request capture for assertions (facet forwarding, yank
 // reasons, install-intent hints, token attachment).
 type fakeRegistry struct {
+	// bundleTar/bundleVer/bundleDigest serve the rule-bundle endpoints when
+	// set; bundleAttest signs the bundle (agentry-cli#8). bundleBadSig serves
+	// an envelope signed over a different digest.
+	bundleTar    []byte
+	bundleVer    string
+	bundleDigest string
+	bundleAttest bool
+	bundleBadSig bool
 	// submitKeys records the Idempotency-Key of every upload attempt;
 	// submitFails makes that many attempts answer 503 first (agentry#22).
 	submitKeys  []string
@@ -318,6 +326,27 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		}
 		fr.mu.Unlock()
 		writeJSON(w, http.StatusOK, fr.versionDoc(r.PathValue("v"), status))
+	})
+
+	mux.HandleFunc("GET /api/v1/ruleset-releases/latest/bundle", func(w http.ResponseWriter, _ *http.Request) {
+		if fr.bundleTar == nil {
+			writeProblem(w, http.StatusNotFound, "not found", "no bundle")
+			return
+		}
+		w.Header().Set("X-Agentry-Bundle-Semver", fr.bundleVer)
+		w.Header().Set("X-Agentry-Bundle-Digest", fr.bundleDigest)
+		_, _ = w.Write(fr.bundleTar)
+	})
+	mux.HandleFunc("GET /api/v1/ruleset-releases/latest/attestation", func(w http.ResponseWriter, _ *http.Request) {
+		if !fr.bundleAttest || fr.signer == nil {
+			writeProblem(w, http.StatusNotFound, "not found", "unsigned")
+			return
+		}
+		digest := fr.bundleDigest
+		if fr.bundleBadSig {
+			digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+		}
+		writeJSON(w, http.StatusOK, fr.signDSSE(attest.BuildRulesetStatement(fr.srv.URL, fr.bundleVer, digest)))
 	})
 
 	mux.HandleFunc("GET /.well-known/agentry/signing-keys.json", func(w http.ResponseWriter, _ *http.Request) {
