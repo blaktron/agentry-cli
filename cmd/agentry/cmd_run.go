@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blaktron/agentry-cli/runnerimage"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,7 +28,6 @@ import (
 	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 	"github.com/blaktron/agentry/pkg/manifest"
 
-	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
@@ -247,7 +247,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
 	docker := dockerx.New()
-	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, pol.RunnerImageTag(runnerCLIVersion()), homeImageDir(home), cmd.ErrOrStderr()); err != nil {
+	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, pol.RunnerImageTag(runnerimage.ContentVersion()), homeImageDir(home), cmd.ErrOrStderr()); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	if len(resolvedServers) > 0 {
@@ -638,7 +638,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 		Policy:       pol,
 		PolicySHA:    polSHA,
 		AdapterName:  adapterName,
-		RunnerImage:  pol.RunnerImageTag(runnerCLIVersion()),
+		RunnerImage:  pol.RunnerImageTag(runnerimage.ContentVersion()),
 		MCPServers:   serverSpecs,
 	}, planDir)
 	if err != nil {
@@ -877,4 +877,3 @@ func digestSuffix(digest string) string {
 
 // runnerCLIVersion feeds the runner image tag derivation (§R7: a new CLI
 // version is what triggers a runner image rebuild).
-func runnerCLIVersion() string { return version.Version }
