@@ -143,3 +143,31 @@ publish:
 		t.Errorf("empty include: %v", err)
 	}
 }
+
+// A transport-level or 5xx failure is retried with the SAME Idempotency-Key,
+// so the registry replays an already-accepted submission instead of the
+// retry colliding on V3 "version exists" (agentry#22).
+func TestPublishRetriesUploadWithSameKey(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv(envToken, "agy_testtoken")
+	fr := newFakeRegistry(t)
+	fr.submitStatus = "published"
+	fr.submitFails = 1
+
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "publish", publishWorkspace(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "retrying with the same Idempotency-Key") {
+		t.Errorf("no retry notice in %s", stdout)
+	}
+	fr.mu.Lock()
+	keys := append([]string(nil), fr.submitKeys...)
+	fr.mu.Unlock()
+	if len(keys) != 2 {
+		t.Fatalf("upload attempts = %d, want 2 (one 503, one 202)", len(keys))
+	}
+	if keys[0] == "" || keys[0] != keys[1] || !strings.HasPrefix(keys[0], "publish-") {
+		t.Fatalf("Idempotency-Key per attempt = %q; want one non-empty key reused", keys)
+	}
+}

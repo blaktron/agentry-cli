@@ -148,9 +148,13 @@ type fakeAgent struct {
 // CLI hits, plus request capture for assertions (facet forwarding, yank
 // reasons, install-intent hints, token attachment).
 type fakeRegistry struct {
-	t      *testing.T
-	srv    *httptest.Server
-	agents map[string]*fakeAgent
+	// submitKeys records the Idempotency-Key of every upload attempt;
+	// submitFails makes that many attempts answer 503 first (agentry#22).
+	submitKeys  []string
+	submitFails int
+	t           *testing.T
+	srv         *httptest.Server
+	agents      map[string]*fakeAgent
 
 	signer *ecdsa.PrivateKey
 	keyID  string
@@ -292,6 +296,17 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 	})
 
 	mux.HandleFunc("POST /api/v1/agents/{ns}/{name}/versions", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		fr.submitKeys = append(fr.submitKeys, r.Header.Get("Idempotency-Key"))
+		fail := fr.submitFails > 0
+		if fail {
+			fr.submitFails--
+		}
+		fr.mu.Unlock()
+		if fail {
+			writeProblem(w, http.StatusServiceUnavailable, "unavailable", "try again")
+			return
+		}
 		writeJSON(w, http.StatusAccepted, fr.versionDoc("0.1.0", fr.submitStatus))
 	})
 
