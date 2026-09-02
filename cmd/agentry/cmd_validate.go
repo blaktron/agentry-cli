@@ -25,10 +25,10 @@ func newValidateCmd() *cobra.Command {
 	var strict, rulesUpdate bool
 	cmd := &cobra.Command{
 		Use:   "validate [dir]",
-		Short: "Validate a workspace offline (manifest rules V1-V8 + S1/S3/S4 scan)",
+		Short: "Validate a workspace offline (manifest rules V1-V9 + S1/S3/S4 scan)",
 		Long: "Validate a workspace offline with the same code the registry runs at submit\n" +
 			"time (D-12 local/remote parity), over the files publish.include would ship:\n\n" +
-			"  manifest  rules V1-V8, in a public-publish context so V7 runs\n" +
+			"  manifest  rules V1-V9, in a public-publish context so V7 runs\n" +
 			"  S1        content-sniffed executables and nested archives (critical),\n" +
 			"            non-UTF-8 text (low) — the checks that used to reject a\n" +
 			"            workspace at submit after it passed locally\n" +
@@ -90,6 +90,11 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 		Name:      m.Name,
 		Public:    true,
 		Files:     files,
+		// V9 compares the skill entrypoint's frontmatter with the manifest;
+		// the path is repo-relative and validated by V4 before it is read.
+		ReadFile: func(p string) ([]byte, error) {
+			return os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))) //nolint:gosec // validated repo-relative path in the workspace
+		},
 	})
 	var errCount, warnCount int
 	for _, issue := range issues {
@@ -100,7 +105,7 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 		}
 	}
 	if len(issues) == 0 {
-		_, _ = fmt.Fprintln(out, "manifest: OK (rules V1-V8, public-publish context)")
+		_, _ = fmt.Fprintln(out, "manifest: OK (rules V1-V9, public-publish context)")
 	} else {
 		_, _ = fmt.Fprintf(out, "manifest: %d error(s), %d warning(s)\n", errCount, warnCount)
 		printManifestIssues(out, issues)

@@ -12,7 +12,7 @@ import (
 )
 
 // TestInitScaffoldsValidate: for each kind, init a workspace and run the
-// REAL validate command over it, expecting a full PASS (manifest V1-V8, S1
+// REAL validate command over it, expecting a full PASS (manifest V1-V9, S1
 // inventory, S3/S4 scan with the embedded bundle).
 func TestInitScaffoldsValidate(t *testing.T) {
 	isolateEnv(t)
