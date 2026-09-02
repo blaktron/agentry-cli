@@ -234,6 +234,18 @@ func writeSecretsFile(p Params, path string) error {
 	return nil
 }
 
+// SecretResolvable reports whether name would resolve at run time: from
+// the overrides (an MCP profile) first, then the policy source — the same
+// order writeSecretsFile uses, exposed so `agentry doctor` can predict an
+// exit-11 refusal without starting anything. Values never leave here.
+func SecretResolvable(name string, overrides map[string]string, src policy.SecretSource) bool {
+	if v, ok := overrides[name]; ok && v != "" {
+		return true
+	}
+	v, ok := lookupSecret(name, src)
+	return ok && v != ""
+}
+
 // lookupSecret resolves one name from the operator source (§R9, Q-R3).
 func lookupSecret(name string, src policy.SecretSource) (string, bool) {
 	switch src.Mode {

@@ -194,6 +194,11 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 	fr := &fakeRegistry{t: t, agents: map[string]*fakeAgent{}, userHandle: "tester", submitStatus: "published"}
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
 	mux.HandleFunc("GET /api/v1/meta", func(w http.ResponseWriter, _ *http.Request) {
 		body := map[string]any{"version": "9.9.9", "apiVersion": "v1", "features": map[string]bool{}}
 		if fr.metaMinCLI != "" {
