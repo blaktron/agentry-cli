@@ -8,9 +8,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -24,6 +27,11 @@ import (
 const (
 	publishPollInterval = 2 * time.Second
 	publishPollBudget   = 5 * time.Minute
+	// submitAttempts bounds upload retries. Each attempt carries the same
+	// Idempotency-Key (§9.1), so a retry after a transport failure or a 5xx
+	// replays the accepted submission instead of colliding on V3 "version
+	// exists" (agentry#22).
+	submitAttempts = 3
 )
 
 // newPublishCmd builds the publish command.
@@ -126,11 +134,50 @@ func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, ou
 		return nil, fmt.Errorf("finish multipart body: %w", err)
 	}
 
-	resp, err := client.SubmitVersionWithBodyWithResponse(ctx, m.Namespace, m.Name, mw.FormDataContentType(), &body)
+	key, err := newIdempotencyKey()
 	if err != nil {
-		return nil, fmt.Errorf("upload version: %w", err)
+		return nil, err
 	}
-	return resp, nil
+	raw := body.Bytes()
+	withKey := func(_ context.Context, req *http.Request) error {
+		req.Header.Set("Idempotency-Key", key)
+		return nil
+	}
+	var last error
+	for attempt := 1; attempt <= submitAttempts; attempt++ {
+		resp, err := client.SubmitVersionWithBodyWithResponse(ctx, m.Namespace, m.Name,
+			mw.FormDataContentType(), bytes.NewReader(raw), withKey)
+		switch {
+		case err != nil:
+			last = fmt.Errorf("upload version: %w", err)
+		case resp.StatusCode() >= 500:
+			last = fmt.Errorf("upload version: registry answered %d", resp.StatusCode())
+		default:
+			return resp, nil
+		}
+		if attempt == submitAttempts {
+			break
+		}
+		_, _ = fmt.Fprintf(out, "upload attempt %d failed (%v); retrying with the same Idempotency-Key\n", attempt, last)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt) * 2 * time.Second):
+		}
+	}
+	return nil, last
+}
+
+// newIdempotencyKey is one publish invocation's key: random, so two
+// deliberate publishes of the same bytes are not confused, and constant
+// across this invocation's retries, so the server replays rather than
+// re-runs (agentry#22).
+func newIdempotencyKey() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("idempotency key: %w", err)
+	}
+	return "publish-" + hex.EncodeToString(b), nil
 }
 
 // pollVerdict polls the version until it reaches a terminal state, printing
