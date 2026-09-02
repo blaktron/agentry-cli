@@ -249,6 +249,9 @@ type Budgets struct {
 	// MaxTurns kills the run after this many tool-call events (exit 16);
 	// 0 = unlimited.
 	MaxTurns int `json:"maxTurns"`
+	// MaxCostUSD kills the run once the reported running cost exceeds it
+	// (exit 16); 0 = unlimited.
+	MaxCostUSD float64 `json:"maxCostUsd,omitempty"`
 }
 
 // MCPServerSpec is one declared MCP server, resolved to its exact

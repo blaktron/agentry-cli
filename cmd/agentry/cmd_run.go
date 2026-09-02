@@ -54,6 +54,7 @@ type runOpts struct {
 	policyPath         string
 	timeout            int
 	maxTurns           int
+	maxCost            float64
 	yes                bool
 	allowUnsigned      bool
 	prepare            bool
@@ -110,6 +111,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
 	f.IntVar(&opts.timeout, "timeout", 0, "override the policy timeout (seconds)")
 	f.IntVar(&opts.maxTurns, "max-turns", -1, "override the policy tool-call budget (0 = unlimited)")
+	f.Float64Var(&opts.maxCost, "max-cost", -1, "override the policy cost budget in USD; the run is killed (exit 16) once the harness reports more (0 = unlimited)")
 	f.BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	f.BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "run a release with no registry attestation (required for --local)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
@@ -286,6 +288,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if opts.maxTurns >= 0 {
 		budgets.MaxTurns = opts.maxTurns
+	}
+	if opts.maxCost >= 0 {
+		budgets.MaxCostUSD = opts.maxCost
 	}
 
 	var overrides map[string]string

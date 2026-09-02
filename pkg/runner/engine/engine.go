@@ -353,11 +353,15 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// looping agent instead of billing it to completion (§R8 exit 16).
 	pr, pw := io.Pipe()
 	collector := &eventCollector{
-		adapter:  p.Adapter,
-		events:   eventsFile,
-		maxTurns: p.Budgets.MaxTurns,
+		adapter:    p.Adapter,
+		events:     eventsFile,
+		maxTurns:   p.Budgets.MaxTurns,
+		maxCostUSD: p.Budgets.MaxCostUSD,
 		overBudget: func() {
 			cancelCause(errBudget)
+		},
+		overCost: func() {
+			cancelCause(errCostBudget)
 		},
 	}
 	done := make(chan struct{})
@@ -388,6 +392,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	switch {
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
+	case context.Cause(agentCtx) == errCostBudget:
+		out.err = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", collector.costUSD, p.Budgets.MaxCostUSD))
 	case errors.Is(context.Cause(agentCtx), context.DeadlineExceeded):
 		out.err = Classify(ExitTimeout, fmt.Errorf("run timed out after %ds", p.Budgets.TimeoutSeconds))
 	case runErr != nil:
@@ -402,7 +408,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	return out
 }
 
-var errBudget = errors.New("turn budget exceeded")
+var (
+	errBudget     = errors.New("turn budget exceeded")
+	errCostBudget = errors.New("cost budget exceeded")
+)
 
 // finalResult applies the §R2 output convention: json-kind results must
 // parse (exit 17 otherwise); text results pass through.
@@ -438,12 +447,19 @@ type eventCollector struct {
 	events     io.Writer
 	maxTurns   int
 	overBudget func()
+	// maxCostUSD > 0 makes the harness's reported running cost a hard
+	// stop (agentry-cli#7, DR-4). Usage events carry a running total on
+	// docker-agent; the collector keeps the high-water mark, so a harness
+	// that reported per-call costs would under-enforce, never over-kill.
+	maxCostUSD float64
+	overCost   func()
 
 	turns              int
 	inTok, outTok      int64
 	costUSD            float64
 	lastText           string
 	budgetTripped      bool
+	costTripped        bool
 	harnessErrReported string
 }
 
@@ -470,6 +486,10 @@ func (c *eventCollector) consume(r io.Reader) {
 				c.outTok += ev.OutputTokens
 				if ev.CostUSD > c.costUSD {
 					c.costUSD = ev.CostUSD
+				}
+				if c.maxCostUSD > 0 && c.costUSD > c.maxCostUSD && !c.costTripped && c.overCost != nil {
+					c.costTripped = true
+					c.overCost()
 				}
 			case adapter.EventError:
 				c.harnessErrReported = ev.Text
