@@ -1,7 +1,7 @@
 // `agentry init` (§11): scaffold a new agent workspace with a per-kind
 // agent.yaml matching PLAN §5.2, README.md, a LICENSE placeholder, and the
-// kind's entrypoint file. Import wizards (--from=path|skill|mcp) are
-// deferred to a later milestone.
+// kind's entrypoint file. --from imports an existing SKILL.md or MCP
+// server.json instead (cmd_init_from.go).
 package main
 
 import (
@@ -19,22 +19,40 @@ import (
 // newInitCmd builds the init command.
 func newInitCmd() *cobra.Command {
 	var kind, name, namespace string
+	var ff fromFlags
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
 		Short: "Scaffold a new BriefAgent workspace (agent.yaml, README, LICENSE, entrypoint)",
 		Long: "Scaffold a new BriefAgent workspace: a per-kind agent.yaml (PLAN §5.2), README.md,\n" +
 			"a LICENSE placeholder note, and the kind's entrypoint file.\n\n" +
-			"Import wizards (--from=path|skill|mcp) are deferred to a later milestone.",
+			"--from PATH imports an existing source instead of scaffolding: an Agent Skills\n" +
+			"SKILL.md (with its sibling files) or an MCP registry server.json (declared under\n" +
+			"capabilities.mcpServers with an exact pin and its secret names). The capability\n" +
+			"contract is never guessed from the source: on a terminal the wizard asks, with\n" +
+			"hints from the source as defaults; otherwise pass --egress and --secrets\n" +
+			"(\"none\" allowed; --exec, --fs-read, --fs-write optional).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
 			if len(args) == 1 {
 				dir = args[0]
 			}
+			if ff.from != "" {
+				if !cmd.Flags().Changed("kind") {
+					kind = ""
+				}
+				return runInitFrom(cmd, dir, kind, name, namespace, ff)
+			}
 			return runInit(cmd, dir, kind, name, namespace)
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", string(manifest.KindSkill), "BriefAgent kind: skill | prompt-agent | mcp-server")
+	cmd.Flags().StringVar(&ff.from, "from", "", "import an existing SKILL.md or server.json (file or directory) instead of scaffolding")
+	cmd.Flags().StringVar(&ff.egress, "egress", "", "with --from: egress hosts (comma-separated, \"*\", or none)")
+	cmd.Flags().StringVar(&ff.secrets, "secrets", "", "with --from: secret env var NAMES (comma-separated, or none)")
+	cmd.Flags().StringVar(&ff.exec, "exec", "", "with --from: commands the agent executes (comma-separated; default none)")
+	cmd.Flags().StringVar(&ff.fsRead, "fs-read", "none", "with --from: filesystem read: none | workspace")
+	cmd.Flags().StringVar(&ff.fsWrite, "fs-write", "none", "with --from: filesystem write: none | workspace")
 	cmd.Flags().StringVar(&name, "name", "", "BriefAgent name (default: the directory basename)")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "owning namespace handle (default: derived from $USER)")
 	return cmd
@@ -99,7 +117,6 @@ func runInit(cmd *cobra.Command, dir, kind, name, namespace string) error {
 	_, _ = fmt.Fprintln(out, "  1. edit agent.yaml (summary, capabilities) and the entrypoint content")
 	_, _ = fmt.Fprintln(out, "  2. replace LICENSE with the full license text")
 	_, _ = fmt.Fprintln(out, "  3. agentry validate "+dir)
-	_, _ = fmt.Fprintln(out, "note: import wizards (--from=path|skill|mcp) are deferred to a later milestone")
 	return nil
 }
 
