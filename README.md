@@ -79,8 +79,8 @@ host agent application instead of the gateway path.
 
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
-As-built architecture: [ARCHITECTURE.md](https://github.com/blaktron/agentry-notes/blob/main/agentry-cli/ARCHITECTURE.md). Immutable
-specifications: [RUNNER-PLAN.md](https://github.com/blaktron/agentry-notes/blob/main/agentry-cli/RUNNER-PLAN.md) and
-[RUNNER-PLAN-2.md](https://github.com/blaktron/agentry-notes/blob/main/agentry-cli/RUNNER-PLAN-2.md); divergences:
+As-built architecture: [ARCHITECTURE.md](https://github.com/blaktron/agentry-notes/blob/main/ARCHITECTURE.md) §6
+in agentry-notes. The original design records (RUNNER-PLAN, -2, -3) are archived there under
+[archive/agentry-cli/](https://github.com/blaktron/agentry-notes/tree/main/archive/agentry-cli); divergences:
 [RUNNER-DEVIATIONS.md](https://github.com/blaktron/agentry-notes/blob/main/agentry-cli/RUNNER-DEVIATIONS.md); acceptance:
 `make accept-runner` (the docker E2E self-skips without a daemon).
