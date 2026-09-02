@@ -60,6 +60,10 @@ type FakeForeground struct {
 	// Block, when set, waits for ctx cancellation and then returns
 	// (exit 137) — how tests exercise timeout/budget kills.
 	Block bool
+	// Before, when set, runs with the spec before the scripted result is
+	// produced — how tests leave files in a mounted directory the way a
+	// real builder would.
+	Before func(r RunSpec)
 }
 
 // record appends a call.
@@ -159,6 +163,9 @@ func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, st
 	f.mu.Unlock()
 	if fg == nil {
 		return 0, nil
+	}
+	if fg.Before != nil {
+		fg.Before(r)
 	}
 	if stdin != nil {
 		b, _ := io.ReadAll(stdin)
