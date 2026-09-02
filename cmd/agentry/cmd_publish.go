@@ -1,8 +1,9 @@
 // `agentry publish` (§11): submit a version and follow the pipeline to a
 // verdict. --tag submits an existing repo tag (git-tag source); without it
 // the CLI packs the deterministic archive locally and uploads it
-// (cli-upload source, §6.5). Progress is polled every 2s — SSE streaming is
-// deferred (§11 allows "SSE/poll").
+// (cli-upload source, §6.5). Progress arrives over the registry's event
+// stream when it has one (agentry#65), else it is polled every 2s (§11
+// allows "SSE/poll").
 package main
 
 import (
@@ -45,7 +46,8 @@ func newPublishCmd() *cobra.Command {
 			"(git-tag source). Without --tag the CLI packs the deterministic archive\n" +
 			"locally from publish.include and uploads it (cli-upload source); the\n" +
 			"server re-validates and re-packs — client packing is never trusted.\n\n" +
-			"Progress is polled every 2s until published, rejected, or needs_review\n" +
+			"Progress streams from the registry (stage by stage) until published, rejected,\n" +
+			"or needs_review; registries without the stream are polled every 2s\n" +
 			"(SSE streaming deferred). Exits non-zero on rejection.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,7 +97,7 @@ func runPublish(cmd *cobra.Command, dir, tag string) error {
 	v := resp.JSON202
 	_, _ = fmt.Fprintf(out, "version %s accepted (status %s) — waiting for the pipeline verdict\n", v.Version, v.Status)
 
-	return pollVerdict(cmd.Context(), client, out, m.Namespace, m.Name, v)
+	return waitVerdict(cmd.Context(), client, httpClient, reg, token, out, m.Namespace, m.Name, v)
 }
 
 // submitUpload packs the deterministic archive locally (WalkWorkspace →
