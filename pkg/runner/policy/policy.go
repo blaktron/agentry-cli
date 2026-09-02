@@ -331,12 +331,14 @@ func (p *Policy) Validate() error {
 }
 
 // RunnerImageTag returns the local runner image tag: the policy override,
-// or a tag derived from the CLI version.
-func (p *Policy) RunnerImageTag(cliVersion string) string {
+// or a tag derived from version — which every client passes as
+// runnerimage.ContentVersion() (agentry-cli#6), so the CLI and the desktop
+// app share one image for one embedded build context.
+func (p *Policy) RunnerImageTag(version string) string {
 	if p.Images.Runner != "" {
 		return p.Images.Runner
 	}
-	v := cliVersion
+	v := version
 	ok := v != ""
 	for _, r := range v {
 		safe := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||

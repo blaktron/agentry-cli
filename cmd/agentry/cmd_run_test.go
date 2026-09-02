@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/blaktron/agentry-cli/runnerimage"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,7 +83,7 @@ func TestHomeImageDirAndDigestSuffix(t *testing.T) {
 }
 
 func TestRunnerCLIVersionFeedsImageTag(t *testing.T) {
-	if runnerCLIVersion() == "" {
+	if runnerimage.ContentVersion() == "" {
 		t.Error("runnerCLIVersion is empty — the runner image tag would be unversioned")
 	}
 }
