@@ -42,7 +42,11 @@ type Resolved struct {
 	// sanitized package name.
 	ID string `json:"id"`
 	// BinName is the launchable entry: the npm bin name, or the PyPI
-	// console script (assumed = the normalized project name, DR-11).
+	// console script. For PyPI the JSON API does not expose entry points,
+	// so resolution starts from the normalized project name and
+	// EnsureInstalled replaces it with the console script the installed
+	// distribution actually declares (entry_points.txt, agentry-cli#13 /
+	// DR-11); the recorded resolution carries the resolved name.
 	BinName string `json:"binName"`
 	// Integrity is what the registry advertised for the artifact (npm SRI
 	// or "sha256:<hex>" for PyPI — the pure-Python wheel when one exists).
@@ -259,9 +263,10 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 	return Resolved{
 		Source: "pypi", Package: pkg, Version: version,
 		ID: sanitizeID("pypi", pkg),
-		// DR-11: the console script is assumed to equal the normalized
-		// project name (the JSON API does not expose entry points).
-		BinName:   pkg,
+		// Provisional (DR-11): the JSON API does not expose entry points,
+		// so start from the normalized project name; the builder reads
+		// the real console script from the installed dist (below).
+		BinName:   normalizePyPIName(pkg),
 		Integrity: integrity,
 		Artifacts: artifacts,
 	}, nil
@@ -308,6 +313,11 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 				(prior.Integrity != "" && r.Integrity != "" && prior.Integrity != r.Integrity) {
 				return fmt.Errorf("server store for %s holds %s@%s (%s) but the registry now resolves %s@%s (%s) — the recorded pin is the trust decision; remove the profile to accept the change",
 					r.ID, prior.Package, prior.Version, prior.Integrity, r.Package, r.Version, r.Integrity)
+			}
+			if prior.BinName != "" {
+				// The store knows which console script the install
+				// produced; the fresh resolution only has the guess.
+				r.BinName = prior.BinName
 			}
 			_, _ = fmt.Fprintf(logw, "mcp server %s@%s already installed (reusing the signature's store)\n", r.Package, r.Version)
 			continue
@@ -370,6 +380,11 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		if code != 0 {
 			return fmt.Errorf("install %s: builder exited %d", r.ID, code)
 		}
+		if r.Source == "pypi" {
+			if err := adoptConsoleScript(hostDir, r, logw); err != nil {
+				return err
+			}
+		}
 
 		r.InstalledAt = time.Now().UTC().Format(time.RFC3339)
 		b, err := json.MarshalIndent(r, "", "  ")
@@ -431,6 +446,77 @@ func writeArtifactSums(hostDir string, artifacts map[string]string) error {
 	return nil
 }
 
+// consoleScriptsFile is where the PyPI builder leaves the console scripts
+// the installed distribution declares (one name per line, from its
+// entry_points metadata), read back by adoptConsoleScript.
+const consoleScriptsFile = "console-scripts"
+
+// normalizePyPIName applies PEP 503 normalization: lower-case, with every
+// run of '-', '_' or '.' collapsed to a single '-'.
+func normalizePyPIName(pkg string) string {
+	var b strings.Builder
+	dash := false
+	for _, ch := range strings.ToLower(pkg) {
+		if ch == '-' || ch == '_' || ch == '.' {
+			dash = true
+			continue
+		}
+		if dash && b.Len() > 0 {
+			b.WriteByte('-')
+		}
+		dash = false
+		b.WriteRune(ch)
+	}
+	return b.String()
+}
+
+// chooseConsoleScript picks the launchable entry among the console scripts
+// a PyPI distribution declares: the one named like the project wins, a
+// sole script is taken as-is, and otherwise the first in sorted order
+// (deterministic, and reported so the choice is visible in the log). ok is
+// false when the dist declares no console script at all.
+func chooseConsoleScript(pkg string, names []string) (name string, ok bool) {
+	clean := make([]string, 0, len(names))
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			clean = append(clean, n)
+		}
+	}
+	if len(clean) == 0 {
+		return "", false
+	}
+	want := normalizePyPIName(pkg)
+	for _, n := range clean {
+		if normalizePyPIName(n) == want {
+			return n, true
+		}
+	}
+	sort.Strings(clean)
+	return clean[0], true
+}
+
+// adoptConsoleScript reads the console scripts the builder recorded for the
+// installed distribution and sets r.BinName to the launchable one. A dist
+// with no console script keeps the DR-11 guess (it will fail at gateway
+// health, as before) but says so in the log.
+func adoptConsoleScript(hostDir string, r *Resolved, logw io.Writer) error {
+	b, err := os.ReadFile(filepath.Join(hostDir, consoleScriptsFile)) //nolint:gosec // our store layout
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("install %s: read console scripts: %w", r.ID, err)
+	}
+	names := strings.Split(strings.TrimSpace(string(b)), "\n")
+	name, ok := chooseConsoleScript(r.Package, names)
+	if !ok {
+		_, _ = fmt.Fprintf(logw, "mcp server %s@%s declares no console script; launching %s (may fail at gateway health)\n", r.Package, r.Version, r.BinName)
+		return nil
+	}
+	if len(names) > 1 {
+		_, _ = fmt.Fprintf(logw, "mcp server %s@%s declares console scripts %s; launching %s\n", r.Package, r.Version, strings.Join(names, ", "), name)
+	}
+	r.BinName = name
+	return nil
+}
+
 // pipScript is the builder's shell for a PyPI server (see the pypi case in
 // EnsureInstalled). Kept as one string so the test can pin its shape.
 func pipScript(r *Resolved, regs policy.MCPRegistries) string {
@@ -450,5 +536,10 @@ func pipScript(r *Resolved, regs policy.MCPRegistries) string {
 			`echo "$want  $f" | sha256sum -c - >/dev/null || { echo "mcp install: $n does not match the advertised digest"; exit 4; }; done`,
 			p, p, artifactSumsFile, r.Package, r.Version),
 		fmt.Sprintf("%s/venv/bin/pip install --quiet --no-cache-dir %s --index-url %s --find-links %s/dl %s==%s", p, onlyBinary, idx, p, r.Package, r.Version),
+		// Record the console scripts the installed dist declares
+		// (agentry-cli#13): the host picks the launchable one from
+		// this file rather than assuming the project name.
+		fmt.Sprintf(`%s/venv/bin/python -c 'import importlib.metadata as m, sys; eps = sorted(e.name for e in m.distribution(sys.argv[1]).entry_points if e.group == "console_scripts"); open(sys.argv[2], "w").write("\n".join(eps) + "\n")' %s %s/%s`,
+			p, r.Package, p, consoleScriptsFile),
 	}, " && ")
 }

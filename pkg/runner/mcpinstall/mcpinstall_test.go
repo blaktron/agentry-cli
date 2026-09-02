@@ -199,3 +199,81 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 		t.Fatalf("pypiAllowSourceDists still wheel-only: %s", s)
 	}
 }
+
+// A PyPI server's launchable entry is the console script the installed
+// distribution declares, not the project name (agentry-cli#13 / DR-11):
+// the builder records entry points, the host adopts the right one, and a
+// later reuse of the store carries the recorded name.
+func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
+	store := t.TempDir()
+	fake := &dockerx.Fake{
+		ExistingImages: map[string]bool{"python:test": true},
+		Foreground: map[string]*dockerx.FakeForeground{
+			"agentry-mcpinstall-pypi-some-tool": {Before: func(r dockerx.RunSpec) {
+				if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, consoleScriptsFile), []byte("some-tool-cli\nsome_tool\n"), 0o600); err != nil {
+					t.Error(err)
+				}
+			}},
+		},
+	}
+	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
+	regs := policy.MCPRegistries{NPM: "http://unused.invalid", PyPI: "http://unused.invalid"}
+	res := []Resolved{{Source: "pypi", Package: "Some.Tool", Version: "1.0.0", ID: "pypi-some-tool", BinName: "some-tool", Integrity: "sha256:aa"}}
+	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if res[0].BinName != "some_tool" {
+		t.Fatalf("BinName = %q, want the declared script matching the project name", res[0].BinName)
+	}
+	if got := res[0].Command()[0]; !strings.HasSuffix(got, "/venv/bin/some_tool") {
+		t.Fatalf("command = %q", got)
+	}
+	// Reuse: the fresh resolution only knows the guess; the store knows better.
+	again := []Resolved{{Source: "pypi", Package: "Some.Tool", Version: "1.0.0", ID: "pypi-some-tool", BinName: "some-tool", Integrity: "sha256:aa"}}
+	if err := EnsureInstalled(t.Context(), fake, again, store, regs, images, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if again[0].BinName != "some_tool" {
+		t.Fatalf("reused BinName = %q", again[0].BinName)
+	}
+	if n := len(fake.Ops()); n != 2 { // ImageExists + RunForeground once; reuse touched docker not at all
+		t.Fatalf("docker ops on reuse: %v", fake.Ops())
+	}
+}
+
+func TestChooseConsoleScript(t *testing.T) {
+	cases := []struct {
+		pkg   string
+		names []string
+		want  string
+		ok    bool
+	}{
+		{"mcp-server-fetch", []string{"mcp-server-fetch"}, "mcp-server-fetch", true},
+		{"mcp_server_fetch", []string{"other", "mcp-server-fetch"}, "mcp-server-fetch", true},
+		{"Some.Tool", []string{"sometool-cli"}, "sometool-cli", true},
+		{"pkg", []string{"zeta", "alpha", ""}, "alpha", true},
+		{"pkg", []string{"", "  "}, "", false},
+		{"pkg", nil, "", false},
+	}
+	for _, c := range cases {
+		got, ok := chooseConsoleScript(c.pkg, c.names)
+		if got != c.want || ok != c.ok {
+			t.Errorf("chooseConsoleScript(%q, %v) = %q,%v want %q,%v", c.pkg, c.names, got, ok, c.want, c.ok)
+		}
+	}
+	if normalizePyPIName("Mcp__Server.Fetch-") != "mcp-server-fetch" {
+		t.Fatal(normalizePyPIName("Mcp__Server.Fetch-"))
+	}
+}
+
+// The builder script records the dist's console scripts after installing.
+func TestPipScriptRecordsConsoleScripts(t *testing.T) {
+	r := Resolved{Source: "pypi", Package: "mcp-server-fetch", Version: "0.6.2", ID: "pypi-mcp-server-fetch", BinName: "mcp-server-fetch"}
+	s := pipScript(&r, policy.MCPRegistries{PyPI: "http://pypi.invalid"})
+	if !strings.Contains(s, "console_scripts") || !strings.Contains(s, "/"+consoleScriptsFile) {
+		t.Fatalf("pip script does not record console scripts:\n%s", s)
+	}
+	if strings.Index(s, "pip install") > strings.Index(s, "console_scripts") {
+		t.Fatal("console scripts must be read after pip install")
+	}
+}
