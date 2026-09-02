@@ -195,6 +195,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Budgets: spec.Budgets{
 			TimeoutSeconds: in.Policy.Budgets.TimeoutSeconds,
 			MaxTurns:       in.Policy.Budgets.MaxTurns,
+			MaxCostUSD:     in.Policy.Budgets.MaxCostUSD,
 		},
 		Output: output,
 		Files:  map[string]string{},

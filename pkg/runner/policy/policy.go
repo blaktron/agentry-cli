@@ -156,6 +156,10 @@ type Budgets struct {
 	TimeoutSeconds int `yaml:"timeoutSeconds"`
 	// MaxTurns caps tool-call events (default 60; 0 = unlimited).
 	MaxTurns int `yaml:"maxTurns"`
+	// MaxCostUSD kills the run once the harness's reported running cost
+	// exceeds this many US dollars (exit 16); 0 = unlimited. Enforcement
+	// is only as good as the harness's usage events (DR-4).
+	MaxCostUSD float64 `yaml:"maxCostUsd"`
 }
 
 // Default returns the built-in policy.
@@ -397,6 +401,9 @@ secretSource:
 budgets:
   timeoutSeconds: 900
   maxTurns: 60
+  # maxCostUsd: 0 = unlimited; a positive value is a hard stop (exit 16)
+  # on the harness's reported running cost.
+  maxCostUsd: 0
 
 profiles:
   # A BriefAgent's MCP profile stores the keys/identities guided setup
