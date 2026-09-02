@@ -6,8 +6,12 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoginStoresTokenInConfigFallback(t *testing.T) {
@@ -97,5 +101,74 @@ func TestKeyringSetDisabled(t *testing.T) {
 	}
 	if keyringDisabled() != true {
 		t.Error("keyringDisabled must reflect the env var")
+	}
+}
+
+// The browser flow (agentry-cli#5): login starts a loopback listener, hands
+// the authorize URL to the browser, receives a one-time code and exchanges
+// it for the token at the registry — presenting the flow's own state — then
+// stores and verifies it exactly like a pasted PAT.
+func TestLoginViaBrowserExchangesCode(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+
+	var opened string
+	prev := openBrowser
+	openBrowser = func(u string) error {
+		opened = u
+		// The "browser": the registry's authorize page would 303 the
+		// loopback listener a code; do that directly.
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return err
+		}
+		cb := fmt.Sprintf("http://127.0.0.1:%s/callback?state=%s&code=agd_browser-code",
+			parsed.Query().Get("port"), url.QueryEscape(parsed.Query().Get("state")))
+		go func() {
+			// The listener may still be coming up: retry briefly, the way a
+			// real browser would simply arrive later.
+			for i := 0; i < 50; i++ {
+				res, err := http.Get(cb) //nolint:gosec // loopback test URL
+				if err == nil {
+					_ = res.Body.Close()
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}()
+		return nil
+	}
+	t.Cleanup(func() { openBrowser = prev })
+
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "login", "--browser")
+	if err != nil {
+		t.Fatalf("login --browser: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(opened, fr.url()+"/settings/tokens/desktop?port=") {
+		t.Fatalf("browser opened %q", opened)
+	}
+	if !strings.Contains(stdout, "logged in to "+fr.url()+" as "+fr.userHandle) {
+		t.Fatalf("stdout = %s", stdout)
+	}
+	fr.mu.Lock()
+	seen := append([]string(nil), fr.exchangeSeen...)
+	fr.mu.Unlock()
+	if len(seen) != 1 || !strings.HasPrefix(seen[0], "agd_browser-code|") || strings.HasSuffix(seen[0], "|") {
+		t.Fatalf("exchange presented %v; want the code with this flow's state", seen)
+	}
+	if strings.Contains(stdout+stderr, "agy_browsertoken") {
+		t.Fatal("the token was printed")
+	}
+}
+
+// Without a terminal and without --browser, login keeps the paste path.
+func TestLoginDefaultsToPasteWithoutTerminal(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	prev := openBrowser
+	openBrowser = func(string) error { t.Fatal("browser opened without a terminal"); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+	if _, _, err := runCLI(t, strings.NewReader("agy_newtoken\n"), "--registry", fr.url(), "login"); err != nil {
+		t.Fatal(err)
 	}
 }
