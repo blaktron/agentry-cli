@@ -28,6 +28,8 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/rules"
+
+	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
 // maxBundleBytes bounds what the CLI will read from the bundle endpoint.
@@ -106,6 +108,25 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 			semver, bundle.Version())
 	}
 
+	// Signature (agentry-cli#8 / agentry#25): the registry signs the bundle
+	// with its release key. Verified against the TOFU-pinned key set exactly
+	// like an install attestation; the digest we just recomputed is the
+	// subject we require. A present-but-invalid signature is fatal; an
+	// absent one (a registry that does not sign) is reported and tolerated,
+	// the same split `verify` makes (DEV-043).
+	att := trust.VerifyAttestation(ctx, httpClient, regURL, "", "/api/v1/ruleset-releases/latest/attestation", got)
+	switch att.State {
+	case trust.StateVerified:
+		_, _ = fmt.Fprintf(w, "rules: signature verified (key %s)\n", att.KeyID)
+		if att.FirstUse {
+			_, _ = fmt.Fprintln(w, "note: signing keys pinned on first use (TOFU) — run `agentry login` to pin deliberately")
+		}
+	case trust.StateUnsigned:
+		// Reported below, after the cache write.
+	default:
+		return "", fmt.Errorf("rule bundle signature %s: %s — refusing to cache it", att.State, att.Detail)
+	}
+
 	// Install atomically-ish: write to a sibling and rename over, so an
 	// interrupted update never leaves a half-written version directory that
 	// the loader would then pick as "newest".
@@ -130,7 +151,9 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 	}
 
 	_, _ = fmt.Fprintf(w, "rules: cached bundle %s (%s) from %s at %s\n", semver, got, regURL, final)
-	_, _ = fmt.Fprintln(w, "rules: pinned by digest; bundle-level signatures are not available yet (DEV-024)")
+	if att.State == trust.StateUnsigned {
+		_, _ = fmt.Fprintln(w, "rules: pinned by digest only — this registry publishes no bundle signature")
+	}
 	return semver, nil
 }
 

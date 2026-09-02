@@ -189,3 +189,53 @@ func TestLoadRulesBundlePrecedence(t *testing.T) {
 		t.Fatalf("broken env override = %v", err)
 	}
 }
+
+// A signed bundle verifies against the registry's published key (pinned on
+// first use); a signature over a different digest is refused and nothing is
+// cached (agentry-cli#8 / agentry#25).
+func TestFetchRulesBundleVerifiesSignature(t *testing.T) {
+	isolateEnv(t)
+	bundle, tar := bundleFixture(t)
+	fr := newFakeRegistry(t)
+	fr.enableSigning(t)
+	fr.bundleTar, fr.bundleVer, fr.bundleDigest, fr.bundleAttest = tar, bundle.Version(), bundle.Digest(), true
+
+	var out strings.Builder
+	semver, err := fetchRulesBundle(context.Background(), &out, fr.url())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if semver != bundle.Version() || !strings.Contains(out.String(), "signature verified") {
+		t.Fatalf("output = %s", out.String())
+	}
+	if strings.Contains(out.String(), "pinned by digest only") {
+		t.Fatalf("signed bundle reported as unsigned: %s", out.String())
+	}
+
+	fr.bundleBadSig = true
+	root, _ := rulesCacheDir()
+	_ = os.RemoveAll(root)
+	out.Reset()
+	if _, err := fetchRulesBundle(context.Background(), &out, fr.url()); err == nil || !strings.Contains(err.Error(), "signature") {
+		t.Fatalf("bad signature accepted: err=%v out=%s", err, out.String())
+	}
+	if _, statErr := os.Stat(filepath.Join(root, bundle.Version())); statErr == nil {
+		t.Fatal("a bundle with a bad signature was cached")
+	}
+}
+
+// A registry that signs releases but not bundles is still usable: the
+// bundle is pinned by digest and the output says so.
+func TestFetchRulesBundleUnsignedIsReported(t *testing.T) {
+	isolateEnv(t)
+	bundle, tar := bundleFixture(t)
+	fr := newFakeRegistry(t)
+	fr.bundleTar, fr.bundleVer, fr.bundleDigest = tar, bundle.Version(), bundle.Digest()
+	var out strings.Builder
+	if _, err := fetchRulesBundle(context.Background(), &out, fr.url()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "pinned by digest only") {
+		t.Fatalf("output = %s", out.String())
+	}
+}
