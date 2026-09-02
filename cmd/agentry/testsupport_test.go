@@ -148,6 +148,9 @@ type fakeAgent struct {
 // CLI hits, plus request capture for assertions (facet forwarding, yank
 // reasons, install-intent hints, token attachment).
 type fakeRegistry struct {
+	// exchangeSeen records code|state pairs presented to the desktop
+	// exchange endpoint (agentry-cli#5).
+	exchangeSeen []string
 	// bundleTar/bundleVer/bundleDigest serve the rule-bundle endpoints when
 	// set; bundleAttest signs the bundle (agentry-cli#8). bundleBadSig serves
 	// an envelope signed over a different digest.
@@ -326,6 +329,19 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		}
 		fr.mu.Unlock()
 		writeJSON(w, http.StatusOK, fr.versionDoc(r.PathValue("v"), status))
+	})
+
+	mux.HandleFunc("POST /api/v1/auth/desktop/exchange", func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Code, State string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		fr.mu.Lock()
+		fr.exchangeSeen = append(fr.exchangeSeen, body.Code+"|"+body.State)
+		fr.mu.Unlock()
+		if body.Code != "agd_browser-code" {
+			writeProblem(w, http.StatusForbidden, "forbidden", "invalid, expired, or already used sign-in code")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"token": "agy_browsertoken", "scopes": []string{"user:profile"}})
 	})
 
 	mux.HandleFunc("GET /api/v1/ruleset-releases/latest/bundle", func(w http.ResponseWriter, _ *http.Request) {

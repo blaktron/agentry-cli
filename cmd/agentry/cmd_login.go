@@ -1,31 +1,65 @@
-// `agentry login` (§11): read a PAT from stdin, verify it against GET /user,
-// store it — OS keychain first, config-file fallback for headless machines —
-// and pin the registry's signing keys (TOFU).
-//
-// §11's login row also names a "device-code or browser flow". That needs
-// server-side device-authorization endpoints which do not exist; the PAT
-// paste remains the only way in, recorded in DEVIATIONS as DEV-025 rather
-// than left as a silent gap.
+// `agentry login` (§11): obtain a PAT — through the browser (the default on
+// a terminal: the registry's authorize page mints a one-time code to a
+// loopback listener and this process exchanges it, agentry-cli#5 /
+// DEV-025 closure) or pasted from stdin (`--paste`, and the default when
+// stdin is not a terminal) — verify it against GET /user, store it (OS
+// keychain first, config-file fallback for headless machines), and pin the
+// registry's signing keys (TOFU).
 package main
 
 import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/authflow"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
+// openBrowser hands a URL to the system browser; tests replace it.
+var openBrowser = func(url string) error {
+	var c *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		c = exec.Command("open", url)
+	case "windows":
+		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		c = exec.Command("xdg-open", url)
+	}
+	return c.Start()
+}
+
+// stdinIsTerminal reports whether the command's input is an interactive
+// terminal — the case where a browser sign-in is the better default. An
+// injected reader (tests, a pipe) is never a terminal.
+func stdinIsTerminal(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
 // newLoginCmd builds the login command.
 func newLoginCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate to a registry with a personal access token",
-		Long: "Read a personal access token (agy_…) from stdin, verify it against the\n" +
-			"registry, and store it: in the OS keychain when available, else in\n" +
+		Long: "Sign in through the browser (default on a terminal): the registry's\n" +
+			"authorize page hands this process a one-time code on 127.0.0.1 and the\n" +
+			"token is minted on exchange, never shown. Or paste a personal access\n" +
+			"token (agy_…) on stdin with --paste (the default when stdin is not a\n" +
+			"terminal). Either way the token is verified against the registry and\n" +
+			"stored: in the OS keychain when available, else in\n" +
 			"~/.config/agentry/config.yaml (chmod 600) with a warning.\n\n" +
 			"Login also PINS the registry's DSSE signing keys on first use (§8.8\n" +
 			"trust-on-first-use). Pinning here rather than at the first verify is\n" +
@@ -38,21 +72,39 @@ func newLoginCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: runLogin,
 	}
+	cmd.Flags().Bool("browser", false, "sign in through the browser even when stdin is not a terminal")
+	cmd.Flags().Bool("paste", false, "paste a personal access token on stdin instead of signing in through the browser")
+	return cmd
 }
 
 // runLogin executes the login flow.
 func runLogin(cmd *cobra.Command, _ []string) error {
 	reg := registryURL()
-
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Paste a personal access token for %s (needs the user:profile scope): ", reg)
-	reader := bufio.NewReader(cmd.InOrStdin())
-	line, err := reader.ReadString('\n')
-	if err != nil && line == "" {
-		return fmt.Errorf("read token from stdin: %w", err)
+	forceBrowser, _ := cmd.Flags().GetBool("browser")
+	forcePaste, _ := cmd.Flags().GetBool("paste")
+	if forceBrowser && forcePaste {
+		return errors.New("--browser and --paste are mutually exclusive")
 	}
-	token := strings.TrimSpace(line)
-	if token == "" {
-		return errors.New("no token provided")
+	useBrowser := forceBrowser || (!forcePaste && stdinIsTerminal(cmd.InOrStdin()))
+
+	var token string
+	if useBrowser {
+		t, err := loginViaBrowser(cmd, reg)
+		if err != nil {
+			return err
+		}
+		token = t
+	} else {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Paste a personal access token for %s (needs the user:profile scope): ", reg)
+		reader := bufio.NewReader(cmd.InOrStdin())
+		line, err := reader.ReadString('\n')
+		if err != nil && line == "" {
+			return fmt.Errorf("read token from stdin: %w", err)
+		}
+		token = strings.TrimSpace(line)
+		if token == "" {
+			return errors.New("no token provided")
+		}
 	}
 
 	client, err := newAPIClientChecked(cmd, reg, token)
@@ -100,4 +152,27 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	// undo a login whose credential is already stored and verified.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", trust.PinAtLogin(cmd.Context(), httpClient, reg))
 	return nil
+}
+
+// loginViaBrowser runs the loopback flow: a one-shot listener, the
+// registry's authorize page in the browser, a code back, the token on
+// exchange. The URL is always printed so a machine without a browser
+// association (or with the browser on another host of a tailnet) can be
+// completed by hand; AGENTRY_NO_BROWSER=1 skips the open attempt.
+func loginViaBrowser(cmd *cobra.Command, reg string) (string, error) {
+	flow, err := authflow.Start()
+	if err != nil {
+		return "", err
+	}
+	defer flow.Close()
+	url := flow.AuthorizeURL(reg)
+	errOut := cmd.ErrOrStderr()
+	_, _ = fmt.Fprintf(errOut, "Sign in to %s in your browser:\n  %s\n", reg, url)
+	if os.Getenv("AGENTRY_NO_BROWSER") == "" {
+		if err := openBrowser(url); err != nil {
+			_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v — open the address above yourself)\n", err)
+		}
+	}
+	_, _ = fmt.Fprintln(errOut, "Waiting for the browser to finish (up to 5 minutes; Ctrl-C to abort, or use --paste)…")
+	return flow.Wait(cmd.Context())
 }
