@@ -18,7 +18,7 @@ func TestStreamVerdictFollowsEventsThenPolls(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/events"):
 			streamHits++
 			if r.Header.Get("Authorization") != "Bearer tok" {
-				http.Error(w, "no", 401)
+				http.Error(w, "no", http.StatusUnauthorized)
 				return
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
