@@ -77,6 +77,13 @@ type MCPRegistries struct {
 	NPM string `yaml:"npm,omitempty"`
 	// PyPI is the PyPI base URL (JSON API at /pypi/, index at /simple).
 	PyPI string `yaml:"pypi,omitempty"`
+	// PyPIAllowSourceDists lets the builder fall back to source
+	// distributions (which run the package's own build code inside the
+	// runtime image at install time). Off by default: only wheels are
+	// installed, for the declared server and its dependencies alike
+	// (agentry-cli#4). Turn on for a server that ships no wheel, knowing
+	// what it costs.
+	PyPIAllowSourceDists bool `yaml:"pypiAllowSourceDists,omitempty"`
 }
 
 // Profiles is the MCP-profile policy block.

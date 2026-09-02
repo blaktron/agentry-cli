@@ -45,8 +45,12 @@ type Resolved struct {
 	// console script (assumed = the normalized project name, DR-11).
 	BinName string `json:"binName"`
 	// Integrity is what the registry advertised for the artifact (npm SRI
-	// or "sha256:<hex>" for PyPI).
+	// or "sha256:<hex>" for PyPI — the pure-Python wheel when one exists).
 	Integrity string `json:"integrity,omitempty"`
+	// Artifacts (PyPI) maps every advertised filename to its sha256 hex,
+	// so the builder can verify whichever wheel pip picks for its platform
+	// against what the registry's metadata said (agentry-cli#4).
+	Artifacts map[string]string `json:"artifacts,omitempty"`
 	// InstalledAt is stamped by EnsureInstalled.
 	InstalledAt string `json:"installedAt,omitempty"`
 }
@@ -210,6 +214,7 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 	var meta struct {
 		URLs []struct {
 			PackageType string `json:"packagetype"`
+			Filename    string `json:"filename"`
 			Digests     struct {
 				SHA256 string `json:"sha256"`
 			} `json:"digests"`
@@ -220,11 +225,24 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 		return Resolved{}, err
 	}
 	integrity := ""
-	// Prefer the wheel's digest; fall back to any artifact.
+	artifacts := map[string]string{}
+	// The drift pin prefers the pure-Python wheel (one file for every
+	// platform), then any wheel, then any artifact; every advertised file
+	// is recorded so the builder can verify the one pip actually picks.
 	for _, art := range meta.URLs {
-		if art.PackageType == "bdist_wheel" && art.Digests.SHA256 != "" {
+		if art.Filename != "" && art.Digests.SHA256 != "" {
+			artifacts[art.Filename] = art.Digests.SHA256
+		}
+		if art.PackageType == "bdist_wheel" && art.Digests.SHA256 != "" && strings.HasSuffix(art.Filename, "-none-any.whl") {
 			integrity = "sha256:" + art.Digests.SHA256
-			break
+		}
+	}
+	if integrity == "" {
+		for _, art := range meta.URLs {
+			if art.PackageType == "bdist_wheel" && art.Digests.SHA256 != "" {
+				integrity = "sha256:" + art.Digests.SHA256
+				break
+			}
 		}
 	}
 	if integrity == "" {
@@ -245,6 +263,7 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 		// project name (the JSON API does not expose entry points).
 		BinName:   pkg,
 		Integrity: integrity,
+		Artifacts: artifacts,
 	}, nil
 }
 
@@ -311,9 +330,19 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 				"--no-audit", "--no-fund", "--ignore-scripts", "--loglevel", "error"}
 		case "pypi":
 			image = images.PythonRuntime
-			argv = []string{"sh", "-c",
-				fmt.Sprintf("python -m venv %s/venv && %s/venv/bin/pip install --quiet --index-url %s/simple %s==%s",
-					r.prefix(), r.prefix(), strings.TrimRight(regs.PyPI, "/"), r.Package, r.Version)}
+			// Wheels only, and the pinned artifact verified against the
+			// registry's advertised digest before anything is installed
+			// (agentry-cli#4, DR-12/DR-13): `pip download --no-deps` fetches
+			// exactly the declared package; the file it picked for this
+			// platform must be one the JSON API listed, with that digest;
+			// then the install runs from that verified file plus wheels
+			// for the dependency closure. A source distribution would run
+			// the package's own build code in the builder — refused unless
+			// policy pypiAllowSourceDists says so.
+			if err := writeArtifactSums(hostDir, r.Artifacts); err != nil {
+				return err
+			}
+			argv = []string{"sh", "-c", pipScript(r, regs)}
 		default:
 			return fmt.Errorf("unknown server source %q", r.Source)
 		}
@@ -379,4 +408,47 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// artifactSumsFile is the `sha256sum -c`-shaped list of every artifact the
+// registry advertised for the pinned release, written into the server's
+// store directory (mounted at the prefix) for the builder to check against.
+const artifactSumsFile = "artifacts.sha256"
+
+func writeArtifactSums(hostDir string, artifacts map[string]string) error {
+	names := make([]string, 0, len(artifacts))
+	for n := range artifacts {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		b.WriteString(artifacts[n] + "  " + n + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(hostDir, artifactSumsFile), []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("write artifact digests: %w", err)
+	}
+	return nil
+}
+
+// pipScript is the builder's shell for a PyPI server (see the pypi case in
+// EnsureInstalled). Kept as one string so the test can pin its shape.
+func pipScript(r *Resolved, regs policy.MCPRegistries) string {
+	p := r.prefix()
+	idx := strings.TrimRight(regs.PyPI, "/") + "/simple"
+	onlyBinary := "--only-binary=:all:"
+	if regs.PyPIAllowSourceDists {
+		onlyBinary = ""
+	}
+	return strings.Join([]string{
+		"set -e",
+		fmt.Sprintf("python -m venv %s/venv", p),
+		fmt.Sprintf("mkdir -p %s/dl", p),
+		fmt.Sprintf("%s/venv/bin/pip download --quiet --no-cache-dir --no-deps %s --index-url %s --dest %s/dl %s==%s", p, onlyBinary, idx, p, r.Package, r.Version),
+		fmt.Sprintf(`for f in %s/dl/*; do n=$(basename "$f"); want=$(grep " $n$" %s/%s | cut -d" " -f1); `+
+			`[ -n "$want" ] || { echo "mcp install: $n is not an artifact the registry advertised for %s==%s"; exit 3; }; `+
+			`echo "$want  $f" | sha256sum -c - >/dev/null || { echo "mcp install: $n does not match the advertised digest"; exit 4; }; done`,
+			p, p, artifactSumsFile, r.Package, r.Version),
+		fmt.Sprintf("%s/venv/bin/pip install --quiet --no-cache-dir %s --index-url %s --find-links %s/dl %s==%s", p, onlyBinary, idx, p, r.Package, r.Version),
+	}, " && ")
 }

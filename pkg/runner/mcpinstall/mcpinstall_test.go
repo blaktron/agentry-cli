@@ -26,7 +26,12 @@ func fakeRegistries(t *testing.T) policy.MCPRegistries {
 		_, _ = w.Write([]byte(`{"name":"no-bin","dist":{"tarball":"t","integrity":"sha512-BBB"}}`))
 	})
 	mux.HandleFunc("GET /pypi/mcp-server-fetch/0.6.2/json", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"urls":[{"packagetype":"bdist_wheel","digests":{"sha256":"cafe"}}]}`))
+		// A platform wheel listed first, then the pure-Python one, then the
+		// sdist: the pin must prefer none-any and record all three.
+		_, _ = w.Write([]byte(`{"urls":[
+		  {"packagetype":"bdist_wheel","filename":"mcp_server_fetch-0.6.2-cp312-manylinux_x86_64.whl","digests":{"sha256":"beef"}},
+		  {"packagetype":"bdist_wheel","filename":"mcp_server_fetch-0.6.2-py3-none-any.whl","digests":{"sha256":"cafe"}},
+		  {"packagetype":"sdist","filename":"mcp_server_fetch-0.6.2.tar.gz","digests":{"sha256":"f00d"}}]}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -67,6 +72,9 @@ func TestResolveAll(t *testing.T) {
 	}
 	if res[1].Integrity != "sha256:cafe" || res[1].BinName != "mcp-server-fetch" {
 		t.Fatalf("pypi resolution = %+v", res[1])
+	}
+	if len(res[1].Artifacts) != 3 || res[1].Artifacts["mcp_server_fetch-0.6.2-cp312-manylinux_x86_64.whl"] != "beef" {
+		t.Fatalf("pypi artifacts = %v, want all three advertised files", res[1].Artifacts)
 	}
 	if got := res[1].Command(); !strings.HasSuffix(got[0], "/venv/bin/mcp-server-fetch") {
 		t.Fatalf("pypi command = %v", got)
@@ -141,5 +149,53 @@ func TestSpecsCarryManifestFilters(t *testing.T) {
 	}
 	if len(s.Tools) != 1 || len(s.Secrets) != 1 || s.Egress[0] != "api.github.com" {
 		t.Fatalf("filters not carried: %+v", s)
+	}
+}
+
+// PyPI installs are wheel-only and verify the pinned artifact against the
+// registry's advertised digests before installing (agentry-cli#4); policy
+// can opt back into source distributions.
+func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
+	regs := fakeRegistries(t)
+	res, err := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{decl("", "mcp-server-fetch", "0.6.2")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := t.TempDir()
+	fake := &dockerx.Fake{}
+	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
+	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for _, c := range fake.Calls {
+		if c.Op == "RunForeground" && c.Run.Image == "python:test" {
+			script = strings.Join(c.Run.Argv, " ")
+		}
+	}
+	for _, want := range []string{
+		"pip download", "--no-deps", "--only-binary=:all:", "sha256sum -c",
+		"--find-links", "mcp-server-fetch==0.6.2", "artifacts.sha256",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("builder script lacks %q:\n%s", want, script)
+		}
+	}
+	if strings.Count(script, "--only-binary=:all:") != 2 {
+		t.Errorf("download and install must both be wheel-only:\n%s", script)
+	}
+	sums, err := os.ReadFile(filepath.Join(store, res[0].ID, "artifacts.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sums), "cafe  mcp_server_fetch-0.6.2-py3-none-any.whl") ||
+		!strings.Contains(string(sums), "beef  mcp_server_fetch-0.6.2-cp312-manylinux_x86_64.whl") {
+		t.Fatalf("artifact digests file = %q", sums)
+	}
+
+	// Policy opt-in: source distributions allowed → no --only-binary.
+	regs.PyPIAllowSourceDists = true
+	if s := pipScript(&res[0], regs); strings.Contains(s, "--only-binary") {
+		t.Fatalf("pypiAllowSourceDists still wheel-only: %s", s)
 	}
 }
