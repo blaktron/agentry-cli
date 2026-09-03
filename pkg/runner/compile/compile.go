@@ -139,7 +139,14 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	files := map[string][]byte{}
-	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, in.RunnerImage, extraServers, extraEntries, in.MCPServers); err != nil {
+	// The tools server runs in the shared runner image unless the agent
+	// declares exec, in which case it runs in that agent's exec image —
+	// the runner image minimized to the declared commands (agentry-cli#9).
+	toolsImage := in.RunnerImage
+	if t := spec.ExecImageTag(in.RunnerImage, caps.ExecCommands); t != "" {
+		toolsImage = t
+	}
+	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, extraServers, extraEntries, in.MCPServers); err != nil {
 		return nil, err
 	}
 
@@ -706,7 +713,7 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 		e["exec"] = "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled"
 	} else {
 		e["exec"] = "run_command restricted to argv0 allowlist + shim PATH {" + strings.Join(caps.ExecCommands, ", ") +
-			"}; tools image is not binary-minimal in v1 (RUNNER-DEVIATIONS DR-1)"
+			"}; tools container is the runner image minimized to exactly those binaries (per-BriefAgent exec image, agentry-cli#9)"
 	}
 	if len(secrets) == 0 {
 		e["secrets"] = "none declared"

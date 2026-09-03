@@ -11,6 +11,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // PlanVersion is the current plan schema major. The engine refuses plans
@@ -326,4 +328,25 @@ func ParsePlan(b []byte) (*Plan, error) {
 		return nil, fmt.Errorf("plan version %q not supported (want %q) — re-run to recompile", p.PlanVersion, PlanVersion)
 	}
 	return &p, nil
+}
+
+// ExecImageTag names the per-BriefAgent exec image (agentry-cli#9, DR-1
+// closure): the runner image minimized to exactly the declared commands.
+// Deterministic in (runner image, sorted commands) so the compiler can
+// reference it before the install step builds it. "" when no exec is
+// declared — the shared runner image serves.
+func ExecImageTag(runnerImage string, commands []string) string {
+	if len(commands) == 0 {
+		return ""
+	}
+	sorted := append([]string(nil), commands...)
+	sort.Strings(sorted)
+	sum := sha256.Sum256([]byte(runnerImage + "\x00" + strings.Join(sorted, "\x00")))
+	name := runnerImage
+	if i := strings.LastIndex(name, ":"); i > 0 && !strings.Contains(name[i:], "/") {
+		name = name[:i] + "-exec:" + name[i+1:] + "-" + hex.EncodeToString(sum[:6])
+	} else {
+		name += "-exec:" + hex.EncodeToString(sum[:6])
+	}
+	return name
 }

@@ -43,7 +43,7 @@
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
     "dataAccess": "declared tickets; no servers cataloged by policy (declaration recorded for audit)",
-    "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools image is not binary-minimal in v1 (RUNNER-DEVIATIONS DR-1)",
+    "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools container is the runner image minimized to exactly those binaries (per-BriefAgent exec image, agentry-cli#9)",
     "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
     "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
     "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN"
@@ -166,7 +166,7 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "06fa2829fa1849218349817cf2246ba2e3f2943acdf11d595bf005a379f6f849",
+    "gateway/catalog.yaml": "59f56460b8e70e000599557e2749b45f5911c95536541cf6f4c7867b0ae6a959",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "4dbca71b62adf7649658e1fb9fa4136dd85514f9aa5d5b068ff475d3a35376f5",

@@ -17,6 +17,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
@@ -35,6 +37,8 @@ const usageText = `usage: agentry-runner <mode> [flags]
         serve the §R3 MCP tools on stdio, configured by the compiled spec file
   proxy --allow <host[:port],...> [--addr :3128]
         run the CONNECT egress allowlist proxy (llm-proxy)
+  minimize <command> [<command>...]
+        (docker build only) delete every executable except the named commands
   probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60]
         wait until the MCP gateway answers an authed initialize with a 2xx
 `
@@ -56,6 +60,14 @@ func main() {
 		err = runProxy(os.Args[2:])
 	case "probe":
 		err = runProbe(os.Args[2:])
+	case "minimize":
+		// agentry-cli#9: `docker build` runs this once to strip every
+		// executable but the declared commands from the image.
+		if len(os.Args) < 3 {
+			err = errors.New("minimize: at least one command name is required")
+		} else {
+			err = minimize.Minimize("/", os.Args[2:], os.Stderr)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "agentry-runner: unknown mode %q\n", os.Args[1])
 		usageExit()
