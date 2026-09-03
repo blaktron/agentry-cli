@@ -8,6 +8,7 @@
 package compile
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -362,7 +364,28 @@ func loadOutputSchema(workspace string) ([]byte, spec.OutputSpec, error) {
 	if err := json.Unmarshal(b, &probe); err != nil {
 		return nil, spec.OutputSpec{}, fmt.Errorf("%s is not valid JSON: %w", OutputSchemaFile, err)
 	}
+	// The schema must itself be a valid JSON Schema: the engine validates
+	// the final message against it (DR-8 closed, agentry-cli#11), so a
+	// broken schema is a compile-time refusal, not a run-time surprise.
+	if _, err := CompileOutputSchema(b); err != nil {
+		return nil, spec.OutputSpec{}, fmt.Errorf("%s is not a valid JSON Schema: %w", OutputSchemaFile, err)
+	}
 	return b, spec.OutputSpec{SchemaFile: OutputSchemaFile, SchemaSHA256: sha256hex(b)}, nil
+}
+
+// CompileOutputSchema compiles output.schema.json bytes (draft 2020-12 by
+// default, whatever $schema names otherwise) into a validator the engine
+// runs the final message through.
+func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(OutputSchemaFile, doc); err != nil {
+		return nil, err
+	}
+	return c.Compile(OutputSchemaFile)
 }
 
 // toolSpec compiles the capability summary into the tools-server spec —

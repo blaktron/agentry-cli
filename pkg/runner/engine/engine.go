@@ -11,9 +11,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"io"
 	"os"
 	"path/filepath"
@@ -182,7 +185,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		return fail(env, outcome.err)
 	}
 
-	result, rerr := finalResult(p.Plan.Harness.ResultKind, outcome.lastText)
+	schema, serr := outputSchema(p)
+	if serr != nil {
+		return nil, serr
+	}
+	result, rerr := finalResult(p.Plan.Harness.ResultKind, outcome.lastText, schema)
 	if rerr != nil {
 		env.Result = receipt.TextResult(outcome.lastText)
 		return fail(env, rerr)
@@ -413,9 +420,32 @@ var (
 	errCostBudget = errors.New("cost budget exceeded")
 )
 
+// outputSchema loads and compiles the package's output.schema.json for a
+// json-kind plan (DR-8 closed, agentry-cli#11). The bytes are re-hashed
+// against the plan: the plan is what was accepted at install, the
+// workspace is what the run reads, and they must agree.
+func outputSchema(p Params) (*jsonschema.Schema, error) {
+	if p.Plan.Harness.ResultKind != "json" || p.Plan.Output.SchemaFile == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(filepath.Join(p.WorkspaceSrc, filepath.FromSlash(p.Plan.Output.SchemaFile))) //nolint:gosec // plan-named file under the verified workspace
+	if err != nil {
+		return nil, Classify(ExitCompile, fmt.Errorf("read %s: %w", p.Plan.Output.SchemaFile, err))
+	}
+	if sum := sha256.Sum256(raw); p.Plan.Output.SchemaSHA256 != "" && hex.EncodeToString(sum[:]) != p.Plan.Output.SchemaSHA256 {
+		return nil, Classify(ExitVerify, fmt.Errorf("%s does not match the plan's recorded digest — the workspace changed after install", p.Plan.Output.SchemaFile))
+	}
+	sch, err := compile.CompileOutputSchema(raw)
+	if err != nil {
+		return nil, Classify(ExitCompile, fmt.Errorf("%s: %w", p.Plan.Output.SchemaFile, err))
+	}
+	return sch, nil
+}
+
 // finalResult applies the §R2 output convention: json-kind results must
-// parse (exit 17 otherwise); text results pass through.
-func finalResult(kind, lastText string) (json.RawMessage, error) {
+// parse AND validate against output.schema.json (exit 17 otherwise, the
+// violation named); text results pass through.
+func finalResult(kind, lastText string, schema *jsonschema.Schema) (json.RawMessage, error) {
 	if kind != "json" {
 		return receipt.TextResult(lastText), nil
 	}
@@ -424,6 +454,18 @@ func finalResult(kind, lastText string) (json.RawMessage, error) {
 	if err := json.Unmarshal([]byte(candidate), &probe); err != nil {
 		return nil, Classify(ExitOutputSchema,
 			fmt.Errorf("package declares %s but the final message is not valid JSON: %v (raw output preserved in receipts)", compile.OutputSchemaFile, err))
+	}
+	if schema != nil {
+		// Validate the value the way the schema library expects it (its own
+		// JSON decoder keeps numbers exact).
+		val, err := jsonschema.UnmarshalJSON(strings.NewReader(candidate))
+		if err != nil {
+			return nil, Classify(ExitOutputSchema, fmt.Errorf("final message: %v", err))
+		}
+		if err := schema.Validate(val); err != nil {
+			return nil, Classify(ExitOutputSchema,
+				fmt.Errorf("final message does not satisfy %s: %v (raw output preserved in receipts)", compile.OutputSchemaFile, err))
+		}
 	}
 	return json.RawMessage(candidate), nil
 }

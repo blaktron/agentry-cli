@@ -625,3 +625,18 @@ func TestPolicyRefusalError(t *testing.T) {
 		t.Errorf("Error() = %q", got)
 	}
 }
+
+// A package whose output.schema.json is JSON but not a JSON Schema is
+// refused at compile time (DR-8 closed, agentry-cli#11): the engine will
+// validate the final message against it, so it must compile.
+func TestOutputSchemaMustBeAValidSchema(t *testing.T) {
+	if _, err := CompileOutputSchema([]byte(`{"type":"object","required":["a"]}`)); err != nil {
+		t.Fatalf("valid schema refused: %v", err)
+	}
+	if _, err := CompileOutputSchema([]byte(`{"type":"nonsense"}`)); err == nil {
+		t.Fatal("invalid schema type accepted")
+	}
+	if _, err := CompileOutputSchema([]byte(`{"properties":"not-an-object"}`)); err == nil {
+		t.Fatal("malformed properties accepted")
+	}
+}
