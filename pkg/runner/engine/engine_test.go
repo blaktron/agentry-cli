@@ -453,7 +453,7 @@ func TestTimeoutKillsRun(t *testing.T) {
 func TestJSONResultKindEnforced(t *testing.T) {
 	p, _ := fixture(t)
 	// Recompile with an output schema so ResultKind flips to json.
-	if err := os.WriteFile(filepath.Join(p.WorkspaceSrc, compile.OutputSchemaFile), []byte(`{"type":"object"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(p.WorkspaceSrc, compile.OutputSchemaFile), []byte(`{"type":"object","required":["answer"],"properties":{"answer":{"type":"integer"}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m, err := manifest.Parse([]byte(engineManifest))
@@ -482,6 +482,22 @@ func TestJSONResultKindEnforced(t *testing.T) {
 		var ce *ClassifiedError
 		if !errors.As(err, &ce) || ce.Code != ExitOutputSchema {
 			t.Fatalf("want exit %d, got %v", ExitOutputSchema, err)
+		}
+	})
+	// DR-8 closed (agentry-cli#11): valid JSON that violates the schema is
+	// exit 17 too, with the violation named.
+	t.Run("schema violation is exit 17", func(t *testing.T) {
+		line, _ := json.Marshal(map[string]any{"type": "agent_choice", "message": map[string]any{"content": `{"answer":"forty-two"}`}})
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: string(line) + "\n"},
+		}}
+		q := p
+		q.OutDir = t.TempDir()
+		_, err := Run(context.Background(), f, q)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitOutputSchema || !strings.Contains(err.Error(), "does not satisfy") {
+			t.Fatalf("want exit %d naming the violation, got %v", ExitOutputSchema, err)
 		}
 	})
 	t.Run("fenced json accepted", func(t *testing.T) {

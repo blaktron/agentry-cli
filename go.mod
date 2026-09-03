@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/blaktron/agentry v0.0.0-20260902093814-3b85958a15ce
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
 	gopkg.in/yaml.v3 v3.0.1
