@@ -249,7 +249,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
 	docker := dockerx.New()
-	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, pol.RunnerImageTag(runnerimage.ContentVersion()), homeImageDir(home), cmd.ErrOrStderr()); err != nil {
+	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
+	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
+		return engine.Classify(engine.ExitGateway, err)
+	}
+	// The per-BriefAgent exec image the plan names (agentry-cli#9).
+	if _, err := gateway.EnsureExecImage(cmd.Context(), docker, runnerTag, plan.Capabilities.ExecCommands, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	if len(resolvedServers) > 0 {

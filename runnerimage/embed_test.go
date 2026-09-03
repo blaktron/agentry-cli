@@ -46,6 +46,7 @@ func TestMaterializeLayout(t *testing.T) {
 		"runnerimage/toolsrv/paths.go",
 		"runnerimage/toolsrv/tools.go",
 		"runnerimage/netproxy/proxy.go",
+		"runnerimage/minimize/minimize.go",
 	} {
 		if !want[p] {
 			t.Fatalf("embedded context is missing %s", p)

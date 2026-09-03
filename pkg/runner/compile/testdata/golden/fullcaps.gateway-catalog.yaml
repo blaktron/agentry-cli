@@ -4,7 +4,7 @@ registry:
     description: Agentry BriefAgent tools server (generated per run)
     title: BriefAgent Tools
     type: server
-    image: agentry-runner:test
+    image: agentry-runner-exec:test-02b6d0e758bd
     command:
       - tools
       - --spec
