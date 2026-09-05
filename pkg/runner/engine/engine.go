@@ -36,8 +36,11 @@ import (
 // the runner's composability contract: a cron job or pipeline branches on
 // these, so each class has exactly one meaning.
 const (
-	ExitOK           = 0
-	ExitCLI          = 1
+	ExitOK  = 0
+	ExitCLI = 1
+	// ExitUsage: the invocation cannot work as asked (interactive without a
+	// terminal, an output format the mode cannot produce).
+	ExitUsage        = 2
 	ExitVerify       = 10
 	ExitPolicy       = 11
 	ExitCompile      = 12
