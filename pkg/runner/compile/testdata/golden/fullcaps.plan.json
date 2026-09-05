@@ -3,7 +3,7 @@
   "ref": "demo/full-caps@2.1.0",
   "digest": "sha256:0123456789abcdef",
   "source": "local",
-  "kind": "skill",
+  "kind": "",
   "summary": "Exercises every capability shape",
   "policySha256": "fixedpolicysha",
   "instruction": {

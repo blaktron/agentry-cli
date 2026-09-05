@@ -447,7 +447,7 @@ func TestRunRegistryDryRun(t *testing.T) {
 	_, policyPath := isolateRunnerHome(t)
 	fr := newFakeRegistry(t)
 	fr.enableSigning(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attSigned
 
 	args := []string{"--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--policy", policyPath}
@@ -479,7 +479,7 @@ func TestRunRegistryVerifyGates(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
 	fr := newFakeRegistry(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	base := []string{"--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--policy", policyPath}
 
 	_, _, err := runCLI(t, strings.NewReader(""), base...)

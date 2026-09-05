@@ -76,6 +76,9 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 	if err != nil {
 		return err
 	}
+	if m.Major() == 1 {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "note: schemaVersion 1 manifest (kind-classified); it still validates and publishes as autonomous-only. modes, intake and interactive need schemaVersion \"2\" — agentry init --modes scaffolds one.")
+	}
 
 	files, err := archive.WalkWorkspace(dir)
 	if err != nil {

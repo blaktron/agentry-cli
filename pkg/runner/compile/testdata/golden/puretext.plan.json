@@ -3,7 +3,7 @@
   "ref": "demo/pure-text@1.0.0",
   "digest": "sha256:0123456789abcdef",
   "source": "local",
-  "kind": "prompt-agent",
+  "kind": "",
   "summary": "A pure text agent",
   "policySha256": "fixedpolicysha",
   "instruction": {

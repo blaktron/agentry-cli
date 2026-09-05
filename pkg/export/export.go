@@ -1,5 +1,5 @@
 // Package export holds the interop exporters (§5.6): pure functions of
-// (archive, manifest, target) that emit the claude-skill, mcp, and agents-md
+// (archive, manifest, target) that emit the claude-skill and agents-md
 // install formats. Keeping them side-effect free makes them table-testable
 // without a registry, and lets any client — the CLI, the desktop app —
 // produce byte-identical installs from the same inputs.
@@ -7,15 +7,10 @@ package export
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // EnsureSkillFrontmatter returns content guaranteed to start with YAML
@@ -47,72 +42,8 @@ func EnsureSkillFrontmatter(content []byte, name, summary string) []byte {
 	return out.Bytes()
 }
 
-// MCPServerEntry is one server stanza in a client's .mcp.json.
-type MCPServerEntry struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-}
-
-// MCPEntryFromManifest builds the .mcp.json stanza for an installed
-// mcp-server: command and args from entrypoints.mcp, and empty-value env
-// placeholders for every declared secret (§5.6). Args naming archive files
-// are re-rooted under extractedRel (slash-separated, "" = config file sits
-// next to the extracted files).
-func MCPEntryFromManifest(m *manifest.Manifest, extractedRel string, archiveFiles map[string]bool) (MCPServerEntry, error) {
-	if m.Entrypoints.MCP == nil {
-		return MCPServerEntry{}, errors.New("manifest declares no mcp entrypoint")
-	}
-	entry := MCPServerEntry{Command: m.Entrypoints.MCP.Command}
-	for _, a := range m.Entrypoints.MCP.Args {
-		if extractedRel != "" && archiveFiles[a] {
-			a = path.Join(extractedRel, a)
-		}
-		entry.Args = append(entry.Args, a)
-	}
-	if len(m.Capabilities.Secrets) > 0 {
-		entry.Env = make(map[string]string, len(m.Capabilities.Secrets))
-		for _, s := range m.Capabilities.Secrets {
-			entry.Env[s] = ""
-		}
-	}
-	return entry, nil
-}
-
-// MergeMCPConfig upserts one server entry into a .mcp.json document,
-// preserving every existing server and any unknown top-level keys. The
-// output is deterministic (sorted keys, two-space indent, trailing newline),
-// so repeated merges are byte-idempotent.
-func MergeMCPConfig(existing []byte, name string, entry MCPServerEntry) ([]byte, error) {
-	root := map[string]any{}
-	if len(bytes.TrimSpace(existing)) > 0 {
-		if err := json.Unmarshal(existing, &root); err != nil {
-			return nil, fmt.Errorf("existing .mcp.json is not valid JSON (refusing to overwrite): %w", err)
-		}
-	}
-	servers, _ := root["mcpServers"].(map[string]any)
-	if servers == nil {
-		servers = map[string]any{}
-	}
-	raw, err := json.Marshal(entry)
-	if err != nil {
-		return nil, fmt.Errorf("encode server entry: %w", err)
-	}
-	var entryDoc map[string]any
-	if err := json.Unmarshal(raw, &entryDoc); err != nil {
-		return nil, fmt.Errorf("normalize server entry: %w", err)
-	}
-	servers[name] = entryDoc
-	root["mcpServers"] = servers
-	out, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("encode .mcp.json: %w", err)
-	}
-	return append(out, '\n'), nil
-}
-
 // AgentsMDSection renders the AGENTS.md section for one installed
-// prompt-agent (§5.6 agents-md target).
+// BriefAgent (§5.6 agents-md target).
 func AgentsMDSection(ns, name, version, summary, installPath string) string {
 	return AgentsMDSectionNote(ns, name, version, summary, installPath, "")
 }

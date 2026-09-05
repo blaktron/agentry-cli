@@ -11,37 +11,41 @@ import (
 	"testing"
 )
 
-// TestInitScaffoldsValidate: for each kind, init a workspace and run the
-// REAL validate command over it, expecting a full PASS (manifest V1-V9, S1
-// inventory, S3/S4 scan with the embedded bundle).
+// TestInitScaffoldsValidate: for each mode set, init a workspace and run the
+// REAL validate command over it, expecting a full PASS (manifest V1-V10, S1
+// inventory, S3/S4 scan with the embedded bundle). The scaffold is schema
+// v2: modes in the manifest, AGENT.md as the instruction file, and an
+// interactive block only when interactive is chosen.
 func TestInitScaffoldsValidate(t *testing.T) {
 	isolateEnv(t)
-	for _, kind := range []string{"skill", "prompt-agent", "mcp-server"} {
-		t.Run(kind, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "my-"+kind)
-			stdout, _, err := runCLI(t, nil, "init", dir, "--kind", kind, "--namespace", "acme")
+	for _, modes := range []string{"autonomous", "interactive", "autonomous,interactive"} {
+		t.Run(modes, func(t *testing.T) {
+			name := "my-" + strings.ReplaceAll(modes, ",", "-")
+			dir := filepath.Join(t.TempDir(), name)
+			stdout, _, err := runCLI(t, nil, "init", dir, "--modes", modes, "--namespace", "acme")
 			if err != nil {
 				t.Fatalf("init: %v", err)
 			}
-			if !strings.Contains(stdout, "initialized "+kind+" BriefAgent acme/my-"+kind) {
+			if !strings.Contains(stdout, "initialized BriefAgent acme/"+name+" (modes: "+modes+")") {
 				t.Errorf("init banner = %s", stdout)
 			}
 
-			for _, f := range []string{"agent.yaml", "README.md", "LICENSE"} {
+			for _, f := range []string{"agent.yaml", "README.md", "LICENSE", "AGENT.md"} {
 				if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 					t.Errorf("scaffold lacks %s", f)
 				}
 			}
-			entry := map[string]string{
-				"skill": "SKILL.md", "prompt-agent": "prompts/main.md", "mcp-server": "src/server.js",
-			}[kind]
-			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(entry))); err != nil {
-				t.Errorf("scaffold lacks the %s entrypoint %s", kind, entry)
+			raw, _ := os.ReadFile(filepath.Join(dir, "agent.yaml"))
+			yaml := string(raw)
+			if !strings.Contains(yaml, "schemaVersion: \"2\"") || strings.Contains(yaml, "\nkind:") {
+				t.Errorf("scaffold is not a schema v2 manifest:\n%s", yaml)
 			}
-			if kind == "mcp-server" {
-				if _, err := os.Stat(filepath.Join(dir, "package-lock.json")); err != nil {
-					t.Error("mcp-server scaffold lacks the V6 lockfile")
-				}
+			if want := "modes: [" + strings.ReplaceAll(modes, ",", ", ") + "]"; !strings.Contains(yaml, want) {
+				t.Errorf("manifest lacks %q:\n%s", want, yaml)
+			}
+			interactive := strings.Contains(modes, "interactive")
+			if got := strings.Contains(yaml, "\ninteractive:\n  opening:"); got != interactive {
+				t.Errorf("interactive block present = %v, want %v:\n%s", got, interactive, yaml)
 			}
 
 			vout, _, err := runCLI(t, nil, "validate", dir)
@@ -93,9 +97,18 @@ func TestInitGuards(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--namespace") {
 		t.Errorf("invalid namespace: %v", err)
 	}
-	_, _, err = runCLI(t, nil, "init", filepath.Join(t.TempDir(), "fine"), "--kind", "daemon")
-	if err == nil || !strings.Contains(err.Error(), "unknown --kind") {
-		t.Errorf("invalid kind: %v", err)
+	_, _, err = runCLI(t, nil, "init", filepath.Join(t.TempDir(), "fine"), "--modes", "daemon")
+	if err == nil || !strings.Contains(err.Error(), "unknown mode \"daemon\"") {
+		t.Errorf("invalid mode: %v", err)
+	}
+	_, _, err = runCLI(t, nil, "init", filepath.Join(t.TempDir(), "fine"), "--modes", "autonomous,autonomous")
+	if err == nil || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("repeated mode: %v", err)
+	}
+	// The withdrawn v1 flag points at its replacement instead of "unknown flag".
+	_, _, err = runCLI(t, nil, "init", filepath.Join(t.TempDir(), "fine"), "--kind", "skill")
+	if err == nil || !strings.Contains(err.Error(), "--modes") {
+		t.Errorf("withdrawn --kind: %v", err)
 	}
 }
 

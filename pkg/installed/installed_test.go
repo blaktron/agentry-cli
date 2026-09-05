@@ -18,10 +18,10 @@ import (
 // shapes become the flat, comparable form the capability diff (and the
 // install/run consent gate) reads.
 func TestSnapshotFlattensTheContract(t *testing.T) {
-	m, err := manifest.Parse([]byte(`schemaVersion: "1"
+	m, err := manifest.Parse([]byte(`schemaVersion: "2"
 name: snap
 namespace: demo
-kind: prompt-agent
+modes: [autonomous]
 version: 1.0.0
 summary: "snapshot fixture"
 capabilities:

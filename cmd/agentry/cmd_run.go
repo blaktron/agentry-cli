@@ -668,7 +668,7 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	// Everything here narrates to stderr: stdout is the run's result
 	// channel (§R8) and must stay pipeline-clean.
 	out := cmd.ErrOrStderr()
-	_, _ = fmt.Fprintf(out, "%s (%s)\n", meta.Ref, m.Kind)
+	_, _ = fmt.Fprintf(out, "%s (%s)\n", meta.Ref, modesLabel(m.SupportedModes()))
 	if m.Summary != "" {
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}

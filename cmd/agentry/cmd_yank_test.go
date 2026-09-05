@@ -12,7 +12,7 @@ func TestYankHappyPathForwardsReason(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_testtoken")
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "yank", "acme/demo@1.0.0", "--reason", "CVE-2026-0001")
 	if err != nil {
@@ -31,7 +31,7 @@ func TestYankHappyPathForwardsReason(t *testing.T) {
 func TestYankGuards(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 
 	// --reason is required by the flag layer itself.
 	_, _, err := runCLI(t, nil, "--registry", fr.url(), "yank", "acme/demo@1.0.0")

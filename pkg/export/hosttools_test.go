@@ -11,8 +11,8 @@ import (
 
 func capsFromYAML(t *testing.T, capsBlock string) manifest.Capabilities {
 	t.Helper()
-	yaml := "schemaVersion: \"1\"\nname: t\nnamespace: d\nkind: prompt-agent\nversion: 1.0.0\nsummary: \"t\"\n" +
-		capsBlock + "publish:\n  include: [agent.yaml]\n"
+	yaml := "schemaVersion: \"2\"\nname: t\nnamespace: d\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"t\"\n" +
+		capsBlock + "publish:\n  include: [agent.yaml, AGENT.md]\n"
 	m, err := manifest.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatalf("parse: %v", err)

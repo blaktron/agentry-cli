@@ -105,7 +105,7 @@ func TestDoctorLocalAgentReportsMissingImageAndSecret(t *testing.T) {
 func TestDoctorRegistryRefNotInstalledYet(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "hello", "skill", "hi").addVersion(t, "1.0.0", skillFiles("hello", ""))
+	fr.addAgent("acme", "hello", "autonomous", "hi").addVersion(t, "1.0.0", skillFiles("hello", ""))
 
 	out, _, err := runCLI(t, nil, "doctor", "acme/hello", "--registry", fr.url(), "--policy", policyPath)
 	if err != nil {

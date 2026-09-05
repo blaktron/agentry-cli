@@ -87,13 +87,13 @@ WILD=$("$AGENTRY" run --local testdata/runner/wildcard --dry-run --allow-unsigne
 echo "$WILD" | grep -q 'UNRESTRICTED' || fail "wildcard: enforcement must disclose itself"
 note "wildcard allowed by policy, loudly disclosed"
 
-# --- mcp-server package: not runnable (exit 12) ------------------------------
+# --- withdrawn v1 mcp-server package: not runnable (exit 12) -----------------
 set +e
 "$AGENTRY" run --local testdata/runner/toolserver --dry-run --allow-unsigned --yes --policy "$POLICY" >/dev/null 2>&1
 CODE=$?
 set -e
 [ "$CODE" -eq 12 ] || fail "toolserver: want exit 12, got $CODE"
-note "mcp-server refused as agent (exit 12)"
+note "v1 mcp-server package refused as agent (exit 12)"
 
 # --- --local without --allow-unsigned: verify class (exit 10) ----------------
 set +e

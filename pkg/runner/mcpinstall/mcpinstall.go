@@ -360,7 +360,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		if ok, err := d.ImageExists(ctx, image); err != nil {
 			return err
 		} else if !ok {
-			_, _ = fmt.Fprintf(logw, "pulling %s (first mcp-server install)\n", image)
+			_, _ = fmt.Fprintf(logw, "pulling %s (first MCP server install)\n", image)
 			if err := d.Pull(ctx, image); err != nil {
 				return fmt.Errorf("pull %s: %w", image, err)
 			}

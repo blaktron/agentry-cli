@@ -93,7 +93,6 @@ func fsAnswer(s string) string {
 
 // imported is what a source stated plus what the author answered.
 type imported struct {
-	Kind      manifest.Kind
 	Name      string
 	Namespace string
 	Summary   string
@@ -118,7 +117,7 @@ type capHints struct {
 }
 
 // runInitFrom performs the import.
-func runInitFrom(cmd *cobra.Command, dir, kind, name, namespace string, ff fromFlags) error {
+func runInitFrom(cmd *cobra.Command, dir, name, namespace string, ff fromFlags) error {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
@@ -134,9 +133,6 @@ func runInitFrom(cmd *cobra.Command, dir, kind, name, namespace string, ff fromF
 	imp, err := detectAndRead(src)
 	if err != nil {
 		return err
-	}
-	if kind != "" && kind != string(imp.Kind) {
-		return fmt.Errorf("--kind %s does not match the source (%s imports as %s)", kind, ff.from, imp.Kind)
 	}
 	if name != "" {
 		imp.Name = name
@@ -195,10 +191,8 @@ func runInitFrom(cmd *cobra.Command, dir, kind, name, namespace string, ff fromF
 	if _, ok := imp.Files["LICENSE"]; !ok {
 		generated = append(generated, scaffoldFile{"LICENSE", licenseNote})
 	}
-	if imp.Kind == manifest.KindSkill {
-		if _, ok := imp.Files["SKILL.md"]; !ok {
-			generated = append(generated, scaffoldFile{"SKILL.md", skillMD(imp.Name)})
-		}
+	if _, ok := imp.Files["SKILL.md"]; !ok {
+		generated = append(generated, scaffoldFile{"SKILL.md", skillMD(imp.Name)})
 	}
 	for _, f := range generated {
 		full := filepath.Join(absDir, f.path)
@@ -214,7 +208,7 @@ func runInitFrom(cmd *cobra.Command, dir, kind, name, namespace string, ff fromF
 	sort.Strings(created)
 
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "imported %s BriefAgent %s/%s from %s into %s\n", imp.Kind, imp.Namespace, imp.Name, ff.from, absDir)
+	_, _ = fmt.Fprintf(out, "imported BriefAgent %s/%s (modes: autonomous) from %s into %s\n", imp.Namespace, imp.Name, ff.from, absDir)
 	for _, p := range created {
 		_, _ = fmt.Fprintf(out, "  created %s\n", p)
 	}
@@ -276,7 +270,6 @@ func readSkill(path string) (*imported, error) {
 	}
 	srcDir := filepath.Dir(path)
 	imp := &imported{
-		Kind:    manifest.KindSkill,
 		Name:    front.Name,
 		Summary: oneLine(front.Description),
 		License: front.License,
@@ -427,7 +420,7 @@ func readServerJSON(path string) (*imported, error) {
 	if err := json.Unmarshal(raw, &sj); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	imp := &imported{Kind: manifest.KindSkill, Summary: oneLine(sj.Description), Version: sj.Version,
+	imp := &imported{Summary: oneLine(sj.Description), Version: sj.Version,
 		Files: map[string]string{}, Include: []string{"agent.yaml", "LICENSE", "README.md", "SKILL.md"}}
 	var hints capHints
 	for _, p := range sj.Packages {
@@ -588,16 +581,20 @@ func importedYAML(imp *imported) string {
 	if license == "" {
 		license = "Apache-2.0"
 	}
-	w(`schemaVersion: "1"`)
+	w(`schemaVersion: "2"`)
 	w("name: %s", imp.Name)
 	w("namespace: %s", imp.Namespace)
-	w("kind: %s", imp.Kind)
+	w("# Run modes: an import starts autonomous; add interactive (and an")
+	w("# interactive: block) once the instructions expect a conversation.")
+	w("modes: [%s]", manifest.ModeAutonomous)
 	w("version: %s", version)
 	w("summary: %s", q(imp.Summary))
 	w("license: %s", q(license))
 	w("")
+	w("# The imported SKILL.md is the instruction file; its frontmatter is")
+	w("# stripped before the body reaches the harness.")
 	w("entrypoints:")
-	w("  skill: SKILL.md")
+	w("  instruction: SKILL.md")
 	w("runtime:")
 	w("  interfaces: [claude-skill]")
 	w("")
