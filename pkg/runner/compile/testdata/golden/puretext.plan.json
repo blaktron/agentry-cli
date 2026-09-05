@@ -37,15 +37,15 @@
       "--servers",
       "agentry-tools",
       "--catalog",
-      "/mcp/catalog.yaml",
+      "/root/.docker/mcp/catalogs/catalog.yaml",
       "--registry",
-      "/mcp/registry.yaml",
+      "/root/.docker/mcp/catalogs/registry.yaml",
       "--config",
-      "/mcp/config.yaml",
+      "/root/.docker/mcp/catalogs/config.yaml",
       "--tools-config",
-      "/mcp/tools.yaml",
+      "/root/.docker/mcp/catalogs/tools.yaml",
       "--secrets",
-      "/mcp/secrets.env",
+      "/root/.docker/mcp/catalogs/secrets.env",
       "--block-network",
       "--verify-signatures",
       "--log-calls"
@@ -54,6 +54,10 @@
       {
         "name": "MCP_GATEWAY_AUTH_TOKEN",
         "fromRunToken": true
+      },
+      {
+        "name": "HOME",
+        "value": "/root"
       },
       {
         "name": "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
@@ -67,7 +71,7 @@
     "mounts": [
       {
         "source": "@@RUN_CFG@@/gateway",
-        "target": "/mcp",
+        "target": "/root/.docker/mcp/catalogs",
         "readOnly": true
       },
       {

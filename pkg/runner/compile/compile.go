@@ -413,6 +413,14 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	}
 }
 
+// GatewayConfigDir is where the rendered gateway files are mounted inside
+// the gateway container. It must be the gateway's own catalogs directory:
+// since v0.43 a local --catalog path "must resolve within Docker MCP
+// catalogs directory" (pkg/catalog, errUntrustedLocalPath) and the
+// gateway exits at startup otherwise (agentry-cli#41). HOME is pinned to
+// /root in the container env so the directory is the same on every host.
+const GatewayConfigDir = "/root/.docker/mcp/catalogs"
+
 // gatewaySpec builds the gateway container launch (§R4). The flag set is
 // compiled, and --block-network is unconditional: without it allowHosts is
 // advisory, which is the sharpest foot-gun the research flagged (§R11
@@ -428,17 +436,20 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary) spec.Gate
 			"--transport", "streaming",
 			"--port", fmt.Sprintf("%d", spec.GatewayPort),
 			"--servers", strings.Join(servers, ","),
-			"--catalog", "/mcp/catalog.yaml",
-			"--registry", "/mcp/registry.yaml",
-			"--config", "/mcp/config.yaml",
-			"--tools-config", "/mcp/tools.yaml",
-			"--secrets", "/mcp/secrets.env",
+			"--catalog", GatewayConfigDir + "/catalog.yaml",
+			"--registry", GatewayConfigDir + "/registry.yaml",
+			"--config", GatewayConfigDir + "/config.yaml",
+			"--tools-config", GatewayConfigDir + "/tools.yaml",
+			"--secrets", GatewayConfigDir + "/secrets.env",
 			"--block-network",
 			"--verify-signatures",
 			"--log-calls",
 		},
 		Env: []spec.EnvVar{
 			{Name: spec.GatewayAuthTokenEnv, FromRunToken: true},
+			// Pins the catalogs directory (see GatewayConfigDir); the
+			// image sets no HOME and runs as root.
+			{Name: "HOME", Value: "/root"},
 			// Bind-mount containment (gateway v0.43.1+): sources must
 			// resolve under these roots; writable binds need exact
 			// entries. Separator ":" — verified empirically at M-R2.
@@ -448,7 +459,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary) spec.Gate
 				Value: strings.Join(writable, ":")},
 		},
 		Mounts: []spec.Mount{
-			{Source: spec.PHCfg + "/gateway", Target: "/mcp", ReadOnly: true},
+			{Source: spec.PHCfg + "/gateway", Target: GatewayConfigDir, ReadOnly: true},
 			// The gateway drives the host daemon: that is its documented
 			// privilege level, and the reason the agent container never
 			// sees this socket (§R4).
