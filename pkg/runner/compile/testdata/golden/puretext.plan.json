@@ -83,7 +83,7 @@
     "adapter": "docker-agent",
     "model": "anthropic/claude-sonnet-4-5",
     "agent": {
-      "image": "docker/docker-agent:v1.128.0",
+      "image": "docker/docker-agent:1.128.0",
       "argv": [
         "run",
         "--exec",
