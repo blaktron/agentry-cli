@@ -34,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
@@ -46,6 +47,7 @@ import (
 // runOpts carries the run command's flags.
 type runOpts struct {
 	mode               string
+	intake             []string
 	input              string
 	out                string
 	outputFormat       string
@@ -121,6 +123,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
+	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the BriefAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	return cmd
@@ -289,6 +292,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return nil
 	}
 
+	answers, err := collectIntake(cmd, m, opts)
+	if err != nil {
+		return engine.Classify(engine.ExitCLI, err)
+	}
+
 	runID, err := engine.NewRunID()
 	if err != nil {
 		return err
@@ -309,9 +317,14 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		budgets.MaxCostUSD = opts.maxCost
 	}
 
-	var overrides map[string]string
+	overrides := map[string]string{}
 	if prof != nil {
-		overrides = prof.Secrets
+		for k, v := range prof.Secrets {
+			overrides[k] = v
+		}
+	}
+	for id, v := range answers.Secrets {
+		overrides[intake.SecretName(id)] = v
 	}
 	env, runErr := engine.Run(cmd.Context(), docker, engine.Params{
 		Plan:            plan,
@@ -321,6 +334,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		OutDir:          outDir,
 		Task:            taskReader(cmd, opts.input),
 		InputPaths:      opts.files,
+		Intake:          answers,
 		Adapter:         ad,
 		Policy:          pol,
 		SecretOverrides: overrides,
@@ -402,6 +416,26 @@ func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
 	_, _ = cmd.OutOrStdout().Write(b)
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "run plan sha256: %s\nplan dir: %s\nmode: %s (declared: %s)\n", shortHash(plan), planDir, plan.Mode, strings.Join(plan.Modes, ","))
 	return nil
+}
+
+// collectIntake answers the manifest's up-front questions (plan §3.5):
+// --intake presets first, then the terminal when there is one.
+func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts) (*intake.Answers, error) {
+	preset, err := intake.ParsePreset(opts.intake)
+	if err != nil {
+		return nil, err
+	}
+	if len(m.Intake) == 0 {
+		if len(preset) > 0 {
+			return nil, errors.New("--intake given but the BriefAgent asks no intake questions")
+		}
+		return nil, nil
+	}
+	var p setup.Prompter
+	if stdinIsTTY(cmd.InOrStdin()) {
+		p = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+	}
+	return intake.Collect(p, m.Intake, preset, m.Capabilities.Secrets)
 }
 
 // resolveRunMode applies the plan's default rule (§6.2): the flag wins; a

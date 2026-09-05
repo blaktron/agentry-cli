@@ -82,6 +82,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
 	}
+	if err := stageIntake(p, rd); err != nil {
+		return nil, err
+	}
 	// secrets.env dies unconditionally; the rest of the run dir only
 	// when not kept for debugging (§R11 invariant 6; KeepRunDir never
 	// keeps secrets).
@@ -103,6 +106,39 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "run-plan.json"), b, 0o644)
 	}
 	return rd, nil
+}
+
+// stageIntake writes the agent-side intake document and stages file
+// answers next to the other inputs; the non-secret document is also a
+// receipt (plan §3.5).
+func stageIntake(p Params, rd *runDirs) error {
+	if p.Intake.Empty() {
+		return nil
+	}
+	for _, path := range p.Intake.FilePaths() {
+		if _, err := os.Lstat(filepath.Join(rd.inputs, filepath.Base(path))); err == nil {
+			return Classify(ExitCLI, fmt.Errorf("intake file %s collides with an input of the same basename under %s", path, spec.InputsMount))
+		}
+		if err := stageInputs([]string{path}, rd.inputs); err != nil {
+			return err
+		}
+	}
+	const name = "intake.json"
+	if _, err := os.Lstat(filepath.Join(rd.inputs, name)); err == nil {
+		return Classify(ExitCLI, fmt.Errorf("an input named %s is reserved for the intake answers", name))
+	}
+	doc, err := json.MarshalIndent(p.Intake.Document(spec.InputsMount), "", "  ")
+	if err != nil {
+		return Classify(ExitCLI, fmt.Errorf("encode intake: %w", err))
+	}
+	doc = append(doc, '\n')
+	if err := os.WriteFile(filepath.Join(rd.inputs, name), doc, 0o644); err != nil { //nolint:gosec // agent-readable by design; carries no secret values
+		return Classify(ExitCLI, fmt.Errorf("stage intake: %w", err))
+	}
+	if err := os.WriteFile(filepath.Join(rd.receiptsDir, name), doc, 0o644); err != nil { //nolint:gosec // receipt
+		return Classify(ExitCLI, fmt.Errorf("intake receipt: %w", err))
+	}
+	return nil
 }
 
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,

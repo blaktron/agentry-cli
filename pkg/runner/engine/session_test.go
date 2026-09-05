@@ -18,6 +18,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
@@ -376,5 +377,55 @@ func TestStartSessionRefusesAutonomousPlan(t *testing.T) {
 	p, f := fixture(t) // autonomous plan
 	if _, err := StartSession(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "not an interactive plan") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// TestIntakeStagedAndReceipted: intake answers reach the agent as
+// /inputs/intake.json (secrets by name only), file answers are staged,
+// the receipt copy is written, and a session records an intake event.
+func TestIntakeStagedAndReceipted(t *testing.T) {
+	p, f := sessionFixture(t)
+	data := filepath.Join(t.TempDir(), "data.csv")
+	if err := os.WriteFile(data, []byte("a,b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p.Intake = &intake.Answers{
+		Values:  map[string]string{"region": "apac"},
+		Files:   map[string]string{"dataset": data},
+		Secrets: map[string]string{"api_token": "hush-hush-1234"},
+	}
+	happyFake(f)
+	h := &fakeHarness{}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get, done := collect(s)
+	env, err := s.End(context.Background(), false)
+	<-done
+	if err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	staged, err := os.ReadFile(filepath.Join(p.RunRoot, "runs", "5e5510", "inputs", "intake.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	_ = json.Unmarshal(staged, &doc)
+	if doc["region"] != "apac" || doc["dataset"] != "/inputs/data.csv" {
+		t.Errorf("intake.json = %s", staged)
+	}
+	if sec, _ := doc["api_token"].(map[string]any); sec["secret"] != "API_TOKEN" || strings.Contains(string(staged), "hush-hush") {
+		t.Errorf("secret answer staged wrongly: %s", staged)
+	}
+	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "5e5510", "inputs", "data.csv")); err != nil {
+		t.Errorf("file answer not staged: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(env.Receipts.Dir, "intake.json")); err != nil || !strings.Contains(string(b), "apac") || strings.Contains(string(b), "hush-hush") {
+		t.Errorf("intake receipt: %v %s", err, b)
+	}
+	if k := kinds(get()); k[session.KindIntake] != 1 {
+		t.Errorf("kinds = %v", k)
 	}
 }

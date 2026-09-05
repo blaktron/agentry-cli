@@ -26,6 +26,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -79,6 +80,10 @@ type Params struct {
 	// InputPaths are operator-provided files/directories copied into the
 	// run's read-only inputs channel (RUNNER-PLAN-2 §P4).
 	InputPaths []string
+	// Intake holds the answers to the manifest's up-front questions (plan
+	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
+	// secret answers already merged into SecretOverrides by the caller.
+	Intake *intake.Answers
 	// Adapter interprets the harness event stream.
 	Adapter adapter.Adapter
 	// Policy supplies the secret source.

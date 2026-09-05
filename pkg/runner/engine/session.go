@@ -117,6 +117,11 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := s.startHarness(ctx, token, rep); err != nil {
 		return fail(err)
 	}
+	if !p.Intake.Empty() {
+		if raw, err := json.Marshal(p.Intake.Receipt(spec.InputsMount)); err == nil {
+			s.emit(session.Event{Kind: session.KindIntake, Raw: raw})
+		}
+	}
 	go s.pump()
 	go s.watch()
 	if len(strings.TrimSpace(string(task))) > 0 {
