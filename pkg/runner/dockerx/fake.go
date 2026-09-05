@@ -64,6 +64,10 @@ type FakeForeground struct {
 	// produced — how tests leave files in a mounted directory the way a
 	// real builder would.
 	Before func(r RunSpec)
+	// Handler, when set, plays the container itself on the attached
+	// streams (an interactive harness for session tests); the scripted
+	// fields above are ignored.
+	Handler func(ctx context.Context, r RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 }
 
 // record appends a call.
@@ -150,7 +154,7 @@ func (f *Fake) RunDetached(_ context.Context, r RunSpec) error {
 }
 
 // RunForeground implements Client.
-func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	f.record("RunForeground", r.Name, r)
 	var fg *FakeForeground
 	f.mu.Lock()
@@ -166,6 +170,9 @@ func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, st
 	}
 	if fg.Before != nil {
 		fg.Before(r)
+	}
+	if fg.Handler != nil {
+		return fg.Handler(ctx, r, stdin, stdout, stderr)
 	}
 	if stdin != nil {
 		b, _ := io.ReadAll(stdin)

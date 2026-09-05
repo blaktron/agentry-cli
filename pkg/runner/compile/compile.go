@@ -182,6 +182,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("adapter %s: %w", adapterName, err)
 	}
+	if res.Session != nil {
+		res.Session.Budgets = sessionBudgets(m, in.Policy)
+	}
 	for name, content := range res.Files {
 		files[filepath.ToSlash(filepath.Join("harness", name))] = content
 	}
@@ -324,6 +327,21 @@ func fsMode(a manifest.FSAccess) (string, []string) {
 	default: // none or undeclared
 		return "none", nil
 	}
+}
+
+// sessionBudgets applies plan §6.7: the operator's caps, with the idle
+// timeout tightened by the manifest's interactive hint (never loosened).
+func sessionBudgets(m *manifest.Manifest, pol *policy.Policy) spec.SessionBudgets {
+	b := spec.SessionBudgets{
+		IdleTimeoutSeconds: pol.Sessions.IdleTimeoutSeconds,
+		MaxWallSeconds:     pol.Sessions.MaxWallSeconds,
+		MaxUserTurns:       pol.Sessions.MaxUserTurns,
+	}
+	if m.Interactive != nil && m.Interactive.IdleTimeoutSeconds > 0 &&
+		(b.IdleTimeoutSeconds == 0 || m.Interactive.IdleTimeoutSeconds < b.IdleTimeoutSeconds) {
+		b.IdleTimeoutSeconds = m.Interactive.IdleTimeoutSeconds
+	}
+	return b
 }
 
 // modeStrings renders a mode set for the plan.
