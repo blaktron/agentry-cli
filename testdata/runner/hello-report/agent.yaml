@@ -1,14 +1,14 @@
-schemaVersion: "1"
+schemaVersion: "2"
 name: hello-report
 namespace: fixtures
-kind: skill
+modes: [autonomous]
 version: 1.0.0
 summary: "Reads the workspace and writes a hello report — the E2E smoke agent"
 license: Apache-2.0
 tags: [fixture]
 
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 
 capabilities:
   filesystem:

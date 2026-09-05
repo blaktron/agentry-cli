@@ -40,24 +40,24 @@ func parseManifest(t *testing.T, yaml string) *manifest.Manifest {
 	return m
 }
 
-const pureTextYAML = `schemaVersion: "1"
+const pureTextYAML = `schemaVersion: "2"
 name: pure-text
 namespace: demo
-kind: prompt-agent
+modes: [autonomous]
 version: 1.0.0
 summary: "A pure text agent"
 publish:
   include: [agent.yaml, AGENT.md]
 `
 
-const fullCapsYAML = `schemaVersion: "1"
+const fullCapsYAML = `schemaVersion: "2"
 name: full-caps
 namespace: demo
-kind: skill
+modes: [autonomous, interactive]
 version: 2.1.0
 summary: "Exercises every capability shape"
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 capabilities:
   network:
     egress: [api.example.com, api.other.net]
@@ -71,16 +71,18 @@ publish:
   include: [agent.yaml, SKILL.md]
 `
 
-// workspaceFor writes the prompt files a manifest kind needs.
+// workspaceFor writes the instruction file a manifest names (its first
+// candidate: entrypoints.instruction, AGENT.md by default).
 func workspaceFor(t *testing.T, m *manifest.Manifest, extra map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	files := map[string]string{}
-	switch m.Kind {
-	case manifest.KindSkill:
-		files["SKILL.md"] = "---\nname: x\n---\n\nDo the skill task well.\n"
-	case manifest.KindPromptAgent:
-		files["AGENT.md"] = "You are a pure text agent.\n"
+	if c := m.InstructionCandidates(); len(c) > 0 {
+		if c[0] == "SKILL.md" {
+			files["SKILL.md"] = "---\nname: x\n---\n\nDo the skill task well.\n"
+		} else {
+			files[c[0]] = "You are a pure text agent.\n"
+		}
 	}
 	for k, v := range extra {
 		files[k] = v
@@ -229,7 +231,7 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			yaml := "schemaVersion: \"1\"\nname: matrix\nnamespace: demo\nkind: prompt-agent\nversion: 1.0.0\nsummary: \"m\"\n" +
+			yaml := "schemaVersion: \"2\"\nname: matrix\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"m\"\n" +
 				tc.caps + "publish:\n  include: [agent.yaml, AGENT.md]\n"
 			m := parseManifest(t, yaml)
 			ws := workspaceFor(t, m, nil)
@@ -277,7 +279,7 @@ func TestGatewayAlwaysBlocksNetwork(t *testing.T) {
 }
 
 func TestWildcardEgressPolicyGate(t *testing.T) {
-	yaml := "schemaVersion: \"1\"\nname: wild\nnamespace: demo\nkind: prompt-agent\nversion: 1.0.0\nsummary: \"w\"\n" +
+	yaml := "schemaVersion: \"2\"\nname: wild\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"w\"\n" +
 		"capabilities:\n  network:\n    egress: \"*\"\n" +
 		"publish:\n  include: [agent.yaml, AGENT.md]\n"
 	m := parseManifest(t, yaml)
@@ -329,18 +331,29 @@ func TestInstructionRules(t *testing.T) {
 			t.Error("runner contract postscript missing")
 		}
 	})
-	t.Run("prompt-agent requires AGENT.md or PROMPT.md", func(t *testing.T) {
+	t.Run("v2 instruction defaults to AGENT.md and must exist", func(t *testing.T) {
 		m := parseManifest(t, pureTextYAML)
-		ws := t.TempDir() // no prompt files at all
+		ws := t.TempDir() // no instruction file at all
 		_, err := Compile(Inputs{
 			Manifest: m, Digest: "sha256:x", Source: "local", WorkspaceDir: ws,
 			Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test",
 		}, t.TempDir())
-		if err == nil || !strings.Contains(err.Error(), "AGENT.md") {
-			t.Fatalf("want AGENT.md/PROMPT.md error, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "looked for AGENT.md") {
+			t.Fatalf("want missing-AGENT.md error, got %v", err)
 		}
 	})
-	t.Run("mcp-server is not runnable", func(t *testing.T) {
+	t.Run("v1 prompt-agent falls back from AGENT.md to PROMPT.md", func(t *testing.T) {
+		m := parseManifest(t, "schemaVersion: \"1\"\nname: old\nnamespace: demo\nkind: prompt-agent\nversion: 1.0.0\nsummary: \"v1\"\npublish:\n  include: [agent.yaml, PROMPT.md]\n")
+		ws := workspaceFor(t, m, map[string]string{"PROMPT.md": "Prompt body.\n"})
+		if err := os.Remove(filepath.Join(ws, "AGENT.md")); err != nil {
+			t.Fatal(err)
+		}
+		plan, _ := compileFixture(t, m, ws)
+		if plan.Instruction.SourcePath != "PROMPT.md" || plan.Kind != "prompt-agent" {
+			t.Fatalf("v1 plan = %s / kind %q", plan.Instruction.SourcePath, plan.Kind)
+		}
+	})
+	t.Run("v1 mcp-server is not runnable", func(t *testing.T) {
 		m := parseManifest(t, `schemaVersion: "1"
 name: toolsrv
 namespace: demo
@@ -427,10 +440,10 @@ func TestNoSecretValuesInPlan(t *testing.T) {
 
 // ---- dataAccess → operator-cataloged servers (§R3) ----
 
-const dataAccessYAML = `schemaVersion: "1"
+const dataAccessYAML = `schemaVersion: "2"
 name: data-access
 namespace: demo
-kind: prompt-agent
+modes: [autonomous]
 version: 1.0.0
 summary: "Declares semantic data access"
 capabilities:

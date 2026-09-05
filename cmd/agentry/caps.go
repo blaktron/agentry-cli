@@ -4,6 +4,9 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -107,14 +110,56 @@ func renderDataAccess(items []manifest.DataAccess) string {
 	return strings.Join(out, ", ")
 }
 
-// defaultTarget maps an agent kind to its §5.6 default install target.
-func defaultTarget(kind manifest.Kind) string {
-	switch kind {
-	case manifest.KindMCPServer:
-		return manifest.InterfaceMCP
-	case manifest.KindPromptAgent:
-		return manifest.InterfaceAgentsMD
-	default: // manifest.KindSkill and anything future
-		return manifest.InterfaceClaudeSkill
+// defaultTarget picks the §5.6 install target for a manifest: the first
+// entry of runtime.interfaces the CLI can emit, claude-skill when nothing
+// usable is listed. Interfaces are independent of run mode.
+func defaultTarget(m *manifest.Manifest) string {
+	for _, it := range m.Runtime.Interfaces {
+		if slices.Contains(validTargets, it) {
+			return it
+		}
 	}
+	return manifest.InterfaceClaudeSkill
+}
+
+// modeStrings converts a mode set for joining.
+func modeStrings[T ~string](modes []T) []string {
+	out := make([]string, len(modes))
+	for i, m := range modes {
+		out[i] = string(m)
+	}
+	return out
+}
+
+// modesLabel renders a mode set for one-line output ("autonomous,interactive");
+// an empty set — a v1 release of the withdrawn kind — reads "none".
+func modesLabel[T ~string](modes []T) string {
+	if len(modes) == 0 {
+		return "none"
+	}
+	return strings.Join(modeStrings(modes), ",")
+}
+
+// parseModes reads a comma-separated --modes value into the manifest's
+// closed set, in the order given, refusing repeats and unknown names.
+func parseModes(s string) ([]manifest.Mode, error) {
+	var out []manifest.Mode
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		m := manifest.Mode(part)
+		if !m.Valid() {
+			return nil, fmt.Errorf("unknown mode %q in --modes (want autonomous, interactive, or autonomous,interactive)", part)
+		}
+		if slices.Contains(out, m) {
+			return nil, fmt.Errorf("--modes lists %s twice", m)
+		}
+		out = append(out, m)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("--modes must name at least one run mode: autonomous, interactive")
+	}
+	return out, nil
 }

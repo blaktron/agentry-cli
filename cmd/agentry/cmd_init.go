@@ -5,26 +5,31 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/blaktron/agentry/pkg/manifest"
+	"github.com/spf13/cobra"
 )
 
 // newInitCmd builds the init command.
 func newInitCmd() *cobra.Command {
-	var kind, name, namespace string
+	var modes, kind, name, namespace string
 	var ff fromFlags
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
-		Short: "Scaffold a new BriefAgent workspace (agent.yaml, README, LICENSE, entrypoint)",
-		Long: "Scaffold a new BriefAgent workspace: a per-kind agent.yaml (PLAN §5.2), README.md,\n" +
-			"a LICENSE placeholder note, and the kind's entrypoint file.\n\n" +
+		Short: "Scaffold a new BriefAgent workspace (agent.yaml, README, LICENSE, AGENT.md)",
+		Long: "Scaffold a new BriefAgent workspace: a manifest schema v2 agent.yaml declaring the\n" +
+			"run modes, README.md, a LICENSE placeholder note, and the AGENT.md instruction file.\n\n" +
+			"--modes lists the run modes the BriefAgent supports: autonomous (runs from its\n" +
+			"files, writes its output and receipts, and ends), interactive (a chat session in\n" +
+			"the terminal or the desktop app under exactly the same controls), or both,\n" +
+			"comma-separated. Interactive adds an interactive: block with the opening message.\n\n" +
 			"--from PATH imports an existing source instead of scaffolding: an Agent Skills\n" +
 			"SKILL.md (with its sibling files) or an MCP registry server.json (declared under\n" +
 			"capabilities.mcpServers with an exact pin and its secret names). The capability\n" +
@@ -33,20 +38,24 @@ func newInitCmd() *cobra.Command {
 			"(\"none\" allowed; --exec, --fs-read, --fs-write optional).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("kind") {
+				return errors.New("--kind was withdrawn with manifest schema v2 (kinds became run modes): pass --modes autonomous, --modes interactive, or --modes autonomous,interactive")
+			}
 			dir := "."
 			if len(args) == 1 {
 				dir = args[0]
 			}
 			if ff.from != "" {
-				if !cmd.Flags().Changed("kind") {
-					kind = ""
-				}
-				return runInitFrom(cmd, dir, kind, name, namespace, ff)
+				return runInitFrom(cmd, dir, name, namespace, ff)
 			}
-			return runInit(cmd, dir, kind, name, namespace)
+			return runInit(cmd, dir, modes, name, namespace)
 		},
 	}
-	cmd.Flags().StringVar(&kind, "kind", string(manifest.KindSkill), "BriefAgent kind: skill | prompt-agent | mcp-server")
+	cmd.Flags().StringVar(&modes, "modes", string(manifest.ModeAutonomous), "run modes the BriefAgent supports: autonomous | interactive | autonomous,interactive")
+	// The v1 flag stays parseable so an old habit gets a pointer to --modes
+	// rather than cobra's "unknown flag".
+	cmd.Flags().StringVar(&kind, "kind", "", "withdrawn: use --modes")
+	_ = cmd.Flags().MarkHidden("kind")
 	cmd.Flags().StringVar(&ff.from, "from", "", "import an existing SKILL.md or server.json (file or directory) instead of scaffolding")
 	cmd.Flags().StringVar(&ff.egress, "egress", "", "with --from: egress hosts (comma-separated, \"*\", or none)")
 	cmd.Flags().StringVar(&ff.secrets, "secrets", "", "with --from: secret env var NAMES (comma-separated, or none)")
@@ -59,12 +68,10 @@ func newInitCmd() *cobra.Command {
 }
 
 // runInit performs the scaffold.
-func runInit(cmd *cobra.Command, dir, kind, name, namespace string) error {
-	k := manifest.Kind(kind)
-	switch k {
-	case manifest.KindSkill, manifest.KindPromptAgent, manifest.KindMCPServer:
-	default:
-		return fmt.Errorf("unknown --kind %q (want skill, prompt-agent, or mcp-server)", kind)
+func runInit(cmd *cobra.Command, dir, modesFlag, name, namespace string) error {
+	modes, err := parseModes(modesFlag)
+	if err != nil {
+		return err
 	}
 
 	absDir, err := filepath.Abs(dir)
@@ -91,7 +98,7 @@ func runInit(cmd *cobra.Command, dir, kind, name, namespace string) error {
 		return fmt.Errorf("namespace %q is invalid (lowercase [a-z0-9-], 1-38 chars); pass --namespace", namespace)
 	}
 
-	files := scaffoldFiles(k, name, namespace)
+	files := scaffoldFiles(modes, name, namespace)
 	var created []string
 	for _, f := range files {
 		full := filepath.Join(absDir, filepath.FromSlash(f.path))
@@ -109,12 +116,12 @@ func runInit(cmd *cobra.Command, dir, kind, name, namespace string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "initialized %s BriefAgent %s/%s in %s\n", k, namespace, name, absDir)
+	_, _ = fmt.Fprintf(out, "initialized BriefAgent %s/%s (modes: %s) in %s\n", namespace, name, modesLabel(modes), absDir)
 	for _, p := range created {
 		_, _ = fmt.Fprintf(out, "  created %s\n", p)
 	}
 	_, _ = fmt.Fprintln(out, "next steps:")
-	_, _ = fmt.Fprintln(out, "  1. edit agent.yaml (summary, capabilities) and the entrypoint content")
+	_, _ = fmt.Fprintln(out, "  1. edit agent.yaml (summary, capabilities) and the instructions in AGENT.md")
 	_, _ = fmt.Fprintln(out, "  2. replace LICENSE with the full license text")
 	_, _ = fmt.Fprintln(out, "  3. agentry validate "+dir)
 	return nil
@@ -142,39 +149,76 @@ type scaffoldFile struct {
 	content string
 }
 
-// scaffoldFiles returns the per-kind scaffold set (PLAN §5.1/§5.2 layout).
-func scaffoldFiles(k manifest.Kind, name, namespace string) []scaffoldFile {
-	files := []scaffoldFile{
-		{"agent.yaml", agentYAML(k, name, namespace)},
+// scaffoldFiles returns the scaffold set (PLAN §5.1/§5.2 layout, manifest
+// schema v2): the manifest, the README, the LICENSE note, and AGENT.md.
+func scaffoldFiles(modes []manifest.Mode, name, namespace string) []scaffoldFile {
+	return []scaffoldFile{
+		{"agent.yaml", agentYAML(modes, name, namespace)},
 		{"README.md", readmeMD(name, namespace)},
 		{"LICENSE", licenseNote},
+		{manifest.DefaultInstructionFile, agentMD(name)},
 	}
-	switch k {
-	case manifest.KindSkill:
-		files = append(files, scaffoldFile{"SKILL.md", skillMD(name)})
-	case manifest.KindPromptAgent:
-		files = append(files, scaffoldFile{"prompts/main.md", promptMainMD(name)})
-	case manifest.KindMCPServer:
-		files = append(files,
-			scaffoldFile{"src/server.js", serverJS(name)},
-			scaffoldFile{"package-lock.json", packageLockJSON(name)},
-		)
-	}
-	return files
 }
 
-// agentYAML renders the per-kind manifest template (PLAN §5.2).
-func agentYAML(k manifest.Kind, name, namespace string) string {
-	header := fmt.Sprintf(`schemaVersion: "1"
+// todoSummary is the placeholder summary; AGENT.md's frontmatter repeats it
+// so V9 (frontmatter vs manifest) is quiet until the author edits both.
+const todoSummary = "TODO one line (at most 140 chars) saying what this BriefAgent does"
+
+// agentYAML renders the schema v2 manifest template (PLAN §5.2): every mode
+// field is present, commented out where the chosen modes do not use it.
+func agentYAML(modes []manifest.Mode, name, namespace string) string {
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, `schemaVersion: "2"
 name: %s
 namespace: %s
-kind: %s
+# Run modes this BriefAgent supports, one or both:
+#   autonomous  — runs from its files (after any intake questions), writes
+#                 its output and receipts, and ends
+#   interactive — the same plan and the same controls, run as a chat session
+#                 in the terminal or the desktop app: the agent can ask, the
+#                 user can answer and add read-only inputs, and nobody can
+#                 widen the capabilities declared below
+modes: [%s]
 version: 0.1.0
-summary: "TODO one line (at most 140 chars) saying what this BriefAgent does"
+summary: %q
 license: Apache-2.0
-`, name, namespace, k)
 
-	capabilities := `
+# The instruction file (AGENT.md when omitted). A leading YAML frontmatter
+# block is stripped; the body is what the harness runs.
+entrypoints:
+  instruction: AGENT.md
+
+# Questions asked before a run starts, in either mode; the answers are
+# staged read-only for the agent at /inputs/intake.json. At most 20:
+# intake:
+#   - id: dataset
+#     prompt: "Path to the dataset to analyse"
+#     type: file            # text (default) | secret | choice | file
+#     required: true
+`, name, namespace, strings.Join(modeStrings(modes), ", "), todoSummary)
+	if slices.Contains(modes, manifest.ModeInteractive) {
+		b.WriteString(`
+# Hints for interactive sessions. Budgets and timeouts are the operator's
+# runner policy, which a manifest can only tighten.
+interactive:
+  opening: "What should I look at?"
+  # idleTimeoutSeconds: 900
+`)
+	} else {
+		b.WriteString(`
+# With interactive in modes, an interactive block hints the session:
+# interactive:
+#   opening: "What should I look at?"
+#   idleTimeoutSeconds: 900
+`)
+	}
+	b.WriteString(`
+# The agentry install targets this package supports, independent of mode;
+# the first listed is the default (claude-skill: ~/.claude/skills/<name>,
+# agents-md: a section in ./AGENTS.md).
+runtime:
+  interfaces: [claude-skill, agents-md]
+
 # capabilities is the security contract (closed vocabulary, PLAN 5.4).
 # Nothing declared means "pure text": no network, filesystem, exec, or
 # secrets. Declare only what the agent really needs, for example:
@@ -182,38 +226,11 @@ license: Apache-2.0
 #   network:
 #     egress: [api.example.com]
 #   secrets: [EXAMPLE_TOKEN]
-`
 
-	switch k {
-	case manifest.KindPromptAgent:
-		return header + `runtime:
-  interfaces: [agents-md]
-` + capabilities + `
 publish:
-  include: [agent.yaml, README.md, prompts/**, LICENSE]
-`
-	case manifest.KindMCPServer:
-		return header + `entrypoints:
-  mcp:
-    command: node
-    args: [src/server.js]
-    transport: stdio
-runtime:
-  interfaces: [mcp]
-` + capabilities + `
-publish:
-  include: [agent.yaml, README.md, src/**, package-lock.json, LICENSE]
-`
-	default: // skill
-		return header + `entrypoints:
-  skill: SKILL.md
-runtime:
-  interfaces: [claude-skill]
-` + capabilities + `
-publish:
-  include: [agent.yaml, README.md, SKILL.md, LICENSE]
-`
-	}
+  include: [agent.yaml, README.md, AGENT.md, LICENSE]
+`)
+	return b.String()
 }
 
 // readmeMD renders the scaffold README (required for public publish, V7).
@@ -237,8 +254,25 @@ full text of the license you actually chose before publishing publicly
 (rule V7 requires a LICENSE file consistent with the declared SPDX id).
 `
 
-// skillMD renders the kind=skill entrypoint with agentskills-style
-// frontmatter (name must match the installed directory name, §5.6).
+// agentMD renders the instruction file with Agent Skills-style frontmatter
+// (name must match the manifest, V9) so the same file serves the
+// claude-skill install target unchanged.
+func agentMD(name string) string {
+	return fmt.Sprintf(`---
+name: %s
+description: %s
+---
+
+# %s
+
+TODO write the instructions the agent follows. It receives one task, does one
+job, and finishes; in an interactive session it can ask for what it needs.
+`, name, todoSummary, name)
+}
+
+// skillMD renders an Agent Skills-shaped SKILL.md for an import whose
+// source ships none (server.json); the manifest names it as the
+// instruction file.
 func skillMD(name string) string {
 	return fmt.Sprintf(`---
 name: %s
@@ -249,47 +283,4 @@ description: TODO describe when a consuming agent should use this skill
 
 TODO write the instructions the consuming agent will follow.
 `, name, name)
-}
-
-// promptMainMD renders the kind=prompt-agent entrypoint.
-func promptMainMD(name string) string {
-	return fmt.Sprintf(`# %s — main prompt
-
-You are %s, a single-purpose agent.
-
-TODO write the prompt.
-`, name, name)
-}
-
-// serverJS renders a dependency-free stdio MCP server stub (kind=mcp-server).
-func serverJS(name string) string {
-	return fmt.Sprintf(`// Minimal MCP stdio server stub scaffolded by `+"`agentry init`"+`.
-// Replace with a real implementation; dependencies must be covered by
-// package-lock.json (validation rule V6).
-const readline = require("node:readline");
-
-const rl = readline.createInterface({ input: process.stdin });
-rl.on("line", (line) => {
-  let msg;
-  try {
-    msg = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (msg.method === "initialize") {
-    process.stdout.write(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: msg.id,
-        result: { capabilities: {}, serverInfo: { name: %q, version: "0.1.0" } },
-      }) + "\n",
-    );
-  }
-});
-`, name)
-}
-
-// packageLockJSON renders the mandatory lockfile for kind=mcp-server (V6).
-func packageLockJSON(name string) string {
-	return fmt.Sprintf("{\"name\":%q,\"lockfileVersion\":3,\"packages\":{}}\n", name)
 }

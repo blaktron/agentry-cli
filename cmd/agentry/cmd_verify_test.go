@@ -23,7 +23,7 @@ func TestVerifyRequiresExactPin(t *testing.T) {
 func TestVerifyUnsignedPasses(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "verify", "acme/demo@1.0.0")
 	if err != nil {
@@ -40,7 +40,7 @@ func TestVerifyVerifiedAttestation(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
 	fr.enableSigning(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attSigned
 
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "verify", "acme/demo@1.0.0")
@@ -65,7 +65,7 @@ func TestVerifyVerifiedAttestation(t *testing.T) {
 func TestVerifyDigestMismatchFails(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.digest = "sha256:" + strings.Repeat("11", 32)
 	fv.yanked = true // the report must surface yanked too
 
@@ -84,7 +84,7 @@ func TestVerifyAttestationMismatchFails(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
 	fr.enableSigning(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attSigned
 	fv.attSubject = "sha256:" + strings.Repeat("22", 32)
 
@@ -99,7 +99,7 @@ func TestVerifyAttestationMismatchFails(t *testing.T) {
 func TestVerifyStrictPromotesUnverifiable(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attError
 
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "verify", "acme/demo@1.0.0")
@@ -119,7 +119,7 @@ func TestVerifyStrictPromotesUnverifiable(t *testing.T) {
 func TestVerifyJSONReport(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "verify", "acme/demo@1.0.0")
 	if err != nil {

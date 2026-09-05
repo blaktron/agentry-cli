@@ -102,7 +102,8 @@ type Plan struct {
 	Digest string `json:"digest"`
 	// Source is "registry" or "local" (§R5).
 	Source string `json:"source"`
-	// Kind is the manifest kind (skill | prompt-agent).
+	// Kind is the v1 manifest kind (skill | prompt-agent); empty for a
+	// schema v2 manifest, whose run mode reaches the plan with agentry-cli#34.
 	Kind string `json:"kind"`
 	// Summary is the manifest one-liner (harness description field).
 	Summary string `json:"summary"`

@@ -12,7 +12,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -178,7 +180,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Ref:          fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 		Digest:       in.Digest,
 		Source:       in.Source,
-		Kind:         string(m.Kind),
+		Kind:         m.Kind,
 		Summary:      m.Summary,
 		PolicySHA256: in.PolicySHA,
 		Instruction: spec.InstructionSpec{
@@ -306,32 +308,26 @@ func fsMode(a manifest.FSAccess) (string, []string) {
 }
 
 // deriveInstruction implements the §R2 closed rule for where the harness
-// instruction comes from.
+// instruction comes from: the manifest's own candidate list — a schema v2
+// entrypoints.instruction (AGENT.md when omitted); for v1 the skill
+// entrypoint, or AGENT.md then PROMPT.md for a prompt-agent — read in order.
+// A manifest with no candidates (the withdrawn mcp-server kind) is not
+// runnable (DR-15).
 func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, error) {
-	switch m.Kind {
-	case manifest.KindSkill:
-		rel := m.Entrypoints.Skill
-		if rel == "" {
-			rel = "SKILL.md"
-		}
-		b, err := os.ReadFile(filepath.Join(workspace, filepath.FromSlash(rel))) //nolint:gosec // path from the verified archive
-		if err != nil {
-			return "", "", fmt.Errorf("read skill entrypoint %s: %w", rel, err)
-		}
-		return rel, stripFrontmatter(string(b)), nil
-	case manifest.KindPromptAgent:
-		for _, rel := range []string{"AGENT.md", "PROMPT.md"} {
-			b, err := os.ReadFile(filepath.Join(workspace, rel)) //nolint:gosec // fixed names under the verified archive
-			if err == nil {
-				return rel, stripFrontmatter(string(b)), nil
-			}
-		}
-		return "", "", fmt.Errorf("prompt-agent package has neither AGENT.md nor PROMPT.md at its root (RUNNER-PLAN §R2)")
-	case manifest.KindMCPServer:
-		return "", "", fmt.Errorf("kind mcp-server is a tool server, not a runnable BriefAgent (RUNNER-PLAN §R2; attach it to other BriefAgents' runs instead)")
-	default:
-		return "", "", fmt.Errorf("kind %q is not runnable", m.Kind)
+	candidates := m.InstructionCandidates()
+	if len(candidates) == 0 {
+		return "", "", fmt.Errorf("%s/%s declares no instruction file, so it is not a runnable BriefAgent (RUNNER-PLAN §R2; the withdrawn mcp-server kind is a tool server)", m.Namespace, m.Name)
 	}
+	for _, rel := range candidates {
+		b, err := os.ReadFile(filepath.Join(workspace, filepath.FromSlash(rel))) //nolint:gosec // path from the verified archive
+		if err == nil {
+			return rel, stripFrontmatter(string(b)), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", "", fmt.Errorf("read instruction %s: %w", rel, err)
+		}
+	}
+	return "", "", fmt.Errorf("instruction file missing from the package: looked for %s (RUNNER-PLAN §R2)", strings.Join(candidates, ", "))
 }
 
 // stripFrontmatter drops a leading YAML frontmatter block: the harness

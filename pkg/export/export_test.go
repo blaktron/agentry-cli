@@ -3,8 +3,6 @@ package export
 import (
 	"strings"
 	"testing"
-
-	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 func TestEnsureSkillFrontmatter(t *testing.T) {
@@ -55,111 +53,6 @@ func TestEnsureSkillFrontmatterEmptySummaryFallsBackToName(t *testing.T) {
 	got := string(EnsureSkillFrontmatter([]byte("body\n"), "my-skill", "  "))
 	if !strings.Contains(got, "description: my-skill\n") {
 		t.Errorf("empty summary should fall back to the name:\n%q", got)
-	}
-}
-
-func TestMergeMCPConfigFresh(t *testing.T) {
-	entry := MCPServerEntry{Command: "node", Args: []string{"src/server.js"}, Env: map[string]string{"TOKEN": ""}}
-	got, err := MergeMCPConfig(nil, "my-server", entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Keys sort alphabetically: the whole document round-trips through maps
-	// so repeated merges are byte-identical.
-	want := `{
-  "mcpServers": {
-    "my-server": {
-      "args": [
-        "src/server.js"
-      ],
-      "command": "node",
-      "env": {
-        "TOKEN": ""
-      }
-    }
-  }
-}
-`
-	if string(got) != want {
-		t.Errorf("got:\n%s\nwant:\n%s", got, want)
-	}
-}
-
-func TestMergeMCPConfigPreservesExistingEntriesAndKeys(t *testing.T) {
-	existing := `{
-  "mcpServers": {
-    "other": {"command": "python", "args": ["a.py"]}
-  },
-  "somethingElse": {"keep": true}
-}`
-	got, err := MergeMCPConfig([]byte(existing), "mine", MCPServerEntry{Command: "node"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`"other"`, `"python"`, `"somethingElse"`, `"keep": true`, `"mine"`} {
-		if !strings.Contains(string(got), want) {
-			t.Errorf("merged config lost %s:\n%s", want, got)
-		}
-	}
-}
-
-func TestMergeMCPConfigIdempotent(t *testing.T) {
-	entry := MCPServerEntry{Command: "node", Args: []string{"srv.js"}}
-	once, err := MergeMCPConfig(nil, "s", entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	twice, err := MergeMCPConfig(once, "s", entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(once) != string(twice) {
-		t.Errorf("merge is not idempotent:\nfirst:\n%s\nsecond:\n%s", once, twice)
-	}
-}
-
-func TestMergeMCPConfigRejectsInvalidJSON(t *testing.T) {
-	if _, err := MergeMCPConfig([]byte("{nope"), "s", MCPServerEntry{Command: "node"}); err == nil {
-		t.Error("invalid existing JSON must not be clobbered")
-	}
-}
-
-func TestMCPEntryFromManifest(t *testing.T) {
-	m := &manifest.Manifest{
-		Entrypoints: manifest.Entrypoints{
-			MCP: &manifest.MCPEntrypoint{Command: "node", Args: []string{"src/server.js", "--verbose"}},
-		},
-		Capabilities: manifest.Capabilities{Secrets: []string{"API_TOKEN"}},
-	}
-	archiveFiles := map[string]bool{"src/server.js": true}
-
-	entry, err := MCPEntryFromManifest(m, "agents/my-server", archiveFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if entry.Command != "node" {
-		t.Errorf("command = %q", entry.Command)
-	}
-	if got, want := strings.Join(entry.Args, " "), "agents/my-server/src/server.js --verbose"; got != want {
-		t.Errorf("args = %q, want %q (file args re-rooted, flags untouched)", got, want)
-	}
-	if v, ok := entry.Env["API_TOKEN"]; !ok || v != "" {
-		t.Errorf("env = %v, want empty placeholder for API_TOKEN", entry.Env)
-	}
-
-	// Extracting next to the config file keeps args untouched.
-	entry, err = MCPEntryFromManifest(m, "", archiveFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if entry.Args[0] != "src/server.js" {
-		t.Errorf("args with empty rel = %v", entry.Args)
-	}
-}
-
-func TestMCPEntryFromManifestNoEntrypoint(t *testing.T) {
-	if _, err := MCPEntryFromManifest(&manifest.Manifest{}, "", nil); err == nil {
-		t.Error("missing mcp entrypoint must error")
 	}
 }
 

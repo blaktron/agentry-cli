@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry/pkg/apiclient"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // newInfoCmd builds the info command.
@@ -30,7 +31,7 @@ func newInfoCmd() *cobra.Command {
 
 // searchOpts carries the §10.4 facet filters.
 type searchOpts struct {
-	kind       string
+	mode       string
 	capability string
 	license    string
 	verified   bool
@@ -47,7 +48,7 @@ func newSearchCmd() *cobra.Command {
 		Long: "Search public BriefAgents via GET /search (§10.4). A query containing \"/\" is\n" +
 			"treated as ns/name and shows that BriefAgent's info instead.\n\n" +
 			"Facets narrow the result set:\n\n" +
-			"  --kind        skill | prompt-agent | mcp-server\n" +
+			"  --mode        autonomous | interactive (a BriefAgent supporting both matches either)\n" +
 			"  --capability  a capability the latest version actually asks for\n" +
 			"                (network, filesystem, exec, secrets, dataAccess) —\n" +
 			"                a capability declared as \"none\" does not match\n" +
@@ -60,7 +61,7 @@ func newSearchCmd() *cobra.Command {
 			return runSearch(cmd, args[0], opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.kind, "kind", "", "filter by BriefAgent kind: skill | prompt-agent | mcp-server")
+	cmd.Flags().StringVar(&opts.mode, "mode", "", "filter by run mode: autonomous | interactive")
 	cmd.Flags().StringVar(&opts.capability, "capability", "", "filter by declared capability (network, filesystem, exec, secrets, dataAccess)")
 	cmd.Flags().StringVar(&opts.license, "license", "", "filter by SPDX license identifier")
 	cmd.Flags().BoolVar(&opts.verified, "verified", false, "only BriefAgents in orgs with a verified domain")
@@ -157,7 +158,7 @@ func resolveLatest(ctx context.Context, client *apiclient.ClientWithResponses, n
 
 // renderAgentInfo prints the human-readable info block.
 func renderAgentInfo(out io.Writer, agent *apiclient.Agent, latest *apiclient.ResolveResult, latestErr error) {
-	_, _ = fmt.Fprintf(out, "%s/%s — %s, %s\n", agent.Namespace, agent.Name, agent.Kind, agent.Visibility)
+	_, _ = fmt.Fprintf(out, "%s/%s — %s, %s\n", agent.Namespace, agent.Name, modesLabel(agent.Modes), agent.Visibility)
 	if agent.Summary != "" {
 		_, _ = fmt.Fprintf(out, "  summary: %s\n", agent.Summary)
 	}
@@ -197,9 +198,12 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 	if query != "" {
 		params.Q = &query
 	}
-	if opts.kind != "" {
-		k := apiclient.AgentKind(opts.kind)
-		params.Kind = &k
+	if opts.mode != "" {
+		if !manifest.Mode(opts.mode).Valid() {
+			return fmt.Errorf("unknown --mode %q (want autonomous or interactive)", opts.mode)
+		}
+		mo := apiclient.AgentMode(opts.mode)
+		params.Mode = &mo
 	}
 	if opts.capability != "" {
 		params.Capability = &opts.capability
@@ -249,7 +253,7 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 		if hit.Installs30d != nil {
 			installs = fmt.Sprintf("%d installs/30d", *hit.Installs30d)
 		}
-		_, _ = fmt.Fprintf(out, "%-40s %-13s %-16s %s\n", hit.Namespace+"/"+hit.Name, hit.Kind, installs, summary)
+		_, _ = fmt.Fprintf(out, "%-40s %-23s %-16s %s\n", hit.Namespace+"/"+hit.Name, modesLabel(hit.Modes), installs, summary)
 	}
 	if results.Total != nil && *results.Total > len(results.Results) {
 		_, _ = fmt.Fprintf(out, "\n%d of %d results shown (--limit to see more)\n", len(results.Results), *results.Total)
@@ -261,8 +265,8 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 // "no agents match" never looks like "this registry is empty".
 func describeFacets(opts searchOpts) string {
 	var parts []string
-	if opts.kind != "" {
-		parts = append(parts, "kind="+opts.kind)
+	if opts.mode != "" {
+		parts = append(parts, "mode="+opts.mode)
 	}
 	if opts.capability != "" {
 		parts = append(parts, "capability="+opts.capability)

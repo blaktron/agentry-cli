@@ -107,7 +107,7 @@ func TestManifestFromResolve(t *testing.T) {
 func TestResolveRefStates(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 
 	client, err := newAPIClient(fr.url(), "")
 	if err != nil {
@@ -144,7 +144,7 @@ func TestResolveRefStates(t *testing.T) {
 func TestDownloadArchiveRelativeURLAndTokenScoping(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	res := resolveResultOf(t, fr, "acme/demo@1.0.0")
 
 	// Relative archiveUrl (self-host): resolves against the registry and

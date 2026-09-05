@@ -1,7 +1,7 @@
-schemaVersion: "1"
+schemaVersion: "2"
 name: pure-text
 namespace: fixtures
-kind: prompt-agent
+modes: [autonomous]
 version: 1.0.0
 summary: "Answers from its prompt alone — declares no capabilities at all"
 license: Apache-2.0

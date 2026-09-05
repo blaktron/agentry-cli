@@ -222,10 +222,10 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 			}
 		}
 		if needNode {
-			images = append(images, struct{ name, ref, fix string }{"image:nodeRuntime", pol.Images.NodeRuntime, "pulled at first mcp-server install"})
+			images = append(images, struct{ name, ref, fix string }{"image:nodeRuntime", pol.Images.NodeRuntime, "pulled at first MCP server install"})
 		}
 		if needPython {
-			images = append(images, struct{ name, ref, fix string }{"image:pythonRuntime", pol.Images.PythonRuntime, "pulled at first mcp-server install"})
+			images = append(images, struct{ name, ref, fix string }{"image:pythonRuntime", pol.Images.PythonRuntime, "pulled at first MCP server install"})
 		}
 	}
 	for _, im := range images {

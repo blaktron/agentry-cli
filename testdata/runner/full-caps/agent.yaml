@@ -1,14 +1,14 @@
-schemaVersion: "1"
+schemaVersion: "2"
 name: full-caps
 namespace: fixtures
-kind: skill
+modes: [autonomous]
 version: 1.0.0
 summary: "Exercises every capability shape and the output schema convention"
 license: Apache-2.0
 tags: [fixture]
 
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 
 capabilities:
   network:

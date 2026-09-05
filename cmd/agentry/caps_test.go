@@ -11,16 +11,14 @@ import (
 // forms ("none", "workspace", "*") exercise the real decoders.
 func parseCaps(t *testing.T, capsYAML string) manifest.Capabilities {
 	t.Helper()
-	doc := `schemaVersion: "1"
+	doc := `schemaVersion: "2"
 name: capdemo
 namespace: acme
-kind: skill
+modes: [autonomous]
 version: 1.0.0
 summary: "cap rendering fixture"
-entrypoints:
-  skill: SKILL.md
 publish:
-  include: [agent.yaml, SKILL.md]
+  include: [agent.yaml, AGENT.md]
 ` + capsYAML
 	m, err := manifest.Parse([]byte(doc))
 	if err != nil {
@@ -103,18 +101,41 @@ func TestCapabilityNeedsConfirmTable(t *testing.T) {
 	}
 }
 
+// TestDefaultTarget: the default install target follows runtime.interfaces
+// (first emittable entry), never the run modes, and is claude-skill when
+// nothing usable is declared.
 func TestDefaultTarget(t *testing.T) {
 	tests := []struct {
-		kind manifest.Kind
-		want string
+		interfaces []string
+		want       string
 	}{
-		{manifest.KindSkill, manifest.InterfaceClaudeSkill},
-		{manifest.KindMCPServer, manifest.InterfaceMCP},
-		{manifest.KindPromptAgent, manifest.InterfaceAgentsMD},
+		{nil, manifest.InterfaceClaudeSkill},
+		{[]string{manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD}, manifest.InterfaceClaudeSkill},
+		{[]string{manifest.InterfaceAgentsMD, manifest.InterfaceClaudeSkill}, manifest.InterfaceAgentsMD},
+		{[]string{"mcp", manifest.InterfaceAgentsMD}, manifest.InterfaceAgentsMD}, // v1 archive: the withdrawn target is skipped
+		{[]string{"mcp"}, manifest.InterfaceClaudeSkill},
 	}
 	for _, tt := range tests {
-		if got := defaultTarget(tt.kind); got != tt.want {
-			t.Errorf("defaultTarget(%s) = %s, want %s", tt.kind, got, tt.want)
+		m := &manifest.Manifest{Modes: []manifest.Mode{manifest.ModeAutonomous, manifest.ModeInteractive}}
+		m.Runtime.Interfaces = tt.interfaces
+		if got := defaultTarget(m); got != tt.want {
+			t.Errorf("defaultTarget(%v) = %s, want %s", tt.interfaces, got, tt.want)
 		}
+	}
+}
+
+// TestParseModes: the --modes grammar is the manifest's closed set.
+func TestParseModes(t *testing.T) {
+	got, err := parseModes(" interactive, autonomous ")
+	if err != nil || len(got) != 2 || got[0] != manifest.ModeInteractive || got[1] != manifest.ModeAutonomous {
+		t.Errorf("parseModes = %v, %v", got, err)
+	}
+	for _, bad := range []string{"", "daemon", "autonomous,autonomous", "autonomous,"} {
+		if _, err := parseModes(bad); err == nil && bad != "autonomous," {
+			t.Errorf("parseModes(%q) accepted", bad)
+		}
+	}
+	if got := modesLabel([]manifest.Mode{}); got != "none" {
+		t.Errorf("empty label = %q", got)
 	}
 }

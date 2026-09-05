@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -113,15 +112,16 @@ func newInstallCmd() *cobra.Command {
 	return cmd
 }
 
-// validTargets is the §5.6 closed set.
-var validTargets = []string{manifest.InterfaceClaudeSkill, manifest.InterfaceMCP, manifest.InterfaceAgentsMD}
+// validTargets is the §5.6 closed set. The mcp target left with the
+// withdrawn v1 tool-server package kind (DEV-088).
+var validTargets = []string{manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD}
 
 // validateTarget checks an explicitly requested target. It runs BEFORE any
 // network call: a typo in --target should cost a usage message, not a
 // download, a capability prompt, and an extraction that is then thrown away.
 func validateTarget(target string) error {
 	if target == "" {
-		return nil // resolved from the agent's kind once the manifest arrives
+		return nil // resolved from the manifest's interfaces once it arrives
 	}
 	for _, t := range validTargets {
 		if target == t {
@@ -182,7 +182,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 
 	target := opts.target
 	if target == "" {
-		target = defaultTarget(m.Kind)
+		target = defaultTarget(m)
 	}
 	warnUndeclaredTarget(errOut, m, target)
 	paths, err := resolveInstallPaths(target, opts.dir, m.Name)
@@ -190,7 +190,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "%s/%s@%s (%s)\n", res.Namespace, res.Name, res.Version, m.Kind)
+	_, _ = fmt.Fprintf(out, "%s/%s@%s (%s)\n", res.Namespace, res.Name, res.Version, modesLabel(m.SupportedModes()))
 	if m.Summary != "" {
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}
@@ -230,13 +230,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	switch target {
 	case manifest.InterfaceClaudeSkill:
 		err = exportClaudeSkill(out, staging, paths, m, res.Namespace, res.Version)
-	case manifest.InterfaceMCP:
-		err = exportMCP(out, staging, paths, m, res.Namespace, res.Version)
 	case manifest.InterfaceAgentsMD:
 		err = exportAgentsMD(out, staging, paths, m, res.Namespace, res.Version)
 	default:
 		// Unreachable: validateTarget and defaultTarget between them admit
-		// only the three above. Kept so a fourth interface cannot be added
+		// only the two above. Kept so a third interface cannot be added
 		// without this switch failing loudly.
 		return fmt.Errorf("unknown --target %q (want %s)", target, strings.Join(validTargets, ", "))
 	}
@@ -411,12 +409,6 @@ type installPaths struct {
 	// Only a managed directory is cleared on reinstall — a --dir the user
 	// named is theirs, and may hold files this command did not put there.
 	managed bool
-	// mcpConfig is the .mcp.json to merge into (mcp target only).
-	mcpConfig string
-	// extractedRel re-roots MCP args at the extraction path when the config
-	// lives above it (default layout only); empty when config and files are
-	// siblings.
-	extractedRel string
 }
 
 // resolveInstallPaths computes the destination for a target without touching
@@ -433,15 +425,6 @@ func resolveInstallPaths(target, dir, name string) (installPaths, error) {
 			return installPaths{}, fmt.Errorf("locate home directory (pass --dir): %w", err)
 		}
 		return installPaths{dest: filepath.Join(home, ".claude", "skills", name), managed: true}, nil
-
-	case manifest.InterfaceMCP:
-		if dir != "" {
-			return installPaths{dest: dir, mcpConfig: filepath.Join(dir, ".mcp.json")}, nil
-		}
-		return installPaths{
-			dest: filepath.Join("agents", name), managed: true,
-			mcpConfig: ".mcp.json", extractedRel: path.Join("agents", name),
-		}, nil
 
 	case manifest.InterfaceAgentsMD:
 		if dir != "" {
@@ -524,43 +507,6 @@ func exportClaudeSkill(out io.Writer, staging string, p installPaths, m *manifes
 	}
 
 	_, _ = fmt.Fprintf(out, "installed %s/%s@%s as Claude skill: %s\n", ns, m.Name, version, dest)
-	return nil
-}
-
-// exportMCP extracts to {dir|./agents/<name>} and merges a server entry into
-// the client config: {dir}/.mcp.json when --dir is given, else ./.mcp.json
-// with args re-rooted at the extraction path (§5.6 mcp row).
-func exportMCP(out io.Writer, staging string, p installPaths, m *manifest.Manifest, ns, version string) error {
-	dest, configPath, extractedRel := p.dest, p.mcpConfig, p.extractedRel
-	if err := prepareDest(p); err != nil {
-		return err
-	}
-	if err := copyTree(staging, dest); err != nil {
-		return err
-	}
-
-	entry, err := export.MCPEntryFromManifest(m, extractedRel, treeFiles(staging))
-	if err != nil {
-		return err
-	}
-	existing, err := os.ReadFile(configPath) //nolint:gosec // fixed config name under a user-chosen dir
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", configPath, err)
-	}
-	merged, err := export.MergeMCPConfig(existing, m.Name, entry)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(configPath, merged, 0o644); err != nil { //nolint:gosec // client config, not a secret
-		return fmt.Errorf("write %s: %w", configPath, err)
-	}
-
-	_, _ = fmt.Fprintf(out, "installed %s/%s@%s as MCP server: %s\n", ns, m.Name, version, dest)
-	_, _ = fmt.Fprintf(out, "merged server entry %q into %s", m.Name, configPath)
-	if len(m.Capabilities.Secrets) > 0 {
-		_, _ = fmt.Fprintf(out, " — fill in env: %s", strings.Join(m.Capabilities.Secrets, ", "))
-	}
-	_, _ = fmt.Fprintln(out)
 	return nil
 }
 

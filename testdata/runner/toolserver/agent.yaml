@@ -3,7 +3,7 @@ name: toolserver
 namespace: fixtures
 kind: mcp-server
 version: 1.0.0
-summary: "An mcp-server package — a tool, not a runnable agent (exit 12)"
+summary: "A withdrawn v1 mcp-server package — a tool, not a runnable agent (exit 12)"
 license: Apache-2.0
 tags: [fixture]
 

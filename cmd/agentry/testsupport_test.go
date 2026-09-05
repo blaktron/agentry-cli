@@ -139,9 +139,10 @@ type fakeVersion struct {
 
 // fakeAgent is one agent with its version set.
 type fakeAgent struct {
-	ns, name, kind, summary string
-	versions                map[string]*fakeVersion
-	latest                  string
+	ns, name, summary string
+	modes             []string
+	versions          map[string]*fakeVersion
+	latest            string
 }
 
 // fakeRegistry is an httptest server implementing the endpoint subset the
@@ -230,7 +231,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": "00000000-0000-0000-0000-000000000001", "namespace": fa.ns, "name": fa.name,
-			"kind": fa.kind, "summary": fa.summary, "visibility": "public",
+			"modes": fa.modes, "summary": fa.summary, "visibility": "public",
 			"quarantineState": "none", "defaultBranch": "main",
 			"gitHttpUrl": fr.srv.URL + "/git/" + fa.ns + "/" + fa.name + ".git",
 			"createdAt":  "2026-01-02T03:04:05Z",
@@ -398,9 +399,10 @@ func (fr *fakeRegistry) versionDoc(version, status string) map[string]any {
 // url returns the registry base URL for --registry.
 func (fr *fakeRegistry) url() string { return fr.srv.URL }
 
-// addAgent registers an agent shell (no versions yet).
-func (fr *fakeRegistry) addAgent(ns, name, kind, summary string) *fakeAgent {
-	fa := &fakeAgent{ns: ns, name: name, kind: kind, summary: summary, versions: map[string]*fakeVersion{}}
+// addAgent registers an agent shell (no versions yet); modes is the
+// comma-separated run mode set the registry reports for it.
+func (fr *fakeRegistry) addAgent(ns, name, modes, summary string) *fakeAgent {
+	fa := &fakeAgent{ns: ns, name: name, modes: strings.Split(modes, ","), summary: summary, versions: map[string]*fakeVersion{}}
 	fr.agents[ns+"/"+name] = fa
 	return fa
 }
@@ -520,19 +522,19 @@ func writeProblem(w http.ResponseWriter, status int, title, detail string) {
 	_ = json.NewEncoder(w).Encode(doc)
 }
 
-// skillFiles is a minimal kind=skill package with the given capabilities
+// skillFiles is a minimal schema v2 package with the given capabilities
 // block ("" = pure text) — the workhorse fixture for install/run tests.
 func skillFiles(name, capsYAML string) map[string]string {
 	return map[string]string{
-		"agent.yaml": fmt.Sprintf(`schemaVersion: "1"
+		"agent.yaml": fmt.Sprintf(`schemaVersion: "2"
 name: %s
 namespace: acme
-kind: skill
+modes: [autonomous]
 version: 1.0.0
 summary: "test fixture skill"
 license: Apache-2.0
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 %spublish:
   include: [agent.yaml, SKILL.md]
 `, name, capsYAML),

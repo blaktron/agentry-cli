@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -240,13 +239,13 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
 	files := skillFiles("demo", "capabilities:\n  filesystem:\n    read: workspace\n")
-	fr.addAgent("acme", "demo", "skill", "reads things").addVersion(t, "1.0.0", files)
+	fr.addAgent("acme", "demo", "autonomous", "reads things").addVersion(t, "1.0.0", files)
 
 	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned")
 	if err != nil {
 		t.Fatalf("install: %v (stderr %q)", err, stderr)
 	}
-	for _, want := range []string{"acme/demo@1.0.0 (skill)", "filesystem.read: workspace", "installed acme/demo@1.0.0 as Claude skill"} {
+	for _, want := range []string{"acme/demo@1.0.0 (autonomous)", "filesystem.read: workspace", "installed acme/demo@1.0.0 as Claude skill"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}
@@ -288,7 +287,7 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 func TestInstallDirIsMergedNotCleared(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	dir := t.TempDir()
 
 	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--dir", dir); err != nil {
@@ -306,96 +305,26 @@ func TestInstallDirIsMergedNotCleared(t *testing.T) {
 	}
 }
 
-// mcpServerFiles is a minimal kind=mcp-server package whose args name an
-// archive file, so the .mcp.json merge exercises arg re-rooting.
-func mcpServerFiles(name string) map[string]string {
-	return map[string]string{
-		"agent.yaml": `schemaVersion: "1"
-name: ` + name + `
-namespace: acme
-kind: mcp-server
-version: 1.0.0
-summary: "test mcp server"
-license: Apache-2.0
-entrypoints:
-  mcp:
-    command: node
-    args: [src/server.js]
-    transport: stdio
-capabilities:
-  secrets: [DEMO_TOKEN]
-publish:
-  include: [agent.yaml, src/**, package-lock.json]
-`,
-		"src/server.js":     "// stub\n",
-		"package-lock.json": `{"name":"` + name + `","lockfileVersion":3,"packages":{}}` + "\n",
-	}
-}
-
-// TestInstallMCPTargetMergesConfig: the mcp default layout extracts under
-// ./agents/<name> and merges ./.mcp.json with args re-rooted at the
-// extraction path and declared secrets as empty env placeholders (§5.6).
-func TestInstallMCPTargetMergesConfig(t *testing.T) {
-	isolateEnv(t)
-	t.Chdir(t.TempDir())
-	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "srv", "mcp-server", "s").addVersion(t, "1.0.0", mcpServerFiles("srv"))
-
-	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/srv@1.0.0", "--allow-unsigned")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout, "fill in env: DEMO_TOKEN") {
-		t.Errorf("stdout does not point at the secret env to fill:\n%s", stdout)
-	}
-	if _, err := os.Stat(filepath.Join("agents", "srv", "src", "server.js")); err != nil {
-		t.Fatalf("extracted server missing: %v", err)
-	}
-	raw, err := os.ReadFile(".mcp.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		Servers map[string]struct {
-			Command string            `json:"command"`
-			Args    []string          `json:"args"`
-			Env     map[string]string `json:"env"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		t.Fatalf("merged .mcp.json is not JSON: %v\n%s", err, raw)
-	}
-	entry, ok := cfg.Servers["srv"]
-	if !ok {
-		t.Fatalf("no srv entry in .mcp.json:\n%s", raw)
-	}
-	if entry.Command != "node" || len(entry.Args) != 1 || entry.Args[0] != "agents/srv/src/server.js" {
-		t.Errorf("entry = %+v; args must be re-rooted at the extraction path", entry)
-	}
-	if _, ok := entry.Env["DEMO_TOKEN"]; !ok {
-		t.Errorf("declared secret has no env placeholder: %+v", entry.Env)
-	}
-}
-
-// promptAgentFiles is a minimal kind=prompt-agent package for the agents-md
-// target.
+// promptAgentFiles is a minimal schema v2 package that lists agents-md
+// first, so it installs there by default.
 func promptAgentFiles(name string) map[string]string {
 	return map[string]string{
-		"agent.yaml": `schemaVersion: "1"
+		"agent.yaml": `schemaVersion: "2"
 name: ` + name + `
 namespace: acme
-kind: prompt-agent
+modes: [autonomous, interactive]
 version: 1.0.0
 summary: "test prompt agent"
 license: Apache-2.0
 runtime:
-  interfaces: [agents-md]
+  interfaces: [agents-md, claude-skill]
 capabilities:
   exec:
     commands: [jq]
 publish:
-  include: [agent.yaml, prompts/**]
+  include: [agent.yaml, AGENT.md, prompts/**]
 `,
+		"AGENT.md":        "# main\n\nDo it.\n",
 		"prompts/main.md": "# main\n\nDo it.\n",
 	}
 }
@@ -407,7 +336,7 @@ func TestInstallAgentsMDTarget(t *testing.T) {
 	isolateEnv(t)
 	t.Chdir(t.TempDir())
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "pa", "prompt-agent", "s").addVersion(t, "1.0.0", promptAgentFiles("pa"))
+	fr.addAgent("acme", "pa", "autonomous", "s").addVersion(t, "1.0.0", promptAgentFiles("pa"))
 
 	// Declared exec without --yes off a TTY (piped stdin): the gate holds.
 	_, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/pa@1.0.0", "--allow-unsigned")
@@ -439,7 +368,7 @@ func TestInstallAgentsMDTarget(t *testing.T) {
 func TestInstallDigestMismatchAborts(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.digest = "sha256:" + strings.Repeat("ab", 32)
 
 	_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned")
@@ -459,7 +388,7 @@ func TestInstallDigestMismatchAborts(t *testing.T) {
 func TestInstallUnsignedGate(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 
 	_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0")
 	if err == nil || !strings.Contains(err.Error(), "--allow-unsigned") {
@@ -482,7 +411,7 @@ func TestInstallVerifiedAttestation(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
 	fr.enableSigning(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attSigned
 
 	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0")
@@ -507,7 +436,7 @@ func TestInstallAttestationMismatchAborts(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
 	fr.enableSigning(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attSigned
 	fv.attSubject = "sha256:" + strings.Repeat("cd", 32) // signs some other archive
 
@@ -523,7 +452,7 @@ func TestInstallAttestationMismatchAborts(t *testing.T) {
 func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fa := fr.addAgent("acme", "demo", "skill", "s")
+	fa := fr.addAgent("acme", "demo", "autonomous", "s")
 	fa.addVersion(t, "1.0.0", skillFiles("demo", ""))
 	wideCaps := "capabilities:\n  network:\n    egress: [api.example.com]\n"
 	wide := skillFiles("demo", wideCaps)
@@ -563,7 +492,7 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 func TestInstallYankedWarns(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fv := fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.yanked = true
 
 	_, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned")
@@ -580,7 +509,7 @@ func TestInstallYankedWarns(t *testing.T) {
 func TestInstallProviderPicksTarget(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "skill", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--provider", "openclaw")
 	if err != nil {
