@@ -84,11 +84,9 @@ func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 		val, given := preset[q.ID]
 		if !given && p != nil {
 			var err error
-			val, err = ask(p, q, typ)
-			if err != nil {
+			if val, err = ask(p, q, typ); err != nil {
 				return nil, err
 			}
-			given = val != ""
 		}
 		if strings.TrimSpace(val) == "" {
 			if q.Required {

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 )
 
 type scriptPrompter struct {
@@ -89,7 +91,11 @@ func TestCollectRefusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Collect(tc.p, questions(), tc.preset, tc.secrets)
+			var p setup.Prompter // a nil *scriptPrompter must not become a non-nil interface
+			if tc.p != nil {
+				p = tc.p
+			}
+			_, err := Collect(p, questions(), tc.preset, tc.secrets)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("want %q, got %v", tc.want, err)
 			}
