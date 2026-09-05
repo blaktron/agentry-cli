@@ -258,9 +258,17 @@ func (c *CLI) PSByLabel(ctx context.Context, label string) ([]string, error) {
 	return names, nil
 }
 
-// Logs implements Client.
+// Logs implements Client. Both streams are returned: a container's stderr
+// (where the gateway writes its startup errors) comes out of `docker logs`
+// on stderr, and a diagnostic that dropped it explained nothing
+// (agentry-cli#41).
 func (c *CLI) Logs(ctx context.Context, name string, tail int) (string, error) {
-	return c.run(ctx, "logs", "--tail", strconv.Itoa(tail), name)
+	cmd := c.command(ctx, "logs", "--tail", strconv.Itoa(tail), name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("docker logs: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
 }
 
 // args assembles the docker run argv (without env values, see RunSpec.Env).

@@ -653,3 +653,40 @@ func TestOutputSchemaMustBeAValidSchema(t *testing.T) {
 		t.Fatal("malformed properties accepted")
 	}
 }
+
+// TestGatewayConfigInsideCatalogsDir pins agentry-cli#41: the gateway
+// (v0.43+) refuses a --catalog outside its own catalogs directory, so the
+// rendered files must be mounted there and every file flag must point
+// inside that mount.
+func TestGatewayConfigInsideCatalogsDir(t *testing.T) {
+	m := parseManifest(t, fullCapsYAML)
+	ws := workspaceFor(t, m, nil)
+	plan, _ := compileFixture(t, m, ws)
+	var mounted bool
+	for _, mt := range plan.Gateway.Mounts {
+		if mt.Target == GatewayConfigDir && mt.ReadOnly {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Fatalf("gateway config is not mounted read-only at %s: %+v", GatewayConfigDir, plan.Gateway.Mounts)
+	}
+	args := plan.Gateway.Args
+	for i, a := range args {
+		switch a {
+		case "--catalog", "--registry", "--config", "--tools-config", "--secrets":
+			if i+1 >= len(args) || !strings.HasPrefix(args[i+1], GatewayConfigDir+"/") {
+				t.Errorf("%s points outside the catalogs mount: %v", a, args)
+			}
+		}
+	}
+	var home bool
+	for _, e := range plan.Gateway.Env {
+		if e.Name == "HOME" && e.Value == "/root" {
+			home = true
+		}
+	}
+	if !home {
+		t.Errorf("gateway env does not pin HOME=/root: %+v", plan.Gateway.Env)
+	}
+}
