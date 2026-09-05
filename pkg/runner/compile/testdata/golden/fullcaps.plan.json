@@ -175,6 +175,6 @@
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "4dbca71b62adf7649658e1fb9fa4136dd85514f9aa5d5b068ff475d3a35376f5",
     "gateway/toolspec.json": "9b5b07e66a655c1c8fea68069be5daa23a0565dbbf9c282b55020e4c1141ec4c",
-    "harness/agent.yaml": "0455da531696499c6725b20e0384c4f76da858b09090d086f34434f7f6e1f545"
+    "harness/agent.yaml": "0658c1c1ec3b98f48cb54ea206a012ed330c7ba902038e7d8afe4277bca247ec"
   }
 }

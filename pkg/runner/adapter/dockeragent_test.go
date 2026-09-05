@@ -39,6 +39,7 @@ func TestDockerAgentCompile(t *testing.T) {
 		"transport_type: streamable",
 		"Bearer ${env.MCP_GATEWAY_TOKEN}",
 		"allow_private_ips: true",
+		"version: \"" + HarnessConfigVersion + "\"", // schema of the pinned harness (#43)
 		"Do the thing.",
 	} {
 		if !strings.Contains(y, want) {
