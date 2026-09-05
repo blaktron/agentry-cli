@@ -232,6 +232,20 @@ type SessionSpec struct {
 	// not in-harness prompting, is the boundary, and the runner answers
 	// any permission request with a denial.
 	Safety string `json:"safety"`
+	// Budgets are the session caps the engine enforces (policy §6.7,
+	// tightened by the manifest's interactive hints).
+	Budgets SessionBudgets `json:"budgets"`
+}
+
+// SessionBudgets are the interactive caps: the engine ends the session
+// with a session_end receipt when any is reached, never hangs.
+type SessionBudgets struct {
+	// IdleTimeoutSeconds is the longest silence from the user.
+	IdleTimeoutSeconds int `json:"idleTimeoutSeconds"`
+	// MaxWallSeconds is the whole-session deadline.
+	MaxWallSeconds int `json:"maxWallSeconds"`
+	// MaxUserTurns caps user messages (0 = unlimited).
+	MaxUserTurns int `json:"maxUserTurns"`
 }
 
 // SessionMount is the container path of the interactive session store.

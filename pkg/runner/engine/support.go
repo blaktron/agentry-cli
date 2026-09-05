@@ -74,12 +74,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	// inputs/ exists even when empty: the compiled catalog always mounts
 	// it :ro, and an absent bind source would fail the tools container.
-	for _, dir := range []string{rd.workspace, rd.inputs, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
+	for _, dir := range []string{rd.workspace, rd.inputs, rd.session, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
 	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
+		return nil, err
+	}
+	if err := stageIntake(p, rd); err != nil {
 		return nil, err
 	}
 	// secrets.env dies unconditionally; the rest of the run dir only
@@ -103,6 +106,39 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "run-plan.json"), b, 0o644)
 	}
 	return rd, nil
+}
+
+// stageIntake writes the agent-side intake document and stages file
+// answers next to the other inputs; the non-secret document is also a
+// receipt (plan §3.5).
+func stageIntake(p Params, rd *runDirs) error {
+	if p.Intake.Empty() {
+		return nil
+	}
+	for _, path := range p.Intake.FilePaths() {
+		if _, err := os.Lstat(filepath.Join(rd.inputs, filepath.Base(path))); err == nil {
+			return Classify(ExitCLI, fmt.Errorf("intake file %s collides with an input of the same basename under %s", path, spec.InputsMount))
+		}
+		if err := stageInputs([]string{path}, rd.inputs); err != nil {
+			return err
+		}
+	}
+	const name = "intake.json"
+	if _, err := os.Lstat(filepath.Join(rd.inputs, name)); err == nil {
+		return Classify(ExitCLI, fmt.Errorf("an input named %s is reserved for the intake answers", name))
+	}
+	doc, err := json.MarshalIndent(p.Intake.Document(spec.InputsMount), "", "  ")
+	if err != nil {
+		return Classify(ExitCLI, fmt.Errorf("encode intake: %w", err))
+	}
+	doc = append(doc, '\n')
+	if err := os.WriteFile(filepath.Join(rd.inputs, name), doc, 0o644); err != nil { //nolint:gosec // agent-readable by design; carries no secret values
+		return Classify(ExitCLI, fmt.Errorf("stage intake: %w", err))
+	}
+	if err := os.WriteFile(filepath.Join(rd.receiptsDir, name), doc, 0o644); err != nil { //nolint:gosec // receipt
+		return Classify(ExitCLI, fmt.Errorf("intake receipt: %w", err))
+	}
+	return nil
 }
 
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
@@ -181,6 +217,32 @@ func stageInputs(paths []string, dest string) error {
 // failure mode this exists to prevent. Resolution order: the caller's
 // overrides (the MCP profile, P2 §P2) first, then the policy source.
 func writeSecretsFile(p Params, path string) error {
+	values, err := secretValues(p)
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(values[k])
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("write secrets file: %w", err))
+	}
+	return nil
+}
+
+// secretValues resolves every secret the plan needs (declared and MCP
+// server secrets) to its value, keyed the way the gateway reads them; the
+// session transcript redacts these same values (§R11 invariant 7).
+func secretValues(p Params) (map[string]string, error) {
 	values := map[string]string{}
 	missingSet := map[string]bool{}
 	resolve := func(name string) (string, bool) {
@@ -215,26 +277,10 @@ func writeSecretsFile(p Params, path string) error {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		return Classify(ExitPolicy, fmt.Errorf("declared secret(s) not resolvable from the MCP profile or the %s source: %s (run with --reconfigure-profile to set them)",
+		return nil, Classify(ExitPolicy, fmt.Errorf("declared secret(s) not resolvable from the MCP profile or the %s source: %s (run with --reconfigure-profile to set them)",
 			p.Policy.SecretSource.Mode, strings.Join(missing, ", ")))
 	}
-	keys := make([]string, 0, len(values))
-	for k := range values {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(values[k])
-		b.WriteByte('\n')
-	}
-	// Always written, even empty: the gateway argv references it.
-	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
-		return Classify(ExitCLI, fmt.Errorf("write secrets file: %w", err))
-	}
-	return nil
+	return values, nil
 }
 
 // SecretResolvable reports whether name would resolve at run time: from

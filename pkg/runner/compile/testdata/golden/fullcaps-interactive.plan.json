@@ -165,7 +165,12 @@
           "target": "/session"
         }
       ],
-      "safety": "autonomous"
+      "safety": "autonomous",
+      "budgets": {
+        "idleTimeoutSeconds": 900,
+        "maxWallSeconds": 7200,
+        "maxUserTurns": 200
+      }
     }
   },
   "proxy": {

@@ -232,3 +232,27 @@ func TestRunnerImageTag(t *testing.T) {
 		t.Errorf("override ignored, got %q", got)
 	}
 }
+
+// TestSessionsDefaultsAndValidation: the interactive caps ship with
+// defaults, round-trip through Save/Load, and refuse negatives.
+func TestSessionsDefaultsAndValidation(t *testing.T) {
+	p := Default()
+	if p.Sessions != (Sessions{IdleTimeoutSeconds: 900, MaxWallSeconds: 7200, MaxUserTurns: 200}) {
+		t.Fatalf("defaults = %+v", p.Sessions)
+	}
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := Save(path, p); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Sessions != p.Sessions {
+		t.Errorf("round trip = %+v", loaded.Sessions)
+	}
+	p.Sessions.MaxUserTurns = -1
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "sessions.") {
+		t.Errorf("negative cap accepted: %v", err)
+	}
+}

@@ -62,6 +62,8 @@ type Policy struct {
 	// Budgets are the default hard stops, overridable per run (tighter
 	// only) by flags.
 	Budgets Budgets `yaml:"budgets"`
+	// Sessions caps interactive sessions (plan §6.7).
+	Sessions Sessions `yaml:"sessions"`
 	// Profiles configures MCP-profile behavior (RUNNER-PLAN-2 §P2).
 	Profiles Profiles `yaml:"profiles,omitempty"`
 	// MCPRegistries is where declared capabilities.mcpServers resolve
@@ -150,6 +152,18 @@ type SecretSource struct {
 	EnvFile string `yaml:"envFile,omitempty"`
 }
 
+// Sessions are the interactive-session caps (plan §6.7). A manifest's
+// interactive.idleTimeoutSeconds may ask for less idle time, never more.
+type Sessions struct {
+	// IdleTimeoutSeconds ends a session after this much silence from the
+	// user (default 900).
+	IdleTimeoutSeconds int `yaml:"idleTimeoutSeconds"`
+	// MaxWallSeconds is the whole-session deadline (default 7200).
+	MaxWallSeconds int `yaml:"maxWallSeconds"`
+	// MaxUserTurns caps user messages per session (default 200; 0 = unlimited).
+	MaxUserTurns int `yaml:"maxUserTurns"`
+}
+
 // Budgets are the policy-default hard stops.
 type Budgets struct {
 	// TimeoutSeconds is the whole-run deadline (default 900).
@@ -182,6 +196,7 @@ func Default() *Policy {
 		},
 		SecretSource: SecretSource{Mode: "env"},
 		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 60},
+		Sessions:     Sessions{IdleTimeoutSeconds: 900, MaxWallSeconds: 7200, MaxUserTurns: 200},
 		Profiles:     Profiles{KeepByDefault: boolPtr(true)},
 	}
 }
@@ -295,6 +310,9 @@ func (p *Policy) Validate() error {
 	if p.Model.Provider == "" || p.Model.Name == "" {
 		return errors.New("model.provider and model.name are required")
 	}
+	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
+		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
+	}
 	if p.Model.APIKeyEnv == "" {
 		return errors.New("model.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)")
 	}
@@ -404,6 +422,12 @@ budgets:
   # maxCostUsd: 0 = unlimited; a positive value is a hard stop (exit 16)
   # on the harness's reported running cost.
   maxCostUsd: 0
+# Interactive sessions (DR-15): silence, wall clock and user-turn caps. A
+# manifest may ask for a shorter idle timeout, never a longer one.
+sessions:
+  idleTimeoutSeconds: 900
+  maxWallSeconds: 7200
+  maxUserTurns: 200
 
 profiles:
   # A BriefAgent's MCP profile stores the keys/identities guided setup

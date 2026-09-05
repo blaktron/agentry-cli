@@ -65,6 +65,9 @@ type Harness struct {
 	Adapter string `json:"adapter"`
 	Image   string `json:"image"`
 	Model   string `json:"model"`
+	// Mode is the run mode (autonomous or interactive); empty in
+	// envelopes written before run modes existed.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Usage is the measured cost of the run.
@@ -75,6 +78,8 @@ type Usage struct {
 	WallMS       int64   `json:"wallMs"`
 	// Turns counts tool-call events (the --max-turns meter).
 	Turns int `json:"turns"`
+	// UserTurns counts the user's messages in an interactive session.
+	UserTurns int `json:"userTurns,omitempty"`
 }
 
 // Receipts locates the audit artifacts.

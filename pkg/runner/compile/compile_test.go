@@ -767,3 +767,28 @@ func TestCompileRefusesUndeclaredMode(t *testing.T) {
 		t.Fatal("unknown mode accepted")
 	}
 }
+
+// TestSessionBudgetsFollowPolicyAndManifestHint: the plan's session caps
+// are the operator's, and a manifest may only shorten the idle timeout.
+func TestSessionBudgetsFollowPolicyAndManifestHint(t *testing.T) {
+	pol := testPolicy()
+	pol.Sessions = policy.Sessions{IdleTimeoutSeconds: 600, MaxWallSeconds: 3600, MaxUserTurns: 50}
+	base := "schemaVersion: \"2\"\nname: hinted\nnamespace: demo\nmodes: [autonomous, interactive]\nversion: 1.0.0\nsummary: \"h\"\n"
+	for _, tc := range []struct {
+		name     string
+		hint     string
+		wantIdle int
+	}{
+		{"no hint", "", 600},
+		{"shorter hint wins", "interactive:\n  idleTimeoutSeconds: 120\n", 120},
+		{"longer hint is capped", "interactive:\n  idleTimeoutSeconds: 9000\n", 600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := parseManifest(t, base+tc.hint+"publish:\n  include: [agent.yaml, AGENT.md]\n")
+			got := sessionBudgets(m, pol)
+			if got.IdleTimeoutSeconds != tc.wantIdle || got.MaxWallSeconds != 3600 || got.MaxUserTurns != 50 {
+				t.Errorf("budgets = %+v", got)
+			}
+		})
+	}
+}
