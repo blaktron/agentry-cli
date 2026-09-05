@@ -7,10 +7,12 @@ package compile
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -117,19 +119,35 @@ func compileFixture(t *testing.T, m *manifest.Manifest, ws string) (*spec.Plan, 
 	return plan, planDir
 }
 
+// compileFixtureMode is compileFixture for a chosen run mode.
+func compileFixtureMode(t *testing.T, m *manifest.Manifest, ws string, mode manifest.Mode) (*spec.Plan, string) {
+	t.Helper()
+	planDir := t.TempDir()
+	plan, err := Compile(Inputs{
+		Manifest: m, Mode: mode, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: ws,
+		Policy: testPolicy(), PolicySHA: "fixedpolicysha", RunnerImage: "agentry-runner:test",
+	}, planDir)
+	if err != nil {
+		t.Fatalf("compile %s: %v", mode, err)
+	}
+	return plan, planDir
+}
+
 func TestCompileGolden(t *testing.T) {
 	cases := []struct {
 		name string
 		yaml string
+		mode manifest.Mode
 	}{
-		{"puretext", pureTextYAML},
-		{"fullcaps", fullCapsYAML},
+		{"puretext", pureTextYAML, manifest.ModeAutonomous},
+		{"fullcaps", fullCapsYAML, manifest.ModeAutonomous},
+		{"fullcaps-interactive", fullCapsYAML, manifest.ModeInteractive},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := parseManifest(t, tc.yaml)
 			ws := workspaceFor(t, m, nil)
-			_, planDir := compileFixture(t, m, ws)
+			_, planDir := compileFixtureMode(t, m, ws, tc.mode)
 
 			for _, rel := range []string{"plan.json", "gateway/catalog.yaml", "gateway/tools.yaml", "gateway/toolspec.json", "harness/agent.yaml"} {
 				got, err := os.ReadFile(filepath.Join(planDir, filepath.FromSlash(rel)))
@@ -349,8 +367,8 @@ func TestInstructionRules(t *testing.T) {
 			t.Fatal(err)
 		}
 		plan, _ := compileFixture(t, m, ws)
-		if plan.Instruction.SourcePath != "PROMPT.md" || plan.Kind != "prompt-agent" {
-			t.Fatalf("v1 plan = %s / kind %q", plan.Instruction.SourcePath, plan.Kind)
+		if plan.Instruction.SourcePath != "PROMPT.md" || !reflect.DeepEqual(plan.Modes, []string{"autonomous"}) {
+			t.Fatalf("v1 plan = %s / modes %v", plan.Instruction.SourcePath, plan.Modes)
 		}
 	})
 	t.Run("v1 mcp-server is not runnable", func(t *testing.T) {
@@ -369,7 +387,9 @@ publish:
 			Manifest: m, Digest: "sha256:x", Source: "local", WorkspaceDir: t.TempDir(),
 			Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test",
 		}, t.TempDir())
-		if err == nil || !strings.Contains(err.Error(), "not a runnable BriefAgent") {
+		// The withdrawn kind declares no run mode, so the mode gate refuses
+		// it before the instruction rule would.
+		if err == nil || !strings.Contains(err.Error(), "not runnable") {
 			t.Fatalf("want not-runnable error, got %v", err)
 		}
 	})
@@ -688,5 +708,62 @@ func TestGatewayConfigInsideCatalogsDir(t *testing.T) {
 	}
 	if !home {
 		t.Errorf("gateway env does not pin HOME=/root: %+v", plan.Gateway.Env)
+	}
+}
+
+// TestModePlansIdenticalExceptSession pins plan §6.10 line 1: for one
+// release and policy, the interactive plan's gateway file set, egress
+// allowlist, mounts, secrets and instruction are byte-identical to the
+// autonomous plan's; only the harness argv/stdin and the Session block
+// differ.
+func TestModePlansIdenticalExceptSession(t *testing.T) {
+	m := parseManifest(t, fullCapsYAML)
+	ws := workspaceFor(t, m, nil)
+	auto, autoDir := compileFixtureMode(t, m, ws, manifest.ModeAutonomous)
+	inter, interDir := compileFixtureMode(t, m, ws, manifest.ModeInteractive)
+	if auto.Mode != "autonomous" || inter.Mode != "interactive" || !reflect.DeepEqual(auto.Modes, inter.Modes) {
+		t.Fatalf("modes: %s/%v vs %s/%v", auto.Mode, auto.Modes, inter.Mode, inter.Modes)
+	}
+	if auto.Harness.Session != nil || inter.Harness.Session == nil {
+		t.Fatalf("session blocks: auto=%v inter=%v", auto.Harness.Session, inter.Harness.Session)
+	}
+	if reflect.DeepEqual(auto.Harness.Agent.Argv, inter.Harness.Agent.Argv) {
+		t.Fatal("argv must differ between modes")
+	}
+	for _, rel := range []string{"gateway/catalog.yaml", "gateway/registry.yaml", "gateway/config.yaml", "gateway/tools.yaml", "gateway/toolspec.json", "harness/agent.yaml"} {
+		a, _ := os.ReadFile(filepath.Join(autoDir, filepath.FromSlash(rel)))
+		b, _ := os.ReadFile(filepath.Join(interDir, filepath.FromSlash(rel)))
+		if !bytes.Equal(a, b) {
+			t.Errorf("%s differs between modes", rel)
+		}
+	}
+	// Normalize the permitted differences and compare the whole plan.
+	na, nb := *auto, *inter
+	na.Mode, nb.Mode = "", ""
+	na.Harness.Agent.Argv, nb.Harness.Agent.Argv = nil, nil
+	na.Harness.Agent.StdinTask, nb.Harness.Agent.StdinTask = false, false
+	na.Harness.Session, nb.Harness.Session = nil, nil
+	na.Files, nb.Files = nil, nil // hashes of identical files, checked above
+	if !reflect.DeepEqual(na, nb) {
+		ja, _ := json.MarshalIndent(na, "", " ")
+		jb, _ := json.MarshalIndent(nb, "", " ")
+		t.Errorf("plans differ beyond argv/session:\n%s\n---\n%s", ja, jb)
+	}
+}
+
+// TestCompileRefusesUndeclaredMode: a mode the manifest does not declare is
+// a compile refusal (exit 12: not runnable this way).
+func TestCompileRefusesUndeclaredMode(t *testing.T) {
+	m := parseManifest(t, pureTextYAML) // autonomous only
+	ws := workspaceFor(t, m, nil)
+	_, err := Compile(Inputs{
+		Manifest: m, Mode: manifest.ModeInteractive, Digest: "sha256:x", Source: "local", WorkspaceDir: ws,
+		Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test",
+	}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "does not declare run mode interactive") {
+		t.Fatalf("want refusal, got %v", err)
+	}
+	if _, err := Compile(Inputs{Manifest: m, Mode: "daemon", WorkspaceDir: ws, Policy: testPolicy()}, t.TempDir()); err == nil {
+		t.Fatal("unknown mode accepted")
 	}
 }

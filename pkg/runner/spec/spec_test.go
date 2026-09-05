@@ -12,7 +12,8 @@ func samplePlan() *Plan {
 		Ref:         "demo/x@1.0.0",
 		Digest:      "sha256:abc",
 		Source:      "local",
-		Kind:        "skill",
+		Modes:       []string{"autonomous"},
+		Mode:        "autonomous",
 		Enforcement: map[string]string{"network": "none", "exec": "none"},
 		Tools:       []string{"write_report"},
 		Files:       map[string]string{"gateway/catalog.yaml": "aa"},
@@ -62,7 +63,7 @@ func TestParsePlanVersionGate(t *testing.T) {
 	if _, err := ParsePlan(b); err != nil {
 		t.Fatalf("current version rejected: %v", err)
 	}
-	old := strings.Replace(string(b), `"planVersion": "1"`, `"planVersion": "0"`, 1)
+	old := strings.Replace(string(b), `"planVersion": "`+PlanVersion+`"`, `"planVersion": "0"`, 1)
 	if _, err := ParsePlan([]byte(old)); err == nil {
 		t.Fatal("foreign plan version accepted")
 	}

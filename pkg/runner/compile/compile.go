@@ -36,6 +36,10 @@ import (
 type Inputs struct {
 	// Manifest is the verified package manifest.
 	Manifest *manifest.Manifest
+	// Mode is the run mode to compile for; empty means autonomous. A mode
+	// the manifest does not declare is refused (exit 12: not runnable
+	// this way).
+	Mode manifest.Mode
 	// Digest is the verified archive digest (or local-tree digest).
 	Digest string
 	// Source is "registry" or "local".
@@ -103,6 +107,18 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		return nil, err
 	}
 
+	mode := in.Mode
+	if mode == "" {
+		mode = manifest.ModeAutonomous
+	}
+	if !mode.Valid() {
+		return nil, fmt.Errorf("unknown run mode %q", mode)
+	}
+	if !m.Supports(mode) {
+		return nil, fmt.Errorf("%s/%s@%s does not declare run mode %s (modes: %s) — not runnable this way",
+			m.Namespace, m.Name, m.Version, mode, strings.Join(modeStrings(m.SupportedModes()), ", "))
+	}
+
 	caps, err := summarizeCapabilities(m, in.Policy)
 	if err != nil {
 		return nil, err
@@ -155,6 +171,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	res, err := ad.Compile(adapter.Input{
+		Mode:         mode,
 		Instruction:  instruction,
 		Summary:      m.Summary,
 		Model:        in.Policy.Model,
@@ -180,7 +197,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Ref:          fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 		Digest:       in.Digest,
 		Source:       in.Source,
-		Kind:         m.Kind,
+		Modes:        modeStrings(m.SupportedModes()),
+		Mode:         string(mode),
 		Summary:      m.Summary,
 		PolicySHA256: in.PolicySHA,
 		Instruction: spec.InstructionSpec{
@@ -197,6 +215,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			Model:      res.Model,
 			Agent:      res.Agent,
 			ResultKind: res.ResultKind,
+			Session:    res.Session,
 		},
 		Proxy: spec.ProxySpec{
 			Image: in.RunnerImage,
@@ -305,6 +324,15 @@ func fsMode(a manifest.FSAccess) (string, []string) {
 	default: // none or undeclared
 		return "none", nil
 	}
+}
+
+// modeStrings renders a mode set for the plan.
+func modeStrings(modes []manifest.Mode) []string {
+	out := make([]string, len(modes))
+	for i, m := range modes {
+		out[i] = string(m)
+	}
+	return out
 }
 
 // deriveInstruction implements the §R2 closed rule for where the harness

@@ -17,7 +17,10 @@ import (
 
 // PlanVersion is the current plan schema major. The engine refuses plans
 // with a different version (recompile instead of guessing).
-const PlanVersion = "1"
+// PlanVersion changes whenever plan.json's shape changes; installed plans
+// with another version are recompiled. "2": run modes (Modes/Mode replace
+// the v1 kind) and the interactive Session block (DR-15).
+const PlanVersion = "2"
 
 // Run-scoped placeholders. Plans and the generated gateway files must not
 // bake in per-run host paths or secrets, or they would stop being
@@ -43,6 +46,9 @@ const (
 	// store (RUNNER-PLAN-3): profile/servers/, one subdirectory per
 	// declared server, mounted :ro into that server's runtime container.
 	PHServers = "@@RUN_SERVERS@@"
+	// PHSession is the host directory an interactive session's harness
+	// store lives in (DR-15); mounted only by interactive plans.
+	PHSession = "@@RUN_SESSION@@"
 )
 
 // MCPStorePrefix is the fixed in-container prefix a declared server's
@@ -102,9 +108,14 @@ type Plan struct {
 	Digest string `json:"digest"`
 	// Source is "registry" or "local" (§R5).
 	Source string `json:"source"`
-	// Kind is the v1 manifest kind (skill | prompt-agent); empty for a
-	// schema v2 manifest, whose run mode reaches the plan with agentry-cli#34.
-	Kind string `json:"kind"`
+	// Modes are the run modes the release declares (manifest v2 modes; a
+	// v1 skill or prompt-agent is [autonomous]).
+	Modes []string `json:"modes"`
+	// Mode is the run mode this plan was compiled for, one of Modes. A
+	// release compiles to one plan per mode (plan/<mode>/); the plans are
+	// identical except Harness.Agent.Argv/StdinTask and Harness.Session
+	// (plan §6.10 line 1, pinned by a golden test).
+	Mode string `json:"mode"`
 	// Summary is the manifest one-liner (harness description field).
 	Summary string `json:"summary"`
 	// PolicySHA256 fingerprints the operator policy the plan was compiled
@@ -197,7 +208,34 @@ type HarnessSpec struct {
 	// ResultKind hints how the final result is extracted: "text" or
 	// "json" (when Output.SchemaFile is set).
 	ResultKind string `json:"resultKind"`
+	// Session says how the harness is driven when Mode is interactive;
+	// nil for an autonomous plan.
+	Session *SessionSpec `json:"session,omitempty"`
 }
+
+// SessionSpec is the interactive drive of the harness (DR-15, plan §6.3):
+// the runner is the Agent Client Protocol client on the agent container's
+// attached stdio. Everything else about the container is the autonomous
+// plan's.
+type SessionSpec struct {
+	// Transport is "acp-stdio".
+	Transport string `json:"transport"`
+	// ProtocolVersion is the ACP protocol version the client negotiates.
+	ProtocolVersion int `json:"protocolVersion"`
+	// SessionDB is the container path of the harness's session store.
+	SessionDB string `json:"sessionDb"`
+	// Mounts are added to the agent container for a session only: the
+	// writable session store under PHSession.
+	Mounts []Mount `json:"mounts,omitempty"`
+	// Safety is the harness safety mode the generated config declares
+	// (the ACP server has no flag): always "autonomous" — the gateway,
+	// not in-harness prompting, is the boundary, and the runner answers
+	// any permission request with a denial.
+	Safety string `json:"safety"`
+}
+
+// SessionMount is the container path of the interactive session store.
+const SessionMount = "/session"
 
 // ProxySpec is the LLM egress proxy sidecar (§R4 agent topology).
 type ProxySpec struct {

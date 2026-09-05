@@ -5,11 +5,13 @@
 package adapter
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 func testInput() Input {
@@ -40,6 +42,7 @@ func TestDockerAgentCompile(t *testing.T) {
 		"Bearer ${env.MCP_GATEWAY_TOKEN}",
 		"allow_private_ips: true",
 		"version: \"" + HarnessConfigVersion + "\"", // schema of the pinned harness (#43)
+		"safety: autonomous",                        // serve acp has no flag; the config carries the mode (DR-15)
 		"Do the thing.",
 	} {
 		if !strings.Contains(y, want) {
@@ -153,5 +156,49 @@ func TestRegistry(t *testing.T) {
 	}
 	if _, err := Get("nope"); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Errorf("unknown adapter must say unknown, got %v", err)
+	}
+}
+
+// TestDockerAgentCompileInteractive: the interactive plan differs from the
+// autonomous one only in argv, stdin and the Session block (plan §6.10).
+func TestDockerAgentCompileInteractive(t *testing.T) {
+	ad, _ := Get(DefaultName)
+	auto, err := ad.Compile(testInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := testInput()
+	in.Mode = manifest.ModeInteractive
+	inter, err := ad.Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(inter.Files["agent.yaml"]) != string(auto.Files["agent.yaml"]) {
+		t.Error("agent.yaml differs between modes")
+	}
+	if inter.Session == nil || inter.Session.Transport != "acp-stdio" || inter.Session.Safety != "autonomous" || inter.Session.SessionDB != spec.SessionMount+"/session.db" {
+		t.Errorf("session = %+v", inter.Session)
+	}
+	if len(inter.Session.Mounts) != 1 || inter.Session.Mounts[0].Source != spec.PHSession || inter.Session.Mounts[0].Target != spec.SessionMount || inter.Session.Mounts[0].ReadOnly {
+		t.Errorf("session mounts = %+v", inter.Session.Mounts)
+	}
+	if inter.Agent.StdinTask {
+		t.Error("interactive plan must not read a task from stdin")
+	}
+	if got := strings.Join(inter.Agent.Argv, " "); got != "serve acp /plan/agent.yaml --session-db /session/session.db" {
+		t.Errorf("argv = %q", got)
+	}
+	// Everything else identical.
+	a, b := auto.Agent, inter.Agent
+	a.Argv, b.Argv, a.StdinTask, b.StdinTask = nil, nil, false, false
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("container specs differ beyond argv/stdin:\n%+v\n%+v", a, b)
+	}
+	if auto.Session != nil {
+		t.Error("autonomous plan carries a Session block")
+	}
+	in.Mode = "daemon"
+	if _, err := ad.Compile(in); err == nil {
+		t.Error("unknown mode accepted")
 	}
 }

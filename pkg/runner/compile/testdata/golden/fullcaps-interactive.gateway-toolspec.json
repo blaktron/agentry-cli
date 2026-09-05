@@ -1,0 +1,34 @@
+{
+  "specVersion": "2",
+  "workspaceDir": "/workspace",
+  "outDir": "/out",
+  "inputsDir": "/inputs",
+  "fsRead": {
+    "enabled": true
+  },
+  "fsWrite": {
+    "enabled": true,
+    "paths": [
+      "notes/summary.md",
+      "reports"
+    ]
+  },
+  "fetch": {
+    "enabled": true,
+    "hosts": [
+      "api.example.com",
+      "api.other.net"
+    ],
+    "allowAll": false,
+    "secretEnv": [
+      "EXAMPLE_TOKEN"
+    ]
+  },
+  "exec": {
+    "commands": [
+      "git",
+      "jq"
+    ]
+  },
+  "limits": {}
+}
