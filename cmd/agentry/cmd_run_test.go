@@ -633,3 +633,34 @@ func TestFinishProfileLifecycle(t *testing.T) {
 		t.Errorf("removal note = %q", errOut.String())
 	}
 }
+
+// TestRunInteractiveUsageGates: an interactive run without a terminal, or
+// with --output-format json, is a usage error (exit 2) before anything
+// starts; --dry-run of the interactive plan still works without a terminal.
+func TestRunInteractiveUsageGates(t *testing.T) {
+	isolateEnv(t)
+	_, pol := isolateRunnerHome(t)
+	fixture := repoPath(t, "testdata/runner/full-caps") // declares both modes
+
+	_, _, err := runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive")
+	wantClassified(t, err, engine.ExitUsage)
+	if !strings.Contains(err.Error(), "terminal") {
+		t.Errorf("non-TTY interactive: %v", err)
+	}
+	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive", "--output-format", "json")
+	wantClassified(t, err, engine.ExitUsage)
+
+	stdout, stderr, err := runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive", "--dry-run")
+	if err != nil {
+		t.Fatalf("interactive dry run: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, `"mode": "interactive"`) || !strings.Contains(stderr, "mode: interactive (declared: autonomous,interactive)") {
+		t.Errorf("dry run = %s\n%s", stdout, stderr)
+	}
+	// Both modes declared, no flag, no terminal: autonomous, and the
+	// consent screen carries no interactive line.
+	_, stderr, err = runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--dry-run")
+	if err != nil || !strings.Contains(stderr, "mode: autonomous") || strings.Contains(stderr, "interactive: you can talk") {
+		t.Errorf("default mode: %v\n%s", err, stderr)
+	}
+}

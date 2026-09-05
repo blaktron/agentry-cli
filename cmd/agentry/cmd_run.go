@@ -42,6 +42,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
+	"github.com/blaktron/agentry-cli/pkg/tui"
 )
 
 // runOpts carries the run command's flags.
@@ -80,8 +81,12 @@ func newRunCmd() *cobra.Command {
 			"Task input: --input FILE, else piped stdin, else an empty task. The result\n" +
 			"goes to stdout (--output-format text|json); reports the BriefAgent writes\n" +
 			"and the full receipts land in the output folder. Every failure class has its\n" +
-			"own exit code: 0 ok, 10 verify, 11 policy/secret, 12 compile, 13\n" +
+			"own exit code: 0 ok, 2 usage, 10 verify, 11 policy/secret, 12 compile, 13\n" +
 			"gateway/docker, 14 agent, 15 timeout, 16 budget, 17 output schema.\n\n" +
+			"Run modes: --mode autonomous runs from the files and ends; --mode interactive\n" +
+			"opens a chat with the agent in this terminal under exactly the same controls\n" +
+			"(/add a file, /finish for the final result, /quit, /caps). A release that\n" +
+			"declares both modes is asked on a terminal and runs autonomous otherwise.\n\n" +
 			"First run of a release verifies it exactly like `agentry install` (digest +\n" +
 			"DSSE attestation; unsigned needs --allow-unsigned), then compiles the run\n" +
 			"plan and installs the gateway/harness/runner images. Later runs reuse all\n" +
@@ -119,7 +124,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "run a release with no registry attestation (required for --local)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
-	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode, else autonomous). Interactive compiles the session plan; running it arrives with the session API (agentry-cli#35, #36)")
+	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode; asked on a terminal when it declares both, autonomous otherwise)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
@@ -213,7 +218,20 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	// The §R5 capability gate: same semantics as install — egress/exec
 	// (or a widened contract vs the last accepted run) needs consent.
-	if err := confirmRunCapabilities(cmd, m, meta, installDir, opts); err != nil {
+	mode, err := resolveRunMode(cmd, opts, m)
+	if err != nil {
+		return engine.Classify(engine.ExitUsage, err)
+	}
+	if mode == manifest.ModeInteractive && !opts.dryRun {
+		if !stdinIsTTY(cmd.InOrStdin()) {
+			return engine.Classify(engine.ExitUsage, errors.New("an interactive run needs a terminal on stdin (the chat is the input); pipe a task to --mode autonomous instead"))
+		}
+		if opts.outputFormat == "json" {
+			return engine.Classify(engine.ExitUsage, errors.New("--output-format json is not available for an interactive run: the transcript and receipts are the record"))
+		}
+	}
+
+	if err := confirmRunCapabilities(cmd, m, meta, installDir, opts, mode); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
@@ -243,10 +261,6 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		serverSpecs = mcpinstall.Specs(resolvedServers, m.Capabilities.MCPServers, pol.Images)
 	}
 
-	mode, err := resolveRunMode(opts.mode, m)
-	if err != nil {
-		return err
-	}
 	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName, serverSpecs, mode)
 	if err != nil {
 		return err
@@ -254,11 +268,6 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	if opts.dryRun {
 		return printDryRun(cmd, plan, planDir)
-	}
-	if mode == manifest.ModeInteractive {
-		// The plan exists and is inspectable; driving it is the session
-		// API's job (DR-15 M3).
-		return engine.Classify(engine.ExitCLI, errors.New("interactive sessions are not runnable yet (agentry-cli#35, #36); --dry-run shows the compiled interactive plan"))
 	}
 
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
@@ -326,7 +335,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	for id, v := range answers.Secrets {
 		overrides[intake.SecretName(id)] = v
 	}
-	env, runErr := engine.Run(cmd.Context(), docker, engine.Params{
+	params := engine.Params{
 		Plan:            plan,
 		PlanDir:         planDir,
 		WorkspaceSrc:    workspaceDir,
@@ -344,13 +353,68 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		KeepRunDir:      opts.keepRunDir,
 		RunID:           runID,
 		Stderr:          cmd.ErrOrStderr(),
-	})
+	}
+	if mode == manifest.ModeInteractive {
+		runErr := runInteractive(cmd, docker, params, m, plan, opts)
+		finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
+		return runErr
+	}
+	env, runErr := engine.Run(cmd.Context(), docker, params)
 	if env != nil {
 		printEnvelope(cmd, env, opts.outputFormat)
 	}
-	// The run completed its lifecycle (success or failure): apply the
-	// profile's keep/remove choice (P2 §P2).
 	finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
+	return runErr
+}
+
+// runInteractive drives an interactive plan: the engine's session behind
+// the terminal chat (plan §6.2, §6.8). The screen is restored before the
+// envelope and receipts are written, so what the user sees last is where
+// the transcript went.
+func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Params, m *manifest.Manifest, plan *spec.Plan, opts runOpts) error {
+	errOut := cmd.ErrOrStderr()
+	s, err := engine.StartSession(cmd.Context(), docker, params)
+	if err != nil {
+		return err
+	}
+	topts := tui.Options{
+		Ref:        plan.Ref,
+		Model:      plan.Harness.Model,
+		Caps:       capabilityLines(m.Capabilities),
+		MaxTurns:   params.Budgets.MaxTurns,
+		MaxCostUSD: params.Budgets.MaxCostUSD,
+		HasTask:    opts.input != "",
+	}
+	if plan.Harness.Session != nil {
+		topts.Budgets = plan.Harness.Session.Budgets
+	}
+	if m.Interactive != nil {
+		topts.Opening = m.Interactive.Opening
+	}
+	outcome, uiErr := tui.Run(cmd.Context(), s, topts, cmd.InOrStdin(), cmd.OutOrStdout())
+	if uiErr != nil {
+		_, _ = fmt.Fprintf(errOut, "chat closed with an error: %v\n", uiErr)
+	}
+	env, runErr := s.End(cmd.Context(), outcome.Finish)
+	if env != nil {
+		if _, reason := s.Ended(); reason != "" {
+			_, _ = fmt.Fprintf(errOut, "session ended: %s\n", reason)
+		}
+		if outcome.Finish && runErr == nil {
+			var asString string
+			if err := json.Unmarshal(env.Result, &asString); err == nil {
+				if asString != "" {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), asString)
+				}
+			} else {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(env.Result))
+			}
+		}
+		_, _ = fmt.Fprintf(errOut, "transcript, reports and receipts: %s\n", env.OutDir)
+	}
+	if runErr == nil && uiErr != nil {
+		return engine.Classify(engine.ExitCLI, uiErr)
+	}
 	return runErr
 }
 
@@ -439,13 +503,13 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts) (*int
 }
 
 // resolveRunMode applies the plan's default rule (§6.2): the flag wins; a
-// release with one mode runs in it; one with both runs autonomous (the
-// terminal prompt arrives with the TUI, agentry-cli#36).
-func resolveRunMode(flag string, m *manifest.Manifest) (manifest.Mode, error) {
-	if flag != "" {
-		mode := manifest.Mode(flag)
+// release with one mode runs in it; one with both is asked on a terminal
+// and runs autonomous otherwise (a --yes or --dry-run run never asks).
+func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (manifest.Mode, error) {
+	if opts.mode != "" {
+		mode := manifest.Mode(opts.mode)
 		if !mode.Valid() {
-			return "", fmt.Errorf("unknown --mode %q (want autonomous or interactive)", flag)
+			return "", fmt.Errorf("unknown --mode %q (want autonomous or interactive)", opts.mode)
 		}
 		return mode, nil
 	}
@@ -453,7 +517,22 @@ func resolveRunMode(flag string, m *manifest.Manifest) (manifest.Mode, error) {
 	if len(modes) == 1 {
 		return modes[0], nil
 	}
-	return manifest.ModeAutonomous, nil
+	if len(modes) == 0 {
+		return manifest.ModeAutonomous, nil // the compiler refuses it with the reason
+	}
+	if !stdinIsTTY(cmd.InOrStdin()) || opts.yes || opts.dryRun {
+		return manifest.ModeAutonomous, nil
+	}
+	p := &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+	answer, err := p.Ask("This BriefAgent runs autonomous or interactive. Mode", string(manifest.ModeAutonomous))
+	if err != nil {
+		return "", err
+	}
+	mode := manifest.Mode(strings.TrimSpace(answer))
+	if !mode.Valid() {
+		return "", fmt.Errorf("unknown mode %q (want autonomous or interactive)", answer)
+	}
+	return mode, nil
 }
 
 func shortHash(plan *spec.Plan) string {
@@ -735,7 +814,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 // confirmRunCapabilities applies the install-time consent semantics to
 // runs, keyed on the runner install dir: first run asks about egress/exec,
 // upgrades ask again only when the contract widened (§R1).
-func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installMeta, installDir string, opts runOpts) error {
+func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installMeta, installDir string, opts runOpts, mode manifest.Mode) error {
 	// Everything here narrates to stderr: stdout is the run's result
 	// channel (§R8) and must stay pipeline-clean.
 	out := cmd.ErrOrStderr()
@@ -746,6 +825,10 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	_, _ = fmt.Fprintln(out, "capabilities:")
 	for _, line := range capabilityLines(m.Capabilities) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
+	}
+	if mode == manifest.ModeInteractive {
+		// Plan §8: the one line the consent screen gains for a session.
+		_, _ = fmt.Fprintln(out, "  interactive: you can talk to this agent and give it files; you cannot give it more access than listed above")
 	}
 	key := installed.Key{
 		Registry: "runner", Namespace: meta.Namespace, Name: meta.Name,
