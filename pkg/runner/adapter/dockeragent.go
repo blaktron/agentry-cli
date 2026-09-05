@@ -20,6 +20,11 @@ import (
 
 func init() { Register(&dockerAgent{}) }
 
+// HarnessConfigVersion is the docker-agent config schema version the
+// adapter writes (`version:` in agent.yaml). It belongs to the pinned
+// harness image (policy.DefaultHarnessImage, 1.128.0 ships schema 15).
+const HarnessConfigVersion = "15"
+
 // dockerAgent implements Adapter for docker/docker-agent.
 type dockerAgent struct{}
 
@@ -85,7 +90,13 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	}
 
 	doc := agentYAML{
-		Version: "2",
+		// The config schema version of the pinned harness: docker-agent
+		// parses a document with the strict schema of the version it
+		// names and upgrades afterwards, so an old number selects an old
+		// schema — "2" has no allow_private_ips and the harness refused
+		// every plan (agentry-cli#43). Bump together with
+		// policy.DefaultHarnessImage (1.128.0 → 15).
+		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
 				Provider: in.Model.Provider,
