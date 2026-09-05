@@ -333,14 +333,14 @@ func TestMaterializeLocalGates(t *testing.T) {
 	_, _, err := materializeLocal(cmd, repoPath(t, "testdata/runner/pure-text"), home, false)
 	wantClassified(t, err, engine.ExitVerify)
 
-	bad := writeTree(t, map[string]string{"agent.yaml": `schemaVersion: "1"
+	bad := writeTree(t, map[string]string{"agent.yaml": `schemaVersion: "2"
 name: bad
 namespace: acme
-kind: skill
+modes: [autonomous]
 version: not-semver
 summary: "x"
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 publish:
   include: [agent.yaml, SKILL.md]
 `, "SKILL.md": "# x\n"})
@@ -503,14 +503,14 @@ func TestRunRegistryVerifyGates(t *testing.T) {
 // for profile tests.
 func runFixtureManifest(t *testing.T, secretsYAML string) *manifest.Manifest {
 	t.Helper()
-	m, err := manifest.Parse([]byte(`schemaVersion: "1"
+	m, err := manifest.Parse([]byte(`schemaVersion: "2"
 name: demo
 namespace: acme
-kind: skill
+modes: [autonomous]
 version: 1.0.0
 summary: "s"
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 ` + secretsYAML + `publish:
   include: [agent.yaml, SKILL.md]
 `))

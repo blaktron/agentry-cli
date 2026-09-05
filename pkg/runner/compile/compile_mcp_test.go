@@ -20,14 +20,14 @@ import (
 func mcpFixtureInputs(t *testing.T, servers []spec.MCPServerSpec, pol *policy.Policy) Inputs {
 	t.Helper()
 	ws := t.TempDir()
-	doc := `schemaVersion: "1"
+	doc := `schemaVersion: "2"
 name: needs-servers
 namespace: acme
-kind: skill
+modes: [autonomous]
 version: 1.0.0
 summary: "mcp server compile fixture"
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 publish:
   include: [agent.yaml, SKILL.md]
 `
