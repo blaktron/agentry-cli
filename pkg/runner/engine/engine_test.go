@@ -25,14 +25,14 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-const engineManifest = `schemaVersion: "1"
+const engineManifest = `schemaVersion: "2"
 name: engine-test
 namespace: demo
-kind: skill
+modes: [autonomous]
 version: 1.0.0
 summary: "engine lifecycle fixture"
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 capabilities:
   network:
     egress: [api.example.com]

@@ -127,14 +127,14 @@ func TestPublishEmptyIncludeRefused(t *testing.T) {
 
 	// publish.include matching nothing is the V4 authoring error; the
 	// upload path refuses before any bytes travel.
-	dir := writeTree(t, map[string]string{"agent.yaml": `schemaVersion: "1"
+	dir := writeTree(t, map[string]string{"agent.yaml": `schemaVersion: "2"
 name: demo
 namespace: acme
-kind: skill
+modes: [autonomous]
 version: 0.1.0
 summary: "s"
 entrypoints:
-  skill: SKILL.md
+  instruction: SKILL.md
 publish:
   include: [does-not-exist/**]
 `})
