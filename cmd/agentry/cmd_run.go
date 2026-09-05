@@ -45,6 +45,7 @@ import (
 
 // runOpts carries the run command's flags.
 type runOpts struct {
+	mode               string
 	input              string
 	out                string
 	outputFormat       string
@@ -116,6 +117,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "run a release with no registry attestation (required for --local)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
+	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode, else autonomous). Interactive compiles the session plan; running it arrives with the session API (agentry-cli#35, #36)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
@@ -238,13 +240,22 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		serverSpecs = mcpinstall.Specs(resolvedServers, m.Capabilities.MCPServers, pol.Images)
 	}
 
-	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName, serverSpecs)
+	mode, err := resolveRunMode(opts.mode, m)
+	if err != nil {
+		return err
+	}
+	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName, serverSpecs, mode)
 	if err != nil {
 		return err
 	}
 
 	if opts.dryRun {
 		return printDryRun(cmd, plan, planDir)
+	}
+	if mode == manifest.ModeInteractive {
+		// The plan exists and is inspectable; driving it is the session
+		// API's job (DR-15 M3).
+		return engine.Classify(engine.ExitCLI, errors.New("interactive sessions are not runnable yet (agentry-cli#35, #36); --dry-run shows the compiled interactive plan"))
 	}
 
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
@@ -389,8 +400,26 @@ func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
 		return err
 	}
 	_, _ = cmd.OutOrStdout().Write(b)
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "run plan sha256: %s\nplan dir: %s\n", shortHash(plan), planDir)
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "run plan sha256: %s\nplan dir: %s\nmode: %s (declared: %s)\n", shortHash(plan), planDir, plan.Mode, strings.Join(plan.Modes, ","))
 	return nil
+}
+
+// resolveRunMode applies the plan's default rule (§6.2): the flag wins; a
+// release with one mode runs in it; one with both runs autonomous (the
+// terminal prompt arrives with the TUI, agentry-cli#36).
+func resolveRunMode(flag string, m *manifest.Manifest) (manifest.Mode, error) {
+	if flag != "" {
+		mode := manifest.Mode(flag)
+		if !mode.Valid() {
+			return "", fmt.Errorf("unknown --mode %q (want autonomous or interactive)", flag)
+		}
+		return mode, nil
+	}
+	modes := m.SupportedModes()
+	if len(modes) == 1 {
+		return modes[0], nil
+	}
+	return manifest.ModeAutonomous, nil
 }
 
 func shortHash(plan *spec.Plan) string {
@@ -622,11 +651,18 @@ func loadInstallMeta(installDir, wantDigest string) (*installMeta, bool) {
 // ensurePlan reuses the installed plan when nothing it depends on changed
 // (§R6/§R9), otherwise recompiles.
 func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, installDir, workspaceDir string,
-	pol *policy.Policy, polSHA, adapterName string, serverSpecs []spec.MCPServerSpec,
+	pol *policy.Policy, polSHA, adapterName string, serverSpecs []spec.MCPServerSpec, mode manifest.Mode,
 ) (*spec.Plan, string, error) {
-	planDir := filepath.Join(installDir, "plan")
+	// One plan per run mode (plan/<mode>/); a plan/plan.json from the
+	// single-plan layout is a stale install and is cleared.
+	if _, err := os.Stat(filepath.Join(installDir, "plan", "plan.json")); err == nil {
+		_ = os.RemoveAll(filepath.Join(installDir, "plan"))
+	}
+	planDir := filepath.Join(installDir, "plan", string(mode))
 	if b, err := os.ReadFile(filepath.Join(planDir, "plan.json")); err == nil { //nolint:gosec // our install layout
 		if plan, perr := spec.ParsePlan(b); perr == nil &&
+			plan.PlanVersion == spec.PlanVersion &&
+			plan.Mode == string(mode) &&
 			plan.Digest == meta.Digest &&
 			plan.PolicySHA256 == polSHA &&
 			plan.Harness.Adapter == adapterName &&
@@ -642,6 +678,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 	}
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest:     m,
+		Mode:         mode,
 		Digest:       meta.Digest,
 		Source:       meta.Source,
 		WorkspaceDir: workspaceDir,

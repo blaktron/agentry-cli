@@ -1,9 +1,12 @@
 {
-  "planVersion": "1",
+  "planVersion": "2",
   "ref": "demo/pure-text@1.0.0",
   "digest": "sha256:0123456789abcdef",
   "source": "local",
-  "kind": "",
+  "modes": [
+    "autonomous"
+  ],
+  "mode": "autonomous",
   "summary": "A pure text agent",
   "policySha256": "fixedpolicysha",
   "instruction": {
@@ -151,6 +154,6 @@
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "88a8dc133a5f0fbdac4dac0486123c3273a0436b6b86594cd73c7881e618304f",
     "gateway/toolspec.json": "a7d760e230f0e15c3a83474a2eeddbb3d05f1579fc9b6d852bb227491321aee1",
-    "harness/agent.yaml": "8c2f66c9cbb3591aa286255a3b49a409d61681fb2454aa6d7dd5286ccd292db5"
+    "harness/agent.yaml": "1f79ba6e2c7148ccdc528ccefa60ca602374bb2e91aac91bd0667ff09544c2cd"
   }
 }

@@ -7,18 +7,26 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // Input is everything an adapter may use to compile harness files. Note
 // what is absent: secret values, host paths, run ids — adapters compile
 // deterministic plan content only (§R4).
 type Input struct {
+	// Mode is the run mode the plan is compiled for (autonomous or
+	// interactive); it selects the harness argv and the Session block and
+	// changes nothing else (plan §6.10 line 1).
+	Mode manifest.Mode
 	// Instruction is the fully rendered system instruction (§R2: prompt
 	// body + runner contract postscript).
 	Instruction string
@@ -39,6 +47,9 @@ type Result struct {
 	// Files are harness-native definition files, written by the compiler
 	// under plan/harness/ and mounted read-only at spec.PlanMount.
 	Files map[string][]byte
+	// Session is the interactive drive (Input.Mode interactive); nil for
+	// an autonomous plan.
+	Session *spec.SessionSpec
 	// Agent is the agent container to run.
 	Agent spec.ContainerSpec
 	// Model is the provider/model string for receipts.
@@ -63,6 +74,9 @@ const (
 	EventUsage EventKind = "usage"
 	// EventError carries a harness-reported error.
 	EventError EventKind = "error"
+	// EventPermissionDenied records an in-harness permission request the
+	// runner refused (interactive sessions; plan §6.10 line 4).
+	EventPermissionDenied EventKind = "permission_denied"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )
@@ -92,6 +106,47 @@ type Adapter interface {
 	// per the adapter's judgment; never an error — parsing must not kill
 	// a run the harness thinks is fine.
 	Events(line []byte) []Event
+	// Session returns the driver for an interactive session over the
+	// harness container's attached stdio (plan §6.9). Adapters without an
+	// interactive transport return ErrNotSupported.
+	Session(ctx context.Context, rw io.ReadWriteCloser) (SessionDriver, error)
+}
+
+// ErrNotSupported is returned by Session for adapters without an
+// interactive transport.
+var ErrNotSupported = errors.New("adapter does not support interactive sessions")
+
+// SessionDriver drives one interactive harness session (DR-15). Turns go
+// in through Prompt; everything the harness says comes out of Events as
+// the same normalized kinds an autonomous run produces, so receipts have
+// one shape. A permission request from the harness is answered with a
+// denial by the driver and surfaced as an EventPermissionDenied.
+type SessionDriver interface {
+	// Start performs the protocol handshake and opens the session.
+	Start(ctx context.Context) error
+	// Prompt sends one user turn and returns when the harness ends it.
+	Prompt(ctx context.Context, text string) (*Turn, error)
+	// Events streams the session's events; closed after Close.
+	Events() <-chan Event
+	// Close ends the protocol; the harness exits on stdin EOF.
+	Close() error
+}
+
+// Turn is the harness's answer to one Prompt.
+type Turn struct {
+	// StopReason is the protocol's reason (end_turn, cancelled, ...).
+	StopReason string
+	// Text is the assistant text of the turn.
+	Text string
+	// Usage is the turn's token usage when the harness reports it.
+	Usage *TurnUsage
+}
+
+// TurnUsage is the token usage of one turn.
+type TurnUsage struct {
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
 }
 
 // registry maps adapter names to constructors. Slots for planned adapters

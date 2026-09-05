@@ -28,6 +28,7 @@ type runDirs struct {
 	root        string // <RunRoot>/runs/<id>
 	workspace   string // root/workspace — the rw copy tools may mount
 	inputs      string // root/inputs — the :ro operator-inputs channel (P2 §P4)
+	session     string // root/session — an interactive session's harness store (DR-15)
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/secrets.env (0600, deleted on teardown)
 	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
@@ -43,6 +44,7 @@ func (rd *runDirs) replacer() *strings.Replacer {
 		spec.PHCfg, rd.cfg,
 		spec.PHSecrets, rd.secretsPath,
 		spec.PHInputs, rd.inputs,
+		spec.PHSession, rd.session,
 		spec.PHServers, rd.serversDir,
 		spec.PHRunID, filepath.Base(rd.root),
 	)
@@ -57,6 +59,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		root:      root,
 		workspace: filepath.Join(root, "workspace"),
 		inputs:    filepath.Join(root, "inputs"),
+		session:   filepath.Join(root, "session"),
 		cfg:       filepath.Join(root, "cfg"),
 		// secrets.env lives INSIDE cfg/gateway because that directory is
 		// the gateway's /mcp mount — the compiled `--secrets

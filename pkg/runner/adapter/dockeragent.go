@@ -16,9 +16,18 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 func init() { Register(&dockerAgent{}) }
+
+// harnessSafety is the docker-agent safety mode for every plan: the
+// gateway is the boundary, so nothing in-harness may prompt (§R4).
+const harnessSafety = "autonomous"
+
+// acpProtocolVersion is the Agent Client Protocol version negotiated with
+// serve acp (docker-agent 1.128 answers protocolVersion 1).
+const acpProtocolVersion = 1
 
 // HarnessConfigVersion is the docker-agent config schema version the
 // adapter writes (`version:` in agent.yaml). It belongs to the pinned
@@ -49,10 +58,15 @@ type modelYAML struct {
 }
 
 type agntYAML struct {
-	Model       string        `yaml:"model"`
-	Description string        `yaml:"description,omitempty"`
-	Instruction string        `yaml:"instruction"`
-	Toolsets    []toolsetYAML `yaml:"toolsets"`
+	Model       string `yaml:"model"`
+	Description string `yaml:"description,omitempty"`
+	Instruction string `yaml:"instruction"`
+	// Safety is docker-agent's declarative safety mode. The ACP server
+	// (serve acp) has no --safety flag, so the interactive plan needs it
+	// here; it is written for both modes so the config is identical, and
+	// the exec path's explicit --safety flag still wins (DR-15).
+	Safety   string        `yaml:"safety,omitempty"`
+	Toolsets []toolsetYAML `yaml:"toolsets"`
 }
 
 type toolsetYAML struct {
@@ -109,6 +123,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 				Model:       "main",
 				Description: in.Summary,
 				Instruction: instruction,
+				Safety:      harnessSafety,
 				Toolsets: []toolsetYAML{{
 					Type: "mcp",
 					Remote: remoteYAML{
@@ -138,15 +153,41 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		return Result{}, fmt.Errorf("render agent.yaml: %w", err)
 	}
 
-	agent := spec.ContainerSpec{
-		Image: in.HarnessImage,
+	mode := in.Mode
+	if mode == "" {
+		mode = manifest.ModeAutonomous
+	}
+	var argv []string
+	var session *spec.SessionSpec
+	switch mode {
+	case manifest.ModeAutonomous:
 		// --exec with no unattended policy auto-rejects every tool call
 		// (annex §4.1). --safety autonomous is deliberate and safe HERE
 		// because in-harness permission patterns are not the boundary:
 		// the tool surface is gateway-only and the container is on an
 		// internal network — the enforcement lives a layer down (§R4).
-		Argv: []string{"run", "--exec", "--json", "--safety", "autonomous",
-			spec.PlanMount + "/agent.yaml", "-"},
+		argv = []string{"run", "--exec", "--json", "--safety", harnessSafety,
+			spec.PlanMount + "/agent.yaml", "-"}
+	case manifest.ModeInteractive:
+		// The ACP server on the container's stdio (DR-15; spike on
+		// agentry-cli#33). Same config, same toolset, same network; the
+		// session store is the one writable mount, added for sessions
+		// only. Safety comes from the config (no flag on serve acp).
+		argv = []string{"serve", "acp", spec.PlanMount + "/agent.yaml",
+			"--session-db", spec.SessionMount + "/session.db"}
+		session = &spec.SessionSpec{
+			Transport:       "acp-stdio",
+			ProtocolVersion: acpProtocolVersion,
+			SessionDB:       spec.SessionMount + "/session.db",
+			Mounts:          []spec.Mount{{Source: spec.PHSession, Target: spec.SessionMount}},
+			Safety:          harnessSafety,
+		}
+	default:
+		return Result{}, fmt.Errorf("docker-agent adapter: unknown run mode %q", mode)
+	}
+	agent := spec.ContainerSpec{
+		Image: in.HarnessImage,
+		Argv:  argv,
 		Env: []spec.EnvVar{
 			{Name: spec.GatewayTokenEnv, FromRunToken: true},
 			{Name: in.Model.APIKeyEnv, FromHostEnv: in.Model.APIKeyEnv},
@@ -162,7 +203,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			Target:   spec.PlanMount,
 			ReadOnly: true,
 		}},
-		StdinTask: true,
+		StdinTask: session == nil, // the task rides stdin only on the exec path
 	}
 
 	return Result{
@@ -170,6 +211,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		Agent:      agent,
 		Model:      in.Model.Provider + "/" + in.Model.Name,
 		ResultKind: resultKind,
+		Session:    session,
 	}, nil
 }
 
