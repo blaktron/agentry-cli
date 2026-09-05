@@ -17,7 +17,7 @@ func testInput() Input {
 		Instruction:  "Do the thing.\n",
 		Summary:      "a test agent",
 		Model:        policy.Default().Model,
-		HarnessImage: "docker/docker-agent:v1.128.0",
+		HarnessImage: "docker/docker-agent:1.128.0",
 		GatewayURL:   spec.GatewayURL(),
 	}
 }

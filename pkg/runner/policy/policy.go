@@ -30,7 +30,7 @@ const Version = "1"
 // research annex survey of 2026-08-30.
 const (
 	DefaultGatewayImage = "docker/mcp-gateway:v0.43.3"
-	DefaultHarnessImage = "docker/docker-agent:v1.128.0"
+	DefaultHarnessImage = "docker/docker-agent:1.128.0"
 	DefaultGoBuilder    = "golang:1.27-alpine"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// (RUNNER-PLAN-3 §P2).
@@ -373,7 +373,7 @@ images:
   # Pin by digest (repo@sha256:...) once you have verified one. Tags are
   # the out-of-box default only because digests cannot be invented.
   gateway: docker/mcp-gateway:v0.43.3
-  harnessDockerAgent: docker/docker-agent:v1.128.0
+  harnessDockerAgent: docker/docker-agent:1.128.0
   goBuilder: golang:1.27-alpine
   # Runtimes for MCP servers a BriefAgent declares (capabilities.mcpServers).
   nodeRuntime: node:22-alpine
