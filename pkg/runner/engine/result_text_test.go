@@ -13,9 +13,9 @@ import (
 // and text before a tool call do not leak into it (agentry-cli#53 — the
 // sequence below is the shape of the first dev-host run's receipt).
 func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
-	ad, ok := adapter.Get("docker-agent")
-	if !ok {
-		t.Fatal("docker-agent adapter missing")
+	ad, err := adapter.Get("docker-agent")
+	if err != nil {
+		t.Fatal(err)
 	}
 	c := &eventCollector{adapter: ad, events: io.Discard}
 	c.consume(strings.NewReader(strings.Join([]string{
