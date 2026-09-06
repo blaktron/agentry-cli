@@ -119,6 +119,8 @@ func TestDockerAgentEvents(t *testing.T) {
 		{"tool response", `{"type":"tool_call_response","tool_call_id":"call_1","response":"ok"}`, []EventKind{EventOther}},
 		{"tool confirmation", `{"type":"tool_call_confirmation","tool_call":{"id":"call_1"}}`, []EventKind{EventOther}},
 		{"complete call", `{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"list_inputs","arguments":"{}"}}}`, []EventKind{EventToolCall}},
+		// The model's reasoning stream is not assistant output (agentry-cli#53).
+		{"reasoning", `{"type":"agent_choice_reasoning","content":"Let me"}`, []EventKind{EventOther}},
 		{"choice text", `{"type":"agent_choice","message":{"content":"hello"}}`, []EventKind{EventAssistantText}},
 		{"content parts", `{"type":"agent_choice","message":{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`, []EventKind{EventAssistantText}},
 		{"top level text", `{"type":"delta","content":"chunk"}`, []EventKind{EventAssistantText}},
@@ -207,5 +209,17 @@ func TestDockerAgentCompileInteractive(t *testing.T) {
 	in.Mode = "daemon"
 	if _, err := ad.Compile(in); err == nil {
 		t.Error("unknown mode accepted")
+	}
+}
+
+// Streamed assistant text is flagged as a delta so the engine concatenates
+// it; a whole-message shape is not (agentry-cli#53).
+func TestDockerAgentTextDeltas(t *testing.T) {
+	ad, _ := Get(DefaultName)
+	if evs := ad.Events([]byte(`{"type":"agent_choice","content":"{"}`)); len(evs) != 1 || evs[0].Kind != EventAssistantText || !evs[0].Delta || evs[0].Text != "{" {
+		t.Fatalf("agent_choice delta: %+v", evs)
+	}
+	if evs := ad.Events([]byte(`{"type":"assistant_message","message":{"content":"whole"}}`)); len(evs) != 1 || evs[0].Kind != EventAssistantText || evs[0].Delta {
+		t.Fatalf("whole message: %+v", evs)
 	}
 }

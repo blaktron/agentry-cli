@@ -242,9 +242,12 @@ func (d *dockerAgent) Events(line []byte) []Event {
 		events = append(events, Event{Kind: EventToolCall, Raw: raw})
 	case strings.Contains(typ, "error"):
 		events = append(events, Event{Kind: EventError, Text: textField(obj), Raw: raw})
+	case strings.Contains(typ, "reasoning") || strings.Contains(typ, "thinking"):
+		// The model's reasoning stream (agent_choice_reasoning): receipts
+		// keep it, the result must not (agentry-cli#53).
 	default:
 		if txt := textField(obj); txt != "" {
-			events = append(events, Event{Kind: EventAssistantText, Text: txt, Raw: raw})
+			events = append(events, Event{Kind: EventAssistantText, Text: txt, Delta: isTextDelta(typ), Raw: raw})
 		}
 	}
 	if in, out, cost, ok := usageFields(obj); ok {
@@ -274,6 +277,19 @@ func isToolCallStart(typ string) bool {
 		}
 	}
 	return true
+}
+
+// isTextDelta is true for the shapes that stream one chunk of the assistant
+// message at a time — docker-agent 1.128.0 emits agent_choice with a
+// content delta per token group; a whole message arrives in one event
+// only for the non-streaming shapes (agentry-cli#53).
+func isTextDelta(typ string) bool {
+	for _, s := range []string{"choice", "delta", "chunk", "partial"} {
+		if strings.Contains(typ, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // textField digs assistant text out of the shapes docker-agent has been
