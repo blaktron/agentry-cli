@@ -326,15 +326,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		budgets.MaxCostUSD = opts.maxCost
 	}
 
-	overrides := map[string]string{}
+	var profSecrets map[string]string
 	if prof != nil {
-		for k, v := range prof.Secrets {
-			overrides[k] = v
-		}
+		profSecrets = prof.Secrets
 	}
-	for id, v := range answers.Secrets {
-		overrides[intake.SecretName(id)] = v
-	}
+	overrides := secretOverrides(profSecrets, answers)
 	params := engine.Params{
 		Plan:            plan,
 		PlanDir:         planDir,
@@ -500,6 +496,23 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts) (*int
 		p = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
 	}
 	return intake.Collect(p, m.Intake, preset, m.Capabilities.Secrets)
+}
+
+// secretOverrides merges the profile's stored secrets with the intake's
+// secret answers (under their SecretName). answers is nil for a BriefAgent
+// that asks no intake questions — the common case, which used to panic
+// here (agentry-cli#49).
+func secretOverrides(profSecrets map[string]string, answers *intake.Answers) map[string]string {
+	overrides := make(map[string]string, len(profSecrets))
+	for k, v := range profSecrets {
+		overrides[k] = v
+	}
+	if answers != nil {
+		for id, v := range answers.Secrets {
+			overrides[intake.SecretName(id)] = v
+		}
+	}
+	return overrides
 }
 
 // resolveRunMode applies the plan's default rule (§6.2): the flag wins; a
