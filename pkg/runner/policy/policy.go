@@ -69,6 +69,19 @@ type Policy struct {
 	// MCPRegistries is where declared capabilities.mcpServers resolve
 	// (RUNNER-PLAN-3 §P2): npm and PyPI by default, private mirrors here.
 	MCPRegistries MCPRegistries `yaml:"mcpRegistries,omitempty"`
+	// MCPServers governs the registry's vulnerability verdict on declared
+	// servers (agentry#177, DR-16).
+	MCPServers MCPServersPolicy `yaml:"mcpServers,omitempty"`
+}
+
+// MCPServersPolicy is the operator's stance on declared servers the
+// registry knows to be vulnerable.
+type MCPServersPolicy struct {
+	// AllowVulnerable lets a run proceed when the registry reports a high
+	// or critical advisory for a declared server version. Off by default:
+	// such a run is refused (exit 11) unless --allow-vulnerable-mcp is
+	// given; either override is recorded in the receipt.
+	AllowVulnerable bool `yaml:"allowVulnerable,omitempty"`
 }
 
 // MCPRegistries names the trusted repositories for declared MCP servers.

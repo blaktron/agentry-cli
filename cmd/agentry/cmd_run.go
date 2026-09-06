@@ -61,6 +61,7 @@ type runOpts struct {
 	maxCost            float64
 	yes                bool
 	allowUnsigned      bool
+	allowVulnerableMCP bool
 	prepare            bool
 	dryRun             bool
 	keepRunDir         bool
@@ -122,6 +123,7 @@ func newRunCmd() *cobra.Command {
 	f.Float64Var(&opts.maxCost, "max-cost", -1, "override the policy cost budget in USD; the run is killed (exit 16) once the harness reports more (0 = unlimited)")
 	f.BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	f.BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "run a release with no registry attestation (required for --local)")
+	f.BoolVar(&opts.allowVulnerableMCP, "allow-vulnerable-mcp", false, "run even when the registry reports a high/critical vulnerability for a declared MCP server (recorded in the receipt)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
 	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode; asked on a terminal when it declares both, autonomous otherwise)")
@@ -253,7 +255,19 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	serversDir := mcpinstall.StoreDir(profDir)
 	var resolvedServers []mcpinstall.Resolved
 	var serverSpecs []spec.MCPServerSpec
+	var vulnLine string
 	if len(m.Capabilities.MCPServers) > 0 {
+		// The registry's vulnerability verdict on each declared server
+		// (agentry#177, DR-16): refused on a known high/critical advisory
+		// unless the operator says otherwise; fail-open when the registry
+		// cannot answer. The receipt records the outcome either way.
+		statuses := mcpinstall.CheckVulnerabilities(cmd.Context(), nil, registryURL(), m.Capabilities.MCPServers)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "declared MCP servers, per the registry: %s\n", mcpinstall.Summary(statuses))
+		var refuseErr error
+		vulnLine, refuseErr = vulnerabilityVerdict(statuses, registryURL(), opts.allowVulnerableMCP, pol.MCPServers.AllowVulnerable)
+		if refuseErr != nil {
+			return engine.Classify(engine.ExitPolicy, refuseErr)
+		}
 		resolvedServers, err = ensureServerResolutions(cmd.Context(), cmd.ErrOrStderr(), serversDir, pol, m)
 		if err != nil {
 			return engine.Classify(engine.ExitVerify, err)
@@ -264,6 +278,14 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName, serverSpecs, mode)
 	if err != nil {
 		return err
+	}
+	if vulnLine != "" {
+		// Run-time evidence on the compiled plan's enforcement record; the
+		// cached plan on disk is untouched (the verdict is per run).
+		if plan.Enforcement == nil {
+			plan.Enforcement = map[string]string{}
+		}
+		plan.Enforcement["mcpServers.vulnerabilities"] = vulnLine
 	}
 
 	if opts.dryRun {
