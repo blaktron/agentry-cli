@@ -5,7 +5,8 @@
 #
 # Requirements (the script gates on each and says so):
 #   - a reachable docker daemon (docker CE is enough; no Desktop features)
-#   - ANTHROPIC_API_KEY in the environment (or edit the policy below)
+#   - the model key named by the operator policy (~/.agentry/runner/policy.yaml,
+#     apiKeyEnv) in the environment; ANTHROPIC_API_KEY when there is no policy
 #   - network access to pull the pinned images on first use
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -17,8 +18,19 @@ if ! docker info >/dev/null 2>&1; then
   echo "SKIP: no reachable docker daemon (RUNNER-DEVIATIONS DR-7)" >&2
   exit 0
 fi
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "SKIP: ANTHROPIC_API_KEY not set — the agent container needs a model" >&2
+# The model comes from the operator policy when one exists (agentry-cli#56):
+# its apiKeyEnv names the variable that must be set. Without a policy the
+# runner's built-in default (anthropic, ANTHROPIC_API_KEY) applies as before.
+POLICY=${AGENTRY_POLICY:-$HOME/.agentry/runner/policy.yaml}
+POLICY_FLAG=()
+KEY_ENV=ANTHROPIC_API_KEY
+if [ -f "$POLICY" ]; then
+  POLICY_FLAG=(--policy "$POLICY")
+  KEY_ENV=$(awk '/^ *apiKeyEnv:/ {print $2; exit}' "$POLICY")
+  KEY_ENV=${KEY_ENV:-ANTHROPIC_API_KEY}
+fi
+if [ -z "${!KEY_ENV:-}" ]; then
+  echo "SKIP: $KEY_ENV not set — the agent container needs a model (policy: ${POLICY_FLAG[1]:-runner default})" >&2
   exit 0
 fi
 
@@ -28,11 +40,11 @@ export AGENTRY_RUNNER_HOME="$WORK/home"
 OUT="$WORK/out"
 
 # --prepare: verify + compile + pull/build images, no execution.
-"$AGENTRY" run --local testdata/runner/hello-report --allow-unsigned --yes --prepare
+"$AGENTRY" run --local testdata/runner/hello-report --allow-unsigned --yes ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} --prepare
 echo "prepare ok"
 
 # The run itself: task on stdin, envelope on stdout.
-echo "please make the report" | "$AGENTRY" run --local testdata/runner/hello-report \
+echo "please make the report" | "$AGENTRY" run --local testdata/runner/hello-report ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} \
   --allow-unsigned --yes --out "$OUT" --output-format json --timeout 300 >"$WORK/envelope.json"
 
 grep -q '"status": "ok"' "$WORK/envelope.json" || { echo "FAIL: run not ok"; cat "$WORK/envelope.json"; exit 1; }
