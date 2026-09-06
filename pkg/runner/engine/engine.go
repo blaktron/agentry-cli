@@ -8,7 +8,6 @@
 package engine
 
 import (
-	"strings"
 	"bufio"
 	"bytes"
 	"context"
@@ -21,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -504,15 +504,15 @@ type eventCollector struct {
 	maxCostUSD float64
 	overCost   func()
 
-	turns              int
-	inTok, outTok      int64
-	costUSD            float64
+	turns         int
+	inTok, outTok int64
+	costUSD       float64
 	// curText accumulates the streamed deltas of the assistant message in
 	// progress; lastText is the complete text of the most recent message
 	// (a streaming provider's last delta alone was the result before
 	// agentry-cli#53). A tool call or a usage event ends a message.
-	curText  strings.Builder
-	lastText string
+	curText            strings.Builder
+	lastText           string
 	budgetTripped      bool
 	costTripped        bool
 	harnessErrReported string
