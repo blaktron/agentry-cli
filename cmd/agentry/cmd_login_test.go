@@ -144,7 +144,7 @@ func TestLoginViaBrowserExchangesCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login --browser: %v\n%s", err, stderr)
 	}
-	if !strings.Contains(opened, fr.url()+"/settings/tokens/desktop?port=") {
+	if !strings.Contains(opened, fr.url()+"/ui/authorize?port=") {
 		t.Fatalf("browser opened %q", opened)
 	}
 	if !strings.Contains(stdout, "logged in to "+fr.url()+" as "+fr.userHandle) {
