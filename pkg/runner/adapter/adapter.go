@@ -87,6 +87,10 @@ type Event struct {
 	// Text is the assistant text (EventAssistantText) or error message
 	// (EventError).
 	Text string
+	// Delta marks Text as one streamed chunk of the current assistant
+	// message rather than a whole message: the engine concatenates deltas
+	// until a tool call or usage event ends the message (agentry-cli#53).
+	Delta bool
 	// InputTokens/OutputTokens/CostUSD are set on EventUsage.
 	InputTokens  int64
 	OutputTokens int64

@@ -504,9 +504,14 @@ type eventCollector struct {
 	maxCostUSD float64
 	overCost   func()
 
-	turns              int
-	inTok, outTok      int64
-	costUSD            float64
+	turns         int
+	inTok, outTok int64
+	costUSD       float64
+	// curText accumulates the streamed deltas of the assistant message in
+	// progress; lastText is the complete text of the most recent message
+	// (a streaming provider's last delta alone was the result before
+	// agentry-cli#53). A tool call or a usage event ends a message.
+	curText            strings.Builder
 	lastText           string
 	budgetTripped      bool
 	costTripped        bool
@@ -522,16 +527,24 @@ func (c *eventCollector) consume(r io.Reader) {
 		for _, ev := range c.adapter.Events(line) {
 			switch ev.Kind {
 			case adapter.EventToolCall:
+				c.curText.Reset() // text before a tool call is its own message
 				c.turns++
 				if c.maxTurns > 0 && c.turns > c.maxTurns && !c.budgetTripped {
 					c.budgetTripped = true
 					c.overBudget()
 				}
 			case adapter.EventAssistantText:
-				if ev.Text != "" {
+				switch {
+				case ev.Text == "":
+				case ev.Delta:
+					c.curText.WriteString(ev.Text)
+					c.lastText = c.curText.String()
+				default:
+					c.curText.Reset()
 					c.lastText = ev.Text
 				}
 			case adapter.EventUsage:
+				c.curText.Reset() // usage is reported once the message is complete
 				c.inTok += ev.InputTokens
 				c.outTok += ev.OutputTokens
 				if ev.CostUSD > c.costUSD {
