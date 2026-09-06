@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -70,4 +71,52 @@ func allSecretNames(m *manifest.Manifest) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// vulnerabilityVerdict turns the registry's statuses into the run's
+// decision: the receipt line, and an error when a declared server carries a
+// known high or critical advisory and nothing overrides it. An override —
+// the flag or the policy — is named in the line so the receipt shows the
+// run was allowed on purpose; an unreachable registry is named too, so a
+// clean line never hides a check that did not happen.
+func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, allowFlag, allowPolicy bool) (string, error) {
+	line := "checked against " + registry + ": " + mcpinstall.Summary(statuses)
+	var refusing []mcpinstall.VulnStatus
+	for _, s := range statuses {
+		if s.Refuses() {
+			refusing = append(refusing, s)
+		}
+	}
+	if len(refusing) == 0 {
+		return line, nil
+	}
+	switch {
+	case allowFlag:
+		return line + "; run allowed by --allow-vulnerable-mcp", nil
+	case allowPolicy:
+		return line + "; run allowed by policy mcpServers.allowVulnerable", nil
+	}
+	parts := make([]string, 0, len(refusing))
+	for _, s := range refusing {
+		p := s.Ref + " has a known " + s.MaxSeverity + " vulnerability"
+		if ids := advisoryIDs(s); len(ids) > 0 {
+			p += " (" + strings.Join(ids, ", ") + ")"
+		}
+		if fixed := s.FixedIn(); len(fixed) > 0 {
+			p += ", fixed in " + strings.Join(fixed, ", ")
+		}
+		parts = append(parts, p)
+	}
+	return line, fmt.Errorf("declared MCP server refused by the registry's vulnerability scan: %s — pin a fixed version, or override with --allow-vulnerable-mcp or policy mcpServers.allowVulnerable",
+		strings.Join(parts, "; "))
+}
+
+func advisoryIDs(s mcpinstall.VulnStatus) []string {
+	var ids []string
+	for _, a := range s.Advisories {
+		if a.Severity == "high" || a.Severity == "critical" {
+			ids = append(ids, a.ID)
+		}
+	}
+	return ids
 }

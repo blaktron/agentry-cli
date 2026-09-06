@@ -346,6 +346,27 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		} else {
 			rep.ok("mcpServers", "%d declared server(s) installed in the signature store", n)
 		}
+		// The registry's vulnerability verdict (agentry#177): what a run
+		// would refuse on, warn about, or could not check.
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		statuses := mcpinstall.CheckVulnerabilities(ctx, nil, registryURL(), m.Capabilities.MCPServers)
+		cancel()
+		for _, st := range statuses {
+			switch {
+			case st.Refuses() && !pol.MCPServers.AllowVulnerable:
+				rep.fail("mcpServers.vulnerabilities", "%s: known %s vulnerability (%s) — a run refuses it; pin a fixed version%s", st.Ref, st.MaxSeverity, strings.Join(vulnIDs(st), ", "), fixedNote(st))
+			case st.Refuses():
+				rep.warn("mcpServers.vulnerabilities", "%s: known %s vulnerability (%s), allowed by policy mcpServers.allowVulnerable%s", st.Ref, st.MaxSeverity, strings.Join(vulnIDs(st), ", "), fixedNote(st))
+			case st.Status == "vulnerable":
+				rep.warn("mcpServers.vulnerabilities", "%s: %s advisories below the refusal bar (%s)", st.Ref, st.MaxSeverity, strings.Join(vulnIDs(st), ", "))
+			case st.Status == "unknown":
+				rep.warn("mcpServers.vulnerabilities", "%s: the registry has not scanned this version (no manifest declared it yet)", st.Ref)
+			case st.Status == "unreachable":
+				rep.warn("mcpServers.vulnerabilities", "%s: could not ask the registry (%s) — a run proceeds unchecked", st.Ref, st.Err)
+			default:
+				rep.ok("mcpServers.vulnerabilities", "%s: no known advisories as of %s", st.Ref, st.CheckedAt.UTC().Format("2006-01-02"))
+			}
+		}
 	}
 	if installDir != "" {
 		if _, err := os.Stat(filepath.Join(installDir, "plan", "plan.json")); err != nil {
@@ -406,4 +427,19 @@ func printDoctorReport(w io.Writer, rep *doctorReport) {
 	} else {
 		_, _ = fmt.Fprintln(w, "ready")
 	}
+}
+
+func vulnIDs(st mcpinstall.VulnStatus) []string {
+	ids := make([]string, 0, len(st.Advisories))
+	for _, a := range st.Advisories {
+		ids = append(ids, a.ID)
+	}
+	return ids
+}
+
+func fixedNote(st mcpinstall.VulnStatus) string {
+	if f := st.FixedIn(); len(f) > 0 {
+		return " (fixed in " + strings.Join(f, ", ") + ")"
+	}
+	return ""
 }
