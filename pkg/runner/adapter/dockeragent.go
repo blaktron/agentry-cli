@@ -262,7 +262,10 @@ func (d *dockerAgent) Events(line []byte) []Event {
 // and every call is followed by a `tool_call_response`; neither is a turn,
 // and counting them burned a 60-call budget on four calls (agentry-cli#51).
 func isToolCallStart(typ string) bool {
-	if !strings.Contains(typ, "tool") || !(strings.Contains(typ, "call") || strings.Contains(typ, "use")) {
+	if !strings.Contains(typ, "tool") {
+		return false
+	}
+	if !strings.Contains(typ, "call") && !strings.Contains(typ, "use") {
 		return false
 	}
 	for _, not := range []string{"partial", "delta", "chunk", "response", "result", "confirm", "output"} {
