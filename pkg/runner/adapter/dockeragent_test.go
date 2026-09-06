@@ -112,6 +112,13 @@ func TestDockerAgentEvents(t *testing.T) {
 	}{
 		{"tool call", `{"type":"tool_call","tool":"fs_read"}`, []EventKind{EventToolCall}},
 		{"tool use variant", `{"type":"tool_use_started"}`, []EventKind{EventToolCall}},
+		// The 1.128.0 harness streams a call's arguments as partial_tool_call
+		// chunks and answers it with tool_call_response; neither is a turn
+		// (agentry-cli#51: 55 chunks of one write_report call ate the budget).
+		{"partial chunk", `{"type":"partial_tool_call","tool_call":{"id":"call_1","function":{"name":"write_report","arguments":"| 101 |"}}}`, []EventKind{EventOther}},
+		{"tool response", `{"type":"tool_call_response","tool_call_id":"call_1","response":"ok"}`, []EventKind{EventOther}},
+		{"tool confirmation", `{"type":"tool_call_confirmation","tool_call":{"id":"call_1"}}`, []EventKind{EventOther}},
+		{"complete call", `{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"list_inputs","arguments":"{}"}}}`, []EventKind{EventToolCall}},
 		{"choice text", `{"type":"agent_choice","message":{"content":"hello"}}`, []EventKind{EventAssistantText}},
 		{"content parts", `{"type":"agent_choice","message":{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`, []EventKind{EventAssistantText}},
 		{"top level text", `{"type":"delta","content":"chunk"}`, []EventKind{EventAssistantText}},

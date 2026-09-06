@@ -238,7 +238,7 @@ func (d *dockerAgent) Events(line []byte) []Event {
 	var events []Event
 
 	switch {
-	case strings.Contains(typ, "tool") && (strings.Contains(typ, "call") || strings.Contains(typ, "use")):
+	case isToolCallStart(typ):
 		events = append(events, Event{Kind: EventToolCall, Raw: raw})
 	case strings.Contains(typ, "error"):
 		events = append(events, Event{Kind: EventError, Text: textField(obj), Raw: raw})
@@ -254,6 +254,26 @@ func (d *dockerAgent) Events(line []byte) []Event {
 		events = append(events, Event{Kind: EventOther, Raw: raw})
 	}
 	return events
+}
+
+// isToolCallStart is true for the one event that marks a tool call: the
+// harness's `tool_call` (or a `tool_use*` variant). A streaming provider
+// delivers the call's arguments as many `partial_tool_call` chunks first,
+// and every call is followed by a `tool_call_response`; neither is a turn,
+// and counting them burned a 60-call budget on four calls (agentry-cli#51).
+func isToolCallStart(typ string) bool {
+	if !strings.Contains(typ, "tool") {
+		return false
+	}
+	if !strings.Contains(typ, "call") && !strings.Contains(typ, "use") {
+		return false
+	}
+	for _, not := range []string{"partial", "delta", "chunk", "response", "result", "confirm", "output"} {
+		if strings.Contains(typ, not) {
+			return false
+		}
+	}
+	return true
 }
 
 // textField digs assistant text out of the shapes docker-agent has been
