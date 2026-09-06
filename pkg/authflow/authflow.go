@@ -1,6 +1,6 @@
 // Package authflow is the client half of browser sign-in (core DEV-058,
 // hardened per agentry#19): a one-shot loopback listener that receives a
-// single-use CODE from the registry's /settings/tokens/desktop page after
+// single-use CODE from the registry's /ui/authorize page after
 // the user signs in (through the directory service, DEV-057) and clicks
 // Authorize, then exchanges that code for the PAT from this process —
 // POST /api/v1/auth/desktop/exchange — so the token never rides a URL or
@@ -95,10 +95,13 @@ func Start() (*Flow, error) {
 	return f, nil
 }
 
-// AuthorizeURL is the page to open in the system browser.
+// AuthorizeURL is the page to open in the system browser: the registry
+// server's own device authorize page (DR-17, agentry DEV-091) — served by
+// agentryd at /ui/authorize whether or not a site fronts it, so browser
+// sign-in works against a headless registry too.
 func (f *Flow) AuthorizeURL(registry string) string {
 	f.Registry = strings.TrimRight(registry, "/")
-	return fmt.Sprintf("%s/settings/tokens/desktop?port=%d&state=%s",
+	return fmt.Sprintf("%s/ui/authorize?port=%d&state=%s",
 		f.Registry, f.Port, url.QueryEscape(f.State))
 }
 
