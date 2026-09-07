@@ -19,7 +19,7 @@ import (
 // a release build can bake its own registry in — binaries served from a
 // site's /download page connect to that site by default:
 //
-//	go build -ldflags "-X main.defaultRegistryURL=https://dev.secureagentry.net" ./cmd/agentry
+//	go build -ldflags "-X main.defaultRegistryURL=https://registry.example.test" ./cmd/agentry
 var defaultRegistryURL = "http://localhost:8080"
 
 // globalFlags carries the §11 global flags shared by every subcommand.
