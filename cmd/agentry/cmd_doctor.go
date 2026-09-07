@@ -291,7 +291,17 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		rep.ok("manifest", "%s/%s@%s (%s)", m.Namespace, m.Name, m.Version, local)
 		meta := &installMeta{Ref: fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 			Namespace: m.Namespace, Name: m.Name, Version: m.Version, Digest: digest, Source: "local"}
-		return m, meta, ""
+		// A local tree installs under the same digest-keyed layout as a
+		// registry ref (cmd_run.go), so its cached plans are checkable too
+		// (agentry-cli#60).
+		installDir := filepath.Join(home, "agents", m.Namespace, m.Name,
+			fmt.Sprintf("%s-%s", m.Version, digestSuffix(digest)))
+		if _, ok := loadInstallMeta(installDir, digest); !ok {
+			rep.warn("install", "not installed yet — `agentry run --local %s --prepare` verifies and installs it", local)
+			return m, meta, ""
+		}
+		rep.ok("install", "verified install %s", installDir)
+		return m, meta, installDir
 	}
 	if _, err := manifest.ParseRef(ref); err != nil {
 		rep.fail("resolve", "%v", err)
