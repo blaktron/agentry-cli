@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -100,6 +101,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	if err := renderPlanFiles(p.PlanDir, rd); err != nil {
 		return nil, err
+	}
+	if err := stampOwner(filepath.Join(rd.cfg, "gateway", "toolspec.json")); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
 	}
 	// The plan the containers actually consumed, verbatim, for audit.
 	if b, err := os.ReadFile(filepath.Join(p.PlanDir, "plan.json")); err == nil { //nolint:gosec // our plan dir
@@ -509,4 +513,34 @@ func copyTree(src, dest string) error {
 		}
 		return os.WriteFile(target, data, info.Mode().Perm())
 	})
+}
+
+// stampOwner writes the invoking user's uid/gid into the per-run copy of
+// the tools spec so the tools container — root, writing into bind mounts
+// the user owns — hands back what it creates (agentry-cli#55). The
+// compiled plan is untouched: ownership is a property of the run, not of
+// the install, and the plan hash must not change per user. Hosts without
+// POSIX ids (Getuid() < 0) leave the field out.
+func stampOwner(specPath string) error {
+	uid, gid := os.Getuid(), os.Getgid()
+	if uid < 0 || gid < 0 {
+		return nil
+	}
+	b, err := os.ReadFile(specPath) //nolint:gosec // our own rendered config
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // a plan without a tools server has no spec to stamp
+		}
+		return err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return err
+	}
+	doc["owner"] = map[string]int{"uid": uid, "gid": gid}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(specPath, append(out, '\n'), 0o644)
 }
