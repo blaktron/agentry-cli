@@ -16,15 +16,36 @@ deterministic archives (`pkg/archive`), attestation verification
 
 ## Building
 
-The core module is private; builders have access to all blaktron repos:
-
 ```bash
-export GOPRIVATE='github.com/blaktron/*'
-# authenticate git for github.com/blaktron (gh auth, a credential helper,
-# or an insteadOf rewrite with a PAT), then:
 make build          # -> bin/agentry
 make check          # gofmt + vet + lint + tests + build
 ```
+
+**Until the repositories are public** (the open core is private until the
+operator flips it; see `PUBLIC-FLIP.md` in agentry-notes), the core module
+cannot be fetched anonymously. Either work from a workspace with a `go.work`
+that resolves `github.com/blaktron/agentry` against a sibling checkout, or:
+
+```bash
+export GOPRIVATE='github.com/blaktron/*' GONOSUMDB='github.com/blaktron/*'
+# authenticate git for github.com/blaktron (gh auth, a credential helper,
+# or an insteadOf rewrite with a read token), then make build
+```
+
+CI does the same with the `AGENTRY_BUILD_TOKEN` secret. All of this goes
+away at the flip.
+
+## The registry it talks to
+
+`agentry` works against any Agentry registry — the hosted service or one you
+run from the open core ([self-hosting guide](https://github.com/blaktron/agentry/blob/main/docs/self-hosting.md)).
+The registry is chosen by `--registry`, else `defaultRegistry` in
+`~/.config/agentry/config.yaml` (written by `agentry login`), else the
+default compiled into the binary (`defaultRegistryURL`, set with
+`-ldflags "-X main.defaultRegistryURL=https://…"` by whoever builds and
+serves the binaries; a source build falls back to `http://localhost:8080`).
+`agentry login` opens the registry's own `/ui/authorize` page, so sign-in
+works the same whether or not a site fronts the server.
 
 ## Commands
 
