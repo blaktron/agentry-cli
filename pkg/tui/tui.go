@@ -286,6 +286,8 @@ func (m *model) apply(ev session.Event) {
 	case session.KindToolCall:
 		m.toolCalls++
 		m.appendLine(m.styles.tool.Render("  · tool: " + ev.Text))
+	case session.KindPermissionGranted:
+		m.appendLine(m.styles.tool.Render("  · permission granted: " + ev.Text))
 	case session.KindPermissionDenied:
 		m.appendLine(m.styles.tool.Render("  · permission request denied: " + ev.Text))
 	case session.KindInputAdded:

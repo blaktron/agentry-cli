@@ -83,6 +83,7 @@ func sessionFixture(t *testing.T) (Params, *dockerx.Fake) {
 type fakeHarness struct {
 	mu      sync.Mutex
 	methods []string
+	granted bool
 	denied  bool
 }
 
@@ -123,6 +124,20 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 				text = m.Params.Prompt[0].Text
 			}
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "fs_list", "status": "pending"}}})
+			write(map[string]any{"jsonrpc": "2.0", "id": 76, "method": "session/request_permission", "params": map[string]any{"sessionId": "s1", "toolCall": map[string]any{"title": "write_report"}, "options": []any{map[string]any{"optionId": "a", "kind": "allow_once"}, map[string]any{"optionId": "r", "kind": "reject_once"}}}})
+			if sc.Scan() {
+				var ans struct {
+					Result struct {
+						Outcome struct {
+							OptionID string `json:"optionId"`
+						} `json:"outcome"`
+					} `json:"result"`
+				}
+				_ = json.Unmarshal(sc.Bytes(), &ans)
+				h.mu.Lock()
+				h.granted = ans.Result.Outcome.OptionID == "a"
+				h.mu.Unlock()
+			}
 			write(map[string]any{"jsonrpc": "2.0", "id": 77, "method": "session/request_permission", "params": map[string]any{"sessionId": "s1", "toolCall": map[string]any{"title": "run_command"}, "options": []any{map[string]any{"optionId": "a", "kind": "allow_once"}, map[string]any{"optionId": "r", "kind": "reject_once"}}}})
 			if sc.Scan() {
 				var ans struct {
@@ -245,7 +260,7 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	}
 	evs := get()
 	k := kinds(evs)
-	if k[session.KindUserTurn] != 2 || k[session.KindAssistantTurn] != 2 || k[session.KindInputAdded] != 1 || k[session.KindPermissionDenied] != 2 || k[session.KindToolCall] != 2 || k[session.KindSessionEnd] != 1 {
+	if k[session.KindUserTurn] != 2 || k[session.KindAssistantTurn] != 2 || k[session.KindInputAdded] != 1 || k[session.KindPermissionGranted] != 2 || k[session.KindPermissionDenied] != 2 || k[session.KindToolCall] != 2 || k[session.KindSessionEnd] != 1 {
 		t.Errorf("event kinds = %v", k)
 	}
 	var synthetic bool
@@ -288,7 +303,7 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 		}
 	}
 	tr, _ := os.ReadFile(filepath.Join(env.Receipts.Dir, "transcript.md"))
-	for _, want := range []string{"## User\n\nhello there", "## Assistant", "- tool call: fs_list", "- permission request denied: run_command", "- input added: /inputs/notes.txt (sha256:", "_Session ended: finished._"} {
+	for _, want := range []string{"## User\n\nhello there", "## Assistant", "- tool call: fs_list", "- permission granted: write_report", "- permission request denied: run_command", "- input added: /inputs/notes.txt (sha256:", "_Session ended: finished._"} {
 		if !strings.Contains(string(tr), want) {
 			t.Errorf("transcript lacks %q:\n%s", want, tr)
 		}
