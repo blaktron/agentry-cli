@@ -28,6 +28,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
 
@@ -369,10 +370,19 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		}
 	}
 	if installDir != "" {
-		if _, err := os.Stat(filepath.Join(installDir, "plan", "plan.json")); err != nil {
-			rep.warn("plan", "no compiled plan yet (compiled at first run)")
-		} else {
-			rep.ok("plan", "compiled")
+		// One plan per run mode (plan/<mode>/); a plan from an older CLI
+		// is stale and `agentry run --prepare` recompiles it in place
+		// (agentry-cli#60).
+		for _, mode := range m.SupportedModes() {
+			b, err := os.ReadFile(filepath.Join(installDir, "plan", string(mode), "plan.json")) //nolint:gosec // our install layout
+			switch {
+			case err != nil:
+				rep.warn("plan."+string(mode), "no compiled plan yet (compiled at first run, or by `agentry run --prepare`)")
+			case cachedPlanVersion(b) != spec.PlanVersion:
+				rep.warn("plan."+string(mode), "compiled by an older CLI (plan version %s, want %s) — `agentry run --prepare` recompiles it", cachedPlanVersion(b), spec.PlanVersion)
+			default:
+				rep.ok("plan."+string(mode), "compiled (plan version %s)", spec.PlanVersion)
+			}
 		}
 	}
 

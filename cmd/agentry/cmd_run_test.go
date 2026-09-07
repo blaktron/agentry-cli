@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"os"
 	"path/filepath"
@@ -663,4 +664,70 @@ func TestRunInteractiveUsageGates(t *testing.T) {
 	if err != nil || !strings.Contains(stderr, "mode: autonomous") || strings.Contains(stderr, "interactive: you can talk") {
 		t.Errorf("default mode: %v\n%s", err, stderr)
 	}
+}
+
+// A cached plan compiled by an older CLI is recompiled in place by
+// ensurePlan — the --prepare and run paths — and reported; doctor names it
+// as stale until then (agentry-cli#60).
+func TestEnsurePlanRecompilesOldPlanVersionAndDoctorReportsIt(t *testing.T) {
+	isolateEnv(t)
+	home, _ := isolateRunnerHome(t)
+	m := runFixtureManifest(t, "")
+	pol := policy.Default()
+	meta := &installMeta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+		Version: "1.0.0", Digest: "sha256:0123456789abcdef", Source: "local"}
+	installDir := t.TempDir()
+	ws := filepath.Join(installDir, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"SKILL.md": "# demo\n\nDo the thing.\n", "agent.yaml": "schemaVersion: \"2\"\n"} {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale := filepath.Join(installDir, "plan", "autonomous")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "plan.json"), []byte(`{"planVersion":"1","mode":"autonomous"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := &doctorReport{}
+	doctorAgentState(rep, home, pol, m, meta, installDir)
+	if !doctorHas(rep, "warn", "older CLI") {
+		t.Errorf("doctor did not flag the stale plan: %+v", rep.Checks)
+	}
+
+	var errOut strings.Builder
+	plan, planDir, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	if err != nil {
+		t.Fatalf("ensurePlan: %v", err)
+	}
+	if plan.PlanVersion != spec.PlanVersion {
+		t.Errorf("plan version after recompile = %q, want %q", plan.PlanVersion, spec.PlanVersion)
+	}
+	if !strings.Contains(errOut.String(), "older CLI") {
+		t.Errorf("no recompile notice: %q", errOut.String())
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "plan.json"))
+	if err != nil || cachedPlanVersion(b) != spec.PlanVersion {
+		t.Errorf("on-disk plan version = %q (err %v), want %q", cachedPlanVersion(b), err, spec.PlanVersion)
+	}
+
+	rep = &doctorReport{}
+	doctorAgentState(rep, home, pol, m, meta, installDir)
+	if !doctorHas(rep, "ok", "compiled (plan version") {
+		t.Errorf("doctor did not report the recompiled plan: %+v", rep.Checks)
+	}
+}
+
+func doctorHas(rep *doctorReport, status, needle string) bool {
+	for _, e := range rep.Checks {
+		if e.Status == status && strings.Contains(e.Detail, needle) {
+			return true
+		}
+	}
+	return false
 }
