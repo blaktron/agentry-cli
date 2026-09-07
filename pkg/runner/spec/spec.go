@@ -49,6 +49,12 @@ const (
 	// PHSession is the host directory an interactive session's harness
 	// store lives in (DR-15); mounted only by interactive plans.
 	PHSession = "@@RUN_SESSION@@"
+	// PHHostGatewayURL / PHHostProxyURL are the published 127.0.0.1
+	// addresses a host-run harness reaches the gateway and the proxy at
+	// (plan runner-m-r4-adapters §5); known only once the run's containers
+	// are up, so they are rendered into harness files and argv per run.
+	PHHostGatewayURL = "@@HOST_GATEWAY_URL@@"
+	PHHostProxyURL   = "@@HOST_PROXY_URL@@"
 )
 
 // MCPStorePrefix is the fixed in-container prefix a declared server's
@@ -83,6 +89,10 @@ const (
 	// reads.
 	GatewayTokenEnv     = "MCP_GATEWAY_TOKEN"
 	GatewayAuthTokenEnv = "MCP_GATEWAY_AUTH_TOKEN"
+	// HostGatewayURLEnv / HostProxyURLEnv carry the same published
+	// addresses to a host-run harness as environment variables.
+	HostGatewayURLEnv = "AGENTRY_GATEWAY_URL"
+	HostProxyURLEnv   = "AGENTRY_PROXY_URL"
 )
 
 // GatewayURL is the MCP endpoint agents connect to on the run network.
@@ -203,8 +213,12 @@ type HarnessSpec struct {
 	Adapter string `json:"adapter"`
 	// Model is the provider/model string for receipts.
 	Model string `json:"model"`
-	// Agent is the agent container.
+	// Agent is the agent container. Empty (no image) when Host is set.
 	Agent ContainerSpec `json:"agent"`
+	// Host runs the harness as a process on this machine from the person's
+	// own installation instead of a container (plan runner-m-r4-adapters
+	// §5, decision D2). Exactly one of Agent.Image and Host is set.
+	Host *HostProcessSpec `json:"host,omitempty"`
 	// ResultKind hints how the final result is extracted: "text" or
 	// "json" (when Output.SchemaFile is set).
 	ResultKind string `json:"resultKind"`
@@ -402,4 +416,33 @@ func ExecImageTag(runnerImage string, commands []string) string {
 		name += "-exec:" + hex.EncodeToString(sum[:6])
 	}
 	return name
+}
+
+// HostProcessSpec runs the harness as a process of this user from the
+// person's own installation of it (plan runner-m-r4-adapters §5, decision
+// D2). The gateway and the proxy are published on 127.0.0.1 for it; their
+// addresses reach it as HostGatewayURLEnv / HostProxyURLEnv and, in plan
+// files and argv, through the PHHostGatewayURL / PHHostProxyURL
+// placeholders. The process is not inside the run's network boundary: the
+// proxy variables and the gateway's catalog are what bound it, which the
+// plan's Enforcement map says in so many words.
+type HostProcessSpec struct {
+	// Command is the executable name, resolved on PATH at run time (the
+	// operator policy's harness.<adapter>.path overrides the lookup); a
+	// plan never carries a host path, so it stays deterministic.
+	Command string `json:"command"`
+	// Argv follows the command; placeholders are rendered per run.
+	Argv []string `json:"argv,omitempty"`
+	// Env is set on the process; the run token and the model key travel
+	// by name exactly as for a container.
+	Env []EnvVar `json:"env,omitempty"`
+	// InheritEnv names host variables passed through unchanged (HOME,
+	// PATH and the like: the harness's own login state lives under them).
+	// Everything else in the runner's environment is dropped.
+	InheritEnv []string `json:"inheritEnv,omitempty"`
+	// VersionArgv, when set, is run once before the harness so the
+	// receipts record which release of it ran (for example --version).
+	VersionArgv []string `json:"versionArgv,omitempty"`
+	// StdinTask feeds the task on stdin (autonomous mode).
+	StdinTask bool `json:"stdinTask,omitempty"`
 }

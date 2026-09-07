@@ -72,6 +72,17 @@ type Policy struct {
 	// MCPServers governs the registry's vulnerability verdict on declared
 	// servers (agentry#177, DR-16).
 	MCPServers MCPServersPolicy `yaml:"mcpServers,omitempty"`
+	// Harness holds per-adapter settings for the adapters that run the
+	// person's own installation of a harness (plan runner-m-r4-adapters
+	// §5), keyed by adapter name.
+	Harness map[string]HarnessPolicy `yaml:"harness,omitempty"`
+}
+
+// HarnessPolicy configures one host-run harness adapter.
+type HarnessPolicy struct {
+	// Path is the executable to run instead of looking the harness up on
+	// PATH.
+	Path string `yaml:"path,omitempty"`
 }
 
 // MCPServersPolicy is the operator's stance on declared servers the

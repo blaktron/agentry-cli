@@ -52,6 +52,9 @@ type Result struct {
 	Session *spec.SessionSpec
 	// Agent is the agent container to run.
 	Agent spec.ContainerSpec
+	// Host runs the harness on this machine from the person's own
+	// installation instead of Agent (plan runner-m-r4-adapters §5).
+	Host *spec.HostProcessSpec
 	// Model is the provider/model string for receipts.
 	Model string
 	// ResultKind is "json" when SchemaJSON was wired, else "text".

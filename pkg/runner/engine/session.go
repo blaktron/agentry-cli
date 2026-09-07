@@ -115,6 +115,12 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
 		return fail(err)
 	}
+	// Harness files after the infrastructure, as in Run: a host-run harness
+	// needs the published addresses (plan runner-m-r4-adapters §5).
+	rep = rd.replacer()
+	if err := renderPlanFiles(p.PlanDir, rd, "harness"); err != nil {
+		return fail(err)
+	}
 	if err := s.startHarness(ctx, token, rep); err != nil {
 		return fail(err)
 	}
@@ -230,8 +236,18 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	stdoutR, stdoutW := io.Pipe()
 	s.stdinW = stdinW
 	s.exited = make(chan struct{})
+	run := func() (int, error) { return s.d.RunForeground(agentCtx, runSpec, stdinR, stdoutW, stderrFile) }
+	if p.Plan.Harness.Host != nil {
+		wait, info, herr := startHostProcess(agentCtx, p, s.rd, rep, token, stdinR, stdoutW, stderrFile)
+		if herr != nil {
+			cancel(herr)
+			return herr
+		}
+		s.env.Harness.Host = info
+		run = wait
+	}
 	go func() {
-		code, rerr := s.d.RunForeground(agentCtx, runSpec, stdinR, stdoutW, stderrFile)
+		code, rerr := run()
 		_ = stdoutW.Close()
 		_ = stderrFile.Close()
 		s.mu.Lock()
@@ -546,6 +562,9 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	}
 	if logs, lerr := s.d.Logs(ctx, containerName(s.runID, "gateway"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "gateway.log"), []byte(s.redact.String(logs)), 0o644)
+	}
+	if logs, lerr := s.d.Logs(ctx, containerName(s.runID, "proxy"), 2000); lerr == nil && logs != "" {
+		_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "proxy.log"), []byte(s.redact.String(logs)), 0o644)
 	}
 	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start)
 

@@ -64,7 +64,10 @@ type Attestation struct {
 type Harness struct {
 	Adapter string `json:"adapter"`
 	Image   string `json:"image"`
-	Model   string `json:"model"`
+	// Host is the executable (and version, when known) a host-run
+	// harness adapter ran; empty for a container harness.
+	Host  string `json:"host,omitempty"`
+	Model string `json:"model"`
 	// Mode is the run mode (autonomous or interactive); empty in
 	// envelopes written before run modes existed.
 	Mode string `json:"mode,omitempty"`

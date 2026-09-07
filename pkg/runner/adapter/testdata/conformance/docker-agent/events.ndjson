@@ -1,0 +1,8 @@
+{"type":"agent_choice_reasoning","content":"Let me look at the inputs first."}
+{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"list_inputs","arguments":"{}"}}}
+{"type":"tool_call_response","tool_call_id":"call_1","response":"[]"}
+{"type":"partial_tool_call","tool_call":{"id":"call_2","function":{"name":"write_report","arguments":"{\"path\":\"reports/hello.md\","}}}
+{"type":"tool_call","tool_call":{"id":"call_2","function":{"name":"write_report","arguments":"{\"path\":\"reports/hello.md\",\"content\":\"# hello\\n\"}"}}}
+{"type":"tool_call_response","tool_call_id":"call_2","response":"ok"}
+{"type":"agent_choice","message":{"content":[{"type":"text","text":"Report written to reports/hello.md."}]}}
+{"type":"stream_stopped","usage":{"input_tokens":120,"output_tokens":30,"cost":0.002}}

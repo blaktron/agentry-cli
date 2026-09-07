@@ -217,6 +217,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			Adapter:    adapterName,
 			Model:      res.Model,
 			Agent:      res.Agent,
+			Host:       res.Host,
 			ResultKind: res.ResultKind,
 			Session:    res.Session,
 		},
@@ -235,6 +236,15 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	// Write the generated files, hashing each into the plan.
+	if res.Host != nil {
+		// §R11 invariant 8: the harness's own isolation is a claim like any
+		// other, and for a host process it is a weaker one.
+		if plan.Enforcement == nil {
+			plan.Enforcement = map[string]string{}
+		}
+		plan.Enforcement["harness.isolation"] = "host process from this machine's own installation of " + res.Host.Command +
+			" (no container): the proxy variables and the gateway catalog bound it, not the run network"
+	}
 	for rel, content := range files {
 		abs := filepath.Join(planDir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {

@@ -176,8 +176,23 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
 		return fail(env, err)
 	}
+	// Harness files are rendered once the infrastructure is up: a host-run
+	// harness (plan runner-m-r4-adapters §5) needs the published gateway
+	// and proxy addresses, known only now; the replacer learns them too.
+	rep = rd.replacer()
+	if err := renderPlanFiles(p.PlanDir, rd, "harness"); err != nil {
+		return fail(env, err)
+	}
 
-	outcome := runAgent(ctx, d, p, rd, runID, token, rep, task)
+	var outcome agentOutcome
+	if p.Plan.Harness.Host != nil {
+		outcome = runHostHarness(ctx, p, rd, token, rep, task)
+	} else {
+		outcome = runAgent(ctx, d, p, rd, runID, token, rep, task)
+	}
+	if outcome.hostInfo != "" {
+		env.Harness.Host = outcome.hostInfo
+	}
 	env.Usage = outcome.usage
 	env.Usage.WallMS = time.Since(start).Milliseconds()
 
@@ -185,6 +200,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	// part of the audit trail; collect before teardown kills it.
 	if logs, lerr := d.Logs(ctx, containerName(runID, "gateway"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "gateway.log"), []byte(logs), 0o644)
+	}
+	// The proxy's decisions (allow/deny per CONNECT) are the evidence of
+	// what left the run (DR-6); collected the same way.
+	if logs, lerr := d.Logs(ctx, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
+		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(logs), 0o644)
 	}
 	writeMeta(rd.receiptsDir, runID, p, start)
 
@@ -234,6 +254,9 @@ type agentOutcome struct {
 	lastText string
 	usage    receipt.Usage
 	err      error // classified, nil on success
+	// hostInfo names the executable (and version) a host-run harness
+	// ran, for the envelope.
+	hostInfo string
 }
 
 // startInfra creates the run network and starts proxy + gateway, then
@@ -260,6 +283,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Network: netName,
 		Alias:   spec.ProxyAlias,
 		Labels:  labels,
+		Publish: hostPublish(p, spec.ProxyPort),
 	}
 	if err := d.RunDetached(ctx, proxySpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start llm proxy: %w", err))
@@ -270,6 +294,13 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// leg. The agent container never does (§R11 invariant 2).
 	if err := d.NetworkConnect(ctx, "bridge", proxyName); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("connect proxy to bridge: %w", err))
+	}
+	if p.Plan.Harness.Host != nil {
+		port, perr := d.Port(ctx, proxyName, spec.ProxyPort)
+		if perr != nil {
+			return Classify(ExitGateway, fmt.Errorf("published proxy port: %w", perr))
+		}
+		rd.hostProxyURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
 
 	gwName := containerName(runID, "gateway")
@@ -286,6 +317,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Network: netName,
 		Alias:   spec.GatewayAlias,
 		Labels:  labels,
+		Publish: hostPublish(p, spec.GatewayPort),
 	}
 	if err := d.RunDetached(ctx, gwSpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))
@@ -298,6 +330,13 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	})
 	if err := d.NetworkConnect(ctx, "bridge", gwName); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("connect gateway to bridge: %w", err))
+	}
+	if p.Plan.Harness.Host != nil {
+		port, perr := d.Port(ctx, gwName, spec.GatewayPort)
+		if perr != nil {
+			return Classify(ExitGateway, fmt.Errorf("published gateway port: %w", perr))
+		}
+		rd.hostGatewayURL = fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
 	}
 
 	// Health: an authenticated MCP initialize from inside the run

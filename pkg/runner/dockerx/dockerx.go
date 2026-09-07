@@ -52,6 +52,9 @@ type Client interface {
 	PSByLabel(ctx context.Context, label string) ([]string, error)
 	// Logs returns a container's recent output (gateway diagnostics).
 	Logs(ctx context.Context, name string, tail int) (string, error)
+	// Port returns the host port a container port was published on
+	// (RunSpec.Publish), for a host-run harness to reach the run.
+	Port(ctx context.Context, name string, containerPort int) (int, error)
 }
 
 // RunSpec describes one docker run.
@@ -76,6 +79,9 @@ type RunSpec struct {
 	// AutoRemove passes --rm; teardown still force-removes by name in
 	// case the client process died before docker could reap.
 	AutoRemove bool
+	// Publish exposes container ports on the host (-p): only for a
+	// host-run harness, and only on 127.0.0.1 (HostPort 0 = ephemeral).
+	Publish []PortPublish
 }
 
 // Mount is one bind mount, already placeholder-resolved.
@@ -295,6 +301,13 @@ func (r RunSpec) args(detach bool) []string {
 	for _, k := range sortedKeys(r.Labels) {
 		args = append(args, "--label", k+"="+r.Labels[k])
 	}
+	for _, pp := range r.Publish {
+		hp := ""
+		if pp.HostPort > 0 {
+			hp = strconv.Itoa(pp.HostPort)
+		}
+		args = append(args, "-p", pp.HostIP+":"+hp+":"+strconv.Itoa(pp.ContainerPort))
+	}
 	for _, k := range sortedKeys(r.Env) {
 		args = append(args, "-e", k) // value travels via process env
 	}
@@ -334,4 +347,28 @@ func isNotFound(err error) bool {
 
 func asExitError(err error, target **exec.ExitError) bool {
 	return errors.As(err, target)
+}
+
+// PortPublish is one -p mapping.
+type PortPublish struct {
+	HostIP        string
+	HostPort      int
+	ContainerPort int
+}
+
+// Port implements Client via `docker port`.
+func (c *CLI) Port(ctx context.Context, name string, containerPort int) (int, error) {
+	out, err := c.run(ctx, "port", name, strconv.Itoa(containerPort)+"/tcp")
+	if err != nil {
+		return 0, fmt.Errorf("docker port %s: %w", name, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if i := strings.LastIndex(line, ":"); i >= 0 {
+			if p, perr := strconv.Atoi(line[i+1:]); perr == nil && p > 0 {
+				return p, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("docker port %s: no published port for %d/tcp in %q", name, containerPort, strings.TrimSpace(out))
 }
