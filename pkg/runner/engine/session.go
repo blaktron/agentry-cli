@@ -72,9 +72,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
 	s := &liveSession{
 		d: d, p: p, env: env, td: td, start: start, runID: runID,
-		events:  make(chan session.Event, 1024),
-		done:    make(chan struct{}),
-		budgets: p.Plan.Harness.Session.Budgets,
+		events:   make(chan session.Event, 1024),
+		done:     make(chan struct{}),
+		pumpDone: make(chan struct{}),
+		budgets:  p.Plan.Harness.Session.Budgets,
 	}
 	fail := func(err error) (session.Session, error) {
 		td.run()
@@ -153,8 +154,9 @@ type liveSession struct {
 	eventsFile *os.File
 	stderrPath string
 
-	events chan session.Event
-	done   chan struct{} // closed once (ended)
+	events   chan session.Event
+	done     chan struct{} // closed once (ended)
+	pumpDone chan struct{} // closed when pump has drained the driver's events
 
 	turnMu sync.Mutex // one prompt at a time
 	mu     sync.Mutex // everything below
@@ -260,6 +262,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 // pump turns adapter events into session events and applies the tool and
 // cost budgets exactly as the autonomous collector does.
 func (s *liveSession) pump() {
+	defer close(s.pumpDone)
 	for ev := range s.drv.Events() {
 		switch ev.Kind {
 		case adapter.EventAssistantText:
@@ -528,6 +531,14 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	}
 	if s.drv != nil {
 		_ = s.drv.Close()
+		// The driver's Close ends its event stream; wait for the pump to
+		// process what was still buffered (the last turn's usage, a late
+		// tool call) before the counters are read into the envelope
+		// (agentry-cli#69). Bounded: a wedged pump must not hang End.
+		select {
+		case <-s.pumpDone:
+		case <-time.After(10 * time.Second):
+		}
 	}
 	close(s.events)
 	if s.eventsFile != nil {
