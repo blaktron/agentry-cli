@@ -808,6 +808,12 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 	}
 	planDir := filepath.Join(installDir, "plan", string(mode))
 	if b, err := os.ReadFile(filepath.Join(planDir, "plan.json")); err == nil { //nolint:gosec // our install layout
+		// A plan from an older CLI is recompiled in place, and says so: a
+		// cached install used to stay stale after an upgrade until its
+		// first execution failed (agentry-cli#60).
+		if v := cachedPlanVersion(b); v != "" && v != spec.PlanVersion {
+			_, _ = fmt.Fprintf(errOut, "installed plan was compiled by an older CLI (plan version %s, want %s) — recompiling\n", v, spec.PlanVersion)
+		}
 		if plan, perr := spec.ParsePlan(b); perr == nil &&
 			plan.PlanVersion == spec.PlanVersion &&
 			plan.Mode == string(mode) &&
@@ -844,6 +850,18 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 		return nil, "", engine.Classify(engine.ExitCompile, err)
 	}
 	return plan, planDir, nil
+}
+
+// cachedPlanVersion reads just the planVersion of a stored plan.json, so a
+// plan the current schema cannot parse still names the version it has.
+func cachedPlanVersion(b []byte) string {
+	var v struct {
+		PlanVersion string `json:"planVersion"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return ""
+	}
+	return v.PlanVersion
 }
 
 // confirmRunCapabilities applies the install-time consent semantics to
