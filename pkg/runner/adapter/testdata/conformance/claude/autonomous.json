@@ -1,0 +1,94 @@
+{
+  "files": {
+    "instruction.md": "You are the conformance fixture. Read the inputs, write one report.",
+    "mcp.json": "{\n  \"mcpServers\": {\n    \"gateway\": {\n      \"type\": \"http\",\n      \"url\": \"@@HOST_GATEWAY_URL@@\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${MCP_GATEWAY_TOKEN}\"\n      }\n    }\n  }\n}\n"
+  },
+  "agent": {
+    "image": ""
+  },
+  "host": {
+    "command": "claude",
+    "argv": [
+      "-p",
+      "--bare",
+      "--verbose",
+      "--output-format",
+      "stream-json",
+      "--system-prompt-file",
+      "instruction.md",
+      "--mcp-config",
+      "mcp.json",
+      "--strict-mcp-config",
+      "--setting-sources",
+      "",
+      "--tools",
+      "",
+      "--allowedTools",
+      "mcp__gateway",
+      "--permission-mode",
+      "dontAsk",
+      "--permission-prompts",
+      "none",
+      "--no-session-persistence",
+      "--disable-slash-commands",
+      "--model",
+      "fixture-model"
+    ],
+    "env": [
+      {
+        "name": "MCP_GATEWAY_TOKEN",
+        "fromRunToken": true
+      },
+      {
+        "name": "ANTHROPIC_AUTH_TOKEN",
+        "fromHostEnv": "FIXTURE_API_KEY"
+      },
+      {
+        "name": "HTTPS_PROXY",
+        "value": "@@HOST_PROXY_URL@@"
+      },
+      {
+        "name": "HTTP_PROXY",
+        "value": "@@HOST_PROXY_URL@@"
+      },
+      {
+        "name": "NO_PROXY",
+        "value": "127.0.0.1,localhost"
+      },
+      {
+        "name": "CLAUDE_CONFIG_DIR",
+        "value": "@@RUN_CFG@@/harness/.claude-home"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_TELEMETRY",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_ERROR_REPORTING",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_AUTOUPDATER",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_BUG_COMMAND",
+        "value": "1"
+      }
+    ],
+    "inheritEnv": [
+      "HOME",
+      "PATH"
+    ],
+    "versionArgv": [
+      "--version"
+    ],
+    "stdinTask": true
+  },
+  "model": "anthropic/fixture-model",
+  "resultKind": "text"
+}

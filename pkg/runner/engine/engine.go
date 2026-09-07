@@ -296,7 +296,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return Classify(ExitGateway, fmt.Errorf("connect proxy to bridge: %w", err))
 	}
 	if p.Plan.Harness.Host != nil {
-		port, perr := d.Port(ctx, proxyName, spec.ProxyPort)
+		port, perr := waitPublishedPort(ctx, d, proxyName, spec.ProxyPort)
 		if perr != nil {
 			return Classify(ExitGateway, fmt.Errorf("published proxy port: %w", perr))
 		}
@@ -332,7 +332,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return Classify(ExitGateway, fmt.Errorf("connect gateway to bridge: %w", err))
 	}
 	if p.Plan.Harness.Host != nil {
-		port, perr := d.Port(ctx, gwName, spec.GatewayPort)
+		port, perr := waitPublishedPort(ctx, d, gwName, spec.GatewayPort)
 		if perr != nil {
 			return Classify(ExitGateway, fmt.Errorf("published gateway port: %w", perr))
 		}

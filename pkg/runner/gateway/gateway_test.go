@@ -17,7 +17,7 @@ func TestEnsureInstalledFirstUse(t *testing.T) {
 	pol := policy.Default()
 	f := &dockerx.Fake{}
 	dir := filepath.Join(t.TempDir(), "image")
-	if err := EnsureInstalled(context.Background(), f, pol, "agentry-runner:test", dir, os.Stderr); err != nil {
+	if err := EnsureInstalled(context.Background(), f, pol, "agentry-runner:test", dir, os.Stderr, true); err != nil {
 		t.Fatalf("EnsureInstalled: %v", err)
 	}
 	ops := strings.Join(f.Ops(), " ")
@@ -43,7 +43,7 @@ func TestEnsureInstalledSkipsPresent(t *testing.T) {
 		pol.Images.HarnessDockerAgent: true,
 		"agentry-runner:test":         true,
 	}}
-	if err := EnsureInstalled(context.Background(), f, pol, "agentry-runner:test", t.TempDir(), os.Stderr); err != nil {
+	if err := EnsureInstalled(context.Background(), f, pol, "agentry-runner:test", t.TempDir(), os.Stderr, true); err != nil {
 		t.Fatal(err)
 	}
 	ops := strings.Join(f.Ops(), " ")

@@ -45,6 +45,8 @@ type Fake struct {
 	// Ports answers Port by container name; a published container with
 	// no entry gets 41000 + its container port modulo 1000.
 	Ports map[string]int
+	// PortFailures makes that many Port calls fail before one succeeds.
+	PortFailures int
 	// Leftover names PSByLabel returns (leak-check tests).
 	Leftover []string
 }
@@ -220,6 +222,17 @@ func (f *Fake) Logs(_ context.Context, name string, _ int) (string, error) {
 // Port implements Client.
 func (f *Fake) Port(_ context.Context, name string, containerPort int) (int, error) {
 	f.record("Port", name, RunSpec{})
+	// PortFailures reproduces the real daemon's timing: a container on an
+	// internal network has no port mapping until docker has finished
+	// programming the one the bridge connect asked for, so the first reads
+	// legitimately find nothing.
+	f.mu.Lock()
+	if f.PortFailures > 0 {
+		f.PortFailures--
+		f.mu.Unlock()
+		return 0, fmt.Errorf("fake docker: no public port for %d/tcp in %s yet", containerPort, name)
+	}
+	f.mu.Unlock()
 	if p, ok := f.Ports[name]; ok {
 		return p, nil
 	}

@@ -178,6 +178,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		HarnessImage: in.Policy.Images.HarnessDockerAgent,
 		GatewayURL:   spec.GatewayURL(),
 		SchemaJSON:   schemaJSON,
+		Harness:      in.Policy.Harness[adapterName],
 	})
 	if err != nil {
 		return nil, fmt.Errorf("adapter %s: %w", adapterName, err)

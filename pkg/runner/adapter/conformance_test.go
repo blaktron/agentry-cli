@@ -139,8 +139,19 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	if v, ok := find(spec.GatewayTokenEnv); !ok || !v.FromRunToken || v.Value != "" {
 		t.Errorf("gateway token env = %+v, want FromRunToken", v)
 	}
-	if v, ok := find(in.Model.APIKeyEnv); !ok || v.FromHostEnv != in.Model.APIKeyEnv || v.Value != "" {
-		t.Errorf("model key env = %+v, want FromHostEnv %s", v, in.Model.APIKeyEnv)
+	// The VARIABLE the harness reads the key under is the harness's own
+	// (docker-agent takes the policy's name, claude takes
+	// ANTHROPIC_AUTH_TOKEN), so what the invariant pins is that the key is
+	// resolved from the operator's environment at run time and that no
+	// plan carries its value.
+	keyByName := false
+	for _, v := range env {
+		if v.FromHostEnv == in.Model.APIKeyEnv && v.Value == "" {
+			keyByName = true
+		}
+	}
+	if !keyByName {
+		t.Errorf("no env var resolves the model key %s from the host environment: %+v", in.Model.APIKeyEnv, env)
 	}
 	for _, v := range env {
 		if v.Value != "" && (strings.Contains(v.Value, "sk-") || strings.Contains(strings.ToLower(v.Name), "secret")) {

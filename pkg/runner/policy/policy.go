@@ -78,11 +78,26 @@ type Policy struct {
 	Harness map[string]HarnessPolicy `yaml:"harness,omitempty"`
 }
 
-// HarnessPolicy configures one host-run harness adapter.
+// HarnessPolicy configures one host-run harness adapter — an adapter that
+// drives the person's own installation of a harness rather than an image
+// the runner pins (plan runner-m-r4-adapters §5).
 type HarnessPolicy struct {
 	// Path is the executable to run instead of looking the harness up on
 	// PATH.
 	Path string `yaml:"path,omitempty"`
+	// Model is the model id this harness is asked for (empty: model.name).
+	// A harness that speaks its own vendor's API needs a model named in
+	// that vendor's terms, which is not always the one model.name holds
+	// for the default adapter.
+	Model string `yaml:"model,omitempty"`
+	// BaseURL points the harness at an endpoint that speaks its own API
+	// (for claude, ANTHROPIC_BASE_URL). Empty: the harness's default
+	// endpoint. The host must also be in model.proxyAllow, or the run
+	// cannot reach it.
+	BaseURL string `yaml:"baseUrl,omitempty"`
+	// APIKeyEnv names the host env var holding this harness's key (empty:
+	// model.apiKeyEnv). The value is read at run time and never stored.
+	APIKeyEnv string `yaml:"apiKeyEnv,omitempty"`
 }
 
 // MCPServersPolicy is the operator's stance on declared servers the
@@ -452,6 +467,19 @@ sessions:
   idleTimeoutSeconds: 900
   maxWallSeconds: 7200
   maxUserTurns: 200
+
+# Adapters that drive YOUR installation of a harness (--adapter claude,
+# and codex/goose as they land) rather than an image the runner pins.
+# Everything here is optional: without it the harness is looked up on PATH
+# and given model.name with model.apiKeyEnv.
+# harness:
+#   claude:
+#     # path: /opt/claude/bin/claude
+#     # An endpoint that speaks the Anthropic Messages API — Anthropic
+#     # itself, or a compatible one. Its host must be in model.proxyAllow.
+#     # baseUrl: https://api.anthropic.com
+#     # model: claude-sonnet-4-5
+#     # apiKeyEnv: ANTHROPIC_API_KEY
 
 profiles:
   # A BriefAgent's MCP profile stores the keys/identities guided setup

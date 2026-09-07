@@ -199,6 +199,23 @@ func TestRunHostHarness(t *testing.T) {
 	}
 }
 
+// The run network is internal, so docker programs a published port only
+// once the container has been connected to the bridge — a moment after
+// `docker run -d` returns. Reading it once made the gateway's address
+// fail intermittently on a real daemon (found by the first host-run
+// harness, agentry-cli#80); the engine must wait for the mapping.
+func TestRunHostHarnessWaitsForThePublishedPort(t *testing.T) {
+	p, f, _, _ := hostFixture(t)
+	f.PortFailures = 3 // the first reads find no mapping yet
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if env.Status != "ok" {
+		t.Fatalf("envelope status = %s", env.Status)
+	}
+}
+
 func TestRunHostHarnessNotInstalled(t *testing.T) {
 	p, f, _, _ := hostFixture(t)
 	t.Setenv("PATH", t.TempDir())

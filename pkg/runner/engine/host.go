@@ -36,6 +36,43 @@ func hostPublish(p Params, containerPort int) []dockerx.PortPublish {
 	return []dockerx.PortPublish{{HostIP: "127.0.0.1", ContainerPort: containerPort}}
 }
 
+// waitPublishedPort reads the host port a run container's published port
+// landed on, retrying until the mapping exists.
+//
+// The run network is internal, which has no NAT, so docker drops the -p
+// binding at creation and only programs it when the container is
+// afterwards connected to the bridge — and that lands a moment after
+// `docker run -d` and `docker network connect` have both returned. Reading
+// the port once therefore fails intermittently (it failed on the gateway
+// and, by luck of a faster image, not on the proxy). Nothing here is
+// worth a fixed sleep: poll until the mapping is there.
+func waitPublishedPort(ctx context.Context, d dockerx.Client, name string, containerPort int) (int, error) {
+	deadline := time.Now().Add(publishedPortTimeout)
+	var err error
+	for {
+		var port int
+		if port, err = d.Port(ctx, name, containerPort); err == nil {
+			return port, nil
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return 0, fmt.Errorf("%s never published port %d on 127.0.0.1 (%ds): %w",
+				name, containerPort, int(publishedPortTimeout/time.Second), err)
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(publishedPortPoll):
+		}
+	}
+}
+
+// publishedPortTimeout bounds that wait; publishedPortPoll is how often it
+// asks. Generous: on a loaded machine a container can take seconds to run.
+const (
+	publishedPortTimeout = 30 * time.Second
+	publishedPortPoll    = 100 * time.Millisecond
+)
+
 // resolveHostCommand finds the harness executable: the policy's
 // harness.<adapter>.path when set, else a PATH lookup of the plan's
 // command name. Not installed is a not-runnable refusal (exit 12) with the
