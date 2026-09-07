@@ -146,7 +146,7 @@ func printAdapters(cmd *cobra.Command) error {
 		}
 		_, _ = fmt.Fprintf(out, "%s%s\n", n, suffix)
 	}
-	_, _ = fmt.Fprintln(out, "planned (RUNNER-PLAN M-R4): goose, claude, codex")
+	_, _ = fmt.Fprintln(out, "planned (RUNNER-PLAN M-R4): goose, codex")
 	return nil
 }
 
@@ -295,7 +295,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
 	docker := dockerx.New()
 	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
-	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
+	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr(),
+		plan.Harness.Host == nil); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	// The per-BriefAgent exec image the plan names (agentry-cli#9).

@@ -1,0 +1,25 @@
+schemaVersion: "2"
+name: hello-chat
+namespace: fixtures
+modes: [autonomous, interactive]
+version: 1.0.0
+summary: "Reads the workspace and answers about it — the E2E smoke agent for both run modes"
+license: Apache-2.0
+tags: [fixture]
+
+interactive:
+  opening: "Ask me what the workspace holds."
+
+entrypoints:
+  instruction: SKILL.md
+
+capabilities:
+  filesystem:
+    read: workspace
+    write: none
+  network:
+    egress: none
+  exec: none
+
+publish:
+  include: [agent.yaml, SKILL.md, notes.txt]

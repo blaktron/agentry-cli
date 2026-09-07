@@ -40,6 +40,13 @@ type Input struct {
 	GatewayURL string
 	// SchemaJSON is the optional output.schema.json content (§R2).
 	SchemaJSON []byte
+	// Harness is the operator policy's block for THIS adapter
+	// (harness.<name>), the configuration an adapter that drives the
+	// person's own installation of a harness needs: which executable,
+	// and — because such a harness speaks its own protocol to its own
+	// endpoint — which model and credential variable it is given (plan
+	// runner-m-r4-adapters §5). Zero for a containerised harness.
+	Harness policy.HarnessPolicy
 }
 
 // Result is what an adapter compiles.
@@ -142,6 +149,22 @@ type SessionOptions struct {
 	GatewayTools []string
 }
 
+// HostHarness is implemented by adapters that drive the person's own
+// installation of a harness instead of a container (plan
+// runner-m-r4-adapters §5), so `agentry doctor --adapter <name>` can
+// report what is actually installed before a scheduled run finds out.
+type HostHarness interface {
+	// Executable is the program name resolved on PATH (the operator
+	// policy's harness.<name>.path overrides the lookup).
+	Executable() string
+	// ProbeVersion is the harness release this adapter was written
+	// against. A different one is a warning, never a refusal: the
+	// adapters read event shapes best-effort by design.
+	ProbeVersion() string
+	// VersionArgv prints the harness's version.
+	VersionArgv() []string
+}
+
 // ErrNotSupported is returned by Session for adapters without an
 // interactive transport.
 var ErrNotSupported = errors.New("adapter does not support interactive sessions")
@@ -186,7 +209,7 @@ type TurnUsage struct {
 var registry = map[string]Adapter{}
 
 // planned names error with an M-R4 pointer instead of "unknown".
-var planned = map[string]bool{"goose": true, "claude": true, "codex": true}
+var planned = map[string]bool{"goose": true, "codex": true}
 
 // Register installs an adapter; duplicate names are a programmer error.
 func Register(a Adapter) {

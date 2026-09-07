@@ -26,13 +26,21 @@ import (
 // from the embedded context if absent. Called from the install step of
 // `agentry run` (RQ5): after this returns nil, a run needs no further
 // network access for infrastructure.
+// harnessImage says whether this run needs the pinned harness image at
+// all: an adapter that drives the person's own installation runs no
+// container, so pulling docker-agent for it would be a download nobody
+// asked for (plan runner-m-r4-adapters §5).
 func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
-	runnerTag, imageCtxDir string, logw io.Writer,
+	runnerTag, imageCtxDir string, logw io.Writer, harnessImage bool,
 ) error {
 	if err := d.Available(ctx); err != nil {
 		return err
 	}
-	for _, ref := range []string{pol.Images.Gateway, pol.Images.HarnessDockerAgent} {
+	images := []string{pol.Images.Gateway}
+	if harnessImage {
+		images = append(images, pol.Images.HarnessDockerAgent)
+	}
+	for _, ref := range images {
 		ok, err := d.ImageExists(ctx, ref)
 		if err != nil {
 			return err

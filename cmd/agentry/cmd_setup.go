@@ -104,7 +104,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	docker := dockerx.New()
 	imageCtx := homeImageDir(home)
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
-		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr()); err != nil {
+		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), true); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(),

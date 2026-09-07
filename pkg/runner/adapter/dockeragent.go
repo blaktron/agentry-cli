@@ -91,17 +91,11 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		return Result{}, fmt.Errorf("docker-agent adapter: no harness image pinned")
 	}
 
-	instruction := in.Instruction
-	resultKind := "text"
-	if len(in.SchemaJSON) > 0 {
-		// Schema-shaped output is requested through the prompt and
-		// validated by the engine before exit (§R2, DR-8 in the
-		// deviations register records why the harness-native
-		// structured_output block is not emitted in v1).
-		instruction += "\n\nYour final message MUST be a single JSON document matching this JSON Schema, with no surrounding prose:\n\n" +
-			string(bytes.TrimSpace(in.SchemaJSON)) + "\n"
-		resultKind = "json"
-	}
+	// Schema-shaped output is requested through the prompt and validated
+	// by the engine before exit (§R2, DR-8 in the deviations register
+	// records why the harness-native structured_output block is not
+	// emitted in v1). The wording is shared with every other adapter.
+	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
 
 	doc := agentYAML{
 		// The config schema version of the pinned harness: docker-agent
