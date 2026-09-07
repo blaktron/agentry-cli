@@ -397,3 +397,44 @@ func TestResolveMountsRelabelsOnlyRunDirectories(t *testing.T) {
 		}
 	}
 }
+
+// What a run labels for its tool containers, and how deep. The run's own
+// directories are labelled through; the operator's --out directory is not,
+// because it is the one directory in the list they chose and it may hold
+// files that have nothing to do with this run (agentry-cli#88). The out
+// directory itself is still labelled, without recursing, so a tool
+// container can traverse into the reports folder it writes.
+func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
+	rd := &runDirs{
+		workspace:  "/run/x/workspace",
+		inputs:     "/run/x/inputs",
+		cfg:        "/run/x/cfg",
+		serversDir: "/home/me/.agentry/servers",
+		outDir:     "/home/me/somewhere-of-mine",
+	}
+	got := map[string]bool{}
+	for _, tgt := range relabelTargets(rd) {
+		got[tgt.dir] = tgt.recursive
+	}
+	want := map[string]bool{
+		"/run/x/workspace":                   true,
+		"/run/x/inputs":                      true,
+		"/run/x/cfg":                         true,
+		"/home/me/.agentry/servers":          true,
+		"/home/me/somewhere-of-mine":         false,
+		"/home/me/somewhere-of-mine/reports": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("labelled %d directories, want %d: %v", len(got), len(want), got)
+	}
+	for dir, recursive := range want {
+		gotRec, ok := got[dir]
+		if !ok {
+			t.Errorf("%s is never labelled", dir)
+			continue
+		}
+		if gotRec != recursive {
+			t.Errorf("%s recursive = %v, want %v", dir, gotRec, recursive)
+		}
+	}
+}
