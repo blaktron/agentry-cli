@@ -439,9 +439,11 @@ func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "fs_write: " + err.Error(), true
 	}
+	s.ownBetween(s.spec.WorkspaceDir, filepath.Dir(abs))
 	if err := os.WriteFile(abs, []byte(a.Content), 0o644); err != nil {
 		return "fs_write: " + err.Error(), true
 	}
+	s.own(abs)
 	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), path.Clean(a.Path)), false
 }
 
@@ -877,6 +879,7 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "write_report: " + err.Error(), true
 	}
+	s.own(root)
 	abs, err := resolveUnder(root, a.Path)
 	if err != nil {
 		return "write_report: " + err.Error(), true
@@ -884,6 +887,8 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "write_report: " + err.Error(), true
 	}
+	s.ownBetween(root, filepath.Dir(abs))
+	defer s.own(abs)
 	if a.Append {
 		f, err := os.OpenFile(abs, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
@@ -903,4 +908,32 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 		}
 	}
 	return fmt.Sprintf("report written: reports/%s (%d bytes)", path.Clean(a.Path), len(a.Content)), false
+}
+
+// own gives path to the host user when the spec names one (agentry-cli#55).
+// Best-effort: a mount that forbids chown (a non-Linux Docker Desktop
+// share, a uid-mapped mount) leaves the file as it is rather than failing
+// the tool — the write itself succeeded, and the receipt shows the result.
+func (s *server) own(path string) {
+	if s.spec.Owner == nil || path == "" {
+		return
+	}
+	_ = os.Chown(path, s.spec.Owner.UID, s.spec.Owner.GID)
+}
+
+// ownBetween chowns every directory below root down to dir (inclusive) —
+// the directories MkdirAll may have just created for a nested path.
+func (s *server) ownBetween(root, dir string) {
+	if s.spec.Owner == nil {
+		return
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return
+	}
+	cur := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		s.own(cur)
+	}
 }

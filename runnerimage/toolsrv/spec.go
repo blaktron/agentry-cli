@@ -54,6 +54,21 @@ type Spec struct {
 	Exec Exec `json:"exec"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
+	// Owner, when set, is the host user who ran the command: every file
+	// and directory write_report and fs_write create is chowned to it.
+	// The tools container runs as root (see runnerimage/Dockerfile) and
+	// writes into bind mounts the host user owns, so without this the
+	// reports come out root-owned and the user cannot delete their own
+	// output folder (agentry-cli#55). The engine stamps it into the
+	// per-run copy of this file, never into the compiled plan; absent on
+	// hosts without POSIX ids.
+	Owner *Owner `json:"owner,omitempty"`
+}
+
+// Owner is a POSIX uid/gid pair.
+type Owner struct {
+	UID int `json:"uid"`
+	GID int `json:"gid"`
 }
 
 // Access is one direction of filesystem access inside the workspace.
