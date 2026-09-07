@@ -28,7 +28,8 @@ const (
 	KindAssistantTurn Kind = "assistant_turn"
 	// KindToolCall is one tool call the harness made through the gateway.
 	KindToolCall Kind = "tool_call"
-	// KindUsage carries the harness's token usage for a turn.
+	// KindUsage carries the harness's token usage for a turn (or, for a
+	// harness that reports only context tokens, one usage update).
 	KindUsage Kind = "usage"
 	// KindPermissionGranted records an in-harness permission request the
 	// runner allowed — a gateway tool (DR-15, agentry-cli#61).
@@ -66,9 +67,12 @@ type Event struct {
 	// Reason says why the session ended.
 	Reason EndReason `json:"reason,omitempty"`
 	// Token usage for usage events.
-	InputTokens  int64   `json:"inputTokens,omitempty"`
-	OutputTokens int64   `json:"outputTokens,omitempty"`
-	CostUSD      float64 `json:"costUsd,omitempty"`
+	InputTokens  int64 `json:"inputTokens,omitempty"`
+	OutputTokens int64 `json:"outputTokens,omitempty"`
+	// TotalTokens is context tokens from a harness that gives no input/output
+	// split (docker-agent's usage_update; the per-update delta).
+	TotalTokens int64   `json:"totalTokens,omitempty"`
+	CostUSD     float64 `json:"costUsd,omitempty"`
 	// Raw is the harness's own message, when there was one.
 	Raw json.RawMessage `json:"raw,omitempty"`
 }

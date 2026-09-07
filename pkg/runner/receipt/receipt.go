@@ -72,10 +72,14 @@ type Harness struct {
 
 // Usage is the measured cost of the run.
 type Usage struct {
-	InputTokens  int64   `json:"inputTokens"`
-	OutputTokens int64   `json:"outputTokens"`
-	CostUSD      float64 `json:"costUsd"`
-	WallMS       int64   `json:"wallMs"`
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+	// TotalTokens is set when the harness reports context tokens without an
+	// input/output split (docker-agent's ACP usage_update); input and output
+	// are then zero, not estimates (agentry-cli#71).
+	TotalTokens int64   `json:"totalTokens,omitempty"`
+	CostUSD     float64 `json:"costUsd"`
+	WallMS      int64   `json:"wallMs"`
 	// Turns counts tool-call events (the --max-turns meter).
 	Turns int `json:"turns"`
 	// UserTurns counts the user's messages in an interactive session.

@@ -67,6 +67,9 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed"}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Hello, "}}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "world."}}}})
+			// docker-agent's usage: cumulative context tokens, no split.
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "usage_update", "used": 1255, "size": 0}}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "usage_update", "used": 1465, "size": 0}}})
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 12, "outputTokens": 3, "totalTokens": 15}}})
 		default:
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32601, "message": "unknown"}})
@@ -119,8 +122,22 @@ func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 	for _, ev := range events {
 		kinds[ev.Kind]++
 	}
-	if kinds[EventToolCall] != 1 || kinds[EventPermissionGranted] != 1 || kinds[EventPermissionDenied] != 1 || kinds[EventAssistantText] != 2 || kinds[EventUsage] != 1 {
+	if kinds[EventToolCall] != 1 || kinds[EventPermissionGranted] != 1 || kinds[EventPermissionDenied] != 1 || kinds[EventAssistantText] != 2 || kinds[EventUsage] != 3 {
 		t.Errorf("event kinds = %v", kinds)
+	}
+	// The two usage_updates arrive as deltas (1255, then 1465-1255), with
+	// no input/output split; the prompt result's own usage is the third.
+	var totals []int64
+	for _, ev := range events {
+		if ev.Kind == EventUsage && ev.TotalTokens > 0 {
+			totals = append(totals, ev.TotalTokens)
+			if ev.InputTokens != 0 || ev.OutputTokens != 0 {
+				t.Errorf("usage_update guessed a split: %+v", ev)
+			}
+		}
+	}
+	if len(totals) != 2 || totals[0] != 1255 || totals[1] != 210 {
+		t.Errorf("usage_update deltas = %v, want [1255 210]", totals)
 	}
 	for _, ev := range events {
 		if ev.Kind == EventPermissionGranted && ev.Text != "fs_list" {
@@ -182,4 +199,49 @@ func TestACPSessionRefusesUnknownRequestsAndReportsProtocolMismatch(t *testing.T
 	if !refused {
 		t.Error("fs/read_text_file was not refused")
 	}
+}
+
+// A harness whose prompt result carries no usage (docker-agent) still
+// yields a turn usage: the sum of the turn's usage_update deltas.
+func TestACPSessionTurnUsageFromUsageUpdates(t *testing.T) {
+	toHarnessR, toHarnessW := io.Pipe()
+	fromHarnessR, fromHarnessW := io.Pipe()
+	go func() {
+		defer func() { _ = fromHarnessW.Close() }()
+		sc := bufio.NewScanner(toHarnessR)
+		write := func(v any) { b, _ := json.Marshal(v); _, _ = fromHarnessW.Write(append(b, '\n')) }
+		for sc.Scan() {
+			var m rpcMessage
+			_ = json.Unmarshal(sc.Bytes(), &m)
+			switch m.Method {
+			case "initialize":
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"protocolVersion": 1}})
+			case "session/new":
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "sess-2"}})
+			case "session/prompt":
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-2", "update": map[string]any{"sessionUpdate": "usage_update", "used": 100, "size": 0}}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-2", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "ok"}}}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-2", "update": map[string]any{"sessionUpdate": "usage_update", "used": 130, "size": 0}}})
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "end_turn"}})
+			}
+		}
+	}()
+	drv := newACPSession(pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, 1, nil)
+	go func() {
+		for range drv.Events() {
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := drv.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	turn, err := drv.Prompt(ctx, "hi")
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if turn.Usage == nil || turn.Usage.TotalTokens != 130 || turn.Usage.InputTokens != 0 {
+		t.Errorf("turn usage = %+v, want total 130 with no split", turn.Usage)
+	}
+	_ = drv.Close()
 }
