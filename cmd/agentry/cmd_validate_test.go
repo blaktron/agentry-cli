@@ -49,6 +49,29 @@ func TestValidateFlagsS1Findings(t *testing.T) {
 	}
 }
 
+// TestValidateAppliesTextTotalQuota: the §19 text total (V8, agentry#44) is
+// the registry's submit-time rule, and validate promises the same rules
+// offline — two 600 KiB prose files must fail here, not at upload.
+func TestValidateAppliesTextTotalQuota(t *testing.T) {
+	isolateEnv(t)
+	files := skillFiles("demo", "")
+	files["notes/a.md"] = "# a\n\n" + strings.Repeat("prose ", 100*1024)
+	files["notes/b.md"] = "# b\n\n" + strings.Repeat("prose ", 100*1024)
+	files["agent.yaml"] = strings.Replace(files["agent.yaml"],
+		"include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, notes/a.md, notes/b.md]", 1)
+	dir := writeTree(t, files)
+
+	stdout, _, err := runCLI(t, nil, "validate", dir)
+	if err == nil {
+		t.Fatalf("1.2 MiB of prose passed validate:\n%s", stdout)
+	}
+	for _, want := range []string{"V8", "text files total", "maximum scanned prose"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("output lacks %q:\n%s", want, stdout)
+		}
+	}
+}
+
 // TestValidateStrictPromotesWarnings: warnings pass by default and fail
 // under --strict — the split the exit-code contract promises.
 func TestValidateStrictPromotesWarnings(t *testing.T) {

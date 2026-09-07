@@ -3,7 +3,7 @@ module github.com/blaktron/agentry-cli
 go 1.27.0
 
 require (
-	github.com/blaktron/agentry v0.0.0-20260905163738-7d7c7d8736c2
+	github.com/blaktron/agentry v0.0.0-20260907123332-91567d4d25ad
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
