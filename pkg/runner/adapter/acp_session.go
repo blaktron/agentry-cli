@@ -39,11 +39,17 @@ type acpSession struct {
 	// permit says whether a permission request for a tool is granted. Nil
 	// denies everything.
 	permit func(tool string) bool
+	// lastUsed is the last cumulative `used` a usage_update carried, so each
+	// update is reported as its delta (agentry-cli#71).
+	lastUsed int64
 }
 
 // turnState accumulates one Prompt's answer.
 type turnState struct {
 	text strings.Builder
+	// totalTokens sums the usage_update deltas seen during the turn, the
+	// turn's usage when the prompt result carries none.
+	totalTokens int64
 }
 
 type rpcMessage struct {
@@ -166,6 +172,10 @@ func (s *acpSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 	if pr.Usage != nil {
 		out.Usage = &TurnUsage{InputTokens: pr.Usage.InputTokens, OutputTokens: pr.Usage.OutputTokens, TotalTokens: pr.Usage.TotalTokens}
 		s.emit(Event{Kind: EventUsage, InputTokens: int64(pr.Usage.InputTokens), OutputTokens: int64(pr.Usage.OutputTokens), Raw: rawCopy(res)})
+	} else if turn.totalTokens > 0 {
+		// docker-agent's prompt result carries no usage; the turn's
+		// usage_update deltas are the record (already emitted as events).
+		out.Usage = &TurnUsage{TotalTokens: int(turn.totalTokens)}
 	}
 	return out, nil
 }
@@ -282,11 +292,30 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 			} `json:"content"`
 			Title  string `json:"title"`
 			Status string `json:"status"`
+			// usage_update (docker-agent): cumulative context tokens used
+			// and the context size (0 when the provider does not say).
+			Used int64 `json:"used"`
+			Size int64 `json:"size"`
 		} `json:"update"`
 	}
 	_ = json.Unmarshal(m.Params, &p)
 	u := p.Update
 	switch u.SessionUpdate {
+	case "usage_update":
+		// `used` is cumulative across the session; report the delta since
+		// the previous update as this step's tokens. No input/output split
+		// exists, so only TotalTokens is set (agentry-cli#71, DR-15).
+		s.mu.Lock()
+		delta := u.Used - s.lastUsed
+		if delta < 0 || s.lastUsed == 0 {
+			delta = u.Used
+		}
+		s.lastUsed = u.Used
+		if s.turn != nil {
+			s.turn.totalTokens += delta
+		}
+		s.mu.Unlock()
+		s.emit(Event{Kind: EventUsage, TotalTokens: delta, Raw: rawCopy(line)})
 	case "agent_message_chunk":
 		s.mu.Lock()
 		if s.turn != nil {

@@ -100,6 +100,12 @@ type Event struct {
 	InputTokens  int64
 	OutputTokens int64
 	CostUSD      float64
+	// TotalTokens is set on EventUsage by a harness that reports context
+	// tokens without an input/output split: docker-agent's ACP
+	// `usage_update` carries a cumulative `used`, and the driver emits the
+	// delta since the previous update (agentry-cli#71). Input and output
+	// stay zero then — unknown, not guessed.
+	TotalTokens int64
 	// Raw is the original line for receipts.
 	Raw json.RawMessage
 }

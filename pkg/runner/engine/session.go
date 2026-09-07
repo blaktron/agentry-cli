@@ -167,6 +167,7 @@ type liveSession struct {
 	userTurns      int
 	toolCalls      int
 	inTok, outTok  int64
+	totTok         int64
 	costUSD        float64
 	lastText       string
 	harnessErr     string
@@ -276,12 +277,13 @@ func (s *liveSession) pump() {
 			s.mu.Lock()
 			s.inTok += ev.InputTokens
 			s.outTok += ev.OutputTokens
+			s.totTok += ev.TotalTokens
 			if ev.CostUSD > s.costUSD {
 				s.costUSD = ev.CostUSD
 			}
 			over := s.p.Budgets.MaxCostUSD > 0 && s.costUSD > s.p.Budgets.MaxCostUSD
 			s.mu.Unlock()
-			s.emit(session.Event{Kind: session.KindUsage, InputTokens: ev.InputTokens, OutputTokens: ev.OutputTokens, CostUSD: ev.CostUSD, Raw: ev.Raw})
+			s.emit(session.Event{Kind: session.KindUsage, InputTokens: ev.InputTokens, OutputTokens: ev.OutputTokens, TotalTokens: ev.TotalTokens, CostUSD: ev.CostUSD, Raw: ev.Raw})
 			if over {
 				s.endWith(session.EndCostBudget)
 			}
@@ -541,7 +543,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	log := append([]session.Event(nil), s.log...)
 	lastText := s.lastText
 	env := s.env
-	env.Usage = receipt.Usage{InputTokens: s.inTok, OutputTokens: s.outTok, CostUSD: s.costUSD, Turns: s.toolCalls, UserTurns: s.userTurns}
+	env.Usage = receipt.Usage{InputTokens: s.inTok, OutputTokens: s.outTok, TotalTokens: s.totTok, CostUSD: s.costUSD, Turns: s.toolCalls, UserTurns: s.userTurns}
 	harnessErr := s.harnessErr
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
