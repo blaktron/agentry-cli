@@ -371,7 +371,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			Image: image,
 			Argv:  argv,
 			Mounts: []dockerx.Mount{
-				{Source: hostDir, Target: r.prefix()},
+				// The server store is the runner's own directory under the
+				// signature profile, so it may be relabeled (agentry-cli#85).
+				{Source: hostDir, Target: r.prefix(), Relabel: true},
 			},
 		}, nil, logw, logw)
 		if err != nil {

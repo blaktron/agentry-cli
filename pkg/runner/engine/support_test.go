@@ -18,6 +18,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 func TestParseEnvFile(t *testing.T) {
@@ -358,4 +359,41 @@ func TestPrepareRunDirsErrors(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// The engine decides per plan mount whether the source is a directory this
+// run made. Only those are relabeled for an SELinux-enabled daemon; the
+// gateway's docker socket must be mounted exactly as it is, because
+// relabeling it would change a system-wide file's label for every container
+// on the host (agentry-cli#85).
+func TestResolveMountsRelabelsOnlyRunDirectories(t *testing.T) {
+	rd := &runDirs{cfg: "/run/x/cfg", workspace: "/run/x/ws", session: "/run/x/session"}
+	got := resolveMounts([]spec.Mount{
+		{Source: spec.PHCfg + "/gateway", Target: "/mcp", ReadOnly: true},
+		{Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"},
+		{Source: spec.PHWorkspace, Target: spec.WorkspaceMount},
+		{Source: spec.PHSession, Target: spec.SessionMount},
+		{Source: "/etc/machine-id", Target: "/etc/machine-id", ReadOnly: true},
+	}, rd.replacer())
+
+	want := map[string]bool{
+		"/mcp":                 true,
+		"/var/run/docker.sock": false,
+		spec.WorkspaceMount:    true,
+		spec.SessionMount:      true,
+		"/etc/machine-id":      false,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("resolved %d mounts, want %d", len(got), len(want))
+	}
+	for _, m := range got {
+		w, known := want[m.Target]
+		if !known {
+			t.Errorf("unexpected mount %+v", m)
+			continue
+		}
+		if m.Relabel != w {
+			t.Errorf("mount %s relabel = %v, want %v", m.Target, m.Relabel, w)
+		}
+	}
 }

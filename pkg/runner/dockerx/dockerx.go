@@ -82,6 +82,16 @@ type RunSpec struct {
 	// Publish exposes container ports on the host (-p): only for a
 	// host-run harness, and only on 127.0.0.1 (HostPort 0 = ephemeral).
 	Publish []PortPublish
+	// DisableSELinuxLabel runs this container with SELinux labelling off
+	// (`--security-opt label=disable`). It is for the ONE container that
+	// drives the host's docker daemon: an SELinux-enabled daemon confines
+	// container processes so they cannot open the docker socket at all, and
+	// the alternative — relabeling the socket itself — would hand that
+	// access to every container on the machine instead of this one
+	// (agentry-cli#85). Every other container in a run stays confined. On a
+	// daemon built without SELinux support the option is accepted and does
+	// nothing.
+	DisableSELinuxLabel bool
 }
 
 // Mount is one bind mount, already placeholder-resolved.
@@ -89,6 +99,15 @@ type Mount struct {
 	Source   string
 	Target   string
 	ReadOnly bool
+	// Relabel asks docker to give the source an SELinux label the
+	// container can read (the `z` option, agentry-cli#85). Set it for
+	// directories THIS RUN created and nothing else: relabeling is a write
+	// to the host's file labels, so pointing it at a path that belongs to
+	// the machine — the docker socket above all — would change what every
+	// other container on that host may touch. On a daemon built without
+	// SELinux support docker accepts the option and ignores it (measured:
+	// the source's label is untouched), so it costs nothing to carry.
+	Relabel bool
 }
 
 // CLI is the real client.
@@ -311,10 +330,26 @@ func (r RunSpec) args(detach bool) []string {
 	for _, k := range sortedKeys(r.Env) {
 		args = append(args, "-e", k) // value travels via process env
 	}
+	if r.DisableSELinuxLabel {
+		args = append(args, "--security-opt", "label=disable")
+	}
 	for _, m := range r.Mounts {
 		spec := m.Source + ":" + m.Target
+		var opts []string
 		if m.ReadOnly {
-			spec += ":ro"
+			opts = append(opts, "ro")
+		}
+		if m.Relabel {
+			// `z` (shared), never `Z` (private): a run mounts the same
+			// directory into more than one of its containers — the config
+			// dir into the gateway and the harness, the server store into
+			// the builder and the runtime — and a private label would give
+			// the first container an exclusive category that locks the
+			// others out.
+			opts = append(opts, "z")
+		}
+		if len(opts) > 0 {
+			spec += ":" + strings.Join(opts, ",")
 		}
 		args = append(args, "-v", spec)
 	}
