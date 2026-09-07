@@ -240,7 +240,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		close(s.exited)
 		s.endWith(session.EndHarness)
 	}()
-	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW})
+	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: p.Plan.Tools})
 	if err != nil {
 		cancel(err)
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w", err))
@@ -285,6 +285,8 @@ func (s *liveSession) pump() {
 			if over {
 				s.endWith(session.EndCostBudget)
 			}
+		case adapter.EventPermissionGranted:
+			s.emit(session.Event{Kind: session.KindPermissionGranted, Text: ev.Text, Raw: ev.Raw})
 		case adapter.EventPermissionDenied:
 			s.emit(session.Event{Kind: session.KindPermissionDenied, Text: ev.Text, Raw: ev.Raw})
 		case adapter.EventError:

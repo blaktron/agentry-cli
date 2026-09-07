@@ -38,28 +38,33 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 		case "session/new":
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "sess-1"}})
 		case "session/prompt":
-			// A tool call, a permission request the client must answer,
-			// text chunks, then the turn result with usage.
+			// A tool call, two permission requests the client must answer —
+			// a gateway tool (granted) and a tool outside the catalog
+			// (denied) — text chunks, then the turn result with usage.
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "fs_list", "status": "pending"}}})
-			write(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "session/request_permission", "params": map[string]any{"sessionId": "sess-1", "toolCall": map[string]any{"title": "fs_list"}, "options": []any{map[string]any{"optionId": "y", "kind": "allow_once"}, map[string]any{"optionId": "n", "kind": "reject_once"}}}})
-			// Wait for the answer before continuing the turn.
-			if !sc.Scan() {
-				return
+			ask := func(id int, tool, want string) {
+				write(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session/request_permission", "params": map[string]any{"sessionId": "sess-1", "toolCall": map[string]any{"title": tool, "toolCallId": "c1", "kind": "execute"}, "options": []any{map[string]any{"optionId": "y", "kind": "allow_once"}, map[string]any{"optionId": "ya", "kind": "allow_always"}, map[string]any{"optionId": "n", "kind": "reject_once"}}}})
+				// Wait for the answer before continuing the turn.
+				if !sc.Scan() {
+					return
+				}
+				var ans struct {
+					ID     int `json:"id"`
+					Result struct {
+						Outcome struct {
+							Outcome  string `json:"outcome"`
+							OptionID string `json:"optionId"`
+						} `json:"outcome"`
+					} `json:"result"`
+				}
+				_ = json.Unmarshal(sc.Bytes(), &ans)
+				if ans.ID != id || ans.Result.Outcome.Outcome != "selected" || ans.Result.Outcome.OptionID != want {
+					t.Errorf("permission for %s answered %s, want option %s", tool, sc.Text(), want)
+				}
 			}
-			var ans struct {
-				ID     int `json:"id"`
-				Result struct {
-					Outcome struct {
-						Outcome  string `json:"outcome"`
-						OptionID string `json:"optionId"`
-					} `json:"outcome"`
-				} `json:"result"`
-			}
-			_ = json.Unmarshal(sc.Bytes(), &ans)
-			if ans.ID != 99 || ans.Result.Outcome.Outcome != "selected" || ans.Result.Outcome.OptionID != "n" {
-				t.Errorf("permission answered %s, want reject option n", sc.Text())
-			}
-			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "failed"}}})
+			ask(99, "fs_list", "y")
+			ask(98, "shell_exec", "n")
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed"}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Hello, "}}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "world."}}}})
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 12, "outputTokens": 3, "totalTokens": 15}}})
@@ -69,13 +74,15 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 	}
 }
 
-func TestACPSessionDrivesOneTurnAndDeniesPermissions(t *testing.T) {
+// The driver grants permission requests for the gateway's tools and denies
+// the rest, and both appear in the event stream (DR-15, agentry-cli#61).
+func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 	toHarnessR, toHarnessW := io.Pipe()
 	fromHarnessR, fromHarnessW := io.Pipe()
 	go fakeACP(t, toHarnessR, fromHarnessW)
 
 	ad, _ := Get(DefaultName)
-	drv, err := ad.Session(context.Background(), pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW})
+	drv, err := ad.Session(context.Background(), pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, SessionOptions{GatewayTools: []string{"fs_list", "write_report"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,14 +119,17 @@ func TestACPSessionDrivesOneTurnAndDeniesPermissions(t *testing.T) {
 	for _, ev := range events {
 		kinds[ev.Kind]++
 	}
-	if kinds[EventToolCall] != 1 || kinds[EventPermissionDenied] != 1 || kinds[EventAssistantText] != 2 || kinds[EventUsage] != 1 {
+	if kinds[EventToolCall] != 1 || kinds[EventPermissionGranted] != 1 || kinds[EventPermissionDenied] != 1 || kinds[EventAssistantText] != 2 || kinds[EventUsage] != 1 {
 		t.Errorf("event kinds = %v", kinds)
 	}
 	for _, ev := range events {
-		if ev.Kind == EventPermissionDenied && ev.Text != "fs_list" {
-			t.Errorf("denied event names %q", ev.Text)
+		if ev.Kind == EventPermissionGranted && ev.Text != "fs_list" {
+			t.Errorf("granted event names %q, want fs_list", ev.Text)
 		}
-		if strings.Contains(string(ev.Raw), "allow_once") && ev.Kind != EventPermissionDenied {
+		if ev.Kind == EventPermissionDenied && ev.Text != "shell_exec" {
+			t.Errorf("denied event names %q, want shell_exec", ev.Text)
+		}
+		if strings.Contains(string(ev.Raw), "allow_once") && ev.Kind != EventPermissionGranted && ev.Kind != EventPermissionDenied {
 			t.Errorf("permission request leaked as %s", ev.Kind)
 		}
 	}
@@ -150,7 +160,7 @@ func TestACPSessionRefusesUnknownRequestsAndReportsProtocolMismatch(t *testing.T
 		b, _ = json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"protocolVersion": 2}})
 		_, _ = fromHarnessW.Write(append(b, '\n'))
 	}()
-	drv := newACPSession(pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, 1)
+	drv := newACPSession(pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, 1, nil)
 	var refused bool
 	done := make(chan struct{})
 	go func() {

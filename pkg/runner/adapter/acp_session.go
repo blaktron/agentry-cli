@@ -35,6 +35,10 @@ type acpSession struct {
 	events    chan Event
 	readDone  chan struct{}
 	closeOnce sync.Once
+
+	// permit says whether a permission request for a tool is granted. Nil
+	// denies everything.
+	permit func(tool string) bool
 }
 
 // turnState accumulates one Prompt's answer.
@@ -57,25 +61,32 @@ type rpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-// newACPSession starts the reader; the protocol begins with Start.
-func newACPSession(rw io.ReadWriteCloser, protocolVersion int) *acpSession {
+// newACPSession starts the reader; the protocol begins with Start. permit
+// decides permission requests (nil denies everything).
+func newACPSession(rw io.ReadWriteCloser, protocolVersion int, permit func(tool string) bool) *acpSession {
 	s := &acpSession{
 		rw:              rw,
 		protocolVersion: protocolVersion,
 		pending:         map[int]chan rpcMessage{},
 		events:          make(chan Event, 256),
 		readDone:        make(chan struct{}),
+		permit:          permit,
 	}
 	go s.readLoop()
 	return s
 }
 
-// Session implements Adapter.
-func (d *dockerAgent) Session(_ context.Context, rw io.ReadWriteCloser) (SessionDriver, error) {
+// Session implements Adapter. Permission requests are granted for the
+// gateway's tools and denied for anything else (DR-15, agentry-cli#61).
+func (d *dockerAgent) Session(_ context.Context, rw io.ReadWriteCloser, opts SessionOptions) (SessionDriver, error) {
 	if rw == nil {
 		return nil, errors.New("docker-agent session: nil transport")
 	}
-	return newACPSession(rw, acpProtocolVersion), nil
+	allowed := make(map[string]bool, len(opts.GatewayTools))
+	for _, t := range opts.GatewayTools {
+		allowed[t] = true
+	}
+	return newACPSession(rw, acpProtocolVersion, func(tool string) bool { return allowed[tool] }), nil
 }
 
 // Start implements SessionDriver.
@@ -305,16 +316,40 @@ func (s *acpSession) handleRequest(m rpcMessage, line []byte) {
 			} `json:"options"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
-		// Deny: pick a reject option when offered, cancel otherwise.
+		// docker-agent names the tool in toolCall.title and asks once per
+		// call, whatever the YAML safety mode says (agentry-cli#33 parts 2–3).
+		// A gateway tool is granted — the gateway is the only toolset and the
+		// policy bounds its catalog — with allow_once so every approval is a
+		// line in the transcript; anything else is denied: pick a reject
+		// option when offered, cancel otherwise. Denial is not a control: a
+		// tool that must not run is kept out of the gateway's catalog.
+		tool := p.ToolCall.Title
+		kind := EventPermissionDenied
 		reply := map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}
-		for _, o := range p.Options {
-			if o.Kind == "reject_once" || o.Kind == "reject_always" {
-				reply = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": o.OptionID}}
-				break
+		if s.permit != nil && s.permit(tool) {
+			for _, want := range []string{"allow_once", "allow_always"} {
+				for _, o := range p.Options {
+					if o.Kind == want {
+						reply = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": o.OptionID}}
+						kind = EventPermissionGranted
+						break
+					}
+				}
+				if kind == EventPermissionGranted {
+					break
+				}
+			}
+		}
+		if kind == EventPermissionDenied {
+			for _, o := range p.Options {
+				if o.Kind == "reject_once" || o.Kind == "reject_always" {
+					reply = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": o.OptionID}}
+					break
+				}
 			}
 		}
 		_ = s.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": reply})
-		s.emit(Event{Kind: EventPermissionDenied, Text: p.ToolCall.Title, Raw: rawCopy(line)})
+		s.emit(Event{Kind: kind, Text: tool, Raw: rawCopy(line)})
 	default:
 		_ = s.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{
 			"code": -32601, "message": "not supported by the agentry runner: " + m.Method}})

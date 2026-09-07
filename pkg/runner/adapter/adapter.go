@@ -74,8 +74,13 @@ const (
 	EventUsage EventKind = "usage"
 	// EventError carries a harness-reported error.
 	EventError EventKind = "error"
+	// EventPermissionGranted records an in-harness permission request the
+	// runner allowed: the tool is one the gateway serves, so the policy
+	// already bounds it (interactive sessions; DR-15, agentry-cli#61).
+	EventPermissionGranted EventKind = "permission_granted"
 	// EventPermissionDenied records an in-harness permission request the
-	// runner refused (interactive sessions; plan §6.10 line 4).
+	// runner refused: a tool outside the gateway's catalog, which should
+	// never occur (interactive sessions; plan §6.10 line 4).
 	EventPermissionDenied EventKind = "permission_denied"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
@@ -113,7 +118,19 @@ type Adapter interface {
 	// Session returns the driver for an interactive session over the
 	// harness container's attached stdio (plan §6.9). Adapters without an
 	// interactive transport return ErrNotSupported.
-	Session(ctx context.Context, rw io.ReadWriteCloser) (SessionDriver, error)
+	Session(ctx context.Context, rw io.ReadWriteCloser, opts SessionOptions) (SessionDriver, error)
+}
+
+// SessionOptions is what the engine tells a driver about the run it will
+// drive.
+type SessionOptions struct {
+	// GatewayTools are the tool names the run's gateway serves — the plan's
+	// `tools`, bounded by policy at compile. A harness permission request
+	// for one of them is granted; anything else is denied (DR-15,
+	// agentry-cli#61: under ACP the client is the permission authority for
+	// every tool call, and a denial does not reach the model as a refused
+	// tool result — docker-agent fails the whole turn).
+	GatewayTools []string
 }
 
 // ErrNotSupported is returned by Session for adapters without an
@@ -123,8 +140,10 @@ var ErrNotSupported = errors.New("adapter does not support interactive sessions"
 // SessionDriver drives one interactive harness session (DR-15). Turns go
 // in through Prompt; everything the harness says comes out of Events as
 // the same normalized kinds an autonomous run produces, so receipts have
-// one shape. A permission request from the harness is answered with a
-// denial by the driver and surfaced as an EventPermissionDenied.
+// one shape. A permission request from the harness is answered by the
+// driver — granted for a gateway tool (EventPermissionGranted), denied for
+// anything else (EventPermissionDenied) — and surfaced either way, so the
+// transcript shows every approval.
 type SessionDriver interface {
 	// Start performs the protocol handshake and opens the session.
 	Start(ctx context.Context) error

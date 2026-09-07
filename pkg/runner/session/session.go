@@ -30,8 +30,12 @@ const (
 	KindToolCall Kind = "tool_call"
 	// KindUsage carries the harness's token usage for a turn.
 	KindUsage Kind = "usage"
+	// KindPermissionGranted records an in-harness permission request the
+	// runner allowed — a gateway tool (DR-15, agentry-cli#61).
+	KindPermissionGranted Kind = "permission_granted"
 	// KindPermissionDenied records an in-harness permission request the
-	// runner refused (plan §6.10 line 4).
+	// runner refused — a tool outside the gateway's catalog (plan §6.10
+	// line 4).
 	KindPermissionDenied Kind = "permission_denied"
 	// KindInputAdded records a file added to /inputs mid-run.
 	KindInputAdded Kind = "input_added"
