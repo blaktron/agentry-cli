@@ -123,8 +123,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// the directories exist and hold their content. Harness files are
 	// rendered later into cfg/, and a new file takes its directory's type,
 	// so they are covered by this too.
-	relabelForToolContainers(context.Background(), p.Stderr,
-		rd.workspace, rd.inputs, rd.cfg, rd.outDir, rd.serversDir)
+	relabelForToolContainers(context.Background(), p.Stderr, relabelTargets(rd)...)
 	return rd, nil
 }
 
@@ -409,7 +408,7 @@ const containerFileType = "container_file_t"
 // Best effort on purpose. A host without SELinux has nothing to do here,
 // and where the relabel cannot be done the run continues and fails with the
 // tool's own error — a second failure invented here would only obscure it.
-func relabelForToolContainers(ctx context.Context, stderr io.Writer, dirs ...string) {
+func relabelForToolContainers(ctx context.Context, stderr io.Writer, targets ...relabelTarget) {
 	if _, err := os.Stat(selinuxRoot); err != nil {
 		return
 	}
@@ -418,14 +417,46 @@ func relabelForToolContainers(ctx context.Context, stderr io.Writer, dirs ...str
 		_, _ = fmt.Fprintf(stderr, "note: SELinux is enabled but chcon is not installed — the tool containers may be refused access to this run's directories\n")
 		return
 	}
-	for _, dir := range dirs {
-		if dir == "" {
+	for _, t := range targets {
+		if t.dir == "" {
 			continue
 		}
-		out, cerr := exec.CommandContext(ctx, chcon, "-R", "-t", containerFileType, dir).CombinedOutput() //nolint:gosec // our own run directories
-		if cerr != nil {
-			_, _ = fmt.Fprintf(stderr, "note: could not label %s for the tool containers: %v %s\n", dir, cerr, bytes.TrimSpace(out))
+		args := []string{"-t", containerFileType}
+		if t.recursive {
+			args = append(args, "-R")
 		}
+		args = append(args, t.dir)
+		out, cerr := exec.CommandContext(ctx, chcon, args...).CombinedOutput() //nolint:gosec // our own run directories
+		if cerr != nil {
+			_, _ = fmt.Fprintf(stderr, "note: could not label %s for the tool containers: %v %s\n", t.dir, cerr, bytes.TrimSpace(out))
+		}
+	}
+}
+
+// relabelTarget is one directory to label, and whether its contents go with
+// it. Recursing is right for the directories the runner made under its own
+// run root, and wrong for the output folder: `--out` is the operator's
+// choice and may already hold files of theirs, which are none of this run's
+// business (agentry-cli#88). There, the directory itself is labelled so a
+// tool container can traverse into what it writes, and only reports/ — which
+// the runner creates — is labelled through.
+type relabelTarget struct {
+	dir       string
+	recursive bool
+}
+
+// relabelTargets is what a run needs labelled, and how deep. Kept separate
+// from the labelling itself so the policy — recurse through what the runner
+// made, never through what the operator brought — can be asserted without
+// an SELinux host to run on.
+func relabelTargets(rd *runDirs) []relabelTarget {
+	return []relabelTarget{
+		{rd.workspace, true},
+		{rd.inputs, true},
+		{rd.cfg, true},
+		{rd.serversDir, true},
+		{rd.outDir, false},
+		{filepath.Join(rd.outDir, "reports"), true},
 	}
 }
 
