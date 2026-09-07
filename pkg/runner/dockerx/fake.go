@@ -42,6 +42,9 @@ type Fake struct {
 	Foreground map[string]*FakeForeground
 	// LogsByName scripts Logs.
 	LogsByName map[string]string
+	// Ports answers Port by container name; a published container with
+	// no entry gets 41000 + its container port modulo 1000.
+	Ports map[string]int
 	// Leftover names PSByLabel returns (leak-check tests).
 	Leftover []string
 }
@@ -212,4 +215,20 @@ func (f *Fake) PSByLabel(_ context.Context, label string) ([]string, error) {
 func (f *Fake) Logs(_ context.Context, name string, _ int) (string, error) {
 	f.record("Logs", name, RunSpec{})
 	return f.LogsByName[name], nil
+}
+
+// Port implements Client.
+func (f *Fake) Port(_ context.Context, name string, containerPort int) (int, error) {
+	f.record("Port", name, RunSpec{})
+	if p, ok := f.Ports[name]; ok {
+		return p, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.Calls {
+		if c.Run.Name == name && len(c.Run.Publish) > 0 {
+			return 41000 + containerPort%1000, nil
+		}
+	}
+	return 0, fmt.Errorf("fake docker: %s publishes no port", name)
 }

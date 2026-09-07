@@ -35,6 +35,10 @@ type runDirs struct {
 	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
 	outDir      string
 	receiptsDir string
+	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
+	// a host-run harness uses; empty for a container harness.
+	hostGatewayURL string
+	hostProxyURL   string
 }
 
 // replacer substitutes the §R4 placeholders with this run's real values.
@@ -47,6 +51,8 @@ func (rd *runDirs) replacer() *strings.Replacer {
 		spec.PHInputs, rd.inputs,
 		spec.PHSession, rd.session,
 		spec.PHServers, rd.serversDir,
+		spec.PHHostGatewayURL, rd.hostGatewayURL,
+		spec.PHHostProxyURL, rd.hostProxyURL,
 		spec.PHRunID, filepath.Base(rd.root),
 	)
 }
@@ -99,7 +105,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := copyTree(p.WorkspaceSrc, rd.workspace); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("copy workspace: %w", err))
 	}
-	if err := renderPlanFiles(p.PlanDir, rd); err != nil {
+	// Gateway files now; harness files once the infrastructure is up, so a
+	// host-run harness sees the published addresses (Run / StartSession).
+	if err := renderPlanFiles(p.PlanDir, rd, "gateway"); err != nil {
 		return nil, err
 	}
 	if err := stampOwner(filepath.Join(rd.cfg, "gateway", "toolspec.json")); err != nil {
@@ -148,9 +156,9 @@ func stageIntake(p Params, rd *runDirs) error {
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
 // substituting placeholders. Rendered files, not the installed ones, are
 // what containers mount — the install stays pristine and reusable.
-func renderPlanFiles(planDir string, rd *runDirs) error {
+func renderPlanFiles(planDir string, rd *runDirs, subs ...string) error {
 	rep := rd.replacer()
-	for _, sub := range []string{"gateway", "harness"} {
+	for _, sub := range subs {
 		src := filepath.Join(planDir, sub)
 		err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
