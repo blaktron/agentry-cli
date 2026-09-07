@@ -617,6 +617,8 @@ func transcript(env *receipt.Envelope, log []session.Event) string {
 			fmt.Fprintf(&b, "## Assistant\n\n%s\n\n", strings.TrimSpace(ev.Text))
 		case session.KindToolCall:
 			fmt.Fprintf(&b, "- tool call: %s\n", ev.Text)
+		case session.KindPermissionGranted:
+			fmt.Fprintf(&b, "- permission granted: %s\n", ev.Text)
 		case session.KindPermissionDenied:
 			fmt.Fprintf(&b, "- permission request denied: %s\n", ev.Text)
 		case session.KindInputAdded:
