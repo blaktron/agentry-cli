@@ -61,7 +61,7 @@ func TestRunSpecArgs(t *testing.T) {
 		Argv:  []string{"--flag", "value"},
 		Env:   map[string]string{"B_TOKEN": "sekret", "A_KEY": "also-sekret"},
 		Mounts: []Mount{
-			{Source: "/host/cfg", Target: "/mcp", ReadOnly: true},
+			{Source: "/host/cfg", Target: "/mcp", ReadOnly: true, Relabel: true},
 			{Source: "/host/out", Target: "/out"},
 		},
 		Network:    "run-net",
@@ -76,7 +76,7 @@ func TestRunSpecArgs(t *testing.T) {
 		"--network-alias", "gateway",
 		"--label", "a=1", "--label", "b=2",
 		"-e", "A_KEY", "-e", "B_TOKEN", // names only, sorted — values never in argv
-		"-v", "/host/cfg:/mcp:ro",
+		"-v", "/host/cfg:/mcp:ro,z",
 		"-v", "/host/out:/out",
 		"img:1", "--flag", "value",
 	}
@@ -398,5 +398,35 @@ func TestCLILogs(t *testing.T) {
 	}
 	if got := recorded(t, record)[0]; got != "logs --tail 40 agentry-x-gateway" {
 		t.Errorf("argv = %q", got)
+	}
+}
+
+// A run's own directories are relabeled so an SELinux-enabled daemon lets
+// the container read them; anything else — the docker socket above all —
+// is mounted untouched, because relabeling it would change a system-wide
+// file's label for every container on the host (agentry-cli#85).
+func TestRunSpecArgsRelabel(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		mount Mount
+		want  string
+	}{
+		{"a run directory", Mount{Source: "/run/cfg", Target: "/mcp", Relabel: true}, "/run/cfg:/mcp:z"},
+		{"read-only too", Mount{Source: "/run/cfg", Target: "/mcp", ReadOnly: true, Relabel: true}, "/run/cfg:/mcp:ro,z"},
+		{"the docker socket", Mount{Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"}, "/var/run/docker.sock:/var/run/docker.sock"},
+		{"a read-only path of the machine's", Mount{Source: "/etc/thing", Target: "/thing", ReadOnly: true}, "/etc/thing:/thing:ro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := RunSpec{Name: "n", Image: "i", Mounts: []Mount{tc.mount}}.args(true)
+			var got string
+			for i, a := range args {
+				if a == "-v" && i+1 < len(args) {
+					got = args[i+1]
+				}
+			}
+			if got != tc.want {
+				t.Errorf("-v %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

@@ -318,6 +318,11 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Alias:   spec.GatewayAlias,
 		Labels:  labels,
 		Publish: hostPublish(p, spec.GatewayPort),
+		// The gateway is the one container that drives the host daemon
+		// (§R4 calls that its documented privilege level, and it is why the
+		// agent container never sees this socket). An SELinux-enabled
+		// daemon would otherwise refuse it the socket outright.
+		DisableSELinuxLabel: mountsDockerSocket(p.Plan.Gateway.Mounts),
 	}
 	if err := d.RunDetached(ctx, gwSpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))

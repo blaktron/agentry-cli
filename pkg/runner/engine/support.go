@@ -5,6 +5,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -117,6 +119,12 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if b, err := os.ReadFile(filepath.Join(p.PlanDir, "plan.json")); err == nil { //nolint:gosec // our plan dir
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "run-plan.json"), b, 0o644)
 	}
+	// Everything the gateway will hand to a tool container, labelled once
+	// the directories exist and hold their content. Harness files are
+	// rendered later into cfg/, and a new file takes its directory's type,
+	// so they are covered by this too.
+	relabelForToolContainers(context.Background(), p.Stderr,
+		rd.workspace, rd.inputs, rd.cfg, rd.outDir, rd.serversDir)
 	return rd, nil
 }
 
@@ -374,9 +382,90 @@ func resolveMounts(mounts []spec.Mount, rep *strings.Replacer) []dockerx.Mount {
 			Source:   rep.Replace(m.Source),
 			Target:   m.Target,
 			ReadOnly: m.ReadOnly,
+			Relabel:  runScopedMount(m.Source),
 		})
 	}
 	return out
+}
+
+// selinuxRoot exists exactly when the host runs SELinux.
+const selinuxRoot = "/sys/fs/selinux"
+
+// containerFileType is the SELinux type a container may read and write —
+// the same one docker's `z` mount option applies, and with no category, so
+// every container in the run shares it.
+const containerFileType = "container_file_t"
+
+// relabelForToolContainers gives the directories the GATEWAY binds into the
+// tool containers a label those containers may use.
+//
+// Our own mounts carry docker's `z` option, but the workspace, the output
+// folder, the inputs and the config dir are bound by the gateway rather
+// than by us, so docker never relabels them on our behalf. Without this a
+// confined tool container is refused every read: the BriefAgent's fs_read
+// comes back denied, the model retries, and the run dies on the turn budget
+// instead of on anything that names the real cause (agentry-cli#85).
+//
+// Best effort on purpose. A host without SELinux has nothing to do here,
+// and where the relabel cannot be done the run continues and fails with the
+// tool's own error — a second failure invented here would only obscure it.
+func relabelForToolContainers(ctx context.Context, stderr io.Writer, dirs ...string) {
+	if _, err := os.Stat(selinuxRoot); err != nil {
+		return
+	}
+	chcon, err := exec.LookPath("chcon")
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "note: SELinux is enabled but chcon is not installed — the tool containers may be refused access to this run's directories\n")
+		return
+	}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		out, cerr := exec.CommandContext(ctx, chcon, "-R", "-t", containerFileType, dir).CombinedOutput() //nolint:gosec // our own run directories
+		if cerr != nil {
+			_, _ = fmt.Fprintf(stderr, "note: could not label %s for the tool containers: %v %s\n", dir, cerr, bytes.TrimSpace(out))
+		}
+	}
+}
+
+// DockerSocket is the daemon socket the gateway mounts to launch the tool
+// containers — the one path in a run that belongs to the machine.
+const DockerSocket = "/var/run/docker.sock"
+
+// mountsDockerSocket says whether a container drives the host's docker
+// daemon. Such a container needs SELinux labelling switched off to reach
+// the socket at all, and deriving that from the mounts rather than from a
+// container's name means the exemption follows the privilege wherever it
+// goes instead of being remembered separately (agentry-cli#85).
+func mountsDockerSocket(mounts []spec.Mount) bool {
+	for _, m := range mounts {
+		if m.Source == DockerSocket {
+			return true
+		}
+	}
+	return false
+}
+
+// runScopedMount says whether a plan mount's source is a directory this run
+// made — which is exactly what the run-scoped placeholders name — rather
+// than a path that belongs to the machine. Only the former may be
+// relabeled for SELinux (agentry-cli#85). The decision is taken on the
+// UNSUBSTITUTED source on purpose: after substitution a run directory and
+// a system path are both just absolute paths, and the plan's own vocabulary
+// is what tells them apart. The gateway's docker socket is the case that
+// matters — relabeling it would change a system-wide file's label for every
+// container on the host.
+func runScopedMount(source string) bool {
+	for _, ph := range []string{
+		spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs,
+		spec.PHServers, spec.PHSession,
+	} {
+		if strings.Contains(source, ph) {
+			return true
+		}
+	}
+	return false
 }
 
 // substituteAll substitutes placeholders across an argv.
