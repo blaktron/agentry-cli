@@ -209,7 +209,7 @@ type TurnUsage struct {
 var registry = map[string]Adapter{}
 
 // planned names error with an M-R4 pointer instead of "unknown".
-var planned = map[string]bool{"goose": true, "codex": true}
+var planned = map[string]bool{"goose": true}
 
 // Register installs an adapter; duplicate names are a programmer error.
 func Register(a Adapter) {

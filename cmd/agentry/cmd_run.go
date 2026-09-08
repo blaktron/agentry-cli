@@ -146,7 +146,7 @@ func printAdapters(cmd *cobra.Command) error {
 		}
 		_, _ = fmt.Fprintf(out, "%s%s\n", n, suffix)
 	}
-	_, _ = fmt.Fprintln(out, "planned (RUNNER-PLAN M-R4): goose, codex")
+	_, _ = fmt.Fprintln(out, "planned (RUNNER-PLAN M-R4): goose")
 	return nil
 }
 

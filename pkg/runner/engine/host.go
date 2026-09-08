@@ -128,7 +128,10 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 		vctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		vcmd := exec.CommandContext(vctx, path, hs.VersionArgv...)
 		vcmd.Env, vcmd.Dir = env, dir
-		out, _ := vcmd.CombinedOutput()
+		// stdout only: a harness that warns on stderr at startup (codex
+		// does, about its config home) would otherwise have the warning
+		// recorded as its version.
+		out, _ := vcmd.Output()
 		cancel()
 		if line := firstLine(out); line != "" {
 			info += " (" + line + ")"
