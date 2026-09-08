@@ -356,22 +356,31 @@ type fakeStdio struct {
 	outW   *io.PipeWriter
 	mu     sync.Mutex
 	writes strings.Builder
-	once   sync.Once
+	// lines receives every line the runner writes, for a scripted harness
+	// that answers requests (the codex session test).
+	lines chan []byte
+	once  sync.Once
 }
 
 func newFakeStdio() *fakeStdio {
 	r, w := io.Pipe()
-	return &fakeStdio{out: r, outW: w}
+	return &fakeStdio{out: r, outW: w, lines: make(chan []byte, 256)}
 }
 func (f *fakeStdio) Read(p []byte) (int, error) { return f.out.Read(p) }
 func (f *fakeStdio) Write(p []byte) (int, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.writes.Write(p)
+	f.mu.Unlock()
+	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+		select {
+		case f.lines <- []byte(line):
+		default:
+		}
+	}
 	return len(p), nil
 }
 func (f *fakeStdio) Close() error {
-	f.once.Do(func() { _ = f.outW.Close() })
+	f.once.Do(func() { _ = f.outW.Close(); close(f.lines) })
 	return nil
 }
 func (f *fakeStdio) say(line string) { _, _ = f.outW.Write([]byte(line + "\n")) }

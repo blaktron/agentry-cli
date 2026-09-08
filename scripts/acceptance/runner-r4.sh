@@ -97,7 +97,17 @@ for A in "${ADAPTERS[@]}"; do
   [ -f "$OUT_OK/receipts/proxy.log" ] || { echo "FAIL $A: proxy.log receipt missing"; exit 1; }
   grep -q "allow $HOSTPORT" "$OUT_OK/receipts/proxy.log" || {
     echo "FAIL $A: proxy.log shows no allowed CONNECT to $HOSTPORT"; cat "$OUT_OK/receipts/proxy.log"; exit 1; }
-  echo "$A allowed run: CONNECT to $HOSTPORT allowed; evidence in receipts/proxy.log"
+  # A run can exit "ok" having accomplished nothing if its tool calls were
+  # refused (a harness whose MCP approval was misconfigured does exactly
+  # that). The hello-report agent's whole job is to read notes.txt and
+  # reply with its text, so the result naming the note proves the gateway
+  # tools actually ran — the check that would have caught it.
+  if ! grep -qi "hello from the workspace" "$WORK/$A-ok.json"; then
+    echo "FAIL $A: the allowed run exited ok but its result does not contain the note — the gateway tools did not run"
+    python3 -c "import json;print(json.load(open('$OUT_OK/result.json'))['result'][:400])" 2>/dev/null
+    exit 1
+  fi
+  echo "$A allowed run: CONNECT to $HOSTPORT allowed and the agent used the gateway (result names the note); evidence in receipts/proxy.log"
 
   OUT_DENIED="$WORK/$A/denied"
   set +e
