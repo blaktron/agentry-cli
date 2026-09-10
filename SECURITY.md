@@ -25,5 +25,7 @@ Particularly interesting here:
 - **Credential handling** — a token or session id written to a log, a
   receipt, an export or a profile it should not be in.
 
-Malicious content on a registry is reported to that registry (the report
-control on the agent page, or its abuse address), not here.
+Malicious content on a registry is reported to that registry, not here.
+There is no report control on the agent page yet. A signed-in account posts
+the report to `POST /api/v1/agents/{ns}/{name}/abuse-reports`; without an
+account, email the security address that instance's operator publishes.

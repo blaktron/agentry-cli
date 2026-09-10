@@ -3,9 +3,10 @@
 The command-line client for [Agentry](https://secureagentry.net):
 publish, install, verify, and **run** BriefAgents — single-purpose AI
 agents. Every install checks the archive digest and DSSE signature before
-anything lands on your machine, and `agentry validate` runs the same
-manifest rules and content scanners the registry runs at publish time —
-offline. Start a new BriefAgent from the
+anything lands on your machine; an unsigned release, one the registry
+published no attestation for, requires `--allow-unsigned`. `agentry validate`
+runs the same manifest rules and content scanners the registry runs at submit
+time — offline. Start a new BriefAgent from the
 [template](https://github.com/blaktron/agentry-template).
 
 This repository holds the CLI only. It depends on the core module
@@ -39,21 +40,22 @@ away at the flip.
 
 `agentry` works against any Agentry registry — the hosted service or one you
 run from the open core ([self-hosting guide](https://github.com/blaktron/agentry/blob/main/docs/self-hosting.md)).
-The registry is chosen by `--registry`, else `defaultRegistry` in
-`~/.config/agentry/config.yaml` (written by `agentry login`), else the
-default compiled into the binary (`defaultRegistryURL`, set with
-`-ldflags "-X main.defaultRegistryURL=https://…"` by whoever builds and
-serves the binaries; a source build falls back to `http://localhost:8080`).
+The CLI takes the registry from `--registry`, else from `defaultRegistry` in
+`~/.config/agentry/config.yaml` (written by `agentry login`), else from the
+default compiled into the binary (`defaultRegistryURL`). Whoever builds and
+serves the binaries sets that default with
+`-ldflags "-X main.defaultRegistryURL=https://…"`; a source build falls back
+to `http://localhost:8080`.
 `agentry login` opens the registry's own `/ui/authorize` page, so sign-in
 works the same whether or not a site fronts the server.
 
 ## Commands
 
-`init` · `validate` · `login` · `publish` · `install` · `setup` · `run` · `uninstall` ·
-`profiles` · `verify` · `search` · `info` · `yank` — run `agentry --help`
-for the full surface. Server-side end-to-end coverage lives in the main
-repo's `scripts/acceptance/m3-cli.sh`, which builds this CLI against a
-live registry.
+`init` · `validate` · `login` · `publish` · `install` · `setup` · `doctor` ·
+`run` · `uninstall` · `profiles` · `verify` · `search` · `info` · `yank` —
+run `agentry --help` for the full surface. Server-side end-to-end coverage
+lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
+CLI against a live registry.
 
 ## The runner (`agentry run`)
 
@@ -79,29 +81,34 @@ manifest + operator policy into a deterministic run plan → execute:
 - **Everything the run produces** lands in the output folder: the
   BriefAgent's report files, `result.json` (the machine-readable envelope),
   and `receipts/` (event stream, gateway log, the exact run plan).
-  Containers, networks, and secret files are torn down on every exit path.
-- Installed into an existing coding agent instead (`agentry install
-  --target claude-skill|agents-md`), the same contract compiles to the
+  The runner tears down containers, networks, and secret files on every
+  exit path.
+- Install a BriefAgent into an existing coding agent instead (`agentry install
+  --target claude-skill|agents-md`) and the same contract compiles to the
   host's built-in tool grants — nothing is bundled in either mode.
 
-Exit codes: `0` ok · `10` verify · `11` policy/secret · `12` compile ·
-`13` gateway/docker · `14` agent · `15` timeout · `16` budget ·
-`17` output schema. Task input: `--input FILE`, else piped stdin. Runs
-compose: `agentry run a ... | agentry run b ...`.
+Exit codes: `0` ok · `2` usage · `10` verify · `11` policy/secret ·
+`12` compile · `13` gateway/docker · `14` agent · `15` timeout ·
+`16` budget · `17` output schema. Task input: `--input FILE`, else piped
+stdin. Runs compose: `agentry run a ... | agentry run b ...`.
 
 Around the enforcement core (v2): **`agentry setup`** configures your LLM
-provider and stands up the gateway plane before any agent is involved;
+provider and stands up the gateway plane before any agent is involved.
 **MCP profiles** store a BriefAgent's keys and identities once per exact
-release (guided setup on first run; keep or remove on completion —
-`--keep-profile`, `agentry profiles list|remove`); **`--file`** hands a
-run external files read-only under `/inputs`; and
+release — guided setup on first run, then keep or remove on completion
+(`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
+run external files read-only under `/inputs`.
 **`agentry install --provider claude|codex|openclaw`** installs for a
 host agent application instead of the gateway path.
 
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
-As-built architecture: [ARCHITECTURE.md](https://github.com/blaktron/agentry-notes/blob/main/ARCHITECTURE.md) §6
-in agentry-notes. The original design records (RUNNER-PLAN, -2, -3) are archived there under
-[archive/agentry-cli/](https://github.com/blaktron/agentry-notes/tree/main/archive/agentry-cli); divergences:
-[RUNNER-DEVIATIONS.md](https://github.com/blaktron/agentry-notes/blob/main/agentry-cli/RUNNER-DEVIATIONS.md); acceptance:
-`make accept-runner` (the docker E2E self-skips without a daemon).
+
+The as-built architecture is [ARCHITECTURE.md](https://github.com/blaktron/agentry-notes/blob/main/ARCHITECTURE.md) §6
+in agentry-notes, where [RUNNER-DEVIATIONS.md](https://github.com/blaktron/agentry-notes/blob/main/agentry-cli/RUNNER-DEVIATIONS.md)
+records the divergences from it. The original design records
+(RUNNER-PLAN, -2, -3) sit in the same repository under
+[archive/agentry-cli/](https://github.com/blaktron/agentry-notes/tree/main/archive/agentry-cli).
+
+`make accept-runner` runs the acceptance scripts; the docker E2E self-skips
+without a daemon.
