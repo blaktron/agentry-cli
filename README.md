@@ -3,7 +3,7 @@
 The command-line client for [Agentry](https://secureagentry.net):
 publish, install, verify, and **run** BriefAgents — single-purpose AI
 agents. Every install checks the archive digest and DSSE signature before
-anything lands on your machine; an unsigned release, one the registry
+anything lands on your machine. An unsigned release, one the registry
 published no attestation for, requires `--allow-unsigned`. `agentry validate`
 runs the same manifest rules and content scanners the registry runs at submit
 time — offline. Start a new BriefAgent from the
@@ -83,8 +83,8 @@ manifest + operator policy into a deterministic run plan → execute:
   and `receipts/` (event stream, gateway log, the exact run plan).
   The runner tears down containers, networks, and secret files on every
   exit path.
-- Install a BriefAgent into an existing coding agent instead (`agentry install
-  --target claude-skill|agents-md`) and the same contract compiles to the
+- Installed into an existing coding agent instead (`agentry install
+  --target claude-skill|agents-md`), the same contract compiles to the
   host's built-in tool grants — nothing is bundled in either mode.
 
 Exit codes: `0` ok · `2` usage · `10` verify · `11` policy/secret ·
@@ -110,5 +110,5 @@ records the divergences from it. The original design records
 (RUNNER-PLAN, -2, -3) sit in the same repository under
 [archive/agentry-cli/](https://github.com/blaktron/agentry-notes/tree/main/archive/agentry-cli).
 
-`make accept-runner` runs the acceptance scripts; the docker E2E self-skips
-without a daemon.
+`make accept-runner` runs the r0, r1 and r2 acceptance scripts; the docker
+E2E self-skips without a daemon.
