@@ -530,3 +530,28 @@ func TestInstallProviderPicksTarget(t *testing.T) {
 		t.Error("unparseable ref was accepted")
 	}
 }
+
+// TestStdinIsTTYRejectsDevNull (agentry-cli#118): /dev/null is a character
+// device but not a terminal; a run with stdin from it must take the
+// non-interactive path. A pipe is not a terminal either.
+func TestStdinIsTTYRejectsDevNull(t *testing.T) {
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = null.Close() }()
+	if stdinIsTTY(null) {
+		t.Fatal("/dev/null taken for a terminal")
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close(); _ = w.Close() }()
+	if stdinIsTTY(r) {
+		t.Fatal("a pipe taken for a terminal")
+	}
+	if stdinIsTTY(strings.NewReader("x")) {
+		t.Fatal("a reader taken for a terminal")
+	}
+}

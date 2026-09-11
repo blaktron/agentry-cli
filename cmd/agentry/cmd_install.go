@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"golang.org/x/term"
 	"io"
 	"os"
 	"path/filepath"
@@ -456,11 +457,9 @@ func stdinIsTTY(in io.Reader) bool {
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	// A terminal is a tty, not any character device: /dev/null is one too,
+	// and a run with stdin from it must take the non-interactive path.
+	return term.IsTerminal(int(f.Fd()))
 }
 
 // warnUndeclaredTarget warns when runtime.interfaces exists but omits the
