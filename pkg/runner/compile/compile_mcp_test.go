@@ -115,6 +115,18 @@ func TestCompileRendersDeclaredServer(t *testing.T) {
 	if !strings.Contains(plan.Enforcement["mcpServers"], "@scope/server-x@1.2.3") {
 		t.Fatalf("enforcement misses the server: %q", plan.Enforcement["mcpServers"])
 	}
+	// The gateway refuses a bind source outside its allowed roots; the
+	// signature's server store must be one of them, or the server never
+	// starts anywhere but under /tmp (agentry-cli#105).
+	allowed := ""
+	for _, ev := range plan.Gateway.Env {
+		if ev.Name == "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS" {
+			allowed = ev.Value
+		}
+	}
+	if !strings.Contains(allowed, spec.PHServers) {
+		t.Fatalf("gateway bind roots lack the server store: %q", allowed)
+	}
 }
 
 // TestCompileRefusesServerWildcardEgress (agentry-cli#105, DR-20): a
@@ -145,6 +157,11 @@ func TestCompileNoServersIsByteStable(t *testing.T) {
 	}
 	if plan.MCPServers != nil {
 		t.Fatalf("empty declaration produced MCPServers = %+v", plan.MCPServers)
+	}
+	for _, ev := range plan.Gateway.Env {
+		if ev.Name == "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS" && strings.Contains(ev.Value, spec.PHServers) {
+			t.Fatal("a plan without servers names the server store among the gateway's bind roots")
+		}
 	}
 	b, err := plan.MarshalCanonical()
 	if err != nil {

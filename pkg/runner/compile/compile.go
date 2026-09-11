@@ -231,7 +231,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Tools:        tspec.GrantedTools(),
 		MCPServers:   in.MCPServers,
 		Enforcement:  enforcement(caps, m.Capabilities.Secrets, extraServers, in.Policy, in.MCPServers),
-		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps),
+		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, len(in.MCPServers) > 0),
 		Harness: spec.HarnessSpec{
 			Adapter:    adapterName,
 			Model:      res.Model,
@@ -500,7 +500,7 @@ const GatewayConfigDir = "/root/.docker/mcp/catalogs"
 // compiled, and --block-network is unconditional: without it allowHosts is
 // advisory, which is the sharpest foot-gun the research flagged (§R11
 // invariant 1 pins this in a test).
-func gatewaySpec(image string, servers []string, caps spec.CapSummary) spec.GatewaySpec {
+func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore bool) spec.GatewaySpec {
 	writable := []string{spec.PHOut}
 	if caps.FSWriteMode != "none" {
 		writable = append(writable, spec.PHWorkspace)
@@ -529,7 +529,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary) spec.Gate
 			// resolve under these roots; writable binds need exact
 			// entries. Separator ":" — verified empirically at M-R2.
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
-				Value: strings.Join([]string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs}, ":")},
+				Value: strings.Join(bindRoots(withStore), ":")},
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
 				Value: strings.Join(writable, ":")},
 		},
@@ -643,6 +643,20 @@ func checkLiteralEnv(srv spec.MCPServerSpec) error {
 // envExpandRE matches what os.Expand would rewrite: a `$` followed by a
 // name character, `{`, or a special shell parameter.
 var envExpandRE = regexp.MustCompile(`\$[A-Za-z0-9_{*#@!?$-]`)
+
+// bindRoots lists the host roots the gateway may bind into the containers
+// it launches: the run's own directories, plus the signature's server
+// store when declared servers exist — each server is launched from a
+// read-only bind of that store, and the gateway refuses a source outside
+// its roots (agentry-cli#105). Left out otherwise so a plan without
+// servers keeps its pre-PLAN-3 bytes.
+func bindRoots(withServers bool) []string {
+	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs}
+	if withServers {
+		roots = append(roots, spec.PHServers)
+	}
+	return roots
+}
 
 // mcpServerEntry renders one declared MCP server (RUNNER-PLAN-3) as a
 // gateway catalog entry: launched from the signature's read-only server
