@@ -40,14 +40,7 @@ var openBrowser = func(url string) error {
 // stdinIsTerminal reports whether the command's input is an interactive
 // terminal — the case where a browser sign-in is the better default. An
 // injected reader (tests, a pipe) is never a terminal.
-func stdinIsTerminal(in io.Reader) bool {
-	f, ok := in.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
+func stdinIsTerminal(in io.Reader) bool { return stdinIsTTY(in) }
 
 // newLoginCmd builds the login command.
 func newLoginCmd() *cobra.Command {
