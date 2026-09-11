@@ -45,17 +45,18 @@ func pipe(ctx context.Context, c net.Conn, target string, logw io.Writer) {
 		return
 	}
 	defer func() { _ = up.Close() }()
+	// Each direction ends on its own EOF and half-closes the peer, so a
+	// client that finishes sending still receives the whole answer; the
+	// pipe ends when both are done or the run does.
 	done := make(chan struct{}, 2)
 	go func() { _, _ = io.Copy(up, c); closeWrite(up); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(c, up); closeWrite(c); done <- struct{}{} }()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
-	select {
-	case <-done:
-	case <-ctx.Done():
-	case <-time.After(time.Second):
+	for range 2 {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

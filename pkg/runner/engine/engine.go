@@ -403,8 +403,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 // checkDeclaredServersStarted reads the gateway's startup log for the
 // lines it writes when a declared server fails to start or to list its
 // tools, and names the first such server with the gateway's own line.
+// The line shapes are docker/mcp-gateway v0.43.3's (pkg/gateway/
+// capabilitites.go "  > Can't start %s: %s", "  > Can't list tools %s:
+// %s"; pkg/mcp/stdio.go relays server stderr as "- %s: %s"): a gateway
+// bump re-checks them.
 func checkDeclaredServersStarted(ctx context.Context, d dockerx.Client, gwName string, servers []spec.MCPServerSpec) error {
-	logs, err := d.Logs(ctx, gwName, 0)
+	logs, err := d.Logs(ctx, gwName, dockerx.LogsAll)
 	if err != nil {
 		return fmt.Errorf("read gateway log to confirm declared servers started: %w", err)
 	}

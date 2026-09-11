@@ -19,6 +19,9 @@ import (
 	"strings"
 )
 
+// LogsAll asks Logs for the whole log.
+const LogsAll = 0
+
 // Client is what the engine talks to.
 type Client interface {
 	// Available errors when no usable docker daemon answers.
@@ -51,7 +54,7 @@ type Client interface {
 	// PSByLabel lists container names carrying label (leak sweeps).
 	PSByLabel(ctx context.Context, label string) ([]string, error)
 	// Logs returns a container's output: the last tail lines, or all of
-	// it when tail is not positive (gateway diagnostics and startup checks).
+	// it for LogsAll (gateway diagnostics and startup checks).
 	Logs(ctx context.Context, name string, tail int) (string, error)
 	// Port returns the host port a container port was published on
 	// (RunSpec.Publish), for a host-run harness to reach the run.

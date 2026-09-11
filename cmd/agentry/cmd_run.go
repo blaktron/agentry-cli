@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -829,7 +830,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 				// Same schema, another build: the compiler's output may
 				// differ (agentry-cli#105 changed what a server's catalog
 				// entry carries without touching the schema).
-				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", orUnknown(plan.CompiledBy), version.Version)
+				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", cmp.Or(plan.CompiledBy, "unknown"), version.Version)
 			case plan.Proxy.Image != runnerImage:
 				_, _ = fmt.Fprintf(errOut, "installed plan names runner image %s, this CLI builds %s — recompiling\n", plan.Proxy.Image, runnerImage)
 			default:
@@ -864,14 +865,6 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 		return nil, "", engine.Classify(engine.ExitCompile, err)
 	}
 	return plan, planDir, nil
-}
-
-// orUnknown names a plan with no recorded build.
-func orUnknown(v string) string {
-	if v == "" {
-		return "unknown"
-	}
-	return v
 }
 
 // cachedPlanVersion reads just the planVersion of a stored plan.json, so a

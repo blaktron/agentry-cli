@@ -119,27 +119,28 @@ func runProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	allow := fs.String("allow", "", "comma-separated host[:port] CONNECT allowlist")
 	addr := fs.String("addr", ":3128", "listen address")
-	var forwards []string
+	type forward struct{ listen, target string }
+	var forwards []forward
 	fs.Func("forward", "LISTEN=TARGET plain TCP pipe (repeatable)", func(v string) error {
-		if _, _, err := netproxy.ParseForward(v); err != nil {
+		listen, target, err := netproxy.ParseForward(v)
+		if err != nil {
 			return err
 		}
-		forwards = append(forwards, v)
+		forwards = append(forwards, forward{listen, target})
 		return nil
 	})
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
 	for _, f := range forwards {
-		listen, target, _ := netproxy.ParseForward(f)
-		l, err := net.Listen("tcp", listen)
+		l, err := net.Listen("tcp", f.listen)
 		if err != nil {
-			return fmt.Errorf("forward %s: %w", f, err)
+			return fmt.Errorf("forward %s: %w", f.listen, err)
 		}
-		fmt.Fprintf(os.Stderr, "forward %s -> %s\n", listen, target)
+		fmt.Fprintf(os.Stderr, "forward %s -> %s\n", f.listen, f.target)
 		go func() {
-			if err := netproxy.Forward(context.Background(), l, target, os.Stderr); err != nil {
-				fmt.Fprintf(os.Stderr, "forward %s: %v\n", f, err)
+			if err := netproxy.Forward(context.Background(), l, f.target, os.Stderr); err != nil {
+				fmt.Fprintf(os.Stderr, "forward %s: %v\n", f.listen, err)
 			}
 		}()
 	}

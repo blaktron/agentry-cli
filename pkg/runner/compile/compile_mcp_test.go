@@ -117,19 +117,22 @@ func TestCompileRendersDeclaredServer(t *testing.T) {
 	}
 }
 
-func TestCompileGatesServerWildcardEgress(t *testing.T) {
+// TestCompileRefusesServerWildcardEgress (agentry-cli#105, DR-20): a
+// declared server's "*" is refused whatever the policy says — the gateway
+// gives such a server no relay and the run gives it no network of its
+// own, so it would land on docker's default bridge, unconstrained. The
+// agent's own "*" stays policy-gated (the llm-proxy still fronts it).
+func TestCompileRefusesServerWildcardEgress(t *testing.T) {
 	srv := githubServerSpec()
 	srv.Egress = []string{"*"}
-	pol := policy.Default() // AllowWildcardEgress false
-	_, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir())
-	var refusal *PolicyRefusal
-	if err == nil || !errorsAs(err, &refusal) {
-		t.Fatalf("wildcard server egress not refused by policy: %v", err)
-	}
-
-	pol.AllowWildcardEgress = true
-	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir()); err != nil {
-		t.Fatalf("policy-permitted wildcard refused: %v", err)
+	for _, allow := range []bool{false, true} {
+		pol := policy.Default()
+		pol.AllowWildcardEgress = allow
+		_, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir())
+		var refusal *PolicyRefusal
+		if err == nil || !errorsAs(err, &refusal) || !strings.Contains(err.Error(), "declare the hosts") {
+			t.Fatalf("allowWildcardEgress=%v: wildcard server egress not refused: %v", allow, err)
+		}
 	}
 }
 
@@ -257,23 +260,5 @@ func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "    allowHosts:\n      - api.github.com:443/tcp\n") {
 		t.Fatalf("declared host is not a TCP relay in the catalog:\n%s", b)
-	}
-}
-
-// TestCompileWildcardServerEgressIsDisclosedAsNoRoute: a server declaring
-// "*" egress gets no proxy sidecar from the gateway and sits on the run's
-// internal network, so it has no route out; the enforcement line says so
-// instead of promising unrestricted access the run does not give.
-func TestCompileWildcardServerEgressIsDisclosedAsNoRoute(t *testing.T) {
-	srv := githubServerSpec()
-	srv.Egress = []string{"*"}
-	pol := policy.Default()
-	pol.AllowWildcardEgress = true
-	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if enf := plan.Enforcement["mcpServers"]; !strings.Contains(enf, "no route out") || strings.Contains(enf, "UNRESTRICTED") {
-		t.Fatalf("wildcard server egress described as something the run does not give: %q", enf)
 	}
 }

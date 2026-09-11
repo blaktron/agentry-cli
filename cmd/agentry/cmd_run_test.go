@@ -777,4 +777,14 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	if err != nil || again.CompiledBy != first.CompiledBy || !strings.Contains(errOut.String(), "recompiling") {
 		t.Fatalf("plan from another CLI build was reused: %v compiledBy=%q %q", err, again.CompiledBy, errOut.String())
 	}
+	// Another runner image (the embedded build context changed): recompiled.
+	b, _ = os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
+	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(strings.ReplaceAll(string(b), again.Proxy.Image, "agentry-runner:older")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	third, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	if err != nil || third.Proxy.Image != again.Proxy.Image || !strings.Contains(errOut.String(), "runner image") {
+		t.Fatalf("plan for another runner image was reused: %v image=%q %q", err, third.Proxy.Image, errOut.String())
+	}
 }
