@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -35,6 +36,15 @@ func capabilityLines(c manifest.Capabilities) []string {
 		}
 		if len(srv.Secrets) > 0 {
 			line += " (secrets: " + renderList(srv.Secrets) + ")"
+		}
+		if len(srv.Env) > 0 {
+			// Plain configuration, so the values are shown: they are what
+			// the server receives and what the person consents to.
+			var pairs []string
+			for _, k := range slices.Sorted(maps.Keys(srv.Env)) {
+				pairs = append(pairs, k+"="+srv.Env[k])
+			}
+			line += " (env: " + strings.Join(pairs, ", ") + ")"
 		}
 		lines = append(lines, line)
 	}

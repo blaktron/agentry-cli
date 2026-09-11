@@ -139,3 +139,25 @@ func TestParseModes(t *testing.T) {
 		t.Errorf("empty label = %q", got)
 	}
 }
+
+// TestCapabilityLinesDeclaredServerEnv (agentry-cli#99): the consent line
+// for a declared server shows its plain env — names and values, sorted —
+// beside its secrets (names only), so what the server will receive is what
+// the person consents to.
+func TestCapabilityLinesDeclaredServerEnv(t *testing.T) {
+	caps := parseCaps(t, `capabilities:
+  mcpServers:
+    - npm: github-mcp-server-js
+      version: 0.1.7
+      secrets: [GITHUB_TOKEN]
+      env:
+        LOGS_DIR: /tmp/logs
+        GITHUB_PERMISSION: read-only
+      egress: [api.github.com]
+`)
+	lines := capabilityLines(caps)
+	want := "mcpServer: npm:github-mcp-server-js@0.1.7 (egress: api.github.com) (secrets: GITHUB_TOKEN) (env: GITHUB_PERMISSION=read-only, LOGS_DIR=/tmp/logs)"
+	if lines[len(lines)-1] != want {
+		t.Errorf("got  %q\nwant %q", lines[len(lines)-1], want)
+	}
+}

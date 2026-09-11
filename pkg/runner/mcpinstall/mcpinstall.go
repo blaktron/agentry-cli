@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -421,10 +422,20 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 			Tools:       append([]string(nil), m.Tools...),
 			Egress:      append([]string(nil), m.Egress...),
 			Secrets:     append([]string(nil), m.Secrets...),
+			Env:         copyEnv(m.Env),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// copyEnv returns a copy of a manifest env map, nil when empty so a plan
+// without env stays byte-identical to one written before env existed.
+func copyEnv(env map[string]string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	return maps.Clone(env)
 }
 
 // artifactSumsFile is the `sha256sum -c`-shaped list of every artifact the

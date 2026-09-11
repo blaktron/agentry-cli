@@ -21,8 +21,10 @@ package installed
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -61,6 +63,12 @@ type CapSnapshot struct {
 	// (RUNNER-PLAN-3) — a new or changed server is a widening the consent
 	// gate must re-ask about.
 	MCPServers []string `yaml:"mcpServers,omitempty" json:"mcpServers,omitempty"`
+	// MCPServerEnv is each declared server's plain env (name → literal
+	// value), keyed like MCPServers. Values are configuration, not
+	// secrets, so they are stored and shown: a changed value is a change
+	// to what the server receives and re-asks for consent. Absent in
+	// records written before env existed, which reads as "no env".
+	MCPServerEnv map[string]map[string]string `yaml:"mcpServerEnv,omitempty" json:"mcpServerEnv,omitempty"`
 }
 
 // Snapshot flattens a manifest capability block for storage.
@@ -76,7 +84,14 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 		Secrets:      append([]string(nil), c.Secrets...),
 	}
 	for _, srv := range c.MCPServers {
-		s.MCPServers = append(s.MCPServers, srv.SourceID()+"@"+srv.Version)
+		id := srv.SourceID() + "@" + srv.Version
+		s.MCPServers = append(s.MCPServers, id)
+		if len(srv.Env) > 0 {
+			if s.MCPServerEnv == nil {
+				s.MCPServerEnv = map[string]map[string]string{}
+			}
+			s.MCPServerEnv[id] = maps.Clone(srv.Env)
+		}
 	}
 	for _, d := range c.DataAccess {
 		s.DataAccess = append(s.DataAccess, string(d))
@@ -295,10 +310,42 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 	// chain, so it widens. A dropped one narrows.
 	added, removed = diffSets(old.MCPServers, next.MCPServers)
 	for _, s := range added {
-		d.Widened = append(d.Widened, "adds MCP server: "+s)
+		line := "adds MCP server: " + s
+		if env := next.MCPServerEnv[s]; len(env) > 0 {
+			// A new server's env is part of what is being added.
+			var pairs []string
+			for _, k := range slices.Sorted(maps.Keys(env)) {
+				pairs = append(pairs, k+"="+env[k])
+			}
+			line += " (env " + strings.Join(pairs, ", ") + ")"
+		}
+		d.Widened = append(d.Widened, line)
 	}
 	for _, s := range removed {
 		d.Narrowed = append(d.Narrowed, "drops MCP server: "+s)
+	}
+
+	// A server's plain env: a new or changed value changes what the
+	// server receives, so it widens and re-asks; a dropped key narrows.
+	// Only servers present on both sides are compared — a new server is
+	// already reported whole above.
+	for _, id := range next.MCPServers {
+		if !slices.Contains(old.MCPServers, id) {
+			continue
+		}
+		oldEnv, newEnv := old.MCPServerEnv[id], next.MCPServerEnv[id]
+		for _, k := range slices.Sorted(maps.Keys(newEnv)) {
+			if prev, had := oldEnv[k]; !had {
+				d.Widened = append(d.Widened, fmt.Sprintf("changes env of MCP server %s: %s=%s", id, k, newEnv[k]))
+			} else if prev != newEnv[k] {
+				d.Widened = append(d.Widened, fmt.Sprintf("changes env of MCP server %s: %s=%s (was %s)", id, k, newEnv[k], prev))
+			}
+		}
+		for _, k := range slices.Sorted(maps.Keys(oldEnv)) {
+			if _, still := newEnv[k]; !still {
+				d.Narrowed = append(d.Narrowed, fmt.Sprintf("drops env %s of MCP server %s", k, id))
+			}
+		}
 	}
 
 	return d

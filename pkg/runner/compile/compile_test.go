@@ -149,30 +149,37 @@ func TestCompileGolden(t *testing.T) {
 			ws := workspaceFor(t, m, nil)
 			_, planDir := compileFixtureMode(t, m, ws, tc.mode)
 
-			for _, rel := range []string{"plan.json", "gateway/catalog.yaml", "gateway/tools.yaml", "gateway/toolspec.json", "harness/agent.yaml"} {
-				got, err := os.ReadFile(filepath.Join(planDir, filepath.FromSlash(rel)))
-				if err != nil {
-					t.Fatalf("read %s: %v", rel, err)
-				}
-				goldenPath := filepath.Join("testdata", "golden", tc.name+"."+strings.ReplaceAll(rel, "/", "-"))
-				if *update {
-					if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(goldenPath, got, 0o644); err != nil {
-						t.Fatal(err)
-					}
-					continue
-				}
-				want, err := os.ReadFile(goldenPath)
-				if err != nil {
-					t.Fatalf("missing golden %s (run with -update): %v", goldenPath, err)
-				}
-				if !bytes.Equal(got, want) {
-					t.Errorf("%s differs from golden %s:\n--- got ---\n%s\n--- want ---\n%s", rel, goldenPath, got, want)
-				}
-			}
+			checkGolden(t, tc.name, planDir, []string{"plan.json", "gateway/catalog.yaml", "gateway/tools.yaml", "gateway/toolspec.json", "harness/agent.yaml"})
 		})
+	}
+}
+
+// checkGolden compares the named plan files with testdata/golden/<name>.<file>
+// and rewrites them under -update.
+func checkGolden(t *testing.T, name, planDir string, rels []string) {
+	t.Helper()
+	for _, rel := range rels {
+		got, err := os.ReadFile(filepath.Join(planDir, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		goldenPath := filepath.Join("testdata", "golden", name+"."+strings.ReplaceAll(rel, "/", "-"))
+		if *update {
+			if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(goldenPath, got, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(goldenPath)
+		if err != nil {
+			t.Fatalf("missing golden %s (run with -update): %v", goldenPath, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s differs from golden %s:\n--- got ---\n%s\n--- want ---\n%s", rel, goldenPath, got, want)
+		}
 	}
 }
 

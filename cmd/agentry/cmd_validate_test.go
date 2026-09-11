@@ -79,10 +79,7 @@ func TestValidateStrictPromotesWarnings(t *testing.T) {
 	// "*" egress is the stable SeverityWarning (V5: policy-gated, not
 	// rejected at validate time). README + LICENSE keep V7 quiet — the
 	// warning must be the ONLY issue for the default/strict split to show.
-	files := skillFiles("demo", "capabilities:\n  network:\n    egress: [\"*\"]\n")
-	files["README.md"] = "# demo\n"
-	files["LICENSE"] = "Apache-2.0 text placeholder\n"
-	dir := writeTree(t, files)
+	dir := writeTree(t, publishableSkillFiles("demo", "capabilities:\n  network:\n    egress: [\"*\"]\n"))
 
 	stdout, _, err := runCLI(t, nil, "validate", dir)
 	if err != nil {
@@ -200,4 +197,41 @@ func TestPrintManifestIssuesOrdersErrorsFirst(t *testing.T) {
 	if !strings.Contains(out, "V3") {
 		t.Errorf("rule id missing from output:\n%s", out)
 	}
+}
+
+// TestValidateAcceptsDeclaredServerEnv (agentry-cli#99): the vendored spec
+// carries the manifest's plain env map on a declared server (agentry#286),
+// so validate passes it offline — and refuses the one collision the spec
+// refuses, a name that is both a secret and env.
+func TestValidateAcceptsDeclaredServerEnv(t *testing.T) {
+	isolateEnv(t)
+	caps := `capabilities:
+  mcpServers:
+    - npm: github-mcp-server-js
+      version: 0.1.7
+      tools: [list_issues]
+      secrets: [GITHUB_TOKEN]
+      env:
+        GITHUB_PERMISSION: read-only
+      egress: [api.github.com]
+`
+	stdout, _, err := runCLI(t, nil, "validate", writeTree(t, publishableSkillFiles("demo", caps)))
+	if err != nil || !strings.Contains(stdout, "validate: PASSED") {
+		t.Fatalf("env refused offline: %v\n%s", err, stdout)
+	}
+	bad := strings.Replace(caps, "        GITHUB_PERMISSION: read-only\n", "        GITHUB_PERMISSION: read-only\n        GITHUB_TOKEN: plain\n", 1)
+	stdout, _, err = runCLI(t, nil, "validate", writeTree(t, publishableSkillFiles("demo", bad)))
+	if err == nil || !strings.Contains(stdout, "configure it as a secret or as env, not both") {
+		t.Fatalf("secret/env collision passed: %v\n%s", err, stdout)
+	}
+}
+
+// publishableSkillFiles is skillFiles plus the README and LICENSE V7 wants
+// for a public publish, so a validate test sees only the issue it is about.
+func publishableSkillFiles(name, capsYAML string) map[string]string {
+	files := skillFiles(name, capsYAML)
+	files["README.md"] = "# " + name + "\n"
+	files["LICENSE"] = "Apache-2.0 text placeholder\n"
+	files["agent.yaml"] = strings.Replace(files["agent.yaml"], "include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, README.md, LICENSE]", 1)
+	return files
 }
