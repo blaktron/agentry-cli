@@ -47,7 +47,8 @@ REQS='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"fs_write","arguments":{"path":"x","content":"y"}}}
 {"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"list_inputs","arguments":{}}}
 {"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"read_input","arguments":{"path":"brief.txt"}}}
-{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"read_input","arguments":{"path":"../ws/notes.txt"}}}'
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"read_input","arguments":{"path":"../ws/notes.txt"}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"fs_read","arguments":{"path":"notes.txt","maxBytes":"9"}}}'
 
 OUT=$(printf '%s\n' "$REQS" | mcp)
 
@@ -68,5 +69,9 @@ echo "$OUT" | grep -q 'brief.txt'                 || fail "list_inputs: provided
 echo "$OUT" | grep -q 'provided input'            || fail "read_input: content missing"
 LINE9=$(echo "$OUT" | grep '"id":9')
 echo "$LINE9" | grep -q '"isError":true'          || fail "read_input traversal not refused: $LINE9"
+# agentry-cli#113: a number sent as a JSON string is the number it encodes.
+LINE10=$(echo "$OUT" | grep '"id":10')
+echo "$LINE10" | grep -q '"isError":true' && fail "stringified maxBytes refused: $LINE10"
+echo "$LINE10" | grep -q 'truncated at 9 bytes' || fail "stringified maxBytes 9 did not cap the read: $LINE10"
 
 echo "runner-r1: all checks passed"

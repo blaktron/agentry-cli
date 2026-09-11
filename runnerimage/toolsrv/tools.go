@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -224,15 +225,87 @@ func writeReportSchema() map[string]any {
 
 // unmarshalArgs decodes tool arguments leniently: unknown fields are
 // tolerated (schema drift on the client side should degrade, not break),
-// absent arguments mean an empty object, and only malformed JSON errors.
+// absent arguments mean an empty object, and a non-string parameter that
+// arrives as a JSON-encoded string — "[\"a\"]" for an array, "200" for a
+// number, "true" for a bool, or the whole object as one string — is taken
+// as the value it encodes, since models do send exactly that and every
+// call would otherwise fail (agentry-cli#113). A string parameter is never
+// reinterpreted; a string that does not encode the wanted type is refused
+// naming the parameter, what arrived and what was wanted. Malformed JSON
+// errors as before.
 func unmarshalArgs(raw json.RawMessage, v any) error {
 	if len(raw) == 0 {
 		raw = []byte("{}")
 	}
-	if err := json.Unmarshal(raw, v); err != nil {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) > 0 && raw[0] == '"' {
+		// The whole arguments object arrived as one JSON string.
+		var inner string
+		if err := json.Unmarshal(raw, &inner); err != nil {
+			return fmt.Errorf("invalid arguments: %w", err)
+		}
+		raw = []byte(inner)
+	}
+	err := json.Unmarshal(raw, v)
+	if err == nil {
+		return nil
+	}
+	var te *json.UnmarshalTypeError
+	if !errors.As(err, &te) || te.Value != "string" {
+		return fmt.Errorf("invalid arguments: %w", err)
+	}
+	coerced, cerr := coerceStringFields(raw, v)
+	if cerr != nil {
+		return cerr
+	}
+	if err := json.Unmarshal(coerced, v); err != nil {
 		return fmt.Errorf("invalid arguments: %w", err)
 	}
 	return nil
+}
+
+// coerceStringFields rewrites, in the arguments object, every JSON string
+// whose target struct field is not a string into the JSON it encodes.
+func coerceStringFields(raw json.RawMessage, v any) (json.RawMessage, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	t := reflect.TypeOf(v)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return raw, nil
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Type.Kind() == reflect.String {
+			continue
+		}
+		name := strings.Split(f.Tag.Get("json"), ",")[0]
+		if name == "" || name == "-" {
+			name = f.Name
+		}
+		r, ok := obj[name]
+		if !ok || len(r) == 0 || r[0] != '"' {
+			continue
+		}
+		var inner string
+		if err := json.Unmarshal(r, &inner); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		probe := reflect.New(f.Type).Interface()
+		if !json.Valid([]byte(inner)) || json.Unmarshal([]byte(inner), probe) != nil {
+			return nil, fmt.Errorf("invalid arguments: %s: got the string %q, want %s", name, inner, f.Type)
+		}
+		obj[name] = json.RawMessage(inner)
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	return out, nil
 }
 
 // containsString is the small allowlist-membership helper the exec and

@@ -232,6 +232,44 @@ func TestUnmarshalArgs(t *testing.T) {
 	}
 }
 
+// TestUnmarshalArgsCoercesJSONStrings (agentry-cli#113): a model that
+// sends a non-string parameter as a JSON-encoded string — "[\"a\"]" for
+// an array, "200" for a number, "true" for a bool, or the whole
+// arguments object as one string — gets the value it meant; a string
+// that is not that type is refused naming the parameter, what arrived and
+// what was wanted; a string parameter is never touched.
+func TestUnmarshalArgsCoercesJSONStrings(t *testing.T) {
+	type args struct {
+		Command  string   `json:"command"`
+		Args     []string `json:"args"`
+		MaxBytes int64    `json:"maxBytes"`
+		Append   bool     `json:"append"`
+	}
+	var v args
+	if err := unmarshalArgs(json.RawMessage(`{"command":"git","args":"[\"log\",\"--oneline\"]","maxBytes":"200","append":"true"}`), &v); err != nil {
+		t.Fatalf("coercion failed: %v", err)
+	}
+	if v.Command != "git" || len(v.Args) != 2 || v.Args[1] != "--oneline" || v.MaxBytes != 200 || !v.Append {
+		t.Fatalf("coerced = %+v", v)
+	}
+	v = args{}
+	if err := unmarshalArgs(json.RawMessage(`"{\"command\":\"echo\",\"args\":[\"hi\"]}"`), &v); err != nil || v.Command != "echo" || len(v.Args) != 1 {
+		t.Fatalf("stringified object: %+v %v", v, err)
+	}
+	v = args{}
+	if err := unmarshalArgs(json.RawMessage(`{"command":"[1]","args":["x"]}`), &v); err != nil || v.Command != "[1]" {
+		t.Fatalf("a string parameter must be taken as written: %+v %v", v, err)
+	}
+	err := unmarshalArgs(json.RawMessage(`{"command":"git","maxBytes":"lots"}`), &v)
+	if err == nil || !strings.Contains(err.Error(), "maxBytes") || !strings.Contains(err.Error(), `"lots"`) || !strings.Contains(err.Error(), "int64") {
+		t.Fatalf("uncoercible string must be refused naming the parameter, the value and the type: %v", err)
+	}
+	err = unmarshalArgs(json.RawMessage(`{"command":"git","args":"log --oneline"}`), &v)
+	if err == nil || !strings.Contains(err.Error(), "args") || !strings.Contains(err.Error(), "[]string") {
+		t.Fatalf("a plain string for an array must be refused: %v", err)
+	}
+}
+
 // failWriter errors on every write — a gateway that hung up mid-response.
 type failWriter struct{}
 
