@@ -360,6 +360,9 @@ type fakeStdio struct {
 	// that answers requests (the codex session test).
 	lines chan []byte
 	once  sync.Once
+	// closed is set under mu before lines is closed, so a write racing
+	// the harness's exit is recorded but never sent on a closed channel.
+	closed bool
 }
 
 func newFakeStdio() *fakeStdio {
@@ -369,8 +372,11 @@ func newFakeStdio() *fakeStdio {
 func (f *fakeStdio) Read(p []byte) (int, error) { return f.out.Read(p) }
 func (f *fakeStdio) Write(p []byte) (int, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.writes.Write(p)
-	f.mu.Unlock()
+	if f.closed {
+		return 0, io.ErrClosedPipe // what a real pipe says after the harness exited
+	}
 	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
 		select {
 		case f.lines <- []byte(line):
@@ -380,7 +386,13 @@ func (f *fakeStdio) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 func (f *fakeStdio) Close() error {
-	f.once.Do(func() { _ = f.outW.Close(); close(f.lines) })
+	f.once.Do(func() {
+		_ = f.outW.Close()
+		f.mu.Lock()
+		f.closed = true
+		close(f.lines)
+		f.mu.Unlock()
+	})
 	return nil
 }
 func (f *fakeStdio) say(line string) { _, _ = f.outW.Write([]byte(line + "\n")) }
