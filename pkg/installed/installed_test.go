@@ -277,6 +277,11 @@ publish:
 		t.Fatal("snapshotting the same env twice produced a diff")
 	}
 
+	fresh := DiffCapabilities(CapSnapshot{}, snap)
+	if !strings.Contains(strings.Join(fresh.Widened, "|"), "adds MCP server: npm:github-mcp-server-js@0.1.7 (env GITHUB_PERMISSION=read-only, LOGS_DIR=/tmp/logs)") {
+		t.Fatalf("a new server's env is not part of its consent line: %+v", fresh)
+	}
+
 	old := snap
 	old.MCPServerEnv = nil // a record from before env existed
 	d := DiffCapabilities(old, snap)

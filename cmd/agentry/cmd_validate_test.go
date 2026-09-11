@@ -79,10 +79,7 @@ func TestValidateStrictPromotesWarnings(t *testing.T) {
 	// "*" egress is the stable SeverityWarning (V5: policy-gated, not
 	// rejected at validate time). README + LICENSE keep V7 quiet — the
 	// warning must be the ONLY issue for the default/strict split to show.
-	files := skillFiles("demo", "capabilities:\n  network:\n    egress: [\"*\"]\n")
-	files["README.md"] = "# demo\n"
-	files["LICENSE"] = "Apache-2.0 text placeholder\n"
-	dir := writeTree(t, files)
+	dir := writeTree(t, publishableSkillFiles("demo", "capabilities:\n  network:\n    egress: [\"*\"]\n"))
 
 	stdout, _, err := runCLI(t, nil, "validate", dir)
 	if err != nil {
@@ -218,20 +215,23 @@ func TestValidateAcceptsDeclaredServerEnv(t *testing.T) {
         GITHUB_PERMISSION: read-only
       egress: [api.github.com]
 `
-	tree := func(capsYAML string) map[string]string {
-		files := skillFiles("demo", capsYAML)
-		files["README.md"] = "# demo\n"
-		files["LICENSE"] = "Apache-2.0\n"
-		files["agent.yaml"] = strings.Replace(files["agent.yaml"], "include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, README.md, LICENSE]", 1)
-		return files
-	}
-	stdout, _, err := runCLI(t, nil, "validate", writeTree(t, tree(caps)))
+	stdout, _, err := runCLI(t, nil, "validate", writeTree(t, publishableSkillFiles("demo", caps)))
 	if err != nil || !strings.Contains(stdout, "validate: PASSED") {
 		t.Fatalf("env refused offline: %v\n%s", err, stdout)
 	}
 	bad := strings.Replace(caps, "        GITHUB_PERMISSION: read-only\n", "        GITHUB_PERMISSION: read-only\n        GITHUB_TOKEN: plain\n", 1)
-	stdout, _, err = runCLI(t, nil, "validate", writeTree(t, tree(bad)))
+	stdout, _, err = runCLI(t, nil, "validate", writeTree(t, publishableSkillFiles("demo", bad)))
 	if err == nil || !strings.Contains(stdout, "configure it as a secret or as env, not both") {
 		t.Fatalf("secret/env collision passed: %v\n%s", err, stdout)
 	}
+}
+
+// publishableSkillFiles is skillFiles plus the README and LICENSE V7 wants
+// for a public publish, so a validate test sees only the issue it is about.
+func publishableSkillFiles(name, capsYAML string) map[string]string {
+	files := skillFiles(name, capsYAML)
+	files["README.md"] = "# " + name + "\n"
+	files["LICENSE"] = "Apache-2.0 text placeholder\n"
+	files["agent.yaml"] = strings.Replace(files["agent.yaml"], "include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, README.md, LICENSE]", 1)
+	return files
 }

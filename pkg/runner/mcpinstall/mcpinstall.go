@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -434,11 +435,7 @@ func copyEnv(env map[string]string) map[string]string {
 	if len(env) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(env))
-	for k, v := range env {
-		out[k] = v
-	}
-	return out
+	return maps.Clone(env)
 }
 
 // artifactSumsFile is the `sha256sum -c`-shaped list of every artifact the

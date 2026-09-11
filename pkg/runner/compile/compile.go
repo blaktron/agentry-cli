@@ -15,9 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -599,18 +601,28 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	return nil
 }
 
-// checkLiteralEnv refuses a declared env value the gateway would rewrite.
-// docker/mcp-gateway (pinned v0.43.3, pkg/gateway/clientpool.go) expands
-// `$NAME`/`${NAME}` in a catalog env value against the server container's
-// environment — the server's secrets included — and evaluates a value
-// holding `{{…}}` as a template, so such a value would not reach the
-// server as the manifest wrote it and could copy a secret into a plain
-// variable. A declared value is literal or it is not declared.
+// checkLiteralEnv refuses a declared env value the gateway would rewrite
+// or drop. docker/mcp-gateway (pinned v0.43.3, pkg/gateway/clientpool.go)
+// expands `$NAME`/`${NAME}` in a catalog env value against the server
+// container's environment — the server's secrets included — evaluates a
+// value holding `{{…}}` as a template, and skips a value that comes out
+// empty, so such a value would not reach the server as the manifest wrote
+// it, could copy a secret into a plain variable, or would be named in the
+// receipt without ever being set. A declared value is literal and
+// non-empty, or it is not declared.
 func checkLiteralEnv(srv spec.MCPServerSpec) error {
-	for _, name := range sortedEnvKeys(srv.Env) {
+	for _, name := range slices.Sorted(maps.Keys(srv.Env)) {
 		v := srv.Env[name]
+		if v == "" {
+			return fmt.Errorf("declared MCP server %s: env %s: the value is empty and the gateway would not set it; declare a value or leave the key out", srv.Package, name)
+		}
 		if envExpandRE.MatchString(v) || (strings.Contains(v, "{{") && strings.Contains(v, "}}")) {
 			return fmt.Errorf("declared MCP server %s: env %s: the value contains $ or {{ }}, which the gateway would interpret; declare a literal value", srv.Package, name)
+		}
+		if strings.Contains(v, "@@") {
+			// The engine rewrites @@RUN_*@@ placeholders in plan files into
+			// host paths; a manifest value must not be able to spell one.
+			return fmt.Errorf("declared MCP server %s: env %s: the value contains @@, the run placeholder marker; declare a literal value", srv.Package, name)
 		}
 	}
 	return nil
@@ -619,15 +631,6 @@ func checkLiteralEnv(srv spec.MCPServerSpec) error {
 // envExpandRE matches what os.Expand would rewrite: a `$` followed by a
 // name character, `{`, or a special shell parameter.
 var envExpandRE = regexp.MustCompile(`\$[A-Za-z0-9_{*#@!?$-]`)
-
-func sortedEnvKeys(env map[string]string) []string {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
 
 // mcpServerEntry renders one declared MCP server (RUNNER-PLAN-3) as a
 // gateway catalog entry: launched from the signature's read-only server
@@ -676,7 +679,7 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	}
 	if len(srv.Env) > 0 {
 		var entries []*yaml.Node
-		for _, name := range sortedEnvKeys(srv.Env) {
+		for _, name := range slices.Sorted(maps.Keys(srv.Env)) {
 			kv := yamlMap{}
 			kv.set("name", strNode(name))
 			kv.set("value", strNode(srv.Env[name]))
@@ -871,7 +874,7 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 			}
 			if len(srv.Env) > 0 {
 				// Keys only: a receipt never carries a configured value.
-				d += ", env keys " + strings.Join(sortedEnvKeys(srv.Env), "/")
+				d += ", env keys " + strings.Join(slices.Sorted(maps.Keys(srv.Env)), "/")
 			}
 			d += ")"
 			parts = append(parts, d)

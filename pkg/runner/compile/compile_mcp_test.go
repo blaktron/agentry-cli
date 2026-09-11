@@ -209,7 +209,7 @@ func TestCompileRendersDeclaredServerEnv(t *testing.T) {
 // could copy a secret into a plain variable. The compiler refuses it: a
 // declared value is literal or it is not declared.
 func TestCompileRefusesInterpretedEnvValue(t *testing.T) {
-	for _, v := range []string{"$GITHUB_PAT", "${HOME}/x", "{{config.dir}}", "a$b"} {
+	for _, v := range []string{"$GITHUB_PAT", "${HOME}/x", "{{config.dir}}", "a$b", "@@RUN_SECRETS@@/x"} {
 		srv := githubServerSpec()
 		srv.Env = map[string]string{"LOGS_DIR": v}
 		_, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir())
@@ -218,6 +218,11 @@ func TestCompileRefusesInterpretedEnvValue(t *testing.T) {
 		}
 	}
 	srv := githubServerSpec()
+	srv.Env = map[string]string{"LOGS_DIR": ""}
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir()); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("empty value not refused (the gateway would skip it and the receipt would still name the key): %v", err)
+	}
+	srv = githubServerSpec()
 	srv.Env = map[string]string{"PRICE": "50$", "NOTE": "a {b} c"}
 	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir()); err != nil {
 		t.Fatalf("literal values refused: %v", err)

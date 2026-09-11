@@ -21,6 +21,7 @@ package installed
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -89,11 +90,7 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 			if s.MCPServerEnv == nil {
 				s.MCPServerEnv = map[string]map[string]string{}
 			}
-			env := make(map[string]string, len(srv.Env))
-			for k, v := range srv.Env {
-				env[k] = v
-			}
-			s.MCPServerEnv[id] = env
+			s.MCPServerEnv[id] = maps.Clone(srv.Env)
 		}
 	}
 	for _, d := range c.DataAccess {
@@ -313,7 +310,16 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 	// chain, so it widens. A dropped one narrows.
 	added, removed = diffSets(old.MCPServers, next.MCPServers)
 	for _, s := range added {
-		d.Widened = append(d.Widened, "adds MCP server: "+s)
+		line := "adds MCP server: " + s
+		if env := next.MCPServerEnv[s]; len(env) > 0 {
+			// A new server's env is part of what is being added.
+			var pairs []string
+			for _, k := range slices.Sorted(maps.Keys(env)) {
+				pairs = append(pairs, k+"="+env[k])
+			}
+			line += " (env " + strings.Join(pairs, ", ") + ")"
+		}
+		d.Widened = append(d.Widened, line)
 	}
 	for _, s := range removed {
 		d.Narrowed = append(d.Narrowed, "drops MCP server: "+s)
@@ -328,14 +334,14 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 			continue
 		}
 		oldEnv, newEnv := old.MCPServerEnv[id], next.MCPServerEnv[id]
-		for _, k := range sortedKeys(newEnv) {
+		for _, k := range slices.Sorted(maps.Keys(newEnv)) {
 			if prev, had := oldEnv[k]; !had {
 				d.Widened = append(d.Widened, fmt.Sprintf("changes env of MCP server %s: %s=%s", id, k, newEnv[k]))
 			} else if prev != newEnv[k] {
 				d.Widened = append(d.Widened, fmt.Sprintf("changes env of MCP server %s: %s=%s (was %s)", id, k, newEnv[k], prev))
 			}
 		}
-		for _, k := range sortedKeys(oldEnv) {
+		for _, k := range slices.Sorted(maps.Keys(oldEnv)) {
 			if _, still := newEnv[k]; !still {
 				d.Narrowed = append(d.Narrowed, fmt.Sprintf("drops env %s of MCP server %s", k, id))
 			}
@@ -343,15 +349,6 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 	}
 
 	return d
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // appendFSDiff records one filesystem direction's change.
