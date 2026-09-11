@@ -338,6 +338,19 @@ func TestRunCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("runs without a workspace mount", func(t *testing.T) {
+		// exec with no filesystem grant: the workspace dir does not exist
+		// (agentry-cli#120), the command still runs, in a scratch dir.
+		noWS := baseSpec(t)
+		noWS.WorkspaceDir = filepath.Join(t.TempDir(), "never-mounted")
+		noWS.Exec = Exec{Commands: []string{"sh"}}
+		s2 := newTestServer(t, noWS)
+		got, isErr := s2.toolRunCommand(rawArgs(t, map[string]any{"command": "sh", "args": []string{"-c", "pwd"}}))
+		if isErr || !strings.HasPrefix(got, "exit code 0\n") || strings.Contains(got, "never-mounted") {
+			t.Fatalf("run_command without a workspace = %q (isError %v)", got, isErr)
+		}
+	})
+
 	t.Run("args sent as a JSON string are the array they encode", func(t *testing.T) {
 		// agentry-cli#113: what the operator's provider sends.
 		got, isErr := s.toolRunCommand(json.RawMessage(`{"command":"echo","args":"[\"hello\",\"there\"]"}`))
