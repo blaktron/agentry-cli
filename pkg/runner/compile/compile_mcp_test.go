@@ -89,7 +89,7 @@ func TestCompileRendersDeclaredServer(t *testing.T) {
 		"image: node:22-alpine",
 		"/node_modules/.bin/server-x",
 		spec.PHServers + "/npm-scope-server-x:" + spec.MCPStorePrefix + "/npm-scope-server-x:ro",
-		"api.github.com:443",
+		"api.github.com:443/tcp",
 		"mcp-npm-scope-server-x.github_pat",
 	} {
 		if !strings.Contains(catalog, want) {
@@ -117,19 +117,22 @@ func TestCompileRendersDeclaredServer(t *testing.T) {
 	}
 }
 
-func TestCompileGatesServerWildcardEgress(t *testing.T) {
+// TestCompileRefusesServerWildcardEgress (agentry-cli#105, DR-20): a
+// declared server's "*" is refused whatever the policy says — the gateway
+// gives such a server no relay and the run gives it no network of its
+// own, so it would land on docker's default bridge, unconstrained. The
+// agent's own "*" stays policy-gated (the llm-proxy still fronts it).
+func TestCompileRefusesServerWildcardEgress(t *testing.T) {
 	srv := githubServerSpec()
 	srv.Egress = []string{"*"}
-	pol := policy.Default() // AllowWildcardEgress false
-	_, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir())
-	var refusal *PolicyRefusal
-	if err == nil || !errorsAs(err, &refusal) {
-		t.Fatalf("wildcard server egress not refused by policy: %v", err)
-	}
-
-	pol.AllowWildcardEgress = true
-	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir()); err != nil {
-		t.Fatalf("policy-permitted wildcard refused: %v", err)
+	for _, allow := range []bool{false, true} {
+		pol := policy.Default()
+		pol.AllowWildcardEgress = allow
+		_, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir())
+		var refusal *PolicyRefusal
+		if err == nil || !errorsAs(err, &refusal) || !strings.Contains(err.Error(), "declare the hosts") {
+			t.Fatalf("allowWildcardEgress=%v: wildcard server egress not refused: %v", allow, err)
+		}
 	}
 }
 
@@ -239,4 +242,23 @@ func TestCompileDeclaredServerGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkGolden(t, "declared-server", planDir, []string{"plan.json", "gateway/catalog.yaml"})
+}
+
+// TestCompileDeclaredServerEgressIsATCPRelay (agentry-cli#105): a declared
+// host becomes "host:443/tcp" in the catalog, so the gateway fronts it
+// with its L4 relay (reached by the host's own name, TLS end to end) and
+// not the L7 CONNECT proxy, which is handed to the server as a
+// scheme-less proxy variable Node's fetch refuses and other clients ignore.
+func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
+	planDir := t.TempDir()
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{githubServerSpec()}, policy.Default()), planDir); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "    allowHosts:\n      - api.github.com:443/tcp\n") {
+		t.Fatalf("declared host is not a TCP relay in the catalog:\n%s", b)
+	}
 }

@@ -27,7 +27,7 @@
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
     "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
     "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
-    "mcpServers": "declared servers installed per-signature from the operator's registries, launched from the release's read-only store, each with its own egress allowlist, server-scoped secrets and the manifest's plain env: @scope/server-x@1.2.3 (npm, egress api.github.com, tools filtered to list_issues, env keys GITHUB_PERMISSION)",
+    "mcpServers": "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network (shared by every gateway on this docker host) with a TCP relay linked under each host's name, one with none has no network — with server-scoped secrets and the manifest's plain env: @scope/server-x@1.2.3 (npm, egress api.github.com, tools filtered to list_issues, env keys GITHUB_PERMISSION)",
     "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
     "secrets": "none declared"
   },
@@ -177,7 +177,7 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "75803cd41a5079fedc66a43f00898018495a0067f9afca127ab2babf7715581a",
+    "gateway/catalog.yaml": "6af2b0f50f7edfab45daf3431ca8d7db628eab78d8928dc101815286c6eb7e6a",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "cc21e4caab49d9b939989a497d4e1bf65dfcb9251550d5d95fd925fa82296a20",
     "gateway/tools.yaml": "9445dc7f35276a0546464cb91e304b2999754451452158ca8202513f2d9df82f",

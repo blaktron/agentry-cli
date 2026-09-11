@@ -19,6 +19,9 @@ import (
 	"strings"
 )
 
+// LogsAll asks Logs for the whole log.
+const LogsAll = 0
+
 // Client is what the engine talks to.
 type Client interface {
 	// Available errors when no usable docker daemon answers.
@@ -50,7 +53,8 @@ type Client interface {
 	RemoveForce(ctx context.Context, name string) error
 	// PSByLabel lists container names carrying label (leak sweeps).
 	PSByLabel(ctx context.Context, label string) ([]string, error)
-	// Logs returns a container's recent output (gateway diagnostics).
+	// Logs returns a container's output: the last tail lines, or all of
+	// it for LogsAll (gateway diagnostics and startup checks).
 	Logs(ctx context.Context, name string, tail int) (string, error)
 	// Port returns the host port a container port was published on
 	// (RunSpec.Publish), for a host-run harness to reach the run.
@@ -72,6 +76,9 @@ type RunSpec struct {
 	// Network and Alias attach the container to the run network.
 	Network string
 	Alias   string
+	// Hostname sets the container's hostname when it must differ from
+	// the container name (the gateway looks itself up by hostname).
+	Hostname string
 	// Labels tag the container for teardown sweeps.
 	Labels map[string]string
 	// Interactive attaches stdin (foreground runs).
@@ -288,7 +295,13 @@ func (c *CLI) PSByLabel(ctx context.Context, label string) ([]string, error) {
 // on stderr, and a diagnostic that dropped it explained nothing
 // (agentry-cli#41).
 func (c *CLI) Logs(ctx context.Context, name string, tail int) (string, error) {
-	cmd := c.command(ctx, "logs", "--tail", strconv.Itoa(tail), name)
+	// docker's --tail 0 prints nothing; a non-positive tail here means the
+	// whole log, which a startup check over the gateway's output needs.
+	tailArg := "all"
+	if tail > 0 {
+		tailArg = strconv.Itoa(tail)
+	}
+	cmd := c.command(ctx, "logs", "--tail", tailArg, name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("docker logs: %w: %s", err, strings.TrimSpace(string(out)))
@@ -313,6 +326,9 @@ func (r RunSpec) args(detach bool) []string {
 	}
 	if r.Network != "" {
 		args = append(args, "--network", r.Network)
+	}
+	if r.Hostname != "" {
+		args = append(args, "--hostname", r.Hostname)
 	}
 	if r.Alias != "" {
 		args = append(args, "--network-alias", r.Alias)

@@ -127,8 +127,11 @@ func TestRunHappyPath(t *testing.T) {
 		t.Error("envelope lacks plan hash")
 	}
 
-	// Execute order (§R6): network → proxy (+bridge) → gateway (+bridge)
-	// → probe → agent; teardown afterwards in reverse.
+	// Execute order (§R6): network → proxy (+bridge) → gateway → probe →
+	// agent; teardown afterwards in reverse. The gateway never joins the
+	// bridge: the MCP servers it launches inherit its networks, and a
+	// user-defined network beside the bridge is a mix docker refuses
+	// (agentry-cli#105).
 	ops := f.Ops()
 	var idx = map[string]int{}
 	for i, op := range ops {
@@ -141,7 +144,6 @@ func TestRunHappyPath(t *testing.T) {
 		"RunDetached:agentry-cafe0000-proxy",
 		"NetworkConnect:bridge<-agentry-cafe0000-proxy",
 		"RunDetached:agentry-cafe0000-gateway",
-		"NetworkConnect:bridge<-agentry-cafe0000-gateway",
 		"RunForeground:agentry-cafe0000-probe",
 		"RunForeground:agentry-cafe0000-agent",
 		"Stop:agentry-cafe0000-gateway",
@@ -175,6 +177,17 @@ func TestRunHappyPath(t *testing.T) {
 		if op == "NetworkConnect:bridge<-agentry-cafe0000-agent" {
 			t.Error("agent container was connected to the bridge network")
 		}
+		if op == "NetworkConnect:bridge<-agentry-cafe0000-gateway" {
+			t.Error("gateway was connected to the bridge network: its MCP servers would inherit the mix docker refuses")
+		}
+	}
+	if gw, ok := f.FindRun("-gateway"); !ok || gw.Network != "agentry-cafe0000-net" || len(gw.Publish) != 0 {
+		t.Errorf("gateway run = %+v: must sit on the run network only and publish nothing", gw)
+	} else if gw.Hostname == "" || gw.Hostname == gw.Name || strings.Contains(gw.Hostname, "agentry-cafe0000") {
+		// The gateway finds "its" networks by looking up a container
+		// named like its hostname; a hostname that is any run container's
+		// name would make every MCP server inherit that network.
+		t.Errorf("gateway hostname %q must not be a run container's name", gw.Hostname)
 	}
 	if !strings.Contains(agent.Mounts[0].Source, "cfg") || strings.Contains(agent.Mounts[0].Source, "@@") {
 		t.Errorf("agent mount source unresolved: %q", agent.Mounts[0].Source)
@@ -523,4 +536,77 @@ func TestJSONResultKindEnforced(t *testing.T) {
 			t.Errorf("result = %s", env.Result)
 		}
 	})
+}
+
+// serverFixture is fixture with one declared MCP server in the plan and a
+// server store, the shape a run with capabilities.mcpServers has.
+func serverFixture(t *testing.T) (Params, *dockerx.Fake) {
+	t.Helper()
+	p, f := fixture(t)
+	srv := spec.MCPServerSpec{
+		Name: "mcp-npm-scope-server-x", Source: "npm", Package: "@scope/server-x", Version: "1.2.3",
+		Image: "node:22-alpine", Command: []string{"/opt/agentry-mcp/npm-scope-server-x/node_modules/.bin/server-x"},
+		StoreSubdir: "npm-scope-server-x", Egress: []string{"api.example"},
+	}
+	plan, err := compile.Compile(compile.Inputs{
+		Manifest: mustManifest(t), Digest: "sha256:feedface", Source: "local",
+		WorkspaceDir: p.WorkspaceSrc, Policy: p.Policy, PolicySHA: "sha", RunnerImage: "agentry-runner:test",
+		MCPServers: []spec.MCPServerSpec{srv},
+	}, p.PlanDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Plan = plan
+	p.ServersDir = t.TempDir()
+	return p, f
+}
+
+func mustManifest(t *testing.T) *manifest.Manifest {
+	t.Helper()
+	m, err := manifest.Parse([]byte(engineManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// TestDeclaredServerThatDidNotStartFailsTheRun (agentry-cli#105): the
+// gateway logs "Can't start <server>" and carries on without it; the
+// engine must not — a run without a declared server is not the run the
+// contract described, so it is the gateway/environment failure class,
+// with the gateway's own line in the error and no agent container run.
+func TestDeclaredServerThatDidNotStartFailsTheRun(t *testing.T) {
+	p, f := serverFixture(t)
+	happyFake(f)
+	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": strings.Join([]string{
+		"- Those servers are enabled: agentry-tools, mcp-npm-scope-server-x",
+		"- mcp-npm-scope-server-x: Error: cannot open /data: read-only file system",
+		"  > Can't start mcp-npm-scope-server-x: failed to connect: calling \"initialize\": EOF",
+		"> 3 tools listed in 1.2s",
+	}, "\n") + "\n"}
+	_, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitGateway {
+		t.Fatalf("want exit %d, got %v", ExitGateway, err)
+	}
+	if !strings.Contains(err.Error(), "@scope/server-x") || !strings.Contains(err.Error(), "Can't start mcp-npm-scope-server-x") || !strings.Contains(err.Error(), "read-only file system") {
+		t.Errorf("error must name the server, quote the gateway and carry the server's own output: %v", err)
+	}
+	for _, op := range f.Ops() {
+		if strings.HasPrefix(op, "RunForeground:agentry-cafe0000-agent") {
+			t.Error("the agent ran without its declared server")
+		}
+	}
+}
+
+// TestDeclaredServerStartedRunsTheAgent: the same plan with a clean
+// gateway log runs to completion.
+func TestDeclaredServerStartedRunsTheAgent(t *testing.T) {
+	p, f := serverFixture(t)
+	happyFake(f)
+	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools, mcp-npm-scope-server-x\n> 4 tools listed in 1.2s\n"}
+	env, err := Run(context.Background(), f, p)
+	if err != nil || env.Status != "ok" {
+		t.Fatalf("run with a started server failed: %v", err)
+	}
 }

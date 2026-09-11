@@ -37,6 +37,9 @@ import (
 // Inputs is everything a compile consumes. No run-scoped values belong
 // here (§R4 determinism); the engine substitutes those at execute time.
 type Inputs struct {
+	// CompiledBy is the CLI build recorded in the plan (see
+	// spec.Plan.CompiledBy); empty in tests and goldens.
+	CompiledBy string
 	// Manifest is the verified package manifest.
 	Manifest *manifest.Manifest
 	// Mode is the run mode to compile for; empty means autonomous. A mode
@@ -150,9 +153,17 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, err
 		}
 		for _, h := range srv.Egress {
-			if h == "*" && !in.Policy.AllowWildcardEgress {
+			if h == "*" {
+				// A wildcard server would get no relay from the gateway
+				// and, with no network of the run's own to inherit, land
+				// on docker's default bridge — a route out that nothing of
+				// ours constrains and a route to every other container
+				// there. Policy can permit the agent's own "*" (the
+				// llm-proxy still fronts it); for a declared server there
+				// is no such front, so the answer is hosts or nothing
+				// (agentry-cli#105, DR-20).
 				return nil, &PolicyRefusal{Reason: fmt.Sprintf(
-					`declared MCP server %s requests egress "*" and this machine's policy has allowWildcardEgress: false`, srv.Name)}
+					`declared MCP server %s requests egress "*": the runner gives a declared server no unrestricted network, only a relay per declared host; declare the hosts it needs`, srv.Name)}
 			}
 		}
 		if srv.Name == spec.ToolServerName {
@@ -204,6 +215,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 
 	plan := &spec.Plan{
 		PlanVersion:  spec.PlanVersion,
+		CompiledBy:   in.CompiledBy,
 		Ref:          fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 		Digest:       in.Digest,
 		Source:       in.Source,
@@ -648,20 +660,17 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	e.set("volumes", strListNode([]string{
 		spec.PHServers + "/" + srv.StoreSubdir + ":" + spec.MCPStorePrefix + "/" + srv.StoreSubdir + ":ro",
 	}))
-	allowAll := false
-	for _, h := range srv.Egress {
-		if h == "*" {
-			allowAll = true
-		}
-	}
 	switch {
-	case allowAll:
-		// Unrestricted: neither key — policy-gated at compile, disclosed
-		// in enforcement.
 	case len(srv.Egress) > 0:
+		// "host:443/tcp": the gateway fronts each host with a TCP relay
+		// (its L4 proxy) reached by that name — TLS runs end to end and
+		// any HTTP client works. Its L7 form is an HTTP CONNECT proxy
+		// handed over as a scheme-less proxy variable, which Node's
+		// fetch cannot use and other clients ignore (agentry-cli#105,
+		// DR-20).
 		hosts := make([]string, 0, len(srv.Egress))
 		for _, h := range sortedCopy(srv.Egress) {
-			hosts = append(hosts, h+":443")
+			hosts = append(hosts, h+":443/tcp")
 		}
 		e.set("allowHosts", strListNode(hosts))
 	default:
@@ -719,7 +728,11 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	if tspec.Fetch.Enabled && !tspec.Fetch.AllowAll {
 		// Manifest hosts are DNS names; the gateway wants host:port.
 		// 443 only: declared-host plaintext HTTP failing closed is the
-		// right default for a security tool plane.
+		// right default for a security tool plane. This stays the
+		// gateway's L7 form (an HTTP CONNECT proxy): the tools server is
+		// our Go binary, whose http client reads the proxy variable the
+		// gateway sets and re-checks every hop itself. A declared
+		// server's hosts are relays instead (mcpServerEntry).
 		hosts := make([]string, 0, len(caps.EgressHosts))
 		for _, h := range caps.EgressHosts {
 			hosts = append(hosts, h+":443")
@@ -879,7 +892,7 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 			d += ")"
 			parts = append(parts, d)
 		}
-		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store, each with its own egress allowlist, server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
+		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network (shared by every gateway on this docker host) with a TCP relay linked under each host's name, one with none has no network — with server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
 	}
 	return e
 }

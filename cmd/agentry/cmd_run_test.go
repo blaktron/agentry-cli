@@ -731,3 +731,60 @@ func doctorHas(rep *doctorReport, status, needle string) bool {
 	}
 	return false
 }
+
+// TestEnsurePlanRecompilesForANewerCLIOrRunnerImage (agentry-cli#105): a
+// plan the same schema version but compiled by another CLI build, or
+// against another runner image, is recompiled — the compiler's output
+// changed under it (the catalog env, a proxy switch), and reusing the old
+// files would run yesterday's plan with today's binary.
+func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
+	isolateEnv(t)
+	_, _ = isolateRunnerHome(t)
+	m := runFixtureManifest(t, "")
+	pol := policy.Default()
+	meta := &installMeta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+		Version: "1.0.0", Digest: "sha256:0123456789abcdef", Source: "local"}
+	installDir := t.TempDir()
+	ws := filepath.Join(installDir, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"SKILL.md": "# demo\n\nDo the thing.\n", "agent.yaml": "schemaVersion: \"2\"\n"} {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var errOut strings.Builder
+	first, planDir, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CompiledBy == "" {
+		t.Fatal("plan does not record the CLI that compiled it")
+	}
+	// Same CLI, same image: reused.
+	errOut.Reset()
+	if _, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous); err != nil || strings.Contains(errOut.String(), "recompiling") {
+		t.Fatalf("unchanged plan was not reused: %v %q", err, errOut.String())
+	}
+	// Another CLI build wrote it: recompiled, and said so.
+	b, _ := os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
+	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(strings.Replace(string(b), first.CompiledBy, "other-build", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	again, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	if err != nil || again.CompiledBy != first.CompiledBy || !strings.Contains(errOut.String(), "recompiling") {
+		t.Fatalf("plan from another CLI build was reused: %v compiledBy=%q %q", err, again.CompiledBy, errOut.String())
+	}
+	// Another runner image (the embedded build context changed): recompiled.
+	b, _ = os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
+	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(strings.ReplaceAll(string(b), again.Proxy.Image, "agentry-runner:older")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	third, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	if err != nil || third.Proxy.Image != again.Proxy.Image || !strings.Contains(errOut.String(), "runner image") {
+		t.Fatalf("plan for another runner image was reused: %v image=%q %q", err, third.Proxy.Image, errOut.String())
+	}
+}

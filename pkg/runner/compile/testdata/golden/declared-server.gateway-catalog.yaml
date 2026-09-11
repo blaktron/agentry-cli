@@ -26,7 +26,7 @@ registry:
     volumes:
       - '@@RUN_SERVERS@@/npm-scope-server-x:/opt/agentry-mcp/npm-scope-server-x:ro'
     allowHosts:
-      - api.github.com:443
+      - api.github.com:443/tcp
     secrets:
       - name: mcp-npm-scope-server-x.github_pat
         env: GITHUB_PAT
