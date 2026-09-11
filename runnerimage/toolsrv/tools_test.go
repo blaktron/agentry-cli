@@ -338,6 +338,14 @@ func TestRunCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("args sent as a JSON string are the array they encode", func(t *testing.T) {
+		// agentry-cli#113: what the operator's provider sends.
+		got, isErr := s.toolRunCommand(json.RawMessage(`{"command":"echo","args":"[\"hello\",\"there\"]"}`))
+		if isErr || got != "exit code 0\nhello there\n" {
+			t.Fatalf("echo with stringified args = %q (isError %v)", got, isErr)
+		}
+	})
+
 	t.Run("non-zero exit is a result, not an error", func(t *testing.T) {
 		got, isErr := s.toolRunCommand(rawArgs(t, map[string]any{"command": "sh", "args": []string{"-c", "exit 3"}}))
 		if isErr {
