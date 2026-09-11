@@ -167,3 +167,71 @@ func errorsAs(err error, target *(*PolicyRefusal)) bool {
 	}
 	return false
 }
+
+// TestCompileRendersDeclaredServerEnv (agentry-cli#99): a declared server's
+// plain env map lands in its catalog entry as the gateway's `env:
+// [{name, value}]` list (docker/mcp-gateway v0.43.3, pkg/catalog/types.go
+// `Server.Env []Env`, applied in pkg/gateway/clientpool.go as `-e NAME` with
+// the value), sorted by name and separate from the secrets list; the
+// enforcement line names the keys and never a value.
+func TestCompileRendersDeclaredServerEnv(t *testing.T) {
+	srv := githubServerSpec()
+	srv.Env = map[string]string{"LOGS_DIR": "/tmp/logs", "GITHUB_PERMISSION": "readonly-v7"}
+	planDir := t.TempDir()
+	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := string(b)
+	want := "    env:\n      - name: GITHUB_PERMISSION\n        value: readonly-v7\n      - name: LOGS_DIR\n        value: /tmp/logs\n"
+	if !strings.Contains(catalog, want) {
+		t.Fatalf("catalog.yaml lacks the sorted env list:\n%s", catalog)
+	}
+	if !strings.Contains(catalog, "mcp-npm-scope-server-x.github_pat") {
+		t.Fatalf("secrets left the catalog when env arrived:\n%s", catalog)
+	}
+	enf := plan.Enforcement["mcpServers"]
+	if !strings.Contains(enf, "env keys GITHUB_PERMISSION/LOGS_DIR") || strings.Contains(enf, "readonly-v7") || strings.Contains(enf, "/tmp/logs") {
+		t.Fatalf("enforcement must name the env keys and no value: %q", enf)
+	}
+	if plan.MCPServers[0].Env["LOGS_DIR"] != "/tmp/logs" {
+		t.Fatalf("plan lost the env map: %+v", plan.MCPServers[0])
+	}
+}
+
+// TestCompileRefusesInterpretedEnvValue: the gateway expands `$NAME` against
+// the server's environment (secrets included) and evaluates `{{…}}` as a
+// template, so such a value would not reach the server as written and
+// could copy a secret into a plain variable. The compiler refuses it: a
+// declared value is literal or it is not declared.
+func TestCompileRefusesInterpretedEnvValue(t *testing.T) {
+	for _, v := range []string{"$GITHUB_PAT", "${HOME}/x", "{{config.dir}}", "a$b"} {
+		srv := githubServerSpec()
+		srv.Env = map[string]string{"LOGS_DIR": v}
+		_, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "LOGS_DIR") || !strings.Contains(err.Error(), "literal") {
+			t.Fatalf("value %q not refused as non-literal: %v", v, err)
+		}
+	}
+	srv := githubServerSpec()
+	srv.Env = map[string]string{"PRICE": "50$", "NOTE": "a {b} c"}
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir()); err != nil {
+		t.Fatalf("literal values refused: %v", err)
+	}
+}
+
+// TestCompileDeclaredServerGolden pins the rendered catalog for a server
+// with both secrets and env, the shape the plan's examples ship with.
+func TestCompileDeclaredServerGolden(t *testing.T) {
+	srv := githubServerSpec()
+	srv.Env = map[string]string{"GITHUB_PERMISSION": "read-only"}
+	planDir := t.TempDir()
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), planDir); err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "declared-server", planDir, []string{"plan.json", "gateway/catalog.yaml"})
+}

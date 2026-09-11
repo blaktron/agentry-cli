@@ -241,3 +241,56 @@ func TestInstallStateRoundTrip(t *testing.T) {
 		t.Errorf("Remove disturbed the wrong record: %+v", back.Records)
 	}
 }
+
+// TestSnapshotAndDiffOfServerEnv (agentry-cli#99): a declared server's plain
+// env is part of the installed contract. A new or changed value is a change
+// to the server and re-asks for consent; a dropped one narrows; the same
+// env twice is no diff, and a record written before env existed compares
+// as "no env" rather than as corrupt.
+func TestSnapshotAndDiffOfServerEnv(t *testing.T) {
+	m, err := manifest.Parse([]byte(`schemaVersion: "2"
+name: snap
+namespace: demo
+modes: [autonomous]
+version: 1.0.0
+summary: "env snapshot fixture"
+capabilities:
+  mcpServers:
+    - npm: github-mcp-server-js
+      version: 0.1.7
+      secrets: [GITHUB_TOKEN]
+      env:
+        LOGS_DIR: /tmp/logs
+        GITHUB_PERMISSION: read-only
+publish:
+  include: [agent.yaml]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := Snapshot(m.Capabilities)
+	got := snap.MCPServerEnv["npm:github-mcp-server-js@0.1.7"]
+	if len(got) != 2 || got["GITHUB_PERMISSION"] != "read-only" || got["LOGS_DIR"] != "/tmp/logs" {
+		t.Fatalf("snapshot env = %v", snap.MCPServerEnv)
+	}
+	if !DiffCapabilities(snap, Snapshot(m.Capabilities)).Empty() {
+		t.Fatal("snapshotting the same env twice produced a diff")
+	}
+
+	old := snap
+	old.MCPServerEnv = nil // a record from before env existed
+	d := DiffCapabilities(old, snap)
+	if !d.HasWidened() || !strings.Contains(strings.Join(d.Widened, "|"), "changes env of MCP server npm:github-mcp-server-js@0.1.7: GITHUB_PERMISSION=read-only") {
+		t.Fatalf("new env did not widen: %+v", d)
+	}
+
+	next := Snapshot(m.Capabilities)
+	next.MCPServerEnv["npm:github-mcp-server-js@0.1.7"] = map[string]string{"GITHUB_PERMISSION": "read-write"}
+	d = DiffCapabilities(snap, next)
+	if !d.HasWidened() || !strings.Contains(strings.Join(d.Widened, "|"), "GITHUB_PERMISSION=read-write (was read-only)") {
+		t.Fatalf("changed value did not widen with the old value named: %+v", d)
+	}
+	if !strings.Contains(strings.Join(d.Narrowed, "|"), "drops env LOGS_DIR of MCP server npm:github-mcp-server-js@0.1.7") {
+		t.Fatalf("dropped key did not narrow: %+v", d)
+	}
+}

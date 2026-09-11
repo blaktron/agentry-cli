@@ -353,6 +353,10 @@ type MCPServerSpec struct {
 	// Secrets are the env names this server needs (values resolved at run
 	// time into the gateway secrets file under this server's keys).
 	Secrets []string `json:"secrets,omitempty"`
+	// Env is the server's plain configuration from the manifest (name →
+	// literal value), rendered into its catalog entry beside — never
+	// through — its secrets. Receipts name the keys only.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // OutputSpec is the optional structured-output convention (§R2).

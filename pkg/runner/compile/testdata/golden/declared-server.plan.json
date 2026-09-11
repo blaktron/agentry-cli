@@ -1,0 +1,187 @@
+{
+  "planVersion": "2",
+  "ref": "acme/needs-servers@1.0.0",
+  "digest": "sha256:beef",
+  "source": "local",
+  "modes": [
+    "autonomous"
+  ],
+  "mode": "autonomous",
+  "summary": "mcp server compile fixture",
+  "policySha256": "policysha",
+  "instruction": {
+    "sourcePath": "SKILL.md",
+    "sha256": "f89d059071f3eb030d8773afff1f24abb7e35a25a56a07003baacbc2b039172d"
+  },
+  "capabilities": {
+    "egressMode": "none",
+    "fsReadMode": "none",
+    "fsWriteMode": "none"
+  },
+  "tools": [
+    "list_inputs",
+    "read_input",
+    "write_report"
+  ],
+  "enforcement": {
+    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
+    "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
+    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
+    "mcpServers": "declared servers installed per-signature from the operator's registries, launched from the release's read-only store, each with its own egress allowlist, server-scoped secrets and the manifest's plain env: @scope/server-x@1.2.3 (npm, egress api.github.com, tools filtered to list_issues, env keys GITHUB_PERMISSION)",
+    "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "secrets": "none declared"
+  },
+  "gateway": {
+    "image": "docker/mcp-gateway:v0.43.3",
+    "args": [
+      "--transport",
+      "streaming",
+      "--port",
+      "8811",
+      "--servers",
+      "agentry-tools,mcp-npm-scope-server-x",
+      "--catalog",
+      "/root/.docker/mcp/catalogs/catalog.yaml",
+      "--registry",
+      "/root/.docker/mcp/catalogs/registry.yaml",
+      "--config",
+      "/root/.docker/mcp/catalogs/config.yaml",
+      "--tools-config",
+      "/root/.docker/mcp/catalogs/tools.yaml",
+      "--secrets",
+      "/root/.docker/mcp/catalogs/secrets.env",
+      "--block-network",
+      "--verify-signatures",
+      "--log-calls"
+    ],
+    "env": [
+      {
+        "name": "MCP_GATEWAY_AUTH_TOKEN",
+        "fromRunToken": true
+      },
+      {
+        "name": "HOME",
+        "value": "/root"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
+        "value": "@@RUN_WORKSPACE@@:@@RUN_OUT@@:@@RUN_CFG@@:@@RUN_INPUTS@@"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
+        "value": "@@RUN_OUT@@"
+      }
+    ],
+    "mounts": [
+      {
+        "source": "@@RUN_CFG@@/gateway",
+        "target": "/root/.docker/mcp/catalogs",
+        "readOnly": true
+      },
+      {
+        "source": "/var/run/docker.sock",
+        "target": "/var/run/docker.sock"
+      }
+    ],
+    "servers": [
+      "agentry-tools",
+      "mcp-npm-scope-server-x"
+    ]
+  },
+  "harness": {
+    "adapter": "docker-agent",
+    "model": "anthropic/claude-sonnet-4-5",
+    "agent": {
+      "image": "docker/docker-agent:1.128.0",
+      "argv": [
+        "run",
+        "--exec",
+        "--json",
+        "--safety",
+        "autonomous",
+        "/plan/agent.yaml",
+        "-"
+      ],
+      "env": [
+        {
+          "name": "MCP_GATEWAY_TOKEN",
+          "fromRunToken": true
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "fromHostEnv": "ANTHROPIC_API_KEY"
+        },
+        {
+          "name": "HTTPS_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "HTTP_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "NO_PROXY",
+          "value": "gateway,localhost,127.0.0.1"
+        },
+        {
+          "name": "TELEMETRY_ENABLED",
+          "value": "false"
+        }
+      ],
+      "mounts": [
+        {
+          "source": "@@RUN_CFG@@/harness",
+          "target": "/plan",
+          "readOnly": true
+        }
+      ],
+      "stdinTask": true
+    },
+    "resultKind": "text"
+  },
+  "proxy": {
+    "image": "agentry-runner:test",
+    "allow": [
+      "api.anthropic.com:443"
+    ]
+  },
+  "mcpServers": [
+    {
+      "name": "mcp-npm-scope-server-x",
+      "source": "npm",
+      "package": "@scope/server-x",
+      "version": "1.2.3",
+      "integrity": "sha512-AAA",
+      "image": "node:22-alpine",
+      "command": [
+        "/opt/agentry-mcp/npm-scope-server-x/node_modules/.bin/server-x"
+      ],
+      "storeSubdir": "npm-scope-server-x",
+      "tools": [
+        "list_issues"
+      ],
+      "egress": [
+        "api.github.com"
+      ],
+      "secrets": [
+        "GITHUB_PAT"
+      ],
+      "env": {
+        "GITHUB_PERMISSION": "read-only"
+      }
+    }
+  ],
+  "budgets": {
+    "timeoutSeconds": 900,
+    "maxTurns": 60
+  },
+  "output": {},
+  "files": {
+    "gateway/catalog.yaml": "75803cd41a5079fedc66a43f00898018495a0067f9afca127ab2babf7715581a",
+    "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
+    "gateway/registry.yaml": "cc21e4caab49d9b939989a497d4e1bf65dfcb9251550d5d95fd925fa82296a20",
+    "gateway/tools.yaml": "9445dc7f35276a0546464cb91e304b2999754451452158ca8202513f2d9df82f",
+    "gateway/toolspec.json": "a7d760e230f0e15c3a83474a2eeddbb3d05f1579fc9b6d852bb227491321aee1",
+    "harness/agent.yaml": "20b2dd4dca498939d64009900c1757551022a9547dd400a5a63965351025adda"
+  }
+}
