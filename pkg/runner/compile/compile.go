@@ -680,6 +680,7 @@ func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) 
 	sort.Strings(pkgs)
 	return &spec.ExecImageSpec{
 		Tag:       spec.ExecImageTag(runnerImage, commands, pkgs, cat.APKMirror),
+		Commands:  sortedCopy(commands),
 		Packages:  pkgs,
 		APKMirror: cat.APKMirror,
 	}, nil
@@ -970,9 +971,9 @@ func execEnforcement(commands []string, cat policy.ExecPolicy) string {
 	if git {
 		// The workspace is a bind mount owned by the host user and the
 		// tools container runs as root; git refuses such a repository as
-		// "dubious ownership". Inside a one-shot sandbox whose mount table
-		// is the boundary, trusting every directory is the honest setting.
-		line += "; git: safe.directory=* in the image's /etc/gitconfig, so the bind-mounted workspace is not refused as dubiously owned"
+		// "dubious ownership". The run's mounts are the only places a
+		// repository can be, so those paths are trusted, nothing wider.
+		line += "; git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned"
 	}
 	return line
 }

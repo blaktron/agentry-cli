@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -103,6 +104,14 @@ type ExecPolicy struct {
 	// posture is unchanged.
 	APKMirror string `yaml:"apkMirror,omitempty"`
 }
+
+// execCommandRE is a bare command name; apkPackageRE an apk package name
+// with an optional exact version — the only shapes the exec image build
+// interpolates into its Dockerfile.
+var (
+	execCommandRE = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
+	apkPackageRE  = regexp.MustCompile(`^[A-Za-z0-9._+-]+(=[A-Za-z0-9._+~-]+)?$`)
+)
 
 // Package returns the catalogued apk package for a command, "" when the
 // catalog does not carry it.
@@ -421,11 +430,13 @@ func (p *Policy) Validate() error {
 		}
 	}
 	for cmd, pkg := range p.Exec.Packages {
-		if cmd == "" || strings.ContainsAny(cmd, "/\\ \t") {
-			return fmt.Errorf("exec.packages: command %q must be a bare command name", cmd)
+		// Both reach a Dockerfile RUN line verbatim: the grammar is apk's,
+		// nothing looser.
+		if !execCommandRE.MatchString(cmd) {
+			return fmt.Errorf("exec.packages: command %q must be a bare command name (%s)", cmd, execCommandRE)
 		}
-		if pkg == "" || strings.ContainsAny(pkg, "/\\ \t") {
-			return fmt.Errorf("exec.packages.%s: package %q must be an apk package name, optionally =version", cmd, pkg)
+		if !apkPackageRE.MatchString(pkg) {
+			return fmt.Errorf("exec.packages.%s: package %q must be an apk package name, optionally =version (%s)", cmd, pkg, apkPackageRE)
 		}
 	}
 	if m := p.Exec.APKMirror; m != "" {

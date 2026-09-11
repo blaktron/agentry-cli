@@ -190,7 +190,9 @@ func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
 	}
 	id = strings.TrimSpace(id)
 	defer func() {
-		rm := c.command(ctx, "rm", "-f", id)
+		// The removal must happen even when the caller's context is
+		// already done (a Ctrl-C mid-copy), or the created container leaks.
+		rm := c.command(context.WithoutCancel(ctx), "rm", "-f", id)
 		rm.Stdout, rm.Stderr = io.Discard, io.Discard
 		_ = rm.Run()
 	}()

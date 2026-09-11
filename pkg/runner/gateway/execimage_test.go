@@ -21,13 +21,14 @@ import (
 func TestEnsureExecImage(t *testing.T) {
 	img := spec.ExecImageSpec{
 		Tag:      spec.ExecImageTag("agentry-runner:v1", []string{"jq", "git"}, []string{"git", "jq"}, ""),
+		Commands: []string{"git", "jq"},
 		Packages: []string{"git", "jq"},
 	}
 	fake := &dockerx.Fake{ExistingImages: map[string]bool{}, ImageFiles: map[string]string{
 		img.Tag + ":" + ExecPackagesFile: "git-2.49.1-r0\njq-1.8.2-r0\n",
 	}}
 	ctxDir := t.TempDir()
-	resolved, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, []string{"jq", "git"}, ctxDir, io.Discard)
+	resolved, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, ctxDir, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,9 @@ func TestEnsureExecImage(t *testing.T) {
 				"apk add --no-cache git jq",
 				"apk list --installed git jq",
 				ExecPackagesFile,
-				`git config --system safe.directory '*'`,
+				"git config --system --add safe.directory '/workspace'",
+				"git config --system --add safe.directory '/workspace/*'",
+				"git config --system --add safe.directory '/inputs/*'",
 				`RUN ["/usr/local/bin/agentry-runner", "minimize", "git", "jq"]`,
 			} {
 				if !strings.Contains(string(df), want) {
@@ -66,7 +69,7 @@ func TestEnsureExecImage(t *testing.T) {
 
 	fake.ExistingImages[img.Tag] = true
 	before := len(fake.Ops())
-	again, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, []string{"git", "jq"}, ctxDir, io.Discard)
+	again, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, ctxDir, io.Discard)
 	if err != nil || strings.Join(again, ",") != "git-2.49.1-r0,jq-1.8.2-r0" {
 		t.Fatalf("reuse: %v %v", again, err)
 	}
@@ -75,7 +78,7 @@ func TestEnsureExecImage(t *testing.T) {
 			t.Fatalf("reuse must not build: %v", fake.Ops()[before:])
 		}
 	}
-	if r, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", spec.ExecImageSpec{}, nil, ctxDir, io.Discard); err != nil || r != nil {
+	if r, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", spec.ExecImageSpec{}, ctxDir, io.Discard); err != nil || r != nil {
 		t.Fatalf("no exec: %v %v", r, err)
 	}
 }
@@ -86,11 +89,12 @@ func TestEnsureExecImage(t *testing.T) {
 func TestEnsureExecImageMirrorAndPins(t *testing.T) {
 	img := spec.ExecImageSpec{
 		Tag:       spec.ExecImageTag("agentry-runner:v1", []string{"openssl"}, []string{"openssl=3.5.1-r0"}, "https://mirror.example/alpine"),
+		Commands:  []string{"openssl"},
 		Packages:  []string{"openssl=3.5.1-r0"},
 		APKMirror: "https://mirror.example/alpine",
 	}
 	fake := &dockerx.Fake{ExistingImages: map[string]bool{}, ImageFiles: map[string]string{img.Tag + ":" + ExecPackagesFile: "openssl-3.5.1-r0\n"}}
-	if _, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, []string{"openssl"}, t.TempDir(), io.Discard); err != nil {
+	if _, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, t.TempDir(), io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	var df string

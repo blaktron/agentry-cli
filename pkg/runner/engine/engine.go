@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -454,10 +455,7 @@ func enforcedWithPackages(enforced map[string]string, packages []string) map[str
 	if len(packages) == 0 {
 		return enforced
 	}
-	out := make(map[string]string, len(enforced))
-	for k, v := range enforced {
-		out[k] = v
-	}
+	out := maps.Clone(enforced)
 	out["exec"] += "; packages resolved at image build: " + strings.Join(packages, ", ")
 	return out
 }

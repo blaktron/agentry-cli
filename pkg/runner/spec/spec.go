@@ -111,10 +111,6 @@ func ProxyURL() string {
 type Plan struct {
 	// PlanVersion pins the schema.
 	PlanVersion string `json:"planVersion"`
-	// ExecImage is the tools container's image when the manifest declares
-	// exec: the runner image plus the operator's catalogued packages,
-	// minimized (agentry-cli#100). Nil when no exec is declared.
-	ExecImage *ExecImageSpec `json:"execImage,omitempty"`
 	// CompiledBy names the CLI build that compiled the plan. The schema
 	// can stay the same while the compiler's output changes, so a plan
 	// from another build is recompiled rather than reused.
@@ -150,6 +146,10 @@ type Plan struct {
 	Enforcement map[string]string `json:"enforcement"`
 	// Gateway describes the gateway container launch.
 	Gateway GatewaySpec `json:"gateway"`
+	// ExecImage is the tools container's image when the manifest declares
+	// exec: the runner image plus the operator's catalogued packages,
+	// minimized (agentry-cli#100). Nil when no exec is declared.
+	ExecImage *ExecImageSpec `json:"execImage,omitempty"`
 	// Harness describes the adapter and the agent container.
 	Harness HarnessSpec `json:"harness"`
 	// Proxy describes the LLM egress proxy sidecar.
@@ -416,6 +416,8 @@ func ParsePlan(b []byte) (*Plan, error) {
 type ExecImageSpec struct {
 	// Tag is the image name (ExecImageTag).
 	Tag string `json:"tag"`
+	// Commands are the declared commands the image is minimized to, sorted.
+	Commands []string `json:"commands"`
 	// Packages are the catalogued apk packages the declared commands map
 	// to (optionally pinned "name=version"), sorted, deduplicated.
 	Packages []string `json:"packages,omitempty"`

@@ -279,12 +279,15 @@ func TestExecCatalog(t *testing.T) {
 		t.Fatalf("Package(curl) = %q, want empty for an uncatalogued command", got)
 	}
 	for name, mutate := range map[string]func(*Policy){
-		"command with a slash":   func(p *Policy) { p.Exec.Packages = map[string]string{"bin/git": "git"} },
-		"empty package":          func(p *Policy) { p.Exec.Packages = map[string]string{"git": ""} },
-		"package with a space":   func(p *Policy) { p.Exec.Packages = map[string]string{"git": "git openssl"} },
-		"package as a path":      func(p *Policy) { p.Exec.Packages = map[string]string{"git": "../git"} },
-		"mirror not a URL":       func(p *Policy) { p.Exec.APKMirror = "mirror.example" },
-		"mirror with a fragment": func(p *Policy) { p.Exec.APKMirror = "https://m.example/alpine#x" },
+		"command with a slash":     func(p *Policy) { p.Exec.Packages = map[string]string{"bin/git": "git"} },
+		"empty package":            func(p *Policy) { p.Exec.Packages = map[string]string{"git": ""} },
+		"package with a space":     func(p *Policy) { p.Exec.Packages = map[string]string{"git": "git openssl"} },
+		"package as a path":        func(p *Policy) { p.Exec.Packages = map[string]string{"git": "../git"} },
+		"package with a newline":   func(p *Policy) { p.Exec.Packages = map[string]string{"git": "git\nRUN curl x | sh"} },
+		"package with a semicolon": func(p *Policy) { p.Exec.Packages = map[string]string{"jq": "jq; curl x"} },
+		"command with a quote":     func(p *Policy) { p.Exec.Packages = map[string]string{"g'it": "git"} },
+		"mirror not a URL":         func(p *Policy) { p.Exec.APKMirror = "mirror.example" },
+		"mirror with a fragment":   func(p *Policy) { p.Exec.APKMirror = "https://m.example/alpine#x" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := Default()

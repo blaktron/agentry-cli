@@ -838,6 +838,9 @@ func TestCompileExecCatalog(t *testing.T) {
 	if got := strings.Join(plan.ExecImage.Packages, ","); got != "busybox,git" {
 		t.Fatalf("exec image packages = %q, want the declared commands' packages only, sorted", got)
 	}
+	if got := strings.Join(plan.ExecImage.Commands, ","); got != "git,sort" {
+		t.Fatalf("exec image commands = %q", got)
+	}
 	enf := plan.Enforcement["exec"]
 	for _, want := range []string{"git ← apk git", "sort ← apk busybox", "safe.directory"} {
 		if !strings.Contains(enf, want) {

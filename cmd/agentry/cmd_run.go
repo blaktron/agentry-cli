@@ -307,7 +307,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	var execPackages []string
 	if plan.ExecImage != nil {
 		var err error
-		execPackages, err = gateway.EnsureExecImage(cmd.Context(), docker, runnerTag, *plan.ExecImage, plan.Capabilities.ExecCommands, homeImageDir(home), cmd.ErrOrStderr())
+		execPackages, err = gateway.EnsureExecImage(cmd.Context(), docker, runnerTag, *plan.ExecImage, homeImageDir(home), cmd.ErrOrStderr())
 		if err != nil {
 			return engine.Classify(engine.ExitGateway, err)
 		}

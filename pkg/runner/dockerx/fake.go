@@ -113,7 +113,7 @@ func (f *Fake) Available(context.Context) error {
 	return f.AvailableErr
 }
 
-// ImageExists implements Client.
+// ImageFile implements Client from ImageFiles.
 func (f *Fake) ImageFile(_ context.Context, ref, path string) ([]byte, error) {
 	f.record("ImageFile", ref+":"+path, RunSpec{})
 	if b, ok := f.ImageFiles[ref+":"+path]; ok {
@@ -122,6 +122,7 @@ func (f *Fake) ImageFile(_ context.Context, ref, path string) ([]byte, error) {
 	return nil, fmt.Errorf("fake docker: %s has no %s", ref, path)
 }
 
+// ImageExists implements Client.
 func (f *Fake) ImageExists(_ context.Context, ref string) (bool, error) {
 	f.record("ImageExists", ref, RunSpec{})
 	return f.ExistingImages[ref], nil

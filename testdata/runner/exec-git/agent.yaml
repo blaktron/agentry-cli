@@ -1,0 +1,14 @@
+schemaVersion: "2"
+name: exec-git
+namespace: fixtures
+modes: [autonomous]
+version: 1.0.0
+summary: "Runs git in the workspace — the exec catalog fixture (agentry-cli#100)"
+license: Apache-2.0
+capabilities:
+  filesystem:
+    read: workspace
+  exec:
+    commands: [git]
+publish:
+  include: [agent.yaml, AGENT.md, README.md, LICENSE]
