@@ -81,3 +81,26 @@ func TestPlaceholdersDoNotCollideWithGatewayTemplates(t *testing.T) {
 		}
 	}
 }
+
+// TestExecImageTagMovesWithTheCatalog (agentry-cli#100): the exec image
+// is named by the runner image, the commands, the catalogued packages and
+// the mirror, so a changed catalog entry or mirror is a new image; the
+// same inputs in another order name the same image.
+func TestExecImageTagMovesWithTheCatalog(t *testing.T) {
+	a := ExecImageTag("agentry-runner:v1", []string{"git", "jq"}, []string{"git", "jq"}, "")
+	if a == "" || !strings.HasPrefix(a, "agentry-runner-exec:v1-") {
+		t.Fatalf("tag = %q", a)
+	}
+	if b := ExecImageTag("agentry-runner:v1", []string{"jq", "git"}, []string{"jq", "git"}, ""); b != a {
+		t.Fatalf("order changed the tag: %q vs %q", a, b)
+	}
+	if b := ExecImageTag("agentry-runner:v1", []string{"git", "jq"}, []string{"git=2.49.1-r0", "jq"}, ""); b == a {
+		t.Fatal("a pinned package did not change the tag")
+	}
+	if b := ExecImageTag("agentry-runner:v1", []string{"git", "jq"}, []string{"git", "jq"}, "https://mirror.example/alpine"); b == a {
+		t.Fatal("a mirror did not change the tag")
+	}
+	if ExecImageTag("agentry-runner:v1", nil, nil, "") != "" {
+		t.Fatal("no commands must mean no exec image")
+	}
+}

@@ -104,6 +104,10 @@ type Params struct {
 	Budgets spec.Budgets
 	// Attestation is the verify-gate outcome for the envelope.
 	Attestation receipt.Attestation
+	// ExecPackages are the catalogued packages' resolved versions the exec
+	// image build recorded ("name-version"); appended to the receipt's
+	// exec line so it names what was installed (agentry-cli#100).
+	ExecPackages []string
 	// KeepRunDir preserves runs/<id>/ for debugging (secrets.env is
 	// still always deleted).
 	KeepRunDir bool
@@ -133,7 +137,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: p.Plan.Enforcement,
+		CapabilitiesEnforced: enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,
@@ -441,6 +445,21 @@ func serverOutputTail(lines []string, name string) string {
 		out = out[len(out)-15:]
 	}
 	return "\nserver output tail:\n" + strings.Join(out, "\n")
+}
+
+// enforcedWithPackages is the plan's enforcement map with the exec line
+// extended by the package versions the image build resolved — the one
+// fact the compiler cannot know. A copy: the plan's map is the plan's.
+func enforcedWithPackages(enforced map[string]string, packages []string) map[string]string {
+	if len(packages) == 0 {
+		return enforced
+	}
+	out := make(map[string]string, len(enforced))
+	for k, v := range enforced {
+		out[k] = v
+	}
+	out["exec"] += "; packages resolved at image build: " + strings.Join(packages, ", ")
+	return out
 }
 
 // gatewayHostname is the gateway container's hostname: not a name any

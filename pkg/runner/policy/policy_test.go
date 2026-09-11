@@ -256,3 +256,49 @@ func TestSessionsDefaultsAndValidation(t *testing.T) {
 		t.Errorf("negative cap accepted: %v", err)
 	}
 }
+
+// TestExecCatalog (agentry-cli#100): `exec.packages` maps a command name
+// to the apk package that provides it, optionally pinned; `exec.apkMirror`
+// is an http(s) URL or empty; a bad command name, package or mirror is
+// refused; the default policy carries no entries (the operator opts in
+// per tool, D11) but documents the key.
+func TestExecCatalog(t *testing.T) {
+	p := Default()
+	if len(p.Exec.Packages) != 0 || p.Exec.APKMirror != "" {
+		t.Fatalf("default policy ships exec entries: %+v", p.Exec)
+	}
+	p.Exec.Packages = map[string]string{"git": "git", "openssl": "openssl=3.5.1-r0", "jq": "jq"}
+	p.Exec.APKMirror = "https://mirror.example/alpine"
+	if err := p.Validate(); err != nil {
+		t.Fatalf("valid catalog refused: %v", err)
+	}
+	if got := p.Exec.Package("openssl"); got != "openssl=3.5.1-r0" {
+		t.Fatalf("Package(openssl) = %q", got)
+	}
+	if got := p.Exec.Package("curl"); got != "" {
+		t.Fatalf("Package(curl) = %q, want empty for an uncatalogued command", got)
+	}
+	for name, mutate := range map[string]func(*Policy){
+		"command with a slash":   func(p *Policy) { p.Exec.Packages = map[string]string{"bin/git": "git"} },
+		"empty package":          func(p *Policy) { p.Exec.Packages = map[string]string{"git": ""} },
+		"package with a space":   func(p *Policy) { p.Exec.Packages = map[string]string{"git": "git openssl"} },
+		"package as a path":      func(p *Policy) { p.Exec.Packages = map[string]string{"git": "../git"} },
+		"mirror not a URL":       func(p *Policy) { p.Exec.APKMirror = "mirror.example" },
+		"mirror with a fragment": func(p *Policy) { p.Exec.APKMirror = "https://m.example/alpine#x" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := Default()
+			mutate(p)
+			if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "exec.") {
+				t.Fatalf("Validate() = %v, want an exec.* refusal", err)
+			}
+		})
+	}
+	// The default file documents the key as comments and round-trips.
+	raw := []byte(defaultFileText)
+	for _, want := range []string{"exec:", "packages:", "git", "apkMirror"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("default policy text does not document %q", want)
+		}
+	}
+}

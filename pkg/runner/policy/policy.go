@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,37 @@ type Policy struct {
 	// person's own installation of a harness (plan runner-m-r4-adapters
 	// §5), keyed by adapter name.
 	Harness map[string]HarnessPolicy `yaml:"harness,omitempty"`
+	// Exec is the operator's exec catalog: which binaries this machine
+	// provides to a BriefAgent that declares `exec: {commands}`, and from
+	// where (plan examples-declared-servers §5.2, D1).
+	Exec ExecPolicy `yaml:"exec,omitempty"`
+}
+
+// ExecPolicy is the exec catalog (agentry-cli#100). The manifest keeps
+// declaring bare command names; the operator, not the manifest, says
+// which apk package provides each on this machine — the same stance as
+// mcpRegistries. A declared command the catalog does not carry is a
+// plan-time refusal, never a run-time "absent". Busybox applets the runner
+// image already has (sh, sed, sort, …) are catalogued as `busybox`.
+type ExecPolicy struct {
+	// Packages maps a command name to the apk package that provides it,
+	// optionally pinned: `git` or `git=2.49.1-r0`. Alpine's index drops a
+	// version once a security update replaces it, so a pin can turn an
+	// example's every run into a failed image build; the build records
+	// the resolved versions into the receipt either way (D11).
+	Packages map[string]string `yaml:"packages,omitempty"`
+	// APKMirror replaces the runner image's Alpine repositories at exec
+	// image build time (`<mirror>/v<release>/main` and `/community`), for
+	// an air-gapped machine. Empty: the image's own /etc/apk/repositories.
+	// This is build-time egress of the image build only; a run's network
+	// posture is unchanged.
+	APKMirror string `yaml:"apkMirror,omitempty"`
+}
+
+// Package returns the catalogued apk package for a command, "" when the
+// catalog does not carry it.
+func (e ExecPolicy) Package(command string) string {
+	return e.Packages[command]
 }
 
 // HarnessPolicy configures one host-run harness adapter — an adapter that
@@ -388,6 +420,20 @@ func (p *Policy) Validate() error {
 			return fmt.Errorf("%s %q must be an http(s) URL", name, u)
 		}
 	}
+	for cmd, pkg := range p.Exec.Packages {
+		if cmd == "" || strings.ContainsAny(cmd, "/\\ \t") {
+			return fmt.Errorf("exec.packages: command %q must be a bare command name", cmd)
+		}
+		if pkg == "" || strings.ContainsAny(pkg, "/\\ \t") {
+			return fmt.Errorf("exec.packages.%s: package %q must be an apk package name, optionally =version", cmd, pkg)
+		}
+	}
+	if m := p.Exec.APKMirror; m != "" {
+		u, err := url.Parse(m)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Fragment != "" || u.RawQuery != "" {
+			return fmt.Errorf("exec.apkMirror %q must be an http(s) URL with no query or fragment", m)
+		}
+	}
 	return nil
 }
 
@@ -494,4 +540,19 @@ mcpRegistries:
   # versions and the install records resolved artifact digests either way.
   npm: https://registry.npmjs.org
   pypi: https://pypi.org
+
+# exec:
+#   # The exec catalog: which binaries this machine provides to a BriefAgent
+#   # that declares exec.commands, as command name → apk package (optionally
+#   # =version). A declared command that is not catalogued is refused at plan
+#   # time. Busybox applets the runner image already has (sh, sed, sort, …)
+#   # are catalogued as busybox. The exec image build installs the packages
+#   # and records their resolved versions into the run's receipt.
+#   packages:
+#     git: git
+#     openssl: openssl
+#     sort: busybox
+#   # Alpine mirror for the image build (build-time egress only); empty uses
+#   # the runner image's own repositories.
+#   apkMirror: https://dl-cdn.alpinelinux.org/alpine
 `

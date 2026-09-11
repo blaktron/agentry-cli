@@ -13,11 +13,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -275,6 +277,21 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		}
 	} else {
 		rep.ok("secretSource", "env")
+	}
+	// The exec catalog (agentry-cli#100): what a declared exec command
+	// resolves to on this machine, or the fact that nothing does.
+	if len(pol.Exec.Packages) == 0 {
+		rep.ok("exec", "no packages catalogued — a BriefAgent declaring exec.commands is refused at plan time until exec.packages names each command's apk package")
+	} else {
+		var entries []string
+		for _, c := range slices.Sorted(maps.Keys(pol.Exec.Packages)) {
+			entries = append(entries, c+" → "+pol.Exec.Packages[c])
+		}
+		line := strings.Join(entries, ", ")
+		if pol.Exec.APKMirror != "" {
+			line += "; mirror " + pol.Exec.APKMirror
+		}
+		rep.ok("exec", "%s", line)
 	}
 	return pol
 }

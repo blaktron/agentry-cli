@@ -45,7 +45,7 @@ func TestDoctorMachineReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor failed: %v\n%s", err, out)
 	}
-	for _, want := range []string{"ok    policy", "ok    model", "ok    docker", "ok    image:runner", "ok    registry", "ready"} {
+	for _, want := range []string{"ok    policy", "ok    model", "ok    docker", "ok    image:runner", "ok    registry", "ready", "exec", "no packages catalogued"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
@@ -53,6 +53,32 @@ func TestDoctorMachineReady(t *testing.T) {
 	for _, op := range fake.Ops() {
 		if strings.HasPrefix(op, "Pull") || strings.HasPrefix(op, "Build") {
 			t.Fatalf("doctor must not change anything, but did %s", op)
+		}
+	}
+}
+
+// TestDoctorReportsTheExecCatalog (agentry-cli#100): doctor lists the
+// operator's exec catalog — command → package, and the mirror — so an
+// author can see which declared commands this machine will honour.
+func TestDoctorReportsTheExecCatalog(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Exec.Packages = map[string]string{"git": "git", "sort": "busybox", "openssl": "openssl=3.5.1-r0"}
+	pol.Exec.APKMirror = "https://mirror.example/alpine"
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	fr := newFakeRegistry(t)
+	out, _, err := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"ok    exec", "git → git", "openssl → openssl=3.5.1-r0", "sort → busybox", "mirror https://mirror.example/alpine"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
 }

@@ -301,9 +301,16 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		plan.Harness.Host == nil); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
-	// The per-BriefAgent exec image the plan names (agentry-cli#9).
-	if _, err := gateway.EnsureExecImage(cmd.Context(), docker, runnerTag, plan.Capabilities.ExecCommands, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
-		return engine.Classify(engine.ExitGateway, err)
+	// The per-BriefAgent exec image the plan names (agentry-cli#9, #100):
+	// built with the operator's catalogued packages; the versions it
+	// resolved go into the receipt.
+	var execPackages []string
+	if plan.ExecImage != nil {
+		var err error
+		execPackages, err = gateway.EnsureExecImage(cmd.Context(), docker, runnerTag, *plan.ExecImage, plan.Capabilities.ExecCommands, homeImageDir(home), cmd.ErrOrStderr())
+		if err != nil {
+			return engine.Classify(engine.ExitGateway, err)
+		}
 	}
 	if len(resolvedServers) > 0 {
 		if err := mcpinstall.EnsureInstalled(cmd.Context(), docker, resolvedServers, serversDir,
@@ -358,6 +365,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	overrides := secretOverrides(profSecrets, answers)
 	params := engine.Params{
 		Plan:            plan,
+		ExecPackages:    execPackages,
 		PlanDir:         planDir,
 		WorkspaceSrc:    workspaceDir,
 		RunRoot:         installDir,
