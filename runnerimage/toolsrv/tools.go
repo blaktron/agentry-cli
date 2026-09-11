@@ -308,6 +308,15 @@ func coerceStringFields(raw json.RawMessage, v any) (json.RawMessage, error) {
 	return out, nil
 }
 
+// execDir is run_command's working directory: the workspace when it is
+// mounted, /tmp — the one writable non-mount in the container — otherwise.
+func (s *server) execDir() string {
+	if fi, err := os.Stat(s.spec.WorkspaceDir); err == nil && fi.IsDir() {
+		return s.spec.WorkspaceDir
+	}
+	return os.TempDir()
+}
+
 // containsString is the small allowlist-membership helper the exec and
 // fetch gates share; exact match only, by design.
 func containsString(list []string, s string) bool {
@@ -756,7 +765,11 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(limitSec)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shim, a.Args...)
-	cmd.Dir = s.spec.WorkspaceDir
+	// The command runs in the workspace when the contract mounted one;
+	// exec and filesystem are independent grants, so a BriefAgent that
+	// declares exec and no filesystem access (it works on /inputs) gets a
+	// scratch directory instead of a failed chdir (agentry-cli#120).
+	cmd.Dir = s.execDir()
 	// A minimal, explicit environment: PATH is the whole point of the
 	// shim; HOME and LANG exist because plenty of tools crash without
 	// them, and /tmp is the only writable non-mount in the container.
