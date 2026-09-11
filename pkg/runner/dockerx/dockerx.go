@@ -7,6 +7,7 @@
 package dockerx
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
@@ -28,6 +29,9 @@ type Client interface {
 	Available(ctx context.Context) error
 	// ImageExists reports whether ref is present locally.
 	ImageExists(ctx context.Context, ref string) (bool, error)
+	// ImageFile reads one file out of an image without running it (a
+	// stopped container is created, copied from, removed).
+	ImageFile(ctx context.Context, ref, path string) ([]byte, error)
 	// Pull pulls ref (first-use install of pinned images, RQ2).
 	Pull(ctx context.Context, ref string) error
 	// Build builds dir into tag with the given build args.
@@ -174,6 +178,40 @@ func (c *CLI) ImageExists(ctx context.Context, ref string) (bool, error) {
 		return false, nil // inspect exits 1 for a missing image
 	}
 	return false, fmt.Errorf("docker image inspect %s: %w", ref, err)
+}
+
+// ImageFile implements Client: `docker create` a container from the image
+// (never started — the exec image has no shell to start with), `docker cp`
+// the path out as a tar stream, `docker rm` the container.
+func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
+	id, err := c.run(ctx, "create", ref)
+	if err != nil {
+		return nil, fmt.Errorf("docker create %s: %w", ref, err)
+	}
+	id = strings.TrimSpace(id)
+	defer func() {
+		// The removal must happen even when the caller's context is
+		// already done (a Ctrl-C mid-copy), or the created container leaks.
+		rm := c.command(context.WithoutCancel(ctx), "rm", "-f", id)
+		rm.Stdout, rm.Stderr = io.Discard, io.Discard
+		_ = rm.Run()
+	}()
+	cp := c.command(ctx, "cp", id+":"+path, "-")
+	var out, errb bytes.Buffer
+	cp.Stdout, cp.Stderr = &out, &errb
+	if err := cp.Run(); err != nil {
+		return nil, fmt.Errorf("docker cp %s:%s: %w: %s", ref, path, err, strings.TrimSpace(errb.String()))
+	}
+	tr := tar.NewReader(&out)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			return nil, fmt.Errorf("docker cp %s:%s: no file in the archive: %w", ref, path, err)
+		}
+		if h.Typeflag == tar.TypeReg {
+			return io.ReadAll(tr)
+		}
+	}
 }
 
 // Pull implements Client.

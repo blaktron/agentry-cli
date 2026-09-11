@@ -57,6 +57,22 @@ if [ ! -s "$OUT/reports/hello.md" ]; then
 fi
 echo "envelope + receipts ok"
 
+# The exec catalog (agentry-cli#100): a BriefAgent declaring exec [git]
+# runs in an exec image built from the catalogued package, and the receipt
+# names the packages the build resolved. The model's use of git is not
+# asserted (its tool-call shape varies; agentry-cli#113) — the build, the
+# record and the receipt line are.
+EXECPOL="$WORK/policy-exec.yaml"
+if [ -f "$POLICY" ]; then cp "$POLICY" "$EXECPOL"; else "$AGENTRY" run --local testdata/runner/hello-report --allow-unsigned --yes --prepare >/dev/null 2>&1; cp "$HOME/.agentry/runner/policy.yaml" "$EXECPOL"; fi
+if ! grep -q '^exec:' "$EXECPOL"; then printf 'exec:\n  packages:\n    git: git\n' >> "$EXECPOL"; fi
+EXECOUT="$WORK/out-exec"
+echo "list the git history" | "$AGENTRY" run --local testdata/runner/exec-git --policy "$EXECPOL" \
+  --allow-unsigned --yes --out "$EXECOUT" --output-format json --timeout 300 >"$WORK/envelope-exec.json"
+grep -q '"status": "ok"' "$WORK/envelope-exec.json" || { echo "FAIL: exec run not ok"; cat "$WORK/envelope-exec.json"; exit 1; }
+grep -q 'packages resolved at image build: .*git-' "$EXECOUT/result.json" || { echo "FAIL: receipt does not name the resolved git package"; grep '"exec"' "$EXECOUT/result.json"; exit 1; }
+grep -q 'safe.directory' "$EXECOUT/result.json" || { echo "FAIL: receipt does not name git's safe.directory setting"; exit 1; }
+echo "exec catalog: image built, receipt names the packages"
+
 # §R11 invariant 6: nothing of ours survives.
 LEFT=$(docker ps -a --filter label=agentry.run --format '{{.Names}}')
 [ -z "$LEFT" ] || { echo "FAIL: leftover containers: $LEFT"; exit 1; }

@@ -13,11 +13,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -150,7 +152,11 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 	// there unless the install is already cached).
 	doctorRegistry(cmd.Context(), rep)
 
-	// 4. The agent's store, profile and secrets.
+	// 4. The agent's declared commands against the catalog (a located
+	// manifest is enough), then its store, profile and secrets.
+	if pol != nil && m != nil {
+		doctorExecCatalog(rep, pol, m)
+	}
 	if pol != nil && m != nil && meta != nil {
 		doctorAgentState(rep, home, pol, m, meta, installDir)
 	}
@@ -275,6 +281,21 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		}
 	} else {
 		rep.ok("secretSource", "env")
+	}
+	// The exec catalog (agentry-cli#100): what a declared exec command
+	// resolves to on this machine, or the fact that nothing does.
+	if len(pol.Exec.Packages) == 0 {
+		rep.warn("exec", "no packages catalogued — a BriefAgent declaring exec.commands is refused at plan time until exec.packages names each command's apk package")
+	} else {
+		var entries []string
+		for _, c := range slices.Sorted(maps.Keys(pol.Exec.Packages)) {
+			entries = append(entries, c+" → "+pol.Exec.Packages[c])
+		}
+		line := strings.Join(entries, ", ")
+		if pol.Exec.APKMirror != "" {
+			line += "; mirror " + pol.Exec.APKMirror
+		}
+		rep.ok("exec", "%s", line)
 	}
 	return pol
 }
@@ -422,6 +443,29 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 
 // doctorAgentState checks the server store, the profile and the secrets
 // for one located BriefAgent.
+// doctorExecCatalog checks a BriefAgent's declared exec commands against
+// the machine's catalog: what the compiler will refuse, said here first
+// (agentry-cli#100).
+func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manifest) {
+	cmds := m.Capabilities.Exec.Commands
+	if len(cmds) == 0 {
+		return
+	}
+	var missing, mapped []string
+	for _, c := range cmds {
+		if pkg := pol.Exec.Package(c); pkg == "" {
+			missing = append(missing, c)
+		} else {
+			mapped = append(mapped, c+" → "+pkg)
+		}
+	}
+	if len(missing) > 0 {
+		rep.fail("exec", "declared command(s) not in this machine's exec.packages catalog: %s — a run is refused at plan time until the policy names each one's apk package", strings.Join(missing, ", "))
+		return
+	}
+	rep.ok("exec", "declared commands catalogued: %s", strings.Join(mapped, ", "))
+}
+
 func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *manifest.Manifest, meta *installMeta, installDir string) {
 	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, digestSuffix(meta.Digest))
 	if n := len(m.Capabilities.MCPServers); n > 0 {

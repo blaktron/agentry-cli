@@ -33,6 +33,8 @@ type Fake struct {
 	AvailableErr error
 	// ExistingImages marks refs ImageExists reports true for.
 	ExistingImages map[string]bool
+	// ImageFiles answers ImageFile by "ref:path"; a missing entry is an error.
+	ImageFiles map[string]string
 	// FailPull/FailBuild/FailDetached script failures by ref/name.
 	FailPull     map[string]error
 	FailBuild    map[string]error
@@ -109,6 +111,15 @@ func (f *Fake) FindRun(substr string) (RunSpec, bool) {
 func (f *Fake) Available(context.Context) error {
 	f.record("Available", "", RunSpec{})
 	return f.AvailableErr
+}
+
+// ImageFile implements Client from ImageFiles.
+func (f *Fake) ImageFile(_ context.Context, ref, path string) ([]byte, error) {
+	f.record("ImageFile", ref+":"+path, RunSpec{})
+	if b, ok := f.ImageFiles[ref+":"+path]; ok {
+		return []byte(b), nil
+	}
+	return nil, fmt.Errorf("fake docker: %s has no %s", ref, path)
 }
 
 // ImageExists implements Client.

@@ -28,6 +28,9 @@ var update = flag.Bool("update", false, "rewrite golden files")
 func testPolicy() *policy.Policy {
 	p := policy.Default()
 	p.Images.Runner = "agentry-runner:test"
+	// The fixtures declare jq and git; the catalog carries them
+	// (agentry-cli#100: an uncatalogued command is a plan-time refusal).
+	p.Exec.Packages = map[string]string{"jq": "jq", "git": "git"}
 	return p
 }
 
@@ -797,5 +800,77 @@ func TestSessionBudgetsFollowPolicyAndManifestHint(t *testing.T) {
 				t.Errorf("budgets = %+v", got)
 			}
 		})
+	}
+}
+
+// TestCompileExecCatalog (agentry-cli#100): a declared command the
+// operator's exec catalog does not carry is a plan-time policy refusal
+// naming the command and the key; a catalogued one compiles into an exec
+// image whose plan entry names the packages, whose tag moves with the
+// catalog entry or the mirror, and whose enforcement line names the
+// packages and, for git, the safe.directory setting.
+func TestCompileExecCatalog(t *testing.T) {
+	m := parseManifest(t, "schemaVersion: \"2\"\nname: gitter\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"g\"\n"+
+		"capabilities:\n  exec: { commands: [git, sort] }\npublish:\n  include: [agent.yaml, AGENT.md]\n")
+	ws := workspaceFor(t, m, nil)
+	compileWith := func(pol *policy.Policy) (*spec.Plan, error) {
+		return Compile(Inputs{Manifest: m, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: ws,
+			Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test"}, t.TempDir())
+	}
+
+	bare := testPolicy()
+	bare.Exec.Packages = nil
+	_, err := compileWith(bare)
+	var refusal *PolicyRefusal
+	if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "git") || !strings.Contains(err.Error(), "exec.packages") {
+		t.Fatalf("uncatalogued command not refused as policy naming the command and the key: %v", err)
+	}
+
+	pol := testPolicy()
+	pol.Exec.Packages = map[string]string{"git": "git", "sort": "busybox", "jq": "jq"}
+	plan, err := compileWith(pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ExecImage == nil || plan.ExecImage.Tag == "" {
+		t.Fatalf("plan lacks the exec image: %+v", plan.ExecImage)
+	}
+	if got := strings.Join(plan.ExecImage.Packages, ","); got != "busybox,git" {
+		t.Fatalf("exec image packages = %q, want the declared commands' packages only, sorted", got)
+	}
+	if got := strings.Join(plan.ExecImage.Commands, ","); got != "git,sort" {
+		t.Fatalf("exec image commands = %q", got)
+	}
+	enf := plan.Enforcement["exec"]
+	for _, want := range []string{"git ← apk git", "sort ← apk busybox", "safe.directory"} {
+		if !strings.Contains(enf, want) {
+			t.Fatalf("enforcement lacks %q: %q", want, enf)
+		}
+	}
+	if strings.Contains(enf, "jq") {
+		t.Fatalf("enforcement names a package for an undeclared command: %q", enf)
+	}
+
+	pinned := testPolicy()
+	pinned.Exec.Packages = map[string]string{"git": "git=2.49.1-r0", "sort": "busybox"}
+	p2, err := compileWith(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.ExecImage.Tag == plan.ExecImage.Tag {
+		t.Fatal("a changed catalog entry must change the exec image tag")
+	}
+	mirrored := testPolicy()
+	mirrored.Exec.Packages = pol.Exec.Packages
+	mirrored.Exec.APKMirror = "https://mirror.example/alpine"
+	p3, err := compileWith(mirrored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p3.ExecImage.Tag == plan.ExecImage.Tag || p3.ExecImage.APKMirror != mirrored.Exec.APKMirror {
+		t.Fatalf("a changed mirror must change the tag and be recorded: %+v", p3.ExecImage)
+	}
+	if plan.Enforcement["exec"] == "" || strings.Contains(plan.Enforcement["exec"], "2.49") {
+		t.Fatal("the compiled line must not claim a resolved version the build has not produced")
 	}
 }

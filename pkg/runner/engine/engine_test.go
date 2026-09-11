@@ -62,6 +62,7 @@ func fixture(t *testing.T) (Params, *dockerx.Fake) {
 	}
 	pol := policy.Default()
 	pol.Images.Runner = "agentry-runner:test"
+	pol.Exec.Packages = map[string]string{"echo": "busybox"} // the fixture declares exec: [echo]
 	planDir := filepath.Join(installDir, "plan")
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest: m, Digest: "sha256:feedface", Source: "local",
@@ -608,5 +609,38 @@ func TestDeclaredServerStartedRunsTheAgent(t *testing.T) {
 	env, err := Run(context.Background(), f, p)
 	if err != nil || env.Status != "ok" {
 		t.Fatalf("run with a started server failed: %v", err)
+	}
+}
+
+// TestReceiptNamesResolvedExecPackages (agentry-cli#100): the resolved
+// versions the exec image build recorded are appended to the receipt's
+// exec line, after the compiled text, so the receipt names the packages
+// as installed; a run with none appends nothing.
+func TestReceiptNamesResolvedExecPackages(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p.Plan.Enforcement["exec"] = "run_command restricted to argv0 allowlist + shim PATH {git}; …"
+	p.ExecPackages = []string{"git-2.49.1-r0", "jq-1.8.2-r0"}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := env.CapabilitiesEnforced["exec"]
+	if !strings.HasPrefix(got, "run_command restricted") || !strings.HasSuffix(got, "; packages resolved at image build: git-2.49.1-r0, jq-1.8.2-r0") {
+		t.Fatalf("exec line = %q", got)
+	}
+	// The plan's own map is not rewritten under the caller's feet.
+	if strings.Contains(p.Plan.Enforcement["exec"], "resolved at image build") {
+		t.Fatal("the plan's enforcement map was mutated")
+	}
+
+	p2, f2 := fixture(t)
+	happyFake(f2)
+	env2, err := Run(context.Background(), f2, p2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(env2.CapabilitiesEnforced["exec"], "resolved at image build") {
+		t.Fatalf("no packages, yet the receipt claims a build: %q", env2.CapabilitiesEnforced["exec"])
 	}
 }

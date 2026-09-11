@@ -146,6 +146,10 @@ type Plan struct {
 	Enforcement map[string]string `json:"enforcement"`
 	// Gateway describes the gateway container launch.
 	Gateway GatewaySpec `json:"gateway"`
+	// ExecImage is the tools container's image when the manifest declares
+	// exec: the runner image plus the operator's catalogued packages,
+	// minimized (agentry-cli#100). Nil when no exec is declared.
+	ExecImage *ExecImageSpec `json:"execImage,omitempty"`
 	// Harness describes the adapter and the agent container.
 	Harness HarnessSpec `json:"harness"`
 	// Proxy describes the LLM egress proxy sidecar.
@@ -405,18 +409,39 @@ func ParsePlan(b []byte) (*Plan, error) {
 	return &p, nil
 }
 
+// ExecImageSpec is the per-BriefAgent exec image a plan runs its tools
+// server in when the manifest declares exec (agentry-cli#9, #100): the
+// runner image with the operator's catalogued packages installed, then
+// minimized to exactly the declared commands.
+type ExecImageSpec struct {
+	// Tag is the image name (ExecImageTag).
+	Tag string `json:"tag"`
+	// Commands are the declared commands the image is minimized to, sorted.
+	Commands []string `json:"commands"`
+	// Packages are the catalogued apk packages the declared commands map
+	// to (optionally pinned "name=version"), sorted, deduplicated.
+	Packages []string `json:"packages,omitempty"`
+	// APKMirror replaces the image's Alpine repositories at build time;
+	// empty means the image's own.
+	APKMirror string `json:"apkMirror,omitempty"`
+}
+
 // ExecImageTag names the per-BriefAgent exec image (agentry-cli#9, DR-1
-// closure): the runner image minimized to exactly the declared commands.
-// Deterministic in (runner image, sorted commands) so the compiler can
-// reference it before the install step builds it. "" when no exec is
-// declared — the shared runner image serves.
-func ExecImageTag(runnerImage string, commands []string) string {
+// closure; #100): the runner image with the catalogued packages installed
+// and minimized to exactly the declared commands. Deterministic in
+// (runner image, sorted commands, sorted packages, mirror) so the compiler
+// can reference it before the install step builds it, and so a changed
+// catalog entry or mirror is a new image. "" when no exec is declared —
+// the shared runner image serves.
+func ExecImageTag(runnerImage string, commands, packages []string, apkMirror string) string {
 	if len(commands) == 0 {
 		return ""
 	}
 	sorted := append([]string(nil), commands...)
 	sort.Strings(sorted)
-	sum := sha256.Sum256([]byte(runnerImage + "\x00" + strings.Join(sorted, "\x00")))
+	pkgs := append([]string(nil), packages...)
+	sort.Strings(pkgs)
+	sum := sha256.Sum256([]byte(runnerImage + "\x00" + strings.Join(sorted, "\x00") + "\x01" + strings.Join(pkgs, "\x00") + "\x01" + apkMirror))
 	name := runnerImage
 	if i := strings.LastIndex(name, ":"); i > 0 && !strings.Contains(name[i:], "/") {
 		name = name[:i] + "-exec:" + name[i+1:] + "-" + hex.EncodeToString(sum[:6])

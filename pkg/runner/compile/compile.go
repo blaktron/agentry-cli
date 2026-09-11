@@ -178,10 +178,15 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	files := map[string][]byte{}
 	// The tools server runs in the shared runner image unless the agent
 	// declares exec, in which case it runs in that agent's exec image —
-	// the runner image minimized to the declared commands (agentry-cli#9).
+	// the runner image with the operator's catalogued packages installed,
+	// minimized to the declared commands (agentry-cli#9, #100).
 	toolsImage := in.RunnerImage
-	if t := spec.ExecImageTag(in.RunnerImage, caps.ExecCommands); t != "" {
-		toolsImage = t
+	execImage, err := execImageFor(caps.ExecCommands, in.RunnerImage, in.Policy.Exec)
+	if err != nil {
+		return nil, err
+	}
+	if execImage != nil {
+		toolsImage = execImage.Tag
 	}
 	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, extraServers, extraEntries, in.MCPServers); err != nil {
 		return nil, err
@@ -231,6 +236,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Tools:        tspec.GrantedTools(),
 		MCPServers:   in.MCPServers,
 		Enforcement:  enforcement(caps, m.Capabilities.Secrets, extraServers, in.Policy, in.MCPServers),
+		ExecImage:    execImage,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, len(in.MCPServers) > 0),
 		Harness: spec.HarnessSpec{
 			Adapter:    adapterName,
@@ -644,6 +650,42 @@ func checkLiteralEnv(srv spec.MCPServerSpec) error {
 // name character, `{`, or a special shell parameter.
 var envExpandRE = regexp.MustCompile(`\$[A-Za-z0-9_{*#@!?$-]`)
 
+// execImageFor maps the declared commands onto the operator's exec
+// catalog (agentry-cli#100, plan examples-declared-servers §5.2, D1). A
+// command the catalog does not carry is a plan-time refusal — the
+// operator, not the manifest, says which binaries this machine provides —
+// never a run-time "absent". Nil when nothing is declared.
+func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) (*spec.ExecImageSpec, error) {
+	if len(commands) == 0 {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	var pkgs, missing []string
+	for _, c := range sortedCopy(commands) {
+		pkg := cat.Package(c)
+		if pkg == "" {
+			missing = append(missing, c)
+			continue
+		}
+		if !seen[pkg] {
+			seen[pkg] = true
+			pkgs = append(pkgs, pkg)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, &PolicyRefusal{Reason: fmt.Sprintf(
+			"manifest declares exec command(s) %s that this machine's policy does not catalogue: add each to exec.packages (command: apk package, or busybox for an applet the runner image already has)",
+			strings.Join(missing, ", "))}
+	}
+	sort.Strings(pkgs)
+	return &spec.ExecImageSpec{
+		Tag:       spec.ExecImageTag(runnerImage, commands, pkgs, cat.APKMirror),
+		Commands:  sortedCopy(commands),
+		Packages:  pkgs,
+		APKMirror: cat.APKMirror,
+	}, nil
+}
+
 // bindRoots lists the host roots the gateway may bind into the containers
 // it launches: the run's own directories, plus the signature's server
 // store when declared servers exist — each server is launched from a
@@ -874,8 +916,7 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 	if len(caps.ExecCommands) == 0 {
 		e["exec"] = "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled"
 	} else {
-		e["exec"] = "run_command restricted to argv0 allowlist + shim PATH {" + strings.Join(caps.ExecCommands, ", ") +
-			"}; tools container is the runner image minimized to exactly those binaries (per-BriefAgent exec image, agentry-cli#9)"
+		e["exec"] = execEnforcement(caps.ExecCommands, pol.Exec)
 	}
 	if len(secrets) == 0 {
 		e["secrets"] = "none declared"
@@ -909,6 +950,32 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network (shared by every gateway on this docker host) with a TCP relay linked under each host's name, one with none has no network — with server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
 	}
 	return e
+}
+
+// execEnforcement is the exec line of the receipt: the allowlist, the
+// catalogued package behind each command, and the git accommodation. The
+// resolved package versions are appended by the engine once the image
+// build has produced them; the compiled line never claims a version.
+func execEnforcement(commands []string, cat policy.ExecPolicy) string {
+	var from []string
+	git := false
+	for _, c := range sortedCopy(commands) {
+		from = append(from, c+" ← apk "+cat.Package(c))
+		if c == "git" {
+			git = true
+		}
+	}
+	line := "run_command restricted to argv0 allowlist + shim PATH {" + strings.Join(commands, ", ") +
+		"}; tools container is the runner image with the operator's catalogued packages installed (" + strings.Join(from, ", ") +
+		") and minimized to exactly those binaries (per-BriefAgent exec image, agentry-cli#9, #100)"
+	if git {
+		// The workspace is a bind mount owned by the host user and the
+		// tools container runs as root; git refuses such a repository as
+		// "dubious ownership". The run's mounts are the only places a
+		// repository can be, so those paths are trusted, nothing wider.
+		line += "; git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned"
+	}
+	return line
 }
 
 func egressDesc(hosts []string) string {

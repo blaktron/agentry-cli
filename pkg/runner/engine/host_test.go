@@ -91,6 +91,7 @@ func hostFixture(t *testing.T) (Params, *dockerx.Fake, string, string) {
 	}
 	pol := policy.Default()
 	pol.Images.Runner = "agentry-runner:test"
+	pol.Exec.Packages = map[string]string{"echo": "busybox"} // the fixture declares exec: [echo]
 	planDir := filepath.Join(installDir, "plan")
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest: m, Digest: "sha256:feedface", Source: "local", AdapterName: "hosttest",

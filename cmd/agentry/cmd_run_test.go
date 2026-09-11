@@ -641,7 +641,12 @@ func TestFinishProfileLifecycle(t *testing.T) {
 func TestRunInteractiveUsageGates(t *testing.T) {
 	isolateEnv(t)
 	_, pol := isolateRunnerHome(t)
-	fixture := repoPath(t, "testdata/runner/full-caps") // declares both modes
+	fixture := repoPath(t, "testdata/runner/full-caps") // declares both modes, and exec: [jq]
+	catalogued := policy.Default()
+	catalogued.Exec.Packages = map[string]string{"jq": "jq"}
+	if err := policy.Save(pol, catalogued); err != nil {
+		t.Fatal(err)
+	}
 
 	_, _, err := runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive")
 	wantClassified(t, err, engine.ExitUsage)

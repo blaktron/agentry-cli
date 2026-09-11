@@ -37,6 +37,11 @@ secretSource:
 budgets:
   timeoutSeconds: 900
   maxTurns: 60
+# The full-caps fixture declares exec: [jq]; a declared command needs a
+# catalog entry or the plan is refused (agentry-cli#100).
+exec:
+  packages:
+    jq: jq
 EOF
 
 run_dry() { # fixture -> plan json on stdout
@@ -48,7 +53,7 @@ note() { echo "ok: $*"; }
 
 # --- pure-text: I/O channels only; networkless tools container --------------
 PLAN=$(run_dry pure-text)
-echo "$PLAN" | grep -q '"planVersion": "1"' || fail "pure-text: plan version"
+echo "$PLAN" | grep -q '"planVersion": "2"' || fail "pure-text: plan version"
 echo "$PLAN" | grep -q '"write_report"'     || fail "pure-text: write_report grant"
 echo "$PLAN" | grep -q '"list_inputs"'      || fail "pure-text: inputs channel missing (RUNNER-PLAN-2 §P4)"
 echo "$PLAN" | grep -q '"fs_read"'          && fail "pure-text: fs_read must be absent"

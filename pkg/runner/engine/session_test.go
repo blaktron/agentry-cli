@@ -56,6 +56,7 @@ func sessionFixture(t *testing.T) (Params, *dockerx.Fake) {
 	}
 	pol := policy.Default()
 	pol.Images.Runner = "agentry-runner:test"
+	pol.Exec.Packages = map[string]string{"echo": "busybox"} // the fixture declares exec: [echo]
 	pol.Sessions = policy.Sessions{IdleTimeoutSeconds: 3600, MaxWallSeconds: 3600, MaxUserTurns: 3}
 	planDir := filepath.Join(installDir, "plan", "interactive")
 	plan, err := compile.Compile(compile.Inputs{

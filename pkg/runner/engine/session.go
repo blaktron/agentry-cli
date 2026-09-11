@@ -52,7 +52,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: p.Plan.Enforcement,
+		CapabilitiesEnforced: enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,

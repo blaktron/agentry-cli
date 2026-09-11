@@ -47,7 +47,7 @@
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
     "dataAccess": "declared tickets; no servers cataloged by policy (declaration recorded for audit)",
-    "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools container is the runner image minimized to exactly those binaries (per-BriefAgent exec image, agentry-cli#9)",
+    "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools container is the runner image with the operator's catalogued packages installed (git ← apk git, jq ← apk jq) and minimized to exactly those binaries (per-BriefAgent exec image, agentry-cli#9, #100); git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned",
     "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
     "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
     "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN"
@@ -106,6 +106,17 @@
     ],
     "servers": [
       "agentry-tools"
+    ]
+  },
+  "execImage": {
+    "tag": "agentry-runner-exec:test-17262807b507",
+    "commands": [
+      "git",
+      "jq"
+    ],
+    "packages": [
+      "git",
+      "jq"
     ]
   },
   "harness": {
@@ -188,7 +199,7 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "59f56460b8e70e000599557e2749b45f5911c95536541cf6f4c7867b0ae6a959",
+    "gateway/catalog.yaml": "f7d1ec1470b1c7d32b8e7f9806d6a7ed06787cb80b23b4fb58a5db50ec8cd79f",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "4dbca71b62adf7649658e1fb9fa4136dd85514f9aa5d5b068ff475d3a35376f5",
