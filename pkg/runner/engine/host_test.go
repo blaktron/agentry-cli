@@ -117,7 +117,7 @@ func hostFixture(t *testing.T) (Params, *dockerx.Fake, string, string) {
 	t.Setenv("UNRELATED_HOST_VAR", "must-not-leak")
 	f := &dockerx.Fake{
 		Foreground: map[string]*dockerx.FakeForeground{"-probe": {ExitCode: 0}},
-		Ports:      map[string]int{"agentry-cafe0001-proxy": 41001, "agentry-cafe0001-gateway": 41002},
+		Ports:      map[string]int{"agentry-cafe0001-proxy:3128": 41001, "agentry-cafe0001-proxy:8811": 41002},
 		LogsByName: map[string]string{"agentry-cafe0001-proxy": "allow model.example:443\n"},
 	}
 	return Params{
@@ -146,15 +146,21 @@ func TestRunHostHarness(t *testing.T) {
 	if !strings.Contains(env.Harness.Host, "agentry-hosttest") || !strings.Contains(env.Harness.Host, "hosttest 1.2.3") {
 		t.Errorf("harness.host = %q", env.Harness.Host)
 	}
-	// The run's containers were published on 127.0.0.1, ephemeral, and
-	// no agent container ran.
+	// The proxy container — the one with a bridge leg — publishes both
+	// doors on 127.0.0.1, ephemeral: its own CONNECT port and a forward to
+	// the gateway, which publishes nothing and stays on the run network.
+	// No agent container ran.
 	proxy, ok := f.FindRun("-proxy")
-	if !ok || len(proxy.Publish) != 1 || proxy.Publish[0].HostIP != "127.0.0.1" || proxy.Publish[0].HostPort != 0 || proxy.Publish[0].ContainerPort != spec.ProxyPort {
+	if !ok || len(proxy.Publish) != 2 || proxy.Publish[0].HostIP != "127.0.0.1" || proxy.Publish[0].HostPort != 0 || proxy.Publish[0].ContainerPort != spec.ProxyPort ||
+		proxy.Publish[1].HostIP != "127.0.0.1" || proxy.Publish[1].HostPort != 0 || proxy.Publish[1].ContainerPort != spec.GatewayPort {
 		t.Errorf("proxy publish = %+v", proxy.Publish)
 	}
+	if !strings.Contains(strings.Join(proxy.Argv, " "), "--forward :8811=gateway:8811") {
+		t.Errorf("proxy argv lacks the gateway forward: %v", proxy.Argv)
+	}
 	gw, ok := f.FindRun("-gateway")
-	if !ok || len(gw.Publish) != 1 || gw.Publish[0].ContainerPort != spec.GatewayPort {
-		t.Errorf("gateway publish = %+v", gw.Publish)
+	if !ok || len(gw.Publish) != 0 || gw.Network != "agentry-cafe0001-net" {
+		t.Errorf("gateway run = %+v: must publish nothing and stay on the run network", gw)
 	}
 	for _, op := range f.Ops() {
 		if strings.HasPrefix(op, "RunForeground:agentry-cafe0001-agent") {

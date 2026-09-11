@@ -44,8 +44,9 @@ func hostPublish(p Params, containerPort int) []dockerx.PortPublish {
 // afterwards connected to the bridge — and that lands a moment after
 // `docker run -d` and `docker network connect` have both returned. Reading
 // the port once therefore fails intermittently (it failed on the gateway
-// and, by luck of a faster image, not on the proxy). Nothing here is
-// worth a fixed sleep: poll until the mapping is there.
+// back when the gateway published its own port, and, by luck of a faster
+// image, not on the proxy). Nothing here is worth a fixed sleep: poll
+// until the mapping is there.
 func waitPublishedPort(ctx context.Context, d dockerx.Client, name string, containerPort int) (int, error) {
 	deadline := time.Now().Add(publishedPortTimeout)
 	var err error

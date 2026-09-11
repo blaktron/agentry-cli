@@ -89,7 +89,7 @@ func TestCompileRendersDeclaredServer(t *testing.T) {
 		"image: node:22-alpine",
 		"/node_modules/.bin/server-x",
 		spec.PHServers + "/npm-scope-server-x:" + spec.MCPStorePrefix + "/npm-scope-server-x:ro",
-		"api.github.com:443",
+		"api.github.com:443/tcp",
 		"mcp-npm-scope-server-x.github_pat",
 	} {
 		if !strings.Contains(catalog, want) {
@@ -239,4 +239,41 @@ func TestCompileDeclaredServerGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkGolden(t, "declared-server", planDir, []string{"plan.json", "gateway/catalog.yaml"})
+}
+
+// TestCompileDeclaredServerEgressIsATCPRelay (agentry-cli#105): a declared
+// host becomes "host:443/tcp" in the catalog, so the gateway fronts it
+// with its L4 relay (reached by the host's own name, TLS end to end) and
+// not the L7 CONNECT proxy, which is handed to the server as a
+// scheme-less proxy variable Node's fetch refuses and other clients ignore.
+func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
+	planDir := t.TempDir()
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{githubServerSpec()}, policy.Default()), planDir); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "    allowHosts:\n      - api.github.com:443/tcp\n") {
+		t.Fatalf("declared host is not a TCP relay in the catalog:\n%s", b)
+	}
+}
+
+// TestCompileWildcardServerEgressIsDisclosedAsNoRoute: a server declaring
+// "*" egress gets no proxy sidecar from the gateway and sits on the run's
+// internal network, so it has no route out; the enforcement line says so
+// instead of promising unrestricted access the run does not give.
+func TestCompileWildcardServerEgressIsDisclosedAsNoRoute(t *testing.T) {
+	srv := githubServerSpec()
+	srv.Egress = []string{"*"}
+	pol := policy.Default()
+	pol.AllowWildcardEgress = true
+	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, pol), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enf := plan.Enforcement["mcpServers"]; !strings.Contains(enf, "no route out") || strings.Contains(enf, "UNRESTRICTED") {
+		t.Fatalf("wildcard server egress described as something the run does not give: %q", enf)
+	}
 }

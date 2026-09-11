@@ -16,11 +16,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -35,8 +37,10 @@ const usageText = `usage: agentry-runner <mode> [flags]
 
   tools --spec <path>
         serve the §R3 MCP tools on stdio, configured by the compiled spec file
-  proxy --allow <host[:port],...> [--addr :3128]
-        run the CONNECT egress allowlist proxy (llm-proxy)
+  proxy --allow <host[:port],...> [--addr :3128] [--forward LISTEN=TARGET]
+        run the CONNECT egress allowlist proxy (llm-proxy); --forward adds
+        a plain TCP pipe (the host's door to the gateway, which never
+        leaves the run network)
   minimize <command> [<command>...]
         (docker build only) delete every executable except the named commands
   probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60]
@@ -115,8 +119,29 @@ func runProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	allow := fs.String("allow", "", "comma-separated host[:port] CONNECT allowlist")
 	addr := fs.String("addr", ":3128", "listen address")
+	var forwards []string
+	fs.Func("forward", "LISTEN=TARGET plain TCP pipe (repeatable)", func(v string) error {
+		if _, _, err := netproxy.ParseForward(v); err != nil {
+			return err
+		}
+		forwards = append(forwards, v)
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
+	}
+	for _, f := range forwards {
+		listen, target, _ := netproxy.ParseForward(f)
+		l, err := net.Listen("tcp", listen)
+		if err != nil {
+			return fmt.Errorf("forward %s: %w", f, err)
+		}
+		fmt.Fprintf(os.Stderr, "forward %s -> %s\n", listen, target)
+		go func() {
+			if err := netproxy.Forward(context.Background(), l, target, os.Stderr); err != nil {
+				fmt.Fprintf(os.Stderr, "forward %s: %v\n", f, err)
+			}
+		}()
 	}
 	var hosts []string
 	for _, h := range strings.Split(*allow, ",") {

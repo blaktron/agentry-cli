@@ -272,18 +272,29 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 	td.add(func(c context.Context) { _ = d.NetworkRemove(c, netName) })
 
-	// LLM egress proxy: the agent container's only route out (§R4).
+	// LLM egress proxy: the agent container's only route out (§R4). It is
+	// also the one run container with a bridge leg, so for a host-run
+	// harness it is the host's door to everything: its own CONNECT port
+	// and a plain TCP forward to the gateway, which never leaves the run
+	// network (a gateway on the bridge makes every MCP server it launches
+	// inherit that mix of networks, which docker refuses; agentry-cli#105).
 	proxyName := containerName(runID, "proxy")
+	proxyArgv := []string{"proxy",
+		"--allow", strings.Join(p.Plan.Proxy.Allow, ","),
+		"--addr", fmt.Sprintf(":%d", spec.ProxyPort)}
+	proxyPublish := hostPublish(p, spec.ProxyPort)
+	if p.Plan.Harness.Host != nil {
+		proxyArgv = append(proxyArgv, "--forward", fmt.Sprintf(":%d=%s:%d", spec.GatewayPort, spec.GatewayAlias, spec.GatewayPort))
+		proxyPublish = append(proxyPublish, hostPublish(p, spec.GatewayPort)...)
+	}
 	proxySpec := dockerx.RunSpec{
-		Name:  proxyName,
-		Image: p.Plan.Proxy.Image,
-		Argv: []string{"proxy",
-			"--allow", strings.Join(p.Plan.Proxy.Allow, ","),
-			"--addr", fmt.Sprintf(":%d", spec.ProxyPort)},
+		Name:    proxyName,
+		Image:   p.Plan.Proxy.Image,
+		Argv:    proxyArgv,
 		Network: netName,
 		Alias:   spec.ProxyAlias,
 		Labels:  labels,
-		Publish: hostPublish(p, spec.ProxyPort),
+		Publish: proxyPublish,
 	}
 	if err := d.RunDetached(ctx, proxySpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start llm proxy: %w", err))
@@ -301,6 +312,11 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			return Classify(ExitGateway, fmt.Errorf("published proxy port: %w", perr))
 		}
 		rd.hostProxyURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		gwPort, perr := waitPublishedPort(ctx, d, proxyName, spec.GatewayPort)
+		if perr != nil {
+			return Classify(ExitGateway, fmt.Errorf("published gateway forward: %w", perr))
+		}
+		rd.hostGatewayURL = fmt.Sprintf("http://127.0.0.1:%d/mcp", gwPort)
 	}
 
 	gwName := containerName(runID, "gateway")
@@ -316,8 +332,18 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Mounts:  resolveMounts(p.Plan.Gateway.Mounts, rep),
 		Network: netName,
 		Alias:   spec.GatewayAlias,
-		Labels:  labels,
-		Publish: hostPublish(p, spec.GatewayPort),
+		// The gateway learns "its" networks by inspecting the container
+		// whose name is its hostname (docker/mcp-gateway guessNetworks)
+		// and attaches every MCP server it launches to all of them. A
+		// server needs none of ours: it speaks stdio to the gateway, and
+		// its declared hosts are reached through the gateway's own relay
+		// network, where the relay's name must be the server's first
+		// network for docker to resolve the link. So the gateway's
+		// hostname is not its container name: it finds no container,
+		// propagates nothing, and each server sits on exactly the
+		// networks its contract calls for (agentry-cli#105).
+		Hostname: gatewayHostname(runID),
+		Labels:   labels,
 		// The gateway is the one container that drives the host daemon
 		// (§R4 calls that its documented privilege level, and it is why the
 		// agent container never sees this socket). An SELinux-enabled
@@ -333,16 +359,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		_ = d.Stop(c, gwName, 10)
 		_ = d.RemoveForce(c, gwName)
 	})
-	if err := d.NetworkConnect(ctx, "bridge", gwName); err != nil {
-		return Classify(ExitGateway, fmt.Errorf("connect gateway to bridge: %w", err))
-	}
-	if p.Plan.Harness.Host != nil {
-		port, perr := waitPublishedPort(ctx, d, gwName, spec.GatewayPort)
-		if perr != nil {
-			return Classify(ExitGateway, fmt.Errorf("published gateway port: %w", perr))
-		}
-		rd.hostGatewayURL = fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
-	}
+	// No bridge leg for the gateway, on purpose: see the proxy above.
 
 	// Health: an authenticated MCP initialize from inside the run
 	// network. A gateway that cannot answer this cannot serve the agent;
@@ -369,8 +386,63 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		}
 		return Classify(ExitGateway, fmt.Errorf("%w%s", perr, diag))
 	}
+	// A declared server the gateway could not start is logged and then
+	// carried past ("Can't start <name>"); the gateway serves whatever
+	// came up. That is not the run the contract described, so it is the
+	// same failure class as a gateway that never answered. The gateway
+	// launches its servers while loading its configuration, before it
+	// serves the probe, so the log is complete by now.
+	if len(p.Plan.MCPServers) > 0 {
+		if err := checkDeclaredServersStarted(ctx, d, gwName, p.Plan.MCPServers); err != nil {
+			return Classify(ExitGateway, err)
+		}
+	}
 	return nil
 }
+
+// checkDeclaredServersStarted reads the gateway's startup log for the
+// lines it writes when a declared server fails to start or to list its
+// tools, and names the first such server with the gateway's own line.
+func checkDeclaredServersStarted(ctx context.Context, d dockerx.Client, gwName string, servers []spec.MCPServerSpec) error {
+	logs, err := d.Logs(ctx, gwName, 0)
+	if err != nil {
+		return fmt.Errorf("read gateway log to confirm declared servers started: %w", err)
+	}
+	lines := strings.Split(logs, "\n")
+	for _, srv := range servers {
+		for _, line := range lines {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "> Can't start "+srv.Name+":") || strings.HasPrefix(t, "> Can't list tools "+srv.Name+":") {
+				return fmt.Errorf("declared MCP server %s@%s did not start; the gateway said: %s%s", srv.Package, srv.Version, t, serverOutputTail(lines, srv.Name))
+			}
+		}
+	}
+	return nil
+}
+
+// serverOutputTail collects what the gateway relayed from a server's own
+// stderr ("- <name>: …" lines), last 15, so a start failure explains
+// itself: this path ends the run before the receipts keep the gateway log.
+func serverOutputTail(lines []string, name string) string {
+	var out []string
+	for _, line := range lines {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "- "+name+": ") {
+			out = append(out, strings.TrimPrefix(t, "- "+name+": "))
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	if len(out) > 15 {
+		out = out[len(out)-15:]
+	}
+	return "\nserver output tail:\n" + strings.Join(out, "\n")
+}
+
+// gatewayHostname is the gateway container's hostname: not a name any
+// run container carries, and not hex, so it cannot resolve to a
+// container id prefix either.
+func gatewayHostname(runID string) string { return "gw-" + runID }
 
 // runAgent runs the harness container under the budgets, streaming events.
 func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,

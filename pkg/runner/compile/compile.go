@@ -37,6 +37,9 @@ import (
 // Inputs is everything a compile consumes. No run-scoped values belong
 // here (§R4 determinism); the engine substitutes those at execute time.
 type Inputs struct {
+	// CompiledBy is the CLI build recorded in the plan (see
+	// spec.Plan.CompiledBy); empty in tests and goldens.
+	CompiledBy string
 	// Manifest is the verified package manifest.
 	Manifest *manifest.Manifest
 	// Mode is the run mode to compile for; empty means autonomous. A mode
@@ -204,6 +207,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 
 	plan := &spec.Plan{
 		PlanVersion:  spec.PlanVersion,
+		CompiledBy:   in.CompiledBy,
 		Ref:          fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 		Digest:       in.Digest,
 		Source:       in.Source,
@@ -659,9 +663,14 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 		// Unrestricted: neither key — policy-gated at compile, disclosed
 		// in enforcement.
 	case len(srv.Egress) > 0:
+		// "host:443/tcp": the gateway fronts each host with a TCP relay
+		// (its L4 proxy) reached by that name — TLS runs end to end and
+		// any HTTP client works. Its L7 form is an HTTP CONNECT proxy
+		// handed over as a scheme-less proxy variable, which Node's
+		// fetch cannot use and other clients ignore (agentry-cli#105).
 		hosts := make([]string, 0, len(srv.Egress))
 		for _, h := range sortedCopy(srv.Egress) {
-			hosts = append(hosts, h+":443")
+			hosts = append(hosts, h+":443/tcp")
 		}
 		e.set("allowHosts", strListNode(hosts))
 	default:
@@ -868,7 +877,7 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 	if len(mcpServers) > 0 {
 		var parts []string
 		for _, srv := range mcpServers {
-			d := fmt.Sprintf("%s@%s (%s, %s", srv.Package, srv.Version, srv.Source, egressDesc(srv.Egress))
+			d := fmt.Sprintf("%s@%s (%s, %s", srv.Package, srv.Version, srv.Source, serverEgressDesc(srv.Egress))
 			if len(srv.Tools) > 0 {
 				d += ", tools filtered to " + strings.Join(sortedCopy(srv.Tools), "/")
 			}
@@ -879,9 +888,23 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 			d += ")"
 			parts = append(parts, d)
 		}
-		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store, each with its own egress allowlist, server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
+		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store, each with its own egress allowlist (the gateway's per-host TCP relays + DNS interception; nothing else resolves on the run network), server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
 	}
 	return e
+}
+
+// serverEgressDesc is egressDesc for a declared server, whose "*" does not
+// mean what the agent's does: the gateway fronts declared hosts with a
+// proxy sidecar and gives a wildcard server no sidecar at all, and the
+// run network is internal, so such a server has no route out. The line
+// says that rather than promising access the run never grants.
+func serverEgressDesc(hosts []string) string {
+	for _, h := range hosts {
+		if h == "*" {
+			return `egress "*" declared and permitted by policy, but the run grants no route out (internal network, no proxy sidecar); declare hosts to reach them`
+		}
+	}
+	return egressDesc(hosts)
 }
 
 func egressDesc(hosts []string) string {

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"io"
 	"os"
@@ -808,6 +809,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 		_ = os.RemoveAll(filepath.Join(installDir, "plan"))
 	}
 	planDir := filepath.Join(installDir, "plan", string(mode))
+	runnerImage := pol.RunnerImageTag(runnerimage.ContentVersion())
 	if b, err := os.ReadFile(filepath.Join(planDir, "plan.json")); err == nil { //nolint:gosec // our install layout
 		// A plan from an older CLI is recompiled in place, and says so: a
 		// cached install used to stay stale after an upgrade until its
@@ -822,10 +824,20 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 			plan.PolicySHA256 == polSHA &&
 			plan.Harness.Adapter == adapterName &&
 			reflect.DeepEqual(plan.MCPServers, serverSpecs) {
-			if verr := compile.VerifyFiles(plan, planDir); verr == nil {
-				return plan, planDir, nil
+			switch {
+			case plan.CompiledBy != version.Version:
+				// Same schema, another build: the compiler's output may
+				// differ (agentry-cli#105 changed what a server's catalog
+				// entry carries without touching the schema).
+				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", orUnknown(plan.CompiledBy), version.Version)
+			case plan.Proxy.Image != runnerImage:
+				_, _ = fmt.Fprintf(errOut, "installed plan names runner image %s, this CLI builds %s — recompiling\n", plan.Proxy.Image, runnerImage)
+			default:
+				if verr := compile.VerifyFiles(plan, planDir); verr == nil {
+					return plan, planDir, nil
+				}
+				_, _ = fmt.Fprintln(errOut, "installed plan failed integrity check — recompiling")
 			}
-			_, _ = fmt.Fprintln(errOut, "installed plan failed integrity check — recompiling")
 		}
 	}
 	if err := os.RemoveAll(planDir); err != nil {
@@ -840,7 +852,8 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 		Policy:       pol,
 		PolicySHA:    polSHA,
 		AdapterName:  adapterName,
-		RunnerImage:  pol.RunnerImageTag(runnerimage.ContentVersion()),
+		RunnerImage:  runnerImage,
+		CompiledBy:   version.Version,
 		MCPServers:   serverSpecs,
 	}, planDir)
 	if err != nil {
@@ -851,6 +864,14 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, insta
 		return nil, "", engine.Classify(engine.ExitCompile, err)
 	}
 	return plan, planDir, nil
+}
+
+// orUnknown names a plan with no recorded build.
+func orUnknown(v string) string {
+	if v == "" {
+		return "unknown"
+	}
+	return v
 }
 
 // cachedPlanVersion reads just the planVersion of a stored plan.json, so a

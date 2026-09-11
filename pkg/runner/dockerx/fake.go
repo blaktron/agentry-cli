@@ -42,7 +42,7 @@ type Fake struct {
 	Foreground map[string]*FakeForeground
 	// LogsByName scripts Logs.
 	LogsByName map[string]string
-	// Ports answers Port by container name; a published container with
+	// Ports answers Port by "name:port" or by container name; a published container with
 	// no entry gets 41000 + its container port modulo 1000.
 	Ports map[string]int
 	// PortFailures makes that many Port calls fail before one succeeds.
@@ -233,6 +233,11 @@ func (f *Fake) Port(_ context.Context, name string, containerPort int) (int, err
 		return 0, fmt.Errorf("fake docker: no public port for %d/tcp in %s yet", containerPort, name)
 	}
 	f.mu.Unlock()
+	// "name:port" wins over "name", so a container publishing two ports
+	// can answer each; the plain key stays for single-port containers.
+	if p, ok := f.Ports[fmt.Sprintf("%s:%d", name, containerPort)]; ok {
+		return p, nil
+	}
 	if p, ok := f.Ports[name]; ok {
 		return p, nil
 	}

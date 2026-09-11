@@ -111,6 +111,10 @@ func ProxyURL() string {
 type Plan struct {
 	// PlanVersion pins the schema.
 	PlanVersion string `json:"planVersion"`
+	// CompiledBy names the CLI build that compiled the plan. The schema
+	// can stay the same while the compiler's output changes, so a plan
+	// from another build is recompiled rather than reused.
+	CompiledBy string `json:"compiledBy,omitempty"`
 	// Ref is the canonical ns/name@version this plan was compiled from.
 	Ref string `json:"ref"`
 	// Digest is the verified archive digest (sha256:…), or the computed
