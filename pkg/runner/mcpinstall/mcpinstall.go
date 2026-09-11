@@ -371,6 +371,10 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			Name:  "agentry-mcpinstall-" + r.ID,
 			Image: image,
 			Argv:  argv,
+			// The name is fixed per server, so the container must go when
+			// the build ends or the next agent declaring the same server
+			// fails at install with a name conflict (agentry-cli#106).
+			AutoRemove: true,
 			Mounts: []dockerx.Mount{
 				// The server store is the runner's own directory under the
 				// signature profile, so it may be relabeled (agentry-cli#85).

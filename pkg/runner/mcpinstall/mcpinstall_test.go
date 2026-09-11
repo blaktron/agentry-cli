@@ -105,6 +105,11 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 	if n := foregroundCalls(fake); n != 1 {
 		t.Fatalf("builder ran %d times, want 1", n)
 	}
+	// The installer's name is fixed per server: it must remove itself, or
+	// the next agent declaring the same server cannot install it (#106).
+	if run, ok := fake.FindRun("agentry-mcpinstall-"); !ok || !run.AutoRemove {
+		t.Fatalf("installer container not auto-removed: %+v", run)
+	}
 	if _, err := os.Stat(filepath.Join(store, "npm-scope-server-x.json")); err != nil {
 		t.Fatalf("resolution not recorded: %v", err)
 	}
