@@ -7,6 +7,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"golang.org/x/term"
@@ -34,6 +37,12 @@ type installOpts struct {
 	dir           string
 	yes           bool
 	allowUnsigned bool
+	// plan stops after the consent preview and writes nothing (agentry-cli#102):
+	// the same resolve, download, digest and attestation checks, then the
+	// contract, its diff against what this machine accepted, the target and
+	// the directory, as JSON with --json — so a client can show the person
+	// exactly what an install would do and confirm it against a digest.
+	plan bool
 }
 
 // providerTargets maps the per-provider install entry points
@@ -110,7 +119,130 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false,
 		"install a release the registry has published no attestation for")
+	cmd.Flags().BoolVar(&opts.plan, "plan", false,
+		"preview only: resolve, download and verify, then show the contract, its diff and where it would go; write nothing (with --json, the machine-readable shape)")
 	return cmd
+}
+
+// installPlan is the `install --plan --json` shape (agentry-cli#102): what an
+// install would do, with nothing written. `contract` is the manifest's
+// capabilities as canonical JSON (sorted keys), and `contractDigest` its
+// sha256, so a client can show the contract, hand the digest to the person,
+// and confirm an install against the digest of exactly what was shown.
+type installPlan struct {
+	Ref       string   `json:"ref"`
+	Namespace string   `json:"namespace"`
+	Name      string   `json:"name"`
+	Version   string   `json:"version"`
+	Digest    string   `json:"digest"`
+	Modes     []string `json:"modes"`
+	Summary   string   `json:"summary,omitempty"`
+	Yanked    bool     `json:"yanked,omitempty"`
+	// Contract is capabilities as canonical JSON; ContractDigest its sha256.
+	Contract       json.RawMessage `json:"contract"`
+	ContractDigest string          `json:"contractDigest"`
+	// Attestation is verified | unsigned | mismatch | unverifiable, with the
+	// key id when verified; Signed is Attestation == verified. An install
+	// refuses mismatch and unverifiable outright, and unsigned without
+	// --allow-unsigned.
+	Attestation string `json:"attestation"`
+	KeyID       string `json:"keyId,omitempty"`
+	Signed      bool   `json:"signed"`
+	// Installed is what this machine last accepted for the same registry,
+	// namespace, name, target and directory, when there is a record.
+	Installed *installPlanPrior `json:"installed,omitempty"`
+	// Diff is the capability diff against Installed (empty on a first install).
+	Diff installed.Diff `json:"diff"`
+	// NeedsConfirmation says whether an install would ask (or need --yes):
+	// a first install that declares network egress or exec, or an update
+	// that widens the contract. Reason says which.
+	NeedsConfirmation bool   `json:"needsConfirmation"`
+	Reason            string `json:"reason,omitempty"`
+	// Target and Dir are where an install would write; Managed is true when
+	// the CLI chose Dir (and would clear it on reinstall).
+	Target  string `json:"target"`
+	Dir     string `json:"dir"`
+	Managed bool   `json:"managed"`
+	// Refusal is set when an install would stop before writing: the
+	// attestation verdict or the missing --allow-unsigned. Empty otherwise.
+	Refusal string `json:"refusal,omitempty"`
+}
+
+type installPlanPrior struct {
+	Version string `json:"version"`
+	Dir     string `json:"dir"`
+}
+
+// installResult is the `install --json` shape: what was written where, and
+// the contract recorded as accepted.
+type installResult struct {
+	Ref            string          `json:"ref"`
+	Namespace      string          `json:"namespace"`
+	Name           string          `json:"name"`
+	Version        string          `json:"version"`
+	Digest         string          `json:"digest"`
+	Target         string          `json:"target"`
+	Dir            string          `json:"dir"`
+	Managed        bool            `json:"managed"`
+	Attestation    string          `json:"attestation"`
+	Signed         bool            `json:"signed"`
+	Contract       json.RawMessage `json:"contract"`
+	ContractDigest string          `json:"contractDigest"`
+	// Recorded is true when the shared install state took the record.
+	Recorded bool `json:"recorded"`
+}
+
+// contractJSON renders capabilities as canonical JSON with its sha256: the
+// same form pkg/manifest.CanonicalJSON gives a whole manifest — keys sorted
+// at every level (encoding/json sorts map keys), nulls and empty objects and
+// arrays pruned — applied to the capabilities value alone, so two identical
+// contracts digest identically whatever their source's field order.
+func contractJSON(caps manifest.Capabilities) (json.RawMessage, string, error) {
+	raw, err := json.Marshal(caps)
+	if err != nil {
+		return nil, "", fmt.Errorf("canonical contract: %w", err)
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, "", fmt.Errorf("canonical contract: %w", err)
+	}
+	b, err := json.Marshal(pruneEmptyJSON(v))
+	if err != nil {
+		return nil, "", fmt.Errorf("canonical contract: %w", err)
+	}
+	sum := sha256.Sum256(b)
+	return b, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// pruneEmptyJSON mirrors pkg/manifest's pruneEmpty: nulls, empty objects and
+// empty arrays leave object values; array elements stay as they are.
+func pruneEmptyJSON(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			pv := pruneEmptyJSON(val)
+			if pv == nil {
+				continue
+			}
+			if m, ok := pv.(map[string]any); ok && len(m) == 0 {
+				continue
+			}
+			if a, ok := pv.([]any); ok && len(a) == 0 {
+				continue
+			}
+			out[k] = pv
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = pruneEmptyJSON(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // validTargets is the §5.6 closed set. The mcp target left with the
@@ -150,6 +282,10 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		return err
 	}
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
+	if flags.jsonOut {
+		// §R8: stdout carries the result; the narration moves to stderr.
+		out = errOut
+	}
 
 	res, err := resolveRef(cmd.Context(), client, ref, true)
 	if err != nil {
@@ -177,8 +313,10 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// says the bytes match what the registry SAID; the attestation says who
 	// vouched for them. Verified against the digest we just computed, so a
 	// valid signature over some other archive proves nothing here.
-	if err := verifyInstallAttestation(cmd, reg, token, res, computed, opts.allowUnsigned); err != nil {
-		return err
+	att := installAttestation(cmd, reg, token, res, computed)
+	attErr := judgeAttestation(out, errOut, att, res, opts.allowUnsigned, opts.plan)
+	if attErr != nil && !opts.plan {
+		return attErr
 	}
 
 	target := opts.target
@@ -211,6 +349,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		state = installed.State{}
 	}
 	nextCaps := installed.Snapshot(m.Capabilities)
+	if opts.plan {
+		return writeInstallPlan(cmd, res, m, computed, att, attErr, &state, key, nextCaps, target, paths)
+	}
 	if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Capabilities, opts.yes); err != nil {
 		return err
 	}
@@ -246,10 +387,92 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// Record only after the files actually landed: a manifest claiming an
 	// install that failed would suppress the next run's capability prompt.
 	state.Upsert(key, res.Version, nextCaps, paths.managed)
+	recorded := true
 	if err := installed.Save(state); err != nil {
+		recorded = false
 		_, _ = fmt.Fprintf(errOut, "warning: %v — the next install of this agent will re-ask about capabilities\n", err)
 	}
+	if flags.jsonOut {
+		contract, cdigest, err := contractJSON(m.Capabilities)
+		if err != nil {
+			return err
+		}
+		return emitJSON(cmd.OutOrStdout(), installResult{
+			Ref: res.Namespace + "/" + res.Name + "@" + res.Version, Namespace: res.Namespace, Name: m.Name,
+			Version: res.Version, Digest: computed, Target: target, Dir: paths.dest, Managed: paths.managed,
+			Attestation: string(att.State), Signed: att.State == trust.StateVerified,
+			Contract: contract, ContractDigest: cdigest, Recorded: recorded,
+		})
+	}
 	return nil
+}
+
+// writeInstallPlan is the --plan exit: the preview as text or JSON, nothing
+// written, and exit 0 whether or not an install would be refused — the
+// refusal is part of what the plan reports.
+func writeInstallPlan(cmd *cobra.Command, res *apiclient.ResolveResult, m *manifest.Manifest, digest string,
+	att trust.AttestationResult, attErr error, state *installed.State, key installed.Key,
+	next installed.CapSnapshot, target string, paths installPaths,
+) error {
+	contract, cdigest, err := contractJSON(m.Capabilities)
+	if err != nil {
+		return err
+	}
+	plan := installPlan{
+		Ref: res.Namespace + "/" + res.Name + "@" + res.Version, Namespace: res.Namespace, Name: m.Name,
+		Version: res.Version, Digest: digest, Modes: modeStrings(m.SupportedModes()), Summary: m.Summary, Yanked: res.Yanked,
+		Contract: contract, ContractDigest: cdigest,
+		Attestation: string(att.State), KeyID: att.KeyID, Signed: att.State == trust.StateVerified,
+		Target: target, Dir: paths.dest, Managed: paths.managed,
+	}
+	if attErr != nil {
+		plan.Refusal = attErr.Error()
+	}
+	if prev := state.Find(key); prev != nil {
+		plan.Installed = &installPlanPrior{Version: prev.Version, Dir: prev.Dir}
+		plan.Diff = installed.DiffCapabilities(prev.Capabilities, next)
+		if plan.Diff.HasWidened() {
+			plan.NeedsConfirmation = true
+			plan.Reason = "this update widens the declared capabilities"
+		}
+	} else if capabilityNeedsConfirm(m.Capabilities) {
+		plan.NeedsConfirmation = true
+		plan.Reason = "a first install of a BriefAgent that declares network egress or exec"
+	}
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), plan)
+	}
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "plan: %s -> %s (%s)\n", plan.Ref, plan.Dir, plan.Target)
+	if plan.Installed != nil {
+		_, _ = fmt.Fprintf(out, "installed: %s at %s\n", plan.Installed.Version, plan.Installed.Dir)
+		for _, l := range plan.Diff.Widened {
+			_, _ = fmt.Fprintf(out, "  + this update %s\n", l)
+		}
+		for _, l := range plan.Diff.Narrowed {
+			_, _ = fmt.Fprintf(out, "  - this update %s\n", l)
+		}
+	}
+	if plan.NeedsConfirmation {
+		_, _ = fmt.Fprintf(out, "would ask: %s\n", plan.Reason)
+	}
+	if plan.Refusal != "" {
+		_, _ = fmt.Fprintf(out, "would refuse: %s\n", plan.Refusal)
+	}
+	_, _ = fmt.Fprintln(out, "nothing written (--plan)")
+	return nil
+}
+
+// emitJSON prints one JSON document, compact and newline-terminated. Compact
+// on purpose: an embedded canonical `contract` keeps its exact bytes, so the
+// digest beside it is the digest of what the reader holds.
+func emitJSON(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(b, '\n'))
+	return err
 }
 
 // installExtractLimits bounds what the CLI unpacks. Looser than the server's
@@ -273,9 +496,7 @@ func installExtractLimits() pkgarchive.ExtractLimits {
 //   - unsigned   → the registry offers no attestation. Proceed only behind
 //     --allow-unsigned, in CI as well as at a terminal: a flag is a decision
 //     someone wrote down, a TTY prompt is a decision someone clicked past.
-func verifyInstallAttestation(cmd *cobra.Command, reg, token string, res *apiclient.ResolveResult, archiveDigest string, allowUnsigned bool) error {
-	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
-
+func installAttestation(cmd *cobra.Command, reg, token string, res *apiclient.ResolveResult, archiveDigest string) trust.AttestationResult {
 	attURL := ""
 	if res.AttestationUrl != nil {
 		attURL = *res.AttestationUrl
@@ -286,8 +507,12 @@ func verifyInstallAttestation(cmd *cobra.Command, reg, token string, res *apicli
 		// concluding "unsigned".
 		attURL = fmt.Sprintf("/api/v1/agents/%s/%s/versions/%s/attestation", res.Namespace, res.Name, res.Version)
 	}
-	att := trust.VerifyAttestation(cmd.Context(), httpClient, reg, token, attURL, archiveDigest)
+	return trust.VerifyAttestation(cmd.Context(), httpClient, reg, token, attURL, archiveDigest)
+}
 
+// judgeAttestation narrates the verdict and returns the install's refusal,
+// if any; --plan reports the refusal instead of stopping on it.
+func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *apiclient.ResolveResult, allowUnsigned, plan bool) error {
 	switch att.State {
 	case trust.StateVerified:
 		_, _ = fmt.Fprintf(out, "attestation:   verified (key %s)\n", att.KeyID)
@@ -305,9 +530,13 @@ func verifyInstallAttestation(cmd *cobra.Command, reg, token string, res *apicli
 				"re-run with --allow-unsigned to install it anyway",
 				res.Namespace, res.Name, res.Version, att.Detail)
 		}
+		doing := "installing"
+		if plan {
+			doing = "an install would proceed"
+		}
 		_, _ = fmt.Fprintf(errOut,
-			"warning: unsigned — registry offers no attestation for %s/%s@%s; installing because --allow-unsigned was given\n",
-			res.Namespace, res.Name, res.Version)
+			"warning: unsigned — registry offers no attestation for %s/%s@%s; %s because --allow-unsigned was given\n",
+			res.Namespace, res.Name, res.Version, doing)
 		return nil
 
 	default: // "mismatch", "unverifiable"

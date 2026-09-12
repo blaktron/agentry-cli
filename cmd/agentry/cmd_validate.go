@@ -60,8 +60,76 @@ func newValidateCmd() *cobra.Command {
 }
 
 // runValidate executes the offline validation over dir.
+// validateOutput is the `validate --json` shape (agentry-cli#102): the
+// rules and scan findings as data, and the verdict `publish` would reach.
+type validateOutput struct {
+	Passed bool `json:"passed"`
+	// Manifest is what agent.yaml said about itself.
+	Manifest validateManifest `json:"manifest"`
+	// Issues are the manifest rules V1–V9, errors and warnings.
+	Issues []validateIssue `json:"issues"`
+	// Inventory is the S1 subset over the resolved include set.
+	Inventory []validateLocalFinding `json:"inventory"`
+	// Findings are the S3/S4 scanner hits.
+	Findings []validateFinding `json:"findings"`
+	// ReadErrors are include-set files that could not be read.
+	ReadErrors []string `json:"readErrors"`
+	FileCount  int      `json:"fileCount"`
+	Bundle     struct {
+		Version string `json:"version"`
+		Source  string `json:"source"`
+	} `json:"bundle"`
+	Counts struct {
+		Errors           int `json:"errors"`
+		Warnings         int `json:"warnings"`
+		InventoryFailing int `json:"inventoryFailing"`
+		Findings         int `json:"findings"`
+	} `json:"counts"`
+	Strict bool `json:"strict"`
+}
+
+type validateManifest struct {
+	Namespace     string   `json:"namespace"`
+	Name          string   `json:"name"`
+	Version       string   `json:"version"`
+	SchemaVersion int      `json:"schemaVersion"`
+	Modes         []string `json:"modes"`
+}
+
+type validateIssue struct {
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Path     string `json:"path,omitempty"`
+	Message  string `json:"message"`
+}
+
+type validateLocalFinding struct {
+	Scanner  string `json:"scanner"`
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	FilePath string `json:"filePath"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+type validateFinding struct {
+	RuleID     string            `json:"ruleId"`
+	Scanner    string            `json:"scanner"`
+	Severity   string            `json:"severity"`
+	Confidence string            `json:"confidence"`
+	Title      string            `json:"title"`
+	FilePath   string            `json:"filePath"`
+	LineStart  int               `json:"lineStart,omitempty"`
+	LineEnd    int               `json:"lineEnd,omitempty"`
+	Excerpt    string            `json:"excerpt,omitempty"`
+	Detail     map[string]string `json:"detail,omitempty"`
+}
+
 func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error {
 	out := cmd.OutOrStdout()
+	if flags.jsonOut {
+		out = cmd.ErrOrStderr() // §R8: the report on stdout, the narration on stderr
+	}
+	report := validateOutput{Strict: strict, Issues: []validateIssue{}, Inventory: []validateLocalFinding{}, Findings: []validateFinding{}, ReadErrors: []string{}}
 
 	if rulesUpdate {
 		if _, err := fetchRulesBundle(cmd.Context(), cmd.ErrOrStderr(), registryURL()); err != nil {
@@ -99,13 +167,21 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 			return os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))) //nolint:gosec // validated repo-relative path in the workspace
 		},
 	})
+	report.Manifest = validateManifest{Namespace: m.Namespace, Name: m.Name, Version: m.Version, SchemaVersion: m.Major(), Modes: modeStrings(m.SupportedModes())}
 	var errCount, warnCount int
 	for _, issue := range issues {
+		sev := "error"
 		if manifest.IsWarning(issue) {
 			warnCount++
+			sev = "warning"
 		} else {
 			errCount++
 		}
+		vi := validateIssue{Severity: sev, Message: issue.Error()}
+		if is, ok := manifest.AsIssue(issue); ok {
+			vi.Rule, vi.Path, vi.Message = is.Rule, is.Path, is.Message
+		}
+		report.Issues = append(report.Issues, vi)
 	}
 	if len(issues) == 0 {
 		_, _ = fmt.Fprintln(out, "manifest: OK (rules V1-V9, public-publish context)")
@@ -119,12 +195,17 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 	errCount += len(readErrs)
 	for _, e := range readErrs {
 		_, _ = fmt.Fprintf(out, "  ERROR read: %v\n", e)
+		report.ReadErrors = append(report.ReadErrors, e.Error())
 	}
+	report.FileCount = len(scanFiles)
 
 	// S1 subset (D-12): the inventory checks that used to reject a workspace
 	// at submit after it had passed locally.
 	s1 := scanS1Local(scanFiles)
 	s1Failing := localFailingFindings(s1)
+	for _, f := range s1 {
+		report.Inventory = append(report.Inventory, validateLocalFinding(f))
+	}
 	if len(s1) == 0 {
 		_, _ = fmt.Fprintf(out, "inventory: clean — %d file(s), S1 (binaries, nested archives, encoding)\n", len(scanFiles))
 	} else {
@@ -139,6 +220,13 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 	}
 	findings := rules.Scan(bundle, rulesFiles(scanFiles))
 	sortFindings(findings)
+	report.Bundle.Version, report.Bundle.Source = bundle.Version(), source
+	for _, f := range findings {
+		report.Findings = append(report.Findings, validateFinding{
+			RuleID: f.RuleID, Scanner: f.Scanner, Severity: string(f.Severity), Confidence: string(f.Confidence),
+			Title: f.Title, FilePath: f.FilePath, LineStart: f.LineStart, LineEnd: f.LineEnd, Excerpt: f.Excerpt, Detail: f.Detail,
+		})
+	}
 
 	switch {
 	case len(findings) == 0:
@@ -151,6 +239,15 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 		}
 	}
 	failed := errCount > 0 || len(findings) > 0 || s1Failing > 0 || (strict && warnCount > 0)
+	report.Passed = !failed
+	report.Counts.Errors, report.Counts.Warnings, report.Counts.InventoryFailing, report.Counts.Findings = errCount, warnCount, s1Failing, len(findings)
+	if flags.jsonOut {
+		// The report is the answer either way; the exit code still says
+		// whether it passed, as it does for doctor.
+		if err := emitJSON(cmd.OutOrStdout(), report); err != nil {
+			return err
+		}
+	}
 	if failed {
 		return fmt.Errorf("validate failed: %d error(s), %d warning(s), %d inventory finding(s), %d scan finding(s)",
 			errCount, warnCount, s1Failing, len(findings))
