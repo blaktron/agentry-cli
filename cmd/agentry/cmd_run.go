@@ -66,6 +66,13 @@ type runOpts struct {
 	allowVulnerableMCP bool
 	prepare            bool
 	dryRun             bool
+	// plan is the consent-free preview a client shows a person before they
+	// consent (agentry-cli#124): resolve, verify, compile, and print what a
+	// run would enforce and what it would ask or refuse — asking nothing,
+	// recording nothing, and materializing into a temp dir rather than the
+	// runner cache. --dry-run keeps its meaning (the plan for a person who
+	// consented on the terminal).
+	plan               bool
 	keepRunDir         bool
 	listAdapters       bool
 	files              []string
@@ -128,6 +135,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.allowVulnerableMCP, "allow-vulnerable-mcp", false, "run even when the registry reports a high/critical vulnerability for a declared MCP server (recorded in the receipt)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
+	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing (with --json, the machine-readable shape)")
 	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode; asked on a terminal when it declares both, autonomous otherwise)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
@@ -203,13 +211,35 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	// Materialize: verified workspace + install metadata, cached per
-	// digest (§R5 standalone mode).
+	// digest (§R5 standalone mode). A --plan materializes into a temp
+	// home instead: a preview writes nothing that outlives it, and an
+	// unsigned release is reported rather than refused.
 	var meta *installMeta
 	var installDir string
+	var planRefusal string
+	// consentHome is where the consent record lives (the real home); home
+	// itself moves to a temp dir under --plan so every later write — the
+	// install cache, the profile store, the plan dir — outlives nothing.
+	consentHome, matOpts := home, opts
+	if opts.plan {
+		tmp, terr := os.MkdirTemp("", "agentry-plan-*")
+		if terr != nil {
+			return fmt.Errorf("create plan dir: %w", terr)
+		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		home = tmp
+		matOpts.allowUnsigned = true
+	}
 	if opts.local != "" {
-		meta, installDir, err = materializeLocal(cmd, opts.local, home, opts.allowUnsigned)
+		if opts.plan && !opts.allowUnsigned {
+			planRefusal = "a local workspace has no attestation; a run needs --allow-unsigned"
+		}
+		meta, installDir, err = materializeLocal(cmd, opts.local, home, matOpts.allowUnsigned)
 	} else {
-		meta, installDir, err = materializeRegistry(cmd, ref, home, opts)
+		meta, installDir, err = materializeRegistry(cmd, ref, home, matOpts)
+		if err == nil && opts.plan {
+			planRefusal = attestationRefusal(meta.Attestation, opts.allowUnsigned)
+		}
 	}
 	if err != nil {
 		return err
@@ -226,7 +256,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
-	if mode == manifest.ModeInteractive && !opts.dryRun {
+	if mode == manifest.ModeInteractive && !opts.dryRun && !opts.plan {
 		if !stdinIsTTY(cmd.InOrStdin()) {
 			return engine.Classify(engine.ExitUsage, errors.New("an interactive run needs a terminal on stdin (the chat is the input); pipe a task to --mode autonomous instead"))
 		}
@@ -235,7 +265,10 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 
-	if err := confirmRunCapabilities(cmd, m, meta, installDir, opts, mode); err != nil {
+	var consent runPlanConsent
+	if opts.plan {
+		consent = describeRunConsent(m, meta, consentHome)
+	} else if err := confirmRunCapabilities(cmd, m, meta, installDir, opts, mode); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
@@ -268,7 +301,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		var refuseErr error
 		vulnLine, refuseErr = vulnerabilityVerdict(statuses, registryURL(), opts.allowVulnerableMCP, pol.MCPServers.AllowVulnerable)
 		if refuseErr != nil {
-			return engine.Classify(engine.ExitPolicy, refuseErr)
+			if !opts.plan {
+				return engine.Classify(engine.ExitPolicy, refuseErr)
+			}
+			if planRefusal == "" {
+				planRefusal = refuseErr.Error()
+			}
 		}
 		resolvedServers, err = ensureServerResolutions(cmd.Context(), cmd.ErrOrStderr(), serversDir, pol, m)
 		if err != nil {
@@ -290,6 +328,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		plan.Enforcement["mcpServers.vulnerabilities"] = vulnLine
 	}
 
+	if opts.plan {
+		return printRunPlan(cmd, plan, meta, m, mode, consent, planRefusal)
+	}
 	if opts.dryRun {
 		return printDryRun(cmd, plan, planDir)
 	}
@@ -499,6 +540,129 @@ func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "reports and receipts: %s\n", env.OutDir)
 }
 
+// runPlanConsent is what a run's consent gate would say, computed without
+// asking or recording (agentry-cli#124).
+type runPlanConsent struct {
+	Installed         *installPlanPrior `json:"installed,omitempty"`
+	Diff              installed.Diff    `json:"diff"`
+	NeedsConfirmation bool              `json:"needsConfirmation"`
+	Reason            string            `json:"reason,omitempty"`
+}
+
+// describeRunConsent mirrors confirmRunCapabilities' decision without its
+// prompt and without installed.Save.
+func describeRunConsent(m *manifest.Manifest, meta *installMeta, home string) runPlanConsent {
+	var c runPlanConsent
+	key := installed.Key{
+		Registry: "runner", Namespace: meta.Namespace, Name: meta.Name,
+		Target: "runner", Dir: filepath.Join(home, "agents", meta.Namespace, meta.Name),
+	}
+	state, serr := installed.Load()
+	if serr != nil {
+		state = installed.State{}
+	}
+	next := installed.Snapshot(m.Capabilities)
+	if prev := state.Find(key); prev != nil {
+		c.Installed = &installPlanPrior{Version: prev.Version, Dir: prev.Dir}
+		c.Diff = installed.DiffCapabilities(prev.Capabilities, next)
+		if c.Diff.HasWidened() {
+			c.NeedsConfirmation = true
+			c.Reason = "this version widens the declared capabilities"
+		}
+	} else if capabilityNeedsConfirm(m.Capabilities) {
+		c.NeedsConfirmation = true
+		c.Reason = "a first run of a BriefAgent that declares network egress or exec"
+	}
+	return c
+}
+
+// attestationRefusal is what a run would stop on for this verdict: nothing
+// when verified, the missing flag when unsigned or local, the verdict
+// itself otherwise.
+func attestationRefusal(att receipt.Attestation, allowUnsigned bool) string {
+	switch att.State {
+	case "verified":
+		return ""
+	case "unsigned", "local":
+		if allowUnsigned {
+			return ""
+		}
+		return "the release is " + att.State + "; a run needs --allow-unsigned"
+	default:
+		return "attestation " + att.State + " — a run refuses"
+	}
+}
+
+// cachedAttestationGate re-applies the unsigned gate to an install the
+// cache already holds: the cache remembers what the verdict was, and the
+// flag is asked for again on every run.
+func cachedAttestationGate(meta *installMeta, allowUnsigned bool) error {
+	switch meta.Attestation.State {
+	case "unsigned", "local":
+		if !allowUnsigned {
+			return fmt.Errorf("%s is %s (cached install); re-run with --allow-unsigned to run it anyway", meta.Ref, meta.Attestation.State)
+		}
+	}
+	return nil
+}
+
+// runPlanOutput is the `run --plan --json` shape (agentry-cli#124): the
+// compiled plan — what a run would enforce — and what a run would ask or
+// refuse, with nothing asked or recorded.
+type runPlanOutput struct {
+	Ref     string   `json:"ref"`
+	Version string   `json:"version"`
+	Digest  string   `json:"digest"`
+	Mode    string   `json:"mode"`
+	Modes   []string `json:"modes"`
+	Summary string   `json:"summary,omitempty"`
+	// Plan is the compiled plan, canonical (§R4); PlanSha256 its hash.
+	Plan       json.RawMessage `json:"plan"`
+	PlanSha256 string          `json:"planSha256"`
+	// Contract is the manifest's capabilities as canonical JSON; the same
+	// form install --plan reports.
+	Contract       json.RawMessage `json:"contract"`
+	ContractDigest string          `json:"contractDigest"`
+	Attestation    string          `json:"attestation"`
+	KeyID          string          `json:"keyId,omitempty"`
+	Signed         bool            `json:"signed"`
+	runPlanConsent
+	// Refusal is what a run would stop on before executing: the
+	// attestation, or a declared server with a known vulnerability.
+	Refusal string `json:"refusal,omitempty"`
+}
+
+func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installMeta, m *manifest.Manifest, mode manifest.Mode, consent runPlanConsent, refusal string) error {
+	b, err := plan.MarshalCanonical()
+	if err != nil {
+		return err
+	}
+	contract, cdigest, err := contractJSON(m.Capabilities)
+	if err != nil {
+		return err
+	}
+	out := runPlanOutput{
+		Ref: meta.Ref, Version: meta.Version, Digest: meta.Digest, Mode: string(mode), Modes: modeStrings(m.SupportedModes()),
+		Summary: m.Summary, Plan: bytes.TrimSpace(b), PlanSha256: planHash(plan), Contract: contract, ContractDigest: cdigest,
+		Attestation: meta.Attestation.State, KeyID: meta.Attestation.KeyID, Signed: meta.Attestation.Verified,
+		runPlanConsent: consent, Refusal: refusal,
+	}
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), out)
+	}
+	w := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(w, "plan: %s (%s) plan sha256 %s\n", out.Ref, out.Mode, out.PlanSha256)
+	_, _ = fmt.Fprintf(w, "attestation: %s\n", out.Attestation)
+	if out.NeedsConfirmation {
+		_, _ = fmt.Fprintf(w, "would ask: %s\n", out.Reason)
+	}
+	if out.Refusal != "" {
+		_, _ = fmt.Fprintf(w, "would refuse: %s\n", out.Refusal)
+	}
+	_, _ = fmt.Fprintln(w, "nothing asked, nothing recorded (--plan)")
+	return nil
+}
+
 // printDryRun prints the compiled plan (§R4: deterministic, hashable,
 // printable) without touching docker.
 func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
@@ -566,7 +730,7 @@ func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (man
 	if len(modes) == 0 {
 		return manifest.ModeAutonomous, nil // the compiler refuses it with the reason
 	}
-	if !stdinIsTTY(cmd.InOrStdin()) || opts.yes || opts.dryRun {
+	if !stdinIsTTY(cmd.InOrStdin()) || opts.yes || opts.dryRun || opts.plan {
 		return manifest.ModeAutonomous, nil
 	}
 	p := &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
@@ -587,6 +751,17 @@ func shortHash(plan *spec.Plan) string {
 		return "unhashable"
 	}
 	return h[:12]
+}
+
+// planHash is the whole plan hash — the receipt's runPlanSha256, over the
+// canonical indented form spec.Plan.Hash defines, not over the compact
+// bytes the JSON output carries; a client matches it, it does not re-derive it.
+func planHash(plan *spec.Plan) string {
+	h, err := plan.Hash()
+	if err != nil {
+		return "unhashable"
+	}
+	return h
 }
 
 // resolveOutDir picks and creates the output folder (RQ3).
@@ -633,6 +808,12 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	installDir := filepath.Join(home, "agents", res.Namespace, res.Name,
 		fmt.Sprintf("%s-%s", res.Version, digestSuffix(res.Digest)))
 	if meta, ok := loadInstallMeta(installDir, res.Digest); ok {
+		// The cache remembers the verdict, not the consent: an unsigned
+		// release still needs --allow-unsigned on every run, or the gate
+		// would be one-shot per digest (agentry-cli#124).
+		if err := cachedAttestationGate(meta, opts.allowUnsigned); err != nil {
+			return nil, "", engine.Classify(engine.ExitVerify, err)
+		}
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "using verified install %s\n", installDir)
 		return meta, installDir, nil
 	}
@@ -646,7 +827,7 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 		return nil, "", engine.Classify(engine.ExitVerify,
 			fmt.Errorf("digest mismatch: registry says %s, archive is %s — refusing to run", res.Digest, computed))
 	}
-	att, err := verifyRunAttestation(cmd, reg, token, res, computed, opts.allowUnsigned)
+	att, err := verifyRunAttestation(cmd, reg, token, res, computed, opts.allowUnsigned, opts.plan)
 	if err != nil {
 		return nil, "", engine.Classify(engine.ExitVerify, err)
 	}
@@ -673,7 +854,10 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 
 // verifyRunAttestation mirrors the install gate (cmd_install.go) but also
 // returns the attestation facts the result envelope reports.
-func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.ResolveResult, archiveDigest string, allowUnsigned bool) (receipt.Attestation, error) {
+// plan makes every verdict reportable rather than a refusal: a preview
+// names what a run would stop on (attestationRefusal), and materializes
+// into a temp home that outlives nothing.
+func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.ResolveResult, archiveDigest string, allowUnsigned, plan bool) (receipt.Attestation, error) {
 	attURL := ""
 	if res.AttestationUrl != nil {
 		attURL = *res.AttestationUrl
@@ -699,6 +883,10 @@ func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.
 		_, _ = fmt.Fprintf(errOut, "warning: unsigned — running %s/%s@%s because --allow-unsigned was given\n", res.Namespace, res.Name, res.Version)
 		return receipt.Attestation{State: "unsigned"}, nil
 	default:
+		if plan {
+			_, _ = fmt.Fprintf(errOut, "attestation:   %s — a run would refuse (%s)\n", att.State, att.Detail)
+			return receipt.Attestation{State: string(att.State), KeyID: att.KeyID}, nil
+		}
 		hint := ""
 		if att.KeyRotated {
 			hint = " (the registry advertises signing key ids you have not pinned — re-pin deliberately if this rotation is expected)"

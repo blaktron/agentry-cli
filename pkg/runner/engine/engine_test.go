@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -642,5 +643,44 @@ func TestReceiptNamesResolvedExecPackages(t *testing.T) {
 	}
 	if strings.Contains(env2.CapabilitiesEnforced["exec"], "resolved at image build") {
 		t.Fatalf("no packages, yet the receipt claims a build: %q", env2.CapabilitiesEnforced["exec"])
+	}
+}
+
+// TestRunInterruptedTearsDownAndWritesEnvelope (agentry-cli#124): a
+// cancelled context — main's SIGINT — ends the agent, runs the teardown
+// on the way out, and writes result.json with status error and the word
+// "interrupted" under the cli class, so an interrupted run leaves its
+// receipts where a process killed by the signal left nothing.
+func TestRunInterruptedTearsDownAndWritesEnvelope(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Block: true}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+	env, err := Run(ctx, f, p)
+	if err == nil {
+		t.Fatal("an interrupted run must fail")
+	}
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitCLI || ce.Err.Error() != "interrupted" {
+		t.Fatalf("classification: %v", err)
+	}
+	if env == nil || env.Status != "error" || env.Error != "interrupted" {
+		t.Fatalf("envelope: %+v", env)
+	}
+	b, rerr := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
+	if rerr != nil {
+		t.Fatalf("result.json not written: %v", rerr)
+	}
+	if !strings.Contains(string(b), `"exitClass": "cli"`) || !strings.Contains(string(b), `"error": "interrupted"`) {
+		t.Fatalf("result.json: %s", b)
+	}
+	ops := f.Ops()
+	joined := strings.Join(ops, "\n")
+	if !strings.Contains(joined, "Stop:agentry-cafe0000-gateway") || !strings.Contains(joined, "NetworkRemove:agentry-cafe0000-net") {
+		t.Fatalf("teardown did not run: %v", ops)
 	}
 }

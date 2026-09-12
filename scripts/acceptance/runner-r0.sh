@@ -111,4 +111,22 @@ set -e
 [ "$CODE" -eq 10 ] || fail "unsigned local: want exit 10, got $CODE"
 note "unsigned local refused (exit 10)"
 
+# --plan --json (agentry-cli#124): the consent-free preview compiles the
+# plan, reports the attestation and the refusal a run would meet, and asks
+# and records nothing — a local workspace without --allow-unsigned still
+# previews, with the refusal named.
+BEFORE=$(sha256sum "$WORK/config/installed.yaml" 2>/dev/null | cut -c1-16)
+PLAN=$("$AGENTRY" --json run --local testdata/runner/hello-report --plan --policy "$POLICY" 2>/dev/null) \
+  || fail "run --plan --json exited non-zero"
+AFTER=$(sha256sum "$WORK/config/installed.yaml" 2>/dev/null | cut -c1-16)
+[ "$BEFORE" = "$AFTER" ] || fail "run --plan changed the consent record"
+python3 - "$PLAN" <<'PY'
+import json, sys
+plan = json.loads(sys.argv[1])
+assert plan["attestation"] == "local" and not plan["signed"], plan["attestation"]
+assert "--allow-unsigned" in plan["refusal"], plan.get("refusal")
+assert plan["mode"] == "autonomous" and len(plan["planSha256"]) == 64 and plan["plan"]["ref"] == plan["ref"]
+PY
+note "run --plan --json previews without asking or recording"
+
 echo "runner-r0: all checks passed"

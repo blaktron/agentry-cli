@@ -3,10 +3,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -35,7 +38,18 @@ type globalFlags struct {
 var flags globalFlags
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	// SIGINT and SIGTERM cancel the command's context (agentry-cli#124): a
+	// run's docker calls take it, the engine's teardown runs on every path,
+	// and the result envelope is written with the failure — an interrupted
+	// run leaves its receipts, where a process killed by the signal left
+	// nothing. Once the context is cancelled the handler is removed, so a
+	// second signal kills the process the ordinary way.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "agentry: "+err.Error())
 		// `agentry run` classifies its failures (RUNNER-PLAN §R8) so
 		// pipelines and cron can branch on the exit code; everything
