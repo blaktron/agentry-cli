@@ -11,6 +11,9 @@ AGENTRY=${AGENTRY:-bin/agentry}
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+# The consent records `agentry run` writes (§R1) go to the throwaway config
+# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+export AGENTRY_CONFIG_DIR="$WORK/config"
 mkdir -p "$WORK/ws" "$WORK/out"
 echo "workspace note" >"$WORK/ws/notes.txt"
 

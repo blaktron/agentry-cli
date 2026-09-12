@@ -16,6 +16,9 @@ fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 export AGENTRY_RUNNER_HOME="$WORK/home"
+# The consent records `agentry run` writes (§R1) go to the throwaway config
+# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+export AGENTRY_CONFIG_DIR="$WORK/config"
 
 # A fixed policy so plans are reproducible; Runner image pinned by name.
 POLICY="$WORK/policy.yaml"
