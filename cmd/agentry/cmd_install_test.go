@@ -2,12 +2,17 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/installed"
 )
 
 // TestResolveInstallPathsManagedFlag: only a directory the CLI chose is
@@ -553,5 +558,110 @@ func TestStdinIsTTYRejectsDevNull(t *testing.T) {
 	}
 	if stdinIsTTY(strings.NewReader("x")) {
 		t.Fatal("a reader taken for a terminal")
+	}
+}
+
+// TestInstallPlanJSONWritesNothing (agentry-cli#102): --plan --json shows
+// what an install would do — the contract as canonical JSON with a stable
+// digest, the attestation verdict, the refusal an install would meet, the
+// target and directory — and touches neither the directory nor the shared
+// install state. A second call digests the contract identically.
+func TestInstallPlanJSONWritesNothing(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	caps := "capabilities:\n  network:\n    egress: [api.example.com]\n  filesystem:\n    read: workspace\n"
+	fr.addAgent("acme", "demo", "autonomous", "reads things").addVersion(t, "1.0.0", skillFiles("demo", caps))
+
+	// Without --allow-unsigned the plan still answers, and names the refusal
+	// an install would meet; it does not fail.
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--plan")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	var plan installPlan
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil {
+		t.Fatalf("plan is not JSON: %v\n%s", err, stdout)
+	}
+	if plan.Ref != "acme/demo@1.0.0" || plan.Target != "claude-skill" || plan.Managed != true {
+		t.Fatalf("plan basics: %+v", plan)
+	}
+	if plan.Attestation != "unsigned" || plan.Signed || !strings.Contains(plan.Refusal, "--allow-unsigned") {
+		t.Fatalf("plan must name the unsigned refusal: %+v", plan)
+	}
+	if !plan.NeedsConfirmation || !strings.Contains(plan.Reason, "first install") {
+		t.Fatalf("a first install with egress needs confirmation: %+v", plan)
+	}
+	if !strings.Contains(string(plan.Contract), `"egress":["api.example.com"]`) || !strings.HasPrefix(plan.ContractDigest, "sha256:") {
+		t.Fatalf("contract: %s %s", plan.Contract, plan.ContractDigest)
+	}
+	// The digest is over the contract bytes exactly as they arrive.
+	sum := sha256.Sum256(plan.Contract)
+	if got := "sha256:" + hex.EncodeToString(sum[:]); got != plan.ContractDigest {
+		t.Fatalf("contract digest %s does not match the bytes received (%s)", plan.ContractDigest, got)
+	}
+	home, _ := os.UserHomeDir()
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "demo")); !os.IsNotExist(err) {
+		t.Fatal("--plan wrote the target directory")
+	}
+	if st, _ := installed.Load(); len(st.Records) != 0 {
+		t.Fatalf("--plan wrote the install state: %+v", st.Records)
+	}
+	if strings.Contains(stdout, "acme/demo@1.0.0 (autonomous)") {
+		t.Fatalf("narration leaked into stdout under --json:\n%s", stdout)
+	}
+
+	// The digest is stable across runs.
+	stdout2, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--plan", "--allow-unsigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan2 installPlan
+	if err := json.Unmarshal([]byte(stdout2), &plan2); err != nil {
+		t.Fatal(err)
+	}
+	if plan2.ContractDigest != plan.ContractDigest || plan2.Refusal != "" {
+		t.Fatalf("second plan: digest %s vs %s, refusal %q", plan2.ContractDigest, plan.ContractDigest, plan2.Refusal)
+	}
+
+	// After a real install, the plan reports the prior record and an
+	// unchanged diff that needs no confirmation.
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	stdout3, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--plan", "--allow-unsigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan3 installPlan
+	if err := json.Unmarshal([]byte(stdout3), &plan3); err != nil {
+		t.Fatal(err)
+	}
+	if plan3.Installed == nil || plan3.Installed.Version != "1.0.0" || plan3.NeedsConfirmation || !plan3.Diff.Empty() {
+		t.Fatalf("plan after install: %+v", plan3)
+	}
+}
+
+// TestInstallJSONResult: install --json puts the result on stdout — where
+// it wrote, the contract it recorded — with the narration on stderr.
+func TestInstallJSONResult(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--allow-unsigned")
+	if err != nil {
+		t.Fatalf("install: %v (%s)", err, stderr)
+	}
+	var res installResult
+	if err := json.Unmarshal([]byte(stdout), &res); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, stdout)
+	}
+	if res.Ref != "acme/demo@1.0.0" || res.Target != "claude-skill" || !res.Recorded || res.Attestation != "unsigned" {
+		t.Fatalf("result: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(res.Dir, "SKILL.md")); err != nil {
+		t.Fatalf("result names a dir without the export: %v", err)
+	}
+	if !strings.Contains(stderr, "as Claude skill") {
+		t.Errorf("narration missing from stderr: %q", stderr)
 	}
 }

@@ -26,8 +26,29 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 )
 
+// uninstallOutput is the `uninstall --json` and `uninstall --plan --json`
+// shape (agentry-cli#102): what was — or, with --plan, would be — removed.
+type uninstallOutput struct {
+	Ref string `json:"ref"`
+	// Plan is true when nothing was touched.
+	Plan bool `json:"plan"`
+	// Installs are the runner install cache directories.
+	Installs []string `json:"installs"`
+	// Profiles are the MCP profiles (keys, identities, servers) removed —
+	// or, under --keep-mcp, kept: then they are listed under KeptProfiles.
+	Profiles     []string `json:"profiles"`
+	KeptProfiles []string `json:"keptProfiles,omitempty"`
+	// ConsentRecord is true when the runner's consent record in the shared
+	// install state was (or would be) removed.
+	ConsentRecord bool `json:"consentRecord"`
+}
+
+func (o uninstallOutput) empty() bool {
+	return len(o.Installs) == 0 && len(o.Profiles) == 0 && len(o.KeptProfiles) == 0 && !o.ConsentRecord
+}
+
 func newUninstallCmd() *cobra.Command {
-	var keepMCP bool
+	var keepMCP, plan bool
 	cmd := &cobra.Command{
 		Use:   "uninstall <ns/name[@version]>",
 		Short: "Remove a BriefAgent's runner install (and, by default, its MCP profile and servers)",
@@ -37,15 +58,16 @@ func newUninstallCmd() *cobra.Command {
 			"which stays locked to the exact release digest it was created for.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUninstall(cmd, args[0], keepMCP)
+			return runUninstall(cmd, args[0], keepMCP, plan)
 		},
 	}
 	cmd.Flags().BoolVar(&keepMCP, "keep-mcp", false,
 		"keep the MCP profile (keys, identities, installed servers) for a same-digest reinstall")
+	cmd.Flags().BoolVar(&plan, "plan", false, "preview only: name what would be removed; remove nothing")
 	return cmd
 }
 
-func runUninstall(cmd *cobra.Command, sel string, keepMCP bool) error {
+func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	ref, err := manifest.ParseRef(sel)
 	if err != nil {
 		return err
@@ -55,7 +77,14 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP bool) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
-	removedAnything := false
+	if flags.jsonOut {
+		out = cmd.ErrOrStderr() // §R8: the result on stdout, the narration on stderr
+	}
+	result := uninstallOutput{Ref: sel, Plan: plan, Installs: []string{}, Profiles: []string{}}
+	verb := "removed"
+	if plan {
+		verb = "would remove"
+	}
 
 	// 1. The install cache: home/agents/<ns>/<name>/<version>-<digest12>.
 	agentDir := filepath.Join(home, "agents", ref.Namespace, ref.Name)
@@ -71,15 +100,19 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP bool) error {
 			continue
 		}
 		full := filepath.Join(agentDir, e.Name())
-		if err := os.RemoveAll(full); err != nil {
-			return fmt.Errorf("remove install %s: %w", full, err)
+		if !plan {
+			if err := os.RemoveAll(full); err != nil {
+				return fmt.Errorf("remove install %s: %w", full, err)
+			}
 		}
-		_, _ = fmt.Fprintf(out, "removed install %s\n", full)
-		removedAnything = true
+		_, _ = fmt.Fprintf(out, "%s install %s\n", verb, full)
+		result.Installs = append(result.Installs, full)
 	}
-	// Prune empty parents so the tree does not accumulate husks.
-	_ = os.Remove(agentDir)
-	_ = os.Remove(filepath.Dir(agentDir))
+	if !plan {
+		// Prune empty parents so the tree does not accumulate husks.
+		_ = os.Remove(agentDir)
+		_ = os.Remove(filepath.Dir(agentDir))
+	}
 
 	// 2. The MCP profile(s): keys and the installed server store. Remove
 	// is the default (RUNNER-PLAN-3 decision 2); --keep-mcp preserves
@@ -95,13 +128,16 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP bool) error {
 		if keepMCP {
 			_, _ = fmt.Fprintf(out, "kept MCP profile %s (%s) — locked to its release digest; a same-digest reinstall reconnects without re-prompting\n",
 				e.Profile.Ref, filepath.Base(e.Dir))
+			result.KeptProfiles = append(result.KeptProfiles, e.Dir)
 			continue
 		}
-		if err := profile.Remove(e.Dir); err != nil {
-			return err
+		if !plan {
+			if err := profile.Remove(e.Dir); err != nil {
+				return err
+			}
 		}
-		_, _ = fmt.Fprintf(out, "removed MCP profile %s (keys, identities, and installed MCP servers)\n", e.Profile.Ref)
-		removedAnything = true
+		_, _ = fmt.Fprintf(out, "%s MCP profile %s (keys, identities, and installed MCP servers)\n", verb, e.Profile.Ref)
+		result.Profiles = append(result.Profiles, e.Dir)
 	}
 
 	// 3. The runner's consent record in the shared install state, so a
@@ -111,14 +147,20 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP bool) error {
 			Registry: "runner", Namespace: ref.Namespace, Name: ref.Name,
 			Target: "runner", Dir: agentDir,
 		}
-		if state.Remove(key) {
+		if plan {
+			result.ConsentRecord = state.Find(key) != nil
+		} else if state.Remove(key) {
+			result.ConsentRecord = true
 			if err := installed.Save(state); err != nil {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
 			}
 		}
 	}
 
-	if !removedAnything && !keepMCP {
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), result)
+	}
+	if result.empty() {
 		_, _ = fmt.Fprintf(out, "nothing installed for %s on this machine\n", sel)
 	}
 	return nil

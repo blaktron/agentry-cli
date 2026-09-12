@@ -26,7 +26,11 @@ type Envelope struct {
 	// exits with; Error carries the failure detail for status error.
 	Status   string `json:"status"`
 	ExitCode int    `json:"exitCode"`
-	Error    string `json:"error,omitempty"`
+	// ExitClass names ExitCode (ok, usage, verify, policy, compile, gateway,
+	// harness, timeout, budget, outputSchema, cli): a client acts on the
+	// name, never on the number (agentry-cli#102). Set by Marshal.
+	ExitClass string `json:"exitClass"`
+	Error     string `json:"error,omitempty"`
 	// RunID names the run (container labels, run dirs).
 	RunID string `json:"runId"`
 	// Ref and Digest identify the exact release that ran.
@@ -46,6 +50,9 @@ type Envelope struct {
 	Result json.RawMessage `json:"result"`
 	// OutDir is the mounted output folder (reports/, receipts/).
 	OutDir string `json:"outDir"`
+	// ResultFile is <OutDir>/result.json, this envelope's own record on
+	// disk, named so a client need not derive it. Set by Marshal.
+	ResultFile string `json:"resultFile,omitempty"`
 	// Receipts locates the audit trail.
 	Receipts Receipts `json:"receipts"`
 }
@@ -108,8 +115,44 @@ func TextResult(s string) json.RawMessage {
 	return b
 }
 
-// Marshal renders the envelope for stdout and result.json.
+// ExitClassName names a §R8 exit code; the table mirrors engine's constants
+// (engine imports this package, so the names live here), and engine's tests
+// hold the two together.
+func ExitClassName(code int) string {
+	switch code {
+	case 0:
+		return "ok"
+	case 1:
+		return "cli"
+	case 2:
+		return "usage"
+	case 10:
+		return "verify"
+	case 11:
+		return "policy"
+	case 12:
+		return "compile"
+	case 13:
+		return "gateway"
+	case 14:
+		return "harness"
+	case 15:
+		return "timeout"
+	case 16:
+		return "budget"
+	case 17:
+		return "outputSchema"
+	}
+	return fmt.Sprintf("exit-%d", code)
+}
+
+// Marshal renders the envelope for stdout and result.json, deriving the
+// exit class name and the result file's path from what is already set.
 func (e *Envelope) Marshal() ([]byte, error) {
+	e.ExitClass = ExitClassName(e.ExitCode)
+	if e.OutDir != "" {
+		e.ResultFile = filepath.Join(e.OutDir, "result.json")
+	}
 	b, err := json.MarshalIndent(e, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal envelope: %w", err)

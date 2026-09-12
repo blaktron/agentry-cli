@@ -64,6 +64,22 @@ func newSetupCmd() *cobra.Command {
 	return cmd
 }
 
+// setupOutput is the `setup --json` shape (agentry-cli#102): the policy as
+// configured — the model provider and the NAME of its key variable, never a
+// value — and whether the images were prepared.
+type setupOutput struct {
+	PolicyPath string `json:"policyPath"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	// APIKeyEnv is the environment variable NAME the runner reads the key
+	// from; the value is never printed.
+	APIKeyEnv string `json:"apiKeyEnv"`
+	BaseURL   string `json:"baseUrl,omitempty"`
+	// Images is "ready" when the gateway, harness and runner images were
+	// pulled or built, "skipped" under --skip-images.
+	Images string `json:"images"`
+}
+
 // runSetup executes both §P1 halves.
 func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	home, err := runnerHome()
@@ -96,8 +112,13 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "policy written: %s\n", policyPath)
+	result := setupOutput{PolicyPath: policyPath, Provider: pol.Model.Provider, Model: pol.Model.Name,
+		APIKeyEnv: pol.Model.APIKeyEnv, BaseURL: pol.Model.BaseURL, Images: "skipped"}
 
 	if opts.skipImages {
+		if flags.jsonOut {
+			return emitJSON(cmd.OutOrStdout(), result)
+		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "setup complete (policy only; images skipped)")
 		return nil
 	}
@@ -106,6 +127,10 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
 		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), true); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
+	}
+	result.Images = "ready"
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), result)
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(),
 		"setup complete — gateway, harness, and runner images ready; BriefAgents can run")
