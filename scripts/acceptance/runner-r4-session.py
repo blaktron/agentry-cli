@@ -16,6 +16,7 @@ Needs the same things as runner-r4.sh: a docker daemon, the operator policy
 and the key it names, plus the adapter's harness installed.
 """
 
+import atexit
 import json
 import os
 import pty
@@ -24,6 +25,7 @@ import select
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 if len(sys.argv) < 2:
@@ -36,7 +38,12 @@ argv = ["bin/agentry", "run", "--local", "testdata/runner/hello-chat",
         "--allow-unsigned", "--yes", "--out", out]
 m, s = pty.openpty()
 os.set_blocking(m, False)
-p = subprocess.Popen(argv, stdin=s, stdout=s, stderr=s, close_fds=True)
+# The consent record `agentry run` writes (§R1) goes to a throwaway config
+# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+config_dir = tempfile.mkdtemp(prefix="agentry-r4-config-")
+atexit.register(shutil.rmtree, config_dir, True)
+env = dict(os.environ, AGENTRY_CONFIG_DIR=config_dir)
+p = subprocess.Popen(argv, stdin=s, stdout=s, stderr=s, close_fds=True, env=env)
 os.close(s)
 buf = bytearray()
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][B0]|\x1b[=>]|\r")

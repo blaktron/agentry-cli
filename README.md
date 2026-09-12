@@ -111,4 +111,7 @@ records the divergences from it. The original design records
 [archive/agentry-cli/](https://github.com/blaktron/agentry-notes/tree/main/archive/agentry-cli).
 
 `make accept-runner` runs the r0, r1 and r2 acceptance scripts; the docker
-E2E self-skips without a daemon.
+E2E self-skips without a daemon. Every runner acceptance script points
+`AGENTRY_CONFIG_DIR` (and `AGENTRY_RUNNER_HOME`, where it needs one) at its
+own throwaway directory, so the consent records `agentry run` writes never
+land in your `~/.config/agentry/installed.yaml`.
