@@ -19,6 +19,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
@@ -792,4 +793,105 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	if err != nil || third.Proxy.Image != again.Proxy.Image || !strings.Contains(errOut.String(), "runner image") {
 		t.Fatalf("plan for another runner image was reused: %v image=%q %q", err, third.Proxy.Image, errOut.String())
 	}
+}
+
+// TestRunPlanAsksNothingRecordsNothing (agentry-cli#124): --plan --json is
+// the consent-free preview. A first run of a contract with egress would
+// prompt (and fail off a TTY) under --dry-run; --plan reports that a run
+// would ask, records no consent, and writes nothing under the runner home.
+func TestRunPlanAsksNothingRecordsNothing(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fr.enableSigning(t)
+	caps := "capabilities:\n  network:\n    egress: [api.example.com]\n"
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", caps))
+	fv.attMode = attSigned
+
+	stdout, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "--json", "run", "acme/demo@1.0.0", "--plan", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("plan: %v (stderr %q)", err, stderr)
+	}
+	var plan runPlanOutput
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil {
+		t.Fatalf("plan is not JSON: %v\n%s", err, stdout)
+	}
+	if plan.Ref != "acme/demo@1.0.0" || plan.Mode != "autonomous" || plan.Attestation != "verified" || !plan.Signed || plan.Refusal != "" {
+		t.Fatalf("plan: %+v", plan)
+	}
+	if !plan.NeedsConfirmation || !strings.Contains(plan.Reason, "first run") {
+		t.Fatalf("an egress contract needs confirmation: %+v", plan)
+	}
+	if len(plan.Plan) == 0 || len(plan.PlanSha256) != 64 || !strings.Contains(string(plan.Contract), "api.example.com") {
+		t.Fatalf("plan body: sha %q contract %s", plan.PlanSha256, plan.Contract)
+	}
+	if strings.Contains(stderr, `type "yes"`) {
+		t.Fatalf("the plan prompted: %q", stderr)
+	}
+	if st, _ := installed.Load(); len(st.Records) != 0 {
+		t.Fatalf("--plan recorded consent: %+v", st.Records)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(home, "agents")); len(entries) != 0 {
+		t.Fatalf("--plan wrote into the runner cache: %v", entries)
+	}
+
+	// The dry run off a TTY refuses at the gate: that is the behaviour the
+	// preview exists to avoid. (It materializes first, so it comes after
+	// the cache assertion.)
+	_, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--policy", policyPath)
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("dry run of an egress contract off a TTY should refuse at the gate: %v", err)
+	}
+
+	// Unsigned: reported with the refusal, not refused.
+	fv.attMode = attUnsigned
+	stdout, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "--json", "run", "acme/demo@1.0.0", "--plan", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("plan of an unsigned release: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil || plan.Attestation != "unsigned" || plan.Signed || !strings.Contains(plan.Refusal, "--allow-unsigned") {
+		t.Fatalf("unsigned plan: %v %+v", err, plan)
+	}
+
+	// A signature no pinned key verifies: reported as the refusal a run
+	// would meet — no flag lifts it — with the contract still shown.
+	fv.attMode = attSigned
+	fr.enableSigning(t) // a new key: the pinned one no longer verifies the signature
+	stdout, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "--json", "run", "acme/demo@1.0.0", "--plan", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("plan of an unverifiable release: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil || plan.Signed || !strings.Contains(plan.Refusal, "a run refuses") || len(plan.Contract) == 0 {
+		t.Fatalf("unverifiable plan: %v %+v", err, plan)
+	}
+
+	// Local: attestation local, the same refusal without the flag.
+	pkg := repoPath(t, "testdata/runner/pure-text")
+	stdout, _, err = runCLI(t, strings.NewReader(""), "--json", "run", "--local", pkg, "--plan", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("local plan: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil || plan.Attestation != "local" || !strings.Contains(plan.Refusal, "--allow-unsigned") {
+		t.Fatalf("local plan: %v %+v", err, plan)
+	}
+}
+
+// TestRunCachedUnsignedInstallIsRegated (agentry-cli#124): the unsigned gate
+// asks for --allow-unsigned on every run, not once per digest.
+func TestRunCachedUnsignedInstallIsRegated(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv.attMode = attUnsigned
+
+	first := []string{"--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--allow-unsigned", "--policy", policyPath}
+	if _, _, err := runCLI(t, strings.NewReader(""), first...); err != nil {
+		t.Fatalf("first run with the flag: %v", err)
+	}
+	_, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--policy", policyPath)
+	if err == nil || !strings.Contains(err.Error(), "--allow-unsigned") || !strings.Contains(err.Error(), "cached install") {
+		t.Fatalf("a cached unsigned install ran without the flag: %v (stderr %q)", err, stderr)
+	}
+	wantClassified(t, err, engine.ExitVerify)
 }

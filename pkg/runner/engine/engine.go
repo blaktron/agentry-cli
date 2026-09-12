@@ -203,18 +203,27 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 
 	// The gateway's own log (tool-call log included, --log-calls) is
 	// part of the audit trail; collect before teardown kills it.
-	if logs, lerr := d.Logs(ctx, containerName(runID, "gateway"), 2000); lerr == nil && logs != "" {
+	// Collected under a context that survives an interrupt: the receipts
+	// are the point of tearing down cleanly (agentry-cli#124).
+	keep := context.WithoutCancel(ctx)
+	if logs, lerr := d.Logs(keep, containerName(runID, "gateway"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "gateway.log"), []byte(logs), 0o644)
 	}
 	// The proxy's decisions (allow/deny per CONNECT) are the evidence of
 	// what left the run (DR-6); collected the same way.
-	if logs, lerr := d.Logs(ctx, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
+	if logs, lerr := d.Logs(keep, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(logs), 0o644)
 	}
 	writeMeta(rd.receiptsDir, runID, p, start)
 
 	if outcome.err != nil {
 		env.Result = receipt.TextResult(outcome.lastText)
+		if ctx.Err() != nil {
+			// The person (or the client driving the CLI) interrupted the
+			// run: not the harness's failure, and not a budget — its own
+			// word, under the cli class, with the receipts kept.
+			return fail(env, Classify(ExitCLI, errors.New("interrupted")))
+		}
 		return fail(env, outcome.err)
 	}
 
