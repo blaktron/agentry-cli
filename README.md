@@ -51,9 +51,14 @@ works the same whether or not a site fronts the server.
 
 ## Commands
 
-`init` · `validate` · `login` · `publish` · `install` · `list` · `setup` ·
-`doctor` · `run` · `uninstall` · `profiles` · `verify` · `search` · `info` ·
-`yank` — run `agentry --help` for the full surface. With the root `--json`
+`init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
+`setup` · `doctor` · `run` · `uninstall` · `profiles` · `verify` · `search` ·
+`info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
+the account the stored credential belongs to and, where the registry has
+subscription tiers (its `/meta` lists the billing extension), the tier and
+the credits; a `publish` the allowance cannot pay for is refused with the
+registry's `402 credits-exhausted` sentence and the ordinary failure exit —
+the upgrade is the site's, never the CLI's. With the root `--json`
 flag the reading and writing commands print one JSON document on stdout
 (`run` takes `--output-format json`), and `install --plan --json` /
 `run --plan --json` print the consent-free preview a client shows a person

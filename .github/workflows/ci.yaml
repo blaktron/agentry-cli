@@ -44,6 +44,11 @@ jobs:
           version: latest
       - name: make check
         run: make check
+      # No client takes money (plan subscription-tiers.md D12): the CLI shows
+      # a tier and a balance and sends the person to the site to upgrade.
+      - name: no payment provider in the CLI
+        run: |
+          if grep -rIi --include='*.go' -n 'stripe' . ; then echo "::error::a payment provider reached the CLI"; exit 1; fi
 
   govulncheck:
     runs-on: [self-hosted, linux, x64]
