@@ -25,7 +25,7 @@ func newValidateCmd() *cobra.Command {
 	var strict, rulesUpdate bool
 	cmd := &cobra.Command{
 		Use:   "validate [dir]",
-		Short: "Validate a workspace offline (manifest rules V1-V9 + S1/S3/S4 scan)",
+		Short: "Validate a workspace offline (manifest rules V1-V10 + S1/S3/S4 scan)",
 		Long: "Validate a workspace offline with the same code the registry runs at submit\n" +
 			"time (D-12 local/remote parity), over the files publish.include would ship:\n\n" +
 			"  manifest  rules V1-V9, in a public-publish context so V7 runs\n" +
@@ -37,11 +37,15 @@ func newValidateCmd() *cobra.Command {
 			"on where it runs. `--rules-update` fetches the registry's current bundle and\n" +
 			"caches it under ~/.config/agentry/rules/<semver>/; the newest cached bundle\n" +
 			"is then preferred over the embedded one. The fetched bundle is pinned by\n" +
-			"digest — bundle-level signatures do not exist yet (DEVIATIONS DEV-024).\n" +
+			"digest and its DSSE signature is verified against the registry's pinned\n" +
+			"keys (an absent signature is reported and tolerated, an invalid one is\n" +
+			"fatal).\n" +
 			"$AGENTRY_RULES_DIR (or ./rules) overrides both, for rule development.\n\n" +
-			"A bundle that will not load is a hard ERROR, never a skipped scan: reporting\n" +
-			"PASSED over content the signature engine never examined is the failure mode\n" +
-			"§7 forbids on the server, so it is forbidden here too (DEV-011).\n\n" +
+			"An override bundle that will not load is a hard ERROR, never a skipped scan:\n" +
+			"reporting PASSED over content the signature engine never examined is the\n" +
+			"failure mode §7 forbids on the server, so it is forbidden here too (DEV-011).\n" +
+			"A cached --rules-update bundle that will not load is skipped for the\n" +
+			"embedded one, which always loads.\n\n" +
 			"Exit code: 0 clean; 1 on manifest errors or scan findings. Manifest warnings\n" +
 			"fail only with --strict.",
 		Args: cobra.MaximumNArgs(1),

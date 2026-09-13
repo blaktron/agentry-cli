@@ -51,17 +51,24 @@ works the same whether or not a site fronts the server.
 
 ## Commands
 
-`init` · `validate` · `login` · `publish` · `install` · `setup` · `doctor` ·
-`run` · `uninstall` · `profiles` · `verify` · `search` · `info` · `yank` —
-run `agentry --help` for the full surface. Server-side end-to-end coverage
+`init` · `validate` · `login` · `publish` · `install` · `list` · `setup` ·
+`doctor` · `run` · `uninstall` · `profiles` · `verify` · `search` · `info` ·
+`yank` — run `agentry --help` for the full surface. With the root `--json`
+flag the reading and writing commands print one JSON document on stdout
+(`run` takes `--output-format json`), and `install --plan --json` /
+`run --plan --json` print the consent-free preview a client shows a person
+first. Server-side end-to-end coverage
 lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
 CLI against a live registry.
 
 ## The runner (`agentry run`)
 
 The runner turns a release's declared capability contract into actual
-enforcement and executes the BriefAgent once, in an isolated container,
-with an output folder for its reports:
+enforcement and executes the BriefAgent once, with an output folder for
+its reports. The default adapter (`docker-agent`) runs the harness in an
+isolated container; `--adapter claude` or `codex` runs your own installed
+Claude Code or Codex as a host process behind the same gateway and egress
+proxy (`goose` is planned, not implemented):
 
 ```bash
 agentry run demo1/incident-summarizer@^1 --input incident.json --out ./reports
@@ -87,7 +94,8 @@ manifest + operator policy into a deterministic run plan → execute:
   --target claude-skill|agents-md`), the same contract compiles to the
   host's built-in tool grants — nothing is bundled in either mode.
 
-Exit codes: `0` ok · `2` usage · `10` verify · `11` policy/secret ·
+Exit codes: `0` ok · `1` cli (an interrupted run, an unknown adapter, an
+intake error) · `2` usage · `10` verify · `11` policy/secret ·
 `12` compile · `13` gateway/docker · `14` agent · `15` timeout ·
 `16` budget · `17` output schema. Task input: `--input FILE`, else piped
 stdin. Runs compose: `agentry run a ... | agentry run b ...`.
