@@ -47,8 +47,8 @@ func newPublishCmd() *cobra.Command {
 			"locally from publish.include and uploads it (cli-upload source); the\n" +
 			"server re-validates and re-packs — client packing is never trusted.\n\n" +
 			"Progress streams from the registry (stage by stage) until published, rejected,\n" +
-			"or needs_review; registries without the stream are polled every 2s\n" +
-			"(SSE streaming deferred). Exits non-zero on rejection.",
+			"or needs_review; registries without the stream are polled every 2s.\n" +
+			"Exits non-zero on rejection.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."

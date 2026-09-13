@@ -7,7 +7,8 @@
 // reinstall of the exact same release digest can ever use it again — not
 // another BriefAgent, not another user, not a newer version of this one.
 //
-// Embedded installs (claude-skill / mcp / agents-md exports) are separate
+// Embedded installs (claude-skill / agents-md exports, and the mcp exports
+// of older clients) are separate
 // state with their own records; this command does not touch them.
 package main
 

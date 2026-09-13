@@ -91,16 +91,19 @@ func newRunCmd() *cobra.Command {
 			"Task input: --input FILE, else piped stdin, else an empty task. The result\n" +
 			"goes to stdout (--output-format text|json); reports the BriefAgent writes\n" +
 			"and the full receipts land in the output folder. Every failure class has its\n" +
-			"own exit code: 0 ok, 2 usage, 10 verify, 11 policy/secret, 12 compile, 13\n" +
-			"gateway/docker, 14 agent, 15 timeout, 16 budget, 17 output schema.\n\n" +
+			"own exit code: 0 ok, 1 cli (interrupted, unknown adapter, intake), 2 usage,\n" +
+			"10 verify, 11 policy/secret, 12 compile, 13 gateway/docker, 14 agent, 15\n" +
+			"timeout, 16 budget, 17 output schema.\n\n" +
 			"Run modes: --mode autonomous runs from the files and ends; --mode interactive\n" +
 			"opens a chat with the agent in this terminal under exactly the same controls\n" +
 			"(/add a file, /finish for the final result, /quit, /caps). A release that\n" +
 			"declares both modes is asked on a terminal and runs autonomous otherwise.\n\n" +
 			"First run of a release verifies it exactly like `agentry install` (digest +\n" +
 			"DSSE attestation; unsigned needs --allow-unsigned), then compiles the run\n" +
-			"plan and installs the gateway/harness/runner images. Later runs reuse all\n" +
-			"of it. --prepare stops after that install step; --dry-run prints the\n" +
+			"plan and installs the gateway/harness/runner images. Later runs reuse the\n" +
+			"verified install, the plan and the images; an unsigned or local release\n" +
+			"needs --allow-unsigned on every run. --prepare stops after that install\n" +
+			"step; --dry-run prints the\n" +
 			"compiled plan and touches no docker. --local DIR runs an unpublished\n" +
 			"BriefAgent directory (treated as unsigned).\n\n" +
 			"Tools: BriefAgents get exactly the tools their manifest capabilities grant,\n" +
@@ -135,7 +138,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.allowVulnerableMCP, "allow-vulnerable-mcp", false, "run even when the registry reports a high/critical vulnerability for a declared MCP server (recorded in the receipt)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
-	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing (with --json, the machine-readable shape)")
+	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode; asked on a terminal when it declares both, autonomous otherwise)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")

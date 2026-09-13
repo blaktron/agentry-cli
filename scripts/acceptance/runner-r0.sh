@@ -2,8 +2,9 @@
 # M-R0/M-R1 acceptance (RUNNER-PLAN §R12): compile + dry-run against the
 # fixture matrix, with no docker and no registry. Proves: deterministic
 # plans, capability→tool mapping, the wildcard policy gate, the
-# not-runnable refusal, exit-code classes, and the always-on
-# --block-network invariant.
+# not-runnable refusal, the withdrawn-v1 toolserver refusal (exit 12),
+# exit-code classes, the always-on --block-network invariant, and that
+# `run --plan --json` writes no consent record.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

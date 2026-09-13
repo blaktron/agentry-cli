@@ -1,7 +1,7 @@
 // `agentry install` (§11): resolve → download → verify digest AND the DSSE
 // attestation signature (§8.8) → show the declared capability contract,
 // diffed against whatever this machine last installed → extract → export to
-// one §5.6 target (claude-skill, mcp, or agents-md).
+// one §5.6 target (claude-skill or agents-md).
 package main
 
 import (
@@ -93,7 +93,6 @@ func newInstallCmd() *cobra.Command {
 			"capability contract (§5.4) diffed against the installed version, and export\n" +
 			"to one install target (§5.6):\n\n" +
 			"  claude-skill  {--dir | ~/.claude/skills}/<name>/ with SKILL.md frontmatter\n" +
-			"  mcp           extract to {--dir | ./agents/<name>} and merge .mcp.json\n" +
 			"  agents-md     extract to {--dir | ./agents/<name>} and update ./AGENTS.md\n\n" +
 			"Signatures: a release the registry has attested must verify against the\n" +
 			"signing keys pinned for that registry, or the install aborts. A registry\n" +
@@ -113,14 +112,14 @@ func newInstallCmd() *cobra.Command {
 			return runInstall(cmd, args[0], opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.target, "target", "", "install target: claude-skill | mcp | agents-md (default: by BriefAgent kind)")
+	cmd.Flags().StringVar(&opts.target, "target", "", "install target: claude-skill | agents-md (default: the first of the release's runtime.interfaces)")
 	cmd.Flags().StringVar(&opts.provider, "provider", "", "install for an agent application: claude | codex | openclaw (picks the target; RUNNER-PLAN-2 §P5)")
 	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory (see help for per-target defaults)")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false,
 		"install a release the registry has published no attestation for")
 	cmd.Flags().BoolVar(&opts.plan, "plan", false,
-		"preview only: resolve, download and verify, then show the contract, its diff and where it would go; write nothing (with --json, the machine-readable shape)")
+		"preview only: resolve, download and verify, then show the contract, its diff and where it would go; writes nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	return cmd
 }
 
