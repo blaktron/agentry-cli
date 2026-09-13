@@ -77,6 +77,15 @@ func newAPIClientChecked(cmd *cobra.Command, regURL, token string) (*apiclient.C
 // apiProblem renders a failed API call as an error, preferring the RFC 9457
 // problem document when the server sent one.
 func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error {
+	if p == nil {
+		// A status the generated client types on its own (the spec's
+		// explicit 402, say) is not the `default` problem it parsed; the
+		// body is a problem all the same.
+		var parsed apiclient.Problem
+		if json.Unmarshal(body, &parsed) == nil && parsed.Title != "" && parsed.Status == status {
+			p = &parsed
+		}
+	}
 	if p != nil {
 		msg := p.Title
 		if p.Detail != nil && *p.Detail != "" {

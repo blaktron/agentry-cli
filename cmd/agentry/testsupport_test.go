@@ -181,6 +181,13 @@ type fakeRegistry struct {
 	searchTotal    *int
 	userHandle     string
 	metaMinCLI     string
+	// billing makes /meta list the billing extension and serves the
+	// account route with these numbers (agentry-cli#128).
+	billing        bool
+	billingBalance int64
+	// submitProblem makes every upload answer this problem (a spent
+	// allowance's 402), the type as the real registry writes it.
+	submitProblem *fakeProblem
 	// submitStatus / pollStatuses drive the publish pipeline fake: submit
 	// answers with the first, each poll consumes the next.
 	submitStatus string
@@ -205,7 +212,26 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		if fr.metaMinCLI != "" {
 			body["minCLIVersion"] = fr.metaMinCLI
 		}
+		if fr.billing {
+			body["extensions"] = []string{"billing"}
+		}
 		writeJSON(w, http.StatusOK, body)
+	})
+
+	mux.HandleFunc("GET /api/v1/x/billing/account", func(w http.ResponseWriter, r *http.Request) {
+		if !fr.billing {
+			http.NotFound(w, r)
+			return
+		}
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer agy_") {
+			writeProblem(w, http.StatusUnauthorized, "Sign in required", "This request carried no valid session or token.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"tier": "standard", "balance": fr.billingBalance, "allowance": 50, "submissionCost": 10,
+			"periodStart": "2026-09-11T00:00:00Z", "periodEnd": "2026-10-11T00:00:00Z", "tierSince": "2026-09-11T00:00:00Z",
+			"privateAgents": map[string]any{"max": 10, "used": 4}, "upgrade": map[string]any{"available": false},
+		})
 	})
 
 	mux.HandleFunc("GET /api/v1/resolve", func(w http.ResponseWriter, r *http.Request) {
@@ -322,6 +348,12 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		fr.mu.Unlock()
 		if fail {
 			writeProblem(w, http.StatusServiceUnavailable, "unavailable", "try again")
+			return
+		}
+		if p := fr.submitProblem; p != nil {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(p.Status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": p.Type, "title": p.Title, "status": p.Status, "detail": p.Detail})
 			return
 		}
 		writeJSON(w, http.StatusAccepted, fr.versionDoc("0.1.0", fr.submitStatus))
@@ -559,4 +591,10 @@ func resolveResultOf(t *testing.T, fr *fakeRegistry, ref string) *apiclient.Reso
 		t.Fatal(err)
 	}
 	return &res
+}
+
+// fakeProblem is an RFC 9457 body the fake answers a submission with.
+type fakeProblem struct {
+	Status              int
+	Type, Title, Detail string
 }

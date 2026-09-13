@@ -58,6 +58,9 @@ func main() {
 		if errors.As(err, &classified) {
 			os.Exit(classified.Code)
 		}
+		if code, ok := exitCodeOf(err); ok {
+			os.Exit(code)
+		}
 		os.Exit(1)
 	}
 }
@@ -80,6 +83,7 @@ func newRootCmd() *cobra.Command {
 		newInitCmd(),
 		newValidateCmd(),
 		newLoginCmd(),
+		newWhoamiCmd(),
 		newPublishCmd(),
 		newInstallCmd(),
 		newSetupCmd(),
