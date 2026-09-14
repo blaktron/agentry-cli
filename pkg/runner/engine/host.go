@@ -180,6 +180,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	collector := &eventCollector{
 		adapter:    p.Adapter,
 		events:     eventsFile,
+		redact:     rd.redact,
 		maxTurns:   p.Budgets.MaxTurns,
 		maxCostUSD: p.Budgets.MaxCostUSD,
 		overBudget: func() { cancelCause(errBudget) },
@@ -211,6 +212,10 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	exit, runErr := wait()
 	_ = pw.Close()
 	<-done
+	// The harness wrote its stderr straight into the receipt; mask it now,
+	// before the tail below quotes it.
+	_ = stderrFile.Close()
+	rd.redact.File(stderrPath)
 	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info}
 	switch {
 	case context.Cause(agentCtx) == errBudget:

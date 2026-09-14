@@ -684,3 +684,87 @@ func TestRunInterruptedTearsDownAndWritesEnvelope(t *testing.T) {
 		t.Fatalf("teardown did not run: %v", ops)
 	}
 }
+
+// TestReceiptsRedactSecretsFromLogs (agentry-cli#109): a declared server
+// that prints its environment, an agent whose stderr echoes a credential
+// and a gateway line that quotes one all leave their values out of the
+// receipts — gateway.log, proxy.log, agent-stderr.log, result.json and the
+// run's error — while a receipt that carries none is written byte for
+// byte as the container produced it.
+func TestReceiptsRedactSecretsFromLogs(t *testing.T) {
+	const secret, apiKey, serverSecret = "sekret-value-1234", "sk-test-key", "server-sekret-5678"
+	t.Run("start failure quotes the server's output masked", func(t *testing.T) {
+		p, f := serverFixture(t)
+		happyFake(f)
+		// The server's own secret is resolved from the same source as the
+		// agent's and masked the same way.
+		p.Plan.MCPServers[0].Secrets = []string{"SERVER_TEST_TOKEN"}
+		t.Setenv("SERVER_TEST_TOKEN", serverSecret)
+		f.LogsByName = map[string]string{"agentry-cafe0000-gateway": strings.Join([]string{
+			"- Those servers are enabled: agentry-tools, mcp-npm-scope-server-x",
+			"- mcp-npm-scope-server-x: env: ENGINE_TEST_TOKEN=" + secret + " SERVER_TEST_TOKEN=" + serverSecret,
+			"- mcp-npm-scope-server-x: Error: 401 from api.example with token " + serverSecret,
+			"  > Can't start mcp-npm-scope-server-x: failed to connect: calling \"initialize\": EOF",
+		}, "\n") + "\n"}
+		env, err := Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitGateway {
+			t.Fatalf("want exit %d, got %v", ExitGateway, err)
+		}
+		for name, text := range map[string]string{"error": err.Error(), "envelope": env.Error} {
+			if strings.Contains(text, secret) || strings.Contains(text, serverSecret) {
+				t.Errorf("%s carries a secret: %s", name, text)
+			}
+			if !strings.Contains(text, "ENGINE_TEST_TOKEN=[redacted] SERVER_TEST_TOKEN=[redacted]") || !strings.Contains(text, "token [redacted]") || !strings.Contains(text, "Can't start mcp-npm-scope-server-x") {
+				t.Errorf("%s lost the masked tail or the gateway's line: %s", name, text)
+			}
+		}
+		b, rerr := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
+		if rerr != nil || strings.Contains(string(b), secret) || strings.Contains(string(b), serverSecret) {
+			t.Errorf("result.json: %v %s", rerr, b)
+		}
+	})
+	t.Run("receipts of a completed run", func(t *testing.T) {
+		p, f := fixture(t)
+		happyFake(f)
+		f.Foreground["-agent"].Stdout = strings.Replace(f.Foreground["-agent"].Stdout, "final answer", "the key is "+apiKey+" and the token "+secret, 1)
+		f.Foreground["-agent"].Stderr = "harness boot\nDEBUG env ENGINE_TEST_TOKEN=" + secret + "\nANTHROPIC_API_KEY=" + apiKey + "\n"
+		f.LogsByName = map[string]string{
+			"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools\n- agentry-tools: fetch: Authorization: Bearer " + secret + "\n",
+			"agentry-cafe0000-proxy":   "allow api.example:443\n",
+		}
+		env, err := Run(context.Background(), f, p)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if got, want := string(env.Result), `"the key is [redacted] and the token [redacted]"`; got != want {
+			t.Errorf("result = %s, want %s", got, want)
+		}
+		read := func(name string) string {
+			b, err := os.ReadFile(filepath.Join(env.Receipts.Dir, name))
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			return string(b)
+		}
+		if got := read("gateway.log"); strings.Contains(got, secret) || !strings.Contains(got, "Bearer [redacted]") {
+			t.Errorf("gateway.log = %q", got)
+		}
+		if got := read("agent-stderr.log"); got != "harness boot\nDEBUG env ENGINE_TEST_TOKEN=[redacted]\nANTHROPIC_API_KEY=[redacted]\n" {
+			t.Errorf("agent-stderr.log = %q", got)
+		}
+		// The event stream is the run's primary receipt: masked line by
+		// line as it arrives, the harness's JSON still parseable.
+		if got := read("events.ndjson"); strings.Contains(got, secret) || strings.Contains(got, apiKey) || !strings.Contains(got, `"content":"the key is [redacted] and the token [redacted]"`) {
+			t.Errorf("events.ndjson = %q", got)
+		}
+		// Nothing to mask: byte-identical to what the container produced.
+		if got := read("proxy.log"); got != "allow api.example:443\n" {
+			t.Errorf("proxy.log = %q", got)
+		}
+		b, err := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
+		if err != nil || strings.Contains(string(b), secret) || strings.Contains(string(b), apiKey) {
+			t.Errorf("result.json leaks: %v %s", err, b)
+		}
+	})
+}

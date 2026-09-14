@@ -445,3 +445,47 @@ func TestIntakeStagedAndReceipted(t *testing.T) {
 		t.Errorf("kinds = %v", k)
 	}
 }
+
+// TestSessionHandshakeFailureMasksStderr (agentry-cli#109): a harness that
+// dies during the handshake, printing its environment on the way out,
+// leaves neither the error nor the stderr receipt carrying a secret —
+// the failure waits for the process to exit and the receipt to be
+// masked before it returns.
+func TestSessionHandshakeFailureMasksStderr(t *testing.T) {
+	p, f := sessionFixture(t)
+	happyFake(f)
+	// The harness refuses the handshake and then hangs until it is
+	// killed, dying with docker's usual latency: the receipt is masked
+	// only once it has exited, so the failure has to wait for that.
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: func(ctx context.Context, _ dockerx.RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+		_, _ = io.WriteString(stderr, "boot: ENGINE_TEST_TOKEN=sekret-value-1234 ANTHROPIC_API_KEY=sk-test-key-9876\nfatal: no model\n")
+		sc := bufio.NewScanner(stdin)
+		if sc.Scan() {
+			var m struct {
+				ID json.RawMessage `json:"id"`
+			}
+			_ = json.Unmarshal(sc.Bytes(), &m)
+			b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32000, "message": "no model"}})
+			_, _ = stdout.Write(append(b, '\n'))
+		}
+		<-ctx.Done()
+		time.Sleep(300 * time.Millisecond) // docker's kill latency: the file is still open here
+		return 137, nil
+	}}
+	_, err := StartSession(context.Background(), f, p)
+	if err == nil {
+		t.Fatal("a harness that died in the handshake started a session")
+	}
+	for _, secret := range []string{"sekret-value-1234", "sk-test-key-9876"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error carries %q: %v", secret, err)
+		}
+	}
+	b, rerr := os.ReadFile(filepath.Join(p.OutDir, "receipts", "agent-stderr.log"))
+	if rerr != nil {
+		t.Fatalf("stderr receipt: %v", rerr)
+	}
+	if got := string(b); got != "boot: ENGINE_TEST_TOKEN=[redacted] ANTHROPIC_API_KEY=[redacted]\nfatal: no model\n" {
+		t.Errorf("agent-stderr.log = %q", got)
+	}
+}

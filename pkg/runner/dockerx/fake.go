@@ -55,8 +55,10 @@ type Fake struct {
 
 // FakeForeground scripts one foreground container.
 type FakeForeground struct {
-	// Stdout is written to the caller's stdout writer.
+	// Stdout is written to the caller's stdout writer, Stderr to its
+	// stderr writer.
 	Stdout string
+	Stderr string
 	// WantStdin, when set, asserts what the container received on stdin
 	// (recorded into GotStdin for the test to inspect).
 	GotStdin string
@@ -198,6 +200,9 @@ func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, st
 	}
 	if fg.Stdout != "" {
 		_, _ = io.WriteString(stdout, fg.Stdout)
+	}
+	if fg.Stderr != "" && stderr != nil {
+		_, _ = io.WriteString(stderr, fg.Stderr)
 	}
 	if fg.Block {
 		<-ctx.Done()
