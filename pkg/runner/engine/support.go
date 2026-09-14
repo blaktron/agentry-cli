@@ -41,6 +41,10 @@ type runDirs struct {
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
 	hostProxyURL   string
+	// redact masks the run's secret values out of every receipt and error
+	// (redact.go); set once the token and the secrets are known, nil-safe
+	// before.
+	redact *redactor
 }
 
 // replacer substitutes the §R4 placeholders with this run's real values.

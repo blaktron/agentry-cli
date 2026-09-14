@@ -147,9 +147,13 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Result: receipt.TextResult(""),
 		OutDir: p.OutDir,
 	}
+	// The run's redactor exists once the token and the secrets are known
+	// (rd.redact, from then on); every failure before that has nothing to
+	// mask, so the local stands in as nil for them.
+	var redact *redactor
 	planHash, err := p.Plan.Hash()
 	if err != nil {
-		return fail(env, Classify(ExitCLI, err))
+		return fail(env, redact, Classify(ExitCLI, err))
 	}
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
@@ -162,31 +166,36 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
-		return fail(env, err)
+		return fail(env, redact, err)
+	}
+	secrets, err := secretValues(p)
+	if err != nil {
+		return fail(env, redact, err)
 	}
 	if err := writeSecretsFile(p, rd.secretsPath); err != nil {
-		return fail(env, err)
+		return fail(env, redact, err)
 	}
 	task, err := readTask(p.Task, rd.receiptsDir)
 	if err != nil {
-		return fail(env, err)
+		return fail(env, redact, err)
 	}
 
 	token, err := newToken()
 	if err != nil {
-		return fail(env, Classify(ExitCLI, err))
+		return fail(env, redact, Classify(ExitCLI, err))
 	}
 	rep := rd.replacer()
+	redact = rd.newRedactor(p, token, secrets)
 
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
-		return fail(env, err)
+		return fail(env, redact, err)
 	}
 	// Harness files are rendered once the infrastructure is up: a host-run
 	// harness (plan runner-m-r4-adapters §5) needs the published gateway
 	// and proxy addresses, known only now; the replacer learns them too.
 	rep = rd.replacer()
 	if err := renderPlanFiles(p.PlanDir, rd, "harness"); err != nil {
-		return fail(env, err)
+		return fail(env, redact, err)
 	}
 
 	var outcome agentOutcome
@@ -198,6 +207,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	if outcome.hostInfo != "" {
 		env.Harness.Host = outcome.hostInfo
 	}
+	// The harness's final text is the result; it is masked like every
+	// other receipt (the session does the same with its last message).
+	outcome.lastText = redact.String(outcome.lastText)
 	env.Usage = outcome.usage
 	env.Usage.WallMS = time.Since(start).Milliseconds()
 
@@ -207,12 +219,12 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	// are the point of tearing down cleanly (agentry-cli#124).
 	keep := context.WithoutCancel(ctx)
 	if logs, lerr := d.Logs(keep, containerName(runID, "gateway"), 2000); lerr == nil && logs != "" {
-		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "gateway.log"), []byte(logs), 0o644)
+		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "gateway.log"), []byte(redact.String(logs)), 0o644)
 	}
 	// The proxy's decisions (allow/deny per CONNECT) are the evidence of
 	// what left the run (DR-6); collected the same way.
 	if logs, lerr := d.Logs(keep, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
-		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(logs), 0o644)
+		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(redact.String(logs)), 0o644)
 	}
 	writeMeta(rd.receiptsDir, runID, p, start)
 
@@ -222,9 +234,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 			// The person (or the client driving the CLI) interrupted the
 			// run: not the harness's failure, and not a budget — its own
 			// word, under the cli class, with the receipts kept.
-			return fail(env, Classify(ExitCLI, errors.New("interrupted")))
+			return fail(env, redact, Classify(ExitCLI, errors.New("interrupted")))
 		}
-		return fail(env, outcome.err)
+		return fail(env, redact, outcome.err)
 	}
 
 	schema, serr := outputSchema(p)
@@ -234,7 +246,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	result, rerr := finalResult(p.Plan.Harness.ResultKind, outcome.lastText, schema)
 	if rerr != nil {
 		env.Result = receipt.TextResult(outcome.lastText)
-		return fail(env, rerr)
+		return fail(env, redact, rerr)
 	}
 	env.Result = result
 	env.Status = "ok"
@@ -245,9 +257,12 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	return env, nil
 }
 
-// fail stamps the envelope with the classified failure, writes it to the
-// output folder (a failed run still leaves its record, RQ3), and returns.
-func fail(env *receipt.Envelope, err error) (*receipt.Envelope, error) {
+// fail stamps the envelope with the classified failure — its text masked
+// by the run's redactor, since a gateway log tail or an agent's stderr
+// tail rides along in it — writes it to the output folder (a failed run
+// still leaves its record, RQ3), and returns.
+func fail(env *receipt.Envelope, r *redactor, err error) (*receipt.Envelope, error) {
+	err = r.Err(err)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) {
 		ce = Classify(ExitCLI, err)
@@ -516,6 +531,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	collector := &eventCollector{
 		adapter:    p.Adapter,
 		events:     eventsFile,
+		redact:     rd.redact,
 		maxTurns:   p.Budgets.MaxTurns,
 		maxCostUSD: p.Budgets.MaxCostUSD,
 		overBudget: func() {
@@ -545,6 +561,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	exit, runErr := d.RunForeground(agentCtx, runSpec, stdin, pw, stderrFile)
 	_ = pw.Close()
 	<-done
+	// The harness wrote its stderr straight into the receipt; mask it now,
+	// before the tail below quotes it.
+	_ = stderrFile.Close()
+	rd.redact.File(stderrPath)
 	// The kill raced the docker client; make the container's absence a
 	// fact rather than a hope. Not-found is the normal case (--rm).
 	_ = d.RemoveForce(ctx, name)
@@ -639,8 +659,11 @@ func stripJSONFences(s string) string {
 
 // eventCollector consumes the harness NDJSON stream line by line.
 type eventCollector struct {
-	adapter    adapter.Adapter
-	events     io.Writer
+	adapter adapter.Adapter
+	events  io.Writer
+	// redact masks the run's secret values out of each event line before
+	// it reaches the receipt; the line is parsed as the harness sent it.
+	redact     *redactor
 	maxTurns   int
 	overBudget func()
 	// maxCostUSD > 0 makes the harness's reported running cost a hard
@@ -669,7 +692,7 @@ func (c *eventCollector) consume(r io.Reader) {
 	sc.Buffer(make([]byte, 0, 64*1024), 8<<20)
 	for sc.Scan() {
 		line := sc.Bytes()
-		_, _ = c.events.Write(append(append([]byte{}, line...), '\n'))
+		_, _ = c.events.Write(append([]byte(c.redact.String(string(line))), '\n'))
 		for _, ev := range c.adapter.Events(line) {
 			switch ev.Kind {
 			case adapter.EventToolCall:

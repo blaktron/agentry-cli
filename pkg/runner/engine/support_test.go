@@ -216,7 +216,7 @@ func TestReadTask(t *testing.T) {
 func TestFailClassification(t *testing.T) {
 	t.Run("bare error becomes exit 1", func(t *testing.T) {
 		env := &receipt.Envelope{}
-		_, err := fail(env, errors.New("plain failure"))
+		_, err := fail(env, nil, errors.New("plain failure"))
 		var ce *ClassifiedError
 		if !errors.As(err, &ce) || ce.Code != ExitCLI {
 			t.Fatalf("err = %v", err)
@@ -228,7 +228,7 @@ func TestFailClassification(t *testing.T) {
 	t.Run("classified error kept, envelope written", func(t *testing.T) {
 		dir := t.TempDir()
 		env := &receipt.Envelope{OutDir: dir}
-		_, err := fail(env, Classify(ExitGateway, errors.New("gw down")))
+		_, err := fail(env, nil, Classify(ExitGateway, errors.New("gw down")))
 		var ce *ClassifiedError
 		if !errors.As(err, &ce) || ce.Code != ExitGateway {
 			t.Fatalf("err = %v", err)
@@ -239,7 +239,7 @@ func TestFailClassification(t *testing.T) {
 	})
 	t.Run("unwritable out dir is reported inside the envelope", func(t *testing.T) {
 		env := &receipt.Envelope{OutDir: filepath.Join(t.TempDir(), "gone")}
-		_, _ = fail(env, Classify(ExitHarness, errors.New("agent died")))
+		_, _ = fail(env, nil, Classify(ExitHarness, errors.New("agent died")))
 		if !strings.Contains(env.Error, "agent died") || !strings.Contains(env.Error, "result.json could not be written") {
 			t.Errorf("env.Error = %q", env.Error)
 		}

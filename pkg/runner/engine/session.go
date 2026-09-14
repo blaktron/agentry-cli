@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -79,7 +78,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	fail := func(err error) (session.Session, error) {
 		td.run()
-		_, cerr := fail(env, err)
+		_, cerr := fail(env, s.redact, err)
 		return nil, cerr
 	}
 
@@ -110,7 +109,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(Classify(ExitCLI, err))
 	}
 	rep := rd.replacer()
-	s.redact = newRedactor(token, secrets, hostSecretValues(p.Plan.Harness.Agent.Env))
+	s.redact = rd.newRedactor(p, token, secrets)
 
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
 		return fail(err)
@@ -250,6 +249,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		code, rerr := run()
 		_ = stdoutW.Close()
 		_ = stderrFile.Close()
+		s.redact.File(s.stderrPath)
 		s.mu.Lock()
 		s.exitCode = code
 		if rerr != nil {
@@ -259,9 +259,20 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		close(s.exited)
 		s.endWith(session.EndHarness)
 	}()
+	// A failure from here on has a harness process running and writing
+	// its stderr receipt; the goroutine above masks that receipt once the
+	// process has exited, so the failure waits for it (bounded — the
+	// cancel kills the process) before the receipt is handed over.
+	awaitExit := func() {
+		select {
+		case <-s.exited:
+		case <-time.After(15 * time.Second):
+		}
+	}
 	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: p.Plan.Tools})
 	if err != nil {
 		cancel(err)
+		awaitExit()
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w", err))
 	}
 	s.drv = drv
@@ -269,6 +280,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	defer cancelHS()
 	if err := drv.Start(handshake); err != nil {
 		cancel(err)
+		awaitExit()
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w%s", err, stderrTail(s.stderrPath)))
 	}
 	s.lastActivity = time.Now()
@@ -617,7 +629,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	}
 	if outErr != nil {
 		env.Result = receipt.TextResult(lastText)
-		env, outErr = fail(env, outErr)
+		env, outErr = fail(env, s.redact, outErr)
 	} else {
 		env.Status = "ok"
 		env.ExitCode = ExitOK
@@ -662,41 +674,6 @@ func transcript(env *receipt.Envelope, log []session.Event) string {
 		}
 	}
 	return b.String()
-}
-
-// redactor masks the values that must never reach a receipt: the run's
-// gateway token, every resolved secret value and the model API key
-// (§R11 invariant 7).
-type redactor struct{ values []string }
-
-func newRedactor(token string, secrets map[string]string, extra []string) *redactor {
-	var vals []string
-	add := func(v string) {
-		if len(v) >= 4 {
-			vals = append(vals, v)
-		}
-	}
-	add(token)
-	for _, v := range secrets {
-		add(v)
-	}
-	for _, v := range extra {
-		add(v)
-	}
-	// Longest first so a value that contains another is masked whole.
-	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
-	return &redactor{values: vals}
-}
-
-// String masks every known value in s.
-func (r *redactor) String(s string) string {
-	if r == nil {
-		return s
-	}
-	for _, v := range r.values {
-		s = strings.ReplaceAll(s, v, "[redacted]")
-	}
-	return s
 }
 
 // hostSecretValues collects the host-environment values the plan injects
