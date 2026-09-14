@@ -85,6 +85,11 @@ type RunSpec struct {
 	Hostname string
 	// Labels tag the container for teardown sweeps.
 	Labels map[string]string
+	// User runs the container's process as this uid:gid (`--user`), for a
+	// container that writes into a directory the invoking user owns and
+	// must be able to remove afterwards (the MCP server installer,
+	// agentry-cli#112). Empty leaves the image's own user.
+	User string
 	// Interactive attaches stdin (foreground runs).
 	Interactive bool
 	// AutoRemove passes --rm; teardown still force-removes by name in
@@ -361,6 +366,9 @@ func (r RunSpec) args(detach bool) []string {
 	}
 	if r.Name != "" {
 		args = append(args, "--name", r.Name)
+	}
+	if r.User != "" {
+		args = append(args, "--user", r.User)
 	}
 	if r.Network != "" {
 		args = append(args, "--network", r.Network)
