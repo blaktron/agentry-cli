@@ -335,7 +335,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		switch r.Source {
 		case "npm":
 			image = images.NodeRuntime
-			argv = []string{"npm", "install",
+			// As the invoking user (below), whose HOME does not exist in
+			// the image: npm's cache and config go under /tmp.
+			argv = []string{"env", "HOME=/tmp", "npm_config_cache=/tmp/npm-cache", "npm", "install",
 				"--prefix", r.prefix(), r.Package + "@" + r.Version,
 				"--registry", regs.NPM,
 				"--no-audit", "--no-fund", "--ignore-scripts", "--loglevel", "error"}
@@ -371,6 +373,12 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			Name:  "agentry-mcpinstall-" + r.ID,
 			Image: image,
 			Argv:  argv,
+			// The store is the user's: the builder runs as the invoking
+			// uid:gid so every file it writes is theirs and `rm -rf` of the
+			// profile — what the drift refusal asks for — works
+			// (agentry-cli#112). Hosts without POSIX ids leave it to the
+			// image's own user.
+			User: invokingUser(),
 			// The name is fixed per server, so the container must go when
 			// the build ends or the next agent declaring the same server
 			// fails at install with a name conflict (agentry-cli#106).
@@ -403,6 +411,16 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		}
 	}
 	return nil
+}
+
+// invokingUser is the uid:gid the install container runs as, or "" on a
+// host without POSIX ids (the engine's stampOwner draws the same line).
+func invokingUser() string {
+	uid, gid := os.Getuid(), os.Getgid()
+	if uid < 0 || gid < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
 // Specs turns resolutions into the plan's server specs.
@@ -545,6 +563,8 @@ func pipScript(r *Resolved, regs policy.MCPRegistries) string {
 	}
 	return strings.Join([]string{
 		"set -e",
+		// as the invoking user, whose HOME does not exist in the image
+		"export HOME=/tmp",
 		fmt.Sprintf("python -m venv %s/venv", p),
 		fmt.Sprintf("mkdir -p %s/dl", p),
 		fmt.Sprintf("%s/venv/bin/pip download --quiet --no-cache-dir --no-deps %s --index-url %s --dest %s/dl %s==%s", p, onlyBinary, idx, p, r.Package, r.Version),

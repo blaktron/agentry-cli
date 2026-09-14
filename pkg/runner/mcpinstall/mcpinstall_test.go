@@ -110,6 +110,14 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 	if run, ok := fake.FindRun("agentry-mcpinstall-"); !ok || !run.AutoRemove {
 		t.Fatalf("installer container not auto-removed: %+v", run)
 	}
+	// The store is the user's (#112): the builder runs as the invoking
+	// uid:gid so `rm -rf` of the profile works afterwards, with npm's home
+	// and cache pointed at /tmp, where that user can write in the image.
+	if run, _ := fake.FindRun("agentry-mcpinstall-"); run.User != invokingUser() || run.User == "" {
+		t.Fatalf("installer runs as %q, want the invoking user %q", run.User, invokingUser())
+	} else if len(run.Argv) < 3 || run.Argv[0] != "env" || run.Argv[1] != "HOME=/tmp" || run.Argv[2] != "npm_config_cache=/tmp/npm-cache" {
+		t.Fatalf("npm not given a writable HOME and cache: %v", run.Argv)
+	}
 	if _, err := os.Stat(filepath.Join(store, "npm-scope-server-x.json")); err != nil {
 		t.Fatalf("resolution not recorded: %v", err)
 	}

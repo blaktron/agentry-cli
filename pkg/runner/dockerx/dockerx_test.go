@@ -96,6 +96,13 @@ func TestRunSpecArgs(t *testing.T) {
 		t.Errorf("foreground args = %q, want %q", got, want)
 	}
 
+	// A container that writes into the user's directory runs as the user
+	// (the MCP server installer, agentry-cli#112).
+	asUser := RunSpec{Name: "n", Image: "i", User: "1000:1000"}
+	if got := asUser.args(false); !reflect.DeepEqual(got, []string{"run", "--name", "n", "--user", "1000:1000", "i"}) {
+		t.Errorf("user args = %q", got)
+	}
+
 	minimal := RunSpec{Image: "i"}
 	if got := minimal.args(false); !reflect.DeepEqual(got, []string{"run", "i"}) {
 		t.Errorf("minimal args = %q", got)
