@@ -331,7 +331,7 @@ func Load(path string) (*Policy, string, error) {
 	dec.KnownFields(true)
 	var p Policy
 	if err := dec.Decode(&p); err != nil {
-		return nil, "", fmt.Errorf("parse %s: %w", path, err)
+		return nil, "", explainParseError(path, err)
 	}
 	// Exactly one YAML document: a trailing document would silently not
 	// apply, which for a policy file is a hole, not a convenience.
