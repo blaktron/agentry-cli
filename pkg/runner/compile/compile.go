@@ -947,7 +947,7 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 			d += ")"
 			parts = append(parts, d)
 		}
-		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network (shared by every gateway on this docker host) with a TCP relay linked under each host's name, one with none has no network — with server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
+		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network with a TCP relay linked under each host's name — a network the runner refuses to share: the run does not start while another gateway's relays are on it (checked as the run starts; a gateway started during the run is not refused), and its own relays are removed at teardown — one with none has no network — with server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
 	}
 	return e
 }

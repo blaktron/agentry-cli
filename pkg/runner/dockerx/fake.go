@@ -51,6 +51,13 @@ type Fake struct {
 	PortFailures int
 	// Leftover names PSByLabel returns (leak-check tests).
 	Leftover []string
+	// ByLabel, when it has the label, is what PSByLabel answers for it
+	// instead of Leftover.
+	ByLabel map[string][]string
+	// OnDetached, when set, runs with the spec of every detached container
+	// as it starts — how a test gives a container side effects, such as
+	// the relays a gateway creates.
+	OnDetached func(r RunSpec)
 }
 
 // FakeForeground scripts one foreground container.
@@ -168,6 +175,9 @@ func (f *Fake) RunDetached(_ context.Context, r RunSpec) error {
 			return err
 		}
 	}
+	if f.OnDetached != nil {
+		f.OnDetached(r)
+	}
 	return nil
 }
 
@@ -226,6 +236,9 @@ func (f *Fake) RemoveForce(_ context.Context, name string) error {
 // PSByLabel implements Client.
 func (f *Fake) PSByLabel(_ context.Context, label string) ([]string, error) {
 	f.record("PSByLabel", label, RunSpec{})
+	if names, ok := f.ByLabel[label]; ok {
+		return names, nil
+	}
 	return f.Leftover, nil
 }
 
