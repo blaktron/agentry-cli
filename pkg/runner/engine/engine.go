@@ -379,13 +379,25 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		// daemon would otherwise refuse it the socket outright.
 		DisableSELinuxLabel: mountsDockerSocket(p.Plan.Gateway.Mounts),
 	}
+	// A run that will give the gateway relays to start refuses to share
+	// the relay network with another gateway's (relays.go, agentry-cli#108).
+	if relaysNeeded(p.Plan.MCPServers) {
+		if err := refuseForeignRelays(ctx, d); err != nil {
+			return err
+		}
+	}
 	if err := d.RunDetached(ctx, gwSpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))
 	}
 	// Graceful stop first: the gateway reaps its tool-server containers
-	// on SIGTERM; rm -f would orphan them.
+	// on SIGTERM; rm -f would orphan them. Its relay sidecars it does not
+	// reap on our stop (Docker 29.7.2, agentry-cli#106), so they are removed
+	// here by the names its log gave them (relays.go), before the log goes
+	// with the container.
+	relays := &relayReaper{}
 	td.add(func(c context.Context) {
 		_ = d.Stop(c, gwName, 10)
+		relays.reap(c, d, gwName)
 		_ = d.RemoveForce(c, gwName)
 	})
 	// No bridge leg for the gateway, on purpose: see the proxy above.
@@ -422,7 +434,14 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// launches its servers while loading its configuration, before it
 	// serves the probe, so the log is complete by now.
 	if len(p.Plan.MCPServers) > 0 {
-		if err := checkDeclaredServersStarted(ctx, d, gwName, p.Plan.MCPServers); err != nil {
+		logs, err := d.Logs(ctx, gwName, dockerx.LogsAll)
+		if err != nil {
+			return Classify(ExitGateway, fmt.Errorf("read gateway log to confirm declared servers started: %w", err))
+		}
+		// The relays are up by now and nothing of the agent's has run: the
+		// names the log carries are the gateway's own (relays.go).
+		relays.snapshot(logs)
+		if err := checkDeclaredServersStarted(logs, p.Plan.MCPServers); err != nil {
 			return Classify(ExitGateway, err)
 		}
 	}
@@ -436,11 +455,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 // capabilitites.go "  > Can't start %s: %s", "  > Can't list tools %s:
 // %s"; pkg/mcp/stdio.go relays server stderr as "- %s: %s"): a gateway
 // bump re-checks them.
-func checkDeclaredServersStarted(ctx context.Context, d dockerx.Client, gwName string, servers []spec.MCPServerSpec) error {
-	logs, err := d.Logs(ctx, gwName, dockerx.LogsAll)
-	if err != nil {
-		return fmt.Errorf("read gateway log to confirm declared servers started: %w", err)
-	}
+func checkDeclaredServersStarted(logs string, servers []spec.MCPServerSpec) error {
 	lines := strings.Split(logs, "\n")
 	for _, srv := range servers {
 		for _, line := range lines {

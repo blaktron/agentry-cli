@@ -82,6 +82,14 @@ LEFT=$(docker ps -a --filter label=agentry.run --format '{{.Names}}')
 NETS=$(docker network ls --format '{{.Name}}' | grep '^agentry-' || true)
 [ -z "$NETS" ] || { echo "FAIL: leftover networks: $NETS"; exit 1; }
 find "$AGENTRY_RUNNER_HOME" -name secrets.env | grep -q . && { echo "FAIL: secrets.env survived"; exit 1; }
+# The relay sidecars the gateway started for a declared server are reaped
+# by the names its log gave them (agentry-cli#106, #108): none named in any
+# run's gateway.log receipt may survive. Checked by name, never by label —
+# the user's own docker mcp gateway may have relays of its own.
+RELAYS=$(cat "$OUT"/receipts/gateway.log "$EXECOUT"/receipts/gateway.log 2>/dev/null | grep -oE '^(starting l4 proxy docker-mcp-l4proxy-[^ ]+ for|[[:space:]]+- Starting l7 proxy docker-mcp-l7proxy-[^ ]+ for)' | grep -oE 'docker-mcp-l[47]proxy-[^ ]+' | sort -u || true)
+for r in $RELAYS; do
+  docker ps -a --format '{{.Names}}' | grep -qx "$r" && { echo "FAIL: relay sidecar $r survived teardown"; exit 1; }
+done
 echo "teardown clean"
 
 echo "runner-r2: all checks passed"
