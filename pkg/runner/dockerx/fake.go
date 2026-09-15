@@ -49,8 +49,10 @@ type Fake struct {
 	Ports map[string]int
 	// PortFailures makes that many Port calls fail before one succeeds.
 	PortFailures int
-	// Leftover names PSByLabel returns (leak-check tests).
-	Leftover []string
+	// Leftover names PSByLabel returns (leak-check tests); LeftoverVolumes
+	// what VolumesByLabel returns.
+	Leftover        []string
+	LeftoverVolumes []string
 	// ByLabel, when it has the label, is what PSByLabel answers for it
 	// instead of Leftover.
 	ByLabel map[string][]string
@@ -165,6 +167,24 @@ func (f *Fake) NetworkConnect(_ context.Context, network, container string) erro
 func (f *Fake) NetworkRemove(_ context.Context, name string) error {
 	f.record("NetworkRemove", name, RunSpec{})
 	return nil
+}
+
+// VolumeCreate implements Client.
+func (f *Fake) VolumeCreate(_ context.Context, name string, _ map[string]string) error {
+	f.record("VolumeCreate", name, RunSpec{})
+	return nil
+}
+
+// VolumeRemove implements Client.
+func (f *Fake) VolumeRemove(_ context.Context, name string) error {
+	f.record("VolumeRemove", name, RunSpec{})
+	return nil
+}
+
+// VolumesByLabel implements Client.
+func (f *Fake) VolumesByLabel(_ context.Context, label string) ([]string, error) {
+	f.record("VolumesByLabel", label, RunSpec{})
+	return f.LeftoverVolumes, nil
 }
 
 // RunDetached implements Client.

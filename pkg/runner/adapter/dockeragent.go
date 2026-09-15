@@ -174,7 +174,10 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			ProtocolVersion: acpProtocolVersion,
 			SessionDB:       spec.SessionMount + "/session.db",
 			Mounts:          []spec.Mount{{Source: spec.PHSession, Target: spec.SessionMount}},
-			Safety:          harnessSafety,
+			// The image runs as its own unprivileged user; the store's
+			// volume is given to it before the harness starts.
+			StoreOwner: "docker-agent",
+			Safety:     harnessSafety,
 		}
 	default:
 		return Result{}, fmt.Errorf("docker-agent adapter: unknown run mode %q", mode)

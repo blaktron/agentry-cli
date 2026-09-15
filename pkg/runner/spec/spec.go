@@ -46,8 +46,9 @@ const (
 	// store (RUNNER-PLAN-3): profile/servers/, one subdirectory per
 	// declared server, mounted :ro into that server's runtime container.
 	PHServers = "@@RUN_SERVERS@@"
-	// PHSession is the host directory an interactive session's harness
-	// store lives in (DR-15); mounted only by interactive plans.
+	// PHSession is the per-run named volume an interactive session's
+	// harness store lives in (DR-15; a volume since agentry-cli#90);
+	// mounted only by interactive plans.
 	PHSession = "@@RUN_SESSION@@"
 	// PHHostGatewayURL / PHHostProxyURL are the published 127.0.0.1
 	// addresses a host-run harness reaches the gateway and the proxy at
@@ -247,8 +248,16 @@ type SessionSpec struct {
 	// SessionDB is the container path of the harness's session store.
 	SessionDB string `json:"sessionDb"`
 	// Mounts are added to the agent container for a session only: the
-	// writable session store under PHSession.
+	// writable session store under PHSession, which the engine resolves to
+	// a per-run named volume (agentry-cli#90).
 	Mounts []Mount `json:"mounts,omitempty"`
+	// StoreOwner is the user, as the harness image knows it, that must
+	// own the session store: a fresh volume is root-owned wherever it is
+	// mounted, and the harness runs unprivileged, so the engine gives the
+	// store to this user once, as root in the harness image on no network,
+	// before the harness starts. Empty leaves the volume as docker made
+	// it.
+	StoreOwner string `json:"storeOwner,omitempty"`
 	// Safety is the harness safety mode the generated config declares
 	// (the ACP server has no flag): always "autonomous" — the gateway,
 	// not in-harness prompting, is the boundary, and the runner answers

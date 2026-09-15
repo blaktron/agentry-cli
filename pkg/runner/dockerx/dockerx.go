@@ -43,6 +43,12 @@ type Client interface {
 	NetworkConnect(ctx context.Context, network, container string) error
 	// NetworkRemove removes a network.
 	NetworkRemove(ctx context.Context, name string) error
+	// VolumeCreate creates a named volume with labels; VolumeRemove
+	// removes one (absent is not an error); VolumesByLabel lists the
+	// names carrying a label, for the run's teardown sweep.
+	VolumeCreate(ctx context.Context, name string, labels map[string]string) error
+	VolumeRemove(ctx context.Context, name string) error
+	VolumesByLabel(ctx context.Context, label string) ([]string, error)
 	// RunDetached starts a container in the background.
 	RunDetached(ctx context.Context, r RunSpec) error
 	// RunForeground runs a container to completion, streaming stdio, and
@@ -90,6 +96,10 @@ type RunSpec struct {
 	// must be able to remove afterwards (the MCP server installer,
 	// agentry-cli#112). Empty leaves the image's own user.
 	User string
+	// Entrypoint replaces the image's entrypoint (`--entrypoint`): for a
+	// one-shot that borrows an image for a shell command, such as the
+	// session store's ownership step (agentry-cli#90). Empty keeps it.
+	Entrypoint string
 	// Interactive attaches stdin (foreground runs).
 	Interactive bool
 	// AutoRemove passes --rm; teardown still force-removes by name in
@@ -265,6 +275,41 @@ func (c *CLI) NetworkRemove(ctx context.Context, name string) error {
 	return err
 }
 
+// VolumeCreate implements Client.
+func (c *CLI) VolumeCreate(ctx context.Context, name string, labels map[string]string) error {
+	args := []string{"volume", "create"}
+	for _, k := range sortedKeys(labels) {
+		args = append(args, "--label", k+"="+labels[k])
+	}
+	args = append(args, name)
+	_, err := c.run(ctx, args...)
+	return err
+}
+
+// VolumeRemove implements Client.
+func (c *CLI) VolumeRemove(ctx context.Context, name string) error {
+	_, err := c.run(ctx, "volume", "rm", "-f", name)
+	if err != nil && isNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// VolumesByLabel implements Client.
+func (c *CLI) VolumesByLabel(ctx context.Context, label string) ([]string, error) {
+	out, err := c.run(ctx, "volume", "ls", "--filter", "label="+label, "--format", "{{.Name}}")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			names = append(names, s)
+		}
+	}
+	return names, nil
+}
+
 // RunDetached implements Client.
 func (c *CLI) RunDetached(ctx context.Context, r RunSpec) error {
 	cmd := c.command(ctx, r.args(true)...)
@@ -369,6 +414,9 @@ func (r RunSpec) args(detach bool) []string {
 	}
 	if r.User != "" {
 		args = append(args, "--user", r.User)
+	}
+	if r.Entrypoint != "" {
+		args = append(args, "--entrypoint", r.Entrypoint)
 	}
 	if r.Network != "" {
 		args = append(args, "--network", r.Network)

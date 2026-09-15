@@ -108,5 +108,10 @@ if os.path.exists(tr):
     check("the transcript records a tool call", "tool" in body.lower(), body[:300])
 ev = os.path.join(out, "receipts", "events.ndjson")
 check("an events receipt exists", os.path.exists(ev))
+# The session store is a per-run volume, gone with the run (agentry-cli#90);
+# no world-writable host directory stands in for it.
+vols = subprocess.run(["docker", "volume", "ls", "--filter", "label=agentry.run", "--format", "{{.Name}}"],
+                      capture_output=True, text=True).stdout.split()
+check("no session volume survives the run", not vols, " ".join(vols))
 print("SESSION_CHECK_EXIT=" + ("0" if ok else "1"))
 sys.exit(0 if ok else 1)

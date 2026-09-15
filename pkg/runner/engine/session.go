@@ -87,11 +87,36 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(err)
 	}
 	s.rd = rd
-	// The harness image runs unprivileged (user docker-agent) and must
-	// write its session store into this host-owned directory; a per-run
-	// named volume is the follow-up (spike, agentry-cli#33).
-	if err := os.Chmod(rd.session, 0o777); err != nil { //nolint:gosec // the harness user must write here; the dir holds only its SQLite store
-		return fail(Classify(ExitCLI, fmt.Errorf("session dir: %w", err)))
+	// The session store: a per-run named volume, labelled like every run
+	// object and removed with it (agentry-cli#90; DR-15 called the
+	// world-writable host directory it replaces "for now"). A fresh
+	// volume is root-owned wherever it is mounted and the harness runs
+	// unprivileged, so the volume is given to the harness image's own
+	// user first — as root, in that image, on no network, once.
+	if err := d.VolumeCreate(ctx, rd.session, runLabels(runID)); err != nil {
+		return fail(Classify(ExitCLI, fmt.Errorf("create session volume: %w", err)))
+	}
+	td.add(func(c context.Context) { _ = d.VolumeRemove(c, rd.session) })
+	if owner := p.Plan.Harness.Session.StoreOwner; owner != "" {
+		initName := containerName(runID, "session-init")
+		td.add(func(c context.Context) { _ = d.RemoveForce(c, initName) })
+		code, err := d.RunForeground(ctx, dockerx.RunSpec{
+			Name:       initName,
+			Image:      p.Plan.Harness.Agent.Image,
+			Entrypoint: "sh",
+			Argv:       []string{"-c", `chown -- "$1" "$2"`, "sh", owner, spec.SessionMount},
+			User:       "0:0",
+			Network:    "none",
+			Mounts:     []dockerx.Mount{{Source: rd.session, Target: spec.SessionMount}},
+			Labels:     runLabels(runID),
+			AutoRemove: true,
+		}, nil, io.Discard, p.Stderr)
+		if err != nil || code != 0 {
+			if err == nil {
+				err = fmt.Errorf("exit %d", code)
+			}
+			return fail(Classify(ExitCLI, fmt.Errorf("give the session store to the harness user %q: %w", owner, err)))
+		}
 	}
 	secrets, err := secretValues(p)
 	if err != nil {
