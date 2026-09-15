@@ -489,3 +489,71 @@ func TestSessionHandshakeFailureMasksStderr(t *testing.T) {
 		t.Errorf("agent-stderr.log = %q", got)
 	}
 }
+
+// TestSessionStoreIsARunVolume (agentry-cli#90): an interactive run's
+// session store is a per-run named volume labelled with the run id —
+// created before the harness, given to the harness image's own user by a
+// one-shot as root on no network, mounted at /session without a relabel,
+// removed at teardown after the containers — and no host directory is
+// made for it, world-writable or otherwise.
+func TestSessionStoreIsARunVolume(t *testing.T) {
+	s, _, p, f := startFixture(t)
+	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "5e5510", "session")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a host session directory exists: %v", err)
+	}
+	// The ownership one-shot: the harness image, root, no network, the
+	// volume mounted, chown to the image's user.
+	init, ok := f.FindRun("-session-init")
+	if !ok {
+		t.Fatal("no session-init container ran")
+	}
+	if init.Image != p.Plan.Harness.Agent.Image || init.User != "0:0" || init.Network != "none" || init.Entrypoint != "sh" ||
+		len(init.Mounts) != 1 || init.Mounts[0].Source != "agentry-5e5510-session" || init.Mounts[0].Target != spec.SessionMount || init.Mounts[0].Relabel {
+		t.Errorf("session-init spec = %+v", init)
+	}
+	if strings.Join(init.Argv, " ") != `-c chown -- "$1" "$2" sh docker-agent /session` {
+		t.Errorf("session-init argv = %q", init.Argv)
+	}
+	// The harness mounts the volume, not a path, and without a relabel.
+	agent, ok := f.FindRun("-agent")
+	if !ok {
+		t.Fatal("no agent container ran")
+	}
+	var mounted bool
+	for _, m := range agent.Mounts {
+		if m.Target == spec.SessionMount {
+			mounted = true
+			if m.Source != "agentry-5e5510-session" || m.ReadOnly || m.Relabel {
+				t.Errorf("session mount = %+v", m)
+			}
+		}
+	}
+	if !mounted {
+		t.Error("the harness has no /session mount")
+	}
+	env, err := s.End(context.Background(), true)
+	if err != nil {
+		t.Fatalf("end: %v (%+v)", err, env)
+	}
+	// Order: the volume is created before the init and the harness, and
+	// removed after the containers are gone; the sweep lists volumes by
+	// the run label.
+	ops := f.Ops()
+	idx := func(op string) int {
+		for i, o := range ops {
+			if o == op {
+				return i
+			}
+		}
+		return -1
+	}
+	create, remove, agentRun, sweep := idx("VolumeCreate:agentry-5e5510-session"), idx("VolumeRemove:agentry-5e5510-session"), idx("RunForeground:agentry-5e5510-agent"), idx("VolumesByLabel:agentry.run=5e5510")
+	if create < 0 || remove < 0 || agentRun < 0 || sweep < 0 || create > agentRun || remove < agentRun || sweep < remove {
+		t.Errorf("order: create=%d agent=%d remove=%d sweep=%d in %v", create, agentRun, remove, sweep, ops)
+	}
+	for i, o := range ops {
+		if strings.HasPrefix(o, "RemoveForce:agentry-5e5510-agent") && i > remove {
+			t.Errorf("the volume was removed before its container: %v", ops)
+		}
+	}
+}

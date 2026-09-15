@@ -81,6 +81,8 @@ LEFT=$(docker ps -a --filter label=agentry.run --format '{{.Names}}')
 [ -z "$LEFT" ] || { echo "FAIL: leftover containers: $LEFT"; exit 1; }
 NETS=$(docker network ls --format '{{.Name}}' | grep '^agentry-' || true)
 [ -z "$NETS" ] || { echo "FAIL: leftover networks: $NETS"; exit 1; }
+VOLS=$(docker volume ls --filter label=agentry.run --format '{{.Name}}')
+[ -z "$VOLS" ] || { echo "FAIL: leftover volumes: $VOLS"; exit 1; }
 find "$AGENTRY_RUNNER_HOME" -name secrets.env | grep -q . && { echo "FAIL: secrets.env survived"; exit 1; }
 # The relay sidecars the gateway started for a declared server are reaped
 # by the names its log gave them (agentry-cli#106, #108): none named in any

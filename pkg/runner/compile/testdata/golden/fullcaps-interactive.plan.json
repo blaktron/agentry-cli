@@ -176,6 +176,7 @@
           "target": "/session"
         }
       ],
+      "storeOwner": "docker-agent",
       "safety": "autonomous",
       "budgets": {
         "idleTimeoutSeconds": 900,

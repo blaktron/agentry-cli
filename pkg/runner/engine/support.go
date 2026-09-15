@@ -31,7 +31,7 @@ type runDirs struct {
 	root        string // <RunRoot>/runs/<id>
 	workspace   string // root/workspace — the rw copy tools may mount
 	inputs      string // root/inputs — the :ro operator-inputs channel (P2 §P4)
-	session     string // root/session — an interactive session's harness store (DR-15)
+	session     string // the per-run volume an interactive session's harness store lives in (DR-15, agentry-cli#90)
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/secrets.env (0600, deleted on teardown)
 	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
@@ -72,8 +72,11 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		root:      root,
 		workspace: filepath.Join(root, "workspace"),
 		inputs:    filepath.Join(root, "inputs"),
-		session:   filepath.Join(root, "session"),
-		cfg:       filepath.Join(root, "cfg"),
+		// The session store is a per-run named volume, not a host
+		// directory (agentry-cli#90): the harness runs unprivileged, and a
+		// host directory it could write was a world-writable one.
+		session: sessionVolumeName(runID),
+		cfg:     filepath.Join(root, "cfg"),
 		// secrets.env lives INSIDE cfg/gateway because that directory is
 		// the gateway's /mcp mount — the compiled `--secrets
 		// /mcp/secrets.env` argv resolves to this file and nothing else.
@@ -87,7 +90,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	// inputs/ exists even when empty: the compiled catalog always mounts
 	// it :ro, and an absent bind source would fail the tools container.
-	for _, dir := range []string{rd.workspace, rd.inputs, rd.session, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
+	for _, dir := range []string{rd.workspace, rd.inputs, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
@@ -381,11 +384,14 @@ func resolveEnv(vars []spec.EnvVar, rep *strings.Replacer, token string) (map[st
 func resolveMounts(mounts []spec.Mount, rep *strings.Replacer) []dockerx.Mount {
 	out := make([]dockerx.Mount, 0, len(mounts))
 	for _, m := range mounts {
+		source := rep.Replace(m.Source)
 		out = append(out, dockerx.Mount{
-			Source:   rep.Replace(m.Source),
+			Source:   source,
 			Target:   m.Target,
 			ReadOnly: m.ReadOnly,
-			Relabel:  runScopedMount(m.Source),
+			// A named volume (the session store) is not a host path and
+			// takes no relabel: docker labels its own volumes.
+			Relabel: runScopedMount(m.Source) && strings.HasPrefix(source, "/"),
 		})
 	}
 	return out
@@ -594,6 +600,13 @@ func (t *teardown) run() {
 				_ = t.d.RemoveForce(ctx, name)
 			}
 		}
+		// Volumes carry the same label (the session store): after the
+		// containers, never before, since a volume in use cannot go.
+		if leftover, err := t.d.VolumesByLabel(ctx, "agentry.run="+t.runID); err == nil {
+			for _, name := range leftover {
+				_ = t.d.VolumeRemove(ctx, name)
+			}
+		}
 	}
 }
 
@@ -601,6 +614,7 @@ func (t *teardown) run() {
 // name and an agentry.run label for sweeps.
 func containerName(runID, role string) string { return "agentry-" + runID + "-" + role }
 func networkName(runID string) string         { return "agentry-" + runID + "-net" }
+func sessionVolumeName(runID string) string   { return "agentry-" + runID + "-session" }
 func runLabels(runID string) map[string]string {
 	return map[string]string{"agentry.run": runID}
 }

@@ -103,9 +103,46 @@ func TestRunSpecArgs(t *testing.T) {
 		t.Errorf("user args = %q", got)
 	}
 
+	// A one-shot that borrows an image for a shell command replaces its
+	// entrypoint and runs as root on no network (the session store's
+	// ownership step, agentry-cli#90); a volume mounts by name like a path.
+	oneShot := RunSpec{Name: "n", Image: "i", Entrypoint: "sh", User: "0:0", Network: "none",
+		Argv:   []string{"-c", `chown -- "$1" "$2"`, "sh", "docker-agent", "/session"},
+		Mounts: []Mount{{Source: "agentry-x-session", Target: "/session"}}}
+	if got := oneShot.args(false); !reflect.DeepEqual(got, []string{"run", "--name", "n", "--user", "0:0", "--entrypoint", "sh", "--network", "none",
+		"-v", "agentry-x-session:/session", "i", "-c", `chown -- "$1" "$2"`, "sh", "docker-agent", "/session"}) {
+		t.Errorf("one-shot args = %q", got)
+	}
+
 	minimal := RunSpec{Image: "i"}
 	if got := minimal.args(false); !reflect.DeepEqual(got, []string{"run", "i"}) {
 		t.Errorf("minimal args = %q", got)
+	}
+}
+
+// TestCLIVolumeOps: the session store's volume is created with the run
+// label, listed by it and removed with force (agentry-cli#90).
+func TestCLIVolumeOps(t *testing.T) {
+	c, record := stub(t, `case "$*" in *"volume ls"*) printf 'agentry-x-session\n';; esac; exit 0`)
+	ctx := context.Background()
+	if err := c.VolumeCreate(ctx, "agentry-x-session", map[string]string{"agentry.run": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	names, err := c.VolumesByLabel(ctx, "agentry.run=x")
+	if err != nil || !reflect.DeepEqual(names, []string{"agentry-x-session"}) {
+		t.Fatalf("VolumesByLabel = %v, %v", names, err)
+	}
+	if err := c.VolumeRemove(ctx, "agentry-x-session"); err != nil {
+		t.Fatal(err)
+	}
+	got := recorded(t, record)
+	want := []string{
+		"volume create --label agentry.run=x agentry-x-session",
+		"volume ls --filter label=agentry.run=x --format {{.Name}}",
+		"volume rm -f agentry-x-session",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("argv lines = %q\nwant %q", got, want)
 	}
 }
 
