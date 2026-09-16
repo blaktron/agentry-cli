@@ -31,6 +31,13 @@ type Fake struct {
 
 	// AvailableErr fails Available.
 	AvailableErr error
+	// RuntimeNames is what Runtimes answers; nil answers the daemon's
+	// usual pair ("io.containerd.runc.v2", "runc"). RuntimesErr fails it.
+	RuntimeNames []string
+	RuntimesErr  error
+	// IPs answers ContainerIP by container name; a name with no entry gets
+	// a made-up address, so a test need not script every container.
+	IPs map[string]string
 	// ExistingImages marks refs ImageExists reports true for.
 	ExistingImages map[string]bool
 	// ImageFiles answers ImageFile by "ref:path"; a missing entry is an error.
@@ -122,6 +129,29 @@ func (f *Fake) FindRun(substr string) (RunSpec, bool) {
 func (f *Fake) Available(context.Context) error {
 	f.record("Available", "", RunSpec{})
 	return f.AvailableErr
+}
+
+// Runtimes implements Client from RuntimeNames.
+func (f *Fake) Runtimes(context.Context) ([]string, error) {
+	f.record("Runtimes", "", RunSpec{})
+	if f.RuntimesErr != nil {
+		return nil, f.RuntimesErr
+	}
+	if f.RuntimeNames == nil {
+		return []string{"io.containerd.runc.v2", "runc"}, nil
+	}
+	return append([]string(nil), f.RuntimeNames...), nil
+}
+
+// ContainerIP implements Client from IPs.
+func (f *Fake) ContainerIP(_ context.Context, name, network string) (string, error) {
+	f.record("ContainerIP", name+"@"+network, RunSpec{})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ip, ok := f.IPs[name]; ok {
+		return ip, nil
+	}
+	return fmt.Sprintf("172.30.0.%d", 10+len(name)%200), nil
 }
 
 // ImageFile implements Client from ImageFiles.

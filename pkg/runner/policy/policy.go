@@ -23,6 +23,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// runtimeNameRE is the shape of a daemon-registered runtime name (runc,
+// runsc, io.containerd.runc.v2): something `--runtime` accepts verbatim.
+var runtimeNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // Version is the current policy schema major.
 const Version = "1"
 
@@ -82,6 +86,9 @@ type Policy struct {
 	// provides to a BriefAgent that declares `exec: {commands}`, and from
 	// where (plan examples-declared-servers §5.2, D1).
 	Exec ExecPolicy `yaml:"exec,omitempty"`
+	// Docker is how the runner drives the daemon beyond the images: the
+	// OCI runtime a run's containers are created with (DR-23).
+	Docker DockerPolicy `yaml:"docker,omitempty"`
 }
 
 // ExecPolicy is the exec catalog (agentry-cli#100). The manifest keeps
@@ -90,6 +97,18 @@ type Policy struct {
 // mcpRegistries. A declared command the catalog does not carry is a
 // plan-time refusal, never a run-time "absent". Busybox applets the runner
 // image already has (sh, sed, sort, …) are catalogued as `busybox`.
+// DockerPolicy is the daemon-facing part of the policy.
+type DockerPolicy struct {
+	// Runtime names the daemon's OCI runtime (`docker run --runtime`) for
+	// every container the runner creates for a run: gVisor's "runsc" on a
+	// host that has it registered. Empty means the daemon's default —
+	// every run before the knob existed. A set value is enforced, not
+	// preferred: a daemon without it refuses the run at the ensure step
+	// (exit 13) rather than falling back, so the receipt's runtime line
+	// is never a claim the run did not have.
+	Runtime string `yaml:"runtime,omitempty"`
+}
+
 type ExecPolicy struct {
 	// Packages maps a command name to the apk package that provides it,
 	// optionally pinned: `git` or `git=2.49.1-r0`. Alpine's index drops a
@@ -439,6 +458,9 @@ func (p *Policy) Validate() error {
 			return fmt.Errorf("exec.packages.%s: package %q must be an apk package name, optionally =version (%s)", cmd, pkg, apkPackageRE)
 		}
 	}
+	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
+		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
+	}
 	if m := p.Exec.APKMirror; m != "" {
 		u, err := url.Parse(m)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Fragment != "" || u.RawQuery != "" {
@@ -551,6 +573,15 @@ mcpRegistries:
   # versions and the install records resolved artifact digests either way.
   npm: https://registry.npmjs.org
   pypi: https://pypi.org
+
+# docker:
+#   # The OCI runtime every container of a run is created with (docker run
+#   # --runtime): gVisor's runsc on a host that has it registered with the
+#   # daemon. Unset, the daemon's default applies and the receipt says
+#   # nothing about it. Set, it is enforced, not preferred: a daemon that
+#   # does not have the runtime refuses the run at the ensure step (exit 13)
+#   # and never falls back to runc; the receipt then names the runtime.
+#   runtime: runsc
 
 # exec:
 #   # The exec catalog: which binaries this machine provides to a BriefAgent

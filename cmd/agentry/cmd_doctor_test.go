@@ -185,3 +185,33 @@ func TestDoctorFlagsUncataloguedExecCommand(t *testing.T) {
 		t.Fatalf("catalogued git not reported ok:\n%s", out)
 	}
 }
+
+// doctor reports the policy's docker.runtime against the daemon's
+// registered runtimes (DR-23): a named failure with the fix when it is
+// missing, ok when it is there, and nothing when the policy sets none.
+func TestDoctorReportsTheDockerRuntime(t *testing.T) {
+	policyPath, fake := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if strings.Contains(out, "docker:runtime") {
+		t.Fatalf("doctor mentions a runtime the policy never set:\n%s", out)
+	}
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Docker.Runtime = "runsc"
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	fake.RuntimeNames = []string{"io.containerd.runc.v2", "runc"}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker:runtime") || !strings.Contains(out, `"runsc"`) || !strings.Contains(out, "runc") {
+		t.Fatalf("a missing runtime was not reported with the fix:\n%s", out)
+	}
+	fake.RuntimeNames = []string{"runc", "runsc"}
+	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if err != nil || !strings.Contains(out, "ok    docker:runtime") {
+		t.Fatalf("a registered runtime was not reported ok (%v):\n%s", err, out)
+	}
+}

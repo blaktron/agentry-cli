@@ -68,10 +68,14 @@ func TestRunSpecArgs(t *testing.T) {
 		Alias:      "gateway",
 		Labels:     map[string]string{"b": "2", "a": "1"},
 		AutoRemove: true,
+		Runtime:    "runsc",
+		ExtraHosts: []string{"gateway:172.19.0.2", "llm-proxy:172.19.0.3"},
 	}
 	wantDetach := []string{
 		"run", "-d", "--rm",
 		"--name", "agentry-x-gateway",
+		"--runtime", "runsc",
+		"--add-host", "gateway:172.19.0.2", "--add-host", "llm-proxy:172.19.0.3",
 		"--network", "run-net",
 		"--network-alias", "gateway",
 		"--label", "a=1", "--label", "b=2",

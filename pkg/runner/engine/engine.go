@@ -522,6 +522,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return agentOutcome{err: err}
 	}
 	name := containerName(runID, "agent")
+	hosts, err := sandboxHosts(ctx, d, p.Plan, runID)
+	if err != nil {
+		return agentOutcome{err: Classify(ExitGateway, err)}
+	}
 	runSpec := dockerx.RunSpec{
 		Name:        name,
 		Image:       p.Plan.Harness.Agent.Image,
@@ -532,6 +536,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Labels:      runLabels(runID),
 		Interactive: p.Plan.Harness.Agent.StdinTask,
 		AutoRemove:  true,
+		Runtime:     p.Plan.Runtime(),
+		ExtraHosts:  hosts,
 	}
 
 	eventsFile, err := os.Create(filepath.Join(rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir
@@ -752,4 +758,29 @@ func (c *eventCollector) usage() receipt.Usage {
 		CostUSD:      c.costUSD,
 		Turns:        c.turns,
 	}
+}
+
+// sandboxHosts pins the run network's two aliases — the gateway and the
+// llm-proxy — into the agent container's /etc/hosts when the plan names a
+// runtime (DR-23): a sandboxed runtime's own network stack does not reach
+// docker's embedded DNS at 127.0.0.11, and the agent's whole world is those
+// two names. Without a runtime nothing is pinned and the run is the run it
+// was. Both containers are up by the time the agent starts (startInfra).
+func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID string) ([]string, error) {
+	if plan.Runtime() == "" {
+		return nil, nil
+	}
+	net := networkName(runID)
+	var hosts []string
+	for _, c := range []struct{ name, alias string }{
+		{containerName(runID, "gateway"), spec.GatewayAlias},
+		{containerName(runID, "proxy"), spec.ProxyAlias},
+	} {
+		ip, err := d.ContainerIP(ctx, c.name, net)
+		if err != nil {
+			return nil, fmt.Errorf("pin %s for the sandboxed agent: %w", c.alias, err)
+		}
+		hosts = append(hosts, c.alias+":"+ip)
+	}
+	return hosts, nil
 }

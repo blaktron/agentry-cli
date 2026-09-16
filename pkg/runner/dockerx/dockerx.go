@@ -10,6 +10,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,11 @@ const LogsAll = 0
 type Client interface {
 	// Available errors when no usable docker daemon answers.
 	Available(ctx context.Context) error
+	// Runtimes lists the OCI runtimes the daemon has registered (runc,
+	// runsc, …), by name — what a policy's docker.runtime may name.
+	Runtimes(ctx context.Context) ([]string, error)
+	// ContainerIP is a running container's address on one network.
+	ContainerIP(ctx context.Context, name, network string) (string, error)
 	// ImageExists reports whether ref is present locally.
 	ImageExists(ctx context.Context, ref string) (bool, error)
 	// ImageFile reads one file out of an image without running it (a
@@ -96,6 +102,17 @@ type RunSpec struct {
 	// must be able to remove afterwards (the MCP server installer,
 	// agentry-cli#112). Empty leaves the image's own user.
 	User string
+	// Runtime names the daemon's OCI runtime for this container
+	// (`--runtime`): a policy's docker.runtime, so the container that runs
+	// the BriefAgent's code can sit behind gVisor on a host that has it
+	// (DR-23). Empty leaves the daemon's default, which is what every local
+	// run had before the knob.
+	Runtime string
+	// ExtraHosts pins names to addresses in the container's /etc/hosts
+	// (`--add-host name:ip`). A sandboxed runtime's network stack does not
+	// reach docker's embedded DNS, so the run network's aliases travel
+	// this way when a runtime is set (DR-23).
+	ExtraHosts []string
 	// Entrypoint replaces the image's entrypoint (`--entrypoint`): for a
 	// one-shot that borrows an image for a shell command, such as the
 	// session store's ownership step (agentry-cli#90). Empty keeps it.
@@ -178,6 +195,38 @@ func (c *CLI) Available(ctx context.Context) error {
 		return fmt.Errorf("docker daemon not reachable: %w", err)
 	}
 	return nil
+}
+
+// Runtimes implements Client from `docker info`: the daemon's runtime
+// table keyed by name. The names are what `--runtime` accepts.
+func (c *CLI) Runtimes(ctx context.Context) ([]string, error) {
+	out, err := c.run(ctx, "info", "--format", "{{json .Runtimes}}")
+	if err != nil {
+		return nil, fmt.Errorf("docker daemon not reachable: %w", err)
+	}
+	var table map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &table); err != nil {
+		return nil, fmt.Errorf("docker info runtimes: %w", err)
+	}
+	names := make([]string, 0, len(table))
+	for name := range table {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// ContainerIP implements Client from `docker inspect`.
+func (c *CLI) ContainerIP(ctx context.Context, name, network string) (string, error) {
+	out, err := c.run(ctx, "inspect", "--format", `{{(index .NetworkSettings.Networks "`+network+`").IPAddress}}`, name)
+	if err != nil {
+		return "", fmt.Errorf("docker inspect %s: %w", name, err)
+	}
+	ip := strings.TrimSpace(out)
+	if ip == "" || ip == "<no value>" {
+		return "", fmt.Errorf("container %s has no address on network %s", name, network)
+	}
+	return ip, nil
 }
 
 // ImageExists implements Client.
@@ -417,6 +466,12 @@ func (r RunSpec) args(detach bool) []string {
 	}
 	if r.Entrypoint != "" {
 		args = append(args, "--entrypoint", r.Entrypoint)
+	}
+	if r.Runtime != "" {
+		args = append(args, "--runtime", r.Runtime)
+	}
+	for _, h := range r.ExtraHosts {
+		args = append(args, "--add-host", h)
 	}
 	if r.Network != "" {
 		args = append(args, "--network", r.Network)

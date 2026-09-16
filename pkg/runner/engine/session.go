@@ -110,6 +110,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			Mounts:     []dockerx.Mount{{Source: rd.session, Target: spec.SessionMount}},
 			Labels:     runLabels(runID),
 			AutoRemove: true,
+			Runtime:    p.Plan.Runtime(),
 		}, nil, io.Discard, p.Stderr)
 		if err != nil || code != 0 {
 			if err == nil {
@@ -224,6 +225,10 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	mounts := resolveMounts(p.Plan.Harness.Agent.Mounts, rep)
 	mounts = append(mounts, resolveMounts(p.Plan.Harness.Session.Mounts, rep)...)
 	name := containerName(s.runID, "agent")
+	hosts, err := sandboxHosts(ctx, s.d, p.Plan, s.runID)
+	if err != nil {
+		return Classify(ExitGateway, err)
+	}
 	runSpec := dockerx.RunSpec{
 		Name:        name,
 		Image:       p.Plan.Harness.Agent.Image,
@@ -234,6 +239,8 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		Labels:      runLabels(s.runID),
 		Interactive: true,
 		AutoRemove:  true,
+		Runtime:     p.Plan.Runtime(),
+		ExtraHosts:  hosts,
 	}
 	s.td.add(func(c context.Context) { _ = s.d.RemoveForce(c, name) })
 

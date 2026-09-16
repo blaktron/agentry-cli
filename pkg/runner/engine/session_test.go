@@ -557,3 +557,40 @@ func TestSessionStoreIsARunVolume(t *testing.T) {
 		}
 	}
 }
+
+// An interactive run's containers that hold the BriefAgent's code — the
+// session store's ownership one-shot on the harness image and the agent
+// — are created under the policy runtime too; the runner's own proxy and
+// gateway are not (DR-23).
+func TestSessionContainersCarryTheRuntime(t *testing.T) {
+	p, f := sessionFixture(t)
+	p.Plan.Docker = &spec.DockerSpec{Runtime: "runsc"}
+	happyFake(f)
+	h := &fakeHarness{}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := s.End(context.Background(), false); err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	for _, name := range []string{"-session-init", "-agent"} {
+		c, ok := f.FindRun(name)
+		if !ok {
+			t.Errorf("no %s container ran", name)
+			continue
+		}
+		if c.Runtime != "runsc" {
+			t.Errorf("%s created without the policy runtime: %q", c.Name, c.Runtime)
+		}
+	}
+	if agent, _ := f.FindRun("-agent"); len(agent.ExtraHosts) != 2 {
+		t.Errorf("session agent extra hosts = %v, want the two aliases pinned", agent.ExtraHosts)
+	}
+	for _, name := range []string{"-proxy", "-gateway"} {
+		if c, _ := f.FindRun(name); c.Runtime != "" {
+			t.Errorf("%s is the runner's own and must stay on the daemon's default: %q", c.Name, c.Runtime)
+		}
+	}
+}

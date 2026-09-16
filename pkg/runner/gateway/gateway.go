@@ -37,6 +37,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	if err := d.Available(ctx); err != nil {
 		return err
 	}
+	if err := EnsureRuntime(ctx, d, pol); err != nil {
+		return err
+	}
 	images := []string{pol.Images.Gateway}
 	if harnessImage {
 		images = append(images, pol.Images.HarnessDockerAgent)
@@ -73,6 +76,27 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 		return fmt.Errorf("build runner image: %w", err)
 	}
 	return nil
+}
+
+// EnsureRuntime refuses, before anything is pulled or started, a policy
+// whose docker.runtime the daemon has not registered (DR-23): a run that
+// quietly landed on runc after asking for runsc would carry a receipt
+// claiming an isolation it did not have. The error names the runtime the
+// policy wants and the ones the daemon has. An unset runtime asks nothing.
+func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) error {
+	want := pol.Docker.Runtime
+	if want == "" {
+		return nil
+	}
+	have, err := d.Runtimes(ctx)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(have, want) {
+		return nil
+	}
+	return fmt.Errorf("docker.runtime %q is not registered on this docker daemon (it has: %s): install it and register it in the daemon's runtimes, or unset docker.runtime in the policy — the runner never falls back to another runtime",
+		want, strings.Join(have, ", "))
 }
 
 // ExecPackagesFile is where the exec image build records the resolved

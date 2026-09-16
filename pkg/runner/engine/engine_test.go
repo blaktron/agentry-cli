@@ -49,6 +49,13 @@ publish:
 // fixture compiles a real plan into a temp install layout.
 func fixture(t *testing.T) (Params, *dockerx.Fake) {
 	t.Helper()
+	return fixtureWith(t, nil)
+}
+
+// fixtureWith is fixture with the policy edited before the compile —
+// the way an operator's policy file shapes a plan.
+func fixtureWith(t *testing.T, edit func(*policy.Policy)) (Params, *dockerx.Fake) {
+	t.Helper()
 	m, err := manifest.Parse([]byte(engineManifest))
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +71,9 @@ func fixture(t *testing.T) (Params, *dockerx.Fake) {
 	pol := policy.Default()
 	pol.Images.Runner = "agentry-runner:test"
 	pol.Exec.Packages = map[string]string{"echo": "busybox"} // the fixture declares exec: [echo]
+	if edit != nil {
+		edit(pol)
+	}
 	planDir := filepath.Join(installDir, "plan")
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest: m, Digest: "sha256:feedface", Source: "local",
@@ -767,4 +777,66 @@ func TestReceiptsRedactSecretsFromLogs(t *testing.T) {
 			t.Errorf("result.json leaks: %v %s", err, b)
 		}
 	})
+}
+
+// A policy runtime reaches the agent container — the stranger's code —
+// with the run network's aliases pinned, never the runner's own proxy,
+// gateway or probe, and the receipt names exactly that; without one, no
+// container is asked for a runtime and the receipt says nothing (DR-23).
+func TestRunUnderAPolicyRuntime(t *testing.T) {
+	p, f := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Runtime = "runsc" })
+	happyFake(f)
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if p.Plan.Runtime() != "runsc" {
+		t.Fatalf("plan runtime = %q", p.Plan.Runtime())
+	}
+	// The runtime is for the stranger's code: the agent carries it, with
+	// the run network's aliases pinned since a sandbox cannot reach
+	// docker's DNS; the runner's own proxy, gateway and probe do not.
+	agent, ok := f.FindRun("-agent")
+	if !ok || agent.Runtime != "runsc" {
+		t.Fatalf("agent runtime = %q (found %v), want runsc", agent.Runtime, ok)
+	}
+	if len(agent.ExtraHosts) != 2 || !strings.HasPrefix(agent.ExtraHosts[0], "gateway:") || !strings.HasPrefix(agent.ExtraHosts[1], "llm-proxy:") {
+		t.Fatalf("agent extra hosts = %v, want the gateway and llm-proxy aliases pinned", agent.ExtraHosts)
+	}
+	for _, infra := range []string{"-proxy", "-gateway", "-probe"} {
+		c, ok := f.FindRun(infra)
+		if !ok {
+			t.Fatalf("no %s container ran", infra)
+		}
+		if c.Runtime != "" || len(c.ExtraHosts) != 0 {
+			t.Errorf("%s is the runner's own and must stay on the daemon's default: runtime=%q hosts=%v", c.Name, c.Runtime, c.ExtraHosts)
+		}
+	}
+	line := env.CapabilitiesEnforced["runtime"]
+	if !strings.HasPrefix(line, "runsc:") || !strings.Contains(line, "--runtime runsc") || !strings.Contains(line, "daemon's default runtime") {
+		t.Fatalf("receipt runtime line = %q", line)
+	}
+}
+
+func TestRunWithoutAPolicyRuntimeAsksForNone(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, c := range f.Calls {
+		if strings.HasPrefix(c.Op, "Run") && (c.Run.Runtime != "" || len(c.Run.ExtraHosts) != 0) {
+			t.Errorf("%s created with a runtime or pinned hosts nobody set: %q %v", c.Run.Name, c.Run.Runtime, c.Run.ExtraHosts)
+		}
+		if c.Op == "ContainerIP" {
+			t.Errorf("a run without a runtime inspected a container's address")
+		}
+	}
+	if _, ok := env.CapabilitiesEnforced["runtime"]; ok {
+		t.Fatal("the receipt names a runtime the policy never set")
+	}
+	if p.Plan.Docker != nil {
+		t.Fatal("a plan compiled without docker.runtime carries a docker block")
+	}
 }

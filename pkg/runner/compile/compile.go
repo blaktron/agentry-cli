@@ -260,6 +260,22 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Files:  map[string]string{},
 	}
 
+	if rt := in.Policy.Docker.Runtime; rt != "" {
+		// The runtime is part of the plan and so of its hash: an operator
+		// who changes it recompiles rather than reinterpreting a stored
+		// plan (DR-23). The enforcement line says exactly what runs under
+		// it — the stranger's code: the agent container and the MCP server
+		// installer — and what does not: the runner's own infrastructure
+		// (the gateway needs the daemon's socket and its DNS, the proxy is
+		// the bridge leg) and what the gateway launches on its own; so
+		// `runtime:` never claims more ground than the engine holds.
+		plan.Docker = &spec.DockerSpec{Runtime: rt}
+		if plan.Enforcement == nil {
+			plan.Enforcement = map[string]string{}
+		}
+		plan.Enforcement["runtime"] = rt + ": the agent container — the BriefAgent's code — and the MCP server installer are created with docker --runtime " + rt +
+			", the run network's aliases pinned into the agent's /etc/hosts; the runner's own llm-proxy, gateway and probe, and what the gateway launches itself (the tools server, the declared MCP servers), take the daemon's default runtime"
+	}
 	// Write the generated files, hashing each into the plan.
 	if res.Host != nil {
 		// §R11 invariant 8: the harness's own isolation is a claim like any

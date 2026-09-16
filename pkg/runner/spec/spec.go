@@ -155,6 +155,10 @@ type Plan struct {
 	Harness HarnessSpec `json:"harness"`
 	// Proxy describes the LLM egress proxy sidecar.
 	Proxy ProxySpec `json:"proxy"`
+	// Docker is the daemon-facing part of the policy the plan was compiled
+	// under; absent when the policy set none, so a plan compiled before the
+	// knob and one compiled without it are the same bytes (DR-23).
+	Docker *DockerSpec `json:"docker,omitempty"`
 	// Secrets lists the manifest secret env names (values are resolved at
 	// run time and never stored, §R4).
 	Secrets []string `json:"secrets,omitempty"`
@@ -288,6 +292,21 @@ type ProxySpec struct {
 	Image string `json:"image"`
 	// Allow is the host:port allowlist (policy model endpoints only).
 	Allow []string `json:"allow"`
+}
+
+// DockerSpec is what the engine asks of the daemon for every container of
+// the run beyond the image: the OCI runtime (docker run --runtime).
+type DockerSpec struct {
+	Runtime string `json:"runtime"`
+}
+
+// Runtime is the OCI runtime the plan asks for, or "" for the daemon's
+// default.
+func (p *Plan) Runtime() string {
+	if p == nil || p.Docker == nil {
+		return ""
+	}
+	return p.Docker.Runtime
 }
 
 // ContainerSpec is a docker container the engine will run. Sources and env
