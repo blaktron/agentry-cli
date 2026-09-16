@@ -125,10 +125,21 @@ func compileFixture(t *testing.T, m *manifest.Manifest, ws string) (*spec.Plan, 
 // compileFixtureMode is compileFixture for a chosen run mode.
 func compileFixtureMode(t *testing.T, m *manifest.Manifest, ws string, mode manifest.Mode) (*spec.Plan, string) {
 	t.Helper()
+	return compileFixtureModeWith(t, m, ws, mode, nil)
+}
+
+// compileFixtureModeWith is compileFixtureMode with the policy edited
+// first, the way an operator's file shapes a plan.
+func compileFixtureModeWith(t *testing.T, m *manifest.Manifest, ws string, mode manifest.Mode, edit func(*policy.Policy)) (*spec.Plan, string) {
+	t.Helper()
 	planDir := t.TempDir()
+	pol := testPolicy()
+	if edit != nil {
+		edit(pol)
+	}
 	plan, err := Compile(Inputs{
 		Manifest: m, Mode: mode, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: ws,
-		Policy: testPolicy(), PolicySHA: "fixedpolicysha", RunnerImage: "agentry-runner:test",
+		Policy: pol, PolicySHA: "fixedpolicysha", RunnerImage: "agentry-runner:test",
 	}, planDir)
 	if err != nil {
 		t.Fatalf("compile %s: %v", mode, err)
@@ -141,16 +152,20 @@ func TestCompileGolden(t *testing.T) {
 		name string
 		yaml string
 		mode manifest.Mode
+		pol  func(*policy.Policy)
 	}{
-		{"puretext", pureTextYAML, manifest.ModeAutonomous},
-		{"fullcaps", fullCapsYAML, manifest.ModeAutonomous},
-		{"fullcaps-interactive", fullCapsYAML, manifest.ModeInteractive},
+		{"puretext", pureTextYAML, manifest.ModeAutonomous, nil},
+		{"fullcaps", fullCapsYAML, manifest.ModeAutonomous, nil},
+		{"fullcaps-interactive", fullCapsYAML, manifest.ModeInteractive, nil},
+		// docker.runtime is in the plan and its hash, and the enforcement
+		// map says what it covers (DR-23).
+		{"fullcaps-runsc", fullCapsYAML, manifest.ModeAutonomous, func(p *policy.Policy) { p.Docker.Runtime = "runsc" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := parseManifest(t, tc.yaml)
 			ws := workspaceFor(t, m, nil)
-			_, planDir := compileFixtureMode(t, m, ws, tc.mode)
+			_, planDir := compileFixtureModeWith(t, m, ws, tc.mode, tc.pol)
 
 			checkGolden(t, tc.name, planDir, []string{"plan.json", "gateway/catalog.yaml", "gateway/tools.yaml", "gateway/toolspec.json", "harness/agent.yaml"})
 		})
@@ -872,5 +887,26 @@ func TestCompileExecCatalog(t *testing.T) {
 	}
 	if plan.Enforcement["exec"] == "" || strings.Contains(plan.Enforcement["exec"], "2.49") {
 		t.Fatal("the compiled line must not claim a resolved version the build has not produced")
+	}
+}
+
+// Two plans that differ only in docker.runtime differ in their hash: an
+// operator who changes the runtime recompiles rather than reinterpreting a
+// stored plan; a plan compiled without the knob carries no docker block.
+func TestRuntimeIsPartOfThePlanHash(t *testing.T) {
+	m := parseManifest(t, fullCapsYAML)
+	ws := workspaceFor(t, m, nil)
+	plain, _ := compileFixtureMode(t, m, ws, manifest.ModeAutonomous)
+	runsc, _ := compileFixtureModeWith(t, m, ws, manifest.ModeAutonomous, func(p *policy.Policy) { p.Docker.Runtime = "runsc" })
+	h1, _ := plain.Hash()
+	h2, _ := runsc.Hash()
+	if h1 == h2 {
+		t.Fatal("a plan with docker.runtime hashes like one without")
+	}
+	if plain.Docker != nil || plain.Enforcement["runtime"] != "" {
+		t.Fatal("a plan compiled without docker.runtime carries a docker block or a runtime line")
+	}
+	if runsc.Runtime() != "runsc" || !strings.HasPrefix(runsc.Enforcement["runtime"], "runsc:") {
+		t.Fatalf("runtime plan: docker=%+v enforcement=%q", runsc.Docker, runsc.Enforcement["runtime"])
 	}
 }

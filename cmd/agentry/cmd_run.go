@@ -358,7 +358,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if len(resolvedServers) > 0 {
 		if err := mcpinstall.EnsureInstalled(cmd.Context(), docker, resolvedServers, serversDir,
-			pol.MCPRegistries, pol.Images, cmd.ErrOrStderr()); err != nil {
+			pol.MCPRegistries, pol.Images, pol.Docker.Runtime, cmd.ErrOrStderr()); err != nil {
 			return engine.Classify(engine.ExitGateway, err)
 		}
 	}

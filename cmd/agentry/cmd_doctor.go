@@ -310,6 +310,20 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 	if pol == nil {
 		return
 	}
+	if want := pol.Docker.Runtime; want != "" {
+		// The policy's runtime is enforced, never preferred (DR-23): a
+		// run on a daemon without it stops at ensure, so doctor says so
+		// here, with the fix.
+		have, err := d.Runtimes(ctx)
+		switch {
+		case err != nil:
+			rep.fail("docker:runtime", "%v", err)
+		case slices.Contains(have, want):
+			rep.ok("docker:runtime", "%s registered on the daemon", want)
+		default:
+			rep.fail("docker:runtime", "policy docker.runtime is %q but the daemon has only: %s — install it and register it in the daemon's runtimes, or unset docker.runtime", want, strings.Join(have, ", "))
+		}
+	}
 	images := []struct{ name, ref, fix string }{
 		{"image:gateway", pol.Images.Gateway, "`agentry setup` pulls it"},
 		{"image:harness", pol.Images.HarnessDockerAgent, "`agentry setup` pulls it"},

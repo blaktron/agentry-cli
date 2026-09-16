@@ -58,6 +58,8 @@ func TestValidateTable(t *testing.T) {
 		{"bad secret mode", func(p *Policy) { p.SecretSource.Mode = "vault" }, "secretSource.mode"},
 		{"envFile without path", func(p *Policy) { p.SecretSource = SecretSource{Mode: "envFile"} }, "envFile"},
 		{"env with stray path", func(p *Policy) { p.SecretSource = SecretSource{Mode: "env", EnvFile: "x"} }, "envFile"},
+		{"docker runtime with a space", func(p *Policy) { p.Docker.Runtime = "run sc" }, "docker.runtime"},
+		{"docker runtime that is a path", func(p *Policy) { p.Docker.Runtime = "/usr/bin/runsc" }, "docker.runtime"},
 		{"zero timeout", func(p *Policy) { p.Budgets.TimeoutSeconds = 0 }, "timeoutSeconds"},
 		{"negative turns", func(p *Policy) { p.Budgets.MaxTurns = -1 }, "maxTurns"},
 		{"missing image", func(p *Policy) { p.Images.Gateway = "" }, "images"},
@@ -303,5 +305,34 @@ func TestExecCatalog(t *testing.T) {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("default policy text does not document %q", want)
 		}
+	}
+}
+
+// docker.runtime is a closed-schema key (DR-23): a set value loads, is
+// absent from the default, and a misspelling under docker is an error like
+// every other unknown key.
+func TestDockerRuntimeKey(t *testing.T) {
+	if Default().Docker.Runtime != "" {
+		t.Fatal("the default policy names a runtime; every run before the knob had the daemon's default")
+	}
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(path, []byte(defaultFileText+"\ndocker:\n  runtime: runsc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("a policy with docker.runtime was refused: %v", err)
+	}
+	if p.Docker.Runtime != "runsc" {
+		t.Fatalf("docker.runtime = %q, want runsc", p.Docker.Runtime)
+	}
+	if err := os.WriteFile(path, []byte(defaultFileText+"\ndocker:\n  runtim: runsc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(path); err == nil {
+		t.Fatal("a misspelled docker key was accepted")
+	}
+	if !strings.Contains(defaultFileText, "runtime: runsc") {
+		t.Fatal("the generated default policy file does not explain docker.runtime")
 	}
 }

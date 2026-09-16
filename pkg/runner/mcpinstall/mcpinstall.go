@@ -301,7 +301,7 @@ func LoadMeta(storeDir, id string) (*Resolved, error) {
 // — the pin is the trust decision, drift is the attack (RUNNER-PLAN-3
 // §P2). Builder output streams to logw.
 func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
-	storeDir string, regs policy.MCPRegistries, images policy.Images, logw io.Writer,
+	storeDir string, regs policy.MCPRegistries, images policy.Images, runtime string, logw io.Writer,
 ) error {
 	for i := range resolved {
 		r := &resolved[i]
@@ -379,6 +379,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// (agentry-cli#112). Hosts without POSIX ids leave it to the
 			// image's own user.
 			User: invokingUser(),
+			// The install runs under the policy's runtime like every
+			// container of a run (DR-23); "" is the daemon's default.
+			Runtime: runtime,
 			// The name is fixed per server, so the container must go when
 			// the build ends or the next agent declaring the same server
 			// fails at install with a name conflict (agentry-cli#106).
