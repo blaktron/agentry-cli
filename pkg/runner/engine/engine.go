@@ -117,6 +117,26 @@ type Params struct {
 	RunID string
 	// Stderr receives progress and diagnostics.
 	Stderr io.Writer
+	// OnUsage, when set, is called every time the harness reports usage,
+	// with the run's running totals. It is what lets a driver meter a run
+	// while it is live: the envelope's usage arrives only at the end, so
+	// before this nothing could enforce a token cap during the run
+	// (agentry-cli#138). Called from the stream-consuming goroutine, in
+	// order, and never after the harness stream closes.
+	//
+	// It MUST NOT BLOCK. That goroutine is also what enforces --max-turns
+	// and --max-cost, and its end is what releases teardown (§R11), so a
+	// callback that waits stops the budgets and leaves containers up. A
+	// callback that panics is caught and switched off rather than allowed
+	// to take the teardown down with it.
+	OnUsage func(receipt.Usage)
+	// Events, when set, receives the harness event stream as JSON lines
+	// while the run is live — the same lines the receipt's events.ndjson
+	// gets, redacted the same way. A driver tails this instead of parsing
+	// the narration (--events). It must not block, for the same reason
+	// OnUsage must not: it is written from the same goroutine, on the same
+	// terms as the receipt's own copy.
+	Events io.Writer
 }
 
 // Run executes the plan. The returned envelope is always usable — on
@@ -552,6 +572,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	collector := &eventCollector{
 		adapter:    p.Adapter,
 		events:     eventsFile,
+		tee:        p.Events,
+		onUsage:    p.OnUsage,
 		redact:     rd.redact,
 		maxTurns:   p.Budgets.MaxTurns,
 		maxCostUSD: p.Budgets.MaxCostUSD,
@@ -706,6 +728,16 @@ type eventCollector struct {
 	budgetTripped      bool
 	costTripped        bool
 	harnessErrReported string
+	// totTok accumulates a harness's context-token reports, for the
+	// harnesses that give a total without an input/output split.
+	totTok int64
+	// onUsage is fired with the running totals on every usage event, and
+	// tee receives every raw line beside the receipt's own copy.
+	onUsage func(receipt.Usage)
+	tee     io.Writer
+	// usageErr records a callback that panicked, so a driver metering the
+	// run learns its meter is dead instead of reading silence as zero.
+	usageErr error
 }
 
 func (c *eventCollector) consume(r io.Reader) {
@@ -713,7 +745,14 @@ func (c *eventCollector) consume(r io.Reader) {
 	sc.Buffer(make([]byte, 0, 64*1024), 8<<20)
 	for sc.Scan() {
 		line := sc.Bytes()
-		_, _ = c.events.Write(append([]byte(c.redact.String(string(line))), '\n'))
+		masked := append([]byte(c.redact.String(string(line))), '\n')
+		_, _ = c.events.Write(masked)
+		if c.tee != nil {
+			// A driver reading this file is metering a live run, so the
+			// line goes out as it arrives; a write it cannot take is its
+			// problem, never the run's.
+			_, _ = c.tee.Write(masked)
+		}
 		for _, ev := range c.adapter.Events(line) {
 			switch ev.Kind {
 			case adapter.EventToolCall:
@@ -737,6 +776,7 @@ func (c *eventCollector) consume(r io.Reader) {
 				c.curText.Reset() // usage is reported once the message is complete
 				c.inTok += ev.InputTokens
 				c.outTok += ev.OutputTokens
+				c.totTok += ev.TotalTokens
 				if ev.CostUSD > c.costUSD {
 					c.costUSD = ev.CostUSD
 				}
@@ -744,6 +784,7 @@ func (c *eventCollector) consume(r io.Reader) {
 					c.costTripped = true
 					c.overCost()
 				}
+				c.notifyUsage()
 			case adapter.EventError:
 				c.harnessErrReported = ev.Text
 			}
@@ -751,10 +792,30 @@ func (c *eventCollector) consume(r io.Reader) {
 	}
 }
 
+// notifyUsage hands the running totals to the driver's callback without
+// letting the driver end the run. This goroutine enforces the turn and cost
+// budgets and its end releases teardown, so a panicking callback used to
+// mean containers left up; one that panics is reported through the run's
+// own error channel and then switched off, because a callback that failed
+// once will fail on every event.
+func (c *eventCollector) notifyUsage() {
+	if c.onUsage == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			c.onUsage = nil
+			c.usageErr = fmt.Errorf("usage callback panicked: %v", r)
+		}
+	}()
+	c.onUsage(c.usage())
+}
+
 func (c *eventCollector) usage() receipt.Usage {
 	return receipt.Usage{
 		InputTokens:  c.inTok,
 		OutputTokens: c.outTok,
+		TotalTokens:  c.totTok,
 		CostUSD:      c.costUSD,
 		Turns:        c.turns,
 	}

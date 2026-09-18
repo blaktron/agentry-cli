@@ -54,6 +54,7 @@ type runOpts struct {
 	input              string
 	out                string
 	outputFormat       string
+	eventsPath         string
 	adapterName        string
 	local              string
 	pin                string
@@ -126,6 +127,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.input, "input", "", "task input file (default: piped stdin, else empty)")
 	f.StringVar(&opts.out, "out", "", "output folder for reports and receipts (default ./agentry-out/<ns>-<name>-<runid>)")
 	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope)")
+	f.StringVar(&opts.eventsPath, "events", "", "append the harness event stream to FILE as JSON lines while the run is live (the receipt keeps its own copy either way)")
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+"); see --list-adapters")
 	f.StringVar(&opts.local, "local", "", "run an unpublished BriefAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
@@ -265,6 +267,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 		if opts.outputFormat == "json" {
 			return engine.Classify(engine.ExitUsage, errors.New("--output-format json is not available for an interactive run: the transcript and receipts are the record"))
+		}
+		if opts.eventsPath != "" {
+			return engine.Classify(engine.ExitUsage, errors.New("--events is not available for an interactive run: the session streams its own events to the transcript"))
 		}
 	}
 
@@ -407,6 +412,20 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		profSecrets = prof.Secrets
 	}
 	overrides := secretOverrides(profSecrets, answers)
+
+	// A driver metering a live run reads the harness's usage two ways, both
+	// beside the envelope rather than instead of it (agentry-cli#138).
+	onUsage := usageReporter(opts.outputFormat, cmd.ErrOrStderr())
+	var eventsOut io.Writer
+	if opts.eventsPath != "" {
+		f, err := os.OpenFile(opts.eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // operator-named path
+		if err != nil {
+			return engine.Classify(engine.ExitCLI, fmt.Errorf("open the live events file: %w", err))
+		}
+		defer func() { _ = f.Close() }()
+		eventsOut = f
+	}
+
 	params := engine.Params{
 		Plan:            plan,
 		ExecPackages:    execPackages,
@@ -426,6 +445,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		KeepRunDir:      opts.keepRunDir,
 		RunID:           runID,
 		Stderr:          cmd.ErrOrStderr(),
+		OnUsage:         onUsage,
+		Events:          eventsOut,
 	}
 	if mode == manifest.ModeInteractive {
 		runErr := runInteractive(cmd, docker, params, m, plan, opts)
