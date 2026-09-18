@@ -521,7 +521,9 @@ const GatewayConfigDir = "/root/.docker/mcp/catalogs"
 // gatewaySpec builds the gateway container launch (§R4). The flag set is
 // compiled, and --block-network is unconditional: without it allowHosts is
 // advisory, which is the sharpest foot-gun the research flagged (§R11
-// invariant 1 pins this in a test).
+// invariant 1 pins this in a test). The guards that the gateway itself
+// defaults on are passed explicitly too, so the run never inherits one it
+// depends on from a version's default.
 func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore bool) spec.GatewaySpec {
 	writable := []string{spec.PHOut}
 	if caps.FSWriteMode != "none" {
@@ -541,6 +543,13 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore
 			"--block-network",
 			"--verify-signatures",
 			"--log-calls",
+			// Default true in the pinned gateway, passed anyway for the
+			// same reason --verify-signatures and --log-calls are: a run
+			// depends on it — the refusal of a secret-looking tool result
+			// is in the enforcement table the receipts answer to
+			// (agentry#297) — and a version whose default flipped would
+			// drop the guard while the receipt still claimed it.
+			"--block-secrets",
 		},
 		Env: []spec.EnvVar{
 			{Name: spec.GatewayAuthTokenEnv, FromRunToken: true},
