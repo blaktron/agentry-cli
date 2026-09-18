@@ -96,6 +96,19 @@ type Usage struct {
 	UserTurns int `json:"userTurns,omitempty"`
 }
 
+// Total is the run's token count as a meter should read it: the harness's
+// own total where it reports one, otherwise input plus output. The two
+// shapes are exclusive — a harness that splits input and output leaves
+// TotalTokens zero, and one that reports only context tokens leaves the
+// split zero — so this is the single rule for anything counting a run's
+// tokens, live or at settlement (agentry-cli#138).
+func (u Usage) Total() int64 {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.InputTokens + u.OutputTokens
+}
+
 // Receipts locates the audit artifacts.
 type Receipts struct {
 	// Dir is <out>/receipts.
