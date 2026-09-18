@@ -51,7 +51,8 @@
       "/root/.docker/mcp/catalogs/secrets.env",
       "--block-network",
       "--verify-signatures",
-      "--log-calls"
+      "--log-calls",
+      "--block-secrets"
     ],
     "env": [
       {
