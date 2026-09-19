@@ -166,17 +166,9 @@ func printAdapters(cmd *cobra.Command) error {
 }
 
 // runnerHome is ~/.agentry/runner, or $AGENTRY_RUNNER_HOME (tests and odd
-// deployments).
-func runnerHome() (string, error) {
-	if h := os.Getenv("AGENTRY_RUNNER_HOME"); h != "" {
-		return h, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locate home directory (set AGENTRY_RUNNER_HOME): %w", err)
-	}
-	return filepath.Join(home, ".agentry", "runner"), nil
-}
+// deployments) — policy.Home, so the policy's default path and everything
+// else under the home cannot resolve differently (agentry-cli#149).
+func runnerHome() (string, error) { return policy.Home() }
 
 // installMeta is <installDir>/install.json: what was verified, once, so
 // repeat runs of the same digest skip the network without skipping the
