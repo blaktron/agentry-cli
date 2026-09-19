@@ -77,7 +77,9 @@ fi
 # asserted (its tool-call shape varies; agentry-cli#113) — the build, the
 # record and the receipt line are.
 EXECPOL="$WORK/policy-exec.yaml"
-if [ -f "$POLICY" ]; then cp "$POLICY" "$EXECPOL"; else "$AGENTRY" run --local testdata/runner/hello-report --allow-unsigned --yes --prepare >/dev/null 2>&1; cp "$HOME/.agentry/runner/policy.yaml" "$EXECPOL"; fi
+# With AGENTRY_RUNNER_HOME exported above, --prepare writes its default
+# policy under that home, not the user's (agentry-cli#149).
+if [ -f "$POLICY" ]; then cp "$POLICY" "$EXECPOL"; else "$AGENTRY" run --local testdata/runner/hello-report --allow-unsigned --yes --prepare >/dev/null 2>&1; cp "$AGENTRY_RUNNER_HOME/policy.yaml" "$EXECPOL"; fi
 if ! grep -q '^exec:' "$EXECPOL"; then printf 'exec:\n  packages:\n    git: git\n' >> "$EXECPOL"; fi
 EXECOUT="$WORK/out-exec"
 echo "list the git history" | "$AGENTRY" run --local testdata/runner/exec-git --policy "$EXECPOL" \

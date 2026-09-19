@@ -336,3 +336,25 @@ func TestDockerRuntimeKey(t *testing.T) {
 		t.Fatal("the generated default policy file does not explain docker.runtime")
 	}
 }
+
+// TestDefaultPathFollowsTheRunnerHome (agentry-cli#149): with the runner
+// home relocated, the policy relocates with it; without, it is under the
+// user's home.
+func TestDefaultPathFollowsTheRunnerHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(HomeEnv, "")
+	p, err := DefaultPath()
+	if err != nil || p != filepath.Join(os.Getenv("HOME"), ".agentry", "runner", "policy.yaml") {
+		t.Fatalf("unset: %q %v", p, err)
+	}
+	dir := t.TempDir()
+	t.Setenv(HomeEnv, dir)
+	p, err = DefaultPath()
+	if err != nil || p != filepath.Join(dir, "policy.yaml") {
+		t.Fatalf("set: %q %v", p, err)
+	}
+	h, err := Home()
+	if err != nil || h != dir {
+		t.Fatalf("Home: %q %v", h, err)
+	}
+}

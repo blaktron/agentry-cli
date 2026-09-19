@@ -329,13 +329,36 @@ func Save(path string, p *Policy) error {
 	return nil
 }
 
-// DefaultPath is ~/.agentry/runner/policy.yaml.
+// HomeEnv relocates the runner home — the policy, the install cache, the
+// profiles, the image context — as one tree, for tests and odd deployments.
+const HomeEnv = "AGENTRY_RUNNER_HOME"
+
+// DefaultPath is the operator policy under the runner home:
+// $AGENTRY_RUNNER_HOME/policy.yaml when the home is relocated, else
+// ~/.agentry/runner/policy.yaml (see Home).
 func DefaultPath() (string, error) {
+	home, err := Home()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "policy.yaml"), nil
+}
+
+// Home is the runner home: $AGENTRY_RUNNER_HOME when set, else
+// ~/.agentry/runner. Every path under the runner home derives from here,
+// the policy's included: a caller that relocates the home relocates the
+// policy with it (agentry-cli#149 — before this, DefaultPath read the
+// user's home regardless, so an isolated test wrote the operator's own
+// policy).
+func Home() (string, error) {
+	if h := os.Getenv(HomeEnv); h != "" {
+		return h, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("locate home directory: %w", err)
+		return "", fmt.Errorf("locate home directory (set %s): %w", HomeEnv, err)
 	}
-	return filepath.Join(home, ".agentry", "runner", "policy.yaml"), nil
+	return filepath.Join(home, ".agentry", "runner"), nil
 }
 
 // Load reads and validates a policy file, also returning the sha256 of the

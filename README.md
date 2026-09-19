@@ -127,4 +127,7 @@ records the divergences from it. The original design records
 E2E self-skips without a daemon. Every runner acceptance script points
 `AGENTRY_CONFIG_DIR` (and `AGENTRY_RUNNER_HOME`, where it needs one) at its
 own throwaway directory, so the consent records `agentry run` writes never
-land in your `~/.config/agentry/installed.yaml`.
+land in your `~/.config/agentry/installed.yaml`. `AGENTRY_RUNNER_HOME`
+relocates the whole runner home — the operator policy included, so a
+relocated home reads and writes its own `policy.yaml`, never yours
+(agentry-cli#149).
