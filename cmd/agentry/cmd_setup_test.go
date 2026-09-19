@@ -127,3 +127,20 @@ func TestSetupPreservesNonModelPolicy(t *testing.T) {
 		t.Errorf("non-model policy was not preserved: %+v", got)
 	}
 }
+
+// TestSetupAPIKeySourceFlag (agentry-cli#148): --api-key-source keyring
+// records the keychain as the fallback and the JSON report says so; the
+// value is nowhere.
+func TestSetupAPIKeySourceFlag(t *testing.T) {
+	_, written, err := setupPolicy(t, "--yes", "--provider", "anthropic", "--api-key-source", "keyring")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(written, "apiKeySource: keyring") || !strings.Contains(written, "apiKeyEnv: ANTHROPIC_API_KEY") {
+		t.Fatalf("policy:\n%s", written)
+	}
+	_, _, err = setupPolicy(t, "--yes", "--provider", "anthropic", "--api-key-source", "vault")
+	if err == nil || !strings.Contains(err.Error(), "must be env or keyring") {
+		t.Fatalf("vault: %v", err)
+	}
+}

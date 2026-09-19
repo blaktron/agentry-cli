@@ -158,6 +158,10 @@ type HarnessPolicy struct {
 	// APIKeyEnv names the host env var holding this harness's key (empty:
 	// model.apiKeyEnv). The value is read at run time and never stored.
 	APIKeyEnv string `yaml:"apiKeyEnv,omitempty"`
+	// APIKeySource is as model.apiKeySource, for this harness's key
+	// (empty: model.apiKeySource); the keychain entry is the model
+	// provider's.
+	APIKeySource string `yaml:"apiKeySource,omitempty"`
 }
 
 // MCPServersPolicy is the operator's stance on declared servers the
@@ -234,6 +238,12 @@ type Model struct {
 	// APIKeyEnv names the host env var holding the API key. The value is
 	// injected only into the agent container and disclosed in receipts.
 	APIKeyEnv string `yaml:"apiKeyEnv"`
+	// APIKeySource is where the key comes from when the variable is not
+	// set: "" or "env" (the environment only) or "keyring" (the OS
+	// keychain entry provider:<provider>, written by `agentry setup` or
+	// the desktop; agentry-cli#148). The variable wins whenever it is set;
+	// the value is never in this file.
+	APIKeySource string `yaml:"apiKeySource,omitempty"`
 	// BaseURL points provider-compatible adapters at a custom endpoint
 	// (e.g. a local OpenAI-compatible server); empty = provider default.
 	BaseURL string `yaml:"baseUrl,omitempty"`
@@ -432,11 +442,22 @@ func (p *Policy) Validate() error {
 	if p.Model.Provider == "" || p.Model.Name == "" {
 		return errors.New("model.provider and model.name are required")
 	}
+	if strings.ContainsAny(p.Model.Provider, ": \t\n") {
+		return fmt.Errorf("model.provider %q must not contain ':' or whitespace (it names the keychain account provider:<provider>)", p.Model.Provider)
+	}
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
 	}
 	if p.Model.APIKeyEnv == "" {
 		return errors.New("model.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)")
+	}
+	if !validKeySource(p.Model.APIKeySource) {
+		return fmt.Errorf("model.apiKeySource %q must be env or keyring", p.Model.APIKeySource)
+	}
+	for name, hp := range p.Harness {
+		if !validKeySource(hp.APIKeySource) {
+			return fmt.Errorf("harness.%s.apiKeySource %q must be env or keyring", name, hp.APIKeySource)
+		}
 	}
 	if len(p.Model.ProxyAllow) == 0 {
 		return errors.New("model.proxyAllow must list the model endpoint host:port (it is the agent container's only egress)")
@@ -621,3 +642,30 @@ mcpRegistries:
 #   # the runner image's own repositories.
 #   apkMirror: https://dl-cdn.alpinelinux.org/alpine
 `
+
+// validKeySource admits the apiKeySource values: unset, env, keyring.
+func validKeySource(v string) bool { return v == "" || v == "env" || v == "keyring" }
+
+// KeyEnv is the variable a run reads the model key from for an adapter:
+// the harness block's, else the model's.
+func KeyEnv(hp HarnessPolicy, m Model) string {
+	if hp.APIKeyEnv != "" {
+		return hp.APIKeyEnv
+	}
+	return m.APIKeyEnv
+}
+
+// KeySource is where that key comes from when the variable is unset: the
+// harness block's apiKeySource, else the model's; "" and "env" both mean
+// the environment only. One rule, so the adapters, the compiler's receipt
+// line and doctor cannot disagree (agentry-cli#148).
+func KeySource(hp HarnessPolicy, m Model) string {
+	src := hp.APIKeySource
+	if src == "" {
+		src = m.APIKeySource
+	}
+	if src == "env" {
+		return ""
+	}
+	return src
+}

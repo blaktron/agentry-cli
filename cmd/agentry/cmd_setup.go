@@ -21,13 +21,14 @@ import (
 
 // setupOpts carries the setup command's flags.
 type setupOpts struct {
-	provider   string
-	model      string
-	apiKeyEnv  string
-	baseURL    string
-	policyPath string
-	yes        bool
-	skipImages bool
+	provider     string
+	model        string
+	apiKeyEnv    string
+	apiKeySource string
+	baseURL      string
+	policyPath   string
+	yes          bool
+	skipImages   bool
 }
 
 // newSetupCmd builds the setup command.
@@ -57,6 +58,7 @@ func newSetupCmd() *cobra.Command {
 	f.StringVar(&opts.provider, "provider", "", "LLM provider: anthropic | openai | google | custom (or any docker-agent provider name)")
 	f.StringVar(&opts.model, "model", "", "model id (default: the provider's table default)")
 	f.StringVar(&opts.apiKeyEnv, "api-key-env", "", "env var NAME holding your api key (never the value)")
+	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
 	f.StringVar(&opts.baseURL, "base-url", "", "custom endpoint base URL (derives the egress-proxy allowlist)")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&opts.yes, "yes", false, "non-interactive: fill gaps from the provider table instead of asking")
@@ -74,7 +76,10 @@ type setupOutput struct {
 	// APIKeyEnv is the environment variable NAME the runner reads the key
 	// from; the value is never printed.
 	APIKeyEnv string `json:"apiKeyEnv"`
-	BaseURL   string `json:"baseUrl,omitempty"`
+	// APIKeySource is "keyring" when the OS keychain is the fallback for
+	// an unset variable; "" when the environment is the only source.
+	APIKeySource string `json:"apiKeySource,omitempty"`
+	BaseURL      string `json:"baseUrl,omitempty"`
 	// Images is "ready" when the gateway, harness and runner images were
 	// pulled or built, "skipped" under --skip-images.
 	Images string `json:"images"`
@@ -100,11 +105,12 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	interactive := !opts.yes && stdinIsTTY(cmd.InOrStdin())
 	prompter := setup.Prompter(&setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()})
 	if err := setup.ConfigureModel(prompter, pol, setup.ModelOpts{
-		Provider:  opts.provider,
-		Model:     opts.model,
-		APIKeyEnv: opts.apiKeyEnv,
-		BaseURL:   opts.baseURL,
-		Yes:       !interactive,
+		Provider:     opts.provider,
+		Model:        opts.model,
+		APIKeyEnv:    opts.apiKeyEnv,
+		APIKeySource: opts.apiKeySource,
+		BaseURL:      opts.baseURL,
+		Yes:          !interactive,
 	}); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
@@ -113,7 +119,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "policy written: %s\n", policyPath)
 	result := setupOutput{PolicyPath: policyPath, Provider: pol.Model.Provider, Model: pol.Model.Name,
-		APIKeyEnv: pol.Model.APIKeyEnv, BaseURL: pol.Model.BaseURL, Images: "skipped"}
+		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, BaseURL: pol.Model.BaseURL, Images: "skipped"}
 
 	if opts.skipImages {
 		if flags.jsonOut {

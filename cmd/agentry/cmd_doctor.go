@@ -29,6 +29,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -37,6 +38,10 @@ import (
 
 // newDockerClient is swapped by tests for a dockerx.Fake.
 var newDockerClient = func() dockerx.Client { return dockerx.New() }
+
+// modelKeyPresent asks the OS keychain for a stored model key without
+// returning it; a seam for tests, which have no keychain.
+var modelKeyPresent = modelkey.Present
 
 // doctorHTTPTimeout bounds the registry liveness probe.
 const doctorHTTPTimeout = 10 * time.Second
@@ -237,6 +242,18 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		rep.fail("model", "no provider/model configured — run `agentry setup`")
 	case pol.Model.APIKeyEnv == "":
 		rep.fail("model", "%s/%s: no apiKeyEnv configured — run `agentry setup`", pol.Model.Provider, pol.Model.Name)
+	case os.Getenv(pol.Model.APIKeyEnv) == "" && policy.KeySource(policy.HarnessPolicy{}, pol.Model) == modelkey.SourceKeyring:
+		// The variable is unset and the policy names the keychain as the
+		// fallback (agentry-cli#148): a run would read it from there.
+		present, err := modelKeyPresent(pol.Model.Provider)
+		switch {
+		case err != nil:
+			rep.fail("model", "%s/%s: $%s is not set and the OS keychain could not be asked — %v", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, err)
+		case !present:
+			rep.fail("model", "%s/%s: $%s is not set and the OS keychain has no entry %s (apiKeySource keyring) — run `agentry setup` to store the key, or set the variable", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, modelkey.Account(pol.Model.Provider))
+		default:
+			rep.ok("model", "%s/%s (key from the OS keychain entry %s; $%s unset)", pol.Model.Provider, pol.Model.Name, modelkey.Account(pol.Model.Provider), pol.Model.APIKeyEnv)
+		}
 	case os.Getenv(pol.Model.APIKeyEnv) == "":
 		rep.fail("model", "%s/%s: $%s is not set in this environment", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
 	default:

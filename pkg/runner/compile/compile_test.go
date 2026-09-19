@@ -910,3 +910,21 @@ func TestRuntimeIsPartOfThePlanHash(t *testing.T) {
 		t.Fatalf("runtime plan: docker=%+v enforcement=%q", runsc.Docker, runsc.Enforcement["runtime"])
 	}
 }
+
+// TestModelKeySource (agentry-cli#148): the receipt's model.apiKey line
+// names the variable, and the keychain account only when the policy says
+// keyring — the harness's source over the model's.
+func TestModelKeySource(t *testing.T) {
+	pol := policy.Default()
+	if env, acct := modelKeySource(pol, "docker-agent"); env != "ANTHROPIC_API_KEY" || acct != "" {
+		t.Fatalf("default: %q %q", env, acct)
+	}
+	pol.Model.APIKeySource = "keyring"
+	if env, acct := modelKeySource(pol, "docker-agent"); env != "ANTHROPIC_API_KEY" || acct != "provider:anthropic" {
+		t.Fatalf("keyring: %q %q", env, acct)
+	}
+	pol.Harness = map[string]policy.HarnessPolicy{"claude": {APIKeyEnv: "CLAUDE_KEY", APIKeySource: "env"}}
+	if env, acct := modelKeySource(pol, "claude"); env != "CLAUDE_KEY" || acct != "" {
+		t.Fatalf("harness env overrides: %q %q", env, acct)
+	}
+}

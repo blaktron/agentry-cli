@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/configdir"
@@ -26,14 +28,14 @@ const (
 	envConfigDir = configdir.EnvVar
 	// envNoKeyring forces the config-file credential fallback even when an
 	// OS keychain is present (headless/CI use).
-	envNoKeyring = "AGENTRY_NO_KEYRING"
+	envNoKeyring = modelkey.EnvNoKeyring
 	// envRulesDir points `agentry validate` at an S4 rule bundle directory.
 	envRulesDir = "AGENTRY_RULES_DIR"
 )
 
 // keyringService is the go-keyring service name; the account key is the
 // registry host, so multiple registries coexist.
-const keyringService = "agentry"
+const keyringService = modelkey.Service
 
 // Token reference kinds recorded per registry entry.
 const (

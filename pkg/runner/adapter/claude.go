@@ -41,6 +41,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -123,10 +124,7 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 	if model == "" {
 		return Result{}, errors.New("claude adapter: no model (set model.name, or harness.claude.model in the policy)")
 	}
-	keyEnv := in.Harness.APIKeyEnv
-	if keyEnv == "" {
-		keyEnv = in.Model.APIKeyEnv
-	}
+	keyEnv := policy.KeyEnv(in.Harness, in.Model)
 	if keyEnv == "" {
 		return Result{}, errors.New("claude adapter: no model key variable (set model.apiKeyEnv, or harness.claude.apiKeyEnv in the policy)")
 	}
@@ -192,7 +190,7 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 		// The model endpoint is the operator's, by name (§R4). Claude
 		// Code sends ANTHROPIC_AUTH_TOKEN as a bearer credential, which
 		// is what an Anthropic-compatible endpoint expects.
-		{Name: "ANTHROPIC_AUTH_TOKEN", FromHostEnv: keyEnv},
+		{Name: "ANTHROPIC_AUTH_TOKEN", FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)},
 	}
 	if in.Harness.BaseURL != "" {
 		env = append(env, spec.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: in.Harness.BaseURL})

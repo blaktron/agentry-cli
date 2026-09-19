@@ -714,7 +714,11 @@ func hostSecretValues(vars []spec.EnvVar) []string {
 	var out []string
 	for _, v := range vars {
 		if v.FromHostEnv != "" {
-			if val := os.Getenv(v.FromHostEnv); val != "" {
+			// The same resolution the run uses (environment, else the
+			// keychain), so a key read from the keychain is redacted like
+			// one read from the environment; a lookup that fails here is
+			// the run's refusal to make, not the redactor's.
+			if val, err := hostSecret(v); err == nil && val != "" {
 				out = append(out, val)
 			}
 		}

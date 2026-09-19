@@ -187,7 +187,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		Argv:  argv,
 		Env: []spec.EnvVar{
 			{Name: spec.GatewayTokenEnv, FromRunToken: true},
-			{Name: in.Model.APIKeyEnv, FromHostEnv: in.Model.APIKeyEnv},
+			{Name: in.Model.APIKeyEnv, FromHostEnv: in.Model.APIKeyEnv, FromKeyring: keyringAccount(in)},
 			// The proxy is the agent container's only route out (§R4);
 			// NO_PROXY keeps MCP traffic direct on the run network.
 			{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},

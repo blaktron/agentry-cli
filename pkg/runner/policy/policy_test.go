@@ -358,3 +358,33 @@ func TestDefaultPathFollowsTheRunnerHome(t *testing.T) {
 		t.Fatalf("Home: %q %v", h, err)
 	}
 }
+
+// TestAPIKeySource (agentry-cli#148): the keyring source parses on the
+// model and the harness blocks; anything else is refused by name.
+func TestAPIKeySource(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "policy.yaml")
+	pol := Default()
+	pol.Model.APIKeySource = "keyring"
+	pol.Harness = map[string]HarnessPolicy{"claude": {APIKeySource: "env"}}
+	if err := Save(p, pol); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(p)
+	if !strings.Contains(string(raw), "apiKeySource: keyring") {
+		t.Fatalf("not written:\n%s", raw)
+	}
+	got, _, err := Load(p)
+	if err != nil || got.Model.APIKeySource != "keyring" || got.Harness["claude"].APIKeySource != "env" {
+		t.Fatalf("load: %+v %v", got, err)
+	}
+	pol.Model.APIKeySource = "vault"
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), "model.apiKeySource") {
+		t.Fatalf("vault accepted: %v", err)
+	}
+	pol.Model.APIKeySource = ""
+	pol.Harness["claude"] = HarnessPolicy{APIKeySource: "file"}
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), "harness.claude.apiKeySource") {
+		t.Fatalf("file accepted: %v", err)
+	}
+}

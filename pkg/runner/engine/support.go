@@ -18,10 +18,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -367,10 +369,9 @@ func resolveEnv(vars []spec.EnvVar, rep *strings.Replacer, token string) (map[st
 		case v.FromRunToken:
 			out[v.Name] = token
 		case v.FromHostEnv != "":
-			val, ok := os.LookupEnv(v.FromHostEnv)
-			if !ok || val == "" {
-				return nil, Classify(ExitPolicy,
-					fmt.Errorf("required environment variable %s is not set (policy names it for %s)", v.FromHostEnv, v.Name))
+			val, err := hostSecret(v)
+			if err != nil {
+				return nil, Classify(ExitPolicy, err)
 			}
 			out[v.Name] = val
 		default:
@@ -689,4 +690,62 @@ func stampOwner(specPath string) error {
 		return err
 	}
 	return os.WriteFile(specPath, append(out, '\n'), 0o644)
+}
+
+// keyringLookup reads a keychain account (spec.EnvVar.FromKeyring); a seam
+// for tests, which have no keychain.
+var keyringLookup = modelkey.LookupAccount
+
+// keyringOnce memoises keychain reads for the process: the redactor and
+// the run's own resolution ask for the same entry, and one read means one
+// unlock prompt and one value — the redactor can never have learned a
+// different key than the run injects.
+var keyringOnce = struct {
+	sync.Mutex
+	vals map[string]string
+	errs map[string]error
+}{vals: map[string]string{}, errs: map[string]error{}}
+
+func lookupKeyringOnce(account string) (string, error) {
+	keyringOnce.Lock()
+	defer keyringOnce.Unlock()
+	if v, ok := keyringOnce.vals[account]; ok {
+		return v, nil
+	}
+	if err, ok := keyringOnce.errs[account]; ok {
+		return "", err
+	}
+	v, err := keyringLookup(account)
+	if err != nil {
+		keyringOnce.errs[account] = err
+		return "", err
+	}
+	keyringOnce.vals[account] = v
+	return v, nil
+}
+
+// resetKeyringOnce forgets memoised reads (tests).
+func resetKeyringOnce() {
+	keyringOnce.Lock()
+	defer keyringOnce.Unlock()
+	keyringOnce.vals = map[string]string{}
+	keyringOnce.errs = map[string]error{}
+}
+
+// hostSecret resolves a FromHostEnv variable: the environment when the
+// variable is set, else the keychain account the plan names (policy
+// apiKeySource keyring), else a refusal that names the provider, the
+// variable and the fix.
+func hostSecret(v spec.EnvVar) (string, error) {
+	if val, ok := os.LookupEnv(v.FromHostEnv); ok && val != "" {
+		return val, nil
+	}
+	if v.FromKeyring != "" {
+		val, err := lookupKeyringOnce(v.FromKeyring)
+		if err != nil {
+			return "", fmt.Errorf("model key for provider %s: $%s is not set and %w", modelkey.ProviderOf(v.FromKeyring), v.FromHostEnv, err)
+		}
+		return val, nil
+	}
+	return "", fmt.Errorf("required environment variable %s is not set (policy names it for %s)", v.FromHostEnv, v.Name)
 }

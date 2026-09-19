@@ -40,6 +40,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -158,10 +159,7 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 	if model == "" {
 		return Result{}, errors.New("codex adapter: no model (set model.name, or harness.codex.model in the policy)")
 	}
-	keyEnv := in.Harness.APIKeyEnv
-	if keyEnv == "" {
-		keyEnv = in.Model.APIKeyEnv
-	}
+	keyEnv := policy.KeyEnv(in.Harness, in.Model)
 	if keyEnv == "" {
 		return Result{}, errors.New("codex adapter: no model key variable (set model.apiKeyEnv, or harness.codex.apiKeyEnv in the policy)")
 	}
@@ -199,7 +197,7 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 	env := []spec.EnvVar{
 		{Name: spec.GatewayTokenEnv, FromRunToken: true},
 		// The key under the very name the config's env_key reads.
-		{Name: keyEnv, FromHostEnv: keyEnv},
+		{Name: keyEnv, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)},
 		{Name: "CODEX_HOME", Value: spec.PHCfg + "/harness/" + codexHomeDir},
 		{Name: "HTTPS_PROXY", Value: spec.PHHostProxyURL},
 		{Name: "HTTP_PROXY", Value: spec.PHHostProxyURL},
