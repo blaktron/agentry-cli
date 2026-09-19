@@ -15,9 +15,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -27,9 +25,9 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
@@ -180,75 +178,46 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 // runner-m-r4-adapters §5): whether the executable resolves, which release
 // it is, and whether the endpoint the policy points it at can be reached
 // through the run's proxy at all. A scheduled `agentry run --adapter
-// claude` fails on exactly these three things.
+// claude` fails on exactly these three things. The facts come from
+// harnessprobe, which the desktop's wizard reads too (agentry-cli#147);
+// this renders them as checks.
 func doctorHarness(ctx context.Context, rep *doctorReport, pol *policy.Policy, name string) {
 	if name == "" {
 		return
 	}
-	ad, err := adapter.Get(name)
-	if err != nil {
-		rep.fail("adapter", "%v", err)
+	r := harnessprobe.Probe(ctx, pol, name)
+	if !r.Known {
+		rep.fail("adapter", "%s", r.Reason)
 		return
 	}
-	hh, ok := ad.(adapter.HostHarness)
-	if !ok {
+	if !r.Host {
 		rep.ok("adapter:"+name, "containerised harness; its image is checked above")
 		return
 	}
 	check := "harness:" + name
-	var hp policy.HarnessPolicy
-	if pol != nil {
-		hp = pol.Harness[name]
-	}
-	path := hp.Path
-	if path != "" {
-		if _, statErr := os.Stat(path); statErr != nil {
-			rep.fail(check, "policy harness.%s.path %s: %v", name, path, statErr)
-			return
-		}
-	} else if path, err = exec.LookPath(hh.Executable()); err != nil {
-		rep.fail(check, "%s is not installed on this machine (not on PATH) — install it, or set harness.%s.path in the policy",
-			hh.Executable(), name)
+	if !r.Found {
+		rep.fail(check, "%s", r.Reason)
 		return
 	}
-	vctx, cancel := context.WithTimeout(ctx, doctorHTTPTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(vctx, path, hh.VersionArgv()...).CombinedOutput() //nolint:gosec // the operator's own harness
-	if err != nil {
-		rep.warn(check, "%s: cannot read its version: %v", path, err)
+	if len(r.Warnings) > 0 {
+		for _, w := range r.Warnings {
+			rep.warn(check, "%s", w)
+		}
 	} else {
-		version := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
-		if hh.ProbeVersion() == "" || strings.Contains(version, hh.ProbeVersion()) {
-			rep.ok(check, "%s (%s)", path, version)
-		} else {
-			rep.warn(check, "%s (%s); this adapter was written against %s, so flags or event shapes may differ",
-				path, version, hh.ProbeVersion())
-		}
+		rep.ok(check, "%s (%s)", r.Path, r.Version)
 	}
-	if pol == nil || hp.BaseURL == "" {
+	if r.Endpoint == nil {
 		return
 	}
-	u, perr := url.Parse(hp.BaseURL)
-	if perr != nil || u.Host == "" {
-		rep.fail(check+":endpoint", "harness.%s.baseUrl %q is not a URL", name, hp.BaseURL)
-		return
+	switch {
+	case !r.Endpoint.Valid:
+		rep.fail(check+":endpoint", "harness.%s.baseUrl %q is not a URL", name, r.Endpoint.BaseURL)
+	case r.Endpoint.Allowed:
+		rep.ok(check+":endpoint", "%s is in model.proxyAllow", r.Endpoint.HostPort)
+	default:
+		rep.fail(check+":endpoint", "harness.%s.baseUrl points at %s, which model.proxyAllow does not list — the run's proxy would deny it",
+			name, r.Endpoint.HostPort)
 	}
-	port := u.Port()
-	if port == "" {
-		port = "443"
-		if u.Scheme == "http" {
-			port = "80"
-		}
-	}
-	want := u.Hostname() + ":" + port
-	for _, allowed := range pol.Model.ProxyAllow {
-		if allowed == want {
-			rep.ok(check+":endpoint", "%s is in model.proxyAllow", want)
-			return
-		}
-	}
-	rep.fail(check+":endpoint", "harness.%s.baseUrl points at %s, which model.proxyAllow does not list — the run's proxy would deny it",
-		name, want)
 }
 
 // doctorPolicy loads the operator policy and checks the model block.
