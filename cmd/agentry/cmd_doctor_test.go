@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -213,5 +214,91 @@ func TestDoctorReportsTheDockerRuntime(t *testing.T) {
 	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
 	if err != nil || !strings.Contains(out, "ok    docker:runtime") {
 		t.Fatalf("a registered runtime was not reported ok (%v):\n%s", err, out)
+	}
+}
+
+// TestDoctorAdapterHarness (agentry-cli#147): --adapter renders the
+// harness probe's facts as checks — the resolved executable and version
+// as ok, the endpoint against model.proxyAllow, and a harness that is not
+// installed as the failure that names the fix. The probe lives in
+// pkg/runner/harnessprobe so the desktop reads the same facts.
+func TestDoctorAdapterHarness(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '2.1.263 (Claude Code)'\n"), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Harness = map[string]policy.HarnessPolicy{"claude": {BaseURL: "https://api.anthropic.com/v1"}}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", bin)
+	out, _, err := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "claude")
+	if err != nil {
+		t.Fatalf("doctor failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"ok    harness:claude", filepath.Join(bin, "claude") + " (2.1.263 (Claude Code))", "ok    harness:claude:endpoint", "api.anthropic.com:443 is in model.proxyAllow"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	t.Setenv("PATH", t.TempDir()) // nothing on it
+	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "claude")
+	if err == nil {
+		t.Fatalf("doctor passed with no claude installed:\n%s", out)
+	}
+	for _, want := range []string{"FAIL  harness:claude", "claude is not installed on this machine (not on PATH)", "set harness.claude.path in the policy"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	// The containerised default names its image as the check, not a path.
+	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "docker-agent")
+	if err != nil || !strings.Contains(out, "ok    adapter:docker-agent") {
+		t.Fatalf("docker-agent: err=%v\n%s", err, out)
+	}
+
+	// An unknown adapter is the adapter check failing with the registry's list.
+	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "no-such")
+	if err == nil || !strings.Contains(out, "FAIL  adapter") || !strings.Contains(out, "unknown adapter \"no-such\"") {
+		t.Fatalf("unknown adapter: err=%v\n%s", err, out)
+	}
+
+	// codex, installed at another release, warns and does not fail; a
+	// baseUrl the allowlist does not cover fails the endpoint check.
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\necho 'codex-cli 9.9.9'\n"), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+	pol.Harness = map[string]policy.HarnessPolicy{"codex": {BaseURL: "https://api.openai.example:8443/v1"}}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "codex")
+	if err == nil {
+		t.Fatalf("an endpoint the proxy would deny must fail doctor:\n%s", out)
+	}
+	for _, want := range []string{"warn  harness:codex", "(codex-cli 9.9.9); this adapter was written against 0.153.4, so flags or event shapes may differ", "FAIL  harness:codex:endpoint", "points at api.openai.example:8443, which model.proxyAllow does not list"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	// A baseUrl that is not a URL fails the endpoint check by name.
+	pol.Harness = map[string]policy.HarnessPolicy{"codex": {BaseURL: "not a url"}}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "codex")
+	if !strings.Contains(out, "FAIL  harness:codex:endpoint") || !strings.Contains(out, "harness.codex.baseUrl \"not a url\" is not a URL") {
+		t.Fatalf("not-a-url:\n%s", out)
 	}
 }
