@@ -82,6 +82,10 @@ func (c *codexAdapter) Executable() string    { return codexExecutable }
 func (c *codexAdapter) ProbeVersion() string  { return codexProbeVersion }
 func (c *codexAdapter) VersionArgv() []string { return []string{"--version"} }
 func (c *codexAdapter) InstallURL() string    { return "https://github.com/openai/codex" }
+func (c *codexAdapter) DisplayName() string   { return "Codex" }
+func (c *codexAdapter) MCPCommand() string {
+	return "codex mcp add agentry -- node /path/to/agentry-mcp/dist/index.js"
+}
 
 // tomlString quotes a value as a TOML basic string. The values here are
 // model ids, URLs and variable names; the escape covers what such values

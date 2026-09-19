@@ -53,9 +53,14 @@ type Result struct {
 	Host bool `json:"host"`
 	// Executable is the program name the adapter resolves on PATH.
 	Executable string `json:"executable,omitempty"`
+	// DisplayName is the product's name for a person ("Claude Code").
+	DisplayName string `json:"displayName,omitempty"`
 	// InstallURL is the vendor's page for getting the harness, for a
 	// client to show when Found is false.
 	InstallURL string `json:"installUrl,omitempty"`
+	// MCPCommand is the documented line that registers agentry-mcp with
+	// this host, for a client to show and copy, never to run.
+	MCPCommand string `json:"mcpCommand,omitempty"`
 	// Path is the executable that resolved: it exists, though it may not
 	// run (then VersionError says so). "" when Found is false.
 	Path string `json:"path,omitempty"`
@@ -118,7 +123,9 @@ func Probe(ctx context.Context, pol *policy.Policy, name string) Result {
 	}
 	r.Host = true
 	r.Executable = hh.Executable()
+	r.DisplayName = hh.DisplayName()
 	r.InstallURL = hh.InstallURL()
+	r.MCPCommand = hh.MCPCommand()
 	r.WrittenAgainst = hh.ProbeVersion()
 
 	var hp policy.HarnessPolicy

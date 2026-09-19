@@ -93,6 +93,10 @@ func (c *claudeAdapter) Executable() string    { return claudeExecutable }
 func (c *claudeAdapter) ProbeVersion() string  { return claudeProbeVersion }
 func (c *claudeAdapter) VersionArgv() []string { return []string{"--version"} }
 func (c *claudeAdapter) InstallURL() string    { return "https://github.com/anthropics/claude-code" }
+func (c *claudeAdapter) DisplayName() string   { return "Claude Code" }
+func (c *claudeAdapter) MCPCommand() string {
+	return "claude mcp add agentry -- node /path/to/agentry-mcp/dist/index.js"
+}
 
 // claudeMCPServer is one entry of Claude Code's MCP config file. Structs,
 // not map[string]any, so the rendered bytes are deterministic.

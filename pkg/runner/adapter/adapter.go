@@ -166,6 +166,15 @@ type HostHarness interface {
 	// InstallURL is where a person gets the harness when it is not on
 	// this machine — the vendor's own page, for a client to show.
 	InstallURL() string
+	// DisplayName is the product's name for a person ("Claude Code"),
+	// where Name is the adapter's ("claude").
+	DisplayName() string
+	// MCPCommand is the one line that registers the agentry-mcp server
+	// with this host, verbatim from agentry-mcp's README ("Install"; the
+	// README also shows an AGENTRY_BIN variant these strings leave out);
+	// the path is the person's own build of the server. A client shows
+	// it; nothing runs it (agentry-cli#151).
+	MCPCommand() string
 }
 
 // ErrNotSupported is returned by Session for adapters without an
