@@ -68,8 +68,8 @@ func TestProbeVersionMismatchIsReportedNotRefused(t *testing.T) {
 	if len(r.Warnings) != 1 || r.Warnings[0] != exe+" (codex-cli 9.9.9); this adapter was written against 0.153.4, so flags or event shapes may differ" {
 		t.Fatalf("warnings = %q", r.Warnings)
 	}
-	if r.InstallURL != "https://github.com/openai/codex" {
-		t.Fatalf("installUrl = %q", r.InstallURL)
+	if r.InstallURL != "https://github.com/openai/codex" || r.DisplayName != "Codex" || r.MCPCommand != "codex mcp add agentry -- node /path/to/agentry-mcp/dist/index.js" {
+		t.Fatalf("vendor facts = %q %q %q", r.InstallURL, r.DisplayName, r.MCPCommand)
 	}
 }
 
