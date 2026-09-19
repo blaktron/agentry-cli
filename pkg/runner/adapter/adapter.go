@@ -14,6 +14,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -254,3 +255,14 @@ func Names() []string {
 
 // DefaultName is the v1 default adapter (annex §7, Q-R4).
 const DefaultName = "docker-agent"
+
+// keyringAccount is the OS keychain account a run falls back to for the
+// model key when the named variable is unset (policy.KeySource says
+// keyring; agentry-cli#148): the model provider's; "" when the environment
+// is the only source.
+func keyringAccount(in Input) string {
+	if policy.KeySource(in.Harness, in.Model) != modelkey.SourceKeyring {
+		return ""
+	}
+	return modelkey.Account(in.Model.Provider)
+}

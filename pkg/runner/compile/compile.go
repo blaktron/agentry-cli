@@ -29,6 +29,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -275,6 +276,19 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		plan.Enforcement["runtime"] = rt + ": the agent container — the BriefAgent's code — and the MCP server installer are created with docker --runtime " + rt +
 			", the run network's aliases pinned into the agent's /etc/hosts; the runner's own llm-proxy, gateway and probe, and what the gateway launches itself (the tools server, the declared MCP servers), take the daemon's default runtime"
+	}
+	// The model key's source is a mechanism the receipt names (§R11): the
+	// variable, or the variable else the keychain (agentry-cli#148).
+	if keyEnv, account := modelKeySource(in.Policy, adapterName); keyEnv != "" {
+		if plan.Enforcement == nil {
+			plan.Enforcement = map[string]string{}
+		}
+		if account == "" {
+			plan.Enforcement["model.apiKey"] = "$" + keyEnv + " from the host environment, injected into the agent container (or the host harness process) only"
+		} else {
+			plan.Enforcement["model.apiKey"] = "$" + keyEnv + " from the host environment, else the OS keychain entry " + account +
+				" (policy apiKeySource keyring); injected into the agent container (or the host harness process) only, never written to the plan or the receipt"
+		}
 	}
 	// Write the generated files, hashing each into the plan.
 	if res.Host != nil {
@@ -1038,4 +1052,16 @@ func sortedCopy(in []string) []string {
 	out := append([]string(nil), in...)
 	sort.Strings(out)
 	return out
+}
+
+// modelKeySource is the variable a run reads the model key from and, when
+// the policy says keyring, the keychain account it falls back to — by the
+// policy's one rule (policy.KeyEnv, policy.KeySource).
+func modelKeySource(pol *policy.Policy, adapterName string) (keyEnv, account string) {
+	hp := pol.Harness[adapterName]
+	keyEnv = policy.KeyEnv(hp, pol.Model)
+	if policy.KeySource(hp, pol.Model) == modelkey.SourceKeyring {
+		account = modelkey.Account(pol.Model.Provider)
+	}
+	return keyEnv, account
 }

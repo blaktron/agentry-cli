@@ -131,3 +131,14 @@ land in your `~/.config/agentry/installed.yaml`. `AGENTRY_RUNNER_HOME`
 relocates the whole runner home — the operator policy included, so a
 relocated home reads and writes its own `policy.yaml`, never yours
 (agentry-cli#149).
+
+The model key a run injects is read from the environment variable the
+policy names (`model.apiKeyEnv`). With `apiKeySource: keyring` in the policy
+the OS keychain is the fallback when that variable is unset — the entry
+`provider:<provider>` under service `agentry`, which an interactive
+`agentry setup` offers to store (or `--api-key-source keyring` records the
+source for a key stored elsewhere, the desktop's model step say); the
+variable still wins when set, and the value is never in the policy, a plan
+or a receipt (the receipt's `model.apiKey` line names the source). On Linux
+the keychain is the Secret Service (GNOME Keyring, KWallet); without one the
+store step fails by name and the variable is the way (agentry-cli#148).

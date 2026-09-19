@@ -333,6 +333,10 @@ type EnvVar struct {
 	// FromHostEnv resolves from the invoking host's environment at run
 	// time (e.g. the operator's model API key, §R4).
 	FromHostEnv string `json:"fromHostEnv,omitempty"`
+	// FromKeyring, beside FromHostEnv, names the OS keychain account read
+	// when that variable is not set (policy apiKeySource keyring,
+	// agentry-cli#148): the account, never the value.
+	FromKeyring string `json:"fromKeyring,omitempty"`
 	// FromRunToken injects the per-run gateway Bearer token.
 	FromRunToken bool `json:"fromRunToken,omitempty"`
 }

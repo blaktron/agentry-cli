@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 )
@@ -71,7 +72,16 @@ type ModelOpts struct {
 	Provider  string
 	Model     string
 	APIKeyEnv string
-	BaseURL   string
+	// APIKeySource is "" (keep what the policy has for the same provider,
+	// else env), "env" or "keyring": where the key comes from when the
+	// variable is unset (agentry-cli#148). Interactive setup offers to
+	// store the key in the keychain and sets keyring itself.
+	APIKeySource string
+	// StoreKey puts a key into the OS keychain (nil: modelkey.Store). A
+	// seam: tests have no keychain, and a form-driven caller stores the
+	// key itself before calling.
+	StoreKey func(provider, key string) error
+	BaseURL  string
 	// Yes suppresses prompting entirely: table defaults fill the gaps and
 	// a custom provider with no BaseURL is an error rather than a question.
 	Yes bool
@@ -178,15 +188,63 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		proxyAllow = []string{hp}
 	}
 
-	pol.Model = policy.Model{
-		Provider:   prov,
-		Name:       model,
-		APIKeyEnv:  keyEnv,
-		BaseURL:    baseURL,
-		ProxyAllow: proxyAllow,
+	// Where the key comes from when the variable is unset. A form-driven
+	// caller says so; on a terminal the offer is to store it now, for the
+	// runs launched from somewhere with no shell environment.
+	source := opts.APIKeySource
+	if source == "" && sameProvider {
+		source = pol.Model.APIKeySource
 	}
-	p.Say(fmt.Sprintf("model: %s/%s (key from $%s; agent-container egress limited to %s)",
-		prov, model, keyEnv, strings.Join(proxyAllow, ", ")))
+	if source != "" && source != modelkey.SourceEnv && source != modelkey.SourceKeyring {
+		return fmt.Errorf("api key source %q must be env or keyring", source)
+	}
+	if !opts.Yes && opts.APIKeySource == "" && source != modelkey.SourceKeyring && !modelkey.Disabled() {
+		store, err := p.Confirm(fmt.Sprintf("Store the key in this machine's keychain now, for runs launched without $%s (the variable still wins when it is set)?", keyEnv), false)
+		if err != nil {
+			return err
+		}
+		if store {
+			key, err := p.AskSecret(fmt.Sprintf("API key for %s (goes to the OS keychain, never to the policy file)", prov))
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(key) == "" {
+				p.Say("nothing stored: the key was empty")
+			} else {
+				storeKey := opts.StoreKey
+				if storeKey == nil {
+					storeKey = modelkey.Store
+				}
+				// A keychain that cannot be reached is not a reason to
+				// leave the policy unwritten: the variable path is as it
+				// was, and the reason is said.
+				if err := storeKey(prov, key); err != nil {
+					p.Say(fmt.Sprintf("not stored — %v; the key stays yours to set as $%s", err, keyEnv))
+				} else {
+					source = modelkey.SourceKeyring
+					p.Say(fmt.Sprintf("stored in the OS keychain as %s", modelkey.Account(prov)))
+				}
+			}
+		}
+	}
+	if source == modelkey.SourceEnv {
+		source = "" // the default, unwritten
+	}
+
+	pol.Model = policy.Model{
+		Provider:     prov,
+		Name:         model,
+		APIKeyEnv:    keyEnv,
+		APIKeySource: source,
+		BaseURL:      baseURL,
+		ProxyAllow:   proxyAllow,
+	}
+	from := "$" + keyEnv
+	if source == modelkey.SourceKeyring {
+		from += ", else the OS keychain"
+	}
+	p.Say(fmt.Sprintf("model: %s/%s (key from %s; agent-container egress limited to %s)",
+		prov, model, from, strings.Join(proxyAllow, ", ")))
 	return nil
 }
 

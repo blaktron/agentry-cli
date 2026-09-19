@@ -4,6 +4,7 @@
 package setup
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -309,3 +310,151 @@ func TestHostPortOf(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigureModelStoresTheKeyInTheKeychain (agentry-cli#148): on a
+// terminal the flow offers to store the key; the secret goes to the store
+// seam and the policy records only the source.
+func TestConfigureModelStoresTheKeyInTheKeychain(t *testing.T) {
+	var stored []string
+	p := &scriptPrompter{answers: []string{"anthropic", "", "", "sk-live-secret"}, confirm: true}
+	pol := policy.Default()
+	err := ConfigureModel(p, pol, ModelOpts{StoreKey: func(prov, key string) error {
+		stored = append(stored, prov+"="+key)
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0] != "anthropic=sk-live-secret" {
+		t.Fatalf("stored = %v", stored)
+	}
+	if pol.Model.APIKeySource != "keyring" || pol.Model.APIKeyEnv != "ANTHROPIC_API_KEY" {
+		t.Fatalf("model = %+v", pol.Model)
+	}
+	if strings.Contains(strings.Join(p.said, "\n"), "sk-live") {
+		t.Fatalf("the secret reached the transcript: %q", p.said)
+	}
+	dir := t.TempDir()
+	if err := policy.Save(dir+"/p.yaml", pol); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(dir + "/p.yaml")
+	if strings.Contains(string(raw), "sk-live") || !strings.Contains(string(raw), "apiKeySource: keyring") {
+		t.Fatalf("policy file:\n%s", raw)
+	}
+}
+
+// TestConfigureModelDeclinedStoreKeepsEnv: declining the offer, or an
+// empty key, leaves the source unset and stores nothing.
+func TestConfigureModelDeclinedStoreKeepsEnv(t *testing.T) {
+	calls := 0
+	store := func(string, string) error { calls++; return nil }
+	pol := policy.Default()
+	if err := ConfigureModel(&scriptPrompter{answers: []string{"anthropic"}, confirm: false}, pol, ModelOpts{StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeySource != "" || calls != 0 {
+		t.Fatalf("declined: source=%q calls=%d", pol.Model.APIKeySource, calls)
+	}
+	pol = policy.Default()
+	p := &scriptPrompter{answers: []string{"anthropic", "", "", "   "}, confirm: true}
+	if err := ConfigureModel(p, pol, ModelOpts{StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeySource != "" || calls != 0 || !strings.Contains(strings.Join(p.said, "\n"), "nothing stored") {
+		t.Fatalf("empty key: source=%q calls=%d said=%q", pol.Model.APIKeySource, calls, p.said)
+	}
+}
+
+// TestConfigureModelYesKeepsAndSetsTheSource: a form-driven caller names
+// the source; re-running for the same provider keeps a keyring source;
+// an unknown source is refused.
+func TestConfigureModelYesKeepsAndSetsTheSource(t *testing.T) {
+	pol := policy.Default()
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "anthropic", APIKeySource: "keyring", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeySource != "keyring" {
+		t.Fatalf("set: %+v", pol.Model)
+	}
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "anthropic", Model: "claude-opus-5", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeySource != "keyring" || pol.Model.Name != "claude-opus-5" {
+		t.Fatalf("same provider must keep the source: %+v", pol.Model)
+	}
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "openai", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeySource != "" {
+		t.Fatalf("a provider switch drops the other provider's source: %+v", pol.Model)
+	}
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "openai", APIKeySource: "vault", Yes: true}); err == nil || !strings.Contains(err.Error(), "must be env or keyring") {
+		t.Fatalf("vault: %v", err)
+	}
+}
+
+// TestConfigureModelStoreFailureDegradesToEnv (agentry-cli#148): a
+// keychain that cannot be reached leaves the policy on the variable path,
+// written, with the reason said and no secret in the transcript.
+func TestConfigureModelStoreFailureDegradesToEnv(t *testing.T) {
+	p := &scriptPrompter{answers: []string{"anthropic", "", "", "sk-live-secret"}, confirm: true}
+	pol := policy.Default()
+	err := ConfigureModel(p, pol, ModelOpts{StoreKey: func(string, string) error { return errStub("no Secret Service") }})
+	if err != nil {
+		t.Fatalf("a store failure must not fail setup: %v", err)
+	}
+	said := strings.Join(p.said, "\n")
+	if pol.Model.APIKeySource != "" || !strings.Contains(said, "not stored") || !strings.Contains(said, "no Secret Service") || strings.Contains(said, "sk-live") {
+		t.Fatalf("source=%q said=%q", pol.Model.APIKeySource, said)
+	}
+}
+
+// TestConfigureModelExplicitSourceSkipsTheOffer: a caller that named the
+// source is not asked; the headless switch silences the offer too.
+func TestConfigureModelExplicitSourceSkipsTheOffer(t *testing.T) {
+	calls := 0
+	store := func(string, string) error { calls++; return nil }
+	p := &confirmCounter{}
+	if err := ConfigureModel(p, policy.Default(), ModelOpts{Provider: "anthropic", APIKeySource: "env", StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if p.confirms != 0 || calls != 0 {
+		t.Fatalf("explicit env: confirms=%d calls=%d", p.confirms, calls)
+	}
+	t.Setenv("AGENTRY_NO_KEYRING", "1")
+	p = &confirmCounter{}
+	if err := ConfigureModel(p, policy.Default(), ModelOpts{Provider: "anthropic", StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if p.confirms != 0 {
+		t.Fatalf("disabled keychain: confirms=%d", p.confirms)
+	}
+}
+
+// confirmCounter answers every question with its default and counts the
+// Confirms.
+type confirmCounter struct{ confirms int }
+
+func (c *confirmCounter) Ask(_, def string) (string, error)      { return def, nil }
+func (c *confirmCounter) AskSecret(string) (string, error)       { return "", nil }
+func (c *confirmCounter) Confirm(_ string, d bool) (bool, error) { c.confirms++; return d, nil }
+func (c *confirmCounter) Say(string)                             {}
+
+// TestConfigureModelOfferFailuresPropagate: a read failure on the offer's
+// Confirm or its AskSecret is an error like the other questions'.
+func TestConfigureModelOfferFailuresPropagate(t *testing.T) {
+	boom := errStub("stdin closed")
+	for failOn := 4; failOn <= 5; failOn++ {
+		pol := policy.Default()
+		p := &failingConfirmingPrompter{failingPrompter: failingPrompter{failOn: failOn, err: boom}}
+		if err := ConfigureModel(p, pol, ModelOpts{StoreKey: func(string, string) error { return nil }}); err == nil {
+			t.Errorf("failure on interaction %d was swallowed", failOn)
+		}
+	}
+}
+
+// failingConfirmingPrompter says yes to Confirms so the AskSecret is reached.
+type failingConfirmingPrompter struct{ failingPrompter }
+
+func (f *failingConfirmingPrompter) Confirm(string, bool) (bool, error) { return true, f.step() }

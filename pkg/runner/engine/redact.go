@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"os"
 	"sort"
 	"strings"
@@ -46,7 +47,13 @@ func newRedactor(token string, secrets map[string]string, extra []string) *redac
 // its token and secrets exist, and hangs it off the run's directories so
 // every later phase masks with the same one.
 func (rd *runDirs) newRedactor(p Params, token string, secrets map[string]string) *redactor {
-	rd.redact = newRedactor(token, secrets, hostSecretValues(p.Plan.Harness.Agent.Env))
+	// Both harness kinds: the agent container's env and, for a host-run
+	// harness (claude, codex), the process env the key travels in.
+	vars := append([]spec.EnvVar(nil), p.Plan.Harness.Agent.Env...)
+	if p.Plan.Harness.Host != nil {
+		vars = append(vars, p.Plan.Harness.Host.Env...)
+	}
+	rd.redact = newRedactor(token, secrets, hostSecretValues(vars))
 	return rd.redact
 }
 

@@ -302,3 +302,42 @@ func TestDoctorAdapterHarness(t *testing.T) {
 		t.Fatalf("not-a-url:\n%s", out)
 	}
 }
+
+// TestDoctorModelKeyFromTheKeychain (agentry-cli#148): with the variable
+// unset and apiKeySource keyring, doctor asks the keychain — present is
+// ok, absent is the failure that names the fix, unreachable is named.
+func TestDoctorModelKeyFromTheKeychain(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model.APIKeySource = "keyring"
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCTOR_TEST_KEY", "")
+	old := modelKeyPresent
+	t.Cleanup(func() { modelKeyPresent = old })
+
+	modelKeyPresent = func(string) (bool, error) { return true, nil }
+	out, _, err := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if err != nil || !strings.Contains(out, "ok    model") || !strings.Contains(out, "OS keychain entry provider:anthropic") {
+		t.Fatalf("present: err=%v\n%s", err, out)
+	}
+	modelKeyPresent = func(string) (bool, error) { return false, nil }
+	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if err == nil || !strings.Contains(out, "FAIL  model") || !strings.Contains(out, "has no entry provider:anthropic") || !strings.Contains(out, "agentry setup") {
+		t.Fatalf("absent: err=%v\n%s", err, out)
+	}
+	modelKeyPresent = func(string) (bool, error) { return false, errStubDoctor("dbus: connection refused") }
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  model") || !strings.Contains(out, "could not be asked") || !strings.Contains(out, "connection refused") {
+		t.Fatalf("unreachable:\n%s", out)
+	}
+}
+
+type errStubDoctor string
+
+func (e errStubDoctor) Error() string { return string(e) }
