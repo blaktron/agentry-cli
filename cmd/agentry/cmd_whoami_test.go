@@ -28,6 +28,9 @@ func TestWhoamiShowsTheAccountAndTheSubscriptionWhereThereIsOne(t *testing.T) {
 	if strings.Contains(stdout, "tier:") || strings.Contains(stdout, "credits:") {
 		t.Errorf("a core registry showed a tier:\n%s", stdout)
 	}
+	if strings.Contains(stdout, "org:") {
+		t.Errorf("an account in no organization was given one:\n%s", stdout)
+	}
 
 	// The same registry with the extension: the tier and the credits.
 	fr.billing, fr.billingBalance = true, 40
@@ -39,6 +42,17 @@ func TestWhoamiShowsTheAccountAndTheSubscriptionWhereThereIsOne(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("whoami lacks %q:\n%s", want, stdout)
 		}
+	}
+	// An account in no organization spends its own credits, never a pool,
+	// and nothing here is a seat or a standing.
+	for _, never := range []string{"pool:", "seats:", "standing:", "org:", "through "} {
+		if strings.Contains(stdout, never) {
+			t.Errorf("whoami showed %q for an account in no organization:\n%s", never, stdout)
+		}
+	}
+	// The credential is what this command reads, never what it prints.
+	if strings.Contains(stdout, "agy_test") || strings.Contains(stderr, "agy_test") {
+		t.Errorf("whoami echoed the token:\n%s\n%s", stdout, stderr)
 	}
 
 	// --json carries the account object.
@@ -125,6 +139,28 @@ func TestWhoamiShowsTheOrganizationAndThePool(t *testing.T) {
 		t.Errorf("an unmetered pool showed a balance:\n%s", stdout)
 	}
 
+	// An organization that is not paid for is granted no allowance, so the
+	// pool says what is left and promises no reset: "0 of 0, resets on the
+	// 11th" would be a promise the registry will not keep (D10).
+	fr.billingAccountDoc["unmetered"] = false
+	fr.billingAccountDoc["standing"], fr.billingAccountDoc["allowance"], fr.billingAccountDoc["balance"] = "restricted", 0, 4000
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "whoami")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "pool:     4000 credits, and no allowance while the subscription is not active") {
+		t.Errorf("a restricted pool promised an allowance:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "resets on") || strings.Contains(stdout, "of 0 credits") {
+		t.Errorf("a restricted pool promised a reset:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "standing: restricted — the subscription has lapsed") {
+		t.Errorf("the standing did not say what it means:\n%s", stdout)
+	}
+
+	// Back to active for the JSON check.
+	fr.billingAccountDoc["standing"], fr.billingAccountDoc["allowance"], fr.billingAccountDoc["balance"] = "active", 5000, 3960
+
 	// --json carries the organization and the account together.
 	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "--json", "whoami")
 	if err != nil {
@@ -151,6 +187,11 @@ func TestWhoamiShowsTheOrganizationAndThePool(t *testing.T) {
 	}
 	if doc.Account.MemberOf != "acme" || doc.Account.Tier != "business" || doc.Account.Standing != "active" || doc.Account.Seats.Max != 10 {
 		t.Errorf("json account = %+v", doc.Account)
+	}
+	// The account is the registry's own document, so a field this command
+	// does not render still reaches --json.
+	if !strings.Contains(stdout, "\"tierSince\"") || !strings.Contains(stdout, "\"upgrade\"") {
+		t.Errorf("--json dropped fields the registry answered:\n%s", stdout)
 	}
 }
 
@@ -221,13 +262,12 @@ func TestPublishRendersCreditsExhausted(t *testing.T) {
 	if n := len(fr.submitKeys); n != 1 {
 		t.Fatalf("submit attempts = %d, want 1 (no retry on a refusal)", n)
 	}
-}
 
-// A 402 that names an account (plan organization-subscriptions.md §8, D22):
-// the pool that is short is the organization's, not the publisher's, so the
-// sentence says whose it is — and an organization whose subscription has not
-// started is its own refusal, not an empty balance.
-func TestPublishNamesTheAccountA402Refuses(t *testing.T) {
+	// A 402 that names an account (plan organization-subscriptions.md §8,
+	// D22): a member publishes to their own namespace but spends from the
+	// organization's pool, so the sentence says whose account it is —
+	// including for an organization whose subscription never started,
+	// which is its own refusal rather than an empty balance.
 	for _, tc := range []struct {
 		name    string
 		problem *fakeProblem
@@ -239,15 +279,32 @@ func TestPublishNamesTheAccountA402Refuses(t *testing.T) {
 				Title:   "Not enough credits for this submission",
 				Detail:  "a submission costs 10 credits; the acme organization's pool has 0, and its allowance resets on 11 October 2026",
 				Members: map[string]any{"account": "acme", "balance": 0, "tier": "business"}},
-			want: "(account acme, HTTP 402)",
+			want: "; the account is acme (HTTP 402)",
 		},
 		{
-			name: "subscription-inactive names the organization and its standing",
+			name: "subscription-inactive names the organization it is about",
 			problem: &fakeProblem{Status: 402, Type: "https://agentry.dev/problems/subscription-inactive",
 				Title:   "The organization's subscription is not active",
 				Detail:  "the acme organization is awaiting payment: nothing is admitted until its subscription starts",
 				Members: map[string]any{"account": "acme", "standing": "pending", "tier": "business"}},
-			want: "(account acme, standing pending, HTTP 402)",
+			want: "; the account is acme (HTTP 402)",
+		},
+		{
+			name: "an account name is bounded and stripped before it reaches a terminal",
+			problem: &fakeProblem{Status: 402, Type: "https://agentry.dev/problems/credits-exhausted",
+				Title: "Not enough credits for this submission", Detail: "the pool is empty",
+				Members: map[string]any{"account": "\x1b]0;pwned\x07" + strings.Repeat("a", 200)}},
+			// The escape's control characters are dropped and what is left
+			// is cut to 64 runes, so no registry can rewrite the terminal
+			// its refusal is printed to, nor fill it.
+			want: "; the account is ]0;pwned" + strings.Repeat("a", 56) + "… (HTTP 402)",
+		},
+		{
+			name: "a status that is not a payment refusal carries no account",
+			problem: &fakeProblem{Status: 422, Type: "https://agentry.dev/problems/validation",
+				Title: "Validation failed", Detail: "the manifest is not valid",
+				Members: map[string]any{"account": "acme"}},
+			want: "the manifest is not valid (HTTP 422)",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,10 +315,13 @@ func TestPublishNamesTheAccountA402Refuses(t *testing.T) {
 			t.Setenv(envToken, "agy_test")
 			_, _, err := runCLI(t, nil, "--registry", fr.url(), "publish", publishWorkspace(t))
 			if err == nil {
-				t.Fatal("publish succeeded on a 402")
+				t.Fatal("publish succeeded on a refusal")
 			}
-			if !strings.Contains(err.Error(), tc.problem.Detail) || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("message = %q, want the detail and %q", err, tc.want)
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("message = %q, want %q", err, tc.want)
+			}
+			if strings.ContainsAny(err.Error(), "\x1b\x07") {
+				t.Fatalf("a control character reached the message: %q", err)
 			}
 		})
 	}

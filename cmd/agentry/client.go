@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -96,7 +97,10 @@ func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error 
 				msg += fmt.Sprintf("; %s: %s", fe.Field, fe.Message)
 			}
 		}
-		return fmt.Errorf("%s: %s (%sHTTP %d)", op, msg, accountClause(body), status)
+		if acct := refusedAccount(status, body); acct != "" {
+			msg += "; the account is " + acct
+		}
+		return fmt.Errorf("%s: %s (HTTP %d)", op, msg, status)
 	}
 	msg := strings.TrimSpace(string(body))
 	if len(msg) > 300 {
@@ -108,26 +112,45 @@ func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error 
 	return fmt.Errorf("%s: HTTP %d: %s", op, status, msg)
 }
 
-// accountClause names the account a billing refusal is about, and its
-// standing where the refusal carries one, as a clause for the trailer:
-// "account acme, " or "account acme, standing pending, ". A member
+// refusedAccount names the account a payment refusal is about. A member
 // publishes to their own namespace but spends from their organization's
 // pool (plan organization-subscriptions.md D22), so the account whose
 // balance is short is often not the one that signed the request, and the
-// refusal's prose alone leaves that to be guessed. Empty for every
-// refusal that names no account, which is every refusal but billing's.
-func accountClause(body []byte) string {
-	var members struct {
-		Account  string `json:"account"`
-		Standing string `json:"standing"`
-	}
-	if json.Unmarshal(body, &members) != nil || members.Account == "" {
+// refusal's prose alone leaves that to be guessed.
+//
+// Only a 402 is read for it: `account` is the billing extension's
+// extension member, and 402 is the one status it refuses with, so no other
+// problem body can put a word of its own choosing into this sentence.
+// The value is still the server's, so it is bounded and stripped of
+// control characters before it reaches a terminal — the same care the
+// non-problem branch below takes with a body it did not write.
+func refusedAccount(status int, body []byte) string {
+	if status != http.StatusPaymentRequired {
 		return ""
 	}
-	if members.Standing != "" {
-		return fmt.Sprintf("account %s, standing %s, ", members.Account, members.Standing)
+	var members struct {
+		Account string `json:"account"`
 	}
-	return fmt.Sprintf("account %s, ", members.Account)
+	if json.Unmarshal(body, &members) != nil {
+		return ""
+	}
+	return safeTerminalText(members.Account, 64)
+}
+
+// safeTerminalText bounds a server-supplied string and drops the control
+// characters an escape sequence needs, so nothing a registry answers can
+// rewrite the terminal it is printed to.
+func safeTerminalText(s string, max int) string {
+	clean := strings.Map(func(r rune) rune {
+		if r == '\t' || (unicode.IsControl(r) && r != ' ') {
+			return -1
+		}
+		return r
+	}, s)
+	if len([]rune(clean)) > max {
+		clean = string([]rune(clean)[:max]) + "…"
+	}
+	return clean
 }
 
 // sha256Digest computes the "sha256:<hex>" digest of b (D-15 identity form).

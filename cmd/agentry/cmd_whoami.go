@@ -47,7 +47,6 @@ func newWhoamiCmd() *cobra.Command {
 // underneath for the day they leave, and a pending fold-in is still
 // answered their own.
 type billingAccount struct {
-	Kind           string     `json:"kind,omitempty"`
 	Tier           string     `json:"tier"`
 	Standing       string     `json:"standing,omitempty"`
 	Unmetered      bool       `json:"unmetered,omitempty"`
@@ -90,7 +89,7 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 	}
 	u := resp.JSON200
 
-	acct, accountErr := fetchBillingAccount(cmd.Context(), client, reg, token)
+	acct, raw, accountErr := fetchBillingAccount(cmd.Context(), client, reg, token)
 
 	if flags.jsonOut {
 		doc := map[string]any{"registry": reg, "handle": u.Handle, "email": u.Email, "displayName": u.DisplayName}
@@ -98,10 +97,14 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 			doc["orgs"] = *u.Orgs
 		}
 		if u.PendingOrg != nil {
-			doc["pendingOrg"] = u.PendingOrg
+			doc["pendingOrg"] = *u.PendingOrg
 		}
-		if acct != nil {
-			doc["account"] = acct
+		if raw != nil {
+			// The registry's own account document, not this command's
+			// copy of the fields it renders: a field the extension adds
+			// reaches --json without an edit here, and none is silently
+			// dropped.
+			doc["account"] = raw
 		}
 		if accountErr != nil {
 			doc["accountError"] = accountErr.Error()
@@ -112,9 +115,7 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 	}
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "registry: %s\nhandle:   %s\nemail:    %s\n", reg, u.Handle, u.Email)
-	for _, line := range orgLines(u) {
-		_, _ = fmt.Fprintln(out, line)
-	}
+	writeOrgs(out, u)
 	switch {
 	case acct != nil:
 		writeSubscription(out, acct)
@@ -124,24 +125,22 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// orgLines renders the memberships GET /user reports. They are the core's
+// writeOrgs renders the memberships GET /user reports. They are the core's
 // own facts, so a registry that sells nothing still says which
 // organization a person belongs to and in what role; a membership an admin
 // has yet to approve says so and names the door the person came through,
 // because until then they hold no seat and spend from their own account.
-func orgLines(u *apiclient.User) []string {
+func writeOrgs(out io.Writer, u *apiclient.User) {
 	if u.Orgs == nil {
-		return nil
+		return
 	}
-	lines := make([]string, 0, len(*u.Orgs))
 	for _, o := range *u.Orgs {
 		line := fmt.Sprintf("org:      %s (%s)", o.Handle, o.Role)
 		if o.State != nil && *o.State == apiclient.MembershipStatePending {
 			line += " — pending: " + pendingNote(u.PendingOrg, o.Handle)
 		}
-		lines = append(lines, line)
+		_, _ = fmt.Fprintln(out, line)
 	}
-	return lines
 }
 
 // pendingNote says an admin has yet to approve the membership, and how the
@@ -171,11 +170,18 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 		tier += ", through " + a.MemberOf
 	}
 	_, _ = fmt.Fprintf(out, "tier:     %s\n", tier)
-	switch pool := a.MemberOf != "" || a.Kind == "org"; {
+	pool := a.MemberOf != ""
+	switch {
 	case pool && a.Unmetered:
 		// Nothing is ever debited, so a balance out of an allowance would
 		// be a number that means nothing.
 		_, _ = fmt.Fprint(out, "pool:     not metered\n")
+	case pool && a.Standing != standingActive:
+		// The extension grants no allowance to an organization that is
+		// not paid for, so the balance is whatever the ledger last left
+		// and there is no reset to promise: saying "0 of 0, resets on the
+		// 11th" would be a promise the registry will not keep.
+		_, _ = fmt.Fprintf(out, "pool:     %d credits, and no allowance while the subscription is not active\n", a.Balance)
 	case pool:
 		_, _ = fmt.Fprintf(out, "pool:     %d of %d credits (a submission costs %d; resets on %s)\n",
 			a.Balance, a.Allowance, a.SubmissionCost, dayOf(a.PeriodEnd))
@@ -187,7 +193,7 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 		_, _ = fmt.Fprintf(out, "seats:    %s\n", seatsPhrase(*a.Seats))
 	}
 	if a.Standing != "" {
-		_, _ = fmt.Fprintf(out, "standing: %s\n", a.Standing)
+		_, _ = fmt.Fprintf(out, "standing: %s\n", standingPhrase(a.Standing))
 	}
 	if a.PendingTier != "" {
 		_, _ = fmt.Fprintf(out, "changes:  %s from %s\n", tierLabel(a.PendingTier), dayOf(a.PeriodEnd))
@@ -197,8 +203,11 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 	}
 }
 
-// seatsPhrase renders held seats against the allowance; an allowance of 0
-// is no cap, which is what an Enterprise organization is granted.
+// seatsPhrase renders held seats against the allowance. The extension's
+// seat maximum is 0 for no cap, which is what an Enterprise organization
+// is configured with by default (AGENTRY_BILLING_ORG_ENTERPRISE_SEATS_MAX);
+// a Business one is validated to at least 1, so the unbounded phrase is
+// only ever the registry's own meaning, never this client's guess.
 func seatsPhrase(s seatsView) string {
 	if s.Max <= 0 {
 		return fmt.Sprintf("%d (no cap)", s.Used)
@@ -206,12 +215,35 @@ func seatsPhrase(s seatsView) string {
 	return fmt.Sprintf("%d of %d", s.Used, s.Max)
 }
 
-// fetchBillingAccount returns nil, nil for a registry without the billing
+// standingActive is the one standing that admits work; the extension's own
+// Paid() is the same test (agentry-enterprise/internal/billing/cycle.go).
+const standingActive = "active"
+
+// standingPhrase glosses an organization's standing with the consequence
+// the registry's own refusal gives it, so "restricted" reaches a person as
+// what it means rather than as a column value.
+func standingPhrase(s string) string {
+	switch s {
+	case standingActive:
+		return "active"
+	case "pending":
+		return "pending — awaiting payment; nothing is admitted until the subscription starts"
+	case "restricted":
+		return "restricted — the subscription has lapsed; nothing is admitted until it is paid again"
+	case "decommissioning":
+		return "decommissioning — the organization is closing and admits nothing"
+	}
+	return s
+}
+
+// fetchBillingAccount returns nil for a registry without the billing
 // extension; an error only when the registry has it and the read failed.
-func fetchBillingAccount(ctx context.Context, client *apiclient.ClientWithResponses, reg, token string) (*billingAccount, error) {
+// The raw document comes back beside the parsed one so --json can print
+// what the registry said rather than this command's copy of it.
+func fetchBillingAccount(ctx context.Context, client *apiclient.ClientWithResponses, reg, token string) (*billingAccount, json.RawMessage, error) {
 	meta, err := client.GetMetaWithResponse(ctx)
 	if err != nil || meta.JSON200 == nil || meta.JSON200.Extensions == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	mounted := false
 	for _, e := range *meta.JSON200.Extensions {
@@ -220,32 +252,32 @@ func fetchBillingAccount(ctx context.Context, client *apiclient.ClientWithRespon
 		}
 	}
 	if !mounted {
-		return nil, nil
+		return nil, nil, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reg+"/api/v1/x/billing/account", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	res, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
 	if res.StatusCode != http.StatusOK {
 		var p apiclient.Problem
 		if json.Unmarshal(body, &p) == nil && p.Title != "" {
-			return nil, apiProblem("read subscription", res.StatusCode, &p, body)
+			return nil, nil, apiProblem("read subscription", res.StatusCode, &p, body)
 		}
-		return nil, apiProblem("read subscription", res.StatusCode, nil, body)
+		return nil, nil, apiProblem("read subscription", res.StatusCode, nil, body)
 	}
 	var acct billingAccount
 	if err := json.Unmarshal(body, &acct); err != nil {
-		return nil, fmt.Errorf("read subscription: %w", err)
+		return nil, nil, fmt.Errorf("read subscription: %w", err)
 	}
-	return &acct, nil
+	return &acct, json.RawMessage(body), nil
 }
 
 // tierLabel is the product's name for a tier — the two a person may hold
