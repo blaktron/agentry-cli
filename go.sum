@@ -9,8 +9,8 @@ github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiE
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/aymanbagabas/go-udiff v0.3.1 h1:LV+qyBQ2pqe0u42ZsUEtPiCaUoqgA9gYRDs3vj1nolY=
 github.com/aymanbagabas/go-udiff v0.3.1/go.mod h1:G0fsKmG+P6ylD0r6N/KgQD/nWzgfnl8ZBcNLgcbrw8E=
-github.com/blaktron/agentry v0.0.0-20260911183443-7affca685c90 h1:DkcEfoReRd/GS91/Zpa8zhZMutAm/De7tMobh8KvqB4=
-github.com/blaktron/agentry v0.0.0-20260911183443-7affca685c90/go.mod h1:DoxM2Gh//daes3ObXxzQrYR1TkiuI6osLuWUrFyzStQ=
+github.com/blaktron/agentry v0.0.0-20260920135121-c14d938c95fd h1:E7o7q3tgg4uQRNz/pnSGrOj3B3/OCKdNdAUZAM1U8eI=
+github.com/blaktron/agentry v0.0.0-20260920135121-c14d938c95fd/go.mod h1:DoxM2Gh//daes3ObXxzQrYR1TkiuI6osLuWUrFyzStQ=
 github.com/bmatcuk/doublestar v1.1.1/go.mod h1:UD6OnuiIn0yFxxA2le/rnRU1G4RaI4UvFv1sNto9p6w=
 github.com/charmbracelet/bubbles v1.0.0 h1:12J8/ak/uCZEMQ6KU7pcfwceyjLlWsDLAxB5fXonfvc=
 github.com/charmbracelet/bubbles v1.0.0/go.mod h1:9d/Zd5GdnauMI5ivUIVisuEm3ave1XwXtD1ckyV6r3E=
