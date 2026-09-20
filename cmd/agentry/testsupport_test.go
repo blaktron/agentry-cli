@@ -185,6 +185,14 @@ type fakeRegistry struct {
 	// account route with these numbers (agentry-cli#128).
 	billing        bool
 	billingBalance int64
+	// billingAccountDoc replaces the personal account body, for the
+	// organization's view a member is answered with — memberOf, the
+	// seats and the standing (agentry-cli#145).
+	billingAccountDoc map[string]any
+	// orgs and pendingOrg are what GET /user reports of the caller's
+	// memberships: every registry answers them, tiers or none.
+	orgs       []map[string]any
+	pendingOrg map[string]any
 	// submitProblem makes every upload answer this problem (a spent
 	// allowance's 402), the type as the real registry writes it.
 	submitProblem *fakeProblem
@@ -227,8 +235,12 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			writeProblem(w, http.StatusUnauthorized, "Sign in required", "This request carried no valid session or token.")
 			return
 		}
+		if fr.billingAccountDoc != nil {
+			writeJSON(w, http.StatusOK, fr.billingAccountDoc)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"tier": "standard", "balance": fr.billingBalance, "allowance": 50, "submissionCost": 10,
+			"kind": "user", "tier": "standard", "balance": fr.billingBalance, "allowance": 50, "submissionCost": 10,
 			"periodStart": "2026-09-11T00:00:00Z", "periodEnd": "2026-10-11T00:00:00Z", "tierSince": "2026-09-11T00:00:00Z",
 			"privateAgents": map[string]any{"max": 10, "used": 4}, "upgrade": map[string]any{"available": false},
 		})
@@ -331,11 +343,18 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			writeProblem(w, http.StatusUnauthorized, "invalid token", "the credential was not accepted")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		doc := map[string]any{
 			"id": "00000000-0000-0000-0000-000000000002", "handle": fr.userHandle,
 			"displayName": "Tester", "email": "t@example.com", "emailVerified": true,
 			"totpEnabled": false, "createdAt": "2026-01-02T03:04:05Z",
-		})
+		}
+		if fr.orgs != nil {
+			doc["orgs"] = fr.orgs
+		}
+		if fr.pendingOrg != nil {
+			doc["pendingOrg"] = fr.pendingOrg
+		}
+		writeJSON(w, http.StatusOK, doc)
 	})
 
 	mux.HandleFunc("POST /api/v1/agents/{ns}/{name}/versions", func(w http.ResponseWriter, r *http.Request) {
@@ -353,7 +372,11 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		if p := fr.submitProblem; p != nil {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(p.Status)
-			_ = json.NewEncoder(w).Encode(map[string]any{"type": p.Type, "title": p.Title, "status": p.Status, "detail": p.Detail})
+			doc := map[string]any{"type": p.Type, "title": p.Title, "status": p.Status, "detail": p.Detail}
+			for k, v := range p.Members {
+				doc[k] = v
+			}
+			_ = json.NewEncoder(w).Encode(doc)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, fr.versionDoc("0.1.0", fr.submitStatus))
@@ -594,7 +617,10 @@ func resolveResultOf(t *testing.T, fr *fakeRegistry, ref string) *apiclient.Reso
 }
 
 // fakeProblem is an RFC 9457 body the fake answers a submission with.
+// Members carries the extension members a billing refusal adds — the
+// account whose balance is short, its standing (agentry-cli#145).
 type fakeProblem struct {
 	Status              int
 	Type, Title, Detail string
+	Members             map[string]any
 }

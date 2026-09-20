@@ -96,7 +96,7 @@ func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error 
 				msg += fmt.Sprintf("; %s: %s", fe.Field, fe.Message)
 			}
 		}
-		return fmt.Errorf("%s: %s (HTTP %d)", op, msg, status)
+		return fmt.Errorf("%s: %s (%sHTTP %d)", op, msg, accountClause(body), status)
 	}
 	msg := strings.TrimSpace(string(body))
 	if len(msg) > 300 {
@@ -106,6 +106,28 @@ func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error 
 		msg = http.StatusText(status)
 	}
 	return fmt.Errorf("%s: HTTP %d: %s", op, status, msg)
+}
+
+// accountClause names the account a billing refusal is about, and its
+// standing where the refusal carries one, as a clause for the trailer:
+// "account acme, " or "account acme, standing pending, ". A member
+// publishes to their own namespace but spends from their organization's
+// pool (plan organization-subscriptions.md D22), so the account whose
+// balance is short is often not the one that signed the request, and the
+// refusal's prose alone leaves that to be guessed. Empty for every
+// refusal that names no account, which is every refusal but billing's.
+func accountClause(body []byte) string {
+	var members struct {
+		Account  string `json:"account"`
+		Standing string `json:"standing"`
+	}
+	if json.Unmarshal(body, &members) != nil || members.Account == "" {
+		return ""
+	}
+	if members.Standing != "" {
+		return fmt.Sprintf("account %s, standing %s, ", members.Account, members.Standing)
+	}
+	return fmt.Sprintf("account %s, ", members.Account)
 }
 
 // sha256Digest computes the "sha256:<hex>" digest of b (D-15 identity form).
