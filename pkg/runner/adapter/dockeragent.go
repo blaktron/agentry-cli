@@ -138,6 +138,15 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	var keyExpect *spec.CredentialKind
+	if provider == policy.ProviderAnthropic {
+		// A plan-time refusal, so `agentry run --plan` and a run meet it
+		// before any container starts (agentry-cli#171).
+		if policy.KeyKind(in.Harness, in.Model) == policy.KeyKindSubscription {
+			return Result{}, &Refusal{Reason: "the model key is " + policy.SubscriptionTokenSentence}
+		}
+		keyExpect = anthropicKeyExpectation(in)
+	}
 	keyEnv := policy.KeyEnv(in.Harness, in.Model)
 
 	// Schema-shaped output is requested through the prompt and validated
@@ -239,7 +248,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			// The key, under the name the harness's client reads it by,
 			// from the variable the policy names (the harness block's
 			// override first, as the receipt's line says: policy.KeyEnv).
-			{Name: harnessKeyVar(provider, keyEnv), FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)},
+			{Name: harnessKeyVar(provider, keyEnv), FromHostEnv: keyEnv, FromKeyring: keyringAccount(in), ExpectedKind: keyExpect},
 			// The proxy is the agent container's only route out (§R4);
 			// NO_PROXY keeps MCP traffic direct on the run network.
 			{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},

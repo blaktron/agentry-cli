@@ -339,6 +339,22 @@ type EnvVar struct {
 	FromKeyring string `json:"fromKeyring,omitempty"`
 	// FromRunToken injects the per-run gateway Bearer token.
 	FromRunToken bool `json:"fromRunToken,omitempty"`
+	// ExpectedKind, beside FromHostEnv, is the credential kind the plan
+	// was compiled for (policy apiKeyKind, agentry-cli#171): the engine
+	// checks the value it resolves against it and refuses a mismatch by
+	// name, so a plan rendered for a subscription token never runs with
+	// an API key and the reverse — the kind decides the harness's argv
+	// and the variable it reads, which the plan fixed at compile time. A
+	// consistency check between the policy and the key, not a boundary:
+	// plan.json is the operator's own file. Nil when the provider has one
+	// kind of key.
+	ExpectedKind *CredentialKind `json:"expectedKind,omitempty"`
+}
+
+// CredentialKind names a provider and the kind of credential expected.
+type CredentialKind struct {
+	Provider string `json:"provider"`
+	Kind     string `json:"kind"`
 }
 
 // Mount is one bind mount.
@@ -510,4 +526,12 @@ type HostProcessSpec struct {
 	VersionArgv []string `json:"versionArgv,omitempty"`
 	// StdinTask feeds the task on stdin (autonomous mode).
 	StdinTask bool `json:"stdinTask,omitempty"`
+	// RefuseAncestorFiles names files (relative names) that must not
+	// exist in any ancestor of the harness's working directory: the
+	// engine walks up to the root before starting the process and
+	// refuses the run by name if one is there. A harness that reads
+	// context from its ancestors (Claude Code without --bare reads
+	// CLAUDE.md up the tree) names them here, so "no ambient context" is
+	// measured rather than assumed (agentry-cli#171, DR-26).
+	RefuseAncestorFiles []string `json:"refuseAncestorFiles,omitempty"`
 }

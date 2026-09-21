@@ -43,7 +43,11 @@
       },
       {
         "name": "ANTHROPIC_AUTH_TOKEN",
-        "fromHostEnv": "FIXTURE_API_KEY"
+        "fromHostEnv": "FIXTURE_API_KEY",
+        "expectedKind": {
+          "provider": "anthropic",
+          "kind": "api"
+        }
       },
       {
         "name": "HTTPS_PROXY",

@@ -205,6 +205,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Harness:      in.Policy.Harness[adapterName],
 	})
 	if err != nil {
+		var refusal *adapter.Refusal
+		if errors.As(err, &refusal) {
+			return nil, &PolicyRefusal{Reason: refusal.Reason}
+		}
 		return nil, fmt.Errorf("adapter %s: %w", adapterName, err)
 	}
 	if res.Session != nil {
@@ -289,6 +293,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		} else {
 			plan.Enforcement["model.apiKey"] = "$" + keyEnv + " from the host environment, else the OS keychain entry " + account +
 				" (policy apiKeySource keyring); injected into the agent container (or the host harness process) only, never written to the plan or the receipt"
+		}
+		// A subscription token is a mechanism of its own (agentry-cli#171):
+		// the plan was rendered for it, and the run refuses a value of
+		// the other kind.
+		if adapterName == adapter.ClaudeAdapterName && policy.KeyKind(in.Policy.Harness[adapterName], in.Policy.Model) == policy.KeyKindSubscription {
+			plan.Enforcement["model.apiKey"] += "; an Anthropic subscription token (policy apiKeyKind subscription), passed to Claude Code as CLAUDE_CODE_OAUTH_TOKEN without --bare (DR-26); the run checks the value it resolves is one"
 		}
 	}
 	// Write the generated files, hashing each into the plan.

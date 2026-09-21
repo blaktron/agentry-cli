@@ -19,13 +19,23 @@
 //     user, project or local settings; CLAUDE_CONFIG_DIR points at a
 //     run-scoped directory. What the model sees is the BriefAgent's
 //     instruction and nothing else, which is also what makes a run
-//     reproducible on someone else's machine.
-//   - Operator-owned model credentials. --bare deliberately reads no
-//     OAuth credential and no keychain entry, so the model endpoint is
-//     the operator policy's (ANTHROPIC_BASE_URL plus the key by name),
-//     never the person's own login. That matches the runner's rule that
-//     the model key is always the operator's (annex Q-R2), and it is why
-//     harness.claude.baseUrl / .model / .apiKeyEnv exist in the policy.
+//     reproducible on someone else's machine. For a subscription token
+//     the run has no --bare (see Compile): the config dir and the
+//     setting sources still close hooks, plugins, skills, memory and the
+//     person's login, the engine refuses the run when an ancestor of the
+//     harness directory holds a CLAUDE.md, and managed settings stay the
+//     administrator's — a weaker construction for that kind, recorded
+//     as such (DR-26).
+//   - Operator-owned model credentials. The model endpoint is the
+//     operator policy's (ANTHROPIC_BASE_URL plus the key by name), never
+//     the person's own login: with an API key, --bare reads no OAuth
+//     credential and no keychain entry; with a subscription token (policy
+//     apiKeyKind, agentry-cli#171), which Claude Code reads only from
+//     CLAUDE_CODE_OAUTH_TOKEN and only without --bare, the run-scoped
+//     CLAUDE_CONFIG_DIR is what holds no login of the person's. That
+//     matches the runner's rule that the model key is always the
+//     operator's (annex Q-R2), and it is why harness.claude.baseUrl /
+//     .model / .apiKeyEnv / .apiKeyKind exist in the policy.
 //
 // Written against Claude Code 2.1.263 (claudeProbeVersion); the flags,
 // the mcp.json shape and the event shapes below were established by
@@ -82,6 +92,11 @@ const (
 	// adapter reads it.
 	claudeProtocolVersion = 1
 )
+
+// claudeAncestorContext is what Claude Code reads from the working
+// directory's ancestors when not in bare mode (the memory files and the
+// rules directory), for the engine to refuse a subscription run over.
+var claudeAncestorContext = []string{"CLAUDE.md", "CLAUDE.local.md", ".claude/rules"}
 
 // claudeAdapter implements Adapter for the installed Claude Code CLI.
 type claudeAdapter struct{}
@@ -168,24 +183,40 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 	if mode == "" {
 		mode = manifest.ModeAutonomous
 	}
+	// A subscription OAuth token is read from CLAUDE_CODE_OAUTH_TOKEN,
+	// and bare mode does not read that variable (Anthropic's own
+	// documentation: "Bare mode does not read CLAUDE_CODE_OAUTH_TOKEN"),
+	// so that kind runs without --bare. Most of what --bare withheld is
+	// withheld by the rest: --setting-sources "" loads no user, project
+	// or local settings, the run-scoped CLAUDE_CONFIG_DIR holds no login,
+	// no hooks, no plugins and no memory of the person's. Two things stay
+	// open and are said so (DR-26): CLAUDE.md files in the ancestors of
+	// the harness directory, which the engine refuses a subscription run
+	// over (engine: ancestorFile), and managed settings, which are the
+	// machine administrator's and no flag closes (agentry-cli#171).
+	subscription := policy.KeyKind(in.Harness, in.Model) == policy.KeyKindSubscription
 	// One argv for both modes but for the input side: an autonomous run
 	// takes its task on stdin and ends, a session reads user turns as
 	// stream-json and stays up until stdin closes.
-	argv := []string{
-		"-p", "--bare", "--verbose",
+	argv := []string{"-p"}
+	if !subscription {
+		argv = append(argv, "--bare")
+	}
+	argv = append(argv,
+		"--verbose",
 		"--output-format", "stream-json",
 		"--system-prompt-file", claudeInstructionFile,
 		"--mcp-config", claudeMCPFile,
 		"--strict-mcp-config",
 		"--setting-sources", "",
 		"--tools", "",
-		"--allowedTools", "mcp__" + claudeGatewayServer,
+		"--allowedTools", "mcp__"+claudeGatewayServer,
 		"--permission-mode", "dontAsk",
 		"--permission-prompts", "none",
 		"--no-session-persistence",
 		"--disable-slash-commands",
 		"--model", model,
-	}
+	)
 	var session *spec.SessionSpec
 	stdinTask := true
 	switch mode {
@@ -201,12 +232,27 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 		return Result{}, fmt.Errorf("claude adapter: unknown run mode %q", mode)
 	}
 
+	// The model credential is the operator's, by name (§R4): an API key
+	// as ANTHROPIC_AUTH_TOKEN, the bearer an Anthropic-compatible
+	// endpoint expects; a subscription token as CLAUDE_CODE_OAUTH_TOKEN,
+	// the one variable Claude Code reads such a token from. The plan
+	// records which kind it was rendered for, and the engine refuses a
+	// value of the other kind.
+	credentialVar := "ANTHROPIC_AUTH_TOKEN"
+	// Without --bare, Claude Code reads CLAUDE.md, CLAUDE.local.md and
+	// .claude/rules from the working directory and every ancestor up to
+	// the root — the run directory sits under the person's home, so a
+	// ~/CLAUDE.md would enter a subscription run. The engine refuses the
+	// run when one is there (RefuseAncestorFiles), which is the
+	// invariant measured rather than assumed.
+	var ancestorContext []string
+	if subscription {
+		credentialVar = "CLAUDE_CODE_OAUTH_TOKEN"
+		ancestorContext = claudeAncestorContext
+	}
 	env := []spec.EnvVar{
 		{Name: spec.GatewayTokenEnv, FromRunToken: true},
-		// The model endpoint is the operator's, by name (§R4). Claude
-		// Code sends ANTHROPIC_AUTH_TOKEN as a bearer credential, which
-		// is what an Anthropic-compatible endpoint expects.
-		{Name: "ANTHROPIC_AUTH_TOKEN", FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)},
+		{Name: credentialVar, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in), ExpectedKind: anthropicKeyExpectation(in)},
 	}
 	if in.Harness.BaseURL != "" {
 		env = append(env, spec.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: in.Harness.BaseURL})
@@ -237,9 +283,10 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 			claudeMCPFile:         cfg,
 		},
 		Host: &spec.HostProcessSpec{
-			Command: claudeExecutable,
-			Argv:    argv,
-			Env:     env,
+			Command:             claudeExecutable,
+			RefuseAncestorFiles: ancestorContext,
+			Argv:                argv,
+			Env:                 env,
 			// HOME and PATH only: the binary needs them to run. The
 			// person's model credentials are deliberately NOT inherited
 			// — the operator policy's are the ones a run may spend.

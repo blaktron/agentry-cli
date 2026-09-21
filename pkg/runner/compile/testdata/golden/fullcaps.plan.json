@@ -142,7 +142,11 @@
         },
         {
           "name": "ANTHROPIC_API_KEY",
-          "fromHostEnv": "ANTHROPIC_API_KEY"
+          "fromHostEnv": "ANTHROPIC_API_KEY",
+          "expectedKind": {
+            "provider": "anthropic",
+            "kind": "api"
+          }
         },
         {
           "name": "HTTPS_PROXY",

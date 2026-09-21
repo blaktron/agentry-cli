@@ -261,6 +261,12 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	default:
 		rep.ok("model", "%s/%s (key from $%s)", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
 	}
+	// A subscription token (agentry-cli#171) drives Claude Code alone; a
+	// machine whose default adapter is the container harness cannot run
+	// with it, and doctor says so before a run finds out.
+	if policy.KeyKind(policy.HarnessPolicy{}, pol.Model) == policy.KeyKindSubscription {
+		rep.warn("model:kind", "the key is an Anthropic subscription token (apiKeyKind subscription): runs through Claude Code only (`agentry run --adapter claude`); the container harness refuses it — store a Console API key for those")
+	}
 	if pol.SecretSource.Mode == "envFile" {
 		if _, err := os.Stat(pol.SecretSource.EnvFile); err != nil {
 			rep.fail("secretSource", "envFile %s: %v", pol.SecretSource.EnvFile, err)

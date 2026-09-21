@@ -501,3 +501,71 @@ func TestClaudeSessionEndsWithoutAnAnswer(t *testing.T) {
 		t.Fatal("Prompt returned no error after the harness exited")
 	}
 }
+
+// A subscription OAuth token (policy apiKeyKind subscription,
+// agentry-cli#171) is what Claude Code reads from CLAUDE_CODE_OAUTH_TOKEN
+// — and bare mode does not read that variable, by Anthropic's own
+// documentation — so the plan drops --bare for that kind and keeps every
+// other isolation flag; the plan records the kind it was rendered for,
+// so the engine refuses an API key under it. An API key renders exactly
+// as before.
+func TestClaudeCompileSubscriptionTokenDropsBareAndUsesTheOAuthVariable(t *testing.T) {
+	in := claudeInput()
+	in.Model.APIKeyKind = policy.KeyKindSubscription
+	res := claudeCompile(t, in)
+	argv := strings.Join(res.Host.Argv, " ")
+	if strings.Contains(argv, "--bare") {
+		t.Errorf("--bare kept for a subscription token, which bare mode cannot read: %s", argv)
+	}
+	for _, keep := range []string{"--strict-mcp-config", "--setting-sources ", "--tools ", "--permission-mode dontAsk", "--no-session-persistence"} {
+		if !strings.Contains(argv, keep) {
+			t.Errorf("isolation flag %q lost: %s", keep, argv)
+		}
+	}
+	env := map[string]spec.EnvVar{}
+	for _, v := range res.Host.Env {
+		env[v.Name] = v
+	}
+	if _, set := env["ANTHROPIC_AUTH_TOKEN"]; set {
+		t.Errorf("ANTHROPIC_AUTH_TOKEN set for a subscription token: %+v", env["ANTHROPIC_AUTH_TOKEN"])
+	}
+	v := env["CLAUDE_CODE_OAUTH_TOKEN"]
+	if v.FromHostEnv != in.Model.APIKeyEnv || v.Value != "" || v.ExpectedKind == nil || v.ExpectedKind.Provider != "anthropic" || v.ExpectedKind.Kind != "subscription" {
+		t.Errorf("CLAUDE_CODE_OAUTH_TOKEN = %+v, want it resolved from %s and held to the subscription kind", v, in.Model.APIKeyEnv)
+	}
+	if !strings.Contains(env["CLAUDE_CONFIG_DIR"].Value, claudeConfigDirName) {
+		t.Errorf("the run-scoped config dir is what keeps the person's own login out without --bare: %+v", env["CLAUDE_CONFIG_DIR"])
+	}
+	// Without --bare the harness reads memory files up the tree: the
+	// plan names them for the engine to refuse the run over.
+	if got := strings.Join(res.Host.RefuseAncestorFiles, ","); got != "CLAUDE.md,CLAUDE.local.md,.claude/rules" {
+		t.Errorf("RefuseAncestorFiles = %q", got)
+	}
+
+	// The harness block's kind wins, as its variable does.
+	in = claudeInput()
+	in.Harness = policy.HarnessPolicy{APIKeyEnv: "TEAM_OAUTH", APIKeyKind: policy.KeyKindSubscription}
+	res = claudeCompile(t, in)
+	if strings.Contains(strings.Join(res.Host.Argv, " "), "--bare") {
+		t.Errorf("harness block's subscription kind ignored")
+	}
+
+	// An API key: --bare, ANTHROPIC_AUTH_TOKEN, held to the api kind.
+	res = claudeCompile(t, claudeInput())
+	if !strings.Contains(strings.Join(res.Host.Argv, " "), "--bare") {
+		t.Errorf("--bare must stay for an API key")
+	}
+	env = map[string]spec.EnvVar{}
+	for _, v := range res.Host.Env {
+		env[v.Name] = v
+	}
+	if v := env["ANTHROPIC_AUTH_TOKEN"]; v.ExpectedKind == nil || v.ExpectedKind.Kind != "api" {
+		t.Errorf("an API key's plan records the api kind: %+v", v)
+	}
+	if _, set := env["CLAUDE_CODE_OAUTH_TOKEN"]; set {
+		t.Errorf("CLAUDE_CODE_OAUTH_TOKEN set for an API key")
+	}
+	if res.Host.RefuseAncestorFiles != nil {
+		t.Errorf("an API-key run has --bare and names nothing to refuse over: %v", res.Host.RefuseAncestorFiles)
+	}
+}

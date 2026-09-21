@@ -25,6 +25,7 @@ type setupOpts struct {
 	model        string
 	apiKeyEnv    string
 	apiKeySource string
+	apiKeyKind   string
 	baseURL      string
 	policyPath   string
 	yes          bool
@@ -59,6 +60,7 @@ func newSetupCmd() *cobra.Command {
 	f.StringVar(&opts.model, "model", "", "model id (default: the provider's table default)")
 	f.StringVar(&opts.apiKeyEnv, "api-key-env", "", "env var NAME holding your api key (never the value)")
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
+	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what the Anthropic credential is: api (the default) | subscription (a `claude setup-token` token — Claude Code only; derived from the key when this setup stores it)")
 	f.StringVar(&opts.baseURL, "base-url", "", "custom endpoint base URL (derives the egress-proxy allowlist)")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&opts.yes, "yes", false, "non-interactive: fill gaps from the provider table instead of asking")
@@ -79,7 +81,10 @@ type setupOutput struct {
 	// APIKeySource is "keyring" when the OS keychain is the fallback for
 	// an unset variable; "" when the environment is the only source.
 	APIKeySource string `json:"apiKeySource,omitempty"`
-	BaseURL      string `json:"baseUrl,omitempty"`
+	// APIKeyKind is "subscription" for an Anthropic subscription token
+	// (agentry-cli#171); absent for an API key.
+	APIKeyKind string `json:"apiKeyKind,omitempty"`
+	BaseURL    string `json:"baseUrl,omitempty"`
 	// Images is "ready" when the gateway, harness and runner images were
 	// pulled or built, "skipped" under --skip-images.
 	Images string `json:"images"`
@@ -109,6 +114,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		Model:        opts.model,
 		APIKeyEnv:    opts.apiKeyEnv,
 		APIKeySource: opts.apiKeySource,
+		APIKeyKind:   opts.apiKeyKind,
 		BaseURL:      opts.baseURL,
 		Yes:          !interactive,
 	}); err != nil {
@@ -119,7 +125,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "policy written: %s\n", policyPath)
 	result := setupOutput{PolicyPath: policyPath, Provider: pol.Model.Provider, Model: pol.Model.Name,
-		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, BaseURL: pol.Model.BaseURL, Images: "skipped"}
+		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, APIKeyKind: pol.Model.APIKeyKind, BaseURL: pol.Model.BaseURL, Images: "skipped"}
 
 	if opts.skipImages {
 		if flags.jsonOut {

@@ -162,6 +162,9 @@ type HarnessPolicy struct {
 	// APIKeyEnv names the host env var holding this harness's key (empty:
 	// model.apiKeyEnv). The value is read at run time and never stored.
 	APIKeyEnv string `yaml:"apiKeyEnv,omitempty"`
+	// APIKeyKind is as model.apiKeyKind, for this harness's key (empty:
+	// model.apiKeyKind).
+	APIKeyKind string `yaml:"apiKeyKind,omitempty"`
 	// APIKeySource is as model.apiKeySource, for this harness's key
 	// (empty: model.apiKeySource); the keychain entry is the model
 	// provider's.
@@ -252,6 +255,15 @@ type Model struct {
 	// the desktop; agentry-cli#148). The variable wins whenever it is set;
 	// the value is never in this file.
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
+	// APIKeyKind is what the credential is, for the one provider whose
+	// keys come in two kinds (agentry-cli#171): "" or "api" (an API key,
+	// any harness) or "subscription" (an Anthropic subscription OAuth
+	// token, which Anthropic admits from Claude Code alone — the claude
+	// adapter passes it as CLAUDE_CODE_OAUTH_TOKEN, the container harness
+	// refuses it). Written by `agentry setup` or the desktop from the
+	// value's shape at store time; a run checks the value it resolves
+	// against this and refuses a mismatch by name.
+	APIKeyKind string `yaml:"apiKeyKind,omitempty"`
 	// BaseURL points provider-compatible adapters at a custom endpoint
 	// (e.g. a local OpenAI-compatible server); empty = provider default.
 	BaseURL string `yaml:"baseUrl,omitempty"`
@@ -462,9 +474,21 @@ func (p *Policy) Validate() error {
 	if !validKeySource(p.Model.APIKeySource) {
 		return fmt.Errorf("model.apiKeySource %q must be env or keyring", p.Model.APIKeySource)
 	}
+	if !validKeyKind(p.Model.APIKeyKind) {
+		return fmt.Errorf("model.apiKeyKind %q must be api or subscription", p.Model.APIKeyKind)
+	}
+	if p.Model.APIKeyKind == KeyKindSubscription && p.Model.Provider != ProviderAnthropic {
+		return fmt.Errorf("model.apiKeyKind subscription needs model.provider anthropic (it is %q): only Anthropic has such tokens, and only Claude Code may use one", p.Model.Provider)
+	}
 	for name, hp := range p.Harness {
 		if !validKeySource(hp.APIKeySource) {
 			return fmt.Errorf("harness.%s.apiKeySource %q must be env or keyring", name, hp.APIKeySource)
+		}
+		if !validKeyKind(hp.APIKeyKind) {
+			return fmt.Errorf("harness.%s.apiKeyKind %q must be api or subscription", name, hp.APIKeyKind)
+		}
+		if hp.APIKeyKind == KeyKindSubscription && name != "claude" {
+			return fmt.Errorf("harness.%s.apiKeyKind subscription: %s", name, SubscriptionTokenSentence)
 		}
 	}
 	if len(p.Model.ProxyAllow) == 0 {
@@ -578,6 +602,10 @@ model:
   # keychain, apiKeySource: keyring) and hands it to the harness under
   # the name its client expects for the provider.
   apiKeyEnv: ANTHROPIC_API_KEY
+  # apiKeyKind: subscription   # an Anthropic subscription token (claude
+  #   setup-token): Claude Code only, so anthropic only; written by setup
+  #   from the key's shape (or harness.claude.apiKeyKind, beside an API
+  #   key for the container harness here)
   # baseUrl: https://llm.internal:8443/v1   # custom only
   # The llm-proxy CONNECT allowlist: the agent container can reach these
   # host:port pairs and nothing else. Keep it to model endpoints.
@@ -660,6 +688,66 @@ mcpRegistries:
 
 // validKeySource admits the apiKeySource values: unset, env, keyring.
 func validKeySource(v string) bool { return v == "" || v == "env" || v == "keyring" }
+
+// The apiKeyKind values: what an Anthropic credential is, read from its
+// shape (agentry-cli#171). ProviderAnthropic is the one provider whose
+// keys come in two kinds.
+const (
+	KeyKindAPI          = "api"
+	KeyKindSubscription = "subscription"
+	ProviderAnthropic   = "anthropic"
+)
+
+// The Anthropic prefixes, as the Console and `claude setup-token` mint
+// them.
+const (
+	anthropicAPIPrefix          = "sk-ant-api"
+	anthropicSubscriptionPrefix = "sk-ant-oat"
+)
+
+// CredentialKindOf reads the kind of a credential from its shape: a
+// subscription OAuth token for Anthropic by its prefix, an API key for
+// everything else — a shape this build does not know included, the
+// endpoint being the judge. Pure; records nothing. Setup and the desktop
+// write its answer into apiKeyKind at store time, a form uses it to say
+// what a credential can drive before anything is stored, the models
+// listing to send an Anthropic token in the header shape it needs, and
+// the engine to hold a resolved value against the plan's expectation.
+func CredentialKindOf(provider, key string) string {
+	if strings.ToLower(strings.TrimSpace(provider)) != ProviderAnthropic {
+		return KeyKindAPI
+	}
+	if strings.HasPrefix(strings.TrimSpace(key), anthropicSubscriptionPrefix) {
+		return KeyKindSubscription
+	}
+	return KeyKindAPI
+}
+
+// SubscriptionTokenSentence is the one sentence every surface says about
+// an Anthropic subscription token: what it drives and what it does not.
+// Anthropic admits one from Claude Code alone (its terms since February
+// 2026, and the API), so a run through any other harness would fail at
+// the first model call.
+const SubscriptionTokenSentence = "an Anthropic subscription token works with Claude Code only (agentry run --adapter claude); runs in the container harness need a Console API key (sk-ant-api…)"
+
+// validKeyKind admits the apiKeyKind values: unset, api, subscription.
+func validKeyKind(v string) bool {
+	return v == "" || v == KeyKindAPI || v == KeyKindSubscription
+}
+
+// KeyKind is what the credential a run resolves is expected to be: the
+// harness block's apiKeyKind, else the model's; unset is api. One rule,
+// beside KeyEnv and KeySource (agentry-cli#171).
+func KeyKind(hp HarnessPolicy, m Model) string {
+	k := hp.APIKeyKind
+	if k == "" {
+		k = m.APIKeyKind
+	}
+	if k == "" {
+		return KeyKindAPI
+	}
+	return k
+}
 
 // KeyEnv is the variable a run reads the model key from for an adapter:
 // the harness block's, else the model's.

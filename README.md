@@ -146,3 +146,15 @@ variable still wins when set, and the value is never in the policy, a plan
 or a receipt (the receipt's `model.apiKey` line names the source). On Linux
 the keychain is the Secret Service (GNOME Keyring, KWallet); without one the
 store step fails by name and the variable is the way (agentry-cli#148).
+
+An Anthropic subscription token (`claude setup-token`, `sk-ant-oat…`) is a
+credential of its own kind: Anthropic admits it from Claude Code alone, so
+it drives `agentry run --adapter claude` and nothing else, and the container
+harness refuses it by name. The policy records the kind (`model.apiKeyKind:
+subscription`, written by `agentry setup` from the key's shape when it stores
+one, or by `--api-key-kind subscription` for a variable you set yourself);
+the claude adapter then passes it as `CLAUDE_CODE_OAUTH_TOKEN` and runs
+without `--bare`, which bare mode could not read, refusing the run if a
+`CLAUDE.md` sits in an ancestor of the run directory; a run whose key turns
+out to be the other kind is refused before the harness starts, and `agentry
+doctor` says so (agentry-cli#171, DR-26).

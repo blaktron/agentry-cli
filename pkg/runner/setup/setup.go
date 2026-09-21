@@ -99,7 +99,14 @@ type ModelOpts struct {
 	// seam: tests have no keychain, and a form-driven caller stores the
 	// key itself before calling.
 	StoreKey func(provider, key string) error
-	BaseURL  string
+	// APIKeyKind is what the credential is (policy apiKeyKind,
+	// agentry-cli#171): "" (keep what the policy has for the same
+	// provider, else api), "api" or "subscription". A form-driven caller
+	// that stored the key itself passes policy.CredentialKindOf's answer;
+	// an interactive setup derives it from the key it stores; a
+	// variable-only setup takes --api-key-kind.
+	APIKeyKind string
+	BaseURL    string
 	// Yes suppresses prompting entirely: table defaults fill the gaps and
 	// a custom provider with no BaseURL is an error rather than a question.
 	Yes bool
@@ -219,6 +226,16 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if source != "" && source != modelkey.SourceEnv && source != modelkey.SourceKeyring {
 		return fmt.Errorf("api key source %q must be env or keyring", source)
 	}
+	kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind))
+	if kind == "" && sameProvider {
+		kind = pol.Model.APIKeyKind
+	}
+	if kind != "" && kind != policy.KeyKindAPI && kind != policy.KeyKindSubscription {
+		return fmt.Errorf("api key kind %q must be api or subscription", kind)
+	}
+	if kind == policy.KeyKindSubscription && prov != policy.ProviderAnthropic {
+		return fmt.Errorf("api key kind subscription needs provider anthropic (it is %q): %s", prov, policy.SubscriptionTokenSentence)
+	}
 	if !opts.Yes && opts.APIKeySource == "" && source != modelkey.SourceKeyring && !modelkey.Disabled() {
 		store, err := p.Confirm(fmt.Sprintf("Store the key in this machine's keychain now, for runs launched without $%s (the variable still wins when it is set)?", keyEnv), false)
 		if err != nil {
@@ -244,6 +261,9 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 				} else {
 					source = modelkey.SourceKeyring
 					p.Say(fmt.Sprintf("stored in the OS keychain as %s", modelkey.Account(prov)))
+					// The kind is read from the value at the one moment
+					// this flow holds it.
+					kind = policy.CredentialKindOf(prov, key)
 				}
 			}
 		}
@@ -251,12 +271,16 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if source == modelkey.SourceEnv {
 		source = "" // the default, unwritten
 	}
+	if kind == policy.KeyKindAPI {
+		kind = "" // the default, unwritten
+	}
 
 	pol.Model = policy.Model{
 		Provider:     prov,
 		Name:         model,
 		APIKeyEnv:    keyEnv,
 		APIKeySource: source,
+		APIKeyKind:   kind,
 		BaseURL:      baseURL,
 		ProxyAllow:   proxyAllow,
 	}
@@ -266,6 +290,9 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	}
 	p.Say(fmt.Sprintf("model: %s/%s (key from %s; agent-container egress limited to %s)",
 		prov, model, from, strings.Join(proxyAllow, ", ")))
+	if kind == policy.KeyKindSubscription {
+		p.Say("the key is " + policy.SubscriptionTokenSentence)
+	}
 	return nil
 }
 

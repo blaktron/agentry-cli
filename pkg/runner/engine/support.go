@@ -732,18 +732,45 @@ func resetKeyringOnce() {
 	keyringOnce.errs = map[string]error{}
 }
 
+// checkKind holds the value a plan resolved against the credential kind
+// the plan was compiled for (agentry-cli#171): the plan fixed the
+// harness's argv and variable by that kind, so a value of another kind
+// would run a plan that is wrong for it. A credential of a shape this
+// build does not know reads as an API key, the endpoint being the judge.
+// The redactor (hostSecretValues) never sees a value refused here, which
+// is fine: resolveEnv refuses on the same error before any process
+// starts.
+func checkKind(v spec.EnvVar, val, from string) error {
+	if v.ExpectedKind == nil {
+		return nil
+	}
+	found := policy.CredentialKindOf(v.ExpectedKind.Provider, val)
+	if found == v.ExpectedKind.Kind {
+		return nil
+	}
+	return fmt.Errorf("model key for provider %s: the policy says the credential is %s (apiKeyKind) but the value in %s is %s — record the kind: `agentry setup --api-key-kind %s`, or store the key again (setup and the app read the kind from it)",
+		v.ExpectedKind.Provider, v.ExpectedKind.Kind, from, found, found)
+}
+
 // hostSecret resolves a FromHostEnv variable: the environment when the
 // variable is set, else the keychain account the plan names (policy
 // apiKeySource keyring), else a refusal that names the provider, the
-// variable and the fix.
+// variable and the fix — and holds the value against the kind the plan
+// expects (checkKind).
 func hostSecret(v spec.EnvVar) (string, error) {
 	if val, ok := os.LookupEnv(v.FromHostEnv); ok && val != "" {
+		if err := checkKind(v, val, "$"+v.FromHostEnv); err != nil {
+			return "", err
+		}
 		return val, nil
 	}
 	if v.FromKeyring != "" {
 		val, err := lookupKeyringOnce(v.FromKeyring)
 		if err != nil {
 			return "", fmt.Errorf("model key for provider %s: $%s is not set and %w", modelkey.ProviderOf(v.FromKeyring), v.FromHostEnv, err)
+		}
+		if err := checkKind(v, val, "the OS keychain entry "+v.FromKeyring); err != nil {
+			return "", err
 		}
 		return val, nil
 	}
