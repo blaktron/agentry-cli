@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -81,31 +80,15 @@ const (
 // (harnessprobe.Find: the policy's harness.<adapter>.path when set, else
 // PATH, else the adapter's well-known install locations), so a run finds
 // exactly what doctor reported and what the desktop's wizard showed. A
-// plan whose adapter this build does not know as a host harness keeps
-// the plain rule: the policy path, else a PATH lookup of the plan's
-// command name. Not installed is a not-runnable refusal (exit 12) with
-// the remedy in the message.
+// plan whose adapter this build does not register as a host harness (a
+// test adapter; a plan from another build) has no well-known locations
+// to offer, so Find is given a stand-in that names the plan's command
+// and nothing else — one resolution, one wording. Not installed is a
+// not-runnable refusal (exit 12) with the remedy in the message.
 func resolveHostCommand(pol *policy.Policy, adapterName, command string) (string, error) {
-	if ad, err := adapter.Get(adapterName); err == nil {
-		if _, ok := ad.(adapter.HostHarness); ok {
-			path, _, ferr := harnessprobe.Find(pol, adapterName)
-			if ferr != nil {
-				return "", Classify(ExitCompile, fmt.Errorf("harness %s: %w", adapterName, ferr))
-			}
-			return path, nil
-		}
-	}
-	if pol != nil {
-		if hp, ok := pol.Harness[adapterName]; ok && hp.Path != "" {
-			if _, err := os.Stat(hp.Path); err != nil {
-				return "", Classify(ExitCompile, fmt.Errorf("harness %s: policy harness.%s.path %q: %w", adapterName, adapterName, hp.Path, err))
-			}
-			return hp.Path, nil
-		}
-	}
-	path, err := exec.LookPath(command)
+	path, _, err := harnessprobe.FindExecutable(pol, adapterName, command)
 	if err != nil {
-		return "", Classify(ExitCompile, fmt.Errorf("harness %s: %q is not installed on this machine (not on PATH); install it, or set harness.%s.path in the runner policy", adapterName, command, adapterName))
+		return "", Classify(ExitCompile, fmt.Errorf("harness %s: %w", adapterName, err))
 	}
 	return path, nil
 }

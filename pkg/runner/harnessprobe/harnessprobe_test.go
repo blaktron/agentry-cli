@@ -422,3 +422,117 @@ func TestProbeLeavesThePolicyFileAlone(t *testing.T) {
 		t.Fatalf("the probe wrote into the runner home: %v", entries)
 	}
 }
+
+// The template rule, pinned where it is applied (agentry-cli#176): "~"
+// is the home directory only as a whole first element, so "~user/x" is
+// somebody else's convention and is left alone; "${VAR}" with braces is
+// the one variable form, a bare "$VAR" is a literal, an unset or empty
+// variable skips the template; and a "$" inside the home path is a
+// character in a path, not an expansion, because variables are expanded
+// before the home directory is substituted.
+func TestExpandFollowsTheTemplateRule(t *testing.T) {
+	home := isolateHome(t)
+	t.Setenv("HP_TEST_DIR", "roaming")
+	t.Setenv("HP_TEST_EMPTY", "")
+	cases := []struct {
+		tpl  string
+		want string
+		ok   bool
+	}{
+		{"~/.local/bin/claude", filepath.Join(home, ".local", "bin", "claude"), true},
+		{"~", home, true},
+		{"~user/.local/bin/claude", "~user/.local/bin/claude", true},
+		{"${HP_TEST_DIR}/npm/claude.cmd", filepath.Join("roaming", "npm", "claude.cmd"), true},
+		{"~/${HP_TEST_DIR}/x", filepath.Join(home, "roaming", "x"), true},
+		{"${HP_TEST_EMPTY}/npm/claude.cmd", "", false},
+		{"${HP_TEST_UNSET_9X}/npm/claude.cmd", "", false},
+		{"/opt/$HP_TEST_DIR/claude", filepath.Join("/opt", "$HP_TEST_DIR", "claude"), true},
+	}
+	for _, c := range cases {
+		got, ok := expand(c.tpl)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("expand(%q) = %q, %v; want %q, %v", c.tpl, got, ok, c.want, c.ok)
+		}
+	}
+	// A "$" in the home path survives: it is substituted after the
+	// variables are expanded, never fed to the expansion.
+	dollar := filepath.Join(t.TempDir(), "us$er")
+	homeDir = func() (string, error) { return dollar, nil }
+	if got, ok := expand("~/.local/bin/claude"); !ok || got != filepath.Join(dollar, ".local", "bin", "claude") {
+		t.Errorf("a $ in the home path: %q, %v", got, ok)
+	}
+}
+
+// On a tie between "2.1.275" and "2.1.275.exe" the executable wins —
+// on Windows the bare name is the one that will not run — and a
+// prerelease suffix does not demote a build ("2.1.275-beta" is 2.1.275,
+// not 2.1).
+func TestNewestVersionPrefersTheExecutableOnATieAndReadsPrereleases(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"2.1.275", "2.1.275.exe", "2.1.9", "2.1.300-beta"} {
+		writeExe(t, filepath.Join(dir, name), name)
+	}
+	if got, ok := newestVersion(dir); !ok || got != filepath.Join(dir, "2.1.300-beta") {
+		t.Fatalf("newest = %q, %v", got, ok)
+	}
+	if err := os.Remove(filepath.Join(dir, "2.1.300-beta")); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := newestVersion(dir); !ok || got != filepath.Join(dir, "2.1.275.exe") {
+		t.Fatalf("on a tie the executable must win: %q, %v", got, ok)
+	}
+	for name, want := range map[string][]int{"2.1.275": {2, 1, 275}, "2.1.275-beta": {2, 1, 275}, "2.1.275.EXE": {2, 1, 275}, "notes.txt": nil, "v2": nil} {
+		if got := versionOf(name); !equalInts(got, want) {
+			t.Errorf("versionOf(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// FindExecutable for an adapter this build does not register (a plan
+// from another build, a test adapter) looks up the plan's command on
+// PATH and honours the policy path, and nothing else: no usual
+// locations, because only an adapter can name them.
+func TestFindExecutableForAnUnregisteredAdapterIsPathAndPolicyOnly(t *testing.T) {
+	noHarness(t)
+	home, _ := homeDir()
+	writeExe(t, filepath.Join(home, ".local", "bin", "other-harness"), "1.0")
+	if _, _, err := FindExecutable(policy.Default(), "other", "other-harness"); err == nil || !strings.Contains(err.Error(), "harness.other.path") {
+		t.Fatalf("an unregistered adapter must not search usual locations: %v", err)
+	}
+	dir := t.TempDir()
+	onPath := filepath.Join(dir, "other-harness")
+	writeExe(t, onPath, "1.0")
+	lookPath = func(file string) (string, error) {
+		if p := filepath.Join(dir, file); fileExists(p) {
+			return p, nil
+		}
+		return "", os.ErrNotExist
+	}
+	if p, src, err := FindExecutable(policy.Default(), "other", "other-harness"); err != nil || p != onPath || src != SourcePath {
+		t.Fatalf("PATH: %q %q %v", p, src, err)
+	}
+	chosen := filepath.Join(t.TempDir(), "other-chosen")
+	writeExe(t, chosen, "1.0")
+	pol := policy.Default()
+	pol.Harness = map[string]policy.HarnessPolicy{"other": {Path: chosen}}
+	if p, src, err := FindExecutable(pol, "other", "other-harness"); err != nil || p != chosen || src != SourcePolicy {
+		t.Fatalf("policy: %q %q %v", p, src, err)
+	}
+	// A registered host adapter goes through the same door as Find.
+	writeExe(t, filepath.Join(home, ".local", "bin", "claude"), "2.1.263 (Claude Code)")
+	if p, src, err := FindExecutable(policy.Default(), adapter.ClaudeAdapterName, "claude"); err != nil || src != SourceKnown || p != filepath.Join(home, ".local", "bin", "claude") {
+		t.Fatalf("registered: %q %q %v", p, src, err)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

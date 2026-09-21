@@ -142,8 +142,12 @@ func (e ExecPolicy) Package(command string) string {
 // drives the person's own installation of a harness rather than an image
 // the runner pins (plan runner-m-r4-adapters §5).
 type HarnessPolicy struct {
-	// Path is the executable to run instead of looking the harness up on
-	// PATH.
+	// Path is the executable to run instead of looking the harness up —
+	// on PATH, then in its usual install locations (the native
+	// installer's directory, a desktop app's bundled build; the
+	// adapter's WellKnownPaths, agentry-cli#167). A path set here wins
+	// over both, and one that does not exist is a refusal, not a
+	// fallback.
 	Path string `yaml:"path,omitempty"`
 	// Model is the model id this harness is asked for (empty: model.name).
 	// A harness that speaks its own vendor's API needs a model named in
@@ -603,8 +607,9 @@ sessions:
 
 # Adapters that drive YOUR installation of a harness (--adapter claude,
 # and codex/goose as they land) rather than an image the runner pins.
-# Everything here is optional: without it the harness is looked up on PATH
-# and given model.name with model.apiKeyEnv.
+# Everything here is optional: without it the harness is looked up on PATH,
+# then in its usual install locations (agentry doctor --adapter <name>
+# says which), and given model.name with model.apiKeyEnv.
 # harness:
 #   claude:
 #     # path: /opt/claude/bin/claude

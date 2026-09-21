@@ -155,8 +155,9 @@ type SessionOptions struct {
 // runner-m-r4-adapters §5), so `agentry doctor --adapter <name>` can
 // report what is actually installed before a scheduled run finds out.
 type HostHarness interface {
-	// Executable is the program name resolved on PATH (the operator
-	// policy's harness.<name>.path overrides the lookup).
+	// Executable is the program name looked up on PATH, then in
+	// WellKnownPaths; the operator policy's harness.<name>.path
+	// overrides both.
 	Executable() string
 	// ProbeVersion is the harness release this adapter was written
 	// against. A different one is a warning, never a refusal: the
@@ -181,11 +182,22 @@ type HostHarness interface {
 	// after PATH (agentry-cli#167): a GUI launched from the dock or the
 	// Start Menu carries the login session's PATH, not the shell's, and
 	// the desktop apps that bundle a harness put it nowhere on PATH at
-	// all. Each is a path template: a leading "~" is the home directory,
-	// "${VAR}" an environment variable (a template whose variable is
-	// unset is skipped), and a final "*" a directory of versions, of
-	// which the newest is taken. Only the executable's existence is read
-	// from them; nothing is run but the version flag.
+	// all. Each is a path template, and this is the whole rule
+	// (harnessprobe applies it and defines nothing of its own):
+	//
+	//   - "~" as the whole first element is the home directory ("~user"
+	//     is left alone); it is substituted after the variables, so a
+	//     "$" in the home path is a character, not an expansion;
+	//   - "${VAR}", braces required, is an environment variable; a bare
+	//     "$VAR" is literal; a template whose variable is unset or empty
+	//     is skipped, never resolved against an empty prefix;
+	//   - a final "*" is a directory of version-named builds, of which
+	//     the newest by dotted version is taken (a prerelease suffix does
+	//     not demote a build; on a tie between "2.1.275" and
+	//     "2.1.275.exe" the executable wins).
+	//
+	// Only the executable's existence is read from them — a regular file,
+	// through a link; nothing is run but the version flag.
 	WellKnownPaths(goos string) []string
 }
 

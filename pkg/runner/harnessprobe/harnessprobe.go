@@ -2,8 +2,8 @@
 // name on this machine: whether its executable resolves (from the operator
 // policy's harness.<name>.path, PATH, or the adapter's well-known install
 // locations), which release it is, and whether the endpoint the policy
-// points it at is one the run's proxy would let through. It reads, and executes nothing but the harness's own version
-// flag; it writes nothing.
+// points it at is one the run's proxy would let through. It reads, and
+// executes nothing but the harness's own version flag; it writes nothing.
 //
 // `agentry doctor --adapter <name>` renders these facts as checks, and the
 // desktop's first-run wizard reads them for its Coding agent step
@@ -64,7 +64,10 @@ type Result struct {
 	// Path is the executable that resolved: it exists, though it may not
 	// run (then VersionError says so). "" when Found is false.
 	Path string `json:"path,omitempty"`
-	// PathFromPolicy is true when Path came from harness.<name>.path.
+	// PathFromPolicy is true when Path came from harness.<name>.path —
+	// Source == SourcePolicy, kept because the desktop reads this field
+	// today (agentry-desktop internal/run/harness.go); drop it once the
+	// desktop reads Source.
 	PathFromPolicy bool `json:"pathFromPolicy,omitempty"`
 	// Source says where Path was found: the policy, PATH, or one of the
 	// adapter's well-known install locations (agentry-cli#167). "" when
