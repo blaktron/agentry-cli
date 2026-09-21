@@ -24,6 +24,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 )
 
@@ -88,7 +89,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	}
 
 	// 1. The install cache: home/agents/<ns>/<name>/<version>-<digest12>.
-	agentDir := filepath.Join(home, "agents", ref.Namespace, ref.Name)
+	agentDir := installdir.AgentDir(home, ref.Namespace, ref.Name)
 	entries, err := os.ReadDir(agentDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -144,10 +145,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	// 3. The runner's consent record in the shared install state, so a
 	// future install asks about capabilities from scratch.
 	if state, serr := installed.Load(); serr == nil {
-		key := installed.Key{
-			Registry: "runner", Namespace: ref.Namespace, Name: ref.Name,
-			Target: "runner", Dir: agentDir,
-		}
+		key := installdir.ConsentKey(home, ref.Namespace, ref.Name)
 		if plan {
 			result.ConsentRecord = state.Find(key) != nil
 		} else if state.Remove(key) {

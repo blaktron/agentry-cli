@@ -1,7 +1,8 @@
 // `agentry install` (§11): resolve → download → verify digest AND the DSSE
 // attestation signature (§8.8) → show the declared capability contract,
-// diffed against whatever this machine last installed → extract → export to
-// one §5.6 target (claude-skill or agents-md).
+// diffed against whatever this machine last installed → extract → lay the
+// release down for one target: the runner home (the default, DR-28), or
+// one of the two §5.6 coding-agent exports (claude-skill, agents-md).
 package main
 
 import (
@@ -29,6 +30,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/pathguard"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
@@ -93,11 +97,16 @@ func newInstallCmd() *cobra.Command {
 	var opts installOpts
 	cmd := &cobra.Command{
 		Use:   "install <ns/name[@range]>",
-		Short: "Resolve, download, verify, and export a BriefAgent to a runtime format",
+		Short: "Resolve, download, verify, and install a BriefAgent on this machine",
 		Long: "Resolve ns/name[@range] (§9.4), download the release archive, verify its\n" +
 			"sha256 digest AND its DSSE attestation signature (§8.8), show the declared\n" +
-			"capability contract (§5.4) diffed against the installed version, and export\n" +
-			"to one install target (§5.6):\n\n" +
+			"capability contract (§5.4) diffed against the installed version, and lay\n" +
+			"it down for one install target (§5.6):\n\n" +
+			"  runner        (the default) the runner home, where `agentry run` reads it:\n" +
+			"                ~/.agentry/runner/agents/<ns>/<name>/<version>-<digest>/, with\n" +
+			"                the coding-agent shape beside it (a Claude skill when the\n" +
+			"                policy names Claude Code or an Anthropic key, AGENTS.md\n" +
+			"                otherwise); an install of a newer version replaces the older\n" +
 			"  claude-skill  {--dir | ~/.claude/skills}/<name>/ with SKILL.md frontmatter\n" +
 			"  agents-md     extract to {--dir | ./agents/<name>} and update ./AGENTS.md\n\n" +
 			"Signatures: a release the registry has attested must verify against the\n" +
@@ -122,9 +131,9 @@ func newInstallCmd() *cobra.Command {
 			return runInstall(cmd, args[0], opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.target, "target", "", "install target: claude-skill | agents-md (default: the first of the release's runtime.interfaces)")
+	cmd.Flags().StringVar(&opts.target, "target", "", "install target: runner | claude-skill | agents-md (default runner: the runner home, where `agentry run` reads it)")
 	cmd.Flags().StringVar(&opts.provider, "provider", "", "install for an agent application: claude | codex | openclaw (picks the target; RUNNER-PLAN-2 §P5)")
-	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory (see help for per-target defaults)")
+	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory for claude-skill and agents-md (see help for per-target defaults); the runner target has one home")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false,
 		"install a release the registry has published no attestation for")
@@ -257,9 +266,10 @@ func pruneEmptyJSON(v any) any {
 	}
 }
 
-// validTargets is the §5.6 closed set. The mcp target left with the
-// withdrawn v1 tool-server package kind (DEV-088).
-var validTargets = []string{manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD}
+// validTargets is the §5.6 closed set plus the runner home (agentry-cli#190,
+// DR-28): the directory a run reads, and the two coding-agent exports. The
+// mcp target left with the withdrawn v1 tool-server package kind (DEV-088).
+var validTargets = []string{installdir.Target, manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD}
 
 // validateTarget checks an explicitly requested target. It runs BEFORE any
 // network call: a typo in --target should cost a usage message, not a
@@ -342,14 +352,59 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		return attErr
 	}
 
+	// The one place the target is told apart: where the files go, which
+	// installed.yaml record this is, and how the release is laid down.
 	target := opts.target
 	if target == "" {
-		target = defaultTarget(m)
+		target = installdir.Target
 	}
-	warnUndeclaredTarget(errOut, m, target)
-	paths, err := resolveInstallPaths(target, opts.dir, m.Name)
-	if err != nil {
-		return err
+	var (
+		paths installPaths
+		key   installed.Key
+		lay   func(staging string, m *manifest.Manifest) error
+		// after runs once the record is saved: the runner target's
+		// replace of the older version (D9) waits for the record, so a
+		// failed save never leaves a directory gone and a record naming it.
+		after func() error
+	)
+	switch target {
+	case installdir.Target:
+		if opts.dir != "" {
+			return errors.New("--dir is for the claude-skill and agents-md targets; the runner target has one home (AGENTRY_RUNNER_HOME)")
+		}
+		home, herr := runnerHome()
+		if herr != nil {
+			return herr
+		}
+		// The runner record is the run's own consent record, so a consent
+		// given here covers the run, and there is one record.
+		key = installdir.ConsentKey(home, res.Namespace, m.Name)
+		paths = installPaths{dest: key.Dir, managed: true}
+		releaseDir := installdir.ReleaseDir(home, res.Namespace, m.Name, res.Version, computed)
+		lay = func(staging string, m *manifest.Manifest) error {
+			return installRunnerTarget(out, errOut, staging, releaseDir, m, res, computed, att)
+		}
+		after = func() error { return installdir.RemoveOtherVersions(key.Dir, releaseDir) }
+	case manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD:
+		warnUndeclaredTarget(errOut, m, target)
+		paths, err = resolveInstallPaths(target, opts.dir, m.Name)
+		if err != nil {
+			return err
+		}
+		key = installed.Key{Registry: reg, Namespace: res.Namespace, Name: m.Name, Target: target, Dir: paths.dest}
+		if target == manifest.InterfaceClaudeSkill {
+			lay = func(staging string, m *manifest.Manifest) error {
+				return exportClaudeSkill(out, staging, paths, m, res.Namespace, res.Version)
+			}
+		} else {
+			lay = func(staging string, m *manifest.Manifest) error {
+				return exportAgentsMD(out, staging, paths, m, res.Namespace, res.Version)
+			}
+		}
+	default:
+		// Unreachable: validateTarget admits only the three above. Kept so
+		// a fourth target cannot be added without this switch failing loudly.
+		return fmt.Errorf("unknown --target %q (want %s)", target, strings.Join(validTargets, ", "))
 	}
 
 	_, _ = fmt.Fprintf(out, "%s/%s@%s (%s)\n", res.Namespace, res.Name, res.Version, modesLabel(m.SupportedModes()))
@@ -361,10 +416,6 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 
-	key := installed.Key{
-		Registry: reg, Namespace: res.Namespace, Name: m.Name,
-		Target: target, Dir: paths.dest,
-	}
 	state, serr := installed.Load()
 	if serr != nil {
 		// Bookkeeping trouble must not block an install; it costs a prompt.
@@ -401,18 +452,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		m = am
 	}
 
-	switch target {
-	case manifest.InterfaceClaudeSkill:
-		err = exportClaudeSkill(out, staging, paths, m, res.Namespace, res.Version)
-	case manifest.InterfaceAgentsMD:
-		err = exportAgentsMD(out, staging, paths, m, res.Namespace, res.Version)
-	default:
-		// Unreachable: validateTarget and defaultTarget between them admit
-		// only the two above. Kept so a third interface cannot be added
-		// without this switch failing loudly.
-		return fmt.Errorf("unknown --target %q (want %s)", target, strings.Join(validTargets, ", "))
-	}
-	if err != nil {
+	if err := lay(staging, m); err != nil {
 		return err
 	}
 
@@ -423,6 +463,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	if err := installed.Save(state); err != nil {
 		recorded = false
 		_, _ = fmt.Fprintf(errOut, "warning: %v — the next install of this agent will re-ask about capabilities\n", err)
+	}
+	if after != nil && recorded {
+		if err := after(); err != nil {
+			return err
+		}
 	}
 	if flags.jsonOut {
 		contract, cdigest, err := contractJSON(m.Capabilities)
@@ -707,9 +752,10 @@ type installPaths struct {
 	managedRoot string
 }
 
-// resolveInstallPaths computes the destination for a target without touching
-// the filesystem, so an unwritable home or an unknown target is reported
-// before a download rather than after one.
+// resolveInstallPaths computes the destination for a coding-agent target
+// without touching the filesystem, so an unwritable home or an unknown
+// target is reported before a download rather than after one. The runner
+// target has one home and is resolved in runInstall.
 func resolveInstallPaths(target, dir, name string) (installPaths, error) {
 	switch target {
 	case manifest.InterfaceClaudeSkill:
@@ -730,7 +776,7 @@ func resolveInstallPaths(target, dir, name string) (installPaths, error) {
 		return installPaths{dest: filepath.Join("agents", name), managed: true, managedRoot: "agents"}, nil
 
 	default:
-		return installPaths{}, fmt.Errorf("unknown --target %q (want %s)", target, strings.Join(validTargets, ", "))
+		return installPaths{}, fmt.Errorf("no directory rule for target %q (want %s or %s)", target, manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD)
 	}
 }
 
@@ -818,98 +864,75 @@ func warnUndeclaredTarget(w io.Writer, m *manifest.Manifest, target string) {
 	_, _ = fmt.Fprintf(w, "warning: manifest runtime.interfaces %v does not list target %q\n", m.Runtime.Interfaces, target)
 }
 
+// installRunnerTarget lays the verified release down in the runner home
+// the way a run's first fetch does (installdir.Write, so `agentry run`
+// finds it by digest and fetches nothing) and writes the coding-agent
+// shape beside it in the style the policy implies (installdir.StyleFor).
+// The cache holds the verdict and never the consent, as a run's does, and
+// says whether the verdict was a verified signature the way a run's does
+// (the receipt's shorthand).
+func installRunnerTarget(out, errOut io.Writer, staging, releaseDir string, m *manifest.Manifest, res *apiclient.ResolveResult, digest string, att trust.AttestationResult) error {
+	meta := &installdir.Meta{
+		Ref:       fmt.Sprintf("%s/%s@%s", res.Namespace, m.Name, res.Version),
+		Namespace: res.Namespace, Name: m.Name, Version: res.Version,
+		Digest: digest, Source: "registry",
+		Attestation: receipt.Attestation{State: string(att.State), KeyID: att.KeyID, Verified: att.State == trust.StateVerified},
+	}
+	if err := installdir.Write(releaseDir, staging, meta); err != nil {
+		return err
+	}
+	style := installdir.StyleFor(policyForStyle(errOut))
+	if err := installdir.WriteExport(releaseDir, style, m, meta); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "installed %s/%s@%s into the runner home: %s (export: %s)\n", res.Namespace, m.Name, res.Version, releaseDir, style)
+	return nil
+}
+
+// policyForStyle is the operator policy the export style is read from. A
+// machine with none yet reads as no policy (an install must not create
+// one — that is setup's and a run's); a policy that cannot be read is
+// said, and read as none too, so the install goes on with the generic
+// shape rather than stopping on a file it does not need.
+func policyForStyle(errOut io.Writer) *policy.Policy {
+	path, err := policy.DefaultPath()
+	if err != nil {
+		return nil
+	}
+	pol, _, err := policy.Load(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			_, _ = fmt.Fprintf(errOut, "warning: operator policy %s could not be read (%v) — the export beside the install takes the generic AGENTS.md shape\n", path, err)
+		}
+		return nil
+	}
+	return pol
+}
+
 // exportClaudeSkill writes the archive into {dir/<name>|~/.claude/skills/<name>},
 // guaranteeing SKILL.md frontmatter (§5.6 claude-skill row).
 func exportClaudeSkill(out io.Writer, staging string, p installPaths, m *manifest.Manifest, ns, version string) error {
-	dest := p.dest
 	if err := prepareDest(p); err != nil {
 		return err
 	}
-	if err := copyTree(staging, dest); err != nil {
+	if err := export.WriteClaudeSkillTree(staging, p.dest, m); err != nil {
 		return err
 	}
-
-	skillRel := m.Entrypoints.Skill
-	if skillRel == "" {
-		skillRel = "SKILL.md"
-	}
-	// The entrypoint is a manifest string (validated before the download,
-	// and taken from the archive's own manifest when it carries one); the
-	// file it names must be inside the directory just written, whatever
-	// the string.
-	skillPath := filepath.Join(dest, filepath.FromSlash(skillRel))
-	if !pathguard.Under(dest, skillPath) {
-		return fmt.Errorf("skill entrypoint %q resolves outside the install directory — refusing to write it", skillRel)
-	}
-	content, err := os.ReadFile(skillPath) //nolint:gosec // under dest, checked just above
-	if err != nil {
-		return fmt.Errorf("read skill entrypoint %s: %w", skillRel, err)
-	}
-	// Embedded mode (RUNNER-PLAN §R5): the host coding agent supplies the
-	// tools, so the capability contract compiles to its allowed-tools
-	// vocabulary here — the same contract the standalone runner enforces
-	// through the gateway.
-	withFM := export.SkillFrontmatterWithTools(content, m.Name, m.Summary, export.HostToolGrants(m.Capabilities))
-	if err := os.WriteFile(skillPath, withFM, 0o644); err != nil { //nolint:gosec // skill files are world-readable content
-		return fmt.Errorf("write skill entrypoint: %w", err)
-	}
-
-	_, _ = fmt.Fprintf(out, "installed %s/%s@%s as Claude skill: %s\n", ns, m.Name, version, dest)
+	_, _ = fmt.Fprintf(out, "installed %s/%s@%s as Claude skill: %s\n", ns, m.Name, version, p.dest)
 	return nil
 }
 
 // exportAgentsMD extracts to {dir|./agents/<name>} and upserts the agent's
 // section in ./AGENTS.md (§5.6 agents-md row).
 func exportAgentsMD(out io.Writer, staging string, p installPaths, m *manifest.Manifest, ns, version string) error {
-	dest := p.dest
 	if err := prepareDest(p); err != nil {
 		return err
 	}
-	if err := copyTree(staging, dest); err != nil {
+	const agentsPath = "AGENTS.md"
+	if err := export.WriteAgentsMDTree(staging, p.dest, agentsPath, m, ns, version); err != nil {
 		return err
 	}
-
-	const agentsPath = "AGENTS.md"
-	existing, err := os.ReadFile(agentsPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", agentsPath, err)
-	}
-	// Embedded mode (RUNNER-PLAN §R5): the section states which host
-	// built-ins the declared contract corresponds to.
-	updated := export.UpsertAgentsMDSectionNote(existing, ns, m.Name, version, m.Summary, dest,
-		export.HostToolsNote(m.Capabilities))
-	if err := os.WriteFile(agentsPath, updated, 0o644); err != nil { //nolint:gosec // project doc, not a secret
-		return fmt.Errorf("write %s: %w", agentsPath, err)
-	}
-
-	_, _ = fmt.Fprintf(out, "installed %s/%s@%s as prompt agent: %s (section updated in %s)\n", ns, m.Name, version, dest, agentsPath)
-	return nil
-}
-
-// copyTree copies the extracted archive into dest, preserving each file's
-// permission bits (the archive normalizes modes, D-15).
-func copyTree(src, dest string) error {
-	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, rerr := filepath.Rel(src, p)
-		if rerr != nil {
-			return rerr
-		}
-		target := filepath.Join(dest, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		data, rerr := os.ReadFile(p) //nolint:gosec // reading our own staging dir
-		if rerr != nil {
-			return rerr
-		}
-		return os.WriteFile(target, data, info.Mode().Perm())
-	})
-	if err != nil {
-		return fmt.Errorf("copy files to %s: %w", dest, err)
-	}
+	_, _ = fmt.Fprintf(out, "installed %s/%s@%s as prompt agent: %s (section updated in %s)\n", ns, m.Name, version, p.dest, agentsPath)
 	return nil
 }
 

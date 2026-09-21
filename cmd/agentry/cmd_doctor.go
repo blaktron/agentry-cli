@@ -28,6 +28,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -143,7 +144,7 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 	// 2. Docker + images (only the ones this run would need).
 	docker := newDockerClient()
 	var m *manifest.Manifest
-	var meta *installMeta
+	var meta *installdir.Meta
 	var installDir string
 	if pol != nil && (ref != "" || opts.local != "") {
 		m, meta, installDir = doctorAgent(cmd, rep, home, ref, opts.local)
@@ -386,7 +387,7 @@ func doctorRegistry(ctx context.Context, rep *doctorReport) {
 
 // doctorAgent locates the BriefAgent: a cached verified install for a
 // registry ref (resolved without downloading), or a local directory.
-func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string) (*manifest.Manifest, *installMeta, string) {
+func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string) (*manifest.Manifest, *installdir.Meta, string) {
 	if local != "" {
 		m, err := manifestFromWorkspace(local)
 		if err != nil {
@@ -399,14 +400,13 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 			return nil, nil, ""
 		}
 		rep.ok("manifest", "%s/%s@%s (%s)", m.Namespace, m.Name, m.Version, local)
-		meta := &installMeta{Ref: fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
+		meta := &installdir.Meta{Ref: fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 			Namespace: m.Namespace, Name: m.Name, Version: m.Version, Digest: digest, Source: "local"}
 		// A local tree installs under the same digest-keyed layout as a
 		// registry ref (cmd_run.go), so its cached plans are checkable too
 		// (agentry-cli#60).
-		installDir := filepath.Join(home, "agents", m.Namespace, m.Name,
-			fmt.Sprintf("%s-%s", m.Version, digestSuffix(digest)))
-		if _, ok := loadInstallMeta(installDir, digest); !ok {
+		installDir := installdir.ReleaseDir(home, m.Namespace, m.Name, m.Version, digest)
+		if _, ok := installdir.Load(installDir, digest); !ok {
 			rep.warn("install", "not installed yet — `agentry run --local %s --prepare` verifies and installs it", local)
 			return m, meta, ""
 		}
@@ -433,9 +433,8 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	} else {
 		rep.ok("resolve", "%s/%s@%s (%s)", res.Namespace, res.Name, res.Version, res.Digest)
 	}
-	installDir := filepath.Join(home, "agents", res.Namespace, res.Name,
-		fmt.Sprintf("%s-%s", res.Version, digestSuffix(res.Digest)))
-	meta, ok := loadInstallMeta(installDir, res.Digest)
+	installDir := installdir.ReleaseDir(home, res.Namespace, res.Name, res.Version, res.Digest)
+	meta, ok := installdir.Load(installDir, res.Digest)
 	if !ok {
 		rep.warn("install", "not installed yet — `agentry run %s --prepare` downloads, verifies and installs it", ref)
 		return nil, nil, ""
@@ -474,8 +473,8 @@ func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manife
 	rep.ok("exec", "declared commands catalogued: %s", strings.Join(mapped, ", "))
 }
 
-func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *manifest.Manifest, meta *installMeta, installDir string) {
-	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, digestSuffix(meta.Digest))
+func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *manifest.Manifest, meta *installdir.Meta, installDir string) {
+	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, installdir.DigestSuffix(meta.Digest))
 	if n := len(m.Capabilities.MCPServers); n > 0 {
 		serversDir := mcpinstall.StoreDir(profDir)
 		missing := []string{}

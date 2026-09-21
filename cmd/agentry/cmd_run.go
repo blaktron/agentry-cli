@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"io"
 	"os"
@@ -174,19 +175,6 @@ func printAdapters(cmd *cobra.Command) error {
 // else under the home cannot resolve differently (agentry-cli#149).
 func runnerHome() (string, error) { return policy.Home() }
 
-// installMeta is <installDir>/install.json: what was verified, once, so
-// repeat runs of the same digest skip the network without skipping the
-// truth about how it was admitted.
-type installMeta struct {
-	Ref         string              `json:"ref"`
-	Namespace   string              `json:"namespace"`
-	Name        string              `json:"name"`
-	Version     string              `json:"version"`
-	Digest      string              `json:"digest"`
-	Source      string              `json:"source"`
-	Attestation receipt.Attestation `json:"attestation"`
-}
-
 // runRun executes the whole §R6 lifecycle.
 func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if (ref == "") == (opts.local == "") {
@@ -215,7 +203,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// digest (§R5 standalone mode). A --plan materializes into a temp
 	// home instead: a preview writes nothing that outlives it, and an
 	// unsigned release is reported rather than refused.
-	var meta *installMeta
+	var meta *installdir.Meta
 	var installDir string
 	var planRefusal string
 	// consentHome is where the consent record lives (the real home); home
@@ -283,7 +271,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	var consent runPlanConsent
 	if opts.plan {
 		consent = describeRunConsent(m, meta, consentHome)
-	} else if err := confirmRunCapabilities(cmd, m, meta, installDir, opts, mode); err != nil {
+	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
@@ -301,7 +289,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// compiler can bake the launch specs into the plan. Installation into
 	// the store happens with the image install below; --dry-run stops at
 	// resolution and touches no docker.
-	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, digestSuffix(meta.Digest))
+	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, installdir.DigestSuffix(meta.Digest))
 	serversDir := mcpinstall.StoreDir(profDir)
 	var resolvedServers []mcpinstall.Resolved
 	var serverSpecs []spec.MCPServerSpec
@@ -582,12 +570,9 @@ type runPlanConsent struct {
 
 // describeRunConsent mirrors confirmRunCapabilities' decision without its
 // prompt and without installed.Save.
-func describeRunConsent(m *manifest.Manifest, meta *installMeta, home string) runPlanConsent {
+func describeRunConsent(m *manifest.Manifest, meta *installdir.Meta, home string) runPlanConsent {
 	var c runPlanConsent
-	key := installed.Key{
-		Registry: "runner", Namespace: meta.Namespace, Name: meta.Name,
-		Target: "runner", Dir: filepath.Join(home, "agents", meta.Namespace, meta.Name),
-	}
+	key := installdir.ConsentKey(home, meta.Namespace, meta.Name)
 	state, serr := installed.Load()
 	if serr != nil {
 		state = installed.State{}
@@ -633,7 +618,7 @@ func attestationRefusal(att receipt.Attestation, allowUnsigned, allowUnscanned b
 // cache already holds: the cache remembers what the verdict was, and the
 // flag is asked for again on every run — and the receipt of this run
 // carries the consent given now, not the one given at the install.
-func cachedAttestationGate(meta *installMeta, allowUnsigned, allowUnscanned bool) error {
+func cachedAttestationGate(meta *installdir.Meta, allowUnsigned, allowUnscanned bool) error {
 	switch meta.Attestation.State {
 	case trust.StateUnsigned, "local":
 		if !allowUnsigned {
@@ -677,7 +662,7 @@ type runPlanOutput struct {
 	Refusal string `json:"refusal,omitempty"`
 }
 
-func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installMeta, m *manifest.Manifest, mode manifest.Mode, consent runPlanConsent, refusal string) error {
+func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m *manifest.Manifest, mode manifest.Mode, consent runPlanConsent, refusal string) error {
 	b, err := plan.MarshalCanonical()
 	if err != nil {
 		return err
@@ -810,7 +795,7 @@ func planHash(plan *spec.Plan) string {
 }
 
 // resolveOutDir picks and creates the output folder (RQ3).
-func resolveOutDir(flag string, meta *installMeta, runID string) (string, error) {
+func resolveOutDir(flag string, meta *installdir.Meta, runID string) (string, error) {
 	dir := flag
 	if dir == "" {
 		dir = filepath.Join("agentry-out", fmt.Sprintf("%s-%s-%s", meta.Namespace, meta.Name, runID))
@@ -827,7 +812,7 @@ func resolveOutDir(flag string, meta *installMeta, runID string) (string, error)
 
 // materializeRegistry resolves, verifies, and caches a registry release
 // (§R1: the same gate as install — digest, DSSE, --allow-unsigned).
-func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*installMeta, string, error) {
+func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*installdir.Meta, string, error) {
 	if _, err := manifest.ParseRef(ref); err != nil {
 		return nil, "", err
 	}
@@ -850,9 +835,8 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 			fmt.Errorf("--pin mismatch: registry resolved %s, pin requires %s", res.Digest, opts.pin))
 	}
 
-	installDir := filepath.Join(home, "agents", res.Namespace, res.Name,
-		fmt.Sprintf("%s-%s", res.Version, digestSuffix(res.Digest)))
-	if meta, ok := loadInstallMeta(installDir, res.Digest); ok {
+	installDir := installdir.ReleaseDir(home, res.Namespace, res.Name, res.Version, res.Digest)
+	if meta, ok := installdir.Load(installDir, res.Digest); ok {
 		// The registry's word today outranks the cache's memory: an
 		// install cached as unsigned by a CLI that did not know the
 		// unscanned state, against a registry that now says the version
@@ -905,7 +889,7 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 		return nil, "", err
 	}
 
-	meta := &installMeta{
+	meta := &installdir.Meta{
 		Ref:       fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version),
 		Namespace: res.Namespace, Name: res.Name, Version: res.Version,
 		Digest: res.Digest, Source: "registry", Attestation: att,
@@ -914,7 +898,7 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	// run's alone: the next run is asked again.
 	cached := *meta
 	cached.Attestation.Consent = ""
-	if err := writeInstall(installDir, staging, &cached); err != nil {
+	if err := installdir.Write(installDir, staging, &cached); err != nil {
 		return nil, "", err
 	}
 	return meta, installDir, nil
@@ -924,7 +908,7 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 // with a release the gate would have refused, the way a fresh materialize
 // does: a cached unsigned or unscanned release is not "verified", and the
 // flag that admits it is named on every run.
-func narrateCachedConsent(errOut io.Writer, meta *installMeta, plan bool) {
+func narrateCachedConsent(errOut io.Writer, meta *installdir.Meta, plan bool) {
 	doing := "running"
 	if plan {
 		doing = "a run would proceed"
@@ -1000,7 +984,7 @@ func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.
 // validate the manifest, hash the tree, and cache like a registry install
 // keyed by that hash. Local trees are unsigned by definition, so the same
 // --allow-unsigned decision applies.
-func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) (*installMeta, string, error) {
+func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) (*installdir.Meta, string, error) {
 	if !allowUnsigned {
 		return nil, "", engine.Classify(engine.ExitVerify,
 			errors.New("--local packages are unsigned by definition; pass --allow-unsigned to run one"))
@@ -1016,74 +1000,26 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 	if err != nil {
 		return nil, "", err
 	}
-	installDir := filepath.Join(home, "agents", m.Namespace, m.Name,
-		fmt.Sprintf("%s-%s", m.Version, digestSuffix(digest)))
-	meta := &installMeta{
+	installDir := installdir.ReleaseDir(home, m.Namespace, m.Name, m.Version, digest)
+	meta := &installdir.Meta{
 		Ref:       fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 		Namespace: m.Namespace, Name: m.Name, Version: m.Version,
 		Digest: digest, Source: "local",
 		Attestation: receipt.Attestation{State: "local", Consent: receipt.ConsentAllowUnsigned},
 	}
-	if cached, ok := loadInstallMeta(installDir, digest); ok {
+	if cached, ok := installdir.Load(installDir, digest); ok {
 		return cached, installDir, nil
 	}
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "local package %s (%s)\n", meta.Ref, digestSuffix(digest))
-	if err := writeInstall(installDir, dir, meta); err != nil {
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "local package %s (%s)\n", meta.Ref, installdir.DigestSuffix(digest))
+	if err := installdir.Write(installDir, dir, meta); err != nil {
 		return nil, "", err
 	}
 	return meta, installDir, nil
 }
 
-// writeInstall lands workspace + install.json under installDir.
-func writeInstall(installDir, srcTree string, meta *installMeta) error {
-	// A half-written install must not look installed: build aside, then
-	// rename into place.
-	if err := os.RemoveAll(installDir); err != nil {
-		return fmt.Errorf("clear install dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(installDir), 0o755); err != nil {
-		return fmt.Errorf("create install dir: %w", err)
-	}
-	tmp := installDir + ".partial"
-	if err := os.RemoveAll(tmp); err != nil {
-		return fmt.Errorf("clear partial install: %w", err)
-	}
-	if err := copyWorkspace(srcTree, filepath.Join(tmp, "workspace")); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal install metadata: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, "install.json"), append(b, '\n'), 0o644); err != nil { //nolint:gosec // metadata, not secret
-		return fmt.Errorf("write install metadata: %w", err)
-	}
-	if err := os.Rename(tmp, installDir); err != nil {
-		return fmt.Errorf("finalize install dir: %w", err)
-	}
-	return nil
-}
-
-// loadInstallMeta reuses a cached verified install iff its recorded digest
-// matches what the registry (or tree hash) says now.
-func loadInstallMeta(installDir, wantDigest string) (*installMeta, bool) {
-	b, err := os.ReadFile(filepath.Join(installDir, "install.json")) //nolint:gosec // our install layout
-	if err != nil {
-		return nil, false
-	}
-	var meta installMeta
-	if err := json.Unmarshal(b, &meta); err != nil || meta.Digest != wantDigest {
-		return nil, false
-	}
-	if _, err := os.Stat(filepath.Join(installDir, "workspace")); err != nil {
-		return nil, false
-	}
-	return &meta, true
-}
-
 // ensurePlan reuses the installed plan when nothing it depends on changed
 // (§R6/§R9), otherwise recompiles.
-func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installMeta, installDir, workspaceDir string,
+func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installdir.Meta, installDir, workspaceDir string,
 	pol *policy.Policy, polSHA, adapterName string, serverSpecs []spec.MCPServerSpec, mode manifest.Mode,
 ) (*spec.Plan, string, error) {
 	// One plan per run mode (plan/<mode>/); a plan/plan.json from the
@@ -1164,7 +1100,7 @@ func cachedPlanVersion(b []byte) string {
 // confirmRunCapabilities applies the install-time consent semantics to
 // runs, keyed on the runner install dir: first run asks about egress/exec,
 // upgrades ask again only when the contract widened (§R1).
-func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installMeta, installDir string, opts runOpts, mode manifest.Mode) error {
+func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installdir.Meta, home string, opts runOpts, mode manifest.Mode) error {
 	// Everything here narrates to stderr: stdout is the run's result
 	// channel (§R8) and must stay pipeline-clean.
 	out := cmd.ErrOrStderr()
@@ -1180,10 +1116,7 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 		// Plan §8: the one line the consent screen gains for a session.
 		_, _ = fmt.Fprintln(out, "  interactive: you can talk to this agent and give it files; you cannot give it more access than listed above")
 	}
-	key := installed.Key{
-		Registry: "runner", Namespace: meta.Namespace, Name: meta.Name,
-		Target: "runner", Dir: filepath.Dir(installDir),
-	}
+	key := installdir.ConsentKey(home, meta.Namespace, meta.Name)
 	state, serr := installed.Load()
 	if serr != nil {
 		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
@@ -1193,7 +1126,14 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Capabilities, opts.yes); err != nil {
 		return err
 	}
-	state.Upsert(key, meta.Version, next, false)
+	// An install owns the agent's directory (managed, agentry-cli#190); a
+	// run that re-consents keeps that, and records nothing managed of its
+	// own — its cache is not an install.
+	managed := false
+	if prev := state.Find(key); prev != nil {
+		managed = prev.Managed
+	}
+	state.Upsert(key, meta.Version, next, managed)
 	if err := installed.Save(state); err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v — the next run will re-ask about capabilities\n", err)
 	}
@@ -1279,43 +1219,14 @@ func localTreeDigest(dir string) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// copyWorkspace copies a local package tree, skipping VCS and output dirs.
-func copyWorkspace(src, dest string) error {
-	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && (info.Name() == ".git" || info.Name() == "agentry-out") {
-			return filepath.SkipDir
-		}
-		rel, rerr := filepath.Rel(src, p)
-		if rerr != nil {
-			return rerr
-		}
-		target := filepath.Join(dest, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		data, rerr := os.ReadFile(p) //nolint:gosec // copying the user's named tree
-		if rerr != nil {
-			return rerr
-		}
-		return os.WriteFile(target, data, info.Mode().Perm())
-	})
-	if err != nil {
-		return fmt.Errorf("copy package tree: %w", err)
-	}
-	return nil
-}
-
 // ensureProfile loads — or, on a terminal, guides the creation of — the
 // BriefAgent's MCP profile for this signature (RUNNER-PLAN-2 §P2/§P3).
 // Returns the profile (nil when none applies), its directory, and the
 // effective keep choice: flag > stored profile > policy default.
-func ensureProfile(cmd *cobra.Command, home string, meta *installMeta, m *manifest.Manifest,
+func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *manifest.Manifest,
 	pol *policy.Policy, opts runOpts,
 ) (*profile.Profile, string, bool, error) {
-	dir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, digestSuffix(meta.Digest))
+	dir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, installdir.DigestSuffix(meta.Digest))
 	prof, err := profile.Load(dir)
 	if err != nil {
 		return nil, dir, false, err
@@ -1406,15 +1317,6 @@ func finishProfile(errOut io.Writer, prof *profile.Profile, dir string, keep boo
 		return
 	}
 	_, _ = fmt.Fprintln(errOut, "MCP profile removed (run completed with keep-profile=false)")
-}
-
-// digestSuffix shortens sha256:… for directory names.
-func digestSuffix(digest string) string {
-	s := strings.TrimPrefix(digest, "sha256:")
-	if len(s) > 12 {
-		s = s[:12]
-	}
-	return s
 }
 
 // runnerCLIVersion feeds the runner image tag derivation (§R7: a new CLI

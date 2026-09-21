@@ -105,7 +105,12 @@ manifest + operator policy into a deterministic run plan → execute:
   and `receipts/` (event stream, gateway log, the exact run plan).
   The runner tears down containers, networks, and secret files on every
   exit path.
-- Installed into an existing coding agent instead (`agentry install
+- **`agentry install ns/name`** lays the verified release down in the
+  runner home, where `agentry run` reads it — no second fetch — with the
+  Claude-skill or AGENTS.md shape beside it (the policy's coding agent or
+  provider decides which); a newer version replaces the older, and
+  `agentry list --check` says when one exists.
+- **Installed into an existing coding agent instead** (`agentry install
   --target claude-skill|agents-md`), the same contract compiles to the
   host's built-in tool grants — nothing is bundled in either mode.
 

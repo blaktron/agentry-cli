@@ -101,29 +101,6 @@ func TestCapabilityNeedsConfirmTable(t *testing.T) {
 	}
 }
 
-// TestDefaultTarget: the default install target follows runtime.interfaces
-// (first emittable entry), never the run modes, and is claude-skill when
-// nothing usable is declared.
-func TestDefaultTarget(t *testing.T) {
-	tests := []struct {
-		interfaces []string
-		want       string
-	}{
-		{nil, manifest.InterfaceClaudeSkill},
-		{[]string{manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD}, manifest.InterfaceClaudeSkill},
-		{[]string{manifest.InterfaceAgentsMD, manifest.InterfaceClaudeSkill}, manifest.InterfaceAgentsMD},
-		{[]string{"mcp", manifest.InterfaceAgentsMD}, manifest.InterfaceAgentsMD}, // v1 archive: the withdrawn target is skipped
-		{[]string{"mcp"}, manifest.InterfaceClaudeSkill},
-	}
-	for _, tt := range tests {
-		m := &manifest.Manifest{Modes: []manifest.Mode{manifest.ModeAutonomous, manifest.ModeInteractive}}
-		m.Runtime.Interfaces = tt.interfaces
-		if got := defaultTarget(m); got != tt.want {
-			t.Errorf("defaultTarget(%v) = %s, want %s", tt.interfaces, got, tt.want)
-		}
-	}
-}
-
 // TestParseModes: the --modes grammar is the manifest's closed set.
 func TestParseModes(t *testing.T) {
 	got, err := parseModes(" interactive, autonomous ")

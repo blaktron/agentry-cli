@@ -17,6 +17,8 @@ import (
 
 	"github.com/blaktron/agentry/pkg/rules"
 	"github.com/blaktron/agentry/pkg/ruleset"
+
+	"github.com/blaktron/agentry-cli/pkg/export"
 )
 
 // bundleFixture loads the embedded rule bundle and its Tar() bytes — the
@@ -85,7 +87,7 @@ func TestFetchRulesBundleHappyPathAndCache(t *testing.T) {
 
 	// A higher-semver cache entry wins, whatever order they arrived in.
 	higher := filepath.Join(root, "999.0.0")
-	if err := copyTree(filepath.Join(root, semver), higher); err != nil {
+	if err := export.CopyTree(filepath.Join(root, semver), higher); err != nil {
 		t.Fatal(err)
 	}
 	if _, gotVer = newestCachedBundle(); gotVer != "999.0.0" {

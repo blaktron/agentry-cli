@@ -29,6 +29,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/rules"
 
+	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
@@ -140,7 +141,7 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 	final := filepath.Join(root, semver)
 	tmp := final + ".incoming"
 	_ = os.RemoveAll(tmp)
-	if err := copyTree(staging, tmp); err != nil {
+	if err := export.CopyTree(staging, tmp); err != nil {
 		return "", err
 	}
 	if err := os.RemoveAll(final); err != nil {
