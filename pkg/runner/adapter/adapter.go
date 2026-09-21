@@ -176,6 +176,17 @@ type HostHarness interface {
 	// the path is the person's own build of the server. A client shows
 	// it; nothing runs it (agentry-cli#151).
 	MCPCommand() string
+	// WellKnownPaths are the places the harness's executable is usually
+	// installed on goos ("linux", "darwin", "windows"), tried in order
+	// after PATH (agentry-cli#167): a GUI launched from the dock or the
+	// Start Menu carries the login session's PATH, not the shell's, and
+	// the desktop apps that bundle a harness put it nowhere on PATH at
+	// all. Each is a path template: a leading "~" is the home directory,
+	// "${VAR}" an environment variable (a template whose variable is
+	// unset is skipped), and a final "*" a directory of versions, of
+	// which the newest is taken. Only the executable's existence is read
+	// from them; nothing is run but the version flag.
+	WellKnownPaths(goos string) []string
 }
 
 // ErrNotSupported is returned by Session for adapters without an

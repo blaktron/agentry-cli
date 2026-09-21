@@ -16,6 +16,7 @@ import (
 // version as its first line, and points the PATH seam at it.
 func fakeHarness(t *testing.T, name, version string) string {
 	t.Helper()
+	isolateHome(t)
 	dir := t.TempDir()
 	ad, err := adapter.Get(name)
 	if err != nil {
@@ -38,8 +39,22 @@ func fakeHarness(t *testing.T, name, version string) string {
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
+// isolateHome points the well-known-location lookup at an empty home, so
+// a harness installed on the machine running the tests (this one has
+// both) is not what a "nothing installed" test finds.
+func isolateHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	oldHome, oldGoos := homeDir, goos
+	homeDir = func() (string, error) { return home, nil }
+	goos = "linux"
+	t.Cleanup(func() { homeDir, goos = oldHome, oldGoos })
+	return home
+}
+
 func noHarness(t *testing.T) {
 	t.Helper()
+	isolateHome(t)
 	old := lookPath
 	lookPath = func(string) (string, error) { return "", os.ErrNotExist }
 	t.Cleanup(func() { lookPath = old })
@@ -127,8 +142,162 @@ func TestProbeNotOnPath(t *testing.T) {
 	if !r.Known || !r.Host || r.Found || r.Path != "" {
 		t.Fatalf("result = %+v", r)
 	}
-	if !strings.Contains(r.Reason, "not installed on this machine") || !strings.Contains(r.Reason, "harness.claude.path") {
+	if !strings.Contains(r.Reason, "not installed on this machine") || !strings.Contains(r.Reason, "usual install locations") || !strings.Contains(r.Reason, "harness.claude.path") {
 		t.Fatalf("reason = %q", r.Reason)
+	}
+}
+
+// writeExe puts an executable printing version at path, creating the
+// directories above it.
+func writeExe(t *testing.T, path, version string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho '"+version+"'\n"), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+}
+
+func TestProbeFindsAWellKnownLocationWhenPathHasNothing(t *testing.T) {
+	noHarness(t)
+	home, _ := homeDir()
+	exe := filepath.Join(home, ".local", "bin", "claude")
+	writeExe(t, exe, "2.1.263 (Claude Code)")
+	r := Probe(context.Background(), policy.Default(), adapter.ClaudeAdapterName)
+	if !r.Found || r.Path != exe || r.Source != SourceKnown || r.PathFromPolicy {
+		t.Fatalf("result = %+v", r)
+	}
+	if r.Version != "2.1.263 (Claude Code)" || !r.VersionMatches {
+		t.Fatalf("the version is read from the well-known executable: %+v", r)
+	}
+}
+
+func TestProbePathWinsOverAWellKnownLocation(t *testing.T) {
+	exe := fakeHarness(t, adapter.ClaudeAdapterName, "2.1.263")
+	home, _ := homeDir()
+	writeExe(t, filepath.Join(home, ".local", "bin", "claude"), "2.0.0")
+	r := Probe(context.Background(), policy.Default(), adapter.ClaudeAdapterName)
+	if !r.Found || r.Path != exe || r.Source != SourcePath {
+		t.Fatalf("PATH must win: %+v", r)
+	}
+}
+
+func TestProbePolicyPathWinsOverAWellKnownLocation(t *testing.T) {
+	noHarness(t)
+	home, _ := homeDir()
+	writeExe(t, filepath.Join(home, ".local", "bin", "claude"), "2.0.0")
+	chosen := filepath.Join(t.TempDir(), "claude-chosen")
+	writeExe(t, chosen, "2.1.263")
+	pol := policy.Default()
+	pol.Harness = map[string]policy.HarnessPolicy{adapter.ClaudeAdapterName: {Path: chosen}}
+	r := Probe(context.Background(), pol, adapter.ClaudeAdapterName)
+	if !r.Found || r.Path != chosen || r.Source != SourcePolicy || !r.PathFromPolicy {
+		t.Fatalf("the policy path must win: %+v", r)
+	}
+}
+
+// The Claude desktop app keeps the builds it downloaded side by side
+// under ~/.claude/remote/ccd-cli/<version>; the newest is the one it
+// runs, so it is the one reported — by version, not by name order ("2.1.9"
+// is older than "2.1.10"), and reading "2.1.275" as the file "2.1" with
+// extension ".275" would make every build the same version (the live
+// check on this workstation caught exactly that: 2.1.271 chosen over
+// 2.1.275).
+func TestProbePicksTheNewestDesktopBuild(t *testing.T) {
+	noHarness(t)
+	home, _ := homeDir()
+	dir := filepath.Join(home, ".claude", "remote", "ccd-cli")
+	for _, v := range []string{"2.1.9", "2.1.10", "2.1.2", "2.1.7.exe"} {
+		writeExe(t, filepath.Join(dir, v), strings.TrimSuffix(v, ".exe")+" (Claude Code)")
+	}
+	if got := versionOf("2.1.275"); len(got) != 3 || got[2] != 275 {
+		t.Fatalf("versionOf(2.1.275) = %v", got)
+	}
+	if got := versionOf("2.1.275.EXE"); len(got) != 3 || got[2] != 275 {
+		t.Fatalf("versionOf(2.1.275.EXE) = %v", got)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "9.9.9"), 0o755); err != nil { // a directory is not a build
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+	r := Probe(context.Background(), policy.Default(), adapter.ClaudeAdapterName)
+	if !r.Found || r.Path != filepath.Join(dir, "2.1.10") || r.Source != SourceKnown {
+		t.Fatalf("result = %+v", r)
+	}
+	if r.Version != "2.1.10 (Claude Code)" {
+		t.Fatalf("version = %q", r.Version)
+	}
+}
+
+// The native installer's location comes before the desktop app's build:
+// the first well-known location that exists wins.
+func TestProbeWellKnownLocationsAreTriedInOrder(t *testing.T) {
+	noHarness(t)
+	home, _ := homeDir()
+	writeExe(t, filepath.Join(home, ".claude", "remote", "ccd-cli", "2.1.275"), "2.1.275 (Claude Code)")
+	writeExe(t, filepath.Join(home, ".local", "bin", "claude"), "2.1.263 (Claude Code)")
+	r := Probe(context.Background(), policy.Default(), adapter.ClaudeAdapterName)
+	if r.Path != filepath.Join(home, ".local", "bin", "claude") {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+// A directory where the executable would be, or a link to nothing, is
+// not an installation.
+func TestProbeSkipsADirectoryOrADanglingLinkAtAWellKnownLocation(t *testing.T) {
+	noHarness(t)
+	home, _ := homeDir()
+	if err := os.MkdirAll(filepath.Join(home, ".local", "bin", "claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "remote", "ccd-cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "gone"), filepath.Join(home, ".claude", "remote", "ccd-cli", "2.1.1")); err != nil {
+		t.Fatal(err)
+	}
+	r := Probe(context.Background(), policy.Default(), adapter.ClaudeAdapterName)
+	if r.Found {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+// A template naming an unset variable (npm's global shim lives under
+// %APPDATA% on Windows) is skipped, never resolved against an empty
+// prefix — and the Windows list is what a Windows host tries.
+func TestProbeSkipsATemplateWhoseVariableIsUnset(t *testing.T) {
+	noHarness(t)
+	goos = "windows"
+	t.Setenv("APPDATA", "")
+	if p, ok := expand("${APPDATA}/npm/claude.cmd"); ok {
+		t.Fatalf("an unset variable must skip the template, not expand to %q", p)
+	}
+	home, _ := homeDir()
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	writeExe(t, filepath.Join(home, "AppData", "Roaming", "npm", "claude.cmd"), "2.1.263 (Claude Code)")
+	r := Probe(context.Background(), policy.Default(), adapter.ClaudeAdapterName)
+	if !r.Found || r.Source != SourceKnown || !strings.HasSuffix(r.Path, filepath.Join("npm", "claude.cmd")) {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+func TestFindIsWhatTheEngineResolves(t *testing.T) {
+	noHarness(t)
+	home, _ := homeDir()
+	exe := filepath.Join(home, ".codex", "packages", "standalone", "current", "bin", "codex")
+	writeExe(t, exe, "codex-cli 0.153.4")
+	p, src, err := Find(policy.Default(), adapter.CodexAdapterName)
+	if err != nil || p != exe || src != SourceKnown {
+		t.Fatalf("Find = %q %q %v", p, src, err)
+	}
+	if _, _, err := Find(policy.Default(), "docker-agent"); err == nil || !strings.Contains(err.Error(), "containerised") {
+		t.Fatalf("a containerised adapter has no executable: %v", err)
+	}
+	if _, _, err := Find(policy.Default(), "nope"); err == nil {
+		t.Fatal("an unknown adapter is an error")
 	}
 }
 

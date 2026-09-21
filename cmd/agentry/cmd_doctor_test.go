@@ -254,7 +254,7 @@ func TestDoctorAdapterHarness(t *testing.T) {
 	if err == nil {
 		t.Fatalf("doctor passed with no claude installed:\n%s", out)
 	}
-	for _, want := range []string{"FAIL  harness:claude", "claude is not installed on this machine (not on PATH)", "set harness.claude.path in the policy"} {
+	for _, want := range []string{"FAIL  harness:claude", "claude is not installed on this machine (not on PATH, and not in its usual install locations)", "set harness.claude.path in the policy"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}

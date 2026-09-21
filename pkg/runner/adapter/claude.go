@@ -99,6 +99,22 @@ func (c *claudeAdapter) MCPCommand() string {
 	return "claude mcp add agentry -- node /path/to/agentry-mcp/dist/index.js"
 }
 
+// WellKnownPaths implements HostHarness. The native installer's
+// ~/.local/bin/claude (a link to ~/.local/share/claude/versions/<ver>) and
+// the Claude desktop app's own Claude Code build, ~/.claude/remote/ccd-cli/
+// <ver> (its Code tab's runtime, answering --version like the CLI), were
+// both read on a Linux workstation; the Windows spellings follow the
+// installer documentation (~\.local\bin\claude.exe) and npm's global shim,
+// and are not verified here.
+func (c *claudeAdapter) WellKnownPaths(goos string) []string {
+	switch goos {
+	case "windows":
+		return []string{`~/.local/bin/claude.exe`, `~/.claude/remote/ccd-cli/*`, `${APPDATA}/npm/claude.cmd`}
+	default:
+		return []string{"~/.local/bin/claude", "~/.claude/remote/ccd-cli/*"}
+	}
+}
+
 // claudeMCPServer is one entry of Claude Code's MCP config file. Structs,
 // not map[string]any, so the rendered bytes are deterministic.
 type claudeMCPServer struct {
