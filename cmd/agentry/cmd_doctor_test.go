@@ -260,6 +260,24 @@ func TestDoctorAdapterHarness(t *testing.T) {
 		}
 	}
 
+	// Off PATH but in the native installer's directory (isolateEnv gave
+	// this test its own HOME): found, and the line says where
+	// (agentry-cli#167, #176).
+	known := filepath.Join(os.Getenv("HOME"), ".local", "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(known), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(known, []byte("#!/bin/sh\necho '2.1.263 (Claude Code)'\n"), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "claude")
+	if err != nil {
+		t.Fatalf("doctor failed with claude in a usual location: %v\n%s", err, out)
+	}
+	if want := "ok    harness:claude     " + known + " (2.1.263 (Claude Code)) — a usual install location, not on this process's PATH"; !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+
 	// The containerised default names its image as the check, not a path.
 	out, _, err = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath, "--adapter", "docker-agent")
 	if err != nil || !strings.Contains(out, "ok    adapter:docker-agent") {

@@ -52,6 +52,19 @@ func (hostTestAdapter) Compile(in adapter.Input) (adapter.Result, error) {
 	}, nil
 }
 
+// The test adapter is a HostHarness too, with one usual install location
+// under the home directory, so the envelope test below can prove a run
+// names the well-known path it actually ran (agentry-cli#176).
+func (hostTestAdapter) Executable() string    { return "agentry-hosttest" }
+func (hostTestAdapter) ProbeVersion() string  { return "" }
+func (hostTestAdapter) VersionArgv() []string { return []string{"--version"} }
+func (hostTestAdapter) InstallURL() string    { return "https://example.test/hosttest" }
+func (hostTestAdapter) DisplayName() string   { return "Host Test" }
+func (hostTestAdapter) MCPCommand() string    { return "" }
+func (hostTestAdapter) WellKnownPaths(string) []string {
+	return []string{"~/.hosttest/bin/agentry-hosttest"}
+}
+
 func (hostTestAdapter) Events(line []byte) []adapter.Event {
 	da, _ := adapter.Get(adapter.DefaultName)
 	return da.Events(line)
@@ -226,6 +239,7 @@ func TestRunHostHarnessWaitsForThePublishedPort(t *testing.T) {
 func TestRunHostHarnessNotInstalled(t *testing.T) {
 	p, f, _, _ := hostFixture(t)
 	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", t.TempDir()) // and not in its usual location either
 	env, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "not installed") || !strings.Contains(err.Error(), "harness.hosttest.path") {
@@ -253,6 +267,33 @@ func TestRunHostHarnessPolicyPath(t *testing.T) {
 	}
 	if _, err := os.Stat(envFile); err != nil {
 		t.Error("the policy-named harness did not run")
+	}
+}
+
+// With nothing on PATH and no policy path, the run finds the harness in
+// its usual install location and the envelope names that path — the
+// receipt says what ran (agentry-cli#176).
+func TestRunHostHarnessWellKnownLocation(t *testing.T) {
+	p, f, envFile, _ := hostFixture(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	known := filepath.Join(home, ".hosttest", "bin", "agentry-hosttest")
+	if err := os.MkdirAll(filepath.Dir(known), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(known, []byte(hostScript), 0o755); err != nil { //nolint:gosec // test script
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run with a well-known location: %v", err)
+	}
+	if !strings.HasPrefix(env.Harness.Host, known) {
+		t.Errorf("harness.host = %q, want the well-known path", env.Harness.Host)
+	}
+	if _, err := os.Stat(envFile); err != nil {
+		t.Error("the well-known harness did not run")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// Source says where a harness executable was found.
+// Source says where a harness executable was found. The values are wire
+// values: doctor prints them and the desktop's Coding agent step reads
+// them from the probe's JSON (agentry-desktop#131).
 type Source string
 
 const (
@@ -52,6 +55,32 @@ func Find(pol *policy.Policy, name string) (path string, source Source, err erro
 	return find(pol, name, hh)
 }
 
+// FindExecutable is Find for the engine, which holds the plan's command
+// name as well as the adapter's: when the adapter is not registered as a
+// host harness in this build, the lookup is the same rule over that
+// command name alone (no well-known locations, which only an adapter can
+// name), so the run and the probe never word a refusal differently.
+func FindExecutable(pol *policy.Policy, name, command string) (string, Source, error) {
+	if ad, err := adapter.Get(name); err == nil {
+		if hh, ok := ad.(adapter.HostHarness); ok {
+			return find(pol, name, hh)
+		}
+	}
+	return find(pol, name, commandOnly(command))
+}
+
+// commandOnly is a HostHarness with a name and no locations, for
+// FindExecutable's stand-in.
+type commandOnly string
+
+func (c commandOnly) Executable() string           { return string(c) }
+func (commandOnly) ProbeVersion() string           { return "" }
+func (commandOnly) VersionArgv() []string          { return nil }
+func (commandOnly) InstallURL() string             { return "" }
+func (commandOnly) DisplayName() string            { return "" }
+func (commandOnly) MCPCommand() string             { return "" }
+func (commandOnly) WellKnownPaths(string) []string { return nil }
+
 func find(pol *policy.Policy, name string, hh adapter.HostHarness) (string, Source, error) {
 	if pol != nil {
 		if hp := pol.Harness[name]; hp.Path != "" {
@@ -72,9 +101,8 @@ func find(pol *policy.Policy, name string, hh adapter.HostHarness) (string, Sour
 }
 
 // wellKnown returns the first template that expands to an existing
-// regular file. A template whose environment variable is unset, or whose
-// home directory cannot be found, is skipped rather than resolved to a
-// wrong place.
+// regular file, applying the rule adapter.HostHarness.WellKnownPaths
+// states — that comment is the definition; nothing here adds to it.
 func wellKnown(templates []string) (string, bool) {
 	for _, tpl := range templates {
 		p, ok := expand(tpl)
@@ -94,26 +122,30 @@ func wellKnown(templates []string) (string, bool) {
 	return "", false
 }
 
-// expand resolves "~" and "${VAR}" in a template into a path for this
-// platform; false when something it names does not exist.
+// bracedVar matches the one variable form the rule admits, "${NAME}".
+var bracedVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expand resolves a template into a path for this platform: the braced
+// variables first, then a whole-element leading "~"; false when a
+// variable is unset or empty, or the home directory cannot be found.
 func expand(tpl string) (string, bool) {
-	if strings.HasPrefix(tpl, "~") {
+	skip := false
+	tpl = bracedVar.ReplaceAllStringFunc(tpl, func(m string) string {
+		v, ok := os.LookupEnv(m[2 : len(m)-1])
+		if !ok || v == "" {
+			skip = true
+		}
+		return v
+	})
+	if skip {
+		return "", false
+	}
+	if tpl == "~" || strings.HasPrefix(tpl, "~/") {
 		home, err := homeDir()
 		if err != nil || home == "" {
 			return "", false
 		}
 		tpl = home + tpl[1:]
-	}
-	unset := false
-	tpl = os.Expand(tpl, func(name string) string {
-		v, ok := os.LookupEnv(name)
-		if !ok || v == "" {
-			unset = true
-		}
-		return v
-	})
-	if unset {
-		return "", false
 	}
 	return filepath.FromSlash(tpl), true
 }
@@ -127,7 +159,7 @@ func newestVersion(dir string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	best, bestVer := "", []int(nil)
+	best, bestVer, bestExe := "", []int(nil), false
 	for _, e := range entries {
 		p := filepath.Join(dir, e.Name())
 		if !isFile(p) {
@@ -137,31 +169,59 @@ func newestVersion(dir string) (string, bool) {
 		if v == nil {
 			continue
 		}
-		if best == "" || compareVersions(v, bestVer) > 0 {
-			best, bestVer = p, v
+		exe := hasExecutableExt(e.Name())
+		switch c := compareVersions(v, bestVer); {
+		case best == "", c > 0, c == 0 && exe && !bestExe:
+			// A newer build, or the same build under the name that
+			// runs: on Windows "2.1.275" beside "2.1.275.exe" is the
+			// one that does not.
+			best, bestVer, bestExe = p, v, exe
 		}
 	}
 	return best, best != ""
 }
 
+// executableExts are the Windows extensions a build may carry; stripped
+// before the version is read (filepath.Ext would take ".275" off
+// "2.1.275" and make every build the same version).
+var executableExts = []string{".exe", ".cmd", ".bat"}
+
+func hasExecutableExt(name string) bool {
+	lower := strings.ToLower(name)
+	for _, ext := range executableExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // versionOf reads the leading dotted number of a file name ("2.1.275",
-// "2.1.275.exe" → [2 1 275]); nil when the name does not start with one.
-// Only an executable's extension is stripped: filepath.Ext would take
-// ".275" off "2.1.275" and make every build the same version.
+// "2.1.275.exe", "2.1.275-beta" → [2 1 275]); nil when the name does not
+// start with one. Each segment is read up to its first non-digit, so a
+// prerelease suffix ends the number without demoting the build.
 func versionOf(name string) []int {
-	for _, ext := range []string{".exe", ".cmd", ".bat"} {
-		if strings.HasSuffix(strings.ToLower(name), ext) {
+	lower := strings.ToLower(name)
+	for _, ext := range executableExts {
+		if strings.HasSuffix(lower, ext) {
 			name = name[:len(name)-len(ext)]
 			break
 		}
 	}
 	var v []int
 	for _, part := range strings.Split(name, ".") {
-		n, err := strconv.Atoi(part)
+		digits := part
+		if i := strings.IndexFunc(part, func(r rune) bool { return r < '0' || r > '9' }); i >= 0 {
+			digits = part[:i]
+		}
+		n, err := strconv.Atoi(digits)
 		if err != nil {
 			break
 		}
 		v = append(v, n)
+		if len(digits) != len(part) {
+			break // "275-beta": the number ends here
+		}
 	}
 	return v
 }
