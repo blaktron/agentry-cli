@@ -223,3 +223,107 @@ func TestDockerAgentTextDeltas(t *testing.T) {
 		t.Fatalf("whole message: %+v", evs)
 	}
 }
+
+// The policy's "custom" provider is an OpenAI-compatible endpoint of the
+// operator's own; docker-agent has no provider of that name (1.128.0
+// refuses `unknown provider type "custom"`) and reaches such an endpoint
+// through its openai client with a base URL (agentry-cli#169, measured
+// on the pinned image).
+func TestDockerAgentCompileMapsCustomToTheOpenAIClient(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := testInput()
+	in.Model = policy.Model{
+		Provider:   "custom",
+		Name:       "qwen3.8-flash",
+		APIKeyEnv:  "CUSTOM_API_KEY",
+		BaseURL:    "https://llm.example.net/compatible-mode/v1",
+		ProxyAllow: []string{"llm.example.net:443"},
+	}
+	res, err := ad.Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y := string(res.Files["agent.yaml"])
+	for _, want := range []string{"provider: openai", "model: qwen3.8-flash", "base_url: https://llm.example.net/compatible-mode/v1"} {
+		if !strings.Contains(y, want) {
+			t.Errorf("agent.yaml missing %q:\n%s", want, y)
+		}
+	}
+	if strings.Contains(y, "provider: custom") {
+		t.Errorf("the harness does not know a provider called custom:\n%s", y)
+	}
+	if res.Model != "custom/qwen3.8-flash" {
+		t.Errorf("the receipt keeps the policy's name: %q", res.Model)
+	}
+}
+
+func TestDockerAgentCompileRefusesCustomWithoutABaseURL(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := testInput()
+	in.Model = policy.Model{Provider: "custom", Name: "m", APIKeyEnv: "CUSTOM_API_KEY"}
+	if _, err := ad.Compile(in); err == nil || !strings.Contains(err.Error(), "model.baseUrl") {
+		t.Fatalf("custom without a base URL must refuse naming the field: %v", err)
+	}
+}
+
+// docker-agent's clients read the credential from their own variable
+// (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY — measured on
+// 1.128.0, which refuses to start the anthropic and google clients
+// without theirs and ignores a config-level token_key for them), so the
+// container carries the key under that name whatever the policy calls
+// the host variable it comes from; the harness block's apiKeyEnv
+// override counts, as it does for the receipt (policy.KeyEnv).
+func TestDockerAgentCompileNamesTheKeyForTheHarnessClient(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyVar := func(res Result) (name, from string) {
+		for _, e := range res.Agent.Env {
+			if e.FromHostEnv != "" {
+				return e.Name, e.FromHostEnv
+			}
+		}
+		return "", ""
+	}
+	cases := []struct {
+		provider, policyVar, baseURL, wantName string
+	}{
+		{"anthropic", "MY_ANTHROPIC_KEY", "", "ANTHROPIC_API_KEY"},
+		{"google", "GOOGLE_API_KEY", "", "GEMINI_API_KEY"},
+		{"openai", "OPENAI_API_KEY", "", "OPENAI_API_KEY"},
+		{"custom", "CUSTOM_API_KEY", "https://llm.example.net/v1", "OPENAI_API_KEY"},
+		{"mistral", "MISTRAL_API_KEY", "", "MISTRAL_API_KEY"}, // a provider the harness knows and this table does not
+	}
+	for _, c := range cases {
+		in := testInput()
+		in.Model = policy.Model{Provider: c.provider, Name: "m", APIKeyEnv: c.policyVar, BaseURL: c.baseURL, ProxyAllow: []string{"x:443"}}
+		res, err := ad.Compile(in)
+		if err != nil {
+			t.Fatalf("%s: %v", c.provider, err)
+		}
+		if name, from := keyVar(res); name != c.wantName || from != c.policyVar {
+			t.Errorf("%s: key travels as %s from $%s; want %s from $%s", c.provider, name, from, c.wantName, c.policyVar)
+		}
+		if strings.Contains(string(res.Files["agent.yaml"]), "token_key") {
+			t.Errorf("%s: token_key is not a mechanism every client has:\n%s", c.provider, res.Files["agent.yaml"])
+		}
+	}
+	// The harness block's override names the host variable, as the
+	// receipt's model.apiKey line does.
+	in := testInput()
+	in.Harness = policy.HarnessPolicy{APIKeyEnv: "TEAM_ANTHROPIC_KEY"}
+	res, err := ad.Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, from := keyVar(res); name != "ANTHROPIC_API_KEY" || from != "TEAM_ANTHROPIC_KEY" {
+		t.Errorf("harness override: key travels as %s from $%s", name, from)
+	}
+}

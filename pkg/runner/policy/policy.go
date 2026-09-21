@@ -231,7 +231,11 @@ type Images struct {
 // Model configures the operator-owned model endpoint (annex Q-R2: the key
 // is always the operator's; packages never carry or suggest credentials).
 type Model struct {
-	// Provider is the harness provider name (anthropic, openai, …).
+	// Provider is the provider name: one of the setup table's
+	// (anthropic, openai, google), "custom" for an OpenAI-compatible
+	// endpoint of the operator's own (BaseURL required; the docker-agent
+	// adapter renders it as the harness's openai client pointed at that
+	// URL, agentry-cli#169), or a provider name the harness itself knows.
 	Provider string `yaml:"provider"`
 	// Name is the model id.
 	Name string `yaml:"name"`
@@ -560,11 +564,17 @@ images:
   pythonRuntime: python:3.12-alpine
 
 model:
+  # anthropic | openai | google, or custom for an OpenAI-compatible
+  # endpoint of your own (then baseUrl is required and proxyAllow names
+  # its host:port; the harness reaches it through its openai client).
   provider: anthropic
   name: claude-sonnet-4-5
   # The env var holding YOUR api key. Keys are operator-owned; packages
-  # never carry them.
+  # never carry them. The run reads the value from this variable (or the
+  # keychain, apiKeySource: keyring) and hands it to the harness under
+  # the name its client expects for the provider.
   apiKeyEnv: ANTHROPIC_API_KEY
+  # baseUrl: https://llm.internal:8443/v1   # custom only
   # The llm-proxy CONNECT allowlist: the agent container can reach these
   # host:port pairs and nothing else. Keep it to model endpoints.
   proxyAllow:

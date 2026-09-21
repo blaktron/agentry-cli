@@ -19,7 +19,7 @@
         "fromRunToken": true
       },
       {
-        "name": "FIXTURE_API_KEY",
+        "name": "OPENAI_API_KEY",
         "fromHostEnv": "FIXTURE_API_KEY"
       },
       {

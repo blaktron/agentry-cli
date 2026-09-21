@@ -747,5 +747,8 @@ func hostSecret(v spec.EnvVar) (string, error) {
 		}
 		return val, nil
 	}
-	return "", fmt.Errorf("required environment variable %s is not set (policy names it for %s)", v.FromHostEnv, v.Name)
+	if v.Name != v.FromHostEnv {
+		return "", fmt.Errorf("required environment variable %s is not set (the policy names it; the harness reads it as %s)", v.FromHostEnv, v.Name)
+	}
+	return "", fmt.Errorf("required environment variable %s is not set (the policy names it)", v.FromHostEnv)
 }
