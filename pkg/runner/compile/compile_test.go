@@ -928,3 +928,47 @@ func TestModelKeySource(t *testing.T) {
 		t.Fatalf("harness env overrides: %q %q", env, acct)
 	}
 }
+
+// TestCompileRefusesAPathOutsideTheWorkspace: a filesystem path in the
+// manifest becomes a bind-mount specification by concatenation, so the
+// compiler judges every path itself — whatever the manifest layer promised
+// — and refuses one that would leave the run workspace or break the volume
+// string (security review 2026-09-20 §4.2, C3).
+func TestCompileRefusesAPathOutsideTheWorkspace(t *testing.T) {
+	base := "schemaVersion: \"2\"\nname: paths\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"p\"\nentrypoints:\n  instruction: SKILL.md\npublish:\n  include: [agent.yaml, SKILL.md]\n"
+	refused := map[string]string{
+		"parent traversal":            "capabilities:\n  filesystem:\n    write: { paths: [\"../../../../home/victim/.ssh\"] }\n",
+		"nested traversal":            "capabilities:\n  filesystem:\n    read: { paths: [\"docs/../../etc\"] }\n",
+		"absolute":                    "capabilities:\n  filesystem:\n    write: { paths: [\"/etc\"] }\n",
+		"colon":                       "capabilities:\n  filesystem:\n    read: { paths: [\"a:b\"] }\n",
+		"dot":                         "capabilities:\n  filesystem:\n    write: { paths: [\".\"] }\n",
+		"empty":                       "capabilities:\n  filesystem:\n    write: { paths: [\"\"] }\n",
+		"unclean":                     "capabilities:\n  filesystem:\n    read: { paths: [\"a//b\"] }\n",
+		"whole read, write traversal": "capabilities:\n  filesystem:\n    read: workspace\n    write: { paths: [\"../out\"] }\n",
+	}
+	for name, caps := range refused {
+		t.Run(name, func(t *testing.T) {
+			m := parseManifest(t, base+caps)
+			ws := workspaceFor(t, m, nil)
+			_, err := Compile(Inputs{
+				Manifest: m, Digest: "sha256:x", Source: "registry", WorkspaceDir: ws,
+				Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test",
+			}, t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), "filesystem path") {
+				t.Fatalf("want a filesystem path refusal, got %v", err)
+			}
+		})
+	}
+	// The shapes a manifest may use compile to binds under the workspace.
+	m := parseManifest(t, base+"capabilities:\n  filesystem:\n    read: { paths: [docs, \"data/in.csv\"] }\n    write: { paths: [reports, \"notes/summary.md\"] }\n")
+	compileFixture(t, m, workspaceFor(t, m, nil))
+	caps, err := summarizeCapabilities(m, testPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range workspaceVolumes(caps) {
+		if !strings.HasPrefix(v, spec.PHWorkspace+"/") || strings.Contains(v, "..") {
+			t.Fatalf("bind outside the workspace: %q", v)
+		}
+	}
+}

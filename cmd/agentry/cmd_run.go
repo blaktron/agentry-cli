@@ -246,6 +246,16 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitCompile, err)
 	}
+	// An install cached before the registry path validated (agentry-cli#158)
+	// is held to the same rules at run; the compiler refuses the mount
+	// shapes on its own besides.
+	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
+		msgs := make([]string, 0, len(blocking))
+		for _, e := range blocking {
+			msgs = append(msgs, e.Error())
+		}
+		return engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid:\n  %s", meta.Ref, strings.Join(msgs, "\n  ")))
+	}
 
 	// The §R5 capability gate: same semantics as install — egress/exec
 	// (or a widened contract vs the last accepted run) needs consent.
@@ -856,6 +866,16 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	if err := pkgarchive.Extract(bytes.NewReader(archive), staging, int64(len(archive)), installExtractLimits()); err != nil {
 		return nil, "", engine.Classify(engine.ExitVerify, fmt.Errorf("extract archive: %w", err))
 	}
+	// The verified archive's own manifest, held to the publish rules before
+	// it is cached as a verified install: the resolve response's copy is
+	// not covered by the digest, and the registry's validation is not ours.
+	m, err := manifestFromWorkspace(staging)
+	if err != nil {
+		return nil, "", engine.Classify(engine.ExitCompile, err)
+	}
+	if err := requireValidManifest(cmd, m, fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version)); err != nil {
+		return nil, "", err
+	}
 
 	meta := &installMeta{
 		Ref:       fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version),
@@ -925,22 +945,8 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 	if err != nil {
 		return nil, "", engine.Classify(engine.ExitCompile, err)
 	}
-	// Warnings (e.g. the V5 "*" egress flag) surface but do not block —
-	// same split the registry applies at publish; the RUN-time gate for
-	// wildcard egress is the policy check in the compiler (§R4).
-	errs := manifest.Validate(m)
-	for _, e := range errs {
-		if manifest.IsWarning(e) {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", e)
-		}
-	}
-	if blocking := manifest.Blocking(errs); len(blocking) > 0 {
-		msgs := make([]string, 0, len(blocking))
-		for _, e := range blocking {
-			msgs = append(msgs, e.Error())
-		}
-		return nil, "", engine.Classify(engine.ExitCompile,
-			fmt.Errorf("local package manifest invalid:\n  %s", strings.Join(msgs, "\n  ")))
+	if err := requireValidManifest(cmd, m, "local package"); err != nil {
+		return nil, "", err
 	}
 	digest, err := localTreeDigest(dir)
 	if err != nil {
@@ -1126,6 +1132,34 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	state.Upsert(key, meta.Version, next, false)
 	if err := installed.Save(state); err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v — the next run will re-ask about capabilities\n", err)
+	}
+	return nil
+}
+
+// requireValidManifest holds a manifest to the registry's own publish rules
+// before anything is compiled from it. Warnings (e.g. the V5 "*" egress
+// flag) surface but do not block — same split the registry applies at
+// publish; the RUN-time gate for wildcard egress is the policy check in the
+// compiler (§R4). A blocking error is a compile refusal naming every rule.
+// Both materialize paths call this before caching: a --local tree because
+// nobody else has, and a registry release because the registry's
+// validation is that registry's — a self-hosted one whose rules predate
+// today's, or a compromised one, is exactly the trust the digest check
+// refuses to extend elsewhere (security review 2026-09-20 §4.2).
+func requireValidManifest(cmd *cobra.Command, m *manifest.Manifest, what string) error {
+	errs := manifest.Validate(m)
+	for _, e := range errs {
+		if manifest.IsWarning(e) {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", e)
+		}
+	}
+	if blocking := manifest.Blocking(errs); len(blocking) > 0 {
+		msgs := make([]string, 0, len(blocking))
+		for _, e := range blocking {
+			msgs = append(msgs, e.Error())
+		}
+		return engine.Classify(engine.ExitCompile,
+			fmt.Errorf("%s manifest invalid:\n  %s", what, strings.Join(msgs, "\n  ")))
 	}
 	return nil
 }
