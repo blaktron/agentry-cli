@@ -10,11 +10,13 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -57,6 +59,48 @@ type modelYAML struct {
 	BaseURL string `yaml:"base_url,omitempty"`
 }
 
+// customProvider is the policy's name for an OpenAI-compatible endpoint
+// of the operator's own (setup's "custom"); docker-agent has no provider
+// of that name — 1.128.0 refuses it as `unknown provider type "custom"` —
+// and reaches such an endpoint through its openai client with a base
+// URL, which is what the rendered config names (agentry-cli#169).
+const customProvider = "custom"
+
+// harnessProvider maps the policy's provider name to docker-agent's.
+func harnessProvider(m policy.Model) (string, error) {
+	if m.Provider != customProvider {
+		return m.Provider, nil
+	}
+	if m.BaseURL == "" {
+		return "", errors.New("docker-agent adapter: provider custom needs model.baseUrl (the endpoint the openai client is pointed at)")
+	}
+	return "openai", nil
+}
+
+// harnessKeyVar is the variable docker-agent's client for a provider
+// reads its credential from, measured on 1.128.0 (agentry-cli#169): the
+// anthropic client requires ANTHROPIC_API_KEY, the google client
+// GOOGLE_API_KEY or GEMINI_API_KEY, the openai client OPENAI_API_KEY —
+// and only the openai client honours a config-level token_key, so a
+// variable named in the config is not a mechanism the others have. The
+// container therefore carries the key under the client's own name, and
+// the policy's apiKeyEnv (whatever it is called) is only where the value
+// comes FROM on the host. A provider docker-agent knows that this table
+// does not (mistral, azure, …) keeps the policy's name, which is then
+// the operator's to get right.
+func harnessKeyVar(harnessProvider, policyVar string) string {
+	switch harnessProvider {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	case "google":
+		return "GEMINI_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	default:
+		return policyVar
+	}
+}
+
 type agntYAML struct {
 	Model       string `yaml:"model"`
 	Description string `yaml:"description,omitempty"`
@@ -90,6 +134,11 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	if in.HarnessImage == "" {
 		return Result{}, fmt.Errorf("docker-agent adapter: no harness image pinned")
 	}
+	provider, err := harnessProvider(in.Model)
+	if err != nil {
+		return Result{}, err
+	}
+	keyEnv := policy.KeyEnv(in.Harness, in.Model)
 
 	// Schema-shaped output is requested through the prompt and validated
 	// by the engine before exit (§R2, DR-8 in the deviations register
@@ -107,7 +156,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
-				Provider: in.Model.Provider,
+				Provider: provider,
 				Model:    in.Model.Name,
 				BaseURL:  in.Model.BaseURL,
 			},
@@ -187,7 +236,10 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		Argv:  argv,
 		Env: []spec.EnvVar{
 			{Name: spec.GatewayTokenEnv, FromRunToken: true},
-			{Name: in.Model.APIKeyEnv, FromHostEnv: in.Model.APIKeyEnv, FromKeyring: keyringAccount(in)},
+			// The key, under the name the harness's client reads it by,
+			// from the variable the policy names (the harness block's
+			// override first, as the receipt's line says: policy.KeyEnv).
+			{Name: harnessKeyVar(provider, keyEnv), FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)},
 			// The proxy is the agent container's only route out (§R4);
 			// NO_PROXY keeps MCP traffic direct on the run network.
 			{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},

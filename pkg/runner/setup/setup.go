@@ -109,10 +109,13 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 
 	d := DefaultsFor(prov)
 	if d == nil && prov != "custom" {
-		// An unlisted provider name is treated as custom-with-a-name:
-		// docker-agent accepts many providers; the table only carries the
-		// ones whose endpoints we can derive.
-		p.Say(fmt.Sprintf("provider %q is not in the built-in table; treating it as a custom/OpenAI-compatible endpoint", prov))
+		// An unlisted provider name is passed to the harness as it is:
+		// docker-agent knows more providers than the table, which only
+		// carries the ones whose endpoints we can derive — but it does
+		// not know "custom", which the adapter renders as its openai
+		// client at the base URL (agentry-cli#169), and it will not know
+		// a name made up here.
+		p.Say(fmt.Sprintf("provider %q is not in the built-in table; the harness must know it by that name — for an OpenAI-compatible endpoint of your own, use custom with --base-url", prov))
 	}
 
 	// A provider switch prefers the new provider's table defaults; staying
