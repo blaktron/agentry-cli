@@ -84,6 +84,24 @@ func (c *codexAdapter) ProbeVersion() string  { return codexProbeVersion }
 func (c *codexAdapter) VersionArgv() []string { return []string{"--version"} }
 func (c *codexAdapter) InstallURL() string    { return "https://github.com/openai/codex" }
 func (c *codexAdapter) DisplayName() string   { return "Codex" }
+
+// WellKnownPaths implements HostHarness. The standalone installer's
+// ~/.local/bin/codex links to ~/.codex/packages/standalone/current/bin/
+// codex (read on a Linux workstation); the Codex app on macOS carries its
+// CLI at Contents/Resources/bin/codex (openai/codex#19041). The Windows
+// spellings are the standalone layout with .exe and npm's global shim,
+// not verified here.
+func (c *codexAdapter) WellKnownPaths(goos string) []string {
+	switch goos {
+	case "windows":
+		return []string{`~/.local/bin/codex.exe`, `~/.codex/packages/standalone/current/bin/codex.exe`, `${APPDATA}/npm/codex.cmd`}
+	case "darwin":
+		return []string{"~/.local/bin/codex", "~/.codex/packages/standalone/current/bin/codex", "/Applications/Codex.app/Contents/Resources/bin/codex"}
+	default:
+		return []string{"~/.local/bin/codex", "~/.codex/packages/standalone/current/bin/codex"}
+	}
+}
+
 func (c *codexAdapter) MCPCommand() string {
 	return "codex mcp add agentry -- node /path/to/agentry-mcp/dist/index.js"
 }

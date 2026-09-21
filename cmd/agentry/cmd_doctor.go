@@ -208,6 +208,8 @@ func doctorHarness(ctx context.Context, rep *doctorReport, pol *policy.Policy, n
 		for _, w := range r.Warnings {
 			rep.warn(check, "%s", w)
 		}
+	} else if r.Source == harnessprobe.SourceKnown {
+		rep.ok(check, "%s (%s) — a usual install location, not on this process's PATH", r.Path, r.Version)
 	} else {
 		rep.ok(check, "%s (%s)", r.Path, r.Version)
 	}

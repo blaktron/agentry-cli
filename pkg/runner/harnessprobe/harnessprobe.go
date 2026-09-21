@@ -1,8 +1,8 @@
 // Package harnessprobe describes the host-run harness behind an adapter
 // name on this machine: whether its executable resolves (from the operator
-// policy's harness.<name>.path or PATH), which release it is, and whether
-// the endpoint the policy points it at is one the run's proxy would let
-// through. It reads, and executes nothing but the harness's own version
+// policy's harness.<name>.path, PATH, or the adapter's well-known install
+// locations), which release it is, and whether the endpoint the policy
+// points it at is one the run's proxy would let through. It reads, and executes nothing but the harness's own version
 // flag; it writes nothing.
 //
 // `agentry doctor --adapter <name>` renders these facts as checks, and the
@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -67,6 +66,10 @@ type Result struct {
 	Path string `json:"path,omitempty"`
 	// PathFromPolicy is true when Path came from harness.<name>.path.
 	PathFromPolicy bool `json:"pathFromPolicy,omitempty"`
+	// Source says where Path was found: the policy, PATH, or one of the
+	// adapter's well-known install locations (agentry-cli#167). "" when
+	// Found is false.
+	Source Source `json:"source,omitempty"`
 	// Found is true when an executable resolved.
 	Found bool `json:"found"`
 	// Reason says why Known or Found is false, in the run's own words.
@@ -133,22 +136,13 @@ func Probe(ctx context.Context, pol *policy.Policy, name string) Result {
 	if pol != nil {
 		hp = pol.Harness[name]
 	}
-	switch {
-	case hp.Path != "":
-		if _, statErr := os.Stat(hp.Path); statErr != nil {
-			r.Reason = fmt.Sprintf("policy harness.%s.path %s: %v", name, hp.Path, statErr)
-			return withEndpointCheck(r, pol, hp)
-		}
-		r.Path, r.PathFromPolicy, r.Found = hp.Path, true, true
-	default:
-		path, lerr := lookPath(hh.Executable())
-		if lerr != nil {
-			r.Reason = fmt.Sprintf("%s is not installed on this machine (not on PATH) — install it, or set harness.%s.path in the policy",
-				hh.Executable(), name)
-			return withEndpointCheck(r, pol, hp)
-		}
-		r.Path, r.Found = path, true
+	path, source, ferr := find(pol, name, hh)
+	if ferr != nil {
+		r.Reason = ferr.Error()
+		return withEndpointCheck(r, pol, hp)
 	}
+	r.Path, r.Source, r.Found = path, source, true
+	r.PathFromPolicy = source == SourcePolicy
 
 	vctx := ctx
 	if _, has := ctx.Deadline(); !has {

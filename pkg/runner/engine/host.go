@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/procx"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -75,11 +77,24 @@ const (
 	publishedPortPoll    = 100 * time.Millisecond
 )
 
-// resolveHostCommand finds the harness executable: the policy's
-// harness.<adapter>.path when set, else a PATH lookup of the plan's
-// command name. Not installed is a not-runnable refusal (exit 12) with the
-// remedy in the message.
+// resolveHostCommand finds the harness executable the way the probe does
+// (harnessprobe.Find: the policy's harness.<adapter>.path when set, else
+// PATH, else the adapter's well-known install locations), so a run finds
+// exactly what doctor reported and what the desktop's wizard showed. A
+// plan whose adapter this build does not know as a host harness keeps
+// the plain rule: the policy path, else a PATH lookup of the plan's
+// command name. Not installed is a not-runnable refusal (exit 12) with
+// the remedy in the message.
 func resolveHostCommand(pol *policy.Policy, adapterName, command string) (string, error) {
+	if ad, err := adapter.Get(adapterName); err == nil {
+		if _, ok := ad.(adapter.HostHarness); ok {
+			path, _, ferr := harnessprobe.Find(pol, adapterName)
+			if ferr != nil {
+				return "", Classify(ExitCompile, fmt.Errorf("harness %s: %w", adapterName, ferr))
+			}
+			return path, nil
+		}
+	}
 	if pol != nil {
 		if hp, ok := pol.Harness[adapterName]; ok && hp.Path != "" {
 			if _, err := os.Stat(hp.Path); err != nil {

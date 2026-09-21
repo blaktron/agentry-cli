@@ -255,3 +255,39 @@ func TestRunHostHarnessPolicyPath(t *testing.T) {
 		t.Error("the policy-named harness did not run")
 	}
 }
+
+// A real host adapter resolves through harnessprobe.Find, so a run finds
+// the harness where doctor found it: here the native installer's
+// ~/.local/bin, with nothing on PATH (agentry-cli#167). The policy's path
+// still comes first, and a policy path that is not there is the refusal
+// it always was.
+func TestResolveHostCommandUsesTheWellKnownLocations(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir())
+	exe := filepath.Join(home, ".local", "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho 2.1.263\n"), 0o755); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+	got, err := resolveHostCommand(policy.Default(), adapter.ClaudeAdapterName, "claude")
+	if err != nil || got != exe {
+		t.Fatalf("resolve = %q, %v", got, err)
+	}
+	pol := policy.Default()
+	pol.Harness = map[string]policy.HarnessPolicy{adapter.ClaudeAdapterName: {Path: filepath.Join(home, "nowhere")}}
+	_, err = resolveHostCommand(pol, adapter.ClaudeAdapterName, "claude")
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "policy harness.claude.path") {
+		t.Fatalf("a missing policy path must refuse, not fall back: %v", err)
+	}
+	if err := os.Remove(exe); err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolveHostCommand(policy.Default(), adapter.ClaudeAdapterName, "claude")
+	if !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "usual install locations") {
+		t.Fatalf("nothing anywhere: %v", err)
+	}
+}
