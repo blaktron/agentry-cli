@@ -289,3 +289,20 @@ func keyringAccount(in Input) string {
 	}
 	return modelkey.Account(in.Model.Provider)
 }
+
+// anthropicKeyExpectation is the credential kind the plan is rendered
+// for, for the engine to hold the resolved value against
+// (agentry-cli#171). Only an Anthropic-shaped credential has two kinds:
+// the claude adapter attaches it always (its credential is Anthropic's
+// shape whatever endpoint the policy names), the docker-agent adapter
+// when its client is the anthropic one.
+func anthropicKeyExpectation(in Input) *spec.CredentialKind {
+	return &spec.CredentialKind{Provider: policy.ProviderAnthropic, Kind: policy.KeyKind(in.Harness, in.Model)}
+}
+
+// Refusal is an adapter's policy-shaped refusal at compile time: the
+// compiler reports it as a refusal by policy (exit 11), not a compile
+// failure, because the policy is what has to change.
+type Refusal struct{ Reason string }
+
+func (r *Refusal) Error() string { return r.Reason }

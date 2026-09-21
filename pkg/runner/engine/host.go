@@ -93,6 +93,30 @@ func resolveHostCommand(pol *policy.Policy, adapterName, command string) (string
 	return path, nil
 }
 
+// ancestorFile walks from dir up to the root and returns the first of
+// names that exists in any directory on the way (dir itself included),
+// "" when none does. Names are relative and may have a directory part.
+func ancestorFile(dir string, names []string) (string, error) {
+	if len(names) == 0 {
+		return "", nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("harness dir: %w", err)
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		for _, name := range names {
+			p := filepath.Join(d, filepath.FromSlash(name))
+			if _, err := os.Lstat(p); err == nil {
+				return p, nil
+			}
+		}
+		if filepath.Dir(d) == d {
+			return "", nil
+		}
+	}
+}
+
 // startHostProcess starts the harness process with stdin/stdout/stderr
 // wired as given and returns a wait function (exit code, or a run error),
 // plus the executable and version line for the receipts.
@@ -122,6 +146,12 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	dir := filepath.Join(rd.cfg, "harness")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, "", Classify(ExitCLI, fmt.Errorf("harness dir: %w", err))
+	}
+	if found, err := ancestorFile(dir, hs.RefuseAncestorFiles); err != nil {
+		return nil, "", Classify(ExitCLI, err)
+	} else if found != "" {
+		return nil, "", Classify(ExitPolicy, fmt.Errorf("harness %s: %s would enter the run as context — the harness reads it from every ancestor of its working directory, and this run has no --bare to skip it; move it, or use an API key (agentry-cli#171)",
+			p.Plan.Harness.Adapter, found))
 	}
 	info := path
 	if len(hs.VersionArgv) > 0 {

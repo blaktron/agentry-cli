@@ -105,3 +105,45 @@ func TestReceiptNamesTheModelKeySource(t *testing.T) {
 		}
 	}
 }
+
+// The plan fixed the harness's argv and variable by the credential's
+// kind (agentry-cli#171); a value of another kind is refused by name
+// rather than run against the wrong plan, from the environment and from
+// the keychain alike. A shape this build does not know passes as an API
+// key.
+func TestHostSecretHoldsTheValueAgainstTheKindThePlanExpects(t *testing.T) {
+	fakeKeyring(t, map[string]string{"provider:anthropic": "sk-ant-oat01-fromkeyring"})
+	expectAPI := &spec.CredentialKind{Provider: "anthropic", Kind: "api"}
+	expectSub := &spec.CredentialKind{Provider: "anthropic", Kind: "subscription"}
+
+	t.Setenv("TEST_MODEL_KEY", "sk-ant-oat01-secret")
+	_, err := hostSecret(spec.EnvVar{Name: "ANTHROPIC_AUTH_TOKEN", FromHostEnv: "TEST_MODEL_KEY", ExpectedKind: expectAPI})
+	if err == nil || !strings.Contains(err.Error(), "policy says the credential is api") || !strings.Contains(err.Error(), "$TEST_MODEL_KEY is subscription") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("subscription token under an api plan: %v", err)
+	}
+	if got, err := hostSecret(spec.EnvVar{Name: "CLAUDE_CODE_OAUTH_TOKEN", FromHostEnv: "TEST_MODEL_KEY", ExpectedKind: expectSub}); err != nil || got != "sk-ant-oat01-secret" {
+		t.Fatalf("subscription token under a subscription plan: %q %v", got, err)
+	}
+
+	t.Setenv("TEST_MODEL_KEY", "sk-ant-api03-secret")
+	_, err = hostSecret(spec.EnvVar{Name: "CLAUDE_CODE_OAUTH_TOKEN", FromHostEnv: "TEST_MODEL_KEY", ExpectedKind: expectSub})
+	if err == nil || !strings.Contains(err.Error(), "is api") {
+		t.Fatalf("api key under a subscription plan: %v", err)
+	}
+	t.Setenv("TEST_MODEL_KEY", "sk-ant-admin01-odd")
+	if _, err := hostSecret(spec.EnvVar{Name: "ANTHROPIC_AUTH_TOKEN", FromHostEnv: "TEST_MODEL_KEY", ExpectedKind: expectAPI}); err != nil {
+		t.Fatalf("an unknown shape passes as an api key: %v", err)
+	}
+
+	// The keychain value is held to the same rule, and named as the source.
+	t.Setenv("TEST_MODEL_KEY", "")
+	_, err = hostSecret(spec.EnvVar{Name: "ANTHROPIC_AUTH_TOKEN", FromHostEnv: "TEST_MODEL_KEY", FromKeyring: "provider:anthropic", ExpectedKind: expectAPI})
+	if err == nil || !strings.Contains(err.Error(), "the OS keychain entry provider:anthropic is subscription") {
+		t.Fatalf("keychain: %v", err)
+	}
+	// No expectation: any value passes (the other providers).
+	t.Setenv("TEST_MODEL_KEY", "anything")
+	if got, err := hostSecret(spec.EnvVar{Name: "OPENAI_API_KEY", FromHostEnv: "TEST_MODEL_KEY"}); err != nil || got != "anything" {
+		t.Fatalf("no expectation: %q %v", got, err)
+	}
+}

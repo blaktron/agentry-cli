@@ -458,3 +458,52 @@ func TestConfigureModelOfferFailuresPropagate(t *testing.T) {
 type failingConfirmingPrompter struct{ failingPrompter }
 
 func (f *failingConfirmingPrompter) Confirm(string, bool) (bool, error) { return true, f.step() }
+
+// The credential's kind (agentry-cli#171) is read from the key at the
+// one moment the flow holds it: a subscription token stored for
+// anthropic records apiKeyKind subscription and says what it drives; an
+// API key records nothing (api is the default, unwritten); a
+// variable-only setup takes the kind as an option; a switch of provider
+// drops a kind that was the old provider's; a bad kind is refused.
+func TestConfigureModelRecordsTheCredentialKind(t *testing.T) {
+	store := func(string, string) error { return nil }
+	p := &scriptPrompter{answers: []string{"anthropic", "", "", "sk-ant-oat01-secret"}, confirm: true}
+	pol := policy.Default()
+	if err := ConfigureModel(p, pol, ModelOpts{StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeyKind != "subscription" {
+		t.Fatalf("kind = %q", pol.Model.APIKeyKind)
+	}
+	said := strings.Join(p.said, "\n")
+	if !strings.Contains(said, "Claude Code only") || strings.Contains(said, "secret") {
+		t.Fatalf("said = %q", p.said)
+	}
+
+	p = &scriptPrompter{answers: []string{"anthropic", "", "", "sk-ant-api03-secret"}, confirm: true}
+	pol = policy.Default()
+	if err := ConfigureModel(p, pol, ModelOpts{StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeyKind != "" || strings.Contains(strings.Join(p.said, "\n"), "Claude Code only") {
+		t.Fatalf("an API key: kind = %q, said = %q", pol.Model.APIKeyKind, p.said)
+	}
+
+	pol = policy.Default()
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "anthropic", APIKeyKind: "subscription", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.APIKeyKind != "subscription" {
+		t.Fatalf("option: kind = %q", pol.Model.APIKeyKind)
+	}
+	// Staying on the provider keeps the kind; switching drops it.
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "anthropic", Model: "claude-opus-5", Yes: true}); err != nil || pol.Model.APIKeyKind != "subscription" {
+		t.Fatalf("same provider: kind = %q %v", pol.Model.APIKeyKind, err)
+	}
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "openai", Yes: true}); err != nil || pol.Model.APIKeyKind != "" {
+		t.Fatalf("switched provider: kind = %q %v", pol.Model.APIKeyKind, err)
+	}
+	if err := ConfigureModel(&scriptPrompter{}, policy.Default(), ModelOpts{Provider: "anthropic", APIKeyKind: "oauth", Yes: true}); err == nil || !strings.Contains(err.Error(), "api key kind") {
+		t.Fatalf("bad kind: %v", err)
+	}
+}

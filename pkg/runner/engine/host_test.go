@@ -28,6 +28,10 @@ import (
 // real harness.
 type hostTestAdapter struct{}
 
+// hostTestRefuse is what the test adapter names as ambient context to
+// refuse over (agentry-cli#171); nil for every other test.
+var hostTestRefuse []string
+
 func (hostTestAdapter) Name() string { return "hosttest" }
 
 func (hostTestAdapter) Compile(in adapter.Input) (adapter.Result, error) {
@@ -43,9 +47,10 @@ func (hostTestAdapter) Compile(in adapter.Input) (adapter.Result, error) {
 				{Name: "HTTP_PROXY", Value: spec.PHHostProxyURL},
 				{Name: "NO_PROXY", Value: "127.0.0.1,localhost"},
 			},
-			InheritEnv:  []string{"PATH", "HOME", "AGENTRY_HOSTTEST_ENVFILE", "AGENTRY_HOSTTEST_TASKFILE"},
-			VersionArgv: []string{"--version"},
-			StdinTask:   in.Mode != manifest.ModeInteractive,
+			InheritEnv:          []string{"PATH", "HOME", "AGENTRY_HOSTTEST_ENVFILE", "AGENTRY_HOSTTEST_TASKFILE"},
+			VersionArgv:         []string{"--version"},
+			StdinTask:           in.Mode != manifest.ModeInteractive,
+			RefuseAncestorFiles: hostTestRefuse,
 		},
 		Model:      in.Model.Provider + "/" + in.Model.Name,
 		ResultKind: "text",
@@ -330,5 +335,59 @@ func TestResolveHostCommandUsesTheWellKnownLocations(t *testing.T) {
 	_, err = resolveHostCommand(policy.Default(), adapter.ClaudeAdapterName, "claude")
 	if !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "usual install locations") {
 		t.Fatalf("nothing anywhere: %v", err)
+	}
+}
+
+// A harness that reads context from its ancestors names the files in
+// the plan; the engine refuses the run when one is there, naming it
+// (agentry-cli#171): the invariant is measured, not assumed.
+func TestRunHostHarnessRefusesAmbientContextInAnAncestor(t *testing.T) {
+	if found, err := ancestorFile(t.TempDir(), nil); err != nil || found != "" {
+		t.Fatalf("nothing named: %q %v", found, err)
+	}
+	root := t.TempDir()
+	deep := filepath.Join(root, "a", "b", "harness")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := ancestorFile(deep, []string{"CLAUDE.md", ".claude/rules"}); err != nil || found != "" {
+		t.Fatalf("clean tree: %q %v", found, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("# mine"), 0o644); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+	if found, _ := ancestorFile(deep, []string{"CLAUDE.md", ".claude/rules"}); found != filepath.Join(root, "CLAUDE.md") {
+		t.Fatalf("an ancestor's CLAUDE.md: %q", found)
+	}
+	if err := os.Remove(filepath.Join(root, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "a", ".claude", "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if found, _ := ancestorFile(deep, []string{"CLAUDE.md", ".claude/rules"}); found != filepath.Join(root, "a", ".claude", "rules") {
+		t.Fatalf("a rules directory: %q", found)
+	}
+
+	// Through the engine: the run is refused before the process starts,
+	// as a policy refusal naming the file, and nothing is left behind.
+	// (The fixture compiles the plan, so the adapter must name the file
+	// before it runs.)
+	hostTestRefuse = []string{"CLAUDE.md"}
+	t.Cleanup(func() { hostTestRefuse = nil })
+	p, f, envFile, _ := hostFixture(t)
+	if err := os.WriteFile(filepath.Join(p.RunRoot, "CLAUDE.md"), []byte("# ambient"), 0o644); err != nil { //nolint:gosec // a test fixture
+		t.Fatal(err)
+	}
+	_, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "CLAUDE.md would enter the run") {
+		t.Fatalf("ambient context: %v", err)
+	}
+	if _, err := os.Stat(envFile); err == nil {
+		t.Error("the harness ran")
+	}
+	if f.Leftover != nil {
+		t.Errorf("leftovers: %v", f.Leftover)
 	}
 }

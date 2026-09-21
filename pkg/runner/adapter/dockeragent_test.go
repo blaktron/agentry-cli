@@ -327,3 +327,48 @@ func TestDockerAgentCompileNamesTheKeyForTheHarnessClient(t *testing.T) {
 		t.Errorf("harness override: key travels as %s from $%s", name, from)
 	}
 }
+
+// An Anthropic subscription token is admitted from Claude Code alone —
+// by Anthropic's terms and by the API — so the container harness refuses
+// it at compile time, naming the harness that can use it and the key
+// this one needs (agentry-cli#171). The refusal is a plan-time fact, so
+// `agentry run --plan` shows it before any container starts.
+func TestDockerAgentCompileRefusesASubscriptionToken(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := testInput()
+	in.Model.APIKeyKind = policy.KeyKindSubscription
+	_, err = ad.Compile(in)
+	if err == nil {
+		t.Fatal("a subscription token must be refused by the container harness")
+	}
+	for _, want := range []string{"subscription token", "Claude Code", "--adapter claude", "API key"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q lacks %q", err, want)
+		}
+	}
+	// An API key's plan holds the value to that kind at run time.
+	res, err := ad.Compile(testInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range res.Agent.Env {
+		if e.FromHostEnv != "" && (e.ExpectedKind == nil || e.ExpectedKind.Kind != "api" || e.ExpectedKind.Provider != "anthropic") {
+			t.Errorf("the key's env does not record the api kind: %+v", e)
+		}
+	}
+	// Other providers have one kind of key: nothing to expect.
+	in = testInput()
+	in.Model = policy.Model{Provider: "openai", Name: "m", APIKeyEnv: "OPENAI_API_KEY", ProxyAllow: []string{"x:443"}}
+	res, err = ad.Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range res.Agent.Env {
+		if e.FromHostEnv != "" && e.ExpectedKind != nil {
+			t.Errorf("openai's key carries an expectation: %+v", e)
+		}
+	}
+}

@@ -359,3 +359,24 @@ func TestDoctorModelKeyFromTheKeychain(t *testing.T) {
 type errStubDoctor string
 
 func (e errStubDoctor) Error() string { return string(e) }
+
+// A policy whose key is a subscription token (agentry-cli#171): doctor
+// says which harness can use it before a run finds out.
+func TestDoctorSaysASubscriptionTokenIsClaudeCodeOnly(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model.APIKeyKind = policy.KeyKindSubscription
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	for _, want := range []string{"warn  model:kind", "subscription token", "--adapter claude", "container harness refuses it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

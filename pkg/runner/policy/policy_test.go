@@ -388,3 +388,80 @@ func TestAPIKeySource(t *testing.T) {
 		t.Fatalf("file accepted: %v", err)
 	}
 }
+
+// apiKeyKind (agentry-cli#171): what the Anthropic credential is — an API
+// key (the default, unwritten) or a subscription OAuth token, which only
+// Claude Code may use. Round-trips, validates, and the one rule reads the
+// harness block first like apiKeyEnv and apiKeySource.
+func TestAPIKeyKindRoundTripsValidatesAndFollowsTheOneRule(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "policy.yaml")
+	pol := Default()
+	pol.Model.APIKeyKind = "subscription"
+	pol.Harness = map[string]HarnessPolicy{"claude": {APIKeyKind: "api"}}
+	if err := Save(p, pol); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(p)
+	if !strings.Contains(string(raw), "apiKeyKind: subscription") {
+		t.Fatalf("not written:\n%s", raw)
+	}
+	got, _, err := Load(p)
+	if err != nil || got.Model.APIKeyKind != "subscription" || got.Harness["claude"].APIKeyKind != "api" {
+		t.Fatalf("load: %+v %v", got, err)
+	}
+	if k := KeyKind(got.Harness["claude"], got.Model); k != "api" {
+		t.Fatalf("the harness block's kind wins: %q", k)
+	}
+	if k := KeyKind(HarnessPolicy{}, got.Model); k != "subscription" {
+		t.Fatalf("else the model's: %q", k)
+	}
+	if k := KeyKind(HarnessPolicy{}, Model{}); k != "api" {
+		t.Fatalf("unset is api: %q", k)
+	}
+	pol.Model.APIKeyKind = "oauth"
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), "model.apiKeyKind") {
+		t.Fatalf("oauth accepted: %v", err)
+	}
+	pol.Model.APIKeyKind = ""
+	pol.Harness["claude"] = HarnessPolicy{APIKeyKind: "token"}
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), "harness.claude.apiKeyKind") {
+		t.Fatalf("token accepted: %v", err)
+	}
+}
+
+func TestCredentialKindOfReadsTheAnthropicShapesAndNothingElse(t *testing.T) {
+	cases := []struct {
+		provider, key string
+		want          string
+	}{
+		{"anthropic", "sk-ant-api03-abc", KeyKindAPI},
+		{"anthropic", "sk-ant-oat01-abc", KeyKindSubscription},
+		{"Anthropic", "  sk-ant-oat01-abc  ", KeyKindSubscription},
+		{"anthropic", "sk-ant-admin01-abc", KeyKindAPI}, // a shape this build does not know: the endpoint judges
+		{"anthropic", "", KeyKindAPI},
+		{"openai", "sk-proj-abc", KeyKindAPI},
+		{"openai", "sk-ant-oat01-abc", KeyKindAPI}, // another provider's key is what it is
+		{"custom", "anything", KeyKindAPI},
+	}
+	for _, c := range cases {
+		if got := CredentialKindOf(c.provider, c.key); got != c.want {
+			t.Errorf("CredentialKindOf(%q, %q) = %q, want %q", c.provider, c.key, got, c.want)
+		}
+	}
+	// A subscription kind is valid only where it can be honoured.
+	pol := Default()
+	pol.Model.Provider, pol.Model.APIKeyKind = "openai", KeyKindSubscription
+	pol.Model.APIKeyEnv = "OPENAI_API_KEY"
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), "needs model.provider anthropic") {
+		t.Fatalf("subscription on openai: %v", err)
+	}
+	pol = Default()
+	pol.Harness = map[string]HarnessPolicy{"codex": {APIKeyKind: KeyKindSubscription}}
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), "harness.codex.apiKeyKind subscription") {
+		t.Fatalf("subscription on the codex harness: %v", err)
+	}
+	pol.Harness = map[string]HarnessPolicy{"claude": {APIKeyKind: KeyKindSubscription}}
+	if err := pol.Validate(); err != nil {
+		t.Fatalf("subscription on the claude harness beside an API key for the container: %v", err)
+	}
+}

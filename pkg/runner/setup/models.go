@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // Catalog is what a provider's models endpoint listed, in the provider's
@@ -209,7 +209,7 @@ func anthropicPager(keyHeader string) *pager {
 		},
 		auth: func(req *http.Request, key string) {
 			req.Header.Set("anthropic-version", anthropicVersion)
-			if modelkey.KindOf("anthropic", key) == modelkey.KindSubscription {
+			if policy.CredentialKindOf(policy.ProviderAnthropic, key) == policy.KeyKindSubscription {
 				setKey(req, keyHeaderBearer, key)
 				req.Header.Set("anthropic-beta", anthropicOAuthBeta)
 				return
