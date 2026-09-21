@@ -84,36 +84,47 @@ func relaysStartedBy(logs string) []string {
 }
 
 // relayReaper removes, at teardown, the relays this run's gateway started.
-// The names come from the gateway's log, read once the gateway has served
-// its health probe (startInfra): the gateway starts its relays while
-// loading its configuration, before it serves anything, and nothing the
-// agent does can reach the log before that snapshot — a tool call is
-// logged with its name verbatim (--log-calls), which is the one way a
-// server could otherwise plant a line. A run that failed before the
-// snapshot reads the log at teardown, when no tool was ever called. Every
-// name is then confirmed against the relay label before removal: by name
-// and confirmed relay, never by label alone, which on the shared network
-// would take another gateway's. Best-effort, like every teardown step.
+// The names come from the gateway's log, read twice: once the gateway has
+// served its health probe (startInfra), when the relays it starts while
+// loading its configuration are named and nothing of the agent's has run;
+// and again at teardown, because a relay is also started later — the l4
+// relay for a declared server's egress host starts when that server first
+// connects, which is after the probe, and a run that read the log once
+// left it behind on the shared network, where the next run's
+// refuseForeignRelays then refused to start (agentry-cli#184, found by
+// runner-r2's mcp-osv fixture). The second read happens after the agent
+// ran, so a tool call — logged with its name verbatim (--log-calls) — is
+// the one way a server could plant a line there; every name is therefore
+// confirmed against the relay label before removal, so a planted name
+// can reach at most a relay on the shared network and never anything
+// else, and the run's own relays are removed whichever read named them.
+// By name and confirmed relay, never by label alone, which on the shared
+// network would take another gateway's. Best-effort, like every teardown
+// step.
 type relayReaper struct {
 	names []string
-	taken bool
 }
 
 // snapshot records the relays the gateway's log names now.
 func (r *relayReaper) snapshot(logs string) {
 	r.names = relaysStartedBy(logs)
-	r.taken = true
 }
 
 func (r *relayReaper) reap(ctx context.Context, d dockerx.Client, gwName string) {
-	if !r.taken {
-		logs, err := d.Logs(ctx, gwName, dockerx.LogsAll)
-		if err != nil {
-			return
+	names := append([]string{}, r.names...)
+	if logs, err := d.Logs(ctx, gwName, dockerx.LogsAll); err == nil {
+		seen := make(map[string]bool, len(names))
+		for _, n := range names {
+			seen[n] = true
 		}
-		r.snapshot(logs)
+		for _, n := range relaysStartedBy(logs) {
+			if !seen[n] {
+				seen[n] = true
+				names = append(names, n)
+			}
+		}
 	}
-	if len(r.names) == 0 {
+	if len(names) == 0 {
 		return
 	}
 	labelled, err := d.PSByLabel(ctx, relayLabel)
@@ -124,7 +135,7 @@ func (r *relayReaper) reap(ctx context.Context, d dockerx.Client, gwName string)
 	for _, n := range labelled {
 		isRelay[n] = true
 	}
-	for _, name := range r.names {
+	for _, name := range names {
 		if isRelay[name] {
 			_ = d.RemoveForce(ctx, name)
 		}

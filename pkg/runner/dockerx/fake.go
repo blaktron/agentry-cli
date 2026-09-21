@@ -67,6 +67,10 @@ type Fake struct {
 	// as it starts — how a test gives a container side effects, such as
 	// the relays a gateway creates.
 	OnDetached func(r RunSpec)
+	// OnForeground, when set, runs with the spec of every foreground
+	// container as it starts — how a test makes something happen once the
+	// agent is running, such as a relay the gateway starts late.
+	OnForeground func(r RunSpec)
 }
 
 // FakeForeground scripts one foreground container.
@@ -234,6 +238,9 @@ func (f *Fake) RunDetached(_ context.Context, r RunSpec) error {
 // RunForeground implements Client.
 func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	f.record("RunForeground", r.Name, r)
+	if f.OnForeground != nil {
+		f.OnForeground(r)
+	}
 	var fg *FakeForeground
 	f.mu.Lock()
 	for prefix, b := range f.Foreground {
