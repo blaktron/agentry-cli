@@ -36,17 +36,33 @@ type KeySet struct {
 	Keys []SigningKey `json:"keys" yaml:"keys"`
 }
 
-// Attestation states reported by VerifyAttestation.
+// Attestation states reported by VerifyAttestation, and one the registry
+// reports before any attestation is looked for.
 const (
 	StateVerified     = "verified"
 	StateUnsigned     = "unsigned"
 	StateUnverifiable = "unverifiable"
 	StateMismatch     = "mismatch"
+	// StateUnscanned is a version the registry admitted without a scan
+	// (an organization's private agent its administrator took off the
+	// pipeline; plan organization-subscriptions §4): no findings, no
+	// report and no attestation, because nothing was attested. It is
+	// its own outcome — not unsigned (a registry that signs nothing), and
+	// not a scan with a known gap.
+	StateUnscanned = "unscanned"
 )
+
+// Unscanned is the result for a version the registry says was admitted
+// without a scan: the resolve answer carries `scanStatus: skipped`, and
+// no attestation is asked for, because the absence is the fact and not a
+// missing signature.
+func Unscanned() AttestationResult {
+	return AttestationResult{State: StateUnscanned, Detail: "the registry admitted this version without a scan: no findings, no report and no attestation stand behind it"}
+}
 
 // AttestationResult is what verify/install report about provenance.
 type AttestationResult struct {
-	// State is one of: verified, unsigned, unverifiable, mismatch.
+	// State is one of: verified, unsigned, unverifiable, mismatch, unscanned.
 	State string `json:"state"`
 	// Detail explains the state in one line.
 	Detail string `json:"detail"`

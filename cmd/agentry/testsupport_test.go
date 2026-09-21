@@ -135,6 +135,9 @@ type fakeVersion struct {
 	// to prove subject-mismatch aborts).
 	attMode    string
 	attSubject string
+	// unscanned marks a version the registry admitted without a scan
+	// (M21): resolve carries scanStatus skipped and no attestationUrl.
+	unscanned bool
 }
 
 // fakeAgent is one agent with its version set.
@@ -552,6 +555,11 @@ func (fr *fakeRegistry) resolveDoc(fa *fakeAgent, fv *fakeVersion, version strin
 		"manifest":   manifestDoc,
 		"yanked":     fv.yanked,
 	}
+	if fv.unscanned {
+		doc["scanStatus"] = "skipped"
+		return doc
+	}
+	doc["scanStatus"] = "pipeline"
 	if fv.attMode != attUnsigned {
 		doc["attestationUrl"] = fmt.Sprintf("/api/v1/agents/%s/%s/versions/%s/attestation", fa.ns, fa.name, version)
 	}

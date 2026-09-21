@@ -38,7 +38,11 @@ func newVerifyCmd() *cobra.Command {
 			"--strict makes unverifiable non-zero as well. Use it in CI, where\n" +
 			"\"we could not check\" and \"we checked and it was fine\" must not be the\n" +
 			"same green build. An unsigned version (no attestation published at all)\n" +
-			"is reported and exits 0 in both modes: self-host may run unsigned (§8.8).",
+			"is reported and exits 0 in both modes: self-host may run unsigned (§8.8).\n" +
+			"An unscanned version — one the registry admitted without a scan, a private\n" +
+			"organization agent its administrator took off the pipeline — is reported\n" +
+			"as its own outcome, \"unscanned, no attestation\", exits 0 by default and\n" +
+			"non-zero under --strict.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVerify(cmd, args[0], strict)
@@ -95,15 +99,10 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 	report.DigestMatch = report.ComputedDigest == report.RegistryDigest
 
 	// Provenance (§8.8): verify the DSSE attestation against the pinned key
-	// set and bind it to the bytes we just downloaded.
-	attURL := ""
-	if res.AttestationUrl != nil {
-		attURL = *res.AttestationUrl
-	}
-	if attURL == "" {
-		attURL = fmt.Sprintf("/api/v1/agents/%s/%s/versions/%s/attestation", res.Namespace, res.Name, res.Version)
-	}
-	att := trust.VerifyAttestation(cmd.Context(), httpClient, reg, token, attURL, report.ComputedDigest)
+	// set and bind it to the bytes we just downloaded — unless the registry
+	// admitted the version without a scan, which is its own outcome
+	// (unscanned, no attestation) and not a missing signature.
+	att := attestationOf(cmd.Context(), reg, token, res, report.ComputedDigest)
 	report.Attestation = &att
 
 	out := cmd.OutOrStdout()
@@ -117,7 +116,11 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 		_, _ = fmt.Fprintf(out, "%s/%s@%s\n", res.Namespace, res.Name, res.Version)
 		_, _ = fmt.Fprintf(out, "  registry digest: %s\n", report.RegistryDigest)
 		_, _ = fmt.Fprintf(out, "  computed digest: %s\n", report.ComputedDigest)
-		_, _ = fmt.Fprintf(out, "  attestation:     %s (%s)\n", att.State, att.Detail)
+		if att.State == trust.StateUnscanned {
+			_, _ = fmt.Fprintln(out, "  attestation:     unscanned, no attestation (the registry admitted this version without a scan)")
+		} else {
+			_, _ = fmt.Fprintf(out, "  attestation:     %s (%s)\n", att.State, att.Detail)
+		}
 		if att.State == "verified" {
 			_, _ = fmt.Fprintf(out, "  signed by:       key %s\n", att.KeyID)
 			if att.RulesetVer != "" {
@@ -152,6 +155,12 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 	// that cannot reach the key endpoint reports that instead of passing.
 	if strict && att.State == "unverifiable" {
 		return fmt.Errorf("attestation unverifiable for %s: %s (--strict)", ref, att.Detail)
+	}
+	// Unscanned is reported as its own outcome and, like unsigned, exits 0
+	// by default: verify describes, install and run decide. --strict fails
+	// it, so a CI job that wants only scanned releases can say so.
+	if strict && att.State == trust.StateUnscanned {
+		return fmt.Errorf("%s is unscanned: the registry admitted it without a scan (--strict)", ref)
 	}
 	return nil
 }

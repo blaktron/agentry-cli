@@ -919,3 +919,95 @@ func TestRunRegistryRefusesAnInvalidManifest(t *testing.T) {
 		t.Fatalf("a refused release was cached: %v", entries)
 	}
 }
+
+// TestRunUnscannedIsItsOwnConsent: a release the registry admitted without
+// a scan (M21) is refused by run without --allow-unscanned — and
+// --allow-unsigned does not stand in for it — on the first run and on
+// every run from the cache; the receipt names the consent that admitted
+// it; --plan reports the verdict and the refusal instead of stopping.
+func TestRunUnscannedIsItsOwnConsent(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "internal", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("internal", ""))
+	fv.unscanned = true
+
+	_, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--policy", policyPath)
+	if err == nil || !strings.Contains(err.Error(), "--allow-unscanned") || !strings.Contains(err.Error(), "without a scan") {
+		t.Fatalf("an unscanned release ran without the flag: %v", err)
+	}
+	wantClassified(t, err, engine.ExitVerify)
+	_, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--allow-unsigned", "--policy", policyPath)
+	if err == nil || !strings.Contains(err.Error(), "--allow-unscanned") {
+		t.Fatalf("--allow-unsigned admitted an unscanned release: %v", err)
+	}
+
+	_, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--allow-unscanned", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("run with the flag: %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(stderr, "warning: unscanned") || !strings.Contains(stderr, "because --allow-unscanned was given") {
+		t.Errorf("an allowed unscanned run must still warn: %q", stderr)
+	}
+	// The cache remembers the verdict, not the consent: asked again.
+	_, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--policy", policyPath)
+	if err == nil || !strings.Contains(err.Error(), "--allow-unscanned") || !strings.Contains(err.Error(), "cached install") {
+		t.Fatalf("a cached unscanned install ran without the flag: %v", err)
+	}
+	wantClassified(t, err, engine.ExitVerify)
+
+	// --plan: the verdict reported, the refusal named, nothing asked.
+	stdout, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "--json", "run", "acme/internal@1.0.0", "--plan", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	var plan runPlanOutput
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil {
+		t.Fatalf("plan json: %v\n%s", err, stdout)
+	}
+	if plan.Attestation != "unscanned" || plan.Signed || !strings.Contains(plan.Refusal, "--allow-unscanned") {
+		t.Fatalf("plan = attestation %q signed %t refusal %q", plan.Attestation, plan.Signed, plan.Refusal)
+	}
+}
+
+// TestReceiptRecordsTheConsent: the receipt's attestation carries the flag
+// that admitted a release the gate would have refused — evidence of who
+// accepted what — and nothing for a verified one.
+func TestReceiptRecordsTheConsent(t *testing.T) {
+	cached := &installMeta{Ref: "acme/internal@1.0.0", Attestation: receipt.Attestation{State: "unscanned"}}
+	if err := cachedAttestationGate(cached, false, false); err == nil {
+		t.Fatal("a cached unscanned install passed without the flag")
+	}
+	if err := cachedAttestationGate(cached, true, false); err == nil {
+		t.Fatal("--allow-unsigned passed a cached unscanned install")
+	}
+	if err := cachedAttestationGate(cached, false, true); err != nil {
+		t.Fatalf("with the flag: %v", err)
+	}
+	if cached.Attestation.Consent != receipt.ConsentAllowUnscanned {
+		t.Fatalf("consent = %q, want %q", cached.Attestation.Consent, receipt.ConsentAllowUnscanned)
+	}
+	unsigned := &installMeta{Ref: "acme/demo@1.0.0", Attestation: receipt.Attestation{State: "unsigned"}}
+	if err := cachedAttestationGate(unsigned, true, false); err != nil || unsigned.Attestation.Consent != receipt.ConsentAllowUnsigned {
+		t.Fatalf("unsigned: %v, consent %q", err, unsigned.Attestation.Consent)
+	}
+	verified := &installMeta{Ref: "acme/demo@1.0.0", Attestation: receipt.Attestation{State: "verified", Verified: true}}
+	if err := cachedAttestationGate(verified, false, false); err != nil || verified.Attestation.Consent != "" {
+		t.Fatalf("verified: %v, consent %q", err, verified.Attestation.Consent)
+	}
+	// On the wire, as a client reads it.
+	raw, _ := json.Marshal(receipt.Attestation{State: "unscanned", Consent: receipt.ConsentAllowUnscanned})
+	if string(raw) != `{"state":"unscanned","verified":false,"consent":"--allow-unscanned"}` {
+		t.Fatalf("attestation json = %s", raw)
+	}
+	raw, _ = json.Marshal(receipt.Attestation{State: "verified", KeyID: "k1", Verified: true})
+	if strings.Contains(string(raw), "consent") {
+		t.Fatalf("a verified attestation carries a consent: %s", raw)
+	}
+	if r := attestationRefusal(receipt.Attestation{State: "unscanned"}, true, false); !strings.Contains(r, "--allow-unscanned") {
+		t.Fatalf("plan refusal = %q", r)
+	}
+	if r := attestationRefusal(receipt.Attestation{State: "unscanned"}, false, true); r != "" {
+		t.Fatalf("plan refusal with the flag = %q", r)
+	}
+}

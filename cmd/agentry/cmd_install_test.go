@@ -780,3 +780,50 @@ func TestPrepareDestRefusesWhatItMustNeverClear(t *testing.T) {
 		t.Fatalf("the agents-md default must be clearable: %v", err)
 	}
 }
+
+// TestInstallUnscannedGate: a version the registry admitted without a scan
+// (M21; plan organization-subscriptions §4) is its own outcome — not
+// unsigned — and needs its own consent: --allow-unsigned does not give it,
+// --allow-unscanned does, and the warning says what is being accepted.
+func TestInstallUnscannedGate(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "internal", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("internal", ""))
+	fv.unscanned = true
+
+	_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/internal@1.0.0")
+	if err == nil || !strings.Contains(err.Error(), "--allow-unscanned") || !strings.Contains(err.Error(), "without a scan") {
+		t.Fatalf("an unscanned release installed without the flag: %v", err)
+	}
+	if strings.Contains(err.Error(), "--allow-unsigned") {
+		t.Fatalf("the refusal offers the wrong flag: %v", err)
+	}
+	_, _, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/internal@1.0.0", "--allow-unsigned")
+	if err == nil || !strings.Contains(err.Error(), "--allow-unscanned") {
+		t.Fatalf("--allow-unsigned admitted an unscanned release: %v", err)
+	}
+
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/internal@1.0.0", "--allow-unscanned")
+	if err != nil {
+		t.Fatalf("install with the flag: %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(stderr, "warning: unscanned") || !strings.Contains(stderr, "because --allow-unscanned was given") {
+		t.Errorf("an allowed unscanned install must still warn: %q", stderr)
+	}
+	if strings.Contains(stdout+stderr, "attestation:   verified") {
+		t.Errorf("an unscanned install claims a verified attestation:\n%s%s", stdout, stderr)
+	}
+
+	// --plan reports the verdict and the refusal instead of stopping.
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/internal@1.0.0", "--plan", "--json")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	var plan installPlan
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil {
+		t.Fatalf("plan json: %v\n%s", err, stdout)
+	}
+	if plan.Attestation != "unscanned" || plan.Signed || !strings.Contains(plan.Refusal, "--allow-unscanned") {
+		t.Fatalf("plan = %+v, want attestation unscanned, unsigned, a refusal naming --allow-unscanned", plan)
+	}
+}

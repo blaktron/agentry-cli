@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +39,9 @@ type installOpts struct {
 	dir           string
 	yes           bool
 	allowUnsigned bool
+	// allowUnscanned admits a version the registry published without a
+	// scan (M22): its own consent, which --allow-unsigned does not give.
+	allowUnscanned bool
 	// plan stops after the consent preview and writes nothing (agentry-cli#102):
 	// the same resolve, download, digest and attestation checks, then the
 	// contract, its diff against what this machine accepted, the target and
@@ -98,7 +102,11 @@ func newInstallCmd() *cobra.Command {
 			"Signatures: a release the registry has attested must verify against the\n" +
 			"signing keys pinned for that registry, or the install aborts. A registry\n" +
 			"that publishes no attestation yields an unsigned install, which requires\n" +
-			"--allow-unsigned (in CI as well as at a terminal).\n\n" +
+			"--allow-unsigned (in CI as well as at a terminal). A version the registry\n" +
+			"admitted WITHOUT a scan — a private organization agent its administrator\n" +
+			"took off the pipeline — is unscanned: no findings, no report and no\n" +
+			"attestation stand behind it, and it requires --allow-unscanned, which is\n" +
+			"its own decision (--allow-unsigned does not give it).\n\n" +
 			"Capabilities: declared network egress or exec requires typed confirmation,\n" +
 			"and so does any capability WIDENED since the version currently installed\n" +
 			"here (a new egress host, new exec commands, escalated filesystem access,\n" +
@@ -119,6 +127,8 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false,
 		"install a release the registry has published no attestation for")
+	cmd.Flags().BoolVar(&opts.allowUnscanned, "allow-unscanned", false,
+		"install a release the registry admitted without a scan (no findings, no report, no attestation)")
 	cmd.Flags().BoolVar(&opts.plan, "plan", false,
 		"preview only: resolve, download and verify, then show the contract, its diff and where it would go; writes nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	return cmd
@@ -141,10 +151,11 @@ type installPlan struct {
 	// Contract is capabilities as canonical JSON; ContractDigest its sha256.
 	Contract       json.RawMessage `json:"contract"`
 	ContractDigest string          `json:"contractDigest"`
-	// Attestation is verified | unsigned | mismatch | unverifiable, with the
-	// key id when verified; Signed is Attestation == verified. An install
-	// refuses mismatch and unverifiable outright, and unsigned without
-	// --allow-unsigned.
+	// Attestation is verified | unsigned | unscanned | mismatch |
+	// unverifiable, with the key id when verified; Signed is Attestation ==
+	// verified. An install refuses mismatch and unverifiable outright,
+	// unsigned without --allow-unsigned, and unscanned without
+	// --allow-unscanned.
 	Attestation string `json:"attestation"`
 	KeyID       string `json:"keyId,omitempty"`
 	Signed      bool   `json:"signed"`
@@ -325,7 +336,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// vouched for them. Verified against the digest we just computed, so a
 	// valid signature over some other archive proves nothing here.
 	att := installAttestation(cmd, reg, token, res, computed)
-	attErr := judgeAttestation(out, errOut, att, res, opts.allowUnsigned, opts.plan)
+	attErr := judgeAttestation(out, errOut, att, res, opts.allowUnsigned, opts.allowUnscanned, opts.plan)
 	if attErr != nil && !opts.plan {
 		return attErr
 	}
@@ -517,6 +528,18 @@ func installExtractLimits() pkgarchive.ExtractLimits {
 //     --allow-unsigned, in CI as well as at a terminal: a flag is a decision
 //     someone wrote down, a TTY prompt is a decision someone clicked past.
 func installAttestation(cmd *cobra.Command, reg, token string, res *apiclient.ResolveResult, archiveDigest string) trust.AttestationResult {
+	return attestationOf(cmd.Context(), reg, token, res, archiveDigest)
+}
+
+// attestationOf is the one read of a release's provenance install, run and
+// verify share: a version the registry admitted without a scan is
+// unscanned before any attestation is looked for — the absence is the
+// fact, not a missing signature — and every other version's attestation
+// is fetched and verified against the digest just computed.
+func attestationOf(ctx context.Context, reg, token string, res *apiclient.ResolveResult, archiveDigest string) trust.AttestationResult {
+	if res.ScanStatus != nil && *res.ScanStatus == apiclient.ResolveResultScanStatusSkipped {
+		return trust.Unscanned()
+	}
 	attURL := ""
 	if res.AttestationUrl != nil {
 		attURL = *res.AttestationUrl
@@ -527,12 +550,12 @@ func installAttestation(cmd *cobra.Command, reg, token string, res *apiclient.Re
 		// concluding "unsigned".
 		attURL = fmt.Sprintf("/api/v1/agents/%s/%s/versions/%s/attestation", res.Namespace, res.Name, res.Version)
 	}
-	return trust.VerifyAttestation(cmd.Context(), httpClient, reg, token, attURL, archiveDigest)
+	return trust.VerifyAttestation(ctx, httpClient, reg, token, attURL, archiveDigest)
 }
 
 // judgeAttestation narrates the verdict and returns the install's refusal,
 // if any; --plan reports the refusal instead of stopping on it.
-func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *apiclient.ResolveResult, allowUnsigned, plan bool) error {
+func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *apiclient.ResolveResult, allowUnsigned, allowUnscanned, plan bool) error {
 	switch att.State {
 	case trust.StateVerified:
 		_, _ = fmt.Fprintf(out, "attestation:   verified (key %s)\n", att.KeyID)
@@ -556,6 +579,23 @@ func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *a
 		}
 		_, _ = fmt.Fprintf(errOut,
 			"warning: unsigned — registry offers no attestation for %s/%s@%s; %s because --allow-unsigned was given\n",
+			res.Namespace, res.Name, res.Version, doing)
+		return nil
+
+	case trust.StateUnscanned:
+		// Its own consent: an unscanned release is not an unsigned one,
+		// and --allow-unsigned says nothing about it.
+		if !allowUnscanned {
+			return fmt.Errorf("unscanned — the registry admitted %s/%s@%s without a scan: no findings, no report and no attestation stand behind it; "+
+				"re-run with --allow-unscanned to install it anyway, accepting that nothing about its contents was checked",
+				res.Namespace, res.Name, res.Version)
+		}
+		doing := "installing"
+		if plan {
+			doing = "an install would proceed"
+		}
+		_, _ = fmt.Fprintf(errOut,
+			"warning: unscanned — the registry admitted %s/%s@%s without a scan; %s because --allow-unscanned was given\n",
 			res.Namespace, res.Name, res.Version, doing)
 		return nil
 
