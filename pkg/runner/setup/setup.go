@@ -107,8 +107,9 @@ type ModelOpts struct {
 	// variable-only setup takes --api-key-kind.
 	APIKeyKind string
 	BaseURL    string
-	// Yes suppresses prompting entirely: table defaults fill the gaps and
-	// a custom provider with no BaseURL is an error rather than a question.
+	// Yes suppresses prompting entirely: table defaults fill the gaps, the
+	// same provider's policy fills what it customized, and a custom
+	// provider with no BaseURL left is an error rather than a question.
 	Yes bool
 }
 
@@ -200,14 +201,25 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		proxyAllow = append([]string(nil), d.ProxyAllow...)
 	default:
 		if baseURL == "" {
+			// The same-provider rule covers the URL too: staying on
+			// custom keeps the endpoint the policy has — the question's
+			// default, and under --yes the answer — and derives the
+			// allowlist from it again (agentry-cli#188). A switch brings
+			// no URL along.
 			if opts.Yes {
-				return fmt.Errorf("provider %q needs --base-url so the egress proxy allowlist can be derived", prov)
+				if sameProvider {
+					baseURL = strings.TrimSpace(pol.Model.BaseURL)
+				}
+				if baseURL == "" {
+					return fmt.Errorf("provider %q needs --base-url so the egress proxy allowlist can be derived", prov)
+				}
+			} else {
+				ans, err := p.Ask("Endpoint base URL (e.g. https://llm.internal:8443/v1)", pol.Model.BaseURL)
+				if err != nil {
+					return err
+				}
+				baseURL = strings.TrimSpace(ans)
 			}
-			ans, err := p.Ask("Endpoint base URL (e.g. https://llm.internal:8443/v1)", pol.Model.BaseURL)
-			if err != nil {
-				return err
-			}
-			baseURL = strings.TrimSpace(ans)
 		}
 		hp, err := hostPortOf(baseURL)
 		if err != nil {
