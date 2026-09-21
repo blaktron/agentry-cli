@@ -49,7 +49,7 @@ func newVerifyCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false,
-		"also fail when the attestation could not be verified (key fetch failure, key rotation)")
+		"also fail when the attestation could not be verified (key fetch failure, key rotation) and when the version is unscanned")
 	return cmd
 }
 

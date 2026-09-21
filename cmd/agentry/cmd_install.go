@@ -40,7 +40,8 @@ type installOpts struct {
 	yes           bool
 	allowUnsigned bool
 	// allowUnscanned admits a version the registry published without a
-	// scan (M22): its own consent, which --allow-unsigned does not give.
+	// scan (M22, agentry-cli#146): its own consent, which --allow-unsigned
+	// does not give.
 	allowUnscanned bool
 	// plan stops after the consent preview and writes nothing (agentry-cli#102):
 	// the same resolve, download, digest and attestation checks, then the

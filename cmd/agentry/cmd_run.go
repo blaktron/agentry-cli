@@ -103,11 +103,10 @@ func newRunCmd() *cobra.Command {
 			"First run of a release verifies it exactly like `agentry install` (digest +\n" +
 			"DSSE attestation; unsigned needs --allow-unsigned; a release the registry\n" +
 			"admitted without a scan is unscanned and needs --allow-unscanned, its own\n" +
-			"decision), then compiles the run\n" +
-			"plan and installs the gateway/harness/runner images. Later runs reuse the\n" +
-			"verified install, the plan and the images; an unsigned or local release\n" +
-			"needs --allow-unsigned on every run, an unscanned one --allow-unscanned.\n" +
-			"--prepare stops after that install\n" +
+			"decision), then compiles the run plan and installs the gateway, harness\n" +
+			"and runner images. Later runs reuse the verified install, the plan and the\n" +
+			"images; an unsigned or local release needs --allow-unsigned on every run,\n" +
+			"an unscanned one --allow-unscanned. --prepare stops after that install\n" +
 			"step; --dry-run prints the\n" +
 			"compiled plan and touches no docker. --local DIR runs an unpublished\n" +
 			"BriefAgent directory (treated as unsigned).\n\n" +
@@ -615,7 +614,7 @@ func attestationRefusal(att receipt.Attestation, allowUnsigned, allowUnscanned b
 	switch att.State {
 	case "verified":
 		return ""
-	case "unsigned", "local":
+	case trust.StateUnsigned, "local":
 		if allowUnsigned {
 			return ""
 		}
@@ -636,7 +635,7 @@ func attestationRefusal(att receipt.Attestation, allowUnsigned, allowUnscanned b
 // carries the consent given now, not the one given at the install.
 func cachedAttestationGate(meta *installMeta, allowUnsigned, allowUnscanned bool) error {
 	switch meta.Attestation.State {
-	case "unsigned", "local":
+	case trust.StateUnsigned, "local":
 		if !allowUnsigned {
 			return fmt.Errorf("%s is %s (cached install); re-run with --allow-unsigned to run it anyway", meta.Ref, meta.Attestation.State)
 		}
@@ -667,9 +666,11 @@ type runPlanOutput struct {
 	// form install --plan reports.
 	Contract       json.RawMessage `json:"contract"`
 	ContractDigest string          `json:"contractDigest"`
-	Attestation    string          `json:"attestation"`
-	KeyID          string          `json:"keyId,omitempty"`
-	Signed         bool            `json:"signed"`
+	// Attestation is verified | unsigned | unscanned | mismatch |
+	// unverifiable; Signed is Attestation == verified.
+	Attestation string `json:"attestation"`
+	KeyID       string `json:"keyId,omitempty"`
+	Signed      bool   `json:"signed"`
 	runPlanConsent
 	// Refusal is what a run would stop on before executing: the
 	// attestation, or a declared server with a known vulnerability.
@@ -852,13 +853,22 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	installDir := filepath.Join(home, "agents", res.Namespace, res.Name,
 		fmt.Sprintf("%s-%s", res.Version, digestSuffix(res.Digest)))
 	if meta, ok := loadInstallMeta(installDir, res.Digest); ok {
+		// The registry's word today outranks the cache's memory: an
+		// install cached as unsigned by a CLI that did not know the
+		// unscanned state, against a registry that now says the version
+		// was admitted without a scan, is unscanned, and the consent
+		// asked for is that one.
+		if res.ScanStatus != nil && *res.ScanStatus == apiclient.ResolveResultScanStatusSkipped && meta.Attestation.State != trust.StateUnscanned {
+			meta.Attestation = receipt.Attestation{State: trust.StateUnscanned}
+		}
 		// The cache remembers the verdict, not the consent: an unsigned
 		// release still needs --allow-unsigned on every run, or the gate
-		// would be one-shot per digest (agentry-cli#124).
+		// would be one-shot per digest (agentry-cli#124), and an
+		// unscanned one --allow-unscanned.
 		if err := cachedAttestationGate(meta, opts.allowUnsigned, opts.allowUnscanned); err != nil {
 			return nil, "", engine.Classify(engine.ExitVerify, err)
 		}
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "using verified install %s\n", installDir)
+		narrateCachedConsent(cmd.ErrOrStderr(), meta, opts.plan)
 		return meta, installDir, nil
 	}
 
@@ -900,10 +910,33 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 		Namespace: res.Namespace, Name: res.Name, Version: res.Version,
 		Digest: res.Digest, Source: "registry", Attestation: att,
 	}
-	if err := writeInstall(installDir, staging, meta); err != nil {
+	// The cache holds the verdict and never the consent, which is this
+	// run's alone: the next run is asked again.
+	cached := *meta
+	cached.Attestation.Consent = ""
+	if err := writeInstall(installDir, staging, &cached); err != nil {
 		return nil, "", err
 	}
 	return meta, installDir, nil
+}
+
+// narrateCachedConsent says on stderr what a run from the cache is doing
+// with a release the gate would have refused, the way a fresh materialize
+// does: a cached unsigned or unscanned release is not "verified", and the
+// flag that admits it is named on every run.
+func narrateCachedConsent(errOut io.Writer, meta *installMeta, plan bool) {
+	doing := "running"
+	if plan {
+		doing = "a run would proceed"
+	}
+	switch meta.Attestation.State {
+	case trust.StateUnscanned:
+		_, _ = fmt.Fprintf(errOut, "warning: unscanned — %s %s (cached install), which the registry admitted without a scan, because --allow-unscanned was given\n", doing, meta.Ref)
+	case trust.StateUnsigned, "local":
+		_, _ = fmt.Fprintf(errOut, "warning: %s — %s %s (cached install) because --allow-unsigned was given\n", meta.Attestation.State, doing, meta.Ref)
+	default:
+		_, _ = fmt.Fprintf(errOut, "using verified install %s\n", meta.Ref)
+	}
 }
 
 // verifyRunAttestation mirrors the install gate (cmd_install.go) but also
@@ -927,17 +960,27 @@ func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.
 			return receipt.Attestation{}, fmt.Errorf("unsigned — registry offers no attestation for %s/%s@%s (%s); re-run with --allow-unsigned to run it anyway",
 				res.Namespace, res.Name, res.Version, att.Detail)
 		}
-		_, _ = fmt.Fprintf(errOut, "warning: unsigned — running %s/%s@%s because --allow-unsigned was given\n", res.Namespace, res.Name, res.Version)
-		return receipt.Attestation{State: "unsigned", Consent: receipt.ConsentAllowUnsigned}, nil
+		// Under --plan the flag is forced so the preview can go on, and
+		// the refusal is named by attestationRefusal from the real one:
+		// the line here says what a run would do, not what was given.
+		if plan {
+			_, _ = fmt.Fprintf(errOut, "attestation:   unsigned — a run of %s/%s@%s proceeds only with --allow-unsigned\n", res.Namespace, res.Name, res.Version)
+		} else {
+			_, _ = fmt.Fprintf(errOut, "warning: unsigned — running %s/%s@%s because --allow-unsigned was given\n", res.Namespace, res.Name, res.Version)
+		}
+		return receipt.Attestation{State: trust.StateUnsigned, Consent: receipt.ConsentAllowUnsigned}, nil
 	case trust.StateUnscanned:
 		// Its own consent: --allow-unsigned says nothing about a version
-		// the registry never scanned. Under --plan the verdict is
-		// reported and the refusal named by attestationRefusal.
+		// the registry never scanned.
 		if !allowUnscanned {
 			return receipt.Attestation{}, fmt.Errorf("unscanned — the registry admitted %s/%s@%s without a scan: no findings, no report and no attestation stand behind it; re-run with --allow-unscanned to run it anyway, accepting that nothing about its contents was checked",
 				res.Namespace, res.Name, res.Version)
 		}
-		_, _ = fmt.Fprintf(errOut, "warning: unscanned — running %s/%s@%s, which the registry admitted without a scan, because --allow-unscanned was given\n", res.Namespace, res.Name, res.Version)
+		if plan {
+			_, _ = fmt.Fprintf(errOut, "attestation:   unscanned — the registry admitted %s/%s@%s without a scan; a run proceeds only with --allow-unscanned\n", res.Namespace, res.Name, res.Version)
+		} else {
+			_, _ = fmt.Fprintf(errOut, "warning: unscanned — running %s/%s@%s, which the registry admitted without a scan, because --allow-unscanned was given\n", res.Namespace, res.Name, res.Version)
+		}
 		return receipt.Attestation{State: trust.StateUnscanned, Consent: receipt.ConsentAllowUnscanned}, nil
 	default:
 		if plan {

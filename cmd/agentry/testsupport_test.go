@@ -136,7 +136,8 @@ type fakeVersion struct {
 	attMode    string
 	attSubject string
 	// unscanned marks a version the registry admitted without a scan
-	// (M21): resolve carries scanStatus skipped and no attestationUrl.
+	// (the core's M21; M22 here): resolve carries scanStatus skipped and no
+	// attestationUrl.
 	unscanned bool
 }
 

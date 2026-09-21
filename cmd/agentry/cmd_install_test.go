@@ -782,7 +782,7 @@ func TestPrepareDestRefusesWhatItMustNeverClear(t *testing.T) {
 }
 
 // TestInstallUnscannedGate: a version the registry admitted without a scan
-// (M21; plan organization-subscriptions §4) is its own outcome — not
+// (M22, plan organization-subscriptions §8; the core's M21) is its own outcome — not
 // unsigned — and needs its own consent: --allow-unsigned does not give it,
 // --allow-unscanned does, and the warning says what is being accepted.
 func TestInstallUnscannedGate(t *testing.T) {

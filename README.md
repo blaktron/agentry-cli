@@ -5,11 +5,11 @@ publish, install, verify, and **run** BriefAgents — single-purpose AI
 agents. Every install checks the archive digest and DSSE signature before
 anything lands on your machine. An unsigned release, one the registry
 published no attestation for, requires `--allow-unsigned`. An unscanned
-release — one the registry admitted without a scan, a private organization
-agent its administrator took off the pipeline, with no findings, no report
-and no attestation behind it — is its own outcome and requires
-`--allow-unscanned`, on `install` and on every `run`; `agentry verify`
-reports it as "unscanned, no attestation" and the run's receipt names the
+release is its own outcome: the registry admitted it without a scan (a
+private organization agent its administrator took off the pipeline), so no
+findings, no report and no attestation stand behind it. It requires
+`--allow-unscanned`, on `install` and on every `run`. `agentry verify`
+reports it as "unscanned, no attestation", and the run's receipt names the
 consent that admitted it. `agentry validate`
 runs the same manifest rules and content scanners the registry runs at submit
 time — offline. Start a new BriefAgent from the

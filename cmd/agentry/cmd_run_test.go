@@ -921,13 +921,13 @@ func TestRunRegistryRefusesAnInvalidManifest(t *testing.T) {
 }
 
 // TestRunUnscannedIsItsOwnConsent: a release the registry admitted without
-// a scan (M21) is refused by run without --allow-unscanned — and
+// a scan (M22; the core's M21) is refused by run without --allow-unscanned — and
 // --allow-unsigned does not stand in for it — on the first run and on
 // every run from the cache; the receipt names the consent that admitted
 // it; --plan reports the verdict and the refusal instead of stopping.
 func TestRunUnscannedIsItsOwnConsent(t *testing.T) {
 	isolateEnv(t)
-	_, policyPath := isolateRunnerHome(t)
+	home, policyPath := isolateRunnerHome(t)
 	fr := newFakeRegistry(t)
 	fv := fr.addAgent("acme", "internal", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("internal", ""))
 	fv.unscanned = true
@@ -949,12 +949,28 @@ func TestRunUnscannedIsItsOwnConsent(t *testing.T) {
 	if !strings.Contains(stderr, "warning: unscanned") || !strings.Contains(stderr, "because --allow-unscanned was given") {
 		t.Errorf("an allowed unscanned run must still warn: %q", stderr)
 	}
-	// The cache remembers the verdict, not the consent: asked again.
+	// The cache remembers the verdict, not the consent: asked again, and
+	// the cache file itself holds no consent.
 	_, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--policy", policyPath)
 	if err == nil || !strings.Contains(err.Error(), "--allow-unscanned") || !strings.Contains(err.Error(), "cached install") {
 		t.Fatalf("a cached unscanned install ran without the flag: %v", err)
 	}
 	wantClassified(t, err, engine.ExitVerify)
+	installs, _ := filepath.Glob(filepath.Join(home, "agents", "acme", "internal", "*", "install.json"))
+	if len(installs) != 1 {
+		t.Fatalf("install.json files = %v, want one", installs)
+	}
+	if cached := cachedInstall(t, installs[0]); cached.Attestation.State != "unscanned" || cached.Attestation.Consent != "" {
+		t.Fatalf("the cache must hold the verdict and no consent: %+v", cached.Attestation)
+	}
+	// A cached run with the flag says what it is doing, every time.
+	_, stderr, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--allow-unscanned", "--policy", policyPath)
+	if err != nil || !strings.Contains(stderr, "warning: unscanned") || !strings.Contains(stderr, "cached install") {
+		t.Fatalf("a cached unscanned run with the flag: %v (stderr %q)", err, stderr)
+	}
+	if strings.Contains(stderr, "using verified install") {
+		t.Fatalf("a cached unscanned run called itself verified: %q", stderr)
+	}
 
 	// --plan: the verdict reported, the refusal named, nothing asked.
 	stdout, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "--json", "run", "acme/internal@1.0.0", "--plan", "--policy", policyPath)
@@ -1010,4 +1026,51 @@ func TestReceiptRecordsTheConsent(t *testing.T) {
 	if r := attestationRefusal(receipt.Attestation{State: "unscanned"}, false, true); r != "" {
 		t.Fatalf("plan refusal with the flag = %q", r)
 	}
+}
+
+// TestRunStaleCacheDefersToTheRegistry: an install cached as unsigned by
+// a CLI that did not know the unscanned state, against a registry that
+// now says the version was admitted without a scan, is unscanned — the
+// registry's word today outranks the cache's memory — so --allow-unsigned
+// no longer admits it and the receipt would name the right consent.
+func TestRunStaleCacheDefersToTheRegistry(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "internal", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("internal", ""))
+	// Cached by the older CLI: the registry then said nothing of scans.
+	fv.attMode = attUnsigned
+	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--allow-unsigned", "--policy", policyPath); err != nil {
+		t.Fatalf("the older run: %v", err)
+	}
+	installs, _ := filepath.Glob(filepath.Join(home, "agents", "acme", "internal", "*", "install.json"))
+	if len(installs) != 1 {
+		t.Fatalf("install.json files = %v", installs)
+	}
+	if cached := cachedInstall(t, installs[0]); cached.Attestation.State != "unsigned" {
+		t.Fatalf("the cache does not say unsigned: %+v", cached.Attestation)
+	}
+	// The registry now says the version was admitted without a scan.
+	fv.unscanned = true
+	_, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--allow-unsigned", "--policy", policyPath)
+	if err == nil || !strings.Contains(err.Error(), "--allow-unscanned") {
+		t.Fatalf("--allow-unsigned admitted a cached release the registry now calls unscanned: %v", err)
+	}
+	if _, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/internal@1.0.0", "--dry-run", "--allow-unscanned", "--policy", policyPath); err != nil || !strings.Contains(stderr, "warning: unscanned") {
+		t.Fatalf("with the right flag: %v (stderr %q)", err, stderr)
+	}
+}
+
+// cachedInstall reads an install.json the run cache wrote.
+func cachedInstall(t *testing.T, path string) installMeta {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta installMeta
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		t.Fatalf("install.json: %v\n%s", err, raw)
+	}
+	return meta
 }
