@@ -59,13 +59,25 @@ type Envelope struct {
 
 // Attestation is the verify-gate outcome (§R1).
 type Attestation struct {
-	// State is verified | unsigned | local.
+	// State is verified | unsigned | local | unscanned.
 	State string `json:"state"`
 	// KeyID is the pinned signing key that verified (state verified).
 	KeyID string `json:"keyId,omitempty"`
 	// Verified is the boolean shorthand clients gate on.
 	Verified bool `json:"verified"`
+	// Consent names the flag that admitted a release the gate would have
+	// refused — `--allow-unsigned` for unsigned and local, `--allow-unscanned`
+	// for a version the registry admitted without a scan — so the receipt
+	// says not only what the verdict was but who accepted it. Empty for a
+	// verified release, which needed none.
+	Consent string `json:"consent,omitempty"`
 }
+
+// The consents a receipt records.
+const (
+	ConsentAllowUnsigned  = "--allow-unsigned"
+	ConsentAllowUnscanned = "--allow-unscanned"
+)
 
 // Harness identifies what looped the model.
 type Harness struct {

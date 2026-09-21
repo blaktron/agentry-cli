@@ -136,3 +136,46 @@ func TestVerifyJSONReport(t *testing.T) {
 		t.Error("digests disagree in a passing report")
 	}
 }
+
+// TestVerifyReportsUnscanned: a version the registry admitted without a
+// scan is reported as its own outcome — "unscanned, no attestation", never
+// "unsigned" — exits 0 by default and non-zero under --strict.
+func TestVerifyReportsUnscanned(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "internal", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("internal", ""))
+	fv.unscanned = true
+
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "verify", "acme/internal@1.0.0")
+	if err != nil {
+		t.Fatalf("verify of an unscanned version must exit 0 by default: %v", err)
+	}
+	if !strings.Contains(stdout, "attestation:     unscanned, no attestation") || !strings.Contains(stdout, "digest: PASS") {
+		t.Errorf("verify output lacks the unscanned outcome:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "unsigned") {
+		t.Errorf("verify conflates unscanned with unsigned:\n%s", stdout)
+	}
+
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "verify", "acme/internal@1.0.0", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep struct {
+		Attestation struct {
+			State  string `json:"state"`
+			Detail string `json:"detail"`
+		} `json:"attestation"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &rep); err != nil {
+		t.Fatalf("json: %v\n%s", err, stdout)
+	}
+	if rep.Attestation.State != "unscanned" || !strings.Contains(rep.Attestation.Detail, "without a scan") {
+		t.Fatalf("json attestation = %+v", rep.Attestation)
+	}
+
+	_, _, err = runCLI(t, nil, "--registry", fr.url(), "verify", "acme/internal@1.0.0", "--strict")
+	if err == nil || !strings.Contains(err.Error(), "unscanned") {
+		t.Fatalf("--strict must fail an unscanned version: %v", err)
+	}
+}

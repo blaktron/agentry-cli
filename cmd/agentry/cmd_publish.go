@@ -229,6 +229,12 @@ func verdict(out io.Writer, ns, name string, v *apiclient.AgentVersion) (bool, e
 		if v.ArchiveDigest != nil {
 			_, _ = fmt.Fprintf(out, " (%s)", *v.ArchiveDigest)
 		}
+		if v.ScanStatus != nil && *v.ScanStatus == apiclient.AgentVersionScanStatusSkipped {
+			// The registry admitted it without a scan (the organization's
+			// administrator took the agent off the pipeline): said here,
+			// so a publisher never reads "published" as "scanned".
+			_, _ = fmt.Fprint(out, " — unscanned: the registry admitted it without a scan, and installs and runs will ask for --allow-unscanned")
+		}
 		_, _ = fmt.Fprintln(out)
 		return true, nil
 	case "rejected":
