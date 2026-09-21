@@ -128,6 +128,10 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 		vctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		vcmd := exec.CommandContext(vctx, path, hs.VersionArgv...)
 		vcmd.Env, vcmd.Dir = env, dir
+		// As the probe: once the process has exited or been killed, a
+		// grandchild left holding stdout may delay the read this long,
+		// then it is abandoned.
+		vcmd.WaitDelay = 2 * time.Second
 		procx.NoWindow(vcmd)
 		// stdout only: a harness that warns on stderr at startup (codex
 		// does, about its config home) would otherwise have the warning
@@ -141,6 +145,8 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	cmd := exec.CommandContext(ctx, path, substituteAll(hs.Argv, rep)...)
 	cmd.Env, cmd.Dir = env, dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	// configProcess replaces SysProcAttr (the process group on unix), so
+	// the window rule, which keeps what it finds, goes after it.
 	configProcess(cmd)
 	procx.NoWindow(cmd)
 	if err := cmd.Start(); err != nil {
