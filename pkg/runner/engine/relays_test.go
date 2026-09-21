@@ -119,6 +119,36 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 		}
 		check(t, f)
 	})
+	// A relay the gateway starts after its health probe — the l4 relay for
+	// a declared server's egress host starts when the server first connects
+	// — is not in the probe-time snapshot. Teardown reads the log again, so
+	// it is reaped all the same (agentry-cli#184, found by runner-r2's
+	// mcp-osv fixture).
+	t.Run("relay started after the snapshot", func(t *testing.T) {
+		p, f := serverFixture(t)
+		happyFake(f)
+		f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools, mcp-npm-scope-server-x\n" + relayLine + "> 4 tools listed in 1.2s\n"}
+		gatewayCreatesRelays(f)
+		f.OnForeground = func(r dockerx.RunSpec) {
+			if strings.HasSuffix(r.Name, "-agent") {
+				f.LogsByName["agentry-cafe0000-gateway"] += "starting l4 proxy docker-mcp-l4proxy-late for api.osv.dev, ports 443\n"
+				f.ByLabel[relayLabel] = append(f.ByLabel[relayLabel], "docker-mcp-l4proxy-late")
+			}
+		}
+		if env, err := Run(context.Background(), f, p); err != nil || env.Status != "ok" {
+			t.Fatalf("run: %v", err)
+		}
+		check(t, f)
+		late := false
+		for _, op := range f.Ops() {
+			if op == "RemoveForce:docker-mcp-l4proxy-late" {
+				late = true
+			}
+		}
+		if !late {
+			t.Fatalf("the relay started after the snapshot survived teardown: %v", f.Ops())
+		}
+	})
 	t.Run("server failed to start", func(t *testing.T) {
 		p, f := serverFixture(t)
 		happyFake(f)
