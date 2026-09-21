@@ -1,9 +1,14 @@
 // Package setup implements the operator-experience flows of RUNNER-PLAN-2:
-// first-run machine setup with LLM-provider configuration (§P1) and the
+// first-run machine setup with LLM-provider configuration (§P1), the
 // guided MCP-profile setup that collects a BriefAgent's keys and
-// identities (§P3). Everything works through the Prompter interface so the
-// CLI (a TTY) and the desktop app (a form) drive the same logic — no
-// parallel implementations (§P8).
+// identities (§P3), and the model catalog — one read of a provider's
+// models listing with the operator's key, so a form can offer the models
+// rather than ask for one to be typed, which is also the endpoint test the
+// form gets for free (agentry-cli#170; models.go). Everything works
+// through the Prompter interface so the CLI (a TTY) and the desktop app (a
+// form) drive the same logic — no parallel implementations (§P8); the
+// provider table below is the one place that knows a provider's endpoints
+// and how its key is sent.
 package setup
 
 import (
@@ -37,13 +42,26 @@ type ProviderDefault struct {
 	Model      string
 	APIKeyEnv  string
 	ProxyAllow []string
+	// ModelsURL is the provider's models listing; KeyHeader the header
+	// its key rides in (keyHeaderBearer is "Authorization: Bearer").
+	ModelsURL string
+	KeyHeader string
 }
 
-// providerDefaults is the closed §P1 table; "custom" is handled by asking.
+// keyHeaderBearer marks a provider whose key is an Authorization bearer
+// rather than a header of its own.
+const keyHeaderBearer = "Authorization"
+
+// providerDefaults is the closed §P1 table; "custom" is handled by asking
+// (its endpoint is the operator's base URL, its key a bearer, the OpenAI
+// shape every compatible endpoint uses).
 var providerDefaults = []ProviderDefault{
-	{Provider: "anthropic", Model: "claude-sonnet-4-5", APIKeyEnv: "ANTHROPIC_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"}},
-	{Provider: "openai", Model: "gpt-5.2", APIKeyEnv: "OPENAI_API_KEY", ProxyAllow: []string{"api.openai.com:443"}},
-	{Provider: "google", Model: "gemini-3-pro", APIKeyEnv: "GEMINI_API_KEY", ProxyAllow: []string{"generativelanguage.googleapis.com:443"}},
+	{Provider: "anthropic", Model: "claude-sonnet-4-5", APIKeyEnv: "ANTHROPIC_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"},
+		ModelsURL: "https://api.anthropic.com/v1/models", KeyHeader: "x-api-key"},
+	{Provider: "openai", Model: "gpt-5.2", APIKeyEnv: "OPENAI_API_KEY", ProxyAllow: []string{"api.openai.com:443"},
+		ModelsURL: "https://api.openai.com/v1/models", KeyHeader: keyHeaderBearer},
+	{Provider: "google", Model: "gemini-3-pro", APIKeyEnv: "GEMINI_API_KEY", ProxyAllow: []string{"generativelanguage.googleapis.com:443"},
+		ModelsURL: "https://generativelanguage.googleapis.com/v1beta/models", KeyHeader: "x-goog-api-key"},
 }
 
 // Providers lists the selectable provider names (custom last).
