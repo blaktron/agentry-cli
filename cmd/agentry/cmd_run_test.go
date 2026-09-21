@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"os"
@@ -76,10 +77,10 @@ func TestHomeImageDirAndDigestSuffix(t *testing.T) {
 	if got := homeImageDir("/rh"); got != filepath.Join("/rh", "image") {
 		t.Errorf("homeImageDir = %q", got)
 	}
-	if got := digestSuffix("sha256:0123456789abcdef0123"); got != "0123456789ab" {
+	if got := installdir.DigestSuffix("sha256:0123456789abcdef0123"); got != "0123456789ab" {
 		t.Errorf("digestSuffix long = %q", got)
 	}
-	if got := digestSuffix("short"); got != "short" {
+	if got := installdir.DigestSuffix("short"); got != "short" {
 		t.Errorf("digestSuffix short = %q", got)
 	}
 }
@@ -126,29 +127,12 @@ func TestLocalTreeDigest(t *testing.T) {
 	}
 }
 
-func TestCopyWorkspaceSkipsVCSAndOutputs(t *testing.T) {
-	src := writeTree(t, map[string]string{
-		"agent.yaml": "y", "prompts/main.md": "p",
-		".git/config":         "x",
-		"agentry-out/r/x.txt": "x",
-	})
-	dest := filepath.Join(t.TempDir(), "ws")
-	if err := copyWorkspace(src, dest); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dest, "prompts", "main.md")); err != nil {
-		t.Error("workspace file missing after copy")
-	}
-	for _, skipped := range []string{".git", "agentry-out"} {
-		if _, err := os.Stat(filepath.Join(dest, skipped)); !os.IsNotExist(err) {
-			t.Errorf("%s was copied into the workspace", skipped)
-		}
-	}
-}
+// The workspace copy's skip rule (.git, agentry-out) is installdir.Write's,
+// tested in pkg/runner/installdir.
 
 func TestResolveOutDir(t *testing.T) {
 	t.Chdir(t.TempDir())
-	meta := &installMeta{Namespace: "acme", Name: "demo"}
+	meta := &installdir.Meta{Namespace: "acme", Name: "demo"}
 
 	dir, err := resolveOutDir("", meta, "runid1")
 	if err != nil {
@@ -297,29 +281,29 @@ func TestRunArgValidation(t *testing.T) {
 func TestWriteAndLoadInstallMeta(t *testing.T) {
 	src := writeTree(t, map[string]string{"agent.yaml": "x"})
 	installDir := filepath.Join(t.TempDir(), "agents", "acme", "demo", "1.0.0-abc")
-	meta := &installMeta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+	meta := &installdir.Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
 		Version: "1.0.0", Digest: "sha256:d1", Source: "local"}
-	if err := writeInstall(installDir, src, meta); err != nil {
+	if err := installdir.Write(installDir, src, meta); err != nil {
 		t.Fatal(err)
 	}
 
-	got, ok := loadInstallMeta(installDir, "sha256:d1")
+	got, ok := installdir.Load(installDir, "sha256:d1")
 	if !ok || got.Ref != meta.Ref || got.Source != "local" {
 		t.Fatalf("loadInstallMeta = %+v, %v", got, ok)
 	}
 	// A digest that moved on (new publish, changed tree) must invalidate
 	// the cache rather than run stale bytes.
-	if _, ok := loadInstallMeta(installDir, "sha256:other"); ok {
+	if _, ok := installdir.Load(installDir, "sha256:other"); ok {
 		t.Error("stale digest reused the cached install")
 	}
 	// A cache entry whose workspace vanished is not an install.
 	if err := os.RemoveAll(filepath.Join(installDir, "workspace")); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := loadInstallMeta(installDir, "sha256:d1"); ok {
+	if _, ok := installdir.Load(installDir, "sha256:d1"); ok {
 		t.Error("workspace-less install dir was reused")
 	}
-	if _, ok := loadInstallMeta(filepath.Join(t.TempDir(), "nope"), "sha256:d1"); ok {
+	if _, ok := installdir.Load(filepath.Join(t.TempDir(), "nope"), "sha256:d1"); ok {
 		t.Error("missing install dir was reused")
 	}
 }
@@ -531,7 +515,7 @@ func TestEnsureProfilePaths(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
 	pol := policy.Default()
-	meta := &installMeta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+	meta := &installdir.Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
 		Version: "1.0.0", Digest: "sha256:0123456789abcdef"}
 	pure := runFixtureManifest(t, "")
 	secretful := runFixtureManifest(t, "capabilities:\n  secrets: [API_TOKEN]\n")
@@ -680,7 +664,7 @@ func TestEnsurePlanRecompilesOldPlanVersionAndDoctorReportsIt(t *testing.T) {
 	home, _ := isolateRunnerHome(t)
 	m := runFixtureManifest(t, "")
 	pol := policy.Default()
-	meta := &installMeta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+	meta := &installdir.Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
 		Version: "1.0.0", Digest: "sha256:0123456789abcdef", Source: "local"}
 	installDir := t.TempDir()
 	ws := filepath.Join(installDir, "workspace")
@@ -748,7 +732,7 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	_, _ = isolateRunnerHome(t)
 	m := runFixtureManifest(t, "")
 	pol := policy.Default()
-	meta := &installMeta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+	meta := &installdir.Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
 		Version: "1.0.0", Digest: "sha256:0123456789abcdef", Source: "local"}
 	installDir := t.TempDir()
 	ws := filepath.Join(installDir, "workspace")
@@ -990,7 +974,7 @@ func TestRunUnscannedIsItsOwnConsent(t *testing.T) {
 // that admitted a release the gate would have refused — evidence of who
 // accepted what — and nothing for a verified one.
 func TestReceiptRecordsTheConsent(t *testing.T) {
-	cached := &installMeta{Ref: "acme/internal@1.0.0", Attestation: receipt.Attestation{State: "unscanned"}}
+	cached := &installdir.Meta{Ref: "acme/internal@1.0.0", Attestation: receipt.Attestation{State: "unscanned"}}
 	if err := cachedAttestationGate(cached, false, false); err == nil {
 		t.Fatal("a cached unscanned install passed without the flag")
 	}
@@ -1003,11 +987,11 @@ func TestReceiptRecordsTheConsent(t *testing.T) {
 	if cached.Attestation.Consent != receipt.ConsentAllowUnscanned {
 		t.Fatalf("consent = %q, want %q", cached.Attestation.Consent, receipt.ConsentAllowUnscanned)
 	}
-	unsigned := &installMeta{Ref: "acme/demo@1.0.0", Attestation: receipt.Attestation{State: "unsigned"}}
+	unsigned := &installdir.Meta{Ref: "acme/demo@1.0.0", Attestation: receipt.Attestation{State: "unsigned"}}
 	if err := cachedAttestationGate(unsigned, true, false); err != nil || unsigned.Attestation.Consent != receipt.ConsentAllowUnsigned {
 		t.Fatalf("unsigned: %v, consent %q", err, unsigned.Attestation.Consent)
 	}
-	verified := &installMeta{Ref: "acme/demo@1.0.0", Attestation: receipt.Attestation{State: "verified", Verified: true}}
+	verified := &installdir.Meta{Ref: "acme/demo@1.0.0", Attestation: receipt.Attestation{State: "verified", Verified: true}}
 	if err := cachedAttestationGate(verified, false, false); err != nil || verified.Attestation.Consent != "" {
 		t.Fatalf("verified: %v, consent %q", err, verified.Attestation.Consent)
 	}
@@ -1062,13 +1046,13 @@ func TestRunStaleCacheDefersToTheRegistry(t *testing.T) {
 }
 
 // cachedInstall reads an install.json the run cache wrote.
-func cachedInstall(t *testing.T, path string) installMeta {
+func cachedInstall(t *testing.T, path string) installdir.Meta {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var meta installMeta
+	var meta installdir.Meta
 	if err := json.Unmarshal(raw, &meta); err != nil {
 		t.Fatalf("install.json: %v\n%s", err, raw)
 	}

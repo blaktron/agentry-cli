@@ -1,16 +1,22 @@
 // Package export holds the interop exporters (§5.6): pure functions of
 // (archive, manifest, target) that emit the claude-skill and agents-md
-// install formats. Keeping them side-effect free makes them table-testable
-// without a registry, and lets any client — the CLI, the desktop app —
-// produce byte-identical installs from the same inputs.
+// install formats, and the two tree writers that lay them on disk from an
+// extracted archive. Keeping the shaping side-effect free makes it
+// table-testable without a registry, and lets any client — the CLI, the
+// desktop app — produce byte-identical installs from the same inputs.
 package export
 
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/blaktron/agentry/pkg/manifest"
 	"gopkg.in/yaml.v3"
+
+	"github.com/blaktron/agentry-cli/pkg/pathguard"
 )
 
 // EnsureSkillFrontmatter returns content guaranteed to start with YAML
@@ -108,4 +114,91 @@ func UpsertAgentsMDSectionNote(existing []byte, ns, name, version, summary, inst
 		out = append(out, section)
 	}
 	return []byte(strings.Join(out, "\n") + "\n")
+}
+
+// WriteClaudeSkillTree copies the release's files from staging into dest —
+// the skill's directory, as ~/.claude/skills/<name> holds it — and gives
+// the skill entrypoint its frontmatter. Embedded mode (RUNNER-PLAN §R5):
+// the host coding agent supplies the tools, so the capability contract
+// compiles to its allowed-tools vocabulary here — the same contract the
+// standalone runner enforces through the gateway. The entrypoint is a
+// manifest string; the file it names must be inside dest, whatever the
+// string.
+func WriteClaudeSkillTree(staging, dest string, m *manifest.Manifest) error {
+	if err := CopyTree(staging, dest); err != nil {
+		return err
+	}
+	skillRel := m.Entrypoints.Skill
+	if skillRel == "" {
+		skillRel = "SKILL.md"
+	}
+	skillPath := filepath.Join(dest, filepath.FromSlash(skillRel))
+	if !pathguard.Under(dest, skillPath) {
+		return fmt.Errorf("skill entrypoint %q resolves outside the install directory — refusing to write it", skillRel)
+	}
+	content, err := os.ReadFile(skillPath) //nolint:gosec // under dest, checked just above
+	if err != nil {
+		return fmt.Errorf("read skill entrypoint %s: %w", skillRel, err)
+	}
+	withFM := SkillFrontmatterWithTools(content, m.Name, m.Summary, HostToolGrants(m.Capabilities))
+	if err := os.WriteFile(skillPath, withFM, 0o644); err != nil { //nolint:gosec // skill files are world-readable content
+		return fmt.Errorf("write skill entrypoint: %w", err)
+	}
+	return nil
+}
+
+// WriteAgentsMDTree copies the release's files from staging into dest —
+// <project>/agents/<name> — and upserts the agent's section, with the note
+// naming which host built-ins the declared contract corresponds to
+// (embedded mode, RUNNER-PLAN §R5), into the AGENTS.md at agentsMDPath.
+func WriteAgentsMDTree(staging, dest, agentsMDPath string, m *manifest.Manifest, ns, version string) error {
+	if err := CopyTree(staging, dest); err != nil {
+		return err
+	}
+	existing, err := os.ReadFile(agentsMDPath) //nolint:gosec // the project's own AGENTS.md
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", agentsMDPath, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(agentsMDPath), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(agentsMDPath), err)
+	}
+	updated := UpsertAgentsMDSectionNote(existing, ns, m.Name, version, m.Summary, dest, HostToolsNote(m.Capabilities))
+	if err := os.WriteFile(agentsMDPath, updated, 0o644); err != nil { //nolint:gosec // project doc, not a secret
+		return fmt.Errorf("write %s: %w", agentsMDPath, err)
+	}
+	return nil
+}
+
+// CopyTree copies src into dest, preserving each file's permission bits
+// (the archive normalizes modes, D-15).
+func CopyTree(src, dest string) error { return CopyTreeSkipping(src, dest, nil) }
+
+// CopyTreeSkipping is CopyTree leaving out every directory skipDir names
+// (a local tree's .git, a run's own output folder).
+func CopyTreeSkipping(src, dest string, skipDir func(name string) bool) error {
+	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if skipDir != nil && info.IsDir() && p != src && skipDir(info.Name()) {
+			return filepath.SkipDir
+		}
+		rel, rerr := filepath.Rel(src, p)
+		if rerr != nil {
+			return rerr
+		}
+		target := filepath.Join(dest, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, rerr := os.ReadFile(p) //nolint:gosec // reading the staging dir
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
+	if err != nil {
+		return fmt.Errorf("copy files to %s: %w", dest, err)
+	}
+	return nil
 }

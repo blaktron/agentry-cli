@@ -13,13 +13,15 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
 )
 
 // TestResolveInstallPathsManagedFlag: only a directory the CLI chose is
-// cleared on reinstall.
+// cleared on reinstall. The runner target is not here: it has one home,
+// resolved in runInstall, and refuses --dir.
 func TestResolveInstallPathsManagedFlag(t *testing.T) {
-	for _, target := range validTargets {
+	for _, target := range []string{manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD} {
 		withDir, err := resolveInstallPaths(target, "/user/chosen", "helper")
 		if err != nil {
 			t.Fatalf("%s: %v", target, err)
@@ -223,7 +225,7 @@ func TestCopyTreePreservesModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(t.TempDir(), "out")
-	if err := copyTree(src, dest); err != nil {
+	if err := export.CopyTree(src, dest); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(filepath.Join(dest, "sub", "run.sh"))
@@ -240,7 +242,8 @@ func TestCopyTreePreservesModes(t *testing.T) {
 }
 
 // TestInstallClaudeSkillEndToEnd: the full §9.4 flow against the fake
-// registry — resolve, download, digest check, unsigned gate, export with
+// registry with the coding-agent target named (the default is the runner
+// home since DR-28) — resolve, download, digest check, unsigned gate, export with
 // embedded-mode allowed-tools, install-state record, and the
 // reinstall-clears-managed-dir rule with an "unchanged" diff.
 func TestInstallClaudeSkillEndToEnd(t *testing.T) {
@@ -249,7 +252,7 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 	files := skillFiles("demo", "capabilities:\n  filesystem:\n    read: workspace\n")
 	fr.addAgent("acme", "demo", "autonomous", "reads things").addVersion(t, "1.0.0", files)
 
-	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned")
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned")
 	if err != nil {
 		t.Fatalf("install: %v (stderr %q)", err, stderr)
 	}
@@ -278,7 +281,7 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned")
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned")
 	if err != nil {
 		t.Fatalf("reinstall: %v", err)
 	}
@@ -298,14 +301,14 @@ func TestInstallDirIsMergedNotCleared(t *testing.T) {
 	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	dir := t.TempDir()
 
-	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--dir", dir); err != nil {
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned", "--dir", dir); err != nil {
 		t.Fatal(err)
 	}
 	mine := filepath.Join(dir, "demo", "my-notes.txt")
 	if err := os.WriteFile(mine, []byte("mine"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--dir", dir); err != nil {
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned", "--dir", dir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(mine); err != nil {
@@ -347,12 +350,12 @@ func TestInstallAgentsMDTarget(t *testing.T) {
 	fr.addAgent("acme", "pa", "autonomous", "s").addVersion(t, "1.0.0", promptAgentFiles("pa"))
 
 	// Declared exec without --yes off a TTY (piped stdin): the gate holds.
-	_, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/pa@1.0.0", "--allow-unsigned")
+	_, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/pa@1.0.0", "--target", "agents-md", "--allow-unsigned")
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("exec caps installed without consent: %v", err)
 	}
 
-	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/pa@1.0.0", "--allow-unsigned", "--yes")
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/pa@1.0.0", "--target", "agents-md", "--allow-unsigned", "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,13 +378,21 @@ func TestInstallAgentsMDTarget(t *testing.T) {
 // identity (D-15); bytes that hash differently must never reach disk.
 func TestInstallDigestMismatchAborts(t *testing.T) {
 	isolateEnv(t)
+	runnerHome, _ := isolateRunnerHome(t)
 	fr := newFakeRegistry(t)
 	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.digest = "sha256:" + strings.Repeat("ab", 32)
 
-	_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned")
-	if err == nil || !strings.Contains(err.Error(), "digest mismatch") {
-		t.Fatalf("mismatched digest installed: %v", err)
+	// The default (runner) target and the coding-agent one: neither writes.
+	for _, extra := range [][]string{nil, {"--target", "claude-skill"}} {
+		args := append([]string{"--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned"}, extra...)
+		_, _, err := runCLI(t, nil, args...)
+		if err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+			t.Fatalf("mismatched digest installed (%v): %v", extra, err)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(runnerHome, "agents")); !os.IsNotExist(statErr) {
+		t.Error("a mismatched archive left files in the runner home")
 	}
 	home, _ := os.UserHomeDir()
 	if _, statErr := os.Stat(filepath.Join(home, ".claude", "skills", "demo")); !os.IsNotExist(statErr) {
@@ -577,7 +588,7 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 
 	// Without --allow-unsigned the plan still answers, and names the refusal
 	// an install would meet; it does not fail.
-	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--plan")
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--target", "claude-skill", "--plan")
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -614,7 +625,7 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 	}
 
 	// The digest is stable across runs.
-	stdout2, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--plan", "--allow-unsigned")
+	stdout2, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--target", "claude-skill", "--plan", "--allow-unsigned")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,10 +639,10 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 
 	// After a real install, the plan reports the prior record and an
 	// unchanged diff that needs no confirmation.
-	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned", "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	stdout3, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--plan", "--allow-unsigned")
+	stdout3, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--target", "claude-skill", "--plan", "--allow-unsigned")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +661,7 @@ func TestInstallJSONResult(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
 	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
-	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--allow-unsigned")
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned")
 	if err != nil {
 		t.Fatalf("install: %v (%s)", err, stderr)
 	}

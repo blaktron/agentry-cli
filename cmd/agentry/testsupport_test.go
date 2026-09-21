@@ -181,6 +181,7 @@ type fakeRegistry struct {
 	yankBodies     []string
 	installIntents []string
 	downloadAuths  []string
+	resolveAuths   []string
 	searchResults  []map[string]any
 	searchTotal    *int
 	userHandle     string
@@ -251,6 +252,9 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 	})
 
 	mux.HandleFunc("GET /api/v1/resolve", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		fr.resolveAuths = append(fr.resolveAuths, r.Header.Get("Authorization"))
+		fr.mu.Unlock()
 		ref := r.URL.Query().Get("ref")
 		if r.Header.Get("X-Agentry-Install") == "1" {
 			fr.mu.Lock()

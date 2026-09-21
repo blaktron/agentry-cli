@@ -3,6 +3,7 @@ module github.com/blaktron/agentry-cli
 go 1.27.0
 
 require (
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/blaktron/agentry v0.0.0-20260921050627-0d76248276aa
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -17,7 +18,6 @@ require (
 )
 
 require (
-	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

@@ -120,18 +120,6 @@ func renderDataAccess(items []manifest.DataAccess) string {
 	return strings.Join(out, ", ")
 }
 
-// defaultTarget picks the §5.6 install target for a manifest: the first
-// entry of runtime.interfaces the CLI can emit, claude-skill when nothing
-// usable is listed. Interfaces are independent of run mode.
-func defaultTarget(m *manifest.Manifest) string {
-	for _, it := range m.Runtime.Interfaces {
-		if slices.Contains(validTargets, it) {
-			return it
-		}
-	}
-	return manifest.InterfaceClaudeSkill
-}
-
 // modeStrings converts a mode set for joining.
 func modeStrings[T ~string](modes []T) []string {
 	out := make([]string, len(modes))
