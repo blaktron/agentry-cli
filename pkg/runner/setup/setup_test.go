@@ -82,6 +82,67 @@ func TestConfigureModelCustomNeedsBaseURLInYesMode(t *testing.T) {
 	}
 }
 
+// TestConfigureModelYesKeepsTheSameProvidersBaseURL (agentry-cli#188): the
+// same-provider rule — keep what the operator customized — covers the base
+// URL as it covers the model and the variable, so an unattended re-run on
+// a custom policy needs no --base-url and derives the allowlist from the
+// URL it kept. A provider switch to custom with no URL is still refused.
+func TestConfigureModelYesKeepsTheSameProvidersBaseURL(t *testing.T) {
+	pol := policy.Default()
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{
+		Provider: "custom", Model: "llama-local", BaseURL: "https://llm.internal:8443/v1", Yes: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Three re-run shapes on the same policy, in order; the model is kept
+	// until the third names another.
+	for i, opts := range []ModelOpts{{Yes: true}, {Provider: "custom", Yes: true}, {Provider: "custom", Model: "llama-tune", Yes: true}} {
+		if err := ConfigureModel(&scriptPrompter{}, pol, opts); err != nil {
+			t.Fatalf("re-run %+v on a custom policy: %v", opts, err)
+		}
+		if pol.Model.Provider != "custom" || pol.Model.BaseURL != "https://llm.internal:8443/v1" || strings.Join(pol.Model.ProxyAllow, ",") != "llm.internal:8443" {
+			t.Fatalf("re-run %+v lost the URL: %+v", opts, pol.Model)
+		}
+		if want := map[bool]string{false: "llama-local", true: "llama-tune"}[i == 2]; pol.Model.Name != want {
+			t.Fatalf("re-run %d model = %q, want %q", i, pol.Model.Name, want)
+		}
+	}
+	// On a terminal the question is still asked, with the kept URL as its
+	// default: an empty answer keeps it, a typed one moves the endpoint.
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "custom"}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.BaseURL != "https://llm.internal:8443/v1" {
+		t.Fatalf("interactive re-run lost the URL: %+v", pol.Model)
+	}
+	moved := &scriptPrompter{answers: []string{"", "", "https://llm.moved:8443/v1"}} // model, variable, URL
+	if err := ConfigureModel(moved, pol, ModelOpts{Provider: "custom"}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.BaseURL != "https://llm.moved:8443/v1" || strings.Join(pol.Model.ProxyAllow, ",") != "llm.moved:8443" {
+		t.Fatalf("interactive re-run did not take the new URL: %+v", pol.Model)
+	}
+	// A new URL on the same provider replaces the kept one, allowlist included.
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "custom", BaseURL: "https://llm.other:9443/v1", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.BaseURL != "https://llm.other:9443/v1" || strings.Join(pol.Model.ProxyAllow, ",") != "llm.other:9443" {
+		t.Fatalf("new URL not taken: %+v", pol.Model)
+	}
+	// Leaving custom for a table provider drops the URL with the provider;
+	// coming back to custom is a switch again, and needs the URL.
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "openai", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if pol.Model.BaseURL != "" {
+		t.Fatalf("a table provider kept a custom URL: %+v", pol.Model)
+	}
+	err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "custom", Model: "m", Yes: true})
+	if err == nil || !strings.Contains(err.Error(), "base-url") {
+		t.Fatalf("switch to custom without a URL must still refuse, got %v", err)
+	}
+}
+
 func TestConfigureModelInteractive(t *testing.T) {
 	pol := policy.Default()
 	p := &scriptPrompter{answers: []string{"google", "", ""}} // provider; model+keyEnv keep defaults
