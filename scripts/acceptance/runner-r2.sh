@@ -35,7 +35,28 @@ if [ -z "${!KEY_ENV:-}" ]; then
 fi
 
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+# The leak sweep runs whatever happened: under set -e a failed run used to
+# skip it, so "teardown on every path" was only ever checked on the
+# success path (agentry-cli#160). A leak found after a failure is reported
+# beside the failure; the exit status stays the failure's.
+RUN_PID=""
+sweep_leftovers() {
+  local rc=$?
+  local left nets vols
+  # A run still in flight (an assertion failed while it ran) gets to finish
+  # and tear down before its resources are judged.
+  if [ -n "$RUN_PID" ] && kill -0 "$RUN_PID" 2>/dev/null; then wait "$RUN_PID" || true; fi
+  left=$(docker ps -a --filter label=agentry.run --format '{{.Names}}' || true)
+  nets=$(docker network ls --format '{{.Name}}' | grep '^agentry-' || true)
+  vols=$(docker volume ls --filter label=agentry.run --format '{{.Name}}' || true)
+  if [ -n "$left$nets$vols" ]; then
+    echo "FAIL: run resources survived teardown — containers: [$left] networks: [$nets] volumes: [$vols]" >&2
+    [ $rc -eq 0 ] && rc=1
+  fi
+  rm -rf "$WORK"
+  exit $rc
+}
+trap sweep_leftovers EXIT
 export AGENTRY_RUNNER_HOME="$WORK/home"
 # The consent records `agentry run` writes (§R1) go to the throwaway config
 # dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
@@ -46,9 +67,41 @@ OUT="$WORK/out"
 "$AGENTRY" run --local testdata/runner/hello-report --allow-unsigned --yes ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} --prepare
 echo "prepare ok"
 
-# The run itself: task on stdin, envelope on stdout.
+# The run itself: task on stdin, envelope on stdout. It runs in the
+# background so the containers can be inspected while they are live —
+# the §9 row's "gateway never without --block-network; agent container
+# internal-only, no published ports, no secret in its environment" was
+# proven only against the docker fake until agentry-cli#160.
 echo "please make the report" | "$AGENTRY" run --local testdata/runner/hello-report ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} \
-  --allow-unsigned --yes --out "$OUT" --output-format json --timeout 300 >"$WORK/envelope.json"
+  --allow-unsigned --yes --out "$OUT" --output-format json --timeout 300 >"$WORK/envelope.json" &
+RUN_PID=$!
+AGENT=""
+for _ in $(seq 1 120); do
+  AGENT=$(docker ps --filter label=agentry.run --format '{{.Names}}' | grep -- '-agent$' | head -1 || true)
+  [ -n "$AGENT" ] && break
+  kill -0 "$RUN_PID" 2>/dev/null || break
+  sleep 1
+done
+if [ -n "$AGENT" ]; then
+  RUN_ID=${AGENT#agentry-}; RUN_ID=${RUN_ID%-agent}
+  GW="agentry-$RUN_ID-gateway"
+  docker inspect "$GW" --format '{{join .Args " "}}' | grep -q -- '--block-network' || { echo "FAIL: live gateway $GW runs without --block-network"; exit 1; }
+  NETS=$(docker inspect "$AGENT" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
+  [ "$(echo $NETS | wc -w)" -eq 1 ] || { echo "FAIL: agent container on more than one network: $NETS"; exit 1; }
+  docker network inspect $NETS --format '{{.Internal}}' | grep -qx true || { echo "FAIL: agent network $NETS is not internal"; exit 1; }
+  PORTS=$(docker inspect "$AGENT" --format '{{json .NetworkSettings.Ports}}')
+  echo "$PORTS" | grep -q 'HostPort' && { echo "FAIL: agent container publishes a port: $PORTS"; exit 1; }
+  # The agent holds the model key under the provider's name by necessity
+  # (agentry-cli#96) and the gateway token it calls the gateway with; what
+  # it must never hold is the registry credential (nothing in pkg/runner
+  # reads AGENTRY_TOKEN) or the daemon's socket (§R4: the gateway alone).
+  docker inspect "$AGENT" --format '{{join .Config.Env "\n"}}' | grep -q '^AGENTRY_TOKEN=' && { echo "FAIL: the registry token is in the agent container's environment"; exit 1; }
+  docker inspect "$AGENT" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q 'docker.sock' && { echo "FAIL: the agent container mounts the docker socket"; exit 1; }
+  echo "live containers: gateway --block-network, agent internal-only on $NETS, no published port, no registry token, no socket"
+else
+  echo "WARN: the agent container was never observed live (the run ended first?)" >&2
+fi
+wait "$RUN_PID" || { echo "FAIL: run exited non-zero"; cat "$WORK/envelope.json"; exit 1; }
 
 grep -q '"status": "ok"' "$WORK/envelope.json" || { echo "FAIL: run not ok"; cat "$WORK/envelope.json"; exit 1; }
 grep -q '"runPlanSha256"' "$WORK/envelope.json" || { echo "FAIL: envelope lacks plan hash"; exit 1; }
@@ -89,7 +142,19 @@ grep -q 'packages resolved at image build: .*git-' "$EXECOUT/result.json" || { e
 grep -q 'safe.directory' "$EXECOUT/result.json" || { echo "FAIL: receipt does not name git's safe.directory setting"; exit 1; }
 echo "exec catalog: image built, receipt names the packages"
 
-# §R11 invariant 6: nothing of ours survives.
+# A declared MCP server (agentry-cli#160): the gateway starts relay
+# sidecars for it, and DR-22's teardown assertion below is about them. The
+# fixture pins the same server the examples use; the install needs the
+# registry (npm) reachable from the docker host.
+MCPOUT="$WORK/out-mcp"
+echo "look up GHSA-8v63-cqqc-6r2c in OSV and summarise it" | "$AGENTRY" run --local testdata/runner/mcp-osv ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} \
+  --allow-unsigned --yes --out "$MCPOUT" --output-format json --timeout 300 >"$WORK/envelope-mcp.json" \
+  || { echo "FAIL: declared-server run exited non-zero"; cat "$WORK/envelope-mcp.json"; exit 1; }
+grep -q '"status": "ok"' "$WORK/envelope-mcp.json" || { echo "FAIL: declared-server run not ok"; cat "$WORK/envelope-mcp.json"; exit 1; }
+echo "declared MCP server: run ok"
+
+# §R11 invariant 6: nothing of ours survives. (The EXIT trap repeats this
+# on every path; here it is the success-path assertion with the names.)
 LEFT=$(docker ps -a --filter label=agentry.run --format '{{.Names}}')
 [ -z "$LEFT" ] || { echo "FAIL: leftover containers: $LEFT"; exit 1; }
 NETS=$(docker network ls --format '{{.Name}}' | grep '^agentry-' || true)
@@ -100,11 +165,15 @@ find "$AGENTRY_RUNNER_HOME" -name secrets.env | grep -q . && { echo "FAIL: secre
 # The relay sidecars the gateway started for a declared server are reaped
 # by the names its log gave them (agentry-cli#106, #108): none named in any
 # run's gateway.log receipt may survive. Checked by name, never by label —
-# the user's own docker mcp gateway may have relays of its own.
-RELAYS=$(cat "$OUT"/receipts/gateway.log "$EXECOUT"/receipts/gateway.log 2>/dev/null | grep -oE '^(starting l4 proxy docker-mcp-l4proxy-[^ ]+ for|[[:space:]]+- Starting l7 proxy docker-mcp-l7proxy-[^ ]+ for)' | grep -oE 'docker-mcp-l[47]proxy-[^ ]+' | sort -u || true)
+# the user's own docker mcp gateway may have relays of its own. The list
+# must be non-empty: the mcp-osv run above declares a server, so an empty
+# list means the assertion is looping over nothing (DR-22 was "accepted"
+# on exactly that for a while, agentry-cli#160).
+RELAYS=$(cat "$OUT"/receipts/gateway.log "$EXECOUT"/receipts/gateway.log "$MCPOUT"/receipts/gateway.log 2>/dev/null | grep -oE '^(starting l4 proxy docker-mcp-l4proxy-[^ ]+ for|[[:space:]]+- Starting l7 proxy docker-mcp-l7proxy-[^ ]+ for)' | grep -oE 'docker-mcp-l[47]proxy-[^ ]+' | sort -u || true)
+[ -n "$RELAYS" ] || { echo "FAIL: no relay sidecar named in any gateway.log — the declared-server fixture started none, so the DR-22 assertion proves nothing"; exit 1; }
 for r in $RELAYS; do
   docker ps -a --format '{{.Names}}' | grep -qx "$r" && { echo "FAIL: relay sidecar $r survived teardown"; exit 1; }
 done
-echo "teardown clean"
+echo "teardown clean ($(echo $RELAYS | wc -w) relay sidecar(s) named and reaped)"
 
 echo "runner-r2: all checks passed"

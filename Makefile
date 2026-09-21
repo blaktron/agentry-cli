@@ -12,8 +12,11 @@ LDFLAGS := -X github.com/blaktron/agentry-cli/internal/version.Version=$(shell g
 build:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/agentry ./cmd/agentry
 
+# -race: the engine and the session pump are goroutines over a docker
+# process and a TUI, and §9 claims the suites run under the detector;
+# they did not until agentry-cli#160.
 test:
-	$(GO) test ./...
+	$(GO) test -race ./...
 
 lint:
 	@fmt_out=$$(gofmt -l .); if [ -n "$$fmt_out" ]; then echo "gofmt needed on:"; echo "$$fmt_out"; exit 1; fi

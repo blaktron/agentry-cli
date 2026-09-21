@@ -1,0 +1,29 @@
+schemaVersion: "2"
+name: mcp-osv
+namespace: fixtures
+modes: [autonomous]
+version: 1.0.0
+summary: "Declares one MCP server (the OSV advisory lookup) — the fixture behind runner-r2's relay-teardown assertion"
+license: Apache-2.0
+tags: [fixture]
+
+entrypoints:
+  instruction: SKILL.md
+
+capabilities:
+  filesystem:
+    read: none
+    write: none
+  network:
+    egress: none
+  exec: none
+  mcpServers:
+    - npm: "@cyanheads/osv-advisory-mcp-server"
+      version: 0.1.13
+      tools: [osv_get_vulnerability]
+      env:
+        LOGS_DIR: /tmp/osv-logs
+      egress: [api.osv.dev]
+
+publish:
+  include: [agent.yaml, SKILL.md]

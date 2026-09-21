@@ -44,6 +44,14 @@ jobs:
           version: latest
       - name: make check
         run: make check
+      # ARCHITECTURE §9's runner row names runner-r0/r1 as its evidence;
+      # until agentry-cli#160 no workflow ran them. Both need no docker and
+      # no registry (r2 needs a docker host and a model key, and stays a
+      # manual gate — the row says so).
+      - name: runner acceptance r0 + r1 (no docker)
+        run: |
+          scripts/acceptance/runner-r0.sh
+          scripts/acceptance/runner-r1.sh
       # No client takes money (plan subscription-tiers.md D12): the CLI shows
       # a tier and a balance and sends the person to the site to upgrade.
       - name: no payment provider in the CLI
