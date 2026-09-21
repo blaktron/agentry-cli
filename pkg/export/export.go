@@ -8,9 +8,12 @@ package export
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -136,15 +139,63 @@ func WriteClaudeSkillTree(staging, dest string, m *manifest.Manifest) error {
 	if !pathguard.Under(dest, skillPath) {
 		return fmt.Errorf("skill entrypoint %q resolves outside the install directory — refusing to write it", skillRel)
 	}
-	content, err := os.ReadFile(skillPath) //nolint:gosec // under dest, checked just above
+	content, err := skillBody(staging, m, skillRel)
 	if err != nil {
-		return fmt.Errorf("read skill entrypoint %s: %w", skillRel, err)
+		return err
 	}
 	withFM := SkillFrontmatterWithTools(content, m.Name, m.Summary, HostToolGrants(m.Capabilities))
 	if err := os.WriteFile(skillPath, withFM, 0o644); err != nil { //nolint:gosec // skill files are world-readable content
 		return fmt.Errorf("write skill entrypoint: %w", err)
 	}
 	return nil
+}
+
+// skillBody is the skill's content, read from the verified release
+// (staging) and never from a destination an earlier install may have
+// left a file in: the skill file the manifest names; or, for a release
+// with no skill entrypoint — a prompt agent, whose instruction is AGENT.md
+// — its instruction as the runner reads it (the first of the manifest's
+// InstructionCandidates it carries, agentry-cli#193), else a SKILL.md it
+// ships anyway. A release that names a skill file it does not carry is
+// refused by that name, never patched over from something else; one with
+// nothing to make a skill from is refused naming what was looked for.
+func skillBody(staging string, m *manifest.Manifest, skillRel string) ([]byte, error) {
+	if m.Entrypoints.Skill != "" {
+		content, err := readUnder(staging, skillRel)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("the release names skill entrypoint %s but does not carry it", skillRel)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read skill entrypoint %s: %w", skillRel, err)
+		}
+		return content, nil
+	}
+	var tried []string
+	for _, rel := range append(m.InstructionCandidates(), skillRel) {
+		if slices.Contains(tried, rel) {
+			continue
+		}
+		tried = append(tried, rel)
+		content, err := readUnder(staging, rel)
+		if err == nil {
+			return content, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("read instruction %s: %w", rel, err)
+		}
+	}
+	return nil, fmt.Errorf("the release carries no instruction file and no skill file (looked for %s) to make a Claude skill from", strings.Join(tried, ", "))
+}
+
+// readUnder reads rel under root, refusing a rel that resolves outside
+// it: an entrypoint is a manifest string, and the file it names must be
+// inside the release whatever the string says.
+func readUnder(root, rel string) ([]byte, error) {
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if !pathguard.Under(root, p) {
+		return nil, fmt.Errorf("%q resolves outside the release — refusing to read it", rel)
+	}
+	return os.ReadFile(p) //nolint:gosec // under root, checked just above
 }
 
 // WriteAgentsMDTree copies the release's files from staging into dest —

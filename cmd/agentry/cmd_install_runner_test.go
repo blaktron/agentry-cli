@@ -331,3 +331,56 @@ func TestListCheckAsksTheRecordsOwnRegistry(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallRunnerTargetOfAnInstructionOnlyReleaseWithClaudeChosen
+// (agentry-cli#193): a prompt agent — AGENT.md, no SKILL.md, the shape of
+// the catalogue on dev — installs into the runner home with Claude Code
+// chosen, its export a Claude skill whose SKILL.md is made from the
+// instruction; and `--target claude-skill` on the same release writes the
+// same skill into ~/.claude/skills. Before this, both failed on the
+// SKILL.md the release does not carry.
+func TestInstallRunnerTargetOfAnInstructionOnlyReleaseWithClaudeChosen(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "pa", "autonomous", "s").addVersion(t, "1.0.0", promptAgentFiles("pa"))
+	pol := policy.Default()
+	pol.Harness = map[string]policy.HarnessPolicy{"claude": {}}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/pa@1.0.0", "--allow-unsigned", "--yes")
+	if err != nil {
+		t.Fatalf("install: %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(stdout, "(export: claude-skill)") {
+		t.Fatalf("stdout %s", stdout)
+	}
+	releaseDir := installdir.ReleaseDir(home, "acme", "pa", "1.0.0", fv.digest)
+	skill, err := os.ReadFile(filepath.Join(releaseDir, "export", "pa", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("the synthesised skill: %v", err)
+	}
+	if !strings.Contains(string(skill), "name: pa") || !strings.Contains(string(skill), "allowed-tools: Bash(jq:*)") || !strings.HasSuffix(string(skill), "# main\n\nDo it.\n") {
+		t.Fatalf("SKILL.md:\n%s", skill)
+	}
+
+	stdout, stderr, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/pa@1.0.0", "--target", "claude-skill", "--allow-unsigned", "--yes")
+	if err != nil {
+		t.Fatalf("--target claude-skill: %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(stdout, "as Claude skill") {
+		t.Fatalf("stdout %s", stdout)
+	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(userHome, ".claude", "skills", "pa", "SKILL.md")); err != nil {
+		t.Fatalf("~/.claude/skills/pa/SKILL.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(userHome, ".claude", "skills", "pa", "AGENT.md")); err != nil {
+		t.Fatalf("the instruction file stays beside the skill: %v", err)
+	}
+}
