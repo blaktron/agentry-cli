@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/procx"
 )
 
 // LogsAll asks Logs for the whole log.
@@ -172,6 +174,7 @@ func New() *CLI {
 func (c *CLI) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, c.Bin, args...) //nolint:gosec // fixed binary, structured args
 	cmd.Env = os.Environ()
+	procx.NoWindow(cmd)
 	return cmd
 }
 

@@ -25,6 +25,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/procx"
 )
 
 // defaultTimeout bounds the version read when the caller's context sets
@@ -157,6 +158,7 @@ func Probe(ctx context.Context, pol *policy.Policy, name string) Result {
 	}
 	cmd := exec.CommandContext(vctx, r.Path, hh.VersionArgv()...) //nolint:gosec // the operator's own harness, its version flag only
 	cmd.WaitDelay = waitDelay
+	procx.NoWindow(cmd)
 	out, verr := cmd.Output()
 	switch {
 	case verr != nil:

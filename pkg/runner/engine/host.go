@@ -15,6 +15,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/procx"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -129,6 +130,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 		vctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		vcmd := exec.CommandContext(vctx, path, hs.VersionArgv...)
 		vcmd.Env, vcmd.Dir = env, dir
+		procx.NoWindow(vcmd)
 		// stdout only: a harness that warns on stderr at startup (codex
 		// does, about its config home) would otherwise have the warning
 		// recorded as its version.
@@ -142,6 +144,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	cmd.Env, cmd.Dir = env, dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	configProcess(cmd)
+	procx.NoWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, info, Classify(ExitHarness, fmt.Errorf("start harness %s: %w", hs.Command, err))
 	}
