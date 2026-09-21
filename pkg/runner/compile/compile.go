@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -373,6 +374,11 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 
 	caps.FSReadMode, caps.FSReadPaths = fsMode(m.Capabilities.Filesystem.Read)
 	caps.FSWriteMode, caps.FSWritePaths = fsMode(m.Capabilities.Filesystem.Write)
+	for _, p := range append(append([]string{}, caps.FSReadPaths...), caps.FSWritePaths...) {
+		if err := checkWorkspacePath(p); err != nil {
+			return caps, err
+		}
+	}
 	if !m.Capabilities.Exec.IsZero() && !m.Capabilities.Exec.None {
 		caps.ExecCommands = sortedCopy(m.Capabilities.Exec.Commands)
 	}
@@ -381,6 +387,35 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 	}
 	sort.Strings(caps.DataAccess)
 	return caps, nil
+}
+
+// checkWorkspacePath judges a filesystem.read/write path before it becomes
+// a bind-mount specification. workspaceVolumes builds those by joining the
+// workspace placeholder and the path with a slash, and docker reads the
+// result as source:target[:mode] — so a path is a relative, clean, slash
+// path with no ".." segment and no ":" in it, or the bind leaves the run
+// workspace (or names a different one). pkg/manifest.Validate refuses the
+// same shapes at publish and on the --local path, but the compiler is the
+// last thing between the manifest and the mount, and a manifest that
+// reached it unvalidated — a registry release, a cached install — is
+// judged here regardless (security review 2026-09-20 §4.2).
+func checkWorkspacePath(p string) error {
+	switch {
+	case p == "" || p == ".":
+		return fmt.Errorf("compile: filesystem path %q names the workspace itself; declare read: workspace or write: workspace instead", p)
+	case strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\"):
+		return fmt.Errorf("compile: filesystem path %q is absolute; paths are relative to the workspace", p)
+	case strings.ContainsAny(p, ":\\"):
+		return fmt.Errorf("compile: filesystem path %q contains a character a bind mount cannot carry", p)
+	case path.Clean(p) != p:
+		return fmt.Errorf("compile: filesystem path %q is not in its clean form (%q)", p, path.Clean(p))
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return fmt.Errorf("compile: filesystem path %q would leave the workspace", p)
+		}
+	}
+	return nil
 }
 
 func fsMode(a manifest.FSAccess) (string, []string) {

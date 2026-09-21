@@ -895,3 +895,27 @@ func TestRunCachedUnsignedInstallIsRegated(t *testing.T) {
 	}
 	wantClassified(t, err, engine.ExitVerify)
 }
+
+// TestRunRegistryRefusesAnInvalidManifest: a release downloaded from a
+// registry is validated exactly as a --local tree is, before it is cached.
+// The fake registry applies no publish-time rules, so it stands in for a
+// compromised or out-of-date one (security review 2026-09-20 §4.2, C3).
+func TestRunRegistryRefusesAnInvalidManifest(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fr.enableSigning(t)
+	fv := fr.addAgent("acme", "escape", "autonomous", "s").addVersion(t, "1.0.0",
+		skillFiles("escape", "capabilities:\n  filesystem:\n    write: { paths: [\"../../../../escape\"] }\n"))
+	fv.attMode = attSigned
+
+	_, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/escape@1.0.0", "--dry-run", "--policy", policyPath)
+	wantClassified(t, err, engine.ExitCompile)
+	if !strings.Contains(err.Error(), "manifest invalid") && !strings.Contains(stderr, "manifest invalid") {
+		t.Fatalf("the refusal should name the manifest rule: %v (stderr %q)", err, stderr)
+	}
+	// Nothing was cached: a refused release is not a verified install.
+	if entries, _ := os.ReadDir(filepath.Join(home, "agents", "acme", "escape")); len(entries) != 0 {
+		t.Fatalf("a refused release was cached: %v", entries)
+	}
+}
