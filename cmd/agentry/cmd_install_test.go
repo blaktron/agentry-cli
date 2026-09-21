@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,7 +104,9 @@ func TestPrepareDest(t *testing.T) {
 	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareDest(installPaths{dest: managed, managed: true}); err != nil {
+	// A managed destination names the root it sits under (resolveInstallPaths
+	// records it); prepareDest clears nothing without one.
+	if err := prepareDest(installPaths{dest: managed, managed: true, managedRoot: filepath.Dir(managed)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
@@ -663,5 +666,117 @@ func TestInstallJSONResult(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "as Claude skill") {
 		t.Errorf("narration missing from stderr: %q", stderr)
+	}
+}
+
+// The install takes its destination and its skill entrypoint from the
+// resolve response's manifest, which neither the archive digest nor the
+// attestation covers. Security review 2026-09-20 §4.7: a registry naming
+// "../../.." got $HOME cleared; an entrypoint of "../../.bashrc" was an
+// arbitrary-file overwrite. Three guards now, tested with a canary home.
+
+func plantCanaryHome(t *testing.T) string {
+	t.Helper()
+	home, _ := os.UserHomeDir() // isolateEnv pointed HOME at a temp dir
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "skills", "other-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"canary", ".bashrc", ".claude/skills/other-skill/SKILL.md"} {
+		if err := os.WriteFile(filepath.Join(home, f), []byte("keep me\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home
+}
+
+func assertCanaryHomeIntact(t *testing.T, home string) {
+	t.Helper()
+	for _, f := range []string{"canary", ".bashrc", ".claude/skills/other-skill/SKILL.md"} {
+		b, err := os.ReadFile(filepath.Join(home, f))
+		if err != nil || string(b) != "keep me\n" {
+			t.Fatalf("%s was touched: %v %q", f, err, b)
+		}
+	}
+}
+
+func TestInstallRefusesATraversalNameFromTheResolveResponse(t *testing.T) {
+	isolateEnv(t)
+	home := plantCanaryHome(t)
+	for _, name := range []string{"../../..", "..", "../other-skill", "a/b", ""} {
+		fr := newFakeRegistry(t)
+		fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+		fv.manifest.Name = name // the archive stays genuine; the resolve doc lies
+		_, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes")
+		if err == nil {
+			t.Fatalf("name %q: the install was accepted", name)
+		}
+		if !strings.Contains(err.Error(), "manifest") && !strings.Contains(stderr, "manifest") {
+			t.Fatalf("name %q: refused for another reason: %v (stderr %q)", name, err, stderr)
+		}
+	}
+	assertCanaryHomeIntact(t, home)
+}
+
+func TestInstallRefusesAnEscapingSkillEntrypoint(t *testing.T) {
+	isolateEnv(t)
+	home := plantCanaryHome(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv.manifest.Entrypoints.Skill = "../../.bashrc"
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err == nil {
+		t.Fatal("an escaping entrypoint was accepted")
+	}
+	assertCanaryHomeIntact(t, home)
+
+	// The export's own check, for a manifest that reached it by another road.
+	dest := filepath.Join(home, ".claude", "skills", "demo")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, "SKILL.md"), []byte("# demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := &manifest.Manifest{Name: "demo", Summary: "s"}
+	m.Entrypoints.Skill = "../../.bashrc"
+	err := exportClaudeSkill(io.Discard, staging, installPaths{dest: dest, managed: true, managedRoot: filepath.Dir(dest)}, m, "acme", "1.0.0")
+	if err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("exportClaudeSkill wrote outside the destination: %v", err)
+	}
+	assertCanaryHomeIntact(t, home)
+}
+
+func TestPrepareDestRefusesWhatItMustNeverClear(t *testing.T) {
+	isolateEnv(t)
+	home := plantCanaryHome(t)
+	root := filepath.Join(home, ".claude", "skills")
+	for _, dest := range []string{home, filepath.Dir(home), filepath.Join(home, ".claude"), root, string(filepath.Separator), "",
+		filepath.Join(root, "..", "..", "canary"), filepath.Join(root, "a", "b")} {
+		if err := prepareDest(installPaths{dest: dest, managed: true, managedRoot: root}); err == nil {
+			t.Fatalf("prepareDest cleared %q", dest)
+		}
+	}
+	if err := prepareDest(installPaths{dest: filepath.Join(root, "other-skill"), managed: true}); err == nil {
+		t.Fatal("prepareDest cleared a directory with no managed root")
+	}
+	assertCanaryHomeIntact(t, home)
+	// A skill directory under the managed root is cleared, as before; and the
+	// agents-md default, a relative agents/<name> under the working directory.
+	mine := filepath.Join(root, "mine")
+	if err := os.MkdirAll(mine, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareDest(installPaths{dest: mine, managed: true, managedRoot: root}); err != nil {
+		t.Fatalf("a managed skill directory must be clearable: %v", err)
+	}
+	if _, err := os.Stat(mine); !os.IsNotExist(err) {
+		t.Fatal("the managed skill directory was not cleared")
+	}
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll(filepath.Join("agents", "demo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareDest(installPaths{dest: filepath.Join("agents", "demo"), managed: true, managedRoot: "agents"}); err != nil {
+		t.Fatalf("the agents-md default must be clearable: %v", err)
 	}
 }

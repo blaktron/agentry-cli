@@ -27,6 +27,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/pathguard"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
@@ -298,6 +299,17 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	if err != nil {
 		return err
 	}
+	// The resolve response's manifest is covered by neither the digest nor
+	// the attestation (both are over the archive), and the install directory
+	// and the skill file are derived from it: hold it to the publish rules
+	// before any path is, and require it to name the resolved release
+	// (security review 2026-09-20 §4.7).
+	if err := requireValidManifest(cmd, m, fmt.Sprintf("the registry's manifest for %s/%s@%s", res.Namespace, res.Name, res.Version)); err != nil {
+		return err
+	}
+	if m.Name != res.Name || m.Namespace != res.Namespace {
+		return fmt.Errorf("the registry's manifest names %s/%s but the release is %s/%s — refusing to install", m.Namespace, m.Name, res.Namespace, res.Name)
+	}
 
 	archive, err := downloadArchive(cmd.Context(), reg, token, res)
 	if err != nil {
@@ -366,6 +378,15 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// file-count and compression-ratio bombs all refused rather than written.
 	if err := pkgarchive.Extract(bytes.NewReader(archive), staging, int64(len(archive)), installExtractLimits()); err != nil {
 		return fmt.Errorf("extract archive: %w", err)
+	}
+
+	// The archive is the verified bytes; when it carries its manifest, that
+	// is the one the export reads (a v1 release may ship without one, and
+	// then the resolve manifest validated above stands).
+	if am, err := manifestFromInstallArchive(staging, m, res); err != nil {
+		return err
+	} else {
+		m = am
 	}
 
 	switch target {
@@ -638,6 +659,11 @@ type installPaths struct {
 	// Only a managed directory is cleared on reinstall — a --dir the user
 	// named is theirs, and may hold files this command did not put there.
 	managed bool
+	// managedRoot is the directory a managed dest sits directly under
+	// (~/.claude/skills, or ./agents): the one shape a managed clear may
+	// have, so a dest derived from a bad name cannot be cleared whatever
+	// it resolved to.
+	managedRoot string
 }
 
 // resolveInstallPaths computes the destination for a target without touching
@@ -653,17 +679,38 @@ func resolveInstallPaths(target, dir, name string) (installPaths, error) {
 		if err != nil {
 			return installPaths{}, fmt.Errorf("locate home directory (pass --dir): %w", err)
 		}
-		return installPaths{dest: filepath.Join(home, ".claude", "skills", name), managed: true}, nil
+		root := filepath.Join(home, ".claude", "skills")
+		return installPaths{dest: filepath.Join(root, name), managed: true, managedRoot: root}, nil
 
 	case manifest.InterfaceAgentsMD:
 		if dir != "" {
 			return installPaths{dest: dir}, nil
 		}
-		return installPaths{dest: filepath.Join("agents", name), managed: true}, nil
+		return installPaths{dest: filepath.Join("agents", name), managed: true, managedRoot: "agents"}, nil
 
 	default:
 		return installPaths{}, fmt.Errorf("unknown --target %q (want %s)", target, strings.Join(validTargets, ", "))
 	}
+}
+
+// manifestFromInstallArchive reads agent.yaml out of the extracted archive
+// when it is there, validates it, and requires it to name the resolved
+// release; absent (a legacy v1 release), the resolve manifest stands.
+func manifestFromInstallArchive(staging string, fromResolve *manifest.Manifest, res *apiclient.ResolveResult) (*manifest.Manifest, error) {
+	if _, err := os.Stat(filepath.Join(staging, "agent.yaml")); errors.Is(err, os.ErrNotExist) {
+		return fromResolve, nil
+	}
+	m, err := manifestFromWorkspace(staging)
+	if err != nil {
+		return nil, fmt.Errorf("the archive's agent.yaml: %w — refusing to install", err)
+	}
+	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
+		return nil, fmt.Errorf("the archive's agent.yaml fails validation — refusing to install: %v", blocking[0])
+	}
+	if m.Name != res.Name || m.Namespace != res.Namespace {
+		return nil, fmt.Errorf("the archive's manifest names %s/%s but the release is %s/%s — refusing to install", m.Namespace, m.Name, res.Namespace, res.Name)
+	}
+	return m, nil
 }
 
 // prepareDest clears a CLI-managed destination so files an older version
@@ -673,7 +720,33 @@ func prepareDest(p installPaths) error {
 	if !p.managed {
 		return nil
 	}
-	if err := os.RemoveAll(p.dest); err != nil {
+	// A managed destination is one directory directly under its managed
+	// root and nothing else: never a root, never the home directory or an
+	// ancestor of it, never a directory a traversing name resolved to.
+	// The agents-md default is relative to the working directory, so both
+	// are made absolute before the judgement (security review 2026-09-20
+	// §4.7).
+	dest, err := filepath.Abs(p.dest)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", p.dest, err)
+	}
+	root := p.managedRoot
+	if root != "" {
+		if root, err = filepath.Abs(root); err != nil {
+			return fmt.Errorf("resolve %s: %w", p.managedRoot, err)
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home directory: %w", err)
+	}
+	if err := pathguard.RefuseDangerousDir(dest, home); err != nil {
+		return fmt.Errorf("refusing to clear %s: %v", p.dest, err)
+	}
+	if !pathguard.DirectlyUnder(root, dest) {
+		return fmt.Errorf("refusing to clear %s: a managed install lives directly under its managed root (%q)", p.dest, p.managedRoot)
+	}
+	if err := os.RemoveAll(dest); err != nil {
 		return fmt.Errorf("clear %s: %w", p.dest, err)
 	}
 	return nil
@@ -719,8 +792,15 @@ func exportClaudeSkill(out io.Writer, staging string, p installPaths, m *manifes
 	if skillRel == "" {
 		skillRel = "SKILL.md"
 	}
+	// The entrypoint is a manifest string (validated before the download,
+	// and taken from the archive's own manifest when it carries one); the
+	// file it names must be inside the directory just written, whatever
+	// the string.
 	skillPath := filepath.Join(dest, filepath.FromSlash(skillRel))
-	content, err := os.ReadFile(skillPath) //nolint:gosec // path derives from the verified archive
+	if !pathguard.Under(dest, skillPath) {
+		return fmt.Errorf("skill entrypoint %q resolves outside the install directory — refusing to write it", skillRel)
+	}
+	content, err := os.ReadFile(skillPath) //nolint:gosec // under dest, checked just above
 	if err != nil {
 		return fmt.Errorf("read skill entrypoint %s: %w", skillRel, err)
 	}
