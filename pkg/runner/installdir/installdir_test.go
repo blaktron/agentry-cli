@@ -165,6 +165,45 @@ func TestWriteExport(t *testing.T) {
 	}
 }
 
+// An instruction-only release (a prompt agent: AGENT.md, no SKILL.md — the
+// shape of the catalogue on dev) exports as a Claude skill too, its
+// SKILL.md made from the instruction (agentry-cli#193): a chosen Claude
+// Code no longer fails the runner-home install of such a release.
+func TestWriteExportInstructionOnlyClaudeSkill(t *testing.T) {
+	m := &manifest.Manifest{SchemaVersion: "2", Name: "changelog-from-git", Namespace: "agentry", Version: "1.2.1", Summary: "Drafts a changelog from git history."}
+	m.Entrypoints.Instruction = "AGENT.md"
+	m.Capabilities.Exec.Commands = []string{"git"}
+	src := stageTree(t, map[string]string{"agent.yaml": "name: changelog-from-git\n", "AGENT.md": "# Changelog\n\nRead the log.\n", "README.md": "readme\n"})
+	dir := filepath.Join(t.TempDir(), "1.2.1-abc")
+	meta := &Meta{Ref: "agentry/changelog-from-git@1.2.1", Namespace: "agentry", Name: "changelog-from-git", Version: "1.2.1", Digest: "sha256:abc", Source: "registry"}
+	if err := Write(dir, src, meta); err != nil {
+		t.Fatal(err)
+	}
+	pol := policy.Default()
+	pol.Harness = map[string]policy.HarnessPolicy{"claude": {}}
+	if style := StyleFor(pol); style != manifest.InterfaceClaudeSkill {
+		t.Fatalf("StyleFor with claude chosen: %s", style)
+	}
+	if err := WriteExport(dir, manifest.InterfaceClaudeSkill, m, meta); err != nil {
+		t.Fatalf("the Claude-skill export of an instruction-only release: %v", err)
+	}
+	skill, err := os.ReadFile(filepath.Join(dir, "export", "changelog-from-git", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"name: changelog-from-git", "description: Drafts a changelog from git history.", "allowed-tools: Bash(git:*)", "# Changelog\n\nRead the log.\n"} {
+		if !strings.Contains(string(skill), want) {
+			t.Fatalf("SKILL.md lacks %q:\n%s", want, skill)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "export", "changelog-from-git", "AGENT.md")); err != nil {
+		t.Fatalf("the instruction file must stay beside the skill: %v", err)
+	}
+	if got, ok := Load(dir, "sha256:abc"); !ok || got.Export != manifest.InterfaceClaudeSkill {
+		t.Fatalf("install.json names what was written: %+v", got)
+	}
+}
+
 // RemoveOtherVersions leaves the named release and takes every sibling.
 func TestRemoveOtherVersions(t *testing.T) {
 	home := t.TempDir()
