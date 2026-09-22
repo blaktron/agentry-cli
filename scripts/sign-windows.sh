@@ -60,14 +60,14 @@ printf '%s  %s\n' "$JSIGN_SHA256" "$jar" | sha256sum -c --quiet - 2>/dev/null ||
 # --storepass env:NAME makes jsign read the token from the environment; the
 # alias is <account>/<profile>; RFC 3161 is the timestamp protocol the
 # Microsoft TSA speaks; the name and URL are what Windows shows beside the
-# publisher in the signature's details.
+# publisher in the signature's details (this is the CLI: not "Agentry Desktop").
 java -jar "$jar" sign \
   --storetype TRUSTEDSIGNING \
   --keystore "$ARTIFACT_SIGNING_ENDPOINT" \
   --storepass env:AGENTRY_SIGNING_TOKEN \
   --alias "$ARTIFACT_SIGNING_ACCOUNT/$ARTIFACT_SIGNING_PROFILE" \
   --tsaurl "$TSA_URL" --tsmode RFC3161 --tsretries 5 --tsretrywait 15 \
-  --name "Agentry Desktop" --url "https://secureagentry.net" \
+  --name "Agentry CLI" --url "https://secureagentry.net" \
   --replace \
   "$file" || fail "jsign could not sign $file"
 # jsign 7.5 has no verify command; the read-back — chain to the pinned root,

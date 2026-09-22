@@ -8,10 +8,9 @@
 # and `v*` tags, so a job on another branch, a pull request or a fork never
 # presents that subject. The exchange is the OAuth client-credentials grant
 # with the OIDC token as the client assertion — plain curl, no Azure CLI on
-# the runner. The release workflow's Windows signing (#54) does the same
-# exchange in its own `linux-windows` job (which joins the environment then)
-# and hands the token to jsign; this workflow proves the credential before
-# that lands, and stays as the diagnostic when it fails later.
+# the runner. The release workflow's `build` job does the same exchange and
+# hands the token to jsign; this workflow proves the credential on its own
+# (agentry-cli#197's wizard runs it) and stays as the diagnostic.
 #
 # Nothing here is printed but the outcome and the OIDC token's own subject
 # claim (public by construction). Both tokens reach curl through a config on
@@ -50,7 +49,7 @@ jobs:
         with:
           persist-credentials: false
       # scripts/signing-token.sh is the exchange the release's Windows
-      # signing runs (agentry-desktop#54); here it proves the credential and
+      # signing runs (agentry-cli#196); here it proves the credential and
       # nothing is signed. The token it prints is masked and dropped.
       - name: Exchange the job's OIDC token for an Artifact Signing access token
         env:

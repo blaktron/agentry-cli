@@ -44,8 +44,14 @@ away at the flip.
 
 ## Releasing
 
-A release is a tag `v<semver>` on `main` (`git tag v0.1.0 && git push origin
-v0.1.0`; plan `agentry-notes/plans/cli-release-signing.md`). The `release`
+A release is a tag `v<major>.<minor>.<patch>` on `main`:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+(plan `agentry-notes/plans/cli-release-signing.md`). A `workflow_dispatch`
+of the `release` workflow from `main` is a dry run of the same job. The
 workflow builds the five binaries with `make dist` (linux and darwin on amd64
 and arm64, windows on amd64; the tag is the version, bare, and
 `build/release.env` names the registry they talk to by default), signs the
@@ -57,9 +63,10 @@ names — writes `BUILD-INFO` and `SHA256SUMS`, signs those sums with the
 estate's own update-signing key (the desktop's `signrelease`, at the desktop
 revision the workflow pins, which verifies what it wrote against the committed
 key set), and uploads the set as one workflow artifact `agentry-cli-<version>`.
-The site imports it with `build-downloads.sh --from-run blaktron/agentry-cli
-v<version>`, verifies both signatures, and its download page says "signed"
-for the Windows binary. No GitHub Release before 1.0. A `workflow_dispatch`
+The site will import it with `build-downloads.sh --from-run
+blaktron/agentry-cli v<version>`, verify both signatures, and say "signed" on
+the Windows binary's card (agentry-web#214; until then the site still builds
+the CLI itself). No GitHub Release before 1.0. A `workflow_dispatch`
 run from `main` is a dry run: it signs exactly as a tag does and the site
 refuses its bundle.
 

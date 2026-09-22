@@ -27,7 +27,7 @@ unset AGENTRY_WINDOWS_SIGNING_CN SIGNING_CAFILE SIGNING_TSA_CAFILE
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 name=$(basename "$exe")
-[[ "$name" =~ ^agentry-.+-windows-amd64\.exe$ ]] || name="agentry-0.0.0-windows-amd64.exe"
+[[ "$name" =~ ^agentry-.+-windows-amd64\.exe$ ]] || fail "$name is not agentry-<version>-windows-amd64.exe; give the file the release's name"
 
 # A root and a leaf with the code-signing EKU, two days of life.
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/ca.key" -out "$T/ca.pem" -days 2 -subj "/CN=Agentry Test Root" \

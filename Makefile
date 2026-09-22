@@ -32,7 +32,7 @@ check: lint test build
 # Pure Go, CGO off, so every target builds on any host with the toolchain and
 # nothing else — no signing input is read here (plan D5): the release
 # workflow signs the Windows exe after this target, not inside it.
-DIST_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo 0.0.0-dev)
+DIST_VERSION ?= $(shell v=$$(git describe --tags --always --dirty 2>/dev/null) || v=0.0.0-dev; echo "$$v" | sed 's/^v//')
 DIST_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 dist:
 	@mkdir -p dist

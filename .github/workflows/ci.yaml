@@ -70,7 +70,8 @@ jobs:
       - name: Windows signing seam, with a throwaway CA
         run: |
           set -euo pipefail
-          make dist DIST_VERSION=0.0.0
+          mkdir -p dist
+          GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/agentry-0.0.0-windows-amd64.exe ./cmd/agentry
           scripts/acceptance/windows-signing.sh dist/agentry-0.0.0-windows-amd64.exe
       # No client takes money (plan subscription-tiers.md D12): the CLI shows
       # a tier and a balance and sends the person to the site to upgrade.
