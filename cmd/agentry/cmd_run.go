@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -466,6 +468,19 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 	if err != nil {
 		return err
 	}
+	// Teardown on every path (agentry-cli#161): a panic in the terminal chat,
+	// or any return before the explicit End below, would leave the session's
+	// sandbox, the gateway holding the docker socket and the model key running
+	// with nothing left to apply a budget. End is idempotent — a second call
+	// returns the first one's envelope — so the explicit End below still
+	// produces the receipts this function reports. The deferred call gets a
+	// context of its own: on the panic path cmd.Context() may already be
+	// cancelled, and a teardown that cannot run is no teardown.
+	defer func() {
+		endCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_, _ = s.End(endCtx, false)
+	}()
 	topts := tui.Options{
 		Ref:        plan.Ref,
 		Model:      plan.Harness.Model,

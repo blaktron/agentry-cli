@@ -97,14 +97,11 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
 	}
-	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
-		return nil, err
-	}
-	if err := stageIntake(p, rd); err != nil {
-		return nil, err
-	}
-	// secrets.env dies unconditionally; the rest of the run dir only
-	// when not kept for debugging (§R11 invariant 6; KeepRunDir never
+	// Registered before anything is staged into it: a failure in stageInputs
+	// or stageIntake — or a panic — otherwise leaves the run directory, and
+	// whatever was copied into it, behind for the next run to trip over
+	// (agentry-cli#161). secrets.env dies unconditionally; the rest of the run
+	// dir only when not kept for debugging (§R11 invariant 6; KeepRunDir never
 	// keeps secrets).
 	td.add(func(context.Context) {
 		_ = os.Remove(rd.secretsPath)
@@ -112,6 +109,12 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			_ = os.RemoveAll(root)
 		}
 	})
+	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
+		return nil, err
+	}
+	if err := stageIntake(p, rd); err != nil {
+		return nil, err
+	}
 
 	if err := copyTree(p.WorkspaceSrc, rd.workspace); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("copy workspace: %w", err))

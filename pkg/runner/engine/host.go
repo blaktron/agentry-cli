@@ -176,13 +176,20 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	cmd.Env, cmd.Dir = env, dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	// configProcess replaces SysProcAttr (the process group on unix), so
-	// the window rule, which keeps what it finds, goes after it.
-	configProcess(cmd)
+	// the window rule, which keeps what it finds, goes after it. Ten seconds
+	// for the harness and its children to answer SIGTERM before the whole
+	// group is SIGKILLed (agentry-cli#161).
+	waited := configProcess(cmd, 10*time.Second)
 	procx.NoWindow(cmd)
 	if err := cmd.Start(); err != nil {
+		waited()
 		return nil, info, Classify(ExitHarness, fmt.Errorf("start harness %s: %w", hs.Command, err))
 	}
 	wait := func() (int, error) {
+		// The leader's pid is the process group's id, and once it is reaped
+		// the kernel may hand that pid to something else: call off any pending
+		// group escalation before that can happen (agentry-cli#161).
+		defer waited()
 		err := cmd.Wait()
 		if err == nil {
 			return 0, nil
@@ -225,11 +232,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		overBudget: func() { cancelCause(errBudget) },
 		overCost:   func() { cancelCause(errCostBudget) },
 	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		collector.consume(pr)
-	}()
+	done := consumeGuarded(collector, pr, cancelCause)
 	var stdin io.Reader
 	if p.Plan.Harness.Host.StdinTask {
 		stdin = bytes.NewReader(task)
@@ -257,6 +260,10 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	rd.redact.File(stderrPath)
 	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info}
 	switch {
+	// First, as in the container path: a panic that stopped the reader is the
+	// reason anything downstream looks wrong (agentry-cli#161).
+	case collector.panicErr != nil:
+		out.err = Classify(ExitCLI, collector.panicErr)
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:
