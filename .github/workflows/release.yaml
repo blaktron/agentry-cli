@@ -38,7 +38,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 env:
-  # The desktop COMMIT whose internal/cmd/signrelease signs this bundle and
+  # The desktop COMMIT (agentry-desktop#172: signrelease knows -product)
+  # whose internal/cmd/signrelease signs this bundle and
   # whose internal/selfupdate/keys.json is the key set the signature is
   # verified against before upload — the same key set the site's importer
   # checks (agentry-web#189). When the desktop rotates or retires a key
@@ -46,7 +47,7 @@ env:
   # AGENTRY_UPDATE_SIGNING_KEY secret move together, by a pull request and the
   # operator's secret update in one operation; either alone fails the next
   # release closed (a key the set does not carry as current is refused).
-  DESKTOP_SIGNRELEASE_REF: 2a10da595bc8595c67fb01f9d584e524053fb438
+  DESKTOP_SIGNRELEASE_REF: c4b13867dd9fc9783f5daf9438e964e5d7fce05d
 
 jobs:
   # Refuses before a binary is built: a tag that is not semver. The tag is the
@@ -239,7 +240,12 @@ jobs:
         run: GOBIN="$RUNNER_TEMP" go install "github.com/blaktron/agentry-desktop/internal/cmd/signrelease@${DESKTOP_SIGNRELEASE_REF}"
       # The private half is an Actions secret, piped to the signer on stdin,
       # never written to disk, dropped from the signer's own environment
-      # (agentry-desktop D-026).
+      # (agentry-desktop D-026). -product agentry-cli: the signed trusted
+      # comment names THIS product ("agentry-cli <version> (commit <sha>)",
+      # agentry-desktop#171), and the signer refuses to sign sums whose
+      # artifact names are not the CLI's; the desktop's update check reads
+      # only its own product's comment, so this bundle can never be offered
+      # to the desktop as an update, whatever manifest names it.
       - name: Sign SHA256SUMS with the estate's update-signing key
         env:
           AGENTRY_UPDATE_SIGNING_KEY: ${{ secrets.AGENTRY_UPDATE_SIGNING_KEY }}
@@ -250,6 +256,7 @@ jobs:
             | env -u AGENTRY_UPDATE_SIGNING_KEY "$RUNNER_TEMP/signrelease" \
                 -key - \
                 -in bundle/SHA256SUMS \
+                -product agentry-cli \
                 -version "$VERSION" \
                 -commit "${GITHUB_SHA}"
           cat bundle/SHA256SUMS.minisig

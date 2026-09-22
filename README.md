@@ -60,8 +60,9 @@ identity is the OIDC token GitHub mints for it in the `release` environment,
 so it holds no Azure secret; `jsign` signs, `osslsigncode` verifies to the
 Microsoft root pinned in `build/windows/signing/` and the CN `release.env`
 names — writes `BUILD-INFO` and `SHA256SUMS`, signs those sums with the
-estate's own update-signing key (the desktop's `signrelease`, at the desktop
-revision the workflow pins, which verifies what it wrote against the committed
+estate's own update-signing key (the desktop's `signrelease -product
+agentry-cli`, at the desktop commit the workflow pins: the signed comment
+names this product, and the tool verifies what it wrote against the committed
 key set), and uploads the set as one workflow artifact `agentry-cli-<version>`.
 The site will import it with `build-downloads.sh --from-run
 blaktron/agentry-cli v<version>`, verify both signatures, and say "signed" on
