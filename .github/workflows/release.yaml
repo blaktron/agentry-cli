@@ -1,0 +1,274 @@
+# The CLI's release (agentry-cli#196; plan cli-release-signing.md): a tag
+# v<semver> pushed to main builds the five binaries on the Linux runner in
+# the `release` environment, Authenticode-signs the Windows exe in the same
+# job against Azure Artifact Signing over the job's OIDC token — the same
+# identity, scripts and checks as the desktop's release (agentry-desktop
+# D-032) — writes SHA256SUMS over the binaries and BUILD-INFO, signs those
+# sums with the estate's own update-signing key by the desktop's signrelease
+# at a pinned version (which verifies what it wrote against the committed key
+# set, so a bundle no app would check is never uploaded), and uploads the set
+# as ONE workflow artifact named agentry-cli-<version>. The site imports it
+# with build-downloads.sh --from-run blaktron/agentry-cli <tag> once
+# agentry-web#214 teaches it to. No GitHub Release before 1.0 (the desktop's
+# D-023 rule).
+#
+# The `release` environment and its deployment policy (main and v* tags) are
+# agentry-cli#197's: a dispatch before that exists makes GitHub create the
+# environment with no policy and then fails here at the variable check; the
+# operator wizard's create-or-update repairs the policy.
+#
+# workflow_dispatch runs the same job as a dry run — from main or a v* tag,
+# which is all the `release` environment admits — named by the describe
+# string; it signs exactly as a tag does (plan D8 of os-code-signing.md) and
+# the site's importer refuses its bundle by event=. Nothing in the tree's
+# build or tests needs any of this (plan cli-release-signing.md D5):
+# `make build` and `make check` work with no token and no signing tool.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref, never cancelled by a later one: a release in flight
+# finishes or fails on its own account.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+env:
+  # The desktop COMMIT (agentry-desktop#172: signrelease knows -product)
+  # whose internal/cmd/signrelease signs this bundle and
+  # whose internal/selfupdate/keys.json is the key set the signature is
+  # verified against before upload — the same key set the site's importer
+  # checks (agentry-web#189). When the desktop rotates or retires a key
+  # (agentry-desktop#111), this pin and this repository's
+  # AGENTRY_UPDATE_SIGNING_KEY secret move together, by a pull request and the
+  # operator's secret update in one operation; either alone fails the next
+  # release closed (a key the set does not carry as current is refused).
+  DESKTOP_SIGNRELEASE_REF: c4b13867dd9fc9783f5daf9438e964e5d7fce05d
+
+jobs:
+  # Refuses before a binary is built: a tag that is not semver. The tag is the
+  # version — bare, without the v, as the desktop names its files (D-023) and
+  # as the site's manifest reads a tagged release; a dispatch is named by git
+  # describe, which the importer refuses as a dry run by event= regardless.
+  preflight:
+    runs-on: [self-hosted, linux, x64]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The version this release is named for
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # Exactly v<major>.<minor>.<patch>, no leading zeros, no suffix: a
+            # pre-release suffix is not a release before 1.0, and anything the
+            # site's manifest would not read as semver is not a tag to cut.
+            [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$ ]] \
+              || { echo "::error::${GITHUB_REF_NAME} is not a v<major>.<minor>.<patch> tag; a release is one (plan cli-release-signing.md D2)"; exit 1; }
+            v="${GITHUB_REF_NAME#v}"
+          else
+            v=$(git describe --tags --always 2>/dev/null | sed 's/^v//')
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "version $v (${GITHUB_EVENT_NAME} on ${GITHUB_REF})"
+
+  build:
+    needs: preflight
+    runs-on: [self-hosted, linux, x64]
+    # The `release` environment is what the Windows signing credential is
+    # scoped to (agentry-cli#197; the desktop's #151): the Entra federated
+    # credential matches a job of this repository in this environment and
+    # nothing else, and the environment admits only main and v* tags.
+    # id-token lets the job mint the OIDC token it exchanges; contents: read
+    # is what checkout needs and is repeated because a job-level permissions
+    # block replaces the workflow's.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # Shared persistent host module cache; restoring the Actions cache
+          # over it left partial modules in the core (agentry#225).
+          cache: false
+      # Job-scoped on this persistent runner, removed at the end (the
+      # desktop's #92 shape): the token reaches a file the job deletes, not
+      # the runner's global git config.
+      - name: Authenticate for the private blaktron modules (job-scoped)
+        env:
+          AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/gitconfig" >> "$GITHUB_ENV"
+          echo "GOPRIVATE=github.com/blaktron/*" >> "$GITHUB_ENV"
+          git config --file "$RUNNER_TEMP/gitconfig" url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - name: What this release bakes in
+        run: |
+          set -euo pipefail
+          set -a; . build/release.env; set +a
+          : "${AGENTRY_DEFAULT_REGISTRY:?build/release.env must set AGENTRY_DEFAULT_REGISTRY}"
+          echo "AGENTRY_DEFAULT_REGISTRY=${AGENTRY_DEFAULT_REGISTRY}" >> "$GITHUB_ENV"
+          # The CN the Windows signature must carry: required, so a blanked
+          # line cannot quietly turn the check into "any Artifact Signing
+          # customer" (the pinned root is shared).
+          : "${AGENTRY_WINDOWS_SIGNING_CN:?build/release.env must set AGENTRY_WINDOWS_SIGNING_CN}"
+          echo "AGENTRY_WINDOWS_SIGNING_CN=${AGENTRY_WINDOWS_SIGNING_CN}" >> "$GITHUB_ENV"
+      # The five binaries, unsigned, from the Makefile's own target: what a
+      # person builds locally is what ships, and this step reads nothing
+      # signing-related (plan D5).
+      - name: The five binaries
+        run: |
+          set -euo pipefail
+          make dist DIST_VERSION="$VERSION" AGENTRY_DEFAULT_REGISTRY="$AGENTRY_DEFAULT_REGISTRY"
+          # -X on a symbol that moved fails silently; the URL and the version
+          # must be in the binaries. The runner is linux/amd64: run that one.
+          for f in dist/agentry-"$VERSION"-*; do
+            grep -q -a -F "$AGENTRY_DEFAULT_REGISTRY" "$f" || { echo "::error::$(basename "$f") does not carry $AGENTRY_DEFAULT_REGISTRY"; exit 1; }
+          done
+          out=$(./dist/agentry-"$VERSION"-linux-amd64 --version)
+          echo "$out"
+          printf '%s\n' "$out" | grep -q -F "$VERSION" || { echo "::error::the binary reports '$out', not version $VERSION"; exit 1; }
+      - name: java, osslsigncode, jq and openssl from Ubuntu's packages
+        run: |
+          set -euo pipefail
+          if ! command -v java >/dev/null || ! command -v osslsigncode >/dev/null || ! command -v jq >/dev/null || ! command -v openssl >/dev/null; then
+            sudo=""; [ "$(id -u)" = 0 ] || sudo=sudo
+            $sudo apt-get update -qq
+            $sudo apt-get install -y -qq --no-install-recommends default-jre-headless osslsigncode jq openssl
+          fi
+          java -version 2>&1 | sed -n 1p; osslsigncode --version 2>&1 | sed -n 1p
+      - name: jsign at the pinned digest
+        run: scripts/sign-windows.sh fetch "$RUNNER_TEMP"
+      # Authenticode (agentry-cli#196; agentry-desktop D-032). The job proves
+      # who it is with the OIDC token GitHub minted for it and gets an Azure
+      # access token for the signing service in return (scripts/signing-token.sh:
+      # no Azure secret, both tokens via curl's stdin config, never argv); the
+      # access token is masked, lives in this step's shell, and reaches jsign
+      # through the environment of the one command that signs
+      # (`--storepass env:`), so it is in no process listing. No unsigned
+      # fallback: a missing variable, a refused exchange or a jsign failure
+      # fails the release.
+      - name: Sign the Windows exe (Artifact Signing over OIDC)
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+        run: |
+          set -euo pipefail
+          for v in AZURE_TENANT_ID AZURE_CLIENT_ID ARTIFACT_SIGNING_ENDPOINT ARTIFACT_SIGNING_ACCOUNT ARTIFACT_SIGNING_PROFILE; do
+            [ -n "${!v:-}" ] || { echo "::error::the $v repository variable is not set: run the desktop's artifact-signing-setup.sh --repo blaktron/agentry-cli (agentry-cli#197)"; exit 1; }
+          done
+          token=$(scripts/signing-token.sh) || { echo "::error::no signing token: the release environment's federated credential (agentry-cli#197) must match this job's OIDC subject"; exit 1; }
+          [ -n "$token" ] || { echo "::error::signing-token.sh printed no token"; exit 1; }
+          echo "::add-mask::$token"
+          echo "signing as $ARTIFACT_SIGNING_ACCOUNT/$ARTIFACT_SIGNING_PROFILE at $ARTIFACT_SIGNING_ENDPOINT"
+          AGENTRY_SIGNING_TOKEN="$token" JSIGN_JAR="$RUNNER_TEMP/jsign.jar" scripts/sign-windows.sh "dist/agentry-$VERSION-windows-amd64.exe"
+      # The read-back: one signature, timestamped, chain to the pinned
+      # Microsoft root, the CN release.env names; the report goes into
+      # BUILD-INFO.
+      - name: Verify the Windows signature
+        id: verify
+        env:
+          ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+        run: |
+          set -euo pipefail
+          scripts/check-windows-binary.sh --report "$RUNNER_TEMP/windows-signing.txt" "dist/agentry-$VERSION-windows-amd64.exe"
+          cn=$(sed -n 's/^cn=//p' "$RUNNER_TEMP/windows-signing.txt"); ts=$(sed -n 's/^timestamp=//p' "$RUNNER_TEMP/windows-signing.txt"); root=$(sed -n 's/^root=//p' "$RUNNER_TEMP/windows-signing.txt")
+          [ -n "$cn" ] && [ -n "$ts" ] && [ -n "$root" ] || { cat "$RUNNER_TEMP/windows-signing.txt"; echo "::error::the signing report is incomplete"; exit 1; }
+          # The grammar the site's importer reads (agentry-web#189): the keys in
+          # this order, each value running to the next key.
+          echo "signed_windows=authenticode CN=$cn profile=$ARTIFACT_SIGNING_ACCOUNT/$ARTIFACT_SIGNING_PROFILE timestamp=$ts verified=osslsigncode root=$root" >> "$GITHUB_OUTPUT"
+      # One bundle: the binaries, BUILD-INFO saying what built them and what
+      # they bake in, SHA256SUMS over all of it — every file but SHA256SUMS
+      # itself — and SHA256SUMS.minisig, the estate's own signature over the
+      # sums, made by the desktop's signrelease at the pinned revision, which
+      # verifies what it wrote against that revision's committed key set.
+      - name: BUILD-INFO and SHA256SUMS
+        env:
+          SIGNED_WINDOWS: ${{ steps.verify.outputs.signed_windows }}
+        run: |
+          set -euo pipefail
+          mkdir -p bundle
+          cp dist/agentry-"$VERSION"-* bundle/
+          : "${SIGNED_WINDOWS:?the verify step reported no Windows signature, and a release without one does not complete}"
+          {
+            echo "product=agentry-cli"
+            echo "version=$VERSION"
+            echo "event=${GITHUB_EVENT_NAME}"
+            echo "ref=${GITHUB_REF}"
+            echo "commit=${GITHUB_SHA}"
+            echo "default_registry=${AGENTRY_DEFAULT_REGISTRY}"
+            # signed= is true only when EVERY artifact is OS-signed; the
+            # per-platform lines say which are. Windows here; macOS is #198.
+            echo "signed=false"
+            echo "signed_windows=${SIGNED_WINDOWS}"
+            echo "built_by=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > bundle/BUILD-INFO
+          cat bundle/BUILD-INFO
+          cd bundle
+          sha256sum agentry-* BUILD-INFO > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          for want in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64.exe; do
+            [ -f "agentry-$VERSION-$want" ] || { echo "::error::agentry-$VERSION-$want is missing"; exit 1; }
+          done
+          cat SHA256SUMS
+      # The signer is the desktop's, installed by module path at the pinned
+      # commit — its own step, so the compiler and git run nowhere near the
+      # key: it embeds that commit's key set and refuses to sign with a key
+      # the set does not carry as current. The module is private; the
+      # job-scoped credential above resolves it.
+      - name: The desktop's signrelease at the pinned commit
+        run: GOBIN="$RUNNER_TEMP" go install "github.com/blaktron/agentry-desktop/internal/cmd/signrelease@${DESKTOP_SIGNRELEASE_REF}"
+      # The private half is an Actions secret, piped to the signer on stdin,
+      # never written to disk, dropped from the signer's own environment
+      # (agentry-desktop D-026). -product agentry-cli: the signed trusted
+      # comment names THIS product ("agentry-cli <version> (commit <sha>)",
+      # agentry-desktop#171), and the signer refuses to sign sums whose
+      # artifact names are not the CLI's; the desktop's update check reads
+      # only its own product's comment, so this bundle can never be offered
+      # to the desktop as an update, whatever manifest names it.
+      - name: Sign SHA256SUMS with the estate's update-signing key
+        env:
+          AGENTRY_UPDATE_SIGNING_KEY: ${{ secrets.AGENTRY_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${AGENTRY_UPDATE_SIGNING_KEY}" ] || { echo "::error::No AGENTRY_UPDATE_SIGNING_KEY secret on this repository (agentry-cli#197): the bundle would carry no signature the site or an app could check, so this release does not complete."; exit 1; }
+          printf '%s' "${AGENTRY_UPDATE_SIGNING_KEY}" \
+            | env -u AGENTRY_UPDATE_SIGNING_KEY "$RUNNER_TEMP/signrelease" \
+                -key - \
+                -in bundle/SHA256SUMS \
+                -product agentry-cli \
+                -version "$VERSION" \
+                -commit "${GITHUB_SHA}"
+          cat bundle/SHA256SUMS.minisig
+      - name: Remove the signing binary and the report
+        if: always()
+        run: rm -f "$RUNNER_TEMP/signrelease" "$RUNNER_TEMP/windows-signing.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentry-cli-${{ needs.preflight.outputs.version }}
+          path: bundle/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Remove the job-scoped git credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gitconfig"

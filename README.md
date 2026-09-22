@@ -42,6 +42,44 @@ export GOPRIVATE='github.com/blaktron/*' GONOSUMDB='github.com/blaktron/*'
 CI does the same with the `AGENTRY_BUILD_TOKEN` secret. All of this goes
 away at the flip.
 
+## Releasing
+
+A release is a tag `v<major>.<minor>.<patch>` on `main`:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+(plan `agentry-notes/plans/cli-release-signing.md`). A `workflow_dispatch`
+of the `release` workflow from `main` is a dry run of the same job. The
+workflow builds the five binaries with `make dist` (linux and darwin on amd64
+and arm64, windows on amd64; the tag is the version, bare, and
+`build/release.env` names the registry they talk to by default), signs the
+Windows exe against Azure Artifact Signing in the same job — the job's
+identity is the OIDC token GitHub mints for it in the `release` environment,
+so it holds no Azure secret; `jsign` signs, `osslsigncode` verifies to the
+Microsoft root pinned in `build/windows/signing/` and the CN `release.env`
+names — writes `BUILD-INFO` and `SHA256SUMS`, signs those sums with the
+estate's own update-signing key (the desktop's `signrelease -product
+agentry-cli`, at the desktop commit the workflow pins: the signed comment
+names this product, and the tool verifies what it wrote against the committed
+key set), and uploads the set as one workflow artifact `agentry-cli-<version>`.
+The site will import it with `build-downloads.sh --from-run
+blaktron/agentry-cli v<version>`, verify both signatures, and say "signed" on
+the Windows binary's card (agentry-web#214; until then the site still builds
+the CLI itself). No GitHub Release before 1.0. A `workflow_dispatch`
+run from `main` is a dry run: it signs exactly as a tag does and the site
+refuses its bundle.
+
+**Nothing in this repository depends on being signed** (plan D5): `make
+build`, `make check` and `make dist` need no token, no certificate and no
+signing tool; the CLI never inspects its own signature. The signing scripts
+(`scripts/sign-windows.sh`, `scripts/signing-token.sh`,
+`scripts/check-windows-binary.sh`) are the release workflow's, and
+`scripts/acceptance/windows-signing.sh` proves that seam on every PR with a
+throwaway CA in place of the key. The macOS binaries are signed and notarized
+once the Apple credential exists (agentry-cli#198).
+
 ## The registry it talks to
 
 `agentry` works against any Agentry registry — the hosted service or one you
