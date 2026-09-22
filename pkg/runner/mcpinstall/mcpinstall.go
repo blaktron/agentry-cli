@@ -10,10 +10,14 @@ package mcpinstall
 
 import (
 	"context"
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/url"
@@ -58,6 +62,11 @@ type Resolved struct {
 	Artifacts map[string]string `json:"artifacts,omitempty"`
 	// InstalledAt is stamped by EnsureInstalled.
 	InstalledAt string `json:"installedAt,omitempty"`
+	// StoreDigest is the server store's tree as the install left it
+	// (storeDigest); a reuse that finds anything else refuses
+	// (agentry-cli#162). The runs mount the store read-only, so nothing
+	// legitimate changes it after the install.
+	StoreDigest string `json:"storeDigest,omitempty"`
 }
 
 // ServerName is the gateway catalog name for a resolved server.
@@ -118,6 +127,13 @@ func ResolveAll(ctx context.Context, client *http.Client, regs policy.MCPRegistr
 	}
 	out := make([]Resolved, 0, len(servers))
 	for _, srv := range servers {
+		pkg := srv.NPM
+		if pkg == "" {
+			pkg = srv.PyPI
+		}
+		if err := builderArgs(pkg, srv.Version); err != nil {
+			return nil, fmt.Errorf("resolve %s@%s: %w", srv.SourceID(), srv.Version, err)
+		}
 		var r Resolved
 		var err error
 		if srv.NPM != "" {
@@ -315,13 +331,20 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 				return fmt.Errorf("server store for %s holds %s@%s (%s) but the registry now resolves %s@%s (%s) — the recorded pin is the trust decision; remove the profile to accept the change",
 					r.ID, prior.Package, prior.Version, prior.Integrity, r.Package, r.Version, r.Integrity)
 			}
+			if err := checkStore(storeDir, prior, logw); err != nil {
+				return err
+			}
 			if prior.BinName != "" {
 				// The store knows which console script the install
 				// produced; the fresh resolution only has the guess.
 				r.BinName = prior.BinName
 			}
+			r.StoreDigest = prior.StoreDigest
 			_, _ = fmt.Fprintf(logw, "mcp server %s@%s already installed (reusing the signature's store)\n", r.Package, r.Version)
 			continue
+		}
+		if err := builderArgs(r.Package, r.Version); err != nil {
+			return fmt.Errorf("install %s: %w", r.ID, err)
 		}
 
 		hostDir := filepath.Join(storeDir, r.ID)
@@ -355,7 +378,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			if err := writeArtifactSums(hostDir, r.Artifacts); err != nil {
 				return err
 			}
-			argv = []string{"sh", "-c", pipScript(r, regs)}
+			argv = pipArgv(r, regs)
 		default:
 			return fmt.Errorf("unknown server source %q", r.Source)
 		}
@@ -386,6 +409,13 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// the build ends or the next agent declaring the same server
 			// fails at install with a name conflict (agentry-cli#106).
 			AutoRemove: true,
+			// Docker's default bridge, named rather than implied: the
+			// builder fetches from the policy's npm and PyPI registries
+			// directly, outside the run's proxy, which is the open route
+			// DR-12 accepts until agentry-cli#92 decides otherwise. Naming
+			// it keeps the builder's reach from following whatever default
+			// a daemon is configured with (agentry-cli#162).
+			Network: builderNetwork,
 			Mounts: []dockerx.Mount{
 				// The server store is the runner's own directory under the
 				// signature profile, so it may be relabeled (agentry-cli#85).
@@ -404,6 +434,11 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			}
 		}
 
+		digest, err := storeDigest(hostDir)
+		if err != nil {
+			return fmt.Errorf("install %s: hash the server store: %w", r.ID, err)
+		}
+		r.StoreDigest = digest
 		r.InstalledAt = time.Now().UTC().Format(time.RFC3339)
 		b, err := json.MarshalIndent(r, "", "  ")
 		if err != nil {
@@ -555,31 +590,139 @@ func adoptConsoleScript(hostDir string, r *Resolved, logw io.Writer) error {
 	return nil
 }
 
-// pipScript is the builder's shell for a PyPI server (see the pypi case in
-// EnsureInstalled). Kept as one string so the test can pin its shape.
-func pipScript(r *Resolved, regs policy.MCPRegistries) string {
-	p := r.prefix()
-	idx := strings.TrimRight(regs.PyPI, "/") + "/simple"
+// pypiBuilder is the PyPI builder's program (pypi_builder.py), run as
+// `python -c` with every value a separate argument: nothing a manifest
+// says passes through a shell (agentry-cli#162).
+//
+//go:embed pypi_builder.py
+var pypiBuilder string
+
+// pipArgv is the builder's argv for a PyPI server (see the pypi case in
+// EnsureInstalled).
+func pipArgv(r *Resolved, regs policy.MCPRegistries) []string {
 	onlyBinary := "--only-binary=:all:"
 	if regs.PyPIAllowSourceDists {
 		onlyBinary = ""
 	}
-	return strings.Join([]string{
-		"set -e",
-		// as the invoking user, whose HOME does not exist in the image
-		"export HOME=/tmp",
-		fmt.Sprintf("python -m venv %s/venv", p),
-		fmt.Sprintf("mkdir -p %s/dl", p),
-		fmt.Sprintf("%s/venv/bin/pip download --quiet --no-cache-dir --no-deps %s --index-url %s --dest %s/dl %s==%s", p, onlyBinary, idx, p, r.Package, r.Version),
-		fmt.Sprintf(`for f in %s/dl/*; do n=$(basename "$f"); want=$(grep " $n$" %s/%s | cut -d" " -f1); `+
-			`[ -n "$want" ] || { echo "mcp install: $n is not an artifact the registry advertised for %s==%s"; exit 3; }; `+
-			`echo "$want  $f" | sha256sum -c - >/dev/null || { echo "mcp install: $n does not match the advertised digest"; exit 4; }; done`,
-			p, p, artifactSumsFile, r.Package, r.Version),
-		fmt.Sprintf("%s/venv/bin/pip install --quiet --no-cache-dir %s --index-url %s --find-links %s/dl %s==%s", p, onlyBinary, idx, p, r.Package, r.Version),
-		// Record the console scripts the installed dist declares
-		// (agentry-cli#13): the host picks the launchable one from
-		// this file rather than assuming the project name.
-		fmt.Sprintf(`%s/venv/bin/python -c 'import importlib.metadata as m, sys; eps = sorted(e.name for e in m.distribution(sys.argv[1]).entry_points if e.group == "console_scripts"); open(sys.argv[2], "w").write("\n".join(eps) + "\n")' %s %s/%s`,
-			p, r.Package, p, consoleScriptsFile),
-	}, " && ")
+	return []string{"python", "-c", pypiBuilder,
+		r.prefix(), r.Package, r.Version, strings.TrimRight(regs.PyPI, "/") + "/simple", onlyBinary}
+}
+
+// builderNetwork is the network the install container joins.
+const builderNetwork = "bridge"
+
+// builderArgs refuses a package or version the builder could not pass to
+// pip or npm as the plain value it must be: one that starts with "-" (an
+// option to either tool), or that holds a character no npm name, PyPI
+// name, exact semver or exact PEP 440 release has, such as the "file:" or
+// URL forms of an npm spec, which would install something other than the
+// pinned registry artifact. The manifest's own grammar (V5) is the
+// registry's check at publish; this one holds at the builder whatever the
+// manifest came through (agentry-cli#162).
+func builderArgs(pkg, version string) error {
+	if !builderValue(pkg, "@/._-") {
+		return fmt.Errorf("package %q is not a name the MCP-server builder will pass on", pkg)
+	}
+	if !builderValue(version, ".+-") {
+		return fmt.Errorf("version %q is not an exact release the MCP-server builder will pass on", version)
+	}
+	return nil
+}
+
+func builderValue(v, punct string) bool {
+	if v == "" || strings.HasPrefix(v, "-") {
+		return false
+	}
+	for _, c := range v {
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.ContainsRune(punct, c)
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// storeDigest hashes a server's store tree: every path in lexical order,
+// with a regular file's executable bits and content digest and a
+// symlink's target (a venv links its interpreter). A reuse recomputes it
+// and refuses any difference (agentry-cli#162).
+func storeDigest(dir string) (string, error) {
+	h := sha256.New()
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		switch t := d.Type(); {
+		case t&fs.ModeSymlink != 0:
+			target, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(h, "L %q %q\n", rel, target)
+		case t.IsDir():
+			_, _ = fmt.Fprintf(h, "D %q\n", rel)
+		case t.IsRegular():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			sum, err := fileSHA256(p)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(h, "F %q %o %s\n", rel, info.Mode().Perm()&0o111, sum)
+		default:
+			_, _ = fmt.Fprintf(h, "O %q %s\n", rel, t)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // a path inside our own store
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// checkStore holds a reused server store to the digest its install
+// recorded: a difference refuses. A record written before stores were
+// hashed gets today's digest, said in the log, and is held to it from
+// then on.
+func checkStore(storeDir string, prior *Resolved, logw io.Writer) error {
+	got, err := storeDigest(filepath.Join(storeDir, prior.ID))
+	if err != nil {
+		return fmt.Errorf("server store for %s: %w", prior.ID, err)
+	}
+	if prior.StoreDigest == "" {
+		prior.StoreDigest = got
+		b, err := json.MarshalIndent(prior, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(metaPath(storeDir, prior.ID), append(b, '\n'), 0o600); err != nil {
+			return fmt.Errorf("record server store digest: %w", err)
+		}
+		_, _ = fmt.Fprintf(logw, "mcp server %s@%s: recorded the store's digest %s (first check of a store installed before digests were kept)\n", prior.Package, prior.Version, got)
+		return nil
+	}
+	if got != prior.StoreDigest {
+		return fmt.Errorf("server store for %s changed since it was installed (recorded %s, now %s) — something wrote into the signature's store; remove the profile to reinstall", prior.ID, prior.StoreDigest, got)
+	}
+	return nil
 }
