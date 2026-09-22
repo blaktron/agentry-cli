@@ -6,6 +6,7 @@ package installed
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -297,5 +298,55 @@ publish:
 	}
 	if !strings.Contains(strings.Join(d.Narrowed, "|"), "drops env LOGS_DIR of MCP server npm:github-mcp-server-js@0.1.7") {
 		t.Fatalf("dropped key did not narrow: %+v", d)
+	}
+}
+
+// TestCapabilitiesInvertsSnapshot pins the one piece of new logic the shared
+// rule needs (agentry-cli#201): the diff is the core's
+// manifest.DiffCapabilities, over manifest.Capabilities, so a stored
+// snapshot is turned back into that type first. Snapshotting the result
+// must give back the snapshot exactly — every field, a scoped npm server
+// whose name carries its own "@", a PyPI server, and a server's env —
+// or an installed record would read as a changed contract and re-ask.
+func TestCapabilitiesInvertsSnapshot(t *testing.T) {
+	snap := CapSnapshot{
+		EgressHosts:  []string{"a.example.com", "*"},
+		FSRead:       "paths",
+		FSReadPaths:  []string{"docs", "src"},
+		FSWrite:      "workspace",
+		ExecCommands: []string{"git", "jq"},
+		Secrets:      []string{"TOKEN"},
+		DataAccess:   []string{"code", "tickets"},
+		MCPServers:   []string{"npm:@scope/server@1.2.3", "pypi:mcp-thing@0.4.0"},
+		MCPServerEnv: map[string]map[string]string{"npm:@scope/server@1.2.3": {"MODE": "ro"}},
+	}
+	if got := Snapshot(snap.capabilities()); !reflect.DeepEqual(got, snap) {
+		t.Errorf("Snapshot(snap.capabilities()) =\n  %+v\nwant\n  %+v", got, snap)
+	}
+
+	none := CapSnapshot{EgressNone: true, FSRead: "none", FSWrite: "none"}
+	if got := Snapshot(none.capabilities()); !reflect.DeepEqual(got, none) {
+		t.Errorf("explicit none: got %+v, want %+v", got, none)
+	}
+	if got := Snapshot(CapSnapshot{}.capabilities()); !reflect.DeepEqual(got, CapSnapshot{}) {
+		t.Errorf("an empty snapshot came back as %+v", got)
+	}
+}
+
+// TestMalformedServerIDStillReasks: an id Snapshot never writes — a
+// hand-edited installed.yaml — must not parse into the next release's
+// key and hide a new server. It fails safe: the recorded server reads as
+// one no release declares, so the release's server widens and re-asks,
+// as the raw-string comparison it replaced did.
+func TestMalformedServerIDStillReasks(t *testing.T) {
+	next := Snapshot(manifest.Capabilities{MCPServers: []manifest.MCPServer{
+		{PyPI: "foo", Version: "1"},
+		{NPM: "@scope/x", Version: "2.0.0"},
+	}})
+	for _, recorded := range []string{"foo@1", "npm:@scope/x", "pypi:", "npm:"} {
+		old := CapSnapshot{MCPServers: []string{recorded}}
+		if d := DiffCapabilities(old, next); !d.HasWidened() {
+			t.Errorf("recorded %q: the release's servers did not widen: %+v", recorded, d)
+		}
 	}
 }

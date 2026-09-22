@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -97,6 +96,68 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 		s.DataAccess = append(s.DataAccess, string(d))
 	}
 	return s
+}
+
+// capabilities is Snapshot's inverse, for the diff only: the stored
+// contract as the manifest type, so the one widening rule, the core's
+// manifest.DiffCapabilities, can compare two snapshots (agentry-cli#201).
+// For any record Snapshot wrote, Snapshot(s.capabilities()) is s. It is
+// lossy — a server's tools, secrets and egress are not in the snapshot and
+// come back empty — which is why it is not exported as a contract.
+func (s CapSnapshot) capabilities() manifest.Capabilities {
+	c := manifest.Capabilities{
+		Network: manifest.Network{Egress: manifest.Egress{
+			None:  s.EgressNone,
+			Hosts: slices.Clone(s.EgressHosts),
+		}},
+		Filesystem: manifest.Filesystem{
+			Read:  manifest.FSAccess{Mode: manifest.FSMode(s.FSRead), Paths: slices.Clone(s.FSReadPaths)},
+			Write: manifest.FSAccess{Mode: manifest.FSMode(s.FSWrite), Paths: slices.Clone(s.FSWritePaths)},
+		},
+		Exec:    manifest.ExecCapability{Commands: slices.Clone(s.ExecCommands)},
+		Secrets: slices.Clone(s.Secrets),
+	}
+	for _, d := range s.DataAccess {
+		c.DataAccess = append(c.DataAccess, manifest.DataAccess(d))
+	}
+	for _, id := range s.MCPServers {
+		srv := serverFromID(id)
+		srv.Env = maps.Clone(s.MCPServerEnv[id])
+		c.MCPServers = append(c.MCPServers, srv)
+	}
+	return c
+}
+
+// unparsedServer prefixes the name of a server whose recorded id did not
+// parse. No package name holds a NUL, so its key matches no server a
+// release declares.
+const unparsedServer = "\x00unparsed:"
+
+// serverFromID reads a "source:package@version" id back into the server
+// the core keys by SourceID()+"@"+Version, splitting at the last "@" — a
+// scoped npm name begins with one. An id Snapshot never writes (a
+// hand-edited record) fails safe: it becomes a server no release declares,
+// so the release's own server reads as added and the gate asks again, as
+// the raw-string comparison this replaced did.
+func serverFromID(id string) manifest.MCPServer {
+	for _, src := range []string{"npm:", "pypi:"} {
+		rest, ok := strings.CutPrefix(id, src)
+		if !ok {
+			continue
+		}
+		at := strings.LastIndex(rest, "@")
+		if at <= 0 {
+			break
+		}
+		srv := manifest.MCPServer{Version: rest[at+1:]}
+		if src == "npm:" {
+			srv.NPM = rest[:at]
+		} else {
+			srv.PyPI = rest[:at]
+		}
+		return srv
+	}
+	return manifest.MCPServer{PyPI: unparsedServer + id}
 }
 
 // Record is one installed (registry, agent, target, dir) tuple.
@@ -231,181 +292,18 @@ func (st *State) Remove(k Key) bool {
 	return false
 }
 
-// Diff is the comparison between an installed contract and a new one.
-type Diff struct {
-	// Widened lists strictly-more-permissive changes, phrased for a human.
-	Widened []string `json:"widened,omitempty"`
-	// Narrowed lists strictly-less-permissive changes.
-	Narrowed []string `json:"narrowed,omitempty"`
-}
-
-// HasWidened reports whether anything requires confirmation.
-func (d Diff) HasWidened() bool { return len(d.Widened) > 0 }
-
-// Empty reports an identical contract.
-func (d Diff) Empty() bool { return len(d.Widened) == 0 && len(d.Narrowed) == 0 }
-
-// fsRank orders filesystem access declarations from least to most permissive.
-// Explicit "none" ranks BELOW undeclared: a manifest that says nothing has
-// told us nothing, which is worse than one that promises no access — but it
-// is still better than one that asks for access.
-var fsRank = map[string]int{"none": 0, "": 1, "paths": 2, "workspace": 3}
+// Diff is the comparison between an installed contract and a new one: the
+// core's manifest.CapabilityDiff, one type for the CLI, the desktop and the
+// registry's account install.
+type Diff = manifest.CapabilityDiff
 
 // DiffCapabilities compares the previously installed contract with the new
-// one. Everything it reports is phrased the way §11 promises: "this update
-// adds network egress to evil.example".
+// one. The rule is the core's manifest.DiffCapabilities — the registry
+// re-asks for an account install's acceptance by it (DEV-120) — so the
+// promise that the CLI, the desktop and the site ask again on the same
+// widening is kept by construction, not by two copies staying in step
+// (agentry-cli#201). Everything it reports is phrased the way §11 promises:
+// "this update adds network egress to evil.example".
 func DiffCapabilities(old, next CapSnapshot) Diff {
-	var d Diff
-
-	// Network egress: the canonical widening.
-	added, removed := diffSets(old.EgressHosts, next.EgressHosts)
-	for _, h := range added {
-		if h == "*" {
-			d.Widened = append(d.Widened, "adds UNRESTRICTED network egress (any host)")
-			continue
-		}
-		d.Widened = append(d.Widened, "adds network egress to "+h)
-	}
-	for _, h := range removed {
-		d.Narrowed = append(d.Narrowed, "drops network egress to "+h)
-	}
-
-	// Exec: none → commands, or a longer command list.
-	added, removed = diffSets(old.ExecCommands, next.ExecCommands)
-	for _, c := range added {
-		if len(old.ExecCommands) == 0 {
-			d.Widened = append(d.Widened, "adds subprocess execution: "+c+" (previously none)")
-			continue
-		}
-		d.Widened = append(d.Widened, "adds subprocess execution: "+c)
-	}
-	for _, c := range removed {
-		d.Narrowed = append(d.Narrowed, "drops subprocess execution: "+c)
-	}
-
-	// Filesystem, both directions. Write escalation is the one §11 names, but
-	// a read widening is a widening too and gets the same treatment.
-	d.appendFSDiff("read", old.FSRead, next.FSRead, old.FSReadPaths, next.FSReadPaths)
-	d.appendFSDiff("write", old.FSWrite, next.FSWrite, old.FSWritePaths, next.FSWritePaths)
-
-	// Secrets: a new environment variable name is a new thing being asked for.
-	added, removed = diffSets(old.Secrets, next.Secrets)
-	for _, s := range added {
-		d.Widened = append(d.Widened, "asks for a new secret: "+s)
-	}
-	for _, s := range removed {
-		d.Narrowed = append(d.Narrowed, "no longer asks for secret: "+s)
-	}
-
-	added, removed = diffSets(old.DataAccess, next.DataAccess)
-	for _, s := range added {
-		d.Widened = append(d.Widened, "adds data access: "+s)
-	}
-	for _, s := range removed {
-		d.Narrowed = append(d.Narrowed, "drops data access: "+s)
-	}
-
-	// Declared MCP servers (RUNNER-PLAN-3): a new server — or the same
-	// server at a different pin — is new tool surface and new supply
-	// chain, so it widens. A dropped one narrows.
-	added, removed = diffSets(old.MCPServers, next.MCPServers)
-	for _, s := range added {
-		line := "adds MCP server: " + s
-		if env := next.MCPServerEnv[s]; len(env) > 0 {
-			// A new server's env is part of what is being added.
-			var pairs []string
-			for _, k := range slices.Sorted(maps.Keys(env)) {
-				pairs = append(pairs, k+"="+env[k])
-			}
-			line += " (env " + strings.Join(pairs, ", ") + ")"
-		}
-		d.Widened = append(d.Widened, line)
-	}
-	for _, s := range removed {
-		d.Narrowed = append(d.Narrowed, "drops MCP server: "+s)
-	}
-
-	// A server's plain env: a new or changed value changes what the
-	// server receives, so it widens and re-asks; a dropped key narrows.
-	// Only servers present on both sides are compared — a new server is
-	// already reported whole above.
-	for _, id := range next.MCPServers {
-		if !slices.Contains(old.MCPServers, id) {
-			continue
-		}
-		oldEnv, newEnv := old.MCPServerEnv[id], next.MCPServerEnv[id]
-		for _, k := range slices.Sorted(maps.Keys(newEnv)) {
-			if prev, had := oldEnv[k]; !had {
-				d.Widened = append(d.Widened, fmt.Sprintf("changes env of MCP server %s: %s=%s", id, k, newEnv[k]))
-			} else if prev != newEnv[k] {
-				d.Widened = append(d.Widened, fmt.Sprintf("changes env of MCP server %s: %s=%s (was %s)", id, k, newEnv[k], prev))
-			}
-		}
-		for _, k := range slices.Sorted(maps.Keys(oldEnv)) {
-			if _, still := newEnv[k]; !still {
-				d.Narrowed = append(d.Narrowed, fmt.Sprintf("drops env %s of MCP server %s", k, id))
-			}
-		}
-	}
-
-	return d
-}
-
-// appendFSDiff records one filesystem direction's change.
-func (d *Diff) appendFSDiff(dir, oldMode, newMode string, oldPaths, newPaths []string) {
-	switch {
-	case fsRank[newMode] > fsRank[oldMode]:
-		d.Widened = append(d.Widened, fmt.Sprintf("widens filesystem %s from %s to %s",
-			dir, orUndeclared(oldMode), describeFS(newMode, newPaths)))
-	case fsRank[newMode] < fsRank[oldMode]:
-		d.Narrowed = append(d.Narrowed, fmt.Sprintf("narrows filesystem %s from %s to %s",
-			dir, orUndeclared(oldMode), describeFS(newMode, newPaths)))
-	case newMode == "paths":
-		added, removed := diffSets(oldPaths, newPaths)
-		for _, p := range added {
-			d.Widened = append(d.Widened, fmt.Sprintf("adds filesystem %s path: %s", dir, p))
-		}
-		for _, p := range removed {
-			d.Narrowed = append(d.Narrowed, fmt.Sprintf("drops filesystem %s path: %s", dir, p))
-		}
-	}
-}
-
-func describeFS(mode string, paths []string) string {
-	if mode == "paths" && len(paths) > 0 {
-		return "paths " + strings.Join(paths, ", ")
-	}
-	return orUndeclared(mode)
-}
-
-func orUndeclared(mode string) string {
-	if mode == "" {
-		return "undeclared"
-	}
-	return mode
-}
-
-// diffSets returns the sorted elements added to and removed from a list.
-func diffSets(old, next []string) (added, removed []string) {
-	has := func(list []string, v string) bool {
-		for _, x := range list {
-			if x == v {
-				return true
-			}
-		}
-		return false
-	}
-	for _, v := range next {
-		if !has(old, v) {
-			added = append(added, v)
-		}
-	}
-	for _, v := range old {
-		if !has(next, v) {
-			removed = append(removed, v)
-		}
-	}
-	sort.Strings(added)
-	sort.Strings(removed)
-	return added, removed
+	return manifest.DiffCapabilities(old.capabilities(), next.capabilities())
 }
