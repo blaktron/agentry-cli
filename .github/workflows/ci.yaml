@@ -6,7 +6,9 @@
 name: ci
 on:
   push:
-    branches: [main]
+    # dev is the integration branch; main is production (WORKFLOW.md
+    # "Branches", 2026-09-22).
+    branches: [main, dev]
   pull_request:
 
 permissions:
