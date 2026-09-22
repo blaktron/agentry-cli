@@ -324,6 +324,52 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	}
 }
 
+// TestSessionRecordsTheLastTurnsEventsBeforeEnd: a turn's tool calls and
+// permission decisions reach the log, events.ndjson and the transcript
+// even when the pump lags the driver and End follows the turn at once
+// (agentry-cli#204). The lag is what a loaded runner produced (#172).
+func TestSessionRecordsTheLastTurnsEventsBeforeEnd(t *testing.T) {
+	pumpEventHook = func() { time.Sleep(20 * time.Millisecond) }
+	t.Cleanup(func() { pumpEventHook = nil })
+	s, _, _, _ := startFixture(t)
+	get, done := collect(s)
+	ctx := context.Background()
+	if err := s.Send(ctx, "hello there"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	env, err := s.End(ctx, true)
+	if err != nil {
+		t.Fatalf("end: %v (envelope %+v)", err, env)
+	}
+	<-done
+	evs := get()
+	k := kinds(evs)
+	if k[session.KindToolCall] != 1 || k[session.KindPermissionGranted] != 1 || k[session.KindPermissionDenied] != 1 || k[session.KindAssistantTurn] != 1 {
+		t.Errorf("event kinds = %v", k)
+	}
+	// The turn's own events come before the turn that closes it.
+	var order []session.Kind
+	for _, ev := range evs {
+		switch ev.Kind {
+		case session.KindToolCall, session.KindPermissionDenied, session.KindAssistantTurn:
+			order = append(order, ev.Kind)
+		}
+	}
+	if len(order) != 3 || order[2] != session.KindAssistantTurn {
+		t.Errorf("order = %v, want the tool call and the denial before assistant_turn", order)
+	}
+	nd, _ := os.ReadFile(filepath.Join(env.Receipts.Dir, "events.ndjson"))
+	if !strings.Contains(string(nd), `"kind":"permission_denied"`) {
+		t.Errorf("events.ndjson lacks the denial:\n%s", nd)
+	}
+	tr, _ := os.ReadFile(filepath.Join(env.Receipts.Dir, "transcript.md"))
+	for _, want := range []string{"- tool call: fs_list", "- permission granted: write_report", "- permission request denied: run_command"} {
+		if !strings.Contains(string(tr), want) {
+			t.Errorf("transcript lacks %q:\n%s", want, tr)
+		}
+	}
+}
+
 // TestSessionBudgetsEndTheSession covers line 6: the user-turn cap and the
 // idle timeout end the session with a session_end receipt, never a hang.
 func TestSessionBudgetsEndTheSession(t *testing.T) {
