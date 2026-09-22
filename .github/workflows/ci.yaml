@@ -23,6 +23,8 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -31,13 +33,32 @@ jobs:
           # modules that broke `go mod verify` in the core (agentry#225).
           cache: false
       # The blaktron modules are private; the runner needs credentials to
-      # fetch github.com/blaktron/agentry. The token never lands in the repo.
-      - name: Authenticate for the private blaktron modules
+      # fetch github.com/blaktron/agentry. The token never lands in the repo —
+      # and never in this container's global git config or go env either. The
+      # container is long-lived, so a `--global` rewrite outlives the job that
+      # wrote it and is readable by every later job that runs here, a pull
+      # request's own `run:` steps included — attacker-controlled text until
+      # the fork guard lands (agentry-cli#165) — and what it reads is a token
+      # for a *different* repository's private source (agentry#385). Both go
+      # through the job environment instead. The job's last step removes the
+      # file, and the runner wipes $RUNNER_TEMP at the start of every job,
+      # which is what covers a run cancelled by `cancel-in-progress` before
+      # that step could execute.
+      - name: Authenticate for the private blaktron modules (job-scoped)
         env:
           AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
         run: |
-          git config --global url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
-          go env -w GOPRIVATE='github.com/blaktron/*'
+          set -euo pipefail
+          echo "GOPRIVATE=github.com/blaktron/*" >> "$GITHUB_ENV"
+          # No rewrite without a token: an empty-credential insteadOf is worse
+          # than none, turning anonymous access into a hard 401 on every
+          # github.com fetch in the job. A fork's PR gets no secrets.
+          if [ -n "$AGENTRY_BUILD_TOKEN" ]; then
+            echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/gitconfig" >> "$GITHUB_ENV"
+            git config --file "$RUNNER_TEMP/gitconfig" url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
+          else
+            echo "::warning::AGENTRY_BUILD_TOKEN is not set; the private blaktron modules resolve only from the runner's module cache"
+          fi
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
@@ -78,11 +99,16 @@ jobs:
       - name: no payment provider in the CLI
         run: |
           if grep -rIi --include='*.go' -n 'stripe' . ; then echo "::error::a payment provider reached the CLI"; exit 1; fi
+      - name: Remove the job-scoped git credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gitconfig"
 
   govulncheck:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -90,10 +116,21 @@ jobs:
           # runner; restoring the Actions cache over it is slow and left partial
           # modules that broke `go mod verify` in the core (agentry#225).
           cache: false
-      - name: Authenticate for the private blaktron modules
+      # Job-scoped, and guarded, for the reasons the `check` job states
+      # (agentry#385).
+      - name: Authenticate for the private blaktron modules (job-scoped)
         env:
           AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
         run: |
-          git config --global url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
-          go env -w GOPRIVATE='github.com/blaktron/*'
+          set -euo pipefail
+          echo "GOPRIVATE=github.com/blaktron/*" >> "$GITHUB_ENV"
+          if [ -n "$AGENTRY_BUILD_TOKEN" ]; then
+            echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/gitconfig" >> "$GITHUB_ENV"
+            git config --file "$RUNNER_TEMP/gitconfig" url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
+          else
+            echo "::warning::AGENTRY_BUILD_TOKEN is not set; the private blaktron modules resolve only from the runner's module cache"
+          fi
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Remove the job-scoped git credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gitconfig"
