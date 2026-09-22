@@ -211,7 +211,10 @@ var ErrNotSupported = errors.New("adapter does not support interactive sessions"
 // one shape. A permission request from the harness is answered by the
 // driver — granted for a gateway tool (EventPermissionGranted), denied for
 // anything else (EventPermissionDenied) — and surfaced either way, so the
-// transcript shows every approval.
+// transcript shows every approval. Every event a turn produces is on
+// Events before its Prompt returns: the engine records them ahead of the
+// turn's end on that promise, so none is lost to an End that follows the
+// turn (agentry-cli#204).
 type SessionDriver interface {
 	// Start performs the protocol handshake and opens the session.
 	Start(ctx context.Context) error

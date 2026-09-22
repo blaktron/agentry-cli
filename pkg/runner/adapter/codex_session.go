@@ -307,6 +307,9 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		s.emit(Event{Kind: EventUsage, InputTokens: p.TokenUsage.Last.InputTokens, OutputTokens: p.TokenUsage.Last.OutputTokens, Raw: raw})
 		return
 	case "turn/completed":
+		// The marker goes out before the turn ends: every event of a turn is
+		// queued before Prompt returns (SessionDriver).
+		s.emit(Event{Kind: EventOther, Text: m.Method, Raw: raw})
 		s.mu.Lock()
 		t := s.turn
 		s.mu.Unlock()
@@ -318,7 +321,6 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 			}
 			t.done <- end
 		}
-		s.emit(Event{Kind: EventOther, Text: m.Method, Raw: raw})
 		return
 	case "error":
 		s.emit(Event{Kind: EventError, Text: p.Message, Raw: raw})

@@ -74,6 +74,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		events:   make(chan session.Event, 1024),
 		done:     make(chan struct{}),
 		pumpDone: make(chan struct{}),
+		pumpSync: make(chan chan struct{}),
 		budgets:  p.Plan.Harness.Session.Budgets,
 	}
 	fail := func(err error) (session.Session, error) {
@@ -163,6 +164,11 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	return s, nil
 }
 
+// pumpEventHook runs before the pump handles each driver event; nil
+// outside tests, which set it to make the pump lag the driver as a loaded
+// machine does (agentry-cli#204).
+var pumpEventHook func()
+
 // liveSession is the engine's session.Session.
 type liveSession struct {
 	d      dockerx.Client
@@ -188,6 +194,9 @@ type liveSession struct {
 	events   chan session.Event
 	done     chan struct{} // closed once (ended)
 	pumpDone chan struct{} // closed when pump has drained the driver's events
+	// pumpSync asks the pump to record everything the driver has queued so
+	// far, then close the channel it was sent (agentry-cli#204).
+	pumpSync chan chan struct{}
 
 	turnMu sync.Mutex // one prompt at a time
 	mu     sync.Mutex // everything below
@@ -337,45 +346,94 @@ func (s *liveSession) pump() {
 			s.recordPanic(fmt.Errorf("session event pump panicked: %v", r))
 		}
 	}()
-	for ev := range s.drv.Events() {
-		switch ev.Kind {
-		case adapter.EventAssistantText:
-			s.emit(session.Event{Kind: session.KindAssistantText, Text: ev.Text, Raw: ev.Raw})
-		case adapter.EventToolCall:
-			s.emit(session.Event{Kind: session.KindToolCall, Text: ev.Text, Raw: ev.Raw})
-			s.mu.Lock()
-			s.toolCalls++
-			over := s.p.Budgets.MaxTurns > 0 && s.toolCalls > s.p.Budgets.MaxTurns
-			s.mu.Unlock()
-			if over {
-				s.endWith(session.EndToolBudget)
+	events := s.drv.Events()
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return
 			}
-		case adapter.EventUsage:
-			s.mu.Lock()
-			s.inTok += ev.InputTokens
-			s.outTok += ev.OutputTokens
-			s.totTok += ev.TotalTokens
-			if ev.CostUSD > s.costUSD {
-				s.costUSD = ev.CostUSD
+			s.handle(ev)
+		case ack := <-s.pumpSync:
+			// Everything the driver queued before the caller asked is in the
+			// channel already; take it without waiting for more.
+			for drained := false; !drained; {
+				select {
+				case ev, ok := <-events:
+					if !ok {
+						close(ack)
+						return
+					}
+					s.handle(ev)
+				default:
+					drained = true
+				}
 			}
-			over := s.p.Budgets.MaxCostUSD > 0 && s.costUSD > s.p.Budgets.MaxCostUSD
-			s.mu.Unlock()
-			s.emit(session.Event{Kind: session.KindUsage, InputTokens: ev.InputTokens, OutputTokens: ev.OutputTokens, TotalTokens: ev.TotalTokens, CostUSD: ev.CostUSD, Raw: ev.Raw})
-			if over {
-				s.endWith(session.EndCostBudget)
-			}
-		case adapter.EventPermissionGranted:
-			s.emit(session.Event{Kind: session.KindPermissionGranted, Text: ev.Text, Raw: ev.Raw})
-		case adapter.EventPermissionDenied:
-			s.emit(session.Event{Kind: session.KindPermissionDenied, Text: ev.Text, Raw: ev.Raw})
-		case adapter.EventError:
-			s.mu.Lock()
-			s.harnessErr = ev.Text
-			s.mu.Unlock()
-			s.emit(session.Event{Kind: session.KindError, Text: ev.Text, Raw: ev.Raw})
-		default:
-			s.emit(session.Event{Kind: session.KindOther, Text: ev.Text, Raw: ev.Raw})
+			close(ack)
 		}
+	}
+}
+
+// syncPump returns once the pump has recorded every event the driver had
+// queued when it was called. SessionDriver queues all of a turn's events
+// before Prompt returns, so after a turn this puts the turn's tool calls
+// and permission decisions in the log ahead of assistant_turn, and ahead
+// of an End that would otherwise make emit discard them (agentry-cli#204).
+func (s *liveSession) syncPump() {
+	ack := make(chan struct{})
+	select {
+	case s.pumpSync <- ack:
+	case <-s.pumpDone:
+		return
+	}
+	select {
+	case <-ack:
+	case <-s.pumpDone:
+	}
+}
+
+// handle records one driver event (the pump's body).
+func (s *liveSession) handle(ev adapter.Event) {
+	if pumpEventHook != nil {
+		pumpEventHook()
+	}
+	switch ev.Kind {
+	case adapter.EventAssistantText:
+		s.emit(session.Event{Kind: session.KindAssistantText, Text: ev.Text, Raw: ev.Raw})
+	case adapter.EventToolCall:
+		s.emit(session.Event{Kind: session.KindToolCall, Text: ev.Text, Raw: ev.Raw})
+		s.mu.Lock()
+		s.toolCalls++
+		over := s.p.Budgets.MaxTurns > 0 && s.toolCalls > s.p.Budgets.MaxTurns
+		s.mu.Unlock()
+		if over {
+			s.endWith(session.EndToolBudget)
+		}
+	case adapter.EventUsage:
+		s.mu.Lock()
+		s.inTok += ev.InputTokens
+		s.outTok += ev.OutputTokens
+		s.totTok += ev.TotalTokens
+		if ev.CostUSD > s.costUSD {
+			s.costUSD = ev.CostUSD
+		}
+		over := s.p.Budgets.MaxCostUSD > 0 && s.costUSD > s.p.Budgets.MaxCostUSD
+		s.mu.Unlock()
+		s.emit(session.Event{Kind: session.KindUsage, InputTokens: ev.InputTokens, OutputTokens: ev.OutputTokens, TotalTokens: ev.TotalTokens, CostUSD: ev.CostUSD, Raw: ev.Raw})
+		if over {
+			s.endWith(session.EndCostBudget)
+		}
+	case adapter.EventPermissionGranted:
+		s.emit(session.Event{Kind: session.KindPermissionGranted, Text: ev.Text, Raw: ev.Raw})
+	case adapter.EventPermissionDenied:
+		s.emit(session.Event{Kind: session.KindPermissionDenied, Text: ev.Text, Raw: ev.Raw})
+	case adapter.EventError:
+		s.mu.Lock()
+		s.harnessErr = ev.Text
+		s.mu.Unlock()
+		s.emit(session.Event{Kind: session.KindError, Text: ev.Text, Raw: ev.Raw})
+	default:
+		s.emit(session.Event{Kind: session.KindOther, Text: ev.Text, Raw: ev.Raw})
 	}
 }
 
@@ -530,6 +588,7 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 		}
 	}()
 	res, err := s.drv.Prompt(turnCtx, text)
+	s.syncPump()
 	if err != nil {
 		if ended, _ := s.Ended(); ended {
 			return session.ErrEnded
