@@ -504,6 +504,14 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 	if !strings.Contains(stdout, "capability diff vs 2.0.0: narrowed") {
 		t.Errorf("narrowed diff not shown:\n%s", stdout)
 	}
+
+	// 1.0.0 again, the contract unchanged: a piped install without --yes
+	// goes through, since nothing widened against the record read back
+	// from disk (agentry-cli#201: the snapshot is compared by the core's
+	// rule after the round trip through installed.yaml).
+	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned"); err != nil {
+		t.Fatalf("an unchanged contract asked again: %v", err)
+	}
 }
 
 // TestInstallYankedWarns: an exact pin of a yanked version installs (§5.5)

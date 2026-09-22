@@ -6,6 +6,7 @@ package installed
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -297,5 +298,37 @@ publish:
 	}
 	if !strings.Contains(strings.Join(d.Narrowed, "|"), "drops env LOGS_DIR of MCP server npm:github-mcp-server-js@0.1.7") {
 		t.Fatalf("dropped key did not narrow: %+v", d)
+	}
+}
+
+// TestCapabilitiesInvertsSnapshot pins the one piece of new logic the shared
+// rule needs (agentry-cli#201): the diff is the core's
+// manifest.DiffCapabilities, over manifest.Capabilities, so a stored
+// snapshot is turned back into that type first. Snapshotting the result
+// must give back the snapshot exactly — every field, a scoped npm server
+// whose name carries its own "@", a PyPI server, and a server's env —
+// or an installed record would read as a changed contract and re-ask.
+func TestCapabilitiesInvertsSnapshot(t *testing.T) {
+	snap := CapSnapshot{
+		EgressHosts:  []string{"a.example.com", "*"},
+		FSRead:       "paths",
+		FSReadPaths:  []string{"docs", "src"},
+		FSWrite:      "workspace",
+		ExecCommands: []string{"git", "jq"},
+		Secrets:      []string{"TOKEN"},
+		DataAccess:   []string{"code", "tickets"},
+		MCPServers:   []string{"npm:@scope/server@1.2.3", "pypi:mcp-thing@0.4.0"},
+		MCPServerEnv: map[string]map[string]string{"npm:@scope/server@1.2.3": {"MODE": "ro"}},
+	}
+	if got := Snapshot(snap.Capabilities()); !reflect.DeepEqual(got, snap) {
+		t.Errorf("Snapshot(snap.Capabilities()) =\n  %+v\nwant\n  %+v", got, snap)
+	}
+
+	none := CapSnapshot{EgressNone: true, FSRead: "none", FSWrite: "none"}
+	if got := Snapshot(none.Capabilities()); !reflect.DeepEqual(got, none) {
+		t.Errorf("explicit none: got %+v, want %+v", got, none)
+	}
+	if got := Snapshot(CapSnapshot{}.Capabilities()); !reflect.DeepEqual(got, CapSnapshot{}) {
+		t.Errorf("an empty snapshot came back as %+v", got)
 	}
 }
