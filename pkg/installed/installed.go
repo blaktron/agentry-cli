@@ -98,14 +98,13 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 	return s
 }
 
-// Capabilities is Snapshot's inverse: the stored contract as the manifest
-// type, so the one widening rule, the core's manifest.DiffCapabilities, can
-// compare two snapshots (agentry-cli#201). Snapshot(s.Capabilities()) is s.
-// A server comes back from its "source:package@version" id with the name
-// and the version split at the last "@" — a scoped npm name begins with one
-// — which is all the rule compares; its tools, secrets and egress are not
-// part of the snapshot and stay empty.
-func (s CapSnapshot) Capabilities() manifest.Capabilities {
+// capabilities is Snapshot's inverse, for the diff only: the stored
+// contract as the manifest type, so the one widening rule, the core's
+// manifest.DiffCapabilities, can compare two snapshots (agentry-cli#201).
+// For any record Snapshot wrote, Snapshot(s.capabilities()) is s. It is
+// lossy — a server's tools, secrets and egress are not in the snapshot and
+// come back empty — which is why it is not exported as a contract.
+func (s CapSnapshot) capabilities() manifest.Capabilities {
 	c := manifest.Capabilities{
 		Network: manifest.Network{Egress: manifest.Egress{
 			None:  s.EgressNone,
@@ -122,19 +121,43 @@ func (s CapSnapshot) Capabilities() manifest.Capabilities {
 		c.DataAccess = append(c.DataAccess, manifest.DataAccess(d))
 	}
 	for _, id := range s.MCPServers {
-		srv := manifest.MCPServer{Env: maps.Clone(s.MCPServerEnv[id])}
-		name := id
-		if at := strings.LastIndex(id, "@"); at > 0 {
-			name, srv.Version = id[:at], id[at+1:]
-		}
-		if npm, ok := strings.CutPrefix(name, "npm:"); ok {
-			srv.NPM = npm
-		} else {
-			srv.PyPI = strings.TrimPrefix(name, "pypi:")
-		}
+		srv := serverFromID(id)
+		srv.Env = maps.Clone(s.MCPServerEnv[id])
 		c.MCPServers = append(c.MCPServers, srv)
 	}
 	return c
+}
+
+// unparsedServer prefixes the name of a server whose recorded id did not
+// parse. No package name holds a NUL, so its key matches no server a
+// release declares.
+const unparsedServer = "\x00unparsed:"
+
+// serverFromID reads a "source:package@version" id back into the server
+// the core keys by SourceID()+"@"+Version, splitting at the last "@" — a
+// scoped npm name begins with one. An id Snapshot never writes (a
+// hand-edited record) fails safe: it becomes a server no release declares,
+// so the release's own server reads as added and the gate asks again, as
+// the raw-string comparison this replaced did.
+func serverFromID(id string) manifest.MCPServer {
+	for _, src := range []string{"npm:", "pypi:"} {
+		rest, ok := strings.CutPrefix(id, src)
+		if !ok {
+			continue
+		}
+		at := strings.LastIndex(rest, "@")
+		if at <= 0 {
+			break
+		}
+		srv := manifest.MCPServer{Version: rest[at+1:]}
+		if src == "npm:" {
+			srv.NPM = rest[:at]
+		} else {
+			srv.PyPI = rest[:at]
+		}
+		return srv
+	}
+	return manifest.MCPServer{PyPI: unparsedServer + id}
 }
 
 // Record is one installed (registry, agent, target, dir) tuple.
@@ -282,5 +305,5 @@ type Diff = manifest.CapabilityDiff
 // (agentry-cli#201). Everything it reports is phrased the way §11 promises:
 // "this update adds network egress to evil.example".
 func DiffCapabilities(old, next CapSnapshot) Diff {
-	return manifest.DiffCapabilities(old.Capabilities(), next.Capabilities())
+	return manifest.DiffCapabilities(old.capabilities(), next.capabilities())
 }

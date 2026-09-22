@@ -320,15 +320,33 @@ func TestCapabilitiesInvertsSnapshot(t *testing.T) {
 		MCPServers:   []string{"npm:@scope/server@1.2.3", "pypi:mcp-thing@0.4.0"},
 		MCPServerEnv: map[string]map[string]string{"npm:@scope/server@1.2.3": {"MODE": "ro"}},
 	}
-	if got := Snapshot(snap.Capabilities()); !reflect.DeepEqual(got, snap) {
-		t.Errorf("Snapshot(snap.Capabilities()) =\n  %+v\nwant\n  %+v", got, snap)
+	if got := Snapshot(snap.capabilities()); !reflect.DeepEqual(got, snap) {
+		t.Errorf("Snapshot(snap.capabilities()) =\n  %+v\nwant\n  %+v", got, snap)
 	}
 
 	none := CapSnapshot{EgressNone: true, FSRead: "none", FSWrite: "none"}
-	if got := Snapshot(none.Capabilities()); !reflect.DeepEqual(got, none) {
+	if got := Snapshot(none.capabilities()); !reflect.DeepEqual(got, none) {
 		t.Errorf("explicit none: got %+v, want %+v", got, none)
 	}
-	if got := Snapshot(CapSnapshot{}.Capabilities()); !reflect.DeepEqual(got, CapSnapshot{}) {
+	if got := Snapshot(CapSnapshot{}.capabilities()); !reflect.DeepEqual(got, CapSnapshot{}) {
 		t.Errorf("an empty snapshot came back as %+v", got)
+	}
+}
+
+// TestMalformedServerIDStillReasks: an id Snapshot never writes — a
+// hand-edited installed.yaml — must not parse into the next release's
+// key and hide a new server. It fails safe: the recorded server reads as
+// one no release declares, so the release's server widens and re-asks,
+// as the raw-string comparison it replaced did.
+func TestMalformedServerIDStillReasks(t *testing.T) {
+	next := Snapshot(manifest.Capabilities{MCPServers: []manifest.MCPServer{
+		{PyPI: "foo", Version: "1"},
+		{NPM: "@scope/x", Version: "2.0.0"},
+	}})
+	for _, recorded := range []string{"foo@1", "npm:@scope/x", "pypi:", "npm:"} {
+		old := CapSnapshot{MCPServers: []string{recorded}}
+		if d := DiffCapabilities(old, next); !d.HasWidened() {
+			t.Errorf("recorded %q: the release's servers did not widen: %+v", recorded, d)
+		}
 	}
 }

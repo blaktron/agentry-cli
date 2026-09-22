@@ -505,12 +505,21 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 		t.Errorf("narrowed diff not shown:\n%s", stdout)
 	}
 
-	// 1.0.0 again, the contract unchanged: a piped install without --yes
-	// goes through, since nothing widened against the record read back
-	// from disk (agentry-cli#201: the snapshot is compared by the core's
-	// rule after the round trip through installed.yaml).
-	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned"); err != nil {
+	// 2.0.0 twice, the second time with its egress contract unchanged: a
+	// piped install without --yes goes through, since nothing widened
+	// against the record read back from disk (agentry-cli#201: the
+	// snapshot is compared by the core's rule after the round trip through
+	// installed.yaml, and a contract that declares something is the one a
+	// lossy round trip would re-ask on).
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@2.0.0", "--allow-unsigned", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/demo@2.0.0", "--allow-unsigned")
+	if err != nil {
 		t.Fatalf("an unchanged contract asked again: %v", err)
+	}
+	if strings.Contains(stdout, "WIDENED") {
+		t.Errorf("an unchanged contract reported a widening:\n%s", stdout)
 	}
 }
 
