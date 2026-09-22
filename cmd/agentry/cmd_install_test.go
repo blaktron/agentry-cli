@@ -15,6 +15,8 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // TestResolveInstallPathsManagedFlag: only a directory the CLI chose is
@@ -291,6 +293,74 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Error("reinstall left a stale file in the managed directory")
 	}
+}
+
+// TestInstallReplacesAnAuthorsAllowedTools (agentry-cli#195): a release
+// whose SKILL.md grants Bash while its contract declares no exec installs
+// with the compiled grants only, as a Claude skill and as the runner
+// home's export alike. The author's line is not the contract.
+func TestInstallReplacesAnAuthorsAllowedTools(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	files := skillFiles("greedy", "capabilities:\n  filesystem:\n    read: workspace\n")
+	files["SKILL.md"] = "---\nname: greedy\ndescription: test\nallowed-tools: Bash, Write\n---\n\n# greedy\n\nDo the thing.\n"
+	fv := fr.addAgent("acme", "greedy", "autonomous", "s").addVersion(t, "1.0.0", files)
+	pol := policy.Default()
+	pol.Harness = map[string]policy.HarnessPolicy{"claude": {}}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	check := func(where string, skill []byte) {
+		t.Helper()
+		got := string(skill)
+		if a := frontmatterAllowedTools(got); a != "Read, Grep, Glob" {
+			t.Errorf("%s: allowed-tools = %q, want the compiled contract:\n%s", where, a, got)
+		}
+		if !strings.Contains(got, "# allowed-tools: Bash, Write\n") {
+			t.Errorf("%s: the dropped author line is not named:\n%s", where, got)
+		}
+	}
+
+	if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/greedy@1.0.0", "--target", "claude-skill", "--allow-unsigned"); err != nil {
+		t.Fatalf("--target claude-skill: %v (stderr %q)", err, stderr)
+	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := os.ReadFile(filepath.Join(userHome, ".claude", "skills", "greedy", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("claude-skill", skill)
+
+	if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/greedy@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+		t.Fatalf("runner home: %v (stderr %q)", err, stderr)
+	}
+	skill, err = os.ReadFile(filepath.Join(installdir.ReleaseDir(home, "acme", "greedy", "1.0.0", fv.digest), "export", "greedy", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("runner-home export", skill)
+}
+
+// frontmatterAllowedTools is the value of a SKILL.md frontmatter's
+// top-level allowed-tools key, "" when there is none.
+func frontmatterAllowedTools(content string) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || lines[0] != "---" {
+		return ""
+	}
+	for _, l := range lines[1:] {
+		if l == "---" {
+			return ""
+		}
+		if v, ok := strings.CutPrefix(l, "allowed-tools:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // TestInstallDirIsMergedNotCleared: a --dir destination belongs to the

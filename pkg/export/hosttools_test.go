@@ -66,11 +66,53 @@ func TestSkillFrontmatterWithTools(t *testing.T) {
 			t.Errorf("author frontmatter lost:\n%s", got)
 		}
 	})
-	t.Run("author allowed-tools wins", func(t *testing.T) {
-		in := "---\nname: mine\nallowed-tools: Read\n---\n\nbody\n"
+	// agentry-cli#195: the line is the declared contract, compiled; an
+	// author's own grant is replaced, never kept, and stays visible as a
+	// comment naming what was dropped.
+	t.Run("author allowed-tools is replaced by the contract", func(t *testing.T) {
+		in := "---\nname: mine\nallowed-tools: Bash\ndescription: d\n---\n\nbody\n"
 		got := string(SkillFrontmatterWithTools([]byte(in), "n", "s", tools))
-		if got != in {
-			t.Errorf("author allowed-tools overridden:\n%s", got)
+		if a := activeAllowedTools(got); a != "Read, WebFetch(domain:x.y)" {
+			t.Errorf("active allowed-tools = %q:\n%s", a, got)
+		}
+		if !strings.Contains(got, "# allowed-tools: Bash\n") || !strings.Contains(got, "name: mine\n") || !strings.Contains(got, "description: d\n---\n\nbody\n") {
+			t.Errorf("author line not kept as a comment, or frontmatter lost:\n%s", got)
+		}
+	})
+	t.Run("a list-form author grant is replaced whole", func(t *testing.T) {
+		in := "---\nname: mine\nallowed-tools:\n  - Bash\n  - Read\ndescription: d\n---\nbody\n"
+		got := string(SkillFrontmatterWithTools([]byte(in), "n", "s", tools))
+		if a := activeAllowedTools(got); a != "Read, WebFetch(domain:x.y)" {
+			t.Errorf("active allowed-tools = %q:\n%s", a, got)
+		}
+		if strings.Contains(got, "\n  - Bash") || !strings.Contains(got, "#   - Bash\n") || !strings.Contains(got, "description: d\n") {
+			t.Errorf("list items survived as grants, or were not kept as comments:\n%s", got)
+		}
+	})
+	t.Run("no grants removes the author's line", func(t *testing.T) {
+		in := "---\nname: mine\nallowed-tools: Bash, Write\n---\n\nbody\n"
+		got := string(SkillFrontmatterWithTools([]byte(in), "n", "s", nil))
+		if a := activeAllowedTools(got); a != "" {
+			t.Errorf("a pure-text contract kept a grant %q:\n%s", a, got)
+		}
+		if !strings.Contains(got, "# allowed-tools: Bash, Write\n") || !strings.HasSuffix(got, "---\n\nbody\n") {
+			t.Errorf("dropped line not named, or body changed:\n%s", got)
+		}
+	})
+	t.Run("an author line equal to the contract is left as written", func(t *testing.T) {
+		in := "---\nname: mine\nallowed-tools: Read, WebFetch(domain:x.y)\n---\n\nbody\n"
+		if got := string(SkillFrontmatterWithTools([]byte(in), "n", "s", tools)); got != in {
+			t.Errorf("an agreeing line was rewritten:\n%s", got)
+		}
+	})
+	t.Run("CRLF frontmatter is handled the same", func(t *testing.T) {
+		in := "---\r\nname: mine\r\nallowed-tools: Bash\r\n---\r\n\r\nbody\r\n"
+		got := string(SkillFrontmatterWithTools([]byte(in), "n", "s", tools))
+		if a := activeAllowedTools(got); a != "Read, WebFetch(domain:x.y)" {
+			t.Errorf("active allowed-tools = %q:\n%q", a, got)
+		}
+		if !strings.HasSuffix(got, "---\r\n\r\nbody\r\n") {
+			t.Errorf("body or fence changed:\n%q", got)
 		}
 	})
 	t.Run("no grants leaves content alone", func(t *testing.T) {
@@ -121,4 +163,22 @@ func TestUpsertAgentsMDSectionNoteCarriesTools(t *testing.T) {
 	if again != got {
 		t.Errorf("upsert with note not idempotent:\n%s\nvs\n%s", got, again)
 	}
+}
+
+// activeAllowedTools is the value of the frontmatter's top-level
+// allowed-tools key, "" when there is none (comments do not count).
+func activeAllowedTools(content string) string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	if len(lines) == 0 || lines[0] != "---" {
+		return ""
+	}
+	for _, l := range lines[1:] {
+		if l == "---" {
+			return ""
+		}
+		if v, ok := strings.CutPrefix(l, "allowed-tools:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

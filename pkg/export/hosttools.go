@@ -51,45 +51,85 @@ func HostToolGrants(c manifest.Capabilities) []string {
 	return tools
 }
 
-// EnsureSkillAllowedTools inserts an `allowed-tools` line into a SKILL.md
-// frontmatter block that lacks one. Content without frontmatter is
-// returned unchanged (EnsureSkillFrontmatter runs first and owns that
-// case); an existing allowed-tools line is the author's and wins — the
-// exporter narrows nothing it did not write.
-func EnsureSkillAllowedTools(content []byte, tools []string) []byte {
-	if len(tools) == 0 {
+// SetSkillAllowedTools makes a SKILL.md frontmatter's top-level
+// allowed-tools line the compiled grants: the declared capability
+// contract, never the author's (agentry-cli#195, RUNNER-PLAN §R5). An
+// author's own line (or list) that differs is replaced and kept as a
+// comment naming what was dropped; with no grants it is removed, so the
+// host pre-approves nothing the manifest did not declare. Content without
+// frontmatter is returned unchanged (EnsureSkillFrontmatter runs first and
+// owns that case).
+func SetSkillAllowedTools(content []byte, tools []string) []byte {
+	nl := "\n"
+	switch {
+	case bytes.HasPrefix(content, []byte("---\r\n")):
+		nl = "\r\n"
+	case !bytes.HasPrefix(content, []byte("---\n")):
 		return content
 	}
-	if !bytes.HasPrefix(content, []byte("---\n")) && !bytes.HasPrefix(content, []byte("---\r\n")) {
-		return content
+	lines := strings.SplitAfter(string(content), "\n")
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r\n") == "---" {
+			end = i
+			break
+		}
 	}
-	head := content[bytes.IndexByte(content, '\n')+1:]
-	end := bytes.Index(head, []byte("\n---"))
 	if end < 0 {
 		return content
 	}
-	block := head[:end]
-	for _, line := range bytes.Split(block, []byte("\n")) {
-		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("allowed-tools:")) {
-			return content
+	want := ""
+	if len(tools) > 0 {
+		want = "allowed-tools: " + strings.Join(tools, ", ") + nl
+	}
+	start, stop := -1, -1
+	for i := 1; i < end; i++ {
+		if strings.HasPrefix(lines[i], "allowed-tools:") {
+			start, stop = i, i+1
+			for stop < end && yamlContinuation(lines[stop]) {
+				stop++
+			}
+			break
 		}
 	}
-	insert := "allowed-tools: " + strings.Join(tools, ", ") + "\n"
-	var out bytes.Buffer
-	out.Write(content[:len(content)-len(head)+end+1]) // through the last frontmatter line
-	out.WriteString(insert)
-	out.Write(head[end+1:])
-	return out.Bytes()
+	var out strings.Builder
+	if start < 0 {
+		if want == "" {
+			return content
+		}
+		out.WriteString(strings.Join(lines[:end], ""))
+		out.WriteString(want)
+		out.WriteString(strings.Join(lines[end:], ""))
+		return []byte(out.String())
+	}
+	if strings.Join(lines[start:stop], "") == want {
+		return content
+	}
+	out.WriteString(strings.Join(lines[:start], ""))
+	out.WriteString("# The skill file's own allowed-tools, replaced by the grants compiled" + nl)
+	out.WriteString("# from the declared capability contract:" + nl)
+	for _, l := range lines[start:stop] {
+		out.WriteString("# " + l)
+	}
+	out.WriteString(want)
+	out.WriteString(strings.Join(lines[stop:], ""))
+	return []byte(out.String())
+}
+
+// yamlContinuation reports whether a frontmatter line continues the key
+// above it: an indented line, or a block-sequence item at column 0.
+func yamlContinuation(line string) bool {
+	return strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "-")
 }
 
 // SkillFrontmatterWithTools is EnsureSkillFrontmatter plus the embedded
-// tool grants: generated frontmatter carries allowed-tools directly, and
-// author-supplied frontmatter gains the key only when absent.
+// tool grants: the allowed-tools line is the compiled contract whether the
+// frontmatter is generated or the author's.
 func SkillFrontmatterWithTools(content []byte, name, summary string, tools []string) []byte {
 	if bytes.HasPrefix(content, []byte("---\n")) || bytes.HasPrefix(content, []byte("---\r\n")) {
-		return EnsureSkillAllowedTools(content, tools)
+		return SetSkillAllowedTools(content, tools)
 	}
-	return EnsureSkillAllowedTools(EnsureSkillFrontmatter(content, name, summary), tools)
+	return SetSkillAllowedTools(EnsureSkillFrontmatter(content, name, summary), tools)
 }
 
 // HostToolsNote renders the embedded-tools contract for prose targets
