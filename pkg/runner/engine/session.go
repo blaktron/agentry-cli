@@ -204,10 +204,14 @@ type liveSession struct {
 	costUSD        float64
 	lastText       string
 	harnessErr     string
-	lastActivity   time.Time
-	endOnce        sync.Once
-	envelope       *receipt.Envelope
-	envelopeErr    error
+	// panicErr is set when the pump or the watcher recovered a panic. It is
+	// the session's error whatever reason it then ended with, because that
+	// reason is a side effect of the recovery (agentry-cli#161).
+	panicErr     error
+	lastActivity time.Time
+	endOnce      sync.Once
+	envelope     *receipt.Envelope
+	envelopeErr  error
 }
 
 // rwPipe joins the harness's stdout (read) and stdin (write) for the adapter.
@@ -323,6 +327,16 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 // cost budgets exactly as the autonomous collector does.
 func (s *liveSession) pump() {
 	defer close(s.pumpDone)
+	// A panic here would take the process down, and the session's teardown
+	// runs only from End — so the sandbox, the gateway holding the docker
+	// socket, the run network and secrets.env would outlive it, bounded by
+	// nothing, since the budgets are applied by the goroutine that died
+	// (agentry-cli#161). Recover, name it, and end the session so End runs.
+	defer func() {
+		if r := recover(); r != nil {
+			s.recordPanic(fmt.Errorf("session event pump panicked: %v", r))
+		}
+	}()
 	for ev := range s.drv.Events() {
 		switch ev.Kind {
 		case adapter.EventAssistantText:
@@ -365,11 +379,31 @@ func (s *liveSession) pump() {
 	}
 }
 
+// recordPanic stores a recovered panic as the session's error and ends the
+// session, so End runs the teardown and names the panic instead of the
+// process dying with the sandbox still up (agentry-cli#161). The first panic
+// is the one kept: whatever follows is its fallout.
+func (s *liveSession) recordPanic(err error) {
+	s.mu.Lock()
+	if s.panicErr == nil {
+		s.panicErr = err
+	}
+	s.mu.Unlock()
+	s.endWith(session.EndCancelled)
+}
+
 // watch ends the session on silence (plan §6.7); the wall clock is the
 // agent context's deadline.
 func (s *liveSession) watch() {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
+	// As the pump's: a panic here would leave the session's containers up
+	// with nothing left to apply the idle or wall budgets (agentry-cli#161).
+	defer func() {
+		if r := recover(); r != nil {
+			s.recordPanic(fmt.Errorf("session watcher panicked: %v", r))
+		}
+	}()
 	for {
 		select {
 		case <-s.done:
@@ -619,6 +653,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	env := s.env
 	env.Usage = receipt.Usage{InputTokens: s.inTok, OutputTokens: s.outTok, TotalTokens: s.totTok, CostUSD: s.costUSD, Turns: s.toolCalls, UserTurns: s.userTurns}
 	harnessErr := s.harnessErr
+	panicErr := s.panicErr
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
 	_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "transcript.md"), []byte(transcript(env, log)), 0o644)
@@ -658,6 +693,12 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		outErr = Classify(ExitHarness, fmt.Errorf("agent exited before the session ended%s", detail))
 	default:
 		outErr = Classify(ExitCLI, fmt.Errorf("session %s", reason))
+	}
+	if panicErr != nil {
+		// The panic is the error, whatever reason the recovery ended the
+		// session with: that reason is the recovery's own doing, not what
+		// went wrong (agentry-cli#161).
+		outErr = Classify(ExitCLI, panicErr)
 	}
 	if outErr != nil {
 		env.Result = receipt.TextResult(lastText)

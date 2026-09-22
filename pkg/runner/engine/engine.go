@@ -584,11 +584,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			cancelCause(errCostBudget)
 		},
 	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		collector.consume(pr)
-	}()
+	done := consumeGuarded(collector, pr, cancelCause)
 
 	var stdin io.Reader
 	if runSpec.Interactive {
@@ -614,6 +610,11 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 
 	out := agentOutcome{lastText: collector.lastText, usage: collector.usage()}
 	switch {
+	// First, because a panic that stopped the reader is the reason anything
+	// else downstream looks wrong — the harness blocked on a pipe nobody was
+	// draining, and so was killed.
+	case collector.panicErr != nil:
+		out.err = Classify(ExitCLI, collector.panicErr)
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:
@@ -728,6 +729,12 @@ type eventCollector struct {
 	budgetTripped      bool
 	costTripped        bool
 	harnessErrReported string
+	// panicErr is set when the consuming goroutine recovered a panic. It is
+	// the run's error: a panic in the adapter's mapper or the tee writer
+	// would otherwise take the process down, and teardown is a defer in
+	// Run's own goroutine, which a dying goroutine never runs
+	// (agentry-cli#161).
+	panicErr error
 	// totTok accumulates a harness's context-token reports, for the
 	// harnesses that give a total without an input/output split.
 	totTok int64
@@ -738,6 +745,44 @@ type eventCollector struct {
 	// usageErr records a callback that panicked, so a driver metering the
 	// run learns its meter is dead instead of reading silence as zero.
 	usageErr error
+}
+
+// consumeGuarded runs the collector's consume in its own goroutine and returns
+// the channel that closes when it is done.
+//
+// A panic in the adapter's mapper or the --events tee writer would otherwise
+// take the whole process down, and teardown is a defer in the caller's
+// goroutine: a dying goroutine runs none of it, which leaves the agent
+// container holding a valid gateway token, the gateway holding the docker
+// socket, and the run network and secrets.env on disk — bounded by nothing,
+// since the turn, cost and wall budgets are all enforced by the process that
+// died (agentry-cli#161). So the panic is recovered, recorded as the
+// collector's error, and the pipe is closed with it, which makes the harness's
+// next write fail instead of blocking forever on a reader that is gone.
+// onCancel ends the agent's context for the case where nothing is writing: a
+// docker client blocked reading the attach stream never notices the closed
+// pipe, and without it the run would sit there with its budget goroutine dead
+// and the sandbox up.
+//
+// Both call sites — the container agent and the host-run harness — go through
+// this, because they are the same shape and hardening one copy of it left the
+// other one leaking.
+func consumeGuarded(c *eventCollector, pr *io.PipeReader, onCancel func(error)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				c.panicErr = fmt.Errorf("event stream panicked: %v", r)
+				_ = pr.CloseWithError(c.panicErr)
+				if onCancel != nil {
+					onCancel(c.panicErr)
+				}
+			}
+		}()
+		c.consume(pr)
+	}()
+	return done
 }
 
 func (c *eventCollector) consume(r io.Reader) {
