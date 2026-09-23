@@ -276,7 +276,7 @@ var validTargets = []string{installdir.Target, manifest.InterfaceClaudeSkill, ma
 // download, a capability prompt, and an extraction that is then thrown away.
 func validateTarget(target string) error {
 	if target == "" {
-		return nil // resolved from the manifest's interfaces once it arrives
+		return nil // no --target: the runner home (installdir.Target), chosen in runInstall
 	}
 	for _, t := range validTargets {
 		if target == t {
