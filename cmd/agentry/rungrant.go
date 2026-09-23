@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 )
@@ -27,16 +28,22 @@ func installRunGrant() {
 	if grant == "" {
 		return
 	}
-	http.DefaultTransport = &grantTransport{next: http.DefaultTransport, grant: grant, registry: grantHost}
+	http.DefaultTransport = &grantTransport{next: http.DefaultTransport, grant: grant, registry: grantOrigin}
 }
 
-// grantHost is the --registry host, read once the flags are parsed.
-var grantHost = sync.OnceValue(func() string {
-	host, _ := registryHost(registryURL())
-	return host
+// grantOrigin is the --registry scheme and host, read once the flags are
+// parsed: the grant goes to that origin alone, so a redirect to another
+// host or down to plain http on the same one does not carry it.
+var grantOrigin = sync.OnceValue(func() string {
+	u, err := url.Parse(registryURL())
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 })
 
-// grantTransport adds the grant to requests bound for the registry's host.
+// grantTransport adds the grant to requests bound for the registry's
+// origin; every hop of a redirect passes through here again.
 type grantTransport struct {
 	next     http.RoundTripper
 	grant    string
@@ -44,7 +51,7 @@ type grantTransport struct {
 }
 
 func (t *grantTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if host := t.registry(); host != "" && req.URL.Host == host {
+	if origin := t.registry(); origin != "" && req.URL.Scheme+"://"+req.URL.Host == origin {
 		req = req.Clone(req.Context())
 		req.Header.Set(runGrantHeader, t.grant)
 	}

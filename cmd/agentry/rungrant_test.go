@@ -25,11 +25,7 @@ func TestRunGrantReachesOnlyTheRegistryHost(t *testing.T) {
 	elsewhere := httptest.NewServer(handler("elsewhere"))
 	defer elsewhere.Close()
 
-	host, err := registryHost(registry.URL + "/api/v1/x/runs/rel")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := &http.Client{Transport: &grantTransport{next: http.DefaultTransport, grant: "agyr_grant", registry: func() string { return host }}}
+	c := &http.Client{Transport: &grantTransport{next: http.DefaultTransport, grant: "agyr_grant", registry: func() string { return registry.URL }}}
 	for _, u := range []string{registry.URL + "/api/v1/x/runs/rel/api/v1/resolve?ref=a/b@1.0.0", elsewhere.URL + "/archive.tgz"} {
 		resp, err := c.Get(u)
 		if err != nil {
@@ -52,5 +48,29 @@ func TestNoRunGrantLeavesTheTransport(t *testing.T) {
 	installRunGrant()
 	if http.DefaultTransport != before {
 		t.Fatal("the default transport was replaced with no grant set")
+	}
+}
+
+// Installed from the environment, the grant rides the CLI's own client —
+// the one resolve, the archive and the attestation go through.
+func TestRunGrantInstalledReachesTheCLIsClient(t *testing.T) {
+	var got string
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(runGrantHeader)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer registry.Close()
+	before, beforeOrigin := http.DefaultTransport, grantOrigin
+	t.Cleanup(func() { http.DefaultTransport, grantOrigin = before, beforeOrigin })
+	t.Setenv(envRunGrant, "agyr_grant")
+	grantOrigin = func() string { return registry.URL }
+	installRunGrant()
+	resp, err := httpClient.Get(registry.URL + "/api/v1/x/runs/rel/api/v1/resolve?ref=a/b@1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if got != "agyr_grant" {
+		t.Fatalf("the CLI's client did not carry the grant: %q", got)
 	}
 }
