@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -838,5 +839,65 @@ func TestRunWithoutAPolicyRuntimeAsksForNone(t *testing.T) {
 	}
 	if p.Plan.Docker != nil {
 		t.Fatal("a plan compiled without docker.runtime carries a docker block")
+	}
+}
+
+// Every container the engine starts drops every capability, cannot gain
+// privileges and is bounded by the policy's limits, the defaults when it
+// sets none; the proxy, the probe and the agent run on a read-only root
+// (the agent's writable paths the adapter's); the gateway passes the
+// limits to what it launches; the receipt names it all (agentry-cli#163).
+func TestRunContainersAreHardened(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lim  policy.Limits
+		want policy.Limits
+	}{
+		{"defaults", policy.Limits{}, policy.Limits{}.WithDefaults()},
+		{"the policy's", policy.Limits{Memory: "512m", CPUs: 3, Pids: 64}, policy.Limits{Memory: "512m", CPUs: 3, Pids: 64}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, f := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Limits = tc.lim })
+			happyFake(f)
+			env, err := Run(context.Background(), f, p)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			for _, name := range []string{"-proxy", "-gateway", "-probe", "-agent"} {
+				c, ok := f.FindRun(name)
+				if !ok {
+					t.Fatalf("no %s container ran", name)
+				}
+				wantAdd := ""
+				if name == "-gateway" {
+					wantAdd = "DAC_READ_SEARCH"
+				}
+				if len(c.CapDrop) != 1 || c.CapDrop[0] != "ALL" || strings.Join(c.CapAdd, ",") != wantAdd || !c.NoNewPrivileges {
+					t.Errorf("%s: cap-drop %v cap-add %v no-new-privileges %v", c.Name, c.CapDrop, c.CapAdd, c.NoNewPrivileges)
+				}
+				if c.Memory != tc.want.Memory || c.CPUs != tc.want.CPUs || c.PidsLimit != tc.want.Pids {
+					t.Errorf("%s: memory %q cpus %d pids %d, want %+v", c.Name, c.Memory, c.CPUs, c.PidsLimit, tc.want)
+				}
+				wantRO := name != "-gateway"
+				if c.ReadOnly != wantRO || (wantRO && len(c.Tmpfs) == 0) {
+					t.Errorf("%s: read-only %v tmpfs %v, want read-only %v", c.Name, c.ReadOnly, c.Tmpfs, wantRO)
+				}
+			}
+			agent, _ := f.FindRun("-agent")
+			if strings.Join(agent.Tmpfs, ",") != strings.Join(p.Plan.Harness.Agent.Tmpfs, ",") || len(agent.Tmpfs) == 0 {
+				t.Errorf("agent tmpfs %v, want the adapter's %v", agent.Tmpfs, p.Plan.Harness.Agent.Tmpfs)
+			}
+			gw, _ := f.FindRun("-gateway")
+			args := strings.Join(gw.Argv, " ")
+			if !strings.Contains(args, fmt.Sprintf("--cpus %d --memory %s", tc.want.CPUs, tc.want.Memory)) {
+				t.Errorf("gateway argv does not bound what it launches: %s", args)
+			}
+			line := env.CapabilitiesEnforced["containers"]
+			if !strings.Contains(line, "all capabilities dropped, no-new-privileges") ||
+				!strings.Contains(line, fmt.Sprintf("memory %s, cpus %d, pids %d", tc.want.Memory, tc.want.CPUs, tc.want.Pids)) ||
+				!strings.Contains(line, "the agent (tmpfs /tmp, /work, /home/docker-agent)") || !strings.Contains(line, "DAC_READ_SEARCH alone") {
+				t.Errorf("receipt containers line = %q", line)
+			}
+		})
 	}
 }

@@ -43,6 +43,12 @@
         "target": "/plan",
         "readOnly": true
       }
+    ],
+    "readOnlyRoot": true,
+    "tmpfs": [
+      "/tmp:mode=1777",
+      "/work:mode=1777",
+      "/home/docker-agent:mode=1777"
     ]
   },
   "session": {

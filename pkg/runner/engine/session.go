@@ -52,7 +52,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages),
+		CapabilitiesEnforced: withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,
@@ -102,7 +102,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if owner := p.Plan.Harness.Session.StoreOwner; owner != "" {
 		initName := containerName(runID, "session-init")
 		td.add(func(c context.Context) { _ = d.RemoveForce(c, initName) })
-		code, err := d.RunForeground(ctx, dockerx.RunSpec{
+		// The one-shot that hands the store to the harness user keeps
+		// CHOWN, the one capability its chown needs, and nothing else.
+		initSpec := hardened(dockerx.RunSpec{
 			Name:       initName,
 			Image:      p.Plan.Harness.Agent.Image,
 			Entrypoint: "sh",
@@ -113,7 +115,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			Labels:     runLabels(runID),
 			AutoRemove: true,
 			Runtime:    p.Plan.Runtime(),
-		}, nil, io.Discard, p.Stderr)
+		}, p.limits())
+		initSpec.CapAdd = []string{"CHOWN"}
+		code, err := d.RunForeground(ctx, initSpec, nil, io.Discard, p.Stderr)
 		if err != nil || code != 0 {
 			if err == nil {
 				err = fmt.Errorf("exit %d", code)
@@ -256,6 +260,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		Runtime:     p.Plan.Runtime(),
 		ExtraHosts:  hosts,
 	}
+	runSpec = hardenedAgent(runSpec, p)
 	s.td.add(func(c context.Context) { _ = s.d.RemoveForce(c, name) })
 
 	eventsFile, err := os.Create(filepath.Join(s.rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir

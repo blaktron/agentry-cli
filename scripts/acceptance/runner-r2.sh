@@ -97,7 +97,19 @@ if [ -n "$AGENT" ]; then
   # reads AGENTRY_TOKEN) or the daemon's socket (§R4: the gateway alone).
   docker inspect "$AGENT" --format '{{join .Config.Env "\n"}}' | grep -q '^AGENTRY_TOKEN=' && { echo "FAIL: the registry token is in the agent container's environment"; exit 1; }
   docker inspect "$AGENT" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q 'docker.sock' && { echo "FAIL: the agent container mounts the docker socket"; exit 1; }
+  # The container posture (agentry-cli#163): every capability dropped and
+  # no-new-privileges on the agent and the gateway, a read-only root and a
+  # pids and memory bound on the agent, and the bounds passed to what the
+  # gateway launches.
+  for C in "$AGENT" "$GW"; do
+    docker inspect "$C" --format '{{json .HostConfig.CapDrop}}' | grep -q '"ALL"' || { echo "FAIL: $C keeps its capabilities"; exit 1; }
+    docker inspect "$C" --format '{{json .HostConfig.SecurityOpt}}' | grep -q 'no-new-privileges' || { echo "FAIL: $C runs without no-new-privileges"; exit 1; }
+  done
+  docker inspect "$AGENT" --format '{{.HostConfig.ReadonlyRootfs}}' | grep -qx true || { echo "FAIL: the agent container's root is writable"; exit 1; }
+  docker inspect "$AGENT" --format '{{.HostConfig.PidsLimit}} {{.HostConfig.Memory}}' | grep -Eq '^[1-9][0-9]* [1-9][0-9]*$' || { echo "FAIL: the agent container has no pids or memory bound"; exit 1; }
+  docker inspect "$GW" --format '{{join .Args " "}}' | grep -Eq -- '--cpus [0-9]+ --memory [0-9]+[mg]' || { echo "FAIL: the gateway does not bound what it launches"; exit 1; }
   echo "live containers: gateway --block-network, agent internal-only on $NETS, no published port, no registry token, no socket"
+  echo "live posture: agent and gateway drop ALL with no-new-privileges; agent root read-only with pids and memory bounds; gateway passes cpus and memory on"
 else
   echo "WARN: the agent container was never observed live (the run ended first?)" >&2
 fi
