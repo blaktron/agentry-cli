@@ -60,6 +60,10 @@ func TestValidateTable(t *testing.T) {
 		{"env with stray path", func(p *Policy) { p.SecretSource = SecretSource{Mode: "env", EnvFile: "x"} }, "envFile"},
 		{"docker runtime with a space", func(p *Policy) { p.Docker.Runtime = "run sc" }, "docker.runtime"},
 		{"docker runtime that is a path", func(p *Policy) { p.Docker.Runtime = "/usr/bin/runsc" }, "docker.runtime"},
+		{"memory without a unit", func(p *Policy) { p.Docker.Limits.Memory = "2048" }, "docker.limits.memory"},
+		{"memory in bytes", func(p *Policy) { p.Docker.Limits.Memory = "2b" }, "docker.limits.memory"},
+		{"negative cpus", func(p *Policy) { p.Docker.Limits.CPUs = -1 }, "docker.limits"},
+		{"too few pids to start", func(p *Policy) { p.Docker.Limits.Pids = 8 }, "docker.limits"},
 		{"zero timeout", func(p *Policy) { p.Budgets.TimeoutSeconds = 0 }, "timeoutSeconds"},
 		{"negative turns", func(p *Policy) { p.Budgets.MaxTurns = -1 }, "maxTurns"},
 		{"missing image", func(p *Policy) { p.Images.Gateway = "" }, "images"},
@@ -463,5 +467,21 @@ func TestCredentialKindOfReadsTheAnthropicShapesAndNothingElse(t *testing.T) {
 	pol.Harness = map[string]HarnessPolicy{"claude": {APIKeyKind: KeyKindSubscription}}
 	if err := pol.Validate(); err != nil {
 		t.Fatalf("subscription on the claude harness beside an API key for the container: %v", err)
+	}
+}
+
+// A policy that sets no limits is bounded by the defaults, and a set field
+// keeps its value (agentry-cli#163).
+func TestLimitsDefaults(t *testing.T) {
+	if got := (Limits{}).WithDefaults(); got != (Limits{Memory: DefaultMemory, CPUs: DefaultCPUs, Pids: DefaultPids}) {
+		t.Fatalf("zero limits with defaults = %+v", got)
+	}
+	if got := (Limits{Memory: "512m", Pids: 64}).WithDefaults(); got != (Limits{Memory: "512m", CPUs: DefaultCPUs, Pids: 64}) {
+		t.Fatalf("partial limits with defaults = %+v", got)
+	}
+	p := Default()
+	p.Docker.Limits = Limits{Memory: "4g", CPUs: 4, Pids: 1024}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("valid limits refused: %v", err)
 	}
 }

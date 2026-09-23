@@ -158,7 +158,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages),
+		CapabilitiesEnforced: withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,
@@ -345,6 +345,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Labels:  labels,
 		Publish: proxyPublish,
 	}
+	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
 	if err := d.RunDetached(ctx, proxySpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start llm proxy: %w", err))
 	}
@@ -376,7 +377,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	gwSpec := dockerx.RunSpec{
 		Name:    gwName,
 		Image:   p.Plan.Gateway.Image,
-		Argv:    substituteAll(p.Plan.Gateway.Args, rep),
+		Argv:    append(substituteAll(p.Plan.Gateway.Args, rep), gatewayLimitArgs(p.limits())...),
 		Env:     gwEnv,
 		Mounts:  resolveMounts(p.Plan.Gateway.Mounts, rep),
 		Network: netName,
@@ -399,6 +400,9 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		// daemon would otherwise refuse it the socket outright.
 		DisableSELinuxLabel: mountsDockerSocket(p.Plan.Gateway.Mounts),
 	}
+	// Its root stays writable: a vendor image, whose writes are its own.
+	// It needs no capability for the socket, which it opens as its owner.
+	gwSpec = hardened(gwSpec, p.limits())
 	// A run that will give the gateway relays to start refuses to share
 	// the relay network with another gateway's (relays.go, agentry-cli#108).
 	if relaysNeeded(p.Plan.MCPServers) {
@@ -439,6 +443,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Labels:     labels,
 		AutoRemove: true,
 	}
+	probeSpec = readOnlyRoot(hardened(probeSpec, p.limits()), "/tmp")
 	code, perr := d.RunForeground(ctx, probeSpec, nil, io.Discard, p.Stderr)
 	if perr != nil || code != 0 {
 		diag := gatewayDiagnostics(ctx, d, gwName)
@@ -558,6 +563,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		AutoRemove:  true,
 		Runtime:     p.Plan.Runtime(),
 		ExtraHosts:  hosts,
+	}
+	runSpec = hardened(runSpec, p.limits())
+	if a := p.Plan.Harness.Agent; a.ReadOnlyRoot {
+		runSpec = readOnlyRoot(runSpec, a.Tmpfs...)
 	}
 
 	eventsFile, err := os.Create(filepath.Join(rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir

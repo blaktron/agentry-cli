@@ -107,7 +107,49 @@ type DockerPolicy struct {
 	// (exit 13) rather than falling back, so the receipt's runtime line
 	// is never a claim the run did not have.
 	Runtime string `yaml:"runtime,omitempty"`
+	// Limits bound every container the runner starts for a run
+	// (agentry-cli#163). The engine also drops every capability and sets
+	// no-new-privileges on each. A zero field takes its default
+	// (Limits.WithDefaults), so a policy written before the field exists
+	// is bounded all the same. The gateway passes memory and CPUs on to
+	// the tool and server containers it launches.
+	Limits Limits `yaml:"limits,omitempty"`
 }
+
+// Limits are the per-container resource bounds of a run (agentry-cli#163,
+// DR-30): memory in docker's notation (`2g`), whole CPUs, and processes.
+type Limits struct {
+	Memory string `yaml:"memory,omitempty"`
+	CPUs   int    `yaml:"cpus,omitempty"`
+	Pids   int    `yaml:"pids,omitempty"`
+}
+
+// The defaults: enough for the docker-agent harness and a declared
+// server's install; not a sizing for several runs on one host, which is
+// the hosted plan's to choose (hosted-runs-production D7).
+const (
+	DefaultMemory = "2g"
+	DefaultCPUs   = 2
+	DefaultPids   = 512
+)
+
+// WithDefaults fills every zero field with its default.
+func (l Limits) WithDefaults() Limits {
+	if l.Memory == "" {
+		l.Memory = DefaultMemory
+	}
+	if l.CPUs == 0 {
+		l.CPUs = DefaultCPUs
+	}
+	if l.Pids == 0 {
+		l.Pids = DefaultPids
+	}
+	return l
+}
+
+// memoryRE is a docker memory size with its unit: 64m, 2g. Docker refuses
+// anything under 6m; the floor here is a unit that makes sense for a run.
+var memoryRE = regexp.MustCompile(`^[1-9][0-9]{0,5}[mg]$`)
 
 type ExecPolicy struct {
 	// Packages maps a command name to the apk package that provides it,
@@ -536,6 +578,12 @@ func (p *Policy) Validate() error {
 	}
 	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
 		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
+	}
+	if l := p.Docker.Limits; l.Memory != "" && !memoryRE.MatchString(l.Memory) {
+		return fmt.Errorf("docker.limits.memory %q must be a size in m or g, such as 512m or 2g", l.Memory)
+	}
+	if l := p.Docker.Limits; l.CPUs < 0 || l.CPUs > 64 || l.Pids < 0 || (l.Pids > 0 && l.Pids < 32) || l.Pids > 65536 {
+		return fmt.Errorf("docker.limits: cpus must be 0–64 and pids 32–65536 (0 takes the default), got cpus %d pids %d", l.CPUs, l.Pids)
 	}
 	if m := p.Exec.APKMirror; m != "" {
 		u, err := url.Parse(m)

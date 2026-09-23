@@ -262,6 +262,14 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			ReadOnly: true,
 		}},
 		StdinTask: session == nil, // the task rides stdin only on the exec path
+		// A read-only root (agentry-cli#163): the image's user (uid 100,
+		// not root) writes its scratch, its working directory and its home
+		// (its session database under ~/.cagent), each a tmpfs that goes
+		// with the container. A tmpfs is root's 0755 unless told
+		// otherwise, which the harness cannot write, hence the mode. The
+		// plan and the session store are mounts of their own.
+		ReadOnlyRoot: true,
+		Tmpfs:        []string{"/tmp:mode=1777", "/work:mode=1777", "/home/docker-agent:mode=1777"},
 	}
 
 	return Result{

@@ -317,8 +317,9 @@ func LoadMeta(storeDir, id string) (*Resolved, error) {
 // — the pin is the trust decision, drift is the attack (RUNNER-PLAN-3
 // §P2). Builder output streams to logw.
 func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
-	storeDir string, regs policy.MCPRegistries, images policy.Images, runtime string, logw io.Writer,
+	storeDir string, regs policy.MCPRegistries, images policy.Images, docker policy.DockerPolicy, logw io.Writer,
 ) error {
+	lim := docker.Limits.WithDefaults()
 	for i := range resolved {
 		r := &resolved[i]
 		prior, err := LoadMeta(storeDir, r.ID)
@@ -404,7 +405,16 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			User: invokingUser(),
 			// The install runs under the policy's runtime like every
 			// container of a run (DR-23); "" is the daemon's default.
-			Runtime: runtime,
+			Runtime: docker.Runtime,
+			// The run's container posture (agentry-cli#163): no
+			// capability, no privilege gain, the policy's bounds. Its
+			// root stays writable, since npm and pip write where they
+			// please while they build.
+			CapDrop:         []string{"ALL"},
+			NoNewPrivileges: true,
+			PidsLimit:       lim.Pids,
+			Memory:          lim.Memory,
+			CPUs:            lim.CPUs,
 			// The name is fixed per server, so the container must go when
 			// the build ends or the next agent declaring the same server
 			// fails at install with a name conflict (agentry-cli#106).

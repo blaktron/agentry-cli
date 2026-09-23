@@ -138,6 +138,14 @@ manifest + operator policy into a deterministic run plan → execute:
   reachable endpoints are the gateway (Bearer-token MCP) and an
   allowlisting egress proxy for the model API. No workspace mount, no
   docker socket, no manifest secrets.
+- **Every container the runner starts is locked down**: all capabilities
+  dropped, no-new-privileges, and bounded by the policy's `docker.limits`
+  (2g of memory, 2 CPUs and 512 processes unless the policy says
+  otherwise); the agent's, the proxy's and the probe's root filesystem is
+  read-only. The tool and MCP server containers the gateway launches get
+  its own no-new-privileges and the same memory and CPU bounds; their
+  capabilities are the gateway's defaults. The receipt names what was
+  applied.
 - **Everything the run produces** lands in the output folder: the
   BriefAgent's report files, `result.json` (the machine-readable envelope),
   and `receipts/` (event stream, gateway log, the exact run plan).

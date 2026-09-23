@@ -137,6 +137,20 @@ type RunSpec struct {
 	// daemon built without SELinux support the option is accepted and does
 	// nothing.
 	DisableSELinuxLabel bool
+	// CapDrop and CapAdd are the container's capabilities (`--cap-drop`,
+	// `--cap-add`); NoNewPrivileges sets `--security-opt
+	// no-new-privileges`; ReadOnly makes the root filesystem read-only
+	// with Tmpfs as its writable scratch; PidsLimit, Memory and CPUs are
+	// its resource bounds (agentry-cli#163). Zero values leave docker's
+	// defaults.
+	CapDrop         []string
+	CapAdd          []string
+	NoNewPrivileges bool
+	ReadOnly        bool
+	Tmpfs           []string
+	PidsLimit       int
+	Memory          string
+	CPUs            int
 }
 
 // Mount is one bind mount, already placeholder-resolved.
@@ -500,6 +514,30 @@ func (r RunSpec) args(detach bool) []string {
 	}
 	if r.DisableSELinuxLabel {
 		args = append(args, "--security-opt", "label=disable")
+	}
+	for _, c := range r.CapDrop {
+		args = append(args, "--cap-drop", c)
+	}
+	for _, c := range r.CapAdd {
+		args = append(args, "--cap-add", c)
+	}
+	if r.NoNewPrivileges {
+		args = append(args, "--security-opt", "no-new-privileges")
+	}
+	if r.ReadOnly {
+		args = append(args, "--read-only")
+	}
+	for _, t := range r.Tmpfs {
+		args = append(args, "--tmpfs", t)
+	}
+	if r.PidsLimit > 0 {
+		args = append(args, "--pids-limit", strconv.Itoa(r.PidsLimit))
+	}
+	if r.Memory != "" {
+		args = append(args, "--memory", r.Memory)
+	}
+	if r.CPUs > 0 {
+		args = append(args, "--cpus", strconv.Itoa(r.CPUs))
 	}
 	for _, m := range r.Mounts {
 		spec := m.Source + ":" + m.Target
