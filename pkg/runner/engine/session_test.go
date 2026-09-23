@@ -86,6 +86,11 @@ type fakeHarness struct {
 	methods []string
 	granted bool
 	denied  bool
+	// usage, when set, is written as one usage_update before the turn's
+	// reply — the wire shape a harness that prices the session sends. Nil
+	// keeps the stream as docker-agent 1.128.0's own, which reports no
+	// cost at all (agentry-cli#222).
+	usage map[string]any
 }
 
 func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
@@ -152,6 +157,13 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 				h.mu.Lock()
 				h.denied = ans.Result.Outcome.OptionID == "r"
 				h.mu.Unlock()
+			}
+			if h.usage != nil {
+				upd := map[string]any{"sessionUpdate": "usage_update"}
+				for k, v := range h.usage {
+					upd[k] = v
+				}
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": upd}})
 			}
 			reply := "You said: " + text + ". The token is sekret-value-1234 and the key is sk-test-key-9876."
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": reply}}}})
@@ -429,6 +441,75 @@ func TestSessionBudgetsEndTheSession(t *testing.T) {
 		}
 		if k := kinds(get()); k[session.KindSessionEnd] != 1 {
 			t.Errorf("kinds = %v", k)
+		}
+	})
+}
+
+// TestSessionCostBudgetNeedsACostTheHarnessReports: the ceiling fires on a
+// harness that prices the session, and the receipt says plainly that it
+// could not fire on one that does not. docker-agent 1.128.0 sends `used`
+// and no cost on its ACP usage_update, so a costUsd of 0 on the default
+// adapter's interactive runs means "nothing was reported", not "the
+// session was free" (agentry-cli#222).
+func TestSessionCostBudgetNeedsACostTheHarnessReports(t *testing.T) {
+	start := func(t *testing.T, ceiling float64, usage map[string]any) (session.Session, func() []session.Event, chan struct{}) {
+		t.Helper()
+		p, f := sessionFixture(t)
+		p.Budgets.MaxCostUSD = ceiling
+		happyFake(f)
+		h := &fakeHarness{usage: usage}
+		f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+		s, err := StartSession(context.Background(), f, p)
+		if err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		get, done := collect(s)
+		return s, get, done
+	}
+
+	t.Run("a reported cost above the ceiling ends the session", func(t *testing.T) {
+		s, get, done := start(t, 1.0, map[string]any{
+			"used": 1262, "size": 0,
+			"cost": map[string]any{"amount": 4.5, "currency": "USD"},
+		})
+		ctx := context.Background()
+		if err := s.Send(ctx, "turn"); err != nil && !errors.Is(err, session.ErrEnded) {
+			t.Fatalf("send: %v", err)
+		}
+		env, err := s.End(ctx, false)
+		<-done
+		var ce *ClassifiedError
+		if err == nil || !errors.As(err, &ce) || ce.Code != ExitBudget || env.Status != "error" {
+			t.Fatalf("end = %v (%+v)", err, env)
+		}
+		if env.Usage.CostUSD != 4.5 {
+			t.Errorf("usage.costUsd = %v, want the 4.5 the harness reported", env.Usage.CostUSD)
+		}
+		if line := env.CapabilitiesEnforced["budgets.cost"]; !strings.Contains(line, "cost ceiling $1.00 enforced") || !strings.Contains(line, "$4.5000") {
+			t.Errorf("budgets.cost = %q", line)
+		}
+		if last := get()[len(get())-1]; last.Kind != session.KindSessionEnd || last.Reason != session.EndCostBudget {
+			t.Errorf("last event = %+v", last)
+		}
+	})
+
+	t.Run("a harness that reports no cost cannot trip it, and the receipt says so", func(t *testing.T) {
+		s, _, done := start(t, 0.0001, map[string]any{"used": 1262, "size": 0})
+		ctx := context.Background()
+		if err := s.Send(ctx, "turn"); err != nil && !errors.Is(err, session.ErrEnded) {
+			t.Fatalf("send: %v", err)
+		}
+		env, err := s.End(ctx, false)
+		<-done
+		if err != nil {
+			t.Fatalf("end = %v, want the session to finish: a ceiling nothing can trip is not a breach", err)
+		}
+		if env.Usage.CostUSD != 0 {
+			t.Errorf("usage.costUsd = %v, want 0", env.Usage.CostUSD)
+		}
+		line := env.CapabilitiesEnforced["budgets.cost"]
+		if !strings.Contains(line, "requested but not enforceable") || !strings.Contains(line, "not because the session cost nothing") {
+			t.Errorf("budgets.cost = %q", line)
 		}
 	})
 }
