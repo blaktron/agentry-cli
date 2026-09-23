@@ -297,6 +297,17 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 			// and the context size (0 when the provider does not say).
 			Used int64 `json:"used"`
 			Size int64 `json:"size"`
+			// Cost is the running cost a harness that prices the session
+			// reports. A pointer because docker-agent 1.128.0 sends no
+			// cost field at all, and absent must stay distinguishable
+			// from zero: against such a harness the session's cost
+			// ceiling cannot fire, and the envelope says so rather than
+			// leaving usage.costUsd 0 to read as a free session
+			// (agentry-cli#222).
+			Cost *struct {
+				Amount   float64 `json:"amount"`
+				Currency string  `json:"currency"`
+			} `json:"cost"`
 		} `json:"update"`
 	}
 	_ = json.Unmarshal(m.Params, &p)
@@ -316,7 +327,15 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 			s.turn.totalTokens += delta
 		}
 		s.mu.Unlock()
-		s.emit(Event{Kind: EventUsage, TotalTokens: delta, Raw: rawCopy(line)})
+		ev := Event{Kind: EventUsage, TotalTokens: delta, Raw: rawCopy(line)}
+		// The engine keeps the high-water mark of a reported cost, so a
+		// harness whose figure is per step rather than running
+		// under-enforces and never over-kills. An amount in another
+		// currency is left out rather than passed off as dollars.
+		if u.Cost != nil && (u.Cost.Currency == "" || u.Cost.Currency == "USD") {
+			ev.CostUSD = u.Cost.Amount
+		}
+		s.emit(ev)
 	case "agent_message_chunk":
 		s.mu.Lock()
 		if s.turn != nil {

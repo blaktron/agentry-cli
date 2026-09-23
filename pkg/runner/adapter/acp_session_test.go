@@ -245,3 +245,125 @@ func TestACPSessionTurnUsageFromUsageUpdates(t *testing.T) {
 	}
 	_ = drv.Close()
 }
+
+// usageOnlyACP answers the handshake and one prompt, emitting the given
+// usage_update payloads in order before ending the turn.
+func usageOnlyACP(in io.Reader, out io.WriteCloser, updates []map[string]any) {
+	defer func() { _ = out.Close() }()
+	sc := bufio.NewScanner(in)
+	write := func(v any) {
+		b, _ := json.Marshal(v)
+		_, _ = out.Write(append(b, '\n'))
+	}
+	for sc.Scan() {
+		var m rpcMessage
+		_ = json.Unmarshal(sc.Bytes(), &m)
+		switch m.Method {
+		case "initialize":
+			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"protocolVersion": 1}})
+		case "session/new":
+			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "sess-1"}})
+		case "session/prompt":
+			for _, u := range updates {
+				u["sessionUpdate"] = "usage_update"
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": u}})
+			}
+			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "end_turn"}})
+		default:
+			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32601, "message": "unknown"}})
+		}
+	}
+}
+
+// TestACPSessionCostComesFromTheWire drives the real driver over recorded
+// wire shapes. The session's cost ceiling can only fire on a cost the
+// harness reports, and docker-agent 1.128.0 reports none: its ACP
+// usage_update carries `used` and `size` and nothing else, as recorded on
+// the dev host on 2026-09-14 (run 01cac818, fixtures/hello-chat@1.0.0),
+// whose envelope then reported costUsd 0 after three turns of real model
+// calls. A harness that does price the session reaches the engine's
+// high-water mark; one that does not leaves CostUSD at zero, which the
+// envelope explains rather than reporting as a free session
+// (agentry-cli#222).
+func TestACPSessionCostComesFromTheWire(t *testing.T) {
+	cases := []struct {
+		name     string
+		updates  []map[string]any
+		wantCost []float64
+		wantTot  []int64
+	}{
+		{
+			name: "docker-agent reports no cost",
+			updates: []map[string]any{
+				{"used": 1262, "size": 0},
+				{"used": 1386, "size": 0},
+				{"used": 1422, "size": 0},
+			},
+			wantCost: []float64{0, 0, 0},
+			wantTot:  []int64{1262, 124, 36},
+		},
+		{
+			name: "a harness that prices the session",
+			updates: []map[string]any{
+				{"used": 1262, "size": 0, "cost": map[string]any{"amount": 0.4, "currency": "USD"}},
+				{"used": 1386, "size": 0, "cost": map[string]any{"amount": 1.25, "currency": "USD"}},
+			},
+			wantCost: []float64{0.4, 1.25},
+			wantTot:  []int64{1262, 124},
+		},
+		{
+			name:     "an amount in another currency is not passed off as dollars",
+			updates:  []map[string]any{{"used": 500, "size": 0, "cost": map[string]any{"amount": 9.99, "currency": "EUR"}}},
+			wantCost: []float64{0},
+			wantTot:  []int64{500},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			toHarnessR, toHarnessW := io.Pipe()
+			fromHarnessR, fromHarnessW := io.Pipe()
+			go usageOnlyACP(toHarnessR, fromHarnessW, tc.updates)
+
+			drv := newACPSession(pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, 1, nil)
+			var events []Event
+			collected := make(chan struct{})
+			go func() {
+				for ev := range drv.Events() {
+					events = append(events, ev)
+				}
+				close(collected)
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := drv.Start(ctx); err != nil {
+				t.Fatalf("start: %v", err)
+			}
+			if _, err := drv.Prompt(ctx, "go"); err != nil {
+				t.Fatalf("prompt: %v", err)
+			}
+			_ = drv.Close()
+			<-collected
+
+			var gotCost []float64
+			var gotTot []int64
+			for _, ev := range events {
+				if ev.Kind != EventUsage {
+					continue
+				}
+				gotCost = append(gotCost, ev.CostUSD)
+				gotTot = append(gotTot, ev.TotalTokens)
+			}
+			if len(gotCost) != len(tc.wantCost) {
+				t.Fatalf("usage events = %v, want %d", gotCost, len(tc.wantCost))
+			}
+			for i := range gotCost {
+				if gotCost[i] != tc.wantCost[i] {
+					t.Errorf("CostUSD[%d] = %v, want %v", i, gotCost[i], tc.wantCost[i])
+				}
+				if gotTot[i] != tc.wantTot[i] {
+					t.Errorf("TotalTokens[%d] = %v, want %v", i, gotTot[i], tc.wantTot[i])
+				}
+			}
+		})
+	}
+}

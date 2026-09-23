@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -715,6 +716,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	panicErr := s.panicErr
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
+	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
 	_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "transcript.md"), []byte(transcript(env, log)), 0o644)
 
 	var outErr error
@@ -823,5 +825,36 @@ func hostSecretValues(vars []spec.EnvVar) []string {
 			}
 		}
 	}
+	return out
+}
+
+// withCostBudget adds the receipt's line about the session's cost budget.
+// A cost of 0 is ambiguous: the harness may have reported none, which is
+// not the same as a session that cost nothing. And a ceiling asked for
+// against such a harness could never have fired, so the line says that
+// rather than leaving the control looking enforced (agentry-cli#222).
+// docker-agent 1.128.0 sends `used` and no cost on its ACP usage_update,
+// which makes this the default adapter's normal case, not an edge.
+//
+// A copy: enforcedWithPackages hands back the plan's own map when the run
+// resolved no exec packages, and the plan's map is the plan's.
+func withCostBudget(enforced map[string]string, ceiling, reported float64) map[string]string {
+	const unreported = "the harness reported no cost on its event stream, so usage.costUsd is 0 because nothing was reported, not because the session cost nothing"
+	var line string
+	switch {
+	case reported > 0 && ceiling > 0:
+		line = fmt.Sprintf("cost ceiling $%.2f enforced on the harness's reported running cost ($%.4f)", ceiling, reported)
+	case reported > 0:
+		line = fmt.Sprintf("no cost ceiling requested; the harness reported a running cost of $%.4f", reported)
+	case ceiling > 0:
+		line = fmt.Sprintf("cost ceiling $%.2f requested but not enforceable: %s", ceiling, unreported)
+	default:
+		line = unreported
+	}
+	out := maps.Clone(enforced)
+	if out == nil {
+		out = make(map[string]string, 1)
+	}
+	out["budgets.cost"] = line
 	return out
 }
