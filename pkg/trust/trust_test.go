@@ -669,3 +669,64 @@ func TestDecodePredicate(t *testing.T) {
 		}
 	})
 }
+
+// AGENTRY_PIN_REGISTRY names whose pins verify (agentry-cli#232): a
+// run-scoped prefix of a registry uses the registry's own pin file, and
+// without it every URL keeps its own.
+func TestPinRegistryNamesThePinFile(t *testing.T) {
+	t.Setenv("AGENTRY_CONFIG_DIR", t.TempDir())
+	root, _ := PinnedKeysPath("https://reg.example")
+	prefix, _ := PinnedKeysPath("https://reg.example/api/v1/x/runs/rel")
+	if root == prefix {
+		t.Fatalf("without the override a prefix shares the root's pins: %s", prefix)
+	}
+	t.Setenv(EnvPinRegistry, "https://reg.example")
+	if got, _ := PinnedKeysPath("https://reg.example/api/v1/x/runs/rel"); got != root {
+		t.Fatalf("with the override the prefix pins at %s, want %s", got, root)
+	}
+}
+
+// With AGENTRY_PIN_REGISTRY set and nothing pinned for it, verification
+// refuses rather than trusting --registry on first use, and writes no pin
+// file for the named registry (agentry-cli#232).
+func TestPinRegistryWithoutPinsRefusesFirstUse(t *testing.T) {
+	t.Setenv("AGENTRY_CONFIG_DIR", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/attestation"):
+			_, _ = w.Write([]byte(`{"payloadType":"application/vnd.in-toto+json","payload":"e30=","signatures":[{"keyid":"k","sig":"AA=="}]}`))
+		case strings.HasSuffix(r.URL.Path, "signing-keys.json"):
+			_, _ = w.Write([]byte(`{"keys":[{"keyId":"planted","algorithm":"ecdsa-p256-sha256","publicKeyPem":"x"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv(EnvPinRegistry, "https://reg.example")
+	res := VerifyAttestation(t.Context(), srv.Client(), srv.URL+"/api/v1/x/runs/rel", "", "/attestation", "sha256:00")
+	if res.State != StateUnverifiable || !strings.Contains(res.Detail, "AGENTRY_PIN_REGISTRY") {
+		t.Fatalf("result = %+v, want unverifiable naming the override", res)
+	}
+	if set, _ := LoadPinned("https://reg.example"); len(set.Keys) != 0 {
+		t.Fatalf("keys were planted into the named registry's pin file: %+v", set)
+	}
+}
+
+// Login pins the registry it was pointed at, whatever AGENTRY_PIN_REGISTRY
+// names: a prefix's keys never land in another registry's pin file.
+func TestLoginIgnoresThePinRegistry(t *testing.T) {
+	t.Setenv("AGENTRY_CONFIG_DIR", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"keys":[{"keyId":"prefix-key","algorithm":"ecdsa-p256-sha256","publicKeyPem":"x"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv(EnvPinRegistry, "https://reg.example")
+	_ = PinAtLogin(t.Context(), srv.Client(), srv.URL+"/api/v1/x/runs/rel")
+	t.Setenv(EnvPinRegistry, "")
+	if set, _ := LoadPinned("https://reg.example"); len(set.Keys) != 0 {
+		t.Fatalf("login wrote into the named registry's pins: %+v", set)
+	}
+	if set, _ := LoadPinned(srv.URL + "/api/v1/x/runs/rel"); len(set.Keys) != 1 {
+		t.Fatalf("login did not pin the registry it was pointed at: %+v", set)
+	}
+}
