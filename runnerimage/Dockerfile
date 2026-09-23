@@ -21,13 +21,22 @@
 # into EACCES at the first fs_write. The gateway launches tool servers
 # with no-new-privileges, the container is one-shot, and §R11's mount
 # table — not the container user — is the enforcement boundary.
-ARG GO_IMAGE=golang:1.27-alpine
+
+# Both bases come from Agentry's own mirrors (blaktron/agentry-dockerimages),
+# digest-verified equal to the upstream images they mirror, so this embedded
+# context pulls nothing from Docker Hub — which rate-limits anonymous pulls at
+# 100 per hour per IP, a limit one build of this image can reach on a shared
+# address. GO_IMAGE is overridden at build time from the policy's
+# images.goBuilder; RUNTIME_IMAGE is an argument for the same reason, so an
+# operator who mirrors elsewhere can point both at their own registry.
+ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine
+ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22
 FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /agentry-runner ./runnerimage
 
-FROM alpine:3.22
+FROM ${RUNTIME_IMAGE}
 # ca-certificates: fetch and probe speak TLS from inside this image; the
 # llm-proxy only tunnels, but the CA bundle costs nothing and removes a
 # whole class of "works on host, fails in container" reports.

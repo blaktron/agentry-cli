@@ -54,7 +54,7 @@
     "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN"
   },
   "gateway": {
-    "image": "docker/mcp-gateway:v0.43.3",
+    "image": "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3",
     "args": [
       "--transport",
       "streaming",
@@ -125,7 +125,7 @@
     "adapter": "docker-agent",
     "model": "anthropic/claude-sonnet-4-5",
     "agent": {
-      "image": "docker/docker-agent:1.128.0",
+      "image": "ghcr.io/blaktron/agentry-docker-agent:1.128.0",
       "argv": [
         "run",
         "--exec",

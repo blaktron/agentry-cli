@@ -30,18 +30,26 @@ var runtimeNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // Version is the current policy schema major.
 const Version = "1"
 
-// Default image pins. Tags, not digests: the CLI cannot know digest values
-// ahead of time, and inventing them would be worse than honesty — the
-// generated default file says, loudly, to pin digests. Versions match the
-// research annex survey of 2026-08-30.
+// Default image pins. These are Agentry's own mirrors, published from
+// blaktron/agentry-dockerimages: each one's destination digest was verified
+// equal to the upstream digest it mirrors, so the bytes are what the upstream
+// tag named when it was pinned, and the tag cannot move under us because we
+// are the only ones who can push to it.
+//
+// Tags rather than digests for now. Every digest is recorded in that
+// repository's images.tsv, so pinning them here is possible and is the next
+// step — but it changes the shape of the ref the runner hands the daemon, and
+// that wants a live acceptance run to prove before it ships.
+//
+// Versions match the survey of 2026-08-30, re-verified 2026-09-23.
 const (
-	DefaultGatewayImage = "docker/mcp-gateway:v0.43.3"
-	DefaultHarnessImage = "docker/docker-agent:1.128.0"
-	DefaultGoBuilder    = "golang:1.27-alpine"
+	DefaultGatewayImage = "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3"
+	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.128.0"
+	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// (RUNNER-PLAN-3 §P2).
-	DefaultNodeRuntime   = "node:22-alpine"
-	DefaultPythonRuntime = "python:3.12-alpine"
+	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:22-alpine"
+	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-alpine:3.12-alpine"
 	// Default trusted repositories for capabilities.mcpServers.
 	DefaultNPMRegistry  = "https://registry.npmjs.org"
 	DefaultPyPIRegistry = "https://pypi.org"
@@ -635,14 +643,17 @@ const defaultFileText = `# Agentry Runner operator policy (RUNNER-PLAN §R9).
 policyVersion: "1"
 
 images:
-  # Pin by digest (repo@sha256:...) once you have verified one. Tags are
-  # the out-of-box default only because digests cannot be invented.
-  gateway: docker/mcp-gateway:v0.43.3
-  harnessDockerAgent: docker/docker-agent:1.128.0
-  goBuilder: golang:1.27-alpine
+  # Agentry's own mirrors of the upstream images, published from
+  # blaktron/agentry-dockerimages, where every digest is recorded and was
+  # verified equal to the upstream digest it mirrors — so the tag cannot move
+  # under you. Point these at any registry you prefer, a private one or your
+  # own mirror, and pin by digest (repo@sha256:...) once you have verified one.
+  gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
+  harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0
+  goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine
   # Runtimes for MCP servers a BriefAgent declares (capabilities.mcpServers).
-  nodeRuntime: node:22-alpine
-  pythonRuntime: python:3.12-alpine
+  nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:22-alpine
+  pythonRuntime: ghcr.io/blaktron/agentry-python-alpine:3.12-alpine
 
 model:
   # anthropic | openai | google, or custom for an OpenAI-compatible
