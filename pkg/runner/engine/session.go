@@ -260,10 +260,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		Runtime:     p.Plan.Runtime(),
 		ExtraHosts:  hosts,
 	}
-	runSpec = hardened(runSpec, p.limits())
-	if a := p.Plan.Harness.Agent; a.ReadOnlyRoot {
-		runSpec = readOnlyRoot(runSpec, a.Tmpfs...)
-	}
+	runSpec = hardenedAgent(runSpec, p)
 	s.td.add(func(c context.Context) { _ = s.d.RemoveForce(c, name) })
 
 	eventsFile, err := os.Create(filepath.Join(s.rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir

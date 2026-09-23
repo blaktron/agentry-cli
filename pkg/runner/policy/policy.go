@@ -126,10 +126,12 @@ type Limits struct {
 
 // The defaults: enough for the docker-agent harness and a declared
 // server's install; not a sizing for several runs on one host, which is
-// the hosted plan's to choose (hosted-runs-production D7).
+// the hosted plan's to choose (hosted-runs-production D7). One CPU because
+// docker refuses more than the host has, and because it is what the
+// gateway already gave the containers it launches.
 const (
 	DefaultMemory = "2g"
-	DefaultCPUs   = 2
+	DefaultCPUs   = 1
 	DefaultPids   = 512
 )
 
@@ -147,9 +149,9 @@ func (l Limits) WithDefaults() Limits {
 	return l
 }
 
-// memoryRE is a docker memory size with its unit: 64m, 2g. Docker refuses
-// anything under 6m; the floor here is a unit that makes sense for a run.
-var memoryRE = regexp.MustCompile(`^[1-9][0-9]{0,5}[mg]$`)
+// memoryRE is a docker memory size with its unit, at least docker's own
+// floor of 6m: 64m, 512m, 2g.
+var memoryRE = regexp.MustCompile(`^([6-9]|[1-9][0-9]{1,5})m$|^[1-9][0-9]{0,3}g$`)
 
 type ExecPolicy struct {
 	// Packages maps a command name to the apk package that provides it,
@@ -582,8 +584,11 @@ func (p *Policy) Validate() error {
 	if l := p.Docker.Limits; l.Memory != "" && !memoryRE.MatchString(l.Memory) {
 		return fmt.Errorf("docker.limits.memory %q must be a size in m or g, such as 512m or 2g", l.Memory)
 	}
-	if l := p.Docker.Limits; l.CPUs < 0 || l.CPUs > 64 || l.Pids < 0 || (l.Pids > 0 && l.Pids < 32) || l.Pids > 65536 {
-		return fmt.Errorf("docker.limits: cpus must be 0–64 and pids 32–65536 (0 takes the default), got cpus %d pids %d", l.CPUs, l.Pids)
+	if c := p.Docker.Limits.CPUs; c < 0 || c > 64 {
+		return fmt.Errorf("docker.limits.cpus must be 1–64 (0 takes the default), got %d", c)
+	}
+	if n := p.Docker.Limits.Pids; n < 0 || (n > 0 && n < 32) || n > 65536 {
+		return fmt.Errorf("docker.limits.pids must be 32–65536 (0 takes the default), got %d", n)
 	}
 	if m := p.Exec.APKMirror; m != "" {
 		u, err := url.Parse(m)
@@ -717,6 +722,16 @@ mcpRegistries:
 #   # does not have the runtime refuses the run at the ensure step (exit 13)
 #   # and never falls back to runc; the receipt then names the runtime.
 #   runtime: runsc
+#   # The bounds of every container a run starts (agentry-cli#163): memory
+#   # (at least 6m, as 512m or 2g), whole CPUs (never more than this host
+#   # has: docker refuses them), and processes. Unset fields take these
+#   # defaults. The gateway passes memory and cpus on to the tool and server
+#   # containers it launches. Every container also drops all capabilities
+#   # and sets no-new-privileges; that is not configurable.
+#   limits:
+#     memory: 2g
+#     cpus: 1
+#     pids: 512
 
 # exec:
 #   # The exec catalog: which binaries this machine provides to a BriefAgent

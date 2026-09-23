@@ -406,15 +406,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// The install runs under the policy's runtime like every
 			// container of a run (DR-23); "" is the daemon's default.
 			Runtime: docker.Runtime,
-			// The run's container posture (agentry-cli#163): no
-			// capability, no privilege gain, the policy's bounds. Its
-			// root stays writable, since npm and pip write where they
-			// please while they build.
-			CapDrop:         []string{"ALL"},
-			NoNewPrivileges: true,
-			PidsLimit:       lim.Pids,
-			Memory:          lim.Memory,
-			CPUs:            lim.CPUs,
+
 			// The name is fixed per server, so the container must go when
 			// the build ends or the next agent declaring the same server
 			// fails at install with a name conflict (agentry-cli#106).
@@ -431,7 +423,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 				// signature profile, so it may be relabeled (agentry-cli#85).
 				{Source: hostDir, Target: r.prefix(), Relabel: true},
 			},
-		}, nil, logw, logw)
+			// The run's container posture (agentry-cli#163); its root stays
+			// writable, since npm and pip write where they please.
+		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), nil, logw, logw)
 		if err != nil {
 			return fmt.Errorf("install %s: %w", r.ID, err)
 		}

@@ -401,8 +401,11 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		DisableSELinuxLabel: mountsDockerSocket(p.Plan.Gateway.Mounts),
 	}
 	// Its root stays writable: a vendor image, whose writes are its own.
-	// It needs no capability for the socket, which it opens as its owner.
+	// It opens the socket as its owner, root, with no capability; reading
+	// the run's secrets file, 0600 and the invoking user's, takes
+	// DAC_READ_SEARCH, which it keeps and nothing else.
 	gwSpec = hardened(gwSpec, p.limits())
+	gwSpec.CapAdd = []string{"DAC_READ_SEARCH"}
 	// A run that will give the gateway relays to start refuses to share
 	// the relay network with another gateway's (relays.go, agentry-cli#108).
 	if relaysNeeded(p.Plan.MCPServers) {
@@ -564,10 +567,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Runtime:     p.Plan.Runtime(),
 		ExtraHosts:  hosts,
 	}
-	runSpec = hardened(runSpec, p.limits())
-	if a := p.Plan.Harness.Agent; a.ReadOnlyRoot {
-		runSpec = readOnlyRoot(runSpec, a.Tmpfs...)
-	}
+	runSpec = hardenedAgent(runSpec, p)
 
 	eventsFile, err := os.Create(filepath.Join(rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir
 	if err != nil {

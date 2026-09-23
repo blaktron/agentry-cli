@@ -31,11 +31,17 @@ func (p Params) limits() policy.Limits {
 
 // hardened is spec with the posture every run container takes.
 func hardened(s dockerx.RunSpec, lim policy.Limits) dockerx.RunSpec {
-	s.CapDrop = []string{"ALL"}
-	s.NoNewPrivileges = true
-	s.PidsLimit = lim.Pids
-	s.Memory = lim.Memory
-	s.CPUs = lim.CPUs
+	return s.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
+}
+
+// hardenedAgent is the agent container's spec with the posture, and its
+// root read-only when the adapter says where the harness writes; the exec
+// path and the interactive session share it.
+func hardenedAgent(s dockerx.RunSpec, p Params) dockerx.RunSpec {
+	s = hardened(s, p.limits())
+	if a := p.Plan.Harness.Agent; a.ReadOnlyRoot {
+		s = readOnlyRoot(s, a.Tmpfs...)
+	}
 	return s
 }
 
@@ -53,31 +59,40 @@ func gatewayLimitArgs(lim policy.Limits) []string {
 }
 
 // withContainers adds the receipt's line for the posture above, naming
-// only what this run's containers were given.
+// what this run's containers were given and the two exceptions.
 func withContainers(enforced map[string]string, p Params) map[string]string {
 	lim := p.limits()
 	out := maps.Clone(enforced)
 	if out == nil {
 		out = map[string]string{}
 	}
-	bounds := fmt.Sprintf("memory %s, cpus %d, pids %d", lim.Memory, lim.CPUs, lim.Pids)
-	var readOnly []string
-	readOnly = append(readOnly, "the llm proxy", "the probe")
-	agent := "the agent container"
+	containers := []string{"the llm proxy", "the gateway", "the probe"}
+	readOnly := []string{"the llm proxy", "the probe"}
 	switch {
 	case p.Plan.Harness.Host != nil:
-		agent = "no agent container (the harness runs on the host)"
+		// The harness is a host process: there is no agent container.
 	case p.Plan.Harness.Agent.ReadOnlyRoot:
+		containers = append(containers, "the agent")
 		var paths []string
 		for _, t := range p.Plan.Harness.Agent.Tmpfs {
 			path, _, _ := strings.Cut(t, ":")
 			paths = append(paths, path)
 		}
 		readOnly = append(readOnly, "the agent (tmpfs "+strings.Join(paths, ", ")+")")
+	default:
+		containers = append(containers, "the agent")
 	}
-	out["containers"] = "the llm proxy, the gateway, the probe and " + agent +
-		": all capabilities dropped, no-new-privileges, " + bounds +
-		"; read-only root: " + strings.Join(readOnly, ", ") +
-		"; the tool and MCP server containers the gateway launches: its own no-new-privileges and the same memory and cpus through its flags, capabilities and root as the gateway leaves them"
+	if len(p.Plan.MCPServers) > 0 {
+		containers = append(containers, "the MCP server installer")
+	}
+	line := strings.Join(containers, ", ") +
+		fmt.Sprintf(": all capabilities dropped, no-new-privileges, memory %s, cpus %d, pids %d", lim.Memory, lim.CPUs, lim.Pids) +
+		"; the gateway keeps DAC_READ_SEARCH alone, to read the run's secrets file" +
+		"; read-only root: " + strings.Join(readOnly, ", ")
+	if p.Plan.Mode == "interactive" {
+		line += "; the session store's one-shot chown keeps CHOWN alone"
+	}
+	line += "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them"
+	out["containers"] = line
 	return out
 }

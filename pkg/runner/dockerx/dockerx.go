@@ -153,6 +153,19 @@ type RunSpec struct {
 	CPUs            int
 }
 
+// WithPosture is r with the posture every run container takes
+// (agentry-cli#163, DR-30): every capability dropped, no privilege gained
+// through a setuid binary, and memory, CPUs and processes bounded. A
+// container that needs one capability back adds it to CapAdd afterwards.
+func (r RunSpec) WithPosture(memory string, cpus, pids int) RunSpec {
+	r.CapDrop = []string{"ALL"}
+	r.NoNewPrivileges = true
+	r.Memory = memory
+	r.CPUs = cpus
+	r.PidsLimit = pids
+	return r
+}
+
 // Mount is one bind mount, already placeholder-resolved.
 type Mount struct {
 	Source   string

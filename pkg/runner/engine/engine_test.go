@@ -854,7 +854,7 @@ func TestRunContainersAreHardened(t *testing.T) {
 		want policy.Limits
 	}{
 		{"defaults", policy.Limits{}, policy.Limits{}.WithDefaults()},
-		{"the policy's", policy.Limits{Memory: "512m", CPUs: 1, Pids: 64}, policy.Limits{Memory: "512m", CPUs: 1, Pids: 64}},
+		{"the policy's", policy.Limits{Memory: "512m", CPUs: 3, Pids: 64}, policy.Limits{Memory: "512m", CPUs: 3, Pids: 64}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, f := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Limits = tc.lim })
@@ -868,7 +868,11 @@ func TestRunContainersAreHardened(t *testing.T) {
 				if !ok {
 					t.Fatalf("no %s container ran", name)
 				}
-				if len(c.CapDrop) != 1 || c.CapDrop[0] != "ALL" || len(c.CapAdd) != 0 || !c.NoNewPrivileges {
+				wantAdd := ""
+				if name == "-gateway" {
+					wantAdd = "DAC_READ_SEARCH"
+				}
+				if len(c.CapDrop) != 1 || c.CapDrop[0] != "ALL" || strings.Join(c.CapAdd, ",") != wantAdd || !c.NoNewPrivileges {
 					t.Errorf("%s: cap-drop %v cap-add %v no-new-privileges %v", c.Name, c.CapDrop, c.CapAdd, c.NoNewPrivileges)
 				}
 				if c.Memory != tc.want.Memory || c.CPUs != tc.want.CPUs || c.PidsLimit != tc.want.Pids {
@@ -891,7 +895,7 @@ func TestRunContainersAreHardened(t *testing.T) {
 			line := env.CapabilitiesEnforced["containers"]
 			if !strings.Contains(line, "all capabilities dropped, no-new-privileges") ||
 				!strings.Contains(line, fmt.Sprintf("memory %s, cpus %d, pids %d", tc.want.Memory, tc.want.CPUs, tc.want.Pids)) ||
-				!strings.Contains(line, "the agent (tmpfs ") {
+				!strings.Contains(line, "the agent (tmpfs /tmp, /work, /home/docker-agent)") || !strings.Contains(line, "DAC_READ_SEARCH alone") {
 				t.Errorf("receipt containers line = %q", line)
 			}
 		})
