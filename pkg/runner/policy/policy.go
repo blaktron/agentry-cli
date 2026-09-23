@@ -107,7 +107,51 @@ type DockerPolicy struct {
 	// (exit 13) rather than falling back, so the receipt's runtime line
 	// is never a claim the run did not have.
 	Runtime string `yaml:"runtime,omitempty"`
+	// Limits bound every container the runner starts for a run
+	// (agentry-cli#163). The engine also drops every capability and sets
+	// no-new-privileges on each. A zero field takes its default
+	// (Limits.WithDefaults), so a policy written before the field exists
+	// is bounded all the same. The gateway passes memory and CPUs on to
+	// the tool and server containers it launches.
+	Limits Limits `yaml:"limits,omitempty"`
 }
+
+// Limits are the per-container resource bounds of a run (agentry-cli#163,
+// DR-30): memory in docker's notation (`2g`), whole CPUs, and processes.
+type Limits struct {
+	Memory string `yaml:"memory,omitempty"`
+	CPUs   int    `yaml:"cpus,omitempty"`
+	Pids   int    `yaml:"pids,omitempty"`
+}
+
+// The defaults: enough for the docker-agent harness and a declared
+// server's install; not a sizing for several runs on one host, which is
+// the hosted plan's to choose (hosted-runs-production D7). One CPU because
+// docker refuses more than the host has, and because it is what the
+// gateway already gave the containers it launches.
+const (
+	DefaultMemory = "2g"
+	DefaultCPUs   = 1
+	DefaultPids   = 512
+)
+
+// WithDefaults fills every zero field with its default.
+func (l Limits) WithDefaults() Limits {
+	if l.Memory == "" {
+		l.Memory = DefaultMemory
+	}
+	if l.CPUs == 0 {
+		l.CPUs = DefaultCPUs
+	}
+	if l.Pids == 0 {
+		l.Pids = DefaultPids
+	}
+	return l
+}
+
+// memoryRE is a docker memory size with its unit, at least docker's own
+// floor of 6m: 64m, 512m, 2g.
+var memoryRE = regexp.MustCompile(`^([6-9]|[1-9][0-9]{1,5})m$|^[1-9][0-9]{0,3}g$`)
 
 type ExecPolicy struct {
 	// Packages maps a command name to the apk package that provides it,
@@ -537,6 +581,15 @@ func (p *Policy) Validate() error {
 	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
 		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
 	}
+	if l := p.Docker.Limits; l.Memory != "" && !memoryRE.MatchString(l.Memory) {
+		return fmt.Errorf("docker.limits.memory %q must be a size in m or g, such as 512m or 2g", l.Memory)
+	}
+	if c := p.Docker.Limits.CPUs; c < 0 || c > 64 {
+		return fmt.Errorf("docker.limits.cpus must be 1–64 (0 takes the default), got %d", c)
+	}
+	if n := p.Docker.Limits.Pids; n < 0 || (n > 0 && n < 32) || n > 65536 {
+		return fmt.Errorf("docker.limits.pids must be 32–65536 (0 takes the default), got %d", n)
+	}
 	if m := p.Exec.APKMirror; m != "" {
 		u, err := url.Parse(m)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Fragment != "" || u.RawQuery != "" {
@@ -669,6 +722,16 @@ mcpRegistries:
 #   # does not have the runtime refuses the run at the ensure step (exit 13)
 #   # and never falls back to runc; the receipt then names the runtime.
 #   runtime: runsc
+#   # The bounds of every container a run starts (agentry-cli#163): memory
+#   # (at least 6m, as 512m or 2g), whole CPUs (never more than this host
+#   # has: docker refuses them), and processes. Unset fields take these
+#   # defaults. The gateway passes memory and cpus on to the tool and server
+#   # containers it launches. Every container also drops all capabilities
+#   # and sets no-new-privileges; that is not configurable.
+#   limits:
+#     memory: 2g
+#     cpus: 1
+#     pids: 512
 
 # exec:
 #   # The exec catalog: which binaries this machine provides to a BriefAgent

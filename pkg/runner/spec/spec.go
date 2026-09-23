@@ -320,6 +320,12 @@ type ContainerSpec struct {
 	Mounts []Mount `json:"mounts,omitempty"`
 	// StdinTask: the engine pipes the task text into stdin (§R2).
 	StdinTask bool `json:"stdinTask,omitempty"`
+	// ReadOnlyRoot runs the container with a read-only root filesystem
+	// and Tmpfs as its only writable paths besides its mounts
+	// (agentry-cli#163). The adapter sets both, since where a harness
+	// writes is the image's to say.
+	ReadOnlyRoot bool     `json:"readOnlyRoot,omitempty"`
+	Tmpfs        []string `json:"tmpfs,omitempty"`
 }
 
 // EnvVar is one environment variable. Exactly one of Value / FromHostEnv /

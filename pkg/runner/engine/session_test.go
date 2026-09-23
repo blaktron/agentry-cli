@@ -641,6 +641,15 @@ func TestSessionStoreIsARunVolume(t *testing.T) {
 	if strings.Join(init.Argv, " ") != `-c chown -- "$1" "$2" sh docker-agent /session` {
 		t.Errorf("session-init argv = %q", init.Argv)
 	}
+	// The container posture (agentry-cli#163): the one-shot keeps CHOWN
+	// alone; the session's agent is hardened and read-only like the exec
+	// path's, and the receipt says both.
+	if strings.Join(init.CapDrop, ",") != "ALL" || strings.Join(init.CapAdd, ",") != "CHOWN" || !init.NoNewPrivileges || init.PidsLimit == 0 || init.Memory == "" {
+		t.Errorf("session-init posture: drop %v add %v nnp %v pids %d memory %q", init.CapDrop, init.CapAdd, init.NoNewPrivileges, init.PidsLimit, init.Memory)
+	}
+	if a, _ := f.FindRun("-agent"); strings.Join(a.CapDrop, ",") != "ALL" || len(a.CapAdd) != 0 || !a.NoNewPrivileges || !a.ReadOnly || len(a.Tmpfs) == 0 {
+		t.Errorf("session agent posture: drop %v add %v nnp %v read-only %v tmpfs %v", a.CapDrop, a.CapAdd, a.NoNewPrivileges, a.ReadOnly, a.Tmpfs)
+	}
 	// The harness mounts the volume, not a path, and without a relabel.
 	agent, ok := f.FindRun("-agent")
 	if !ok {

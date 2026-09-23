@@ -478,3 +478,23 @@ func TestRunSpecArgsRelabel(t *testing.T) {
 		})
 	}
 }
+
+// The hardening fields (agentry-cli#163) reach docker as their own flags,
+// and a zero value adds none.
+func TestRunSpecArgsHardening(t *testing.T) {
+	hard := RunSpec{Name: "n", Image: "img:1", CapDrop: []string{"ALL"}, CapAdd: []string{"CHOWN"}, NoNewPrivileges: true,
+		ReadOnly: true, Tmpfs: []string{"/tmp", "/work"}, PidsLimit: 512, Memory: "2g", CPUs: 2}
+	got := strings.Join(hard.args(false), " ")
+	for _, want := range []string{"--cap-drop ALL", "--cap-add CHOWN", "--security-opt no-new-privileges", "--read-only",
+		"--tmpfs /tmp", "--tmpfs /work", "--pids-limit 512", "--memory 2g", "--cpus 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args lack %q: %s", want, got)
+		}
+	}
+	plain := strings.Join(RunSpec{Name: "n", Image: "img:1"}.args(false), " ")
+	for _, flag := range []string{"--cap-drop", "--cap-add", "no-new-privileges", "--read-only", "--tmpfs", "--pids-limit", "--memory", "--cpus"} {
+		if strings.Contains(plain, flag) {
+			t.Errorf("a spec that set nothing emitted %s: %s", flag, plain)
+		}
+	}
+}
