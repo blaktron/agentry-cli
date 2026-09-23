@@ -669,3 +669,19 @@ func TestDecodePredicate(t *testing.T) {
 		}
 	})
 }
+
+// AGENTRY_PIN_REGISTRY names whose pins verify (agentry-cli#232): a
+// run-scoped prefix of a registry uses the registry's own pin file, and
+// without it every URL keeps its own.
+func TestPinRegistryNamesThePinFile(t *testing.T) {
+	t.Setenv("AGENTRY_CONFIG_DIR", t.TempDir())
+	root, _ := PinnedKeysPath("https://reg.example")
+	prefix, _ := PinnedKeysPath("https://reg.example/api/v1/x/runs/rel")
+	if root == prefix {
+		t.Fatalf("without the override a prefix shares the root's pins: %s", prefix)
+	}
+	t.Setenv(EnvPinRegistry, "https://reg.example")
+	if got, _ := PinnedKeysPath("https://reg.example/api/v1/x/runs/rel"); got != root {
+		t.Fatalf("with the override the prefix pins at %s, want %s", got, root)
+	}
+}

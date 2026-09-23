@@ -113,6 +113,12 @@ func newRunCmd() *cobra.Command {
 			"step; --dry-run prints the\n" +
 			"compiled plan and touches no docker. --local DIR runs an unpublished\n" +
 			"BriefAgent directory (treated as unsigned).\n\n" +
+			"For drivers (a hosted run's worker): AGENTRY_RUN_GRANT is sent as the\n" +
+			"X-Agentry-Run-Grant header on every request to the --registry host and\n" +
+			"nowhere else, for a registry prefix that answers for one run;\n" +
+			"AGENTRY_PIN_REGISTRY names the registry whose pinned signing keys verify\n" +
+			"the release, so pointing --registry at such a prefix keeps the pins made\n" +
+			"at login.\n\n" +
 			"Tools: BriefAgents get exactly the tools their manifest capabilities grant,\n" +
 			"served through a per-run Docker MCP Gateway (never from inside the agent\n" +
 			"container). The operator policy at ~/.agentry/runner/policy.yaml pins\n" +

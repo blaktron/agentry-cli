@@ -38,6 +38,7 @@ type globalFlags struct {
 var flags globalFlags
 
 func main() {
+	installRunGrant()
 	// SIGINT and SIGTERM cancel the command's context (agentry-cli#124): a
 	// run's docker calls take it, the engine's teardown runs on every path,
 	// and the result envelope is written with the failure — an interrupted

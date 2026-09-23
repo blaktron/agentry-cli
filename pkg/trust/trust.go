@@ -114,11 +114,22 @@ func FetchKeys(ctx context.Context, hc *http.Client, registryURL string) (KeySet
 	return set, nil
 }
 
-// PinnedKeysPath is where TOFU-pinned keys live, per registry host.
+// EnvPinRegistry names the registry whose pinned keys verify attestations
+// in place of the one being talked to (agentry-cli#232). A driver that
+// points --registry at a run-scoped prefix of a registry keeps the pins it
+// made at login against the registry itself, instead of trusting whatever
+// the prefix serves on first use under a pin file named after the prefix.
+const EnvPinRegistry = "AGENTRY_PIN_REGISTRY"
+
+// PinnedKeysPath is where TOFU-pinned keys live, per registry: the one
+// named by AGENTRY_PIN_REGISTRY when set, else registryURL's own.
 func PinnedKeysPath(registryURL string) (string, error) {
 	dir, err := configdir.Dir()
 	if err != nil {
 		return "", err
+	}
+	if pin := os.Getenv(EnvPinRegistry); pin != "" {
+		registryURL = pin
 	}
 	host := registryURL
 	host = strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
