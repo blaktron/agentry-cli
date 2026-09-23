@@ -114,8 +114,25 @@ func FetchKeys(ctx context.Context, hc *http.Client, registryURL string) (KeySet
 	return set, nil
 }
 
-// PinnedKeysPath is where TOFU-pinned keys live, per registry host.
+// EnvPinRegistry names the registry whose pinned keys verify attestations
+// in place of the one being talked to (agentry-cli#232). A driver that
+// points --registry at a run-scoped prefix of a registry keeps the pins it
+// made at login against the registry itself, instead of trusting whatever
+// the prefix serves on first use under a pin file named after the prefix.
+const EnvPinRegistry = "AGENTRY_PIN_REGISTRY"
+
+// PinnedKeysPath is where TOFU-pinned keys live, per registry: the one
+// named by AGENTRY_PIN_REGISTRY when set, else registryURL's own.
 func PinnedKeysPath(registryURL string) (string, error) {
+	if pin := os.Getenv(EnvPinRegistry); pin != "" {
+		registryURL = pin
+	}
+	return ownPinnedKeysPath(registryURL)
+}
+
+// ownPinnedKeysPath is registryURL's own pin file, whatever the override
+// says: login pins the registry it was pointed at, never another one.
+func ownPinnedKeysPath(registryURL string) (string, error) {
 	dir, err := configdir.Dir()
 	if err != nil {
 		return "", err
@@ -133,6 +150,11 @@ func LoadPinned(registryURL string) (KeySet, error) {
 	if err != nil {
 		return KeySet{}, err
 	}
+	return loadPinnedFile(path)
+}
+
+// loadPinnedFile reads one pin file (empty when it does not exist).
+func loadPinnedFile(path string) (KeySet, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // path derives from config dir
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -153,6 +175,11 @@ func SavePinned(registryURL string, set KeySet) error {
 	if err != nil {
 		return err
 	}
+	return savePinnedFile(path, set)
+}
+
+// savePinnedFile writes one pin file (0600).
+func savePinnedFile(path string, set KeySet) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -174,7 +201,15 @@ func SavePinned(registryURL string, set KeySet) error {
 // the login: a registry with signing switched off publishes an empty key set,
 // and that is a legitimate self-host configuration (§8.8), not a login error.
 func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string {
-	existing, err := LoadPinned(registryURL)
+	// Login pins the registry it was pointed at, whatever
+	// AGENTRY_PIN_REGISTRY names: the override chooses which pins verify,
+	// and must never let a prefix's keys be written into another
+	// registry's pin file (agentry-cli#232).
+	own, err := ownPinnedKeysPath(registryURL)
+	if err != nil {
+		return "could not read pinned signing keys: " + err.Error()
+	}
+	existing, err := loadPinnedFile(own)
 	if err != nil {
 		return "could not read pinned signing keys: " + err.Error()
 	}
@@ -188,7 +223,7 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 	}
 
 	if len(existing.Keys) == 0 {
-		if err := SavePinned(registryURL, fetched); err != nil {
+		if err := savePinnedFile(own, fetched); err != nil {
 			return "could not pin signing keys: " + err.Error()
 		}
 		return fmt.Sprintf("pinned %d signing key(s) on first use (TOFU)", len(fetched.Keys))
@@ -198,7 +233,7 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 	}
 	// A changed key set at login is reported, never silently adopted:
 	// re-pinning on the strength of a fresh fetch would defeat the pin.
-	path, _ := PinnedKeysPath(registryURL)
+	path := own
 	return "WARNING: the registry advertises signing key ids that differ from the pinned set — " +
 		"rotation or compromise. Verification will keep using the pinned keys; " +
 		"delete " + path + " to re-pin deliberately"
@@ -250,6 +285,12 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 		return AttestationResult{State: StateUnverifiable, Detail: err.Error()}
 	}
 	trusted := pinned
+	if len(trusted.Keys) == 0 && os.Getenv(EnvPinRegistry) != "" {
+		// A driver that names the registry whose pins verify must have
+		// made them: trusting first use here would fetch keys from
+		// --registry and write them into the named registry's pin file.
+		return AttestationResult{State: StateUnverifiable, Detail: "no signing keys are pinned for " + os.Getenv(EnvPinRegistry) + " (AGENTRY_PIN_REGISTRY); log in to it first"}
+	}
 	if len(trusted.Keys) == 0 {
 		fetched, err := FetchKeys(ctx, hc, registryURL)
 		if err != nil {
