@@ -68,7 +68,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	// The runner image is built, not pulled: its source ships inside this
 	// binary (§R7), so first use needs our registry for nothing. A new
 	// CLI version derives a new tag, which is what triggers rebuilds.
-	_, _ = fmt.Fprintf(logw, "building %s from embedded context (first use)\n", runnerTag)
+	// The log names the builder base it hands the build, digest and all,
+	// so a run's own output shows what the image was built from (DR-32).
+	_, _ = fmt.Fprintf(logw, "building %s from embedded context with GO_IMAGE=%s (first use)\n", runnerTag, pol.Images.GoBuilder)
 	if err := runnerimage.Materialize(imageCtxDir); err != nil {
 		return fmt.Errorf("materialize runner image context: %w", err)
 	}

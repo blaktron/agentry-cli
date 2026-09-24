@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -484,5 +485,39 @@ func TestLimitsDefaults(t *testing.T) {
 	p.Docker.Limits = Limits{Memory: "4g", CPUs: 4, Pids: 1024}
 	if err := p.Validate(); err != nil {
 		t.Fatalf("valid limits refused: %v", err)
+	}
+}
+
+// TestRunnerImageBasesArePinnedByDigest (agentry-cli#269, DR-32): both
+// bases of the runner image are name:tag@sha256:<64 hex>, so the bytes a
+// build starts from cannot move under a tag. The Dockerfile's GO_IMAGE
+// default and the policy's goBuilder default are the same ref (the CLI
+// always passes the policy's as the build argument, so a Dockerfile-only
+// pin would pin nothing), and the generated policy file carries it.
+func TestRunnerImageBasesArePinnedByDigest(t *testing.T) {
+	digestRef := regexp.MustCompile(`^ghcr\.io/blaktron/[a-z0-9-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$`)
+	df, err := os.ReadFile(filepath.Join("..", "..", "..", "runnerimage", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]string{}
+	for _, line := range strings.Split(string(df), "\n") {
+		if name, val, ok := strings.Cut(strings.TrimPrefix(line, "ARG "), "="); ok && strings.HasPrefix(line, "ARG ") {
+			args[name] = val
+		}
+	}
+	for _, name := range []string{"GO_IMAGE", "RUNTIME_IMAGE"} {
+		if !digestRef.MatchString(args[name]) {
+			t.Errorf("Dockerfile ARG %s = %q, want name:tag@sha256:<digest>", name, args[name])
+		}
+	}
+	if !digestRef.MatchString(DefaultGoBuilder) {
+		t.Errorf("DefaultGoBuilder = %q, want name:tag@sha256:<digest>", DefaultGoBuilder)
+	}
+	if args["GO_IMAGE"] != DefaultGoBuilder {
+		t.Errorf("Dockerfile GO_IMAGE %q differs from the policy default %q", args["GO_IMAGE"], DefaultGoBuilder)
+	}
+	if !strings.Contains(defaultFileText, "goBuilder: "+DefaultGoBuilder+"\n") {
+		t.Error("the generated policy file does not carry the digest-pinned goBuilder")
 	}
 }

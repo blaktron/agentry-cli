@@ -41,16 +41,21 @@ const Version = "1"
 // move one, and a run would not be able to tell. Say so rather than claiming
 // immutability.
 //
-// Tags rather than digests for now. Every digest is recorded in that
-// repository's images.tsv, so pinning them here is possible and is the next
-// step — but it changes the shape of the ref the runner hands the daemon, and
-// that wants a live acceptance run to prove before it ships (agentry-cli#236).
+// The exception is DefaultGoBuilder, one of the two bases of the runner image,
+// which is pinned by digest (name:tag@sha256:…, the digest from images.tsv)
+// since agentry-cli#269 closed DR-32's deferral: the image is built, not
+// pulled, so the ref only ever reaches a Dockerfile FROM, and a live build
+// proved the digest form there. The runtime base is pinned the same way in
+// runnerimage/Dockerfile. The pulled images (the gateway, the harness, the
+// two MCP runtimes) are still tags: every digest is in images.tsv, but the
+// digest form changes the ref the runner hands the daemon to pull and to
+// probe, and that wants its own live acceptance run (agentry-cli#236).
 //
 // Versions match the survey of 2026-08-30, re-verified 2026-09-23.
 const (
 	DefaultGatewayImage = "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3"
 	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.128.0"
-	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine"
+	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// (RUNNER-PLAN-3 §P2).
 	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:22-alpine"
@@ -654,14 +659,15 @@ images:
   # Agentry's own mirrors of the upstream images, published from
   # blaktron/agentry-dockerimages. Every digest is recorded there, and each was
   # verified equal to the upstream digest it mirrors when it was copied.
-  # These are tags, not digests. They are ours, so they cannot move without us,
-  # but nothing enforces that — a push to one would move it and a run could not
-  # tell. For bytes that cannot move at all, pin the digest from that
-  # repository's images.tsv (repo@sha256:...), or point these at any registry
-  # you prefer: a private one, or your own mirror.
+  # goBuilder is pinned by digest: the @sha256 part fixes the bytes, and the
+  # tag before it is only a label. The others are tags. They are ours, so they
+  # cannot move without us, but nothing enforces that — a push to one would
+  # move it and a run could not tell. For bytes that cannot move at all, pin
+  # the digest from that repository's images.tsv (repo:tag@sha256:...), or
+  # point these at any registry you prefer: a private one, or your own mirror.
   gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
   harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0
-  goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine
+  goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
   # Runtimes for MCP servers a BriefAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:22-alpine
   pythonRuntime: ghcr.io/blaktron/agentry-python-alpine:3.12-alpine
