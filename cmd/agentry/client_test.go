@@ -289,3 +289,24 @@ func TestNewRootCmdCommandSet(t *testing.T) {
 		}
 	}
 }
+
+// TestVersionShowsBakedRegistry: --version names the registry the binary
+// falls back to when nothing is configured (agentry-cli#240), so a person
+// (and the release workflow) can see which site a download talks to.
+func TestVersionShowsBakedRegistry(t *testing.T) {
+	saved := defaultRegistryURL
+	t.Cleanup(func() { defaultRegistryURL = saved })
+	defaultRegistryURL = "https://baked.example.test"
+
+	root := newRootCmd()
+	var out strings.Builder
+	root.SetOut(&out)
+	root.SetArgs([]string{"--version"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "agentry version ") || lines[1] != "default registry: https://baked.example.test" {
+		t.Errorf("--version = %q, want 'agentry version …' then 'default registry: https://baked.example.test'", out.String())
+	}
+}
