@@ -144,9 +144,8 @@ manifest + operator policy into a deterministic run plan → execute:
   reachable endpoints are the gateway (Bearer-token MCP) and an
   allowlisting egress proxy for the model API. No workspace mount, no
   docker socket, no manifest secrets. It does hold the model API key: the
-  harness inside it calls the model, so the key is in its environment
-  under the variable the policy names for it (`model.apiKeyEnv`), and the
-  receipt says so.
+  harness inside it calls the model, so the key is in its environment,
+  under the variable that harness reads, and the receipt says so.
 - **The containers the runner starts** (the proxy, the gateway, the
   probe, the agent, the MCP server installer) drop all capabilities, set
   no-new-privileges, and are bounded by the policy's `docker.limits` (2g
