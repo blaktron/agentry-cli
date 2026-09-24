@@ -47,20 +47,27 @@ func newWhoamiCmd() *cobra.Command {
 // underneath for the day they leave, and a pending fold-in is still
 // answered their own.
 type billingAccount struct {
-	Tier           string     `json:"tier"`
-	Standing       string     `json:"standing,omitempty"`
-	Unmetered      bool       `json:"unmetered,omitempty"`
-	Seats          *seatsView `json:"seats,omitempty"`
-	MemberOf       string     `json:"memberOf,omitempty"`
-	Balance        int64      `json:"balance"`
-	Allowance      int64      `json:"allowance"`
-	SubmissionCost int64      `json:"submissionCost"`
-	PeriodEnd      string     `json:"periodEnd"`
-	PendingTier    string     `json:"pendingTier,omitempty"`
-	PrivateAgents  struct {
-		Max  int64 `json:"max"`
-		Used int64 `json:"used"`
-	} `json:"privateAgents"`
+	Tier           string            `json:"tier"`
+	Standing       string            `json:"standing,omitempty"`
+	Unmetered      bool              `json:"unmetered,omitempty"`
+	Seats          *seatsView        `json:"seats,omitempty"`
+	MemberOf       string            `json:"memberOf,omitempty"`
+	Balance        int64             `json:"balance"`
+	Allowance      int64             `json:"allowance"`
+	SubmissionCost int64             `json:"submissionCost"`
+	PeriodEnd      string            `json:"periodEnd"`
+	PendingTier    string            `json:"pendingTier,omitempty"`
+	PrivateAgents  privateAgentsView `json:"privateAgents"`
+}
+
+// privateAgentsView is the private-agent cap as the registry applies it.
+// Enabled is a pointer because a registry that predates
+// agentry-enterprise#40 does not send it, and absence must not read as
+// false: there a max of 0 meant both "none" and "no cap".
+type privateAgentsView struct {
+	Enabled *bool `json:"enabled,omitempty"`
+	Max     int64 `json:"max"`
+	Used    int64 `json:"used"`
 }
 
 // seatsView is the organization's seats: held (active members plus open
@@ -198,9 +205,30 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 	if a.PendingTier != "" {
 		_, _ = fmt.Fprintf(out, "changes:  %s from %s\n", tierLabel(a.PendingTier), dayOf(a.PeriodEnd))
 	}
-	if a.PrivateAgents.Max > 0 {
-		_, _ = fmt.Fprintf(out, "private:  %d of %d BriefAgents\n", a.PrivateAgents.Used, a.PrivateAgents.Max)
+	if line := privatePhrase(a.PrivateAgents); line != "" {
+		_, _ = fmt.Fprintf(out, "private:  %s\n", line)
 	}
+}
+
+// privatePhrase renders the private-agent cap (agentry-cli#277). Enabled
+// is read first: false is "none", and max then says nothing (an
+// organization that is not paid for, and its members); enabled with max 0
+// is no cap; otherwise at most max. A registry that does not send enabled
+// gets the old rule, a line only when max > 0, because its 0 is ambiguous
+// and the client does not guess. Agents already held while none may be
+// added are named, so a person is not told "none" beside agents they own.
+func privatePhrase(p privateAgentsView) string {
+	switch {
+	case p.Enabled == nil && p.Max <= 0:
+		return ""
+	case p.Enabled != nil && !*p.Enabled && p.Used > 0:
+		return fmt.Sprintf("none may be added (%d BriefAgents held)", p.Used)
+	case p.Enabled != nil && !*p.Enabled:
+		return "none"
+	case p.Max <= 0:
+		return fmt.Sprintf("%d BriefAgents, no cap", p.Used)
+	}
+	return fmt.Sprintf("%d of %d BriefAgents", p.Used, p.Max)
 }
 
 // seatsPhrase renders held seats against the allowance. The extension's
