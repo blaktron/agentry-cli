@@ -31,7 +31,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/pathguard"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
-	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
@@ -381,10 +380,28 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		key = installdir.ConsentKey(home, res.Namespace, m.Name)
 		paths = installPaths{dest: key.Dir, managed: true}
 		releaseDir := installdir.ReleaseDir(home, res.Namespace, m.Name, res.Version, computed)
+		// installdir.Install is the lay-down the desktop calls too, in the
+		// style the runner home's policy implies; its warning for a policy
+		// that cannot be read is said here. The cache holds the verdict
+		// and never the consent.
 		lay = func(staging string, m *manifest.Manifest) error {
-			return installRunnerTarget(out, errOut, staging, releaseDir, m, res, computed, att)
+			meta := &installdir.Meta{
+				Ref:       fmt.Sprintf("%s/%s@%s", res.Namespace, m.Name, res.Version),
+				Namespace: res.Namespace, Name: m.Name, Version: res.Version,
+				Digest: computed, Source: "registry",
+				Attestation: receipt.Attestation{State: string(att.State), KeyID: att.KeyID, Verified: att.State == trust.StateVerified},
+			}
+			style, warning := installdir.StyleForHome(home)
+			if warning != "" {
+				_, _ = fmt.Fprintf(errOut, "warning: %s\n", warning)
+			}
+			if err := installdir.Install(releaseDir, staging, m, meta, style); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(out, "installed %s/%s@%s into the runner home: %s (export: %s)\n", res.Namespace, m.Name, res.Version, releaseDir, style)
+			return nil
 		}
-		after = func() error { return installdir.RemoveOtherVersions(key.Dir, releaseDir) }
+		after = func() error { return removeOtherVersions(key.Dir, releaseDir) }
 	case manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD:
 		warnUndeclaredTarget(errOut, m, target)
 		paths, err = resolveInstallPaths(target, opts.dir, m.Name)
@@ -477,8 +494,15 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		_, _ = fmt.Fprintf(errOut, "warning: %v — the next install of this agent will re-ask about capabilities\n", err)
 	}
 	if after != nil && recorded {
-		if err := after(); err != nil {
+		// The release and its record landed: an older version's directory
+		// that will not go is said on a completed install, not an error
+		// that reads as a failed one (agentry-cli#192, the desktop's way).
+		// A path built wrong (ErrNotARelease) is a bug, not an older
+		// version, and still stops.
+		if err := after(); errors.Is(err, installdir.ErrNotARelease) {
 			return err
+		} else if err != nil {
+			_, _ = fmt.Fprintf(errOut, "warning: %v — the older version's files are still in the runner home; installing this version again retries the removal\n", err)
 		}
 	}
 	if flags.jsonOut {
@@ -876,50 +900,9 @@ func warnUndeclaredTarget(w io.Writer, m *manifest.Manifest, target string) {
 	_, _ = fmt.Fprintf(w, "warning: manifest runtime.interfaces %v does not list target %q\n", m.Runtime.Interfaces, target)
 }
 
-// installRunnerTarget lays the verified release down in the runner home
-// the way a run's first fetch does (installdir.Write, so `agentry run`
-// finds it by digest and fetches nothing) and writes the coding-agent
-// shape beside it in the style the policy implies (installdir.StyleFor).
-// The cache holds the verdict and never the consent, as a run's does, and
-// says whether the verdict was a verified signature the way a run's does
-// (the receipt's shorthand).
-func installRunnerTarget(out, errOut io.Writer, staging, releaseDir string, m *manifest.Manifest, res *apiclient.ResolveResult, digest string, att trust.AttestationResult) error {
-	meta := &installdir.Meta{
-		Ref:       fmt.Sprintf("%s/%s@%s", res.Namespace, m.Name, res.Version),
-		Namespace: res.Namespace, Name: m.Name, Version: res.Version,
-		Digest: digest, Source: "registry",
-		Attestation: receipt.Attestation{State: string(att.State), KeyID: att.KeyID, Verified: att.State == trust.StateVerified},
-	}
-	if err := installdir.Write(releaseDir, staging, meta); err != nil {
-		return err
-	}
-	style := installdir.StyleFor(policyForStyle(errOut))
-	if err := installdir.WriteExport(releaseDir, style, m, meta); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(out, "installed %s/%s@%s into the runner home: %s (export: %s)\n", res.Namespace, m.Name, res.Version, releaseDir, style)
-	return nil
-}
-
-// policyForStyle is the operator policy the export style is read from. A
-// machine with none yet reads as no policy (an install must not create
-// one — that is setup's and a run's); a policy that cannot be read is
-// said, and read as none too, so the install goes on with the generic
-// shape rather than stopping on a file it does not need.
-func policyForStyle(errOut io.Writer) *policy.Policy {
-	path, err := policy.DefaultPath()
-	if err != nil {
-		return nil
-	}
-	pol, _, err := policy.Load(path)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			_, _ = fmt.Fprintf(errOut, "warning: operator policy %s could not be read (%v) — the export beside the install takes the generic AGENTS.md shape\n", path, err)
-		}
-		return nil
-	}
-	return pol
-}
+// removeOtherVersions is the runner target's replace (D9), a variable so a
+// test can make it fail after the record is saved.
+var removeOtherVersions = installdir.RemoveOtherVersions
 
 // exportClaudeSkill writes the archive into {dir/<name>|~/.claude/skills/<name>},
 // guaranteeing SKILL.md frontmatter (§5.6 claude-skill row).
