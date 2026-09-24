@@ -77,6 +77,11 @@ type Params struct {
 	WorkspaceSrc string
 	// RunRoot is where runs/<id>/ ephemera live (the install dir).
 	RunRoot string
+	// RunnerHome is the runner home, shared by every client on the host.
+	// A run whose plan needs relays holds its relay lock (RelayLockFile)
+	// for the whole run (agentry-cli#268). Empty takes no lock, leaving
+	// the relay listing as the only check.
+	RunnerHome string
 	// OutDir is the mounted output folder (RQ3), already absolute.
 	OutDir string
 	// Task is the task input (may be nil for an empty task).
@@ -412,7 +417,16 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	gwSpec.CapAdd = []string{"DAC_READ_SEARCH"}
 	// A run that will give the gateway relays to start refuses to share
 	// the relay network with another gateway's (relays.go, agentry-cli#108).
+	// It holds the runner home's relay lock from the listing to the end of
+	// its teardown, so two such runs starting together cannot both list an
+	// empty network (relaylock.go, agentry-cli#268). The release is queued
+	// before the gateway's teardown, so it runs after the relays are reaped.
 	if relaysNeeded(p.Plan.MCPServers) {
+		release, err := holdRelayLock(p.RunnerHome)
+		if err != nil {
+			return err
+		}
+		td.add(func(context.Context) { release() })
 		if err := refuseForeignRelays(ctx, d); err != nil {
 			return err
 		}

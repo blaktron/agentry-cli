@@ -440,6 +440,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		PlanDir:         planDir,
 		WorkspaceSrc:    workspaceDir,
 		RunRoot:         installDir,
+		RunnerHome:      home,
 		OutDir:          outDir,
 		Task:            taskReader(cmd, opts.input),
 		InputPaths:      opts.files,
