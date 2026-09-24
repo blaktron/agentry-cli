@@ -16,7 +16,9 @@
 //
 // EVERY client (CLI, desktop) must read and write this same file, so a
 // capability diff on upgrade works regardless of which client did the
-// original install.
+// original install. The same clients hold a downloaded archive's own
+// manifest to the contract they asked consent on (ArchiveWidenings), so
+// the rule for that lives here too.
 package installed
 
 import (
@@ -83,7 +85,7 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 		Secrets:      append([]string(nil), c.Secrets...),
 	}
 	for _, srv := range c.MCPServers {
-		id := srv.SourceID() + "@" + srv.Version
+		id := serverID(srv)
 		s.MCPServers = append(s.MCPServers, id)
 		if len(srv.Env) > 0 {
 			if s.MCPServerEnv == nil {
@@ -316,11 +318,17 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 // bytes it served, and an install refuses it rather than reconciling. It
 // is the core's rule, manifest.DiffCapabilities, on the two full
 // contracts, plus what that rule does not yet compare: a declared MCP
-// server's own egress, secrets and tool restriction (agentry#527).
+// server's own egress, secrets and tool restriction (agentry#527). The
+// desktop keeps a copy until it calls this (agentry-desktop#220).
 func ArchiveWidenings(consented, archive manifest.Capabilities) []string {
 	widened := manifest.DiffCapabilities(consented, archive).Widened
 	return append(widened, serverWidenings(consented.MCPServers, archive.MCPServers)...)
 }
+
+// serverID is a declared server's key in a snapshot and in the core's
+// diff: its package id and pin, "npm:@scope/x@1.2.3" (serverFromID's
+// inverse).
+func serverID(s manifest.MCPServer) string { return s.SourceID() + "@" + s.Version }
 
 // serverWidenings reports what the archive grants a declared MCP server
 // beyond the consented declaration of the same server (same package and
@@ -328,11 +336,11 @@ func ArchiveWidenings(consented, archive manifest.Capabilities) []string {
 func serverWidenings(consented, archive []manifest.MCPServer) []string {
 	byID := make(map[string]manifest.MCPServer, len(consented))
 	for _, s := range consented {
-		byID[s.SourceID()+"@"+s.Version] = s
+		byID[serverID(s)] = s
 	}
 	var out []string
 	for _, s := range archive {
-		id := s.SourceID() + "@" + s.Version
+		id := serverID(s)
 		c, ok := byID[id]
 		if !ok {
 			continue

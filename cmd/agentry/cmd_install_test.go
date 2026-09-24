@@ -991,6 +991,18 @@ func TestInstallHoldsTheArchiveToTheConsentedContract(t *testing.T) {
 		}
 	}
 
+	t.Run("matches", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
+		fr := newFakeRegistry(t)
+		files := skillFiles("demo", osv("      egress: [api.osv.dev]\n      tools: [query]\n"))
+		fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", files)
+		fv.manifest = resolveManifest(t, files)
+		if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+			t.Fatalf("an archive matching the consented contract was refused: %v (%s)", err, stderr)
+		}
+	})
+
 	t.Run("narrows", func(t *testing.T) {
 		isolateEnv(t)
 		t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
