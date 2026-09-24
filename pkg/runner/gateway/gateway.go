@@ -70,9 +70,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	// two bases do: since DR-32 they come from our registry
 	// (ghcr.io/blaktron), GO_IMAGE from the policy's images.goBuilder and
 	// RUNTIME_IMAGE from the Dockerfile's pinned default, so first use
-	// needs ghcr.io for them (and Docker Hub for the build's frontend,
-	// agentry-cli#281). A new embedded context derives a new tag, which is
-	// what triggers rebuilds.
+	// needs ghcr.io for them and nothing else: the Dockerfile names no
+	// external frontend (agentry-cli#281). A new embedded context derives
+	// a new tag, which is what triggers rebuilds.
 	// The log names the builder base it hands the build, digest and all,
 	// so a run's own output shows what the image was built from (DR-32).
 	_, _ = fmt.Fprintf(logw, "building %s from embedded context with GO_IMAGE=%s (first use)\n", runnerTag, pol.Images.GoBuilder)
