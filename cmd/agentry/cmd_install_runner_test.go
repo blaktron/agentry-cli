@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -440,5 +441,22 @@ func TestInstallRunnerTargetReplaceFailureIsAWarning(t *testing.T) {
 	}
 	if _, ok := installdir.Load(installdir.ReleaseDir(home, "acme", "demo", "1.1.0", v2.digest), v2.digest); !ok {
 		t.Fatal("1.1.0 is not installed")
+	}
+
+	// With --json the result on stdout is the JSON alone, recorded; the
+	// warning stays on stderr.
+	stdout, stderr, err = runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.1.0", "--allow-unsigned")
+	if err != nil {
+		t.Fatalf("--json: %v (stderr %q)", err, stderr)
+	}
+	var res struct{ Recorded bool }
+	if jerr := json.Unmarshal([]byte(stdout), &res); jerr != nil || !res.Recorded || !strings.Contains(stderr, "device or resource busy") {
+		t.Fatalf("--json: stdout %q (%v) stderr %q", stdout, jerr, stderr)
+	}
+
+	// A path built wrong is not an older version and still stops.
+	removeOtherVersions = func(string, string) error { return fmt.Errorf("%w: refusing to clear x", installdir.ErrNotARelease) }
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.1.0", "--allow-unsigned"); !errors.Is(err, installdir.ErrNotARelease) {
+		t.Fatalf("a refused replace passed as a warning: %v", err)
 	}
 }

@@ -497,8 +497,12 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		// The release and its record landed: an older version's directory
 		// that will not go is said on a completed install, not an error
 		// that reads as a failed one (agentry-cli#192, the desktop's way).
-		if err := after(); err != nil {
-			_, _ = fmt.Fprintf(errOut, "warning: %v — the older version's files are still in the runner home; `agentry uninstall` and a reinstall clear them\n", err)
+		// A path built wrong (ErrNotARelease) is a bug, not an older
+		// version, and still stops.
+		if err := after(); errors.Is(err, installdir.ErrNotARelease) {
+			return err
+		} else if err != nil {
+			_, _ = fmt.Fprintf(errOut, "warning: %v — the older version's files are still in the runner home; installing this version again retries the removal\n", err)
 		}
 	}
 	if flags.jsonOut {

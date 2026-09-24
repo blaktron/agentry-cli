@@ -2,6 +2,7 @@ package installdir
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -285,5 +286,24 @@ func TestInstall(t *testing.T) {
 	}
 	if err := Install(dir, src, m, meta, "bogus"); err == nil {
 		t.Fatal("an unknown style was accepted")
+	}
+	other := filepath.Join(t.TempDir(), ReleaseName("1.0.0", "sha256:abc"))
+	consented := *meta
+	consented.Attestation.Consent = "allow-unsigned"
+	if err := Install(other, src, m, &consented, manifest.InterfaceAgentsMD); err == nil {
+		t.Fatal("a consent was written into install.json")
+	}
+	if _, err := os.Stat(other); !os.IsNotExist(err) {
+		t.Fatalf("the refused Install wrote %s", other)
+	}
+}
+
+// A keep that is not a release directly under the agent's directory is
+// ErrNotARelease, so a caller that warns on a failed replace still stops
+// on a path it built wrong.
+func TestRemoveOtherVersionsRefusalIsErrNotARelease(t *testing.T) {
+	agentDir := t.TempDir()
+	if err := RemoveOtherVersions(agentDir, filepath.Join(agentDir, "a", "b")); !errors.Is(err, ErrNotARelease) {
+		t.Fatalf("err = %v, want ErrNotARelease", err)
 	}
 }

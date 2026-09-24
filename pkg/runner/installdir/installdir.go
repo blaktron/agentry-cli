@@ -197,10 +197,15 @@ func StyleForHome(home string) (style, warning string) {
 
 // Install is the one lay-down both clients call for the runner target: the
 // verified release written (Write), then the coding-agent shape beside it
-// in the given style (WriteExport). The caller has already verified the
-// digest, the attestation and the consent; the cache holds the verdict and
-// never the consent.
+// in the given style (WriteExport). It is called only once the digest, the
+// attestation and the consent have been judged — it checks none of them.
+// It refuses a Meta that carries a consent: the cache holds the verdict
+// and never the consent, which lives in installed.yaml, so a run cannot
+// read one out of install.json.
 func Install(releaseDir, staging string, m *manifest.Manifest, meta *Meta, style string) error {
+	if meta.Attestation.Consent != "" {
+		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
+	}
 	if err := Write(releaseDir, staging, meta); err != nil {
 		return err
 	}
@@ -240,6 +245,12 @@ func WriteExport(dir, style string, m *manifest.Manifest, meta *Meta) error {
 // release does not: its version control, and the runner's own output.
 func notPartOfARelease(name string) bool { return name == ".git" || name == "agentry-out" }
 
+// ErrNotARelease is RemoveOtherVersions' refusal of a keep that is not a
+// release directly under the agent's directory: a path the caller built
+// wrong, never an older version that would not go, so a caller that says
+// a failed replace as a warning still stops on it.
+var ErrNotARelease = errors.New("not a release of this agent")
+
 // RemoveOtherVersions removes every entry of agentDir but keep — the
 // replace rule of an update (D9): one release per BriefAgent, the older
 // one's directory gone once the new one is verified and recorded. Runs
@@ -248,7 +259,7 @@ func notPartOfARelease(name string) bool { return name == ".git" || name == "age
 // must not turn into a sweep of some other directory.
 func RemoveOtherVersions(agentDir, keep string) error {
 	if !pathguard.DirectlyUnder(agentDir, keep) {
-		return fmt.Errorf("refusing to clear %s: %s is not a release directly under it", agentDir, keep)
+		return fmt.Errorf("%w: refusing to clear %s: %s is not a release directly under it", ErrNotARelease, agentDir, keep)
 	}
 	entries, err := os.ReadDir(agentDir)
 	if err != nil {
