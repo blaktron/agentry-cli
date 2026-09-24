@@ -75,6 +75,11 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// The second line names the registry this binary falls back to when
+	// nothing is configured: a release bakes production's or dev's by the
+	// branch it was cut from (agentry-cli#240), and this is where a person
+	// sees which.
+	root.SetVersionTemplate("agentry version {{.Version}}\ndefault registry: " + defaultRegistryURL + "\n")
 	root.PersistentFlags().StringVar(&flags.registry, "registry", "",
 		"registry base URL (default: config defaultRegistry, else "+defaultRegistryURL+")")
 	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false,

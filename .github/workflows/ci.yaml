@@ -75,6 +75,12 @@ jobs:
         run: |
           scripts/acceptance/runner-r0.sh
           scripts/acceptance/runner-r1.sh
+      # A release from main bakes production's registry, one from dev
+      # bakes dev's, and no other commit is a release (agentry-cli#240):
+      # scripts/release-registry.sh against a throwaway origin with the
+      # estate's branch model, then a main build's --version read back.
+      - name: release registry by branch
+        run: scripts/acceptance/release-registry.sh
       # The release signs the Windows exe (agentry-cli#196); a PR proves the
       # seam with a throwaway CA instead of the key: the checker accepts a
       # signed, timestamped binary chained to the root it is given and refuses
