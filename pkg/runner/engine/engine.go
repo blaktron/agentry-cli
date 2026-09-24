@@ -724,9 +724,13 @@ type eventCollector struct {
 	maxTurns   int
 	overBudget func()
 	// maxCostUSD > 0 makes the harness's reported running cost a hard
-	// stop (agentry-cli#7, DR-4). Usage events carry a running total on
-	// docker-agent; the collector keeps the high-water mark, so a harness
+	// stop (agentry-cli#7, DR-4). docker-agent's usage events carry cost as
+	// a running total, so the collector keeps its high-water mark: a harness
 	// that reported per-call costs would under-enforce, never over-kill.
+	// Tokens are the opposite, and are summed: docker-agent's token_usage
+	// carries that model request's own tokens (fresh plus cached input),
+	// and claude and codex report once per autonomous run (agentry-cli#141;
+	// usage_recorded_test.go pins this against the recorded streams).
 	maxCostUSD float64
 	overCost   func()
 
