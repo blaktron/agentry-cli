@@ -1078,11 +1078,12 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installdir.Meta, i
 			plan.Harness.Adapter == adapterName &&
 			reflect.DeepEqual(plan.MCPServers, serverSpecs) {
 			switch {
-			case plan.CompiledBy != version.Version:
+			case plan.CompiledBy != version.Build():
 				// Same schema, another build: the compiler's output may
 				// differ (agentry-cli#105 changed what a server's catalog
-				// entry carries without touching the schema).
-				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", cmp.Or(plan.CompiledBy, "unknown"), version.Version)
+				// entry carries without touching the schema). An unstamped
+				// build is told apart by its binary (agentry-cli#144).
+				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", cmp.Or(plan.CompiledBy, "unknown"), version.Build())
 			case plan.Proxy.Image != runnerImage:
 				_, _ = fmt.Fprintf(errOut, "installed plan names runner image %s, this CLI builds %s — recompiling\n", plan.Proxy.Image, runnerImage)
 			default:
@@ -1106,7 +1107,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installdir.Meta, i
 		PolicySHA:    polSHA,
 		AdapterName:  adapterName,
 		RunnerImage:  runnerImage,
-		CompiledBy:   version.Version,
+		CompiledBy:   version.Build(),
 		MCPServers:   serverSpecs,
 	}, planDir)
 	if err != nil {

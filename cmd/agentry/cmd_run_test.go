@@ -752,6 +752,11 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	if first.CompiledBy == "" {
 		t.Fatal("plan does not record the CLI that compiled it")
 	}
+	// The test binary is unstamped, so the plan names the binary, not only
+	// the version every unstamped build shares (agentry-cli#144).
+	if !strings.HasPrefix(first.CompiledBy, "0.0.0-dev+exe.") {
+		t.Errorf("an unstamped build recorded %q, want 0.0.0-dev+exe.<digest>", first.CompiledBy)
+	}
 	// Same CLI, same image: reused.
 	errOut.Reset()
 	if _, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous); err != nil || strings.Contains(errOut.String(), "recompiling") {
@@ -766,6 +771,18 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	again, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
 	if err != nil || again.CompiledBy != first.CompiledBy || !strings.Contains(errOut.String(), "recompiling") {
 		t.Fatalf("plan from another CLI build was reused: %v compiledBy=%q %q", err, again.CompiledBy, errOut.String())
+	}
+	// A plan an older unstamped CLI cached records the bare 0.0.0-dev that
+	// every unstamped build used to share: recompiled. This is how the hosted
+	// worker kept running plans from before a compile change (agentry-cli#144).
+	b, _ = os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
+	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(strings.Replace(string(b), again.CompiledBy, "0.0.0-dev", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	again, _, err = ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	if err != nil || again.CompiledBy != first.CompiledBy || !strings.Contains(errOut.String(), "recompiling") {
+		t.Fatalf("plan from an older unstamped CLI was reused: %v compiledBy=%q %q", err, again.CompiledBy, errOut.String())
 	}
 	// Another runner image (the embedded build context changed): recompiled.
 	b, _ = os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
