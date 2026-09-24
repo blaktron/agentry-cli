@@ -71,12 +71,22 @@ type Client interface {
 	RemoveForce(ctx context.Context, name string) error
 	// PSByLabel lists container names carrying label (leak sweeps).
 	PSByLabel(ctx context.Context, label string) ([]string, error)
+	// PSLabels lists every container (running or not) carrying label, each
+	// with the values of the label keys asked for ("" where it has none):
+	// the startup sweep reads who created a container before removing it.
+	PSLabels(ctx context.Context, label string, keys []string) ([]Labeled, error)
 	// Logs returns a container's output: the last tail lines, or all of
 	// it for LogsAll (gateway diagnostics and startup checks).
 	Logs(ctx context.Context, name string, tail int) (string, error)
 	// Port returns the host port a container port was published on
 	// (RunSpec.Publish), for a host-run harness to reach the run.
 	Port(ctx context.Context, name string, containerPort int) (int, error)
+}
+
+// Labeled is one container PSLabels found, with the label values it read.
+type Labeled struct {
+	Name   string
+	Labels map[string]string
 }
 
 // RunSpec describes one docker run.
@@ -455,6 +465,40 @@ func (c *CLI) PSByLabel(ctx context.Context, label string) ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// PSLabels implements Client. Each key is read with docker's own
+// {{.Label "k"}}, one tab-separated line per container, so a value is never
+// split out of a comma-joined label list; the keys and the values this CLI
+// writes carry no tabs or newlines.
+func (c *CLI) PSLabels(ctx context.Context, label string, keys []string) ([]Labeled, error) {
+	format := "{{.Names}}"
+	for _, k := range keys {
+		if strings.ContainsAny(k, "\t\n\"{}") {
+			return nil, fmt.Errorf("docker ps: label key %q cannot be read back", k)
+		}
+		format += "\t{{.Label \"" + k + "\"}}"
+	}
+	out, err := c.run(ctx, "ps", "-a", "--filter", "label="+label, "--format", format)
+	if err != nil {
+		return nil, err
+	}
+	var found []Labeled
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) != len(keys)+1 {
+			return nil, fmt.Errorf("docker ps: %d fields in %q, want %d", len(f), line, len(keys)+1)
+		}
+		l := Labeled{Name: strings.TrimSpace(f[0]), Labels: map[string]string{}}
+		for i, k := range keys {
+			l.Labels[k] = f[i+1]
+		}
+		found = append(found, l)
+	}
+	return found, nil
 }
 
 // Logs implements Client. Both streams are returned: a container's stderr

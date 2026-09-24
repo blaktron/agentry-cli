@@ -69,6 +69,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
 
+	// What a run whose process died left behind goes first, before this
+	// run adds its own (agentry-cli#161).
+	sweepAbandoned(ctx, d, p.Stderr)
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
 	s := &liveSession{
 		d: d, p: p, env: env, td: td, start: start, runID: runID,
@@ -224,8 +227,13 @@ type liveSession struct {
 	panicErr     error
 	lastActivity time.Time
 	endOnce      sync.Once
-	envelope     *receipt.Envelope
-	envelopeErr  error
+	// endMu serialises End: a second caller waits for the first and gets
+	// its envelope. Without it two concurrent callers both passed the
+	// envelope check and both closed events (agentry-cli#161; the
+	// desktop's quit mid-run, agentry-desktop#125, is such a caller).
+	endMu       sync.Mutex
+	envelope    *receipt.Envelope
+	envelopeErr error
 }
 
 // rwPipe joins the harness's stdout (read) and stdin (write) for the adapter.
@@ -664,6 +672,8 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 
 // End implements session.Session.
 func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, error) {
+	s.endMu.Lock()
+	defer s.endMu.Unlock()
 	s.mu.Lock()
 	if s.envelope != nil {
 		env, err := s.envelope, s.envelopeErr

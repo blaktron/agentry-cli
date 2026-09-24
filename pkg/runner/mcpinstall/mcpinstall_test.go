@@ -13,6 +13,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
@@ -110,6 +111,13 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 	// the next agent declaring the same server cannot install it (#106).
 	if run, ok := fake.FindRun("agentry-mcpinstall-"); !ok || !run.AutoRemove {
 		t.Fatalf("installer container not auto-removed: %+v", run)
+	}
+	// A CLI killed mid-install leaves the builder running; its owner labels
+	// are what the next run's sweep removes it by (agentry-cli#161).
+	if run, _ := fake.FindRun("agentry-mcpinstall-"); run.Labels["agentry.mcpinstall"] == "" {
+		t.Fatalf("installer labels = %v, want the server it builds", run.Labels)
+	} else if own := owner.Labels(); own != nil && run.Labels[owner.LabelPID] != own[owner.LabelPID] {
+		t.Fatalf("installer labels = %v, want this process as owner", run.Labels)
 	}
 	// The store is the user's (#112): the builder runs as the invoking
 	// uid:gid so `rm -rf` of the profile works afterwards, with npm's home

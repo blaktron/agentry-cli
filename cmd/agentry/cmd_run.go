@@ -464,13 +464,21 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	return runErr
 }
 
+// startSession and runChat are runInteractive's two collaborators, package
+// variables so a test can put a fake session behind a chat that panics or
+// returns early and see teardown still run (agentry-cli#161).
+var (
+	startSession = engine.StartSession
+	runChat      = tui.Run
+)
+
 // runInteractive drives an interactive plan: the engine's session behind
 // the terminal chat (plan §6.2, §6.8). The screen is restored before the
 // envelope and receipts are written, so what the user sees last is where
 // the transcript went.
 func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Params, m *manifest.Manifest, plan *spec.Plan, opts runOpts) error {
 	errOut := cmd.ErrOrStderr()
-	s, err := engine.StartSession(cmd.Context(), docker, params)
+	s, err := startSession(cmd.Context(), docker, params)
 	if err != nil {
 		return err
 	}
@@ -501,7 +509,7 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 	if m.Interactive != nil {
 		topts.Opening = m.Interactive.Opening
 	}
-	outcome, uiErr := tui.Run(cmd.Context(), s, topts, cmd.InOrStdin(), cmd.OutOrStdout())
+	outcome, uiErr := runChat(cmd.Context(), s, topts, cmd.InOrStdin(), cmd.OutOrStdout())
 	if uiErr != nil {
 		_, _ = fmt.Fprintf(errOut, "chat closed with an error: %v\n", uiErr)
 	}
