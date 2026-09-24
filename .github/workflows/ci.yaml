@@ -2,7 +2,9 @@
 # dependency hygiene. The server-side e2e round-trip (register → publish →
 # install → verify → yank) lives in the main repo's scripts/acceptance/
 # m3-cli.sh, which resolves and exercises this CLI against a live registry —
-# it does not run here because it needs the server repo.
+# it does not run here because it needs the server repo. `gitleaks` scans the
+# commits every event brings for secrets. Every job carries the fork guard
+# (below), and every action is pinned to a commit SHA (agentry-cli#165).
 name: ci
 on:
   push:
@@ -14,20 +16,43 @@ on:
 permissions:
   contents: read
 
+# The CI tools' versions, in one place (agentry-cli#165; the desktop's shape,
+# agentry#419): no step installs anything unpinned, and scripts/pins-check.sh
+# (the daily pins workflow) reads these lines to report newer releases.
+# GITLEAKS_SHA256 is the checksum of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
+# from the release's own gitleaks_${GITLEAKS_VERSION}_checksums.txt.
+env:
+  GOLANGCI_LINT_VERSION: v2.14.0
+  GOVULNCHECK_VERSION: v1.8.0
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
 # One run per ref: a new push to a PR cancels the superseded run (self-hosted
 # capacity is a handful of runners, not a cloud).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every job carries the fork guard
+#   if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+# (agentry-cli#165; the estate's shape, agentry#419, agentry-desktop#128). This
+# repository goes public at the 1.0 flip, and every job here runs on a
+# persistent self-hosted runner that shares one module cache with the release
+# builders. A pull request from a fork would otherwise execute its own `run:`
+# steps there. The guard lives in the file, where a diff shows it; the
+# repository setting "Require approval for all external contributors" stays on
+# as belt-and-braces (PUBLIC-FLIP.md item 5). A fork's pull request shows these
+# jobs as skipped; a maintainer who wants it built pushes its commits to a
+# branch here.
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           # The runner shares one persistent host module cache with every other
@@ -39,9 +64,10 @@ jobs:
       # and never in this container's global git config or go env either. The
       # container is long-lived, so a `--global` rewrite outlives the job that
       # wrote it and is readable by every later job that runs here, a pull
-      # request's own `run:` steps included — attacker-controlled text until
-      # the fork guard lands (agentry-cli#165) — and what it reads is a token
-      # for a *different* repository's private source (agentry#385). Both go
+      # request's own `run:` steps included (the fork guard on this job keeps a
+      # fork's out, agentry-cli#165, but the rewrite stays job-scoped) — and
+      # what it reads is a token for a *different* repository's private
+      # source (agentry#385). Both go
       # through the job environment instead. The job's last step removes the
       # file, and the runner wipes $RUNNER_TEMP at the start of every job,
       # which is what covers a run cancelled by `cancel-in-progress` before
@@ -62,9 +88,9 @@ jobs:
             echo "::warning::AGENTRY_BUILD_TOKEN is not set; the private blaktron modules resolve only from the runner's module cache"
           fi
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
         with:
-          version: latest
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
       - name: make check
         run: make check
       # ARCHITECTURE §9's runner row names runner-r0/r1 as its evidence;
@@ -112,12 +138,13 @@ jobs:
         run: rm -f "$RUNNER_TEMP/gitconfig"
 
   govulncheck:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           # The runner shares one persistent host module cache with every other
@@ -138,7 +165,51 @@ jobs:
           else
             echo "::warning::AGENTRY_BUILD_TOKEN is not set; the private blaktron modules resolve only from the runner's module cache"
           fi
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
       - name: Remove the job-scoped git credential
         if: always()
         run: rm -f "$RUNNER_TEMP/gitconfig"
+
+  # Secret scanning (agentry-cli#165): gitleaks over the commits this event
+  # brings — a pull request's own range, or a push's before..after — with the
+  # repository's .gitleaks.toml, failing on any hit. The binary is the release
+  # tarball at the pinned version, checked against the pinned checksum before
+  # it runs (the runner image's copy is not relied on). --redact: a hit names
+  # the file, line and rule, never the value.
+  gitleaks:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks at the pinned version, checksum-verified
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$tarball" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          "$RUNNER_TEMP/gitleaks/gitleaks" version
+      - name: Scan the commits this event brings
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -n "$PUSH_BEFORE" ] && ! printf '%s' "$PUSH_BEFORE" | grep -qE '^0+$' && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+            range="$PUSH_BEFORE..$PUSH_AFTER"
+          else
+            # A push with no usable "before" (a new branch, a force-push over
+            # a commit this clone does not have): the whole history.
+            range="$PUSH_AFTER"
+          fi
+          echo "scanning $range"
+          "$RUNNER_TEMP/gitleaks/gitleaks" detect --source . --config .gitleaks.toml \
+            --redact --no-banner --exit-code 1 --log-opts="$range"
