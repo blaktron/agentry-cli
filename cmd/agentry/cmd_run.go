@@ -326,7 +326,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		serverSpecs = mcpinstall.Specs(resolvedServers, m.Capabilities.MCPServers, pol.Images)
 	}
 
-	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), m, meta, installDir, workspaceDir, pol, polSHA, adapterName, serverSpecs, mode)
+	plan, planDir, err := ensurePlan(cmd.ErrOrStderr(), home, m, meta, installDir, workspaceDir, pol, polSHA, adapterName, serverSpecs, mode)
 	if err != nil {
 		return err
 	}
@@ -1052,10 +1052,18 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 }
 
 // ensurePlan reuses the installed plan when nothing it depends on changed
-// (§R6/§R9), otherwise recompiles.
-func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installdir.Meta, installDir, workspaceDir string,
+// (§R6/§R9), otherwise recompiles. A reused plan.json is first checked
+// against the integrity record its compile wrote under the runner home's
+// key (agentry-cli#266): a plan with no record this home can check is
+// recompiled, and one that does not match its record — changed after it
+// was compiled — refuses the run (exit 10).
+func ensurePlan(errOut io.Writer, home string, m *manifest.Manifest, meta *installdir.Meta, installDir, workspaceDir string,
 	pol *policy.Policy, polSHA, adapterName string, serverSpecs []spec.MCPServerSpec, mode manifest.Mode,
 ) (*spec.Plan, string, error) {
+	key, err := compile.IntegrityKey(home)
+	if err != nil {
+		return nil, "", engine.Classify(engine.ExitCLI, err)
+	}
 	// One plan per run mode (plan/<mode>/); a plan/plan.json from the
 	// single-plan layout is a stale install and is cleared.
 	if _, err := os.Stat(filepath.Join(installDir, "plan", "plan.json")); err == nil {
@@ -1063,7 +1071,22 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installdir.Meta, i
 	}
 	planDir := filepath.Join(installDir, "plan", string(mode))
 	runnerImage := pol.RunnerImageTag(runnerimage.ContentVersion())
-	if b, err := os.ReadFile(filepath.Join(planDir, "plan.json")); err == nil { //nolint:gosec // our install layout
+	b, rerr := compile.ReadInstalledPlan(key, planDir)
+	var tampered *compile.TamperedPlanError
+	switch {
+	case errors.As(rerr, &tampered):
+		return nil, "", engine.Classify(engine.ExitVerify, rerr)
+	case errors.Is(rerr, compile.ErrNoIntegrityRecord):
+		// Read again for the notice only, never for use: a plan from an
+		// older CLI has no record and says which CLI it was.
+		raw, _ := os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // our install layout
+		if v := cachedPlanVersion(raw); v != "" && v != spec.PlanVersion {
+			_, _ = fmt.Fprintf(errOut, "installed plan was compiled by an older CLI (plan version %s, want %s) — recompiling\n", v, spec.PlanVersion)
+		} else {
+			_, _ = fmt.Fprintln(errOut, "installed plan has no integrity record from this runner home — recompiling")
+		}
+	}
+	if rerr == nil {
 		// A plan from an older CLI is recompiled in place, and says so: a
 		// cached install used to stay stale after an upgrade until its
 		// first execution failed (agentry-cli#60).
@@ -1109,6 +1132,7 @@ func ensurePlan(errOut io.Writer, m *manifest.Manifest, meta *installdir.Meta, i
 		RunnerImage:  runnerImage,
 		CompiledBy:   version.Build(),
 		MCPServers:   serverSpecs,
+		IntegrityKey: key,
 	}, planDir)
 	if err != nil {
 		var refusal *compile.PolicyRefusal

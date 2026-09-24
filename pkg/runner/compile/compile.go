@@ -68,6 +68,12 @@ type Inputs struct {
 	// install step, not here: the compiler stays offline and
 	// deterministic over its inputs.
 	MCPServers []spec.MCPServerSpec
+	// IntegrityKey is the runner home's plan-integrity key (IntegrityKey).
+	// It is not part of the plan: when set, the compile also writes
+	// plan.json.hmac, so a later run can reuse the plan only as compiled
+	// (ReadInstalledPlan, agentry-cli#266). Nil writes no record, and a
+	// reader then recompiles rather than trust the plan.
+	IntegrityKey []byte
 }
 
 // PolicyRefusal is a run refused by operator policy — the §R8 exit-11
@@ -327,6 +333,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), planBytes, 0o644); err != nil { //nolint:gosec // ditto
 		return nil, fmt.Errorf("write plan.json: %w", err)
+	}
+	if in.IntegrityKey != nil {
+		if err := writeIntegrityRecord(in.IntegrityKey, planDir, planBytes); err != nil {
+			return nil, err
+		}
 	}
 	return plan, nil
 }

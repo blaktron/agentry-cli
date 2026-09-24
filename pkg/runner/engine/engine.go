@@ -218,7 +218,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	// harness (plan runner-m-r4-adapters §5) needs the published gateway
 	// and proxy addresses, known only now; the replacer learns them too.
 	rep = rd.replacer()
-	if err := renderPlanFiles(p.PlanDir, rd, "harness"); err != nil {
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, "harness"); err != nil {
 		return fail(env, redact, err)
 	}
 

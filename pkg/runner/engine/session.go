@@ -153,7 +153,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	// Harness files after the infrastructure, as in Run: a host-run harness
 	// needs the published addresses (plan runner-m-r4-adapters §5).
 	rep = rd.replacer()
-	if err := renderPlanFiles(p.PlanDir, rd, "harness"); err != nil {
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, "harness"); err != nil {
 		return fail(err)
 	}
 	if err := s.startHarness(ctx, token, rep); err != nil {
