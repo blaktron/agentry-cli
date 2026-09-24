@@ -655,3 +655,23 @@ func TestFetch(t *testing.T) {
 		}
 	})
 }
+
+// run_command's output passes fetch's secret scrub (agentry-cli#246): a
+// granted secret's value never reaches the model verbatim through exec.
+func TestRunCommandScrubsGrantedSecrets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("exec tests use sh/echo semantics")
+	}
+	t.Setenv("AGENTRY_T246_TOKEN", "tok-246-value")
+	spec := baseSpec(t)
+	spec.Exec = Exec{Commands: []string{"echo"}}
+	spec.Fetch.SecretEnv = []string{"AGENTRY_T246_TOKEN"}
+	s := newTestServer(t, spec)
+	got, isErr := s.toolRunCommand(rawArgs(t, map[string]any{"command": "echo", "args": []string{"before tok-246-value after"}}))
+	if isErr {
+		t.Fatalf("echo: %q", got)
+	}
+	if want := "exit code 0\nbefore [redacted:AGENTRY_T246_TOKEN] after\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}

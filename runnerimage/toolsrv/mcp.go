@@ -110,6 +110,16 @@ func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
 	if err := validateSpec(spec); err != nil {
 		return err
 	}
+	// Before any tool can run: a catalogued exec command must not be able
+	// to read the granted secrets out of /proc/<this pid>/environ
+	// (agentry-cli#246, DR-34). Fail closed when exec is granted — the
+	// protection is what makes exec and secrets safe to grant together.
+	if err := hideEnvironment(); err != nil {
+		if len(spec.Exec.Commands) > 0 {
+			return fmt.Errorf("hide the tools server's environment from exec children: %w", err)
+		}
+		_, _ = fmt.Fprintf(logw, "agentry-runner tools: could not mark the process non-dumpable: %v\n", err)
+	}
 	s, err := newServer(spec, out, logw)
 	if err != nil {
 		return err
