@@ -3,10 +3,14 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // TestRelaysStartedBy reads relay names out of the gateway's own lines
@@ -170,4 +174,225 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 		}
 		check(t, f)
 	})
+}
+
+// relayHost is the one docker host two runs share: the relay sidecars on
+// the shared relay network are host state, not any one run's. listed is a
+// barrier — each run's relay listing waits (up to a bound) until both runs
+// have listed, the interleaving in which list-then-start is a race.
+type relayHost struct {
+	mu       sync.Mutex
+	relays   map[string]bool
+	arrived  int
+	listed   chan struct{}
+	beside   int // gateways started while another run's relay was up
+	gateways int
+}
+
+func newRelayHost() *relayHost {
+	return &relayHost{relays: map[string]bool{}, listed: make(chan struct{})}
+}
+
+// hostDocker is one run's view of the shared host: its own Fake records
+// its calls, and the relay list and the relays its gateway starts are the
+// host's.
+type hostDocker struct {
+	*dockerx.Fake
+	host  *relayHost
+	relay string
+}
+
+func (h hostDocker) PSByLabel(ctx context.Context, label string) ([]string, error) {
+	if label != relayLabel {
+		return h.Fake.PSByLabel(ctx, label)
+	}
+	_, _ = h.Fake.PSByLabel(ctx, label) // recorded on this run's fake
+	// The listing answers with the network as it is now, and returns only
+	// once both runs have listed (or a bound passes): neither gateway can
+	// start between the two listings.
+	h.host.mu.Lock()
+	var names []string
+	for n := range h.host.relays {
+		names = append(names, n)
+	}
+	h.host.arrived++
+	if h.host.arrived == 2 {
+		close(h.host.listed)
+	}
+	h.host.mu.Unlock()
+	select {
+	case <-h.host.listed:
+	case <-time.After(time.Second):
+	}
+	return names, nil
+}
+
+func (h hostDocker) RunDetached(ctx context.Context, r dockerx.RunSpec) error {
+	if err := h.Fake.RunDetached(ctx, r); err != nil {
+		return err
+	}
+	if strings.HasSuffix(r.Name, "-gateway") {
+		h.host.mu.Lock()
+		h.host.gateways++
+		if len(h.host.relays) > 0 {
+			h.host.beside++
+		}
+		h.host.relays[h.relay] = true
+		h.host.mu.Unlock()
+	}
+	return nil
+}
+
+func (h hostDocker) RemoveForce(ctx context.Context, name string) error {
+	h.host.mu.Lock()
+	delete(h.host.relays, name)
+	h.host.mu.Unlock()
+	return h.Fake.RemoveForce(ctx, name)
+}
+
+// TestConcurrentRelayRunsDoNotShareTheRelayNetwork (agentry-cli#268): two
+// runs whose plans need relays, started together on one host, both list
+// the relay network before either gateway is up. Listing and then starting
+// with nothing held across the two let both see an empty network and both
+// start, each gateway's relays beside the other's. The second must be
+// refused.
+func TestConcurrentRelayRunsDoNotShareTheRelayNetwork(t *testing.T) {
+	host := newRelayHost()
+	home := t.TempDir()
+	type result struct {
+		env *receipt.Envelope
+		err error
+	}
+	results := make([]result, 2)
+	var wg sync.WaitGroup
+	for i := range 2 {
+		p, f := serverFixture(t)
+		happyFake(f)
+		p.RunID = fmt.Sprintf("cafe000%d", i)
+		p.RunnerHome = home
+		relay := fmt.Sprintf("docker-mcp-l4proxy-run%d", i)
+		f.LogsByName = map[string]string{"agentry-" + p.RunID + "-gateway": "starting l4 proxy " + relay + " for api.example, ports 443\n"}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			env, err := Run(context.Background(), hostDocker{Fake: f, host: host, relay: relay}, p)
+			results[i] = result{env, err}
+		}()
+	}
+	wg.Wait()
+	ok, refused := 0, 0
+	for _, r := range results {
+		var ce *ClassifiedError
+		switch {
+		case r.err == nil && r.env.Status == "ok":
+			ok++
+		case errors.As(r.err, &ce) && ce.Code == ExitGateway:
+			refused++
+		default:
+			t.Errorf("unexpected outcome: %v", r.err)
+		}
+	}
+	if host.beside != 0 || ok != 1 || refused != 1 {
+		t.Fatalf("two relay runs at once: %d ran, %d refused, %d gateways of %d started beside another run's relays", ok, refused, host.beside, host.gateways)
+	}
+}
+
+// TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath
+// (agentry-cli#268): the lock is taken before the relay listing, held
+// while the run is going — a relay can start late, after the gateway's
+// probe — and released by teardown after the relays are reaped, on the
+// success path and on a refusal alike; a run without relays never takes it.
+func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
+	heldNow := func(home string) bool {
+		release, err := holdRelayLock(home)
+		if err != nil {
+			return true
+		}
+		release()
+		return false
+	}
+	t.Run("held during the run, released after the reap", func(t *testing.T) {
+		p, f := serverFixture(t)
+		happyFake(f)
+		p.RunnerHome = t.TempDir()
+		f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "starting l4 proxy docker-mcp-l4proxy-ours for api.example, ports 443\n"}
+		f.ByLabel = map[string][]string{relayLabel: nil}
+		var duringAgent, atReap bool
+		f.OnForeground = func(r dockerx.RunSpec) {
+			if strings.HasSuffix(r.Name, "-agent") {
+				duringAgent = heldNow(p.RunnerHome)
+				f.ByLabel[relayLabel] = []string{"docker-mcp-l4proxy-ours"}
+			}
+		}
+		d := &reapProbe{Fake: f, onRemove: func(name string) {
+			if name == "docker-mcp-l4proxy-ours" {
+				atReap = heldNow(p.RunnerHome)
+			}
+		}}
+		if env, err := Run(context.Background(), d, p); err != nil || env.Status != "ok" {
+			t.Fatalf("run: %v", err)
+		}
+		if !duringAgent || !atReap {
+			t.Fatalf("lock held while the agent ran: %v, while the relays were reaped: %v", duringAgent, atReap)
+		}
+		if heldNow(p.RunnerHome) {
+			t.Fatal("the lock outlived the run")
+		}
+	})
+	t.Run("released when the relay listing refuses", func(t *testing.T) {
+		p, f := serverFixture(t)
+		happyFake(f)
+		p.RunnerHome = t.TempDir()
+		f.ByLabel = map[string][]string{relayLabel: {"docker-mcp-l4proxy-theirs"}}
+		if _, err := Run(context.Background(), f, p); err == nil {
+			t.Fatal("foreign relays did not refuse the run")
+		}
+		if heldNow(p.RunnerHome) {
+			t.Fatal("a refused run kept the lock")
+		}
+	})
+	t.Run("a held lock refuses before anything is listed", func(t *testing.T) {
+		p, f := serverFixture(t)
+		happyFake(f)
+		p.RunnerHome = t.TempDir()
+		release, err := holdRelayLock(p.RunnerHome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		_, err = Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), RelayLockFile) {
+			t.Fatalf("want exit %d naming the lock, got %v", ExitGateway, err)
+		}
+		for _, op := range f.Ops() {
+			if strings.HasPrefix(op, "PSByLabel:"+relayLabel) || strings.HasPrefix(op, "RunDetached:agentry-cafe0000-gateway") {
+				t.Errorf("a run refused at the lock went on to %s", op)
+			}
+		}
+	})
+	t.Run("a run without relays takes no lock", func(t *testing.T) {
+		p, f := fixture(t)
+		happyFake(f)
+		p.RunnerHome = t.TempDir()
+		release, err := holdRelayLock(p.RunnerHome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if env, err := Run(context.Background(), f, p); err != nil || env.Status != "ok" {
+			t.Fatalf("a run with no relays was held by the relay lock: %v", err)
+		}
+	})
+}
+
+// reapProbe observes each forced removal as it happens.
+type reapProbe struct {
+	*dockerx.Fake
+	onRemove func(name string)
+}
+
+func (r *reapProbe) RemoveForce(ctx context.Context, name string) error {
+	r.onRemove(name)
+	return r.Fake.RemoveForce(ctx, name)
 }
