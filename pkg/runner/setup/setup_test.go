@@ -568,3 +568,27 @@ func TestConfigureModelRecordsTheCredentialKind(t *testing.T) {
 		t.Fatalf("bad kind: %v", err)
 	}
 }
+
+// TestGuidedProfileSaysEachKeysHelp: the release guide's connect help
+// (DEV-141, agentry-cli#257) is printed before the question for that key,
+// and a key without help gets none.
+func TestGuidedProfileSaysEachKeysHelp(t *testing.T) {
+	p := &scriptPrompter{confirm: true}
+	_, err := GuidedProfile(p, GuidedProfileOpts{
+		Ref: "demo/x@1.0.0", Digest: "sha256:abcdef",
+		Secrets: []string{"GITHUB_TOKEN", "OTHER"},
+		Help:    map[string]string{"GITHUB_TOKEN": "A fine-grained token with read access to pull requests"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var help []string
+	for _, s := range p.said {
+		if strings.Contains(s, ": ") && (strings.HasPrefix(s, "GITHUB_TOKEN") || strings.HasPrefix(s, "OTHER")) {
+			help = append(help, s)
+		}
+	}
+	if len(help) != 1 || help[0] != "GITHUB_TOKEN: A fine-grained token with read access to pull requests" {
+		t.Fatalf("help said = %v", help)
+	}
+}

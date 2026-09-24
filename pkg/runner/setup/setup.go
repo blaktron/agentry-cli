@@ -339,6 +339,10 @@ type GuidedProfileOpts struct {
 	DefaultKeep bool
 	// KeepDecided suppresses the keep question (the flag already chose).
 	KeepDecided bool
+	// Help is the release guide's connect help per secret name (DEV-141):
+	// where to create the key, which scopes it needs. Printed before the
+	// question for that key.
+	Help map[string]string
 }
 
 // GuidedProfile runs the §P3 conversation and returns the new profile.
@@ -357,6 +361,9 @@ func GuidedProfile(p Prompter, opts GuidedProfileOpts) (*profile.Profile, error)
 	names := append([]string(nil), opts.Secrets...)
 	sort.Strings(names)
 	for _, name := range names {
+		if h := opts.Help[name]; h != "" {
+			p.Say(fmt.Sprintf("%s: %s", name, h))
+		}
 		v, err := p.AskSecret(fmt.Sprintf("Value for %s (empty = resolve from the environment at run time)", name))
 		if err != nil {
 			return nil, err
