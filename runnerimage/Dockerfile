@@ -8,9 +8,12 @@
 # the agentry-cli repo.
 #
 # The context is self-contained on purpose (RQ1): module sources plus a
-# generated go.mod, no third-party imports, so the build needs network
-# access for the two public base images below and for nothing else — no
-# module proxy, no registries of ours.
+# generated go.mod, no third-party imports, so the build needs no module
+# proxy. What it does fetch: the two base images below, which since DR-32
+# come from Agentry's registry (ghcr.io/blaktron), and — because of the
+# `# syntax=` line above — BuildKit's Dockerfile frontend,
+# docker.io/docker/dockerfile:1, from Docker Hub on every build
+# (agentry-cli#281).
 #
 # One binary serves the `tools` (MCP stdio), `proxy` (CONNECT allowlist),
 # and `probe` roles; the gateway and the engine pick the role via argv.
@@ -23,15 +26,22 @@
 # table — not the container user — is the enforcement boundary.
 
 # Both bases come from Agentry's own mirrors (blaktron/agentry-dockerimages),
-# digest-verified equal to the upstream images they mirror, so this embedded
-# context pulls nothing from Docker Hub — which rate-limits anonymous pulls at
-# 100 per hour per IP, a limit one build of this image can reach on a shared
-# address. Both are pinned by digest (name:tag@sha256:…, the digests recorded
-# in that repository's images.tsv; agentry-cli#269, DR-32): the digest fixes
-# the bytes, and the tag is only a label for a reader. GO_IMAGE is overridden
-# at build time from the policy's images.goBuilder; RUNTIME_IMAGE is an
-# argument for the same reason, so an operator who mirrors elsewhere can point
-# both at their own registry.
+# digest-verified equal to the upstream images they mirror, so neither base is
+# pulled from Docker Hub, which rate-limits anonymous pulls at 100 per IP (the
+# registry's header gives the window as an hour, Docker's documentation as six
+# hours; a shared address can reach either). The frontend named by the
+# `# syntax=` line still is (agentry-cli#281). Both bases are pinned by digest
+# (name:tag@sha256:…, the digests recorded in that repository's images.tsv;
+# agentry-cli#269, DR-32): the digest fixes the bytes, and the tag is only a
+# label for a reader.
+#
+# The two arguments are NOT equally reachable. GO_IMAGE is set by the CLI on
+# every build from the policy's images.goBuilder, so an operator repoints the
+# builder in policy.yaml. RUNTIME_IMAGE has no policy field and the CLI never
+# passes it: the default below is always what a run's image is built on, and
+# repointing it means building this context yourself with
+# --build-arg RUNTIME_IMAGE=… and naming the result in the policy's
+# images.runner. Nothing in policy.yaml changes it.
 ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
 ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 FROM ${GO_IMAGE} AS build
