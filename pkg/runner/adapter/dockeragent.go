@@ -394,7 +394,10 @@ func textField(obj map[string]any) string {
 }
 
 // usageFields extracts token/cost accounting from a top-level or nested
-// "usage" object.
+// "usage" object. On docker-agent's token_usage event input_tokens and
+// output_tokens are that model request's own (input fresh plus cached), so
+// the engine sums them; cost is the session's running total, so it keeps
+// the high-water mark (agentry-cli#141).
 func usageFields(obj map[string]any) (in, out int64, cost float64, ok bool) {
 	u := obj
 	if nested, isMap := obj["usage"].(map[string]any); isMap {
