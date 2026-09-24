@@ -7,7 +7,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 )
+
+// procStartTime is owner.StartTime: the pid's start time, which tells the
+// group this run started from a group a reused pid now leads.
+func procStartTime(pid int) (uint64, bool) { return owner.StartTime(pid) }
 
 // configProcess puts the harness in its own process group so a budget or
 // timeout kill reaches every child it spawned, gives it SIGTERM first and
