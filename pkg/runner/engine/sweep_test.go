@@ -58,7 +58,7 @@ func TestSweepRemovesOnlyWhatADeadRunLeft(t *testing.T) {
 		{Name: "agentry-old00004-gateway", Labels: map[string]string{"agentry.run": "old00004"}},
 	}}
 	var stderr strings.Builder
-	sweepAbandoned(context.Background(), f, &stderr)
+	SweepAbandoned(context.Background(), f, &stderr)
 
 	ops := f.Ops()
 	for _, want := range []string{

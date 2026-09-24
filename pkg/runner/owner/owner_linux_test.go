@@ -74,3 +74,34 @@ func TestDeadOnlyWhatItCanProve(t *testing.T) {
 		}
 	}
 }
+
+// TestUnreadableIsNotDead: a process record that exists but cannot be read
+// (hidepid with a non-dumpable owner, an LSM denial) proves nothing, so its
+// owner is not dead; only an absent record is.
+func TestUnreadableIsNotDead(t *testing.T) {
+	root := t.TempDir()
+	saved := procRoot
+	procRoot = root
+	t.Cleanup(func() { procRoot = saved })
+	// A directory where the stat file should be: the read fails with
+	// something other than "does not exist", as a denied read would, even
+	// for root.
+	if err := os.MkdirAll(root+"/4242/stat", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if ownerDead(4242, 1) {
+		t.Error("an unreadable record read as dead")
+	}
+	if !ownerDead(4243, 1) {
+		t.Error("an absent record did not read as dead")
+	}
+	if err := os.MkdirAll(root+"/4244", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root+"/4244/stat", []byte("4244 (x) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 777 0 0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ownerDead(4244, 777) || !ownerDead(4244, 778) {
+		t.Error("a readable record: same start time must be live, another start time dead")
+	}
+}

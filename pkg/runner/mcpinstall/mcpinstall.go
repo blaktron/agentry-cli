@@ -741,9 +741,5 @@ func checkStore(storeDir string, prior *Resolved, logw io.Writer) error {
 // installLabels are the installer container's labels: the server it builds
 // and the owner labels of this process (none where owner has no identity).
 func installLabels(serverID string) map[string]string {
-	l := map[string]string{"agentry.mcpinstall": serverID}
-	for k, v := range owner.Labels() {
-		l[k] = v
-	}
-	return l
+	return owner.With(map[string]string{"agentry.mcpinstall": serverID})
 }

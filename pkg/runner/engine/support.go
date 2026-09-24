@@ -600,14 +600,14 @@ func (t *teardown) run() {
 		t.funcs[i](ctx)
 	}
 	if t.runID != "" {
-		if leftover, err := t.d.PSByLabel(ctx, "agentry.run="+t.runID); err == nil {
+		if leftover, err := t.d.PSByLabel(ctx, runLabel+"="+t.runID); err == nil {
 			for _, name := range leftover {
 				_ = t.d.RemoveForce(ctx, name)
 			}
 		}
 		// Volumes carry the same label (the session store): after the
 		// containers, never before, since a volume in use cannot go.
-		if leftover, err := t.d.VolumesByLabel(ctx, "agentry.run="+t.runID); err == nil {
+		if leftover, err := t.d.VolumesByLabel(ctx, runLabel+"="+t.runID); err == nil {
 			for _, name := range leftover {
 				_ = t.d.VolumeRemove(ctx, name)
 			}
@@ -618,17 +618,16 @@ func (t *teardown) run() {
 // Naming helpers: every run-scoped docker object carries the run id in its
 // name and an agentry.run label for sweeps, plus the owner labels (package
 // owner) that let a later run tell a crashed run's leftovers from a live
-// sibling's (sweepAbandoned).
+// sibling's (SweepAbandoned).
 func containerName(runID, role string) string { return "agentry-" + runID + "-" + role }
 func networkName(runID string) string         { return "agentry-" + runID + "-net" }
 func sessionVolumeName(runID string) string   { return "agentry-" + runID + "-session" }
 func runLabels(runID string) map[string]string {
-	l := map[string]string{"agentry.run": runID}
-	for k, v := range owner.Labels() {
-		l[k] = v
-	}
-	return l
+	return owner.With(map[string]string{runLabel: runID})
 }
+
+// runLabel keys every run-scoped object by its run id.
+const runLabel = "agentry.run"
 
 // NewRunID mints a run identifier. Exported because the CLI derives the
 // default output folder name from it before handing it to Run.

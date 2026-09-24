@@ -365,6 +365,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 	if len(resolvedServers) > 0 {
+		// A CLI killed mid-install left its builder running under the
+		// same fixed name: sweep what dead runs left before building
+		// (agentry-cli#161). engine.Run sweeps again; the second finds
+		// nothing.
+		engine.SweepAbandoned(cmd.Context(), docker, cmd.ErrOrStderr())
 		if err := mcpinstall.EnsureInstalled(cmd.Context(), docker, resolvedServers, serversDir,
 			pol.MCPRegistries, pol.Images, pol.Docker, cmd.ErrOrStderr()); err != nil {
 			return engine.Classify(engine.ExitGateway, err)

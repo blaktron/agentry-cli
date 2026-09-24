@@ -71,7 +71,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 
 	// What a run whose process died left behind goes first, before this
 	// run adds its own (agentry-cli#161).
-	sweepAbandoned(ctx, d, p.Stderr)
+	SweepAbandoned(ctx, d, p.Stderr)
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
 	s := &liveSession{
 		d: d, p: p, env: env, td: td, start: start, runID: runID,

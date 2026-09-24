@@ -183,7 +183,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	// anything still carrying this run's label.
 	// What a run whose process died left behind goes first, before this
 	// run adds its own (agentry-cli#161).
-	sweepAbandoned(ctx, d, p.Stderr)
+	SweepAbandoned(ctx, d, p.Stderr)
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
 	defer td.run()
 

@@ -15,8 +15,10 @@
 package owner
 
 import (
+	"maps"
 	"os"
 	"strconv"
+	"sync"
 )
 
 // The labels an owned object carries.
@@ -27,29 +29,44 @@ const (
 )
 
 // Labels are this process's owner labels, or nil where Identity or the
-// process's own start time cannot be read.
-func Labels() map[string]string {
-	id, ok := Identity()
-	if !ok {
-		return nil
+// process's own start time cannot be read. Read once: none of it changes
+// for the life of the process.
+var Labels = func() func() map[string]string {
+	once := sync.OnceValue(func() map[string]string {
+		id, ok := Identity()
+		if !ok {
+			return nil
+		}
+		pid := os.Getpid()
+		start, ok := StartTime(pid)
+		if !ok {
+			return nil
+		}
+		return map[string]string{
+			LabelHost:  id,
+			LabelPID:   strconv.Itoa(pid),
+			LabelStart: strconv.FormatUint(start, 10),
+		}
+	})
+	return func() map[string]string { return maps.Clone(once()) }
+}()
+
+// With returns labels plus this process's owner labels, as a new map.
+func With(labels map[string]string) map[string]string {
+	out := maps.Clone(labels)
+	if out == nil {
+		out = map[string]string{}
 	}
-	pid := os.Getpid()
-	start, ok := StartTime(pid)
-	if !ok {
-		return nil
-	}
-	return map[string]string{
-		LabelHost:  id,
-		LabelPID:   strconv.Itoa(pid),
-		LabelStart: strconv.FormatUint(start, 10),
-	}
+	maps.Copy(out, Labels())
+	return out
 }
 
 // Dead reports whether the owner a set of labels names is provably gone:
 // labelled from this process's Identity, with a pid and start time that
-// parse, and no live process with that pid and that start time. Anything it
-// cannot prove — another identity, a missing or malformed label, a pid that
-// is still the same process — is not dead.
+// parse, and either no process with that pid or one with another start time.
+// Anything it cannot prove — another identity, a missing or malformed label,
+// a process record that exists but cannot be read, a pid that is still the
+// same process — is not dead.
 func Dead(labels map[string]string) bool {
 	id, ok := Identity()
 	if !ok || labels[LabelHost] != id {
@@ -63,6 +80,5 @@ func Dead(labels map[string]string) bool {
 	if err != nil {
 		return false
 	}
-	now, alive := StartTime(pid)
-	return !alive || now != start
+	return ownerDead(pid, start)
 }
