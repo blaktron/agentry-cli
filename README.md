@@ -143,7 +143,9 @@ manifest + operator policy into a deterministic run plan → execute:
 - **The agent container is isolated**: internal-only network whose sole
   reachable endpoints are the gateway (Bearer-token MCP) and an
   allowlisting egress proxy for the model API. No workspace mount, no
-  docker socket, no manifest secrets.
+  docker socket, no manifest secrets. It does hold the model API key: the
+  harness inside it calls the model, so the key is in its environment,
+  under the variable that harness reads, and the receipt says so.
 - **The containers the runner starts** (the proxy, the gateway, the
   probe, the agent, the MCP server installer) drop all capabilities, set
   no-new-privileges, and are bounded by the policy's `docker.limits` (2g
@@ -159,7 +161,11 @@ manifest + operator policy into a deterministic run plan → execute:
   BriefAgent's report files, `result.json` (the machine-readable envelope),
   and `receipts/` (event stream, gateway log, the exact run plan).
   The runner tears down containers, networks, and secret files on every
-  exit path.
+  exit path. Each teardown step is best effort: a docker call that fails
+  is not retried and never replaces the run's own error, so something can
+  be left behind. A sweep at the end of the run removes any container or
+  volume still carrying the run's label, and on Linux the next run removes
+  the containers of a run whose process died.
 - **`agentry install ns/name`** lays the verified release down in the
   runner home, where `agentry run` reads it — no second fetch — with the
   Claude-skill or AGENTS.md shape beside it (the policy's coding agent or
