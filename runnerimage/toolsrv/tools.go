@@ -783,17 +783,22 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	// Run blocked past the kill; five seconds of grace, then move on.
 	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
+	// The output passes the same scrub as fetch's (agentry-cli#246): the
+	// child cannot read this process's environment (hideEnvironment), but a
+	// granted secret that reached it some other way must still not be
+	// echoed to the model verbatim.
+	text := s.scrubSecrets(out.text())
 	if err != nil && ctx.Err() == context.DeadlineExceeded {
-		return fmt.Sprintf("run_command: %q timed out after %ds\n%s", a.Command, limitSec, out.text()), true
+		return fmt.Sprintf("run_command: %q timed out after %ds\n%s", a.Command, limitSec, text), true
 	}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
-		return "exit code 0\n" + out.text(), false
+		return "exit code 0\n" + text, false
 	case errors.As(err, &exitErr):
 		// Deliberately NOT isError: the exit code is information the
 		// agent acts on (§R3), not a tool malfunction.
-		return fmt.Sprintf("exit code %d\n%s", exitErr.ExitCode(), out.text()), false
+		return fmt.Sprintf("exit code %d\n%s", exitErr.ExitCode(), text), false
 	default:
 		return "run_command: " + err.Error(), true
 	}

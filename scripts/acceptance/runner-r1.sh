@@ -77,4 +77,41 @@ LINE10=$(echo "$OUT" | grep '"id":10')
 echo "$LINE10" | grep -q '"isError":true' && fail "stringified maxBytes refused: $LINE10"
 echo "$LINE10" | grep -q 'truncated at 9 bytes' || fail "stringified maxBytes 9 did not cap the read: $LINE10"
 
+# agentry-cli#246 (DR-34): a catalogued exec command must not read the tools
+# server's environment, which holds every granted secret. The server starts
+# with a planted secret in its environment block — what /proc/<pid>/environ
+# shows — and a declared `sh` tries to read it from its parent (the server).
+# A caller holding CAP_SYS_PTRACE (a privileged container) can read any
+# non-dumpable process; the gateway's tool containers do not hold it, so the
+# check is skipped, and says so, only there. Off Linux there is no /proc.
+if [ -r /proc/self/status ]; then
+  CAPEFF=$(awk '/^CapEff:/{print $2}' /proc/self/status)
+  if (( 0x$CAPEFF & 0x80000 )); then
+    echo "runner-r1: exec environ check skipped (this shell holds CAP_SYS_PTRACE; the tool containers do not)"
+  else
+    SECRET="r1-planted-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+    cat >"$WORK/spec-exec.json" <<EOF
+{
+  "specVersion": "2",
+  "workspaceDir": "$WORK/ws",
+  "outDir": "$WORK/out",
+  "fsRead": { "enabled": false },
+  "fsWrite": { "enabled": false },
+  "fetch": { "enabled": false, "allowAll": false, "secretEnv": ["R1_GRANTED_SECRET"] },
+  "exec": { "commands": ["sh", "cat"] },
+  "limits": {}
+}
+EOF
+    EREQS='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"r1","version":"0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"sh","args":["-c","cat /proc/$PPID/environ; echo; echo probed=$PPID"]}}}'
+    EOUT=$(printf '%s\n' "$EREQS" | R1_GRANTED_SECRET="$SECRET" "$AGENTRY" runner-tools --spec "$WORK/spec-exec.json" 2>/dev/null)
+    ELINE=$(echo "$EOUT" | grep '"id":2')
+    echo "$ELINE" | grep -q 'probed='            || fail "exec environ probe did not run: $ELINE"
+    echo "$EOUT" | grep -q "$SECRET"             && fail "an exec child read the tools server's environment (agentry-cli#246): $ELINE"
+    echo "$ELINE" | grep -q 'Permission denied'  || fail "reading the tools server's environ was not refused: $ELINE"
+    echo "runner-r1: exec cannot read the tools server's environment"
+  fi
+fi
+
 echo "runner-r1: all checks passed"
