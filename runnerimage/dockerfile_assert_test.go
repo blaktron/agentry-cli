@@ -133,3 +133,24 @@ func copyFile(t *testing.T, src, dst string, mode os.FileMode) {
 		t.Fatal(err)
 	}
 }
+
+// The Dockerfile names no external frontend (agentry-cli#281). A `# syntax=`
+// parser directive makes BuildKit pull that frontend image before it reads a
+// line of the file — docker.io/docker/dockerfile:1, by a tag that can move, on
+// every build of every client's first run — and that image's code parses the
+// build. The file uses nothing the daemon's built-in frontend lacks, so it
+// carries no directive and the bases (DR-32) are the only images the build
+// fetches. Directives are only honoured in the leading comment block, but any
+// `syntax=` directive line anywhere is refused so one cannot creep back in.
+func TestDockerfileNamesNoExternalFrontend(t *testing.T) {
+	df, err := contextFS.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(string(df), "\n") {
+		l := strings.ToLower(strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "#")), ""))
+		if strings.HasPrefix(strings.TrimSpace(line), "#") && strings.HasPrefix(l, "syntax=") {
+			t.Errorf("Dockerfile line %d is a syntax directive (%q): it makes BuildKit pull an external frontend on every build (agentry-cli#281)", i+1, line)
+		}
+	}
+}

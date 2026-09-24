@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # The agentry-runner image (RUNNER-PLAN §R7). This file ships EMBEDDED in
 # the agentry CLI: `runnerimage.Materialize` writes this build context to
 # ~/.agentry/runner/image/ on first use, and the engine builds
@@ -10,10 +8,12 @@
 # The context is self-contained on purpose (RQ1): module sources plus a
 # generated go.mod, no third-party imports, so the build needs no module
 # proxy. What it does fetch: the two base images below, which since DR-32
-# come from Agentry's registry (ghcr.io/blaktron), and — because of the
-# `# syntax=` line above — BuildKit's Dockerfile frontend,
-# docker.io/docker/dockerfile:1, from Docker Hub on every build
-# (agentry-cli#281).
+# come from Agentry's registry (ghcr.io/blaktron), and nothing else. The
+# file deliberately carries no `# syntax=` parser directive: one would make
+# BuildKit pull its frontend image (docker.io/docker/dockerfile:1, by a tag
+# that can move) before every build and let that image's code parse this
+# file, and nothing here needs more than the daemon's built-in frontend
+# (agentry-cli#281; TestDockerfileNamesNoExternalFrontend holds it).
 #
 # One binary serves the `tools` (MCP stdio), `proxy` (CONNECT allowlist),
 # and `probe` roles; the gateway and the engine pick the role via argv.
@@ -29,8 +29,8 @@
 # digest-verified equal to the upstream images they mirror, so neither base is
 # pulled from Docker Hub, which rate-limits anonymous pulls at 100 per IP (the
 # registry's header gives the window as an hour, Docker's documentation as six
-# hours; a shared address can reach either). The frontend named by the
-# `# syntax=` line still is (agentry-cli#281). Both bases are pinned by digest
+# hours; a shared address can reach either). With no `# syntax=` directive
+# (above), nothing else is either. Both bases are pinned by digest
 # (name:tag@sha256:…, the digests recorded in that repository's images.tsv;
 # agentry-cli#269, DR-32): the digest fixes the bytes, and the tag is only a
 # label for a reader.
