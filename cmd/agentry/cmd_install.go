@@ -446,9 +446,21 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// The archive is the verified bytes; when it carries its manifest, that
 	// is the one the export reads (a v1 release may ship without one, and
 	// then the resolve manifest validated above stands).
-	if am, err := manifestFromInstallArchive(staging, m, res); err != nil {
+	am, err := manifestFromInstallArchive(staging, m, res)
+	if err != nil {
 		return err
-	} else {
+	}
+	// The consent above was on the resolve manifest's contract; the export
+	// compiles its grants from the archive's. Hold the archive to what was
+	// consented before anything is written, and record its contract: never
+	// wider, possibly narrower (agentry-cli#252). A legacy archive without
+	// agent.yaml hands back m itself, which has nothing to be held to.
+	if am != m {
+		if widened := installed.ArchiveWidenings(m.Capabilities, am.Capabilities); len(widened) > 0 {
+			return fmt.Errorf("the archive of %s/%s@%s declares more than the registry said it would — refusing to install: its agent.yaml %s",
+				res.Namespace, res.Name, res.Version, strings.Join(widened, "; "))
+		}
+		nextCaps = installed.Snapshot(am.Capabilities)
 		m = am
 	}
 

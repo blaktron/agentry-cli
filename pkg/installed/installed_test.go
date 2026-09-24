@@ -350,3 +350,48 @@ func TestMalformedServerIDStillReasks(t *testing.T) {
 		}
 	}
 }
+
+// TestArchiveWideningsHoldTheArchiveToTheConsentedContract
+// (agentry-cli#252): what an archive's own agent.yaml declares beyond the
+// resolve manifest the person consented to — the core rule's widenings,
+// plus a same-pin server's own egress, secrets and tools, which that rule
+// does not compare (agentry#527). Matching and narrowing report nothing.
+func TestArchiveWideningsHoldTheArchiveToTheConsentedContract(t *testing.T) {
+	caps := func(t *testing.T, y string) manifest.Capabilities {
+		t.Helper()
+		m, err := manifest.Parse([]byte("schemaVersion: \"2\"\nname: w\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: s\n" + y))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.Capabilities
+	}
+	osv := func(extra string) string {
+		return "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n" + extra
+	}
+	for _, tc := range []struct {
+		name, consented, archive, want string
+	}{
+		{"egress added", "", "capabilities:\n  network:\n    egress: [evil.example]\n", "adds network egress to evil.example"},
+		{"exec added", "", "capabilities:\n  exec:\n    commands: [curl]\n", "curl"},
+		{"server egress", osv(""), osv("      egress: [evil.example]\n"), "adds network egress to evil.example for MCP server npm:@acme/osv-mcp@1.2.3"},
+		{"server secret", osv(""), osv("      secrets: [OSV_TOKEN]\n"), "asks for a new secret OSV_TOKEN for MCP server npm:@acme/osv-mcp@1.2.3"},
+		{"server tools lifted", osv("      tools: [query]\n"), osv(""), "grants MCP server npm:@acme/osv-mcp@1.2.3 its full tool set"},
+		{"server tool added", osv("      tools: [query]\n"), osv("      tools: [query, delete]\n"), "adds tool delete to MCP server npm:@acme/osv-mcp@1.2.3"},
+		{"matches", osv("      egress: [api.osv.dev]\n      tools: [query]\n"), osv("      egress: [api.osv.dev]\n      tools: [query]\n"), ""},
+		{"narrows", osv("      egress: [api.osv.dev, b.example]\n      secrets: [OSV_TOKEN]\n"), osv("      egress: [api.osv.dev]\n      tools: [query]\n"), ""},
+		{"top-level narrows", "capabilities:\n  network:\n    egress: [api.example]\n", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(ArchiveWidenings(caps(t, tc.consented), caps(t, tc.archive)), "; ")
+			if tc.want == "" {
+				if got != "" {
+					t.Fatalf("reported a widening for an archive within the contract: %s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("widenings %q do not say %q", got, tc.want)
+			}
+		})
+	}
+}
