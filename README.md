@@ -44,17 +44,23 @@ away at the flip.
 
 ## Releasing
 
-A release is a tag `v<major>.<minor>.<patch>` on `main`:
+A release is a tag `v<major>.<minor>.<patch>` on a commit that has been the
+head of `main` (a production release, baking `https://secureagentry.net`) or
+of `dev` (a dev release, baking `https://dev.secureagentry.net`).
+`build/release.env` names both registries and is the same on both branches;
+`scripts/release-registry.sh` picks one by the commit's first-parent history
+and refuses any other commit (agentry-cli#240). `agentry --version` prints the
+registry a binary falls back to. A production release tags main's head:
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+git fetch origin && git tag v0.1.0 origin/main && git push origin v0.1.0
 ```
 
 (plan `agentry-notes/plans/cli-release-signing.md`). A `workflow_dispatch`
 of the `release` workflow from `main` is a dry run of the same job. The
 workflow builds the five binaries with `make dist` (linux and darwin on amd64
 and arm64, windows on amd64; the tag is the version, bare, and
-`build/release.env` names the registry they talk to by default), signs the
+the registry they talk to by default is the branch's, as above), signs the
 Windows exe against Azure Artifact Signing in the same job — the job's
 identity is the OIDC token GitHub mints for it in the `release` environment,
 so it holds no Azure secret; `jsign` signs, `osslsigncode` verifies to the

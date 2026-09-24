@@ -1,9 +1,11 @@
 # The CLI's release (agentry-cli#196; plan cli-release-signing.md): a tag
-# v<semver> pushed to main builds the five binaries on the Linux runner in
-# the `release` environment, Authenticode-signs the Windows exe in the same
-# job against Azure Artifact Signing over the job's OIDC token — the same
-# identity, scripts and checks as the desktop's release (agentry-desktop
-# D-032) — writes SHA256SUMS over the binaries and BUILD-INFO, signs those
+# v<semver> on a commit that has been the head of main (production) or of dev
+# (agentry-cli#240: the registry it bakes is that branch's, chosen by
+# scripts/release-registry.sh in preflight) builds the five binaries on the
+# Linux runner in the `release` environment, Authenticode-signs the Windows
+# exe in the same job against Azure Artifact Signing over the job's OIDC
+# token — the same identity, scripts and checks as the desktop's release
+# (agentry-desktop D-032) — writes SHA256SUMS over the binaries and BUILD-INFO, signs those
 # sums with the estate's own update-signing key by the desktop's signrelease
 # at a pinned version (which verifies what it wrote against the committed key
 # set, so a bundle no app would check is never uploaded), and uploads the set
@@ -58,6 +60,8 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     outputs:
       version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.registry.outputs.channel }}
+      registry: ${{ steps.registry.outputs.registry }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,6 +83,22 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "version $v (${GITHUB_EVENT_NAME} on ${GITHUB_REF})"
+      # Production's registry for a commit that has been main's head, dev's
+      # for one that has been dev's, refused for any other commit — before a
+      # binary is built (agentry-cli#240, DR-33). The rule is read from the
+      # commit being released, so it binds a tag on main or dev, not a tag on
+      # a feature commit that rewrites it (the script's header says why). build/release.env names
+      # both and is the same on both branches; the history picks. The
+      # checkout's fetch-depth 0 brings the origin/main and origin/dev refs
+      # the rule reads.
+      - name: The channel and the registry this release bakes in
+        id: registry
+        run: |
+          set -euo pipefail
+          out=$(scripts/release-registry.sh "${GITHUB_SHA}")
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | sed -n -e 's/^AGENTRY_RELEASE_CHANNEL=/channel=/p' -e 's/^AGENTRY_DEFAULT_REGISTRY=/registry=/p' >> "$GITHUB_OUTPUT"
+          echo "::notice::${GITHUB_SHA} is a $(printf '%s\n' "$out" | sed -n 's/^AGENTRY_RELEASE_CHANNEL=//p') release"
 
   build:
     needs: preflight
@@ -96,6 +116,8 @@ jobs:
       id-token: write
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
+      AGENTRY_DEFAULT_REGISTRY: ${{ needs.preflight.outputs.registry }}
+      AGENTRY_RELEASE_CHANNEL: ${{ needs.preflight.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,9 +143,13 @@ jobs:
       - name: What this release bakes in
         run: |
           set -euo pipefail
+          # The registry is preflight's (scripts/release-registry.sh), not
+          # this file's: required, so an empty output cannot bake the
+          # source default.
+          : "${AGENTRY_DEFAULT_REGISTRY:?preflight named no registry for this commit}"
+          : "${AGENTRY_RELEASE_CHANNEL:?preflight named no channel for this commit}"
+          echo "default registry ${AGENTRY_DEFAULT_REGISTRY}"
           set -a; . build/release.env; set +a
-          : "${AGENTRY_DEFAULT_REGISTRY:?build/release.env must set AGENTRY_DEFAULT_REGISTRY}"
-          echo "AGENTRY_DEFAULT_REGISTRY=${AGENTRY_DEFAULT_REGISTRY}" >> "$GITHUB_ENV"
           # The CN the Windows signature must carry: required, so a blanked
           # line cannot quietly turn the check into "any Artifact Signing
           # customer" (the pinned root is shared).
@@ -144,6 +170,7 @@ jobs:
           out=$(./dist/agentry-"$VERSION"-linux-amd64 --version)
           echo "$out"
           printf '%s\n' "$out" | grep -q -F "$VERSION" || { echo "::error::the binary reports '$out', not version $VERSION"; exit 1; }
+          printf '%s\n' "$out" | grep -qxF "default registry: $AGENTRY_DEFAULT_REGISTRY" || { echo "::error::the binary reports '$out', not default registry $AGENTRY_DEFAULT_REGISTRY"; exit 1; }
       - name: java, osslsigncode, jq and openssl from Ubuntu's packages
         run: |
           set -euo pipefail
@@ -217,6 +244,7 @@ jobs:
             echo "ref=${GITHUB_REF}"
             echo "commit=${GITHUB_SHA}"
             echo "default_registry=${AGENTRY_DEFAULT_REGISTRY}"
+            echo "channel=${AGENTRY_RELEASE_CHANNEL}"
             # signed= is true only when EVERY artifact is OS-signed; the
             # per-platform lines say which are. Windows here; macOS is #198.
             echo "signed=false"
