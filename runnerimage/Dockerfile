@@ -35,6 +35,17 @@ FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /agentry-runner ./runnerimage
+# Assert the artefact is an executable ELF binary before anything copies it
+# (agentry-cli#235). Not redundant: in the agentry-cli repo runnerimage/main.go
+# carries `//go:build ignore` and runnerimage.Materialize strips it, and
+# neither is visible from here. Build this Dockerfile from the repository root
+# instead of from the materialized context and ./runnerimage is a LIBRARY
+# package: `go build -o` then writes a non-executable `!<arch>` archive, exits
+# 0, and the image builds "successfully" with an entrypoint that cannot run.
+# `test -x` rules out the 0644 archive; the ELF magic rules out anything else
+# that is not a Linux binary (an archive someone chmodded, a truncated file).
+# TestDockerfileAssertsExecutable runs this exact line against both kinds.
+RUN test -x /agentry-runner && [ "$(head -c 4 /agentry-runner)" = "$(printf '\177ELF')" ] || { echo "agentry-runner: the build produced no executable ELF binary (a library archive?) - build from the context runnerimage.Materialize writes, not the repository root" >&2; exit 1; }
 
 FROM ${RUNTIME_IMAGE}
 # ca-certificates: fetch and probe speak TLS from inside this image; the
