@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // TestRedactorErrKeepsClassAndIdentity: an error that carries a value is
@@ -85,5 +88,31 @@ func TestShortSecretsAreDisclosedInTheReceipt(t *testing.T) {
 	}
 	if got, ok := env2.CapabilitiesEnforced["redaction"]; ok {
 		t.Errorf("redaction = %q with every secret long enough, want no entry", got)
+	}
+}
+
+// TestRedactionNoteReadsServerScopedSecrets: a declared server's short
+// secret is named by its declared name; a name the agent and a server both
+// declare appears once; a long value and an existing entry are left alone.
+func TestRedactionNoteReadsServerScopedSecrets(t *testing.T) {
+	var p Params
+	p.Plan = &spec.Plan{
+		Secrets:    []string{"SHARED", "LONG_ONE"},
+		MCPServers: []spec.MCPServerSpec{{Name: "mcp-x", Secrets: []string{"SHARED", "SRV_PIN"}}},
+	}
+	secrets := map[string]string{
+		compile.SecretKey("SHARED"):                 "abc",
+		compile.SecretKey("LONG_ONE"):               "long-enough-value",
+		compile.ServerSecretKey("mcp-x", "SHARED"):  "abc",
+		compile.ServerSecretKey("mcp-x", "SRV_PIN"): "1234",
+	}
+	in := map[string]string{"network": "internal"}
+	out := withRedactionNote(in, p, secrets)
+	want := "secret values shorter than 8 characters are not masked in receipts: SHARED, SRV_PIN"
+	if out["redaction"] != want || out["network"] != "internal" {
+		t.Errorf("note = %v, want redaction %q beside the existing entries", out, want)
+	}
+	if _, touched := in["redaction"]; touched {
+		t.Error("the input map was changed")
 	}
 }
