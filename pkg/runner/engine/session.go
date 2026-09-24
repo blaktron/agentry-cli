@@ -145,6 +145,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	rep := rd.replacer()
 	s.redact = rd.newRedactor(p, token, secrets)
+	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
 		return fail(err)
