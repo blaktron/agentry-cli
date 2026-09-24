@@ -1,0 +1,29 @@
+# The CI supply chain, checked daily (agentry-cli#165; the desktop's pins.yaml
+# shape, agentry#419): every action SHA-pinned to the tag its comment names,
+# that tag not moved, and every action and CI tool in ci.yaml's env block
+# current within its major. A new major is a warning; see
+# scripts/pins-check.sh.
+#
+# Deliberately NOT a pull-request job. A pin goes stale when upstream
+# releases, which is nobody's fault on the pull request that happens to be
+# open here, and a gate that reddens for someone else's release teaches
+# people to merge past red.
+name: pins
+on:
+  schedule:
+    # Daily, after the working day's merges have settled.
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actions-and-tools:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Are the action and tool pins current?
+        run: ./scripts/pins-check.sh

@@ -1,0 +1,24 @@
+# gitleaks configuration for the CLI (agentry-cli#165; the estate's shape,
+# agentry#419). The CI job `gitleaks` scans every pull request's commits and
+# every push with it. The default rules apply. A full-history scan when this
+# file was added (147 commits, 2026-09-24) was clean with the pinned 8.30.1;
+# the workstation's newer build flagged two fake values in tests, allowlisted
+# below by their file AND their value (so the same file still fails on any
+# other secret-shaped string) so that a rule-set bump does not redden on them.
+# A new false positive gets the same narrow entry, with the reason beside it;
+# never a whole tree.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "fake values in tests: the redactor's own run token, and a setup transcript's placeholder digest"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^pkg/runner/engine/redact_test\.go$''',
+  '''^pkg/runner/setup/setup_test\.go$''',
+]
+regexes = [
+  '''tok-0123456789''',
+  '''abcdef123456''',
+]
