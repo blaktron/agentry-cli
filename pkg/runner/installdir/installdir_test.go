@@ -225,3 +225,65 @@ func TestRemoveOtherVersions(t *testing.T) {
 		t.Fatalf("left: %v", entries)
 	}
 }
+
+// ReleaseName is the one spelling of a release's directory name, the one
+// ReleaseDir and every client use (agentry-cli#192).
+func TestReleaseName(t *testing.T) {
+	if got := ReleaseName("1.2.0", "sha256:0123456789abcdefXYZ"); got != "1.2.0-0123456789ab" {
+		t.Fatalf("ReleaseName = %q", got)
+	}
+	if filepath.Base(ReleaseDir("/rh", "acme", "demo", "1.2.0", "sha256:0123456789abcdefXYZ")) != ReleaseName("1.2.0", "sha256:0123456789abcdefXYZ") {
+		t.Fatal("ReleaseDir does not end in ReleaseName")
+	}
+}
+
+// StyleForHome reads the runner home's policy for the export style with
+// its one honest outcome for each case (agentry-cli#192): no policy is the
+// generic shape and nothing to say; a policy is StyleFor's answer; a
+// policy that cannot be read is the generic shape and a warning naming it.
+func TestStyleForHome(t *testing.T) {
+	home := t.TempDir()
+	if style, warn := StyleForHome(home); style != manifest.InterfaceAgentsMD || warn != "" {
+		t.Fatalf("no policy: %q %q", style, warn)
+	}
+	pol := policy.Default()
+	pol.Harness = map[string]policy.HarnessPolicy{"claude": {}}
+	path := policy.PathIn(home)
+	if err := policy.Save(path, pol); err != nil {
+		t.Fatal(err)
+	}
+	if style, warn := StyleForHome(home); style != manifest.InterfaceClaudeSkill || warn != "" {
+		t.Fatalf("claude policy: %q %q", style, warn)
+	}
+	if err := os.WriteFile(path, []byte("not: [a policy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	style, warn := StyleForHome(home)
+	if style != manifest.InterfaceAgentsMD || !strings.Contains(warn, path) || !strings.Contains(warn, "AGENTS.md") {
+		t.Fatalf("unreadable policy: %q %q", style, warn)
+	}
+}
+
+// Install is the one lay-down both clients call: the release written,
+// then its export in the style given, recorded in install.json.
+func TestInstall(t *testing.T) {
+	m := &manifest.Manifest{Name: "demo", Namespace: "acme", Version: "1.0.0", Summary: "reads things"}
+	src := stageTree(t, map[string]string{"agent.yaml": "name: demo\n", "SKILL.md": "# Demo\n"})
+	dir := filepath.Join(t.TempDir(), ReleaseName("1.0.0", "sha256:abc"))
+	meta := &Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: "sha256:abc", Source: "registry"}
+	if err := Install(dir, src, m, meta, manifest.InterfaceClaudeSkill); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := Load(dir, "sha256:abc")
+	if !ok || got.Export != manifest.InterfaceClaudeSkill {
+		t.Fatalf("install.json: %+v ok=%v", got, ok)
+	}
+	for _, want := range []string{"workspace/SKILL.md", "export/demo/SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(want))); err != nil {
+			t.Fatalf("%s: %v", want, err)
+		}
+	}
+	if err := Install(dir, src, m, meta, "bogus"); err == nil {
+		t.Fatal("an unknown style was accepted")
+	}
+}

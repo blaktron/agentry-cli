@@ -83,7 +83,13 @@ func AgentDir(home, namespace, name string) string {
 
 // ReleaseDir is one release's directory under AgentDir.
 func ReleaseDir(home, namespace, name, version, digest string) string {
-	return filepath.Join(AgentDir(home, namespace, name), fmt.Sprintf("%s-%s", version, DigestSuffix(digest)))
+	return filepath.Join(AgentDir(home, namespace, name), ReleaseName(version, digest))
+}
+
+// ReleaseName is a release directory's name, <version>-<12 of the digest>:
+// one spelling for every client, so a run finds what an install laid down.
+func ReleaseName(version, digest string) string {
+	return fmt.Sprintf("%s-%s", version, DigestSuffix(digest))
 }
 
 // DigestSuffix shortens sha256:… for directory names.
@@ -169,6 +175,36 @@ func StyleFor(pol *policy.Policy) string {
 		return manifest.InterfaceClaudeSkill
 	}
 	return manifest.InterfaceAgentsMD
+}
+
+// StyleForHome is StyleFor applied to the runner home's policy, with the
+// one honest outcome for each case: no policy yet is the generic shape and
+// nothing to say (an install must not create one, that is setup's and a
+// run's); a policy that cannot be read is the generic shape too, and the
+// warning says so, so an install goes on rather than stopping on a file it
+// does not need. Both clients show the warning the same way.
+func StyleForHome(home string) (style, warning string) {
+	path := policy.PathIn(home)
+	pol, _, err := policy.Load(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return StyleFor(nil), ""
+		}
+		return StyleFor(nil), fmt.Sprintf("operator policy %s could not be read (%v) — the export beside the install takes the generic AGENTS.md shape", path, err)
+	}
+	return StyleFor(pol), ""
+}
+
+// Install is the one lay-down both clients call for the runner target: the
+// verified release written (Write), then the coding-agent shape beside it
+// in the given style (WriteExport). The caller has already verified the
+// digest, the attestation and the consent; the cache holds the verdict and
+// never the consent.
+func Install(releaseDir, staging string, m *manifest.Manifest, meta *Meta, style string) error {
+	if err := Write(releaseDir, staging, meta); err != nil {
+		return err
+	}
+	return WriteExport(releaseDir, style, m, meta)
 }
 
 // WriteExport lays the coding-agent shape under <dir>/export from the

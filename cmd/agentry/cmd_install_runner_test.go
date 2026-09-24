@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -382,5 +383,62 @@ func TestInstallRunnerTargetOfAnInstructionOnlyReleaseWithClaudeChosen(t *testin
 	}
 	if _, err := os.Stat(filepath.Join(userHome, ".claude", "skills", "pa", "AGENT.md")); err != nil {
 		t.Fatalf("the instruction file stays beside the skill: %v", err)
+	}
+}
+
+// TestInstallRunnerTargetWarnsOnAnUnreadablePolicy (agentry-cli#192): a
+// policy that cannot be read is said on stderr, and the install goes on
+// with the generic AGENTS.md shape.
+func TestInstallRunnerTargetWarnsOnAnUnreadablePolicy(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	if err := os.WriteFile(policyPath, []byte("not: [a policy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned")
+	if err != nil {
+		t.Fatalf("install: %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(stderr, "warning: operator policy "+policyPath+" could not be read") || !strings.Contains(stdout, "(export: agents-md)") {
+		t.Fatalf("stdout %q stderr %q", stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(installdir.ReleaseDir(home, "acme", "demo", "1.0.0", fv.digest), "export", "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestInstallRunnerTargetReplaceFailureIsAWarning (agentry-cli#192): once
+// the new release and its record have landed, an older version's
+// directory that will not go is said as a warning on a completed install
+// (exit 0, the record saved), the desktop's way, not an error that reads
+// as a failed install.
+func TestInstallRunnerTargetReplaceFailureIsAWarning(t *testing.T) {
+	isolateEnv(t)
+	home, _ := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fa := fr.addAgent("acme", "demo", "autonomous", "s")
+	fa.addVersion(t, "1.0.0", skillFiles("demo", ""))
+	v2 := fa.addVersion(t, "1.1.0", skillFiles("demo", ""))
+	if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned"); err != nil {
+		t.Fatalf("install 1.0.0: %v (stderr %q)", err, stderr)
+	}
+	removeOtherVersions = func(string, string) error { return errors.New("remove 1.0.0-x: device or resource busy") }
+	t.Cleanup(func() { removeOtherVersions = installdir.RemoveOtherVersions })
+
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.1.0", "--allow-unsigned")
+	if err != nil {
+		t.Fatalf("a completed install whose older version would not go failed: %v", err)
+	}
+	if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, "device or resource busy") || !strings.Contains(stdout, "installed acme/demo@1.1.0") {
+		t.Fatalf("stdout %q stderr %q", stdout, stderr)
+	}
+	st, _ := installed.Load()
+	if len(st.Records) != 1 || st.Records[0].Version != "1.1.0" {
+		t.Fatalf("records: %+v", st.Records)
+	}
+	if _, ok := installdir.Load(installdir.ReleaseDir(home, "acme", "demo", "1.1.0", v2.digest), v2.digest); !ok {
+		t.Fatal("1.1.0 is not installed")
 	}
 }
