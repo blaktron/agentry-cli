@@ -26,8 +26,16 @@
 # the next promotion into production. One file, the same on both branches,
 # names both registries; the history decides which one a build carries.
 #
-# It needs the remote-tracking refs origin/main and origin/dev, which
-# actions/checkout fetches with fetch-depth: 0.
+# It needs the remote-tracking refs origin/main and origin/dev and the whole
+# history, which actions/checkout fetches with fetch-depth: 0; a shallow
+# clone is refused, since a cut-off first-parent line could read a main
+# commit as dev's.
+#
+# What it does not stop: the script and build/release.env are read from the
+# commit being released, and the `release` environment admits any v* tag. A
+# tag on a feature commit that edits this file could bake whatever it says.
+# That was as true of the single-line release.env before; closing it needs a
+# tag ruleset (unavailable on the repositories' current plan), not a script.
 set -euo pipefail
 
 commit=${1:-HEAD}
@@ -46,6 +54,9 @@ for v in AGENTRY_REGISTRY_PRODUCTION AGENTRY_REGISTRY_DEV; do
     *) echo "release-registry: build/release.env must set $v to an https:// URL (it is '${val}')" >&2; exit 1 ;;
   esac
 done
+
+[ "$(git rev-parse --is-shallow-repository)" = false ] \
+  || { echo "release-registry: this is a shallow clone; the rule needs the whole history (fetch-depth: 0)" >&2; exit 1; }
 
 sha=$(git rev-parse --verify --quiet "${commit}^{commit}") || { echo "release-registry: $commit is not a commit" >&2; exit 1; }
 

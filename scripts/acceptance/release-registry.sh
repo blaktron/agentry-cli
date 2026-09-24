@@ -8,9 +8,9 @@
 # feature branches with merge commits, main takes only promotions of dev
 # with merge commits — clones it as actions/checkout does (fetch-depth 0,
 # origin/* refs), and asks scripts/release-registry.sh about each kind of
-# commit a tag could name. Then it builds the CLI the way `make dist` does
-# with what a main commit is given, and reads the registry back from the
-# binary's --version. Needs git and go; no network, no docker.
+# commit a tag could name. Then it builds the CLI with `make dist` and what a
+# main commit is given, and reads the registry back from the binary's
+# --version. Needs git and go; no network, no docker.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/../.." && pwd)
@@ -73,20 +73,24 @@ expect "history from before dev branched"   "$c0" production "$prod"
 refuse "a feature commit merged into dev"   "$f1"
 refuse "an unmerged feature branch"         "$f4"
 
-# Without the origin refs the rule cannot be applied: refuse, never guess.
-g clone -q --depth 1 --single-branch --branch dev "file://$work/src" "$work/shallow"
-cd "$work/shallow"
-refuse "a checkout without origin/main" HEAD
+# Without the origin refs, or with a cut-off history, the rule cannot be
+# applied: refuse, never guess.
+g clone -q --single-branch --branch dev "$work/src" "$work/onebranch"
+cd "$work/onebranch"; refuse "a checkout without origin/main" HEAD
+g clone -q --depth 1 --no-single-branch "file://$work/src" "$work/shallow"
+cd "$work/shallow"; refuse "a shallow checkout" origin/main
 
 # A main build carries production's registry, end to end: what the script
-# gives a main commit, baked as make dist bakes it, read back from --version.
+# gives a main commit, baked by the Makefile's own dist target (the host's
+# platform only), read back from --version.
 cd "$work/co"
 eval "$(scripts/release-registry.sh "$p1")"
-(cd "$here" && GOWORK=off CGO_ENABLED=0 go build -trimpath \
-  -ldflags "-X github.com/blaktron/agentry-cli/internal/version.Version=9.9.9 -X main.defaultRegistryURL=$AGENTRY_DEFAULT_REGISTRY" \
-  -o "$work/agentry" ./cmd/agentry)
-v=$("$work/agentry" --version)
-if printf '%s\n' "$v" | grep -qx "default registry: $prod"; then
+plat="$(go env GOOS)/$(go env GOARCH)"
+bin="dist/agentry-9.9.9-${plat%/*}-${plat#*/}"; [ "${plat%/*}" = windows ] && bin="$bin.exe"
+make -s -C "$here" dist DIST_VERSION=9.9.9 DIST_TARGETS="$plat" AGENTRY_DEFAULT_REGISTRY="$AGENTRY_DEFAULT_REGISTRY" >/dev/null
+v=$("$here/$bin" --version)
+rm -f "$here/$bin"
+if printf '%s\n' "$v" | grep -qxF "default registry: $prod"; then
   pass "a main build's --version names $prod"
 else
   bad "a main build's --version says '$v', want 'default registry: $prod'"
