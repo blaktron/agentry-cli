@@ -4,3 +4,8 @@
 /dist/
 __pycache__/
 *.pyc
+# Local credentials never enter the tree (agentry-cli#165): the estate's
+# convention for secrets is an .env file. build/release.env is a committed,
+# non-secret build input and is not matched by these patterns.
+.env
+.env.*
