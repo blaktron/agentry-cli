@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -122,14 +123,19 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	// Gateway files now; harness files once the infrastructure is up, so a
 	// host-run harness sees the published addresses (Run / StartSession).
-	if err := renderPlanFiles(p.PlanDir, rd, "gateway"); err != nil {
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, "gateway"); err != nil {
 		return nil, err
 	}
 	if err := stampOwner(filepath.Join(rd.cfg, "gateway", "toolspec.json")); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
 	}
-	// The plan the containers actually consumed, verbatim, for audit.
-	if b, err := os.ReadFile(filepath.Join(p.PlanDir, "plan.json")); err == nil { //nolint:gosec // our plan dir
+	// The plan this run executes, for audit: the verified plan in memory,
+	// in the canonical encoding the receipts' runPlanSha256 hashes — not
+	// plan.json re-read from disk, which could have changed since it was
+	// verified and does not carry the run's own additions (the MCP
+	// vulnerability verdict), so its hash would not be the receipt's
+	// (agentry-cli#266).
+	if b, err := p.Plan.MarshalCanonical(); err == nil {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "run-plan.json"), b, 0o644)
 	}
 	// Everything the gateway will hand to a tool container, labelled once
@@ -175,8 +181,11 @@ func stageIntake(p Params, rd *runDirs) error {
 
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
 // substituting placeholders. Rendered files, not the installed ones, are
-// what containers mount — the install stays pristine and reusable.
-func renderPlanFiles(planDir string, rd *runDirs, subs ...string) error {
+// what containers mount — the install stays pristine and reusable. Each
+// file is held to the plan's hash of it as it is read: the plan was
+// verified before the run started, and a file changed or added since is
+// refused rather than mounted (agentry-cli#266).
+func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, subs ...string) error {
 	rep := rd.replacer()
 	for _, sub := range subs {
 		src := filepath.Join(planDir, sub)
@@ -192,17 +201,37 @@ func renderPlanFiles(planDir string, rd *runDirs, subs ...string) error {
 			if rerr != nil {
 				return rerr
 			}
+			if want, ok := plan.Files[filepath.ToSlash(rel)]; !ok || sha256Hex(b) != want {
+				return &planFileChangedError{rel: filepath.ToSlash(rel)}
+			}
 			dest := filepath.Join(rd.cfg, rel)
 			if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil {
 				return mkErr
 			}
 			return os.WriteFile(dest, []byte(rep.Replace(string(b))), 0o644)
 		})
+		var changed *planFileChangedError
+		if errors.As(err, &changed) {
+			return Classify(ExitVerify, err)
+		}
 		if err != nil {
 			return Classify(ExitCLI, fmt.Errorf("render plan files: %w", err))
 		}
 	}
 	return nil
+}
+
+// planFileChangedError is a generated plan file that no longer matches
+// the verified plan, or that the plan never listed.
+type planFileChangedError struct{ rel string }
+
+func (e *planFileChangedError) Error() string {
+	return fmt.Sprintf("installed plan file %s changed after the plan was verified — refusing to run it; remove the plan directory to recompile", e.rel)
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // stageInputs copies operator-named files/directories into the run's
