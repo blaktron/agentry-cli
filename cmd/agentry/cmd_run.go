@@ -781,19 +781,36 @@ func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
 		*opts.guideShown = true
 	}
 	g := m.Guide
-	if strings.TrimSpace(g.Overview) != "" {
-		_, _ = fmt.Fprintf(w, "\n%s\n", strings.TrimSpace(g.Overview))
+	if ov := termSafe(strings.TrimSpace(g.Overview)); ov != "" {
+		_, _ = fmt.Fprintf(w, "\n%s\n", ov)
 	}
 	if len(g.Prepare) > 0 {
 		_, _ = fmt.Fprintln(w, "\nHave these ready:")
 		for _, item := range g.Prepare {
-			_, _ = fmt.Fprintf(w, "  - %s\n", item)
+			_, _ = fmt.Fprintf(w, "  - %s\n", termSafe(item))
 		}
 	}
 	if g.Files != "" {
-		_, _ = fmt.Fprintf(w, "Files: %s\n", g.Files)
+		_, _ = fmt.Fprintf(w, "Files: %s\n", termSafe(g.Files))
 	}
 	_, _ = fmt.Fprintln(w)
+}
+
+// termSafe is author text as a terminal may show it: every control
+// character but a newline or a tab becomes "?", so a guide cannot send
+// escape sequences (colours, cursor moves, a window title, a hyperlink) to
+// the terminal it is printed on. The core refuses them in the single-line
+// parts already; the overview may span lines, so it is cleaned here.
+func termSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 // secretOverrides merges the profile's stored secrets with the intake's
@@ -1374,8 +1391,10 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 	}
 
 	sayGuide(cmd.ErrOrStderr(), m, opts)
+	// The key help rides with the guide: printed on a text run, and like
+	// the overview left out of a --output-format json one.
 	var help map[string]string
-	if m.Guide != nil {
+	if m.Guide != nil && opts.outputFormat != "json" {
 		help = m.Guide.Connect
 	}
 	prompter := &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}

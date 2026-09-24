@@ -362,6 +362,8 @@ func GuidedProfile(p Prompter, opts GuidedProfileOpts) (*profile.Profile, error)
 	sort.Strings(names)
 	for _, name := range names {
 		if h := opts.Help[name]; h != "" {
+			// The core refuses control and format characters in connect
+			// help (DEV-141); printed as the manifest gives it.
 			p.Say(fmt.Sprintf("%s: %s", name, h))
 		}
 		v, err := p.AskSecret(fmt.Sprintf("Value for %s (empty = resolve from the environment at run time)", name))
