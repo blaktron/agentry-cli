@@ -360,12 +360,10 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		switch r.Source {
 		case "npm":
 			image = images.NodeRuntime
-			// As the invoking user (below), whose HOME does not exist in
-			// the image: npm's cache and config go under /tmp.
-			argv = []string{"env", "HOME=/tmp", "npm_config_cache=/tmp/npm-cache", "npm", "install",
-				"--prefix", r.prefix(), r.Package + "@" + r.Version,
-				"--registry", regs.NPM,
-				"--no-audit", "--no-fund", "--ignore-scripts", "--loglevel", "error"}
+			// The pinned tarball verified against the integrity recorded at
+			// resolution before anything is installed, then installed from
+			// that verified file (agentry-cli#91, DR-13): npm_builder.js.
+			argv = npmArgv(r, regs)
 		case "pypi":
 			image = images.PythonRuntime
 			// Wheels only, and the pinned artifact verified against the
@@ -617,6 +615,25 @@ func pipArgv(r *Resolved, regs policy.MCPRegistries) []string {
 	}
 	return []string{"python", "-c", pypiBuilder,
 		r.prefix(), r.Package, r.Version, strings.TrimRight(regs.PyPI, "/") + "/simple", onlyBinary}
+}
+
+// npmBuilder is the npm builder's program (npm_builder.js), run as
+// `node -e` with every value a separate argument, like the PyPI builder.
+//
+//go:embed npm_builder.js
+var npmBuilder string
+
+// npmDownloadDir is where npm_builder.js leaves the verified tarball,
+// under the server's store directory; the install is from that file.
+const npmDownloadDir = "dl"
+
+// npmArgv is the builder's argv for an npm server. It runs as the invoking
+// user (see EnsureInstalled), whose HOME does not exist in the image: npm's
+// cache and config go under /tmp.
+func npmArgv(r *Resolved, regs policy.MCPRegistries) []string {
+	return []string{"env", "HOME=/tmp", "npm_config_cache=/tmp/npm-cache",
+		"node", "-e", npmBuilder,
+		r.prefix(), r.Package, r.Version, regs.NPM, r.Integrity}
 }
 
 // builderNetwork is the network the install container joins.
