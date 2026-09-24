@@ -26,11 +26,14 @@
 # digest-verified equal to the upstream images they mirror, so this embedded
 # context pulls nothing from Docker Hub — which rate-limits anonymous pulls at
 # 100 per hour per IP, a limit one build of this image can reach on a shared
-# address. GO_IMAGE is overridden at build time from the policy's
-# images.goBuilder; RUNTIME_IMAGE is an argument for the same reason, so an
-# operator who mirrors elsewhere can point both at their own registry.
-ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine
-ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22
+# address. Both are pinned by digest (name:tag@sha256:…, the digests recorded
+# in that repository's images.tsv; agentry-cli#269, DR-32): the digest fixes
+# the bytes, and the tag is only a label for a reader. GO_IMAGE is overridden
+# at build time from the policy's images.goBuilder; RUNTIME_IMAGE is an
+# argument for the same reason, so an operator who mirrors elsewhere can point
+# both at their own registry.
+ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY . .
