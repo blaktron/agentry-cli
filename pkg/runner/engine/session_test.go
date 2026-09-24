@@ -730,3 +730,33 @@ func TestSessionContainersCarryTheRuntime(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionEndIsSafeToCallConcurrently: two callers ending the session at
+// once — the terminal's End and runInteractive's deferred one, or a window
+// closing mid-run (agentry-desktop#125) — both get the one envelope, and
+// neither closes the event stream a second time (agentry-cli#161).
+func TestSessionEndIsSafeToCallConcurrently(t *testing.T) {
+	s, _, _, _ := startFixture(t)
+	_, done := collect(s)
+	var wg sync.WaitGroup
+	envs := make([]*receipt.Envelope, 4)
+	panics := make([]any, 4)
+	for i := range envs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { panics[i] = recover() }()
+			envs[i], _ = s.End(context.Background(), false)
+		}(i)
+	}
+	wg.Wait()
+	<-done
+	for i := range envs {
+		if panics[i] != nil {
+			t.Fatalf("End call %d panicked: %v", i, panics[i])
+		}
+		if envs[i] == nil || envs[i] != envs[0] {
+			t.Errorf("End call %d returned %p, want the one envelope %p", i, envs[i], envs[0])
+		}
+	}
+}

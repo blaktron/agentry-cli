@@ -63,6 +63,9 @@ type Fake struct {
 	// ByLabel, when it has the label, is what PSByLabel answers for it
 	// instead of Leftover.
 	ByLabel map[string][]string
+	// Containers is what PSLabels lists: each is returned when it carries
+	// the asked label ("k=v", or "k" for any value), with the asked keys.
+	Containers []Labeled
 	// OnDetached, when set, runs with the spec of every detached container
 	// as it starts — how a test gives a container side effects, such as
 	// the relays a gateway creates.
@@ -297,6 +300,27 @@ func (f *Fake) PSByLabel(_ context.Context, label string) ([]string, error) {
 		return names, nil
 	}
 	return f.Leftover, nil
+}
+
+// PSLabels implements Client.
+func (f *Fake) PSLabels(_ context.Context, label string, keys []string) ([]Labeled, error) {
+	f.record("PSLabels", label, RunSpec{})
+	k, v, exact := strings.Cut(label, "=")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Labeled
+	for _, c := range f.Containers {
+		got, has := c.Labels[k]
+		if !has || (exact && got != v) {
+			continue
+		}
+		l := Labeled{Name: c.Name, Labels: map[string]string{}}
+		for _, key := range keys {
+			l.Labels[key] = c.Labels[key]
+		}
+		out = append(out, l)
+	}
+	return out, nil
 }
 
 // Logs implements Client.

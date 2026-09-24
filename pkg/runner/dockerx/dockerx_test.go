@@ -438,6 +438,37 @@ func TestCLIPSByLabel(t *testing.T) {
 	}
 }
 
+func TestCLIPSLabels(t *testing.T) {
+	c, record := stub(t, `printf 'agentry-a-gateway\tcafe0000\t4242\n\nagentry-b-agent\t\t\n'`)
+	got, err := c.PSLabels(context.Background(), "agentry.owner.host=h", []string{"agentry.run", "agentry.owner.pid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Labeled{
+		{Name: "agentry-a-gateway", Labels: map[string]string{"agentry.run": "cafe0000", "agentry.owner.pid": "4242"}},
+		{Name: "agentry-b-agent", Labels: map[string]string{"agentry.run": "", "agentry.owner.pid": ""}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("PSLabels = %+v, want %+v", got, want)
+	}
+	if argv := recorded(t, record)[0]; argv != `ps -a --filter label=agentry.owner.host=h --format {{.Names}}	{{.Label "agentry.run"}}	{{.Label "agentry.owner.pid"}}` {
+		t.Errorf("argv = %q", argv)
+	}
+	// A line that does not split into the asked fields is refused, never
+	// read as some other container's labels.
+	cBad, _ := stub(t, `printf 'only-a-name\n'`)
+	if _, err := cBad.PSLabels(context.Background(), "l", []string{"k"}); err == nil {
+		t.Error("a short line was accepted")
+	}
+	if _, err := c.PSLabels(context.Background(), "l", []string{`k"}}{{.ID`}); err == nil {
+		t.Error("a key that would inject template text was accepted")
+	}
+	cErr, _ := stub(t, `exit 1`)
+	if _, err := cErr.PSLabels(context.Background(), "l", nil); err == nil {
+		t.Fatal("ps failure swallowed")
+	}
+}
+
 func TestCLILogs(t *testing.T) {
 	c, record := stub(t, `printf 'line1\nline2\n'`)
 	out, err := c.Logs(context.Background(), "agentry-x-gateway", 40)

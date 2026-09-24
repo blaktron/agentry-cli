@@ -30,6 +30,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -418,6 +419,12 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// it keeps the builder's reach from following whatever default
 			// a daemon is configured with (agentry-cli#162).
 			Network: builderNetwork,
+			// Who started it (package owner): the builder precedes any run
+			// id, so it carries no agentry.run label, but a CLI killed
+			// mid-install leaves it building with nobody waiting, and the
+			// next run's sweep removes it by its dead owner
+			// (agentry-cli#161).
+			Labels: installLabels(r.ID),
 			Mounts: []dockerx.Mount{
 				// The server store is the runner's own directory under the
 				// signature profile, so it may be relabeled (agentry-cli#85).
@@ -729,4 +736,10 @@ func checkStore(storeDir string, prior *Resolved, logw io.Writer) error {
 		return fmt.Errorf("server store for %s changed since it was installed (recorded %s, now %s) — something wrote into the signature's store; remove the profile to reinstall", prior.ID, prior.StoreDigest, got)
 	}
 	return nil
+}
+
+// installLabels are the installer container's labels: the server it builds
+// and the owner labels of this process (none where owner has no identity).
+func installLabels(serverID string) map[string]string {
+	return owner.With(map[string]string{"agentry.mcpinstall": serverID})
 }
