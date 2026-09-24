@@ -396,6 +396,28 @@ func (f *fakeStdio) Close() error {
 	return nil
 }
 func (f *fakeStdio) say(line string) { _, _ = f.outW.Write([]byte(line + "\n")) }
+
+// awaitLine waits, up to d, for the runner to write a line containing want,
+// and reports whether it did. A scripted harness that answers a turn calls
+// it first: a real harness replies only after it has read the turn, and a
+// fake that replies earlier can have its answer dropped before the driver
+// has registered the turn it belongs to (agentry-cli#205).
+func (f *fakeStdio) awaitLine(want string, d time.Duration) bool {
+	deadline := time.After(d)
+	for {
+		select {
+		case line, ok := <-f.lines:
+			if !ok {
+				return false
+			}
+			if strings.Contains(string(line), want) {
+				return true
+			}
+		case <-deadline:
+			return false
+		}
+	}
+}
 func (f *fakeStdio) written() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -421,7 +443,14 @@ func TestClaudeSessionTurn(t *testing.T) {
 		t.Errorf("Start wrote to the harness: %q", stdio.written())
 	}
 
+	// The harness answers only once the user turn has reached it, as Claude
+	// Code does: the driver drops a result that arrives while no turn is in
+	// flight, so a fake that answered at once could race Prompt's
+	// registration and leave it waiting for its deadline (agentry-cli#205).
 	go func() {
+		if !stdio.awaitLine(`"type":"user"`, 5*time.Second) {
+			return // Prompt times out and the test says why
+		}
 		stdio.say(`{"type":"system","subtype":"init","tools":["mcp__gateway__fs_read"]}`)
 		stdio.say(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__gateway__fs_read"}]}}`)
 		stdio.say(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":[]}]}}`)
