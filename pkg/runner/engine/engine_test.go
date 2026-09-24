@@ -901,3 +901,62 @@ func TestRunContainersAreHardened(t *testing.T) {
 		})
 	}
 }
+
+// TestRunPlanReceiptIsThePlanThatRan (agentry-cli#266): receipts/run-plan.json
+// is the plan the run executed, byte for byte the encoding runPlanSha256
+// hashes — including the run's own additions to the verified plan (the MCP
+// vulnerability verdict lands on Enforcement after the compile) — not
+// plan.json re-read from the install dir.
+func TestRunPlanReceiptIsThePlanThatRan(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p.Plan.Enforcement["mcpServers.vulnerabilities"] = "run-time verdict, not on disk"
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", "run-plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := p.Plan.Hash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sha256Hex(b); got != want {
+		t.Fatalf("run-plan.json hashes to %s, the receipt names %s", got, want)
+	}
+	if !strings.Contains(string(b), "run-time verdict") {
+		t.Fatal("run-plan.json is missing the run's own enforcement line")
+	}
+}
+
+// TestRunRefusesAPlanFileChangedAfterVerification (agentry-cli#266): a
+// generated plan file is held to the verified plan's hash as the run reads
+// it, so an edit made after ensurePlan verified the plan — or a file the
+// plan never listed — is refused with the verify class, not mounted.
+func TestRunRefusesAPlanFileChangedAfterVerification(t *testing.T) {
+	for name, edit := range map[string]func(planDir string) error{
+		"changed": func(planDir string) error {
+			return os.WriteFile(filepath.Join(planDir, "gateway", "catalog.yaml"), []byte("tampered\n"), 0o644)
+		},
+		"added": func(planDir string) error {
+			return os.WriteFile(filepath.Join(planDir, "gateway", "extra.yaml"), []byte("x: 1\n"), 0o644)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, f := fixture(t)
+			happyFake(f)
+			if err := edit(p.PlanDir); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Run(context.Background(), f, p)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitVerify || !strings.Contains(err.Error(), "changed after the plan was verified") {
+				t.Fatalf("want the verify-class refusal, got %v", err)
+			}
+			if _, ok := f.FindRun("gateway"); ok {
+				t.Fatal("the gateway was started on a changed plan")
+			}
+		})
+	}
+}

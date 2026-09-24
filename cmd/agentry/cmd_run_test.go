@@ -21,6 +21,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
@@ -691,7 +692,7 @@ func TestEnsurePlanRecompilesOldPlanVersionAndDoctorReportsIt(t *testing.T) {
 	}
 
 	var errOut strings.Builder
-	plan, planDir, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	plan, planDir, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
 	if err != nil {
 		t.Fatalf("ensurePlan: %v", err)
 	}
@@ -729,7 +730,24 @@ func doctorHas(rep *doctorReport, status, needle string) bool {
 // files would run yesterday's plan with today's binary.
 func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	isolateEnv(t)
-	_, _ = isolateRunnerHome(t)
+	home, _ := isolateRunnerHome(t)
+	key, err := compile.IntegrityKey(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each case below stands for a plan another build compiled under this
+	// runner home, so each rewrite is sealed as that build's compile would
+	// have been; an unsealed edit is refused (agentry-cli#266).
+	rewrite := func(planDir string, edit func(string) string) {
+		t.Helper()
+		b, _ := os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
+		if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(edit(string(b))), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := compile.Seal(key, planDir); err != nil {
+			t.Fatal(err)
+		}
+	}
 	m := runFixtureManifest(t, "")
 	pol := policy.Default()
 	meta := &installdir.Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
@@ -745,7 +763,7 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 		}
 	}
 	var errOut strings.Builder
-	first, planDir, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	first, planDir, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,40 +777,130 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	}
 	// Same CLI, same image: reused.
 	errOut.Reset()
-	if _, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous); err != nil || strings.Contains(errOut.String(), "recompiling") {
+	if _, _, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous); err != nil || strings.Contains(errOut.String(), "recompiling") {
 		t.Fatalf("unchanged plan was not reused: %v %q", err, errOut.String())
 	}
 	// Another CLI build wrote it: recompiled, and said so.
-	b, _ := os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
-	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(strings.Replace(string(b), first.CompiledBy, "other-build", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	rewrite(planDir, func(s string) string { return strings.Replace(s, first.CompiledBy, "other-build", 1) })
 	errOut.Reset()
-	again, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	again, _, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
 	if err != nil || again.CompiledBy != first.CompiledBy || !strings.Contains(errOut.String(), "recompiling") {
 		t.Fatalf("plan from another CLI build was reused: %v compiledBy=%q %q", err, again.CompiledBy, errOut.String())
 	}
 	// A plan an older unstamped CLI cached records the bare 0.0.0-dev that
 	// every unstamped build used to share: recompiled. This is how the hosted
 	// worker kept running plans from before a compile change (agentry-cli#144).
-	b, _ = os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
-	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(strings.Replace(string(b), again.CompiledBy, "0.0.0-dev", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	rewrite(planDir, func(s string) string { return strings.Replace(s, again.CompiledBy, "0.0.0-dev", 1) })
 	errOut.Reset()
-	again, _, err = ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	again, _, err = ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
 	if err != nil || again.CompiledBy != first.CompiledBy || !strings.Contains(errOut.String(), "recompiling") {
 		t.Fatalf("plan from an older unstamped CLI was reused: %v compiledBy=%q %q", err, again.CompiledBy, errOut.String())
 	}
 	// Another runner image (the embedded build context changed): recompiled.
-	b, _ = os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
-	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(strings.ReplaceAll(string(b), again.Proxy.Image, "agentry-runner:older")), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	rewrite(planDir, func(s string) string { return strings.ReplaceAll(s, again.Proxy.Image, "agentry-runner:older") })
 	errOut.Reset()
-	third, _, err := ensurePlan(&errOut, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+	third, _, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
 	if err != nil || third.Proxy.Image != again.Proxy.Image || !strings.Contains(errOut.String(), "runner image") {
 		t.Fatalf("plan for another runner image was reused: %v image=%q %q", err, third.Proxy.Image, errOut.String())
+	}
+}
+
+// TestEnsurePlanRefusesAPlanEditedAfterCompile (agentry-cli#266): a
+// compiled plan is used only as compiled. plan.json edited after the
+// compile, with its generated files left alone so their hashes still
+// pass, refuses the run with the verify class instead of running the
+// edit; a plan with no record this runner home can check (none, or one
+// from another home's key) is recompiled, never trusted.
+func TestEnsurePlanRefusesAPlanEditedAfterCompile(t *testing.T) {
+	isolateEnv(t)
+	home, _ := isolateRunnerHome(t)
+	m := runFixtureManifest(t, "")
+	pol := policy.Default()
+	meta := &installdir.Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+		Version: "1.0.0", Digest: "sha256:0123456789abcdef", Source: "local"}
+	installDir := t.TempDir()
+	ws := filepath.Join(installDir, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"SKILL.md": "# demo\n\nDo the thing.\n", "agent.yaml": "schemaVersion: \"2\"\n"} {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ensure := func() (*spec.Plan, string, string, error) {
+		var errOut strings.Builder
+		plan, planDir, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
+		return plan, planDir, errOut.String(), err
+	}
+	first, planDir, _, err := ensure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(planDir, compile.IntegrityFile)); err != nil {
+		t.Fatalf("the compile wrote no integrity record: %v", err)
+	}
+	planPath := filepath.Join(planDir, "plan.json")
+	compiled, err := os.ReadFile(planPath) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The edit a writable install dir allows: the contract widened in
+	// plan.json alone, every field ensurePlan compares left as it was.
+	widened, err := spec.ParsePlan(compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Capabilities.EgressMode != "none" {
+		t.Fatalf("fixture: egress %q, want none", first.Capabilities.EgressMode)
+	}
+	widened.Capabilities.EgressMode = "all"
+	editedBytes, err := widened.MarshalCanonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := string(editedBytes)
+	if err := os.WriteFile(planPath, editedBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var classified *engine.ClassifiedError
+	if plan, _, _, err := ensure(); err == nil {
+		t.Fatalf("an edited plan.json was used: egress %q", plan.Capabilities.EgressMode)
+	} else if !strings.Contains(err.Error(), "does not match its integrity record") || !errors.As(err, &classified) || classified.Code != engine.ExitVerify {
+		t.Fatalf("edited plan: want the verify-class refusal, got %v", err)
+	}
+	if b, _ := os.ReadFile(planPath); string(b) != edited { //nolint:gosec // test plan dir
+		t.Fatal("the refusal repaired the plan in place: the evidence is gone")
+	}
+
+	// No record: recompiled, not trusted.
+	if err := os.Remove(filepath.Join(planDir, compile.IntegrityFile)); err != nil {
+		t.Fatal(err)
+	}
+	plan, _, notice, err := ensure()
+	if err != nil || !strings.Contains(notice, "no integrity record") || plan.Capabilities.EgressMode != "none" {
+		t.Fatalf("a plan without a record: err %v notice %q", err, notice)
+	}
+	if b, _ := os.ReadFile(planPath); string(b) != string(compiled) { //nolint:gosec // test plan dir
+		t.Fatal("the recompile did not restore the compiled plan")
+	}
+
+	// A record made under another home's key: recompiled, not refused.
+	if err := os.WriteFile(planPath, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := compile.Seal(bytes.Repeat([]byte{7}, 32), planDir); err != nil {
+		t.Fatal(err)
+	}
+	plan, _, notice, err = ensure()
+	if err != nil || !strings.Contains(notice, "no integrity record") || plan.Capabilities.EgressMode != "none" {
+		t.Fatalf("a plan sealed by another home: err %v notice %q", err, notice)
+	}
+
+	// Unchanged: reused without a word.
+	if _, _, notice, err := ensure(); err != nil || strings.Contains(notice, "recompiling") {
+		t.Fatalf("an intact plan was not reused: %v %q", err, notice)
 	}
 }
 
