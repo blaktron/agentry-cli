@@ -428,8 +428,11 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "policy.yaml"), nil
+	return PathIn(home), nil
 }
+
+// PathIn is the operator policy's path under a given runner home.
+func PathIn(home string) string { return filepath.Join(home, "policy.yaml") }
 
 // Home is the runner home: $AGENTRY_RUNNER_HOME when set, else
 // ~/.agentry/runner. Every path under the runner home derives from here,

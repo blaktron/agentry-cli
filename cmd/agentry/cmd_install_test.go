@@ -925,3 +925,99 @@ func TestInstallUnscannedGate(t *testing.T) {
 		t.Fatalf("plan = %+v, want attestation unscanned, unsigned, a refusal naming --allow-unscanned", plan)
 	}
 }
+
+// TestInstallHoldsTheArchiveToTheConsentedContract (agentry-cli#252): the
+// prompt and --yes consent to the resolve manifest's contract, and the
+// export is compiled from the archive's own agent.yaml. An archive that
+// declares more is refused on every target, under --yes, with the
+// widening named and nothing written: no destination, no release
+// directory, no record. One that narrows installs, and the record carries
+// the archive's contract.
+func TestInstallHoldsTheArchiveToTheConsentedContract(t *testing.T) {
+	resolveManifest := func(t *testing.T, files map[string]string) *manifest.Manifest {
+		t.Helper()
+		m, err := manifest.Parse([]byte(files["agent.yaml"]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	egress := func(h string) string { return "capabilities:\n  network:\n    egress: [" + h + "]\n" }
+	osv := func(extra string) string {
+		return "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n" + extra
+	}
+
+	for _, target := range []string{installdir.Target, "claude-skill", "agents-md"} {
+		for _, tc := range []struct{ name, consented, archive, want string }{
+			{"egress", "", egress("evil.example"), "adds network egress to evil.example"},
+			{"server egress", osv(""), osv("      egress: [evil.example]\n"), "adds network egress to evil.example for MCP server npm:@acme/osv-mcp@1.2.3"},
+		} {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				isolateEnv(t)
+				home := t.TempDir()
+				t.Setenv("AGENTRY_RUNNER_HOME", home)
+				t.Chdir(t.TempDir())
+				fr := newFakeRegistry(t)
+				fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", tc.archive))
+				fv.manifest = resolveManifest(t, skillFiles("demo", tc.consented))
+
+				_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", target, "--allow-unsigned", "--yes")
+				if err == nil {
+					t.Fatal("an archive widening the consented contract was installed")
+				}
+				for _, want := range []string{"declares more than the registry said it would", tc.want} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("refusal %q does not say %q", err, want)
+					}
+				}
+				userHome, _ := os.UserHomeDir()
+				for _, p := range []string{
+					installdir.AgentDir(home, "acme", "demo"),
+					filepath.Join(userHome, ".claude", "skills", "demo"),
+					"agents", "AGENTS.md",
+				} {
+					if _, serr := os.Stat(p); !os.IsNotExist(serr) {
+						t.Errorf("%s written before the refusal (stat err %v)", p, serr)
+					}
+				}
+				st, lerr := installed.Load()
+				if lerr != nil {
+					t.Fatal(lerr)
+				}
+				if len(st.Records) != 0 {
+					t.Errorf("a refused install left a record: %+v", st.Records)
+				}
+			})
+		}
+	}
+
+	t.Run("matches", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
+		fr := newFakeRegistry(t)
+		files := skillFiles("demo", osv("      egress: [api.osv.dev]\n      tools: [query]\n"))
+		fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", files)
+		fv.manifest = resolveManifest(t, files)
+		if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+			t.Fatalf("an archive matching the consented contract was refused: %v (%s)", err, stderr)
+		}
+	})
+
+	t.Run("narrows", func(t *testing.T) {
+		isolateEnv(t)
+		t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
+		fr := newFakeRegistry(t)
+		fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+		fv.manifest = resolveManifest(t, skillFiles("demo", egress("api.example")))
+		if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+			t.Fatalf("an archive narrower than the consented contract was refused: %v (%s)", err, stderr)
+		}
+		st, err := installed.Load()
+		if err != nil || len(st.Records) != 1 {
+			t.Fatalf("records %+v err %v", st.Records, err)
+		}
+		if hosts := st.Records[0].Capabilities.EgressHosts; len(hosts) != 0 {
+			t.Errorf("record carries the resolve manifest's egress %v, want the archive's (none)", hosts)
+		}
+	})
+}

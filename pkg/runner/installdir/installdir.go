@@ -83,7 +83,13 @@ func AgentDir(home, namespace, name string) string {
 
 // ReleaseDir is one release's directory under AgentDir.
 func ReleaseDir(home, namespace, name, version, digest string) string {
-	return filepath.Join(AgentDir(home, namespace, name), fmt.Sprintf("%s-%s", version, DigestSuffix(digest)))
+	return filepath.Join(AgentDir(home, namespace, name), ReleaseName(version, digest))
+}
+
+// ReleaseName is a release directory's name, <version>-<12 of the digest>:
+// one spelling for every client, so a run finds what an install laid down.
+func ReleaseName(version, digest string) string {
+	return fmt.Sprintf("%s-%s", version, DigestSuffix(digest))
 }
 
 // DigestSuffix shortens sha256:… for directory names.
@@ -171,6 +177,41 @@ func StyleFor(pol *policy.Policy) string {
 	return manifest.InterfaceAgentsMD
 }
 
+// StyleForHome is StyleFor applied to the runner home's policy, with the
+// one honest outcome for each case: no policy yet is the generic shape and
+// nothing to say (an install must not create one, that is setup's and a
+// run's); a policy that cannot be read is the generic shape too, and the
+// warning says so, so an install goes on rather than stopping on a file it
+// does not need. Both clients show the warning the same way.
+func StyleForHome(home string) (style, warning string) {
+	path := policy.PathIn(home)
+	pol, _, err := policy.Load(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return StyleFor(nil), ""
+		}
+		return StyleFor(nil), fmt.Sprintf("operator policy %s could not be read (%v) — the export beside the install takes the generic AGENTS.md shape", path, err)
+	}
+	return StyleFor(pol), ""
+}
+
+// Install is the one lay-down both clients call for the runner target: the
+// verified release written (Write), then the coding-agent shape beside it
+// in the given style (WriteExport). It is called only once the digest, the
+// attestation and the consent have been judged — it checks none of them.
+// It refuses a Meta that carries a consent: the cache holds the verdict
+// and never the consent, which lives in installed.yaml, so a run cannot
+// read one out of install.json.
+func Install(releaseDir, staging string, m *manifest.Manifest, meta *Meta, style string) error {
+	if meta.Attestation.Consent != "" {
+		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
+	}
+	if err := Write(releaseDir, staging, meta); err != nil {
+		return err
+	}
+	return WriteExport(releaseDir, style, m, meta)
+}
+
 // WriteExport lays the coding-agent shape under <dir>/export from the
 // verified workspace — the Claude skill as ~/.claude/skills would hold it
 // (export/<name>/SKILL.md with the compiled allowed-tools), or AGENTS.md
@@ -204,6 +245,12 @@ func WriteExport(dir, style string, m *manifest.Manifest, meta *Meta) error {
 // release does not: its version control, and the runner's own output.
 func notPartOfARelease(name string) bool { return name == ".git" || name == "agentry-out" }
 
+// ErrNotARelease is RemoveOtherVersions' refusal of a keep that is not a
+// release directly under the agent's directory: a path the caller built
+// wrong, never an older version that would not go, so a caller that says
+// a failed replace as a warning still stops on it.
+var ErrNotARelease = errors.New("not a release of this agent")
+
 // RemoveOtherVersions removes every entry of agentDir but keep — the
 // replace rule of an update (D9): one release per BriefAgent, the older
 // one's directory gone once the new one is verified and recorded. Runs
@@ -212,7 +259,7 @@ func notPartOfARelease(name string) bool { return name == ".git" || name == "age
 // must not turn into a sweep of some other directory.
 func RemoveOtherVersions(agentDir, keep string) error {
 	if !pathguard.DirectlyUnder(agentDir, keep) {
-		return fmt.Errorf("refusing to clear %s: %s is not a release directly under it", agentDir, keep)
+		return fmt.Errorf("%w: refusing to clear %s: %s is not a release directly under it", ErrNotARelease, agentDir, keep)
 	}
 	entries, err := os.ReadDir(agentDir)
 	if err != nil {
