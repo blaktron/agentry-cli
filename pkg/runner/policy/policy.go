@@ -33,13 +33,18 @@ const Version = "1"
 // Default image pins. These are Agentry's own mirrors, published from
 // blaktron/agentry-dockerimages: each one's destination digest was verified
 // equal to the upstream digest it mirrors, so the bytes are what the upstream
-// tag named when it was pinned, and the tag cannot move under us because we
-// are the only ones who can push to it.
+// tag named when it was pinned.
+//
+// They are tags, and that is a real limit. The tags are ours, so they cannot
+// move without us — but nothing enforces that: a push by us, by anyone holding
+// a token that can write to the namespace, or by a mistaken re-mirror would
+// move one, and a run would not be able to tell. Say so rather than claiming
+// immutability.
 //
 // Tags rather than digests for now. Every digest is recorded in that
 // repository's images.tsv, so pinning them here is possible and is the next
 // step — but it changes the shape of the ref the runner hands the daemon, and
-// that wants a live acceptance run to prove before it ships.
+// that wants a live acceptance run to prove before it ships (agentry-cli#236).
 //
 // Versions match the survey of 2026-08-30, re-verified 2026-09-23.
 const (
@@ -644,10 +649,13 @@ policyVersion: "1"
 
 images:
   # Agentry's own mirrors of the upstream images, published from
-  # blaktron/agentry-dockerimages, where every digest is recorded and was
-  # verified equal to the upstream digest it mirrors — so the tag cannot move
-  # under you. Point these at any registry you prefer, a private one or your
-  # own mirror, and pin by digest (repo@sha256:...) once you have verified one.
+  # blaktron/agentry-dockerimages. Every digest is recorded there, and each was
+  # verified equal to the upstream digest it mirrors when it was copied.
+  # These are tags, not digests. They are ours, so they cannot move without us,
+  # but nothing enforces that — a push to one would move it and a run could not
+  # tell. For bytes that cannot move at all, pin the digest from that
+  # repository's images.tsv (repo@sha256:...), or point these at any registry
+  # you prefer: a private one, or your own mirror.
   gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
   harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine
