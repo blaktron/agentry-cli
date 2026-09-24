@@ -449,6 +449,18 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	if am, err := manifestFromInstallArchive(staging, m, res); err != nil {
 		return err
 	} else {
+		// The consent above was on the resolve manifest's contract; the
+		// export compiles its grants from the archive's. Hold the archive
+		// to what was consented before anything is written, and record its
+		// contract: never wider, possibly narrower (agentry-cli#252). A
+		// legacy archive without agent.yaml hands back m itself.
+		if am != m {
+			if widened := installed.ArchiveWidenings(m.Capabilities, am.Capabilities); len(widened) > 0 {
+				return fmt.Errorf("the archive of %s/%s@%s declares more than the registry said it would — refusing to install: its agent.yaml %s",
+					res.Namespace, res.Name, res.Version, strings.Join(widened, "; "))
+			}
+			nextCaps = installed.Snapshot(am.Capabilities)
+		}
 		m = am
 	}
 

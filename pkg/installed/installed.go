@@ -307,3 +307,58 @@ type Diff = manifest.CapabilityDiff
 func DiffCapabilities(old, next CapSnapshot) Diff {
 	return manifest.DiffCapabilities(old.capabilities(), next.capabilities())
 }
+
+// ArchiveWidenings reports what an archive's own manifest declares beyond
+// the contract the person consented to, the resolve manifest's, on which
+// the prompt and the diff were raised (agentry-cli#252; the desktop's
+// agentry-desktop#163). The digest and the attestation cover the archive,
+// so a widening means the registry's resolve answer diverged from the
+// bytes it served, and an install refuses it rather than reconciling. It
+// is the core's rule, manifest.DiffCapabilities, on the two full
+// contracts, plus what that rule does not yet compare: a declared MCP
+// server's own egress, secrets and tool restriction (agentry#527).
+func ArchiveWidenings(consented, archive manifest.Capabilities) []string {
+	widened := manifest.DiffCapabilities(consented, archive).Widened
+	return append(widened, serverWidenings(consented.MCPServers, archive.MCPServers)...)
+}
+
+// serverWidenings reports what the archive grants a declared MCP server
+// beyond the consented declaration of the same server (same package and
+// pin); a server the consented contract lacks is the core diff's to report.
+func serverWidenings(consented, archive []manifest.MCPServer) []string {
+	byID := make(map[string]manifest.MCPServer, len(consented))
+	for _, s := range consented {
+		byID[s.SourceID()+"@"+s.Version] = s
+	}
+	var out []string
+	for _, s := range archive {
+		id := s.SourceID() + "@" + s.Version
+		c, ok := byID[id]
+		if !ok {
+			continue
+		}
+		for _, h := range s.Egress {
+			if !slices.Contains(c.Egress, h) {
+				out = append(out, fmt.Sprintf("adds network egress to %s for MCP server %s", h, id))
+			}
+		}
+		for _, n := range s.Secrets {
+			if !slices.Contains(c.Secrets, n) {
+				out = append(out, fmt.Sprintf("asks for a new secret %s for MCP server %s", n, id))
+			}
+		}
+		if len(c.Tools) == 0 {
+			continue // the consented declaration already granted the full set
+		}
+		if len(s.Tools) == 0 {
+			out = append(out, fmt.Sprintf("grants MCP server %s its full tool set (consented: %s)", id, strings.Join(c.Tools, ", ")))
+			continue
+		}
+		for _, tool := range s.Tools {
+			if !slices.Contains(c.Tools, tool) {
+				out = append(out, fmt.Sprintf("adds tool %s to MCP server %s", tool, id))
+			}
+		}
+	}
+	return out
+}
