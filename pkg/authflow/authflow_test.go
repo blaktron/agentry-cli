@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -55,10 +56,32 @@ func TestStateMismatchIsRefused(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("mismatched state answered %d, want 403", resp.StatusCode)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if tok, err := f.Wait(ctx); err == nil || tok != "" {
+		t.Fatalf("Wait = (%q, %v) after a mismatched state, want no token and still waiting", tok, err)
+	}
+}
+
+// TestBogusStateDoesNotEndTheFlow: a request without the nonce is refused
+// and the real callback still completes the sign-in — anything local can
+// reach the port, and must not be able to abort a sign-in (agentry-cli#164).
+func TestBogusStateDoesNotEndTheFlow(t *testing.T) {
+	f, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if resp := get(t, fmt.Sprintf("http://127.0.0.1:%d/callback?state=WRONG&token=agy_evil", f.Port)); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("mismatched state answered %d, want 403", resp.StatusCode)
+	}
+	if resp := get(t, fmt.Sprintf("http://127.0.0.1:%d/callback?state=%s&token=agy_real", f.Port, url.QueryEscape(f.State))); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the real callback answered %d, want 200", resp.StatusCode)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := f.Wait(ctx); err == nil {
-		t.Fatal("Wait accepted a token delivered with the wrong state")
+	if tok, err := f.Wait(ctx); err != nil || tok != "agy_real" {
+		t.Fatalf("Wait = (%q, %v), want the real token", tok, err)
 	}
 }
 

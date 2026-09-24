@@ -1,10 +1,15 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // TestRedactorErrKeepsClassAndIdentity: an error that carries a value is
@@ -56,4 +61,58 @@ func TestRedactorFile(t *testing.T) {
 		t.Errorf("clean file was rewritten: %q", b)
 	}
 	r.File(filepath.Join(dir, "absent.log")) // no receipt, no panic
+}
+
+// TestShortSecretsAreDisclosedInTheReceipt: a declared secret too short for
+// the redactor to mask is named in the receipt's enforced capabilities, so
+// the receipt never implies a mask it did not apply (agentry-cli#164).
+func TestShortSecretsAreDisclosedInTheReceipt(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p.SecretOverrides = map[string]string{"ENGINE_TEST_TOKEN": "x9q"}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := env.CapabilitiesEnforced["redaction"]
+	if !strings.Contains(got, "ENGINE_TEST_TOKEN") || strings.Contains(got, "x9q") {
+		t.Errorf("redaction = %q, want the secret's name and never its value", got)
+	}
+
+	p2, f2 := fixture(t)
+	happyFake(f2)
+	p2.SecretOverrides = map[string]string{"ENGINE_TEST_TOKEN": "long-enough-value"}
+	env2, err := Run(context.Background(), f2, p2)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, ok := env2.CapabilitiesEnforced["redaction"]; ok {
+		t.Errorf("redaction = %q with every secret long enough, want no entry", got)
+	}
+}
+
+// TestRedactionNoteReadsServerScopedSecrets: a declared server's short
+// secret is named by its declared name; a name the agent and a server both
+// declare appears once; a long value and an existing entry are left alone.
+func TestRedactionNoteReadsServerScopedSecrets(t *testing.T) {
+	var p Params
+	p.Plan = &spec.Plan{
+		Secrets:    []string{"SHARED", "LONG_ONE"},
+		MCPServers: []spec.MCPServerSpec{{Name: "mcp-x", Secrets: []string{"SHARED", "SRV_PIN"}}},
+	}
+	secrets := map[string]string{
+		compile.SecretKey("SHARED"):                 "abc",
+		compile.SecretKey("LONG_ONE"):               "long-enough-value",
+		compile.ServerSecretKey("mcp-x", "SHARED"):  "abc",
+		compile.ServerSecretKey("mcp-x", "SRV_PIN"): "1234",
+	}
+	in := map[string]string{"network": "internal"}
+	out := withRedactionNote(in, p, secrets)
+	want := "secret values shorter than 8 characters are not masked in receipts: SHARED, SRV_PIN"
+	if out["redaction"] != want || out["network"] != "internal" {
+		t.Errorf("note = %v, want redaction %q beside the existing entries", out, want)
+	}
+	if _, touched := in["redaction"]; touched {
+		t.Error("the input map was changed")
+	}
 }
