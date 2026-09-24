@@ -109,8 +109,10 @@ func (f *Flow) handleCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	token := r.URL.Query().Get("token")
 	if subtle.ConstantTimeCompare([]byte(state), []byte(f.State)) != 1 {
-		http.Error(w, "state mismatch — start the sign-in again from the app", http.StatusForbidden)
-		f.deliver(outcome{err: errors.New("callback state mismatch")})
+		// Refused, and the flow keeps waiting: anything on this machine can
+		// reach the loopback port, so a request without the nonce must not
+		// be able to end a sign-in it cannot complete (agentry-cli#164).
+		http.Error(w, "state mismatch — this is not the sign-in the app started", http.StatusForbidden)
 		return
 	}
 	if code := r.URL.Query().Get("code"); code != "" {

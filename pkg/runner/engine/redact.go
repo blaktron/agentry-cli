@@ -2,10 +2,15 @@ package engine
 
 import (
 	"errors"
-	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // redactor masks the values that must never reach a receipt: the run's
@@ -41,6 +46,38 @@ func newRedactor(token string, secrets map[string]string, extra []string) *redac
 	// Longest first so a value that contains another is masked whole.
 	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
 	return &redactor{values: vals}
+}
+
+// withRedactionNote names, in the receipt's enforced capabilities, every
+// declared secret whose resolved value is too short for the redactor to
+// mask, so the receipt never implies a mask it did not apply
+// (agentry-cli#164). Declared names only: the value is the thing not being
+// masked. secrets is secretValues' map, keyed as the gateway reads it.
+func withRedactionNote(enforced map[string]string, p Params, secrets map[string]string) map[string]string {
+	short := map[string]bool{}
+	check := func(name, key string) {
+		if v := secrets[key]; v != "" && len(v) < redactMinLen {
+			short[name] = true
+		}
+	}
+	for _, name := range p.Plan.Secrets {
+		check(name, compile.SecretKey(name))
+	}
+	for _, srv := range p.Plan.MCPServers {
+		for _, name := range srv.Secrets {
+			check(name, compile.ServerSecretKey(srv.Name, name))
+		}
+	}
+	if len(short) == 0 {
+		return enforced
+	}
+	names := slices.Sorted(maps.Keys(short))
+	out := maps.Clone(enforced)
+	if out == nil {
+		out = map[string]string{}
+	}
+	out["redaction"] = fmt.Sprintf("secret values shorter than %d characters are not masked in receipts: %s", redactMinLen, strings.Join(names, ", "))
+	return out
 }
 
 // newRedactor builds the run's redactor from the values a run knows once
