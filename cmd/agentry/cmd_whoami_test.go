@@ -326,3 +326,49 @@ func TestPublishRendersCreditsExhausted(t *testing.T) {
 		})
 	}
 }
+
+// The private-agent line (agentry-cli#277, after agentry-enterprise#40):
+// the registry's privateAgents.enabled says which of "none" and "no cap"
+// a max of 0 means, so the line is printed for everyone it answers. A
+// registry that predates the field keeps the old rule: the line only when
+// max > 0, because 0 could mean either.
+func TestWhoamiPrivateAgentLineReadsEnabled(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	fr.userHandle = "chris"
+	fr.billing = true
+	t.Setenv(envToken, "agy_test")
+
+	for _, tc := range []struct {
+		name    string
+		private map[string]any
+		want    string // "" means no private line at all
+	}{
+		{"disabled", map[string]any{"enabled": false, "max": 0, "used": 0}, "private:  none\n"},
+		{"disabled with agents held", map[string]any{"enabled": false, "max": 0, "used": 2}, "private:  none may be added (2 BriefAgents held)\n"},
+		{"enabled, no cap", map[string]any{"enabled": true, "max": 0, "used": 4}, "private:  4 BriefAgents, no cap\n"},
+		{"enabled, capped", map[string]any{"enabled": true, "max": 10, "used": 4}, "private:  4 of 10 BriefAgents\n"},
+		{"absent field, capped", map[string]any{"max": 10, "used": 4}, "private:  4 of 10 BriefAgents\n"},
+		{"absent field, max 0", map[string]any{"max": 0, "used": 4}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr.billingAccountDoc = map[string]any{
+				"tier": "pro", "balance": 40, "allowance": 50, "submissionCost": 10,
+				"periodEnd": "2026-10-11T00:00:00Z", "privateAgents": tc.private,
+			}
+			stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "whoami")
+			if err != nil {
+				t.Fatalf("whoami: %v (stderr %q)", err, stderr)
+			}
+			if tc.want == "" {
+				if strings.Contains(stdout, "private:") {
+					t.Errorf("a registry without enabled and max 0 was guessed at:\n%s", stdout)
+				}
+				return
+			}
+			if !strings.Contains(stdout, tc.want) {
+				t.Errorf("whoami lacks %q:\n%s", tc.want, stdout)
+			}
+		})
+	}
+}
