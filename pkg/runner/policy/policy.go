@@ -245,7 +245,11 @@ type MCPServersPolicy struct {
 
 // MCPRegistries names the trusted repositories for declared MCP servers.
 // Empty fields resolve to the public defaults at load time, so a policy
-// file written before this block existed keeps working unchanged.
+// file written before this block existed keeps working unchanged. They
+// must be https: the install builder reaches them only through the
+// install proxy, which tunnels TLS, with the registry's host (and the
+// artifact hosts its metadata names for the pin) as its whole allowlist
+// (agentry-cli#92).
 type MCPRegistries struct {
 	// NPM is the npm registry base URL (metadata + tarballs).
 	NPM string `yaml:"npm,omitempty"`

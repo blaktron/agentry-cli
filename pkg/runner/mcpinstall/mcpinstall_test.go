@@ -40,6 +40,26 @@ func fakeRegistries(t *testing.T) policy.MCPRegistries {
 	return policy.MCPRegistries{NPM: srv.URL, PyPI: srv.URL}
 }
 
+// httpsRegs is regs with https URLs: the install proxy tunnels https
+// only, so EnsureInstalled refuses anything else, while the resolution
+// tests' fake registry is a plain httptest server that EnsureInstalled
+// never contacts.
+func httpsRegs(regs policy.MCPRegistries) policy.MCPRegistries {
+	regs.NPM = strings.Replace(regs.NPM, "http://", "https://", 1)
+	regs.PyPI = strings.Replace(regs.PyPI, "http://", "https://", 1)
+	return regs
+}
+
+// withRunner marks the runner image built, as the install step leaves it
+// before any server is installed: the install proxy runs from it.
+func withRunner(f *dockerx.Fake) *dockerx.Fake {
+	if f.ExistingImages == nil {
+		f.ExistingImages = map[string]bool{}
+	}
+	f.ExistingImages[proxyImage(policy.Images{})] = true
+	return f
+}
+
 func foregroundCalls(f *dockerx.Fake) int {
 	n := 0
 	for _, c := range f.Calls {
@@ -99,9 +119,10 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 	}
 	store := t.TempDir()
 	fake := &dockerx.Fake{}
+	withRunner(fake)
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
 
-	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if n := foregroundCalls(fake); n != 1 {
@@ -133,7 +154,7 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 
 	// Second install of the SAME resolution: pure reuse, no docker.
 	res2, _ := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{decl("@scope/server-x", "", "1.2.3")})
-	if err := EnsureInstalled(t.Context(), fake, res2, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res2, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if n := foregroundCalls(fake); n != 1 {
@@ -144,15 +165,16 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 func TestEnsureInstalledRefusesDrift(t *testing.T) {
 	store := t.TempDir()
 	fake := &dockerx.Fake{}
+	withRunner(fake)
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
-	regs := policy.MCPRegistries{NPM: "http://unused.invalid", PyPI: "http://unused.invalid"}
+	regs := policy.MCPRegistries{NPM: "https://unused.invalid", PyPI: "https://unused.invalid"}
 
 	first := []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-OLD"}}
-	if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, first, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	drifted := []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-NEW"}}
-	err := EnsureInstalled(t.Context(), fake, drifted, store, regs, images, policy.DockerPolicy{}, io.Discard)
+	err := EnsureInstalled(t.Context(), fake, drifted, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "trust decision") {
 		t.Fatalf("integrity drift not refused: %v", err)
 	}
@@ -185,8 +207,9 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 	}
 	store := t.TempDir()
 	fake := &dockerx.Fake{}
+	withRunner(fake)
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
-	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	run, ok := fake.FindRun("agentry-mcpinstall-pypi-")
@@ -194,7 +217,7 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 		t.Fatal("no PyPI builder ran")
 	}
 	// The program is fixed; the values follow it one per element.
-	want := []string{"python", "-c", pypiBuilder, "/opt/agentry-mcp/pypi-mcp-server-fetch", "mcp-server-fetch", "0.6.2", regs.PyPI + "/simple", "--only-binary=:all:"}
+	want := []string{"python", "-c", pypiBuilder, "/opt/agentry-mcp/pypi-mcp-server-fetch", "mcp-server-fetch", "0.6.2", httpsRegs(regs).PyPI + "/simple", "--only-binary=:all:"}
 	if !slices.Equal(run.Argv, want) {
 		t.Errorf("builder argv = %q\nwant %q", run.Argv[3:], want[3:])
 	}
@@ -221,7 +244,7 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
 	store := t.TempDir()
 	fake := &dockerx.Fake{
-		ExistingImages: map[string]bool{"python:test": true},
+		ExistingImages: map[string]bool{"python:test": true, proxyImage(policy.Images{}): true},
 		Foreground: map[string]*dockerx.FakeForeground{
 			"agentry-mcpinstall-pypi-some-tool": {Before: func(r dockerx.RunSpec) {
 				if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, consoleScriptsFile), []byte("some-tool-cli\nsome_tool\n"), 0o600); err != nil {
@@ -231,9 +254,9 @@ func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
 		},
 	}
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
-	regs := policy.MCPRegistries{NPM: "http://unused.invalid", PyPI: "http://unused.invalid"}
+	regs := policy.MCPRegistries{NPM: "https://unused.invalid", PyPI: "https://unused.invalid"}
 	res := []Resolved{{Source: "pypi", Package: "Some.Tool", Version: "1.0.0", ID: "pypi-some-tool", BinName: "some-tool", Integrity: "sha256:aa"}}
-	if err := EnsureInstalled(t.Context(), fake, res, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if res[0].BinName != "some_tool" {
@@ -244,14 +267,15 @@ func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
 	}
 	// Reuse: the fresh resolution only knows the guess; the store knows better.
 	again := []Resolved{{Source: "pypi", Package: "Some.Tool", Version: "1.0.0", ID: "pypi-some-tool", BinName: "some-tool", Integrity: "sha256:aa"}}
-	if err := EnsureInstalled(t.Context(), fake, again, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	installOps := len(fake.Ops())
+	if err := EnsureInstalled(t.Context(), fake, again, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if again[0].BinName != "some_tool" {
 		t.Fatalf("reused BinName = %q", again[0].BinName)
 	}
-	if n := len(fake.Ops()); n != 2 { // ImageExists + RunForeground once; reuse touched docker not at all
-		t.Fatalf("docker ops on reuse: %v", fake.Ops())
+	if n := len(fake.Ops()); n != installOps { // reuse touches docker not at all
+		t.Fatalf("docker ops on reuse: %v", fake.Ops()[installOps:])
 	}
 }
 
@@ -321,8 +345,9 @@ func TestBuilderValuesNeverReachAShell(t *testing.T) {
 	}
 	for _, c := range cases {
 		fake := &dockerx.Fake{}
+		withRunner(fake)
 		r := []Resolved{{Source: c.src, Package: c.pkg, Version: c.version, ID: c.src + "-x", BinName: "x"}}
-		err := EnsureInstalled(t.Context(), fake, r, t.TempDir(), policy.MCPRegistries{NPM: "http://n.invalid", PyPI: "http://p.invalid"},
+		err := EnsureInstalled(t.Context(), fake, r, t.TempDir(), policy.MCPRegistries{NPM: "https://n.invalid", PyPI: "https://p.invalid"},
 			policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, policy.DockerPolicy{}, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "builder will pass on") || len(fake.Calls) != 0 {
 			t.Errorf("%s %q@%q: err=%v docker calls=%v", c.src, c.pkg, c.version, err, fake.Ops())
@@ -333,7 +358,7 @@ func TestBuilderValuesNeverReachAShell(t *testing.T) {
 		} else {
 			d.PyPI = c.pkg
 		}
-		if _, err := ResolveAll(t.Context(), nil, policy.MCPRegistries{NPM: "http://n.invalid", PyPI: "http://p.invalid"}, []manifest.MCPServer{d}); err == nil || !strings.Contains(err.Error(), "builder will pass on") {
+		if _, err := ResolveAll(t.Context(), nil, policy.MCPRegistries{NPM: "https://n.invalid", PyPI: "https://p.invalid"}, []manifest.MCPServer{d}); err == nil || !strings.Contains(err.Error(), "builder will pass on") {
 			t.Errorf("resolve %s %q@%q: %v", c.src, c.pkg, c.version, err)
 		}
 	}
@@ -344,22 +369,125 @@ func TestBuilderValuesNeverReachAShell(t *testing.T) {
 	}
 }
 
-// The builder's network is named, not left to the daemon's default
-// (agentry-cli#162; whether it goes through the proxy is agentry-cli#92).
-func TestEnsureInstalledNamesTheBuilderNetwork(t *testing.T) {
-	regs := fakeRegistries(t)
-	for _, d := range []manifest.MCPServer{decl("@scope/server-x", "", "1.2.3"), decl("", "mcp-server-fetch", "0.6.2")} {
-		res, err := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{d})
-		if err != nil {
-			t.Fatal(err)
-		}
-		fake := &dockerx.Fake{}
-		if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, policy.DockerPolicy{}, io.Discard); err != nil {
-			t.Fatal(err)
-		}
-		if run, ok := fake.FindRun("agentry-mcpinstall-"); !ok || run.Network != "bridge" {
-			t.Errorf("%s: builder network = %q, want bridge", d.SourceID(), run.Network)
-		}
+// The builder's only route out is the install proxy (agentry-cli#92,
+// DR-12): an internal network of its own, where the runner image's proxy
+// allows the configured registry and the artifact hosts the registry's
+// metadata named, and nothing else; the builder is told the proxy by the
+// proxy variables. The proxy's decisions are kept beside the record, the
+// record names the allowlist, and the proxy and the network go when the
+// build ends.
+func TestEnsureInstalledRoutesTheBuilderThroughTheInstallProxy(t *testing.T) {
+	cases := []struct {
+		decl      manifest.MCPServer
+		regs      policy.MCPRegistries
+		resolved  Resolved
+		wantAllow []string
+	}{
+		{
+			decl:      decl("@scope/server-x", "", "1.2.3"),
+			regs:      policy.MCPRegistries{NPM: "https://registry.npmjs.org", PyPI: "https://pypi.org"},
+			resolved:  Resolved{Source: "npm", Package: "@scope/server-x", Version: "1.2.3", ID: "npm-scope-server-x", BinName: "server-x", Integrity: "sha512-A"},
+			wantAllow: []string{"registry.npmjs.org:443"},
+		},
+		{
+			decl: decl("", "mcp-server-fetch", "0.6.2"),
+			regs: policy.MCPRegistries{NPM: "https://registry.npmjs.org", PyPI: "https://pypi.org"},
+			resolved: Resolved{Source: "pypi", Package: "mcp-server-fetch", Version: "0.6.2", ID: "pypi-mcp-server-fetch", BinName: "mcp-server-fetch", Integrity: "sha256:aa",
+				FetchHosts: []string{"files.pythonhosted.org:443"}},
+			wantAllow: []string{"files.pythonhosted.org:443", "pypi.org:443"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.decl.SourceID(), func(t *testing.T) {
+			store := t.TempDir()
+			id := c.resolved.ID
+			fake := withRunner(&dockerx.Fake{LogsByName: map[string]string{installProxyName(id): "allow pypi.org:443\ndeny evil.example:443\n"}})
+			res := []Resolved{c.resolved}
+			if err := EnsureInstalled(t.Context(), fake, res, store, c.regs, policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, policy.DockerPolicy{Runtime: "runsc"}, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			ops := fake.Ops()
+			net := installNetworkName(id)
+			for _, want := range []string{
+				"NetworkCreate:" + net + "(internal=true)",
+				"RunDetached:" + installProxyName(id),
+				"NetworkConnect:bridge<-" + installProxyName(id),
+				"RemoveForce:" + installProxyName(id),
+				"NetworkRemove:" + net,
+			} {
+				if !slices.Contains(ops, want) {
+					t.Errorf("docker ops lack %q: %v", want, ops)
+				}
+			}
+			proxy, ok := fake.FindRun(installProxyName(id))
+			if !ok {
+				t.Fatal("no install proxy ran")
+			}
+			wantArgv := []string{"proxy", "--allow", strings.Join(c.wantAllow, ","), "--addr", ":3128"}
+			if proxy.Image != proxyImage(policy.Images{}) || !slices.Equal(proxy.Argv, wantArgv) || proxy.Network != net || proxy.Alias != installProxyAlias {
+				t.Errorf("install proxy = image %q argv %q network %q alias %q; want %q %q", proxy.Image, proxy.Argv, proxy.Network, proxy.Alias, proxyImage(policy.Images{}), wantArgv)
+			}
+			if proxy.Runtime != "runsc" || !proxy.ReadOnly || !proxy.NoNewPrivileges {
+				t.Errorf("install proxy posture: runtime %q readOnly %v noNewPrivileges %v", proxy.Runtime, proxy.ReadOnly, proxy.NoNewPrivileges)
+			}
+			builder, ok := fake.FindRun("agentry-mcpinstall-" + id)
+			if !ok {
+				t.Fatal("no builder ran")
+			}
+			if builder.Network != net {
+				t.Errorf("builder network = %q, want the install network %q (never the bridge)", builder.Network, net)
+			}
+			if got := builder.Env["HTTPS_PROXY"]; got != "http://mcp-install-proxy:3128" || builder.Env["https_proxy"] != got || builder.Env["npm_config_https_proxy"] != got || builder.Env["PIP_PROXY"] != got {
+				t.Errorf("builder proxy env = %v", builder.Env)
+			}
+			logb, err := os.ReadFile(filepath.Join(store, id+installProxyLogSuffix))
+			if err != nil || !strings.Contains(string(logb), "deny evil.example:443") {
+				t.Errorf("install proxy log = %q, %v", logb, err)
+			}
+			meta, err := LoadMeta(store, id)
+			if err != nil || meta == nil || !slices.Equal(meta.InstallEgress, c.wantAllow) {
+				t.Errorf("recorded install egress = %+v, %v; want %q", meta, err, c.wantAllow)
+			}
+		})
+	}
+}
+
+// The proxy tunnels https only, so a plain-http registry is refused before
+// anything starts, and so is a missing runner image, which docker would
+// otherwise try to pull under a name that is only ever built locally.
+func TestEnsureInstalledRefusesWhatTheInstallProxyCannotCarry(t *testing.T) {
+	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
+	res := func() []Resolved {
+		return []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-A"}}
+	}
+	fake := withRunner(&dockerx.Fake{})
+	err := EnsureInstalled(t.Context(), fake, res(), t.TempDir(), policy.MCPRegistries{NPM: "http://registry.example", PyPI: "https://pypi.org"}, images, policy.DockerPolicy{}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "https") {
+		t.Errorf("an http registry: %v", err)
+	}
+	if foregroundCalls(fake) != 0 || len(fake.Ops()) != 0 {
+		t.Errorf("an http registry still touched docker: %v", fake.Ops())
+	}
+	bare := &dockerx.Fake{ExistingImages: map[string]bool{"node:test": true}}
+	err = EnsureInstalled(t.Context(), bare, res(), t.TempDir(), policy.MCPRegistries{NPM: "https://registry.npmjs.org", PyPI: "https://pypi.org"}, images, policy.DockerPolicy{}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "not built") {
+		t.Errorf("no runner image: %v", err)
+	}
+	if foregroundCalls(bare) != 0 {
+		t.Error("the builder ran without its proxy")
+	}
+}
+
+// Resolution records where the pinned artifact is fetched from, when that
+// is not the registry itself: npm's tarball host, PyPI's file host. Only
+// https URLs count; the registry's own host is not repeated.
+func TestFetchHosts(t *testing.T) {
+	got := fetchHosts("https://pypi.org",
+		"https://files.pythonhosted.org/packages/a.whl", "https://files.pythonhosted.org/packages/b.tar.gz",
+		"https://pypi.org/x", "http://plain.example/y", "t", "https://mirror.example:8443/z")
+	want := []string{"files.pythonhosted.org:443", "mirror.example:8443"}
+	if !slices.Equal(got, want) {
+		t.Errorf("fetchHosts = %q, want %q", got, want)
 	}
 }
 
@@ -368,7 +496,7 @@ func TestEnsureInstalledNamesTheBuilderNetwork(t *testing.T) {
 // before digests were kept gets one on first use and is held to it.
 func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
-	regs := policy.MCPRegistries{NPM: "http://unused.invalid", PyPI: "http://unused.invalid"}
+	regs := policy.MCPRegistries{NPM: "https://unused.invalid", PyPI: "https://unused.invalid"}
 	server := func() []Resolved {
 		return []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-A"}}
 	}
@@ -384,8 +512,9 @@ func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 			}
 		}},
 	}}
+	withRunner(fake)
 	first := server()
-	if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, first, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(first[0].StoreDigest, "sha256:") {
@@ -439,8 +568,9 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &dockerx.Fake{}
+	withRunner(fake)
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
-	if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, images, policy.DockerPolicy{Runtime: "runsc", Limits: policy.Limits{Memory: "1g"}}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), httpsRegs(regs), images, policy.DockerPolicy{Runtime: "runsc", Limits: policy.Limits{Memory: "1g"}}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	inst, ok := fake.FindRun("agentry-mcpinstall-")
@@ -454,7 +584,8 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 		t.Fatalf("installer posture: cap-drop %v nnp %v memory %q cpus %d pids %d", inst.CapDrop, inst.NoNewPrivileges, inst.Memory, inst.CPUs, inst.PidsLimit)
 	}
 	fake2 := &dockerx.Fake{}
-	if err := EnsureInstalled(t.Context(), fake2, res, t.TempDir(), regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+	withRunner(fake2)
+	if err := EnsureInstalled(t.Context(), fake2, res, t.TempDir(), httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if inst, _ := fake2.FindRun("agentry-mcpinstall-"); inst.Runtime != "" {
