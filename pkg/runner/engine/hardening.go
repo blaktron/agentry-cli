@@ -66,6 +66,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if out == nil {
 		out = map[string]string{}
 	}
+	out["daemon"] = daemonLine(nil)
 	containers := []string{"the llm proxy", "the gateway", "the probe"}
 	readOnly := []string{"the llm proxy", "the probe"}
 	switch {

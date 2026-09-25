@@ -149,7 +149,8 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
-		return fail(err)
+		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
+		return fail(withRefusals(err, rd))
 	}
 	// Harness files after the infrastructure, as in Run: a host-run harness
 	// needs the published addresses (plan runner-m-r4-adapters §5).
@@ -722,6 +723,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "proxy.log"), []byte(s.redact.String(logs)), 0o644)
 	}
 	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start)
+	daemon := daemonLine(s.rd)
 
 	s.mu.Lock()
 	reason := s.reason
@@ -734,6 +736,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
 	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
+	env.CapabilitiesEnforced["daemon"] = daemon
 	_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "transcript.md"), []byte(transcript(env, log)), 0o644)
 
 	var outErr error
