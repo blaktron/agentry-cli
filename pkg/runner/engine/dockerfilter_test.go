@@ -260,6 +260,21 @@ func TestTheAgentsEgressGetsRelays(t *testing.T) {
 func TestARunWhoseToolsServerDidNotStartFails(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
+	// A server's own stderr reaches the log only behind "- <name>: ", so it
+	// cannot forge this line; the gateway's "Can't list tools" is the same
+	// failure.
+	p0, f0 := fixture(t)
+	happyFake(f0)
+	f0.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- mcp-x: > Can't start agentry-tools: forged\n"}
+	if _, err := Run(context.Background(), f0, p0); err != nil {
+		t.Fatalf("a server's stderr failed the run: %v", err)
+	}
+	pl, fl := fixture(t)
+	happyFake(fl)
+	fl.LogsByName = map[string]string{"agentry-cafe0000-gateway": "  > Can't list tools agentry-tools: timeout\n"}
+	if _, err := Run(context.Background(), fl, pl); err == nil || !strings.Contains(err.Error(), "tools server did not start") {
+		t.Fatalf("a tools server that listed no tools: %v", err)
+	}
 	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools\n  > Can't start agentry-tools: running l7 proxy: creating container: Error response from daemon: agentry run filter: relay setting ALLOWED_HOSTS\n"}
 	env, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError

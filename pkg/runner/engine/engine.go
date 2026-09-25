@@ -555,7 +555,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return Classify(ExitGateway, withRefusals(err, rd))
 	}
 	if err := checkDeclaredServersStarted(logs, p.Plan.MCPServers); err != nil {
-		return Classify(ExitGateway, err)
+		return Classify(ExitGateway, withRefusals(err, rd))
 	}
 	return nil
 }

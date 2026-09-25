@@ -325,12 +325,12 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err := f.bound(hc); err != nil {
 		return nil, err
 	}
-	relay, err := f.isRelay(ctx, imageID)
+	relay, err := f.relayPin(ctx, imageID)
 	if err != nil {
 		return nil, err
 	}
-	if relay {
-		if err := f.relayShape(&c); err != nil {
+	if relay != "" {
+		if err := f.relayShape(&c, relay); err != nil {
 			return nil, err
 		}
 	} else if f.cfg.Runtime != "" {
@@ -406,14 +406,19 @@ func (f *Filter) pinLinks(ctx context.Context, c *containerCreateBody) error {
 // and what a pinned /etc/hosts entry may name.
 var hostNameRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
 
-// relayPortsRE is a relay's other setting, held to its form likewise.
-var relayPortsRE = regexp.MustCompile(`^[0-9]{1,5}(,[0-9]{1,5})*$`)
+// relayPortsRE is an L4 relay's other setting, held to its form likewise;
+// relayPortRE one port of an L7 relay's host:port.
+var (
+	relayPortsRE = regexp.MustCompile(`^[0-9]{1,5}(,[0-9]{1,5})*$`)
+	relayPortRE  = regexp.MustCompile(`^[0-9]{1,5}$`)
+)
 
 // relayShape holds a relay, the one kind of container with a way off the
 // host, to what the pinned gateway gives one: its image's own entrypoint
-// and command, no files, and the target host and ports as settings. The
-// host must be one the run's servers declared.
-func (f *Filter) relayShape(c *containerCreateBody) error {
+// and command, no files, and its targets as settings, each one the run
+// declared (its servers' egress, and the agent's own on 443). The pin says
+// which relay it is, and so which settings it takes.
+func (f *Filter) relayShape(c *containerCreateBody, pin string) error {
 	hc := c.HostConfig
 	switch {
 	case present(c.Entrypoint) || present(c.Cmd) || present(c.Shell) || present(c.Healthcheck) || present(c.OnBuild):
@@ -433,12 +438,12 @@ func (f *Filter) relayShape(c *containerCreateBody) error {
 			}
 		}
 	}
-	// The pinned gateway's two relays take their target as settings, each
-	// its own form: the L4 relay one host and its ports (PROXY_HOSTNAME,
-	// PROXY_PORTS), the L7 relay a list of host:port it may CONNECT to
-	// (ALLOWED_HOSTS), which is how the tools server's fetch reaches the
-	// agent's declared hosts (agentry-cli#346). One form or the other,
-	// never both, nothing else, and every target declared.
+	// The pinned gateway's two relays take their targets as settings, each
+	// its own form, bound to its image: the L4 relay one host and its ports
+	// (PROXY_HOSTNAME, PROXY_PORTS), the L7 relay a list of host:port it
+	// may CONNECT to (ALLOWED_HOSTS), which is how the tools server's fetch
+	// reaches the agent's declared hosts (agentry-cli#346). Nothing else,
+	// and every target declared.
 	settings := map[string]string{}
 	for _, kv := range c.Env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -452,11 +457,15 @@ func (f *Filter) relayShape(c *containerCreateBody) error {
 			return deny("relay setting %s", k)
 		}
 	}
-	if allowed, l7 := settings["ALLOWED_HOSTS"]; l7 {
-		if len(settings) != 1 {
-			return deny("a relay is either an L4 relay (PROXY_HOSTNAME, PROXY_PORTS) or an L7 relay (ALLOWED_HOSTS), not both")
+	if strings.Contains(pin, "/mcp-l7proxy@") {
+		allowed, ok := settings["ALLOWED_HOSTS"]
+		if !ok || len(settings) != 1 {
+			return deny("an L7 relay takes ALLOWED_HOSTS and nothing else")
 		}
 		return f.l7Targets(allowed)
+	}
+	if _, ok := settings["ALLOWED_HOSTS"]; ok {
+		return deny("an L4 relay takes PROXY_HOSTNAME and PROXY_PORTS, not ALLOWED_HOSTS")
 	}
 	host, ports := settings["PROXY_HOSTNAME"], settings["PROXY_PORTS"]
 	if !hostNameRE.MatchString(host) {
@@ -467,7 +476,7 @@ func (f *Filter) relayShape(c *containerCreateBody) error {
 	}
 	for _, p := range strings.Split(ports, ",") {
 		if !f.relayAllowed(host, p) {
-			return deny("relay to %s port %s is not one the run's servers declared", host, p)
+			return deny("relay to %s port %s is not one the run declared", host, p)
 		}
 	}
 	return nil
@@ -482,7 +491,7 @@ func (f *Filter) l7Targets(allowed string) error {
 	}
 	for _, target := range strings.Split(allowed, ",") {
 		host, port, ok := strings.Cut(target, ":")
-		if !ok || !hostNameRE.MatchString(host) || !relayPortsRE.MatchString(port) || strings.Contains(port, ",") {
+		if !ok || !hostNameRE.MatchString(host) || !relayPortRE.MatchString(port) {
 			return deny("relay target %q is not host:port", target)
 		}
 		if !f.relayAllowed(host, port) {

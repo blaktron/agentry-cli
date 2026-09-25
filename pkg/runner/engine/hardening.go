@@ -133,15 +133,15 @@ func runtimeLine(p Params) string {
 	under = append(under, "the gateway's health probe")
 	line := rt + ": created with docker --runtime " + rt + ": " + strings.Join(under, ", ") +
 		" (each finds the containers it talks to through /etc/hosts, since a sandboxed network stack does not reach docker's embedded DNS)"
-	launched, are := "the tools server, which the gateway launches, is", "takes"
+	launched, is, takes := "the tools server", "is", "takes"
 	if servers {
-		launched, are = "the tools server and the declared MCP servers, which the gateway launches, are", "take"
+		launched, is, takes = "the tools server and the declared MCP servers", "are", "take"
 	}
 	if filterSupported {
-		line += "; " + launched + " given " + rt + " by the run's docker filter" +
+		line += "; " + launched + ", which the gateway launches, " + is + " given " + rt + " by the run's docker filter" +
 			" (a server's relay links pinned into its /etc/hosts at the relay's address)"
 	} else {
-		line += "; " + strings.TrimSuffix(strings.TrimSuffix(launched, " is"), " are") + " " + are + " the daemon's default: the docker filter that sets the runtime runs on Linux only (agentry-cli#322)"
+		line += "; " + launched + ", which the gateway launches, " + takes + " the daemon's default: the docker filter that sets the runtime runs on Linux only (agentry-cli#322)"
 	}
 	if p.Plan.Harness.Host != nil {
 		line += "; the harness is a host process, under no container runtime at all"
