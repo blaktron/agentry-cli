@@ -24,6 +24,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/dirpublish"
 	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/pathguard"
@@ -102,28 +103,42 @@ func DigestSuffix(digest string) string {
 }
 
 // Write lands workspace/ and install.json under dir. A half-written
-// install must not look installed: the tree is built aside and renamed
-// into place, and whatever was at dir before is gone. A local tree's .git
-// and agentry-out are not part of the release and are skipped.
+// install must not look installed, and two first installs of one release
+// at once (a CLI run and a desktop run on a fresh runner home) must not
+// share a half-built tree (agentry-cli#294): the tree is built aside and
+// published by rename (dirpublish). dir is named for the release's
+// digest, so a whole install of that digest already there, whoever laid
+// it down, is the same release: it is kept, with any run's plan inside
+// it, and this copy discarded. Anything else at dir is replaced. A local
+// tree's .git and agentry-out are not part of the release and are
+// skipped.
 func Write(dir, srcTree string, meta *Meta) error {
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("clear install dir: %w", err)
+	return layDown(dir, srcTree, meta, func(got *Meta) bool { return true }, nil)
+}
+
+// layDown builds the release tree for dir aside, lets addToTree add to it
+// (Install's export), and publishes the whole, or leaves dir as it was.
+// A whole install of the same digest at dir that keep accepts wins over
+// this copy.
+func layDown(dir, srcTree string, meta *Meta, keep func(got *Meta) bool, addToTree func(tree string) error) error {
+	settled := func() bool {
+		got, ok := Load(dir, meta.Digest)
+		return ok && keep(got)
 	}
-	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
-		return fmt.Errorf("create install dir: %w", err)
-	}
-	tmp := dir + ".partial"
-	if err := os.RemoveAll(tmp); err != nil {
-		return fmt.Errorf("clear partial install: %w", err)
-	}
-	if err := export.CopyTreeSkipping(srcTree, filepath.Join(tmp, "workspace"), notPartOfARelease); err != nil {
-		return err
-	}
-	if err := writeMeta(tmp, meta); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, dir); err != nil {
-		return fmt.Errorf("finalize install dir: %w", err)
+	_, err := dirpublish.ReplaceUnless(dir, func(tree string) error {
+		if err := export.CopyTreeSkipping(srcTree, filepath.Join(tree, "workspace"), notPartOfARelease); err != nil {
+			return err
+		}
+		if err := writeMeta(tree, meta); err != nil {
+			return err
+		}
+		if addToTree != nil {
+			return addToTree(tree)
+		}
+		return nil
+	}, settled)
+	if err != nil {
+		return fmt.Errorf("lay down the release: %w", err)
 	}
 	return nil
 }
@@ -196,20 +211,24 @@ func StyleForHome(home string) (style, warning string) {
 }
 
 // Install is the one lay-down both clients call for the runner target: the
-// verified release written (Write), then the coding-agent shape beside it
-// in the given style (WriteExport). It is called only once the digest, the
+// verified release written as Write does, with the coding-agent shape in
+// the given style (WriteExport) inside it, published as one tree. It is called only once the digest, the
 // attestation and the consent have been judged — it checks none of them.
 // It refuses a Meta that carries a consent: the cache holds the verdict
 // and never the consent, which lives in installed.yaml, so a run cannot
 // read one out of install.json.
-func Install(releaseDir, staging string, m *manifest.Manifest, meta *Meta, style string) error {
+func Install(releaseDir, srcTree string, m *manifest.Manifest, meta *Meta, style string) error {
 	if meta.Attestation.Consent != "" {
 		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
 	}
-	if err := Write(releaseDir, staging, meta); err != nil {
-		return err
-	}
-	return WriteExport(releaseDir, style, m, meta)
+	// The export is written into the staged tree, so the published
+	// release is whole with its export, and a refused style leaves
+	// whatever was installed before untouched. The same release already
+	// installed with this export is kept as it is.
+	keepIfSameExport := func(got *Meta) bool { return got.Export == style }
+	return layDown(releaseDir, srcTree, meta, keepIfSameExport, func(tree string) error {
+		return WriteExport(tree, style, m, meta)
+	})
 }
 
 // WriteExport lays the coding-agent shape under <dir>/export from the
@@ -253,10 +272,11 @@ var ErrNotARelease = errors.New("not a release of this agent")
 
 // RemoveOtherVersions removes every entry of agentDir but keep — the
 // replace rule of an update (D9): one release per BriefAgent, the older
-// one's directory gone once the new one is verified and recorded. Runs
-// keep their receipts in the person's output folder, not here. keep must
-// sit directly under agentDir, or nothing is removed: the caller's slip
-// must not turn into a sweep of some other directory.
+// one's directory gone once the new one is verified and recorded, while a
+// staging or retired sibling another process is still using is left to
+// it. Runs keep their receipts in the person's output folder, not here.
+// keep must sit directly under agentDir, or nothing is removed: the
+// caller's slip must not turn into a sweep of some other directory.
 func RemoveOtherVersions(agentDir, keep string) error {
 	if !pathguard.DirectlyUnder(agentDir, keep) {
 		return fmt.Errorf("%w: refusing to clear %s: %s is not a release directly under it", ErrNotARelease, agentDir, keep)
@@ -270,7 +290,10 @@ func RemoveOtherVersions(agentDir, keep string) error {
 	}
 	keepName := filepath.Base(keep)
 	for _, e := range entries {
-		if e.Name() == keepName {
+		// Another process laying a release down right now owns its
+		// staging sibling; removing it could gut the tree it is about to
+		// publish (agentry-cli#294). An abandoned one goes.
+		if e.Name() == keepName || dirpublish.InFlight(e) {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(agentDir, e.Name())); err != nil {

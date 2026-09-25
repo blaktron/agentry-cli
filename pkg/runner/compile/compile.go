@@ -29,6 +29,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/dirpublish"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -319,46 +320,36 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			" (no container): the proxy variables and the gateway catalog bound it, not the run network"
 	}
 	// Everything is written into a staging directory beside planDir and
-	// published in one rename (publishPlanDir), so a plan directory is
+	// published in one rename (dirpublish.Replace), so a plan directory is
 	// only ever one compile's complete output: another process reading or
 	// compiling the same plan at the same time never sees this compile's
 	// plan.json beside another's record (agentry-cli#289).
-	staging, err := newStagingDir(planDir)
+	err = dirpublish.Replace(planDir, func(staging string) error {
+		for rel, content := range files {
+			abs := filepath.Join(staging, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+				return fmt.Errorf("create plan dir: %w", err)
+			}
+			if err := os.WriteFile(abs, content, 0o644); err != nil { //nolint:gosec // generated config, no secrets by construction
+				return fmt.Errorf("write %s: %w", rel, err)
+			}
+			plan.Files[rel] = sha256hex(content)
+		}
+		planBytes, err := plan.MarshalCanonical()
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(staging, "plan.json"), planBytes, 0o644); err != nil { //nolint:gosec // ditto
+			return fmt.Errorf("write plan.json: %w", err)
+		}
+		if in.IntegrityKey != nil {
+			return writeIntegrityRecord(in.IntegrityKey, staging, planBytes)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	published := false
-	defer func() {
-		if !published {
-			_ = os.RemoveAll(staging)
-		}
-	}()
-	for rel, content := range files {
-		abs := filepath.Join(staging, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return nil, fmt.Errorf("create plan dir: %w", err)
-		}
-		if err := os.WriteFile(abs, content, 0o644); err != nil { //nolint:gosec // generated config, no secrets by construction
-			return nil, fmt.Errorf("write %s: %w", rel, err)
-		}
-		plan.Files[rel] = sha256hex(content)
-	}
-	planBytes, err := plan.MarshalCanonical()
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(staging, "plan.json"), planBytes, 0o644); err != nil { //nolint:gosec // ditto
-		return nil, fmt.Errorf("write plan.json: %w", err)
-	}
-	if in.IntegrityKey != nil {
-		if err := writeIntegrityRecord(in.IntegrityKey, staging, planBytes); err != nil {
-			return nil, err
-		}
-	}
-	if err := publishPlanDir(staging, planDir); err != nil {
-		return nil, err
-	}
-	published = true
 	return plan, nil
 }
 
