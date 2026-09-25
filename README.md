@@ -120,6 +120,32 @@ first. Server-side end-to-end coverage
 lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
 CLI against a live registry.
 
+### Signing keys and `verify`
+
+`agentry login` pins the registry's signing keys
+(`/.well-known/agentry/signing-keys.json`) on first use, under
+`~/.config/agentry/keys/<host>.yaml`, a file the desktop shares. From then
+on, `install`, `run` and `verify` accept a signature only from a pinned key.
+When a later login finds a different key set, it says what changed and
+keeps the pin:
+
+- **A possible key rotation.** The registry added a key and still
+  advertises every pinned one. That is consistent with a rotation, which
+  keeps retired keys listed, but the client cannot tell a rotation from an
+  added key it should not trust, so confirm it with the registry's operator.
+  Releases the pinned keys signed still verify. A release signed only by
+  the new key is refused until you re-pin.
+- **A warning.** A pinned key is gone, or a pinned key id now carries a
+  different public key. That is not a rotation; treat it as a possible
+  compromise.
+
+In both cases you re-pin deliberately: delete the pin file and log in
+again. The registry also records each key as `active` or `retired`, with
+the date it retired. Login copies that record into the pin file. When the
+key that verified a release is retired, `verify` prints `signed by a
+retired key (retired <date>)`, and its `--json` report carries `keyRetired`
+and `keyRetiredAt`. The key still verifies exactly as it did before.
+
 ## The runner (`agentry run`)
 
 The runner turns a release's declared capability contract into actual
