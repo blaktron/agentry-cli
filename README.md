@@ -44,38 +44,85 @@ away at the flip.
 
 ## Releasing
 
-A release is a tag `v<major>.<minor>.<patch>` on a commit that has been the
-head of `main` (a production release, baking `https://secureagentry.net`) or
-of `dev` (a dev release, baking `https://dev.secureagentry.net`).
+Every build that ships is released under a version (DEV-148, agentry-cli#327
+and #241). A tag is one of two forms, and the branch line its commit is on
+must agree:
+
+- `vX.Y.Z` on a commit on `main`'s first-parent line (a promotion's merge
+  commit) is a **production release**; its binaries bake
+  `https://secureagentry.net`;
+- `vX.Y.Z-dev.N` (N from 1) on a commit on `dev`'s first-parent line (a PR's
+  merge commit) is a **dev prerelease** of the version `main` releases next;
+  its binaries bake `https://dev.secureagentry.net`.
+
 `build/release.env` names both registries and is the same on both branches;
-`scripts/release-registry.sh` picks one by the commit's first-parent history
-and refuses any other commit (agentry-cli#240). `agentry --version` prints the
-registry a binary falls back to. A production release tags main's head:
+`scripts/release-registry.sh` reads the line from the commit's first-parent
+history (agentry-cli#240), and `scripts/release-tag.sh check` refuses a tag of
+any other form, a form on the wrong line, and any 1.x unless the operator has
+set the repository variable `AGENTRY_ALLOW_V1=true` (agentry#522). The
+`release` workflow runs that check before it builds anything.
+`agentry --version` prints the version (the tag without its `v`, `-dev.N`
+included) and the registry the binary falls back to.
+
+**Cutting one** (agents may; only the operator moves the minor version or cuts
+1.0.0). Patch releases are minted as work lands:
 
 ```bash
-git fetch origin && git tag v0.1.0 origin/main && git push origin v0.1.0
+git fetch --tags origin
+tag=$(scripts/release-tag.sh next dev) && git tag "$tag" origin/dev && git push origin "$tag"    # a dev prerelease of dev's head
+tag=$(scripts/release-tag.sh next main) && git tag "$tag" origin/main && git push origin "$tag"  # a production release of main's head
 ```
 
-(plan `agentry-notes/plans/cli-release-signing.md`). A `workflow_dispatch`
-of the `release` workflow from `main` is a dry run of the same job. The
-workflow builds the five binaries with `make dist` (linux and darwin on amd64
-and arm64, windows on amd64; the tag is the version, bare, and
-the registry they talk to by default is the branch's, as above), signs the
-Windows exe against Azure Artifact Signing in the same job — the job's
-identity is the OIDC token GitHub mints for it in the `release` environment,
-so it holds no Azure secret; `jsign` signs, `osslsigncode` verifies to the
-Microsoft root pinned in `build/windows/signing/` and the CN `release.env`
-names — writes `BUILD-INFO` and `SHA256SUMS`, signs those sums with the
-estate's own update-signing key (the desktop's `signrelease -product
-agentry-cli`, at the desktop commit the workflow pins: the signed comment
-names this product, and the tool verifies what it wrote against the committed
-key set), and uploads the set as one workflow artifact `agentry-cli-<version>`.
-The site will import it with `build-downloads.sh --from-run
-blaktron/agentry-cli v<version>`, verify both signatures, and say "signed" on
-the Windows binary's card (agentry-web#214; until then the site still builds
-the CLI itself). No GitHub Release before 1.0. A `workflow_dispatch`
-run from `main` is a dry run: it signs exactly as a tag does and the site
-refuses its bundle.
+`next` names the version `main` releases next: the highest version `dev` has
+prereleased above the newest release, else the newest release with its patch
+bumped (the first release of all is `v0.6.0`). Releases only move forward:
+`check` refuses a tag below the newest release and a prerelease of a version
+already released. `RELEASE_VERSION=X.Y.0` is the operator's, for the first
+tag of a minor they have chosen; an agent never sets it on its own. Tag the branch's head
+only after its merge is verified: a dev prerelease after the change is
+deployed and checked on dev, a production release after its promotion. Then
+watch the `release` run to green and read the Release it published.
+
+**What the workflow does.** It builds the five binaries with `make dist`
+(linux and darwin on amd64 and arm64, windows on amd64), writes `BUILD-INFO`
+and `SHA256SUMS`, and signs what this repository can sign: signed where
+signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
+(inside the sums) and the Release's notes say which.
+
+- The Windows exe is signed against Azure Artifact Signing in the same job
+  when the five signing variables are set (agentry-cli#197). The job's
+  identity is the OIDC token GitHub mints for it in the `release` environment,
+  so it holds no Azure secret; `jsign` signs, and `osslsigncode` verifies to
+  the Microsoft root pinned in `build/windows/signing/` and the CN
+  `release.env` names. With none set it ships unsigned (`signed_windows=none`).
+- `SHA256SUMS` is signed with the estate's own update-signing key when the
+  `AGENTRY_UPDATE_SIGNING_KEY` secret exists (the desktop's `signrelease
+  -product agentry-cli`, at the desktop commit the workflow pins: the signed
+  comment names this product, and the tool verifies what it wrote against the
+  committed key set). Without it there is no `SHA256SUMS.minisig`
+  (`signed_sums=none`).
+- A signing input that is half-configured, or a signature that fails, fails
+  the release; there is no silent fallback. Once signing is set up, the
+  repository variable `AGENTRY_REQUIRE_SIGNING=true` (agentry-cli#197) makes a
+  missing input fail too, so removing a credential cannot quietly turn signing
+  off.
+
+What the checks do not stop: a pushed tag runs the workflow of the tagged
+commit's own tree, so they bind a tag on `main`'s or `dev`'s head (reviewed
+code) and catch a mistaken tag elsewhere only while its tree carries them;
+closing that needs a tag ruleset (DR-33, DR-40).
+
+The bundle is uploaded as one workflow artifact, `agentry-cli-<version>`, and
+**every tag publishes a GitHub Release** with it: a `-dev.N` tag's is a
+prerelease, a `vX.Y.Z` tag's a full release, and only the newest `vX.Y.Z` is
+the latest. Notes are generated from the commits under a header naming the
+signatures. A minor or major release (`vX.Y.0`) is left a draft: the operator
+approves its notes and publishes it. The site's downloads page does not read
+it yet: until agentry-web#214 and agentry-web#444 import the Release (the dev
+page taking `-dev.N` prereleases, production's the `vX.Y.Z` releases), the
+site still builds the CLI itself. A `workflow_dispatch` of `release` from `main` is a dry run:
+it signs exactly as a tag does, publishes no Release, and the site refuses its
+bundle.
 
 **Nothing in this repository depends on being signed** (plan D5): `make
 build`, `make check` and `make dist` need no token, no certificate and no

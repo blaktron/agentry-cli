@@ -107,6 +107,11 @@ jobs:
       # estate's branch model, then a main build's --version read back.
       - name: release registry by branch
         run: scripts/acceptance/release-registry.sh
+      # A tag's form must agree with the line its commit is on (vX.Y.Z on
+      # main's, vX.Y.Z-dev.N on dev's), 1.x waits for AGENTRY_ALLOW_V1, and
+      # the next tag follows the scheme (agentry-cli#327, DEV-148).
+      - name: release tags by branch
+        run: scripts/acceptance/release-tag.sh
       # The release signs the Windows exe (agentry-cli#196); a PR proves the
       # seam with a throwaway CA instead of the key: the checker accepts a
       # signed, timestamped binary chained to the root it is given and refuses
