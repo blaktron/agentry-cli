@@ -746,6 +746,8 @@ func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
 		{"a server linked in HostConfig", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev"}}}},
 		{"a server linked on its endpoint", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet},
 			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{"Links": []string{"/runa-relay:/container/api.osv.dev"}}}}}},
+		{"a server linked in both, as docker's CLI writes it", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev"}},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{"Links": []string{"runa-relay:api.osv.dev"}}}}}},
 	} {
 		hc := created(c.name, c.doc)
 		hosts, _ := hc["ExtraHosts"].([]any)

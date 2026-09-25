@@ -140,12 +140,13 @@ check_filter "$OUT"
 echo "envelope + receipts ok; the docker filter refused nothing"
 
 # docker.runtime (DR-23): when the operator policy names a runtime, the
-# receipt names it too, and every container of the run was created under
-# it — the receipt line is the runner's claim, so it is asserted only when
-# the policy made one.
+# receipt names it too, class by class (agentry-cli#221) — the receipt
+# line is the runner's claim, so it is asserted only when the policy made
+# one.
 if [ -f "$POLICY" ] && RUNTIME=$(awk '/^docker:/{d=1; next} d && /^[^ ]/{d=0} d && /^ *runtime:/{print $2; exit}' "$POLICY") && [ -n "$RUNTIME" ]; then
   grep -q "\"runtime\": \"$RUNTIME:" "$OUT/result.json" || { echo "FAIL: policy names docker.runtime $RUNTIME but the receipt does not"; grep '"runtime"' "$OUT/result.json"; exit 1; }
-  echo "docker.runtime $RUNTIME: receipt names it"
+  grep '"runtime":' "$OUT/result.json" | grep -q "the gateway's health probe" || { echo "FAIL: the receipt's runtime line does not name each class"; grep '"runtime"' "$OUT/result.json"; exit 1; }
+  echo "docker.runtime $RUNTIME: receipt names it, class by class"
 else
   if grep -q '"runtime":' "$OUT/result.json"; then echo "FAIL: the receipt names a runtime the policy never set"; exit 1; fi
 fi

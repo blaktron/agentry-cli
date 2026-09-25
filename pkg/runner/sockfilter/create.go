@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -382,7 +383,11 @@ func (f *Filter) pinLinks(ctx context.Context, c *containerCreateBody) error {
 		if err != nil {
 			return err
 		}
-		hc.ExtraHosts = append(hc.ExtraHosts, alias+":"+ip)
+		// docker's CLI writes a link on a user-defined network in both
+		// places; one entry answers it.
+		if entry := alias + ":" + ip; !slices.Contains(hc.ExtraHosts, entry) {
+			hc.ExtraHosts = append(hc.ExtraHosts, entry)
+		}
 	}
 	return nil
 }
