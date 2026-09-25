@@ -75,7 +75,7 @@ func TestVerifyRetiredKeySays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"attestation:     verified", "signed by:       key " + fr.keyID, "note:            signed by a retired key (retired 2026-09-20T10:00:00Z)"} {
+	for _, want := range []string{"attestation:     verified", "signed by:       key " + fr.keyID, "note:            signed by a retired key (retired 2026-09-20)"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("verify output lacks %q:\n%s", want, stdout)
 		}

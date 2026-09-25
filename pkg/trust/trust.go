@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -121,7 +122,26 @@ func (r AttestationResult) RetiredNote() string {
 	if r.KeyRetiredAt == "" {
 		return "signed by a retired key (the registry gives no retirement date)"
 	}
-	return "signed by a retired key (retired " + r.KeyRetiredAt + ")"
+	return "signed by a retired key (retired " + retiredDate(r.KeyRetiredAt) + ")"
+}
+
+// retiredDate renders the registry's retiredAt for a terminal: the day of
+// an RFC 3339 timestamp, else the value with anything but printable ASCII
+// dropped and cut short, since the registry chose it.
+func retiredDate(v string) string {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.UTC().Format(time.DateOnly)
+	}
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e {
+			return -1
+		}
+		return r
+	}, v)
+	if len(clean) > 40 {
+		clean = clean[:40]
+	}
+	return clean
 }
 
 // KeyChange is how a registry's advertised key set differs from the
@@ -147,18 +167,21 @@ func DiffKeys(pinned, advertised KeySet) KeyChange {
 	for _, k := range pinned.Keys {
 		have[k.KeyID] = k
 	}
-	seen := map[string]bool{}
+	seen, replaced := map[string]bool{}, map[string]bool{}
 	for _, k := range advertised.Keys {
+		p, pinnedID := have[k.KeyID]
+		// A pinned id advertised with another public key, even beside
+		// the pinned one (an id listed twice), is a replacement.
+		if pinnedID && !samePublicKey(p.PublicKey, k.PublicKey) && !replaced[k.KeyID] {
+			replaced[k.KeyID] = true
+			c.Replaced = append(c.Replaced, k.KeyID)
+		}
 		if seen[k.KeyID] {
 			continue
 		}
 		seen[k.KeyID] = true
-		p, ok := have[k.KeyID]
-		switch {
-		case !ok:
+		if !pinnedID {
 			c.Added = append(c.Added, k.KeyID)
-		case !samePublicKey(p.PublicKey, k.PublicKey):
-			c.Replaced = append(c.Replaced, k.KeyID)
 		}
 	}
 	for _, k := range pinned.Keys {
@@ -230,7 +253,7 @@ func retiredSummary(set KeySet) string {
 			if when == "" {
 				when = "(no date given)"
 			}
-			parts = append(parts, "key "+k.KeyID+" retired "+when)
+			parts = append(parts, "key "+k.KeyID+" retired "+retiredDate(when))
 		}
 	}
 	return strings.Join(parts, ", ")
@@ -384,10 +407,11 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 	}
 	change := DiffKeys(existing, fetched)
 	// The registry's status record for keys still pinned (a key it has
-	// since retired) is taken whatever else changed: it is shown, never
-	// used to decide what verifies.
+	// since retired) is taken when the set is unchanged or looks like a
+	// rotation: it is shown, never used to decide what verifies. A set
+	// that changed any other way is not trusted even for that.
 	statusNote := ""
-	if refreshStatus(&existing, fetched) {
+	if (change.Same() || change.Rotation()) && refreshStatus(&existing, fetched) {
 		if err := savePinnedFile(own, existing); err != nil {
 			statusNote = " (could not record the keys' status: " + err.Error() + ")"
 		}
@@ -400,16 +424,19 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 	}
 	// A changed key set at login is reported, never silently adopted:
 	// re-pinning on the strength of a fresh fetch would defeat the pin.
-	// A superset is named a rotation (agentry-cli#139, DR-35) and still
-	// not adopted: the new key is trusted only after a deliberate re-pin.
+	// A superset is reported as consistent with a rotation
+	// (agentry-cli#139, DR-35), which is all the client can tell, and is
+	// still not adopted: the new key is trusted only after a deliberate
+	// re-pin.
+	repin := "delete " + own + " and log in again to re-pin deliberately"
 	if change.Rotation() {
-		return "key rotation: the registry " + change.String() + " and still advertises every pinned key" + statusNote + ". " +
-			"Verification keeps using the pinned keys, so releases they signed still verify and a release signed only by the new key is refused until you re-pin; " +
-			"delete " + own + " and log in again to re-pin deliberately"
+		return "possible key rotation: the registry " + change.String() + " and still advertises every pinned key" + statusNote + ", which is consistent with a key rotation. " +
+			"Verification keeps using the pinned keys, so releases they signed still verify and a release signed only by the new key is refused until you re-pin. " +
+			"Confirm the rotation with the registry's operator, then " + repin
 	}
 	return "WARNING: the registry's signing keys no longer match the pinned set: " + change.String() + statusNote + ". " +
 		"A rotation keeps every earlier key listed, so this is not one; treat it as a possible compromise and confirm it with the registry's operator. " +
-		"Verification keeps using the pinned keys; delete " + own + " to re-pin deliberately"
+		"Verification keeps using the pinned keys; only once the change is confirmed, " + repin
 }
 
 // VerifyAttestation fetches and verifies the attestation for a version.
@@ -492,7 +519,7 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 			out.KeyChange = &change
 			if change.Rotation() {
 				out.Detail = "signature does not match any pinned key; since the pin the registry " + change.String() +
-					" and still advertises every pinned key, the shape of a key rotation — the new key is not trusted until you re-pin deliberately"
+					" and still advertises every pinned key, which is consistent with a key rotation — the new key is not trusted until you confirm the rotation with the registry's operator and re-pin deliberately"
 			} else {
 				out.Detail = "signature does not match any pinned key; the registry's key set changed (" + change.String() +
 					"), which a rotation does not do — treat it as a possible compromise and re-pin deliberately only once the change is confirmed"

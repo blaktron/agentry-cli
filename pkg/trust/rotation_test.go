@@ -54,6 +54,7 @@ func TestDiffKeys(t *testing.T) {
 		{"superset is a rotation", setOfKeys(a.keySet().Keys[0]), setOfKeys(a.withStatus(KeyStatusRetired, "2026-09-20"), b.withStatus(KeyStatusActive, "")), KeyChange{Added: []string{b.keyID}}, true},
 		{"removed", setOfKeys(a.keySet().Keys[0], b.keySet().Keys[0]), setOfKeys(b.keySet().Keys[0]), KeyChange{Removed: []string{a.keyID}}, false},
 		{"replaced", setOfKeys(a.keySet().Keys[0]), setOfKeys(swapped), KeyChange{Replaced: []string{a.keyID}}, false},
+		{"an id listed twice with another key", setOfKeys(a.keySet().Keys[0]), setOfKeys(a.keySet().Keys[0], swapped, b.keySet().Keys[0]), KeyChange{Added: []string{b.keyID}, Replaced: []string{a.keyID}}, false},
 		{"swapped", setOfKeys(a.keySet().Keys[0]), setOfKeys(c.keySet().Keys[0]), KeyChange{Added: []string{c.keyID}, Removed: []string{a.keyID}}, false},
 	}
 	for _, tc := range tests {
@@ -93,7 +94,7 @@ func TestPinAtLoginClassifiesTheChange(t *testing.T) {
 			f.keys = setOfKeys(old.withStatus(KeyStatusRetired, "2026-09-20"), next.withStatus(KeyStatusActive, ""))
 		})
 		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
-		for _, want := range []string{"key rotation", "added key id(s) " + next.keyID, "key " + old.keyID + " retired 2026-09-20", "re-pin deliberately"} {
+		for _, want := range []string{"possible key rotation", "added key id(s) " + next.keyID, "key " + old.keyID + " retired 2026-09-20", "consistent with a key rotation", "Confirm the rotation with the registry's operator", "log in again to re-pin deliberately"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("note %q lacks %q", note, want)
 			}
@@ -115,7 +116,7 @@ func TestPinAtLoginClassifiesTheChange(t *testing.T) {
 		_ = PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
 		reg.set(func(f *registryFixture) { f.keys = next.keySet() })
 		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
-		if !strings.Contains(note, "WARNING") || !strings.Contains(note, "removed key id(s) "+old.keyID) || !strings.Contains(note, "possible compromise") {
+		if !strings.Contains(note, "WARNING") || !strings.Contains(note, "removed key id(s) "+old.keyID) || !strings.Contains(note, "possible compromise") || !strings.Contains(note, "log in again to re-pin deliberately") {
 			t.Fatalf("note = %q", note)
 		}
 		if pinned, _ := LoadPinned(reg.srv.URL); len(pinned.Keys) != 2 {
@@ -131,7 +132,7 @@ func TestPinAtLoginClassifiesTheChange(t *testing.T) {
 		swapped.Keys[0].Status = KeyStatusRetired
 		reg.set(func(f *registryFixture) { f.keys = swapped })
 		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
-		if !strings.Contains(note, "WARNING") || !strings.Contains(note, "different public key under key id(s) "+old.keyID) {
+		if !strings.Contains(note, "WARNING") || !strings.Contains(note, "different public key under key id(s) "+old.keyID) || strings.Contains(note, "retired") {
 			t.Fatalf("note = %q", note)
 		}
 		pinned, _ := LoadPinned(reg.srv.URL)
@@ -171,6 +172,32 @@ func TestVerifyAttestationAcrossARotation(t *testing.T) {
 			t.Fatalf("note = %q", res.RetiredNote())
 		}
 	})
+	t.Run("a key the pin records as retired verifies when the registry cannot be read", func(t *testing.T) {
+		isolatePins(t)
+		env := old.envelope(t, testDigestHex)
+		reg := newRegistry(t, rotated, &env)
+		if err := SavePinned(reg.srv.URL, setOfKeys(old.withStatus(KeyStatusRetired, "2026-09-20T10:00:00Z"))); err != nil {
+			t.Fatal(err)
+		}
+		reg.set(func(f *registryFixture) { f.keyStatus = http.StatusBadGateway })
+		res := VerifyAttestation(ctx, http.DefaultClient, reg.srv.URL, "", "/att", "sha256:"+testDigestHex)
+		if res.State != StateVerified || !res.KeyRetired || res.RetiredNote() != "signed by a retired key (retired 2026-09-20)" {
+			t.Fatalf("res = %+v, note %q", res, res.RetiredNote())
+		}
+	})
+	t.Run("under AGENTRY_PIN_REGISTRY the pin's record answers", func(t *testing.T) {
+		isolatePins(t)
+		env := old.envelope(t, testDigestHex)
+		reg := newRegistry(t, rotated, &env) // the registry says retired
+		t.Setenv(EnvPinRegistry, reg.srv.URL)
+		if err := SavePinned(reg.srv.URL, old.keySet()); err != nil { // the pin says active
+			t.Fatal(err)
+		}
+		res := VerifyAttestation(ctx, http.DefaultClient, reg.srv.URL, "", "/att", "sha256:"+testDigestHex)
+		if res.State != StateVerified || res.KeyRetired {
+			t.Fatalf("res = %+v, want verified with the pin's (active) record", res)
+		}
+	})
 	t.Run("a countersigned release is reported under the active key", func(t *testing.T) {
 		isolatePins(t)
 		env := countersigned(t, old.envelope(t, testDigestHex), next)
@@ -194,7 +221,7 @@ func TestVerifyAttestationAcrossARotation(t *testing.T) {
 		if res.State != StateUnverifiable || !res.KeyRotated || res.KeyChange == nil || !res.KeyChange.Rotation() {
 			t.Fatalf("res = %+v, want unverifiable, a rotation", res)
 		}
-		if !strings.Contains(res.Detail, "shape of a key rotation") || strings.Contains(res.Detail, "compromise") {
+		if !strings.Contains(res.Detail, "consistent with a key rotation") || !strings.Contains(res.Detail, "confirm the rotation") || strings.Contains(res.Detail, "compromise") {
 			t.Fatalf("detail = %q", res.Detail)
 		}
 		if pinned, _ := LoadPinned(reg.srv.URL); len(pinned.Keys) != 1 {
