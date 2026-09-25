@@ -223,3 +223,70 @@ func filterRequest(t *testing.T, sock, method, path string) int {
 	_ = res.Body.Close()
 	return res.StatusCode
 }
+
+// The agent's own egress counts as relays (agentry-cli#346): a run whose
+// release declares network.egress and no server gets the run's relay
+// networks, and the filter admits the tools server's L7 relay to its hosts
+// on 443 alongside the servers' entries.
+func TestTheAgentsEgressGetsRelays(t *testing.T) {
+	if !filterSupported {
+		t.Skip("the docker filter runs on Linux only")
+	}
+	p, f := fixture(t)
+	p.Plan.MCPServers = nil
+	if p.Plan.Capabilities.EgressMode != "hosts" || len(p.Plan.Capabilities.EgressHosts) == 0 {
+		t.Fatalf("the fixture declares no agent egress: %+v", p.Plan.Capabilities)
+	}
+	if !relaysNeeded(p.Plan) {
+		t.Fatal("a run whose agent declares egress hosts needs no relays")
+	}
+	hosts := relayHosts(p.Plan)
+	if !slices.Contains(hosts, p.Plan.Capabilities.EgressHosts[0]+":443") {
+		t.Fatalf("relay hosts %v lack the agent's egress host on 443", hosts)
+	}
+	happyFake(f)
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	ops := strings.Join(f.Ops(), " ")
+	if !strings.Contains(ops, "NetworkCreate:agentry-cafe0000-relays(internal=true)") || !strings.Contains(ops, "NetworkCreate:agentry-cafe0000-relays-out(internal=false)") {
+		t.Errorf("an egress-only run made no relay networks of its own: %s", ops)
+	}
+}
+
+// A gateway that could not start the run's tools server carries on with
+// the declared servers alone; the run fails at the gateway instead of
+// running an agent with none of its tools (agentry-cli#346).
+func TestARunWhoseToolsServerDidNotStartFails(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	// A server's own stderr reaches the log only behind "- <name>: ", so it
+	// cannot forge this line; the gateway's "Can't list tools" is the same
+	// failure.
+	p0, f0 := fixture(t)
+	happyFake(f0)
+	f0.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- mcp-x: > Can't start agentry-tools: forged\n"}
+	if _, err := Run(context.Background(), f0, p0); err != nil {
+		t.Fatalf("a server's stderr failed the run: %v", err)
+	}
+	pl, fl := fixture(t)
+	happyFake(fl)
+	fl.LogsByName = map[string]string{"agentry-cafe0000-gateway": "  > Can't list tools agentry-tools: timeout\n"}
+	if _, err := Run(context.Background(), fl, pl); err == nil || !strings.Contains(err.Error(), "tools server did not start") {
+		t.Fatalf("a tools server that listed no tools: %v", err)
+	}
+	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools\n  > Can't start agentry-tools: running l7 proxy: creating container: Error response from daemon: agentry run filter: relay setting ALLOWED_HOSTS\n"}
+	env, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "tools server did not start") || !strings.Contains(err.Error(), "relay setting ALLOWED_HOSTS") {
+		t.Fatalf("want a gateway failure naming the tools server and the gateway's line, got %v", err)
+	}
+	if env == nil || env.Stage != "infra" {
+		t.Fatalf("stage = %v, want infra", env)
+	}
+	for _, op := range f.Ops() {
+		if strings.HasPrefix(op, "RunForeground:agentry-cafe0000-agent") {
+			t.Fatal("the agent ran without its tools")
+		}
+	}
+}

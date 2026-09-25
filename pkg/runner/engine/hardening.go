@@ -133,15 +133,15 @@ func runtimeLine(p Params) string {
 	under = append(under, "the gateway's health probe")
 	line := rt + ": created with docker --runtime " + rt + ": " + strings.Join(under, ", ") +
 		" (each finds the containers it talks to through /etc/hosts, since a sandboxed network stack does not reach docker's embedded DNS)"
-	launched := "the tools server"
+	launched, is, takes := "the tools server", "is", "takes"
 	if servers {
-		launched += " and the declared MCP servers"
+		launched, is, takes = "the tools server and the declared MCP servers", "are", "take"
 	}
 	if filterSupported {
-		line += "; " + launched + ", which the gateway launches, are given " + rt + " by the run's docker filter" +
+		line += "; " + launched + ", which the gateway launches, " + is + " given " + rt + " by the run's docker filter" +
 			" (a server's relay links pinned into its /etc/hosts at the relay's address)"
 	} else {
-		line += "; " + launched + ", which the gateway launches, take the daemon's default: the docker filter that sets their runtime runs on Linux only (agentry-cli#322)"
+		line += "; " + launched + ", which the gateway launches, " + takes + " the daemon's default: the docker filter that sets the runtime runs on Linux only (agentry-cli#322)"
 	}
 	if p.Plan.Harness.Host != nil {
 		line += "; the harness is a host process, under no container runtime at all"
@@ -150,7 +150,7 @@ func runtimeLine(p Params) string {
 	if servers {
 		gaps = append(gaps, "the MCP server install proxy (it resolves the registry the same way)")
 	}
-	if relaysNeeded(p.Plan.MCPServers) {
+	if relaysNeeded(p.Plan) {
 		gaps = append(gaps, "the relays (each resolves its declared host the same way)")
 	}
 	gaps = append(gaps, "the gateway (it reaches the daemon through a host Unix socket, which "+rt+" does not open)")

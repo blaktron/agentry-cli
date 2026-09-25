@@ -86,7 +86,8 @@ type Config struct {
 	// names and never reaches another run's relays.
 	NetworkNames map[string]string
 	// RelayHosts are what a relay may be pointed at: the run's declared
-	// servers' egress entries, "host" (ports 443 and 80), "host:port",
+	// servers' egress entries and the agent's own egress hosts on 443
+	// (agentry-cli#346), each "host" (ports 443 and 80), "host:port",
 	// "*.domain" or "*". Empty admits no relay.
 	RelayHosts []string
 	// Limits bound every container created through the filter: a request

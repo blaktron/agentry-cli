@@ -860,13 +860,15 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 	}
 	line := env.CapabilitiesEnforced["runtime"]
 	for _, want := range []string{"runsc: created with docker --runtime runsc: the agent container", "the gateway's health probe",
-		"the tools server", "given runsc by the run's docker filter", "daemon's default runtime", "the llm-proxy (", "the gateway ("} {
+		"the tools server, which the gateway launches, is given runsc by the run's docker filter", "daemon's default runtime", "the llm-proxy (", "the gateway ("} {
 		if !strings.Contains(line, want) {
 			t.Errorf("receipt runtime line lacks %q: %q", want, line)
 		}
 	}
-	if strings.Contains(line, "older line") || strings.Contains(line, "relays") {
-		t.Errorf("receipt runtime line = %q: the plan's text, or relays a run without servers never had", line)
+	// The fixture declares the agent's own egress, whose fetch reaches its
+	// host through the gateway's L7 relay (agentry-cli#346).
+	if strings.Contains(line, "older line") || !strings.Contains(line, "the relays (") {
+		t.Errorf("receipt runtime line = %q: the plan's text, or no relays for a run whose agent declares egress", line)
 	}
 }
 
