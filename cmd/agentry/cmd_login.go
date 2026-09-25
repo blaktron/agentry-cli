@@ -144,6 +144,7 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	// registry is a legitimate configuration, and a key-fetch hiccup must not
 	// undo a login whose credential is already stored and verified.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", trust.PinAtLogin(cmd.Context(), httpClient, reg))
+	rewrapAfterLogin(cmd, reg)
 	return nil
 }
 
