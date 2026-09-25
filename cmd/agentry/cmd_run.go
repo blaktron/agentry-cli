@@ -362,6 +362,15 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		serverSpecs = mcpinstall.Specs(resolvedServers, m.Capabilities.MCPServers, pol.Images)
 	}
 
+	// The install is checked again before the plan is compiled from it: a
+	// person can sit at the consent prompt for minutes, and a plan compiled
+	// from files edited meanwhile would be kept and reused (agentry-cli#326).
+	// The run's own copy is checked once more by the engine (CheckWorkspace).
+	if opts.local == "" && !opts.plan {
+		if err := recheckInstall(installDir, meta); err != nil {
+			return err
+		}
+	}
 	opts.progress.at(receipt.StageCompile)
 	plan, planDir, err := localrun.EnsurePlan(localrun.PlanInputs{
 		Home: home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspaceDir,
@@ -485,6 +494,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		ExecPackages:    execPackages,
 		PlanDir:         planDir,
 		WorkspaceSrc:    workspaceDir,
+		CheckWorkspace:  installedCopyCheck(opts, installDir, meta),
 		RunRoot:         installDir,
 		RunnerHome:      home,
 		OutDir:          outDir,
@@ -692,11 +702,44 @@ func printFailure(ctx context.Context, cmd *cobra.Command, p *runProgress, err e
 	printEnvelope(cmd, env, "json")
 }
 
+// recheckInstall holds a registry install to its record again, after the
+// consent prompt and before anything is compiled from it.
+func recheckInstall(installDir string, meta *installdir.Meta) error {
+	_, err := installdir.Inspect(installDir, meta.Digest)
+	var changed *installdir.ChangedError
+	if errors.As(err, &changed) {
+		changed.Ref = meta.Ref
+		return engine.Classify(engine.ExitVerify, changed)
+	}
+	if err != nil {
+		return engine.Classify(engine.ExitVerify, fmt.Errorf("installed %s: %w", meta.Ref, err))
+	}
+	return nil
+}
+
+// installedCopyCheck is the engine's check of a registry release's per-run
+// copy against the install's record; a --local directory has none (it is
+// its own source, agentry-cli#326's one exemption).
+func installedCopyCheck(opts runOpts, installDir string, meta *installdir.Meta) func(string) error {
+	if opts.local != "" {
+		return nil
+	}
+	return func(copyDir string) error {
+		err := installdir.CheckCopy(installDir, copyDir)
+		var changed *installdir.ChangedError
+		if errors.As(err, &changed) {
+			changed.Ref = meta.Ref
+			return changed
+		}
+		return err
+	}
+}
+
 // installedChanges is a changed install's refusal in the envelope's shape.
 func installedChanges(e *installdir.ChangedError) *receipt.InstalledChanges {
 	return &receipt.InstalledChanges{
-		Changed: e.Changed, Added: e.Added, Removed: e.Removed, Record: e.Record,
-		Repair: strings.Trim(e.RepairCommand(), "`"),
+		Changed: e.Changed, Added: e.Added, Removed: e.Removed, Record: string(e.Record),
+		Repair: e.RepairCommand(),
 	}
 }
 
@@ -861,11 +904,12 @@ type refusalKind string
 
 const (
 	// refusalInstalledChanged: the installed release changed after it was
-	// laid down, or could not be read to check it. No flag lifts it; the
-	// message names `agentry install --repair`.
-	refusalInstalledChanged refusalKind = "installed_changed"
-	refusalAttestation      refusalKind = "attestation"
-	refusalVulnerableServer refusalKind = "vulnerable_server"
+	// laid down. No flag lifts it; the message names `agentry install
+	// --repair`. refusalInstalledUnreadable: it could not be read to check.
+	refusalInstalledChanged    refusalKind = "installed_changed"
+	refusalInstalledUnreadable refusalKind = "installed_unreadable"
+	refusalAttestation         refusalKind = "attestation"
+	refusalVulnerableServer    refusalKind = "vulnerable_server"
 )
 
 // installIntegrity is what a run would find of the release installed in
@@ -877,10 +921,10 @@ const (
 	integrityUnchanged installIntegrity = "unchanged"
 	// integrityChanged: installed and changed since; a run refuses it.
 	integrityChanged installIntegrity = "changed"
-	// integrityUnsealed: installed with no integrity record from this
-	// runner home (laid down before records existed); a run fetches and
-	// verifies the release again and lays it down in its place.
-	integrityUnsealed installIntegrity = "unsealed"
+	// integrityNoRecord: installed with no integrity record from this
+	// runner home (laid down by an older CLI); a run fetches the release
+	// again, checks it as a first fetch is, and lays it down in its place.
+	integrityNoRecord installIntegrity = "no-record"
 	// integrityNotInstalled: a run fetches, verifies and lays it down.
 	integrityNotInstalled installIntegrity = "not-installed"
 	// integrityLocal: a --local directory is not checked. It is its own
@@ -896,8 +940,8 @@ const (
 var integrityLines = map[installIntegrity]string{
 	integrityUnchanged:    "unchanged since it was installed",
 	integrityChanged:      "changed since it was installed — a run refuses it",
-	integrityUnsealed:     "installed without an integrity record from this runner home — a run fetches and verifies it again first",
-	integrityNotInstalled: "not installed — a run fetches and verifies it",
+	integrityNoRecord:     "installed without an integrity record from this runner home — a run fetches it again first",
+	integrityNotInstalled: "not installed — a run fetches it",
 	integrityLocal:        "not checked — a local directory is its own source",
 	integrityUnreadable:   "could not be read to check it — a run fails",
 }
@@ -912,13 +956,14 @@ func installedIntegrity(home string, meta *installdir.Meta) (installIntegrity, *
 	case err == nil:
 		return integrityUnchanged, nil
 	case errors.As(err, &changed):
+		changed.Ref = meta.Ref
 		return integrityChanged, &runPlanRefusal{Kind: refusalInstalledChanged, Message: changed.Error()}
-	case errors.Is(err, installdir.ErrUnsealed):
-		return integrityUnsealed, nil
+	case errors.Is(err, installdir.ErrNoRecord):
+		return integrityNoRecord, nil
 	case errors.Is(err, installdir.ErrNotInstalled):
 		return integrityNotInstalled, nil
 	default:
-		return integrityUnreadable, &runPlanRefusal{Kind: refusalInstalledChanged, Message: err.Error()}
+		return integrityUnreadable, &runPlanRefusal{Kind: refusalInstalledUnreadable, Message: err.Error()}
 	}
 }
 
@@ -1173,9 +1218,12 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	reExport := ""
 	switch {
 	case errors.As(ierr, &changed):
-		return nil, "", engine.Classify(engine.ExitVerify, ierr)
-	case errors.Is(ierr, installdir.ErrUnsealed):
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "installed %s has no integrity record from this runner home (laid down before agentry-cli#326, or under another key) — fetching and verifying it again\n", meta.Ref)
+		// Named for what was resolved, not for the install.json that
+		// failed its record.
+		changed.Ref = fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version)
+		return nil, "", engine.Classify(engine.ExitVerify, changed)
+	case errors.Is(ierr, installdir.ErrNoRecord):
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "installed %s/%s@%s has no integrity record from this runner home (laid down by an older CLI, or under another key) — fetching it again and checking it as a first fetch is\n", res.Namespace, res.Name, res.Version)
 		reExport = meta.Export
 	case ierr != nil && !errors.Is(ierr, installdir.ErrNotInstalled):
 		return nil, "", engine.Classify(engine.ExitCLI, ierr)

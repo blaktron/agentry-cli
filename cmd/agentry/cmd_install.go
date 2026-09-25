@@ -136,8 +136,8 @@ func newInstallCmd() *cobra.Command {
 			"Integrity: a runner install is recorded, file by file, under the runner\n" +
 			"home's integrity key, and `agentry run` refuses one whose files changed\n" +
 			"after it was installed (exit 10), naming them. So does an install of the\n" +
-			"same release over it: --repair lays it down again, fetched and verified\n" +
-			"afresh, in place of the changed copy.",
+			"same release over it: --repair lays it down again from a fresh download,\n" +
+			"checked as any install is, in place of the changed copy.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInstall(cmd, args[0], opts)
@@ -152,7 +152,7 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.allowUnscanned, "allow-unscanned", false,
 		"install a release the registry admitted without a scan (no findings, no report, no attestation)")
 	cmd.Flags().BoolVar(&opts.repair, "repair", false,
-		"runner target: lay the release down again, fetched and verified afresh, in place of an installed copy whose files changed after it was installed (which a run refuses with exit 10)")
+		"runner target: lay the release down again from a fresh download, checked as any install is, in place of an installed copy whose files changed after it was installed (which a run refuses with exit 10)")
 	cmd.Flags().BoolVar(&opts.plan, "plan", false,
 		"preview only: resolve, download and verify, then show the contract, its diff and where it would go; writes nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	return cmd
@@ -376,9 +376,12 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		target = installdir.Target
 	}
 	var (
-		paths installPaths
-		key   installed.Key
-		lay   func(staging string, m *manifest.Manifest) error
+		// changedRefusal is the release installed here and changed since,
+		// which --plan reports as the refusal an install would meet.
+		changedRefusal error
+		paths          installPaths
+		key            installed.Key
+		lay            func(staging string, m *manifest.Manifest) error
 		// after runs once the record is saved: the runner target's
 		// replace of the older version (D9) waits for the record, so a
 		// failed save never leaves a directory gone and a record naming it.
@@ -403,12 +406,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		// person's --repair lays it down again instead (agentry-cli#326).
 		var changed *installdir.ChangedError
 		if _, ierr := installdir.Inspect(releaseDir, computed); errors.As(ierr, &changed) && !opts.repair {
+			changed.Ref = fmt.Sprintf("%s/%s@%s", res.Namespace, m.Name, res.Version)
 			if !opts.plan {
-				return engine.Classify(engine.ExitVerify, ierr)
+				return engine.Classify(engine.ExitVerify, changed)
 			}
-			if attErr == nil {
-				attErr = ierr
-			}
+			changedRefusal = changed
 		}
 		// installdir.Install is the lay-down the desktop calls too, in the
 		// style the runner home's policy implies; its warning for a policy
@@ -429,7 +431,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 				if err := installdir.Repair(releaseDir, staging, m, meta, style); err != nil {
 					return err
 				}
-				_, _ = fmt.Fprintf(out, "repaired %s/%s@%s: laid down again in the runner home, fetched and verified afresh: %s (export: %s)\n", res.Namespace, m.Name, res.Version, releaseDir, style)
+				_, _ = fmt.Fprintf(out, "repaired %s/%s@%s: laid down again in the runner home from a fresh download (digest checked, attestation %s): %s (export: %s)\n", res.Namespace, m.Name, res.Version, att.State, releaseDir, style)
 				return nil
 			}
 			if err := installdir.Install(releaseDir, staging, m, meta, style); err != nil {
@@ -486,7 +488,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	}
 	nextCaps := installed.Snapshot(m.Capabilities)
 	if opts.plan {
-		return writeInstallPlan(cmd, res, m, computed, att, attErr, &state, key, nextCaps, target, paths)
+		refusal := attErr
+		if refusal == nil {
+			refusal = changedRefusal
+		}
+		return writeInstallPlan(cmd, res, m, computed, att, refusal, &state, key, nextCaps, target, paths)
 	}
 	if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Capabilities, opts.yes); err != nil {
 		return err

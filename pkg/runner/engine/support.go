@@ -135,6 +135,11 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := copyTree(p.WorkspaceSrc, rd.workspace); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("copy workspace: %w", err))
 	}
+	if p.CheckWorkspace != nil {
+		if err := p.CheckWorkspace(rd.workspace); err != nil {
+			return nil, Classify(ExitVerify, err)
+		}
+	}
 	// Gateway files now; harness files once the infrastructure is up, so a
 	// host-run harness sees the published addresses (Run / StartSession).
 	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, "gateway"); err != nil {

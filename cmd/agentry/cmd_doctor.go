@@ -415,8 +415,9 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 				rep.warn("install", "not installed yet — `agentry run --local %s --prepare` verifies and installs it", local)
 			} else {
 				// A local directory is its own source: a cached copy that
-				// differs is replaced from it by the next run, never refused.
-				rep.warn("install", "the cached copy at %s is not what was laid down from %s (%v) — the next run lays it down again", installDir, local, ierr)
+				// differs is replaced from it by the next run, never refused,
+				// so the repair a registry install names does not apply.
+				rep.warn("install", "the cached copy at %s is not what was laid down from %s — the next run lays it down again from the directory", installDir, local)
 			}
 			return m, meta, ""
 		}
@@ -449,13 +450,14 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	switch {
 	case errors.As(ierr, &changed):
 		// What a run refuses (agentry-cli#326), said here first.
-		rep.fail("install", "%v", ierr)
+		changed.Ref = fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version)
+		rep.fail("install", "%v", changed)
 		return nil, nil, ""
 	case errors.Is(ierr, installdir.ErrNotInstalled):
 		rep.warn("install", "not installed yet — `agentry run %s --prepare` downloads, verifies and installs it", ref)
 		return nil, nil, ""
-	case errors.Is(ierr, installdir.ErrUnsealed):
-		rep.warn("install", "%s has no integrity record from this runner home (laid down before agentry-cli#326) — the next run fetches and verifies it again", installDir)
+	case errors.Is(ierr, installdir.ErrNoRecord):
+		rep.warn("install", "%s has no integrity record from this runner home (laid down by an older CLI) — the next run fetches it again and checks it as a first fetch is", installDir)
 		return nil, nil, ""
 	case ierr != nil:
 		rep.fail("install", "%s: %v", installDir, ierr)

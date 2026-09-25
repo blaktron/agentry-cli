@@ -184,7 +184,7 @@ func TestInspectCatchesARecordForgedWithoutTheKey(t *testing.T) {
 	write(t, filepath.Join(dir, RecordFile), string(forged))
 
 	changed := changedOf(t, func() error { _, err := Inspect(dir, meta.Digest); return err }())
-	if !strings.Contains(changed.Record, "does not verify") {
+	if changed.Record != RecordInvalid || !strings.Contains(changed.Error(), "does not verify") {
 		t.Fatalf("Record = %q", changed.Record)
 	}
 	if err := Write(dir, stageTree(t, map[string]string{"agent.yaml": "x"}), meta); err == nil {
@@ -196,7 +196,7 @@ func TestInspectCatchesARecordForgedWithoutTheKey(t *testing.T) {
 // existed, or under another key) vouches for nothing, and is not a
 // refusal either: the release is laid down again, and Write replaces it
 // and seals it.
-func TestAnUnsealedInstallIsLaidDownAgain(t *testing.T) {
+func TestAnInstallWithNoRecordIsLaidDownAgain(t *testing.T) {
 	for _, name := range []string{"no record", "another key"} {
 		t.Run(name, func(t *testing.T) {
 			dir, _, meta := laidDown(t)
@@ -211,8 +211,8 @@ func TestAnUnsealedInstallIsLaidDownAgain(t *testing.T) {
 				}
 			}
 			got, err := Inspect(dir, meta.Digest)
-			if !errors.Is(err, ErrUnsealed) || got == nil || got.Ref != meta.Ref {
-				t.Fatalf("Inspect = %+v, %v; want the Meta and ErrUnsealed", got, err)
+			if !errors.Is(err, ErrNoRecord) || got == nil || got.Ref != meta.Ref {
+				t.Fatalf("Inspect = %+v, %v; want the Meta and ErrNoRecord", got, err)
 			}
 			if _, ok := Load(dir, meta.Digest); ok {
 				t.Fatal("Load reused an install no record vouches for")
@@ -222,7 +222,7 @@ func TestAnUnsealedInstallIsLaidDownAgain(t *testing.T) {
 			write(t, filepath.Join(dir, "workspace", "AGENT.md"), "edited")
 			src := stageTree(t, map[string]string{"agent.yaml": "name: demo\n", "AGENT.md": "# Demo\n"})
 			if err := Write(dir, src, meta); err != nil {
-				t.Fatalf("Write over an unsealed install: %v", err)
+				t.Fatalf("Write over an install with no record: %v", err)
 			}
 			if _, err := Inspect(dir, meta.Digest); err != nil {
 				t.Fatalf("after the lay-down: %v", err)
@@ -322,5 +322,61 @@ func TestHomeOf(t *testing.T) {
 	}
 	if err := Write(filepath.Join(t.TempDir(), "1.0.0-abc"), stageTree(t, map[string]string{"a": "b"}), &Meta{Digest: "sha256:abc"}); err == nil {
 		t.Fatal("Write laid a release down outside a runner home")
+	}
+}
+
+// A run's copy of the release is held to the record: an edit made to the
+// install after the check, and so present in the copy, is named; the copy
+// is compared on content, since a copy is written under the umask.
+func TestCheckCopy(t *testing.T) {
+	dir, _, _ := laidDown(t)
+	cp := t.TempDir()
+	if err := os.CopyFS(cp, os.DirFS(filepath.Join(dir, "workspace"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(cp, "tools", "run.sh"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckCopy(dir, cp); err != nil {
+		t.Fatalf("an exact copy (modes aside): %v", err)
+	}
+	write(t, filepath.Join(cp, "AGENT.md"), "edited between the check and the copy")
+	write(t, filepath.Join(cp, "planted.md"), "x")
+	changed := changedOf(t, CheckCopy(dir, cp))
+	if !reflect.DeepEqual(changed.Changed, []string{"AGENT.md"}) || !reflect.DeepEqual(changed.Added, []string{"planted.md"}) {
+		t.Fatalf("changed %v added %v", changed.Changed, changed.Added)
+	}
+	// The record itself edited since: the copy is not believed either.
+	b, _ := os.ReadFile(filepath.Join(dir, RecordFile))
+	write(t, filepath.Join(dir, RecordFile), strings.Replace(string(b), `"mac": "`, `"mac": "00`, 1))
+	if changed := changedOf(t, CheckCopy(dir, t.TempDir())); changed.Record != RecordInvalid {
+		t.Fatalf("Record = %q", changed.Record)
+	}
+	if err := os.Remove(filepath.Join(dir, RecordFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckCopy(dir, cp); !errors.Is(err, ErrNoRecord) {
+		t.Fatalf("a copy of an install with no record: %v", err)
+	}
+}
+
+// What is sealed is the verified files and nothing else: a staged copy
+// that differs from the source (a file added to the staging directory
+// before the seal) is not sealed.
+func TestSameFiles(t *testing.T) {
+	src := stageTree(t, map[string]string{"agent.yaml": "name: demo\n", "a/b.md": "b", ".git/HEAD": "ref"})
+	ws := t.TempDir()
+	if err := os.CopyFS(ws, os.DirFS(src)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(ws, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sameFiles(src, ws); err != nil {
+		t.Fatalf("the copy CopyTreeSkipping makes: %v", err)
+	}
+	write(t, filepath.Join(ws, "injected.md"), "x")
+	if err := sameFiles(src, ws); err == nil || !strings.Contains(err.Error(), "injected.md") {
+		t.Fatalf("an injected file: %v", err)
 	}
 }

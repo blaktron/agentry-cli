@@ -13,6 +13,7 @@ package integritykey
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -67,6 +68,17 @@ func Load(home string) ([]byte, error) {
 		}
 	}
 	return read(path)
+}
+
+// ID names the key for one purpose without revealing it: the first 16 hex
+// of sha256(purpose NUL key). Each record names the key it was made under
+// this way, so a record made under another key is told apart from one
+// made under this key that does not verify.
+func ID(key []byte, purpose string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(purpose + "\x00"))
+	_, _ = h.Write(key)
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 // Read returns the runner home's key without creating it: an error

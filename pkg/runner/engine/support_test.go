@@ -339,6 +339,30 @@ func TestPrepareRunDirsErrors(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	// The client's check of the run's own copy (agentry-cli#326) refuses
+	// the run with the verify class before anything reads the copy, and is
+	// handed the copy, not the source.
+	t.Run("the workspace copy refused", func(t *testing.T) {
+		p, f := fixture(t)
+		var handed string
+		p.CheckWorkspace = func(copyDir string) error {
+			handed = copyDir
+			return errors.New("installed release changed after it was installed")
+		}
+		_, err := Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitVerify || !strings.Contains(err.Error(), "changed after it was installed") {
+			t.Fatalf("err = %v", err)
+		}
+		if handed == "" || handed == p.WorkspaceSrc || filepath.Base(handed) != "workspace" {
+			t.Fatalf("CheckWorkspace was handed %q, want the run's copy (source %q)", handed, p.WorkspaceSrc)
+		}
+		for _, c := range f.Calls {
+			if strings.HasPrefix(c.Op, "Run") || c.Op == "NetworkCreate" || c.Op == "VolumeCreate" {
+				t.Fatalf("docker was asked to %s after the refusal", c.Op)
+			}
+		}
+	})
 	t.Run("plan dir incomplete", func(t *testing.T) {
 		p, f := fixture(t)
 		if err := os.RemoveAll(filepath.Join(p.PlanDir, "harness")); err != nil {

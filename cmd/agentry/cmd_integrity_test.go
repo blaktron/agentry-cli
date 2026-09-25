@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -84,7 +85,7 @@ func TestRunRefusesAnInstallThatChanged(t *testing.T) {
 		"--policy", policyPath, "--output-format", "json")
 	wantClassified(t, err, engine.ExitVerify)
 	env = receipt.Envelope{}
-	if jerr := json.Unmarshal([]byte(stdout), &env); jerr != nil || env.InstalledChanges == nil || env.InstalledChanges.Record != "install.json changed" {
+	if jerr := json.Unmarshal([]byte(stdout), &env); jerr != nil || env.InstalledChanges == nil || env.InstalledChanges.Record != string(installdir.InstallJSONChanged) {
 		t.Fatalf("an edited install.json: %v %+v", jerr, env.InstalledChanges)
 	}
 }
@@ -149,7 +150,7 @@ func TestInstallRepairLaysAChangedInstallDownAgain(t *testing.T) {
 // A release laid down before records existed has no record: a run fetches
 // and verifies it again and lays it down in place of whatever is there,
 // keeping its export, rather than refusing it or trusting it.
-func TestRunLaysAnUnsealedInstallDownAgain(t *testing.T) {
+func TestRunLaysAnInstallWithNoRecordDownAgain(t *testing.T) {
 	fr, releaseDir, policyPath := installSigned(t)
 	if err := os.Remove(filepath.Join(releaseDir, installdir.RecordFile)); err != nil {
 		t.Fatal(err)
@@ -164,7 +165,7 @@ func TestRunLaysAnUnsealedInstallDownAgain(t *testing.T) {
 
 	_, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--yes", "--policy", policyPath)
 	if err != nil {
-		t.Fatalf("run of an unsealed install: %v (stderr %q)", err, stderr)
+		t.Fatalf("run of an install with no record: %v (stderr %q)", err, stderr)
 	}
 	if !strings.Contains(stderr, "has no integrity record") || len(fr.downloadAuths) != downloads+1 {
 		t.Fatalf("the run did not fetch it again: downloads %d → %d, stderr %q", downloads, len(fr.downloadAuths), stderr)
@@ -263,5 +264,79 @@ func TestRunLocalReplacesAChangedCachedCopy(t *testing.T) {
 	want, _ := os.ReadFile(filepath.Join(pkg, "agent.yaml"))
 	if got, _ := os.ReadFile(filepath.Join(workspace, "agent.yaml")); string(got) != string(want) {
 		t.Fatalf("the cached copy was not replaced from the directory: %q", got)
+	}
+}
+
+// The run checks the install again after the consent prompt, before it
+// compiles, and hands the engine a check of the per-run copy; a --local
+// run gets none (the exemption).
+func TestRunChecksTheInstallAgainAndTheRunsCopy(t *testing.T) {
+	_, releaseDir, _ := installSigned(t)
+	var m installdir.Meta
+	b, _ := os.ReadFile(filepath.Join(releaseDir, "install.json"))
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if err := recheckInstall(releaseDir, &m); err != nil {
+		t.Fatalf("an unchanged install: %v", err)
+	}
+	check := installedCopyCheck(runOpts{}, releaseDir, &m)
+	if check == nil || installedCopyCheck(runOpts{local: "/some/dir"}, releaseDir, &m) != nil {
+		t.Fatal("the copy check: a registry run has one, a --local run none")
+	}
+	cp := t.TempDir()
+	if err := os.CopyFS(cp, os.DirFS(filepath.Join(releaseDir, "workspace"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(cp); err != nil {
+		t.Fatalf("the run's exact copy: %v", err)
+	}
+
+	editFile(t, filepath.Join(releaseDir, "workspace", "SKILL.md"), "edited at the consent prompt")
+	err := recheckInstall(releaseDir, &m)
+	wantClassified(t, err, engine.ExitVerify)
+	if !strings.Contains(err.Error(), "agentry install --repair "+m.Ref) {
+		t.Fatalf("recheck: %v", err)
+	}
+	editFile(t, filepath.Join(cp, "SKILL.md"), "edited after the check, before the copy")
+	var changed *installdir.ChangedError
+	if err := check(cp); !errors.As(err, &changed) || changed.Ref != m.Ref || !reflect.DeepEqual(changed.Changed, []string{"SKILL.md"}) {
+		t.Fatalf("the run's changed copy: %v", err)
+	}
+}
+
+// An install with no record whose install.json claims more than the
+// registry says (verified, for a release the registry publishes no
+// attestation for) is fetched again and put through the gate a first fetch
+// meets: the unsigned release still needs --allow-unsigned.
+func TestAnInstallWithNoRecordIsGatedAsAFirstFetch(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+		t.Fatalf("install: %v (stderr %q)", err, stderr)
+	}
+	releaseDir := installdir.ReleaseDir(home, "acme", "demo", "1.0.0", fv.digest)
+	if err := os.Remove(filepath.Join(releaseDir, installdir.RecordFile)); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(releaseDir, "install.json"))
+	claimed := strings.Replace(strings.Replace(string(b), `"state": "unsigned"`, `"state": "verified"`, 1), `"verified": false`, `"verified": true`, 1)
+	if claimed == string(b) {
+		t.Fatalf("install.json did not say unsigned:\n%s", b)
+	}
+	editFile(t, filepath.Join(releaseDir, "install.json"), claimed)
+
+	_, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--yes", "--policy", policyPath)
+	wantClassified(t, err, engine.ExitVerify)
+	if !strings.Contains(err.Error(), "--allow-unsigned") {
+		t.Fatalf("the rewritten verdict was believed: %v", err)
+	}
+	if _, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--yes", "--allow-unsigned", "--policy", policyPath); err != nil {
+		t.Fatalf("with the consent: %v (stderr %q)", err, stderr)
+	}
+	if meta, err := installdir.Inspect(releaseDir, fv.digest); err != nil || meta.Attestation.State != "unsigned" {
+		t.Fatalf("after the run: %+v %v (the registry's verdict, laid down afresh)", meta, err)
 	}
 }

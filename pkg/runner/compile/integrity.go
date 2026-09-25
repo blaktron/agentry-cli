@@ -84,12 +84,7 @@ func integrityMAC(key, planBytes []byte) string {
 }
 
 // integrityKeyID names a key without revealing it.
-func integrityKeyID(key []byte) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte("agentry plan-integrity key id\x00"))
-	_, _ = h.Write(key)
-	return hex.EncodeToString(h.Sum(nil))[:16]
-}
+func integrityKeyID(key []byte) string { return integritykey.ID(key, "agentry plan-integrity key id") }
 
 // writeIntegrityRecord records plan.json's bytes under key.
 func writeIntegrityRecord(key []byte, planDir string, planBytes []byte) error {

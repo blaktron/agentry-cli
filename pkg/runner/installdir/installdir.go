@@ -134,8 +134,9 @@ func keepAny(*Meta) bool { return true }
 // layDown builds the release tree for dir aside, lets addToTree add to it
 // (Install's export), seals it, and publishes the whole, or leaves dir as
 // it was. A whole install of the same digest at dir, which its record
-// vouches for and keep accepts, wins over this copy. An install at dir
-// that changed after it was laid down is refused unless replaceChanged.
+// vouches for and keep accepts, wins over this copy; a nil keep never
+// keeps one (Repair replaces whatever is there). An install at dir that
+// changed after it was laid down is refused unless replaceChanged.
 func layDown(dir, srcTree string, meta *Meta, keep func(got *Meta) bool, addToTree func(tree string) error, replaceChanged bool) error {
 	home, err := HomeOf(dir)
 	if err != nil {
@@ -169,6 +170,13 @@ func layDown(dir, srcTree string, meta *Meta, keep func(got *Meta) bool, addToTr
 			if err := addToTree(tree); err != nil {
 				return err
 			}
+		}
+		// The staging directory sits beside the release, where anyone who
+		// can write the agent's directory could add to it before it is
+		// sealed: the copy is held to the verified source first, so what is
+		// sealed is the release and nothing else.
+		if err := sameFiles(srcTree, filepath.Join(tree, "workspace")); err != nil {
+			return err
 		}
 		// Last: the record covers install.json as the export left it.
 		return seal(key, tree)
@@ -251,8 +259,8 @@ func StyleForHome(home string) (style, warning string) {
 // and never the consent, which lives in installed.yaml, so a run cannot
 // read one out of install.json.
 func Install(releaseDir, srcTree string, m *manifest.Manifest, meta *Meta, style string) error {
-	if meta.Attestation.Consent != "" {
-		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
+	if err := refuseConsent(meta); err != nil {
+		return err
 	}
 	// The export is written into the staged tree, so the published
 	// release is whole with its export, and a refused style leaves
@@ -271,14 +279,24 @@ func Install(releaseDir, srcTree string, m *manifest.Manifest, meta *Meta, style
 // changed, and sealed afresh. style is the export to write beside it, or
 // empty for none (a release a run laid down, which has none).
 func Repair(releaseDir, srcTree string, m *manifest.Manifest, meta *Meta, style string) error {
-	if meta.Attestation.Consent != "" {
-		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
+	if err := refuseConsent(meta); err != nil {
+		return err
 	}
 	var addExport func(tree string) error
 	if style != "" {
 		addExport = func(tree string) error { return writeExport(tree, style, m, meta) }
 	}
 	return layDown(releaseDir, srcTree, meta, nil, addExport, true)
+}
+
+// refuseConsent refuses a Meta that carries a consent: install.json holds
+// the verdict and never the consent, which lives in installed.yaml, so a
+// run cannot read one out of it.
+func refuseConsent(meta *Meta) error {
+	if meta.Attestation.Consent != "" {
+		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
+	}
+	return nil
 }
 
 // writeExport lays the coding-agent shape under <dir>/export from the
