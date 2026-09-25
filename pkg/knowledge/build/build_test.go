@@ -157,6 +157,20 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(fx.opts.PackDir, "sources", "blob.bin")); err == nil {
 		t.Error("an undecodable document went into the pack")
 	}
+	// The decode container binds from under the runner home, which the
+	// daemon sees wherever the runner runs, and the work is gone after.
+	dec, ok := fx.fake.FindRun("agentry-decode-")
+	if !ok {
+		t.Fatal("no decode container ran")
+	}
+	for _, m := range dec.Mounts {
+		if !strings.HasPrefix(m.Source, filepath.Join(fx.opts.Home, "work")+string(filepath.Separator)) {
+			t.Errorf("the decode container binds %s, outside the runner home's work directory", m.Source)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(fx.opts.Home, "work")); len(entries) != 0 {
+		t.Errorf("the build left its work behind: %v", entries)
+	}
 	if strings.Join(res.Documents, ",") != "incident-report.pdf,runbook.md" || strings.Join(res.Skipped, ",") != "blob.bin" {
 		t.Fatalf("documents %v skipped %v", res.Documents, res.Skipped)
 	}
