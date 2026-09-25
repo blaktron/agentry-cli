@@ -151,7 +151,7 @@ var (
 	// ErrRemoteNotFound is a pack the registry does not keep.
 	ErrRemoteNotFound = errors.New("the registry keeps no such knowledge pack")
 	// ErrRemoteNameTaken is a name the account already uses in Agentry.
-	ErrRemoteNameTaken = errors.New("Agentry already keeps a knowledge pack of that name for this account")
+	ErrRemoteNameTaken = errors.New("this account already keeps a knowledge pack of that name in Agentry")
 	// ErrUnconfigured is a registry that keeps no knowledge (503).
 	ErrUnconfigured = errors.New("this registry keeps no knowledge packs")
 	// ErrNoKeychain is an OS keychain that is not there or is disabled.
