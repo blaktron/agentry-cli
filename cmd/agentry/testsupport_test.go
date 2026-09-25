@@ -176,6 +176,10 @@ type fakeRegistry struct {
 	keyID  string
 	pubPEM string
 
+	// scans answers the MCP-server vulnerability scan by package name
+	// (the scan record's JSON); a package with none is 404, "unknown".
+	scans map[string]string
+
 	mu             sync.Mutex
 	searchQueries  []url.Values
 	yankBodies     []string
@@ -215,6 +219,15 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 	fr := &fakeRegistry{t: t, agents: map[string]*fakeAgent{}, userHandle: "tester", submitStatus: "published"}
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/v1/mcp-servers/scan", func(w http.ResponseWriter, r *http.Request) {
+		rec, ok := fr.scans[r.URL.Query().Get("package")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(rec))
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

@@ -217,7 +217,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// unsigned release is reported rather than refused.
 	var meta *installdir.Meta
 	var installDir string
-	var planRefusal string
+	// planRefusals is every refusal the gates before compile would meet —
+	// the attestation and the declared servers' vulnerabilities — for
+	// --plan: the preview exists so the person sees them all before
+	// consenting (agentry-cli#126), not only the first a run stops on.
+	var planRefusals []runPlanRefusal
 	// consentHome is where the consent record lives (the real home); home
 	// itself moves to a temp dir under --plan so every later write — the
 	// install cache, the profile store, the plan dir — outlives nothing.
@@ -234,13 +238,16 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if opts.local != "" {
 		if opts.plan && !opts.allowUnsigned {
-			planRefusal = "a local workspace has no attestation; a run needs --allow-unsigned"
+			planRefusals = append(planRefusals, runPlanRefusal{Kind: refusalAttestation,
+				Message: "a local workspace has no attestation; a run needs --allow-unsigned", Lift: receipt.ConsentAllowUnsigned})
 		}
 		meta, installDir, err = materializeLocal(cmd, opts.local, home, matOpts.allowUnsigned)
 	} else {
 		meta, installDir, err = materializeRegistry(cmd, ref, home, matOpts)
 		if err == nil && opts.plan {
-			planRefusal = attestationRefusal(meta.Attestation, opts.allowUnsigned, opts.allowUnscanned)
+			if r := attestationRefusal(meta.Attestation, opts.allowUnsigned, opts.allowUnscanned); r != "" {
+				planRefusals = append(planRefusals, runPlanRefusal{Kind: refusalAttestation, Message: r, Lift: attestationLift(meta.Attestation)})
+			}
 		}
 	}
 	if err != nil {
@@ -319,11 +326,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 			if !opts.plan {
 				return engine.Classify(engine.ExitPolicy, refuseErr)
 			}
-			if planRefusal == "" {
-				planRefusal = refuseErr.Error()
-			}
+			planRefusals = append(planRefusals, runPlanRefusal{Kind: refusalVulnerableServer, Message: refuseErr.Error(), Lift: "--allow-vulnerable-mcp"})
 		}
-		resolvedServers, err = ensureServerResolutions(cmd.Context(), cmd.ErrOrStderr(), serversDir, pol, m)
+		resolvedServers, err = serverResolutions(cmd.Context(), cmd.ErrOrStderr(), serversDir, pol, m)
 		if err != nil {
 			return engine.Classify(engine.ExitVerify, err)
 		}
@@ -344,7 +349,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	if opts.plan {
-		return printRunPlan(cmd, plan, meta, m, mode, consent, planRefusal)
+		return printRunPlan(cmd, plan, meta, m, mode, consent, planRefusals)
 	}
 	if opts.dryRun {
 		return printDryRun(cmd, plan, planDir)
@@ -697,12 +702,48 @@ type runPlanOutput struct {
 	KeyID       string `json:"keyId,omitempty"`
 	Signed      bool   `json:"signed"`
 	runPlanConsent
-	// Refusal is what a run would stop on before executing: the
-	// attestation, or a declared server with a known vulnerability.
-	Refusal string `json:"refusal,omitempty"`
+	// Refusals is every refusal the gates before compile would meet, in
+	// the order a run meets them: the attestation, then a declared server
+	// with a known vulnerability (agentry-cli#126). A client that lifts
+	// one with the person's acceptance still meets the others.
+	//
+	// Deprecated: Refusal is Refusals[0].Message, kept for clients that
+	// read one refusal.
+	Refusal  string           `json:"refusal,omitempty"`
+	Refusals []runPlanRefusal `json:"refusals,omitempty"`
 }
 
-func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m *manifest.Manifest, mode manifest.Mode, consent runPlanConsent, refusal string) error {
+// runPlanRefusal is one refusal a run would meet: Kind is the gate,
+// Message what it says, and Lift the flag that lifts it — empty when no
+// flag does (a signature no pinned key verifies), so a client lifts only
+// what the person accepted, by name.
+type runPlanRefusal struct {
+	Kind    refusalKind `json:"kind"`
+	Message string      `json:"message"`
+	Lift    string      `json:"lift,omitempty"`
+}
+
+// refusalKind names the gate a --plan refusal comes from.
+type refusalKind string
+
+const (
+	refusalAttestation      refusalKind = "attestation"
+	refusalVulnerableServer refusalKind = "vulnerable_server"
+)
+
+// attestationLift is the flag that lifts an attestation refusal: the
+// consent a run would record for it (receipt.Consent*), or none.
+func attestationLift(att receipt.Attestation) string {
+	switch att.State {
+	case trust.StateUnsigned, "local":
+		return receipt.ConsentAllowUnsigned
+	case trust.StateUnscanned:
+		return receipt.ConsentAllowUnscanned
+	}
+	return ""
+}
+
+func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m *manifest.Manifest, mode manifest.Mode, consent runPlanConsent, refusals []runPlanRefusal) error {
 	b, err := plan.MarshalCanonical()
 	if err != nil {
 		return err
@@ -715,7 +756,10 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 		Ref: meta.Ref, Version: meta.Version, Digest: meta.Digest, Mode: string(mode), Modes: modeStrings(m.SupportedModes()),
 		Summary: m.Summary, Plan: bytes.TrimSpace(b), PlanSha256: planHash(plan), Contract: contract, ContractDigest: cdigest,
 		Attestation: meta.Attestation.State, KeyID: meta.Attestation.KeyID, Signed: meta.Attestation.Verified,
-		runPlanConsent: consent, Refusal: refusal,
+		runPlanConsent: consent, Refusals: refusals,
+	}
+	if len(refusals) > 0 {
+		out.Refusal = refusals[0].Message
 	}
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), out)
@@ -726,8 +770,8 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 	if out.NeedsConfirmation {
 		_, _ = fmt.Fprintf(w, "would ask: %s\n", out.Reason)
 	}
-	if out.Refusal != "" {
-		_, _ = fmt.Fprintf(w, "would refuse: %s\n", out.Refusal)
+	for _, r := range out.Refusals {
+		_, _ = fmt.Fprintf(w, "would refuse: %s\n", r.Message)
 	}
 	_, _ = fmt.Fprintln(w, "nothing asked, nothing recorded (--plan)")
 	return nil

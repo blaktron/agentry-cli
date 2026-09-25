@@ -18,6 +18,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
+// serverResolutions is ensureServerResolutions, a seam for tests: the
+// configured MCP registries must be https, which a test cannot serve with
+// a certificate the resolver trusts.
+var serverResolutions = ensureServerResolutions
+
 // ensureServerResolutions returns the resolutions for every declared
 // server. When the store already records a resolution for each pin, those
 // are reused verbatim — no network — so cached installs run offline;
