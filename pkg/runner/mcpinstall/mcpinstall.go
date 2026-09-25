@@ -68,6 +68,16 @@ type Resolved struct {
 	// (agentry-cli#162). The runs mount the store read-only, so nothing
 	// legitimate changes it after the install.
 	StoreDigest string `json:"storeDigest,omitempty"`
+	// FetchHosts are the hosts, other than the registry's own, that the
+	// registry's metadata said the pinned artifact is downloaded from (the
+	// npm tarball's host; PyPI's file host, files.pythonhosted.org for
+	// pypi.org). They join the install proxy's allowlist
+	// (agentry-cli#92).
+	FetchHosts []string `json:"fetchHosts,omitempty"`
+	// InstallEgress is the allowlist the install's proxy enforced, as
+	// host:port, stamped by EnsureInstalled; the proxy's own decisions are
+	// in <id>.install-proxy.log beside this record (agentry-cli#92).
+	InstallEgress []string `json:"installEgress,omitempty"`
 }
 
 // ServerName is the gateway catalog name for a resolved server.
@@ -199,6 +209,7 @@ func resolveNPM(ctx context.Context, client *http.Client, registry, pkg, version
 	return Resolved{
 		Source: "npm", Package: pkg, Version: version,
 		ID: sanitizeID("npm", pkg), BinName: bin, Integrity: integrity,
+		FetchHosts: fetchHosts(registry, meta.Dist.Tarball),
 	}, nil
 }
 
@@ -237,6 +248,7 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 		URLs []struct {
 			PackageType string `json:"packagetype"`
 			Filename    string `json:"filename"`
+			URL         string `json:"url"`
 			Digests     struct {
 				SHA256 string `json:"sha256"`
 			} `json:"digests"`
@@ -278,15 +290,20 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 	if len(meta.URLs) == 0 {
 		return Resolved{}, errors.New("release has no downloadable artifacts")
 	}
+	urls := make([]string, 0, len(meta.URLs))
+	for _, art := range meta.URLs {
+		urls = append(urls, art.URL)
+	}
 	return Resolved{
 		Source: "pypi", Package: pkg, Version: version,
 		ID: sanitizeID("pypi", pkg),
 		// Provisional (DR-11): the JSON API does not expose entry points,
 		// so start from the normalized project name; the builder reads
 		// the real console script from the installed dist (below).
-		BinName:   normalizePyPIName(pkg),
-		Integrity: integrity,
-		Artifacts: artifacts,
+		BinName:    normalizePyPIName(pkg),
+		Integrity:  integrity,
+		Artifacts:  artifacts,
+		FetchHosts: fetchHosts(registry, urls...),
 	}, nil
 }
 
@@ -348,6 +365,10 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		if err := builderArgs(r.Package, r.Version); err != nil {
 			return fmt.Errorf("install %s: %w", r.ID, err)
 		}
+		allow, err := installAllowlist(r, regs)
+		if err != nil {
+			return fmt.Errorf("install %s: %w", r.ID, err)
+		}
 
 		hostDir := filepath.Join(storeDir, r.ID)
 		if err := os.MkdirAll(hostDir, 0o700); err != nil {
@@ -392,10 +413,18 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			}
 		}
 
+		egress, err := startInstallProxy(ctx, d, r.ID, allow, images, docker, logw)
+		if err != nil {
+			return fmt.Errorf("install %s: %w", r.ID, err)
+		}
 		code, err := d.RunForeground(ctx, dockerx.RunSpec{
 			Name:  "agentry-mcpinstall-" + r.ID,
 			Image: image,
 			Argv:  argv,
+			// The builder's only route out is the install proxy
+			// (agentry-cli#92): npm, pip and the builders' own fetches
+			// honour these, and the network has no other way off it.
+			Env: egress.env(),
 			// The store is the user's: the builder runs as the invoking
 			// uid:gid so every file it writes is theirs and `rm -rf` of the
 			// profile — what the drift refusal asks for — works
@@ -410,13 +439,12 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// the build ends or the next agent declaring the same server
 			// fails at install with a name conflict (agentry-cli#106).
 			AutoRemove: true,
-			// Docker's default bridge, named rather than implied: the
-			// builder fetches from the policy's npm and PyPI registries
-			// directly, outside the run's proxy, which is the open route
-			// DR-12 accepts until agentry-cli#92 decides otherwise. Naming
-			// it keeps the builder's reach from following whatever default
-			// a daemon is configured with (agentry-cli#162).
-			Network: builderNetwork,
+			// The install's own internal network (agentry-cli#92), where
+			// the only other container is the proxy, whose allowlist is
+			// the configured registry and the artifact hosts its metadata
+			// named. It replaced the default bridge (agentry-cli#162),
+			// which reached every host there is.
+			Network: egress.network,
 			// Who started it (package owner): the builder precedes any run
 			// id, so it carries no agentry.run label, but a CLI killed
 			// mid-install leaves it building with nobody waiting, and the
@@ -431,12 +459,17 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// The run's container posture (agentry-cli#163); its root stays
 			// writable, since npm and pip write where they please.
 		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), nil, logw, logw)
+		// The proxy's allow/deny lines are the evidence of what the
+		// install reached; kept beside the record, failed install or not.
+		egress.stop(ctx, filepath.Join(storeDir, r.ID+installProxyLogSuffix))
 		if err != nil {
 			return fmt.Errorf("install %s: %w", r.ID, err)
 		}
 		if code != 0 {
-			return fmt.Errorf("install %s: builder exited %d", r.ID, code)
+			return fmt.Errorf("install %s: builder exited %d (the install proxy's decisions are in %s)", r.ID, code,
+				filepath.Join(storeDir, r.ID+installProxyLogSuffix))
 		}
+		r.InstallEgress = allow
 		if r.Source == "pypi" {
 			if err := adoptConsoleScript(hostDir, r, logw); err != nil {
 				return err
@@ -635,9 +668,6 @@ func npmArgv(r *Resolved, regs policy.MCPRegistries) []string {
 		"node", "-e", npmBuilder,
 		r.prefix(), r.Package, r.Version, regs.NPM, r.Integrity}
 }
-
-// builderNetwork is the network the install container joins.
-const builderNetwork = "bridge"
 
 // builderArgs refuses a package or version the builder could not pass to
 // pip or npm as the plain value it must be: one that starts with "-" (an
