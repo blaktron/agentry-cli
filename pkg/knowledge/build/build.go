@@ -108,7 +108,15 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		name = current.Manifest.Name
 	}
 
-	work, err := os.MkdirTemp("", "agentry-knowledge-build-*")
+	// The work directory is under the runner home, not the process's
+	// temporary directory: the decode container binds from it, and the
+	// daemon sees the runner home wherever the runner runs — a sandbox
+	// host's runner is in a container whose /tmp the daemon cannot see.
+	workRoot := filepath.Join(o.Home, "work")
+	if err := os.MkdirAll(workRoot, 0o700); err != nil {
+		return nil, engine.Classify(engine.ExitCLI, err)
+	}
+	work, err := os.MkdirTemp(workRoot, "knowledge-build-")
 	if err != nil {
 		return nil, engine.Classify(engine.ExitCLI, err)
 	}
