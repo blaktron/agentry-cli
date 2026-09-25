@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"gopkg.in/yaml.v3"
@@ -187,5 +188,21 @@ func withKnowledge(enforced map[string]string, packs []AttachedPack, execCommand
 		line += "; the declared exec commands run in that container and can read it too, as they can " + spec.InputsMount
 	}
 	out["knowledge"] = line
+	return out
+}
+
+// withDecoded adds the receipt's decode line when the caller decoded the
+// inputs before the run (pkg/runner/decode): the mechanism, the versions
+// and what happened to the files. A run whose inputs were not decoded has
+// no such line.
+func withDecoded(enforced map[string]string, d *decode.Result) map[string]string {
+	if d == nil {
+		return enforced
+	}
+	out := make(map[string]string, len(enforced)+1)
+	for k, v := range enforced {
+		out[k] = v
+	}
+	out["decode"] = d.Line()
 	return out
 }

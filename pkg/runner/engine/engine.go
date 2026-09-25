@@ -26,6 +26,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -94,6 +95,9 @@ type Params struct {
 	// channel and verified there, the three knowledge tools granted and the
 	// receipt's knowledge line written only when there is one (DR-38).
 	Knowledge []AttachedPack
+	// Decoded, when set, is the decode step the caller ran on the inputs
+	// before this run (pkg/runner/decode); the receipt names it.
+	Decoded *decode.Result
 	// Intake holds the answers to the manifest's up-front questions (plan
 	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
 	// secret answers already merged into SecretOverrides by the caller.
@@ -173,7 +177,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: withKnowledge(withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p), p.Knowledge, p.Plan.Capabilities.ExecCommands),
+		CapabilitiesEnforced: withDecoded(withKnowledge(withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p), p.Knowledge, p.Plan.Capabilities.ExecCommands), p.Decoded),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,
