@@ -972,3 +972,50 @@ func TestCompileRefusesAPathOutsideTheWorkspace(t *testing.T) {
 		}
 	}
 }
+
+// TestCompileIgnoresTheGuide: the manifest's guide (DEV-141,
+// agentry-cli#257) is text for people before a run. It is not part of the
+// plan, so a release that differs only in its guide compiles to the same
+// plan hash, and the plan's bytes never carry the guide's words.
+func TestCompileIgnoresTheGuide(t *testing.T) {
+	m := parseManifest(t, fullCapsYAML)
+	ws := workspaceFor(t, m, nil)
+	plain, _ := compileFixture(t, m, ws)
+
+	guided := *m
+	guided.Guide = &manifest.Guide{
+		Overview: "GUIDE-OVERVIEW-MARKER",
+		Prepare:  []string{"GUIDE-PREPARE-MARKER"},
+		Files:    "GUIDE-FILES-MARKER",
+		Task:     "GUIDE-TASK-MARKER",
+	}
+	withGuide, planDir := compileFixture(t, &guided, ws)
+
+	h1, err := plain.Hash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, err := withGuide.Hash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h1 != h2 {
+		t.Fatalf("a guide changed the plan hash: %s vs %s", h1, h2)
+	}
+	err = filepath.Walk(planDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		if strings.Contains(string(b), "GUIDE-") {
+			t.Errorf("%s carries the guide's words", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

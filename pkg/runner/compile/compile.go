@@ -106,7 +106,8 @@ const contractPostscript = "\n\n----\n" +
 //	planDir/harness/<adapter files>
 //
 // The returned plan's Files map hashes every generated file, so a tampered
-// installed plan is detectable before execution (§R6).
+// installed plan is detectable before execution (§R6). planDir is replaced
+// whole: whatever it held before is gone once Compile returns.
 func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	m := in.Manifest
 	if m == nil {
@@ -317,8 +318,23 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["harness.isolation"] = "host process from this machine's own installation of " + res.Host.Command +
 			" (no container): the proxy variables and the gateway catalog bound it, not the run network"
 	}
+	// Everything is written into a staging directory beside planDir and
+	// published in one rename (publishPlanDir), so a plan directory is
+	// only ever one compile's complete output: another process reading or
+	// compiling the same plan at the same time never sees this compile's
+	// plan.json beside another's record (agentry-cli#289).
+	staging, err := newStagingDir(planDir)
+	if err != nil {
+		return nil, err
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = os.RemoveAll(staging)
+		}
+	}()
 	for rel, content := range files {
-		abs := filepath.Join(planDir, filepath.FromSlash(rel))
+		abs := filepath.Join(staging, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			return nil, fmt.Errorf("create plan dir: %w", err)
 		}
@@ -331,14 +347,18 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), planBytes, 0o644); err != nil { //nolint:gosec // ditto
+	if err := os.WriteFile(filepath.Join(staging, "plan.json"), planBytes, 0o644); err != nil { //nolint:gosec // ditto
 		return nil, fmt.Errorf("write plan.json: %w", err)
 	}
 	if in.IntegrityKey != nil {
-		if err := writeIntegrityRecord(in.IntegrityKey, planDir, planBytes); err != nil {
+		if err := writeIntegrityRecord(in.IntegrityKey, staging, planBytes); err != nil {
 			return nil, err
 		}
 	}
+	if err := publishPlanDir(staging, planDir); err != nil {
+		return nil, err
+	}
+	published = true
 	return plan, nil
 }
 

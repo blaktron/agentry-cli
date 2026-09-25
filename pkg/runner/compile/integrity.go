@@ -1,6 +1,7 @@
 package compile
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // An installed plan is reused across runs (§R6/§R9), so plan.json sits on
@@ -154,27 +156,110 @@ func Seal(key []byte, planDir string) error {
 	return writeIntegrityRecord(key, planDir, b)
 }
 
+// readHook is a test seam: called with the name of each file
+// ReadInstalledPlan has just read, so a test can interleave a concurrent
+// recompile between the reads (agentry-cli#289). Nil outside tests.
+var readHook func(read string)
+
+// readAttempts bounds how often ReadInstalledPlan re-reads a pair that
+// disagrees before it believes the disagreement; readBackoff is the pause
+// before each retry, doubling. A real edit stays put, so refusing one
+// costs these few pauses and nothing else.
+const (
+	readAttempts = 4
+	readBackoff  = 10 * time.Millisecond
+)
+
 // ReadInstalledPlan returns planDir/plan.json's bytes only after checking
 // them against the integrity record: fs.ErrNotExist when there is no
 // plan, ErrNoIntegrityRecord when the record cannot vouch for it (the
 // caller recompiles), *TamperedPlanError when it vouches against it (the
 // caller refuses). Every read of an installed plan for execution goes
 // through here.
+//
+// Another process may recompile the same plan directory while this one
+// reads it (two runs of one release and mode started together; the CLI
+// and the desktop recompile each other's plans). A plan read from one
+// compile and a record from the next disagree although nothing was
+// edited, and were refused as tampering (agentry-cli#289). Compile now
+// publishes a whole directory in one rename and the reads go through one
+// handle on the directory, so they see one compile; a client built before
+// that still writes the files in place. So the record is also read on
+// both sides of the plan, and a pair is judged only when the two record
+// reads agree: a record that changed, vanished or appeared meanwhile
+// means a recompile was in flight, and the reads are taken again. A
+// mismatch between a steady record and the plan is re-read too, after a
+// pause, and only a mismatch that persists through every attempt is
+// reported as tampering.
 func ReadInstalledPlan(key []byte, planDir string) ([]byte, error) {
-	b, err := os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // our install layout
-	if err != nil {
-		return nil, err
+	wait := readBackoff
+	var last error
+	for attempt := 0; attempt < readAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(wait)
+			wait *= 2
+		}
+		b, steady, err := readPlanPair(key, planDir)
+		var tampered *TamperedPlanError
+		switch {
+		case err == nil:
+			return b, nil
+		case steady && !errors.As(err, &tampered):
+			// No plan, or no record this home can check: answers in
+			// themselves (the caller recompiles, which is always
+			// safe), not disagreements to wait out.
+			return nil, err
+		}
+		last = err
 	}
-	rec, err := os.ReadFile(filepath.Join(planDir, IntegrityFile)) //nolint:gosec // our install layout
+	return nil, last
+}
+
+// readPlanPair reads the record, the plan and the record again, and
+// judges the plan against the record when both record reads agree
+// (steady). An unsteady read returns ErrNoIntegrityRecord with steady
+// false, so a caller that stops retrying recompiles rather than refuses.
+//
+// All three reads go through one handle on the directory (os.Root), so
+// they read one directory even if a compile publishes a new one under the
+// same name meanwhile (publishPlanDir); the record comparison still
+// catches a writer that rewrites files in place, as a client built before
+// agentry-cli#289 does.
+func readPlanPair(key []byte, planDir string) (plan []byte, steady bool, err error) {
+	root, err := os.OpenRoot(planDir)
 	if err != nil {
-		return nil, ErrNoIntegrityRecord
+		return nil, true, err
+	}
+	defer func() { _ = root.Close() }()
+	before, berr := root.ReadFile(IntegrityFile)
+	if readHook != nil {
+		readHook("record")
+	}
+	b, err := root.ReadFile("plan.json")
+	if err != nil {
+		if berr == nil && errors.Is(err, fs.ErrNotExist) {
+			// A record without its plan: a recompile removed both
+			// between the reads, or is about to write the plan.
+			return nil, false, ErrNoIntegrityRecord
+		}
+		return nil, true, err
+	}
+	if readHook != nil {
+		readHook("plan")
+	}
+	rec, rerr := root.ReadFile(IntegrityFile)
+	if (berr == nil) != (rerr == nil) || !bytes.Equal(before, rec) {
+		return nil, false, ErrNoIntegrityRecord
+	}
+	if rerr != nil {
+		return nil, true, ErrNoIntegrityRecord
 	}
 	fields := strings.Fields(string(rec))
 	if len(fields) != 3 || fields[0] != integrityRecordTag || fields[1] != integrityKeyID(key) {
-		return nil, ErrNoIntegrityRecord
+		return nil, true, ErrNoIntegrityRecord
 	}
 	if !hmac.Equal([]byte(integrityMAC(key, b)), []byte(fields[2])) {
-		return nil, &TamperedPlanError{PlanDir: planDir}
+		return nil, true, &TamperedPlanError{PlanDir: planDir}
 	}
-	return b, nil
+	return b, true, nil
 }

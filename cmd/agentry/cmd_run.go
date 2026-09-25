@@ -52,11 +52,14 @@ import (
 
 // runOpts carries the run command's flags.
 type runOpts struct {
-	mode               string
-	intake             []string
-	input              string
-	out                string
-	outputFormat       string
+	mode         string
+	intake       []string
+	input        string
+	out          string
+	outputFormat string
+	// guideShown is set once the release's guide has been printed on this
+	// terminal, so the profile setup and the intake do not print it twice.
+	guideShown         *bool
 	eventsPath         string
 	adapterName        string
 	local              string
@@ -191,6 +194,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if opts.outputFormat != "text" && opts.outputFormat != "json" {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
 	}
+	opts.guideShown = new(bool)
 	home, err := runnerHome()
 	if err != nil {
 		return err
@@ -756,8 +760,57 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts) (*int
 	var p setup.Prompter
 	if stdinIsTTY(cmd.InOrStdin()) {
 		p = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+		if len(preset) < len(m.Intake) {
+			sayGuide(cmd.ErrOrStderr(), m, opts)
+		}
 	}
 	return intake.Collect(p, m.Intake, preset, m.Capabilities.Secrets)
+}
+
+// sayGuide prints the release guide's overview and its list of what to
+// gather (DEV-141, plan guided-runs.md §6) on the terminal, once, before
+// the first question a run asks: the guided profile's keys or the intake.
+// A run that asks nothing prints nothing, and so do a --output-format json
+// run and a run with no terminal, whose callers never reach here. The
+// overview is markdown and is printed as its text.
+func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
+	if m.Guide == nil || opts.outputFormat == "json" || (opts.guideShown != nil && *opts.guideShown) {
+		return
+	}
+	if opts.guideShown != nil {
+		*opts.guideShown = true
+	}
+	g := m.Guide
+	if ov := termSafe(strings.TrimSpace(g.Overview)); ov != "" {
+		_, _ = fmt.Fprintf(w, "\n%s\n", ov)
+	}
+	if len(g.Prepare) > 0 {
+		_, _ = fmt.Fprintln(w, "\nHave these ready:")
+		for _, item := range g.Prepare {
+			_, _ = fmt.Fprintf(w, "  - %s\n", termSafe(item))
+		}
+	}
+	if g.Files != "" {
+		_, _ = fmt.Fprintf(w, "Files: %s\n", termSafe(g.Files))
+	}
+	_, _ = fmt.Fprintln(w)
+}
+
+// termSafe is author text as a terminal may show it: every control
+// character but a newline or a tab becomes "?", so a guide cannot send
+// escape sequences (colours, cursor moves, a window title, a hyperlink) to
+// the terminal it is printed on. The core refuses them in the single-line
+// parts already; the overview may span lines, so it is cleaned here.
+func termSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 // secretOverrides merges the profile's stored secrets with the intake's
@@ -1118,9 +1171,9 @@ func ensurePlan(errOut io.Writer, home string, m *manifest.Manifest, meta *insta
 			}
 		}
 	}
-	if err := os.RemoveAll(planDir); err != nil {
-		return nil, "", fmt.Errorf("clear stale plan: %w", err)
-	}
+	// Compile replaces planDir whole, in one rename, so it is not cleared
+	// first: a removal here could run into another process's compile of
+	// the same plan (agentry-cli#289).
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest:     m,
 		Mode:         mode,
@@ -1337,6 +1390,13 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 		return nil, dir, keep, nil
 	}
 
+	sayGuide(cmd.ErrOrStderr(), m, opts)
+	// The key help rides with the guide: printed on a text run, and like
+	// the overview left out of a --output-format json one.
+	var help map[string]string
+	if m.Guide != nil && opts.outputFormat != "json" {
+		help = m.Guide.Connect
+	}
 	prompter := &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
 	newProf, err := setup.GuidedProfile(prompter, setup.GuidedProfileOpts{
 		Ref:             meta.Ref,
@@ -1345,6 +1405,7 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 		Secrets:         secrets,
 		DefaultKeep:     keep,
 		KeepDecided:     keepDecided,
+		Help:            help,
 	})
 	if err != nil {
 		return nil, dir, false, err
