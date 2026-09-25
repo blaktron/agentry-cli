@@ -375,7 +375,7 @@ func (f *Filter) pinLinks(ctx context.Context, c *containerCreateBody) error {
 		}
 		// Docker's own form of a stored link is "/name:/container/alias".
 		alias = alias[strings.LastIndex(alias, "/")+1:]
-		if !relayHostRE.MatchString(alias) {
+		if !hostNameRE.MatchString(alias) {
 			return deny("link alias %q is not a host name", alias)
 		}
 		ip, err := f.linkedAddress(ctx, name, joins)
@@ -387,12 +387,13 @@ func (f *Filter) pinLinks(ctx context.Context, c *containerCreateBody) error {
 	return nil
 }
 
-// relayEnv are the relay's settings: its entrypoint writes them into the
-// proxy's configuration, so each value is held to its form, one line.
-var (
-	relayHostRE  = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
-	relayPortsRE = regexp.MustCompile(`^[0-9]{1,5}(,[0-9]{1,5})*$`)
-)
+// hostNameRE is a host name and nothing else, one line: what a relay may
+// be pointed at (its entrypoint writes it into the proxy's configuration)
+// and what a pinned /etc/hosts entry may name.
+var hostNameRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
+
+// relayPortsRE is a relay's other setting, held to its form likewise.
+var relayPortsRE = regexp.MustCompile(`^[0-9]{1,5}(,[0-9]{1,5})*$`)
 
 // relayShape holds a relay, the one kind of container with a way off the
 // host, to what the pinned gateway gives one: its image's own entrypoint
@@ -430,7 +431,7 @@ func (f *Filter) relayShape(c *containerCreateBody) error {
 			return deny("relay setting %s", k)
 		}
 	}
-	if !relayHostRE.MatchString(host) {
+	if !hostNameRE.MatchString(host) {
 		return deny("relay host %q is not a host name", host)
 	}
 	if !relayPortsRE.MatchString(ports) {

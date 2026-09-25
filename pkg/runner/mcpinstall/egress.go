@@ -159,7 +159,10 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow [
 		Network: e.network,
 		Alias:   installProxyAlias,
 		Labels:  labels,
-		Runtime: docker.Runtime,
+		// The daemon's default runtime, like the run's llm-proxy: it is
+		// the runner's own binary, and it resolves the registry's hosts
+		// through docker's embedded DNS, which a sandboxed runtime does not
+		// reach (measured under runsc on dev, DR-23, agentry-cli#221).
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	spec.ReadOnly, spec.Tmpfs = true, []string{"/tmp"}
 	if err := d.RunDetached(ctx, spec); err != nil {
@@ -172,6 +175,22 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow [
 	}
 	_, _ = fmt.Fprintf(logw, "mcp server install egress: through the install proxy, allowing %s\n", strings.Join(allow, ", "))
 	return e, nil
+}
+
+// hosts pins the proxy's alias into a builder that runs under a
+// sandboxed runtime, which cannot ask docker's embedded DNS for it: the
+// builder under runsc failed every install with "getaddrinfo EAI_AGAIN
+// mcp-install-proxy" (dev, agentry-cli#221). Without a runtime nothing is
+// pinned and docker resolves the alias as before.
+func (e *installEgress) hosts(ctx context.Context, runtime string) ([]string, error) {
+	if runtime == "" {
+		return nil, nil
+	}
+	ip, err := e.d.ContainerIP(ctx, e.proxy, e.network)
+	if err != nil {
+		return nil, fmt.Errorf("pin the install proxy for the sandboxed builder: %w", err)
+	}
+	return []string{installProxyAlias + ":" + ip}, nil
 }
 
 // stop keeps the proxy's decisions at logPath (when given), then removes

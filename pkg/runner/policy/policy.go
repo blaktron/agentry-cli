@@ -122,11 +122,12 @@ type Policy struct {
 type DockerPolicy struct {
 	// Runtime names the daemon's OCI runtime (`docker run --runtime`) for
 	// a run's containers: gVisor's "runsc" on a host that has it
-	// registered. It holds every class but three, which stay on the
+	// registered. It holds every class but four, which stay on the
 	// daemon's default because they need what a sandbox does not give
-	// (DR-23, agentry-cli#221): the llm-proxy and the relays (docker's
-	// embedded DNS) and the gateway (a host Unix socket); the receipt's
-	// runtime line names each class. Empty means the daemon's default —
+	// (DR-23, agentry-cli#221): the llm-proxy, the MCP server install
+	// proxy and the relays (docker's embedded DNS) and the gateway (a host
+	// Unix socket); the receipt's runtime line names each class. Empty
+	// means the daemon's default —
 	// every run before the knob existed. A set value is enforced, not
 	// preferred: a daemon without it refuses the run at the ensure step
 	// (exit 13) rather than falling back, so the receipt's runtime line
@@ -796,11 +797,12 @@ mcpRegistries:
 # docker:
 #   # The OCI runtime a run's containers are created with (docker run
 #   # --runtime): gVisor's runsc on a host that has it registered with the
-#   # daemon. The llm-proxy, the relays and the gateway stay on the
-#   # daemon's default (DR-23). Unset, the daemon's default applies and the receipt says
-#   # nothing about it. Set, it is enforced, not preferred: a daemon that
-#   # does not have the runtime refuses the run at the ensure step (exit 13)
-#   # and never falls back to runc; the receipt then names the runtime.
+#   # daemon. The llm-proxy, the install proxy, the relays and the gateway
+#   # stay on the daemon's default (DR-23). Unset, the daemon's default
+#   # applies and the receipt says nothing about it. Set, it is enforced,
+#   # not preferred: a daemon that does not have the runtime refuses the run
+#   # at the ensure step (exit 13) and never falls back to runc; the receipt
+#   # then names the runtime of each container class.
 #   runtime: runsc
 #   # The bounds of every container a run starts (agentry-cli#163): memory
 #   # (at least 6m, as 512m or 2g), whole CPUs (never more than this host

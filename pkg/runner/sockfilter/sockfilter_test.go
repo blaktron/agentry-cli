@@ -759,6 +759,22 @@ func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
 	}
 	g.refused(t, "the gateway naming the run's own runtime", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"Runtime": "runsc"}}, "not the gateway's to choose")
 	g.refused(t, "a link across networks", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": "runa-net", "Links": []string{"runa-relay:api.osv.dev"}}}, "shares no network")
+	g.refused(t, "the gateway naming a runtime in lower case", "POST", "/containers/create", `{"Image":"mcp/server","hostconfig":{"runtime":"runc"}}`, "not the gateway's to choose")
+	for _, form := range []struct {
+		name string
+		doc  func(target string) map[string]any
+	}{
+		{"in HostConfig", func(target string) map[string]any {
+			return map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{target + ":api.osv.dev"}}}
+		}},
+		{"on the endpoint", func(target string) map[string]any {
+			return map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet},
+				"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{"Links": []string{target + ":api.osv.dev"}}}}}
+		}},
+	} {
+		g.refused(t, "a link to another run's container "+form.name, "POST", "/containers/create", form.doc("runb-relay"), "not this run's")
+		g.refused(t, "a link to the runner's own agent "+form.name, "POST", "/containers/create", form.doc("runa-agent"), "not this run's")
+	}
 	g.refused(t, "a link alias that is not a host name", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev 10.0.0.1"}}}, "not a host name")
 
 	plain := newRig(t, Limits{}, relays)

@@ -465,7 +465,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// teardown, so it closes after the gateway has stopped and reaped the
 	// containers it launched through it.
 	if filterSupported {
-		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan.MCPServers, p.RunnerHome, p.Plan.Runtime())
+		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome)
 		if err != nil {
 			return err
 		}
@@ -509,8 +509,8 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Labels:     labels,
 		AutoRemove: true,
 	}
-	// Under the policy's runtime like the agent, and for the same reason
-	// given the gateway's address rather than a name (agentry-cli#221).
+	// Under the policy's runtime like the agent and, for the same reason,
+	// given the gateway's address rather than its name (agentry-cli#221).
 	if probeSpec.ExtraHosts, err = sandboxHosts(ctx, d, p.Plan, runID); err != nil {
 		return Classify(ExitGateway, err)
 	}
@@ -949,11 +949,12 @@ func (c *eventCollector) usage() receipt.Usage {
 }
 
 // sandboxHosts pins the run network's two aliases — the gateway and the
-// llm-proxy — into the agent container's /etc/hosts when the plan names a
-// runtime (DR-23): a sandboxed runtime's own network stack does not reach
-// docker's embedded DNS at 127.0.0.11, and the agent's whole world is those
-// two names. Without a runtime nothing is pinned and the run is the run it
-// was. Both containers are up by the time the agent starts (startInfra).
+// llm-proxy — into the /etc/hosts of a run container under the plan's
+// runtime, the agent and the gateway's health probe (DR-23,
+// agentry-cli#221): a sandboxed runtime's own network stack does not reach
+// docker's embedded DNS at 127.0.0.11, and those two names are the whole
+// world of both. Without a runtime nothing is pinned and the run is the
+// run it was. Both containers are up before either starts (startInfra).
 func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID string) ([]string, error) {
 	if plan.Runtime() == "" {
 		return nil, nil

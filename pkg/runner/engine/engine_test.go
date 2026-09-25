@@ -857,11 +857,28 @@ func TestTheRuntimeLineNamesEachClass(t *testing.T) {
 	p, _ := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Runtime = "runsc" })
 	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "osv", Egress: []string{"api.osv.dev"}}}
 	line := runtimeLine(p)
-	for _, want := range []string{"the MCP server installer", "the tools server and the declared MCP servers", "relay links pinned", "the relays ("} {
+	for _, want := range []string{"the MCP server installer", "the tools server and the declared MCP servers", "relay links pinned", "the MCP server install proxy (", "the relays ("} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line lacks %q: %q", want, line)
 		}
 	}
+	// An interactive session names its store's one-shot only when it runs
+	// one; a host harness has no agent container, and says so.
+	p.Plan.Mode = "interactive"
+	p.Plan.Harness.Session = &spec.SessionSpec{}
+	if line := runtimeLine(p); strings.Contains(line, "one-shot") {
+		t.Errorf("a session without a store owner: %q", line)
+	}
+	p.Plan.Harness.Session.StoreOwner = "agent"
+	if line := runtimeLine(p); !strings.Contains(line, "the session store's one-shot") {
+		t.Errorf("a session with a store owner: %q", line)
+	}
+	p.Plan.Mode, p.Plan.Harness.Session = "autonomous", nil
+	p.Plan.Harness.Host = &spec.HostProcessSpec{}
+	if line := runtimeLine(p); strings.Contains(line, "the agent container") || !strings.Contains(line, "a host process, under no container runtime") {
+		t.Errorf("a host harness: %q", line)
+	}
+	p.Plan.Harness.Host = nil
 	defer func(was bool) { filterSupported = was }(filterSupported)
 	filterSupported = false
 	if line := runtimeLine(p); !strings.Contains(line, "take the daemon's default: the docker filter") || strings.Contains(line, "given runsc") {

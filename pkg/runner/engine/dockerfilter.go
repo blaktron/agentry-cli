@@ -77,7 +77,8 @@ func filterSocketPath(rd *runDirs, runID, runnerHome string) (string, error) {
 // gateway mounts. The bind roots are the gateway's own resolved lists
 // (MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS): the filter
 // enforces for a compromised gateway what the gateway enforces for itself.
-func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, servers []spec.MCPServerSpec, runnerHome, runtimeName string) (*sockfilter.Filter, string, error) {
+func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome string) (*sockfilter.Filter, string, error) {
+	servers := plan.MCPServers
 	sock, err := filterSocketPath(rd, runID, runnerHome)
 	if err != nil {
 		return nil, "", err
@@ -130,7 +131,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
 			Pids:        int64(lim.Pids),
 		},
-		Runtime: runtimeName,
+		Runtime: plan.Runtime(),
 		Log:     logf,
 	})
 	if err != nil {
@@ -231,47 +232,6 @@ func throughFilter(mounts []dockerx.Mount, sock string) []dockerx.Mount {
 		out[i] = m
 	}
 	return out
-}
-
-// runtimeLine is the receipt's account of the policy's runtime (DR-23,
-// agentry-cli#221): which of the run's container classes it holds, and why
-// each other one takes the daemon's default. It is written at run time,
-// not read from the plan, because two of its facts are the run's: whether
-// the filter that gives the gateway's containers the runtime runs here,
-// and what the run started.
-func runtimeLine(p Params) string {
-	rt := p.Plan.Runtime()
-	var under []string
-	switch {
-	case p.Plan.Harness.Host != nil:
-	case p.Plan.Mode == "interactive":
-		under = append(under, "the agent container (the BriefAgent's code)", "the session store's one-shot")
-	default:
-		under = append(under, "the agent container (the BriefAgent's code)")
-	}
-	if len(p.Plan.MCPServers) > 0 {
-		under = append(under, "the MCP server installer")
-	}
-	under = append(under, "the gateway's health probe")
-	line := rt + ": created with docker --runtime " + rt + ": " + strings.Join(under, ", ") +
-		" (the agent and the probe find the gateway and the llm-proxy through /etc/hosts, since a sandboxed network stack does not reach docker's embedded DNS)"
-	launched := "the tools server"
-	if len(p.Plan.MCPServers) > 0 {
-		launched += " and the declared MCP servers"
-	}
-	if filterSupported {
-		line += "; " + launched + ", which the gateway launches, are given " + rt + " by the run's docker filter" +
-			" (a server's relay links pinned into its /etc/hosts at the relay's address)"
-	} else {
-		line += "; " + launched + ", which the gateway launches, take the daemon's default: the docker filter that sets their runtime runs on Linux only (agentry-cli#322)"
-	}
-	var gaps []string
-	gaps = append(gaps, "the llm-proxy (it resolves the model endpoint through docker's embedded DNS, which "+rt+" does not reach)")
-	if relaysNeeded(p.Plan.MCPServers) {
-		gaps = append(gaps, "the relays (each resolves its declared host through that DNS)")
-	}
-	gaps = append(gaps, "the gateway (it reaches the daemon through a host Unix socket, which "+rt+" does not open)")
-	return line + "; the daemon's default runtime, measured under " + rt + " (DR-23): " + strings.Join(gaps, ", ")
 }
 
 // daemonLine is the receipt's account of how the gateway reaches the

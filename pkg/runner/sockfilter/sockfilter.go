@@ -95,10 +95,10 @@ type Config struct {
 	// Runtime is the OCI runtime (the policy's docker.runtime) every
 	// container the gateway creates runs under, the relays excepted: a
 	// relay resolves its declared host through docker's embedded DNS,
-	// which a sandboxed runtime does not reach (DR-23). A container under
-	// it reaches what it links to through /etc/hosts entries the filter
-	// pins, for the same reason. Empty leaves the daemon's default. The
-	// gateway never chooses a runtime itself.
+	// which a sandboxed runtime does not reach (DR-23). For the same
+	// reason a container under it reaches what it links to through
+	// /etc/hosts entries the filter pins. Empty leaves the daemon's
+	// default. The gateway never chooses a runtime itself.
 	Runtime string
 	// Log receives one line per request.
 	Log io.Writer
