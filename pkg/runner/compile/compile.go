@@ -19,7 +19,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -734,13 +733,18 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 // it, could copy a secret into a plain variable, or would be named in the
 // receipt without ever being set. A declared value is literal and
 // non-empty, or it is not declared.
+//
+// The `$` and `{{ }}` half is the registry's own rule,
+// manifest.LiteralEnvValue (agentry#291), called rather than copied so
+// the registry and the runner cannot drift (agentry-cli#131); the empty
+// value and the `@@` run-placeholder marker are the runner's alone.
 func checkLiteralEnv(srv spec.MCPServerSpec) error {
 	for _, name := range slices.Sorted(maps.Keys(srv.Env)) {
 		v := srv.Env[name]
 		if v == "" {
 			return fmt.Errorf("declared MCP server %s: env %s: the value is empty and the gateway would not set it; declare a value or leave the key out", srv.Package, name)
 		}
-		if envExpandRE.MatchString(v) || (strings.Contains(v, "{{") && strings.Contains(v, "}}")) {
+		if !manifest.LiteralEnvValue(v) {
 			return fmt.Errorf("declared MCP server %s: env %s: the value contains $ or {{ }}, which the gateway would interpret; declare a literal value", srv.Package, name)
 		}
 		if strings.Contains(v, "@@") {
@@ -751,10 +755,6 @@ func checkLiteralEnv(srv spec.MCPServerSpec) error {
 	}
 	return nil
 }
-
-// envExpandRE matches what os.Expand would rewrite: a `$` followed by a
-// name character, `{`, or a special shell parameter.
-var envExpandRE = regexp.MustCompile(`\$[A-Za-z0-9_{*#@!?$-]`)
 
 // execImageFor maps the declared commands onto the operator's exec
 // catalog (agentry-cli#100, plan examples-declared-servers §5.2, D1). A
