@@ -19,9 +19,11 @@
 #   registry=<the registry build/release.env names for the channel>
 #   prerelease=true|false   a -dev.N tag's GitHub Release is a prerelease
 #   latest=true|false       only the newest vX.Y.Z becomes the latest release
-#   draft=true|false        a minor or major main release (X.Y.0) is left a
-#                           draft: the operator approves its notes and
-#                           publishes it; patch and -dev.N releases publish
+#   draft=true|false        a minor or major main release from 1.0.0 on
+#                           (X.Y.0, X >= 1) is left a draft: the operator
+#                           approves its notes and publishes it; every
+#                           release before 1.0.0, like every patch and
+#                           -dev.N, publishes at once
 # The commit defaults to the tag's own. Releases only move forward: a
 # vX.Y.Z below the newest vX.Y.Z, and a -dev.N of a version already released,
 # are refused (main is one line; there are no maintenance branches).
@@ -62,7 +64,7 @@ newest_stable() {
 cmd_check() {
   local tag=${1:?usage: release-tag.sh check <tag> [<commit>]} commit=${2:-}
   [[ $tag =~ ^v$n\.$n\.$n(-dev\.([1-9][0-9]*))?$ ]] || die "$tag is not vX.Y.Z or vX.Y.Z-dev.N"
-  local patch=${BASH_REMATCH[3]} dev=${BASH_REMATCH[4]}
+  local major=${BASH_REMATCH[1]} patch=${BASH_REMATCH[3]} dev=${BASH_REMATCH[4]}
   local version=${tag#v} want prerelease latest=false draft=false
   v1_guard "$version"
   if [ -n "$dev" ]; then want=dev prerelease=true; else want=production prerelease=false; fi
@@ -87,7 +89,9 @@ cmd_check() {
   fi
   if [ "$prerelease" = false ]; then
     latest=true
-    [ "$patch" = 0 ] && draft=true
+    # Before 1.0.0 nothing is held (operator, 2026-09-25): only a minor or
+    # major from 1.0.0 on waits for the operator's notes.
+    [ "$patch" = 0 ] && [ "$major" -ge 1 ] && draft=true
   fi
   printf 'version=%s\nchannel=%s\nregistry=%s\nprerelease=%s\nlatest=%s\ndraft=%s\n' \
     "$version" "$channel" "$registry" "$prerelease" "$latest" "$draft"
