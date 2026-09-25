@@ -641,6 +641,9 @@ func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *a
 	switch att.State {
 	case trust.StateVerified:
 		_, _ = fmt.Fprintf(out, "attestation:   verified (key %s)\n", att.KeyID)
+		if note := att.RetiredNote(); note != "" {
+			_, _ = fmt.Fprintf(out, "  %s\n", note)
+		}
 		if att.RulesetVer != "" {
 			_, _ = fmt.Fprintf(out, "  scanned with ruleset %s, judge %s\n", att.RulesetVer, orNone(att.JudgeModel))
 		}
@@ -682,8 +685,10 @@ func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *a
 		return nil
 
 	default: // "mismatch", "unverifiable"
+		// Detail names a key change itself (agentry-cli#139); the hint is
+		// for a result from before that, which carries no KeyChange.
 		hint := ""
-		if att.KeyRotated {
+		if att.KeyRotated && att.KeyChange == nil {
 			hint = " (the registry advertises signing key ids you have not pinned — re-pin deliberately if this rotation is expected)"
 		}
 		return fmt.Errorf("attestation %s for %s/%s@%s: %s%s — refusing to install",

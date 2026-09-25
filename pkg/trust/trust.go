@@ -25,11 +25,31 @@ import (
 )
 
 // SigningKey is one entry from /.well-known/agentry/signing-keys.json.
+// Status and RetiredAt are the registry's own record of the key
+// (agentry#350): "active" for the key that signs today, "retired" (with
+// the date) for one it signed with before and no longer does, empty for a
+// verification-only key the registry never signed with. They are shown,
+// never trusted: which keys verify is decided by the pinned PEMs alone.
 type SigningKey struct {
 	KeyID     string `json:"keyId" yaml:"keyId"`
 	Algorithm string `json:"algorithm" yaml:"algorithm"`
 	PublicKey string `json:"publicKeyPem" yaml:"publicKeyPem"`
+	Status    string `json:"status,omitempty" yaml:"status,omitempty"`
+	RetiredAt string `json:"retiredAt,omitempty" yaml:"retiredAt,omitempty"`
 }
+
+// Key statuses the registry advertises (agentry#350).
+const (
+	KeyStatusActive  = "active"
+	KeyStatusRetired = "retired"
+)
+
+// Retired reports whether the registry recorded the key as retired.
+func (k SigningKey) Retired() bool { return k.Status == KeyStatusRetired }
+
+// samePublicKey compares two PEM encodings of a public key, ignoring the
+// surrounding whitespace a JSON or YAML round trip may change.
+func samePublicKey(a, b string) bool { return strings.TrimSpace(a) == strings.TrimSpace(b) }
 
 // KeySet is a registry's advertised (or pinned) signing key set.
 type KeySet struct {
@@ -80,6 +100,140 @@ type AttestationResult struct {
 	// KeyRotated is true when the registry presented a key id we had not
 	// pinned (a continuity warning, not necessarily an attack).
 	KeyRotated bool `json:"keyRotated,omitempty"`
+	// KeyChange says how the registry's advertised key set differs from
+	// the pinned one, when a signature no pinned key verifies made us
+	// look (agentry-cli#139).
+	KeyChange *KeyChange `json:"keyChange,omitempty"`
+	// KeyRetired is true when the key that verified the signature is one
+	// the registry records as retired (agentry#350), and KeyRetiredAt is
+	// the date it gives. Shown, not judged: a retired key's signature
+	// verifies exactly as before.
+	KeyRetired   bool   `json:"keyRetired,omitempty"`
+	KeyRetiredAt string `json:"keyRetiredAt,omitempty"`
+}
+
+// RetiredNote is the one line a client shows for a signature a retired
+// key made, or "" when the accepting key is not retired.
+func (r AttestationResult) RetiredNote() string {
+	if !r.KeyRetired {
+		return ""
+	}
+	if r.KeyRetiredAt == "" {
+		return "signed by a retired key (the registry gives no retirement date)"
+	}
+	return "signed by a retired key (retired " + r.KeyRetiredAt + ")"
+}
+
+// KeyChange is how a registry's advertised key set differs from the
+// pinned one (agentry-cli#139). Under agentry#350 a rotation adds the new
+// key and keeps every earlier one listed as retired, so an advertised set
+// that is a strict superset of the pinned one is what a rotation looks
+// like; a pinned key that disappears, or an id that now carries a
+// different public key, is not.
+type KeyChange struct {
+	// Added are key ids the registry advertises that are not pinned.
+	Added []string `json:"added,omitempty"`
+	// Removed are pinned key ids the registry no longer advertises.
+	Removed []string `json:"removed,omitempty"`
+	// Replaced are key ids advertised with a public key other than the
+	// pinned one.
+	Replaced []string `json:"replaced,omitempty"`
+}
+
+// DiffKeys compares the pinned set with the advertised one.
+func DiffKeys(pinned, advertised KeySet) KeyChange {
+	var c KeyChange
+	have := map[string]SigningKey{}
+	for _, k := range pinned.Keys {
+		have[k.KeyID] = k
+	}
+	seen := map[string]bool{}
+	for _, k := range advertised.Keys {
+		if seen[k.KeyID] {
+			continue
+		}
+		seen[k.KeyID] = true
+		p, ok := have[k.KeyID]
+		switch {
+		case !ok:
+			c.Added = append(c.Added, k.KeyID)
+		case !samePublicKey(p.PublicKey, k.PublicKey):
+			c.Replaced = append(c.Replaced, k.KeyID)
+		}
+	}
+	for _, k := range pinned.Keys {
+		if !seen[k.KeyID] {
+			c.Removed = append(c.Removed, k.KeyID)
+			seen[k.KeyID] = true
+		}
+	}
+	return c
+}
+
+// Same reports no difference at all.
+func (c KeyChange) Same() bool { return len(c.Added)+len(c.Removed)+len(c.Replaced) == 0 }
+
+// Rotation reports the shape of a rotation: keys added, every pinned key
+// still advertised with the same public key.
+func (c KeyChange) Rotation() bool {
+	return len(c.Added) > 0 && len(c.Removed) == 0 && len(c.Replaced) == 0
+}
+
+// String names what changed, e.g. "added key id(s) k2; removed key id(s) k1".
+func (c KeyChange) String() string {
+	var parts []string
+	if len(c.Added) > 0 {
+		parts = append(parts, "added key id(s) "+strings.Join(c.Added, ", "))
+	}
+	if len(c.Removed) > 0 {
+		parts = append(parts, "removed key id(s) "+strings.Join(c.Removed, ", "))
+	}
+	if len(c.Replaced) > 0 {
+		parts = append(parts, "a different public key under key id(s) "+strings.Join(c.Replaced, ", "))
+	}
+	if len(parts) == 0 {
+		return "no change"
+	}
+	return strings.Join(parts, "; ")
+}
+
+// refreshStatus copies the registry's status and retirement date onto the
+// pinned keys it still advertises with the same public key, and reports
+// whether anything changed. Only this record moves: no key is added,
+// removed or replaced, so what verifies is exactly what verified before.
+func refreshStatus(pinned *KeySet, advertised KeySet) bool {
+	byID := map[string]SigningKey{}
+	for _, k := range advertised.Keys {
+		byID[k.KeyID] = k
+	}
+	changed := false
+	for i, p := range pinned.Keys {
+		a, ok := byID[p.KeyID]
+		if !ok || !samePublicKey(a.PublicKey, p.PublicKey) {
+			continue
+		}
+		if p.Status != a.Status || p.RetiredAt != a.RetiredAt {
+			pinned.Keys[i].Status, pinned.Keys[i].RetiredAt = a.Status, a.RetiredAt
+			changed = true
+		}
+	}
+	return changed
+}
+
+// retiredSummary names the pinned keys the registry records as retired,
+// e.g. "key k1 retired 2026-09-20", or "" when none is.
+func retiredSummary(set KeySet) string {
+	var parts []string
+	for _, k := range set.Keys {
+		if k.Retired() {
+			when := k.RetiredAt
+			if when == "" {
+				when = "(no date given)"
+			}
+			parts = append(parts, "key "+k.KeyID+" retired "+when)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // orDefault guards against a nil client without silently adopting the
@@ -228,15 +382,34 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 		}
 		return fmt.Sprintf("pinned %d signing key(s) on first use (TOFU)", len(fetched.Keys))
 	}
-	if SameKeyIDs(existing, fetched) {
-		return fmt.Sprintf("signing keys unchanged (%d pinned)", len(existing.Keys))
+	change := DiffKeys(existing, fetched)
+	// The registry's status record for keys still pinned (a key it has
+	// since retired) is taken whatever else changed: it is shown, never
+	// used to decide what verifies.
+	statusNote := ""
+	if refreshStatus(&existing, fetched) {
+		if err := savePinnedFile(own, existing); err != nil {
+			statusNote = " (could not record the keys' status: " + err.Error() + ")"
+		}
+	}
+	if retired := retiredSummary(existing); retired != "" {
+		statusNote = "; " + retired + statusNote
+	}
+	if change.Same() {
+		return fmt.Sprintf("signing keys unchanged (%d pinned)%s", len(existing.Keys), statusNote)
 	}
 	// A changed key set at login is reported, never silently adopted:
 	// re-pinning on the strength of a fresh fetch would defeat the pin.
-	path := own
-	return "WARNING: the registry advertises signing key ids that differ from the pinned set — " +
-		"rotation or compromise. Verification will keep using the pinned keys; " +
-		"delete " + path + " to re-pin deliberately"
+	// A superset is named a rotation (agentry-cli#139, DR-35) and still
+	// not adopted: the new key is trusted only after a deliberate re-pin.
+	if change.Rotation() {
+		return "key rotation: the registry " + change.String() + " and still advertises every pinned key" + statusNote + ". " +
+			"Verification keeps using the pinned keys, so releases they signed still verify and a release signed only by the new key is refused until you re-pin; " +
+			"delete " + own + " and log in again to re-pin deliberately"
+	}
+	return "WARNING: the registry's signing keys no longer match the pinned set: " + change.String() + statusNote + ". " +
+		"A rotation keeps every earlier key listed, so this is not one; treat it as a possible compromise and confirm it with the registry's operator. " +
+		"Verification keeps using the pinned keys; delete " + own + " to re-pin deliberately"
 }
 
 // VerifyAttestation fetches and verifies the attestation for a version.
@@ -309,19 +482,35 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 	// Try each pinned key; on failure, check whether the registry has
 	// rotated (a key id we have not pinned) and report that distinctly
 	// rather than silently trusting the new key.
-	stmt, keyID, ok := tryVerify(env, trusted)
+	stmt, key, ok := tryVerify(env, trusted)
 	if !ok {
 		fetched, ferr := FetchKeys(ctx, hc, registryURL)
 		if ferr == nil && !SameKeyIDs(trusted, fetched) {
+			change := DiffKeys(trusted, fetched)
 			out.State = StateUnverifiable
 			out.KeyRotated = true
-			out.Detail = "signature does not match any pinned key; the registry now advertises different key ids (rotation or compromise) — re-pin deliberately"
+			out.KeyChange = &change
+			if change.Rotation() {
+				out.Detail = "signature does not match any pinned key; since the pin the registry " + change.String() +
+					" and still advertises every pinned key, the shape of a key rotation — the new key is not trusted until you re-pin deliberately"
+			} else {
+				out.Detail = "signature does not match any pinned key; the registry's key set changed (" + change.String() +
+					"), which a rotation does not do — treat it as a possible compromise and re-pin deliberately only once the change is confirmed"
+			}
 			return out
 		}
 		out.State = StateMismatch
 		out.Detail = "no pinned key verifies this signature"
+		if ferr == nil {
+			if change := DiffKeys(trusted, fetched); !change.Same() {
+				out.KeyChange = &change
+				out.Detail += " (the registry now advertises " + change.String() + ")"
+			}
+		}
 		return out
 	}
+	keyID := key.KeyID
+	out.KeyRetired, out.KeyRetiredAt = retiredStatus(ctx, hc, registryURL, key)
 
 	// The signature is valid — now bind it to the bytes we downloaded.
 	wantDigest := strings.TrimPrefix(archiveDigest, "sha256:")
@@ -342,13 +531,41 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 	return out
 }
 
-func tryVerify(env attest.DSSEEnvelope, set KeySet) (attest.InTotoStatement, string, bool) {
-	for _, k := range set.Keys {
-		if stmt, err := attest.VerifyEnvelope(env, k.PublicKey); err == nil {
-			return stmt, k.KeyID, true
+// tryVerify returns the first pinned key that verifies env, trying the
+// keys not recorded as retired first: an attestation a rotation
+// countersigned carries both signatures, and is reported as signed by
+// the active key, not the retired one.
+func tryVerify(env attest.DSSEEnvelope, set KeySet) (attest.InTotoStatement, SigningKey, bool) {
+	for _, retired := range []bool{false, true} {
+		for _, k := range set.Keys {
+			if k.Retired() != retired {
+				continue
+			}
+			if stmt, err := attest.VerifyEnvelope(env, k.PublicKey); err == nil {
+				return stmt, k, true
+			}
 		}
 	}
-	return attest.InTotoStatement{}, "", false
+	return attest.InTotoStatement{}, SigningKey{}, false
+}
+
+// retiredStatus is whether the key that verified a signature is retired,
+// and since when. The registry's current record wins over the pin's (a
+// key pinned while active may have retired since), taken only for the
+// same id with the same public key; when the registry cannot be read, or
+// AGENTRY_PIN_REGISTRY points the pins at another registry than the one
+// being talked to, the pinned record answers.
+func retiredStatus(ctx context.Context, hc *http.Client, registryURL string, key SigningKey) (bool, string) {
+	if os.Getenv(EnvPinRegistry) == "" {
+		if fetched, err := FetchKeys(ctx, hc, registryURL); err == nil {
+			for _, k := range fetched.Keys {
+				if k.KeyID == key.KeyID && samePublicKey(k.PublicKey, key.PublicKey) {
+					return k.Retired(), k.RetiredAt
+				}
+			}
+		}
+	}
+	return key.Retired(), key.RetiredAt
 }
 
 // SameKeyIDs reports whether two key sets advertise the same key ids.

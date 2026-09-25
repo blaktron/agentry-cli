@@ -60,6 +60,45 @@ func TestVerifyVerifiedAttestation(t *testing.T) {
 	}
 }
 
+// TestVerifyRetiredKeySays (agentry-cli#139): a signature a retired key
+// made verifies as before, and verify says it was a retired key, in the
+// human output and the JSON.
+func TestVerifyRetiredKeySays(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	fr.enableSigning(t)
+	fr.keyRetiredAt = "2026-09-20T10:00:00Z"
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv.attMode = attSigned
+
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "verify", "acme/demo@1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"attestation:     verified", "signed by:       key " + fr.keyID, "note:            signed by a retired key (retired 2026-09-20T10:00:00Z)"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("verify output lacks %q:\n%s", want, stdout)
+		}
+	}
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "verify", "--json", "acme/demo@1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Attestation struct {
+			State        string `json:"state"`
+			KeyRetired   bool   `json:"keyRetired"`
+			KeyRetiredAt string `json:"keyRetiredAt"`
+		} `json:"attestation"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("%v\n%s", err, stdout)
+	}
+	if report.Attestation.State != "verified" || !report.Attestation.KeyRetired || report.Attestation.KeyRetiredAt != "2026-09-20T10:00:00Z" {
+		t.Fatalf("json attestation = %+v", report.Attestation)
+	}
+}
+
 // TestVerifyDigestMismatchFails: bytes that hash differently from the
 // registry's claim are the §9.4 hard failure regardless of signatures.
 func TestVerifyDigestMismatchFails(t *testing.T) {
