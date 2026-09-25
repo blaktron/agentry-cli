@@ -92,7 +92,7 @@ type Params struct {
 	// Knowledge are the knowledge packs attached to the run (plan
 	// knowledge.md §4.5): each copied into the run's read-only /knowledge
 	// channel and verified there, the three knowledge tools granted and the
-	// receipt's knowledge line written only when there is one (DR-37).
+	// receipt's knowledge line written only when there is one (DR-38).
 	Knowledge []AttachedPack
 	// Intake holds the answers to the manifest's up-front questions (plan
 	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
