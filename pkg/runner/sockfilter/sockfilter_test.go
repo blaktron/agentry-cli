@@ -633,6 +633,37 @@ func TestARelayIsOnlyARelay(t *testing.T) {
 	}
 }
 
+// The gateway's L7 relay, the tools server's way to the agent's declared
+// hosts, takes ALLOWED_HOSTS alone, each host:port one the run declared
+// (agentry-cli#346); the two relay forms never mix.
+func TestAnL7RelayReachesOnlyTheDeclaredHosts(t *testing.T) {
+	g := newRig(t, Limits{}, func(c *Config) { c.RelayHosts = []string{"api.osv.dev", "api.frankfurter.dev:443"} })
+	l7 := func(env ...string) map[string]any {
+		return map[string]any{"Image": relayPin, "Env": env, "HostConfig": map[string]any{"NetworkMode": ext}}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", l7("ALLOWED_HOSTS=api.frankfurter.dev:443")); code != http.StatusCreated {
+		t.Fatalf("the L7 relay to the agent's declared host: %d %s", code, body)
+	}
+	if code, body := g.do(t, "POST", "/containers/create", l7("ALLOWED_HOSTS=api.frankfurter.dev:443,api.osv.dev:443")); code != http.StatusCreated {
+		t.Errorf("the L7 relay to two declared hosts: %d %s", code, body)
+	}
+	for _, c := range []struct {
+		name, reason string
+		env          []string
+	}{
+		{"an undeclared host", "not one the run declared", []string{"ALLOWED_HOSTS=evil.example:443"}},
+		{"an undeclared port", "port 22", []string{"ALLOWED_HOSTS=api.frankfurter.dev:22"}},
+		{"one bad target among good", "not one the run declared", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443,evil.example:443"}},
+		{"both forms", "not both", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443", "PROXY_HOSTNAME=api.osv.dev"}},
+		{"a setting twice", "given twice", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443", "ALLOWED_HOSTS=evil.example:443"}},
+		{"no port", "not host:port", []string{"ALLOWED_HOSTS=api.frankfurter.dev"}},
+		{"a config line", "not host:port", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443\nacl all"}},
+		{"empty", "no ALLOWED_HOSTS", []string{"ALLOWED_HOSTS="}},
+	} {
+		g.refused(t, c.name, "POST", "/containers/create", l7(c.env...), c.reason)
+	}
+}
+
 // A relay may be declared with its port, and then takes that port alone;
 // with no declaration it may not be made at all.
 func TestARelaysPortsAreTheDeclaredOnes(t *testing.T) {

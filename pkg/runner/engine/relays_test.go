@@ -65,9 +65,10 @@ func TestRunRefusesForeignRelays(t *testing.T) {
 		t.Errorf("refusal left the run network or the proxy: %v", f.Ops())
 	}
 
-	// No declared server with egress: the relays are not this run's
-	// concern, and the run proceeds.
+	// No declared egress at all, the agent's or a server's: the relays are
+	// not this run's concern, and the run proceeds.
 	p2, f2 := fixture(t)
+	p2.Plan.Capabilities.EgressMode, p2.Plan.Capabilities.EgressHosts = "none", nil
 	happyFake(f2)
 	f2.ByLabel = map[string][]string{relayLabel: {"docker-mcp-l4proxy-theirs"}}
 	if env, err := Run(context.Background(), f2, p2); err != nil || env.Status != "ok" {
@@ -379,6 +380,7 @@ func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
 	})
 	t.Run("a run without relays takes no lock", func(t *testing.T) {
 		p, f := fixture(t)
+		p.Plan.Capabilities.EgressMode, p.Plan.Capabilities.EgressHosts = "none", nil
 		happyFake(f)
 		p.RunnerHome = t.TempDir()
 		release, err := holdRelayLock(p.RunnerHome)

@@ -78,7 +78,6 @@ func filterSocketPath(rd *runDirs, runID, runnerHome string) (string, error) {
 // (MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS): the filter
 // enforces for a compromised gateway what the gateway enforces for itself.
 func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome string) (*sockfilter.Filter, string, error) {
-	servers := plan.MCPServers
 	sock, err := filterSocketPath(rd, runID, runnerHome)
 	if err != nil {
 		return nil, "", err
@@ -108,7 +107,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 	var shared []string
 	var egress map[string][]string
 	var names map[string]string
-	if relaysNeeded(servers) {
+	if relaysNeeded(plan) {
 		internal, out := relayNetworks(runID)
 		shared = []string{internal}
 		egress = map[string][]string{out: relayImages}
@@ -125,7 +124,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		SharedNetworks: shared,
 		EgressNetworks: egress,
 		NetworkNames:   names,
-		RelayHosts:     relayHosts(servers),
+		RelayHosts:     relayHosts(plan),
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
@@ -145,15 +144,24 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 // may touch: the runner's own run containers carry runLabel alone.
 const gatewayOwnerLabel = "agentry.gateway.run"
 
-// relayHosts are the run's declared servers' egress entries, the only
-// places a relay may be pointed (sockfilter.Config.RelayHosts). Empty when
-// no server declares egress, which admits no relay.
-func relayHosts(servers []spec.MCPServerSpec) []string {
+// relayHosts are where a relay may be pointed (sockfilter.Config.
+// RelayHosts): the run's declared servers' egress entries, and the agent's
+// own egress hosts on 443, the port the compiler gives the tools server's
+// fetch (agentry-cli#346). Empty when nothing declares egress, which admits
+// no relay.
+func relayHosts(plan *spec.Plan) []string {
 	var hosts []string
-	for _, srv := range servers {
+	for _, srv := range plan.MCPServers {
 		for _, h := range srv.Egress {
 			if h != "" {
 				hosts = append(hosts, h)
+			}
+		}
+	}
+	if plan.Capabilities.EgressMode == "hosts" {
+		for _, h := range plan.Capabilities.EgressHosts {
+			if h != "" {
+				hosts = append(hosts, h+":443")
 			}
 		}
 	}

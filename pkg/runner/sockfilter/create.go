@@ -424,18 +424,32 @@ func (f *Filter) relayShape(c *containerCreateBody) error {
 			}
 		}
 	}
-	host, ports := "", ""
+	// The pinned gateway's two relays take their target as settings, each
+	// its own form: the L4 relay one host and its ports (PROXY_HOSTNAME,
+	// PROXY_PORTS), the L7 relay a list of host:port it may CONNECT to
+	// (ALLOWED_HOSTS), which is how the tools server's fetch reaches the
+	// agent's declared hosts (agentry-cli#346). One form or the other,
+	// never both, nothing else, and every target declared.
+	settings := map[string]string{}
 	for _, kv := range c.Env {
 		k, v, _ := strings.Cut(kv, "=")
 		switch k {
-		case "PROXY_HOSTNAME":
-			host = v
-		case "PROXY_PORTS":
-			ports = v
+		case "PROXY_HOSTNAME", "PROXY_PORTS", "ALLOWED_HOSTS":
+			if _, dup := settings[k]; dup {
+				return deny("relay setting %s given twice", k)
+			}
+			settings[k] = v
 		default:
 			return deny("relay setting %s", k)
 		}
 	}
+	if allowed, l7 := settings["ALLOWED_HOSTS"]; l7 {
+		if len(settings) != 1 {
+			return deny("a relay is either an L4 relay (PROXY_HOSTNAME, PROXY_PORTS) or an L7 relay (ALLOWED_HOSTS), not both")
+		}
+		return f.l7Targets(allowed)
+	}
+	host, ports := settings["PROXY_HOSTNAME"], settings["PROXY_PORTS"]
 	if !hostNameRE.MatchString(host) {
 		return deny("relay host %q is not a host name", host)
 	}
@@ -445,6 +459,25 @@ func (f *Filter) relayShape(c *containerCreateBody) error {
 	for _, p := range strings.Split(ports, ",") {
 		if !f.relayAllowed(host, p) {
 			return deny("relay to %s port %s is not one the run's servers declared", host, p)
+		}
+	}
+	return nil
+}
+
+// l7Targets holds the L7 relay's ALLOWED_HOSTS to what the run declared:
+// a comma-separated list of host:port, each a host name and a port the
+// run's egress covers.
+func (f *Filter) l7Targets(allowed string) error {
+	if allowed == "" {
+		return deny("an L7 relay with no ALLOWED_HOSTS")
+	}
+	for _, target := range strings.Split(allowed, ",") {
+		host, port, ok := strings.Cut(target, ":")
+		if !ok || !hostNameRE.MatchString(host) || !relayPortsRE.MatchString(port) || strings.Contains(port, ",") {
+			return deny("relay target %q is not host:port", target)
+		}
+		if !f.relayAllowed(host, port) {
+			return deny("relay to %s port %s is not one the run declared", host, port)
 		}
 	}
 	return nil
