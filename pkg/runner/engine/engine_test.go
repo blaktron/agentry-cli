@@ -241,6 +241,27 @@ func TestRunHappyPath(t *testing.T) {
 	if strings.Contains(gw.Env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"], "@@") {
 		t.Errorf("bind allowlist unresolved: %q", gw.Env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"])
 	}
+	// The gateway's daemon socket is the run's filter, never the daemon's
+	// own (agentry-cli#219), and the receipt says so.
+	var sockMounts int
+	for _, m := range gw.Mounts {
+		if m.Target != DockerSocket {
+			continue
+		}
+		sockMounts++
+		if m.Source == DockerSocket || !strings.HasSuffix(m.Source, "/docker.sock") {
+			t.Errorf("gateway mounts %q at the daemon socket, want the run's filter", m.Source)
+		}
+	}
+	if sockMounts != 1 {
+		t.Errorf("gateway has %d daemon-socket mounts, want 1", sockMounts)
+	}
+	if !gw.DisableSELinuxLabel {
+		t.Error("the gateway lost its SELinux exemption for the socket")
+	}
+	if line := env.CapabilitiesEnforced["daemon"]; !strings.Contains(line, "only through this run's filter") {
+		t.Errorf("receipt daemon line = %q", line)
+	}
 
 	// Task reached the agent's stdin.
 	if got := f.Foreground["-agent"].GotStdin; got != "the task text" {

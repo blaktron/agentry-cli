@@ -223,7 +223,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
-		return fail(env, redact, err)
+		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
+		return fail(env, redact, withRefusals(err, rd))
 	}
 	// Harness files are rendered once the infrastructure is up: a host-run
 	// harness (plan runner-m-r4-adapters §5) needs the published gateway
@@ -262,6 +263,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(redact.String(logs)), 0o644)
 	}
 	writeMeta(rd.receiptsDir, runID, p, start)
+	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 
 	if outcome.err != nil {
 		env.Result = receipt.TextResult(outcome.lastText)
@@ -436,6 +438,26 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		if err := refuseForeignRelays(ctx, d); err != nil {
 			return err
 		}
+		// The filter lets no gateway make or remove the shared relay
+		// networks, so the runner makes them (dockerfilter.go).
+		if filterSupported {
+			if err := ensureRelayNetworks(ctx, d); err != nil {
+				return err
+			}
+		}
+	}
+	// The gateway's daemon socket is this run's filter, not the daemon's
+	// (dockerfilter.go, agentry-cli#219). Queued before the gateway's
+	// teardown, so it closes after the gateway has stopped and reaped the
+	// containers it launched through it.
+	if filterSupported {
+		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan.MCPServers)
+		if err != nil {
+			return err
+		}
+		rd.filter = filter
+		td.add(func(context.Context) { closeDaemonFilter(rd) })
+		gwSpec.Mounts = throughFilter(gwSpec.Mounts, sock)
 	}
 	if err := d.RunDetached(ctx, gwSpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))
