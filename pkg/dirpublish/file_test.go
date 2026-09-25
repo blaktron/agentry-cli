@@ -2,6 +2,7 @@ package dirpublish
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -156,5 +157,61 @@ func TestStageFileSweepsAbandonedFiles(t *testing.T) {
 	}
 	if got := entryNames(t, parent); len(got) != 2 { // dest and the live staging file
 		t.Fatalf("left: %v", got)
+	}
+}
+
+// Without hard links CreateFile still never replaces a file that is
+// there: it creates dest exclusively in place.
+func TestCreateFileWithoutHardLinks(t *testing.T) {
+	saved := link
+	link = func(string, string) error { return &os.LinkError{Op: "link", Err: errors.ErrUnsupported} }
+	t.Cleanup(func() { link = saved })
+	parent := t.TempDir()
+	dest := filepath.Join(parent, "policy.yaml")
+	created, err := CreateFile(dest, []byte("first"), 0o644)
+	if err != nil || !created {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	created, err = CreateFile(dest, []byte("second"), 0o644)
+	if err != nil || created {
+		t.Fatalf("second write: created=%v err=%v", created, err)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "first" {
+		t.Fatalf("dest = %q, want the first writer's file", b)
+	}
+	if got := entryNames(t, parent); len(got) != 1 {
+		t.Fatalf("left behind: %v", got)
+	}
+}
+
+// ReplaceFile writes through a symbolic link to the file it names and
+// keeps an existing file's permission bits, as a write in place did.
+func TestReplaceFileKeepsLinkAndMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic links and permission bits are POSIX here")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "policy.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "policy.yaml")
+	if err := os.Symlink(target, dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceFile(dest, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(dest); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced by a file: %v %v", fi, err)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "new" {
+		t.Fatalf("target = %q", b)
+	}
+	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v, want 0600 kept", fi.Mode().Perm())
 	}
 }

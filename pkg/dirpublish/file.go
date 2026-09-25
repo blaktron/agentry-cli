@@ -19,20 +19,21 @@ import (
 // CreateFile puts data at dest only if nothing is there: it is written to
 // a staging file beside dest, private to this writer, and hard-linked into
 // place, which fails while dest exists, so a file another writer (or the
-// operator) put there meanwhile is never replaced. created is false when
-// dest was already there; either way the staging file is removed.
+// operator) put there meanwhile is never replaced and a reader never sees
+// it partly written. created is false when dest was already there; either
+// way the staging file is removed.
 //
-// On a filesystem without hard links (FAT, some network shares) the
-// staging file is renamed into place instead when dest is still absent:
-// a reader still never sees a partial file, but a file written in the
-// instant between the check and the rename can be replaced.
+// On a filesystem without hard links (FAT, some network shares) dest is
+// created exclusively and written in place instead: still never replacing
+// a file that is there, but a reader in the instant of the write can find
+// it partial, as before this package wrote files.
 func CreateFile(dest string, data []byte, perm fs.FileMode) (created bool, err error) {
 	staging, err := stageFile(dest, data, perm)
 	if err != nil {
 		return false, fmt.Errorf("stage %s: %w", dest, err)
 	}
 	defer func() { _ = os.Remove(staging) }()
-	lerr := os.Link(staging, dest)
+	lerr := link(staging, dest)
 	if lerr == nil {
 		return true, nil
 	}
@@ -43,21 +44,61 @@ func CreateFile(dest string, data []byte, perm fs.FileMode) (created bool, err e
 	}
 	// dest is absent and the link failed for another reason: no hard
 	// links here.
-	if err := os.Rename(staging, dest); err != nil {
+	created, err = createInPlace(dest, data, perm)
+	if err != nil {
 		return false, fmt.Errorf("publish %s: %w (link: %v)", dest, err, lerr)
+	}
+	return created, nil
+}
+
+// link is os.Link, a variable so a test can stand in a filesystem without
+// hard links.
+var link = os.Link
+
+// createInPlace is CreateFile's fallback: dest created exclusively and
+// written where it stands.
+func createInPlace(dest string, data []byte, perm fs.FileMode) (bool, error) {
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm) //nolint:gosec // the caller names dest
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, werr := f.Write(data)
+	if err := errors.Join(werr, f.Close()); err != nil {
+		_ = os.Remove(dest)
+		return false, err
 	}
 	return true, nil
 }
 
 // ReplaceFile puts data at dest in place of whatever is there: it is
 // written to a staging file beside dest and renamed over it, so a reader
-// finds the previous file or the new one whole. The last writer wins. A
-// rename refused because a reader briefly holds dest open (Windows) is
-// retried for about a second.
+// finds the previous file or the new one whole. The last writer wins.
+// When dest is a symbolic link, the file it points to is the one
+// replaced, and an existing file keeps its permission bits (perm applies
+// to a new one), as a write in place would have left them. A rename
+// refused because a reader briefly holds dest open (Windows) is retried
+// for about a second.
 func ReplaceFile(dest string, data []byte, perm fs.FileMode) error {
+	kept := false
+	if target, err := filepath.EvalSymlinks(dest); err == nil {
+		dest = target
+		if info, err := os.Stat(target); err == nil {
+			perm, kept = info.Mode().Perm(), true
+		}
+	}
 	staging, err := stageFile(dest, data, perm)
 	if err != nil {
 		return fmt.Errorf("stage %s: %w", dest, err)
+	}
+	if kept {
+		// Created under the umask; the file it replaces had these bits.
+		if err := os.Chmod(staging, perm); err != nil {
+			_ = os.Remove(staging)
+			return fmt.Errorf("stage %s: %w", dest, err)
+		}
 	}
 	wait := publishBackoff
 	for attempt := range publishAttempts {

@@ -425,7 +425,7 @@ func Save(path string, p *Policy) error {
 	// Staged beside the file and renamed over it: a run loading the policy
 	// while setup writes it reads the old file or the new one, never a
 	// truncated one (agentry-cli#299).
-	if err := dirpublish.ReplaceFile(path, buf.Bytes(), 0o644); err != nil { // policy holds no secret values
+	if err := dirpublish.ReplaceFile(path, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("write policy: %w", err)
 	}
 	return nil
@@ -554,7 +554,7 @@ func EnsureDefault(path string) (*Policy, string, error) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, "", fmt.Errorf("create policy dir: %w", err)
 		}
-		if _, err := dirpublish.CreateFile(path, []byte(defaultFileText), 0o644); err != nil { // policy holds no secret values
+		if _, err := dirpublish.CreateFile(path, []byte(defaultFileText), 0o644); err != nil {
 			return nil, "", fmt.Errorf("write default policy: %w", err)
 		}
 	}
