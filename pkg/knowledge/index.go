@@ -116,12 +116,12 @@ func indexDrift(dir, name string) ([]Finding, error) {
 			return nil, err
 		}
 		if !bytes.Equal(got, want[rel]) {
-			out = append(out, Finding{Page: rel, Rule: "index", Message: "the index is not what the pages generate; regenerate it"})
+			out = append(out, Finding{Page: rel, Rule: RuleIndex, Message: "the index is not what the pages generate; regenerate it"})
 		}
 	}
 	for _, rel := range sectionIndexes(dir) {
 		if _, ok := want[rel]; !ok {
-			out = append(out, Finding{Page: rel, Rule: "index", Message: "a section index the pack is too small to have; regenerate the index"})
+			out = append(out, Finding{Page: rel, Rule: RuleIndex, Message: "a section index the pack is too small to have; regenerate the index"})
 		}
 	}
 	return out, nil

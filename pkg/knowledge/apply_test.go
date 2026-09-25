@@ -176,6 +176,13 @@ func TestApplyRefusals(t *testing.T) {
 		{name: "the manifest is the step's", changes: Changes{Write: []string{"manifest.json"}}, files: map[string]string{"manifest.json": "{}"}, wantErr: "wiki/ or sources/"},
 		{name: "a path out of the pack", changes: Changes{Write: []string{"wiki/../../x.md"}}, files: map[string]string{}, wantErr: "wiki/ or sources/"},
 		{name: "an absolute path", changes: Changes{Delete: []string{"/etc/passwd"}}, files: map[string]string{}, wantErr: "wiki/ or sources/"},
+		// Windows reads a backslash as a separator and a colon as a drive or
+		// a stream: neither is ever a name here.
+		{name: "a backslash climbing out", changes: Changes{Delete: []string{`wiki/..\..\..\x`}}, files: map[string]string{}, wantErr: "wiki/ or sources/"},
+		{name: "a drive", changes: Changes{Delete: []string{"sources/C:x"}}, files: map[string]string{}, wantErr: "wiki/ or sources/"},
+		{name: "a dotted part", changes: Changes{Delete: []string{"wiki/./x.md"}}, files: map[string]string{}, wantErr: "wiki/ or sources/"},
+		{name: "an empty part", changes: Changes{Delete: []string{"wiki//x.md"}}, files: map[string]string{}, wantErr: "wiki/ or sources/"},
+		{name: "a section's generated index", changes: Changes{Write: []string{"wiki/topics/index.md"}}, files: map[string]string{"wiki/topics/index.md": "x"}, wantErr: "generated"},
 		{name: "a file the changes name but do not carry", changes: Changes{Write: []string{"sources/absent.txt"}}, files: map[string]string{}, wantErr: "sources/absent.txt"},
 		{name: "another changes schema", changes: Changes{Schema: "knowledge/changes/v9"}, files: map[string]string{}, wantErr: "knowledge/changes/v9"},
 		{name: "no name for a new pack", changes: Changes{}, files: map[string]string{}, opts: func(o *ApplyOptions) { o.Name = "" }, wantErr: "name"},
@@ -213,6 +220,24 @@ func TestApplyRefusals(t *testing.T) {
 		})
 	}
 
+	t.Run("a linked directory in the outputs does not reach out of them", func(t *testing.T) {
+		packDir := filepath.Join(t.TempDir(), "aws-docs")
+		outside := t.TempDir()
+		write(t, outside, map[string]string{"secret.txt": "host file\n"})
+		out := outputs(t, Changes{Write: []string{"sources/linked/secret.txt"}}, map[string]string{})
+		if err := os.MkdirAll(filepath.Join(out, "sources"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(out, "sources", "linked")); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		if _, err := Apply(packDir, out, opts()); err == nil {
+			t.Fatal("Apply read through a linked directory out of the outputs")
+		}
+		if _, err := os.Stat(packDir); err == nil {
+			t.Fatal("a pack was made from it")
+		}
+	})
 	t.Run("a link in the outputs is refused", func(t *testing.T) {
 		packDir := filepath.Join(t.TempDir(), "aws-docs")
 		out := outputs(t, Changes{Write: []string{"sources/link.txt"}}, map[string]string{})

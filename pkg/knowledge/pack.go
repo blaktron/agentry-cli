@@ -45,8 +45,8 @@ const Schema = "knowledge/v1"
 // Counted in MiB, the unit of the release archive's own cap (rule V8).
 const MaxBytes = 10 << 20
 
-// maxName bounds a pack name, which is also a directory name.
-const maxName = 64
+// maxPackName bounds a pack name, which is also a directory name.
+const maxPackName = 64
 
 // The pack's fixed entries.
 const (
@@ -89,10 +89,17 @@ type Creator struct {
 
 // Scan is the pack's scan record: "not scanned" for every pack no registry
 // has scanned — every pack made on a machine (plan D19) — or the record the
-// registry wrote, kept as written.
+// registry wrote, kept as written. A record in a manifest is only a claim:
+// anyone can write one into a file, so it reads as scanned only once code
+// that asked the registry has set Verified, which this client's local
+// paths never do.
 type Scan struct {
+	// Scanned is true when the manifest carries a registry's record.
 	Scanned bool
 	Report  json.RawMessage
+	// Verified is set by code that confirmed the record with the registry
+	// that wrote it; never read from or written to a file.
+	Verified bool
 }
 
 const notScanned = "not scanned"
@@ -127,10 +134,14 @@ func (s *Scan) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Describe is the record as a receipt and a person read it.
+// Describe is the record as a receipt and a person read it: a record no
+// one here has confirmed says so rather than claiming a scan.
 func (s Scan) Describe() string {
-	if !s.Scanned {
+	switch {
+	case !s.Scanned:
 		return notScanned
+	case !s.Verified:
+		return "a scan record this client has not confirmed with the registry"
 	}
 	return "scanned"
 }
@@ -139,8 +150,8 @@ func (s Scan) Describe() string {
 // or '_', starting with a letter or a digit — one directory component on
 // every filesystem, case-insensitive ones included.
 func ValidName(name string) error {
-	if name == "" || len(name) > maxName {
-		return fmt.Errorf("knowledge pack name %q must be 1-%d characters", name, maxName)
+	if name == "" || len(name) > maxPackName {
+		return fmt.Errorf("knowledge pack name %q must be 1-%d characters", name, maxPackName)
 	}
 	for i, r := range name {
 		switch {
@@ -288,7 +299,54 @@ func Load(dir string) (*Pack, error) {
 	if d.SHA256 != m.SHA256 {
 		return nil, fmt.Errorf("knowledge pack %s: %w (manifest %s, files %s)", m.Name, ErrDigestMismatch, m.SHA256, d.SHA256)
 	}
+	// The counts a receipt repeats are the tree's, not the manifest's word.
+	pages, err := Pages(dir)
+	if err != nil {
+		return nil, fmt.Errorf("knowledge pack %s: %w", m.Name, err)
+	}
+	if m.Pages != pages || m.Bytes != d.Bytes {
+		return nil, fmt.Errorf("knowledge pack %s: manifest.json says %s and %d bytes, the files are %s and %d bytes",
+			m.Name, CountPages(m.Pages), m.Bytes, CountPages(pages), d.Bytes)
+	}
 	return &Pack{Dir: dir, Manifest: m}, nil
+}
+
+// CountPages is a page count as a person reads it: "1 page", "3 pages".
+func CountPages(n int) string { return count(n, "page") }
+
+// CopyPack copies the pack at src to dst, which must not exist: the
+// manifest and the regular files under wiki/ and sources/, nothing else —
+// a link, a device or a pipe is refused, never followed — and never more
+// than MaxBytes in all, so a pack changed after it was checked cannot pull
+// anything else into the copy. Every read goes through an os.Root at src.
+// The copy is for Load to verify; CopyPack itself checks no digest.
+func CopyPack(src, dst string) error {
+	from, err := os.OpenRoot(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = from.Close() }()
+	files, err := treeFiles(src)
+	if err != nil {
+		return err
+	}
+	if err := os.Mkdir(dst, 0o755); err != nil {
+		return err
+	}
+	to, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = to.Close() }()
+	var total int64
+	for _, rel := range append([]string{ManifestFile}, files...) {
+		n, err := copyBetween(from, to, rel, MaxBytes-total)
+		if err != nil {
+			return fmt.Errorf("%s: %w", rel, err)
+		}
+		total += n
+	}
+	return nil
 }
 
 // checkLayout holds a pack to its fixed shape.

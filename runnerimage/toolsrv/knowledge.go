@@ -168,7 +168,12 @@ func (s *server) toolKnowledgeList(raw json.RawMessage) (string, bool) {
 		if err != nil {
 			return "knowledge_list: " + err.Error(), true
 		}
-		return text, isErr
+		if isErr {
+			return text, true
+		}
+		// A section's index links its pages by name, as markdown does
+		// beside them; say how the tools reach them.
+		return fmt.Sprintf("(section %s of %s: read a page with knowledge_read, path %s/<page> or the page's name alone)\n\n", rel, name, rel) + text, false
 	}
 	var lines []string
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -393,6 +398,9 @@ func lineRef(i int, line string) string {
 // frontmatter reads a page's title and summary from its YAML frontmatter:
 // the flat "key: value" lines between a leading "---" and the next, which
 // is all the knowledge/v1 page shape puts there that a search reads.
+// pkg/knowledge parses the same block more fully for its lint; this is the
+// part the tools need, restated because this package imports nothing
+// outside the standard library.
 func frontmatter(text string) (title, summary string) {
 	lines := strings.Split(text, "\n")
 	end := bodyStart(lines)
@@ -456,6 +464,18 @@ func (s *server) toolKnowledgeRead(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return "knowledge_read: " + err.Error(), true
 	}
+	if _, err := os.Lstat(abs); err != nil && base == filepath.Join(root, "wiki") && !strings.Contains(rel, "/") {
+		// A section's index links its pages by name alone. A page's name is
+		// unique in its pack (the format's lint), so a bare name that is not
+		// at the top of the wiki is found where it is.
+		found, ferr := findPage(base, rel)
+		if ferr != nil {
+			return "knowledge_read: " + ferr.Error(), true
+		}
+		if found != "" {
+			abs = found
+		}
+	}
 	if fi, err := os.Stat(abs); err == nil && fi.IsDir() {
 		return fmt.Sprintf("knowledge_read: %q is a directory (use knowledge_list)", path.Clean(a.Path)), true
 	}
@@ -464,6 +484,31 @@ func (s *server) toolKnowledgeRead(raw json.RawMessage) (string, bool) {
 		return "knowledge_read: " + err.Error(), true
 	}
 	return text, isErr
+}
+
+// findPage finds the regular file named name under wiki, or "" when there is
+// none; two of that name is an error naming both.
+func findPage(wiki, name string) (string, error) {
+	var hits []string
+	_ = filepath.WalkDir(wiki, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() && d.Name() == name {
+			hits = append(hits, p)
+		}
+		return nil
+	})
+	switch len(hits) {
+	case 0:
+		return "", nil
+	case 1:
+		return hits[0], nil
+	}
+	rels := make([]string, 0, len(hits))
+	for _, h := range hits {
+		r, _ := filepath.Rel(wiki, h)
+		rels = append(rels, filepath.ToSlash(r))
+	}
+	sort.Strings(rels)
+	return "", fmt.Errorf("%q names several pages (%s); pass the one you mean", name, strings.Join(rels, ", "))
 }
 
 func isRegular(p string) bool {

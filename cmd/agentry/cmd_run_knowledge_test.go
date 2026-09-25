@@ -1,42 +1,22 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
-// handMadePack writes a pack the way a person could by hand: the files,
-// then the format's apply step for the index, the log and the manifest.
+// handMadePack is a pack of one page citing one source.
 func handMadePack(t *testing.T, name string) string {
 	t.Helper()
-	out := t.TempDir()
-	files := map[string]string{
+	return knowledgetest.Make(t, name, map[string]string{
 		"wiki/topics/runbook.md": "---\ntitle: Runbook\ntype: topic\nsummary: What to do\nsources: [doc:notes.txt]\nupdated: 2026-09-25\n---\n\nRestart the thing [src: doc:notes.txt].\n",
 		"sources/notes.txt":      "restart it\n",
-	}
-	ch, _ := json.Marshal(knowledge.Changes{Schema: knowledge.ChangesSchema, Write: []string{"sources/notes.txt", "wiki/topics/runbook.md"}})
-	files[knowledge.ChangesFile] = string(ch)
-	for rel, body := range files {
-		p := filepath.Join(out, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	dir := filepath.Join(t.TempDir(), name)
-	if _, err := knowledge.Apply(dir, out, knowledge.ApplyOptions{Name: name, Now: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)}); err != nil {
-		t.Fatal(err)
-	}
-	return dir
+	}).Dir
 }
 
 func TestRunKnowledgeFlag(t *testing.T) {

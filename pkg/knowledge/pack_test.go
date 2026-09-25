@@ -50,7 +50,7 @@ func TestTreeDigestIsTheCanonicalTar(t *testing.T) {
 	if got.SHA256 != digestFixtureSHA {
 		t.Fatalf("digest = %s, want %s", got.SHA256, digestFixtureSHA)
 	}
-	if got.Bytes != int64(len("# Index\n")+len("# Log\n")+len("---\ntitle: A page\n---\nbody\n")+len("the document\n")) || got.Files != 4 {
+	if got.Bytes != 54 || got.Files != 4 {
 		t.Fatalf("bytes %d files %d", got.Bytes, got.Files)
 	}
 }
@@ -174,6 +174,12 @@ func TestLoadVerifiesAPack(t *testing.T) {
 		{name: "a stray top-level file", break_: func(t *testing.T, root string) {
 			write(t, root, map[string]string{"notes.txt": "x"})
 		}, wantErr: "notes.txt"},
+		{name: "a page count the tree does not have", break_: func(t *testing.T, root string) {
+			rewriteManifest(t, root, func(m *Manifest) { m.Pages = 900 })
+		}, wantErr: "says 900 pages"},
+		{name: "a byte count the tree does not have", break_: func(t *testing.T, root string) {
+			rewriteManifest(t, root, func(m *Manifest) { m.Bytes = 7 })
+		}, wantErr: "7 bytes"},
 		{name: "past the cap", break_: func(t *testing.T, root string) {
 			write(t, root, map[string]string{"sources/big.bin": strings.Repeat("x", MaxBytes)})
 			reseal(t, root)
@@ -234,8 +240,12 @@ func TestScanRecord(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"schema":"knowledge/v1","name":"a","scan":{"state":"ready","findings":2}}`), &m); err != nil {
 		t.Fatal(err)
 	}
-	if !m.Scan.Scanned || m.Scan.Describe() != "scanned" {
-		t.Fatalf("scan %+v", m.Scan)
+	// A record in a file is a claim: unconfirmed, it never reads as a scan.
+	if !m.Scan.Scanned || m.Scan.Describe() != "a scan record this client has not confirmed with the registry" {
+		t.Fatalf("scan %+v reads %q", m.Scan, m.Scan.Describe())
+	}
+	if confirmed := (Scan{Scanned: true, Verified: true}); confirmed.Describe() != "scanned" {
+		t.Fatalf("a confirmed record reads %q", confirmed.Describe())
 	}
 	if b, err := json.Marshal(m.Scan); err != nil || string(b) != `{"state":"ready","findings":2}` {
 		t.Fatalf("a registry's record does not round-trip as written: %s, %v", b, err)
@@ -247,4 +257,37 @@ func TestScanRecord(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"schema":"knowledge/v1","name":"a","scan":"clean"}`), &m); err == nil {
 		t.Fatal("an unknown scan word was accepted")
 	}
+}
+
+func TestCopyPack(t *testing.T) {
+	t.Run("a pack copies whole and loads", func(t *testing.T) {
+		src := validPack(t, "aws-docs")
+		dst := filepath.Join(t.TempDir(), "copy")
+		if err := CopyPack(src, dst); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(dst); err != nil {
+			t.Fatalf("the copy does not load: %v", err)
+		}
+	})
+	t.Run("a link is refused, not followed", func(t *testing.T) {
+		src := validPack(t, "aws-docs")
+		if err := os.Symlink("/etc/hostname", filepath.Join(src, "sources", "host.txt")); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		dst := filepath.Join(t.TempDir(), "copy")
+		if err := CopyPack(src, dst); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("err = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dst, "sources", "host.txt")); err == nil {
+			t.Fatal("the link's target was copied")
+		}
+	})
+	t.Run("more than the cap is refused", func(t *testing.T) {
+		src := validPack(t, "aws-docs")
+		write(t, src, map[string]string{"sources/big.bin": strings.Repeat("x", MaxBytes)})
+		if err := CopyPack(src, filepath.Join(t.TempDir(), "copy")); !errors.Is(err, ErrTooLarge) {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }

@@ -10,41 +10,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// makePack builds a valid pack through the format's own apply step, the
-// way every pack a person attaches was made.
 func makePack(t *testing.T, name string) *knowledge.Pack {
 	t.Helper()
-	out := t.TempDir()
-	files := map[string]string{
-		"wiki/topics/buckets.md": "---\ntitle: Buckets\ntype: topic\nsummary: Naming\nsources: [doc:guide.txt]\nupdated: 2026-09-25\n---\n\nA bucket name is globally unique [src: doc:guide.txt].\n",
-		"sources/guide.txt":      "the guide\n",
-	}
-	changes, _ := json.Marshal(knowledge.Changes{Schema: knowledge.ChangesSchema, Write: []string{"sources/guide.txt", "wiki/topics/buckets.md"}})
-	files[knowledge.ChangesFile] = string(changes)
-	for rel, body := range files {
-		p := filepath.Join(out, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	dir := filepath.Join(t.TempDir(), name)
-	if _, err := knowledge.Apply(dir, out, knowledge.ApplyOptions{Name: name, Now: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)}); err != nil {
-		t.Fatal(err)
-	}
-	p, err := knowledge.Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return knowledgetest.Make(t, name, nil)
 }
 
 func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
@@ -52,14 +26,16 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
 	p.KeepRunDir = true
-	p.Knowledge = []KnowledgeMount{Attach(pack)}
+	p.Knowledge = []AttachedPack{AttachPack(pack)}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	m := pack.Manifest
+	// The fixture declares exec, so the line says the commands reach it too.
 	want := fmt.Sprintf("aws-docs mounted read-only at /knowledge/aws-docs (%s, 1 page, %d bytes, scan: not scanned)"+
-		"; tools knowledge_list, knowledge_search and knowledge_read, on the tools container only", m.SHA256, m.Bytes)
+		"; tools knowledge_list, knowledge_search and knowledge_read, on the tools container only"+
+		"; the declared exec commands run in that container and can read it too, as they can /inputs", m.SHA256, m.Bytes)
 	if got := env.CapabilitiesEnforced["knowledge"]; got != want {
 		t.Fatalf("receipt knowledge line =\n%q\nwant\n%q", got, want)
 	}
@@ -139,7 +115,7 @@ func TestAttachedKnowledgeWidensNothing(t *testing.T) {
 		p, f := fixture(t)
 		happyFake(f)
 		if attach {
-			p.Knowledge = []KnowledgeMount{Attach(makePack(t, "aws-docs")), Attach(makePack(t, "voice"))}
+			p.Knowledge = []AttachedPack{AttachPack(makePack(t, "aws-docs")), AttachPack(makePack(t, "voice"))}
 		}
 		env, err := Run(context.Background(), f, p)
 		if err != nil {
@@ -182,14 +158,14 @@ func TestAttachedKnowledgeWidensNothing(t *testing.T) {
 
 func TestKnowledgeChangedAfterVerificationIsRefused(t *testing.T) {
 	pack := makePack(t, "aws-docs")
-	mount := Attach(pack)
+	mount := AttachPack(pack)
 	// The pack changes between the caller's check and the run's copy.
 	if err := os.WriteFile(filepath.Join(pack.Dir, "sources", "guide.txt"), []byte("not the guide\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	p, f := fixture(t)
 	happyFake(f)
-	p.Knowledge = []KnowledgeMount{mount}
+	p.Knowledge = []AttachedPack{mount}
 	_, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitVerify || !strings.Contains(err.Error(), "aws-docs") {
@@ -198,12 +174,37 @@ func TestKnowledgeChangedAfterVerificationIsRefused(t *testing.T) {
 	if _, ran := f.FindRun("-agent"); ran {
 		t.Fatal("the agent ran on a pack that changed after it was verified")
 	}
+	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000")); !os.IsNotExist(err) {
+		t.Fatalf("the refused run left its directory, and the copy in it, behind: %v", err)
+	}
+}
+
+func TestKnowledgeLineWithoutExec(t *testing.T) {
+	got := withKnowledge(map[string]string{"egress": "x"}, []AttachedPack{{Name: "voice", Digest: "sha256:ab", Pages: 3, Bytes: 10}}, nil)
+	want := "voice mounted read-only at /knowledge/voice (sha256:ab, 3 pages, 10 bytes, scan: not scanned); tools knowledge_list, knowledge_search and knowledge_read, on the tools container only"
+	if got["knowledge"] != want || got["egress"] != "x" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// TestKnowledgeNeedsAPlanThatMountsIt: a plan compiled without the knowledge
+// mount (by a CLI before it) is refused rather than granted tools that
+// would find nothing and a receipt naming a mount the run never had.
+func TestKnowledgeNeedsAPlanThatMountsIt(t *testing.T) {
+	gw := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gw, "catalog.yaml"), []byte("registry:\n  agentry-tools:\n    volumes:\n      - '/run/x/inputs:/inputs:ro'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := grantKnowledge(gw, "/run/x/knowledge", []AttachedPack{{Name: "voice", Digest: "sha256:ab"}})
+	if err == nil || !strings.Contains(err.Error(), "recompile") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestKnowledgeTwoPacksOneNameRefused(t *testing.T) {
 	a, b := makePack(t, "aws-docs"), makePack(t, "aws-docs")
 	p, f := fixture(t)
-	p.Knowledge = []KnowledgeMount{Attach(a), Attach(b)}
+	p.Knowledge = []AttachedPack{AttachPack(a), AttachPack(b)}
 	_, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "twice") {

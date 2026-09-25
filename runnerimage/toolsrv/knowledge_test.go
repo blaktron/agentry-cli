@@ -134,6 +134,22 @@ func TestValidateSpecKnowledge(t *testing.T) {
 	}
 }
 
+// TestPackNameRuleMatchesTheFormat holds validPackName to pkg/knowledge's
+// ValidName table case for case: the rule is restated here because this
+// package imports nothing outside the standard library.
+func TestPackNameRuleMatchesTheFormat(t *testing.T) {
+	for _, ok := range []string{"aws-docs", "a", "my_notes.2", strings.Repeat("a", 64)} {
+		if !validPackName(ok) {
+			t.Errorf("validPackName(%q) = false", ok)
+		}
+	}
+	for _, bad := range []string{"", "AWS", "-lead", ".", "..", "a/b", "a b", strings.Repeat("a", 65), "é"} {
+		if validPackName(bad) {
+			t.Errorf("validPackName(%q) accepted", bad)
+		}
+	}
+}
+
 func TestKnowledgeList(t *testing.T) {
 	spec := knowledgeSpec(t)
 	s := newTestServer(t, spec)
@@ -178,7 +194,8 @@ func TestKnowledgeList(t *testing.T) {
 	t.Run("a section's own index wins over the listing", func(t *testing.T) {
 		mustWrite(t, filepath.Join(spec.KnowledgeDir, "aws-docs", "wiki", "procedures", "index.md"), []byte("# Procedures\n\n- rotate-keys.md\n"))
 		got, isErr := s.toolKnowledgeList(rawArgs(t, map[string]any{"section": "procedures"}))
-		if isErr || got != "# Procedures\n\n- rotate-keys.md\n" {
+		want := "(section procedures of aws-docs: read a page with knowledge_read, path procedures/<page> or the page's name alone)\n\n# Procedures\n\n- rotate-keys.md\n"
+		if isErr || got != want {
 			t.Fatalf("(%q, %v)", got, isErr)
 		}
 	})
@@ -316,6 +333,20 @@ func TestKnowledgeRead(t *testing.T) {
 		})
 	}
 
+	t.Run("a page by the name alone a section index links it by", func(t *testing.T) {
+		got, isErr := s.toolKnowledgeRead(rawArgs(t, map[string]any{"path": "rotate-keys.md", "maxBytes": 4}))
+		if isErr || got != "---\n\n[truncated at 4 bytes of 145]" {
+			t.Fatalf("(%q, %v)", got, isErr)
+		}
+	})
+	t.Run("a name two sections share is refused, naming both", func(t *testing.T) {
+		mustWrite(t, filepath.Join(spec.KnowledgeDir, "aws-docs", "wiki", "procedures", "iam.md"), []byte("x"))
+		got, isErr := s.toolKnowledgeRead(rawArgs(t, map[string]any{"path": "iam.md"}))
+		want := "knowledge_read: \"iam.md\" names several pages (procedures/iam.md, topics/iam.md); pass the one you mean"
+		if !isErr || got != want {
+			t.Fatalf("(%q, %v), want %q", got, isErr, want)
+		}
+	})
 	t.Run("several packs and none named is refused by name", func(t *testing.T) {
 		two := knowledgeSpec(t)
 		two.Knowledge = append(two.Knowledge, KnowledgePack{Name: "voice", Digest: "sha256:bbbb"})

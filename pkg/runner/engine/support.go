@@ -143,7 +143,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := stampOwner(filepath.Join(rd.cfg, "gateway", "toolspec.json")); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
 	}
-	if err := grantKnowledge(filepath.Join(rd.cfg, "gateway"), p.Knowledge); err != nil {
+	if err := grantKnowledge(filepath.Join(rd.cfg, "gateway"), rd.knowledge, p.Knowledge); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
 	}
 	// The plan this run executes, for audit: the verified plan in memory,

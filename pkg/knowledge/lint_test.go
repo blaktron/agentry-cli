@@ -43,11 +43,11 @@ func regenerate(t *testing.T, root, name string) {
 
 func lintOf(t *testing.T, root string) []Finding {
 	t.Helper()
-	fs, err := Lint(root, "aws-docs")
+	findings, err := Lint(root, "aws-docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fs
+	return findings
 }
 
 func TestLintPassesAGoodPack(t *testing.T) {
@@ -95,7 +95,7 @@ func TestLintFindings(t *testing.T) {
 			var got []string
 			for _, f := range lintOf(t, root) {
 				got = append(got, f.String())
-				if f.Page == parts[0] && f.Rule == parts[1] && strconv.Itoa(f.Line) == parts[2] && strings.Contains(f.Message, parts[3]) {
+				if f.Page == parts[0] && string(f.Rule) == parts[1] && strconv.Itoa(f.Line) == parts[2] && strings.Contains(f.Message, parts[3]) {
 					return
 				}
 			}
@@ -116,7 +116,7 @@ func TestLintFindings(t *testing.T) {
 		write(t, root, map[string]string{"wiki/topics/new.md": page("New", "s", "x [src: doc:guide.txt]\n")})
 		found := false
 		for _, f := range lintOf(t, root) {
-			if f.Page == "wiki/index.md" && f.Rule == "index" {
+			if f.Page == "wiki/index.md" && f.Rule == RuleIndex {
 				found = true
 			}
 		}

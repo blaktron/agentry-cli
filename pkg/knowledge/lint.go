@@ -17,14 +17,29 @@ import (
 // pack keeps its sources so that its citations resolve (plan D8). The
 // Creator's apply step drops a page that fails, never the whole build.
 
+// Rule names what a finding is about.
+type Rule string
+
+// The lint's rules.
+const (
+	RuleFrontmatter Rule = "frontmatter"
+	RuleSlug        Rule = "slug"
+	RuleLink        Rule = "link"
+	RuleCitation    Rule = "citation"
+	RuleIndex       Rule = "index"
+	RuleLayout      Rule = "layout"
+)
+
 // Finding is one lint failure.
 type Finding struct {
 	// Page is the slash path relative to the pack, e.g. wiki/topics/x.md.
 	Page string
 	// Line is the 1-based line, or 0 for the file as a whole.
 	Line int
-	// Rule is one of frontmatter, slug, link, citation, index, layout.
-	Rule    string
+	Rule Rule
+	// Target is, for a link or a citation, the slash path relative to the
+	// pack that it names and that is missing; empty otherwise.
+	Target  string
 	Message string
 }
 
@@ -53,7 +68,7 @@ var (
 // Lint checks the pack at dir, whose name the index is generated under.
 // The error is for I/O alone; every problem with the pack is a Finding.
 func Lint(dir, name string) ([]Finding, error) {
-	fs, err := lintPages(dir)
+	findings, err := lintPages(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +76,7 @@ func Lint(dir, name string) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(fs, drift...), nil
+	return append(findings, drift...), nil
 }
 
 // lintPages runs every check but the index's.
@@ -81,7 +96,7 @@ func lintPages(dir string) ([]Finding, error) {
 			continue
 		}
 		if !strings.HasSuffix(rel, ".md") {
-			out = append(out, Finding{Page: rel, Rule: "layout", Message: "the wiki holds only markdown pages; put documents under sources/"})
+			out = append(out, Finding{Page: rel, Rule: RuleLayout, Message: "the wiki holds only markdown pages; put documents under sources/"})
 			continue
 		}
 		if !isPage(rel) {
@@ -94,16 +109,16 @@ func lintPages(dir string) ([]Finding, error) {
 		out = append(out, lintPage(rel, string(b), present)...)
 		parts := strings.Split(strings.TrimPrefix(rel, WikiDir+"/"), "/")
 		if len(parts) != 2 {
-			out = append(out, Finding{Page: rel, Rule: "slug", Message: "a page lives at wiki/<section>/<slug>.md"})
+			out = append(out, Finding{Page: rel, Rule: RuleSlug, Message: "a page lives at wiki/<section>/<slug>.md"})
 			continue
 		}
 		section, slug := parts[0], strings.TrimSuffix(parts[1], ".md")
 		if !slugRE.MatchString(section) || !slugRE.MatchString(slug) {
-			out = append(out, Finding{Page: rel, Rule: "slug", Message: "a section and a slug are lowercase letters, digits and '-', starting with a letter or digit"})
+			out = append(out, Finding{Page: rel, Rule: RuleSlug, Message: "a section and a slug are lowercase letters, digits and '-', starting with a letter or digit"})
 			continue
 		}
 		if prev, dup := slugs[slug]; dup {
-			out = append(out, Finding{Page: rel, Rule: "slug", Message: "slug " + slug + " is also " + prev})
+			out = append(out, Finding{Page: rel, Rule: RuleSlug, Message: "slug " + slug + " is also " + prev})
 			continue
 		}
 		slugs[slug] = rel
@@ -116,18 +131,18 @@ func lintPage(rel, text string, present map[string]bool) []Finding {
 	var out []Finding
 	fm, ok := parseFrontmatter(text)
 	if !ok {
-		return append(out, Finding{Page: rel, Line: 1, Rule: "frontmatter", Message: "no frontmatter (a --- block of title, type, summary, sources, updated)"})
+		return append(out, Finding{Page: rel, Line: 1, Rule: RuleFrontmatter, Message: "no frontmatter (a --- block of title, type, summary, sources, updated)"})
 	}
 	for _, k := range requiredKeys {
 		if _, has := fm.values[k]; !has {
-			out = append(out, Finding{Page: rel, Line: 1, Rule: "frontmatter", Message: "missing " + k})
+			out = append(out, Finding{Page: rel, Line: 1, Rule: RuleFrontmatter, Message: "missing " + k})
 		}
 	}
 	if v, has := fm.values["updated"]; has && !dateRE.MatchString(fm.str("updated")) {
-		out = append(out, Finding{Page: rel, Line: 1, Rule: "frontmatter", Message: fmt.Sprintf("updated %v is not a YYYY-MM-DD date", v)})
+		out = append(out, Finding{Page: rel, Line: 1, Rule: RuleFrontmatter, Message: fmt.Sprintf("updated %v is not a YYYY-MM-DD date", v)})
 	}
 	if t := fm.str("type"); t != "" && !slugRE.MatchString(t) {
-		out = append(out, Finding{Page: rel, Line: 1, Rule: "frontmatter", Message: "type " + t + " is not a lowercase word"})
+		out = append(out, Finding{Page: rel, Line: 1, Rule: RuleFrontmatter, Message: "type " + t + " is not a lowercase word"})
 	}
 
 	body := stripCode(text)
@@ -143,9 +158,9 @@ func lintPage(rel, text string, present map[string]bool) []Finding {
 			resolved := path.Clean(path.Join(pageDir, target))
 			switch {
 			case strings.HasPrefix(target, "/") || resolved == ".." || strings.HasPrefix(resolved, "../"):
-				out = append(out, Finding{Page: rel, Line: i + 1, Rule: "link", Message: "link " + m[1] + " points outside the pack"})
+				out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleLink, Message: "link " + m[1] + " points outside the pack"})
 			case !present[resolved]:
-				out = append(out, Finding{Page: rel, Line: i + 1, Rule: "link", Message: "link " + m[1] + " resolves to nothing in the pack"})
+				out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleLink, Target: resolved, Message: "link " + m[1] + " resolves to nothing in the pack"})
 			}
 		}
 		for _, m := range citationRE.FindAllStringSubmatch(lines[i], -1) {
@@ -155,12 +170,14 @@ func lintPage(rel, text string, present map[string]bool) []Finding {
 					continue
 				}
 				key := fields[0]
-				src, isDoc := strings.CutPrefix(key, citeDoc)
+				src, isDoc := strings.CutPrefix(key, citeSource)
 				switch {
 				case !isDoc:
-					out = append(out, Finding{Page: rel, Line: i + 1, Rule: "citation", Message: "citation key " + key + " is not doc:<path> under sources/"})
-				case !validSourcePath(src) || !present[SourcesDir+"/"+src]:
-					out = append(out, Finding{Page: rel, Line: i + 1, Rule: "citation", Message: "citation " + key + " names no document under sources/"})
+					out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleCitation, Message: "citation key " + key + " is not doc:<path> under sources/"})
+				case !validSourcePath(src):
+					out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleCitation, Message: "citation " + key + " is not a path under sources/"})
+				case !present[SourcesDir+"/"+src]:
+					out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleCitation, Target: SourcesDir + "/" + src, Message: "citation " + key + " names no document under sources/"})
 				}
 			}
 		}
@@ -168,8 +185,8 @@ func lintPage(rel, text string, present map[string]bool) []Finding {
 	return out
 }
 
-// citeDoc is the citation key prefix for a source document.
-const citeDoc = "doc:"
+// citeSource is the citation key prefix for a source document.
+const citeSource = "doc:"
 
 func validSourcePath(p string) bool {
 	return p != "" && !strings.HasPrefix(p, "/") && path.Clean(p) == p && p != ".." && !strings.HasPrefix(p, "../")

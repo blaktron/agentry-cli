@@ -77,7 +77,8 @@ type Spec struct {
 
 // KnowledgePack is one pack mounted under KnowledgeDir/<Name>. The name is
 // what the tools take as their pack argument; the digest is the one the
-// receipt records, carried here so a log line can name what was read.
+// receipt records, so the run's own tool spec names what was attached in
+// the same terms as the receipt.
 type KnowledgePack struct {
 	Name   string `json:"name"`
 	Digest string `json:"digest"`

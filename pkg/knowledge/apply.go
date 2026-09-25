@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -76,9 +75,26 @@ type Result struct {
 }
 
 // Apply applies the output in outDir to the pack at packDir, creating the
-// pack when packDir holds none.
+// pack when packDir holds none. Every path the output names is the model's,
+// so each is held to changePath's rules and then read and written only
+// through an os.Root — at outDir for what the output carries, at the
+// staging directory for what the next pack holds — so no name, link or
+// separator in it reaches a file outside either.
 func Apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
-	ch, err := readChanges(outDir)
+	res, err := apply(packDir, outDir, o)
+	if err != nil {
+		return nil, fmt.Errorf("apply an ingest to the knowledge pack at %s: %w", packDir, err)
+	}
+	return res, nil
+}
+
+func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
+	out, err := os.OpenRoot(outDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = out.Close() }()
+	ch, err := readChanges(out)
 	if err != nil {
 		return nil, err
 	}
@@ -101,38 +117,52 @@ func Apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 	if err := os.MkdirAll(filepath.Dir(packDir), 0o755); err != nil {
 		return nil, err
 	}
-	stage, err := os.MkdirTemp(filepath.Dir(packDir), "."+name+".apply-")
+	stageDir, err := os.MkdirTemp(filepath.Dir(packDir), "."+name+".apply-")
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = os.RemoveAll(stage) }()
+	defer func() { _ = os.RemoveAll(stageDir) }()
+	stage, err := os.OpenRoot(stageDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = stage.Close() }()
+	var packRoot *os.Root
 	if prev != nil {
-		for _, sub := range []string{WikiDir, SourcesDir} {
-			if err := copyDir(filepath.Join(packDir, sub), filepath.Join(stage, sub)); err != nil {
-				return nil, err
+		if packRoot, err = os.OpenRoot(packDir); err != nil {
+			return nil, err
+		}
+		defer func() { _ = packRoot.Close() }()
+		files, err := treeFiles(packDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range files {
+			if _, err := copyBetween(packRoot, stage, rel, MaxBytes); err != nil {
+				return nil, fmt.Errorf("%s: %w", rel, err)
 			}
 		}
 	}
 	for _, rel := range ch.Write {
-		if err := copyFile(filepath.Join(outDir, filepath.FromSlash(rel)), filepath.Join(stage, filepath.FromSlash(rel))); err != nil {
+		if _, err := copyBetween(out, stage, rel, MaxBytes); err != nil {
 			return nil, fmt.Errorf("changes.json writes %s: %w", rel, err)
 		}
 	}
 	for _, rel := range ch.Delete {
-		if err := os.Remove(filepath.Join(stage, filepath.FromSlash(rel))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := stage.Remove(filepath.FromSlash(rel)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
 	}
-	if err := ensureLog(stage); err != nil {
+	if err := ensureLog(stageDir); err != nil {
 		return nil, err
 	}
 
 	res := &Result{}
 	written, deleted := set(ch.Write), set(ch.Delete)
-	if err := settle(stage, packDir, prev != nil, written, deleted, res); err != nil {
+	if err := settle(stageDir, stage, packRoot, written, deleted, res); err != nil {
 		return nil, err
 	}
-	if err := WriteIndex(stage, name); err != nil {
+	if err := WriteIndex(stageDir, name); err != nil {
 		return nil, err
 	}
 	for rel := range written {
@@ -144,15 +174,15 @@ func Apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 	sort.Strings(res.Written)
 	sort.Strings(res.Deleted)
 	sort.Slice(res.Dropped, func(i, j int) bool { return res.Dropped[i].Path < res.Dropped[j].Path })
-	if err := appendLog(stage, o.Now, ch, res); err != nil {
+	if err := appendLog(stageDir, o.Now, ch, res); err != nil {
 		return nil, err
 	}
 
-	d, err := TreeDigest(stage)
+	d, err := TreeDigest(stageDir)
 	if err != nil {
 		return nil, err
 	}
-	pages, err := Pages(stage)
+	pages, err := Pages(stageDir)
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +204,12 @@ func Apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 	}
 	raw = append(raw, '\n')
 	if size := d.Bytes + int64(len(raw)); size > MaxBytes {
-		return nil, fmt.Errorf("knowledge pack %s would be %d bytes: %w", name, size, ErrTooLarge)
+		return nil, fmt.Errorf("the pack would be %d bytes: %w", size, ErrTooLarge)
 	}
-	if err := os.WriteFile(filepath.Join(stage, ManifestFile), raw, 0o644); err != nil { //nolint:gosec // the pack's clear manifest
+	if err := os.WriteFile(filepath.Join(stageDir, ManifestFile), raw, 0o644); err != nil { //nolint:gosec // the pack's clear manifest
 		return nil, err
 	}
-	if err := swapIn(stage, packDir, prev != nil); err != nil {
+	if err := swapIn(stageDir, packDir, prev != nil); err != nil {
 		return nil, err
 	}
 	res.Manifest = m
@@ -187,8 +217,8 @@ func Apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 }
 
 // readChanges decodes and holds changes.json to its rules.
-func readChanges(outDir string) (*Changes, error) {
-	raw, err := os.ReadFile(filepath.Join(outDir, ChangesFile)) //nolint:gosec // the output the caller named
+func readChanges(out *os.Root) (*Changes, error) {
+	raw, err := out.ReadFile(ChangesFile)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ChangesFile, err)
 	}
@@ -216,13 +246,26 @@ func readChanges(outDir string) (*Changes, error) {
 	return &ch, nil
 }
 
-// changePath says whether the Creator may change rel.
+// changePath says whether the Creator may change rel: a slash path under
+// wiki/ or sources/ whose every part is a plain name — no empty part, no
+// "." or "..", no backslash, colon or control character, which some
+// filesystems read as separators, drives or streams — and not a file the
+// apply step writes itself. os.Root is the second line behind this one.
 func changePath(rel string) error {
-	clean := path.Clean(rel)
+	notUnder := fmt.Errorf("%q is not a file under wiki/ or sources/", rel)
+	parts := strings.Split(rel, "/")
+	if len(parts) < 2 || (parts[0] != WikiDir && parts[0] != SourcesDir) {
+		return notUnder
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsFunc(part, func(r rune) bool {
+			return r == '\\' || r == ':' || unicode.IsControl(r)
+		}) {
+			return notUnder
+		}
+	}
 	switch {
-	case clean != rel || strings.HasPrefix(rel, "/") || (!strings.HasPrefix(rel, WikiDir+"/") && !strings.HasPrefix(rel, SourcesDir+"/")):
-		return fmt.Errorf("%q is not a file under wiki/ or sources/", rel)
-	case path.Base(rel) == IndexFile && strings.HasPrefix(rel, WikiDir+"/"):
+	case parts[0] == WikiDir && parts[len(parts)-1] == IndexFile:
 		return fmt.Errorf("%s is generated from the pages; it is not written", rel)
 	case rel == WikiDir+"/"+LogFile:
 		return fmt.Errorf("%s is appended by the apply step; it is not written", rel)
@@ -236,16 +279,16 @@ func changePath(rel string) error {
 // file this change wrote reverts the file to the pack's version, or
 // removes it if it is new. Findings on files this change did not touch
 // are the pack's own, and left alone.
-func settle(stage, packDir string, hadPack bool, written, deleted map[string]bool, res *Result) error {
+func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]bool, res *Result) error {
 	for range len(written) + len(deleted) + 1 {
-		fs, err := lintPages(stage)
+		findings, err := lintPages(stageDir)
 		if err != nil {
 			return err
 		}
 		changed := false
 		byPage := map[string][]Finding{}
 		var order []string
-		for _, f := range fs {
+		for _, f := range findings {
 			if _, ok := byPage[f.Page]; !ok {
 				order = append(order, f.Page)
 			}
@@ -254,27 +297,25 @@ func settle(stage, packDir string, hadPack bool, written, deleted map[string]boo
 		for _, pg := range order {
 			explained := false
 			for _, f := range byPage[pg] {
-				for target := range deleted {
-					if (f.Rule == "link" || f.Rule == "citation") && refersTo(f, pg, target) {
-						if err := restore(packDir, stage, target, hadPack); err != nil {
-							return err
-						}
-						delete(deleted, target)
-						res.Dropped = append(res.Dropped, Drop{Path: target, Kept: true, Reason: pg + " needs it (" + f.Message + ")"})
-						explained, changed = true, true
+				if f.Target != "" && deleted[f.Target] {
+					if err := restore(pack, stage, f.Target); err != nil {
+						return err
 					}
+					delete(deleted, f.Target)
+					res.Dropped = append(res.Dropped, Drop{Path: f.Target, Kept: true, Reason: pg + " needs it (" + f.Message + ")"})
+					explained, changed = true, true
 				}
 			}
 			if explained || !written[pg] {
 				continue
 			}
-			if err := restore(packDir, stage, pg, hadPack); err != nil {
+			if err := restore(pack, stage, pg); err != nil {
 				return err
 			}
 			delete(written, pg)
 			reasons := make([]string, 0, len(byPage[pg]))
 			for _, f := range byPage[pg] {
-				reasons = append(reasons, f.Rule+": "+f.Message)
+				reasons = append(reasons, string(f.Rule)+": "+f.Message)
 			}
 			res.Dropped = append(res.Dropped, Drop{Path: pg, Reason: strings.Join(reasons, "; ")})
 			changed = true
@@ -286,27 +327,16 @@ func settle(stage, packDir string, hadPack bool, written, deleted map[string]boo
 	return nil
 }
 
-// refersTo says whether finding f, on page pg, is about target.
-func refersTo(f Finding, pg, target string) bool {
-	if f.Rule == "citation" {
-		src, _ := strings.CutPrefix(target, SourcesDir+"/")
-		return strings.HasPrefix(target, SourcesDir+"/") && strings.Contains(f.Message, citeDoc+src+" ")
-	}
-	link := strings.TrimSuffix(strings.TrimPrefix(f.Message, "link "), " resolves to nothing in the pack")
-	link, _, _ = strings.Cut(link, "#")
-	return path.Clean(path.Join(path.Dir(pg), link)) == target
-}
-
-// restore puts rel in stage back to what the pack held, or removes it.
-func restore(packDir, stage, rel string, hadPack bool) error {
-	dst := filepath.Join(stage, filepath.FromSlash(rel))
-	if hadPack {
-		src := filepath.Join(packDir, filepath.FromSlash(rel))
-		if _, err := os.Lstat(src); err == nil {
-			return copyFile(src, dst)
+// restore puts rel in the stage back to what the pack held, or removes it
+// when the pack held none (or there is no pack yet).
+func restore(pack, stage *os.Root, rel string) error {
+	if pack != nil {
+		if _, err := pack.Lstat(filepath.FromSlash(rel)); err == nil {
+			_, err := copyBetween(pack, stage, rel, MaxBytes)
+			return err
 		}
 	}
-	if err := os.Remove(dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := stage.Remove(filepath.FromSlash(rel)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -367,7 +397,7 @@ func appendLog(stage string, now time.Time, ch *Changes, res *Result) error {
 }
 
 func oneLine(s string) string {
-	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsControl(r) }), " ")
+	return strings.Join(strings.FieldsFunc(s, unicode.IsControl), " ")
 }
 
 // swapIn replaces the pack with the staged tree by rename.
@@ -402,51 +432,38 @@ func set(list []string) map[string]bool {
 	return out
 }
 
-// copyDir copies the regular files under src into dst; a missing src is an
-// empty one. Anything but a directory or a regular file is refused.
-func copyDir(src, dst string) error {
-	if _, err := os.Lstat(src); errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, p)
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
-		}
-		return copyFile(p, filepath.Join(dst, rel))
-	})
-}
-
-// copyFile copies one regular file, refusing anything else.
-func copyFile(src, dst string) error {
-	fi, err := os.Lstat(src)
+// copyBetween copies the regular file rel (a slash path) from under one
+// root to the same path under another, creating its directories, refusing
+// anything but a regular file and more than limit bytes.
+func copyBetween(src, dst *os.Root, rel string, limit int64) (int64, error) {
+	name := filepath.FromSlash(rel)
+	fi, err := src.Lstat(name)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", src)
+		return 0, fmt.Errorf("not a regular file; a knowledge pack holds only files")
 	}
-	in, err := os.Open(src) //nolint:gosec // checked to be a regular file above
+	in, err := src.Open(name)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = in.Close() }()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+	if dir := filepath.Dir(name); dir != "." {
+		if err := dst.MkdirAll(dir, 0o755); err != nil {
+			return 0, err
+		}
 	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644) //nolint:gosec // a pack file
+	w, err := dst.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = io.Copy(out, in)
-	if cerr := out.Close(); err == nil {
+	n, err := io.Copy(w, io.LimitReader(in, limit+1))
+	if cerr := w.Close(); err == nil {
 		err = cerr
 	}
-	return err
+	if err == nil && n > limit {
+		err = ErrTooLarge
+	}
+	return n, err
 }
