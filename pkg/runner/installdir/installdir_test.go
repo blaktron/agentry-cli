@@ -138,20 +138,17 @@ func TestStyleFor(t *testing.T) {
 	}
 }
 
-// WriteExport lays the coding-agent shape under <dir>/export from the
+// Install lays the coding-agent shape under <dir>/export from the
 // verified workspace: the Claude skill as ~/.claude/skills would hold it,
 // AGENTS.md with the agent's section as a project root would.
-func TestWriteExport(t *testing.T) {
+func TestInstallWritesTheExport(t *testing.T) {
 	m := &manifest.Manifest{Name: "demo", Namespace: "acme", Version: "1.0.0", Summary: "reads things"}
 	m.Capabilities.Filesystem.Read = manifest.FSAccess{Mode: manifest.FSModeWorkspace}
 	for _, style := range []string{manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD} {
 		src := stageTree(t, map[string]string{"agent.yaml": "name: demo\n", "SKILL.md": "# Demo\n", "prompts/main.md": "hi"})
-		dir := filepath.Join(t.TempDir(), "1.0.0-abc")
+		dir := filepath.Join(t.TempDir(), "agents", "acme", "demo", "1.0.0-abc")
 		meta := &Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: "sha256:abc", Source: "registry"}
-		if err := Write(dir, src, meta); err != nil {
-			t.Fatal(err)
-		}
-		if err := WriteExport(dir, style, m, meta); err != nil {
+		if err := Install(dir, src, m, meta, style); err != nil {
 			t.Fatalf("%s: %v", style, err)
 		}
 		got, ok := Load(dir, "sha256:abc")
@@ -186,22 +183,19 @@ func TestWriteExport(t *testing.T) {
 // shape of the catalogue on dev) exports as a Claude skill too, its
 // SKILL.md made from the instruction (agentry-cli#193): a chosen Claude
 // Code no longer fails the runner-home install of such a release.
-func TestWriteExportInstructionOnlyClaudeSkill(t *testing.T) {
+func TestInstallExportInstructionOnlyClaudeSkill(t *testing.T) {
 	m := &manifest.Manifest{SchemaVersion: "2", Name: "changelog-from-git", Namespace: "agentry", Version: "1.2.1", Summary: "Drafts a changelog from git history."}
 	m.Entrypoints.Instruction = "AGENT.md"
 	m.Capabilities.Exec.Commands = []string{"git"}
 	src := stageTree(t, map[string]string{"agent.yaml": "name: changelog-from-git\n", "AGENT.md": "# Changelog\n\nRead the log.\n", "README.md": "readme\n"})
-	dir := filepath.Join(t.TempDir(), "1.2.1-abc")
+	dir := filepath.Join(t.TempDir(), "agents", "agentry", "changelog-from-git", "1.2.1-abc")
 	meta := &Meta{Ref: "agentry/changelog-from-git@1.2.1", Namespace: "agentry", Name: "changelog-from-git", Version: "1.2.1", Digest: "sha256:abc", Source: "registry"}
-	if err := Write(dir, src, meta); err != nil {
-		t.Fatal(err)
-	}
 	pol := policy.Default()
 	pol.Harness = map[string]policy.HarnessPolicy{"claude": {}}
 	if style := StyleFor(pol); style != manifest.InterfaceClaudeSkill {
 		t.Fatalf("StyleFor with claude chosen: %s", style)
 	}
-	if err := WriteExport(dir, manifest.InterfaceClaudeSkill, m, meta); err != nil {
+	if err := Install(dir, src, m, meta, manifest.InterfaceClaudeSkill); err != nil {
 		t.Fatalf("the Claude-skill export of an instruction-only release: %v", err)
 	}
 	skill, err := os.ReadFile(filepath.Join(dir, "export", "changelog-from-git", "SKILL.md"))
@@ -286,7 +280,7 @@ func TestStyleForHome(t *testing.T) {
 func TestInstall(t *testing.T) {
 	m := &manifest.Manifest{Name: "demo", Namespace: "acme", Version: "1.0.0", Summary: "reads things"}
 	src := stageTree(t, map[string]string{"agent.yaml": "name: demo\n", "SKILL.md": "# Demo\n"})
-	dir := filepath.Join(t.TempDir(), ReleaseName("1.0.0", "sha256:abc"))
+	dir := filepath.Join(t.TempDir(), "agents", "acme", "demo", ReleaseName("1.0.0", "sha256:abc"))
 	meta := &Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: "sha256:abc", Source: "registry"}
 	if err := Install(dir, src, m, meta, manifest.InterfaceClaudeSkill); err != nil {
 		t.Fatal(err)
@@ -311,7 +305,7 @@ func TestInstall(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Dir(dir)); len(entries) != 1 {
 		t.Fatalf("a refused Install left its staging behind: %v", entries)
 	}
-	other := filepath.Join(t.TempDir(), ReleaseName("1.0.0", "sha256:abc"))
+	other := filepath.Join(t.TempDir(), "agents", "acme", "demo", ReleaseName("1.0.0", "sha256:abc"))
 	consented := *meta
 	consented.Attestation.Consent = "allow-unsigned"
 	if err := Install(other, src, m, &consented, manifest.InterfaceAgentsMD); err == nil {

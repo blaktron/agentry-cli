@@ -3,7 +3,6 @@ package compile
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/integritykey"
 )
 
 // An installed plan is reused across runs (§R6/§R9), so plan.json sits on
@@ -45,10 +46,10 @@ import (
 const IntegrityFile = "plan.json.hmac"
 
 // IntegrityKeyFile is the key's name directly under the runner home.
-const IntegrityKeyFile = "plan-integrity.key"
+const IntegrityKeyFile = integritykey.File
 
 const (
-	integrityKeyLen    = 32
+	integrityKeyLen    = integritykey.KeyLen
 	integrityRecordTag = "hmac-sha256"
 )
 
@@ -66,57 +67,10 @@ func (e *TamperedPlanError) Error() string {
 		"refusing to run it; remove %s to recompile", filepath.Join(e.PlanDir, "plan.json"), e.PlanDir)
 }
 
-// IntegrityKey returns the runner home's plan-integrity key, creating it
-// on first use. Creation is race-free across processes: the key is
-// written aside and hard-linked into place, so a concurrent first run
-// either wins the link or reads the winner's complete key.
-func IntegrityKey(home string) ([]byte, error) {
-	path := filepath.Join(home, IntegrityKeyFile)
-	if key, err := readIntegrityKey(path); err == nil || !errors.Is(err, fs.ErrNotExist) {
-		return key, err
-	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return nil, fmt.Errorf("create runner home: %w", err)
-	}
-	key := make([]byte, integrityKeyLen)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("plan integrity key: %w", err)
-	}
-	tmp, err := os.CreateTemp(home, IntegrityKeyFile+".*")
-	if err != nil {
-		return nil, fmt.Errorf("plan integrity key: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	// CreateTemp makes the file 0600.
-	if _, err := tmp.Write([]byte(hex.EncodeToString(key) + "\n")); err != nil {
-		_ = tmp.Close()
-		return nil, fmt.Errorf("plan integrity key: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return nil, fmt.Errorf("plan integrity key: %w", err)
-	}
-	if err := os.Link(tmp.Name(), path); err != nil && !errors.Is(err, fs.ErrExist) {
-		// No hard links here (some filesystems): a rename can lose a
-		// first-run race, and the loser's records then name another key,
-		// which is recompiled, never refused.
-		if rerr := os.Rename(tmp.Name(), path); rerr != nil {
-			return nil, fmt.Errorf("plan integrity key: %w", rerr)
-		}
-	}
-	return readIntegrityKey(path)
-}
-
-func readIntegrityKey(path string) ([]byte, error) {
-	b, err := os.ReadFile(path) //nolint:gosec // fixed name under the runner home
-	if err != nil {
-		return nil, err
-	}
-	key, err := hex.DecodeString(strings.TrimSpace(string(b)))
-	if err != nil || len(key) != integrityKeyLen {
-		return nil, fmt.Errorf("plan integrity key %s is malformed — remove it and re-run (installed plans are then recompiled)", path)
-	}
-	return key, nil
-}
+// IntegrityKey returns the runner home's integrity key, creating it on
+// first use (integritykey.Load; the installed-release record uses the
+// same key, agentry-cli#326).
+func IntegrityKey(home string) ([]byte, error) { return integritykey.Load(home) }
 
 // integrityRecord is "hmac-sha256 <key id> <mac>\n" for plan.json's bytes.
 func integrityRecord(key, planBytes []byte) string {
@@ -130,12 +84,7 @@ func integrityMAC(key, planBytes []byte) string {
 }
 
 // integrityKeyID names a key without revealing it.
-func integrityKeyID(key []byte) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte("agentry plan-integrity key id\x00"))
-	_, _ = h.Write(key)
-	return hex.EncodeToString(h.Sum(nil))[:16]
-}
+func integrityKeyID(key []byte) string { return integritykey.ID(key, "agentry plan-integrity key id") }
 
 // writeIntegrityRecord records plan.json's bytes under key.
 func writeIntegrityRecord(key []byte, planDir string, planBytes []byte) error {

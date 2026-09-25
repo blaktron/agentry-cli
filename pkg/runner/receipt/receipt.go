@@ -68,6 +68,25 @@ type Envelope struct {
 	ResultFile string `json:"resultFile,omitempty"`
 	// Receipts locates the audit trail.
 	Receipts Receipts `json:"receipts"`
+	// InstalledChanges names what changed in an installed release a run
+	// refused because it no longer matches what was laid down (exit 10,
+	// class verify; agentry-cli#326), so a client can show the files and
+	// offer the repair without parsing Error. Absent otherwise.
+	InstalledChanges *InstalledChanges `json:"installedChanges,omitempty"`
+}
+
+// InstalledChanges is an installed release's difference from what was laid
+// down. Paths are relative to the release's own files, as its archive
+// carries them.
+type InstalledChanges struct {
+	Changed []string `json:"changed,omitempty"`
+	Added   []string `json:"added,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+	// Record is set when install.json or the integrity record itself is
+	// what failed.
+	Record string `json:"record,omitempty"`
+	// Repair is the command that lays the release down again.
+	Repair string `json:"repair"`
 }
 
 // Attestation is the verify-gate outcome (§R1).

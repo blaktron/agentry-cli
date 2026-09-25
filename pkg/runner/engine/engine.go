@@ -76,6 +76,12 @@ type Params struct {
 	PlanDir string
 	// WorkspaceSrc is the pristine verified workspace to copy per run.
 	WorkspaceSrc string
+	// CheckWorkspace, when set, is handed the run's copy of WorkspaceSrc
+	// before anything reads it, and an error refuses the run with the
+	// verify class: an installed release's copy is held to its integrity
+	// record there (installdir.CheckCopy, agentry-cli#326), so an edit
+	// made to the install after the client's own check does not run.
+	CheckWorkspace func(copyDir string) error
 	// RunRoot is where runs/<id>/ ephemera live (the install dir).
 	RunRoot string
 	// RunnerHome is the runner home, shared by every client on the host.
