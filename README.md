@@ -94,7 +94,7 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   identity is the OIDC token GitHub mints for it in the `release` environment,
   so it holds no Azure secret; `jsign` signs, and `osslsigncode` verifies to
   the Microsoft root pinned in `build/windows/signing/` and the CN
-  `release.env` names. With none set it ships unsigned (`signed_windows=none`).
+  `release.env` names. With none set it ships unsigned (an empty `signed_windows=`, the site's grammar).
 - `SHA256SUMS` is signed with the estate's own update-signing key when the
   `AGENTRY_UPDATE_SIGNING_KEY` secret exists (the desktop's `signrelease
   -product agentry-cli`, at the desktop commit the workflow pins: the signed
