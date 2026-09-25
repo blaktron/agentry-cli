@@ -116,8 +116,9 @@ The bundle is uploaded as one workflow artifact, `agentry-cli-<version>`, and
 **every tag publishes a GitHub Release** with it: a `-dev.N` tag's is a
 prerelease, a `vX.Y.Z` tag's a full release, and only the newest `vX.Y.Z` is
 the latest. Notes are generated from the commits under a header naming the
-signatures. A minor or major release (`vX.Y.0`) is left a draft: the operator
-approves its notes and publishes it. The site's downloads page does not read
+signatures. Before 1.0.0 every release publishes at once. From 1.0.0 on, a
+minor or major release (`vX.Y.0`) is left a draft: the operator approves its
+notes and publishes it. The site's downloads page does not read
 it yet: until agentry-web#214 and agentry-web#444 import the Release (the dev
 page taking `-dev.N` prereleases, production's the `vX.Y.Z` releases), the
 site still builds the CLI itself. A `workflow_dispatch` of `release` from `main` is a dry run:

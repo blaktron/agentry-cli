@@ -36,9 +36,10 @@
 #
 # Every tag then publishes a GitHub Release with the bundle (the publish
 # job): a -dev.N tag's is a prerelease, a vX.Y.Z tag's a full release, the
-# newest one the latest. Notes are generated from the commits. A minor or
-# major main release (X.Y.0) is left a draft for the operator to approve its
-# notes and publish (agentry-cli#241). The bundle is also the workflow
+# newest one the latest. Notes are generated from the commits. Before 1.0.0
+# every release publishes at once; from 1.0.0 on a minor or major main release
+# (X.Y.0) is left a draft for the operator to approve its notes and publish
+# (agentry-cli#241, #349). The bundle is also the workflow
 # artifact agentry-cli-<version> that the site's importer reads.
 #
 # workflow_dispatch runs the build as a dry run from main or a v* tag (all
@@ -383,8 +384,8 @@ jobs:
   # The GitHub Release (agentry-cli#241, DEV-148): every tag, never a dry
   # run. The bundle exactly as built and summed; notes generated from the
   # commits under a header that says what is signed and how to check it. A
-  # minor or major main release is a draft until the operator approves its
-  # notes and publishes it.
+  # minor or major main release from 1.0.0 on is a draft until the operator
+  # approves its notes and publishes it; before 1.0.0 nothing is held.
   publish:
     needs: [preflight, build]
     if: github.event_name == 'push' && github.ref_type == 'tag'
