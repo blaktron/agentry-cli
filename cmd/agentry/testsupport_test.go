@@ -175,6 +175,9 @@ type fakeRegistry struct {
 	signer *ecdsa.PrivateKey
 	keyID  string
 	pubPEM string
+	// keyRetiredAt, when set, advertises the signing key as retired on
+	// that date (agentry#350's status record).
+	keyRetiredAt string
 
 	// scans answers the MCP-server vulnerability scan by package name
 	// (the scan record's JSON); a package with none is 404, "unknown".
@@ -450,7 +453,11 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 	mux.HandleFunc("GET /.well-known/agentry/signing-keys.json", func(w http.ResponseWriter, _ *http.Request) {
 		keys := []map[string]string{}
 		if fr.signer != nil {
-			keys = append(keys, map[string]string{"keyId": fr.keyID, "algorithm": "ecdsa-p256-sha256", "publicKeyPem": fr.pubPEM})
+			k := map[string]string{"keyId": fr.keyID, "algorithm": "ecdsa-p256-sha256", "publicKeyPem": fr.pubPEM}
+			if fr.keyRetiredAt != "" {
+				k["status"], k["retiredAt"] = "retired", fr.keyRetiredAt
+			}
+			keys = append(keys, k)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
 	})

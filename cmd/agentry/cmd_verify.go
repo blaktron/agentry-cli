@@ -123,6 +123,9 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 		}
 		if att.State == "verified" {
 			_, _ = fmt.Fprintf(out, "  signed by:       key %s\n", att.KeyID)
+			if note := att.RetiredNote(); note != "" {
+				_, _ = fmt.Fprintf(out, "  note:            %s\n", note)
+			}
 			if att.RulesetVer != "" {
 				_, _ = fmt.Fprintf(out, "  scanned with:    ruleset %s, judge %s\n", att.RulesetVer, orNone(att.JudgeModel))
 			}
@@ -131,7 +134,11 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 			}
 		}
 		if att.KeyRotated {
-			_, _ = fmt.Fprintln(out, "  WARNING:         the registry advertises new signing key ids")
+			if att.KeyChange.Rotation() {
+				_, _ = fmt.Fprintf(out, "  possible key rotation: the registry %s since the pin; confirm it with the registry's operator, then re-pin deliberately to trust the new key\n", att.KeyChange)
+			} else {
+				_, _ = fmt.Fprintf(out, "  WARNING:         the registry's signing keys changed since the pin: %s\n", att.KeyChange)
+			}
 		}
 		if report.Yanked {
 			_, _ = fmt.Fprintln(out, "  yanked:          yes")
