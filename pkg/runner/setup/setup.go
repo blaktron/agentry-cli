@@ -303,7 +303,9 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	p.Say(fmt.Sprintf("model: %s/%s (key from %s; agent-container egress limited to %s)",
 		prov, model, from, strings.Join(proxyAllow, ", ")))
 	if kind == policy.KeyKindSubscription {
-		p.Say("the key is " + policy.SubscriptionTokenSentence)
+		// The shared sentence stands alone (agentry-cli#182); a prefix
+		// made it ungrammatical (agentry-cli#183).
+		p.Say(policy.SubscriptionTokenSentence)
 	}
 	return nil
 }

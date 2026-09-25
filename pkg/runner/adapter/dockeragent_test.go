@@ -344,6 +344,9 @@ func TestDockerAgentCompileRefusesASubscriptionToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("a subscription token must be refused by the container harness")
 	}
+	if got, want := err.Error(), "apiKeyKind subscription: "+policy.SubscriptionTokenSentence; !strings.Contains(got, want) || strings.Contains(got, "key is an Anthropic") {
+		t.Errorf("refusal %q, want it to carry %q", got, want)
+	}
 	for _, want := range []string{"subscription token", "Claude Code", "--adapter claude", "API key"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q lacks %q", err, want)
