@@ -449,7 +449,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// queued before the gateway's teardown, so it runs after the relays
 	// are reaped.
 	switch {
-	case !relaysNeeded(p.Plan.MCPServers):
+	case !relaysNeeded(p.Plan):
 	case filterSupported:
 		// The gateway's two fixed relay networks are this run's own, made
 		// here and removed with the run; the filter translates the names
@@ -540,16 +540,34 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// same failure class as a gateway that never answered. The gateway
 	// launches its servers while loading its configuration, before it
 	// serves the probe, so the log is complete by now.
-	if len(p.Plan.MCPServers) > 0 {
-		logs, err := d.Logs(ctx, gwName, dockerx.LogsAll)
-		if err != nil {
-			return Classify(ExitGateway, fmt.Errorf("read gateway log to confirm declared servers started: %w", err))
-		}
-		// The relays are up by now and nothing of the agent's has run: the
-		// names the log carries are the gateway's own (relays.go).
-		relays.snapshot(logs)
-		if err := checkDeclaredServersStarted(logs, p.Plan.MCPServers); err != nil {
-			return Classify(ExitGateway, err)
+	// The tools server is checked the same way, on every run: a gateway
+	// that could not start it (a relay the docker filter refused, say)
+	// carries on with the declared servers alone, and the agent would run
+	// without the tools its contract grants (agentry-cli#346).
+	logs, err := d.Logs(ctx, gwName, dockerx.LogsAll)
+	if err != nil {
+		return Classify(ExitGateway, fmt.Errorf("read gateway log to confirm the tools server and declared servers started: %w", err))
+	}
+	// The relays are up by now and nothing of the agent's has run: the
+	// names the log carries are the gateway's own (relays.go).
+	relays.snapshot(logs)
+	if err := checkToolsServerStarted(logs); err != nil {
+		return Classify(ExitGateway, withRefusals(err, rd))
+	}
+	if err := checkDeclaredServersStarted(logs, p.Plan.MCPServers); err != nil {
+		return Classify(ExitGateway, withRefusals(err, rd))
+	}
+	return nil
+}
+
+// checkToolsServerStarted reads the gateway's startup log for its line
+// saying the run's own tools server did not start or list its tools, and
+// names it (the same v0.43.3 line shapes as checkDeclaredServersStarted).
+func checkToolsServerStarted(logs string) error {
+	for _, line := range strings.Split(logs, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "> Can't start "+spec.ToolServerName+":") || strings.HasPrefix(t, "> Can't list tools "+spec.ToolServerName+":") {
+			return fmt.Errorf("the run's tools server did not start, so the agent would have none of its tools; the gateway said: %s", t)
 		}
 	}
 	return nil

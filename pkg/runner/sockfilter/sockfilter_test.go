@@ -19,6 +19,7 @@ const (
 	own       = "agentry.gateway.run"
 	gatewayUA = "gateway-under-test"
 	relayPin  = "docker/mcp-l4proxy@sha256:0123"
+	l7Pin     = "docker/mcp-l7proxy@sha256:4567"
 	ext       = "docker-mcp-proxies-ext"
 	intNet    = "docker-mcp-proxies-int"
 )
@@ -39,6 +40,8 @@ func imageFor(ref string) (string, []string) {
 	switch ref {
 	case relayPin, "docker/mcp-l4proxy:v1", "sha256:relay":
 		return "sha256:relay", []string{relayPin}
+	case l7Pin, "sha256:l7relay":
+		return "sha256:l7relay", []string{l7Pin}
 	case "docker/mcp-l4proxy:moved", "sha256:moved":
 		return "sha256:moved", []string{"docker/mcp-l4proxy@sha256:9999"}
 	case "missing", "":
@@ -198,7 +201,7 @@ func newRig(t *testing.T, lim Limits, opts ...func(*Config)) *rig {
 		RelayHosts: []string{"api.osv.dev", "*.example.org"},
 		BindRoots:  []string{root}, WritableRoots: []string{writable},
 		SharedNetworks: []string{intNet, "docker-mcp-gone"},
-		EgressNetworks: map[string][]string{ext: {relayPin}},
+		EgressNetworks: map[string][]string{ext: {relayPin, l7Pin}},
 		Limits:         lim,
 	}
 	for _, o := range opts {
@@ -613,8 +616,8 @@ func TestARelayIsOnlyARelay(t *testing.T) {
 		doc    map[string]any
 		reason string
 	}{
-		{"an undeclared host", relay(nil, "PROXY_HOSTNAME=evil.example", "PROXY_PORTS=443"), "not one the run's servers declared"},
-		{"the wildcard's own apex", relay(nil, "PROXY_HOSTNAME=example.org", "PROXY_PORTS=443"), "not one the run's servers declared"},
+		{"an undeclared host", relay(nil, "PROXY_HOSTNAME=evil.example", "PROXY_PORTS=443"), "not one the run declared"},
+		{"the wildcard's own apex", relay(nil, "PROXY_HOSTNAME=example.org", "PROXY_PORTS=443"), "not one the run declared"},
 		{"a config line in the host", relay(nil, "PROXY_HOSTNAME=api.osv.dev\nglobal\n master-worker", "PROXY_PORTS=443"), "not a host name"},
 		{"a config line in the ports", relay(nil, "PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443\nprogram x"), "not ports"},
 		{"another setting", relay(nil, "PROXY_HOSTNAME=api.osv.dev", "HAPROXY_CFG=/x"), "relay setting"},
@@ -630,6 +633,40 @@ func TestARelayIsOnlyARelay(t *testing.T) {
 		{"no host at all", relay(nil, "PROXY_PORTS=443"), "not a host name"},
 	} {
 		g.refused(t, c.name, "POST", "/containers/create", c.doc, c.reason)
+	}
+}
+
+// The gateway's L7 relay, the tools server's way to the agent's declared
+// hosts, takes ALLOWED_HOSTS alone, each host:port one the run declared
+// (agentry-cli#346); the two relay forms never mix.
+func TestAnL7RelayReachesOnlyTheDeclaredHosts(t *testing.T) {
+	g := newRig(t, Limits{}, func(c *Config) { c.RelayHosts = []string{"api.osv.dev", "api.frankfurter.dev:443"} })
+	l7 := func(env ...string) map[string]any {
+		return map[string]any{"Image": l7Pin, "Env": env, "HostConfig": map[string]any{"NetworkMode": ext}}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", l7("ALLOWED_HOSTS=api.frankfurter.dev:443")); code != http.StatusCreated {
+		t.Fatalf("the L7 relay to the agent's declared host: %d %s", code, body)
+	}
+	if code, body := g.do(t, "POST", "/containers/create", l7("ALLOWED_HOSTS=api.frankfurter.dev:443,api.osv.dev:443")); code != http.StatusCreated {
+		t.Errorf("the L7 relay to two declared hosts: %d %s", code, body)
+	}
+	g.refused(t, "the L7 form on the L4 image", "POST", "/containers/create",
+		map[string]any{"Image": relayPin, "Env": []string{"ALLOWED_HOSTS=api.frankfurter.dev:443"}, "HostConfig": map[string]any{"NetworkMode": ext}}, "not ALLOWED_HOSTS")
+	for _, c := range []struct {
+		name, reason string
+		env          []string
+	}{
+		{"an undeclared host", "not one the run declared", []string{"ALLOWED_HOSTS=evil.example:443"}},
+		{"an undeclared port", "port 22", []string{"ALLOWED_HOSTS=api.frankfurter.dev:22"}},
+		{"one bad target among good", "not one the run declared", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443,evil.example:443"}},
+		{"both forms", "nothing else", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443", "PROXY_HOSTNAME=api.osv.dev"}},
+		{"the L4 form on the L7 image", "nothing else", []string{"PROXY_HOSTNAME=api.frankfurter.dev", "PROXY_PORTS=443"}},
+		{"a setting twice", "given twice", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443", "ALLOWED_HOSTS=evil.example:443"}},
+		{"no port", "not host:port", []string{"ALLOWED_HOSTS=api.frankfurter.dev"}},
+		{"a config line", "not host:port", []string{"ALLOWED_HOSTS=api.frankfurter.dev:443\nacl all"}},
+		{"empty", "no ALLOWED_HOSTS", []string{"ALLOWED_HOSTS="}},
+	} {
+		g.refused(t, c.name, "POST", "/containers/create", l7(c.env...), c.reason)
 	}
 }
 
@@ -649,7 +686,7 @@ func TestARelaysPortsAreTheDeclaredOnes(t *testing.T) {
 	}
 	none := newRig(t, Limits{}, func(c *Config) { c.RelayHosts = nil })
 	none.refused(t, "a relay with nothing declared", "POST", "/containers/create",
-		map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}}, "not one the run's servers declared")
+		map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}}, "not one the run declared")
 }
 
 // What a container is, and where a request goes, is fixed by id: a tag
@@ -751,8 +788,8 @@ func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
 	} {
 		hc := created(c.name, c.doc)
 		hosts, _ := hc["ExtraHosts"].([]any)
-		if hc["Runtime"] != "runsc" || len(hosts) != 1 || hosts[0] != "api.osv.dev:10.9.0.5" {
-			t.Errorf("%s: runtime %v, hosts %v; want runsc and api.osv.dev at the relay's address", c.name, hc["Runtime"], hc["ExtraHosts"])
+		if hc["Runtime"] != "runsc" || len(hosts) != 2 || hosts[0] != "api.osv.dev:10.9.0.5" || hosts[1] != "runa-relay:10.9.0.5" {
+			t.Errorf("%s: runtime %v, hosts %v; want runsc, and the alias and the relay's name at its address", c.name, hc["Runtime"], hc["ExtraHosts"])
 		}
 	}
 	hc = created("the relay", map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}})
@@ -777,6 +814,7 @@ func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
 		g.refused(t, "a link to another run's container "+form.name, "POST", "/containers/create", form.doc("runb-relay"), "not this run's")
 		g.refused(t, "a link to the runner's own agent "+form.name, "POST", "/containers/create", form.doc("runa-agent"), "not this run's")
 	}
+	g.refused(t, "a linked name that is not a host name", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa_relay:api.osv.dev"}}}, "not a host name")
 	g.refused(t, "a link alias that is not a host name", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev 10.0.0.1"}}}, "not a host name")
 
 	plain := newRig(t, Limits{}, relays)

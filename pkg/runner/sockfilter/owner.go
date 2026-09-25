@@ -185,17 +185,23 @@ func (f *Filter) egressAllowed(ctx context.Context, network, imageID string) err
 	return nil
 }
 
-// isRelay says whether an image, by id, is one of any egress network's
-// relays.
-func (f *Filter) isRelay(ctx context.Context, imageID string) (bool, error) {
-	var pins []string
-	for _, p := range f.cfg.EgressNetworks {
-		pins = append(pins, p...)
+// relayPin is the pinned relay digest an image, by id, is, or "" when it
+// is none of any egress network's relays. The pin names the relay's kind
+// (docker/mcp-l4proxy or docker/mcp-l7proxy), which fixes the settings it
+// may be given (relayShape).
+func (f *Filter) relayPin(ctx context.Context, imageID string) (string, error) {
+	for _, pins := range f.cfg.EgressNetworks {
+		for _, pin := range pins {
+			ok, err := f.pinned(ctx, imageID, []string{pin})
+			if err != nil {
+				return "", err
+			}
+			if ok {
+				return pin, nil
+			}
+		}
 	}
-	if len(pins) == 0 {
-		return false, nil
-	}
-	return f.pinned(ctx, imageID, pins)
+	return "", nil
 }
 
 // resolveImage returns the id of the image a reference names now; the

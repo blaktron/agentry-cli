@@ -152,11 +152,11 @@ func (f *Filter) containerOp(r *http.Request, id, op string) (string, error) {
 	}
 	intoRelay := relayForbidden[op] || (op == "/archive" && r.Method == http.MethodPut)
 	if intoRelay {
-		relay, err := f.isRelay(r.Context(), c.imageID)
+		relay, err := f.relayPin(r.Context(), c.imageID)
 		if err != nil {
 			return "", err
 		}
-		if relay {
+		if relay != "" {
 			return "", deny("nothing may exec into, attach to or write into a relay (%s)", short(id))
 		}
 	}
