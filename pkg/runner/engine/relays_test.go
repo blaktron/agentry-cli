@@ -43,6 +43,7 @@ func TestRelaysStartedBy(t *testing.T) {
 // sidecars are on the shared relay network — exit 13, the names in the
 // error, no gateway started; a plan without such a server ignores them.
 func TestRunRefusesForeignRelays(t *testing.T) {
+	withoutFilter(t) // DR-22 holds where the filter does not run (agentry-cli#220)
 	p, f := serverFixture(t)
 	happyFake(f)
 	f.ByLabel = map[string][]string{relayLabel: {"docker-mcp-l4proxy-theirs"}}
@@ -90,6 +91,8 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 		f.OnDetached = func(r dockerx.RunSpec) {
 			if strings.HasSuffix(r.Name, "-gateway") {
 				f.ByLabel[relayLabel] = []string{"docker-mcp-l4proxy-ours", "docker-mcp-l4proxy-theirs"}
+				// The filter labels this run's gateway's relays alone.
+				f.ByLabel[gatewayOwnerLabel+"=cafe0000"] = []string{"docker-mcp-l4proxy-ours"}
 			}
 		}
 	}
@@ -137,6 +140,7 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 			if strings.HasSuffix(r.Name, "-agent") {
 				f.LogsByName["agentry-cafe0000-gateway"] += "starting l4 proxy docker-mcp-l4proxy-late for api.osv.dev, ports 443\n"
 				f.ByLabel[relayLabel] = append(f.ByLabel[relayLabel], "docker-mcp-l4proxy-late")
+				f.ByLabel[gatewayOwnerLabel+"=cafe0000"] = append(f.ByLabel[gatewayOwnerLabel+"=cafe0000"], "docker-mcp-l4proxy-late")
 			}
 		}
 		if env, err := Run(context.Background(), f, p); err != nil || env.Status != "ok" {
@@ -257,6 +261,7 @@ func (h hostDocker) RemoveForce(ctx context.Context, name string) error {
 // start, each gateway's relays beside the other's. The second must be
 // refused.
 func TestConcurrentRelayRunsDoNotShareTheRelayNetwork(t *testing.T) {
+	withoutFilter(t) // DR-22 holds where the filter does not run (agentry-cli#220)
 	host := newRelayHost()
 	home := t.TempDir()
 	type result struct {
@@ -303,6 +308,7 @@ func TestConcurrentRelayRunsDoNotShareTheRelayNetwork(t *testing.T) {
 // probe — and released by teardown after the relays are reaped, on the
 // success path and on a refusal alike; a run without relays never takes it.
 func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
+	withoutFilter(t) // DR-22 holds where the filter does not run (agentry-cli#220)
 	heldNow := func(home string) bool {
 		release, err := holdRelayLock(home)
 		if err != nil {
@@ -395,4 +401,13 @@ type reapProbe struct {
 func (r *reapProbe) RemoveForce(ctx context.Context, name string) error {
 	r.onRemove(name)
 	return r.Fake.RemoveForce(ctx, name)
+}
+
+// withoutFilter runs a test as on a platform without the gateway's docker
+// filter, where the relay network is the host's one fixed network (DR-22).
+func withoutFilter(t *testing.T) {
+	t.Helper()
+	was := filterSupported
+	filterSupported = false
+	t.Cleanup(func() { filterSupported = was })
 }

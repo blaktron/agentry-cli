@@ -58,6 +58,9 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 	}
 	for r := range runs {
 		_ = d.NetworkRemove(ctx, networkName(r))
+		internal, out := relayNetworks(r)
+		_ = d.NetworkRemove(ctx, internal)
+		_ = d.NetworkRemove(ctx, out)
 		_ = d.VolumeRemove(ctx, sessionVolumeName(r))
 	}
 	if stderr == nil {

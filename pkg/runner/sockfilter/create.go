@@ -527,7 +527,7 @@ func namespaceMode(field, mode string) error {
 // the rules to its name: the run's or a shared one, and an egress network
 // only for a pinned relay.
 func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) error {
-	mode := c.HostConfig.NetworkMode
+	mode := f.runNetwork(c.HostConfig.NetworkMode)
 	switch {
 	case mode == "" || mode == "none" || mode == "default":
 	case mode == "host":
@@ -553,7 +553,7 @@ func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) erro
 	}
 	byID := map[string]*endpointSettings{}
 	for key, ep := range c.NetworkingConfig.EndpointsConfig {
-		n, err := f.ownNetwork(ctx, key, true)
+		n, err := f.ownNetwork(ctx, f.runNetwork(key), true)
 		if err != nil {
 			return err
 		}
@@ -764,16 +764,22 @@ func (f *Filter) networkCreate(ctx context.Context, body []byte) (any, error) {
 	if err := decodeStrict(body, &n); err != nil {
 		return nil, err
 	}
+	asked := n.Name
+	n.Name = f.runNetwork(n.Name)
 	if f.shared(n.Name) {
 		// The runner makes the shared networks; a gateway asking for one
 		// gets the daemon's answer when it is there, and a refusal when
 		// it is not (the runner should have made it).
 		if _, err := f.ownNetwork(ctx, n.Name, true); err == nil {
-			return nil, exists{n.Name}
+			return nil, exists{asked}
 		}
-		return nil, deny("network %s is shared by the host's runs; the runner makes it", n.Name)
+		return nil, deny("network %s is the runner's for this run; the runner makes it", n.Name)
 	}
 	switch {
+	case strings.HasPrefix(n.Name, "agentry-"):
+		// The runner's namespace: a gateway taking one of its names could
+		// keep another run from starting.
+		return nil, deny("network name %s is the runner's", n.Name)
 	case n.Driver != "" && n.Driver != "bridge":
 		return nil, deny("a %q network", n.Driver)
 	case !n.Internal:

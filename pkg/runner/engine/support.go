@@ -621,10 +621,12 @@ func stderrTail(path string) string {
 // sweeps anything still labeled with this run (§R11 invariant 6). Each
 // step is best-effort: teardown must never mask the run's own error.
 type teardown struct {
-	d      dockerx.Client
-	stderr io.Writer
-	funcs  []func(context.Context)
-	runID  string
+	// networks are the ones the run made, removed again after the sweep.
+	networks []string
+	d        dockerx.Client
+	stderr   io.Writer
+	funcs    []func(context.Context)
+	runID    string
 }
 
 func (t *teardown) add(f func(context.Context)) { t.funcs = append(t.funcs, f) }
@@ -640,6 +642,12 @@ func (t *teardown) run() {
 			for _, name := range leftover {
 				_ = t.d.RemoveForce(ctx, name)
 			}
+		}
+		// The run's networks, again, now that every container carrying the
+		// run's label is gone (the gateway's among them, labelled by its
+		// filter): one left attached earlier would have kept its network.
+		for _, n := range t.networks {
+			_ = t.d.NetworkRemove(ctx, n)
 		}
 		// Volumes carry the same label (the session store): after the
 		// containers, never before, since a volume in use cannot go.

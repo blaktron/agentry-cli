@@ -107,6 +107,7 @@ func (f *Filter) judge(r *http.Request, p string) (string, error) {
 		return "", nil
 	}
 	if m := reNetwork.FindStringSubmatch(p); m != nil && m[1] != "create" && m[1] != "prune" {
+		m[1] = f.runNetwork(m[1])
 		switch {
 		case m[3] != "": // connect, disconnect
 			if err := method(r, http.MethodPost); err != nil {
