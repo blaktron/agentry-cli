@@ -1118,9 +1118,9 @@ func ensurePlan(errOut io.Writer, home string, m *manifest.Manifest, meta *insta
 			}
 		}
 	}
-	if err := os.RemoveAll(planDir); err != nil {
-		return nil, "", fmt.Errorf("clear stale plan: %w", err)
-	}
+	// Compile replaces planDir whole, in one rename, so it is not cleared
+	// first: a removal here could run into another process's compile of
+	// the same plan (agentry-cli#289).
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest:     m,
 		Mode:         mode,
