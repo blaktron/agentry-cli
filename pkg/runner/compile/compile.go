@@ -888,7 +888,7 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	vols = append(vols, spec.PHInputs+":"+spec.InputsMount+":ro")
 	// The knowledge channel (plan knowledge.md §4.5): one read-only mount
 	// whether or not packs are attached, so an attachment never moves the
-	// plan; the engine grants the tools only when it attaches one (DR-36).
+	// plan; the engine grants the tools only when it attaches one (DR-37).
 	vols = append(vols, spec.PHKnowledge+":"+spec.KnowledgeMount+":ro")
 	vols = append(vols, spec.PHOut+":"+spec.OutMount+":rw")
 	e.set("volumes", strListNode(vols))

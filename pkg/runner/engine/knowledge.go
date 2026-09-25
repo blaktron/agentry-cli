@@ -1,5 +1,5 @@
 // Knowledge attached to a run (plan knowledge.md §4.5, agentry-cli#317,
-// DR-36). The compiled plan always mounts one read-only /knowledge volume
+// DR-37). The compiled plan always mounts one read-only /knowledge volume
 // on the tools container, as it mounts /inputs, and grants no knowledge
 // tool: which packs a run reads is the person's choice at run time, like
 // its input files, so it must not move the plan or its hash. The engine

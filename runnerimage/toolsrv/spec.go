@@ -51,7 +51,7 @@ type Spec struct {
 	// pack the person attaches is task material and not a manifest
 	// capability, so the compiled plan never carries either field: the
 	// engine stamps both into the run's own copy of this file when packs
-	// are attached (DR-36), and the three knowledge tools exist only then.
+	// are attached (DR-37), and the three knowledge tools exist only then.
 	KnowledgeDir string          `json:"knowledgeDir,omitempty"`
 	Knowledge    []KnowledgePack `json:"knowledge,omitempty"`
 	// FSRead gates fs_read and fs_list.

@@ -46,7 +46,7 @@ const (
 	// (plan knowledge.md §4.5): one subdirectory per attached pack,
 	// mounted :ro into the tools container, empty when the run got no
 	// --knowledge. Always compiled in, so attaching a pack never moves the
-	// plan (DR-36).
+	// plan (DR-37).
 	PHKnowledge = "@@RUN_KNOWLEDGE@@"
 	// PHServers is the host path of the signature's installed MCP-server
 	// store (RUNNER-PLAN-3): profile/servers/, one subdirectory per
