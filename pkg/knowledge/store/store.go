@@ -310,13 +310,66 @@ func (s *Store) install(m knowledge.Manifest, kr KeyRecord, seal func(io.Writer)
 }
 
 // stageDir is a fresh, private directory inside the store.
-func (s *Store) stageDir() (string, error) {
+func (s *Store) stageDir() (string, error) { return s.privateDir(".stage-") }
+
+// privateDir is a fresh directory inside the store, 0700, named prefix and
+// a random suffix; List skips it, and sweep removes one left behind.
+func (s *Store) privateDir(prefix string) (string, error) {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return "", err
+	}
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	dir := filepath.Join(s.dir, ".stage-"+hex.EncodeToString(b))
+	dir := filepath.Join(s.dir, prefix+hex.EncodeToString(b))
 	return dir, os.Mkdir(dir, 0o700)
+}
+
+// staleAfter is how long a private directory may outlive the process that
+// made it before sweep removes it: longer than any run's start.
+const staleAfter = 24 * time.Hour
+
+// sweep removes private directories a process that died left behind.
+func (s *Store) sweep() {
+	dirs, err := os.ReadDir(s.dir)
+	if err != nil {
+		return
+	}
+	for _, d := range dirs {
+		if !d.IsDir() || (!strings.HasPrefix(d.Name(), ".stage-") && !strings.HasPrefix(d.Name(), ".open-")) {
+			continue
+		}
+		if fi, err := d.Info(); err == nil && time.Since(fi.ModTime()) > staleAfter {
+			_ = os.RemoveAll(filepath.Join(s.dir, d.Name()))
+		}
+	}
+}
+
+// RegistryFor is the signed-in client of the registry at u.
+func (s *Store) RegistryFor(u string) (Registry, error) {
+	if s.o.Registries == nil {
+		return nil, fmt.Errorf("%s: %w", u, ErrSignedOut)
+	}
+	return s.o.Registries(u)
+}
+
+// OpenScratch opens the pack named name into a private directory inside
+// the store, for a run to copy into its own directory, and returns it with
+// the function that removes it. The pack's pages rest in the clear there
+// only until done is called (a run calls it at teardown).
+func (s *Store) OpenScratch(ctx context.Context, name string) (p *knowledge.Pack, done func(), err error) {
+	s.sweep()
+	dir, err := s.privateDir(".open-")
+	if err != nil {
+		return nil, func() {}, err
+	}
+	done = func() { _ = os.RemoveAll(dir) }
+	if p, err = s.Open(ctx, name, filepath.Join(dir, name)); err != nil {
+		done()
+		return nil, func() {}, err
+	}
+	return p, done, nil
 }
 
 func writeJSON(path string, v any) error {
