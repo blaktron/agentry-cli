@@ -397,7 +397,14 @@ func collect(reports, docsDir string, dec *decode.Result, docs []document, apply
 	if raw, err := os.ReadFile(filepath.Join(reports, knowledge.ChangesFile)); err == nil { //nolint:gosec // the run's own report
 		var own knowledge.Changes
 		if json.Unmarshal(raw, &own) == nil {
-			ch.Delete, ch.Summary = own.Delete, own.Summary
+			// The model removes pages and nothing else: sources/ is the
+			// build's, and holds the documents as given.
+			for _, rel := range own.Delete {
+				if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
+					ch.Delete = append(ch.Delete, rel)
+				}
+			}
+			ch.Summary = own.Summary
 		}
 	}
 	decoded := map[string]string{}

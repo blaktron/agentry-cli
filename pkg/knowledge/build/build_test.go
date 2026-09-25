@@ -175,6 +175,26 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 		t.Fatalf("log:\n%s", log)
 	}
 
+	t.Run("the model's changes.json removes pages, never sources", func(t *testing.T) {
+		fx3 := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		fx3.opts.PackDir, fx3.opts.Name = fx.opts.PackDir, ""
+		writeFile(t, filepath.Join(fx3.docs, "extra.md"), "# Extra\n")
+		fx3.opts.Documents = []string{filepath.Join(fx3.docs, "extra.md")}
+		fx3.fake.Foreground["-agent"].Before = writes(fx3.opts.OutDir, map[string]string{
+			"wiki/topics/extra.md": page("Extra", "extra.md"),
+			"changes.json":         `{"schema":"knowledge/changes/v1","delete":["sources/runbook.md","wiki/procedures/night.md"],"summary":"trim"}`,
+		})
+		res, err := Build(context.Background(), fx3.fake, fx3.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(res.Applied.Deleted, ",") != "wiki/procedures/night.md" {
+			t.Fatalf("deleted %v", res.Applied.Deleted)
+		}
+		if _, err := os.Stat(filepath.Join(fx.opts.PackDir, "sources", "runbook.md")); err != nil {
+			t.Fatal("the model removed a source")
+		}
+	})
 	t.Run("a second build extends it with the pack attached", func(t *testing.T) {
 		fx2 := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
 		fx2.opts.PackDir, fx2.opts.Name = fx.opts.PackDir, ""
