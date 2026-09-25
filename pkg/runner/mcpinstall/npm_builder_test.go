@@ -206,8 +206,9 @@ func demoTarball(t *testing.T) []byte {
 // resolution, as the last argument, and runs the embedded program.
 func TestEnsureInstalledPassesTheRecordedIntegrityToTheNpmBuilder(t *testing.T) {
 	fake := &dockerx.Fake{}
+	withRunner(fake)
 	res := []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-RECORDED"}}
-	regs := policy.MCPRegistries{NPM: "http://npm.invalid", PyPI: "http://unused.invalid"}
+	regs := policy.MCPRegistries{NPM: "https://npm.invalid", PyPI: "https://unused.invalid"}
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
 	if err := EnsureInstalled(t.Context(), fake, res, t.TempDir(), regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
@@ -220,7 +221,7 @@ func TestEnsureInstalledPassesTheRecordedIntegrityToTheNpmBuilder(t *testing.T) 
 	if len(a) != 11 || a[3] != "node" || a[4] != "-e" || a[5] != npmBuilder {
 		t.Fatalf("builder argv = %q", a[:min(len(a), 5)])
 	}
-	if got := a[6:]; got[0] != "/opt/agentry-mcp/npm-server-x" || got[1] != "server-x" || got[2] != "1.0.0" || got[3] != "http://npm.invalid" || got[4] != "sha512-RECORDED" {
+	if got := a[6:]; got[0] != "/opt/agentry-mcp/npm-server-x" || got[1] != "server-x" || got[2] != "1.0.0" || got[3] != "https://npm.invalid" || got[4] != "sha512-RECORDED" {
 		t.Fatalf("builder values = %q", got)
 	}
 }
