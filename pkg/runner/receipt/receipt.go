@@ -64,7 +64,7 @@ type Envelope struct {
 
 // Attestation is the verify-gate outcome (§R1).
 type Attestation struct {
-	// State is verified | unsigned | local | unscanned.
+	// State is verified | unsigned | local | unscanned | builtin.
 	State string `json:"state"`
 	// KeyID is the pinned signing key that verified (state verified).
 	KeyID string `json:"keyId,omitempty"`
@@ -76,6 +76,10 @@ type Attestation struct {
 	// says not only what the verdict was but who accepted it. Empty for a
 	// verified release, which needed none.
 	Consent string `json:"consent,omitempty"`
+	// Build is, for state builtin, the build of the application that
+	// carried the package (agentry-cli#318): a built-in has no registry
+	// digest to name its provenance, so the receipt names the binary.
+	Build string `json:"build,omitempty"`
 }
 
 // Policy is the operator policy a run enforced. Path is the file whose

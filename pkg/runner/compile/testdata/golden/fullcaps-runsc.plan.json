@@ -51,7 +51,7 @@
     "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
-    "runtime": "runsc: the agent container — the BriefAgent's code — and the MCP server installer are created with docker --runtime runsc, the run network's aliases pinned into the agent's /etc/hosts; the runner's own llm-proxy, gateway and probe, and what the gateway launches itself (the tools server, the declared MCP servers), take the daemon's default runtime",
+    "runtime": "runsc: the run's containers are created with docker --runtime runsc where it holds; the receipt's runtime line names each container class, and each that takes the daemon's default and why",
     "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN"
   },
   "gateway": {

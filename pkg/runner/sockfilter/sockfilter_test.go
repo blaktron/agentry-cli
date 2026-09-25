@@ -105,7 +105,7 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"Id": id + "-full", "Image": image, "Config": map[string]any{"Labels": labelsFor(id, run)},
-			"NetworkSettings": map[string]any{"Networks": map[string]any{"agentry-A-relays": map[string]any{"IPAddress": "10.9.0.5"}}},
+			"NetworkSettings": map[string]any{"Networks": map[string]any{"agentry-A-relays": map[string]any{"NetworkID": "id-agentry-A-relays", "IPAddress": "10.9.0.5"}}},
 		})
 		return
 	case strings.HasPrefix(p, "/networks/") && r.Method == http.MethodGet && !gateway:
@@ -704,7 +704,7 @@ func TestTheGatewaysRelayNamesAreTheRunsNetworks(t *testing.T) {
 	}
 	// The relay, read back, is on the network the gateway knows.
 	_, body := g.do(t, "GET", "/containers/runa-relay/json", nil)
-	if !strings.Contains(body, `"`+intNet+`"`) || strings.Contains(body, "agentry-A-relays") {
+	if !strings.Contains(body, `"`+intNet+`"`) || strings.Contains(body, `"agentry-A-relays"`) {
 		t.Errorf("relay inspect shows %s", body)
 	}
 	// Another run's relay networks, by their own names.
@@ -712,6 +712,81 @@ func TestTheGatewaysRelayNamesAreTheRunsNetworks(t *testing.T) {
 	g.refused(t, "another run's way out", "POST", "/networks/agentry-B-relays-out/connect", map[string]any{"Container": "runa-relay"}, "not this run's")
 	// The run's own may not be removed by the gateway.
 	g.refused(t, "removing the run's relay network", "DELETE", "/networks/"+intNet, nil, "not the gateway's to remove")
+}
+
+// Under the policy's runtime (agentry-cli#221): every container the
+// gateway makes but a relay runs under it, the gateway choosing none; a
+// sandboxed server cannot reach docker's DNS, so each of its links becomes
+// an /etc/hosts entry for the linked relay's address on the network they
+// share, in either form docker takes a link; the relay itself stays on
+// the daemon's default, since it resolves its declared host by that DNS.
+func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
+	relays := func(c *Config) {
+		c.SharedNetworks = []string{"agentry-A-relays"}
+		c.EgressNetworks = map[string][]string{"agentry-A-relays-out": {relayPin}}
+		c.NetworkNames = map[string]string{intNet: "agentry-A-relays", ext: "agentry-A-relays-out"}
+	}
+	g := newRig(t, Limits{}, relays, func(c *Config) { c.Runtime = "runsc" })
+	created := func(name string, doc map[string]any) map[string]any {
+		t.Helper()
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("%s: %d %s", name, code, body)
+		}
+		hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+		return hc
+	}
+	hc := created("the tools server", map[string]any{"HostConfig": map[string]any{"NetworkMode": "none"}})
+	if hc["Runtime"] != "runsc" || hc["ExtraHosts"] != nil {
+		t.Errorf("tools server forwarded with runtime %v, hosts %v; want runsc and none", hc["Runtime"], hc["ExtraHosts"])
+	}
+	for _, c := range []struct {
+		name string
+		doc  map[string]any
+	}{
+		{"a server linked in HostConfig", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev"}}}},
+		{"a server linked on its endpoint", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{"Links": []string{"/runa-relay:/container/api.osv.dev"}}}}}},
+		{"a server linked in both, as docker's CLI writes it", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev"}},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{"Links": []string{"runa-relay:api.osv.dev"}}}}}},
+	} {
+		hc := created(c.name, c.doc)
+		hosts, _ := hc["ExtraHosts"].([]any)
+		if hc["Runtime"] != "runsc" || len(hosts) != 1 || hosts[0] != "api.osv.dev:10.9.0.5" {
+			t.Errorf("%s: runtime %v, hosts %v; want runsc and api.osv.dev at the relay's address", c.name, hc["Runtime"], hc["ExtraHosts"])
+		}
+	}
+	hc = created("the relay", map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}})
+	if hc["Runtime"] != nil || hc["ExtraHosts"] != nil {
+		t.Errorf("relay forwarded with runtime %v, hosts %v; want the daemon's default and its DNS", hc["Runtime"], hc["ExtraHosts"])
+	}
+	g.refused(t, "the gateway naming the run's own runtime", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"Runtime": "runsc"}}, "not the gateway's to choose")
+	g.refused(t, "a link across networks", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": "runa-net", "Links": []string{"runa-relay:api.osv.dev"}}}, "shares no network")
+	g.refused(t, "the gateway naming a runtime in lower case", "POST", "/containers/create", `{"Image":"mcp/server","hostconfig":{"runtime":"runc"}}`, "not the gateway's to choose")
+	for _, form := range []struct {
+		name string
+		doc  func(target string) map[string]any
+	}{
+		{"in HostConfig", func(target string) map[string]any {
+			return map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{target + ":api.osv.dev"}}}
+		}},
+		{"on the endpoint", func(target string) map[string]any {
+			return map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet},
+				"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{"Links": []string{target + ":api.osv.dev"}}}}}
+		}},
+	} {
+		g.refused(t, "a link to another run's container "+form.name, "POST", "/containers/create", form.doc("runb-relay"), "not this run's")
+		g.refused(t, "a link to the runner's own agent "+form.name, "POST", "/containers/create", form.doc("runa-agent"), "not this run's")
+	}
+	g.refused(t, "a link alias that is not a host name", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev 10.0.0.1"}}}, "not a host name")
+
+	plain := newRig(t, Limits{}, relays)
+	if code, body := plain.do(t, "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev"}}}); code != http.StatusCreated {
+		t.Fatalf("a server without a runtime: %d %s", code, body)
+	}
+	hc, _ = plain.body("POST /containers/create")["HostConfig"].(map[string]any)
+	if hc["Runtime"] != nil || hc["ExtraHosts"] != nil {
+		t.Errorf("without a runtime the server was given runtime %v, hosts %v", hc["Runtime"], hc["ExtraHosts"])
+	}
 }
 
 func TestExecsAreTheRunsOwnAndUnprivileged(t *testing.T) {

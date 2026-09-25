@@ -10,13 +10,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
-	"github.com/blaktron/agentry-cli/pkg/runner/spec"
-	"github.com/blaktron/agentry-cli/runnerimage"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -94,40 +95,6 @@ func TestRunnerCLIVersionFeedsImageTag(t *testing.T) {
 
 // TestLocalTreeDigest: the digest is the cache key for --local runs, so it
 // must be deterministic, content-sensitive, and blind to .git noise.
-func TestLocalTreeDigest(t *testing.T) {
-	dir := writeTree(t, map[string]string{
-		"agent.yaml": "x", "sub/a.md": "aa",
-		".git/HEAD":              "ref: refs/heads/main",
-		"agentry-out/old/r.json": "{}",
-	})
-	d1, err := localTreeDigest(dir)
-	if err != nil || !strings.HasPrefix(d1, "sha256:") {
-		t.Fatalf("digest = %q, %v", d1, err)
-	}
-	d2, _ := localTreeDigest(dir)
-	if d1 != d2 {
-		t.Error("digest is not deterministic")
-	}
-
-	// .git and agentry-out do not participate: a fetch or an old run must
-	// not invalidate the install cache.
-	if err := os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("changed"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	d3, _ := localTreeDigest(dir)
-	if d3 != d1 {
-		t.Error(".git content changed the tree digest")
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, "sub", "a.md"), []byte("bb"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	d4, _ := localTreeDigest(dir)
-	if d4 == d1 {
-		t.Error("package content change did not change the digest")
-	}
-}
-
 // The workspace copy's skip rule (.git, agentry-out) is installdir.Write's,
 // tested in pkg/runner/installdir.
 
@@ -355,20 +322,6 @@ publish:
 	}
 	if strings.Contains(errOut.String(), "local package") {
 		t.Errorf("cache hit re-announced the install: %q", errOut.String())
-	}
-}
-
-func TestManifestFromWorkspace(t *testing.T) {
-	m, err := manifestFromWorkspace(repoPath(t, "testdata/runner/pure-text"))
-	if err != nil || m.Name != "pure-text" {
-		t.Fatalf("manifestFromWorkspace = %+v, %v", m, err)
-	}
-	if _, err := manifestFromWorkspace(t.TempDir()); err == nil || !strings.Contains(err.Error(), "read agent.yaml") {
-		t.Errorf("missing agent.yaml: %v", err)
-	}
-	bad := writeTree(t, map[string]string{"agent.yaml": ":\nnot yaml: ["})
-	if _, err := manifestFromWorkspace(bad); err == nil || !strings.Contains(err.Error(), "parse agent.yaml") {
-		t.Errorf("unparseable agent.yaml: %v", err)
 	}
 }
 

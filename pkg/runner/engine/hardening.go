@@ -58,6 +58,16 @@ func gatewayLimitArgs(lim policy.Limits) []string {
 	return []string{"--cpus", strconv.Itoa(lim.CPUs), "--memory", lim.Memory}
 }
 
+// enforcedAtStart is the receipt's enforcement map as a run or a session
+// opens: the plan's lines, the exec packages' versions, the containers'
+// posture, and the run's own knowledge and decode lines. One function for
+// both paths, so a line added to one is on the other.
+func enforcedAtStart(p Params) map[string]string {
+	e := withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p)
+	e = withKnowledge(e, p.Knowledge, p.Plan.Capabilities.ExecCommands)
+	return withDecoded(e, p.Decoded)
+}
+
 // withContainers adds the receipt's line for the posture above, naming
 // what this run's containers were given and the two exceptions.
 func withContainers(enforced map[string]string, p Params) map[string]string {
@@ -95,5 +105,54 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	}
 	line += "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them"
 	out["containers"] = line
+	if p.Plan.Runtime() != "" {
+		out["runtime"] = runtimeLine(p)
+	}
 	return out
+}
+
+// runtimeLine is the receipt's account of the policy's runtime (DR-23,
+// agentry-cli#221): which of the run's container classes it holds, and why
+// each other one takes the daemon's default. It is written at run time,
+// not read from the plan, because two of its facts are the run's: whether
+// the filter that gives the gateway's containers the runtime runs here,
+// and what the run starts.
+func runtimeLine(p Params) string {
+	rt := p.Plan.Runtime()
+	servers := len(p.Plan.MCPServers) > 0
+	var under []string
+	if p.Plan.Harness.Host == nil {
+		under = append(under, "the agent container (the BriefAgent's code)")
+		if s := p.Plan.Harness.Session; p.Plan.Mode == "interactive" && s != nil && s.StoreOwner != "" {
+			under = append(under, "the session store's one-shot")
+		}
+	}
+	if servers {
+		under = append(under, "the MCP server installer")
+	}
+	under = append(under, "the gateway's health probe")
+	line := rt + ": created with docker --runtime " + rt + ": " + strings.Join(under, ", ") +
+		" (each finds the containers it talks to through /etc/hosts, since a sandboxed network stack does not reach docker's embedded DNS)"
+	launched := "the tools server"
+	if servers {
+		launched += " and the declared MCP servers"
+	}
+	if filterSupported {
+		line += "; " + launched + ", which the gateway launches, are given " + rt + " by the run's docker filter" +
+			" (a server's relay links pinned into its /etc/hosts at the relay's address)"
+	} else {
+		line += "; " + launched + ", which the gateway launches, take the daemon's default: the docker filter that sets their runtime runs on Linux only (agentry-cli#322)"
+	}
+	if p.Plan.Harness.Host != nil {
+		line += "; the harness is a host process, under no container runtime at all"
+	}
+	gaps := []string{"the llm-proxy (it resolves the model endpoint through docker's embedded DNS, which " + rt + " does not reach)"}
+	if servers {
+		gaps = append(gaps, "the MCP server install proxy (it resolves the registry the same way)")
+	}
+	if relaysNeeded(p.Plan.MCPServers) {
+		gaps = append(gaps, "the relays (each resolves its declared host the same way)")
+	}
+	gaps = append(gaps, "the gateway (it reaches the daemon through a host Unix socket, which "+rt+" does not open)")
+	return line + "; on the daemon's default runtime, as measured under " + rt + " (DR-23): " + strings.Join(gaps, ", ")
 }

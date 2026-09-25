@@ -26,6 +26,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -94,6 +95,9 @@ type Params struct {
 	// channel and verified there, the three knowledge tools granted and the
 	// receipt's knowledge line written only when there is one (DR-38).
 	Knowledge []AttachedPack
+	// Decoded, when set, is the decode step the caller ran on the inputs
+	// before this run (pkg/runner/decode); the receipt names it.
+	Decoded *decode.Result
 	// Intake holds the answers to the manifest's up-front questions (plan
 	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
 	// secret answers already merged into SecretOverrides by the caller.
@@ -173,7 +177,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: withKnowledge(withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p), p.Knowledge, p.Plan.Capabilities.ExecCommands),
+		CapabilitiesEnforced: enforcedAtStart(p),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,
@@ -465,7 +469,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// teardown, so it closes after the gateway has stopped and reaped the
 	// containers it launched through it.
 	if filterSupported {
-		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan.MCPServers, p.RunnerHome)
+		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome)
 		if err != nil {
 			return err
 		}
@@ -509,6 +513,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Labels:     labels,
 		AutoRemove: true,
 	}
+	// Under the policy's runtime like the agent and, for the same reason,
+	// given the gateway's address rather than its name (agentry-cli#221).
+	if probeSpec.ExtraHosts, err = sandboxHosts(ctx, d, p.Plan, runID); err != nil {
+		return Classify(ExitGateway, err)
+	}
+	probeSpec.Runtime = p.Plan.Runtime()
 	probeSpec = readOnlyRoot(hardened(probeSpec, p.limits()), "/tmp")
 	code, perr := d.RunForeground(ctx, probeSpec, nil, io.Discard, p.Stderr)
 	if perr != nil || code != 0 {
@@ -943,11 +953,12 @@ func (c *eventCollector) usage() receipt.Usage {
 }
 
 // sandboxHosts pins the run network's two aliases — the gateway and the
-// llm-proxy — into the agent container's /etc/hosts when the plan names a
-// runtime (DR-23): a sandboxed runtime's own network stack does not reach
-// docker's embedded DNS at 127.0.0.11, and the agent's whole world is those
-// two names. Without a runtime nothing is pinned and the run is the run it
-// was. Both containers are up by the time the agent starts (startInfra).
+// llm-proxy — into the /etc/hosts of a run container under the plan's
+// runtime, the agent and the gateway's health probe (DR-23,
+// agentry-cli#221): a sandboxed runtime's own network stack does not reach
+// docker's embedded DNS at 127.0.0.11, and those two names are the whole
+// world of both. Without a runtime nothing is pinned and the run is the
+// run it was. Both containers are up before either starts (startInfra).
 func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID string) ([]string, error) {
 	if plan.Runtime() == "" {
 		return nil, nil

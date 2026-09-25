@@ -102,8 +102,8 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `run` · `uninstall` · `profiles` · `verify` · `search` ·
-`info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
+`setup` · `doctor` · `run` · `knowledge` · `uninstall` · `profiles` · `verify` ·
+`search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
 and, where the registry has subscription tiers (its `/meta` lists the
@@ -119,6 +119,32 @@ flag the reading and writing commands print one JSON document on stdout
 first. Server-side end-to-end coverage
 lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
 CLI against a live registry.
+
+### Knowledge packs: `knowledge create` and `knowledge add`
+
+`agentry knowledge create NAME --file PATH…` makes a knowledge pack in
+`--dir` (default `./NAME`), and `agentry knowledge add DIR --file PATH…`
+extends one. The built-in **Knowledge Creator** does the work: a package
+this binary embeds, run with the attestation state `builtin`, never a
+release anyone installs.
+
+1. The runner decodes the documents first, in an image holding only
+   `pdftotext`, `pandoc` and `tesseract`, with no network and every
+   capability dropped. PDF goes through `pdftotext`; DOCX, ODT, EPUB and
+   RTF through `pandoc`; PNG, JPEG, TIFF and WebP through `tesseract`'s OCR;
+   and PPTX and XLSX through the runner's own reader. Markdown, text, HTML,
+   CSV, JSON, YAML and source files pass as they are.
+2. The Creator compiles their text into cited pages, against the model your
+   runner policy names. It runs no command itself.
+3. The build applies what it wrote. The documents and their decoded text are
+   kept in the pack's `sources/`.
+
+A local build costs no credits, and nothing it reads or writes is scanned:
+the command says so before it starts, and the pack records `not scanned`.
+`--timeout`, `--max-turns` and `--max-cost` bound the run. A run stopped by
+one keeps the pages it wrote, and an `add` with the same documents
+continues. With `--json` the result is one document on stdout. Attach a
+pack to a run with `agentry run <ref> --knowledge DIR`.
 
 ### Signing keys and `verify`
 

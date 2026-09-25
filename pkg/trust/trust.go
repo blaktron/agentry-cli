@@ -71,6 +71,13 @@ const (
 	// its own outcome — not unsigned (a registry that signs nothing), and
 	// not a scan with a known gap.
 	StateUnscanned = "unscanned"
+	// StateBuiltin is a package this binary embeds, run as part of the
+	// application (plan knowledge.md §4.2, D6): not a release, so it has
+	// no registry attestation and needs none, and it is never verified —
+	// a client shows it as the application's own, never as a verified
+	// release. Only localrun's Materialize of an embedded package sets it,
+	// in memory; no record on disk carries it into a run.
+	StateBuiltin = "builtin"
 )
 
 // Unscanned is the result for a version the registry says was admitted

@@ -14,12 +14,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/term"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/pathguard"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
@@ -823,7 +825,7 @@ func manifestFromInstallArchive(staging string, fromResolve *manifest.Manifest, 
 	if _, err := os.Stat(filepath.Join(staging, "agent.yaml")); errors.Is(err, os.ErrNotExist) {
 		return fromResolve, nil
 	}
-	m, err := manifestFromWorkspace(staging)
+	m, err := localrun.ManifestFrom(staging)
 	if err != nil {
 		return nil, fmt.Errorf("the archive's agent.yaml: %w — refusing to install", err)
 	}

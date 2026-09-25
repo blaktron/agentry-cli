@@ -77,7 +77,8 @@ func filterSocketPath(rd *runDirs, runID, runnerHome string) (string, error) {
 // gateway mounts. The bind roots are the gateway's own resolved lists
 // (MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS): the filter
 // enforces for a compromised gateway what the gateway enforces for itself.
-func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, servers []spec.MCPServerSpec, runnerHome string) (*sockfilter.Filter, string, error) {
+func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome string) (*sockfilter.Filter, string, error) {
+	servers := plan.MCPServers
 	sock, err := filterSocketPath(rd, runID, runnerHome)
 	if err != nil {
 		return nil, "", err
@@ -130,7 +131,8 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
 			Pids:        int64(lim.Pids),
 		},
-		Log: logf,
+		Runtime: plan.Runtime(),
+		Log:     logf,
 	})
 	if err != nil {
 		closeDaemonFilter(rd)
