@@ -200,13 +200,13 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return err
 	}
 
-	policyPath := opts.policyPath
-	if policyPath == "" {
-		if policyPath, err = policy.DefaultPath(); err != nil {
-			return err
-		}
+	// The receipt names the policy file and how it was chosen, beside its
+	// digest (agentry-cli#152).
+	policyFile, err := policy.Resolve(opts.policyPath)
+	if err != nil {
+		return err
 	}
-	pol, polSHA, err := policy.EnsureDefault(policyPath)
+	pol, polSHA, err := policy.EnsureDefault(policyFile.Path)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
@@ -451,6 +451,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		Intake:          answers,
 		Adapter:         ad,
 		Policy:          pol,
+		PolicyFile:      &policyFile,
 		SecretOverrides: overrides,
 		ServersDir:      serversDir,
 		Budgets:         budgets,

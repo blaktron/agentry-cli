@@ -960,3 +960,66 @@ func TestRunRefusesAPlanFileChangedAfterVerification(t *testing.T) {
 		})
 	}
 }
+
+// The envelope names the operator policy file the run enforced, how its
+// path was chosen, and the digest the plan recorded for it
+// (agentry-cli#152): a run under --policy and a run under a relocated
+// runner home each say so, and a caller that names no file leaves the
+// block out, so older readers see nothing new.
+func TestEnvelopeNamesThePolicyFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag string
+		home bool
+		want string
+	}{
+		{"flag", "custom-policy.yaml", false, receipt.PolicySourceFlag},
+		{"env", "", true, receipt.PolicySourceEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv(policy.HomeEnv, "")
+			if tc.home {
+				t.Setenv(policy.HomeEnv, t.TempDir())
+			}
+			file, err := policy.Resolve(tc.flag)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := file.Path
+			p, f := fixture(t)
+			happyFake(f)
+			p.PolicyFile = &file
+			env, err := Run(context.Background(), f, p)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if env.Policy == nil || env.Policy.Path != path || env.Policy.Source != tc.want || env.Policy.SHA256 != p.Plan.PolicySHA256 || env.Policy.SHA256 == "" {
+				t.Fatalf("policy = %+v, want path %s source %s sha %s", env.Policy, path, tc.want, p.Plan.PolicySHA256)
+			}
+			raw, err := env.Marshal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire struct {
+				Policy map[string]string `json:"policy"`
+			}
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire.Policy["path"] != path || wire.Policy["source"] != tc.want || wire.Policy["sha256"] != p.Plan.PolicySHA256 {
+				t.Fatalf("envelope json policy = %v", wire.Policy)
+			}
+		})
+	}
+	p, f := fixture(t)
+	happyFake(f)
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	raw, _ := env.Marshal()
+	if env.Policy != nil || strings.Contains(string(raw), `"policy":`) {
+		t.Fatalf("a caller that names no policy file got a policy block: %s", raw)
+	}
+}
