@@ -31,6 +31,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/pathguard"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -54,6 +55,11 @@ type installOpts struct {
 	// the directory, as JSON with --json — so a client can show the person
 	// exactly what an install would do and confirm it against a digest.
 	plan bool
+	// repair lays the release down again in place of an installed copy
+	// that changed after it was installed (agentry-cli#326), which an
+	// install and a run otherwise refuse. The release is fetched and
+	// verified as every install's is.
+	repair bool
 }
 
 // providerTargets maps the per-provider install entry points
@@ -126,7 +132,12 @@ func newInstallCmd() *cobra.Command {
 			"Reinstall: a directory the CLI chose (the per-target defaults above) is\n" +
 			"CLEARED first, so files dropped by an older version never linger. A\n" +
 			"directory you named with --dir is MERGED into, never cleared — it is your\n" +
-			"directory and may hold things this command did not put there.",
+			"directory and may hold things this command did not put there.\n\n" +
+			"Integrity: a runner install is recorded, file by file, under the runner\n" +
+			"home's integrity key, and `agentry run` refuses one whose files changed\n" +
+			"after it was installed (exit 10), naming them. So does an install of the\n" +
+			"same release over it: --repair lays it down again, fetched and verified\n" +
+			"afresh, in place of the changed copy.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInstall(cmd, args[0], opts)
@@ -140,6 +151,8 @@ func newInstallCmd() *cobra.Command {
 		"install a release the registry has published no attestation for")
 	cmd.Flags().BoolVar(&opts.allowUnscanned, "allow-unscanned", false,
 		"install a release the registry admitted without a scan (no findings, no report, no attestation)")
+	cmd.Flags().BoolVar(&opts.repair, "repair", false,
+		"runner target: lay the release down again, fetched and verified afresh, in place of an installed copy whose files changed after it was installed (which a run refuses with exit 10)")
 	cmd.Flags().BoolVar(&opts.plan, "plan", false,
 		"preview only: resolve, download and verify, then show the contract, its diff and where it would go; writes nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	return cmd
@@ -212,6 +225,9 @@ type installResult struct {
 	ContractDigest string          `json:"contractDigest"`
 	// Recorded is true when the shared install state took the record.
 	Recorded bool `json:"recorded"`
+	// Repaired is true when --repair laid the release down in place of an
+	// installed copy.
+	Repaired bool `json:"repaired,omitempty"`
 }
 
 // contractJSON renders capabilities as canonical JSON with its sha256: the
@@ -382,6 +398,18 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		key = installdir.ConsentKey(home, res.Namespace, m.Name)
 		paths = installPaths{dest: key.Dir, managed: true}
 		releaseDir := installdir.ReleaseDir(home, res.Namespace, m.Name, res.Version, computed)
+		// The same release installed here and changed since is refused
+		// before anything is asked or written, as a run refuses it; the
+		// person's --repair lays it down again instead (agentry-cli#326).
+		var changed *installdir.ChangedError
+		if _, ierr := installdir.Inspect(releaseDir, computed); errors.As(ierr, &changed) && !opts.repair {
+			if !opts.plan {
+				return engine.Classify(engine.ExitVerify, ierr)
+			}
+			if attErr == nil {
+				attErr = ierr
+			}
+		}
 		// installdir.Install is the lay-down the desktop calls too, in the
 		// style the runner home's policy implies; its warning for a policy
 		// that cannot be read is said here. The cache holds the verdict
@@ -397,7 +425,19 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 			if warning != "" {
 				_, _ = fmt.Fprintf(errOut, "warning: %s\n", warning)
 			}
+			if opts.repair {
+				if err := installdir.Repair(releaseDir, staging, m, meta, style); err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintf(out, "repaired %s/%s@%s: laid down again in the runner home, fetched and verified afresh: %s (export: %s)\n", res.Namespace, m.Name, res.Version, releaseDir, style)
+				return nil
+			}
 			if err := installdir.Install(releaseDir, staging, m, meta, style); err != nil {
+				var changed *installdir.ChangedError
+				if errors.As(err, &changed) {
+					// Changed between the check above and now.
+					return engine.Classify(engine.ExitVerify, err)
+				}
 				return err
 			}
 			_, _ = fmt.Fprintf(out, "installed %s/%s@%s into the runner home: %s (export: %s)\n", res.Namespace, m.Name, res.Version, releaseDir, style)
@@ -405,6 +445,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		}
 		after = func() error { return removeOtherVersions(key.Dir, releaseDir) }
 	case manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD:
+		if opts.repair {
+			return fmt.Errorf("--repair is for the runner target, whose installs are recorded under the runner home's integrity key; a %s install is reinstalled by installing it again", target)
+		}
 		warnUndeclaredTarget(errOut, m, target)
 		paths, err = resolveInstallPaths(target, opts.dir, m.Name)
 		if err != nil {
@@ -517,6 +560,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 			Version: res.Version, Digest: computed, Target: target, Dir: paths.dest, Managed: paths.managed,
 			Attestation: string(att.State), Signed: att.State == trust.StateVerified,
 			Contract: contract, ContractDigest: cdigest, Recorded: recorded,
+			Repaired: opts.repair && target == installdir.Target,
 		})
 	}
 	return nil

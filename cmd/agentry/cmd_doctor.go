@@ -410,8 +410,14 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		// registry ref (cmd_run.go), so its cached plans are checkable too
 		// (agentry-cli#60).
 		installDir := installdir.ReleaseDir(home, m.Namespace, m.Name, m.Version, digest)
-		if _, ok := installdir.Load(installDir, digest); !ok {
-			rep.warn("install", "not installed yet — `agentry run --local %s --prepare` verifies and installs it", local)
+		if _, ierr := installdir.Inspect(installDir, digest); ierr != nil {
+			if errors.Is(ierr, installdir.ErrNotInstalled) {
+				rep.warn("install", "not installed yet — `agentry run --local %s --prepare` verifies and installs it", local)
+			} else {
+				// A local directory is its own source: a cached copy that
+				// differs is replaced from it by the next run, never refused.
+				rep.warn("install", "the cached copy at %s is not what was laid down from %s (%v) — the next run lays it down again", installDir, local, ierr)
+			}
 			return m, meta, ""
 		}
 		rep.ok("install", "verified install %s", installDir)
@@ -438,9 +444,21 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		rep.ok("resolve", "%s/%s@%s (%s)", res.Namespace, res.Name, res.Version, res.Digest)
 	}
 	installDir := installdir.ReleaseDir(home, res.Namespace, res.Name, res.Version, res.Digest)
-	meta, ok := installdir.Load(installDir, res.Digest)
-	if !ok {
+	meta, ierr := installdir.Inspect(installDir, res.Digest)
+	var changed *installdir.ChangedError
+	switch {
+	case errors.As(ierr, &changed):
+		// What a run refuses (agentry-cli#326), said here first.
+		rep.fail("install", "%v", ierr)
+		return nil, nil, ""
+	case errors.Is(ierr, installdir.ErrNotInstalled):
 		rep.warn("install", "not installed yet — `agentry run %s --prepare` downloads, verifies and installs it", ref)
+		return nil, nil, ""
+	case errors.Is(ierr, installdir.ErrUnsealed):
+		rep.warn("install", "%s has no integrity record from this runner home (laid down before agentry-cli#326) — the next run fetches and verifies it again", installDir)
+		return nil, nil, ""
+	case ierr != nil:
+		rep.fail("install", "%s: %v", installDir, ierr)
 		return nil, nil, ""
 	}
 	m, err := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))

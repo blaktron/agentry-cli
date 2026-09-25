@@ -247,15 +247,26 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		matOpts.allowUnsigned = true
 		matOpts.allowUnscanned = true
 	}
+	// integrity is what --plan says of the installed tree in the real
+	// home: the preview materializes into a temp home, so the check a run
+	// makes first is made here against the install a run would use.
+	var integrity installIntegrity
 	if opts.local != "" {
 		if opts.plan && !opts.allowUnsigned {
 			planRefusals = append(planRefusals, runPlanRefusal{Kind: refusalAttestation,
 				Message: "a local workspace has no attestation; a run needs --allow-unsigned", Lift: receipt.ConsentAllowUnsigned})
 		}
+		integrity = integrityLocal
 		meta, installDir, err = materializeLocal(cmd, opts.local, home, matOpts.allowUnsigned)
 	} else {
 		meta, installDir, err = materializeRegistry(cmd, ref, home, matOpts)
 		if err == nil && opts.plan {
+			var r *runPlanRefusal
+			integrity, r = installedIntegrity(consentHome, meta)
+			if r != nil {
+				// A run meets it before the attestation gate.
+				planRefusals = append(planRefusals, *r)
+			}
 			if r := attestationRefusal(meta.Attestation, opts.allowUnsigned, opts.allowUnscanned); r != "" {
 				planRefusals = append(planRefusals, runPlanRefusal{Kind: refusalAttestation, Message: r, Lift: attestationLift(meta.Attestation)})
 			}
@@ -370,7 +381,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	if opts.plan {
-		return printRunPlan(cmd, plan, meta, m, mode, consent, planRefusals)
+		return printRunPlan(cmd, plan, meta, m, mode, consent, integrity, planRefusals)
 	}
 	if opts.dryRun {
 		return printDryRun(cmd, plan, planDir)
@@ -671,7 +682,22 @@ func printFailure(ctx context.Context, cmd *cobra.Command, p *runProgress, err e
 	if m := p.meta; m != nil {
 		env.Ref, env.Digest, env.Attestation = m.Ref, m.Digest, m.Attestation
 	}
+	var changed *installdir.ChangedError
+	if errors.As(err, &changed) {
+		env.InstalledChanges = installedChanges(changed)
+		if env.Ref == "" {
+			env.Ref = changed.Ref
+		}
+	}
 	printEnvelope(cmd, env, "json")
+}
+
+// installedChanges is a changed install's refusal in the envelope's shape.
+func installedChanges(e *installdir.ChangedError) *receipt.InstalledChanges {
+	return &receipt.InstalledChanges{
+		Changed: e.Changed, Added: e.Added, Removed: e.Removed, Record: e.Record,
+		Repair: strings.Trim(e.RepairCommand(), "`"),
+	}
 }
 
 // printEnvelope writes the run result per --output-format. Text mode
@@ -804,6 +830,10 @@ type runPlanOutput struct {
 	Attestation string `json:"attestation"`
 	KeyID       string `json:"keyId,omitempty"`
 	Signed      bool   `json:"signed"`
+	// Integrity is what a run would find of the release installed in the
+	// runner home (agentry-cli#326): installIntegrity's values. A changed
+	// install is also the first of Refusals.
+	Integrity installIntegrity `json:"integrity"`
 	runPlanConsent
 	// Refusals is every refusal the gates before compile would meet, in
 	// the order a run meets them: the attestation, then a declared server
@@ -830,9 +860,67 @@ type runPlanRefusal struct {
 type refusalKind string
 
 const (
+	// refusalInstalledChanged: the installed release changed after it was
+	// laid down, or could not be read to check it. No flag lifts it; the
+	// message names `agentry install --repair`.
+	refusalInstalledChanged refusalKind = "installed_changed"
 	refusalAttestation      refusalKind = "attestation"
 	refusalVulnerableServer refusalKind = "vulnerable_server"
 )
+
+// installIntegrity is what a run would find of the release installed in
+// the runner home, checked against its integrity record (agentry-cli#326).
+type installIntegrity string
+
+const (
+	// integrityUnchanged: installed, and its files are what was laid down.
+	integrityUnchanged installIntegrity = "unchanged"
+	// integrityChanged: installed and changed since; a run refuses it.
+	integrityChanged installIntegrity = "changed"
+	// integrityUnsealed: installed with no integrity record from this
+	// runner home (laid down before records existed); a run fetches and
+	// verifies the release again and lays it down in its place.
+	integrityUnsealed installIntegrity = "unsealed"
+	// integrityNotInstalled: a run fetches, verifies and lays it down.
+	integrityNotInstalled installIntegrity = "not-installed"
+	// integrityLocal: a --local directory is not checked. It is its own
+	// source, with no signed release to be faithful to; its cached copy is
+	// replaced from it whenever they differ. The only exemption.
+	integrityLocal installIntegrity = "not-checked-local"
+	// integrityUnreadable: the installed tree could not be read to check
+	// it; a run fails.
+	integrityUnreadable installIntegrity = "unreadable"
+)
+
+// integrityLines is what the text preview says of each.
+var integrityLines = map[installIntegrity]string{
+	integrityUnchanged:    "unchanged since it was installed",
+	integrityChanged:      "changed since it was installed — a run refuses it",
+	integrityUnsealed:     "installed without an integrity record from this runner home — a run fetches and verifies it again first",
+	integrityNotInstalled: "not installed — a run fetches and verifies it",
+	integrityLocal:        "not checked — a local directory is its own source",
+	integrityUnreadable:   "could not be read to check it — a run fails",
+}
+
+// installedIntegrity checks the release a run would use in home and says
+// what a run would find, with the refusal a run would meet.
+func installedIntegrity(home string, meta *installdir.Meta) (installIntegrity, *runPlanRefusal) {
+	dir := installdir.ReleaseDir(home, meta.Namespace, meta.Name, meta.Version, meta.Digest)
+	_, err := installdir.Inspect(dir, meta.Digest)
+	var changed *installdir.ChangedError
+	switch {
+	case err == nil:
+		return integrityUnchanged, nil
+	case errors.As(err, &changed):
+		return integrityChanged, &runPlanRefusal{Kind: refusalInstalledChanged, Message: changed.Error()}
+	case errors.Is(err, installdir.ErrUnsealed):
+		return integrityUnsealed, nil
+	case errors.Is(err, installdir.ErrNotInstalled):
+		return integrityNotInstalled, nil
+	default:
+		return integrityUnreadable, &runPlanRefusal{Kind: refusalInstalledChanged, Message: err.Error()}
+	}
+}
 
 // attestationLift is the flag that lifts an attestation refusal: the
 // consent a run would record for it (receipt.Consent*), or none.
@@ -846,7 +934,7 @@ func attestationLift(att receipt.Attestation) string {
 	return ""
 }
 
-func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m *manifest.Manifest, mode manifest.Mode, consent runPlanConsent, refusals []runPlanRefusal) error {
+func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m *manifest.Manifest, mode manifest.Mode, consent runPlanConsent, integrity installIntegrity, refusals []runPlanRefusal) error {
 	b, err := plan.MarshalCanonical()
 	if err != nil {
 		return err
@@ -859,7 +947,7 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 		Ref: meta.Ref, Version: meta.Version, Digest: meta.Digest, Mode: string(mode), Modes: modeStrings(m.SupportedModes()),
 		Summary: m.Summary, Plan: bytes.TrimSpace(b), PlanSha256: planHash(plan), Contract: contract, ContractDigest: cdigest,
 		Attestation: meta.Attestation.State, KeyID: meta.Attestation.KeyID, Signed: meta.Attestation.Verified,
-		runPlanConsent: consent, Refusals: refusals,
+		Integrity: integrity, runPlanConsent: consent, Refusals: refusals,
 	}
 	if len(refusals) > 0 {
 		out.Refusal = refusals[0].Message
@@ -870,6 +958,9 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 	w := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(w, "plan: %s (%s) plan sha256 %s\n", out.Ref, out.Mode, out.PlanSha256)
 	_, _ = fmt.Fprintf(w, "attestation: %s\n", out.Attestation)
+	if line := integrityLines[out.Integrity]; line != "" {
+		_, _ = fmt.Fprintf(w, "installed: %s\n", line)
+	}
 	if out.NeedsConfirmation {
 		_, _ = fmt.Fprintf(w, "would ask: %s\n", out.Reason)
 	}
@@ -1072,7 +1163,24 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	}
 
 	installDir := installdir.ReleaseDir(home, res.Namespace, res.Name, res.Version, res.Digest)
-	if meta, ok := installdir.Load(installDir, res.Digest); ok {
+	// The installed tree is held to its integrity record before anything
+	// trusts it (agentry-cli#326): a release that changed after it was laid
+	// down is refused here, before anything is fetched; one no record of
+	// this home vouches for (laid down before records existed) is fetched
+	// and verified again below, and replaces what is there.
+	meta, ierr := installdir.Inspect(installDir, res.Digest)
+	var changed *installdir.ChangedError
+	reExport := ""
+	switch {
+	case errors.As(ierr, &changed):
+		return nil, "", engine.Classify(engine.ExitVerify, ierr)
+	case errors.Is(ierr, installdir.ErrUnsealed):
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "installed %s has no integrity record from this runner home (laid down before agentry-cli#326, or under another key) — fetching and verifying it again\n", meta.Ref)
+		reExport = meta.Export
+	case ierr != nil && !errors.Is(ierr, installdir.ErrNotInstalled):
+		return nil, "", engine.Classify(engine.ExitCLI, ierr)
+	}
+	if ierr == nil {
 		// The registry's word today outranks the cache's memory: an
 		// install cached as unsigned by a CLI that did not know the
 		// unscanned state, against a registry that now says the version
@@ -1125,7 +1233,7 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 		return nil, "", err
 	}
 
-	meta := &installdir.Meta{
+	meta = &installdir.Meta{
 		Ref:       fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version),
 		Namespace: res.Namespace, Name: res.Name, Version: res.Version,
 		Digest: res.Digest, Source: "registry", Attestation: att,
@@ -1134,6 +1242,14 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	// run's alone: the next run is asked again.
 	cached := *meta
 	cached.Attestation.Consent = ""
+	if reExport != "" {
+		// An install laid down before records existed keeps the export it
+		// had when it is laid down again.
+		if err := installdir.Install(installDir, staging, m, &cached, reExport); err != nil {
+			return nil, "", err
+		}
+		return meta, installDir, nil
+	}
 	if err := installdir.Write(installDir, staging, &cached); err != nil {
 		return nil, "", err
 	}
@@ -1247,7 +1363,10 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 		return meta, installDir, nil
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "local package %s (%s)\n", meta.Ref, installdir.DigestSuffix(meta.Digest))
-	if err := installdir.Write(installDir, dir, meta); err != nil {
+	// The directory is the truth and there is no signed release to be
+	// faithful to: a cached copy that changed is replaced from it, never
+	// refused (agentry-cli#326's one exemption).
+	if err := installdir.Replace(installDir, dir, meta); err != nil {
 		return nil, "", err
 	}
 	return meta, installDir, nil
