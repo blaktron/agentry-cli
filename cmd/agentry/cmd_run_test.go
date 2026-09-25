@@ -370,6 +370,40 @@ func TestRunWildcardEgressPolicyRefusal(t *testing.T) {
 	wantClassified(t, err, engine.ExitPolicy)
 }
 
+// A run that fails before the engine writes an envelope still prints one
+// under --output-format json: the exit class and the step it stopped in,
+// which is all a hosted run's host may keep (agentry-cli#332). In text
+// mode stdout stays empty.
+func TestRunFailingBeforeTheEngineNamesItsStage(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	for _, c := range []struct {
+		name  string
+		args  []string
+		code  int
+		stage string
+	}{
+		{"an unsigned local release", []string{"--local", repoPath(t, "testdata/runner/pure-text")}, engine.ExitVerify, receipt.StageVerify},
+		{"an undeclared adapter", []string{"--local", repoPath(t, "testdata/runner/pure-text"), "--allow-unsigned", "--adapter", "nonesuch"}, engine.ExitCLI, receipt.StageCompile},
+	} {
+		args := append([]string{"run"}, c.args...)
+		args = append(args, "--policy", policyPath, "--yes", "--output-format", "json")
+		stdout, _, err := runCLI(t, strings.NewReader(""), args...)
+		wantClassified(t, err, c.code)
+		var env receipt.Envelope
+		if jerr := json.Unmarshal([]byte(stdout), &env); jerr != nil {
+			t.Fatalf("%s: stdout is not an envelope: %v\n%s", c.name, jerr, stdout)
+		}
+		if env.Status != "error" || env.ExitCode != c.code || env.ExitClass != receipt.ExitClassName(c.code) || env.Stage != c.stage || env.Error == "" {
+			t.Errorf("%s: envelope status %q code %d class %q stage %q error %q", c.name, env.Status, env.ExitCode, env.ExitClass, env.Stage, env.Error)
+		}
+		textArgs := args[:len(args)-2]
+		if out, _, _ := runCLI(t, strings.NewReader(""), textArgs...); out != "" {
+			t.Errorf("%s: text mode printed %q", c.name, out)
+		}
+	}
+}
+
 func TestRunUnknownAdapterIsCLIError(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)

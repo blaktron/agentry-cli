@@ -195,6 +195,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	if err != nil {
 		return fail(env, redact, Classify(ExitCLI, err))
 	}
+	env.Stage = receipt.StagePrepare
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
 
@@ -231,6 +232,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	redact = rd.newRedactor(p, token, secrets)
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
+	env.Stage = receipt.StageInfra
 	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
 		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 		return fail(env, redact, withRefusals(err, rd))
@@ -243,6 +245,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		return fail(env, redact, err)
 	}
 
+	env.Stage = receipt.StageAgent
 	var outcome agentOutcome
 	if p.Plan.Harness.Host != nil {
 		outcome = runHostHarness(ctx, p, rd, token, rep, task)
@@ -285,6 +288,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		return fail(env, redact, outcome.err)
 	}
 
+	env.Stage = receipt.StageOutput
 	schema, serr := outputSchema(p)
 	if serr != nil {
 		return nil, serr
@@ -297,6 +301,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	env.Result = result
 	env.Status = "ok"
 	env.ExitCode = ExitOK
+	env.Stage = ""
 	if err := env.Write(p.OutDir); err != nil {
 		_, _ = fmt.Fprintf(p.Stderr, "warning: %v\n", err)
 	}

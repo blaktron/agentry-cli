@@ -432,10 +432,15 @@ func TestGatewayProbeFailureClassifiedAndTornDown(t *testing.T) {
 	p, f := fixture(t)
 	f.Foreground = map[string]*dockerx.FakeForeground{"-probe": {ExitCode: 1}}
 	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "bind: cannot listen\n"}
-	_, err := Run(context.Background(), f, p)
+	env, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitGateway {
 		t.Fatalf("want exit %d, got %v", ExitGateway, err)
+	}
+	// The step it stopped in, for a driver that keeps no error text
+	// (agentry-cli#332).
+	if env == nil || env.Stage != receipt.StageInfra {
+		t.Errorf("stage = %v, want %q", env, receipt.StageInfra)
 	}
 	if !strings.Contains(err.Error(), "cannot listen") {
 		t.Errorf("gateway diagnostics missing from error: %v", err)
@@ -455,10 +460,13 @@ func TestAgentNonZeroExitIsHarnessClass(t *testing.T) {
 		"-probe": {ExitCode: 0},
 		"-agent": {Stdout: `{"type":"error","message":{"content":"model refused"}}` + "\n", ExitCode: 3},
 	}
-	_, err := Run(context.Background(), f, p)
+	env, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitHarness {
 		t.Fatalf("want exit %d, got %v", ExitHarness, err)
+	}
+	if env == nil || env.Stage != receipt.StageAgent {
+		t.Errorf("stage = %v, want %q", env, receipt.StageAgent)
 	}
 	if !strings.Contains(err.Error(), "model refused") {
 		t.Errorf("harness error detail missing: %v", err)

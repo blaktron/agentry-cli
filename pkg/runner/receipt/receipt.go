@@ -31,6 +31,12 @@ type Envelope struct {
 	// name, never on the number (agentry-cli#102). Set by Marshal.
 	ExitClass string `json:"exitClass"`
 	Error     string `json:"error,omitempty"`
+	// Stage names the step a failed run stopped in, one word from a fixed
+	// list (the Stage constants), so a driver that may not keep the
+	// error's text (a hosted run's host keeps nothing the run could have
+	// written) can still say where it failed (agentry-cli#332). Empty on
+	// success.
+	Stage string `json:"stage,omitempty"`
 	// RunID names the run (container labels, run dirs).
 	RunID string `json:"runId"`
 	// Ref and Digest identify the exact release that ran.
@@ -201,6 +207,25 @@ func ExitClassName(code int) string {
 	}
 	return fmt.Sprintf("exit-%d", code)
 }
+
+// The steps of a run, in order, as Stage names them: the policy read,
+// the release verified and installed, the plan compiled, the images
+// installed, the declared MCP servers installed, the profile loaded, the
+// intake answered, the run's directories and secrets prepared, the proxy,
+// gateway and probe started, the agent run, and its output checked.
+const (
+	StagePolicy     = "policy"
+	StageVerify     = "verify"
+	StageCompile    = "compile"
+	StageImages     = "images"
+	StageMCPInstall = "mcp-install"
+	StageProfile    = "profile"
+	StageIntake     = "intake"
+	StagePrepare    = "prepare"
+	StageInfra      = "infra"
+	StageAgent      = "agent"
+	StageOutput     = "output"
+)
 
 // Marshal renders the envelope for stdout and result.json, deriving the
 // exit class name and the result file's path from what is already set.
