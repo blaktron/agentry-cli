@@ -1,10 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // The run's decision on the registry's verdict (agentry-cli#58): a known
@@ -31,5 +39,74 @@ func TestVulnerabilityVerdict(t *testing.T) {
 	line, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{bad}, "https://reg.example", false, true)
 	if err != nil || !strings.HasSuffix(line, "; run allowed by policy mcpServers.allowVulnerable") {
 		t.Fatalf("policy override: %q %v", line, err)
+	}
+}
+
+// TestRunPlanReportsEveryRefusal (agentry-cli#126): --plan on a local
+// workspace (no attestation) whose manifest declares a server with a
+// known critical advisory reports both refusals, in the order a run meets
+// them, so a client that lifts the unsigned gate with the person's
+// acceptance has already shown the vulnerability. refusal stays the first
+// for clients that read one.
+func TestRunPlanReportsEveryRefusal(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	fr := newFakeRegistry(t)
+	fr.scans = map[string]string{"@acme/osv-mcp": `{"status":"vulnerable","maxSeverity":"critical",` +
+		`"advisories":[{"id":"GHSA-test-0001","severity":"critical","summary":"s","fixedIn":["1.2.4"]}]}`}
+	prev := serverResolutions
+	serverResolutions = func(context.Context, io.Writer, string, *policy.Policy, *manifest.Manifest) ([]mcpinstall.Resolved, error) {
+		return []mcpinstall.Resolved{{Source: "npm", Package: "@acme/osv-mcp", Version: "1.2.3", ID: "npm-acme-osv-mcp",
+			BinName: "osv-mcp", Integrity: "sha512-test"}}, nil
+	}
+	t.Cleanup(func() { serverResolutions = prev })
+
+	ws := t.TempDir()
+	for name, body := range skillFiles("demo", "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n") {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := func(extra ...string) (runPlanOutput, string) {
+		t.Helper()
+		args := append([]string{"--registry", fr.url(), "--json", "run", "--local", ws, "--plan", "--policy", policyPath}, extra...)
+		stdout, stderr, err := runCLI(t, strings.NewReader(""), args...)
+		if err != nil {
+			t.Fatalf("plan: %v (stderr %q)", err, stderr)
+		}
+		var out runPlanOutput
+		if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+			t.Fatalf("plan is not JSON: %v\n%s", err, stdout)
+		}
+		return out, stdout
+	}
+
+	out, stdout := plan()
+	if len(out.Refusals) != 2 || out.Refusals[0].Kind != refusalAttestation || out.Refusals[1].Kind != refusalVulnerableServer {
+		t.Fatalf("refusals = %+v", out.Refusals)
+	}
+	if !strings.Contains(out.Refusals[0].Message, "--allow-unsigned") || !strings.Contains(out.Refusals[1].Message, "GHSA-test-0001") ||
+		!strings.Contains(out.Refusals[1].Message, "--allow-vulnerable-mcp") {
+		t.Fatalf("refusal messages = %+v", out.Refusals)
+	}
+	if out.Refusals[0].Lift != "--allow-unsigned" || out.Refusals[1].Lift != "--allow-vulnerable-mcp" {
+		t.Fatalf("lifts = %+v", out.Refusals)
+	}
+	if out.Refusal != out.Refusals[0].Message {
+		t.Fatalf("refusal = %q, want the first of refusals", out.Refusal)
+	}
+	if !strings.Contains(stdout, `"kind":"vulnerable_server"`) {
+		t.Fatalf("kind on the wire:\n%s", stdout)
+	}
+
+	// With the unsigned gate lifted, the vulnerability is what remains.
+	out, _ = plan("--allow-unsigned")
+	if len(out.Refusals) != 1 || out.Refusals[0].Kind != refusalVulnerableServer || out.Refusal != out.Refusals[0].Message {
+		t.Fatalf("with --allow-unsigned: %+v / %q", out.Refusals, out.Refusal)
+	}
+	// Both lifted: nothing to refuse, and neither field is on the wire.
+	_, stdout = plan("--allow-unsigned", "--allow-vulnerable-mcp")
+	if strings.Contains(stdout, `"refusal`) {
+		t.Fatalf("a plan with nothing to refuse carries a refusal field:\n%s", stdout)
 	}
 }
