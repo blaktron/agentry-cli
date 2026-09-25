@@ -143,7 +143,9 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		// A plan-time refusal, so `agentry run --plan` and a run meet it
 		// before any container starts (agentry-cli#171).
 		if policy.KeyKind(in.Harness, in.Model) == policy.KeyKindSubscription {
-			return Result{}, &Refusal{Reason: "the model key is " + policy.SubscriptionTokenSentence}
+			// Named by its policy field, then the shared sentence as it
+			// stands (agentry-cli#183).
+			return Result{}, &Refusal{Reason: "apiKeyKind subscription: " + policy.SubscriptionTokenSentence}
 		}
 		keyExpect = anthropicKeyExpectation(in)
 	}

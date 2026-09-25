@@ -5,6 +5,7 @@ package setup
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -539,6 +540,11 @@ func TestConfigureModelRecordsTheCredentialKind(t *testing.T) {
 	said := strings.Join(p.said, "\n")
 	if !strings.Contains(said, "Claude Code only") || strings.Contains(said, "secret") {
 		t.Fatalf("said = %q", p.said)
+	}
+	// The shared sentence is said as it stands, never after a prefix that
+	// breaks its grammar (agentry-cli#183).
+	if !slices.Contains(p.said, policy.SubscriptionTokenSentence) || strings.Contains(said, "the key is an Anthropic") {
+		t.Fatalf("the sentence is not said on its own line: %q", p.said)
 	}
 
 	p = &scriptPrompter{answers: []string{"anthropic", "", "", "sk-ant-api03-secret"}, confirm: true}
