@@ -186,6 +186,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Policy: policyRecord(p),
 		Result: receipt.TextResult(""),
 		OutDir: p.OutDir,
+		Stage:  receipt.StagePrepare,
 	}
 	// The run's redactor exists once the token and the secrets are known
 	// (rd.redact, from then on); every failure before that has nothing to
@@ -195,7 +196,6 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	if err != nil {
 		return fail(env, redact, Classify(ExitCLI, err))
 	}
-	env.Stage = receipt.StagePrepare
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
 
@@ -291,7 +291,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	env.Stage = receipt.StageOutput
 	schema, serr := outputSchema(p)
 	if serr != nil {
-		return nil, serr
+		env.Result = receipt.TextResult(outcome.lastText)
+		return fail(env, redact, serr)
 	}
 	result, rerr := finalResult(p.Plan.Harness.ResultKind, outcome.lastText, schema)
 	if rerr != nil {

@@ -34,7 +34,9 @@ type Envelope struct {
 	// Stage names the step a failed run stopped in, one word from a fixed
 	// list (the Stage constants), so a driver that may not keep the
 	// error's text (a hosted run's host keeps nothing the run could have
-	// written) can still say where it failed (agentry-cli#332). Empty on
+	// written) can still say where it failed (agentry-cli#332). It says
+	// where; ExitClass says what: a policy refusal while the declared MCP
+	// servers are checked is class policy in stage mcp-servers. Empty on
 	// success.
 	Stage string `json:"stage,omitempty"`
 	// RunID names the run (container labels, run dirs).
@@ -208,17 +210,21 @@ func ExitClassName(code int) string {
 	return fmt.Sprintf("exit-%d", code)
 }
 
-// The steps of a run, in order, as Stage names them: the policy read,
-// the release verified and installed, the plan compiled, the images
-// installed, the declared MCP servers installed, the profile loaded, the
-// intake answered, the run's directories and secrets prepared, the proxy,
-// gateway and probe started, the agent run, and its output checked.
+// The steps of a run as Stage names them, in about the order a run meets
+// them: the policy read; the release verified and installed; its
+// manifest read, the adapter chosen and the plan compiled (compile); its
+// capabilities consented to; the declared MCP servers checked, resolved
+// and installed (mcp-servers, on both sides of the compile); the images
+// installed; the profile loaded; the intake answered; the run's
+// directories and secrets prepared; the proxy, gateway and probe started;
+// the agent run; and its output checked.
 const (
 	StagePolicy     = "policy"
 	StageVerify     = "verify"
+	StageConsent    = "consent"
+	StageMCPServers = "mcp-servers"
 	StageCompile    = "compile"
 	StageImages     = "images"
-	StageMCPInstall = "mcp-install"
 	StageProfile    = "profile"
 	StageIntake     = "intake"
 	StagePrepare    = "prepare"

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -451,6 +452,17 @@ func TestGatewayProbeFailureClassifiedAndTornDown(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("teardown after failure missing %s: %v", want, ops)
 		}
+	}
+}
+
+// A run that fails preparing itself, before any container, names that
+// step (agentry-cli#332).
+func TestAFailureBeforeTheContainersIsStagePrepare(t *testing.T) {
+	p, f := fixture(t)
+	p.Task = iotest.ErrReader(errors.New("the task file vanished"))
+	env, err := Run(context.Background(), f, p)
+	if err == nil || env == nil || env.Stage != receipt.StagePrepare {
+		t.Fatalf("err %v, envelope %+v; want stage %q", err, env, receipt.StagePrepare)
 	}
 }
 
