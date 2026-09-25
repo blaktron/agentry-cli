@@ -6,7 +6,8 @@
 //
 // It is for a directory more than one process may write at the same time,
 // such as the runner home's plan and release directories, which a CLI run
-// and a desktop run started together both write.
+// and a desktop run started together both write. CreateFile and
+// ReplaceFile do the same for a single file (file.go).
 package dirpublish
 
 import (
@@ -102,12 +103,13 @@ func stage(dest string) (string, error) {
 }
 
 // InFlight reports whether a directory entry is a staging or retired
-// sibling a writer may still be using (younger than an abandoned one):
+// sibling (a directory, or a file CreateFile or ReplaceFile is staging) a
+// writer may still be using (younger than an abandoned one):
 // something a sweep of the parent directory must leave alone, or it can
 // delete a tree from under the rename that publishes it.
 func InFlight(e fs.DirEntry) bool {
 	name := e.Name()
-	if !e.IsDir() || !strings.HasPrefix(name, ".") || (!strings.Contains(name, stagingInfix) && !strings.Contains(name, retiredInfix)) {
+	if !strings.HasPrefix(name, ".") || (!strings.Contains(name, stagingInfix) && !strings.Contains(name, retiredInfix)) {
 		return false
 	}
 	info, err := e.Info()
@@ -189,7 +191,7 @@ func sweepAbandonedSiblings(parent, base string) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() || (!strings.HasPrefix(name, "."+base+stagingInfix) && !strings.HasPrefix(name, "."+base+retiredInfix)) {
+		if !strings.HasPrefix(name, "."+base+stagingInfix) && !strings.HasPrefix(name, "."+base+retiredInfix) {
 			continue
 		}
 		info, err := e.Info()

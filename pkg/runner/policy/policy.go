@@ -22,6 +22,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry-cli/pkg/dirpublish"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
@@ -421,7 +422,10 @@ func Save(path string, p *Policy) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create policy dir: %w", err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil { //nolint:gosec // policy holds no secret values
+	// Staged beside the file and renamed over it: a run loading the policy
+	// while setup writes it reads the old file or the new one, never a
+	// truncated one (agentry-cli#299).
+	if err := dirpublish.ReplaceFile(path, buf.Bytes(), 0o644); err != nil { // policy holds no secret values
 		return fmt.Errorf("write policy: %w", err)
 	}
 	return nil
@@ -539,12 +543,18 @@ func Load(path string) (*Policy, string, error) {
 // EnsureDefault writes the commented default policy file if path does not
 // exist, then loads it. First `agentry run` on a machine goes through
 // here, so the file the operator later edits is the file that ran.
+//
+// Two first runs on a fresh runner home (a CLI run and a desktop run
+// started together) both come here: the default is staged beside path and
+// linked into place only if no file is there yet, so neither ever reads
+// it half-written and a policy the operator wrote meanwhile is never
+// replaced (agentry-cli#299).
 func EnsureDefault(path string) (*Policy, string, error) {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, "", fmt.Errorf("create policy dir: %w", err)
 		}
-		if err := os.WriteFile(path, []byte(defaultFileText), 0o644); err != nil { //nolint:gosec // policy holds no secret values
+		if _, err := dirpublish.CreateFile(path, []byte(defaultFileText), 0o644); err != nil { // policy holds no secret values
 			return nil, "", fmt.Errorf("write default policy: %w", err)
 		}
 	}
