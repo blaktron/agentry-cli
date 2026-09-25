@@ -249,6 +249,28 @@ func TestCompileRefusesInterpretedEnvValue(t *testing.T) {
 	}
 }
 
+// TestLiteralEnvRuleIsTheRunnersExpectation (agentry-cli#131): the runner
+// refuses `$` and `{{ }}` values through the registry's own rule,
+// manifest.LiteralEnvValue, rather than a copy. This pins that rule to
+// what the gateway would interpret: os.Expand rewrites `$` followed by a
+// name character, `{` or a special parameter, and a value holding both
+// `{{` and `}}` is evaluated as a template. A core change that loosened
+// the rule fails here before the runner inherits it.
+func TestLiteralEnvRuleIsTheRunnersExpectation(t *testing.T) {
+	interpreted := []string{"$GITHUB_PAT", "${HOME}/x", "a$b", "$1", "$_", "$*", "$#", "$@", "$!", "$?", "$$", "$-", "{{config.dir}}", "}} and {{"}
+	for _, v := range interpreted {
+		if manifest.LiteralEnvValue(v) {
+			t.Errorf("manifest.LiteralEnvValue(%q) = true; the gateway would interpret it", v)
+		}
+	}
+	literal := []string{"read-only", "50$", "$ x", "$.", "a {b} c", "{{ only", "only }}", "@@RUN_SECRETS@@"}
+	for _, v := range literal {
+		if !manifest.LiteralEnvValue(v) {
+			t.Errorf("manifest.LiteralEnvValue(%q) = false; the gateway would pass it through as written", v)
+		}
+	}
+}
+
 // TestCompileDeclaredServerGolden pins the rendered catalog for a server
 // with both secrets and env, the shape the plan's examples ship with.
 func TestCompileDeclaredServerGolden(t *testing.T) {
