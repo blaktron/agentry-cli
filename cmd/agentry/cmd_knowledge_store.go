@@ -78,7 +78,7 @@ type knowledgeEntryJSON struct {
 	Scan    knowledge.Scan     `json:"scan"`
 	Where   string             `json:"where"`
 	Key     string             `json:"key"`
-	Wrapper string             `json:"wrapper"`
+	Wrapper store.Wrapper      `json:"wrapper"`
 	Agentry *store.AgentryCopy `json:"agentry,omitempty"`
 }
 
@@ -298,25 +298,16 @@ func newKnowledgeDeleteCmd() *cobra.Command {
 			if err != nil {
 				return storeErr(err)
 			}
-			onlyCopy := e.Key.Agentry == nil || alsoRemote
-			if onlyCopy && !yes {
-				prompt := fmt.Sprintf("delete knowledge pack %s? No other copy of it will be kept. Type \"yes\": ", e.Name())
+			noCopyRemains := e.Key.Agentry == nil || alsoRemote
+			if noCopyRemains && !yes {
+				prompt := fmt.Sprintf("delete knowledge pack %s? No copy of it will be left. Type \"yes\": ", e.Name())
 				if err := promptYes(cmd, prompt,
-					"this is the only copy of the pack: confirm on a terminal, or pass --yes",
+					"no copy of the pack would be left: confirm on a terminal, or pass --yes",
 					"delete cancelled: nothing was deleted"); err != nil {
 					return engine.Classify(engine.ExitUsage, err)
 				}
 			}
-			if alsoRemote && e.Key.Agentry != nil {
-				reg, err := s.RegistryFor(e.Key.Agentry.Registry)
-				if err != nil {
-					return err
-				}
-				if err := reg.Delete(cmd.Context(), e.Key.Agentry.ID); err != nil && !errors.Is(err, store.ErrRemoteNotFound) {
-					return err
-				}
-			}
-			if _, err := s.Delete(e.Name()); err != nil {
+			if _, err := s.Delete(cmd.Context(), e.Name(), alsoRemote); err != nil {
 				return err
 			}
 			where := "this computer"
@@ -329,7 +320,7 @@ func newKnowledgeDeleteCmd() *cobra.Command {
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "knowledge pack %s deleted from %s\n", e.Name(), where)
 			if !alsoRemote && e.Key.Agentry != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Agentry still keeps a copy; delete it there with `agentry knowledge download %s` then `delete --remote`, or on the site\n", e.Name())
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Agentry still keeps a copy of it: `agentry knowledge download %s` brings it back\n", e.Name())
 			}
 			return nil
 		},
@@ -339,14 +330,18 @@ func newKnowledgeDeleteCmd() *cobra.Command {
 	return cmd
 }
 
-// knowledgeArgIsDir says whether a --knowledge value names a directory
-// rather than a kept pack: anything with a path separator, or a directory
-// that exists.
-func knowledgeArgIsDir(arg string) bool {
-	if strings.ContainsAny(arg, `/\`) || arg == "." || arg == ".." {
-		return true
-	}
-	fi, err := os.Stat(arg)
+// knowledgeArgIsPath says whether a --knowledge (or add) value is written
+// as a path: it holds a path separator, or is "." or "..". Anything else is
+// a pack's name, looked up in the store first (a directory of that name in
+// the working directory is taken only when the store keeps no such pack,
+// as M1 took every value).
+func knowledgeArgIsPath(arg string) bool {
+	return strings.ContainsAny(arg, `/\`) || arg == "." || arg == ".."
+}
+
+// isDir says whether path is a directory.
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
 }
 

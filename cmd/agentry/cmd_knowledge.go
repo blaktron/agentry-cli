@@ -6,7 +6,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -120,7 +119,10 @@ func newKnowledgeAddCmd() *cobra.Command {
 			"this way. A kept pack stays under the key it had.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if knowledgeArgIsDir(args[0]) {
+			if keptPackNamed(cmd, args[0]) {
+				return addKept(cmd, args[0], o)
+			}
+			if knowledgeArgIsPath(args[0]) || isDir(args[0]) {
 				if _, err := os.Stat(filepath.Join(args[0], knowledge.ManifestFile)); err != nil {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("%s holds no knowledge pack; make one with `agentry knowledge create NAME --file …`", args[0]))
 				}
@@ -219,10 +221,12 @@ func stoppedShort(cmd *cobra.Command, target string, res *build.Result) error {
 	return res.RunErr
 }
 
-// createKept builds a new pack in a private directory of the store, then
-// keeps it sealed there; the plain directory goes with the build. A pack
-// that could not be kept is left where it was built, and said so, rather
-// than thrown away with the run that made it.
+// createKept builds a new pack in a 0700 directory inside the store, then
+// keeps it sealed there; the plain directory goes with the build, and so
+// does the Creator run's output, which holds the pages it wrote (unless
+// --out named a place for it). A pack that could not be kept is left where
+// it was built, and said so, rather than thrown away with the run that
+// made it.
 func createKept(cmd *cobra.Command, name string, o knowledgeBuildOpts) error {
 	s, err := knowledgeStore(cmd)
 	if err != nil {
@@ -232,27 +236,37 @@ func createKept(cmd *cobra.Command, name string, o knowledgeBuildOpts) error {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("a knowledge pack named %s is already kept on this computer; extend it with `agentry knowledge add %s --file …`", name, name))
 	}
 	rewrapOnSignIn(cmd, s)
-	scratch, err := knowledgeScratch()
+	scratch, done, err := s.Scratch()
 	if err != nil {
 		return err
 	}
+	kept := false
+	defer func() {
+		if kept {
+			done()
+		}
+	}()
+	o, private := privateCreatorOut(cmd, o, scratch)
 	dir := filepath.Join(scratch, name)
 	res, outDir, err := knowledgeBuilder(cmd, dir, name, o)
 	if err != nil {
-		_ = os.RemoveAll(scratch)
+		kept = true // nothing worth keeping: the scratch goes
 		return err
 	}
 	e, err := s.Keep(cmd.Context(), dir)
 	if err != nil {
-		return fmt.Errorf("the pack was built but could not be kept sealed (%w); it is in %s, in the clear — keep it later with `agentry knowledge import %s`", err, dir, dir)
+		return fmt.Errorf("the pack was built but could not be kept sealed (%w); it is in %s, in the clear, until the store's sweep removes it an hour from now — keep it with `agentry knowledge import %s`, or copy it out", err, dir, dir)
 	}
-	_ = os.RemoveAll(scratch)
+	kept = true
+	if private {
+		outDir = ""
+	}
 	printKnowledgeBuild(cmd.OutOrStdout(), cmd.ErrOrStderr(), "", outDir, res, &e)
 	return stoppedShort(cmd, name, res)
 }
 
-// addKept opens a kept pack into a private directory, runs the Creator over
-// it, and seals the result back under the same key.
+// addKept opens a kept pack into a 0700 directory inside the store, runs
+// the Creator over it, and seals the result back under the same key.
 func addKept(cmd *cobra.Command, name string, o knowledgeBuildOpts) error {
 	if len(o.files) == 0 {
 		return engine.Classify(engine.ExitUsage, errors.New("name the documents to ingest with --file PATH (repeatable)"))
@@ -264,11 +278,12 @@ func addKept(cmd *cobra.Command, name string, o knowledgeBuildOpts) error {
 	if _, err := s.Find(name); err != nil {
 		return storeErr(err)
 	}
-	scratch, err := knowledgeScratch()
+	scratch, done, err := s.Scratch()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(scratch) }()
+	defer done()
+	o, private := privateCreatorOut(cmd, o, scratch)
 	dir := filepath.Join(scratch, name)
 	if _, err := s.Open(cmd.Context(), name, dir); err != nil {
 		return err
@@ -281,6 +296,9 @@ func addKept(cmd *cobra.Command, name string, o knowledgeBuildOpts) error {
 	if err != nil {
 		return err
 	}
+	if private {
+		outDir = ""
+	}
 	printKnowledgeBuild(cmd.OutOrStdout(), cmd.ErrOrStderr(), "", outDir, res, &e)
 	if e.Key.Agentry != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Agentry still keeps the copy from before; send this one with `agentry knowledge upload %s`\n", name)
@@ -288,18 +306,17 @@ func addKept(cmd *cobra.Command, name string, o knowledgeBuildOpts) error {
 	return stoppedShort(cmd, name, res)
 }
 
-// knowledgeScratch is a private (0700) directory for a pack in the clear
-// while the Creator works on it, under the runner home's tmp.
-func knowledgeScratch() (string, error) {
-	home, err := runnerHome()
-	if err != nil {
-		return "", err
+// privateCreatorOut puts the Creator run's output, whose reports/ holds
+// every page it wrote, inside the scratch that goes with a kept build,
+// unless --out named a place for it, which is then said to hold the pages
+// in the clear. private reports which.
+func privateCreatorOut(cmd *cobra.Command, o knowledgeBuildOpts, scratch string) (knowledgeBuildOpts, bool) {
+	if o.out != "" {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "the Creator run's output in %s keeps the pages it writes in the clear, under reports/\n", o.out)
+		return o, false
 	}
-	base := filepath.Join(home, "tmp")
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		return "", err
-	}
-	return os.MkdirTemp(base, "knowledge-")
+	o.out = filepath.Join(scratch, "creator-run")
+	return o, true
 }
 
 // knowledgeBuildReport is create's and add's --json shape: dir for a
@@ -312,7 +329,7 @@ type knowledgeBuildReport struct {
 	Skipped   []string            `json:"skipped,omitempty"`
 	Written   []string            `json:"written"`
 	Dropped   []knowledgeDropJSON `json:"dropped,omitempty"`
-	Receipts  string              `json:"receipts"`
+	Receipts  string              `json:"receipts,omitempty"`
 	Decode    string              `json:"decode,omitempty"`
 	Stopped   string              `json:"stopped,omitempty"`
 }
@@ -332,7 +349,10 @@ func printKnowledgeBuild(out, errOut io.Writer, dir, outDir string, res *build.R
 	}
 	if flags.jsonOut {
 		r := knowledgeBuildReport{Dir: dir, Manifest: m, Documents: res.Documents, Skipped: res.Skipped,
-			Written: res.Applied.Written, Receipts: filepath.Join(outDir, "receipts")}
+			Written: res.Applied.Written}
+		if outDir != "" {
+			r.Receipts = filepath.Join(outDir, "receipts")
+		}
 		if kept != nil {
 			k := entryJSON(*kept)
 			r.Kept = &k
@@ -346,8 +366,7 @@ func printKnowledgeBuild(out, errOut io.Writer, dir, outDir string, res *build.R
 		if res.RunErr != nil {
 			r.Stopped = res.RunErr.Error()
 		}
-		b, _ := json.MarshalIndent(r, "", "  ")
-		_, _ = fmt.Fprintln(out, string(b))
+		printJSON(out, r)
 		return
 	}
 	where, attach := "in "+dir, dir
@@ -367,6 +386,25 @@ func printKnowledgeBuild(out, errOut io.Writer, dir, outDir string, res *build.R
 		}
 		_, _ = fmt.Fprintf(out, "  %s %s: %s\n", verb, d.Path, d.Reason)
 	}
-	_, _ = fmt.Fprintf(out, "  receipts: %s\n", filepath.Join(outDir, "receipts"))
+	if outDir != "" {
+		_, _ = fmt.Fprintf(out, "  receipts: %s\n", filepath.Join(outDir, "receipts"))
+	} else {
+		_, _ = fmt.Fprintln(out, "  receipts: removed with the Creator run's output, which held the pages in the clear (--out DIR keeps them)")
+	}
 	_, _ = fmt.Fprintf(errOut, "attach it to a run with: agentry run <ref> --knowledge %s\n", attach)
+}
+
+// keptPackNamed says whether arg is a pack name the store keeps: a name,
+// not a path, found there. A store that cannot be read answers no, and the
+// caller's own lookup says why.
+func keptPackNamed(cmd *cobra.Command, arg string) bool {
+	if knowledgeArgIsPath(arg) || knowledge.ValidName(arg) != nil {
+		return false
+	}
+	s, err := knowledgeStore(cmd)
+	if err != nil {
+		return false
+	}
+	_, err = s.Find(arg)
+	return err == nil
 }

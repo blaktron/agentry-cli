@@ -180,6 +180,12 @@ func TestAPackKeptOnOneInstallOpensOnAFreshOneAfterSignIn(t *testing.T) {
 		if got.ID() != e.ID() || got.Manifest.SHA256 != e.Manifest.SHA256 || !got.Manifest.Scan.Scanned || got.Key.Agentry == nil {
 			t.Fatalf("downloaded %+v", got)
 		}
+		// The registry's record is kept as it wrote it, and read back, as
+		// every record in a file is, as one this client has not confirmed
+		// (DR-38): nothing on disk can make a pack read as scanned.
+		if d := got.Manifest.Scan.Describe(); !strings.Contains(d, "not confirmed") {
+			t.Fatalf("a downloaded scan record reads %q", d)
+		}
 		p, err := open(t, b.store(), "runbook")
 		if err != nil || !strings.Contains(page(t, p), "globally unique") {
 			t.Fatalf("open the download: %v", err)
@@ -262,7 +268,7 @@ func TestACachedKeyOpensOfflineAndDeleteRemovesIt(t *testing.T) {
 	if _, err := open(t, a.store(), "runbook"); err != nil {
 		t.Fatalf("a cached key does not open offline: %v", err)
 	}
-	if _, err := a.store().Delete("runbook"); err != nil {
+	if _, err := a.store().Delete(ctx, "runbook", false); err != nil {
 		t.Fatal(err)
 	}
 	if a.keys.has("knowledge:"+e.ID()) || a.keys.has("stored:knowledge:"+e.ID()) {
@@ -440,5 +446,99 @@ func TestAKeyRecordMovedToAnotherPackDoesNotOpenIt(t *testing.T) {
 	}
 	if _, err := open(t, a.store(), "two"); err == nil {
 		t.Fatal("pack one's machine-wrapped key opened pack two")
+	}
+}
+
+func TestAPackPastTheFileCapIsNotKept(t *testing.T) {
+	files := map[string]string{}
+	for k, v := range knowledgetest.DefaultFiles {
+		files[k] = v
+	}
+	for i := 0; i < knowledge.MaxFiles; i++ {
+		files[fmt.Sprintf("sources/extra/f%04d.txt", i)] = "x"
+	}
+	reg := knowledgetest.NewRegistry(t)
+	a := newMachine(t, reg, "alice")
+	_, err := a.store().Keep(context.Background(), knowledgetest.Make(t, "big", files).Dir)
+	if err == nil || !strings.Contains(err.Error(), "files") {
+		t.Fatalf("err = %v", err)
+	}
+	if entries, _ := a.store().List(); len(entries) != 0 {
+		t.Fatalf("kept %d packs", len(entries))
+	}
+}
+
+func TestADownloadNeverLosesWhatIsKeptHere(t *testing.T) {
+	ctx := context.Background()
+	reg := knowledgetest.NewRegistry(t)
+	a := newMachine(t, reg, "alice")
+	if _, err := a.store().Keep(ctx, knowledgetest.Make(t, "runbook", nil).Dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.store().Upload(ctx, "runbook"); err != nil {
+		t.Fatal(err)
+	}
+	// Unchanged since the upload: the download replaces it.
+	if _, err := a.store().Download(ctx, "runbook"); err != nil {
+		t.Fatalf("an unchanged pack was not replaced by its own copy: %v", err)
+	}
+	// Changed here since: refused, and the change is still there.
+	work := filepath.Join(t.TempDir(), "work")
+	p, err := a.store().Open(ctx, "runbook", work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "wiki", "topics", "buckets.md"), []byte(strings.Replace(page(t, p), "globally unique", "changed here", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := knowledge.TreeDigest(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := p.Manifest
+	m.SHA256, m.Bytes = d.SHA256, d.Bytes
+	writeManifest(t, work, m)
+	if _, err := a.store().Reseal(ctx, "runbook", work); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store().Download(ctx, "runbook"); err == nil || !strings.Contains(err.Error(), "changed on this computer") {
+		t.Fatalf("err = %v", err)
+	}
+	if got, err := open(t, a.store(), "runbook"); err != nil || !strings.Contains(page(t, got), "changed here") {
+		t.Fatalf("the change was lost: %v", err)
+	}
+	// A different pack under the name is refused too.
+	b := newMachine(t, reg, "alice")
+	if _, err := b.store().Keep(ctx, knowledgetest.Make(t, "runbook", nil).Dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.store().Download(ctx, "runbook"); !errors.Is(err, store.ErrNameTaken) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeleteEverywhereRemovesAgentrysCopyFirst(t *testing.T) {
+	ctx := context.Background()
+	reg := knowledgetest.NewRegistry(t)
+	a := newMachine(t, reg, "alice")
+	if _, err := a.store().Keep(ctx, knowledgetest.Make(t, "runbook", nil).Dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.store().Upload(ctx, "runbook"); err != nil {
+		t.Fatal(err)
+	}
+	a.owner = ""
+	if _, err := a.store().Delete(ctx, "runbook", true); !errors.Is(err, store.ErrSignedOut) {
+		t.Fatalf("signed out: err = %v", err)
+	}
+	if _, err := a.store().Find("runbook"); err != nil {
+		t.Fatal("a refused delete everywhere removed the pack here")
+	}
+	a.owner = "alice"
+	if _, err := a.store().Delete(ctx, "runbook", true); err != nil {
+		t.Fatal(err)
+	}
+	if reg.Packs("alice") != 0 {
+		t.Fatal("Agentry's copy was kept")
 	}
 }

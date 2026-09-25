@@ -225,10 +225,15 @@ a random data key per pack, the core's `pkg/packseal` format), and
 | `knowledge delete NAME` | delete it and its cached key; `--remote` also deletes Agentry's copy. The only copy is deleted after a typed `yes` (`--yes`) |
 
 `run --knowledge NAME` opens a kept pack into a 0700 directory inside the
-store for the run to copy, and removes it at teardown. A pack that is not
-kept, or will not open (signed out of the registry that wraps its key,
-another account's, altered), is refused before the run with exit 11,
-naming the pack.
+store for the run to copy, and removes it at teardown; the run's copy goes
+at teardown too, even with `--keep-run-dir`. A bare name is looked up in
+the store first, and a directory of that name in the working directory is
+taken only when the store keeps no such pack. A pack that is not kept, or
+will not open (signed out of the registry that wraps its key, another
+account's, altered), is refused before the run with exit 11, naming the
+pack. A kept `create` or `add` works on the pack in the same kind of
+directory, and removes it with the Creator run's output, which holds the
+pages it wrote, unless `--out DIR` asks to keep that output.
 
 ### Signing keys and `verify`
 
@@ -331,11 +336,11 @@ provider and stands up the gateway plane before any agent is involved.
 release — guided setup on first run, then keep or remove on completion
 (`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
 run external files read-only under `/inputs`. **`--knowledge NAME`** (a
-pack kept on this computer) or **`--knowledge DIR`** attaches a knowledge pack — an LLM wiki of at most 10 MB with the
-documents it was compiled from — read-only at `/knowledge/<name>`, which
-the run searches with `knowledge_list`, `knowledge_search` and
-`knowledge_read`; the receipt names each pack by digest and says whether
-it was scanned. Attaching a pack changes neither the plan nor its hash.
+pack kept on this computer) or **`--knowledge DIR`** attaches a knowledge
+pack — an LLM wiki of at most 10 MB with the documents it was compiled
+from — read-only at `/knowledge/<name>`, which the run searches with
+`knowledge_list`, `knowledge_search` and `knowledge_read`; the receipt
+names each pack by digest and says whether it was scanned. Attaching a pack changes neither the plan nor its hash.
 **`agentry install --provider claude|codex|openclaw`** installs for a
 host agent application instead of the gateway path.
 

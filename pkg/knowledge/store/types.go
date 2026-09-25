@@ -13,8 +13,12 @@
 //	               this machine's key in the OS keychain (D20); and, once
 //	               the pack is kept in Agentry, the registry's copy
 //
-// No page rests here in the clear: a pack is opened into a directory the
-// caller names (a run's copy, an export) and nowhere else. A data key
+// No page rests in a pack's directory in the clear. A pack is opened into
+// a directory the caller names (an export), or into a 0700 directory inside
+// the store that the caller removes when done (a run's attachment, a build
+// adding to the pack; OpenScratch, Scratch); a download is checked in one
+// before it is kept. Such directories are dot-named, so List skips them,
+// and one a process that died left behind is swept after an hour. A data key
 // the registry unwrapped is cached in the OS keychain (the modelkey
 // pattern, DR-24's exposure noted), so a pack opens offline after its
 // first opening on a machine. The registry holds what wraps the key, so a
@@ -41,14 +45,16 @@ const (
 	KeySchema = "knowledge-key/v1"
 )
 
-// What a pack's data key is wrapped by.
+// Wrapper is what a pack's data key is wrapped by.
+type Wrapper string
+
 const (
 	// WrapperRegistry is a key the registry wrapped (POST
 	// /knowledge/keys/wrap): the deployment's key on a core registry, the
 	// account's certificate on SecureAgentry.
-	WrapperRegistry = "registry"
+	WrapperRegistry Wrapper = "registry"
 	// WrapperMachine is a key this machine wrapped, signed out.
-	WrapperMachine = "machine"
+	WrapperMachine Wrapper = "machine"
 )
 
 // WrappedKey is a data key as a wrapper sealed it: the registry's answer
@@ -64,7 +70,7 @@ type WrappedKey struct {
 type KeyRecord struct {
 	Schema string `json:"schema"`
 	// Wrapper is WrapperRegistry or WrapperMachine.
-	Wrapper string `json:"wrapper"`
+	Wrapper Wrapper `json:"wrapper"`
 	// Registry is the registry that wrapped the key (WrapperRegistry): the
 	// one that can unwrap it, for the account signed in when it did.
 	Registry   string     `json:"registry,omitempty"`

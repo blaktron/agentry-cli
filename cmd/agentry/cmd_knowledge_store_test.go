@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -269,11 +270,12 @@ func TestKnowledgeCreateAndAddKeepThePackSealed(t *testing.T) {
 	if err := os.WriteFile(doc, []byte("# notes\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var builtIn []string
+	var builtIn, outs []string
 	prev := knowledgeBuilder
 	t.Cleanup(func() { knowledgeBuilder = prev })
-	knowledgeBuilder = func(_ *cobra.Command, dir, name string, _ knowledgeBuildOpts) (*build.Result, string, error) {
+	knowledgeBuilder = func(_ *cobra.Command, dir, name string, o knowledgeBuildOpts) (*build.Result, string, error) {
 		builtIn = append(builtIn, dir)
+		outs = append(outs, o.out)
 		files := map[string]string{
 			"wiki/topics/runbook.md": "---\ntitle: Runbook\ntype: topic\nsummary: What to do\nsources: [doc:notes.md]\nupdated: 2026-09-25\n---\n\nRestart it [src: doc:notes.md].\n",
 			"sources/notes.md":       "# notes\n",
@@ -301,18 +303,25 @@ func TestKnowledgeCreateAndAddKeepThePackSealed(t *testing.T) {
 		if err := copyTreeForTest(made.Dir, dir); err != nil {
 			return nil, "", err
 		}
-		return &build.Result{Applied: &knowledge.Result{Manifest: made.Manifest}, Documents: []string{"notes.md"}}, t.TempDir(), nil
+		return &build.Result{Applied: &knowledge.Result{Manifest: made.Manifest}, Documents: []string{"notes.md"}}, o.out, nil
 	}
 
 	out, _, err := runCLI(t, nil, "knowledge", "create", "runbooks", "--file", doc, "--policy", policyPath, "--registry", reg.URL)
 	if err != nil || !strings.Contains(out, "kept on this computer, encrypted to your account's key") {
 		t.Fatalf("create: %q %v", out, err)
 	}
-	if len(builtIn) != 1 || !strings.HasPrefix(builtIn[0], filepath.Join(home, "tmp")) {
-		t.Fatalf("built in %v, not a private directory under the runner home", builtIn)
+	private := filepath.Join(home, store.Dir, ".open-")
+	if len(builtIn) != 1 || !strings.HasPrefix(builtIn[0], private) || !strings.HasPrefix(outs[0], private) {
+		t.Fatalf("built in %v with the Creator's output in %v, not a 0700 directory inside the store", builtIn, outs)
 	}
 	if _, err := os.Stat(builtIn[0]); !os.IsNotExist(err) {
 		t.Fatal("the plain pack directory outlived the create")
+	}
+	if _, err := os.Stat(outs[0]); !os.IsNotExist(err) {
+		t.Fatal("the Creator run's output, which holds its pages, outlived the create")
+	}
+	if !strings.Contains(out, "receipts: removed") {
+		t.Fatalf("create does not say its receipts went with the output: %q", out)
 	}
 	if _, _, err := runCLI(t, nil, "knowledge", "create", "runbooks", "--file", doc, "--policy", policyPath, "--registry", reg.URL); err == nil {
 		t.Fatal("a second create of a kept name went through")
@@ -354,4 +363,88 @@ func copyTreeForTest(src, dst string) error {
 		}
 		return os.WriteFile(target, raw, 0o600)
 	})
+}
+
+// A bare name is the store's first: a directory of the same name in the
+// working directory does not shadow a kept pack.
+func TestAKeptPackIsNotShadowedByADirectoryOfItsName(t *testing.T) {
+	isolateEnv(t)
+	reg := knowledgetest.NewRegistry(t)
+	_, policyPath := newInstall(t)
+	signIn(t, reg, "alice")
+	if _, _, err := runCLI(t, nil, "knowledge", "import", handMadePack(t, "runbooks"), "--registry", reg.URL); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := filepath.Abs(repoPath(t, "testdata/runner/pure-text"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd := t.TempDir()
+	t.Chdir(wd)
+	if err := os.Mkdir(filepath.Join(wd, "runbooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err := runCLI(t, strings.NewReader(""), "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath, "--registry", reg.URL, "--knowledge", "runbooks")
+	if err != nil || !strings.Contains(stderr, "knowledge pack runbooks: 1 page") {
+		t.Fatalf("the kept pack was not attached: %q %v", stderr, err)
+	}
+}
+
+// No key value reaches any output: not the data key, not the key as the
+// registry wrapped it, not the machine key.
+func TestNoKeyValueReachesAnyOutput(t *testing.T) {
+	isolateEnv(t)
+	reg := knowledgetest.NewRegistry(t)
+	home, _ := newInstall(t)
+	kc := knowledgeKeychain().(*testKeychain)
+	var outputs []string
+	run := func(args ...string) {
+		t.Helper()
+		out, errOut, err := runCLI(t, strings.NewReader(""), append(args, "--registry", reg.URL)...)
+		if err != nil {
+			t.Fatalf("%v: %v (%s)", args, err, errOut)
+		}
+		outputs = append(outputs, out, errOut)
+	}
+	signOut(t)
+	run("knowledge", "import", handMadePack(t, "early"))
+	signIn(t, reg, "alice")
+	run("knowledge", "import", handMadePack(t, "runbooks"))
+	run("knowledge", "list")
+	run("--json", "knowledge", "list")
+	run("knowledge", "upload", "runbooks")
+	run("--json", "knowledge", "upload", "runbooks")
+	run("knowledge", "export", "runbooks", "--to", filepath.Join(t.TempDir(), "x"), "--yes")
+
+	var secrets []string
+	for account, v := range kc.m {
+		if strings.HasPrefix(account, "knowledge:") {
+			secrets = append(secrets, v) // cached data keys and the machine key, base64
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(home, store.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		raw, err := os.ReadFile(filepath.Join(home, store.Dir, e.Name(), store.KeyFile))
+		if err != nil {
+			continue
+		}
+		var kr store.KeyRecord
+		if err := json.Unmarshal(raw, &kr); err != nil {
+			t.Fatal(err)
+		}
+		secrets = append(secrets, base64.StdEncoding.EncodeToString(kr.WrappedKey.Key))
+	}
+	if len(secrets) < 4 {
+		t.Fatalf("found only %d key values to look for", len(secrets))
+	}
+	for _, o := range outputs {
+		for _, v := range secrets {
+			if v != "" && strings.Contains(o, v) {
+				t.Fatalf("a key value reached the output:\n%s", o)
+			}
+		}
+	}
 }

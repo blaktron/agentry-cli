@@ -22,7 +22,7 @@ func (m mapKeys) Delete(a string) error { delete(m, a); return nil }
 // not either. Behind Open the sealed tree's header also names its pack, so
 // this binding is what keeps a key record honest on its own.
 func TestTheMachineWrapBindsItsPack(t *testing.T) {
-	s := &Store{o: Options{Keys: mapKeys{}}}
+	s := &Store{opts: Options{Keys: mapKeys{}}}
 	dk := bytes.Repeat([]byte{7}, 32)
 	wk, err := s.machineWrap("kp_00000000000000000000000000000001", dk)
 	if err != nil {

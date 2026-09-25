@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -171,6 +172,6 @@ func cleanup(dst string, made bool) {
 		return
 	}
 	for _, e := range entries {
-		_ = os.RemoveAll(dst + string(os.PathSeparator) + e.Name())
+		_ = os.RemoveAll(filepath.Join(dst, e.Name()))
 	}
 }

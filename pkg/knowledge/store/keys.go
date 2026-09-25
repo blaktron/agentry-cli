@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -27,7 +28,8 @@ const (
 	// markerPrefix names the presence marker beside it, so a client can
 	// say a pack opens offline without reading its key.
 	markerPrefix = "stored:knowledge:"
-	markerValue  = "1"
+	markerValue  = "stored" // modelkey's marker value
+
 	// machineAccount is this machine's key, which wraps a pack's data key
 	// while no registry is signed in (plan D20).
 	machineAccount = "knowledge:machine"
@@ -62,7 +64,11 @@ func (OSKeychain) Set(account, value string) error {
 		return fmt.Errorf("%w (%s is set)", ErrNoKeychain, modelkey.EnvNoKeyring)
 	}
 	if err := keyring.Set(modelkey.Service, account, value); err != nil {
-		return fmt.Errorf("%w: %w", ErrNoKeychain, err)
+		hint := ""
+		if runtime.GOOS == "linux" {
+			hint = " (a Secret Service such as GNOME Keyring or KWallet must be running)"
+		}
+		return fmt.Errorf("%w: %w%s", ErrNoKeychain, err, hint)
 	}
 	return nil
 }
@@ -82,22 +88,22 @@ func (OSKeychain) Delete(account string) error {
 // It is a convenience: a keychain that will not take it leaves the pack
 // opening through the registry each time, never failing the caller.
 func (s *Store) cache(id string, dataKey []byte) {
-	if s.o.Keys == nil {
+	if s.opts.Keys == nil {
 		return
 	}
-	if err := s.o.Keys.Set(cachePrefix+id, base64.StdEncoding.EncodeToString(dataKey)); err != nil {
+	if err := s.opts.Keys.Set(cachePrefix+id, base64.StdEncoding.EncodeToString(dataKey)); err != nil {
 		return
 	}
-	_ = s.o.Keys.Set(markerPrefix+id, markerValue)
+	_ = s.opts.Keys.Set(markerPrefix+id, markerValue)
 }
 
 // cached is a pack's cached data key, if the keychain holds a well-formed
 // one.
 func (s *Store) cached(id string) ([]byte, bool) {
-	if s.o.Keys == nil {
+	if s.opts.Keys == nil {
 		return nil, false
 	}
-	v, err := s.o.Keys.Get(cachePrefix + id)
+	v, err := s.opts.Keys.Get(cachePrefix + id)
 	if err != nil {
 		return nil, false
 	}
@@ -111,13 +117,13 @@ func (s *Store) cached(id string) ([]byte, bool) {
 // uncache removes a pack's cached key, marker first: a removal cut short
 // leaves a key with no marker, never a marker with no key.
 func (s *Store) uncache(id string) error {
-	if s.o.Keys == nil {
+	if s.opts.Keys == nil {
 		return nil
 	}
-	if err := s.o.Keys.Delete(markerPrefix + id); err != nil && !errors.Is(err, ErrNoKeychain) {
+	if err := s.opts.Keys.Delete(markerPrefix + id); err != nil && !errors.Is(err, ErrNoKeychain) {
 		return err
 	}
-	if err := s.o.Keys.Delete(cachePrefix + id); err != nil && !errors.Is(err, ErrNoKeychain) {
+	if err := s.opts.Keys.Delete(cachePrefix + id); err != nil && !errors.Is(err, ErrNoKeychain) {
 		return err
 	}
 	return nil
@@ -127,20 +133,20 @@ func (s *Store) uncache(id string) error {
 // marker alone, so the key never enters the process to answer it: the
 // desktop's "opens offline".
 func (s *Store) Cached(id string) bool {
-	if s.o.Keys == nil {
+	if s.opts.Keys == nil {
 		return false
 	}
-	v, err := s.o.Keys.Get(markerPrefix + id)
+	v, err := s.opts.Keys.Get(markerPrefix + id)
 	return err == nil && v == markerValue
 }
 
 // machineKey is this machine's key; with create, one is made the first
 // time it is needed.
 func (s *Store) machineKey(create bool) ([]byte, error) {
-	if s.o.Keys == nil {
+	if s.opts.Keys == nil {
 		return nil, ErrNoKeychain
 	}
-	v, err := s.o.Keys.Get(machineAccount)
+	v, err := s.opts.Keys.Get(machineAccount)
 	switch {
 	case err == nil:
 		k, derr := base64.StdEncoding.DecodeString(v)
@@ -155,7 +161,7 @@ func (s *Store) machineKey(create bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.o.Keys.Set(machineAccount, base64.StdEncoding.EncodeToString(k)); err != nil {
+	if err := s.opts.Keys.Set(machineAccount, base64.StdEncoding.EncodeToString(k)); err != nil {
 		return nil, err
 	}
 	return k, nil
@@ -184,7 +190,7 @@ func (s *Store) machineWrap(id string, dataKey []byte) (WrappedKey, error) {
 		return WrappedKey{}, err
 	}
 	sealed := aead.Seal(nonce, nonce, dataKey, []byte(machineInfo+id))
-	return WrappedKey{Kind: WrapperMachine, Recipient: machineRecipient(k), Key: sealed}, nil
+	return WrappedKey{Kind: string(WrapperMachine), Recipient: machineRecipient(k), Key: sealed}, nil
 }
 
 // machineUnwrap opens a data key this machine wrapped.

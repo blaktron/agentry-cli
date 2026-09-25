@@ -12,13 +12,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/blaktron/agentry/pkg/apiclient"
+	"github.com/blaktron/agentry/pkg/packseal"
 
+	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
 )
 
@@ -124,20 +127,31 @@ func (c *Client) List(ctx context.Context) ([]store.Remote, error) {
 	return out, nil
 }
 
-// GetTree implements store.Registry: GET /knowledge/packs/{id}/tree.
+// GetTree implements store.Registry: GET /knowledge/packs/{id}/tree. The
+// body is read no further than a sealed pack at the size cap can be, so a
+// registry cannot make the client hold more than that.
 func (c *Client) GetTree(ctx context.Context, id string) ([]byte, string, error) {
 	pid, err := packID(id)
 	if err != nil {
 		return nil, "", err
 	}
-	res, err := c.api.DownloadKnowledgeTreeWithResponse(ctx, pid)
+	res, err := c.api.DownloadKnowledgeTree(ctx, pid)
 	if err != nil {
 		return nil, "", err
 	}
-	if res.StatusCode() != http.StatusOK {
-		return nil, "", c.problem("download the knowledge tree", res.HTTPResponse, res.ApplicationproblemJSONDefault, res.Body)
+	defer func() { _ = res.Body.Close() }()
+	limit := packseal.MaxSealedSize(knowledge.MaxBytes)
+	body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	if err != nil {
+		return nil, "", err
 	}
-	return res.Body, res.HTTPResponse.Header.Get("X-Agentry-Knowledge-Digest"), nil
+	if res.StatusCode != http.StatusOK {
+		return nil, "", c.problem("download the knowledge tree", res, nil, body)
+	}
+	if int64(len(body)) > limit {
+		return nil, "", fmt.Errorf("download the knowledge tree at %s: the registry sent more than a sealed %d MB pack can be", c.url, knowledge.MaxBytes>>20)
+	}
+	return body, res.Header.Get("X-Agentry-Knowledge-Digest"), nil
 }
 
 // Delete implements store.Registry: DELETE /knowledge/packs/{id}.

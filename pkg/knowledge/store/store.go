@@ -36,13 +36,13 @@ type Options struct {
 
 // Store is the local knowledge store under one runner home.
 type Store struct {
-	dir string
-	o   Options
+	dir  string
+	opts Options
 }
 
 // New is the store under the runner home.
-func New(home string, o Options) *Store {
-	return &Store{dir: filepath.Join(home, Dir), o: o}
+func New(home string, opts Options) *Store {
+	return &Store{dir: filepath.Join(home, Dir), opts: opts}
 }
 
 // Entry is one pack the store keeps.
@@ -157,16 +157,25 @@ func (s *Store) Find(name string) (Entry, error) {
 
 // current is the signed-in client of the Current registry.
 func (s *Store) current() (Registry, error) {
-	if s.o.Current == "" || s.o.Registries == nil {
+	if s.opts.Current == "" {
 		return nil, ErrSignedOut
 	}
-	return s.o.Registries(s.o.Current)
+	return s.registry(s.opts.Current)
+}
+
+// registry is the signed-in client of the registry at u.
+func (s *Store) registry(u string) (Registry, error) {
+	if s.opts.Registries == nil {
+		return nil, fmt.Errorf("%s: %w", u, ErrSignedOut)
+	}
+	return s.opts.Registries(u)
 }
 
 // Keep seals the pack at packDir into the store under a new data key,
 // wrapped by the current registry, or signed out by this machine's key. A
 // pack with no id is given one. The pack directory itself is not changed.
 func (s *Store) Keep(ctx context.Context, packDir string) (Entry, error) {
+	s.sweep()
 	p, err := knowledge.Load(packDir)
 	if err != nil {
 		return Entry{}, err
@@ -193,7 +202,7 @@ func (s *Store) Keep(ctx context.Context, packDir string) (Entry, error) {
 	}
 	e, err := s.install(m, kr, func(w io.Writer) error { return sealDir(w, packDir, m, dataKey) }, "")
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, fmt.Errorf("knowledge pack %s: keep it: %w", m.Name, err)
 	}
 	if kr.Wrapper == WrapperRegistry {
 		s.cache(m.ID, dataKey)
@@ -249,7 +258,13 @@ func sealDir(w io.Writer, dir string, m knowledge.Manifest, dataKey []byte) erro
 	done := make(chan error, 1)
 	go func() {
 		d, err := knowledge.WriteTree(dir, pw)
-		if err == nil && d.SHA256 != m.SHA256 {
+		switch {
+		case err != nil:
+		case d.Files > knowledge.MaxFiles:
+			// The registry refuses such a tree, and ExtractTree would
+			// refuse to open it again, so it is never kept.
+			err = fmt.Errorf("knowledge pack %s holds %d files, past %d", m.Name, d.Files, knowledge.MaxFiles)
+		case d.SHA256 != m.SHA256:
 			err = fmt.Errorf("knowledge pack %s changed while it was sealed", m.Name)
 		}
 		_ = pw.CloseWithError(err)
@@ -327,8 +342,9 @@ func (s *Store) privateDir(prefix string) (string, error) {
 }
 
 // staleAfter is how long a private directory may outlive the process that
-// made it before sweep removes it: longer than any run's start.
-const staleAfter = 24 * time.Hour
+// made it before sweep removes it: a run's attachment is copied into the
+// run long before, and a build's working copy is touched as it goes.
+const staleAfter = time.Hour
 
 // sweep removes private directories a process that died left behind.
 func (s *Store) sweep() {
@@ -346,12 +362,15 @@ func (s *Store) sweep() {
 	}
 }
 
-// RegistryFor is the signed-in client of the registry at u.
-func (s *Store) RegistryFor(u string) (Registry, error) {
-	if s.o.Registries == nil {
-		return nil, fmt.Errorf("%s: %w", u, ErrSignedOut)
+// Scratch is a fresh 0700 directory inside the store for a pack in the
+// clear while something works on it (the Creator adding to a kept pack),
+// and the function that removes it.
+func (s *Store) Scratch() (dir string, done func(), err error) {
+	s.sweep()
+	if dir, err = s.privateDir(".open-"); err != nil {
+		return "", func() {}, err
 	}
-	return s.o.Registries(u)
+	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
 // OpenScratch opens the pack named name into a private directory inside
@@ -359,12 +378,10 @@ func (s *Store) RegistryFor(u string) (Registry, error) {
 // the function that removes it. The pack's pages rest in the clear there
 // only until done is called (a run calls it at teardown).
 func (s *Store) OpenScratch(ctx context.Context, name string) (p *knowledge.Pack, done func(), err error) {
-	s.sweep()
-	dir, err := s.privateDir(".open-")
+	dir, done, err := s.Scratch()
 	if err != nil {
-		return nil, func() {}, err
+		return nil, done, err
 	}
-	done = func() { _ = os.RemoveAll(dir) }
 	if p, err = s.Open(ctx, name, filepath.Join(dir, name)); err != nil {
 		done()
 		return nil, func() {}, err
@@ -398,10 +415,7 @@ func (s *Store) dataKey(ctx context.Context, e Entry, skipCache bool) (key []byt
 		}
 		return k, false, nil
 	case WrapperRegistry:
-		if s.o.Registries == nil {
-			return nil, false, fmt.Errorf("knowledge pack %s: %w to %s, whose registry wraps its key", e.Name(), ErrSignedOut, e.Key.Registry)
-		}
-		reg, err := s.o.Registries(e.Key.Registry)
+		reg, err := s.registry(e.Key.Registry)
 		if err != nil {
 			return nil, false, fmt.Errorf("knowledge pack %s: its key is wrapped by %s: %w", e.Name(), e.Key.Registry, err)
 		}
@@ -492,6 +506,7 @@ func clearDir(dir string) {
 // same data key, so its wrapped key, and a copy the registry keeps, still
 // fit.
 func (s *Store) Reseal(ctx context.Context, name, packDir string) (Entry, error) {
+	s.sweep()
 	e, err := s.Find(name)
 	if err != nil {
 		return Entry{}, err
@@ -509,26 +524,44 @@ func (s *Store) Reseal(ctx context.Context, name, packDir string) (Entry, error)
 	if err != nil {
 		return Entry{}, err
 	}
-	return s.install(m, e.Key, func(w io.Writer) error { return sealDir(w, packDir, m, key) }, e.Dir)
+	re, err := s.install(m, e.Key, func(w io.Writer) error { return sealDir(w, packDir, m, key) }, e.Dir)
+	if err != nil {
+		return Entry{}, fmt.Errorf("knowledge pack %s: keep the new tree: %w", name, err)
+	}
+	return re, nil
 }
 
-// Delete removes the kept pack name and its cached key. A copy Agentry
-// keeps is not touched (the caller deletes it through the registry).
-func (s *Store) Delete(name string) (Entry, error) {
+// Delete removes the kept pack name and its cached key; with everywhere,
+// the copy Agentry keeps as well, first, so a refusal there leaves the
+// pack here. A copy Agentry no longer has is not an error.
+func (s *Store) Delete(ctx context.Context, name string, everywhere bool) (Entry, error) {
 	e, err := s.Find(name)
 	if err != nil {
 		return Entry{}, err
 	}
-	gone, err := s.stageDir()
+	if a := e.Key.Agentry; everywhere && a != nil {
+		reg, err := s.registry(a.Registry)
+		if err != nil {
+			return Entry{}, fmt.Errorf("knowledge pack %s: delete Agentry's copy: %w", name, err)
+		}
+		if err := reg.Delete(ctx, a.ID); err != nil && !errors.Is(err, ErrRemoteNotFound) {
+			return Entry{}, fmt.Errorf("knowledge pack %s: delete Agentry's copy: %w", name, err)
+		}
+	}
+	// Moved aside in one rename, then removed: an interrupted delete
+	// leaves a dot-named directory the sweep finishes, never half a pack.
+	trash, err := s.privateDir(".stage-")
+	if err == nil {
+		err = os.Remove(trash)
+	}
+	if err == nil {
+		err = os.Rename(e.Dir, trash)
+	}
+	if err == nil {
+		err = os.RemoveAll(trash)
+	}
 	if err != nil {
-		return Entry{}, err
-	}
-	_ = os.Remove(gone)
-	if err := os.Rename(e.Dir, gone); err != nil {
-		return Entry{}, err
-	}
-	if err := os.RemoveAll(gone); err != nil {
-		return Entry{}, err
+		return Entry{}, fmt.Errorf("knowledge pack %s: delete it: %w", name, err)
 	}
 	if err := s.uncache(e.ID()); err != nil {
 		return e, fmt.Errorf("knowledge pack %s was deleted, but its cached key would not leave the OS keychain: %w", name, err)
@@ -613,7 +646,7 @@ func (s *Store) Upload(ctx context.Context, name string) (Entry, Remote, error) 
 	}
 	sealed, err := os.ReadFile(filepath.Join(e.Dir, SealedFile)) //nolint:gosec // an entry of the store
 	if err != nil {
-		return Entry{}, Remote{}, err
+		return Entry{}, Remote{}, fmt.Errorf("upload knowledge pack %s: %w", name, err)
 	}
 	var r Remote
 	uploaded := false
@@ -637,7 +670,7 @@ func (s *Store) Upload(ctx context.Context, name string) (Entry, Remote, error) 
 	}
 	e.Key.Agentry = &AgentryCopy{Registry: reg.URL(), ID: r.ID, Digest: e.Manifest.SHA256}
 	if err := writeKeyAtomic(e.Dir, e.Key); err != nil {
-		return Entry{}, Remote{}, err
+		return Entry{}, Remote{}, fmt.Errorf("knowledge pack %s was uploaded, but its record of Agentry's copy could not be written: %w", name, err)
 	}
 	return e, r, nil
 }
@@ -647,6 +680,7 @@ func (s *Store) Upload(ctx context.Context, name string) (Entry, Remote, error) 
 // and checked in full, then kept here under that wrapped key. A pack kept
 // here with the same id is replaced; another pack of that name is not.
 func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
+	s.sweep()
 	reg, err := s.current()
 	if err != nil {
 		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
@@ -660,6 +694,7 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 	for _, x := range remotes {
 		if x.Name == name {
 			r, found = x, true
+			break
 		}
 	}
 	switch {
@@ -668,7 +703,7 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 	case r.State == StateScanning:
 		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, ErrScanning)
 	case r.State != StateReady:
-		return Entry{}, fmt.Errorf("download knowledge pack %s: it is %s in Agentry, with no tree to download", name, r.State)
+		return Entry{}, fmt.Errorf("download knowledge pack %s: it is %q in Agentry, with no tree to download", name, r.State)
 	}
 	sealed, digest, err := reg.GetTree(ctx, r.ID)
 	if err != nil {
@@ -679,7 +714,7 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
 	}
 	if !validID(h.Pack) || h.Digest != r.Digest || digest != r.Digest {
-		return Entry{}, fmt.Errorf("download knowledge pack %s: the tree served is pack %q with digest %s, which does not match the pack Agentry describes (%s)", name, h.Pack, h.Digest, r.Digest)
+		return Entry{}, fmt.Errorf("download knowledge pack %s: the tree served is pack %q with digest %q, which does not match the pack Agentry describes (%q)", name, h.Pack, h.Digest, r.Digest)
 	}
 	key, err := reg.Unwrap(ctx, r.WrappedKey)
 	if err != nil {
@@ -689,7 +724,7 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	replacing, err := s.downloadTarget(name, h.Pack)
+	replacing, err := s.downloadTarget(name, h.Pack, r.Digest)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -697,7 +732,7 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 		Agentry: &AgentryCopy{Registry: reg.URL(), ID: r.ID, Digest: r.Digest}}
 	e, err := s.install(m, kr, func(w io.Writer) error { _, err := w.Write(sealed); return err }, replacing)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, fmt.Errorf("download knowledge pack %s: keep it: %w", name, err)
 	}
 	_ = s.uncache(h.Pack)
 	s.cache(h.Pack, key)
@@ -708,9 +743,6 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 // holds it to the pack format, and answers the manifest it is kept under:
 // the counts are the tree's, the scan record the registry's.
 func (s *Store) checkDownload(name string, r Remote, h packseal.Header, sealed, key []byte) (knowledge.Manifest, error) {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return knowledge.Manifest{}, err
-	}
 	scratch, err := s.stageDir()
 	if err != nil {
 		return knowledge.Manifest{}, err
@@ -745,16 +777,25 @@ func (s *Store) checkDownload(name string, r Remote, h packseal.Header, sealed, 
 	return m, nil
 }
 
-// downloadTarget is the entry a download replaces ("" for none), refusing
-// a different pack of the same name.
-func (s *Store) downloadTarget(name, id string) (string, error) {
+// downloadTarget is the entry a download replaces ("" for none): only the
+// same pack under the same name, and only when nothing would be lost —
+// its tree here is the one downloaded, or the one it last uploaded. A
+// different pack of the name, the same pack under another name, or one
+// changed here since its upload is refused.
+func (s *Store) downloadTarget(name, id, digest string) (string, error) {
 	entries, _ := s.List()
 	for _, e := range entries {
 		switch {
-		case e.ID() == id:
-			return e.Dir, nil
-		case e.Name() == name:
+		case e.ID() == id && e.Name() != name:
+			return "", fmt.Errorf("download knowledge pack %s: %w (it is the pack kept here as %s; delete or rename that first)", name, ErrNameTaken, e.Name())
+		case e.Name() == name && e.ID() != id:
 			return "", fmt.Errorf("download knowledge pack %s: %w (another pack, %s; delete or rename it first)", name, ErrNameTaken, e.ID())
+		case e.Name() == name:
+			unchanged := e.Manifest.SHA256 == digest || (e.Key.Agentry != nil && e.Key.Agentry.Digest == e.Manifest.SHA256)
+			if !unchanged {
+				return "", fmt.Errorf("download knowledge pack %s: it changed on this computer since Agentry's copy was made; upload it, or delete it here, first", name)
+			}
+			return e.Dir, nil
 		}
 	}
 	return "", nil
