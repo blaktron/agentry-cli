@@ -1183,3 +1183,37 @@ func cachedInstall(t *testing.T, path string) installdir.Meta {
 	}
 	return meta
 }
+
+// TestEnsurePlanRecompilesUnderAnotherPolicy (agentry-cli#152): a cached
+// plan is reused only when it was compiled against the policy the run
+// read, so the receipt's policy.sha256 (the plan's policySha256) is
+// always the digest of the file the receipt's policy.path names.
+func TestEnsurePlanRecompilesUnderAnotherPolicy(t *testing.T) {
+	isolateEnv(t)
+	home, _ := isolateRunnerHome(t)
+	m := runFixtureManifest(t, "")
+	pol := policy.Default()
+	meta := &installdir.Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo",
+		Version: "1.0.0", Digest: "sha256:0123456789abcdef", Source: "local"}
+	installDir := t.TempDir()
+	ws := filepath.Join(installDir, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"SKILL.md": "# demo\n\nDo the thing.\n", "agent.yaml": "schemaVersion: \"2\"\n"} {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var errOut strings.Builder
+	first, _, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-a", "docker-agent", nil, manifest.ModeAutonomous)
+	if err != nil || first.PolicySHA256 != "policy-a" {
+		t.Fatalf("first: %v %q", err, first.PolicySHA256)
+	}
+	errOut.Reset()
+	again, _, err := ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-b", "docker-agent", nil, manifest.ModeAutonomous)
+	// A reused plan would still say policy-a.
+	if err != nil || again.PolicySHA256 != "policy-b" {
+		t.Fatalf("a plan compiled under another policy was reused: %v policySha256=%q", err, again.PolicySHA256)
+	}
+}

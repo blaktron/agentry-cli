@@ -97,6 +97,11 @@ type Params struct {
 	Adapter adapter.Adapter
 	// Policy supplies the secret source.
 	Policy *policy.Policy
+	// PolicyFile names the operator policy file Policy was read from and
+	// how its path was chosen (policy.Resolve); the envelope records it
+	// with the plan's policySha256 as its digest (agentry-cli#152). Nil
+	// leaves the envelope's policy block out.
+	PolicyFile *policy.File
 	// SecretOverrides resolve declared secrets ahead of the policy source
 	// — the BriefAgent's MCP profile rides in here (P2 §P2); the engine
 	// itself stays profile-agnostic.
@@ -169,6 +174,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 			Image:   p.Plan.Harness.Agent.Image,
 			Model:   p.Plan.Harness.Model,
 		},
+		Policy: policyRecord(p),
 		Result: receipt.TextResult(""),
 		OutDir: p.OutDir,
 	}
@@ -920,4 +926,15 @@ func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID 
 		hosts = append(hosts, c.alias+":"+ip)
 	}
 	return hosts, nil
+}
+
+// policyRecord is the envelope's policy block: the file and source the
+// caller resolved, with the digest the plan was compiled against — the
+// digest of that same file's bytes, since a plan compiled under another
+// policy is recompiled before it runs.
+func policyRecord(p Params) *receipt.Policy {
+	if p.PolicyFile == nil {
+		return nil
+	}
+	return &receipt.Policy{Path: p.PolicyFile.Path, Source: p.PolicyFile.Source, SHA256: p.Plan.PolicySHA256}
 }

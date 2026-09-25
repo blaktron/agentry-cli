@@ -21,6 +21,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // runtimeNameRE is the shape of a daemon-registered runtime name (runc,
@@ -438,6 +440,37 @@ func DefaultPath() (string, error) {
 		return "", err
 	}
 	return PathIn(home), nil
+}
+
+// File is the operator policy file a run reads and how its path was
+// chosen: what the receipt records beside the digest (agentry-cli#152).
+// Source is one of the receipt's values (receipt.PolicySource*).
+type File struct {
+	Path   string
+	Source string
+}
+
+// Resolve is the operator policy a run reads: flag when --policy named
+// one, else the runner home's policy.yaml — source "env" when
+// AGENTRY_RUNNER_HOME relocated the home, "default" otherwise. The path
+// is made absolute, so a record of it names one file.
+func Resolve(flag string) (File, error) {
+	path, source := flag, receipt.PolicySourceFlag
+	if flag == "" {
+		var err error
+		if path, err = DefaultPath(); err != nil {
+			return File{}, err
+		}
+		source = receipt.PolicySourceDefault
+		if os.Getenv(HomeEnv) != "" {
+			source = receipt.PolicySourceEnv
+		}
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return File{}, fmt.Errorf("locate the policy file %s: %w", path, err)
+	}
+	return File{Path: abs, Source: source}, nil
 }
 
 // PathIn is the operator policy's path under a given runner home.

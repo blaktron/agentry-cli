@@ -760,3 +760,26 @@ func TestSessionEndIsSafeToCallConcurrently(t *testing.T) {
 		}
 	}
 }
+
+// An interactive session's envelope names the policy file the same way a
+// run's does (agentry-cli#152).
+func TestSessionEnvelopeNamesThePolicyFile(t *testing.T) {
+	p, f := sessionFixture(t)
+	happyFake(f)
+	h := &fakeHarness{}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+	p.PolicyFile = &policy.File{Path: "/etc/agentry/policy.yaml", Source: receipt.PolicySourceFlag}
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_, done := collect(s)
+	env, err := s.End(context.Background(), true)
+	if err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	<-done
+	if env.Policy == nil || env.Policy.Path != "/etc/agentry/policy.yaml" || env.Policy.Source != receipt.PolicySourceFlag || env.Policy.SHA256 != p.Plan.PolicySHA256 {
+		t.Fatalf("session policy = %+v", env.Policy)
+	}
+}
