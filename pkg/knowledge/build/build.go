@@ -221,6 +221,9 @@ func stageDocuments(paths []string, dst string) (map[string]string, error) {
 			return nil, fmt.Errorf("document %s: %w", p, err)
 		}
 		base := safeName(filepath.Base(abs))
+		if !fi.IsDir() && fi.Size() > knowledge.MaxBytes {
+			return nil, fmt.Errorf("document %s is %d bytes; a knowledge pack, its documents included, is at most 10 MB", p, fi.Size())
+		}
 		if !fi.IsDir() {
 			if err := add(base, p); err != nil {
 				return nil, err
@@ -236,6 +239,9 @@ func stageDocuments(paths []string, dst string) (map[string]string, error) {
 			}
 			if !e.Type().IsRegular() {
 				return nil // a link is not a document
+			}
+			if info, err := e.Info(); err == nil && info.Size() > knowledge.MaxBytes {
+				return fmt.Errorf("document %s is %d bytes; a knowledge pack, its documents included, is at most 10 MB", q, info.Size())
 			}
 			r, _ := filepath.Rel(abs, q)
 			parts := strings.Split(filepath.ToSlash(r), "/")

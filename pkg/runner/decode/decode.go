@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -216,6 +217,19 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 			return rep, fmt.Errorf("%s: the text of %q is not a regular file within %d bytes", runnerdecode.ReportFile, f.Path, MaxTextBytes)
 		}
 	}
+	// A staged document the report leaves out is not decoded, and says so,
+	// rather than vanishing from what a run is told it was given.
+	err = fs.WalkDir(inRoot.FS(), ".", func(p string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() || seen[p] {
+			return err
+		}
+		rep.Files = append(rep.Files, runnerdecode.File{Path: p, Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable, Reason: "the decode's report does not name it"})
+		return nil
+	})
+	if err != nil {
+		return rep, err
+	}
+	sort.Slice(rep.Files, func(i, j int) bool { return rep.Files[i].Path < rep.Files[j].Path })
 	return rep, nil
 }
 

@@ -158,6 +158,14 @@ func TestRunFailures(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(out, runnerdecode.ReportFile), b, 0o644)
 			}}
 		}, wantErr: "not a regular file"},
+		{name: "a text reached through a directory link inside the output", fg: func(t *testing.T) *dockerx.FakeForeground {
+			return &dockerx.FakeForeground{Before: func(r dockerx.RunSpec) {
+				out := mountSource(r, "/out")
+				_ = os.Symlink("/", filepath.Join(out, "sub"))
+				b, _ := json.Marshal(runnerdecode.Report{Schema: runnerdecode.Schema, Files: []runnerdecode.File{{Path: "report.pdf", Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: "sub/etc/hostname"}}})
+				_ = os.WriteFile(filepath.Join(out, runnerdecode.ReportFile), b, 0o644)
+			}}
+		}, wantErr: "outside"},
 		{name: "a report that is a link", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: func(r dockerx.RunSpec) {
 				elsewhere := filepath.Join(t.TempDir(), "decode.json")
@@ -250,4 +258,29 @@ func TestStage(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// TestAStagedDocumentTheReportLeavesOutIsNotDecoded: a decoder that drops a
+// document from its report cannot make it vanish from what a run is told.
+func TestAStagedDocumentTheReportLeavesOutIsNotDecoded(t *testing.T) {
+	in := staged(t)
+	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, []runnerdecode.File{
+		{Path: "notes.md", Family: runnerdecode.FamilyText, Outcome: runnerdecode.OutcomeText},
+	})}}}
+	res, err := Run(context.Background(), f, sampleImage, in, t.TempDir(), policy.Limits{}.WithDefaults(), os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, file := range res.Report.Files {
+		got[file.Path] = string(file.Outcome) + ": " + file.Reason
+	}
+	for _, p := range []string{"blob.bin", "deck.pptx", "link.pdf", "report.pdf"} {
+		if got[p] != "undecodable: the decode's report does not name it" {
+			t.Errorf("%s: %q", p, got[p])
+		}
+	}
+	if got["notes.md"] != "text: " {
+		t.Errorf("notes.md: %q", got["notes.md"])
+	}
 }

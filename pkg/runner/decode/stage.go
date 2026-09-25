@@ -3,6 +3,7 @@ package decode
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -117,8 +118,11 @@ func (r *Result) Readable() []runnerdecode.File {
 
 // CopyOriginal copies the document staged at path, as given, to dst.
 func (r *Result) CopyOriginal(path, dst string) error {
-	return copyOut(r.In, path, dst, 1<<30)
+	return copyOut(r.In, path, dst, MaxDocumentBytes)
 }
+
+// MaxDocumentBytes bounds one document a decode reads back.
+const MaxDocumentBytes = 256 << 20
 
 // CopyText copies the text decoded from the document at path to dst.
 func (r *Result) CopyText(path, dst string) error {
@@ -138,12 +142,32 @@ func copyOut(root, rel, dst string, limit int64) error {
 		return err
 	}
 	defer func() { _ = r.Close() }()
-	b, err := readRegular(r, filepath.FromSlash(rel), limit)
+	name := filepath.FromSlash(rel)
+	fi, err := r.Lstat(name)
 	if err != nil {
 		return err
 	}
+	if !fi.Mode().IsRegular() || fi.Size() > limit {
+		return fmt.Errorf("%s is not a regular file within %d bytes", rel, limit)
+	}
+	in, err := r.Open(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, b, 0o644) //nolint:gosec // a document or its text, read by the run
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644) //nolint:gosec // a document or its text, read by the run
+	if err != nil {
+		return err
+	}
+	n, err := io.Copy(out, io.LimitReader(in, limit+1))
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && n > limit {
+		err = fmt.Errorf("%s grew past %d bytes", rel, limit)
+	}
+	return err
 }
