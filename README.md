@@ -218,6 +218,11 @@ variable still wins when set, and the value is never in the policy, a plan
 or a receipt (the receipt's `model.apiKey` line names the source). On Linux
 the keychain is the Secret Service (GNOME Keyring, KWallet); without one the
 store step fails by name and the variable is the way (agentry-cli#148).
+Beside the key sits a second entry, `stored:provider:<provider>`, whose
+value is only the word `stored`: the desktop's settings ask that one
+whether a key is there, so answering never reads the key; `agentry
+doctor` reads the key's entry itself, as a run would, and puts the marker
+right (agentry-cli#156).
 
 An Anthropic subscription token (`claude setup-token`, `sk-ant-oat…`) is a
 credential of its own kind: Anthropic admits it from Claude Code alone, so

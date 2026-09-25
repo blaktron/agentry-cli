@@ -41,8 +41,11 @@ import (
 var newDockerClient = func() dockerx.Client { return dockerx.New() }
 
 // modelKeyPresent asks the OS keychain for a stored model key without
-// returning it; a seam for tests, which have no keychain.
-var modelKeyPresent = modelkey.Present
+// returning it; a seam for tests, which have no keychain. Doctor reads
+// the entry itself (modelkey.Confirm) rather than trusting the presence
+// marker a settings page reads, so it never says ok about a key removed
+// behind the marker's back (agentry-cli#156).
+var modelKeyPresent = modelkey.Confirm
 
 // doctorHTTPTimeout bounds the registry liveness probe.
 const doctorHTTPTimeout = 10 * time.Second
