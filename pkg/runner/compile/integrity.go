@@ -222,7 +222,7 @@ func ReadInstalledPlan(key []byte, planDir string) ([]byte, error) {
 //
 // All three reads go through one handle on the directory (os.Root), so
 // they read one directory even if a compile publishes a new one under the
-// same name meanwhile (publishPlanDir); the record comparison still
+// same name meanwhile (dirpublish.Replace); the record comparison still
 // catches a writer that rewrites files in place, as a client built before
 // agentry-cli#289 does.
 func readPlanPair(key []byte, planDir string) (plan []byte, steady bool, err error) {
