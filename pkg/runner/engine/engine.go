@@ -89,6 +89,11 @@ type Params struct {
 	// InputPaths are operator-provided files/directories copied into the
 	// run's read-only inputs channel (RUNNER-PLAN-2 §P4).
 	InputPaths []string
+	// Knowledge are the knowledge packs attached to the run (plan
+	// knowledge.md §4.5): each copied into the run's read-only /knowledge
+	// channel and verified there, the three knowledge tools granted and the
+	// receipt's knowledge line written only when there is one (DR-38).
+	Knowledge []AttachedPack
 	// Intake holds the answers to the manifest's up-front questions (plan
 	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
 	// secret answers already merged into SecretOverrides by the caller.
@@ -168,7 +173,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p),
+		CapabilitiesEnforced: withKnowledge(withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p), p.Knowledge, p.Plan.Capabilities.ExecCommands),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,

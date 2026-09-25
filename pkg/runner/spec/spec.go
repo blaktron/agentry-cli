@@ -42,6 +42,12 @@ const (
 	// (RUNNER-PLAN-2 §P4) — operator-provided files, mounted :ro into the
 	// tools container, empty when the run got no --file.
 	PHInputs = "@@RUN_INPUTS@@"
+	// PHKnowledge is the host path of the per-run read-only knowledge dir
+	// (plan knowledge.md §4.5): one subdirectory per attached pack,
+	// mounted :ro into the tools container, empty when the run got no
+	// --knowledge. Always compiled in, so attaching a pack never moves the
+	// plan (DR-38).
+	PHKnowledge = "@@RUN_KNOWLEDGE@@"
 	// PHServers is the host path of the signature's installed MCP-server
 	// store (RUNNER-PLAN-3): profile/servers/, one subdirectory per
 	// declared server, mounted :ro into that server's runtime container.
@@ -73,6 +79,9 @@ const (
 	OutMount = "/out"
 	// InputsMount is where tools see the run-inputs channel (P2 §P4).
 	InputsMount = "/inputs"
+	// KnowledgeMount is where tools see the attached knowledge packs, each
+	// at KnowledgeMount/<name> (plan knowledge.md §4.5).
+	KnowledgeMount = "/knowledge"
 	// PlanMount is where the agent container sees its harness files.
 	PlanMount = "/plan"
 	// ToolSpecMount is where the tools container sees its spec file.

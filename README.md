@@ -212,7 +212,12 @@ provider and stands up the gateway plane before any agent is involved.
 **MCP profiles** store a BriefAgent's keys and identities once per exact
 release — guided setup on first run, then keep or remove on completion
 (`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
-run external files read-only under `/inputs`.
+run external files read-only under `/inputs`. **`--knowledge DIR`**
+attaches a knowledge pack — an LLM wiki of at most 10 MB with the
+documents it was compiled from — read-only at `/knowledge/<name>`, which
+the run searches with `knowledge_list`, `knowledge_search` and
+`knowledge_read`; the receipt names each pack by digest and says whether
+it was scanned. Attaching a pack changes neither the plan nor its hash.
 **`agentry install --provider claude|codex|openclaw`** installs for a
 host agent application instead of the gateway path.
 
