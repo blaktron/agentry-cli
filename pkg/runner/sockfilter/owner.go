@@ -66,11 +66,16 @@ func (f *Filter) ownNetwork(ctx context.Context, id string, sharedOK bool) (netw
 		n.ID = n.Name
 	}
 	got := network{id: n.ID, name: n.Name}
-	if sharedOK && f.shared(n.Name) {
-		return got, nil
-	}
 	if f.shared(n.Name) {
-		return network{}, deny("network %s is shared by the host's runs and not the gateway's to remove", n.Name)
+		// The runner's network for this run, and only if it says so: a
+		// network another gateway made under the name is not it.
+		if n.Labels[f.cfg.Label] != f.cfg.RunID {
+			return network{}, deny("network %s is not this run's", n.Name)
+		}
+		if !sharedOK {
+			return network{}, deny("network %s is the runner's for this run and not the gateway's to remove", n.Name)
+		}
+		return got, nil
 	}
 	if !f.ours(n.Labels) {
 		return network{}, deny("network %s is not this run's", n.Name)
@@ -95,6 +100,25 @@ func (f *Filter) ownVolume(ctx context.Context, name string) error {
 		return deny("volume %s is not this run's", short(name))
 	}
 	return nil
+}
+
+// runNetwork translates a network name the gateway uses to the daemon's.
+func (f *Filter) runNetwork(name string) string {
+	if n, ok := f.cfg.NetworkNames[name]; ok {
+		return n
+	}
+	return name
+}
+
+// gatewayNetwork translates the daemon's network name back to the
+// gateway's.
+func (f *Filter) gatewayNetwork(name string) string {
+	for g, n := range f.cfg.NetworkNames {
+		if n == name {
+			return g
+		}
+	}
+	return name
 }
 
 // shared says whether a network name is one the host's runs share.

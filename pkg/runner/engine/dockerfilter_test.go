@@ -145,41 +145,66 @@ func TestALongRunDirectoryFallsBackToAShortSocket(t *testing.T) {
 	}
 }
 
-// A run with relays makes the two shared relay networks itself, before
-// the gateway, and tolerates their being there already.
-func TestARunWithRelaysMakesTheSharedNetworks(t *testing.T) {
+// A run with relays gets two relay networks of its own, made before the
+// gateway and removed after it, and neither takes the host-wide relay lock
+// nor refuses another gateway's relays: runs with relays share a host
+// (agentry-cli#220). The lock is held by "another run" throughout, and the
+// run goes ahead anyway.
+func TestARunWithRelaysHasRelayNetworksOfItsOwn(t *testing.T) {
 	if !filterSupported {
 		t.Skip("the filter runs on Linux only")
 	}
 	p, f := serverFixture(t)
 	happyFake(f)
 	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools, mcp-npm-scope-server-x\n> 4 tools listed in 1.2s\n"}
+	release, err := holdRelayLock(p.RunnerHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
 	if _, err := Run(context.Background(), f, p); err != nil {
-		t.Fatalf("run: %v", err)
+		t.Fatalf("run beside a held relay lock: %v", err)
 	}
 	ops := f.Ops()
-	in := slices.Index(ops, "NetworkCreate:"+relayNetwork+"(internal=true)")
-	out := slices.Index(ops, "NetworkCreate:"+relayEgressNetwork+"(internal=false)")
-	gw := slices.IndexFunc(ops, func(op string) bool { return strings.HasPrefix(op, "RunDetached:agentry-cafe0000-gateway") })
-	if in < 0 || out < 0 || gw < 0 || in > gw || out > gw {
-		t.Errorf("want both relay networks made before the gateway; got %v", ops)
+	idx := func(want string) int {
+		t.Helper()
+		i := slices.IndexFunc(ops, func(op string) bool { return strings.HasPrefix(op, want) })
+		if i < 0 {
+			t.Fatalf("no %q in %v", want, ops)
+		}
+		return i
+	}
+	in := idx("NetworkCreate:agentry-cafe0000-relays(internal=true)")
+	out := idx("NetworkCreate:agentry-cafe0000-relays-out(internal=false)")
+	gw := idx("RunDetached:agentry-cafe0000-gateway")
+	stop := idx("Stop:agentry-cafe0000-gateway")
+	rmIn := idx("NetworkRemove:agentry-cafe0000-relays")
+	rmOut := idx("NetworkRemove:agentry-cafe0000-relays-out")
+	if in > gw || out > gw || rmIn < stop || rmOut < stop {
+		t.Errorf("want the relay networks made before the gateway and removed after it stopped; got %v", ops)
 	}
 	for _, op := range ops {
-		if strings.HasPrefix(op, "NetworkRemove:docker-mcp-proxies") {
-			t.Errorf("a shared relay network was removed: %s", op)
+		if strings.Contains(op, "docker-mcp-proxies") || op == "PSByLabel:"+relayLabel && slices.Index(ops, op) < gw {
+			t.Errorf("the run touched the host's relay network or refused on another gateway's relays: %s", op)
 		}
-	}
-	if err := ensureRelayNetworks(context.Background(), &existsFake{Fake: &dockerx.Fake{}}); err != nil {
-		t.Errorf("networks already there: %v", err)
 	}
 }
 
-// existsFake answers every network create as docker does for one that is
-// already there.
-type existsFake struct{ *dockerx.Fake }
-
-func (*existsFake) NetworkCreate(context.Context, string, bool, map[string]string) error {
-	return errors.New("Error response from daemon: network with name docker-mcp-proxies-int already exists")
+// Where runs with relays share a host, the reaper takes a name from the
+// gateway's log only if it is a relay this run's gateway made: a name
+// planted in the log reaches no other run's relay.
+func TestTheReaperTakesOnlyTheRunsOwnRelays(t *testing.T) {
+	f := &dockerx.Fake{ByLabel: map[string][]string{
+		relayLabel:                      {"docker-mcp-l4proxy-ours", "docker-mcp-l4proxy-theirs"},
+		gatewayOwnerLabel + "=cafe0000": {"docker-mcp-l4proxy-ours", "mcp-server-x"},
+	}}
+	f.LogsByName = map[string]string{"gw": "starting l4 proxy docker-mcp-l4proxy-ours for a.example, ports 443\nstarting l4 proxy docker-mcp-l4proxy-theirs for b.example, ports 443\n"}
+	r := &relayReaper{runID: "cafe0000"}
+	r.reap(context.Background(), f, "gw")
+	ops := strings.Join(f.Ops(), " ")
+	if !strings.Contains(ops, "RemoveForce:docker-mcp-l4proxy-ours") || strings.Contains(ops, "RemoveForce:docker-mcp-l4proxy-theirs") {
+		t.Errorf("reaped: %s", ops)
+	}
 }
 
 // filterRequest sends one request through a filter's socket.

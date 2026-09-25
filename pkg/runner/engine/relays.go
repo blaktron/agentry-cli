@@ -23,8 +23,14 @@ import (
 // needs relays does not start while another gateway's relays are on the
 // network, and the relays its own gateway started — named in the
 // gateway's log — are removed at teardown, on every path, so they never
-// linger to refuse the next run (agentry-cli#106). Upstream has been asked
-// for a per-run network name, which would turn the refusal into isolation.
+// linger to refuse the next run (agentry-cli#106).
+//
+// Since agentry-cli#220 this is the path only where the gateway's docker
+// filter does not run (Docker Desktop, agentry-cli#322). On Linux the
+// filter gives the gateway the run's own two relay networks under the
+// fixed names (dockerfilter.go): runs with relays share a host without
+// reaching each other's, and neither the lock nor the refusal is taken.
+// The relays are still reaped by name at teardown, on every path.
 
 // relayLabel is the label the gateway puts on every relay sidecar.
 const relayLabel = "docker-mcp-proxy=true"
@@ -95,14 +101,20 @@ func relaysStartedBy(logs string) []string {
 // runner-r2's mcp-osv fixture). The second read happens after the agent
 // ran, so a tool call — logged with its name verbatim (--log-calls) — is
 // the one way a server could plant a line there; every name is therefore
-// confirmed against the relay label before removal, so a planted name
-// can reach at most a relay on the shared network and never anything
-// else, and the run's own relays are removed whichever read named them.
+// confirmed against the relay label before removal, and where the filter
+// runs against the run's own gateway label too, so a planted name reaches
+// no relay but the run's own, and those are removed whichever read named
+// them.
 // By name and confirmed relay, never by label alone, which on the shared
 // network would take another gateway's. Best-effort, like every teardown
 // step.
 type relayReaper struct {
 	names []string
+	// runID, where the gateway's docker filter runs, confines the reap to
+	// relays its gateway made (labelled agentry.gateway.run=<run>): runs
+	// with relays share a host since agentry-cli#220, and a name planted
+	// in the log must not reach another run's relay.
+	runID string
 }
 
 // snapshot records the relays the gateway's log names now.
@@ -134,6 +146,21 @@ func (r *relayReaper) reap(ctx context.Context, d dockerx.Client, gwName string)
 	isRelay := make(map[string]bool, len(labelled))
 	for _, n := range labelled {
 		isRelay[n] = true
+	}
+	if r.runID != "" {
+		ours, err := d.PSByLabel(ctx, gatewayOwnerLabel+"="+r.runID)
+		if err != nil {
+			return
+		}
+		mine := make(map[string]bool, len(ours))
+		for _, n := range ours {
+			mine[n] = true
+		}
+		for n := range isRelay {
+			if !mine[n] {
+				delete(isRelay, n)
+			}
+		}
 	}
 	for _, name := range names {
 		if isRelay[name] {
