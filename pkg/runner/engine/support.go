@@ -27,6 +27,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -45,6 +46,12 @@ type runDirs struct {
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
 	hostProxyURL   string
+	// filter is the gateway's per-run docker socket (dockerfilter.go,
+	// agentry-cli#219), and filterLog its decision log; nil until the
+	// gateway is about to start.
+	filter    *sockfilter.Filter
+	filterLog *os.File
+	filterDir string // the short fallback directory, when the run's was too long
 	// redact masks the run's secret values out of every receipt and error
 	// (redact.go); set once the token and the secrets are known, nil-safe
 	// before.

@@ -57,6 +57,18 @@ sweep_leftovers() {
   exit $rc
 }
 trap sweep_leftovers EXIT
+# The gateway's daemon socket is a per-run filter (agentry-cli#219): the
+# receipt names it, and a run whose gateway was refused anything fails
+# here with the refusals, since a working run's gateway needs nothing the
+# filter denies.
+filter_refusals() { grep ' refuse ' "$1/receipts/docker-filter.log" 2>/dev/null || true; }
+check_filter() {
+  local out=$1 refused
+  [ -f "$out/receipts/docker-filter.log" ] || { echo "FAIL: no docker filter log in $out/receipts"; exit 1; }
+  grep -q "only through this run's filter" "$out/result.json" || { echo "FAIL: the receipt does not name the gateway's docker filter"; exit 1; }
+  refused=$(filter_refusals "$out")
+  [ -z "$refused" ] || { echo "FAIL: the docker filter refused the gateway:"; echo "$refused"; exit 1; }
+}
 export AGENTRY_RUNNER_HOME="$WORK/home"
 # The consent records `agentry run` writes (§R1) go to the throwaway config
 # dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
@@ -108,12 +120,13 @@ if [ -n "$AGENT" ]; then
   docker inspect "$AGENT" --format '{{.HostConfig.ReadonlyRootfs}}' | grep -qx true || { echo "FAIL: the agent container's root is writable"; exit 1; }
   docker inspect "$AGENT" --format '{{.HostConfig.PidsLimit}} {{.HostConfig.Memory}}' | grep -Eq '^[1-9][0-9]* [1-9][0-9]*$' || { echo "FAIL: the agent container has no pids or memory bound"; exit 1; }
   docker inspect "$GW" --format '{{join .Args " "}}' | grep -Eq -- '--cpus [0-9]+ --memory [0-9]+[mg]' || { echo "FAIL: the gateway does not bound what it launches"; exit 1; }
+  docker inspect "$GW" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q '/var/run/docker.sock' && { echo "FAIL: the gateway mounts the daemon's own socket, not the run's filter"; exit 1; }
   echo "live containers: gateway --block-network, agent internal-only on $NETS, no published port, no registry token, no socket"
-  echo "live posture: agent and gateway drop ALL with no-new-privileges; agent root read-only with pids and memory bounds; gateway passes cpus and memory on"
+  echo "live posture: agent and gateway drop ALL with no-new-privileges; agent root read-only with pids and memory bounds; gateway passes cpus and memory on; gateway's socket is the run's filter"
 else
   echo "WARN: the agent container was never observed live (the run ended first?)" >&2
 fi
-wait "$RUN_PID" || { echo "FAIL: run exited non-zero"; cat "$WORK/envelope.json"; exit 1; }
+wait "$RUN_PID" || { echo "FAIL: run exited non-zero"; cat "$WORK/envelope.json"; filter_refusals "$OUT"; exit 1; }
 
 grep -q '"status": "ok"' "$WORK/envelope.json" || { echo "FAIL: run not ok"; cat "$WORK/envelope.json"; exit 1; }
 grep -q '"runPlanSha256"' "$WORK/envelope.json" || { echo "FAIL: envelope lacks plan hash"; exit 1; }
@@ -123,7 +136,8 @@ grep -q '"runPlanSha256"' "$WORK/envelope.json" || { echo "FAIL: envelope lacks 
 if [ ! -s "$OUT/reports/hello.md" ]; then
   echo "WARN: agent did not write reports/hello.md (model behavior — inspect receipts)" >&2
 fi
-echo "envelope + receipts ok"
+check_filter "$OUT"
+echo "envelope + receipts ok; the docker filter refused nothing"
 
 # docker.runtime (DR-23): when the operator policy names a runtime, the
 # receipt names it too, and every container of the run was created under
@@ -152,6 +166,7 @@ echo "list the git history" | "$AGENTRY" run --local testdata/runner/exec-git --
 grep -q '"status": "ok"' "$WORK/envelope-exec.json" || { echo "FAIL: exec run not ok"; cat "$WORK/envelope-exec.json"; exit 1; }
 grep -q 'packages resolved at image build: .*git-' "$EXECOUT/result.json" || { echo "FAIL: receipt does not name the resolved git package"; grep '"exec"' "$EXECOUT/result.json"; exit 1; }
 grep -q 'safe.directory' "$EXECOUT/result.json" || { echo "FAIL: receipt does not name git's safe.directory setting"; exit 1; }
+check_filter "$EXECOUT"
 echo "exec catalog: image built, receipt names the packages"
 
 # A declared MCP server (agentry-cli#160): the gateway starts relay
@@ -161,9 +176,10 @@ echo "exec catalog: image built, receipt names the packages"
 MCPOUT="$WORK/out-mcp"
 echo "look up GHSA-8v63-cqqc-6r2c in OSV and summarise it" | "$AGENTRY" run --local testdata/runner/mcp-osv ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} \
   --allow-unsigned --yes --out "$MCPOUT" --output-format json --timeout 300 >"$WORK/envelope-mcp.json" \
-  || { echo "FAIL: declared-server run exited non-zero"; cat "$WORK/envelope-mcp.json"; exit 1; }
+  || { echo "FAIL: declared-server run exited non-zero"; cat "$WORK/envelope-mcp.json"; filter_refusals "$MCPOUT"; exit 1; }
 grep -q '"status": "ok"' "$WORK/envelope-mcp.json" || { echo "FAIL: declared-server run not ok"; cat "$WORK/envelope-mcp.json"; exit 1; }
-echo "declared MCP server: run ok"
+check_filter "$MCPOUT"
+echo "declared MCP server: run ok, relays launched through the docker filter"
 
 # §R11 invariant 6: nothing of ours survives. (The EXIT trap repeats this
 # on every path; here it is the success-path assertion with the names.)
