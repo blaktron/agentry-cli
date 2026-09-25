@@ -220,7 +220,7 @@ func readChanges(outDir string) (*Changes, error) {
 func changePath(rel string) error {
 	clean := path.Clean(rel)
 	switch {
-	case clean != rel || strings.HasPrefix(rel, "/") || !(strings.HasPrefix(rel, WikiDir+"/") || strings.HasPrefix(rel, SourcesDir+"/")):
+	case clean != rel || strings.HasPrefix(rel, "/") || (!strings.HasPrefix(rel, WikiDir+"/") && !strings.HasPrefix(rel, SourcesDir+"/")):
 		return fmt.Errorf("%q is not a file under wiki/ or sources/", rel)
 	case path.Base(rel) == IndexFile && strings.HasPrefix(rel, WikiDir+"/"):
 		return fmt.Errorf("%s is generated from the pages; it is not written", rel)

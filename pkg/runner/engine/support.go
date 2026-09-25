@@ -36,6 +36,7 @@ type runDirs struct {
 	root        string // <RunRoot>/runs/<id>
 	workspace   string // root/workspace — the rw copy tools may mount
 	inputs      string // root/inputs — the :ro operator-inputs channel (P2 §P4)
+	knowledge   string // root/knowledge — the :ro knowledge packs, one directory each (knowledge.md §4.5)
 	session     string // the per-run volume an interactive session's harness store lives in (DR-15, agentry-cli#90)
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/secrets.env (0600, deleted on teardown)
@@ -66,6 +67,7 @@ func (rd *runDirs) replacer() *strings.Replacer {
 		spec.PHCfg, rd.cfg,
 		spec.PHSecrets, rd.secretsPath,
 		spec.PHInputs, rd.inputs,
+		spec.PHKnowledge, rd.knowledge,
 		spec.PHSession, rd.session,
 		spec.PHServers, rd.serversDir,
 		spec.PHHostGatewayURL, rd.hostGatewayURL,
@@ -83,6 +85,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		root:      root,
 		workspace: filepath.Join(root, "workspace"),
 		inputs:    filepath.Join(root, "inputs"),
+		knowledge: filepath.Join(root, "knowledge"),
 		// The session store is a per-run named volume, not a host
 		// directory (agentry-cli#90): the harness runs unprivileged, and a
 		// host directory it could write was a world-writable one.
@@ -99,9 +102,10 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if len(p.Plan.MCPServers) > 0 && rd.serversDir == "" {
 		return nil, Classify(ExitCLI, fmt.Errorf("plan declares MCP servers but no server store was provided"))
 	}
-	// inputs/ exists even when empty: the compiled catalog always mounts
-	// it :ro, and an absent bind source would fail the tools container.
-	for _, dir := range []string{rd.workspace, rd.inputs, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
+	// inputs/ and knowledge/ exist even when empty: the compiled catalog
+	// always mounts both :ro, and an absent bind source would fail the tools
+	// container.
+	for _, dir := range []string{rd.workspace, rd.inputs, rd.knowledge, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
@@ -124,6 +128,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := stageIntake(p, rd); err != nil {
 		return nil, err
 	}
+	if err := stageKnowledge(p.Knowledge, rd.knowledge); err != nil {
+		return nil, err
+	}
 
 	if err := copyTree(p.WorkspaceSrc, rd.workspace); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("copy workspace: %w", err))
@@ -135,6 +142,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	if err := stampOwner(filepath.Join(rd.cfg, "gateway", "toolspec.json")); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
+	}
+	if err := grantKnowledge(filepath.Join(rd.cfg, "gateway"), p.Knowledge); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
 	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
@@ -504,6 +514,7 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 	return []relabelTarget{
 		{rd.workspace, true},
 		{rd.inputs, true},
+		{rd.knowledge, true},
 		{rd.cfg, true},
 		{rd.serversDir, true},
 		{rd.outDir, false},

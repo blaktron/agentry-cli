@@ -25,7 +25,7 @@ echo "provided input" >"$WORK/in/brief.txt"
 
 cat >"$WORK/spec.json" <<EOF
 {
-  "specVersion": "2",
+  "specVersion": "3",
   "workspaceDir": "$WORK/ws",
   "outDir": "$WORK/out",
   "inputsDir": "$WORK/in",
@@ -92,7 +92,7 @@ if [ -r /proc/self/status ]; then
     SECRET="r1-planted-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
     cat >"$WORK/spec-exec.json" <<EOF
 {
-  "specVersion": "2",
+  "specVersion": "3",
   "workspaceDir": "$WORK/ws",
   "outDir": "$WORK/out",
   "fsRead": { "enabled": false },
