@@ -3,10 +3,13 @@ package installdir
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -65,8 +68,8 @@ func TestWriteAndLoad(t *testing.T) {
 			t.Fatalf("%s was copied", skipped)
 		}
 	}
-	if _, err := os.Stat(dir + ".partial"); !os.IsNotExist(err) {
-		t.Fatal("the partial directory was left behind")
+	if entries, _ := os.ReadDir(filepath.Dir(dir)); len(entries) != 1 {
+		t.Fatalf("a staging directory was left behind: %v", entries)
 	}
 	got, ok := Load(dir, "sha256:abc")
 	if !ok || got.Ref != "acme/demo@1.0.0" || got.Attestation.KeyID != "k1" {
@@ -87,8 +90,21 @@ func TestWriteAndLoad(t *testing.T) {
 	if _, ok := m["export"]; ok {
 		t.Fatalf("export is written only when set:\n%s", raw)
 	}
-	// A second Write replaces a stale tree entirely.
+	// A Write over the same release keeps the whole install already
+	// there (the directory is named for the digest; a sibling run may be
+	// using it)...
 	src2 := stageTree(t, map[string]string{"agent.yaml": "name: demo\n"})
+	if err := Write(dir, src2, meta); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "workspace", "prompts", "main.md")); err != nil {
+		t.Fatal("a whole install of the same digest was replaced")
+	}
+	// ...and replaces a stale tree entirely: one that is not a whole
+	// install of this digest.
+	if err := os.Remove(filepath.Join(dir, "install.json")); err != nil {
+		t.Fatal(err)
+	}
 	if err := Write(dir, src2, meta); err != nil {
 		t.Fatal(err)
 	}
@@ -287,6 +303,14 @@ func TestInstall(t *testing.T) {
 	if err := Install(dir, src, m, meta, "bogus"); err == nil {
 		t.Fatal("an unknown style was accepted")
 	}
+	// A refused style is refused before anything is published: the
+	// install already there keeps its export.
+	if got, ok := Load(dir, "sha256:abc"); !ok || got.Export != manifest.InterfaceClaudeSkill {
+		t.Fatalf("a refused Install replaced the install: %+v ok=%v", got, ok)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(dir)); len(entries) != 1 {
+		t.Fatalf("a refused Install left its staging behind: %v", entries)
+	}
 	other := filepath.Join(t.TempDir(), ReleaseName("1.0.0", "sha256:abc"))
 	consented := *meta
 	consented.Attestation.Consent = "allow-unsigned"
@@ -305,5 +329,134 @@ func TestRemoveOtherVersionsRefusalIsErrNotARelease(t *testing.T) {
 	agentDir := t.TempDir()
 	if err := RemoveOtherVersions(agentDir, filepath.Join(agentDir, "a", "b")); !errors.Is(err, ErrNotARelease) {
 		t.Fatalf("err = %v, want ErrNotARelease", err)
+	}
+}
+
+// Two first installs of one release at once (a CLI run and a desktop run
+// started together on a fresh runner home) each build aside in their own
+// staging directory and publish by rename: neither fails, and the tree
+// left behind is one writer's whole tree (agentry-cli#294).
+func TestWriteConcurrentFirstInstalls(t *testing.T) {
+	files := map[string]string{"agent.yaml": "name: demo\n", "SKILL.md": "# Demo\n"}
+	for i := range 40 {
+		files[fmt.Sprintf("prompts/p%02d.md", i)] = strings.Repeat("x", 4096)
+	}
+	src := stageTree(t, files)
+	meta := &Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: "sha256:abc", Source: "local"}
+	m := &manifest.Manifest{Name: "demo", Namespace: "acme", Version: "1.0.0", Summary: "reads things"}
+	for round := range 20 {
+		dir := filepath.Join(t.TempDir(), "agents", "acme", "demo", ReleaseName("1.0.0", "sha256:abc"))
+		const writers = 8
+		errs := make(chan error, writers)
+		var wg sync.WaitGroup
+		for w := range writers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				mm := *meta
+				if w%2 == 0 {
+					errs <- Write(dir, src, &mm)
+				} else {
+					errs <- Install(dir, src, m, &mm, manifest.InterfaceClaudeSkill)
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: concurrent install failed: %v", round, err)
+			}
+		}
+		if _, ok := Load(dir, "sha256:abc"); !ok {
+			t.Fatalf("round %d: the install left behind does not load", round)
+		}
+		for name := range files {
+			if _, err := os.Stat(filepath.Join(dir, "workspace", filepath.FromSlash(name))); err != nil {
+				t.Fatalf("round %d: the install left behind is not whole: %v", round, err)
+			}
+		}
+		entries, _ := os.ReadDir(filepath.Dir(dir))
+		if len(entries) != 1 {
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Fatalf("round %d: staging or retired siblings left behind: %v", round, names)
+		}
+	}
+}
+
+// A run that finds its release freshly laid down starts using the tree at
+// once (its plan dir goes inside it). A concurrent first install of the
+// same release that publishes later must not sweep that away: once one
+// writer has published, the others keep its tree (agentry-cli#294).
+func TestWriteKeepsTheFirstPublishedTree(t *testing.T) {
+	src := stageTree(t, map[string]string{"agent.yaml": "name: demo\n", "SKILL.md": "# Demo\n"})
+	meta := &Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: "sha256:abc", Source: "local"}
+	for round := range 20 {
+		dir := filepath.Join(t.TempDir(), "agents", "acme", "demo", ReleaseName("1.0.0", "sha256:abc"))
+		const writers = 8
+		var wg sync.WaitGroup
+		errs := make(chan error, writers)
+		for w := range writers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				mm := *meta
+				if err := Write(dir, src, &mm); err != nil {
+					errs <- err
+					return
+				}
+				// The run's plan, written the moment its install loads.
+				p := filepath.Join(dir, "plan", fmt.Sprintf("run-%d", w))
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					errs <- err
+					return
+				}
+				errs <- os.WriteFile(p, nil, 0o644)
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		for w := range writers {
+			if _, err := os.Stat(filepath.Join(dir, "plan", fmt.Sprintf("run-%d", w))); err != nil {
+				t.Fatalf("round %d: run %d's plan was swept away by a later install", round, w)
+			}
+		}
+	}
+}
+
+// RemoveOtherVersions leaves a staging sibling another process is still
+// publishing (removing it could gut the tree that lands), and takes an
+// abandoned one.
+func TestRemoveOtherVersionsLeavesAnInFlightStaging(t *testing.T) {
+	home := t.TempDir()
+	agentDir := AgentDir(home, "acme", "demo")
+	keep := ReleaseDir(home, "acme", "demo", "1.1.0", "sha256:bbb")
+	live := filepath.Join(agentDir, "."+filepath.Base(keep)+".staging-live")
+	dead := filepath.Join(agentDir, ".1.0.0-aaa.staging-dead")
+	for _, d := range []string{keep, live, dead} {
+		if err := os.MkdirAll(filepath.Join(d, "workspace"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(dead, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveOtherVersions(agentDir, keep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(live, "workspace")); err != nil {
+		t.Fatal("an in-flight staging directory was removed")
+	}
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Fatal("an abandoned staging directory survived")
 	}
 }
