@@ -782,8 +782,8 @@ func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
 	} {
 		hc := created(c.name, c.doc)
 		hosts, _ := hc["ExtraHosts"].([]any)
-		if hc["Runtime"] != "runsc" || len(hosts) != 1 || hosts[0] != "api.osv.dev:10.9.0.5" {
-			t.Errorf("%s: runtime %v, hosts %v; want runsc and api.osv.dev at the relay's address", c.name, hc["Runtime"], hc["ExtraHosts"])
+		if hc["Runtime"] != "runsc" || len(hosts) != 2 || hosts[0] != "api.osv.dev:10.9.0.5" || hosts[1] != "runa-relay:10.9.0.5" {
+			t.Errorf("%s: runtime %v, hosts %v; want runsc, and the alias and the relay's name at its address", c.name, hc["Runtime"], hc["ExtraHosts"])
 		}
 	}
 	hc = created("the relay", map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}})

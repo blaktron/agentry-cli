@@ -379,14 +379,23 @@ func (f *Filter) pinLinks(ctx context.Context, c *containerCreateBody) error {
 		if !hostNameRE.MatchString(alias) {
 			return deny("link alias %q is not a host name", alias)
 		}
+		// A link makes the linked container answer to its name as well as
+		// the alias, and the gateway uses both: a server reaches its L4
+		// relay by the declared host (the alias), the tools server its L7
+		// relay by the relay's name in http_proxy (agentry-cli#346).
+		if !hostNameRE.MatchString(name) {
+			return deny("linked container name %q is not a host name", name)
+		}
 		ip, err := f.linkedAddress(ctx, name, joins)
 		if err != nil {
 			return err
 		}
 		// docker's CLI writes a link on a user-defined network in both
-		// places; one entry answers it.
-		if entry := alias + ":" + ip; !slices.Contains(hc.ExtraHosts, entry) {
-			hc.ExtraHosts = append(hc.ExtraHosts, entry)
+		// places; one entry per name answers it.
+		for _, n := range []string{alias, name} {
+			if entry := n + ":" + ip; !slices.Contains(hc.ExtraHosts, entry) {
+				hc.ExtraHosts = append(hc.ExtraHosts, entry)
+			}
 		}
 	}
 	return nil
