@@ -170,9 +170,11 @@ CLI against a live registry.
 
 ### Knowledge packs: `knowledge create` and `knowledge add`
 
-`agentry knowledge create NAME --file PATH…` makes a knowledge pack in
-`--dir` (default `./NAME`), and `agentry knowledge add DIR --file PATH…`
-extends one. The built-in **Knowledge Creator** does the work: a package
+`agentry knowledge create NAME --file PATH…` makes a knowledge pack and
+keeps it sealed on this computer (below), and `agentry knowledge add NAME
+--file PATH…` extends one. `--dir DIR` makes a plain pack directory instead,
+in the clear, and `add DIR` extends one. The built-in **Knowledge Creator**
+does the work: a package
 this binary embeds, run with the attestation state `builtin`, never a
 release anyone installs.
 
@@ -192,7 +194,46 @@ the command says so before it starts, and the pack records `not scanned`.
 `--timeout`, `--max-turns` and `--max-cost` bound the run. A run stopped by
 one keeps the pages it wrote, and an `add` with the same documents
 continues. With `--json` the result is one document on stdout. Attach a
-pack to a run with `agentry run <ref> --knowledge DIR`.
+pack to a run with `agentry run <ref> --knowledge NAME` (or `DIR`).
+
+### Keeping packs: the local store, and Agentry
+
+Packs are kept in the store under the runner home, `~/.agentry/runner/
+knowledge/<pack id>/`, which Agentry Desktop shares: `manifest.json` in the
+clear, the tree as one sealed file (`pack.sealed`, AES-256-GCM frames under
+a random data key per pack, the core's `pkg/packseal` format), and
+`key.json`, that data key as it is wrapped.
+
+- **Signed in**, the registry wraps the key for your account (`POST
+  /knowledge/keys/wrap`); Agentry holds the key that opens it. The pack then
+  opens on any computer you sign in on, with nothing carried between them,
+  and the unwrapped key is cached in the OS keychain (`knowledge:<pack id>`)
+  so it opens offline afterwards. A token minted before the registry had the
+  knowledge scopes is refused: `agentry login` again.
+- **Signed out**, this computer's key wraps it (`knowledge:machine` in the
+  keychain), which is not portable. The next signed-in command, or
+  `agentry login`, rewraps it to your account. With `AGENTRY_NO_KEYRING` and
+  no sign-in, nothing can be kept sealed, and the command says so.
+
+| Command | What it does |
+|---|---|
+| `knowledge list` | the packs kept here: pages, size, scan record, where they are kept, what their key is wrapped to |
+| `knowledge import DIR` | keep a pack directory sealed here (DIR is left as it is) |
+| `knowledge upload NAME` | send it to the registry, sealed, where it is scanned and counted against your allocation |
+| `knowledge download NAME` | keep Agentry's copy here, checked in full |
+| `knowledge export NAME --to DIR` | write it out unencrypted into a new or empty DIR, after a typed `yes` (`--yes` for scripts) |
+| `knowledge delete NAME` | delete it and its cached key; `--remote` also deletes Agentry's copy. The only copy is deleted after a typed `yes` (`--yes`) |
+
+`run --knowledge NAME` opens a kept pack into a 0700 directory inside the
+store for the run to copy, and removes it at teardown; the run's copy goes
+at teardown too, even with `--keep-run-dir`. A bare name is looked up in
+the store first, and a directory of that name in the working directory is
+taken only when the store keeps no such pack. A pack that is not kept, or
+will not open (signed out of the registry that wraps its key, another
+account's, altered), is refused before the run with exit 11, naming the
+pack. A kept `create` or `add` works on the pack in the same kind of
+directory, and removes it with the Creator run's output, which holds the
+pages it wrote, unless `--out DIR` asks to keep that output.
 
 ### Signing keys and `verify`
 
@@ -294,12 +335,12 @@ provider and stands up the gateway plane before any agent is involved.
 **MCP profiles** store a BriefAgent's keys and identities once per exact
 release — guided setup on first run, then keep or remove on completion
 (`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
-run external files read-only under `/inputs`. **`--knowledge DIR`**
-attaches a knowledge pack — an LLM wiki of at most 10 MB with the
-documents it was compiled from — read-only at `/knowledge/<name>`, which
-the run searches with `knowledge_list`, `knowledge_search` and
-`knowledge_read`; the receipt names each pack by digest and says whether
-it was scanned. Attaching a pack changes neither the plan nor its hash.
+run external files read-only under `/inputs`. **`--knowledge NAME`** (a
+pack kept on this computer) or **`--knowledge DIR`** attaches a knowledge
+pack — an LLM wiki of at most 10 MB with the documents it was compiled
+from — read-only at `/knowledge/<name>`, which the run searches with
+`knowledge_list`, `knowledge_search` and `knowledge_read`; the receipt
+names each pack by digest and says whether it was scanned. Attaching a pack changes neither the plan nor its hash.
 **`agentry install --provider claude|codex|openclaw`** installs for a
 host agent application instead of the gateway path.
 

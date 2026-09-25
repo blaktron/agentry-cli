@@ -13,6 +13,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -27,9 +28,23 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 	happyFake(f)
 	p.KeepRunDir = true
 	p.Knowledge = []AttachedPack{AttachPack(pack)}
+	runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
+	// The pack was copied into the run, and it is that copy the tools
+	// container mounts, read-only: checked while the agent runs, since the
+	// copy goes at teardown even from a kept run directory.
+	var copyErr error
+	f.Foreground["-agent"].Before = func(dockerx.RunSpec) {
+		_, copyErr = knowledge.Load(filepath.Join(runDir, "knowledge", "aws-docs"))
+	}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if copyErr != nil {
+		t.Fatalf("the run's copy of the pack: %v", copyErr)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "knowledge")); !os.IsNotExist(err) {
+		t.Fatal("--keep-run-dir kept the run's copy of the pack")
 	}
 	m := pack.Manifest
 	// The fixture declares exec, so the line says the commands reach it too.
@@ -40,12 +55,6 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 		t.Fatalf("receipt knowledge line =\n%q\nwant\n%q", got, want)
 	}
 
-	runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
-	// The pack was copied into the run, and it is that copy the tools
-	// container mounts, read-only.
-	if _, err := knowledge.Load(filepath.Join(runDir, "knowledge", "aws-docs")); err != nil {
-		t.Fatalf("the run's copy of the pack: %v", err)
-	}
 	catalog, err := os.ReadFile(filepath.Join(runDir, "cfg", "gateway", "catalog.yaml"))
 	if err != nil {
 		t.Fatal(err)

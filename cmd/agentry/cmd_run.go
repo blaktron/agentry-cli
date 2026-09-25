@@ -166,7 +166,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
-	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack DIRECTORY to attach read-only at /knowledge/<name>, searched with the knowledge tools (repeatable)")
+	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack to attach read-only at /knowledge/<name>, searched with the knowledge tools: a pack kept on this computer by NAME, or a pack DIRECTORY (repeatable)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the BriefAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
@@ -201,10 +201,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
 	}
 	opts.guideShown = new(bool)
-	attached, err := attachKnowledge(cmd.ErrOrStderr(), opts.knowledge)
+	attached, detach, err := attachKnowledge(cmd, opts.knowledge)
 	if err != nil {
 		return err
 	}
+	defer detach()
 	home, err := runnerHome()
 	if err != nil {
 		return err

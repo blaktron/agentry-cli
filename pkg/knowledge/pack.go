@@ -184,12 +184,19 @@ type Digest struct {
 // what archive/tar writes for these headers. Anything that is not a
 // directory or a regular file is refused: a pack holds files, never links.
 func TreeDigest(dir string) (Digest, error) {
+	return WriteTree(dir, io.Discard)
+}
+
+// WriteTree writes dir's wiki/ and sources/ to w as the canonical tar
+// TreeDigest hashes — the plaintext a sealed pack holds (plan knowledge.md
+// §4.3; the core's pkg/packseal seals it) — and returns its digest.
+func WriteTree(dir string, w io.Writer) (Digest, error) {
 	files, err := treeFiles(dir)
 	if err != nil {
 		return Digest{}, err
 	}
 	h := sha256.New()
-	tw := tar.NewWriter(h)
+	tw := tar.NewWriter(io.MultiWriter(h, w))
 	var total int64
 	for _, rel := range files {
 		f, err := os.Open(filepath.Join(dir, filepath.FromSlash(rel))) //nolint:gosec // a listed regular file of the pack
@@ -201,15 +208,7 @@ func TreeDigest(dir string) (Digest, error) {
 			_ = f.Close()
 			return Digest{}, err
 		}
-		hdr := &tar.Header{
-			Typeflag: tar.TypeReg,
-			Name:     rel,
-			Mode:     0o644,
-			Size:     fi.Size(),
-			ModTime:  time.Unix(0, 0),
-			Format:   tar.FormatPAX,
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
+		if err := tw.WriteHeader(canonicalHeader(rel, fi.Size())); err != nil {
 			_ = f.Close()
 			return Digest{}, err
 		}
@@ -224,6 +223,18 @@ func TreeDigest(dir string) (Digest, error) {
 		return Digest{}, err
 	}
 	return Digest{SHA256: "sha256:" + hex.EncodeToString(h.Sum(nil)), Bytes: total, Files: len(files)}, nil
+}
+
+// canonicalHeader is the one header the canonical tar gives a file.
+func canonicalHeader(rel string, size int64) *tar.Header {
+	return &tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     rel,
+		Mode:     0o644,
+		Size:     size,
+		ModTime:  time.Unix(0, 0),
+		Format:   tar.FormatPAX,
+	}
 }
 
 // treeFiles lists the regular files under wiki/ and sources/ as sorted

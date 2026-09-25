@@ -113,11 +113,14 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// Registered before anything is staged into it: a failure in stageInputs
 	// or stageIntake — or a panic — otherwise leaves the run directory, and
 	// whatever was copied into it, behind for the next run to trip over
-	// (agentry-cli#161). secrets.env dies unconditionally; the rest of the run
-	// dir only when not kept for debugging (§R11 invariant 6; KeepRunDir never
-	// keeps secrets).
+	// (agentry-cli#161). secrets.env and the run's copies of the attached
+	// knowledge packs die unconditionally; the rest of the run dir only when
+	// not kept for debugging (§R11 invariant 6; KeepRunDir never keeps
+	// secrets, nor a pack's pages, which a pack kept sealed on the machine
+	// would otherwise leave in the clear there; DR-42).
 	td.add(func(context.Context) {
 		_ = os.Remove(rd.secretsPath)
+		_ = os.RemoveAll(rd.knowledge)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
 		}
