@@ -451,7 +451,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// teardown, so it closes after the gateway has stopped and reaped the
 	// containers it launched through it.
 	if filterSupported {
-		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan.MCPServers)
+		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan.MCPServers, p.RunnerHome)
 		if err != nil {
 			return err
 		}

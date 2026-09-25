@@ -58,19 +58,36 @@ var relayNetworkLabels = map[string]string{"docker-mcp": "true"}
 // with room for the terminator.
 const maxSocketPath = 103
 
+// filterSocketPath places the filter's socket where the daemon can mount
+// it. Under runhost the CLI runs in a container whose /tmp the daemon
+// cannot see; the runner home is the path it shares with the host, at the
+// same place inside and out. The run's own directory is under the
+// installed BriefAgent's, too deep for a socket path there (measured on
+// dev's runhost, 2026-09-25), so the socket is <runner home>/s/<run>.sock.
+// A home too long even for that falls back (startDaemonFilter) to a short
+// private directory under the system's temp directory; were that ever
+// inside such a container, the daemon would bind a directory in its place
+// and the gateway's health probe fails the run: it never runs unfiltered.
+func filterSocketPath(rd *runDirs, runID, runnerHome string) (string, error) {
+	if runnerHome == "" {
+		return filepath.Join(rd.root, "docker.sock"), nil
+	}
+	dir := filepath.Join(runnerHome, "s")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", Classify(ExitGateway, fmt.Errorf("docker filter directory: %w", err))
+	}
+	return filepath.Join(dir, runID+".sock"), nil
+}
+
 // startDaemonFilter serves the run's filter and returns the socket the
 // gateway mounts. The bind roots are the gateway's own resolved lists
 // (MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS): the filter
 // enforces for a compromised gateway what the gateway enforces for itself.
-func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, servers []spec.MCPServerSpec) (*sockfilter.Filter, string, error) {
-	// The socket lives in the run's directory: under runhost the CLI runs
-	// in a container whose /tmp the daemon cannot see, and the runner home
-	// is the path shared with the host. A home too long for a socket path
-	// falls back to a short private directory under the system's temp
-	// directory; were that ever inside such a container, the daemon would
-	// bind a directory in its place and the gateway's health probe fails
-	// the run — it never runs unfiltered.
-	sock := filepath.Join(rd.root, "docker.sock")
+func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, servers []spec.MCPServerSpec, runnerHome string) (*sockfilter.Filter, string, error) {
+	sock, err := filterSocketPath(rd, runID, runnerHome)
+	if err != nil {
+		return nil, "", err
+	}
 	if len(sock) > maxSocketPath {
 		dir, err := os.MkdirTemp("", "agentry-gw-")
 		if err != nil {

@@ -59,7 +59,7 @@ func TestRefusalsReachTheOutcome(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	rd := &runDirs{root: dir, receiptsDir: dir}
-	f, sock, err := startDaemonFilter(rd, "cafe0000", map[string]string{"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": dir}, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, nil)
+	f, sock, err := startDaemonFilter(rd, "cafe0000", map[string]string{"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": dir}, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,37 @@ func TestRefusalsReachTheOutcome(t *testing.T) {
 	}
 }
 
+// The socket sits under the runner home, the path runhost shares with the
+// host, not under the installed BriefAgent's run directory, which is too
+// deep for a socket path there (dev's runhost, 2026-09-25).
+func TestTheSocketIsUnderTheRunnerHome(t *testing.T) {
+	if !filterSupported {
+		t.Skip("the filter runs on Linux only")
+	}
+	home, err := os.MkdirTemp("", "rh") // short, as runhost's is
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	deep := filepath.Join(home, "profiles", "runs-checker-125725", "hosted-smoke", "0.1.0-0123456789ab", "runs", "c8c45187")
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rd := &runDirs{root: deep, receiptsDir: deep}
+	f, sock, err := startDaemonFilter(rd, "c8c45187", nil, policy.Limits{}, nil, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd.filter = f
+	defer closeDaemonFilter(rd)
+	if sock != filepath.Join(home, "s", "c8c45187.sock") || rd.filterDir != "" {
+		t.Errorf("socket at %s (fallback %q), want under the runner home", sock, rd.filterDir)
+	}
+	if fi, err := os.Stat(filepath.Join(home, "s")); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("socket directory: %v %v", fi, err)
+	}
+}
+
 // A runner home too long for a socket path puts the filter in a short
 // private directory, removed with the filter.
 func TestALongRunDirectoryFallsBackToAShortSocket(t *testing.T) {
@@ -100,7 +131,7 @@ func TestALongRunDirectoryFallsBackToAShortSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	rd := &runDirs{root: long, receiptsDir: long}
-	f, sock, err := startDaemonFilter(rd, "cafe0000", nil, policy.Limits{}, nil)
+	f, sock, err := startDaemonFilter(rd, "cafe0000", nil, policy.Limits{}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
