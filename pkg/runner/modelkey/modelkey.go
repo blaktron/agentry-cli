@@ -44,6 +44,19 @@ const (
 // (a bare host).
 const accountPrefix = "provider:"
 
+// markerPrefix names the presence marker stored beside each model key
+// (stored:provider:<name>), so Present can answer "is a key stored"
+// without reading the key (agentry-cli#156). The keychain APIs the
+// clients use offer no metadata-only lookup. The marker's value is
+// markerValue, never anything derived from the key.
+const (
+	markerPrefix = "stored:"
+	markerValue  = "stored"
+)
+
+// markerFor is the presence marker's account for provider's key.
+func markerFor(provider string) string { return markerPrefix + Account(provider) }
+
 // The keychain calls, as seams for tests (the real keychain is not present
 // on a CI runner, and a test must never touch a person's).
 var (
@@ -88,6 +101,9 @@ func Store(provider, key string) error {
 		}
 		return fmt.Errorf("store the model key for %s in the OS keychain: %w%s; the environment variable the policy names still works", provider, err, hint)
 	}
+	// The marker follows the key. If it cannot be written the key is
+	// still stored, and Present's fallback finds it and writes it then.
+	_ = keyringSet(Service, markerFor(provider), markerValue)
 	return nil
 }
 
@@ -117,26 +133,68 @@ func Delete(provider string) error {
 	if Disabled() {
 		return disabledErr("remove the model key for " + provider)
 	}
+	// The marker goes first: a Delete cut short then leaves a key with no
+	// marker, which Present's fallback still finds, never a marker with
+	// no key.
+	if err := keyringDelete(Service, markerFor(provider)); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return fmt.Errorf("remove the model key for %s: its presence marker %s would not leave the OS keychain (the key is untouched): %w", provider, markerFor(provider), err)
+	}
 	if err := keyringDelete(Service, Account(provider)); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		return fmt.Errorf("remove the model key for %s from the OS keychain: %w", provider, err)
 	}
 	return nil
 }
 
-// Present reports whether a key is stored for provider without returning
-// it — what a settings page shows. "No entry" is (false, nil); a keychain
-// that cannot be reached, or is disabled, is an error, so a page never
-// says "not stored" about a key it could not look for.
+// Present reports whether a key is stored for provider without reading
+// it — what a settings page shows, on every mount. It reads the presence
+// marker Store writes beside the key, so the key's value never enters
+// this process and a per-application keychain ACL is not asked for it
+// (agentry-cli#156). A key stored before the marker existed, by an older
+// CLI or desktop, has none: then the key's entry is read once, the marker
+// written, and the value dropped; with no key there, the read returns
+// nothing. "No entry" is (false, nil); a keychain that cannot be reached,
+// or is disabled, is an error, so a page never says "not stored" about a
+// key it could not look for.
+//
+// A marker outlives a key removed some other way (an older client's
+// Delete, the OS's own keychain app): Present then says "stored" and the
+// run refuses with the named fix, as it does for any missing key, until
+// setup stores a key again or Confirm is asked.
 func Present(provider string) (bool, error) {
+	if Disabled() {
+		return false, disabledErr("look for the model key for " + provider)
+	}
+	_, err := keyringGet(Service, markerFor(provider))
+	switch {
+	case err == nil:
+		return true, nil
+	case !errors.Is(err, keyring.ErrNotFound):
+		return false, lookForErr(provider, err)
+	}
+	return Confirm(provider)
+}
+
+// Confirm reports whether a key is stored for provider by reading its
+// entry, the way a run will, and brings the presence marker into line:
+// written when the key is there, removed when it is not. For a one-shot
+// check that must not trust a marker (agentry doctor); the value is
+// dropped at once, and a settings page asks Present instead.
+func Confirm(provider string) (bool, error) {
 	if Disabled() {
 		return false, disabledErr("look for the model key for " + provider)
 	}
 	_, err := keyringGet(Service, Account(provider))
 	switch {
 	case errors.Is(err, keyring.ErrNotFound):
+		_ = keyringDelete(Service, markerFor(provider))
 		return false, nil
 	case err != nil:
-		return false, fmt.Errorf("look for %s in the OS keychain: %w", Account(provider), err)
+		return false, lookForErr(provider, err)
 	}
+	_ = keyringSet(Service, markerFor(provider), markerValue)
 	return true, nil
+}
+
+func lookForErr(provider string, err error) error {
+	return fmt.Errorf("look for %s in the OS keychain: %w", Account(provider), err)
 }
