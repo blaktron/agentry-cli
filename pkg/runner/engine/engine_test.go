@@ -801,13 +801,18 @@ func TestReceiptsRedactSecretsFromLogs(t *testing.T) {
 	})
 }
 
-// A policy runtime reaches the agent container — the stranger's code —
-// with the run network's aliases pinned, never the runner's own proxy,
-// gateway or probe, and the receipt names exactly that; without one, no
-// container is asked for a runtime and the receipt says nothing (DR-23).
+// A policy runtime reaches every container class that holds under it
+// (DR-23, agentry-cli#221): the agent — the stranger's code — and the
+// gateway's health probe, each with the run network's aliases pinned; the
+// runner's own proxy and gateway stay on the daemon's default, and the
+// receipt names each class and why; without one, no container is asked
+// for a runtime and the receipt says nothing.
 func TestRunUnderAPolicyRuntime(t *testing.T) {
 	p, f := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Runtime = "runsc" })
 	happyFake(f)
+	// A plan compiled before agentry-cli#221 says less; the receipt's line
+	// is the run's own.
+	p.Plan.Enforcement["runtime"] = "runsc: a plan's older line"
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -815,28 +820,52 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 	if p.Plan.Runtime() != "runsc" {
 		t.Fatalf("plan runtime = %q", p.Plan.Runtime())
 	}
-	// The runtime is for the stranger's code: the agent carries it, with
-	// the run network's aliases pinned since a sandbox cannot reach
-	// docker's DNS; the runner's own proxy, gateway and probe do not.
-	agent, ok := f.FindRun("-agent")
-	if !ok || agent.Runtime != "runsc" {
-		t.Fatalf("agent runtime = %q (found %v), want runsc", agent.Runtime, ok)
+	for _, sandboxed := range []string{"-agent", "-probe"} {
+		c, ok := f.FindRun(sandboxed)
+		if !ok || c.Runtime != "runsc" {
+			t.Fatalf("%s runtime = %q (found %v), want runsc", sandboxed, c.Runtime, ok)
+		}
+		if len(c.ExtraHosts) != 2 || !strings.HasPrefix(c.ExtraHosts[0], "gateway:") || !strings.HasPrefix(c.ExtraHosts[1], "llm-proxy:") {
+			t.Fatalf("%s extra hosts = %v, want the gateway and llm-proxy aliases pinned", sandboxed, c.ExtraHosts)
+		}
 	}
-	if len(agent.ExtraHosts) != 2 || !strings.HasPrefix(agent.ExtraHosts[0], "gateway:") || !strings.HasPrefix(agent.ExtraHosts[1], "llm-proxy:") {
-		t.Fatalf("agent extra hosts = %v, want the gateway and llm-proxy aliases pinned", agent.ExtraHosts)
-	}
-	for _, infra := range []string{"-proxy", "-gateway", "-probe"} {
+	for _, infra := range []string{"-proxy", "-gateway"} {
 		c, ok := f.FindRun(infra)
 		if !ok {
 			t.Fatalf("no %s container ran", infra)
 		}
 		if c.Runtime != "" || len(c.ExtraHosts) != 0 {
-			t.Errorf("%s is the runner's own and must stay on the daemon's default: runtime=%q hosts=%v", c.Name, c.Runtime, c.ExtraHosts)
+			t.Errorf("%s holds no sandbox (DR-23) and must stay on the daemon's default: runtime=%q hosts=%v", c.Name, c.Runtime, c.ExtraHosts)
 		}
 	}
 	line := env.CapabilitiesEnforced["runtime"]
-	if !strings.HasPrefix(line, "runsc:") || !strings.Contains(line, "--runtime runsc") || !strings.Contains(line, "daemon's default runtime") {
-		t.Fatalf("receipt runtime line = %q", line)
+	for _, want := range []string{"runsc: created with docker --runtime runsc: the agent container", "the gateway's health probe",
+		"the tools server", "given runsc by the run's docker filter", "daemon's default runtime", "the llm-proxy (", "the gateway ("} {
+		if !strings.Contains(line, want) {
+			t.Errorf("receipt runtime line lacks %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "older line") || strings.Contains(line, "relays") {
+		t.Errorf("receipt runtime line = %q: the plan's text, or relays a run without servers never had", line)
+	}
+}
+
+// The receipt's runtime line follows the run: relays and servers when the
+// plan declares them, and, where the docker filter does not run, the
+// gateway's containers on the daemon's default.
+func TestTheRuntimeLineNamesEachClass(t *testing.T) {
+	p, _ := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Runtime = "runsc" })
+	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "osv", Egress: []string{"api.osv.dev"}}}
+	line := runtimeLine(p)
+	for _, want := range []string{"the MCP server installer", "the tools server and the declared MCP servers", "relay links pinned", "the relays ("} {
+		if !strings.Contains(line, want) {
+			t.Errorf("line lacks %q: %q", want, line)
+		}
+	}
+	defer func(was bool) { filterSupported = was }(filterSupported)
+	filterSupported = false
+	if line := runtimeLine(p); !strings.Contains(line, "take the daemon's default: the docker filter") || strings.Contains(line, "given runsc") {
+		t.Errorf("without the filter: %q", line)
 	}
 }
 

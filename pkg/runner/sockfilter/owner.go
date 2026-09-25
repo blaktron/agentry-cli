@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -43,6 +44,47 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 		return container{}, deny("container %s is not this run's", short(id))
 	}
 	return container{id: c.ID, imageID: c.ImageID}, nil
+}
+
+// linkedAddress is the address a container of this run's gateway has on
+// the first, by name, of the networks in joins (network ids) it sits on.
+func (f *Filter) linkedAddress(ctx context.Context, name string, joins map[string]bool) (string, error) {
+	var c struct {
+		Config struct {
+			Labels map[string]string
+		}
+		NetworkSettings struct {
+			Networks map[string]struct {
+				NetworkID string
+				IPAddress string
+			}
+		}
+	}
+	code, err := f.inspect(ctx, "/containers/"+url.PathEscape(name)+"/json", &c)
+	if err != nil {
+		return "", err
+	}
+	if code == http.StatusNotFound {
+		return "", notFound{"container", name}
+	}
+	if !f.ours(c.Config.Labels) {
+		return "", deny("container %s is not this run's", short(name))
+	}
+	nets := make([]string, 0, len(c.NetworkSettings.Networks))
+	for n := range c.NetworkSettings.Networks {
+		nets = append(nets, n)
+	}
+	sort.Strings(nets)
+	for _, n := range nets {
+		ep := c.NetworkSettings.Networks[n]
+		if joins[ep.NetworkID] {
+			if ep.IPAddress == "" {
+				return "", deny("linked container %s has no address on %s yet", short(name), f.gatewayNetwork(n))
+			}
+			return ep.IPAddress, nil
+		}
+	}
+	return "", deny("linked container %s shares no network with the container linking to it", short(name))
 }
 
 // ownNetwork resolves a network by name, id or id prefix: every later rule

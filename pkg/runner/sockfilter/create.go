@@ -332,9 +332,59 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		if err := f.relayShape(&c); err != nil {
 			return nil, err
 		}
+	} else if f.cfg.Runtime != "" {
+		if err := f.pinLinks(ctx, &c); err != nil {
+			return nil, err
+		}
+		hc.Runtime = f.cfg.Runtime
 	}
 	c.Labels = f.label(c.Labels)
 	return c, nil
+}
+
+// pinLinks gives a container that will run under the run's runtime an
+// /etc/hosts entry for each container it links to: the link's alias at
+// that container's address on a network the two share. A sandboxed
+// runtime's own network stack does not reach docker's embedded DNS, which
+// is what answers a link's name (measured on dev under gVisor, DR-23), so
+// a declared server would not find its relay; the entry answers exactly
+// what the DNS would have. The links stay, and every linked container has
+// already been confirmed this run's gateway's (checkHost, checkNetworks).
+// A link to a container on none of this one's networks, or with no
+// address there yet, is refused rather than left to fail inside the run.
+func (f *Filter) pinLinks(ctx context.Context, c *containerCreateBody) error {
+	hc := c.HostConfig
+	joins := map[string]bool{}
+	if m := hc.NetworkMode; m != "" && m != "none" && m != "default" {
+		joins[m] = true
+	}
+	links := append([]string(nil), hc.Links...)
+	if nc := c.NetworkingConfig; nc != nil {
+		for id, ep := range nc.EndpointsConfig {
+			joins[id] = true
+			if ep != nil {
+				links = append(links, ep.Links...)
+			}
+		}
+	}
+	for _, l := range links {
+		name, alias, hasAlias := strings.Cut(l, ":")
+		name = strings.TrimPrefix(name, "/")
+		if !hasAlias {
+			alias = name
+		}
+		// Docker's own form of a stored link is "/name:/container/alias".
+		alias = alias[strings.LastIndex(alias, "/")+1:]
+		if !relayHostRE.MatchString(alias) {
+			return deny("link alias %q is not a host name", alias)
+		}
+		ip, err := f.linkedAddress(ctx, name, joins)
+		if err != nil {
+			return err
+		}
+		hc.ExtraHosts = append(hc.ExtraHosts, alias+":"+ip)
+	}
+	return nil
 }
 
 // relayEnv are the relay's settings: its entrypoint writes them into the
@@ -435,9 +485,9 @@ func (f *Filter) checkHost(ctx context.Context, hc *hostConfig) error {
 	case hc.CgroupParent != "" || hc.Cgroup != "":
 		return deny("a container placed in another cgroup")
 	case hc.Runtime != "":
-		// The daemon's default runtime is the host's sandbox (plan §12.3);
-		// the runner's own runtime choice is agentry-cli#221's.
-		return deny("HostConfig.Runtime %q: the gateway's containers take the daemon's default", hc.Runtime)
+		// The run's runtime is the policy's, set by the filter itself
+		// (Config.Runtime): the gateway does not get to pick another.
+		return deny("HostConfig.Runtime %q: the run's runtime is the policy's, not the gateway's to choose", hc.Runtime)
 	case hc.Isolation != "" && hc.Isolation != "default":
 		return deny("HostConfig.Isolation %q", hc.Isolation)
 	case present(hc.MaskedPaths) || present(hc.ReadonlyPaths):

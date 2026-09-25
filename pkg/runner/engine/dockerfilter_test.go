@@ -59,7 +59,7 @@ func TestRefusalsReachTheOutcome(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	rd := &runDirs{root: dir, receiptsDir: dir}
-	f, sock, err := startDaemonFilter(rd, "cafe0000", map[string]string{"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": dir}, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, nil, "")
+	f, sock, err := startDaemonFilter(rd, "cafe0000", map[string]string{"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": dir}, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestTheSocketIsUnderTheRunnerHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	rd := &runDirs{root: deep, receiptsDir: deep}
-	f, sock, err := startDaemonFilter(rd, "c8c45187", nil, policy.Limits{}, nil, home)
+	f, sock, err := startDaemonFilter(rd, "c8c45187", nil, policy.Limits{}, nil, home, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestALongRunDirectoryFallsBackToAShortSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	rd := &runDirs{root: long, receiptsDir: long}
-	f, sock, err := startDaemonFilter(rd, "cafe0000", nil, policy.Limits{}, nil, "")
+	f, sock, err := startDaemonFilter(rd, "cafe0000", nil, policy.Limits{}, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

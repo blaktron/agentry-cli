@@ -95,5 +95,8 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	}
 	line += "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them"
 	out["containers"] = line
+	if p.Plan.Runtime() != "" {
+		out["runtime"] = runtimeLine(p)
+	}
 	return out
 }

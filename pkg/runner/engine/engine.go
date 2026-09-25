@@ -465,7 +465,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// teardown, so it closes after the gateway has stopped and reaped the
 	// containers it launched through it.
 	if filterSupported {
-		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan.MCPServers, p.RunnerHome)
+		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan.MCPServers, p.RunnerHome, p.Plan.Runtime())
 		if err != nil {
 			return err
 		}
@@ -509,6 +509,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Labels:     labels,
 		AutoRemove: true,
 	}
+	// Under the policy's runtime like the agent, and for the same reason
+	// given the gateway's address rather than a name (agentry-cli#221).
+	if probeSpec.ExtraHosts, err = sandboxHosts(ctx, d, p.Plan, runID); err != nil {
+		return Classify(ExitGateway, err)
+	}
+	probeSpec.Runtime = p.Plan.Runtime()
 	probeSpec = readOnlyRoot(hardened(probeSpec, p.limits()), "/tmp")
 	code, perr := d.RunForeground(ctx, probeSpec, nil, io.Discard, p.Stderr)
 	if perr != nil || code != 0 {
