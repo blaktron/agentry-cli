@@ -270,7 +270,15 @@ manifest + operator policy into a deterministic run plan → execute:
   runner home, where `agentry run` reads it — no second fetch — with the
   Claude-skill or AGENTS.md shape beside it (the policy's coding agent or
   provider decides which); a newer version replaces the older, and
-  `agentry list --check` says when one exists.
+  `agentry list --check` says when one exists. Each file of the installed
+  release is recorded under the runner home's integrity key, and a run
+  refuses one whose files changed after the install (exit 10, naming
+  them; `run --plan` says so first). `agentry install --repair ns/name@version`
+  lays it down again from a fresh download, checked as any install is. A
+  `--local` directory is the one exemption: its cached copy is replaced
+  from the directory. The record stops an edit by anyone who cannot also
+  read or replace the runner home's key; it does not stand against
+  someone who can write the runner home itself.
 - **Installed into an existing coding agent instead** (`agentry install
   --target claude-skill|agents-md`), the same contract compiles to the
   host's built-in tool grants — nothing is bundled in either mode.

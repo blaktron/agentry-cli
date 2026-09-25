@@ -9,8 +9,9 @@
 //	<runner home>/agents/<ns>/<name>/            the agent's directory (installed.yaml's dir)
 //	  <version>-<12 of the digest>/              one release
 //	    install.json                             Meta: what was verified, once
+//	    integrity.json                           the record that install.json and workspace/ are as laid down (integrity.go)
 //	    workspace/                               the release's files, pristine
-//	    export/                                  the coding-agent shape (WriteExport)
+//	    export/                                  the coding-agent shape (writeExport)
 //	    plan/  runs/                             the run's own, ephemeral
 package installdir
 
@@ -28,6 +29,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/pathguard"
+	"github.com/blaktron/agentry-cli/pkg/runner/integritykey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
@@ -102,30 +104,62 @@ func DigestSuffix(digest string) string {
 	return s
 }
 
-// Write lands workspace/ and install.json under dir. A half-written
-// install must not look installed, and two first installs of one release
-// at once (a CLI run and a desktop run on a fresh runner home) must not
-// share a half-built tree (agentry-cli#294): the tree is built aside and
-// published by rename (dirpublish). dir is named for the release's
-// digest, so a whole install of that digest already there, whoever laid
+// Write lands workspace/ and install.json under dir, sealed with the
+// integrity record (integrity.go). A half-written install must not look
+// installed, and two first installs of one release at once (a CLI run and
+// a desktop run on a fresh runner home) must not share a half-built tree
+// (agentry-cli#294): the tree is built aside and published by rename
+// (dirpublish). dir is named for the release's digest, so a whole install
+// of that digest already there that its record vouches for, whoever laid
 // it down, is the same release: it is kept, with any run's plan inside
-// it, and this copy discarded. Anything else at dir is replaced. A local
-// tree's .git and agentry-out are not part of the release and are
-// skipped.
+// it, and this copy discarded. An install that changed after it was laid
+// down is refused (*ChangedError), never replaced: that is Repair's, on the
+// person's word. Anything else at dir, an install without a record
+// included, is replaced. A local tree's .git and agentry-out are not part
+// of the release and are skipped.
 func Write(dir, srcTree string, meta *Meta) error {
-	return layDown(dir, srcTree, meta, func(got *Meta) bool { return true }, nil)
+	return layDown(dir, srcTree, meta, keepAny, nil, false)
 }
 
+// Replace is Write for a tree whose source is on this machine and is the
+// truth (a --local directory, a built-in package): an installed copy that
+// changed is replaced rather than refused, since there is no signed release
+// for it to be faithful to, only the source it is copied from.
+func Replace(dir, srcTree string, meta *Meta) error {
+	return layDown(dir, srcTree, meta, keepAny, nil, true)
+}
+
+func keepAny(*Meta) bool { return true }
+
 // layDown builds the release tree for dir aside, lets addToTree add to it
-// (Install's export), and publishes the whole, or leaves dir as it was.
-// A whole install of the same digest at dir that keep accepts wins over
-// this copy.
-func layDown(dir, srcTree string, meta *Meta, keep func(got *Meta) bool, addToTree func(tree string) error) error {
-	settled := func() bool {
-		got, ok := Load(dir, meta.Digest)
-		return ok && keep(got)
+// (Install's export), seals it, and publishes the whole, or leaves dir as
+// it was. A whole install of the same digest at dir, which its record
+// vouches for and keep accepts, wins over this copy; a nil keep never
+// keeps one (Repair replaces whatever is there). An install at dir that
+// changed after it was laid down is refused unless replaceChanged.
+func layDown(dir, srcTree string, meta *Meta, keep func(got *Meta) bool, addToTree func(tree string) error, replaceChanged bool) error {
+	home, err := HomeOf(dir)
+	if err != nil {
+		return err
 	}
-	_, err := dirpublish.ReplaceUnless(dir, func(tree string) error {
+	key, err := integritykey.Load(home)
+	if err != nil {
+		return err
+	}
+	if !replaceChanged {
+		var changed *ChangedError
+		if _, err := Inspect(dir, meta.Digest); errors.As(err, &changed) {
+			return changed
+		}
+	}
+	var settled func() bool
+	if keep != nil {
+		settled = func() bool {
+			got, err := Inspect(dir, meta.Digest)
+			return err == nil && keep(got)
+		}
+	}
+	_, err = dirpublish.ReplaceUnless(dir, func(tree string) error {
 		if err := export.CopyTreeSkipping(srcTree, filepath.Join(tree, "workspace"), notPartOfARelease); err != nil {
 			return err
 		}
@@ -133,9 +167,19 @@ func layDown(dir, srcTree string, meta *Meta, keep func(got *Meta) bool, addToTr
 			return err
 		}
 		if addToTree != nil {
-			return addToTree(tree)
+			if err := addToTree(tree); err != nil {
+				return err
+			}
 		}
-		return nil
+		// The staging directory sits beside the release, where anyone who
+		// can write the agent's directory could add to it before it is
+		// sealed: the copy is held to the verified source first, so what is
+		// sealed is the release and nothing else.
+		if err := sameFiles(srcTree, filepath.Join(tree, "workspace")); err != nil {
+			return err
+		}
+		// Last: the record covers install.json as the export left it.
+		return seal(key, tree)
 	}, settled)
 	if err != nil {
 		return fmt.Errorf("lay down the release: %w", err)
@@ -155,20 +199,17 @@ func writeMeta(dir string, meta *Meta) error {
 }
 
 // Load reuses a verified install iff its recorded digest matches what the
-// registry (or the tree hash) says now, and its workspace is there.
+// registry (or the tree hash) says now, its workspace is there, and its
+// integrity record vouches for the tree (Inspect). Anything else is not
+// an install to reuse: a caller that lays the release down again meets a
+// changed install as Write's refusal. A caller that must tell the cases
+// apart (refuse a changed install before fetching anything) uses Inspect.
 func Load(dir, wantDigest string) (*Meta, bool) {
-	b, err := os.ReadFile(filepath.Join(dir, "install.json")) //nolint:gosec // our install layout
+	meta, err := Inspect(dir, wantDigest)
 	if err != nil {
 		return nil, false
 	}
-	var meta Meta
-	if err := json.Unmarshal(b, &meta); err != nil || meta.Digest != wantDigest {
-		return nil, false
-	}
-	if _, err := os.Stat(filepath.Join(dir, "workspace")); err != nil {
-		return nil, false
-	}
-	return &meta, true
+	return meta, true
 }
 
 // StyleFor is the export shape an install writes beside the release (plan
@@ -212,14 +253,14 @@ func StyleForHome(home string) (style, warning string) {
 
 // Install is the one lay-down both clients call for the runner target: the
 // verified release written as Write does, with the coding-agent shape in
-// the given style (WriteExport) inside it, published as one tree. It is called only once the digest, the
+// the given style (writeExport) inside it, published as one tree. It is called only once the digest, the
 // attestation and the consent have been judged — it checks none of them.
 // It refuses a Meta that carries a consent: the cache holds the verdict
 // and never the consent, which lives in installed.yaml, so a run cannot
 // read one out of install.json.
 func Install(releaseDir, srcTree string, m *manifest.Manifest, meta *Meta, style string) error {
-	if meta.Attestation.Consent != "" {
-		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
+	if err := refuseConsent(meta); err != nil {
+		return err
 	}
 	// The export is written into the staged tree, so the published
 	// release is whole with its export, and a refused style leaves
@@ -227,17 +268,47 @@ func Install(releaseDir, srcTree string, m *manifest.Manifest, meta *Meta, style
 	// installed with this export is kept as it is.
 	keepIfSameExport := func(got *Meta) bool { return got.Export == style }
 	return layDown(releaseDir, srcTree, meta, keepIfSameExport, func(tree string) error {
-		return WriteExport(tree, style, m, meta)
-	})
+		return writeExport(tree, style, m, meta)
+	}, false)
 }
 
-// WriteExport lays the coding-agent shape under <dir>/export from the
+// Repair is Install on the person's word that an installed release which
+// changed after it was laid down is to be replaced (`agentry install
+// --repair`): the release, fetched and verified again by the caller, is
+// laid down in place of whatever is at releaseDir, whether or not it
+// changed, and sealed afresh. style is the export to write beside it, or
+// empty for none (a release a run laid down, which has none).
+func Repair(releaseDir, srcTree string, m *manifest.Manifest, meta *Meta, style string) error {
+	if err := refuseConsent(meta); err != nil {
+		return err
+	}
+	var addExport func(tree string) error
+	if style != "" {
+		addExport = func(tree string) error { return writeExport(tree, style, m, meta) }
+	}
+	return layDown(releaseDir, srcTree, meta, nil, addExport, true)
+}
+
+// refuseConsent refuses a Meta that carries a consent: install.json holds
+// the verdict and never the consent, which lives in installed.yaml, so a
+// run cannot read one out of it.
+func refuseConsent(meta *Meta) error {
+	if meta.Attestation.Consent != "" {
+		return fmt.Errorf("install.json holds the attestation verdict, never a consent (got %q)", meta.Attestation.Consent)
+	}
+	return nil
+}
+
+// writeExport lays the coding-agent shape under <dir>/export from the
 // verified workspace — the Claude skill as ~/.claude/skills would hold it
 // (export/<name>/SKILL.md with the compiled allowed-tools), or AGENTS.md
 // with the agent's section as a project root would (export/AGENTS.md and
 // export/agents/<name>/) — and records the style in install.json. The host
-// adapters can read it where it is; the container harness ignores it.
-func WriteExport(dir, style string, m *manifest.Manifest, meta *Meta) error {
+// adapters can read it where it is; the container harness ignores it. It
+// writes into a tree being laid down, before the tree is sealed: on a
+// published release its rewrite of install.json would read as a change
+// (agentry-cli#326), which is why it is not exported.
+func writeExport(dir, style string, m *manifest.Manifest, meta *Meta) error {
 	root := filepath.Join(dir, "export")
 	if err := os.RemoveAll(root); err != nil {
 		return fmt.Errorf("clear export dir: %w", err)

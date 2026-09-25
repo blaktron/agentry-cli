@@ -168,7 +168,9 @@ func (b Builtin) Materialize(home, build string) (*installdir.Meta, string, erro
 			return nil, "", fmt.Errorf("replace the changed copy of %s: %w", b.Ref(), err)
 		}
 	}
-	if err := installdir.Write(dir, stage, meta); err != nil {
+	// The embedded tree is the truth, so a copy that changed is replaced,
+	// not refused (installdir.Replace).
+	if err := installdir.Replace(dir, stage, meta); err != nil {
 		return nil, "", err
 	}
 	return meta, dir, nil
