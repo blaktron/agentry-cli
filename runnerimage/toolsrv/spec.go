@@ -10,11 +10,12 @@
 package toolsrv
 
 // SpecVersion is the current tool-server spec schema version. "2" added
-// the run-inputs channel (RUNNER-PLAN-2 §P4); the server refuses other
-// versions, so a stale runner image meets a newer compiler loudly — and
-// the image tag derives from the CLI version, so rebuilds happen on their
-// own at upgrade time.
-const SpecVersion = "2"
+// the run-inputs channel (RUNNER-PLAN-2 §P4); "3" the knowledge packs a
+// run may search (plan knowledge.md §4.5, agentry-cli#317). The server
+// refuses other versions, so a stale runner image meets a newer compiler
+// loudly — and the image tag derives from the CLI version, so rebuilds
+// happen on their own at upgrade time.
+const SpecVersion = "3"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -44,6 +45,15 @@ type Spec struct {
 	// absence of any write tool keep the channel one-way. Empty means the
 	// channel is not configured and its tools are absent.
 	InputsDir string `json:"inputsDir,omitempty"`
+	// KnowledgeDir is the container path of the read-only knowledge mount
+	// (conventionally /knowledge; plan knowledge.md §4.5), one directory
+	// per attached pack. Knowledge names those packs. Like the inputs, a
+	// pack the person attaches is task material and not a manifest
+	// capability, so the compiled plan never carries either field: the
+	// engine stamps both into the run's own copy of this file when packs
+	// are attached (DR-38), and the three knowledge tools exist only then.
+	KnowledgeDir string          `json:"knowledgeDir,omitempty"`
+	Knowledge    []KnowledgePack `json:"knowledge,omitempty"`
 	// FSRead gates fs_read and fs_list.
 	FSRead Access `json:"fsRead"`
 	// FSWrite gates fs_write.
@@ -63,6 +73,15 @@ type Spec struct {
 	// per-run copy of this file, never into the compiled plan; absent on
 	// hosts without POSIX ids.
 	Owner *Owner `json:"owner,omitempty"`
+}
+
+// KnowledgePack is one pack mounted under KnowledgeDir/<Name>. The name is
+// what the tools take as their pack argument; the digest is the one the
+// receipt records, so the run's own tool spec names what was attached in
+// the same terms as the receipt.
+type KnowledgePack struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
 }
 
 // Owner is a POSIX uid/gid pair.
@@ -150,6 +169,11 @@ const (
 	ToolListInputs  = "list_inputs"
 	ToolReadInput   = "read_input"
 	ToolWriteReport = "write_report"
+	// The knowledge tools (plan knowledge.md §4.5), granted only while a
+	// pack is attached.
+	ToolKnowledgeList   = "knowledge_list"
+	ToolKnowledgeSearch = "knowledge_search"
+	ToolKnowledgeRead   = "knowledge_read"
 )
 
 // GrantedTools returns the tool names this spec exposes, in the fixed
@@ -172,6 +196,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.InputsDir != "" {
 		names = append(names, ToolListInputs, ToolReadInput)
+	}
+	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {
+		names = append(names, ToolKnowledgeList, ToolKnowledgeSearch, ToolKnowledgeRead)
 	}
 	names = append(names, ToolWriteReport)
 	return names

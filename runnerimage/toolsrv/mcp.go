@@ -160,7 +160,7 @@ func validateSpec(spec *Spec) error {
 	if spec.InputsDir != "" && !filepath.IsAbs(spec.InputsDir) {
 		return fmt.Errorf("inputsDir %q must be an absolute container path when set", spec.InputsDir)
 	}
-	return nil
+	return validateKnowledge(spec)
 }
 
 // handleLine dispatches one message. Malformed traffic never kills the

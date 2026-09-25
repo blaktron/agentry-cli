@@ -114,6 +114,15 @@ func (s *server) buildTools() {
 		case ToolReadInput:
 			add(name, "Read one of the run's provided input files (read-only). Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
 				readInputSchema(), s.toolReadInput)
+		case ToolKnowledgeList:
+			add(name, "List a knowledge pack attached to this run: its index (every page, one line each, by section), or one section's pages. With several packs attached and none named, lists the packs.",
+				knowledgeListSchema(), s.toolKnowledgeList)
+		case ToolKnowledgeSearch:
+			add(name, "Search an attached knowledge pack for a word or phrase over its pages' titles, summaries and text (or its source documents). Returns the matching pages, best first, each with the line that matched.",
+				knowledgeSearchSchema(), s.toolKnowledgeSearch)
+		case ToolKnowledgeRead:
+			add(name, "Read a page of an attached knowledge pack (read-only), by the path its index gives, or a source document by a citation's doc:<path>. Capped by the server's byte limit; use offset and maxBytes to page through.",
+				knowledgeReadSchema(), s.toolKnowledgeRead)
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
 				writeReportSchema(), s.toolWriteReport)
@@ -914,37 +923,55 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	if fi.IsDir() {
 		return fmt.Sprintf("read_input: %q is a directory (use list_inputs)", path.Clean(a.Path)), true
 	}
-	limit := s.spec.Limits.readCap()
-	if a.MaxBytes > 0 && a.MaxBytes < limit {
-		limit = a.MaxBytes
-	}
-	f, err := os.Open(abs)
+	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
 	if err != nil {
 		return "read_input: " + err.Error(), true
 	}
+	return text, isErr
+}
+
+// readPaged is the paging read_input and the knowledge tools share: up to
+// the server cap (or the caller's tighter maxBytes) from offset, cut at a
+// rune boundary with a note saying where, and a binary file refused by
+// size. A non-nil error is the caller's to prefix with its tool name; the
+// binary refusal is a tool error with no prefix, as read_input has always
+// said it.
+func readPaged(abs string, offset, maxBytes, serverCap int64) (string, bool, error) {
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return "", true, err
+	}
+	limit := serverCap
+	if maxBytes > 0 && maxBytes < limit {
+		limit = maxBytes
+	}
+	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
+	if err != nil {
+		return "", true, err
+	}
 	defer func() { _ = f.Close() }()
-	if a.Offset > 0 {
-		if _, err := f.Seek(a.Offset, io.SeekStart); err != nil {
-			return "read_input: " + err.Error(), true
+	if offset > 0 {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return "", true, err
 		}
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit))
 	if err != nil {
-		return "read_input: " + err.Error(), true
+		return "", true, err
 	}
 	total := fi.Size()
-	truncated := a.Offset+int64(len(data)) < total
+	truncated := offset+int64(len(data)) < total
 	if truncated {
 		data = trimPartialRune(data)
 	}
 	if !utf8.Valid(data) {
-		return fmt.Sprintf("binary file; %d bytes", total), true
+		return fmt.Sprintf("binary file; %d bytes", total), true, nil
 	}
 	text := string(data)
 	if truncated {
 		text += fmt.Sprintf("\n[truncated at %d bytes of %d]", len(data), total)
 	}
-	return text, false
+	return text, false, nil
 }
 
 // ---- write_report ----

@@ -16,7 +16,7 @@ import (
 func toolSpecJSON(t *testing.T) string {
 	t.Helper()
 	doc := map[string]any{
-		"specVersion":  "2",
+		"specVersion":  "3",
 		"workspaceDir": t.TempDir(),
 		"outDir":       t.TempDir(),
 		"fsRead":       map[string]any{"enabled": false},
