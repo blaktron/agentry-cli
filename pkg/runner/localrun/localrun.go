@@ -1,0 +1,389 @@
+// Package localrun holds what a run needs besides the registry (plan
+// knowledge.md §4.2, D6; agentry-cli#318): the plan's reuse or compile for
+// any run, a release's or not (EnsurePlan, moved here from the CLI's main
+// package, D-031's move for runs); the manifest and the tree digest a local
+// package is read and keyed by; and the built-in run — a package this
+// binary embeds, run with the attestation state builtin, no registry
+// resolve and no consent prompt for a contract the application declares
+// itself. The CLI's commands, the desktop and the enterprise build share it.
+package localrun
+
+import (
+	"cmp"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+
+	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/decode"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/trust"
+	"github.com/blaktron/agentry-cli/runnerimage"
+	"github.com/blaktron/agentry/pkg/manifest"
+)
+
+// ManifestFrom parses agent.yaml at a package tree's root.
+func ManifestFrom(dir string) (*manifest.Manifest, error) {
+	b, err := os.ReadFile(filepath.Join(dir, "agent.yaml")) //nolint:gosec // package root
+	if err != nil {
+		return nil, fmt.Errorf("read agent.yaml: %w", err)
+	}
+	m, err := manifest.Parse(b)
+	if err != nil {
+		return nil, fmt.Errorf("parse agent.yaml: %w", err)
+	}
+	return m, nil
+}
+
+// TreeDigest hashes a package directory deterministically (sorted relative
+// paths, sizes and content, .git and agentry-out left out) so a local or a
+// built-in package is cache-keyed and receipted like an archive, with
+// "sha256:" kept for shape parity.
+func TreeDigest(dir string) (string, error) {
+	h := sha256.New()
+	var files []string
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if info.Name() == ".git" || info.Name() == "agentry-out" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, rerr := filepath.Rel(dir, p)
+		if rerr != nil {
+			return rerr
+		}
+		files = append(files, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("hash local tree: %w", err)
+	}
+	sort.Strings(files)
+	for _, rel := range files {
+		b, rerr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))) //nolint:gosec // hashing the named tree
+		if rerr != nil {
+			return "", fmt.Errorf("hash local tree: %w", rerr)
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", rel, len(b))
+		_, _ = h.Write(b)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// LocalMeta is the install record of a directory package run with --local:
+// unsigned by definition, attestation state local. It is computed, never
+// read from a cached install, so no record on disk can give a directory
+// another state.
+func LocalMeta(dir string) (*installdir.Meta, error) {
+	m, err := ManifestFrom(dir)
+	if err != nil {
+		return nil, err
+	}
+	digest, err := TreeDigest(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &installdir.Meta{
+		Ref:       fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
+		Namespace: m.Namespace, Name: m.Name, Version: m.Version,
+		Digest: digest, Source: "local",
+		Attestation: receipt.Attestation{State: "local", Consent: receipt.ConsentAllowUnsigned},
+	}, nil
+}
+
+// Builtin is a package this binary embeds. Its fields are unexported, so a
+// Builtin is only ever one of Builtins(): nothing else — a directory, a
+// release, a record on disk — can run with the attestation state builtin.
+type Builtin struct {
+	namespace, name, version string
+	fsys                     fs.FS
+}
+
+// KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator).
+func KnowledgeCreator() Builtin {
+	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS()}
+}
+
+// Builtins is every package that may run as builtin.
+func Builtins() []Builtin { return []Builtin{KnowledgeCreator()} }
+
+// Ref is the package's ns/name@version.
+func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }
+
+// Materialize lays the embedded tree down in the runner home's release
+// directory, keyed by its digest, and returns the record of it with the
+// attestation state builtin and the build that carries it. The record is
+// made in memory on every call and never read back; an installed copy whose
+// tree is not the embedded one is replaced.
+func (b Builtin) Materialize(home, build string) (*installdir.Meta, string, error) {
+	if b.fsys == nil {
+		return nil, "", errors.New("not a built-in package")
+	}
+	stage, err := os.MkdirTemp("", "agentry-builtin-*")
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
+	if err := os.CopyFS(stage, b.fsys); err != nil {
+		return nil, "", fmt.Errorf("stage %s: %w", b.Ref(), err)
+	}
+	digest, err := TreeDigest(stage)
+	if err != nil {
+		return nil, "", err
+	}
+	dir := installdir.ReleaseDir(home, b.namespace, b.name, b.version, digest)
+	meta := &installdir.Meta{
+		Ref:       b.Ref(),
+		Namespace: b.namespace, Name: b.name, Version: b.version,
+		Digest: digest, Source: "builtin",
+		Attestation: receipt.Attestation{State: trust.StateBuiltin, Build: build},
+	}
+	if _, ok := installdir.Load(dir, digest); ok {
+		if got, err := TreeDigest(filepath.Join(dir, "workspace")); err == nil && got == digest {
+			return meta, dir, nil
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return nil, "", fmt.Errorf("replace the changed copy of %s: %w", b.Ref(), err)
+		}
+	}
+	if err := installdir.Write(dir, stage, meta); err != nil {
+		return nil, "", err
+	}
+	return meta, dir, nil
+}
+
+// PlanInputs are what EnsurePlan compiles from.
+type PlanInputs struct {
+	Home         string
+	Manifest     *manifest.Manifest
+	Meta         *installdir.Meta
+	InstallDir   string
+	WorkspaceDir string
+	Policy       *policy.Policy
+	PolicySHA    string
+	Adapter      string
+	Servers      []spec.MCPServerSpec
+	Mode         manifest.Mode
+	// CompiledBy is the build identity of the client compiling: a plan
+	// another build compiled is recompiled.
+	CompiledBy string
+	Log        io.Writer
+}
+
+// EnsurePlan reuses the installed plan when nothing it depends on changed
+// (§R6/§R9), otherwise recompiles. A reused plan.json is first checked
+// against the integrity record its compile wrote under the runner home's
+// key (agentry-cli#266): a plan with no record this home can check is
+// recompiled, and one that does not match its record — changed after it
+// was compiled — refuses the run (exit 10).
+func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
+	errOut := in.Log
+	if errOut == nil {
+		errOut = io.Discard
+	}
+	key, err := compile.IntegrityKey(in.Home)
+	if err != nil {
+		return nil, "", engine.Classify(engine.ExitCLI, err)
+	}
+	// One plan per run mode (plan/<mode>/); a plan/plan.json from the
+	// single-plan layout is a stale install and is cleared.
+	if _, err := os.Stat(filepath.Join(in.InstallDir, "plan", "plan.json")); err == nil {
+		_ = os.RemoveAll(filepath.Join(in.InstallDir, "plan"))
+	}
+	planDir := filepath.Join(in.InstallDir, "plan", string(in.Mode))
+	runnerImage := in.Policy.RunnerImageTag(runnerimage.ContentVersion())
+	b, rerr := compile.ReadInstalledPlan(key, planDir)
+	var tampered *compile.TamperedPlanError
+	switch {
+	case errors.As(rerr, &tampered):
+		return nil, "", engine.Classify(engine.ExitVerify, rerr)
+	case errors.Is(rerr, compile.ErrNoIntegrityRecord):
+		// Read again for the notice only, never for use: a plan from an
+		// older CLI has no record and says which CLI it was.
+		raw, _ := os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // our install layout
+		if v := PlanVersionOf(raw); v != "" && v != spec.PlanVersion {
+			_, _ = fmt.Fprintf(errOut, "installed plan was compiled by an older CLI (plan version %s, want %s) — recompiling\n", v, spec.PlanVersion)
+		} else {
+			_, _ = fmt.Fprintln(errOut, "installed plan has no integrity record from this runner home — recompiling")
+		}
+	}
+	if rerr == nil {
+		// A plan from an older CLI is recompiled in place, and says so: a
+		// cached install used to stay stale after an upgrade until its
+		// first execution failed (agentry-cli#60).
+		if v := PlanVersionOf(b); v != "" && v != spec.PlanVersion {
+			_, _ = fmt.Fprintf(errOut, "installed plan was compiled by an older CLI (plan version %s, want %s) — recompiling\n", v, spec.PlanVersion)
+		}
+		if plan, perr := spec.ParsePlan(b); perr == nil &&
+			plan.PlanVersion == spec.PlanVersion &&
+			plan.Mode == string(in.Mode) &&
+			plan.Digest == in.Meta.Digest &&
+			plan.PolicySHA256 == in.PolicySHA &&
+			plan.Harness.Adapter == in.Adapter &&
+			reflect.DeepEqual(plan.MCPServers, in.Servers) {
+			switch {
+			case plan.CompiledBy != in.CompiledBy:
+				// Same schema, another build: the compiler's output may
+				// differ (agentry-cli#105 changed what a server's catalog
+				// entry carries without touching the schema). An unstamped
+				// build is told apart by its binary (agentry-cli#144).
+				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", cmp.Or(plan.CompiledBy, "unknown"), in.CompiledBy)
+			case plan.Proxy.Image != runnerImage:
+				_, _ = fmt.Fprintf(errOut, "installed plan names runner image %s, this CLI builds %s — recompiling\n", plan.Proxy.Image, runnerImage)
+			default:
+				if verr := compile.VerifyFiles(plan, planDir); verr == nil {
+					return plan, planDir, nil
+				}
+				_, _ = fmt.Fprintln(errOut, "installed plan failed integrity check — recompiling")
+			}
+		}
+	}
+	// Compile replaces planDir whole, in one rename, so it is not cleared
+	// first: a removal here could run into another process's compile of
+	// the same plan (agentry-cli#289).
+	plan, err := compile.Compile(compile.Inputs{
+		Manifest:     in.Manifest,
+		Mode:         in.Mode,
+		Digest:       in.Meta.Digest,
+		Source:       in.Meta.Source,
+		WorkspaceDir: in.WorkspaceDir,
+		Policy:       in.Policy,
+		PolicySHA:    in.PolicySHA,
+		AdapterName:  in.Adapter,
+		RunnerImage:  runnerImage,
+		CompiledBy:   in.CompiledBy,
+		MCPServers:   in.Servers,
+		IntegrityKey: key,
+	}, planDir)
+	if err != nil {
+		var refusal *compile.PolicyRefusal
+		if errors.As(err, &refusal) {
+			return nil, "", engine.Classify(engine.ExitPolicy, err)
+		}
+		return nil, "", engine.Classify(engine.ExitCompile, err)
+	}
+	return plan, planDir, nil
+}
+
+// PlanVersionOf reads just the planVersion of a stored plan.json, so a
+// plan the current schema cannot parse still names the version it has.
+func PlanVersionOf(b []byte) string {
+	var v struct {
+		PlanVersion string `json:"planVersion"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return ""
+	}
+	return v.PlanVersion
+}
+
+// Run is one run of a built-in package.
+type Run struct {
+	Builtin    Builtin
+	Home       string
+	Policy     *policy.Policy
+	PolicySHA  string
+	PolicyFile *policy.File
+	// Build is the client's build identity, recorded in the receipt's
+	// attestation and the plan.
+	Build string
+	Task  io.Reader
+	// Inputs are paths staged read-only under /inputs.
+	Inputs    []string
+	Knowledge []engine.AttachedPack
+	// Decoded is the decode step the caller ran on the inputs, for the
+	// receipt.
+	Decoded *decode.Result
+	OutDir  string
+	// Budgets, when set, replace the plan's.
+	Budgets *spec.Budgets
+	// Adapter names the harness adapter; empty takes the default.
+	Adapter    string
+	RunID      string
+	KeepRunDir bool
+	Stderr     io.Writer
+	OnUsage    func(receipt.Usage)
+}
+
+// Execute runs it: materialize, validate, plan, ensure the images, run.
+// There is no consent prompt: the application declares the contract of
+// its own package, and the person's choice was to use the feature.
+func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, error) {
+	logw := r.Stderr
+	if logw == nil {
+		logw = io.Discard
+	}
+	meta, installDir, err := r.Builtin.Materialize(r.Home, r.Build)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCLI, err)
+	}
+	workspace := filepath.Join(installDir, "workspace")
+	m, err := ManifestFrom(workspace)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCompile, err)
+	}
+	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
+		msgs := make([]string, 0, len(blocking))
+		for _, e := range blocking {
+			msgs = append(msgs, e.Error())
+		}
+		return nil, engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid:\n  %s", meta.Ref, strings.Join(msgs, "\n  ")))
+	}
+	adapterName := cmp.Or(r.Adapter, adapter.DefaultName)
+	ad, err := adapter.Get(adapterName)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCLI, err)
+	}
+	plan, planDir, err := EnsurePlan(PlanInputs{
+		Home: r.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
+		Policy: r.Policy, PolicySHA: r.PolicySHA, Adapter: adapterName, Mode: manifest.ModeAutonomous,
+		CompiledBy: r.Build, Log: logw,
+	})
+	if err != nil {
+		return nil, err
+	}
+	runnerTag := r.Policy.RunnerImageTag(runnerimage.ContentVersion())
+	ctxDir := filepath.Join(r.Home, "image")
+	if err := gateway.EnsureInstalled(ctx, d, r.Policy, runnerTag, ctxDir, logw, plan.Harness.Host == nil); err != nil {
+		return nil, engine.Classify(engine.ExitGateway, err)
+	}
+	var execPackages []string
+	if plan.ExecImage != nil {
+		if execPackages, err = gateway.EnsureExecImage(ctx, d, runnerTag, *plan.ExecImage, ctxDir, logw); err != nil {
+			return nil, engine.Classify(engine.ExitGateway, err)
+		}
+	}
+	budgets := plan.Budgets
+	if r.Budgets != nil {
+		budgets = *r.Budgets
+	}
+	return engine.Run(ctx, d, engine.Params{
+		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: r.Home,
+		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: r.Knowledge, Decoded: r.Decoded,
+		Adapter: ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
+		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
+		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage,
+	})
+}

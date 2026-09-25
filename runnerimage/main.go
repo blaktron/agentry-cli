@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -64,6 +65,8 @@ func main() {
 		err = runProxy(os.Args[2:])
 	case "probe":
 		err = runProbe(os.Args[2:])
+	case "decode":
+		err = runDecode(os.Args[2:])
 	case "minimize":
 		// agentry-cli#9: `docker build` runs this once to strip every
 		// executable but the declared commands from the image.
@@ -80,6 +83,27 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agentry-runner: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runDecode turns the documents under --in into text under --out, with the
+// report beside them (plan knowledge.md §4.2). The caller runs it in the
+// decode image: no network, no capabilities, --in read-only.
+func runDecode(args []string) error {
+	fs := flag.NewFlagSet("decode", flag.ContinueOnError)
+	in := fs.String("in", "", "the directory of documents to decode (read-only)")
+	out := fs.String("out", "", "the directory the texts and decode.json are written to")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *in == "" || *out == "" {
+		return errors.New("decode: --in and --out are required")
+	}
+	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "decode: %d files\n", len(rep.Files))
+	return nil
 }
 
 // runTools reads the compiled tool spec and serves MCP on stdio until the

@@ -29,6 +29,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -392,12 +393,12 @@ func doctorRegistry(ctx context.Context, rep *doctorReport) {
 // registry ref (resolved without downloading), or a local directory.
 func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string) (*manifest.Manifest, *installdir.Meta, string) {
 	if local != "" {
-		m, err := manifestFromWorkspace(local)
+		m, err := localrun.ManifestFrom(local)
 		if err != nil {
 			rep.fail("manifest", "%s: %v", local, err)
 			return nil, nil, ""
 		}
-		digest, err := localTreeDigest(local)
+		digest, err := localrun.TreeDigest(local)
 		if err != nil {
 			rep.fail("manifest", "%s: %v", local, err)
 			return nil, nil, ""
@@ -442,7 +443,7 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		rep.warn("install", "not installed yet — `agentry run %s --prepare` downloads, verifies and installs it", ref)
 		return nil, nil, ""
 	}
-	m, err := manifestFromWorkspace(filepath.Join(installDir, "workspace"))
+	m, err := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))
 	if err != nil {
 		rep.fail("install", "%s: %v", installDir, err)
 		return nil, nil, ""
@@ -523,8 +524,8 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 			switch {
 			case err != nil:
 				rep.warn("plan."+string(mode), "no compiled plan yet (compiled at first run, or by `agentry run --prepare`)")
-			case cachedPlanVersion(b) != spec.PlanVersion:
-				rep.warn("plan."+string(mode), "compiled by an older CLI (plan version %s, want %s) — `agentry run --prepare` recompiles it", cachedPlanVersion(b), spec.PlanVersion)
+			case localrun.PlanVersionOf(b) != spec.PlanVersion:
+				rep.warn("plan."+string(mode), "compiled by an older CLI (plan version %s, want %s) — `agentry run --prepare` recompiles it", localrun.PlanVersionOf(b), spec.PlanVersion)
 			default:
 				rep.ok("plan."+string(mode), "compiled (plan version %s)", spec.PlanVersion)
 			}
