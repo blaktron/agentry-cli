@@ -42,6 +42,11 @@ type Envelope struct {
 	CapabilitiesEnforced map[string]string `json:"capabilities_enforced"`
 	// Harness identifies the adapter, image, and model that ran.
 	Harness Harness `json:"harness"`
+	// Policy names the operator policy file the run enforced: its path,
+	// how that path was chosen, and the digest the plan was compiled
+	// against (agentry-cli#152). Absent in envelopes from clients that do
+	// not say, and in those written before it existed.
+	Policy *Policy `json:"policy,omitempty"`
 	// Usage is measured from the harness event stream, best-effort where
 	// the stream is (RUNNER-DEVIATIONS DR-4).
 	Usage Usage `json:"usage"`
@@ -72,6 +77,28 @@ type Attestation struct {
 	// verified release, which needed none.
 	Consent string `json:"consent,omitempty"`
 }
+
+// Policy is the operator policy a run enforced. Path is the file whose
+// bytes SHA256 fingerprints — the digest the run plan records as
+// policySha256 — so a reader can tell which file a run obeyed without
+// knowing the digest to expect.
+type Policy struct {
+	Path string `json:"path"`
+	// Source is how Path was chosen: PolicySourceDefault (the runner
+	// home's policy.yaml), PolicySourceFlag (--policy) or PolicySourceEnv
+	// (the runner home relocated by AGENTRY_RUNNER_HOME). An environment
+	// variable is inherited silently, where a flag shows in the command,
+	// so the receipt says which it was.
+	Source string `json:"source"`
+	SHA256 string `json:"sha256"`
+}
+
+// The policy sources a receipt records (policy.Resolve chooses one).
+const (
+	PolicySourceDefault = "default"
+	PolicySourceFlag    = "flag"
+	PolicySourceEnv     = "env"
+)
 
 // The consents a receipt records.
 const (

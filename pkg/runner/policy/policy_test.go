@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 func TestDefaultFileMatchesDefault(t *testing.T) {
@@ -519,5 +521,37 @@ func TestRunnerImageBasesArePinnedByDigest(t *testing.T) {
 	}
 	if !strings.Contains(defaultFileText, "goBuilder: "+DefaultGoBuilder+"\n") {
 		t.Error("the generated policy file does not carry the digest-pinned goBuilder")
+	}
+}
+
+// Resolve says which policy file a run reads and how it was chosen, for
+// the receipt (agentry-cli#152): --policy wins, then a home relocated by
+// AGENTRY_RUNNER_HOME, then the default home; each path absolute.
+func TestResolveNamesThePathAndHowItWasChosen(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(HomeEnv, "")
+	f, err := Resolve("")
+	if err != nil || f.Path != filepath.Join(home, ".agentry", "runner", "policy.yaml") || f.Source != receipt.PolicySourceDefault {
+		t.Fatalf("default: %+v %v", f, err)
+	}
+	relocated := t.TempDir()
+	t.Setenv(HomeEnv, relocated)
+	f, err = Resolve("")
+	if err != nil || f.Path != filepath.Join(relocated, "policy.yaml") || f.Source != receipt.PolicySourceEnv {
+		t.Fatalf("env: %+v %v", f, err)
+	}
+	// The flag wins over a relocated home; a relative flag or home is
+	// made absolute so the record names one file.
+	t.Chdir(t.TempDir())
+	cwd, _ := os.Getwd()
+	f, err = Resolve("ops/policy.yaml")
+	if err != nil || f.Path != filepath.Join(cwd, "ops", "policy.yaml") || f.Source != receipt.PolicySourceFlag {
+		t.Fatalf("flag: %+v %v", f, err)
+	}
+	t.Setenv(HomeEnv, "rel-home")
+	f, err = Resolve("")
+	if err != nil || f.Path != filepath.Join(cwd, "rel-home", "policy.yaml") || f.Source != receipt.PolicySourceEnv {
+		t.Fatalf("relative env: %+v %v", f, err)
 	}
 }

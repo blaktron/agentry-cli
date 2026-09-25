@@ -59,6 +59,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			Model:   p.Plan.Harness.Model,
 			Mode:    p.Plan.Mode,
 		},
+		Policy: policyRecord(p),
 		Result: receipt.TextResult(""),
 		OutDir: p.OutDir,
 	}
