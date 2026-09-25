@@ -417,6 +417,11 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		if err != nil {
 			return fmt.Errorf("install %s: %w", r.ID, err)
 		}
+		hosts, err := egress.hosts(ctx, docker.Runtime)
+		if err != nil {
+			egress.stop(ctx, "")
+			return fmt.Errorf("install %s: %w", r.ID, err)
+		}
 		code, err := d.RunForeground(ctx, dockerx.RunSpec{
 			Name:  "agentry-mcpinstall-" + r.ID,
 			Image: image,
@@ -432,8 +437,10 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// image's own user.
 			User: invokingUser(),
 			// The install runs under the policy's runtime like every
-			// container of a run (DR-23); "" is the daemon's default.
-			Runtime: docker.Runtime,
+			// container of a run (DR-23); "" is the daemon's default. The
+			// proxy's alias is pinned for it (egress.hosts).
+			Runtime:    docker.Runtime,
+			ExtraHosts: hosts,
 
 			// The name is fixed per server, so the container must go when
 			// the build ends or the next agent declaring the same server

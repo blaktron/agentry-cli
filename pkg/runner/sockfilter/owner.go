@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -22,6 +23,14 @@ func (f *Filter) ours(labels map[string]string) bool {
 type container struct {
 	id      string // the daemon's full id, which requests are forwarded by
 	imageID string // the image it runs, by id: a name can be re-pointed, this cannot
+	// networks are its endpoints by network name: the network's id and
+	// the container's address there.
+	networks map[string]endpoint
+}
+
+type endpoint struct {
+	NetworkID string
+	IPAddress string
 }
 
 func (f *Filter) ownContainer(ctx context.Context, id string) (container, error) {
@@ -30,6 +39,9 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 		ImageID string `json:"Image"`
 		Config  struct {
 			Labels map[string]string
+		}
+		NetworkSettings struct {
+			Networks map[string]endpoint
 		}
 	}
 	code, err := f.inspect(ctx, "/containers/"+url.PathEscape(id)+"/json", &c)
@@ -42,7 +54,31 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 	if !f.ours(c.Config.Labels) {
 		return container{}, deny("container %s is not this run's", short(id))
 	}
-	return container{id: c.ID, imageID: c.ImageID}, nil
+	return container{id: c.ID, imageID: c.ImageID, networks: c.NetworkSettings.Networks}, nil
+}
+
+// linkedAddress is the address a container of this run's gateway has on
+// the first, by name, of the networks in joins (network ids) it sits on.
+func (f *Filter) linkedAddress(ctx context.Context, name string, joins map[string]bool) (string, error) {
+	c, err := f.ownContainer(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	nets := make([]string, 0, len(c.networks))
+	for n := range c.networks {
+		nets = append(nets, n)
+	}
+	sort.Strings(nets)
+	for _, n := range nets {
+		ep := c.networks[n]
+		if joins[ep.NetworkID] {
+			if ep.IPAddress == "" {
+				return "", deny("linked container %s has no address on %s yet", short(name), f.gatewayNetwork(n))
+			}
+			return ep.IPAddress, nil
+		}
+	}
+	return "", deny("linked container %s shares no network with the container linking to it", short(name))
 }
 
 // ownNetwork resolves a network by name, id or id prefix: every later rule

@@ -427,7 +427,9 @@ func TestEnsureInstalledRoutesTheBuilderThroughTheInstallProxy(t *testing.T) {
 			if proxy.Image != proxyImage(policy.Images{}) || !slices.Equal(proxy.Argv, wantArgv) || proxy.Network != net || proxy.Alias != installProxyAlias {
 				t.Errorf("install proxy = image %q argv %q network %q alias %q; want %q %q", proxy.Image, proxy.Argv, proxy.Network, proxy.Alias, proxyImage(policy.Images{}), wantArgv)
 			}
-			if proxy.Runtime != "runsc" || !proxy.ReadOnly || !proxy.NoNewPrivileges {
+			// The runner's own binary on the daemon's default: it resolves
+			// the registry through docker's DNS (agentry-cli#221).
+			if proxy.Runtime != "" || !proxy.ReadOnly || !proxy.NoNewPrivileges {
 				t.Errorf("install proxy posture: runtime %q readOnly %v noNewPrivileges %v", proxy.Runtime, proxy.ReadOnly, proxy.NoNewPrivileges)
 			}
 			builder, ok := fake.FindRun("agentry-mcpinstall-" + id)
@@ -577,6 +579,15 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 	if !ok || inst.Runtime != "runsc" {
 		t.Fatalf("installer runtime = %q (found %v), want runsc", inst.Runtime, ok)
 	}
+	// A sandboxed builder cannot ask docker's DNS for the install proxy
+	// (agentry-cli#221): its alias is pinned; the proxy itself resolves the
+	// registry through that DNS and stays on the daemon's default.
+	if len(inst.ExtraHosts) != 1 || !strings.HasPrefix(inst.ExtraHosts[0], "mcp-install-proxy:") {
+		t.Fatalf("installer extra hosts = %v, want the install proxy pinned", inst.ExtraHosts)
+	}
+	if proxy, ok := fake.FindRun("agentry-mcpproxy-"); !ok || proxy.Runtime != "" {
+		t.Fatalf("install proxy runtime = %q (found %v), want the daemon's default", proxy.Runtime, ok)
+	}
 	// The run's container posture too (agentry-cli#163), the policy's
 	// memory and the defaults for what it left unset.
 	if len(inst.CapDrop) != 1 || inst.CapDrop[0] != "ALL" || !inst.NoNewPrivileges || inst.Memory != "1g" ||
@@ -588,7 +599,7 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 	if err := EnsureInstalled(t.Context(), fake2, res, t.TempDir(), httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if inst, _ := fake2.FindRun("agentry-mcpinstall-"); inst.Runtime != "" {
-		t.Fatalf("an unset runtime reached the installer: %q", inst.Runtime)
+	if inst, _ := fake2.FindRun("agentry-mcpinstall-"); inst.Runtime != "" || len(inst.ExtraHosts) != 0 {
+		t.Fatalf("an unset runtime reached the installer: %q, hosts %v", inst.Runtime, inst.ExtraHosts)
 	}
 }
