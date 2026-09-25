@@ -68,7 +68,7 @@ expect "it bakes dev's registry" "$(set -a; . build/release.env; printf '%s' "$A
 expect "its version is the tag without the v" 0.6.1-dev.1 field version <<<"$out"
 out=$(check v0.6.0 "$p1")
 expect "a main tag is a full release, latest when newest" "false true" echo "$(field prerelease <<<"$out") $(field latest <<<"$out")"
-expect "a minor main release waits for the operator's notes (draft)" true field draft <<<"$out"
+expect "a minor main release before 1.0.0 publishes at once" false field draft <<<"$out"
 out=$(check v0.6.2 "$p1")
 expect "a patch main release publishes at once" false field draft <<<"$out"
 out=$(check v0.6.2-dev.3 "$m1")
