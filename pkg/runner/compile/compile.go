@@ -94,7 +94,9 @@ const contractPostscript = "\n\n----\n" +
 	"gateway — there is no other shell, filesystem, or network access. The task " +
 	"workspace, as seen by your tools, is rooted at " + spec.WorkspaceMount + ". Input " +
 	"files provided for this run, if any, are under " + spec.InputsMount + " — list " +
-	"them with list_inputs and read them with read_input. Files you want to deliver " +
+	"them with list_inputs and read them with read_input. Knowledge packs attached " +
+	"to this run, if any, are searched with knowledge_search, listed with " +
+	"knowledge_list and read with knowledge_read. Files you want to deliver " +
 	"as reports must be written with the write_report tool; they land in the run's " +
 	"output folder. When the task is complete, send your final answer as your last " +
 	"message.\n"
@@ -799,7 +801,7 @@ func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) 
 // its roots (agentry-cli#105). Left out otherwise so a plan without
 // servers keeps its pre-PLAN-3 bytes.
 func bindRoots(withServers bool) []string {
-	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs}
+	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs, spec.PHKnowledge}
 	if withServers {
 		roots = append(roots, spec.PHServers)
 	}
@@ -884,6 +886,10 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// The run-inputs channel (P2 §P4): read-only by mount AND by tool
 	// surface; the output/receipts volume stays separate below.
 	vols = append(vols, spec.PHInputs+":"+spec.InputsMount+":ro")
+	// The knowledge channel (plan knowledge.md §4.5): one read-only mount
+	// whether or not packs are attached, so an attachment never moves the
+	// plan; the engine grants the tools only when it attaches one (DR-36).
+	vols = append(vols, spec.PHKnowledge+":"+spec.KnowledgeMount+":ro")
 	vols = append(vols, spec.PHOut+":"+spec.OutMount+":rw")
 	e.set("volumes", strListNode(vols))
 

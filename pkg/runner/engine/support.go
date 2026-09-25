@@ -541,7 +541,7 @@ func mountsDockerSocket(mounts []spec.Mount) bool {
 func runScopedMount(source string) bool {
 	for _, ph := range []string{
 		spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs,
-		spec.PHServers, spec.PHSession,
+		spec.PHKnowledge, spec.PHServers, spec.PHSession,
 	} {
 		if strings.Contains(source, ph) {
 			return true
