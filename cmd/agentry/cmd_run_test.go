@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/spf13/cobra"
 )
 
 // repoPath resolves a path relative to the repo root (tests run with cwd =
@@ -368,6 +370,65 @@ func TestRunWildcardEgressPolicyRefusal(t *testing.T) {
 	_, _, err := runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/wildcard"),
 		"--allow-unsigned", "--dry-run", "--policy", policyPath, "--yes")
 	wantClassified(t, err, engine.ExitPolicy)
+}
+
+// A run that fails before the engine writes an envelope still prints one
+// under --output-format json: the exit class and the step it stopped in,
+// which is all a hosted run's host may keep (agentry-cli#332). In text
+// mode stdout stays empty.
+func TestRunFailingBeforeTheEngineNamesItsStage(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	for _, c := range []struct {
+		name  string
+		args  []string
+		code  int
+		stage string
+	}{
+		{"an unsigned local release", []string{"--local", repoPath(t, "testdata/runner/pure-text")}, engine.ExitVerify, receipt.StageVerify},
+		{"an undeclared adapter", []string{"--local", repoPath(t, "testdata/runner/pure-text"), "--allow-unsigned", "--adapter", "nonesuch"}, engine.ExitCLI, receipt.StageCompile},
+	} {
+		args := append([]string{"run"}, c.args...)
+		args = append(args, "--policy", policyPath, "--yes", "--output-format", "json")
+		stdout, _, err := runCLI(t, strings.NewReader(""), args...)
+		wantClassified(t, err, c.code)
+		var env receipt.Envelope
+		if jerr := json.Unmarshal([]byte(stdout), &env); jerr != nil {
+			t.Fatalf("%s: stdout is not an envelope: %v\n%s", c.name, jerr, stdout)
+		}
+		if env.Status != "error" || env.ExitCode != c.code || env.ExitClass != receipt.ExitClassName(c.code) || env.Stage != c.stage || env.Error == "" {
+			t.Errorf("%s: envelope status %q code %d class %q stage %q error %q", c.name, env.Status, env.ExitCode, env.ExitClass, env.Stage, env.Error)
+		}
+		// Past verification the release is named with what verified it,
+		// so a later failure does not read as an unverified release.
+		if c.stage != receipt.StageVerify && (env.Digest == "" || env.Attestation.State != "local") {
+			t.Errorf("%s: digest %q attestation %+v, want the verified local release", c.name, env.Digest, env.Attestation)
+		}
+		textArgs := args[:len(args)-2]
+		if out, _, _ := runCLI(t, strings.NewReader(""), textArgs...); out != "" {
+			t.Errorf("%s: text mode printed %q", c.name, out)
+		}
+	}
+}
+
+// A run cancelled before the engine says it was interrupted, under the cli
+// class, as the engine's own envelope does: a driver records an
+// interruption, not the refusal the step's class would read as.
+func TestAnInterruptedRunBeforeTheEngineSaysSo(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	p := &runProgress{stage: receipt.StageMCPServers}
+	printFailure(ctx, cmd, p, engine.Classify(engine.ExitVerify, context.Canceled))
+	var env receipt.Envelope
+	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+		t.Fatalf("not an envelope: %v\n%s", err, out.String())
+	}
+	if env.Error != "interrupted" || env.ExitCode != engine.ExitCLI || env.Stage != receipt.StageMCPServers {
+		t.Errorf("envelope error %q code %d stage %q", env.Error, env.ExitCode, env.Stage)
+	}
 }
 
 func TestRunUnknownAdapterIsCLIError(t *testing.T) {

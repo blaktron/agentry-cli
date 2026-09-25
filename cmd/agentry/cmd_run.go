@@ -55,7 +55,10 @@ type runOpts struct {
 	outputFormat string
 	// guideShown is set once the release's guide has been printed on this
 	// terminal, so the profile setup and the intake do not print it twice.
-	guideShown         *bool
+	guideShown *bool
+	// progress is where the run has got to, for the envelope of a run that
+	// fails before the engine writes one (agentry-cli#332).
+	progress           *runProgress
 	eventsPath         string
 	adapterName        string
 	local              string
@@ -132,7 +135,12 @@ func newRunCmd() *cobra.Command {
 			if len(args) == 1 {
 				ref = args[0]
 			}
-			return runRun(cmd, ref, opts)
+			opts.progress = &runProgress{stage: receipt.StagePolicy, ref: ref}
+			err := runRun(cmd, ref, opts)
+			if err != nil && opts.outputFormat == "json" && !opts.progress.printed {
+				printFailure(cmd.Context(), cmd, opts.progress, err)
+			}
+			return err
 		},
 	}
 	f := cmd.Flags()
@@ -213,6 +221,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
+	opts.progress.at(receipt.StageVerify)
 	// Materialize: verified workspace + install metadata, cached per
 	// digest (§R5 standalone mode). A --plan materializes into a temp
 	// home instead: a preview writes nothing that outlives it, and an
@@ -255,6 +264,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
+	opts.progress.running(meta)
+	opts.progress.at(receipt.StageCompile)
 	workspaceDir := filepath.Join(installDir, "workspace")
 	m, err := localrun.ManifestFrom(workspaceDir)
 	if err != nil {
@@ -290,12 +301,14 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	var consent runPlanConsent
+	opts.progress.at(receipt.StageConsent)
 	if opts.plan {
 		consent = describeRunConsent(m, meta, consentHome)
 	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
+	opts.progress.at(receipt.StageCompile)
 	adapterName := opts.adapterName
 	if adapterName == "" {
 		adapterName = adapter.DefaultName
@@ -316,6 +329,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	var serverSpecs []spec.MCPServerSpec
 	var vulnLine string
 	if len(m.Capabilities.MCPServers) > 0 {
+		opts.progress.at(receipt.StageMCPServers)
 		// The registry's vulnerability verdict on each declared server
 		// (agentry#177, DR-16): refused on a known high/critical advisory
 		// unless the operator says otherwise; fail-open when the registry
@@ -337,6 +351,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		serverSpecs = mcpinstall.Specs(resolvedServers, m.Capabilities.MCPServers, pol.Images)
 	}
 
+	opts.progress.at(receipt.StageCompile)
 	plan, planDir, err := localrun.EnsurePlan(localrun.PlanInputs{
 		Home: home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspaceDir,
 		Policy: pol, PolicySHA: polSHA, Adapter: adapterName, Servers: serverSpecs, Mode: mode,
@@ -362,6 +377,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
+	opts.progress.at(receipt.StageImages)
 	docker := dockerx.New()
 	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr(),
@@ -385,6 +401,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		// (agentry-cli#161). engine.Run sweeps again; the second finds
 		// nothing.
 		engine.SweepAbandoned(cmd.Context(), docker, cmd.ErrOrStderr())
+		opts.progress.at(receipt.StageMCPServers)
 		if err := mcpinstall.EnsureInstalled(cmd.Context(), docker, resolvedServers, serversDir,
 			pol.MCPRegistries, pol.Images, pol.Docker, cmd.ErrOrStderr()); err != nil {
 			return engine.Classify(engine.ExitGateway, err)
@@ -394,6 +411,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// The BriefAgent's MCP profile (RUNNER-PLAN-2 §P2/§P3): load or, on a
 	// terminal, run guided setup. Part of the install step, so --prepare
 	// includes it; --dry-run (above) never prompts.
+	opts.progress.at(receipt.StageProfile)
 	prof, profDir, keep, err := ensureProfile(cmd, home, meta, m, pol, opts)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
@@ -405,11 +423,13 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return nil
 	}
 
+	opts.progress.at(receipt.StageIntake)
 	answers, err := collectIntake(cmd, m, opts)
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, err)
 	}
 
+	opts.progress.at(receipt.StagePrepare)
 	runID, err := engine.NewRunID()
 	if err != nil {
 		return err
@@ -482,6 +502,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	env, runErr := engine.Run(cmd.Context(), docker, params)
 	if env != nil {
 		printEnvelope(cmd, env, opts.outputFormat)
+		opts.progress.enveloped()
 	}
 	finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
 	return runErr
@@ -587,6 +608,71 @@ func taskReader(cmd *cobra.Command, input string) io.Reader {
 type errReader struct{ err error }
 
 func (e *errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// runProgress is where a run has got to: the step it is in (a
+// receipt.Stage word), the release once verified, and whether an envelope
+// has been printed. Its methods take a nil receiver, as runOpts built
+// without one (a test's) leave it.
+type runProgress struct {
+	stage   string
+	meta    *installdir.Meta
+	ref     string
+	printed bool
+}
+
+// at moves the run into a step.
+func (p *runProgress) at(stage string) {
+	if p != nil {
+		p.stage = stage
+	}
+}
+
+// running records the release the run verified and installed.
+func (p *runProgress) running(meta *installdir.Meta) {
+	if p != nil {
+		p.meta = meta
+	}
+}
+
+// enveloped records that the run's own envelope was printed.
+func (p *runProgress) enveloped() {
+	if p != nil {
+		p.printed = true
+	}
+}
+
+// printFailure prints the envelope of a run that failed before the engine
+// wrote one, under --output-format json: a driver reading stdout gets the
+// exit class and the step it stopped in (agentry-cli#332), not silence.
+// There is no run, so no run id, receipts or output folder; the release
+// and its attestation are there once it was verified. A run interrupted
+// here says so under the cli class, as the engine's does, so a driver
+// records an interruption and not a refusal.
+func printFailure(ctx context.Context, cmd *cobra.Command, p *runProgress, err error) {
+	code := engine.ExitCLI
+	var ce *engine.ClassifiedError
+	if errors.As(err, &ce) {
+		code = ce.Code
+	}
+	msg := err.Error()
+	if ctx.Err() != nil {
+		code, msg = engine.ExitCLI, "interrupted"
+	}
+	env := &receipt.Envelope{
+		Agentry:              receipt.EnvelopeVersion,
+		Status:               "error",
+		ExitCode:             code,
+		Error:                msg,
+		Stage:                p.stage,
+		Ref:                  p.ref,
+		CapabilitiesEnforced: map[string]string{},
+		Result:               receipt.TextResult(""),
+	}
+	if m := p.meta; m != nil {
+		env.Ref, env.Digest, env.Attestation = m.Ref, m.Digest, m.Attestation
+	}
+	printEnvelope(cmd, env, "json")
+}
 
 // printEnvelope writes the run result per --output-format. Text mode
 // prints only the agent's result (Unix composition, §R8); the envelope is
