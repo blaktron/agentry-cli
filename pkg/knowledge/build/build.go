@@ -37,12 +37,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
-	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
-
-// DocumentsFile is the Creator's list of what it was given, at the root of
-// its inputs.
-const DocumentsFile = "documents.json"
 
 // Options configure one build.
 type Options struct {
@@ -144,14 +139,19 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	}
 	res.Decoded = dec
 
-	docs, inputs, err := creatorInputs(dec, given, docsDir, inputsDir)
+	docs, inputs, err := dec.Stage(given, inputsDir)
 	if err != nil {
-		return nil, engine.Classify(engine.ExitCLI, err)
+		return nil, engine.Classify(engine.ExitUsage, err)
 	}
 	res.Skipped = dec.Undecodable()
+	var readable []decode.Document
 	for _, doc := range docs {
-		res.Documents = append(res.Documents, doc.Name)
+		if doc.Read != "" {
+			readable = append(readable, doc)
+			res.Documents = append(res.Documents, doc.Name)
+		}
 	}
+	docs = readable
 	if len(docs) == 0 {
 		return res, engine.Classify(engine.ExitUsage, fmt.Errorf("no document could be read: %s", strings.Join(res.Skipped, ", ")))
 	}
@@ -171,7 +171,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	// Whatever the run wrote is applied, even when it stopped early: each
 	// page is checked on its own, and a pack that took some documents'
 	// pages is a valid pack a further build continues.
-	n, err := collect(filepath.Join(o.OutDir, "reports"), docsDir, dec, docs, applyDir)
+	n, err := collect(filepath.Join(o.OutDir, "reports"), dec, docs, applyDir, runErr)
 	if err != nil {
 		return res, engine.Classify(engine.ExitCLI, err)
 	}
@@ -202,8 +202,8 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 func stageDocuments(paths []string, dst string) (map[string]string, error) {
 	out := map[string]string{}
 	add := func(rel, from string) error {
-		if rel == DocumentsFile {
-			return fmt.Errorf("%s: a document may not be named %s, the Creator's own list; rename it", from, DocumentsFile)
+		if rel == decode.DocumentsFile {
+			return fmt.Errorf("%s: a document may not be named %s, the Creator's own list; rename it", from, decode.DocumentsFile)
 		}
 		if prev, dup := out[rel]; dup {
 			return fmt.Errorf("%s and %s would both be the document %s; rename one", prev, from, rel)
@@ -274,85 +274,8 @@ func safeName(s string) string {
 	return out
 }
 
-// document is one line of documents.json.
-type document struct {
-	// Name is the document as the pack cites it: [src: doc:<Name>].
-	Name string `json:"name"`
-	// GivenAs is the path it was given as.
-	GivenAs string `json:"givenAs"`
-	// Read is the file under the inputs to read: the document itself when
-	// it is text, else the text decoded from it.
-	Read   string `json:"read"`
-	Family string `json:"family"`
-	// DecodedBy names the decoder when the text was decoded.
-	DecodedBy string `json:"decodedBy,omitempty"`
-}
-
-// creatorInputs lays out what the Creator reads: each readable document's
-// text at the inputs root, and documents.json naming them; it returns the
-// documents and the paths to stage under /inputs.
-func creatorInputs(dec *decode.Result, givenAs map[string]string, docsDir, inputsDir string) ([]document, []string, error) {
-	var docs []document
-	// What the Creator reads, and what the pack keeps, must name one file
-	// each: a text document called a.pdf.txt beside a.pdf, whose decoded
-	// text is a.pdf.txt too, is refused rather than one hiding the other.
-	claimed := map[string]string{}
-	claim := func(name, by string) error {
-		if prev, dup := claimed[name]; dup && prev != by {
-			return fmt.Errorf("the documents %s and %s would both be read as %s; rename one", prev, by, name)
-		}
-		claimed[name] = by
-		return nil
-	}
-	for _, f := range dec.Report.Files {
-		if f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeDecoded {
-			if err := claim(f.Path, f.Path); err != nil {
-				return nil, nil, err
-			}
-			if f.Outcome == runnerdecode.OutcomeDecoded {
-				if err := claim(f.Output, f.Path); err != nil {
-					return nil, nil, err
-				}
-			}
-		}
-	}
-	for _, f := range dec.Report.Files {
-		doc := document{Name: f.Path, GivenAs: givenAs[f.Path], Family: f.Family}
-		var src string
-		switch f.Outcome {
-		case runnerdecode.OutcomeText:
-			doc.Read, src = f.Path, filepath.Join(docsDir, filepath.FromSlash(f.Path))
-		case runnerdecode.OutcomeDecoded:
-			doc.Read, doc.DecodedBy, src = f.Output, f.Tool, filepath.Join(dec.Out, filepath.FromSlash(f.Output))
-		default:
-			continue
-		}
-		if err := copyFile(src, filepath.Join(inputsDir, filepath.FromSlash(doc.Read))); err != nil {
-			return nil, nil, err
-		}
-		docs = append(docs, doc)
-	}
-	raw, err := json.MarshalIndent(map[string]any{"documents": docs}, "", "  ")
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := os.WriteFile(filepath.Join(inputsDir, DocumentsFile), append(raw, '\n'), 0o644); err != nil { //nolint:gosec // read by the run
-		return nil, nil, err
-	}
-	entries, err := os.ReadDir(inputsDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	var inputs []string
-	for _, e := range entries {
-		inputs = append(inputs, filepath.Join(inputsDir, e.Name()))
-	}
-	sort.Strings(inputs)
-	return docs, inputs, nil
-}
-
 // task is the Creator's task: the pack, the date, the documents.
-func task(name string, current *knowledge.Pack, docs []document, now time.Time) string {
+func task(name string, current *knowledge.Pack, docs []decode.Document, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Knowledge pack: %s. ", name)
 	if current != nil {
@@ -368,61 +291,70 @@ func task(name string, current *knowledge.Pack, docs []document, now time.Time) 
 }
 
 // collect gathers what the Creator wrote under reports/ and the documents
-// it read into applyDir with a changes.json: the pages it wrote, the
-// removals and the note its own changes.json asked for, and every
-// document it read with its decoded text under sources/. It returns how
-// many pages the run wrote.
-func collect(reports, docsDir string, dec *decode.Result, docs []document, applyDir string) (int, error) {
+// it read into applyDir with a changes.json: the pages it wrote, the page
+// removals and the note its own changes.json asked for, and every document
+// it read with its decoded text under sources/. Everything under reports/
+// was written by the run, so it is read through an os.Root, regular files
+// only, within the pack's cap. It returns how many pages the run wrote.
+func collect(reports string, dec *decode.Result, docs []decode.Document, applyDir string, runErr error) (int, error) {
 	ch := knowledge.Changes{Schema: knowledge.ChangesSchema}
-	wiki := filepath.Join(reports, knowledge.WikiDir)
 	pages := 0
-	if _, err := os.Stat(wiki); err == nil {
-		err := filepath.WalkDir(wiki, func(p string, e fs.DirEntry, err error) error {
-			if err != nil || e.IsDir() || !e.Type().IsRegular() || !strings.HasSuffix(p, ".md") {
+	if _, err := os.Stat(filepath.Join(reports, knowledge.WikiDir)); err == nil {
+		root, err := os.OpenRoot(reports)
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = root.Close() }()
+		err = fs.WalkDir(root.FS(), knowledge.WikiDir, func(rel string, e fs.DirEntry, err error) error {
+			if err != nil || e.IsDir() || !e.Type().IsRegular() || !strings.HasSuffix(rel, ".md") {
 				return err
 			}
-			rel, _ := filepath.Rel(reports, p)
-			rel = filepath.ToSlash(rel)
 			if b := path.Base(rel); b == knowledge.IndexFile || rel == knowledge.WikiDir+"/"+knowledge.LogFile {
 				return nil // the apply step writes these
 			}
+			body, err := fs.ReadFile(root.FS(), rel)
+			if err != nil {
+				return err
+			}
+			if len(body) > knowledge.MaxBytes {
+				return fmt.Errorf("the Creator wrote %s past the pack's cap", rel)
+			}
 			pages++
 			ch.Write = append(ch.Write, rel)
-			return copyFile(p, filepath.Join(applyDir, filepath.FromSlash(rel)))
+			return writeOut(filepath.Join(applyDir, filepath.FromSlash(rel)), body)
 		})
 		if err != nil {
 			return 0, err
 		}
-	}
-	if raw, err := os.ReadFile(filepath.Join(reports, knowledge.ChangesFile)); err == nil { //nolint:gosec // the run's own report
-		var own knowledge.Changes
-		if json.Unmarshal(raw, &own) == nil {
-			// The model removes pages and nothing else: sources/ is the
-			// build's, and holds the documents as given.
-			for _, rel := range own.Delete {
-				if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
-					ch.Delete = append(ch.Delete, rel)
+		if raw, err := fs.ReadFile(root.FS(), knowledge.ChangesFile); err == nil && len(raw) <= 1<<20 {
+			var own knowledge.Changes
+			if json.Unmarshal(raw, &own) == nil {
+				// The model removes pages and nothing else: sources/ is the
+				// build's, and holds the documents as given.
+				for _, rel := range own.Delete {
+					if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
+						ch.Delete = append(ch.Delete, rel)
+					}
 				}
+				ch.Summary = own.Summary
 			}
-			ch.Summary = own.Summary
 		}
 	}
-	decoded := map[string]string{}
-	for _, f := range dec.Report.Files {
-		if f.Outcome == runnerdecode.OutcomeDecoded {
-			decoded[f.Path] = f.Output
-		}
+	if runErr != nil {
+		// The log says so: the documents below were given to a run that
+		// did not finish, and may be only partly in the pages.
+		ch.Summary = strings.TrimSpace("The Creator run stopped before it finished (" + runErr.Error() + "); these documents may be only partly compiled, and a further add continues. " + ch.Summary)
 	}
 	for _, doc := range docs {
 		ch.Documents = append(ch.Documents, doc.Name)
 		src := knowledge.SourcesDir + "/" + doc.Name
 		ch.Write = append(ch.Write, src)
-		if err := copyFile(filepath.Join(docsDir, filepath.FromSlash(doc.Name)), filepath.Join(applyDir, filepath.FromSlash(src))); err != nil {
+		if err := dec.CopyOriginal(doc.Name, filepath.Join(applyDir, filepath.FromSlash(src))); err != nil {
 			return 0, err
 		}
-		if out, ok := decoded[doc.Name]; ok {
+		if doc.DecodedBy != "" {
 			ch.Write = append(ch.Write, src+".txt")
-			if err := copyFile(filepath.Join(dec.Out, filepath.FromSlash(out)), filepath.Join(applyDir, filepath.FromSlash(src+".txt"))); err != nil {
+			if err := dec.CopyText(doc.Name, filepath.Join(applyDir, filepath.FromSlash(src+".txt"))); err != nil {
 				return 0, err
 			}
 		}
@@ -432,7 +364,14 @@ func collect(reports, docsDir string, dec *decode.Result, docs []document, apply
 	if err != nil {
 		return 0, err
 	}
-	return pages, os.WriteFile(filepath.Join(applyDir, knowledge.ChangesFile), raw, 0o644) //nolint:gosec // the apply step's input
+	return pages, writeOut(filepath.Join(applyDir, knowledge.ChangesFile), raw)
+}
+
+func writeOut(dst string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, b, 0o644) //nolint:gosec // a page of the pack, or the apply step's input
 }
 
 func copyFile(src, dst string) error {

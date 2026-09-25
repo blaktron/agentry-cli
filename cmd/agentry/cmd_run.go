@@ -687,6 +687,11 @@ func cachedAttestationGate(meta *installdir.Meta, allowUnsigned, allowUnscanned 
 			return fmt.Errorf("%s is unscanned (cached install) — the registry admitted it without a scan; re-run with --allow-unscanned to run it anyway", meta.Ref)
 		}
 		meta.Attestation.Consent = receipt.ConsentAllowUnscanned
+	case trust.StateVerified:
+	default:
+		// A state this gate does not know is refused, not waved through:
+		// only the four above are ever cached (install refuses the rest).
+		return fmt.Errorf("%s is recorded with the attestation state %q (cached install), which a run does not admit; remove it and install it again", meta.Ref, meta.Attestation.State)
 	}
 	return nil
 }

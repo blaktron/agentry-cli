@@ -111,20 +111,25 @@ func TestDecodeFamilies(t *testing.T) {
 	for _, f := range rep.Files {
 		got[f.Path] = f
 	}
-	want := map[string]struct{ family, tool, outcome, text string }{
-		"notes.md":          {"text", "", OutcomeText, ""},
-		"data.csv":          {"text", "", OutcomeText, ""},
-		"config.unknownext": {"text", "", OutcomeText, ""},
-		"report.pdf":        {"pdf", "pdftotext", OutcomeDecoded, "pdftotext read report.pdf\n"},
-		"memo.docx":         {"document", "pandoc", OutcomeDecoded, "pandoc read memo.docx\n"},
-		"book.EPUB":         {"document", "pandoc", OutcomeDecoded, "pandoc read book.EPUB\n"},
-		"scan.png":          {"image", "tesseract", OutcomeDecoded, "tesseract read scan.png\n"},
-		"sub/photo.jpeg":    {"image", "tesseract", OutcomeDecoded, "tesseract read photo.jpeg\n"},
-		"deck.pptx": {"presentation", "agentry-runner", OutcomeDecoded,
+	want := map[string]struct {
+		family       Family
+		tool         string
+		outcome      Outcome
+		output, text string
+	}{
+		"notes.md":          {FamilyText, "", OutcomeText, "", ""},
+		"data.csv":          {FamilyText, "", OutcomeText, "", ""},
+		"config.unknownext": {FamilyText, "", OutcomeText, "", ""},
+		"report.pdf":        {FamilyPDF, "pdftotext", OutcomeDecoded, "report.pdf.txt", "pdftotext read report.pdf\n"},
+		"memo.docx":         {FamilyDocument, "pandoc", OutcomeDecoded, "memo.docx.txt", "pandoc read memo.docx\n"},
+		"book.EPUB":         {FamilyDocument, "pandoc", OutcomeDecoded, "book.EPUB.txt", "pandoc read book.EPUB\n"},
+		"scan.png":          {FamilyImage, "tesseract", OutcomeDecoded, "scan.png.txt", "tesseract read scan.png\n"},
+		"sub/photo.jpeg":    {FamilyImage, "tesseract", OutcomeDecoded, "sub/photo.jpeg.txt", "tesseract read photo.jpeg\n"},
+		"deck.pptx": {FamilyPresentation, "agentry-runner", OutcomeDecoded, "deck.pptx.txt",
 			"Slide 1\nQuarterly review\nRevenue up 4%\n\nSlide 2\nSecond slide\n\nSlide 10\nTenth\n"},
-		"sheet.xlsx": {"spreadsheet", "agentry-runner", OutcomeDecoded,
+		"sheet.xlsx": {FamilySpreadsheet, "agentry-runner", OutcomeDecoded, "sheet.xlsx.txt",
 			"Sheet 1\nRegion\tTotal\nNorth\t1250.5\nSouth\tTRUE\n"},
-		"blob.bin": {"unknown", "", OutcomeUndecodable, ""},
+		"blob.bin": {FamilyUnknown, "", OutcomeUndecodable, "", ""},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("report has %d files, want %d: %+v", len(got), len(want), rep.Files)
@@ -135,17 +140,11 @@ func TestDecodeFamilies(t *testing.T) {
 			t.Errorf("%s: not in the report", path)
 			continue
 		}
-		if f.Family != w.family || f.Tool != w.tool || f.Outcome != w.outcome {
-			t.Errorf("%s: family %q tool %q outcome %q, want %q %q %q (%s)", path, f.Family, f.Tool, f.Outcome, w.family, w.tool, w.outcome, f.Reason)
+		if f.Family != w.family || f.Tool != w.tool || f.Outcome != w.outcome || f.Output != w.output {
+			t.Errorf("%s: family %q tool %q outcome %q output %q, want %q %q %q %q (%s)", path, f.Family, f.Tool, f.Outcome, f.Output, w.family, w.tool, w.outcome, w.output, f.Reason)
 		}
 		if w.outcome != OutcomeDecoded {
-			if f.Output != "" {
-				t.Errorf("%s: an output %q for a file that was not decoded", path, f.Output)
-			}
 			continue
-		}
-		if f.Output != path+".txt" {
-			t.Errorf("%s: output %q, want %q", path, f.Output, path+".txt")
 		}
 		b, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(f.Output)))
 		if err != nil {
@@ -220,6 +219,40 @@ func TestDecodeRefusals(t *testing.T) {
 		}
 		if f := rep.Files[0]; f.Outcome != OutcomeUndecodable || !strings.Contains(f.Reason, "expands past") {
 			t.Fatalf("%+v", f)
+		}
+	})
+	t.Run("files past the cap are refused, not read", func(t *testing.T) {
+		in, out := t.TempDir(), t.TempDir()
+		for _, n := range []string{"a.md", "b.md", "c.md"} {
+			write(t, in, n, []byte("x\n"))
+		}
+		rep, err := Decode(context.Background(), in, out, fakeTools(t), Limits{MaxFiles: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f := rep.Files[2]; f.Path != "c.md" || f.Outcome != OutcomeRefused || !strings.Contains(f.Reason, "2-file cap") {
+			t.Fatalf("%+v", rep.Files)
+		}
+	})
+	t.Run("a decoder's text is cut in scratch, and no more reaches the output", func(t *testing.T) {
+		in, out := t.TempDir(), t.TempDir()
+		write(t, in, "big.pdf", []byte("x"))
+		tools := fakeTools(t)
+		tools.PDFToText = filepath.Join(t.TempDir(), "pdftotext")
+		if err := os.WriteFile(tools.PDFToText, []byte("#!/bin/sh\nhead -c 100000 /dev/zero | tr '\\0' 'a' > \"$6\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		scratch := t.TempDir()
+		rep, err := Decode(context.Background(), in, out, tools, Limits{MaxOutputBytes: 1000, ScratchDir: scratch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(filepath.Join(out, "big.pdf.txt"))
+		if err != nil || fi.Size() != 1000 || !strings.Contains(rep.Files[0].Reason, "cut at 1000 bytes of 100000") {
+			t.Fatalf("%v %+v %v", fi, rep.Files[0], err)
+		}
+		if entries, _ := os.ReadDir(scratch); len(entries) != 0 {
+			t.Fatalf("scratch left behind: %v", entries)
 		}
 	})
 	t.Run("an input root that is missing is the run's error", func(t *testing.T) {

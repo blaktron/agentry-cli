@@ -177,7 +177,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 		Ref:                  p.Plan.Ref,
 		Digest:               p.Plan.Digest,
 		Attestation:          p.Attestation,
-		CapabilitiesEnforced: withDecoded(withKnowledge(withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p), p.Knowledge, p.Plan.Capabilities.ExecCommands), p.Decoded),
+		CapabilitiesEnforced: enforcedAtStart(p),
 		Harness: receipt.Harness{
 			Adapter: p.Plan.Harness.Adapter,
 			Image:   p.Plan.Harness.Agent.Image,

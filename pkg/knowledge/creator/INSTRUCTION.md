@@ -15,7 +15,9 @@ those two files.
   read for it: a PDF, an office file or an image arrives as the text the
   runner decoded from it (`<name>.txt`), and a text document as itself.
   Read every document in full with `read_input`, paging with `offset` when
-  it says it was truncated.
+  it says it was truncated. A document the runner could not read is listed
+  with `unread` and the reason: it has no text for you, so name it in your
+  reply and move on.
 - **The task**, which names the pack and today's date.
 - **The pack as it stands**, when this run extends an existing one. It is
   searched with `knowledge_list` (the index), `knowledge_search` and

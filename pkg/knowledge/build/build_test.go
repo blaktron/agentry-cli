@@ -234,6 +234,28 @@ func TestBuildStoppedAtABudgetKeepsWhatItWrote(t *testing.T) {
 	if _, err := knowledge.Load(fx.opts.PackDir); err != nil {
 		t.Fatalf("the pack a stopped run left does not load: %v", err)
 	}
+	log, _ := os.ReadFile(filepath.Join(fx.opts.PackDir, "wiki", "log.md"))
+	if !strings.Contains(string(log), "The Creator run stopped before it finished") || !strings.Contains(string(log), "a further add continues") {
+		t.Fatalf("the log does not say the ingest stopped:\n%s", log)
+	}
+
+	// The further add, with the same documents, finishes what was left.
+	fx2 := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx2.opts.PackDir, fx2.opts.Name, fx2.opts.Documents = fx.opts.PackDir, "", fx.opts.Documents
+	fx2.fake.Foreground["-agent"].Before = writes(fx2.opts.OutDir, map[string]string{
+		"wiki/topics/power-loss.md": page("Power loss", "incident-report.pdf"),
+		"wiki/procedures/night.md":  page("Night shift", "runbook.md"),
+	})
+	res2, err := Build(context.Background(), fx2.fake, fx2.opts)
+	if err != nil || res2.RunErr != nil {
+		t.Fatalf("the continuing add: %v %v", err, res2.RunErr)
+	}
+	if res2.Applied.Manifest.Pages != 2 || res2.Applied.Manifest.ID != res.Applied.Manifest.ID {
+		t.Fatalf("after the continuing add: %+v", res2.Applied.Manifest)
+	}
+	if !strings.Contains(res2.Envelope.CapabilitiesEnforced["knowledge"], "heron mounted read-only") {
+		t.Fatal("the continuing add did not read the pack as it stood")
+	}
 }
 
 func TestBuildRefusals(t *testing.T) {
@@ -270,62 +292,6 @@ func TestBuildRefusals(t *testing.T) {
 		writeFile(t, filepath.Join(fx.opts.PackDir, "something.txt"), "x")
 		var ce *engine.ClassifiedError
 		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.As(err, &ce) || ce.Code != engine.ExitUsage {
-			t.Fatalf("err = %v", err)
-		}
-	})
-}
-
-func TestCreatorInputs(t *testing.T) {
-	docs, dec, in := t.TempDir(), t.TempDir(), t.TempDir()
-	writeFile(t, filepath.Join(docs, "a.md"), "# a\n")
-	writeFile(t, filepath.Join(dec, "b.pdf.txt"), "b text\n")
-	res := &decode.Result{Out: dec, Report: runnerdecode.Report{Schema: runnerdecode.Schema, Files: []runnerdecode.File{
-		{Path: "a.md", Family: "text", Outcome: runnerdecode.OutcomeText},
-		{Path: "b.pdf", Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: "b.pdf.txt"},
-		{Path: "c.bin", Family: "unknown", Outcome: runnerdecode.OutcomeUndecodable},
-	}}}
-	got, inputs, err := creatorInputs(res, map[string]string{"a.md": "/given/a.md", "b.pdf": "/given/b.pdf"}, docs, in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 || got[0].Read != "a.md" || got[1].Read != "b.pdf.txt" || got[1].DecodedBy != "pdftotext" || got[1].GivenAs != "/given/b.pdf" {
-		t.Fatalf("documents %+v", got)
-	}
-	var names []string
-	for _, p := range inputs {
-		names = append(names, filepath.Base(p))
-	}
-	if strings.Join(names, ",") != "a.md,b.pdf.txt,documents.json" {
-		t.Fatalf("inputs %v", names)
-	}
-	raw, _ := os.ReadFile(filepath.Join(in, DocumentsFile))
-	want := `{
-  "documents": [
-    {
-      "name": "a.md",
-      "givenAs": "/given/a.md",
-      "read": "a.md",
-      "family": "text"
-    },
-    {
-      "name": "b.pdf",
-      "givenAs": "/given/b.pdf",
-      "read": "b.pdf.txt",
-      "family": "pdf",
-      "decodedBy": "pdftotext"
-    }
-  ]
-}
-`
-	if string(raw) != want {
-		t.Fatalf("documents.json =\n%s", raw)
-	}
-	t.Run("a text document named as another's decoded text is refused", func(t *testing.T) {
-		clash := &decode.Result{Out: dec, Report: runnerdecode.Report{Files: []runnerdecode.File{
-			{Path: "b.pdf", Outcome: runnerdecode.OutcomeDecoded, Output: "b.pdf.txt"},
-			{Path: "b.pdf.txt", Outcome: runnerdecode.OutcomeText},
-		}}}
-		if _, _, err := creatorInputs(clash, nil, docs, t.TempDir()); err == nil || !strings.Contains(err.Error(), "would both be read as b.pdf.txt") {
 			t.Fatalf("err = %v", err)
 		}
 	})

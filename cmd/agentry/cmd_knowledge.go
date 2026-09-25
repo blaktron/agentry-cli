@@ -1,3 +1,7 @@
+// `agentry knowledge` (plan knowledge.md §4.3, §4.8; agentry-cli#318): make
+// and extend knowledge packs with the built-in Knowledge Creator, on this
+// machine, against the runner policy's model.
+
 package main
 
 import (
@@ -58,7 +62,7 @@ func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f.StringVar(&o.out, "out", "", "output folder for the Creator run's reports and receipts (default ./agentry-out/agentry-knowledge-creator-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.IntVar(&o.timeout, "timeout", 0, "the Creator run's wall-clock budget in seconds (default: the policy's)")
-	f.IntVar(&o.maxTurns, "max-turns", -1, "the Creator run's tool-call budget (default: the policy's)")
+	f.IntVar(&o.maxTurns, "max-turns", -1, "the Creator run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Creator run once the harness reports this much cost in USD (default: the policy's)")
 }
 
@@ -168,7 +172,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o knowledgeBuildOpt
 		}
 		return err
 	}
-	report(cmd.OutOrStdout(), errOut, dir, outDir, res)
+	printKnowledgeBuild(cmd.OutOrStdout(), errOut, dir, outDir, res)
 	if res.RunErr != nil {
 		_, _ = fmt.Fprintf(errOut, "The Creator run stopped before it finished (%v). The pack holds what it wrote;\n"+
 			"run `agentry knowledge add %s` with the same documents to continue.\n", res.RunErr, dir)
@@ -196,7 +200,8 @@ type knowledgeDropJSON struct {
 	Kept   bool   `json:"kept,omitempty"`
 }
 
-func report(out, errOut io.Writer, dir, outDir string, res *build.Result) {
+// printKnowledgeBuild says what a build made: text, or one --json document.
+func printKnowledgeBuild(out, errOut io.Writer, dir, outDir string, res *build.Result) {
 	m := res.Applied.Manifest
 	if flags.jsonOut {
 		r := knowledgeBuildReport{Dir: dir, Manifest: m, Documents: res.Documents, Skipped: res.Skipped,

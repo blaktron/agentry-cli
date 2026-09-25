@@ -11,9 +11,11 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// The helpers these tests were written against moved to pkg/runner/localrun
-// (agentry-cli#318), where the desktop and the built-in run share them; these
-// keep the tests reading as they did, over the moved code.
+// ensurePlan and cachedPlanVersion moved to pkg/runner/localrun
+// (agentry-cli#318), where the desktop and the built-in run share them, and
+// EnsurePlan's own reuse, recompile and tamper paths are tested there. The
+// CLI's tests that drive it through --local's install keep these two names,
+// over the moved code, rather than rewrite every call.
 
 func ensurePlan(errOut io.Writer, home string, m *manifest.Manifest, meta *installdir.Meta, installDir, workspaceDir string,
 	pol *policy.Policy, polSHA, adapterName string, serverSpecs []spec.MCPServerSpec, mode manifest.Mode,
@@ -25,6 +27,4 @@ func ensurePlan(errOut io.Writer, home string, m *manifest.Manifest, meta *insta
 	})
 }
 
-func localTreeDigest(dir string) (string, error)                   { return localrun.TreeDigest(dir) }
-func manifestFromWorkspace(dir string) (*manifest.Manifest, error) { return localrun.ManifestFrom(dir) }
-func cachedPlanVersion(b []byte) string                            { return localrun.PlanVersionOf(b) }
+func cachedPlanVersion(b []byte) string { return localrun.PlanVersionOf(b) }

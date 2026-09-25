@@ -2,6 +2,7 @@ package localrun
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,10 +11,12 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 )
@@ -92,24 +95,117 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 	})
 }
 
-func TestTreeDigest(t *testing.T) {
+func writeTree(t *testing.T, files map[string]string) string {
+	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("x"), 0o644); err != nil {
+	for rel, body := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestTreeDigest(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"agent.yaml": "x", "sub/a.md": "aa",
+		".git/HEAD":              "ref: refs/heads/main",
+		"agentry-out/old/r.json": "{}",
+	})
+	d1, err := TreeDigest(dir)
+	if err != nil || !strings.HasPrefix(d1, "sha256:") {
+		t.Fatalf("digest = %q, %v", d1, err)
+	}
+	if d2, _ := TreeDigest(dir); d1 != d2 {
+		t.Error("digest is not deterministic")
+	}
+	// .git and agentry-out do not participate: a fetch or an old run must
+	// not invalidate the install cache.
+	if err := os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("changed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a, err := TreeDigest(dir)
+	if d3, _ := TreeDigest(dir); d3 != d1 {
+		t.Error(".git content changed the tree digest")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "a.md"), []byte("bb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d4, _ := TreeDigest(dir); d4 == d1 {
+		t.Error("package content change did not change the digest")
+	}
+}
+
+func TestManifestFrom(t *testing.T) {
+	m, err := ManifestFrom(filepath.Join("..", "..", "..", "testdata", "runner", "pure-text"))
+	if err != nil || m.Name != "pure-text" {
+		t.Fatalf("ManifestFrom = %+v, %v", m, err)
+	}
+	if _, err := ManifestFrom(t.TempDir()); err == nil || !strings.Contains(err.Error(), "read agent.yaml") {
+		t.Errorf("missing agent.yaml: %v", err)
+	}
+	bad := writeTree(t, map[string]string{"agent.yaml": ":\nnot yaml: ["})
+	if _, err := ManifestFrom(bad); err == nil || !strings.Contains(err.Error(), "parse agent.yaml") {
+		t.Errorf("unparseable agent.yaml: %v", err)
+	}
+}
+
+// TestEnsurePlan: the plan is reused while nothing it depends on changed,
+// recompiled when the policy or the compiling build did, and refused when
+// the installed plan changed after it was compiled (agentry-cli#266).
+func TestEnsurePlan(t *testing.T) {
+	home := t.TempDir()
+	meta, dir, err := KnowledgeCreator().Materialize(home, "b1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+	ws := filepath.Join(dir, "workspace")
+	m, err := ManifestFrom(ws)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("ref"), 0o644); err != nil {
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	in := func(polSHA, build string, log *strings.Builder) PlanInputs {
+		return PlanInputs{Home: home, Manifest: m, Meta: meta, InstallDir: dir, WorkspaceDir: ws, Policy: pol,
+			PolicySHA: polSHA, Adapter: "docker-agent", Mode: manifest.ModeAutonomous, CompiledBy: build, Log: log}
+	}
+	var log strings.Builder
+	first, planDir, err := EnsurePlan(in("sha-a", "b1", &log))
+	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := TreeDigest(dir)
-	if a != b || !strings.HasPrefix(a, "sha256:") {
-		t.Fatalf("digest %s then %s (.git must not count)", a, b)
+	h1, _ := first.Hash()
+	log.Reset()
+	again, _, err := EnsurePlan(in("sha-a", "b1", &log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h2, _ := again.Hash(); h2 != h1 || strings.Contains(log.String(), "recompiling") {
+		t.Fatalf("an unchanged plan was not reused (%s)", log.String())
+	}
+	log.Reset()
+	if _, _, err := EnsurePlan(in("sha-a", "b2", &log)); err != nil || !strings.Contains(log.String(), "another CLI build (b1, this is b2)") {
+		t.Fatalf("another build's plan was not recompiled: %v %q", err, log.String())
+	}
+	log.Reset()
+	changed, _, err := EnsurePlan(in("sha-b", "b2", &log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.PolicySHA256 != "sha-b" {
+		t.Fatalf("a changed policy's plan was reused: %s", changed.PolicySHA256)
+	}
+	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), []byte(`{"planVersion":"2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = EnsurePlan(in("sha-b", "b2", &log))
+	var ce *engine.ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != engine.ExitVerify {
+		t.Fatalf("a plan changed after its compile was not refused: %v", err)
 	}
 }
 

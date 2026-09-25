@@ -1,11 +1,11 @@
-// Package localrun is the run of a package that is not a registry release
-// (plan knowledge.md §4.2, D6; agentry-cli#318): the plan's reuse or
-// compile (EnsurePlan, moved here from the CLI's main package, D-031's move
-// for runs), the tree digest a local package is keyed by, and the built-in
-// run — a package this binary embeds, run with the attestation state
-// builtin, no registry resolve and no consent prompt for a contract the
-// application declares itself. The CLI's commands, the desktop and the
-// enterprise build share it.
+// Package localrun holds what a run needs besides the registry (plan
+// knowledge.md §4.2, D6; agentry-cli#318): the plan's reuse or compile for
+// any run, a release's or not (EnsurePlan, moved here from the CLI's main
+// package, D-031's move for runs); the manifest and the tree digest a local
+// package is read and keyed by; and the built-in run — a package this
+// binary embeds, run with the attestation state builtin, no registry
+// resolve and no consent prompt for a contract the application declares
+// itself. The CLI's commands, the desktop and the enterprise build share it.
 package localrun
 
 import (

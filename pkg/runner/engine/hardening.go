@@ -58,6 +58,16 @@ func gatewayLimitArgs(lim policy.Limits) []string {
 	return []string{"--cpus", strconv.Itoa(lim.CPUs), "--memory", lim.Memory}
 }
 
+// enforcedAtStart is the receipt's enforcement map as a run or a session
+// opens: the plan's lines, the exec packages' versions, the containers'
+// posture, and the run's own knowledge and decode lines. One function for
+// both paths, so a line added to one is on the other.
+func enforcedAtStart(p Params) map[string]string {
+	e := withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p)
+	e = withKnowledge(e, p.Knowledge, p.Plan.Capabilities.ExecCommands)
+	return withDecoded(e, p.Decoded)
+}
+
 // withContainers adds the receipt's line for the posture above, naming
 // what this run's containers were given and the two exceptions.
 func withContainers(enforced map[string]string, p Params) map[string]string {

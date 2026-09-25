@@ -42,27 +42,44 @@ const (
 	ReportFile = "decode.json"
 )
 
-// A file's outcome.
+// Outcome is what happened to one file.
+type Outcome string
+
+// The outcomes.
 const (
 	// OutcomeDecoded: text was written for it.
-	OutcomeDecoded = "decoded"
+	OutcomeDecoded Outcome = "decoded"
 	// OutcomeText: it is text already and is read as it is.
-	OutcomeText = "text"
+	OutcomeText Outcome = "text"
 	// OutcomeUndecodable: no decoder applies, or the decoder failed.
-	OutcomeUndecodable = "undecodable"
-	// OutcomeRefused: not a regular file.
-	OutcomeRefused = "refused"
+	OutcomeUndecodable Outcome = "undecodable"
+	// OutcomeRefused: not a regular file, or past the file cap.
+	OutcomeRefused Outcome = "refused"
+)
+
+// Family is the kind of document a file is, which picks its decoder.
+type Family string
+
+// The families.
+const (
+	FamilyText         Family = "text"
+	FamilyPDF          Family = "pdf"
+	FamilyDocument     Family = "document"
+	FamilyPresentation Family = "presentation"
+	FamilySpreadsheet  Family = "spreadsheet"
+	FamilyImage        Family = "image"
+	FamilyUnknown      Family = "unknown"
 )
 
 // File is one input's line in the report.
 type File struct {
 	// Path is the input's slash path relative to the input root.
 	Path   string `json:"path"`
-	Family string `json:"family"`
+	Family Family `json:"family"`
 	// Tool is the decoder that ran: pdftotext, pandoc, tesseract, or
 	// agentry-runner for this package's own PPTX and XLSX reader.
-	Tool    string `json:"tool,omitempty"`
-	Outcome string `json:"outcome"`
+	Tool    string  `json:"tool,omitempty"`
+	Outcome Outcome `json:"outcome"`
 	// Output is the text's slash path relative to the output root.
 	Output string `json:"output,omitempty"`
 	// Bytes is the size of the text written.
@@ -95,8 +112,16 @@ func (t Tools) withDefaults() Tools {
 	return t
 }
 
-// Limits bound one file's decode; zero values take the defaults.
+// Limits bound a decode; zero values take the defaults.
 type Limits struct {
+	// MaxFiles refuses the files past this many (default 2,000, a release
+	// archive's own cap).
+	MaxFiles int
+	// ScratchDir is where a decoder writes before its text is cut to size
+	// and copied out, so no more than MaxOutputBytes of a file's text ever
+	// reaches the output directory (default the system temporary
+	// directory: in the decode container, a size-limited tmpfs).
+	ScratchDir string
 	// PerFileSeconds stops a decoder that runs longer (default 120).
 	PerFileSeconds int
 	// MaxOutputBytes cuts a text past this size (default 10 MiB, a whole
@@ -108,6 +133,12 @@ type Limits struct {
 }
 
 func (l Limits) withDefaults() Limits {
+	if l.MaxFiles <= 0 {
+		l.MaxFiles = 2000
+	}
+	if l.ScratchDir == "" {
+		l.ScratchDir = os.TempDir()
+	}
 	if l.PerFileSeconds <= 0 {
 		l.PerFileSeconds = 120
 	}
@@ -123,12 +154,12 @@ func (l Limits) withDefaults() Limits {
 // The families, and the extensions that name them. A file whose extension
 // is none of these is text when its bytes are UTF-8 with no NUL, else it
 // is unknown.
-var families = map[string]string{
-	".pdf":  "pdf",
-	".docx": "document", ".odt": "document", ".epub": "document", ".rtf": "document",
-	".pptx": "presentation",
-	".xlsx": "spreadsheet",
-	".png":  "image", ".jpg": "image", ".jpeg": "image", ".tif": "image", ".tiff": "image", ".webp": "image",
+var families = map[string]Family{
+	".pdf":  FamilyPDF,
+	".docx": FamilyDocument, ".odt": FamilyDocument, ".epub": FamilyDocument, ".rtf": FamilyDocument,
+	".pptx": FamilyPresentation,
+	".xlsx": FamilySpreadsheet,
+	".png":  FamilyImage, ".jpg": FamilyImage, ".jpeg": FamilyImage, ".tif": FamilyImage, ".tiff": FamilyImage, ".webp": FamilyImage,
 }
 
 // Decode decodes every regular file under in into out and writes the
@@ -137,10 +168,15 @@ var families = map[string]string{
 func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Report, error) {
 	tools, lim = tools.withDefaults(), lim.withDefaults()
 	rep := Report{Schema: Schema, Files: []File{}}
-	if fi, err := os.Stat(in); err != nil || !fi.IsDir() {
-		return rep, fmt.Errorf("decode: the input root %s is not a directory: %v", in, err)
+	fi, err := os.Stat(in)
+	if err != nil {
+		return rep, fmt.Errorf("decode: the input root: %w", err)
 	}
-	err := filepath.WalkDir(in, func(p string, d fs.DirEntry, err error) error {
+	if !fi.IsDir() {
+		return rep, fmt.Errorf("decode: the input root %s is not a directory", in)
+	}
+	seen := 0
+	err = filepath.WalkDir(in, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -153,7 +189,11 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 		}
 		rel = filepath.ToSlash(rel)
 		if !d.Type().IsRegular() {
-			rep.Files = append(rep.Files, File{Path: rel, Family: "unknown", Outcome: OutcomeRefused, Reason: "not a regular file; a link is never followed"})
+			rep.Files = append(rep.Files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: "not a regular file; a link is never followed"})
+			return nil
+		}
+		if seen++; seen > lim.MaxFiles {
+			rep.Files = append(rep.Files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: fmt.Sprintf("past the %d-file cap", lim.MaxFiles)})
 			return nil
 		}
 		rep.Files = append(rep.Files, decodeOne(ctx, p, rel, out, tools, lim))
@@ -177,9 +217,9 @@ func decodeOne(ctx context.Context, src, rel, out string, tools Tools, lim Limit
 	f := File{Path: rel, Family: families[strings.ToLower(filepath.Ext(rel))]}
 	if f.Family == "" {
 		if isText(src) {
-			f.Family, f.Outcome = "text", OutcomeText
+			f.Family, f.Outcome = FamilyText, OutcomeText
 		} else {
-			f.Family, f.Outcome, f.Reason = "unknown", OutcomeUndecodable, "not text, and no decoder reads this kind of file"
+			f.Family, f.Outcome, f.Reason = FamilyUnknown, OutcomeUndecodable, "not text, and no decoder reads this kind of file"
 		}
 		return f
 	}
@@ -188,37 +228,44 @@ func decodeOne(ctx context.Context, src, rel, out string, tools Tools, lim Limit
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return undecodable(f, err.Error())
 	}
+	// A decoder writes into scratch; only its text, cut to size, is copied
+	// to the output, so a document that expands without end fills the
+	// scratch's bounded space, never the caller's.
+	scratch, err := os.MkdirTemp(lim.ScratchDir, "decode-")
+	if err != nil {
+		return undecodable(f, err.Error())
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+	text := filepath.Join(scratch, "out.txt")
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(lim.PerFileSeconds)*time.Second)
 	defer cancel()
-	var err error
 	switch f.Family {
-	case "pdf":
+	case FamilyPDF:
 		f.Tool = "pdftotext"
-		err = runTool(ctx, tools.PDFToText, "-layout", "-enc", "UTF-8", "-q", src, dst)
-	case "document":
+		err = runTool(ctx, tools.PDFToText, "-layout", "-enc", "UTF-8", "-q", src, text)
+	case FamilyDocument:
 		f.Tool = "pandoc"
-		err = runTool(ctx, tools.Pandoc, "--sandbox", "--to=plain", "--wrap=none", "--output="+dst, src)
-	case "image":
+		err = runTool(ctx, tools.Pandoc, "--sandbox", "--to=plain", "--wrap=none", "--output="+text, src)
+	case FamilyImage:
 		f.Tool = "tesseract"
-		// tesseract writes <base>.txt; the base is the output less .txt.
-		err = runTool(ctx, tools.Tesseract, src, strings.TrimSuffix(dst, ".txt"), "-l", "eng")
-	case "presentation", "spreadsheet":
+		// tesseract writes <base>.txt.
+		err = runTool(ctx, tools.Tesseract, src, strings.TrimSuffix(text, ".txt"), "-l", "eng")
+	case FamilyPresentation, FamilySpreadsheet:
 		f.Tool = "agentry-runner"
-		var text string
-		if f.Family == "presentation" {
-			text, err = pptxText(src, lim.MaxExpandedBytes)
+		var body string
+		if f.Family == FamilyPresentation {
+			body, err = pptxText(src, lim.MaxExpandedBytes)
 		} else {
-			text, err = xlsxText(src, lim.MaxExpandedBytes)
+			body, err = xlsxText(src, lim.MaxExpandedBytes)
 		}
 		if err == nil {
-			err = os.WriteFile(dst, []byte(text), 0o644) //nolint:gosec // the decoded text, read by the run
+			err = os.WriteFile(text, []byte(body), 0o600)
 		}
 	}
 	if err != nil {
-		_ = os.Remove(dst)
 		return undecodable(f, f.Tool+": "+err.Error())
 	}
-	return finish(f, dst, lim.MaxOutputBytes)
+	return finish(f, text, dst, lim.MaxOutputBytes)
 }
 
 func undecodable(f File, reason string) File {
@@ -226,21 +273,30 @@ func undecodable(f File, reason string) File {
 	return f
 }
 
-// finish holds the written text to the cap and to UTF-8, and records it.
-func finish(f File, dst string, maxBytes int64) File {
-	b, err := os.ReadFile(dst) //nolint:gosec // the text this decode wrote
+// finish reads at most the cap of the decoder's text, holds it to UTF-8,
+// and writes it to the output.
+func finish(f File, text, dst string, maxBytes int64) File {
+	src, err := os.Open(text) //nolint:gosec // the scratch text this decode wrote
 	if err != nil {
 		return undecodable(f, f.Tool+" wrote no text: "+err.Error())
 	}
-	total := len(b)
-	if int64(total) > maxBytes {
+	defer func() { _ = src.Close() }()
+	b, err := io.ReadAll(io.LimitReader(src, maxBytes+1))
+	if err != nil {
+		return undecodable(f, err.Error())
+	}
+	if int64(len(b)) > maxBytes {
+		total := "more"
+		if fi, err := src.Stat(); err == nil {
+			total = strconv.FormatInt(fi.Size(), 10)
+		}
 		b = b[:maxBytes]
 		for len(b) > 0 && !utf8.Valid(b) {
 			b = b[:len(b)-1]
 		}
-		f.Reason = fmt.Sprintf("cut at %d bytes of %d", len(b), total)
+		f.Reason = fmt.Sprintf("cut at %d bytes of %s", len(b), total)
 	}
-	b = bytes.ToValidUTF8(b, []byte("�"))
+	b = bytes.ToValidUTF8(b, []byte("\uFFFD"))
 	if err := os.WriteFile(dst, b, 0o644); err != nil { //nolint:gosec // the decoded text, read by the run
 		return undecodable(f, err.Error())
 	}
