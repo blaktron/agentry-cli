@@ -23,13 +23,43 @@ func (f *Filter) modifyResponse(res *http.Response) error {
 		})
 	case p == "/networks":
 		return rewriteBody(res, func(body []byte) []byte {
-			return f.keepItems(body, func(item map[string]any) bool {
+			kept := f.keepItems(body, func(item map[string]any) bool {
 				name, _ := item["Name"].(string)
 				return f.oursAny(item["Labels"]) || f.shared(name)
 			})
+			if len(f.cfg.NetworkNames) == 0 {
+				return kept
+			}
+			var items []map[string]any
+			if json.Unmarshal(kept, &items) != nil {
+				return kept
+			}
+			for _, it := range items {
+				if name, ok := it["Name"].(string); ok {
+					it["Name"] = f.gatewayNetwork(name)
+				}
+			}
+			out, _ := json.Marshal(items)
+			return out
 		})
 	case p == "/volumes":
 		return rewriteBody(res, f.keepVolumes)
+	case len(f.cfg.NetworkNames) > 0 && strings.HasPrefix(p, "/containers/") && strings.HasSuffix(p, "/json") && p != "/containers/json":
+		// A container's networks under the names the gateway knows them by:
+		// it reads a relay's address on its relay network by that name.
+		return rewriteBody(res, f.containerNetworksForGateway)
+	case len(f.cfg.NetworkNames) > 0 && strings.HasPrefix(p, "/networks/"):
+		return rewriteBody(res, func(body []byte) []byte {
+			var doc map[string]any
+			if json.Unmarshal(body, &doc) != nil {
+				return body
+			}
+			if name, ok := doc["Name"].(string); ok {
+				doc["Name"] = f.gatewayNetwork(name)
+			}
+			out, _ := json.Marshal(doc)
+			return out
+		})
 	case strings.HasPrefix(p, "/containers/") && strings.HasSuffix(p, "/exec"):
 		return rewriteBody(res, func(body []byte) []byte {
 			var e struct {
@@ -44,6 +74,34 @@ func (f *Filter) modifyResponse(res *http.Response) error {
 		})
 	}
 	return nil
+}
+
+// containerNetworksForGateway renames a container inspect's networks, and
+// its network mode, to the gateway's names.
+func (f *Filter) containerNetworksForGateway(body []byte) []byte {
+	var doc map[string]any
+	if json.Unmarshal(body, &doc) != nil {
+		return body
+	}
+	if ns, ok := doc["NetworkSettings"].(map[string]any); ok {
+		if nets, ok := ns["Networks"].(map[string]any); ok {
+			renamed := map[string]any{}
+			for name, v := range nets {
+				renamed[f.gatewayNetwork(name)] = v
+			}
+			ns["Networks"] = renamed
+		}
+	}
+	if hc, ok := doc["HostConfig"].(map[string]any); ok {
+		if mode, ok := hc["NetworkMode"].(string); ok {
+			hc["NetworkMode"] = f.gatewayNetwork(mode)
+		}
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // oursAny reads a decoded labels object.

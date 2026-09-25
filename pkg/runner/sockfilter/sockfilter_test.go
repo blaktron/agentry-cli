@@ -53,7 +53,7 @@ func imageFor(ref string) (string, []string) {
 // labelsFor is what the daemon holds for an object of a run: the gateway's
 // objects carry both labels, the runner's own ("…-agent") the run's alone.
 func labelsFor(id, run string) map[string]string {
-	if strings.Contains(id, "agent") {
+	if strings.Contains(id, "agent") || strings.HasPrefix(id, "docker-mcp-proxies") || id == "extid" {
 		return map[string]string{lbl: run}
 	}
 	return map[string]string{lbl: run, own: run}
@@ -68,7 +68,11 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case strings.HasPrefix(id, "runb"):
 			return "B", true
 		case id == intNet, id == ext, id == "extid":
-			return "B", true // created by another run's gateway, once
+			return "A", true // the runner's, for run A
+		case strings.HasPrefix(id, "agentry-A-relays"):
+			return "A", true // the runner's, for run A
+		case strings.HasPrefix(id, "agentry-B-relays"):
+			return "B", true
 		}
 		return "", false
 	}
@@ -83,8 +87,13 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"Id": id, "RepoDigests": digests})
 		return
-	case strings.HasPrefix(p, "/containers/") && strings.HasSuffix(p, "/json") && p != "/containers/json" && !gateway:
+	case strings.HasPrefix(p, "/containers/") && strings.HasSuffix(p, "/json") && p != "/containers/json":
 		id := strings.TrimSuffix(strings.TrimPrefix(p, "/containers/"), "/json")
+		if gateway {
+			d.mu.Lock()
+			d.forwarded = append(d.forwarded, r.Method+" "+p)
+			d.mu.Unlock()
+		}
 		run, ok := owner(id)
 		if !ok {
 			http.NotFound(w, r)
@@ -94,7 +103,10 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(id, "relay") {
 			image, _ = imageFor(relayPin)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"Id": id + "-full", "Image": image, "Config": map[string]any{"Labels": labelsFor(id, run)}})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"Id": id + "-full", "Image": image, "Config": map[string]any{"Labels": labelsFor(id, run)},
+			"NetworkSettings": map[string]any{"Networks": map[string]any{"agentry-A-relays": map[string]any{"IPAddress": "10.9.0.5"}}},
+		})
 		return
 	case strings.HasPrefix(p, "/networks/") && r.Method == http.MethodGet && !gateway:
 		id := strings.TrimPrefix(p, "/networks/")
@@ -536,7 +548,8 @@ func TestNetworksAndVolumesTheGatewayMayMake(t *testing.T) {
 			t.Errorf("create %s reached the daemon", name)
 		}
 	}
-	g.refused(t, "removing the shared network", "DELETE", "/networks/"+intNet, nil, "shared")
+	g.refused(t, "removing the shared network", "DELETE", "/networks/"+intNet, nil, "not the gateway's to remove")
+	g.refused(t, "a name in the runner's namespace", "POST", "/networks/create", map[string]any{"Name": "agentry-B-relays", "Internal": true}, "the runner's")
 	g.refused(t, "a volume with driver options", "POST", "/volumes/create", map[string]any{"Name": "v", "DriverOpts": map[string]string{"device": "/"}}, "driver options")
 }
 
@@ -660,6 +673,45 @@ func TestImagesAndNetworksAreJudgedAndForwardedByID(t *testing.T) {
 	if !g.forwarded("POST /networks/id-runa-net/connect") {
 		t.Error("the connect was not forwarded under the network's id")
 	}
+}
+
+// The gateway's fixed relay network names are the run's own networks: it
+// asks for, joins and reads them by the names it knows, the daemon sees
+// the run's, and another run's are out of reach under any name.
+func TestTheGatewaysRelayNamesAreTheRunsNetworks(t *testing.T) {
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.SharedNetworks = []string{"agentry-A-relays"}
+		c.EgressNetworks = map[string][]string{"agentry-A-relays-out": {relayPin}}
+		c.NetworkNames = map[string]string{intNet: "agentry-A-relays", ext: "agentry-A-relays-out"}
+	})
+	for _, name := range []string{intNet, ext} {
+		if code, body := g.do(t, "POST", "/networks/create", map[string]any{"Name": name, "Internal": name == intNet}); code != http.StatusConflict || !strings.Contains(body, name) {
+			t.Errorf("create %s: %d %s, want the daemon's 409 under the gateway's name", name, code, body)
+		}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", map[string]any{
+		"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"},
+		"HostConfig":       map[string]any{"NetworkMode": ext},
+		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{}}},
+	}); code != http.StatusCreated {
+		t.Fatalf("relay on the gateway's names: %d %s", code, body)
+	}
+	doc := g.body("POST /containers/create")
+	hc, _ := doc["HostConfig"].(map[string]any)
+	eps, _ := doc["NetworkingConfig"].(map[string]any)["EndpointsConfig"].(map[string]any)
+	if hc["NetworkMode"] != "id-agentry-A-relays-out" || eps["id-agentry-A-relays"] == nil {
+		t.Errorf("forwarded to %v and %v, want the run's networks by id", hc["NetworkMode"], eps)
+	}
+	// The relay, read back, is on the network the gateway knows.
+	_, body := g.do(t, "GET", "/containers/runa-relay/json", nil)
+	if !strings.Contains(body, `"`+intNet+`"`) || strings.Contains(body, "agentry-A-relays") {
+		t.Errorf("relay inspect shows %s", body)
+	}
+	// Another run's relay networks, by their own names.
+	g.refused(t, "another run's relay network", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": "agentry-B-relays"}}, "not this run's")
+	g.refused(t, "another run's way out", "POST", "/networks/agentry-B-relays-out/connect", map[string]any{"Container": "runa-relay"}, "not this run's")
+	// The run's own may not be removed by the gateway.
+	g.refused(t, "removing the run's relay network", "DELETE", "/networks/"+intNet, nil, "not the gateway's to remove")
 }
 
 func TestExecsAreTheRunsOwnAndUnprivileged(t *testing.T) {

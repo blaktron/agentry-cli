@@ -32,10 +32,8 @@ const dockerFilterLog = "docker-filter.log"
 // filterSupported says whether this platform runs the filter.
 var filterSupported = runtime.GOOS == "linux"
 
-// The pinned gateway's two fixed relay networks (DR-22), which the filter
-// lets a run use without its label until agentry-cli#220 names them per
-// run: the internal one its declared servers reach their relays on, and
-// the relays' way out, which only the relays may join.
+// The pinned gateway's two fixed relay network names (DR-22): the filter
+// gives it the run's own networks under them (agentry-cli#220).
 const (
 	relayNetwork       = "docker-mcp-proxies-int"
 	relayEgressNetwork = "docker-mcp-proxies-ext"
@@ -49,10 +47,6 @@ var relayImages = []string{
 	"docker/mcp-l4proxy@sha256:121b87decc25cda901dbd4ffbd20b116fffbd0fbeecc827c228fa45094a9934c",
 	"docker/mcp-l7proxy@sha256:ef8fd775fdf8ad060af897018c0db3c52229c493cfde437e86c754f3fcd59233",
 }
-
-// relayNetworkLabels are the labels the gateway puts on its own relay
-// networks, kept when the runner makes them.
-var relayNetworkLabels = map[string]string{"docker-mcp": "true"}
 
 // maxSocketPath is below the kernel's sun_path limit (108 on Linux)
 // with room for the terminator.
@@ -107,14 +101,17 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		closeDaemonFilter(rd)
 		return nil, "", Classify(ExitPolicy, err)
 	}
-	// The shared relay networks are the filter's to admit only for a run
-	// whose servers need relays; any other run's gateway has no business
-	// on them, where another run's relays could be reached.
+	// The relay networks are the run's own, and exist only for a run
+	// whose servers need relays; the gateway reaches them under the fixed
+	// names it knows (agentry-cli#220).
 	var shared []string
 	var egress map[string][]string
+	var names map[string]string
 	if relaysNeeded(servers) {
-		shared = []string{relayNetwork}
-		egress = map[string][]string{relayEgressNetwork: relayImages}
+		internal, out := relayNetworks(runID)
+		shared = []string{internal}
+		egress = map[string][]string{out: relayImages}
+		names = map[string]string{relayNetwork: internal, relayEgressNetwork: out}
 	}
 	f, err := sockfilter.Start(sockfilter.Config{
 		RunID:          runID,
@@ -126,6 +123,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		WritableRoots:  pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
 		SharedNetworks: shared,
 		EgressNetworks: egress,
+		NetworkNames:   names,
 		RelayHosts:     relayHosts(servers),
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
@@ -195,18 +193,28 @@ func memoryBytes(s string) (int64, error) {
 	return int64(n * float64(mult)), nil
 }
 
-// ensureRelayNetworks makes the gateway's two shared relay networks, as
-// the gateway would, when a run needs relays: the filter lets no gateway
-// create or remove them, so none can make the internal one routable or
-// take the way out away from another run.
-func ensureRelayNetworks(ctx context.Context, d dockerx.Client) error {
+// relayNetworks are this run's two relay networks, which the filter
+// gives the gateway under the pinned gateway's fixed names: the internal
+// one its declared servers reach their relays on, and the relays' way out.
+func relayNetworks(runID string) (internal, egress string) {
+	return "agentry-" + runID + "-relays", "agentry-" + runID + "-relays-out"
+}
+
+// makeRelayNetworks makes the run's two relay networks and queues their
+// removal, which runs after the gateway and its relays are gone.
+func makeRelayNetworks(ctx context.Context, d dockerx.Client, runID string, td *teardown) error {
+	internal, egress := relayNetworks(runID)
+	labels := runLabels(runID)
 	for _, n := range []struct {
 		name     string
 		internal bool
-	}{{relayNetwork, true}, {relayEgressNetwork, false}} {
-		if err := d.NetworkCreate(ctx, n.name, n.internal, relayNetworkLabels); err != nil && !strings.Contains(err.Error(), "already exists") {
-			return Classify(ExitGateway, fmt.Errorf("create the relay network %s: %w", n.name, err))
+	}{{internal, true}, {egress, false}} {
+		if err := d.NetworkCreate(ctx, n.name, n.internal, labels); err != nil {
+			return Classify(ExitGateway, fmt.Errorf("create the run's relay network %s: %w", n.name, err))
 		}
+		name := n.name
+		td.add(func(c context.Context) { _ = d.NetworkRemove(c, name) })
+		td.networks = append(td.networks, name)
 	}
 	return nil
 }

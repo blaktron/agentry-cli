@@ -70,15 +70,21 @@ type Config struct {
 	// two lists, MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS).
 	BindRoots     []string
 	WritableRoots []string
-	// SharedNetworks are network names the gateway may use without the
-	// run's label: the pinned gateway's fixed relay network (DR-22), until
-	// agentry-cli#220 names it per run. The gateway may not create or
-	// remove them; the engine makes them.
+	// SharedNetworks are the networks the runner made for the gateway to
+	// use without the owner label: the run's relay networks. They must
+	// carry Label=RunID; the gateway may not create or remove them.
 	SharedNetworks []string
 	// EgressNetworks are shared networks with a way out of the host, each
 	// with the image digests (repository@sha256:…) that may join it: the
 	// relays' leg out takes the relays and nothing else a gateway launches.
 	EgressNetworks map[string][]string
+	// NetworkNames maps a network name the gateway uses to the network
+	// the daemon holds for this run: the pinned gateway's two fixed relay
+	// networks become the run's own (DR-22 narrowed, agentry-cli#220). The
+	// name is translated on the way in (paths, create bodies, endpoints)
+	// and back in what the gateway reads, so it never sees the run's
+	// names and never reaches another run's relays.
+	NetworkNames map[string]string
 	// RelayHosts are what a relay may be pointed at: the run's declared
 	// servers' egress entries, "host" (ports 443 and 80), "host:port",
 	// "*.domain" or "*". Empty admits no relay.

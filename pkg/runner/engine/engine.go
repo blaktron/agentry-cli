@@ -342,6 +342,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return Classify(ExitGateway, fmt.Errorf("create run network: %w", err))
 	}
 	td.add(func(c context.Context) { _ = d.NetworkRemove(c, netName) })
+	td.networks = append(td.networks, netName)
 
 	// LLM egress proxy: the agent container's only route out (§R4). It is
 	// also the one run container with a bridge leg, so for a host-run
@@ -428,13 +429,28 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// DAC_READ_SEARCH, which it keeps and nothing else.
 	gwSpec = hardened(gwSpec, p.limits())
 	gwSpec.CapAdd = []string{"DAC_READ_SEARCH"}
-	// A run that will give the gateway relays to start refuses to share
-	// the relay network with another gateway's (relays.go, agentry-cli#108).
-	// It holds the runner home's relay lock from the listing to the end of
-	// its teardown, so two such runs starting together cannot both list an
-	// empty network (relaylock.go, agentry-cli#268). The release is queued
-	// before the gateway's teardown, so it runs after the relays are reaped.
-	if relaysNeeded(p.Plan.MCPServers) {
+	// A run that will give the gateway relays to start: where the docker
+	// filter runs, the relay networks are its own (agentry-cli#220);
+	// elsewhere it refuses to share the host's one relay network with
+	// another gateway's (relays.go, agentry-cli#108, DR-22) and holds the
+	// runner home's relay lock from the listing to the end of its teardown,
+	// so two such runs starting together cannot both list an empty network
+	// (relaylock.go, agentry-cli#268). Either way the release or removal is
+	// queued before the gateway's teardown, so it runs after the relays
+	// are reaped.
+	switch {
+	case !relaysNeeded(p.Plan.MCPServers):
+	case filterSupported:
+		// The gateway's two fixed relay networks are this run's own, made
+		// here and removed with the run; the filter translates the names
+		// (dockerfilter.go, agentry-cli#220). Runs with relays share a host
+		// without seeing each other's.
+		if err := makeRelayNetworks(ctx, d, runID, td); err != nil {
+			return err
+		}
+	default:
+		// Without the filter the gateway's relay network is the host's one
+		// fixed network (DR-22): such runs take turns on the host.
 		release, err := holdRelayLock(p.RunnerHome)
 		if err != nil {
 			return err
@@ -442,13 +458,6 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		td.add(func(context.Context) { release() })
 		if err := refuseForeignRelays(ctx, d); err != nil {
 			return err
-		}
-		// The filter lets no gateway make or remove the shared relay
-		// networks, so the runner makes them (dockerfilter.go).
-		if filterSupported {
-			if err := ensureRelayNetworks(ctx, d); err != nil {
-				return err
-			}
 		}
 	}
 	// The gateway's daemon socket is this run's filter, not the daemon's
@@ -473,6 +482,9 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// here by the names its log gave them (relays.go), before the log goes
 	// with the container.
 	relays := &relayReaper{}
+	if filterSupported {
+		relays.runID = runID
+	}
 	td.add(func(c context.Context) {
 		_ = d.Stop(c, gwName, 10)
 		relays.reap(c, d, gwName)
