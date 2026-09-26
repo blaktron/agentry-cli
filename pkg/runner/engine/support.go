@@ -43,6 +43,14 @@ type runDirs struct {
 	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
 	outDir      string
 	receiptsDir string
+	// webLedger is receipts/web.ndjson for a run with the web tools: made
+	// here and labelled for the tools container, the one file of the
+	// receipts it may write (web.go).
+	webLedger string
+	// web says the run has the web tools, and runID names it, for the
+	// receipt's daemon line.
+	web   bool
+	runID string
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
@@ -125,6 +133,19 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			_ = os.RemoveAll(root)
 		}
 	})
+	rd.runID, rd.web = runID, p.Plan.Capabilities.WebTools
+	if p.Web != nil {
+		// Made here, and only here, as a new regular file: whatever the
+		// output folder held under the name is removed first, so a link a
+		// person left there is not followed.
+		rd.webLedger = filepath.Join(rd.receiptsDir, WebLedgerFile)
+		_ = os.Remove(rd.webLedger)
+		f, err := os.OpenFile(rd.webLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the web ledger: %w", err))
+		}
+		_ = f.Close()
+	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
 	}
@@ -154,6 +175,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := grantKnowledge(filepath.Join(rd.cfg, "gateway"), rd.knowledge, p.Knowledge); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
 	}
+	if err := grantWeb(filepath.Join(rd.cfg, "gateway"), p.Web); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
+	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
 	// plan.json re-read from disk, which could have changed since it was
@@ -167,7 +191,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// the directories exist and hold their content. Harness files are
 	// rendered later into cfg/, and a new file takes its directory's type,
 	// so they are covered by this too.
-	relabelForToolContainers(context.Background(), p.Stderr, relabelTargets(rd)...)
+	relabelForToolContainers(context.Background(), p.Stderr, relabelTargetsFor(rd)...)
 	return rd, nil
 }
 
@@ -357,6 +381,11 @@ func secretValues(p Params) (map[string]string, error) {
 			}
 		}
 	}
+	// The web tools' keys (web.go), for the tools container alone; each
+	// is written even when empty.
+	for k, v := range webSecrets(p) {
+		values[k] = v
+	}
 	missing := make([]string, 0, len(missingSet))
 	for name := range missingSet {
 		missing = append(missing, name)
@@ -528,6 +557,16 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 		{rd.outDir, false},
 		{filepath.Join(rd.outDir, "reports"), true},
 	}
+}
+
+// relabelTargetsFor adds, for a run with the web tools, the web ledger: the
+// one file of the receipts the tools server appends to (web.go).
+func relabelTargetsFor(rd *runDirs) []relabelTarget {
+	t := relabelTargets(rd)
+	if rd.webLedger != "" {
+		t = append(t, relabelTarget{rd.webLedger, false})
+	}
+	return t
 }
 
 // DockerSocket is the daemon socket the gateway mounts to launch the tool

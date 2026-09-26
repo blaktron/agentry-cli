@@ -1,0 +1,19 @@
+{
+  "id": "slack-standup",
+  "description": "Post a daily standup summary to a Slack channel, written from the notes I give it.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "slack.com",
+      "api.slack.com",
+      "hooks.slack.com"
+    ],
+    "maxSecrets": 1,
+    "maxServers": 1,
+    "exec": false,
+    "write": false
+  }
+}

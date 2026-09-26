@@ -211,6 +211,11 @@ type CapSummary struct {
 	ExecCommands []string `json:"execCommands,omitempty"`
 	// DataAccess is the declared semantic category list.
 	DataAccess []string `json:"dataAccess,omitempty"`
+	// WebTools is the built-in Drafter's grant of the web tools
+	// (web_search, web_read, registry_search; plan builder-rework.md §7.3).
+	// It is never the manifest's: the compiler sets it for a built-in
+	// package the CLI grants it to, and refuses it to everything else.
+	WebTools bool `json:"webTools,omitempty"`
 }
 
 // GatewaySpec is the gateway container launch description (§R4). Flags are

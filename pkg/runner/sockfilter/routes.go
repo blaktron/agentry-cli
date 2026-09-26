@@ -160,6 +160,15 @@ func (f *Filter) containerOp(r *http.Request, id, op string) (string, error) {
 			return "", deny("nothing may exec into, attach to or write into a relay (%s)", short(id))
 		}
 	}
+	// The web tools' server is attached to (the gateway speaks to it on
+	// stdio) but never exec'd into or written into: it sits on a network
+	// that reaches past the host.
+	if f.cfg.WebNetwork != "" && (op == "/exec" || (op == "/archive" && r.Method == http.MethodPut)) {
+		web, err := f.webImage(r.Context())
+		if err != nil || c.imageID == web {
+			return "", deny("nothing may exec into or write into the web tools' server (%s)", short(id))
+		}
+	}
 	if op == "/exec" {
 		if err := f.rewrite(r, f.execCreate); err != nil {
 			return "", err

@@ -1,0 +1,19 @@
+{
+  "id": "dependency-advisories",
+  "description": "Check my project's lockfiles for packages with known vulnerabilities and tell me what to upgrade them to.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.osv.dev",
+      "osv.dev",
+      "api.deps.dev"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 1,
+    "exec": false,
+    "write": false
+  }
+}

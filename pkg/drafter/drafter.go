@@ -1,0 +1,33 @@
+// Package drafter is the Drafter (plan builder-rework.md §7.2, D6;
+// agentry-cli#345): the BriefAgent package that turns a person's
+// description into a draft for the Builder, embedded in the CLI beside the
+// Knowledge Creator and run by the runner as the second built-in package.
+// Its manifest declares no egress, no filesystem, no exec and no secret; its
+// reach is the three web tools the runner grants to it alone
+// (runnerimage/toolsrv/web.go), every result of which AI Review reads before
+// its model does.
+//
+// Around the run this package holds the task the Drafter is given, the
+// description's scan before the run starts (Prescan), the draft it returns
+// (Draft, draft.json's shape, plan §7.5) and the package a draft renders
+// into, which the CLI's post-step validates.
+package drafter
+
+import (
+	"embed"
+	"io/fs"
+)
+
+//go:embed agent.yaml AGENT.md output.schema.json
+var files embed.FS
+
+// FS is the package's tree: agent.yaml, AGENT.md and output.schema.json at
+// its root.
+func FS() fs.FS { return files }
+
+// The package's identity, as its manifest declares it.
+const (
+	Namespace = "agentry"
+	Name      = "drafter"
+	Version   = "1.0.0"
+)

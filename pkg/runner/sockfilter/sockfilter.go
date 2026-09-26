@@ -85,6 +85,28 @@ type Config struct {
 	// and back in what the gateway reads, so it never sees the run's
 	// names and never reaches another run's relays.
 	NetworkNames map[string]string
+	// WebNetwork, when set, is the run's own network with a way out of the
+	// host for the built-in Drafter's web tools (agentry-cli#345): the
+	// tools server has no network allowlist of its own there (its tools
+	// hold their own address rule), and the gateway asks for the daemon's
+	// default network for it, which the filter never gives. A container of
+	// WebImage asking for the default network joins WebNetwork instead, and
+	// no container of another image joins WebNetwork at all. It must carry
+	// Label=RunID; the gateway may not create or remove it.
+	WebNetwork string
+	// WebCmd is the one command the web tools' server runs with (the
+	// runner image's tools role and its spec), and WebSpec the host path of
+	// the run's rendered tools spec it must be given read-only at
+	// WebSpecTarget: a container on the web network runs the run's own
+	// tools server and nothing else, as a relay is its image and nothing
+	// else.
+	WebCmd        []string
+	WebSpec       string
+	WebSpecTarget string
+	// WebImage is the tools server's image, by reference; the filter
+	// resolves it to the image id the check compares, once, when a check
+	// first needs it, and refuses the web network while it cannot.
+	WebImage string
 	// RelayHosts are what a relay may be pointed at: the run's declared
 	// servers' egress entries and the agent's own egress hosts on 443
 	// (agentry-cli#346), each "host" (ports 443 and 80), "host:port",
@@ -120,6 +142,11 @@ type Filter struct {
 	srv      *http.Server
 	upstream *http.Client
 	proxy    *httputil.ReverseProxy
+
+	// webImageID is WebImage resolved on the first check that needs it
+	// (webImage), and kept once it resolved.
+	webImageID string
+	webMu      sync.Mutex
 
 	mu      sync.Mutex
 	execs   map[string]bool
