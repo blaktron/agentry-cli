@@ -1,0 +1,15 @@
+{
+  "id": "release-notes",
+  "description": "Turn a list of commit messages I paste in into release notes, grouped into features, fixes and breaking changes, in Markdown.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false
+  }
+}

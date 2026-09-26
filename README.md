@@ -150,7 +150,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `run` · `knowledge` · `uninstall` · `profiles` · `verify` ·
+`setup` · `doctor` · `run` · `knowledge` · `draft` · `uninstall` · `profiles` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -234,6 +234,66 @@ account's, altered), is refused before the run with exit 11, naming the
 pack. A kept `create` or `add` works on the pack in the same kind of
 directory, and removes it with the Creator run's output, which holds the
 pages it wrote, unless `--out DIR` asks to keep that output.
+
+### Drafting a BriefAgent: `draft`
+
+`agentry draft "<description>" [--hint TEXT…] [--out DIR]` drafts a
+BriefAgent from a plain description of what it should do
+(`--description-file FILE` reads it from a file). The built-in
+**Drafter** does the work: a second package this binary embeds, run with the
+attestation state `builtin` like the Knowledge Creator. It searches the
+registry for a published BriefAgent that already does the task, researches
+how the task is done, and writes a draft. It never submits anything.
+
+**AI Review reads what the Drafter reads, first.** TypeSafe's Jev reads the
+description and the hints before the Drafter starts, and a description it
+flags, or cannot scan, stops the draft (exit 11) before anything is searched
+or read. While the Drafter works, AI Review reads every search result, page
+and registry answer before the Drafter's model does. What it flags, or
+cannot scan, is withheld: the model gets the address it asked for and the
+reason, never the text, and the draft's notes list it. A page that cannot be
+read at all is answered in the tools' own words, never the server's. On this computer the scans use **your own Jev
+key**, and without one the Drafter does not run. The key comes from
+`$TYPESAFE_API_KEY`, or the variable the policy's `judge.apiKeyEnv` names.
+With `judge.apiKeySource: keyring` it comes from the OS keychain entry
+`provider:typesafe`.
+
+**The web tools** are the Drafter's alone; the compiler refuses them to any
+release. They run in the tools container; the agent container holds no Jev
+key, no search key and no registry credential (only the model key, as in
+every run). On Linux the tools container is on a network of the run's own,
+which the gateway's docker filter lets no other container join.
+- `web_read` makes GET requests only, over http and https on ports 80 and
+  443, to public addresses only. The address is checked at every connection
+  and redirect hop, so a name that resolves somewhere private is refused
+  too. It sends no cookie and no credential, and returns at most 32 KiB of
+  a page's text.
+- `registry_search` reads the registry's search, a BriefAgent's manifest,
+  and its vulnerability check of an exact MCP server version.
+- `web_search` needs a search provider of your own: `webSearch: {provider:
+  youcom}` in the policy, with the key in `$YDC_API_KEY` (or
+  `webSearch.apiKeyEnv`, or the keychain). Without one the Drafter reads the
+  registry and the pages it already knows.
+
+The description, the searches and the pages go to the search provider, to
+TypeSafe and to the sites read, so the description should hold no secret.
+The draft runs against the model your runner policy names, for no credits.
+
+The result, in `DIR` (default `./agentry-out/agentry-drafter-<runid>`):
+- `draft.json` holds the manifest, the instructions, the notes, the
+  published BriefAgents that match (`matches`), the sources, the open
+  questions, AI Review's record (what was read and every withheld source
+  with its reason), and `validation`, the report `agentry validate --json`
+  gives on the rendered package.
+- `package/` holds that package: `agent.yaml`, `AGENT.md`, a README and a
+  LICENSE placeholder.
+
+A draft that fails the rules is kept with its problems for you to fix. Review
+every part before you publish it. `--timeout`, `--max-turns` and `--max-cost`
+bound the run. `agentry draft --hosted` is the form a sandbox host will run
+for a draft made in Agentry: the scans and the search go through the
+registry, with the job's credential in `$AGENTRY_JOB_TOKEN`. No sandbox host
+runs it yet; the hosted draft kind is Builder M5 (blaktron/agentry-enterprise#183).
 
 ### Signing keys and `verify`
 

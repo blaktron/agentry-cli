@@ -1,0 +1,22 @@
+{
+  "id": "weather-brief",
+  "description": "Give me a three-line weather brief for a city I name, from a free public weather API that needs no key.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.open-meteo.com",
+      "geocoding-api.open-meteo.com",
+      "api.weather.gov",
+      "wttr.in",
+      "api.met.no"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "intake": true
+  }
+}

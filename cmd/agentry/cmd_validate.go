@@ -133,8 +133,6 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 	if flags.jsonOut {
 		out = cmd.ErrOrStderr() // §R8: the report on stdout, the narration on stderr
 	}
-	report := validateOutput{Strict: strict, Issues: []validateIssue{}, Inventory: []validateLocalFinding{}, Findings: []validateFinding{}, ReadErrors: []string{}}
-
 	if rulesUpdate {
 		if _, err := fetchRulesBundle(cmd.Context(), cmd.ErrOrStderr(), registryURL()); err != nil {
 			// Fail closed: a requested rules update that did not happen must
@@ -143,18 +141,43 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 			return err
 		}
 	}
-
-	m, err := readWorkspaceManifest(dir)
+	report, err := validateWorkspace(out, cmd.ErrOrStderr(), dir, strict)
 	if err != nil {
 		return err
 	}
+	if flags.jsonOut {
+		// The report is the answer either way; the exit code still says
+		// whether it passed, as it does for doctor.
+		if err := emitJSON(cmd.OutOrStdout(), report); err != nil {
+			return err
+		}
+	}
+	if !report.Passed {
+		c := report.Counts
+		return fmt.Errorf("validate failed: %d error(s), %d warning(s), %d inventory finding(s), %d scan finding(s)",
+			c.Errors, c.Warnings, c.InventoryFailing, c.Findings)
+	}
+	_, _ = fmt.Fprintln(out, "validate: PASSED")
+	return nil
+}
+
+// validateWorkspace is the validation itself, narrated to out (notes to
+// errOut): the report `validate --json` prints, and what `agentry draft`
+// writes into a draft. An error is a validation that could not run (no
+// manifest, a rule bundle that will not load), never a failed one.
+func validateWorkspace(out, errOut io.Writer, dir string, strict bool) (validateOutput, error) {
+	report := validateOutput{Strict: strict, Issues: []validateIssue{}, Inventory: []validateLocalFinding{}, Findings: []validateFinding{}, ReadErrors: []string{}}
+	m, err := readWorkspaceManifest(dir)
+	if err != nil {
+		return report, err
+	}
 	if m.Major() == 1 {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "note: schemaVersion 1 manifest (kind-classified); it still validates and publishes as autonomous-only. modes, intake and interactive need schemaVersion \"2\" — agentry init --modes scaffolds one.")
+		_, _ = fmt.Fprintln(errOut, "note: schemaVersion 1 manifest (kind-classified); it still validates and publishes as autonomous-only. modes, intake and interactive need schemaVersion \"2\" — agentry init --modes scaffolds one.")
 	}
 
 	files, err := archive.WalkWorkspace(dir)
 	if err != nil {
-		return fmt.Errorf("walk workspace %s: %w", dir, err)
+		return report, fmt.Errorf("walk workspace %s: %w", dir, err)
 	}
 
 	// Server parity context: namespace/name from the manifest itself (the
@@ -220,7 +243,7 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 	bundle, source, err := loadRulesBundle()
 	if err != nil {
 		// Fail closed: never report PASSED on content S4 did not examine.
-		return err
+		return report, err
 	}
 	findings := rules.Scan(bundle, rulesFiles(scanFiles))
 	sortFindings(findings)
@@ -245,19 +268,7 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 	failed := errCount > 0 || len(findings) > 0 || s1Failing > 0 || (strict && warnCount > 0)
 	report.Passed = !failed
 	report.Counts.Errors, report.Counts.Warnings, report.Counts.InventoryFailing, report.Counts.Findings = errCount, warnCount, s1Failing, len(findings)
-	if flags.jsonOut {
-		// The report is the answer either way; the exit code still says
-		// whether it passed, as it does for doctor.
-		if err := emitJSON(cmd.OutOrStdout(), report); err != nil {
-			return err
-		}
-	}
-	if failed {
-		return fmt.Errorf("validate failed: %d error(s), %d warning(s), %d inventory finding(s), %d scan finding(s)",
-			errCount, warnCount, s1Failing, len(findings))
-	}
-	_, _ = fmt.Fprintln(out, "validate: PASSED")
-	return nil
+	return report, nil
 }
 
 // readWorkspaceManifest loads and parses dir/agent.yaml.

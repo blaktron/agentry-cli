@@ -1,0 +1,23 @@
+{
+  "id": "github-pr-review",
+  "description": "Review an open pull request on GitHub: read its diff and its comments and write a review summary that lists the risks and the questions to ask the author.",
+  "hints": [
+    "The repository and the pull request number change each run."
+  ],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.github.com",
+      "github.com",
+      "raw.githubusercontent.com",
+      "patch-diff.githubusercontent.com"
+    ],
+    "maxSecrets": 1,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "intake": true
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "interview-practice",
+  "description": "A conversation that helps me practise for a job interview: it asks me questions for the role I name, one at a time, and gives feedback on each answer.",
+  "hints": [
+    "It works in a conversation, not on its own."
+  ],
+  "expect": {
+    "modes": [
+      "interactive"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false
+  }
+}

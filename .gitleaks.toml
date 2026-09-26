@@ -22,3 +22,10 @@ regexes = [
   '''tok-0123456789''',
   '''abcdef123456''',
 ]
+
+[[allowlists]]
+description = "a fake Jev key in the Drafter's engine test, which holds the agent container to having no key of the person's (agentry-cli#345)"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^pkg/runner/engine/web_test\.go$''']
+regexes = ['''jev-person-key-0123456789abcdef''']

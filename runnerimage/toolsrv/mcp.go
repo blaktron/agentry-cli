@@ -82,6 +82,10 @@ type server struct {
 	// shims maps a declared command to its shim symlink; a declared
 	// command absent from the image is absent here (tools.go).
 	shims map[string]string
+	// webState is the web tools' per-run state, built on first use
+	// (web.go); a test may set it first.
+	webOnce  sync.Once
+	webState *webState
 }
 
 func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
@@ -159,6 +163,12 @@ func validateSpec(spec *Spec) error {
 	}
 	if spec.InputsDir != "" && !filepath.IsAbs(spec.InputsDir) {
 		return fmt.Errorf("inputsDir %q must be an absolute container path when set", spec.InputsDir)
+	}
+	if spec.Web.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0) {
+		// The web tools' container has no network allowlist of its own
+		// (web.go): a fetch grant or a declared command beside them would
+		// reach whatever it liked, bounded by nothing of ours.
+		return errors.New("the web tools are never granted beside fetch or exec")
 	}
 	return validateKnowledge(spec)
 }

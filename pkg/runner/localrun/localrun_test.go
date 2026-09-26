@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -27,13 +28,45 @@ import (
 // had by the zero value, never verified — and the built-in's tree is the
 // embedded one on every run, whatever happened to the installed copy.
 func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
-	t.Run("the list is the Creator alone", func(t *testing.T) {
+	t.Run("the list is the Creator and the Drafter", func(t *testing.T) {
 		var refs []string
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.0.0,agentry/drafter@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
+		}
+	})
+	t.Run("the web tools are the Drafter's alone", func(t *testing.T) {
+		for _, b := range Builtins() {
+			if b.web != (b.Ref() == Drafter().Ref()) {
+				t.Fatalf("%s: web tools %v", b.Ref(), b.web)
+			}
+		}
+		if (Builtin{}).web {
+			t.Fatal("the zero Builtin carries the web tools")
+		}
+	})
+	t.Run("the Drafter materializes as builtin, its tree the embedded one", func(t *testing.T) {
+		home := t.TempDir()
+		meta, dir, err := Drafter().Materialize(home, "agentry 9.9.9 (test)")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.0.0" {
+			t.Fatalf("meta %+v", meta)
+		}
+		for _, name := range []string{"agent.yaml", "AGENT.md", "output.schema.json"} {
+			got, err := os.ReadFile(filepath.Join(dir, "workspace", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want, _ := fs.ReadFile(drafter.FS(), name); string(got) != string(want) {
+				t.Fatalf("the installed %s is not the embedded one", name)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(dir, "workspace", "fixtures")); !os.IsNotExist(err) {
+			t.Fatal("the fixture set is in the run's package")
 		}
 	})
 	t.Run("an embedded package materializes as builtin, not verified", func(t *testing.T) {
@@ -81,16 +114,18 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		}
 	})
 	t.Run("a directory package never materializes as builtin", func(t *testing.T) {
-		src := t.TempDir()
-		if err := os.CopyFS(src, creator.FS()); err != nil {
-			t.Fatal(err)
-		}
-		meta, err := LocalMeta(src)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if meta.Attestation.State != "local" || meta.Source != "local" {
-			t.Fatalf("the Creator's own tree, given as a directory, is %+v", meta.Attestation)
+		for _, tree := range []fs.FS{creator.FS(), drafter.FS()} {
+			src := t.TempDir()
+			if err := os.CopyFS(src, tree); err != nil {
+				t.Fatal(err)
+			}
+			meta, err := LocalMeta(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Attestation.State != "local" || meta.Source != "local" {
+				t.Fatalf("a built-in's own tree, given as a directory, is %+v", meta.Attestation)
+			}
 		}
 	})
 }

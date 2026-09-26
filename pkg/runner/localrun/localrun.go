@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
@@ -115,10 +116,14 @@ func LocalMeta(dir string) (*installdir.Meta, error) {
 
 // Builtin is a package this binary embeds. Its fields are unexported, so a
 // Builtin is only ever one of Builtins(): nothing else — a directory, a
-// release, a record on disk — can run with the attestation state builtin.
+// release, a record on disk — can run with the attestation state builtin,
+// and nothing else can be granted the web tools, which ride on the Builtin
+// value itself (plan builder-rework.md D6, §7.3).
 type Builtin struct {
 	namespace, name, version string
 	fsys                     fs.FS
+	// web grants the web tools: the Drafter's alone.
+	web bool
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator).
@@ -126,8 +131,14 @@ func KnowledgeCreator() Builtin {
 	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS()}
 }
 
+// Drafter is the Drafter (pkg/drafter), the second built-in package (plan
+// builder-rework.md D6), and the one granted the web tools.
+func Drafter() Builtin {
+	return Builtin{namespace: drafter.Namespace, name: drafter.Name, version: drafter.Version, fsys: drafter.FS(), web: true}
+}
+
 // Builtins is every package that may run as builtin.
-func Builtins() []Builtin { return []Builtin{KnowledgeCreator()} }
+func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter()} }
 
 // Ref is the package's ns/name@version.
 func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }
@@ -191,7 +202,10 @@ type PlanInputs struct {
 	// CompiledBy is the build identity of the client compiling: a plan
 	// another build compiled is recompiled.
 	CompiledBy string
-	Log        io.Writer
+	// Web grants the web tools (compile.Inputs.Web): set from a Builtin
+	// that carries them, never from anything a caller passes in.
+	Web bool
+	Log io.Writer
 }
 
 // EnsurePlan reuses the installed plan when nothing it depends on changed
@@ -244,6 +258,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Digest == in.Meta.Digest &&
 			plan.PolicySHA256 == in.PolicySHA &&
 			plan.Harness.Adapter == in.Adapter &&
+			plan.Capabilities.WebTools == in.Web &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
@@ -277,6 +292,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		RunnerImage:  runnerImage,
 		CompiledBy:   in.CompiledBy,
 		MCPServers:   in.Servers,
+		Web:          in.Web,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {
@@ -327,6 +343,9 @@ type Run struct {
 	KeepRunDir bool
 	Stderr     io.Writer
 	OnUsage    func(receipt.Usage)
+	// Web is the web tools' configuration and keys, for a Builtin granted
+	// them (the Drafter); the engine refuses to run one without it.
+	Web *engine.WebRun
 }
 
 // Execute runs it: materialize, validate, plan, ensure the images, run.
@@ -361,7 +380,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	plan, planDir, err := EnsurePlan(PlanInputs{
 		Home: r.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: r.Policy, PolicySHA: r.PolicySHA, Adapter: adapterName, Mode: manifest.ModeAutonomous,
-		CompiledBy: r.Build, Log: logw,
+		CompiledBy: r.Build, Web: r.Builtin.web, Log: logw,
 	})
 	if err != nil {
 		return nil, err
@@ -386,6 +405,6 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: r.Knowledge, Decoded: r.Decoded,
 		Adapter: ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
-		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage,
+		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web,
 	})
 }

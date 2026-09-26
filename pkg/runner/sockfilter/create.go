@@ -322,6 +322,9 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err := f.checkStorage(ctx, hc); err != nil {
 		return nil, err
 	}
+	if err := f.webShape(ctx, &c); err != nil {
+		return nil, err
+	}
 	if err := f.bound(hc); err != nil {
 		return nil, err
 	}
@@ -412,6 +415,83 @@ var (
 	relayPortsRE = regexp.MustCompile(`^[0-9]{1,5}(,[0-9]{1,5})*$`)
 	relayPortRE  = regexp.MustCompile(`^[0-9]{1,5}$`)
 )
+
+// webShape holds a container on the run's web network to the web tools'
+// server (Config.WebNetwork): its image's own entrypoint, the one command
+// WebCmd, the run's tools spec read-only at WebSpecTarget, the web network
+// and no other, no link. The network reaches past the host, and the server's
+// own address rule is what bounds it; any other code there would be bounded
+// by nothing.
+func (f *Filter) webShape(ctx context.Context, c *containerCreateBody) error {
+	if f.cfg.WebNetwork == "" {
+		return nil
+	}
+	web, err := f.ownNetwork(ctx, f.cfg.WebNetwork, true)
+	if err != nil {
+		return err
+	}
+	hc := c.HostConfig
+	joins := hc.NetworkMode == web.id
+	others := hc.NetworkMode != "" && hc.NetworkMode != web.id && hc.NetworkMode != "none" && hc.NetworkMode != "default"
+	if nc := c.NetworkingConfig; nc != nil {
+		for id, ep := range nc.EndpointsConfig {
+			if id == web.id {
+				joins = true
+			} else {
+				others = true
+			}
+			if ep != nil && len(ep.Links) > 0 {
+				others = true
+			}
+		}
+	}
+	if !joins {
+		return nil
+	}
+	var cmd []string
+	switch {
+	case others || len(hc.Links) > 0:
+		return deny("the web tools' server joins the web network and no other, with no link")
+	case present(c.Entrypoint) || present(c.Shell) || present(c.Healthcheck) || present(c.OnBuild):
+		return deny("the web tools' server runs its image's own entrypoint, nothing else")
+	case json.Unmarshal(c.Cmd, &cmd) != nil || !slices.Equal(cmd, f.cfg.WebCmd):
+		return deny("the web tools' server runs its tools role with the run's spec, nothing else")
+	case c.User != "" || c.WorkingDir != "":
+		return deny("the web tools' server's user and working directory are its image's")
+	}
+	spec := false
+	for _, b := range hc.Binds {
+		parts := strings.Split(b, ":")
+		if len(parts) >= 2 && parts[1] == f.cfg.WebSpecTarget {
+			if len(parts) != 3 || !slices.Contains(strings.Split(parts[2], ","), "ro") || !f.sameFile(parts[0], f.cfg.WebSpec) {
+				return deny("the web tools' server reads the run's own tools spec, read-only")
+			}
+			spec = true
+		}
+	}
+	for _, m := range hc.Mounts {
+		if m.Target == f.cfg.WebSpecTarget {
+			return deny("the web tools' server reads the run's own tools spec, read-only")
+		}
+	}
+	if !spec {
+		return deny("the web tools' server reads the run's own tools spec, read-only")
+	}
+	return nil
+}
+
+// sameFile says whether two host paths name one file.
+func (f *Filter) sameFile(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	ra, err := filepath.EvalSymlinks(a)
+	if err != nil {
+		return false
+	}
+	rb, err := filepath.EvalSymlinks(b)
+	return err == nil && ra == rb
+}
 
 // relayShape holds a relay, the one kind of container with a way off the
 // host, to what the pinned gateway gives one: its image's own entrypoint
@@ -634,7 +714,21 @@ func namespaceMode(field, mode string) error {
 // the rules to its name: the run's or a shared one, and an egress network
 // only for a pinned relay.
 func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) error {
-	mode := f.runNetwork(c.HostConfig.NetworkMode)
+	// The web tools' server asks for the daemon's default network; it gets
+	// the run's web network (Config.WebNetwork), and nothing else does.
+	web := false
+	if f.cfg.WebNetwork != "" && c.Image != "" {
+		id, err := f.webImage(ctx)
+		web = err == nil && c.Image == id
+	}
+	netName := func(name string) string {
+		name = f.runNetwork(name)
+		if web && (name == "" || name == "default") {
+			return f.cfg.WebNetwork
+		}
+		return name
+	}
+	mode := netName(c.HostConfig.NetworkMode)
 	switch {
 	case mode == "" || mode == "none" || mode == "default":
 	case mode == "host":
@@ -660,7 +754,7 @@ func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) erro
 	}
 	byID := map[string]*endpointSettings{}
 	for key, ep := range c.NetworkingConfig.EndpointsConfig {
-		n, err := f.ownNetwork(ctx, f.runNetwork(key), true)
+		n, err := f.ownNetwork(ctx, netName(key), true)
 		if err != nil {
 			return err
 		}
