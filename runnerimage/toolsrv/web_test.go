@@ -106,7 +106,7 @@ func ledgerOf(t *testing.T, spec *Spec) []LedgerEntry {
 		}
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []LedgerEntry
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -357,6 +357,13 @@ type fakeRoute struct {
 	mu      sync.Mutex
 }
 
+// seen is what the route was sent, read under its lock.
+func (f *fakeRoute) seen() (tokens, sources, texts []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.tokens...), append([]string(nil), f.sources...), append([]string(nil), f.texts...)
+}
+
 func (f *fakeRoute) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -446,8 +453,9 @@ func TestAScanThatFlagsErrsOrTimesOutWithholdsThePage(t *testing.T) {
 			if !strings.HasPrefix(text, "withheld:") || !strings.Contains(text, "http://site.test/guide") || !strings.Contains(text, tc.reason) {
 				t.Fatalf("want the address and %q, got %q", tc.reason, text)
 			}
-			if route.sources[0] != "page" || !strings.Contains(route.texts[0], secret) || route.tokens[0] != "agyj_job" {
-				t.Fatalf("the route read %v %v with token %v", route.sources, route.texts, route.tokens)
+			tokens, sources, texts := route.seen()
+			if sources[0] != "page" || !strings.Contains(texts[0], secret) || tokens[0] != "agyj_job" {
+				t.Fatalf("the route read %v %v with token %v", sources, texts, tokens)
 			}
 			led := ledgerOf(t, spec)
 			if len(led) != 1 || led[0].Passed() || led[0].URL != "http://site.test/guide" || led[0].Source != "page" {
@@ -518,8 +526,8 @@ func TestWebSearchThroughTheRegistry(t *testing.T) {
 		!strings.Contains(text, "withheld: a result from https://evil.example/") || !strings.Contains(text, "1 withheld by AI Review") {
 		t.Fatalf("%q", text)
 	}
-	if route.tokens[0] != "agyj_job" {
-		t.Fatalf("token %v", route.tokens)
+	if tokens, _, _ := route.seen(); tokens[0] != "agyj_job" {
+		t.Fatalf("token %v", tokens)
 	}
 	led := ledgerOf(t, spec)
 	if len(led) != 3 || !led[0].Search || led[0].Results != 2 || !led[1].Passed() || led[2].Passed() || led[2].URL != "https://evil.example/" {

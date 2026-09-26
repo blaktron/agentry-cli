@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -145,12 +146,15 @@ func TestProviderSearchScansInTheRegistrysForm(t *testing.T) {
 		{Title: "A", URL: "https://a.example/x?y=1", Snippet: "about a"},
 		{Title: "B", URL: "https://b.example/", Snippet: "about b"},
 	}}
+	var mu sync.Mutex
 	var texts []string
 	sc := scanFunc(func(_ context.Context, src Source, text string) Result {
 		if src != SourceSearchResult {
 			t.Errorf("source %s", src)
 		}
+		mu.Lock()
 		texts = append(texts, text)
+		mu.Unlock()
 		if strings.Contains(text, "a.example") {
 			return Result{Verdict: NotScanned, Failure: "timeout"}
 		}

@@ -110,6 +110,15 @@ type Policy struct {
 	// Docker is how the runner drives the daemon beyond the images: the
 	// OCI runtime a run's containers are created with (DR-23).
 	Docker DockerPolicy `yaml:"docker,omitempty"`
+	// Judge names where the person's own AI Review (TypeSafe Jev) key
+	// comes from, for local work that needs a scan: a draft made on this
+	// computer (plan builder-rework.md D25; agentry-cli#345). Unset takes
+	// $TYPESAFE_API_KEY from the environment.
+	Judge JudgeKey `yaml:"judge,omitempty"`
+	// WebSearch names the person's own search provider and where its key
+	// comes from, for a local draft's web_search. Unset, a local draft
+	// has no web search (its web_read and registry_search still work).
+	WebSearch WebSearchKey `yaml:"webSearch,omitempty"`
 }
 
 // ExecPolicy is the exec catalog (agentry-cli#100). The manifest keeps
@@ -346,6 +355,56 @@ type Model struct {
 	// model endpoint and nothing else.
 	ProxyAllow []string `yaml:"proxyAllow"`
 }
+
+// JudgeKey is where the person's own Jev key comes from. The value is
+// never in this file: the variable, else, with apiKeySource keyring, the
+// OS keychain entry provider:typesafe (which the desktop writes).
+type JudgeKey struct {
+	// APIKeyEnv names the variable; empty is DefaultJudgeKeyEnv.
+	APIKeyEnv string `yaml:"apiKeyEnv,omitempty"`
+	// APIKeySource is "" or "env" (the environment only) or "keyring".
+	APIKeySource string `yaml:"apiKeySource,omitempty"`
+}
+
+// WebSearchKey is the person's own search provider, and where its key
+// comes from, as JudgeKey (keychain entry provider:<provider>).
+type WebSearchKey struct {
+	// Provider is "" or "none" (no search) or "youcom".
+	Provider string `yaml:"provider,omitempty"`
+	// APIKeyEnv names the variable; empty is DefaultWebSearchKeyEnv.
+	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"`
+	APIKeySource string `yaml:"apiKeySource,omitempty"`
+}
+
+// The default variables the person's own keys are read from, and the
+// keychain provider name of the Jev key.
+const (
+	DefaultJudgeKeyEnv     = "TYPESAFE_API_KEY"
+	DefaultWebSearchKeyEnv = "YDC_API_KEY"
+	JudgeKeyProvider       = "typesafe"
+)
+
+// KeyEnv is the variable the Jev key is read from.
+func (j JudgeKey) KeyEnv() string {
+	if j.APIKeyEnv != "" {
+		return j.APIKeyEnv
+	}
+	return DefaultJudgeKeyEnv
+}
+
+// On reports whether a search provider is named.
+func (w WebSearchKey) On() bool { return w.Provider != "" && w.Provider != "none" }
+
+// KeyEnv is the variable the search key is read from.
+func (w WebSearchKey) KeyEnv() string {
+	if w.APIKeyEnv != "" {
+		return w.APIKeyEnv
+	}
+	return DefaultWebSearchKeyEnv
+}
+
+// envVarRE is an environment variable name.
+var envVarRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // SecretSource resolves declared secret names to values (§R9, Q-R3).
 type SecretSource struct {
@@ -650,6 +709,21 @@ func (p *Policy) Validate() error {
 		if !apkPackageRE.MatchString(pkg) {
 			return fmt.Errorf("exec.packages.%s: package %q must be an apk package name, optionally =version (%s)", cmd, pkg, apkPackageRE)
 		}
+	}
+	for name, k := range map[string]struct{ env, src string }{
+		"judge": {p.Judge.APIKeyEnv, p.Judge.APIKeySource}, "webSearch": {p.WebSearch.APIKeyEnv, p.WebSearch.APIKeySource},
+	} {
+		if k.env != "" && !envVarRE.MatchString(k.env) {
+			return fmt.Errorf("%s.apiKeyEnv %q must be an environment variable name", name, k.env)
+		}
+		if !validKeySource(k.src) {
+			return fmt.Errorf("%s.apiKeySource %q must be env or keyring", name, k.src)
+		}
+	}
+	switch p.WebSearch.Provider {
+	case "", "none", "youcom":
+	default:
+		return fmt.Errorf("webSearch.provider %q must be none or youcom", p.WebSearch.Provider)
 	}
 	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
 		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
