@@ -123,6 +123,15 @@ func (s *server) buildTools() {
 		case ToolKnowledgeRead:
 			add(name, "Read a page of an attached knowledge pack (read-only), by the path its index gives, or a source document by a citation's doc:<path>. Capped by the server's byte limit; use offset and maxBytes to page through.",
 				knowledgeReadSchema(), s.toolKnowledgeRead)
+		case ToolWebSearch:
+			add(name, "Search the web. AI Review reads every result before you see it; a result it flagged, or could not scan, is shown as withheld with its origin only.",
+				webSearchSchema(), s.toolWebSearch)
+		case ToolWebRead:
+			add(name, "Read a public web page as text (GET only; at most 32 KiB of text). AI Review reads the page before you do; a page it flagged, or could not scan, is withheld and you get only its address and the reason.",
+				webReadSchema(), s.toolWebRead)
+		case ToolRegistrySearch:
+			add(name, "Ask the Agentry registry: search its published BriefAgents (query), read one BriefAgent's manifest (ref), or read its vulnerability check of an exact MCP server version (ecosystem, package, version). AI Review reads each answer before you do.",
+				registrySearchSchema(), s.toolRegistrySearch)
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
 				writeReportSchema(), s.toolWriteReport)
@@ -688,7 +697,7 @@ func (s *server) fetchHostAllowed(host string) bool {
 // the credential (auth debuggers, error pages) must not teach it to the
 // model. The gateway's --block-secrets does the same at its layer.
 func (s *server) scrubSecrets(text string) string {
-	for _, env := range s.spec.Fetch.SecretEnv {
+	for _, env := range append(append([]string(nil), s.spec.Fetch.SecretEnv...), webKeysForScrub(s.spec.Web)...) {
 		v := os.Getenv(env)
 		if v == "" {
 			continue

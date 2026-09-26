@@ -11,11 +11,13 @@ package toolsrv
 
 // SpecVersion is the current tool-server spec schema version. "2" added
 // the run-inputs channel (RUNNER-PLAN-2 §P4); "3" the knowledge packs a
-// run may search (plan knowledge.md §4.5, agentry-cli#317). The server
+// run may search (plan knowledge.md §4.5, agentry-cli#317); "4" the
+// built-in Drafter's web tools (plan builder-rework.md §7.3,
+// agentry-cli#345). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "3"
+const SpecVersion = "4"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -62,6 +64,10 @@ type Spec struct {
 	Fetch Fetch `json:"fetch"`
 	// Exec gates the run_command tool.
 	Exec Exec `json:"exec"`
+	// Web gates the built-in Drafter's web tools (web.go). The compiler
+	// sets Enabled for the Drafter alone; the engine stamps the rest into
+	// the run's own copy of this file.
+	Web Web `json:"web,omitempty"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
 	// Owner, when set, is the host user who ran the command: every file
@@ -174,6 +180,11 @@ const (
 	ToolKnowledgeList   = "knowledge_list"
 	ToolKnowledgeSearch = "knowledge_search"
 	ToolKnowledgeRead   = "knowledge_read"
+	// The web tools (plan builder-rework.md §7.3), the built-in Drafter's
+	// alone: web_search only when the run has a search to use.
+	ToolWebSearch      = "web_search"
+	ToolWebRead        = "web_read"
+	ToolRegistrySearch = "registry_search"
 )
 
 // GrantedTools returns the tool names this spec exposes, in the fixed
@@ -199,6 +210,15 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {
 		names = append(names, ToolKnowledgeList, ToolKnowledgeSearch, ToolKnowledgeRead)
+	}
+	if s.Web.Enabled {
+		if s.Web.Search != "" {
+			names = append(names, ToolWebSearch)
+		}
+		names = append(names, ToolWebRead)
+		if s.Web.Registry != "" {
+			names = append(names, ToolRegistrySearch)
+		}
 	}
 	names = append(names, ToolWriteReport)
 	return names
