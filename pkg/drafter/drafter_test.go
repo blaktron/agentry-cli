@@ -123,7 +123,7 @@ func TestTheInstructionsExampleValidates(t *testing.T) {
 		t.Fatal("no example in the instruction")
 	}
 	example := json.RawMessage(text[start+8 : start+8+end])
-	yml, err := ManifestYAML(example)
+	yml, err := manifestYAML(example)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestTheDescriptionIsScannedBeforeTheDrafterStarts(t *testing.T) {
 	if _, err := Task("", nil); err == nil {
 		t.Fatal("an empty description")
 	}
-	if _, err := Task(strings.Repeat("x", MaxTask), nil); err == nil {
+	if _, err := Task(strings.Repeat("x", maxTask), nil); err == nil {
 		t.Fatal("a description over the cap")
 	}
 }
@@ -333,7 +333,7 @@ func TestTheFixtureSet(t *testing.T) {
 		}
 	}
 	d, _ := Parse(json.RawMessage(sampleDraft))
-	yml, _ := ManifestYAML(d.Manifest)
+	yml, _ := manifestYAML(d.Manifest)
 	m, _ := manifest.Parse(yml)
 	if got := CheckShape(m, d, Expect{Modes: []string{"autonomous"}}); len(got) != 0 {
 		t.Fatalf("%v", got)
@@ -358,8 +358,8 @@ func TestFromReports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(InstructionsReport, "# Do it\n")
-	write(NotesReport, "Chose nothing.\n")
+	write(instructionsReport, "# Do it\n")
+	write(notesReport, "Chose nothing.\n")
 	d := &Draft{Notes: "from the message"}
 	if err := FromReports(d, dir); err != nil {
 		t.Fatal(err)
@@ -367,16 +367,16 @@ func TestFromReports(t *testing.T) {
 	if d.Instructions != "# Do it\n" || d.Notes != "from the message" {
 		t.Fatalf("%+v", d)
 	}
-	write(InstructionsReport, strings.Repeat("x", maxInstructions+1))
+	write(instructionsReport, strings.Repeat("x", maxInstructions+1))
 	if err := FromReports(&Draft{}, dir); err == nil {
 		t.Fatal("an instruction report over the bound was read")
 	}
-	write(InstructionsReport, "\xff\xfe")
+	write(instructionsReport, "\xff\xfe")
 	if err := FromReports(&Draft{}, dir); err == nil {
 		t.Fatal("a report that is not text was read")
 	}
-	_ = os.Remove(filepath.Join(dir, InstructionsReport))
-	if err := os.Symlink("/etc/passwd", filepath.Join(dir, InstructionsReport)); err != nil {
+	_ = os.Remove(filepath.Join(dir, instructionsReport))
+	if err := os.Symlink("/etc/passwd", filepath.Join(dir, instructionsReport)); err != nil {
 		t.Fatal(err)
 	}
 	if err := FromReports(&Draft{}, dir); err == nil {

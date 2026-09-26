@@ -39,11 +39,11 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 	})
 	t.Run("the web tools are the Drafter's alone", func(t *testing.T) {
 		for _, b := range Builtins() {
-			if b.WebTools() != (b.Ref() == Drafter().Ref()) {
-				t.Fatalf("%s: web tools %v", b.Ref(), b.WebTools())
+			if b.web != (b.Ref() == Drafter().Ref()) {
+				t.Fatalf("%s: web tools %v", b.Ref(), b.web)
 			}
 		}
-		if (Builtin{}).WebTools() {
+		if (Builtin{}).web {
 			t.Fatal("the zero Builtin carries the web tools")
 		}
 	})

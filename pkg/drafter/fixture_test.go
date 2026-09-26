@@ -1,6 +1,7 @@
 package drafter
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -10,6 +11,14 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 )
+
+// fixtures is the fixture set (plan D10): described tasks with the shapes
+// expected of their drafts, the regression check on the instruction and the
+// model. It is the tests' and scripts/drafter-fixtures.sh's, never part of
+// the package a run is given.
+//
+//go:embed fixtures/*.json
+var fixtures embed.FS
 
 // Fixture is one described task of the fixture set (plan D10) and the shape
 // expected of its draft.
@@ -46,13 +55,13 @@ type Expect struct {
 
 // LoadFixtures reads the fixture set, sorted by id.
 func LoadFixtures() ([]Fixture, error) {
-	paths, err := fs.Glob(Fixtures(), "fixtures/*.json")
+	paths, err := fs.Glob(fixtures, "fixtures/*.json")
 	if err != nil {
 		return nil, err
 	}
 	var out []Fixture
 	for _, p := range paths {
-		b, err := fs.ReadFile(Fixtures(), p)
+		b, err := fs.ReadFile(fixtures, p)
 		if err != nil {
 			return nil, err
 		}

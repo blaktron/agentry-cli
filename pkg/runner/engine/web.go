@@ -23,6 +23,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
 // WebRun is a web-tools run's configuration and keys.
@@ -36,9 +37,6 @@ type WebRun struct {
 	// Registry is the registry's root, for registry_search and, hosted,
 	// the model-input routes.
 	Registry string
-	// JevURL and SearchURL override the vendors' API roots; empty is the
-	// vendor's.
-	JevURL, SearchURL string
 	// The keys. They reach the tools container alone, through the run's
 	// gateway secrets file, which is deleted at teardown; the receipts are
 	// masked of them. None reaches the agent container.
@@ -126,7 +124,6 @@ func grantWeb(gatewayDir string, w *WebRun) error {
 		return errors.New("this run's rendered tools spec grants no web tools; remove the plan directory to recompile it with this CLI")
 	}
 	ts.Web.Scan, ts.Web.Search, ts.Web.Registry = w.Scan, w.Search, w.Registry
-	ts.Web.JevURL, ts.Web.SearchURL = w.JevURL, w.SearchURL
 	ts.Web.MaxPages, ts.Web.MaxSearches, ts.Web.MaxRegistryCalls = w.MaxPages, w.MaxSearches, w.MaxRegistryCalls
 	ts.Web.Ledger = path.Join(spec.OutMount, "receipts", WebLedgerFile)
 	out, err := json.MarshalIndent(&ts, "", "  ")
@@ -139,40 +136,59 @@ func grantWeb(gatewayDir string, w *WebRun) error {
 	return setAllowlist(filepath.Join(gatewayDir, "tools.yaml"), ts.GrantedTools())
 }
 
-// webRecord counts the run's web ledger, written by the tools server into
-// receipts/web.ndjson; nil for a run without the web tools. A line that does
-// not decode is counted as refused, never as passed.
+// ReadWebLedger reads a run's web ledger (receipts/web.ndjson): its
+// entries, and how many lines did not decode. A missing ledger is none.
+func ReadWebLedger(path string) ([]toolsrv.LedgerEntry, int, error) {
+	f, err := os.Open(path) //nolint:gosec // a run's own receipt
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = f.Close() }()
+	var out []toolsrv.LedgerEntry
+	bad := 0
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
+			continue
+		}
+		var e toolsrv.LedgerEntry
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			bad++
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, bad, sc.Err()
+}
+
+// webRecord counts the run's web ledger into the receipt; nil for a run
+// without the web tools. A line that does not decode is counted as
+// refused, never as passed.
 func webRecord(receiptsDir string, w *WebRun) *receipt.Web {
 	if w == nil {
 		return nil
 	}
 	rec := &receipt.Web{Scan: w.Scan, Search: w.Search}
-	f, err := os.Open(filepath.Join(receiptsDir, WebLedgerFile)) //nolint:gosec // the run's own receipt
-	if err != nil {
-		return rec
-	}
-	defer func() { _ = f.Close() }()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64<<10), 1<<20)
-	for sc.Scan() {
-		var e toolsrv.LedgerEntry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+	entries, bad, _ := ReadWebLedger(filepath.Join(receiptsDir, WebLedgerFile))
+	rec.Refused = bad
+	for _, e := range entries {
+		switch {
+		case e.Refused != "":
 			rec.Refused++
 			continue
-		}
-		if e.Refused != "" {
-			rec.Refused++
-			continue
-		}
-		if e.Search {
+		case e.Search:
 			rec.Searches++
 			continue
 		}
 		rec.Read++
 		switch e.Verdict {
-		case "pass":
+		case webscan.Pass:
 			rec.Passed++
-		case "withheld":
+		case webscan.Withheld:
 			rec.Withheld++
 		default:
 			rec.NotScanned++
@@ -180,6 +196,8 @@ func webRecord(receiptsDir string, w *WebRun) *receipt.Web {
 		switch e.Tool {
 		case toolsrv.ToolWebRead:
 			rec.Pages++
+		case toolsrv.ToolWebSearch:
+			rec.SearchResults++
 		case toolsrv.ToolRegistrySearch:
 			rec.RegistryCalls++
 		}
@@ -198,8 +216,8 @@ func webLine(rec *receipt.Web) string {
 	if rec.Scan == toolsrv.WebScanRegistry {
 		where = "the registry's model-input route, with the job's credential"
 	}
-	line := fmt.Sprintf("AI Review read every result before the model, through %s: %d read (%d pages, %d searches, %d registry answers), %d passed, %d withheld as flagged, %d withheld as not scanned; %d calls refused before reading",
-		where, rec.Read, rec.Pages, rec.Searches, rec.RegistryCalls, rec.Passed, rec.Withheld, rec.NotScanned, rec.Refused)
+	line := fmt.Sprintf("AI Review read every text the web tools brought back before the model, through %s: %d read (%d pages, %d search results of %d searches, %d registry answers), %d passed, %d withheld as flagged, %d withheld as not scanned; %d calls refused before reading anything",
+		where, rec.Read, rec.Pages, rec.SearchResults, rec.Searches, rec.RegistryCalls, rec.Passed, rec.Withheld, rec.NotScanned, rec.Refused)
 	if rec.Model != "" {
 		line += "; judge " + rec.Model + ", question set " + rec.QuestionSet
 	}

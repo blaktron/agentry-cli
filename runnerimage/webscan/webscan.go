@@ -358,12 +358,12 @@ func (j *Jev) Scan(ctx context.Context, source Source, text string) Result {
 	if len(text) > MaxText {
 		return Result{Verdict: NotScanned, Failure: FailureTooLarge}
 	}
-	return FromJudge(j.s.Scan(ctx, source, text))
+	return fromJudge(j.s.Scan(ctx, source, text))
 }
 
-// FromJudge is a judge scan as a Result: the verdict, the flagged questions,
+// fromJudge is a judge scan as a Result: the verdict, the flagged questions,
 // the first chunk's failure word and the usage.
-func FromJudge(r judge.ScanResult) Result {
+func fromJudge(r judge.ScanResult) Result {
 	res := Result{Verdict: r.Verdict, Score: r.Score, Flagged: sortedCopy(r.Flagged), Model: r.Model,
 		QuestionSet: r.QuestionSet, Requests: r.Usage.Requests, InputTokens: int64(r.Usage.InputTokens)}
 	if res.Verdict == NotScanned {
@@ -410,7 +410,7 @@ func (p ProviderSearch) Search(ctx context.Context, query string, count int) ([]
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			res := p.Scanner.Scan(ctx, SourceSearchResult, SearchResultText(r))
+			res := p.Scanner.Scan(ctx, SourceSearchResult, searchResultText(r))
 			if res.Passed() {
 				hits[i] = Hit{URL: r.URL, Title: r.Title, Snippet: r.Snippet, Result: res}
 			} else {
@@ -422,11 +422,11 @@ func (p ProviderSearch) Search(ctx context.Context, query string, count int) ([]
 	return hits, nil
 }
 
-// SearchResultText is what a search result is scanned as: everything of it
+// searchResultText is what a search result is scanned as: everything of it
 // a model is shown, its address included. It is the core's own form
 // (internal/api's searchResultText), so a local scan of a result reads what
 // the registry's does.
-func SearchResultText(r websearch.Result) string {
+func searchResultText(r websearch.Result) string {
 	return "Title: " + r.Title + "\nURL: " + r.URL + "\nSnippet: " + r.Snippet
 }
 

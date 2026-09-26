@@ -259,12 +259,12 @@ func TestTheWebLedgerIsCountedIntoTheReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := env.Web
-	if w == nil || w.Read != 5 || w.Pages != 2 || w.Searches != 1 || w.RegistryCalls != 1 || w.Passed != 3 || w.Withheld != 1 ||
+	if w == nil || w.Read != 5 || w.Pages != 2 || w.Searches != 1 || w.SearchResults != 2 || w.RegistryCalls != 1 || w.Passed != 3 || w.Withheld != 1 ||
 		w.NotScanned != 1 || w.Refused != 2 || w.ScanRequests != 7 || w.ScanInputTokens != 1630 || w.Model != "jev-1.13.0" || w.Scan != "jev" {
 		t.Fatalf("%+v", w)
 	}
 	line := env.CapabilitiesEnforced["web.aiReview"]
-	if !strings.Contains(line, "5 read (2 pages, 1 searches, 1 registry answers), 3 passed, 1 withheld as flagged, 1 withheld as not scanned") {
+	if !strings.Contains(line, "5 read (2 pages, 2 search results of 1 searches, 1 registry answers), 3 passed, 1 withheld as flagged, 1 withheld as not scanned") {
 		t.Fatalf("%q", line)
 	}
 	if !strings.Contains(env.CapabilitiesEnforced["web"], "public addresses only") || !strings.Contains(env.CapabilitiesEnforced["network"], "no declared egress") {

@@ -63,7 +63,7 @@ func TestTheFixtureRuns(t *testing.T) {
 			default:
 				valid = fmt.Sprintf("%d error(s), %d finding(s)", v.Counts.Errors, v.Counts.Findings)
 			}
-			if yml, err := ManifestYAML(d.Manifest); err == nil {
+			if yml, err := manifestYAML(d.Manifest); err == nil {
 				if m, err := manifest.Parse(yml); err == nil {
 					if dev := CheckShape(m, &d, f.Expect); len(dev) > 0 {
 						shape = strings.Join(dev, "; ")

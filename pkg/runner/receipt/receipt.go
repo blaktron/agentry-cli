@@ -88,12 +88,14 @@ type Web struct {
 	// Search is where web_search went ("registry", a provider, or "" when
 	// it was not granted).
 	Search string `json:"search,omitempty"`
-	// Pages, Searches and RegistryCalls are the calls that read something.
+	// Pages, SearchResults and RegistryCalls are the texts the tools
+	// brought back of each kind; Searches the searches that answered.
 	Pages         int `json:"pages"`
 	Searches      int `json:"searches"`
+	SearchResults int `json:"searchResults"`
 	RegistryCalls int `json:"registryCalls"`
-	// Read is every text the tools brought back: a page, a search result,
-	// a registry answer. Each was sent to AI Review before the model.
+	// Read is every text the tools brought back: Pages + SearchResults +
+	// RegistryCalls. Each was sent to AI Review before the model.
 	Read int `json:"read"`
 	// Passed reached the model. Withheld were flagged; NotScanned could not
 	// be scanned and were withheld as well.

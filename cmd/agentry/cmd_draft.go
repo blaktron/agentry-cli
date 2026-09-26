@@ -38,9 +38,9 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// EnvJobToken carries a hosted draft's job credential to `agentry draft
+// envJobToken carries a hosted draft's job credential to `agentry draft
 // --hosted` (minted by the runs extension, M5, agentry-enterprise#183).
-const EnvJobToken = "AGENTRY_JOB_TOKEN"
+const envJobToken = "AGENTRY_JOB_TOKEN"
 
 type draftOpts struct {
 	hints           []string
@@ -51,10 +51,6 @@ type draftOpts struct {
 	timeout         int
 	maxTurns        int
 	maxCost         float64
-	// jevURL and searchURL point the scans and the search at another root
-	// (hidden: tests, a person's own proxy).
-	jevURL    string
-	searchURL string
 }
 
 // draftDocker is the docker client a draft uses; a seam for tests.
@@ -67,11 +63,11 @@ var draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, erro
 }
 
 // draftScanner builds the description's scanner; a seam for tests.
-var draftScanner = func(w *engine.WebRun, jevURL string) (webscan.Scanner, error) {
+var draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
 	if w.Scan == toolsrv.WebScanRegistry {
 		return &webscan.Registry{Base: w.Registry, JobToken: w.JobToken}, nil
 	}
-	return drafter.CoreJev(w.JevKey, jevURL, nil)
+	return drafter.CoreJev(w.JevKey)
 }
 
 func newDraftCmd() *cobra.Command {
@@ -101,14 +97,10 @@ func newDraftCmd() *cobra.Command {
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
-	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host does for Agentry: scans and search through the registry with the job's credential in $"+EnvJobToken)
+	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host does for Agentry: scans and search through the registry with the job's credential in $"+envJobToken)
 	f.IntVar(&o.timeout, "timeout", 0, "the Drafter run's wall-clock budget in seconds (default: the policy's)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Drafter run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Drafter run once the harness reports this much cost in USD (default: the policy's)")
-	f.StringVar(&o.jevURL, "jev-url", "", "the Jev API root for a local draft's scans (default TypeSafe's)")
-	f.StringVar(&o.searchURL, "search-url", "", "the search provider's API root for a local draft (default the provider's)")
-	_ = f.MarkHidden("jev-url")
-	_ = f.MarkHidden("search-url")
 	return cmd
 }
 
@@ -141,7 +133,7 @@ func runDraft(cmd *cobra.Command, args []string, o draftOpts) error {
 
 	// AI Review reads the description first; nothing else happens unless
 	// it passes (D22).
-	sc, err := draftScanner(web, o.jevURL)
+	sc, err := draftScanner(web)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("AI Review cannot scan with this key: %w", err))
 	}
@@ -213,7 +205,7 @@ func draftDescription(args []string, o draftOpts) (string, error) {
 	case o.descriptionFile != "":
 		b, err := os.ReadFile(o.descriptionFile) //nolint:gosec // the person names the file
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("read the description: %w", err)
 		}
 		return string(b), nil
 	}
@@ -227,9 +219,9 @@ func draftDescription(args []string, o draftOpts) (string, error) {
 func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
 	reg := registryURL()
 	if o.hosted {
-		tok := strings.TrimSpace(os.Getenv(EnvJobToken))
+		tok := strings.TrimSpace(os.Getenv(envJobToken))
 		if tok == "" {
-			return nil, "", engine.Classify(engine.ExitPolicy, fmt.Errorf("a hosted draft runs with the job's credential in $%s, and it is not set", EnvJobToken))
+			return nil, "", engine.Classify(engine.ExitPolicy, fmt.Errorf("a hosted draft runs with the job's credential in $%s, and it is not set", envJobToken))
 		}
 		return &engine.WebRun{Scan: toolsrv.WebScanRegistry, Search: toolsrv.WebScanRegistry, Registry: reg, JobToken: tok},
 			"The registry searches the web.", nil
@@ -245,7 +237,7 @@ func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
 				"your runner policy's judge.apiKeyEnv; with judge.apiKeySource: keyring it is read from the OS keychain entry %s",
 			pol.Judge.KeyEnv(), modelkey.Account(policy.JudgeKeyProvider)))
 	}
-	w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: reg, JevURL: o.jevURL, SearchURL: o.searchURL}
+	w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: reg}
 	note := "It has no web search (name a provider in your runner policy's webSearch block), so it reads the registry and pages it knows."
 	if pol.WebSearch.On() {
 		key, err := personalKey(pol.WebSearch.KeyEnv(), pol.WebSearch.APIKeySource, pol.WebSearch.Provider)
@@ -264,7 +256,7 @@ func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
 
 // personalKey reads one of the person's keys: the variable, else, with the
 // keyring source, the keychain entry provider:<provider>. "" is no key; an
-// error is a keychain that could not be read.
+// error is a keychain the policy names that could not be read.
 func personalKey(env, source, provider string) (string, error) {
 	if v := strings.TrimSpace(os.Getenv(env)); v != "" {
 		return v, nil
@@ -273,7 +265,10 @@ func personalKey(env, source, provider string) (string, error) {
 		return "", nil
 	}
 	present, err := modelkey.Present(provider)
-	if err != nil || !present {
+	if err != nil {
+		return "", engine.Classify(engine.ExitPolicy, err)
+	}
+	if !present {
 		return "", nil
 	}
 	v, err := modelkey.Lookup(provider)
@@ -294,6 +289,7 @@ func finishDraft(env *receipt.Envelope, outDir string, desc webscan.Result) (*dr
 	}
 	d.Drafter = &drafter.Made{Ref: localrun.Drafter().Ref(), Build: version.Build(), Model: env.Harness.Model, RunID: env.RunID}
 	d.AIReview = aiReviewOf(env.Web, desc, filepath.Join(outDir, "receipts", engine.WebLedgerFile))
+	d.NoteWithheld()
 	pkg := filepath.Join(outDir, "package")
 	switch err := drafter.FromReports(d, filepath.Join(outDir, "reports")); {
 	case err != nil:
@@ -308,7 +304,7 @@ func finishDraft(env *receipt.Envelope, outDir string, desc webscan.Result) (*dr
 		return nil, err
 	}
 	if err := os.WriteFile(filepath.Join(outDir, "draft.json"), append(b, '\n'), 0o644); err != nil { //nolint:gosec // the person's own output folder
-		return nil, engine.Classify(engine.ExitCLI, err)
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("write draft.json: %w", err))
 	}
 	return d, nil
 }
@@ -332,23 +328,19 @@ func renderAndValidate(d *drafter.Draft, pkg string) (string, json.RawMessage) {
 	return "", b
 }
 
-// aiReviewOf is the draft's AI Review record: the receipt's counts, and each
-// text the model was not given, from the run's ledger.
+// aiReviewOf is the draft's AI Review record: the receipt's counts, and
+// each text the model was not given, from the run's ledger.
 func aiReviewOf(w *receipt.Web, desc webscan.Result, ledger string) *drafter.AIReview {
-	a := &drafter.AIReview{Description: string(desc.Verdict), Model: desc.Model, QuestionSet: desc.QuestionSet, WithheldSources: []drafter.WithheldSource{}}
+	a := &drafter.AIReview{Description: desc.Verdict, WithheldSources: []drafter.WithheldSource{}}
 	if w != nil {
-		a.Scan, a.Read, a.Passed, a.Withheld, a.NotScanned = w.Scan, w.Read, w.Passed, w.Withheld, w.NotScanned
-		if w.Model != "" {
-			a.Model, a.QuestionSet = w.Model, w.QuestionSet
-		}
+		a.Web = *w
 	}
-	b, err := os.ReadFile(ledger) //nolint:gosec // the run's own receipt
-	if err != nil {
-		return a
+	if a.Model == "" {
+		a.Model, a.QuestionSet = desc.Model, desc.QuestionSet
 	}
-	for _, line := range strings.Split(string(b), "\n") {
-		var e toolsrv.LedgerEntry
-		if json.Unmarshal([]byte(line), &e) != nil || e.Refused != "" || e.Search || e.Passed() {
+	entries, _, _ := engine.ReadWebLedger(ledger)
+	for _, e := range entries {
+		if e.Refused != "" || e.Search || e.Passed() {
 			continue
 		}
 		a.WithheldSources = append(a.WithheldSources, drafter.WithheldSource{Tool: e.Tool, URL: e.URL, Reason: e.Reason()})
@@ -356,48 +348,45 @@ func aiReviewOf(w *receipt.Web, desc webscan.Result, ledger string) *drafter.AIR
 	return a
 }
 
-// printDraft says where the draft is and what it holds.
+// printDraft says where the draft is and what it holds. What the Drafter
+// wrote is agent-written text: every line of it is cleaned of terminal
+// control characters before it is printed.
 func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
-	_, _ = fmt.Fprintf(w, "Draft written: %s\n", filepath.Join(outDir, "draft.json"))
-	var v struct {
-		Passed bool `json:"passed"`
-		Issues []struct {
-			Rule    string `json:"rule"`
-			Message string `json:"message"`
-		} `json:"issues"`
-		Counts struct {
-			Errors, Warnings, InventoryFailing, Findings int
-		} `json:"counts"`
+	say := func(format string, args ...any) {
+		_, _ = fmt.Fprintln(w, termSafe(strings.ReplaceAll(fmt.Sprintf(format, args...), "\n", " ")))
 	}
+	pkg := filepath.Join(outDir, "package")
+	say("Draft written: %s", filepath.Join(outDir, "draft.json"))
+	var v validateOutput
 	switch {
-	case d.ManifestError != "" && isDir(filepath.Join(outDir, "package")):
-		_, _ = fmt.Fprintf(w, "  package:   %s holds the draft, which does not pass yet: %s\n", filepath.Join(outDir, "package"), d.ManifestError)
+	case d.ManifestError != "" && isDir(pkg):
+		say("  package:   %s holds the draft, which does not pass yet: %s", pkg, safeTerminalText(d.ManifestError, 400))
 	case d.ManifestError != "":
-		_, _ = fmt.Fprintf(w, "  package:   not rendered: %s\n", d.ManifestError)
+		say("  package:   not rendered: %s", safeTerminalText(d.ManifestError, 400))
 	case json.Unmarshal(d.Validation, &v) == nil && v.Passed:
-		_, _ = fmt.Fprintf(w, "  package:   %s passes agentry validate\n", filepath.Join(outDir, "package"))
+		say("  package:   %s passes agentry validate", pkg)
 	default:
-		_, _ = fmt.Fprintf(w, "  package:   %s does not pass agentry validate yet (%d error(s), %d scan finding(s)):\n",
-			filepath.Join(outDir, "package"), v.Counts.Errors, v.Counts.Findings)
+		say("  package:   %s does not pass agentry validate yet (%d error(s), %d inventory finding(s), %d scan finding(s)):",
+			pkg, v.Counts.Errors, v.Counts.InventoryFailing, v.Counts.Findings)
 		for i, is := range v.Issues {
 			if i == 5 {
-				_, _ = fmt.Fprintf(w, "             … and %d more in draft.json\n", len(v.Issues)-5)
+				say("             … and %d more in draft.json", len(v.Issues)-5)
 				break
 			}
-			_, _ = fmt.Fprintf(w, "             %s %s\n", is.Rule, is.Message)
+			say("             %s %s", is.Rule, safeTerminalText(is.Message, 200))
 		}
 	}
 	for _, m := range d.Matches {
-		_, _ = fmt.Fprintf(w, "  registry:  %s already does some of this: %s\n", m.Ref, m.Why)
+		say("  registry:  %s already does some of this: %s", safeTerminalText(m.Ref, 120), safeTerminalText(m.Why, 300))
 	}
 	if a := d.AIReview; a != nil {
-		_, _ = fmt.Fprintf(w, "  AI Review: read %d result(s); %d withheld\n", a.Read, a.Withheld+a.NotScanned)
+		say("  AI Review: read %d result(s); %d withheld", a.Read, a.Withheld+a.NotScanned)
 		for _, s := range a.WithheldSources {
-			_, _ = fmt.Fprintf(w, "             withheld %s: %s\n", s.URL, s.Reason)
+			say("             withheld %s: %s", safeTerminalText(s.URL, 200), s.Reason)
 		}
 	}
 	if n := len(d.OpenQuestions); n > 0 {
-		_, _ = fmt.Fprintf(w, "  open:      %d question(s) the description leaves open, in draft.json\n", n)
+		say("  open:      %d question(s) the description leaves open, in draft.json", n)
 	}
-	_, _ = fmt.Fprintln(w, "Review every part before you publish it: the contract, the instructions and the notes.")
+	say("Review every part before you publish it: the contract, the instructions and the notes.")
 }

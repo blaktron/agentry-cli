@@ -82,7 +82,9 @@ fewer than 15 pages. Stop reading when you know enough to write the draft.
      `{paths: [...]}` (paths inside the workspace). Most BriefAgents need
      `none`: input files arrive under `/inputs` without a grant, and
      reports go out through `write_report` without one.
-   - `exec`: `none`, or `{commands: [...]}`, single command names.
+   - `exec`: `none`, or `{commands: [...]}`, single command names. An
+     agent reads a CSV, a log, a document or a diff itself: declare a
+     command only for what reading cannot do.
    - `secrets`: the environment variable names of keys the BriefAgent's
      own `fetch` uses (`[GITHUB_TOKEN]`). A key an MCP server needs goes in
      that server's `secrets`.
@@ -95,14 +97,22 @@ fewer than 15 pages. Stop reading when you know enough to write the draft.
 6. **Write intake questions only for what a run cannot know**, and the
    guide. An intake question is asked before each run: a repository name,
    a date range, a choice of format. Do not ask for what the task message
-   will say anyway. Types: `text`, `choice` (with `choices`), `file`, and
-   `secret`, only for a name declared in `secrets`. The `guide` is what a
-   person reads before a run: `overview` (what it does and what it gives
-   back, plainly), `prepare` (up to 10 short things to gather first),
-   `files` (what files to bring, if any), `task` (a placeholder, "e.g.
-   …"), and `connect`, an object with one line of help per declared key
-   (`{"GITHUB_TOKEN": "Where to get it and the permission it needs."}`),
-   left out when the BriefAgent declares no key.
+   will say anyway. Types: `text`, `choice`, `file`, and `secret`, only
+   for a name declared in `secrets`. **A `choice` question always carries
+   its `choices`**, as a list of short answers
+   (`"choices": ["markdown", "json"]`); if you cannot list the answers,
+   make it a `text` question. The `guide` is what a person reads before a
+   run: `overview` (what it does and what it gives back, plainly),
+   `prepare` (up to 10 things to gather first, each at most 200
+   characters), `files` (what files to bring, if any, at most 500
+   characters), `task` (a placeholder, "e.g. …", at most 200 characters),
+   and `connect`, an object with one line of help per declared key, each
+   at most 300 characters
+   (`{"GITHUB_TOKEN": "Where to get it and the permission it needs."}`).
+
+   **Leave out a field that has nothing to say.** Never write `"None"`,
+   `"n/a"`, `null` or an empty text for it: with no key there is no
+   `connect`, with no files there is no `files`.
 7. **Return the draft** (below): two reports, then your last message.
 
 Write plainly: sentence case, no marketing words, no emoji. Never call
@@ -117,7 +127,8 @@ for, and what it cannot do.
 - `name`: lowercase letters, digits and hyphens, from the task
   (`pr-review-summary`). `namespace`: `"draft"`; the person sets their own.
   `version`: `"0.1.0"`.
-- `summary`: one plain sentence of at most 140 characters.
+- `summary`: one plain sentence of **at most 140 characters**; count
+  them, and aim for about 100.
 - `license`: `"Apache-2.0"`, the Builder's default, unless the description
   names another SPDX licence. The person picks it on the Publishing step.
 - `tags`: up to 10, lowercase letters, digits and hyphens.
@@ -150,6 +161,10 @@ known advisories:
   "tags": ["dependencies", "vulnerabilities", "osv"],
   "modes": ["autonomous"],
   "entrypoints": {"instruction": "AGENT.md"},
+  "intake": [
+    {"id": "severity", "prompt": "The lowest severity to report.", "type": "choice",
+     "choices": ["critical", "high", "medium", "low"], "required": false}
+  ],
   "guide": {
     "overview": "Checks every pinned package in the lockfiles you add against the OSV advisory database and reports the vulnerable ones in report.md, worst first, with the smallest fixed version.",
     "prepare": ["The project's lockfiles, with their manifests."],

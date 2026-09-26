@@ -94,6 +94,15 @@ type Config struct {
 	// no container of another image joins WebNetwork at all. It must carry
 	// Label=RunID; the gateway may not create or remove it.
 	WebNetwork string
+	// WebCmd is the one command the web tools' server runs with (the
+	// runner image's tools role and its spec), and WebSpec the host path of
+	// the run's rendered tools spec it must be given read-only at
+	// WebSpecTarget: a container on the web network runs the run's own
+	// tools server and nothing else, as a relay is its image and nothing
+	// else.
+	WebCmd        []string
+	WebSpec       string
+	WebSpecTarget string
 	// WebImage is the tools server's image, by reference; the filter
 	// resolves it to the image id the check compares, once, when a check
 	// first needs it, and refuses the web network while it cannot.

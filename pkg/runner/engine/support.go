@@ -47,6 +47,10 @@ type runDirs struct {
 	// here and labelled for the tools container, the one file of the
 	// receipts it may write (web.go).
 	webLedger string
+	// web says the run has the web tools, and runID names it, for the
+	// receipt's daemon line.
+	web   bool
+	runID string
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
@@ -129,11 +133,18 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			_ = os.RemoveAll(root)
 		}
 	})
+	rd.runID, rd.web = runID, p.Plan.Capabilities.WebTools
 	if p.Web != nil {
+		// Made here, and only here, as a new regular file: whatever the
+		// output folder held under the name is removed first, so a link a
+		// person left there is not followed.
 		rd.webLedger = filepath.Join(rd.receiptsDir, WebLedgerFile)
-		if err := os.WriteFile(rd.webLedger, nil, 0o644); err != nil { //nolint:gosec // appended by the tools container
+		_ = os.Remove(rd.webLedger)
+		f, err := os.OpenFile(rd.webLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create the web ledger: %w", err))
 		}
+		_ = f.Close()
 	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
@@ -180,7 +191,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// the directories exist and hold their content. Harness files are
 	// rendered later into cfg/, and a new file takes its directory's type,
 	// so they are covered by this too.
-	relabelForToolContainers(context.Background(), p.Stderr, relabelTargets(rd)...)
+	relabelForToolContainers(context.Background(), p.Stderr, relabelTargetsFor(rd)...)
 	return rd, nil
 }
 
@@ -545,10 +556,17 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 		{rd.serversDir, true},
 		{rd.outDir, false},
 		{filepath.Join(rd.outDir, "reports"), true},
-		// The web ledger alone of the receipts: the tools server appends
-		// to it, and nothing else of receipts/ is the tools container's.
-		{rd.webLedger, false},
 	}
+}
+
+// relabelTargetsFor adds, for a run with the web tools, the web ledger: the
+// one file of the receipts the tools server appends to (web.go).
+func relabelTargetsFor(rd *runDirs) []relabelTarget {
+	t := relabelTargets(rd)
+	if rd.webLedger != "" {
+		t = append(t, relabelTarget{rd.webLedger, false})
+	}
+	return t
 }
 
 // DockerSocket is the daemon socket the gateway mounts to launch the tool

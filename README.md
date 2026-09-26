@@ -238,27 +238,31 @@ pages it wrote, unless `--out DIR` asks to keep that output.
 ### Drafting a BriefAgent: `draft`
 
 `agentry draft "<description>" [--hint TEXT…] [--out DIR]` drafts a
-BriefAgent from a plain description of what it should do. The built-in
+BriefAgent from a plain description of what it should do
+(`--description-file FILE` reads it from a file). The built-in
 **Drafter** does the work: a second package this binary embeds, run with the
 attestation state `builtin` like the Knowledge Creator. It searches the
 registry for a published BriefAgent that already does the task, researches
 how the task is done, and writes a draft. It never submits anything.
 
-**AI Review reads everything first.** TypeSafe's Jev reads the description
-and the hints before the Drafter starts, and a description it flags, or
-cannot scan, stops the draft (exit 11) before anything is searched or read.
-While the Drafter works, AI Review reads every search result, page and
-registry answer before the Drafter's model does. What it flags, or cannot
-scan, is withheld: the model gets the address and the reason, never the
-text, and the draft lists it. On this computer the scans use **your own Jev
+**AI Review reads what the Drafter reads, first.** TypeSafe's Jev reads the
+description and the hints before the Drafter starts, and a description it
+flags, or cannot scan, stops the draft (exit 11) before anything is searched
+or read. While the Drafter works, AI Review reads every search result, page
+and registry answer before the Drafter's model does. What it flags, or
+cannot scan, is withheld: the model gets the address it asked for and the
+reason, never the text, and the draft's notes list it. A page that cannot be
+read at all is answered in the tools' own words, never the server's. On this computer the scans use **your own Jev
 key**, and without one the Drafter does not run. The key comes from
 `$TYPESAFE_API_KEY`, or the variable the policy's `judge.apiKeyEnv` names.
 With `judge.apiKeySource: keyring` it comes from the OS keychain entry
 `provider:typesafe`.
 
 **The web tools** are the Drafter's alone; the compiler refuses them to any
-release. They run in the tools container, and the agent container holds no
-key and no registry credential.
+release. They run in the tools container; the agent container holds no Jev
+key, no search key and no registry credential (only the model key, as in
+every run). On Linux the tools container is on a network of the run's own,
+which the gateway's docker filter lets no other container join.
 - `web_read` makes GET requests only, over http and https on ports 80 and
   443, to public addresses only. The address is checked at every connection
   and redirect hop, so a name that resolves somewhere private is refused

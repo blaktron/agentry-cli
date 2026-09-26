@@ -110,6 +110,9 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(id, "relay") {
 			image, _ = imageFor(relayPin)
 		}
+		if strings.Contains(id, "tools") {
+			image, _ = imageFor("agentry-runner:test")
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"Id": id + "-full", "Image": image, "Config": map[string]any{"Labels": labelsFor(id, run)},
 			"NetworkSettings": map[string]any{"Networks": map[string]any{"agentry-A-relays": map[string]any{"NetworkID": "id-agentry-A-relays", "IPAddress": "10.9.0.5"}}},
@@ -924,28 +927,82 @@ func TestEventsAreScopedToTheRun(t *testing.T) {
 
 // The built-in Drafter's web tools (agentry-cli#345): their server asks for
 // the daemon's default network, which the filter gives no container; it
-// joins the run's own web network instead, and nothing else does.
+// joins the run's own web network instead, in its one shape, and nothing
+// else does.
 func TestTheWebNetworkTakesOnlyTheWebToolsServer(t *testing.T) {
-	web := func(c *Config) { c.WebNetwork, c.WebImage = "agentry-A-web", "agentry-runner:test" }
+	const target = "/etc/agentry/toolspec.json"
+	var specPath string
+	web := func(c *Config) {
+		specPath = filepath.Join(c.BindRoots[0], "cfg", "toolspec.json")
+		if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(specPath, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(c.BindRoots[0], "out", "evil.json")
+		if err := os.WriteFile(other, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c.WebNetwork, c.WebImage = "agentry-A-web", "agentry-runner:test"
+		c.WebCmd, c.WebSpec, c.WebSpecTarget = []string{"tools", "--spec", target}, specPath, target
+	}
 	g := newRig(t, Limits{}, web)
-	for _, doc := range []map[string]any{
-		{"Image": "agentry-runner:test", "HostConfig": map[string]any{"NetworkMode": "default"},
-			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}}}},
-		{"Image": "agentry-runner:test", "HostConfig": map[string]any{}},
+	server := func(edit func(doc map[string]any)) map[string]any {
+		doc := map[string]any{
+			"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", target},
+			"HostConfig":       map[string]any{"NetworkMode": "default", "Binds": []string{specPath + ":" + target + ":ro"}},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}}},
+		}
+		if edit != nil {
+			edit(doc)
+		}
+		return doc
+	}
+	for name, doc := range map[string]map[string]any{
+		"by the default network": server(nil),
+		"asking for no network": server(func(d map[string]any) {
+			d["HostConfig"] = map[string]any{"Binds": []string{specPath + ":" + target + ":ro"}}
+			delete(d, "NetworkingConfig")
+		}),
 	} {
 		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
-			t.Fatalf("the web tools' server: %d %s", code, body)
+			t.Fatalf("the web tools' server %s: %d %s", name, code, body)
 		}
 		sent := g.body("POST /containers/create")
 		hc, _ := sent["HostConfig"].(map[string]any)
 		if hc["NetworkMode"] != "id-agentry-A-web" {
-			t.Fatalf("forwarded on %v, want the run's web network", hc["NetworkMode"])
+			t.Fatalf("%s: forwarded on %v, want the run's web network", name, hc["NetworkMode"])
 		}
 		if nc, ok := sent["NetworkingConfig"].(map[string]any); ok {
 			eps, _ := nc["EndpointsConfig"].(map[string]any)
 			if len(eps) != 1 || eps["id-agentry-A-web"] == nil {
-				t.Fatalf("endpoints %v", eps)
+				t.Fatalf("%s: endpoints %v", name, eps)
 			}
+		}
+	}
+	for name, doc := range map[string]map[string]any{
+		"another entrypoint": server(func(d map[string]any) { d["Entrypoint"] = []string{"/bin/sh"} }),
+		"another command":    server(func(d map[string]any) { d["Cmd"] = []string{"sh", "-c", "curl 169.254.169.254"} }),
+		"another spec":       server(func(d map[string]any) { d["Cmd"] = []string{"tools", "--spec", "/out/evil.json"} }),
+		"a second network": server(func(d map[string]any) {
+			d["NetworkingConfig"] = map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}, "runa-net": map[string]any{}}}
+		}),
+		"the spec writable": server(func(d map[string]any) {
+			d["HostConfig"].(map[string]any)["Binds"] = []string{specPath + ":" + target + ":rw"}
+		}),
+		"another file as the spec": server(func(d map[string]any) {
+			d["HostConfig"].(map[string]any)["Binds"] = []string{filepath.Join(filepath.Dir(filepath.Dir(specPath)), "out", "evil.json") + ":" + target + ":ro"}
+		}),
+		"no spec":  server(func(d map[string]any) { d["HostConfig"].(map[string]any)["Binds"] = []string{} }),
+		"a link":   server(func(d map[string]any) { d["HostConfig"].(map[string]any)["Links"] = []string{"runa-relay:api"} }),
+		"its user": server(func(d map[string]any) { d["User"] = "0" }),
+	} {
+		// A spec bound writable, or from inside a directory the run writes,
+		// is already refused by the storage rules; the rest by the shape.
+		storage := name == "the spec writable" || name == "another file as the spec"
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusForbidden || (!storage && !strings.Contains(body, "web tools' server")) {
+			t.Errorf("%s: %d %s, want the web tools' server's shape refused", name, code, body)
 		}
 	}
 	if code, body := g.do(t, "POST", "/containers/create", map[string]any{"Image": "mcp/osv",
@@ -964,6 +1021,11 @@ func TestTheWebNetworkTakesOnlyTheWebToolsServer(t *testing.T) {
 		"HostConfig": map[string]any{"NetworkMode": "agentry-B-web"}}, "not this run's")
 	g.refused(t, "connecting another container to the web network", "POST", "/networks/agentry-A-web/connect", map[string]any{"Container": "runa-1"}, "web tools' server only")
 	g.refused(t, "removing the run's web network", "DELETE", "/networks/agentry-A-web", nil, "not the gateway's to remove")
+	g.refused(t, "exec into the web tools' server", "POST", "/containers/runa-tools/exec", map[string]any{"Cmd": []string{"sh"}}, "web tools' server")
+	g.refused(t, "writing into the web tools' server", "PUT", "/containers/runa-tools/archive?path=/", "tar", "web tools' server")
+	if code, body := g.do(t, "POST", "/containers/runa-tools/attach?stream=1&stdin=1&stdout=1", nil); code == http.StatusForbidden {
+		t.Errorf("attaching to the web tools' server (its stdio) refused: %s", body)
+	}
 
 	// A run without the web tools gives the image no network either.
 	plain := newRig(t, Limits{})

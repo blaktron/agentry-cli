@@ -889,6 +889,24 @@ mcpRegistries:
 #     cpus: 1
 #     pids: 512
 
+# judge:
+#   # Your own AI Review (TypeSafe Jev) key, for local work that needs a
+#   # scan: agentry draft has AI Review read the description and every
+#   # search result, page and registry answer before the Drafter's model
+#   # does, and does not run without it. The value is never in this file:
+#   # the variable (default TYPESAFE_API_KEY), else, with apiKeySource
+#   # keyring, the OS keychain entry provider:typesafe.
+#   apiKeyEnv: TYPESAFE_API_KEY
+#   apiKeySource: env
+
+# webSearch:
+#   # Your own web search, for agentry draft's web_search: none (the
+#   # default: the Drafter reads the registry and the pages it knows) or
+#   # youcom. The key as for judge (default YDC_API_KEY; keychain entry
+#   # provider:youcom).
+#   provider: youcom
+#   apiKeyEnv: YDC_API_KEY
+
 # exec:
 #   # The exec catalog: which binaries this machine provides to a BriefAgent
 #   # that declares exec.commands, as command name → apk package (optionally

@@ -140,9 +140,6 @@ func Drafter() Builtin {
 // Builtins is every package that may run as builtin.
 func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter()} }
 
-// WebTools reports whether the package is granted the web tools.
-func (b Builtin) WebTools() bool { return b.web }
-
 // Ref is the package's ns/name@version.
 func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }
 

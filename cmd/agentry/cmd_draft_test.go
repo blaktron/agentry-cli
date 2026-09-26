@@ -40,7 +40,7 @@ func draftSeams(t *testing.T, res webscan.Result, result string, ledger string) 
 	var webs []*engine.WebRun
 	prevScan, prevRun := draftScanner, draftRun
 	t.Cleanup(func() { draftScanner, draftRun = prevScan, prevRun })
-	draftScanner = func(w *engine.WebRun, _ string) (webscan.Scanner, error) {
+	draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
 		webs = append(webs, w)
 		return sc, nil
 	}
@@ -243,11 +243,11 @@ func TestDraftSearchAndHosted(t *testing.T) {
 
 	// Hosted: the job's credential, the registry's scan and search, and no
 	// key of the person's.
-	t.Setenv(EnvJobToken, "")
+	t.Setenv(envJobToken, "")
 	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
 	_, _, err = runCLI(t, nil, "draft", "--hosted", "Weather brief.", "--policy", policyPath)
 	wantClassified(t, err, engine.ExitPolicy)
-	t.Setenv(EnvJobToken, "agyj_the-job")
+	t.Setenv(envJobToken, "agyj_the-job")
 	desc := filepath.Join(t.TempDir(), "description.txt")
 	_ = os.WriteFile(desc, []byte("Weather brief."), 0o644)
 	_, _, webs = draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")

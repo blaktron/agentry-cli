@@ -13,6 +13,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -40,8 +42,10 @@ type Draft struct {
 	// scanners. A draft that fails them is kept, with its problems, for the
 	// person to fix (plan §7.5).
 	Validation json.RawMessage `json:"validation,omitempty"`
-	// ManifestError says why the manifest could not be read at all; the
-	// package is then not rendered.
+	// ManifestError says why the draft could not be checked: its manifest
+	// does not parse (the package is rendered all the same, for the person
+	// to fix), its instruction path or its reports were refused (nothing is
+	// rendered), or validation could not run. Validation is then absent.
 	ManifestError string `json:"manifestError,omitempty"`
 }
 
@@ -67,21 +71,14 @@ type Made struct {
 	RunID string `json:"runId,omitempty"`
 }
 
-// AIReview is the draft's record of AI Review: the description's scan, and
-// what the web tools read and withheld, from the run's receipt and ledger.
+// AIReview is the draft's record of AI Review: the description's verdict,
+// the run's receipt counts (what the web tools read, scanned and withheld,
+// and where it was scanned), and each text the model was not given.
 type AIReview struct {
-	// Scan is where the texts were scanned: "jev" (the person's own key)
-	// or "registry" (Agentry's, with the job's credential).
-	Scan string `json:"scan"`
 	// Description is the verdict on the description and hints, read
-	// before the Drafter started: always "pass" in a draft that exists.
-	Description string `json:"description"`
-	Read        int    `json:"read"`
-	Passed      int    `json:"passed"`
-	Withheld    int    `json:"withheld"`
-	NotScanned  int    `json:"notScanned"`
-	Model       string `json:"model,omitempty"`
-	QuestionSet string `json:"questionSet,omitempty"`
+	// before the Drafter started: always pass in a draft that exists.
+	Description webscan.Verdict `json:"description"`
+	receipt.Web
 	// WithheldSources is every text AI Review kept from the model, with why.
 	WithheldSources []WithheldSource `json:"withheldSources"`
 }
@@ -122,8 +119,8 @@ func Parse(result json.RawMessage) (*Draft, error) {
 // The reports the Drafter writes its two long texts as, and the most read
 // of each (the output schema's bounds on the same fields).
 const (
-	InstructionsReport = "AGENT.md"
-	NotesReport        = "notes.md"
+	instructionsReport = "AGENT.md"
+	notesReport        = "notes.md"
 	maxInstructions    = 60000
 	maxNotes           = 20000
 )
@@ -140,7 +137,7 @@ func FromReports(d *Draft, reportsDir string) error {
 		name  string
 		max   int
 		field *string
-	}{{InstructionsReport, maxInstructions, &d.Instructions}, {NotesReport, maxNotes, &d.Notes}} {
+	}{{instructionsReport, maxInstructions, &d.Instructions}, {notesReport, maxNotes, &d.Notes}} {
 		if strings.TrimSpace(*r.field) != "" {
 			continue
 		}
@@ -180,7 +177,7 @@ var instructionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.md$`)
 // refused, and nothing is written: a draft is agent-written, and its paths
 // are data.
 func Render(d *Draft, dir string) (*manifest.Manifest, error) {
-	yml, err := ManifestYAML(d.Manifest)
+	yml, err := manifestYAML(d.Manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -202,18 +199,41 @@ func Render(d *Draft, dir string) (*manifest.Manifest, error) {
 		return m, fmt.Errorf("the draft names its instruction file %q; a draft's instruction is one Markdown file at the package's root", inst)
 	}
 	if err := os.Mkdir(dir, 0o755); err != nil {
-		return m, err
+		return m, fmt.Errorf("make the draft's package folder: %w", err)
 	}
-	files := map[string][]byte{"agent.yaml": yml}
-	files["README.md"] = []byte(readme(looseString(loose, "name"), looseString(loose, "summary"), looseString(loose, "guide", "overview")))
-	files["LICENSE"] = []byte(licenseNote(looseString(loose, "license")))
-	files[inst] = []byte(d.Instructions)
-	for name, body := range files {
+	// The instruction file is the draft's own; a README or a LICENSE of the
+	// same name is not written over it.
+	out := map[string][]byte{
+		"README.md": []byte(readme(looseString(loose, "name"), looseString(loose, "summary"), looseString(loose, "guide", "overview"))),
+		"LICENSE":   []byte(licenseNote(looseString(loose, "license"))),
+	}
+	out["agent.yaml"] = yml
+	out[inst] = []byte(d.Instructions)
+	for name, body := range out {
 		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil { //nolint:gosec // the person's own output folder
-			return m, err
+			return m, fmt.Errorf("write the draft's %s: %w", name, err)
 		}
 	}
 	return m, perr
+}
+
+// NoteWithheld adds to the notes the texts AI Review kept from the model,
+// with why (plan §7.3: the notes list every withheld source), from the
+// draft's AI Review record rather than from what the model chose to say.
+func (d *Draft) NoteWithheld() {
+	if d.AIReview == nil || len(d.AIReview.WithheldSources) == 0 {
+		return
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(d.Notes, "\n"))
+	if b.Len() > 0 {
+		b.WriteString("\n\n")
+	}
+	b.WriteString("## Withheld by AI Review\n\nThe Drafter was given the address and the reason for each of these, never the text:\n\n")
+	for _, w := range d.AIReview.WithheldSources {
+		fmt.Fprintf(&b, "- %s (%s): %s\n", w.URL, w.Tool, w.Reason)
+	}
+	d.Notes = b.String()
 }
 
 // looseString reads a string at a path of the manifest as it came, or "":
@@ -255,10 +275,10 @@ func licenseNote(spdx string) string {
 		"(rule V7 requires a LICENSE file consistent with the declared SPDX id).\n"
 }
 
-// ManifestYAML renders a manifest given as JSON as block YAML, keeping its
+// manifestYAML renders a manifest given as JSON as block YAML, keeping its
 // keys in the order they came; a string that would read back as another
 // type stays quoted, and one of several lines is a literal block.
-func ManifestYAML(raw json.RawMessage) ([]byte, error) {
+func manifestYAML(raw json.RawMessage) ([]byte, error) {
 	var n yaml.Node
 	if err := yaml.Unmarshal(raw, &n); err != nil {
 		return nil, fmt.Errorf("the draft's manifest is not JSON: %w", err)

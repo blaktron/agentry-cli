@@ -115,9 +115,12 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 	}
 	// The web tools' server runs in the runner image (the compiler grants
 	// the tools to no package with exec, so no exec image).
-	var webNet, webImage string
+	var webNet, webImage, webSpec string
+	var webCmd []string
 	if plan.Capabilities.WebTools {
 		webNet, webImage = webNetwork(runID), plan.Proxy.Image
+		webCmd = []string{"tools", "--spec", spec.ToolSpecMount}
+		webSpec = filepath.Join(rd.cfg, "gateway", "toolspec.json")
 	}
 	f, err := sockfilter.Start(sockfilter.Config{
 		RunID:          runID,
@@ -133,6 +136,9 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		RelayHosts:     relayHosts(plan),
 		WebNetwork:     webNet,
 		WebImage:       webImage,
+		WebCmd:         webCmd,
+		WebSpec:        webSpec,
+		WebSpecTarget:  spec.ToolSpecMount,
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
@@ -277,6 +283,10 @@ func daemonLine(rd *runDirs) string {
 		"lists and events show only the run's, create bodies are checked as the daemon reads them, and it may not create a privileged, host-namespace, device, " +
 		"port-publishing, runtime-choosing or security-weakened container, bind a host path outside the run's directories or write outside its writable ones, " +
 		"or exceed the run's memory, CPU and process limits; every decision is in receipts/" + dockerFilterLog
+	if rd != nil && rd.web {
+		line += "; for the Drafter's web tools one more network leaves the host, the run's own " + webNetwork(rd.runID) +
+			", which only the run's tools server joins, in its one shape (its image's entrypoint, the tools role, the run's spec read-only, no other network, no link), and nothing execs into or writes into"
+	}
 	if rd != nil && rd.filter != nil {
 		if n := rd.filter.Refused(); n > 0 {
 			line += fmt.Sprintf("; %d request(s) refused", n)

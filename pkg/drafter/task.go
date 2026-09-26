@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -14,10 +14,10 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// MaxTask is the longest task a draft is given: the description and its
+// maxTask is the longest task a draft is given: the description and its
 // hints together, as the model reads them. It is half the scan route's cap,
 // so the description's scan is one request of at most four chunks.
-const MaxTask = 32 << 10
+const maxTask = 32 << 10
 
 // Task is the Drafter's task message: the person's description and hints,
 // framed. It is exactly what the description's scan reads (Prescan) and
@@ -48,8 +48,8 @@ func Task(description string, hints []string) (string, error) {
 	if !utf8.ValidString(task) {
 		return "", errors.New("the description and hints must be text (UTF-8)")
 	}
-	if len(task) > MaxTask {
-		return "", fmt.Errorf("the description and hints are %d KiB; a draft takes at most %d KiB of them", len(task)>>10, MaxTask>>10)
+	if len(task) > maxTask {
+		return "", fmt.Errorf("the description and hints are %d KiB; a draft takes at most %d KiB of them", len(task)>>10, maxTask>>10)
 	}
 	return task, nil
 }
@@ -70,8 +70,8 @@ func Prescan(ctx context.Context, sc webscan.Scanner, task string) (webscan.Resu
 // pkg/judge, the registry's client and question set (D25). It is the
 // description's scanner for a local draft; the tools server in the run
 // asks the same questions through the image's byte-for-byte copy.
-func CoreJev(key, baseURL string, hc *http.Client) (webscan.Scanner, error) {
-	c, err := corejudge.New(corejudge.Config{APIKey: key, BaseURL: baseURL, HTTPClient: hc})
+func CoreJev(key string) (webscan.Scanner, error) {
+	c, err := corejudge.New(corejudge.Config{APIKey: key})
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,9 @@ func (j coreJev) Scan(ctx context.Context, source webscan.Source, text string) w
 		return webscan.Result{Verdict: webscan.NotScanned, Failure: webscan.FailureTooLarge}
 	}
 	r := j.s.Scan(ctx, corejudge.Source(source), text)
-	res := webscan.Result{Verdict: webscan.Verdict(r.Verdict), Score: r.Score, Flagged: r.Flagged, Model: r.Model,
+	flagged := append([]string(nil), r.Flagged...)
+	sort.Strings(flagged)
+	res := webscan.Result{Verdict: webscan.Verdict(r.Verdict), Score: r.Score, Flagged: flagged, Model: r.Model,
 		QuestionSet: r.QuestionSet, Requests: r.Usage.Requests, InputTokens: int64(r.Usage.InputTokens)}
 	if res.Verdict == webscan.NotScanned {
 		for _, c := range r.Chunks {

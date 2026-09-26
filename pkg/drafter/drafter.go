@@ -21,17 +21,9 @@ import (
 //go:embed agent.yaml AGENT.md output.schema.json
 var files embed.FS
 
-//go:embed fixtures/*.json
-var fixtures embed.FS
-
 // FS is the package's tree: agent.yaml, AGENT.md and output.schema.json at
 // its root.
 func FS() fs.FS { return files }
-
-// Fixtures is the fixture set (plan D10): described tasks with the shapes
-// expected of their drafts, the regression check on the instruction and the
-// model. They are not part of the package a run is given.
-func Fixtures() fs.FS { return fixtures }
 
 // The package's identity, as its manifest declares it.
 const (

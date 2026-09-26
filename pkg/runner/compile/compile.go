@@ -9,6 +9,7 @@ package compile
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -50,7 +51,8 @@ type Inputs struct {
 	Mode manifest.Mode
 	// Digest is the verified archive digest (or local-tree digest).
 	Digest string
-	// Source is "registry" or "local".
+	// Source is "registry", "local", or "builtin" for a package this binary
+	// embeds (pkg/runner/localrun).
 	Source string
 	// WorkspaceDir is the extracted, verified archive (read-only here:
 	// the compiler reads prompt files and the optional output schema).
@@ -583,20 +585,13 @@ func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
 func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 	if in.Source != "builtin" {
 		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-in Drafter's alone; a %s package is never granted them",
-			toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, cmpOr(in.Source, "release"))}
+			toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, cmp.Or(in.Source, "release"))}
 	}
 	c := in.Manifest.Capabilities
 	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || len(c.MCPServers) > 0 || len(in.MCPServers) > 0 {
 		return &PolicyRefusal{Reason: "the web tools are granted only to a package that declares no egress, exec, filesystem write, secret or MCP server: their container has no network allowlist of its own"}
 	}
 	return nil
-}
-
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // toolSpec compiles the capability summary into the tools-server spec —

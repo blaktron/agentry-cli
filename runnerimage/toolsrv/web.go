@@ -23,6 +23,8 @@ package toolsrv
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,10 +68,6 @@ type Web struct {
 	// Registry is the registry's root, for registry_search and, hosted,
 	// the scan and search routes.
 	Registry string `json:"registry,omitempty"`
-	// JevURL and SearchURL override the vendors' API roots (tests, a
-	// person's own proxy); empty is the vendor's.
-	JevURL    string `json:"jevUrl,omitempty"`
-	SearchURL string `json:"searchUrl,omitempty"`
 	// Ledger is the container path the web ledger is appended to, one JSON
 	// line a result.
 	Ledger string `json:"ledger,omitempty"`
@@ -120,15 +118,18 @@ const (
 // LedgerEntry is one line of the web ledger: one text a web tool read, or
 // one call it refused before reading anything.
 type LedgerEntry struct {
-	Tool   string `json:"tool"`
-	Source string `json:"source,omitempty"`
+	Tool   string         `json:"tool"`
+	Source webscan.Source `json:"source,omitempty"`
 	// URL is the page's final address, a search result's address (its
 	// origin alone when it did not pass), or the registry request.
 	URL string `json:"url,omitempty"`
 	// Bytes is the length of the text scanned.
 	Bytes int `json:"bytes,omitempty"`
-	// Refused says why a call read nothing (an address, a budget, a type).
+	// Refused says why a call read nothing (an address, a budget, a type),
+	// in the words the model was given; Detail is the error behind it,
+	// bounded, for the person.
 	Refused string `json:"refused,omitempty"`
+	Detail  string `json:"detail,omitempty"`
 	// Search marks a web search that answered, with Results results; each
 	// result has a line of its own after it.
 	Search  bool `json:"search,omitempty"`
@@ -156,23 +157,23 @@ type webState struct {
 	ledger     *os.File
 }
 
-func (l Web) maxPages() int {
-	if l.MaxPages > 0 {
-		return l.MaxPages
+func (w Web) maxPages() int {
+	if w.MaxPages > 0 {
+		return w.MaxPages
 	}
 	return DefaultMaxPages
 }
 
-func (l Web) maxSearches() int {
-	if l.MaxSearches > 0 {
-		return l.MaxSearches
+func (w Web) maxSearches() int {
+	if w.MaxSearches > 0 {
+		return w.MaxSearches
 	}
 	return DefaultMaxSearches
 }
 
-func (l Web) maxRegistryCalls() int {
-	if l.MaxRegistryCalls > 0 {
-		return l.MaxRegistryCalls
+func (w Web) maxRegistryCalls() int {
+	if w.MaxRegistryCalls > 0 {
+		return w.MaxRegistryCalls
 	}
 	return DefaultMaxRegistryCalls
 }
@@ -193,7 +194,7 @@ func (s *server) newWebState() *webState {
 		}
 	case WebScanJev:
 		if key := os.Getenv(EnvWebJevKey); key != "" {
-			if j, err := webscan.NewJev(key, web.JevURL, nil); err == nil {
+			if j, err := webscan.NewJev(key, "", nil); err == nil {
 				w.scanner = j
 			}
 		}
@@ -210,7 +211,7 @@ func (s *server) newWebState() *webState {
 		}
 	default:
 		if key := os.Getenv(EnvWebSearchKey); key != "" {
-			if p, err := websearch.New(web.Search, web.SearchURL, key); err == nil && p != nil {
+			if p, err := websearch.New(web.Search, "", key); err == nil && p != nil {
 				w.searcher = webscan.ProviderSearch{Provider: p, Scanner: w.scanner}
 			}
 		}
@@ -288,7 +289,7 @@ func (w *webState) newPageClient() *http.Client {
 				return fmt.Errorf("refused %s: %w", address, err)
 			}
 			if err := w.allow(ap); err != nil {
-				return fmt.Errorf("refused %s: %w", address, err)
+				return &addressRefused{fmt.Errorf("refused %s: %w", address, err)}
 			}
 			return nil
 		},
@@ -304,19 +305,22 @@ func (w *webState) newPageClient() *http.Client {
 		DialContext:           dial,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 20 * time.Second,
-		MaxIdleConns:          8,
-		IdleConnTimeout:       30 * time.Second,
-		ForceAttemptHTTP2:     true,
+		// A server's headers are its own text; far more of them than a
+		// page needs is refused, not read.
+		MaxResponseHeaderBytes: 64 << 10,
+		MaxIdleConns:           8,
+		IdleConnTimeout:        30 * time.Second,
+		ForceAttemptHTTP2:      true,
 	}
 	return &http.Client{
 		Transport: tr,
 		Timeout:   webReadTimeout,
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) > maxRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+				return &redirectRefused{err: fmt.Errorf("stopped after %d redirects", maxRedirects), many: true}
 			}
 			if err := checkPageURL(r.URL); err != nil {
-				return fmt.Errorf("redirect to %s refused: %w", r.URL.Redacted(), err)
+				return &redirectRefused{err: fmt.Errorf("redirect to %s refused: %w", r.URL.Redacted(), err)}
 			}
 			// No header the first request did not carry is added on a
 			// hop; Go carries no Cookie or Authorization here because the
@@ -362,7 +366,7 @@ func checkPageURL(u *url.URL) error {
 func (s *server) record(e LedgerEntry) {
 	switch {
 	case e.Refused != "":
-		_, _ = fmt.Fprintf(s.logw, "web: %s refused %s: %s\n", e.Tool, e.URL, e.Refused)
+		_, _ = fmt.Fprintf(s.logw, "web: %s refused %q: %s %q\n", e.Tool, e.URL, e.Refused, e.Detail)
 	case e.Search:
 		_, _ = fmt.Fprintf(s.logw, "web: %s answered %d result(s)\n", e.Tool, e.Results)
 	default:
@@ -373,7 +377,7 @@ func (s *server) record(e LedgerEntry) {
 		if e.Failure != "" {
 			line += " failure=" + e.Failure
 		}
-		_, _ = fmt.Fprintf(s.logw, "%s bytes=%d %s\n", line, e.Bytes, e.URL)
+		_, _ = fmt.Fprintf(s.logw, "%s bytes=%d %q\n", line, e.Bytes, e.URL)
 	}
 	w := s.web()
 	if s.spec.Web.Ledger == "" {
@@ -459,15 +463,91 @@ func (s *server) toolWebRead(raw json.RawMessage) (string, bool) {
 	}
 	text, final, err := s.fetchPage(u)
 	if err != nil {
-		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.String(), Refused: err.Error()})
-		return "web_read: " + s.scrubSecrets(err.Error()), true
+		// What failed is said to the model in the tools' own words only:
+		// a server's error, header or redirect target is its own text,
+		// and none of it has been scanned. The ledger keeps a bounded
+		// copy of the detail for the person.
+		word := pageFailure(err)
+		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.String(), Refused: word, Detail: detail(err)})
+		return "web_read: " + word, true
 	}
 	res := s.scan(webscan.SourcePage, text)
-	s.record(LedgerEntry{Tool: ToolWebRead, Source: string(webscan.SourcePage), URL: final, Bytes: len(text), Result: res})
+	s.record(LedgerEntry{Tool: ToolWebRead, Source: webscan.SourcePage, URL: final, Bytes: len(text), Result: res})
 	if !res.Passed() {
-		return withheldText("this page", final, res), false
+		// The address the model asked for: a redirect's own target was
+		// part of the text that did not pass.
+		return withheldText("this page", u.String(), res), false
 	}
 	return s.scrubSecrets(text), false
+}
+
+// The ways a page read fails, as the model is told them.
+const (
+	failRefused   = "the page's address is not a public address on port 80 or 443"
+	failRedirect  = "the page redirected to an address web_read does not reach"
+	failRedirects = "the page redirected too many times"
+	failTimeout   = "the page did not answer in time"
+	failName      = "the page's host name did not resolve"
+	failTLS       = "the page's TLS connection could not be verified"
+	failNotText   = "the page is not text: web_read reads HTML, text, JSON, XML and YAML pages only"
+	failRead      = "the page could not be read"
+)
+
+// addressRefused is the dialer's refusal of an address; redirectRefused the
+// redirect check's; notText a page of another type.
+type (
+	addressRefused  struct{ err error }
+	redirectRefused struct {
+		err  error
+		many bool
+	}
+	notText struct{ mediaType string }
+)
+
+func (e *addressRefused) Error() string  { return e.err.Error() }
+func (e *redirectRefused) Error() string { return e.err.Error() }
+func (e *notText) Error() string         { return "not text: " + e.mediaType }
+
+// pageFailure is a failed read in closed words.
+func pageFailure(err error) string {
+	var (
+		ar   *addressRefused
+		rr   *redirectRefused
+		nt   *notText
+		dns  *net.DNSError
+		ne   net.Error
+		cert *tls.CertificateVerificationError
+		ua   x509.UnknownAuthorityError
+		he   x509.HostnameError
+		ci   x509.CertificateInvalidError
+		rh   tls.RecordHeaderError
+	)
+	switch {
+	case errors.As(err, &rr) && rr.many:
+		return failRedirects
+	case errors.As(err, &rr):
+		return failRedirect
+	case errors.As(err, &ar):
+		return failRefused
+	case errors.As(err, &nt):
+		return failNotText
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout():
+		return failTimeout
+	case errors.As(err, &dns):
+		return failName
+	case errors.As(err, &cert), errors.As(err, &ua), errors.As(err, &he), errors.As(err, &ci), errors.As(err, &rh):
+		return failTLS
+	}
+	return failRead
+}
+
+// detail is an error's text for the ledger: valid UTF-8, one line, at most
+// 300 bytes. It never reaches the model.
+func detail(err error) string {
+	d := strings.ToValidUTF8(err.Error(), "?")
+	d = strings.Join(strings.Fields(d), " ")
+	d, _ = cutText(d, 300)
+	return d
 }
 
 // fetchPage GETs u and returns what the model would read of it (the
@@ -489,11 +569,10 @@ func (s *server) fetchPage(u *url.URL) (string, string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	final := resp.Request.URL.String()
-	ctype := resp.Header.Get("Content-Type")
-	mt, _, _ := mime.ParseMediaType(ctype)
+	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	kind := textKind(mt)
 	if kind == "" {
-		return "", "", fmt.Errorf("%s is %s, not text; only pages of text are read", final, cmpOr(mt, "of no content type"))
+		return "", "", &notText{mediaType: mt}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPageRaw))
 	if err != nil {
@@ -505,14 +584,21 @@ func (s *server) fetchPage(u *url.URL) (string, string, error) {
 	} else {
 		text = strings.ToValidUTF8(string(body), "\uFFFD")
 	}
-	full := len(text)
-	text, cut := cutText(text, PageTextBytes)
-	var b strings.Builder
-	fmt.Fprintf(&b, "URL: %s\nStatus: %s\nContent-Type: %s\n\n%s", final, resp.Status, mt, text)
-	if cut {
-		fmt.Fprintf(&b, "\n\n[cut at %d KiB of %d KiB of text]", PageTextBytes>>10, (full+1023)>>10)
+	// The whole answer, its head and the cut note included, is at most
+	// PageTextBytes: four of the judge's chunks (D24).
+	head := fmt.Sprintf("URL: %s\nStatus: %s\nContent-Type: %s\n\n", final, resp.Status, mt)
+	const noteRoom = 64
+	room := PageTextBytes - len(head) - noteRoom
+	if room < 0 {
+		return "", "", errors.New("the page's address and status alone fill a page")
 	}
-	return b.String(), final, nil
+	full := len(text)
+	text, cut := cutText(text, room)
+	out := head + text
+	if cut {
+		out += fmt.Sprintf("\n\n[cut at %d of %d bytes of text]", len(text), full)
+	}
+	return out, final, nil
 }
 
 // textKind is how a media type is read: "html", "text", or "" for a type
@@ -546,13 +632,6 @@ func unwrapURLError(err error) error {
 		return ue.Err
 	}
 	return err
-}
-
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // ---- web_search ----
@@ -595,7 +674,7 @@ func (s *server) toolWebSearch(raw json.RawMessage) (string, bool) {
 	var b strings.Builder
 	shown, held := 0, 0
 	for _, h := range hits {
-		s.record(LedgerEntry{Tool: ToolWebSearch, Source: string(webscan.SourceSearchResult), URL: h.URL, Result: h.Result})
+		s.record(LedgerEntry{Tool: ToolWebSearch, Source: webscan.SourceSearchResult, URL: h.URL, Result: h.Result})
 		if !h.Passed() {
 			held++
 			fmt.Fprintf(&b, "- withheld: a result from %s, because %s\n", h.URL, h.Reason())
@@ -675,7 +754,7 @@ func (s *server) toolRegistrySearch(raw json.RawMessage) (string, bool) {
 	text := renderRegistry(path, status, body, a.Ref, a.Ecosystem+":"+a.Package+"@"+a.Version)
 	text, _ = cutText(text, PageTextBytes)
 	res := s.scan(webscan.SourceRegistry, text)
-	s.record(LedgerEntry{Tool: ToolRegistrySearch, Source: string(webscan.SourceRegistry), URL: path + "?" + q.Encode(), Bytes: len(text), Result: res})
+	s.record(LedgerEntry{Tool: ToolRegistrySearch, Source: webscan.SourceRegistry, URL: path + "?" + q.Encode(), Bytes: len(text), Result: res})
 	if !res.Passed() {
 		return withheldText("the registry's answer", path+"?"+q.Encode(), res), false
 	}
