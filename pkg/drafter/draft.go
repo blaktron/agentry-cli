@@ -19,9 +19,10 @@ import (
 )
 
 // Draft is draft.json (plan builder-rework.md §7.5, D15): what the Drafter
-// returned, known fields only, and what the CLI's post-step adds. A client
-// reads it as data: its values reach the Builder only as text in the fields
-// the Builder already has.
+// returned, known fields only, and what the post-step adds (Finish, and the
+// CLI's validation of the rendered package). A client reads it as data: its
+// values reach the Builder only as text in the fields the Builder already
+// has.
 type Draft struct {
 	// Manifest is the v2 manifest as JSON, as the Drafter wrote it.
 	Manifest json.RawMessage `json:"manifest"`
@@ -102,7 +103,7 @@ func Parse(result json.RawMessage) (*Draft, error) {
 		return nil, errors.New("the Drafter's answer has no manifest object")
 	}
 	// Only the Drafter's own fields are read from its answer; the
-	// post-step's are the CLI's to write.
+	// post-step's are Finish's and the CLI's to write.
 	d.Drafter, d.AIReview, d.Validation, d.ManifestError = nil, nil, nil, ""
 	if d.Matches == nil {
 		d.Matches = []Match{}

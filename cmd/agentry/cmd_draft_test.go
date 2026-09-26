@@ -264,8 +264,9 @@ func TestDraftSearchAndHosted(t *testing.T) {
 
 // TestTheLongTextsComeFromTheReports: a last message with the manifest and
 // the lists takes its instructions and notes from the reports the Drafter
-// wrote; with no instructions at all the draft is kept, unrendered, and
-// says why.
+// wrote, and when AI Review withheld a source its list follows the notes
+// rather than taking their place (agentry-cli#363); with no instructions at
+// all the draft is kept, unrendered, and says why.
 func TestTheLongTextsComeFromTheReports(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -275,36 +276,53 @@ func TestTheLongTextsComeFromTheReports(t *testing.T) {
 	delete(raw, "instructions")
 	delete(raw, "notes")
 	short, _ := json.Marshal(raw)
-	for _, withReports := range []bool{true, false} {
-		draftSeams(t, webscan.Result{Verdict: webscan.Pass}, string(short), "")
-		prev := draftRun
-		draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
-			if withReports {
-				_ = os.MkdirAll(filepath.Join(r.OutDir, "reports"), 0o755)
-				_ = os.WriteFile(filepath.Join(r.OutDir, "reports", "AGENT.md"), []byte("# Meeting actions\n\nRead the notes.\n"), 0o644)
-				_ = os.WriteFile(filepath.Join(r.OutDir, "reports", "notes.md"), []byte("Pure text.\n"), 0o644)
+	for _, c := range []struct {
+		name      string
+		reports   bool
+		ledger    string
+		wantNotes string
+	}{
+		{name: "reports", reports: true, wantNotes: "Pure text.\n"},
+		{name: "reports and a withheld source", reports: true, ledger: draftLedger,
+			wantNotes: "Pure text.\n\n## Withheld by AI Review\n\nThe Drafter was given the address and the reason for each of these, never the text:\n\n" +
+				"- https://bad.example/ (web_read): AI Review flagged it (injection)\n"},
+		{name: "no reports"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			draftSeams(t, webscan.Result{Verdict: webscan.Pass}, string(short), c.ledger)
+			prev := draftRun
+			draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+				if c.reports {
+					_ = os.MkdirAll(filepath.Join(r.OutDir, "reports"), 0o755)
+					_ = os.WriteFile(filepath.Join(r.OutDir, "reports", "AGENT.md"), []byte("# Meeting actions\n\nRead the notes.\n"), 0o644)
+					_ = os.WriteFile(filepath.Join(r.OutDir, "reports", "notes.md"), []byte("Pure text.\n"), 0o644)
+				}
+				return prev(cmd, r)
 			}
-			return prev(cmd, r)
-		}
-		out := filepath.Join(t.TempDir(), "o")
-		if _, _, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
-			t.Fatal(err)
-		}
-		var d drafter.Draft
-		b, _ := os.ReadFile(filepath.Join(out, "draft.json"))
-		_ = json.Unmarshal(b, &d)
-		if withReports {
+			out := filepath.Join(t.TempDir(), "o")
+			stdout, _, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var d drafter.Draft
+			b, _ := os.ReadFile(filepath.Join(out, "draft.json"))
+			_ = json.Unmarshal(b, &d)
+			if !c.reports {
+				if d.ManifestError != "the Drafter wrote no instructions (AGENT.md)" || d.Validation != nil ||
+					!strings.Contains(stdout, "not rendered: the Drafter wrote no instructions (AGENT.md)") {
+					t.Fatalf("%+v\n%s", d, stdout)
+				}
+				return
+			}
 			var v validateOutput
 			_ = json.Unmarshal(d.Validation, &v)
-			if d.Instructions != "# Meeting actions\n\nRead the notes.\n" || d.Notes != "Pure text.\n" || !v.Passed {
+			if d.Instructions != "# Meeting actions\n\nRead the notes.\n" || d.Notes != c.wantNotes || !v.Passed {
 				t.Fatalf("%+v", d)
 			}
 			inst, _ := os.ReadFile(filepath.Join(out, "package", "AGENT.md"))
 			if string(inst) != d.Instructions {
 				t.Fatalf("package AGENT.md %q", inst)
 			}
-		} else if !strings.Contains(d.ManifestError, "no instructions") || d.Validation != nil {
-			t.Fatalf("%+v", d)
-		}
+		})
 	}
 }
