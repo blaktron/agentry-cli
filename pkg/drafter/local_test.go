@@ -25,20 +25,24 @@ func localKeys(t *testing.T) {
 	t.Setenv(modelkey.EnvNoKeyring, "")
 	t.Setenv(policy.DefaultJudgeKeyEnv, "")
 	t.Setenv(policy.DefaultWebSearchKeyEnv, "")
+	t.Setenv(policy.BraveSearchKeyEnv, "")
 }
 
 // TestLocalWebReadsThePersonsKeysAsThePolicySays: the variable wins; with
 // apiKeySource keyring and the variable unset, the keychain entry
 // provider:typesafe (the one the desktop writes); a keychain entry is never
 // read for an env source; no Jev key is ErrNoJevKey. Search is on only with
-// a provider named and its key found (plan builder-rework.md D22, D25;
-// agentry-cli#363).
+// a provider named and its own key found: You.com's or Brave's
+// (plan builder-rework.md D22, D25; agentry-cli#363, agentry-cli#369).
 func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 	localKeys(t)
 	if err := modelkey.Store(policy.JudgeKeyProvider, "jev-from-the-keychain"); err != nil {
 		t.Fatal(err)
 	}
 	if err := modelkey.Store("youcom", "ydc-from-the-keychain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := modelkey.Store("brave", "brave-from-the-keychain"); err != nil {
 		t.Fatal(err)
 	}
 	const reg = "https://registry.example"
@@ -71,6 +75,15 @@ func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 		{name: "search from the variable", judge: keyringJudge, search: policy.WebSearchKey{Provider: "youcom"},
 			env:     map[string]string{policy.DefaultWebSearchKeyEnv: "ydc-from-the-variable"},
 			wantJev: "jev-from-the-keychain", wantSearch: "youcom", wantSKey: "ydc-from-the-variable", wantState: SearchOn},
+		{name: "Brave from its own variable", judge: keyringJudge, search: policy.WebSearchKey{Provider: "brave"},
+			env:     map[string]string{policy.BraveSearchKeyEnv: "brave-from-the-variable"},
+			wantJev: "jev-from-the-keychain", wantSearch: "brave", wantSKey: "brave-from-the-variable", wantState: SearchOn},
+		{name: "Brave from the keychain entry provider:brave", judge: keyringJudge,
+			search:  policy.WebSearchKey{Provider: "brave", APIKeySource: modelkey.SourceKeyring},
+			wantJev: "jev-from-the-keychain", wantSearch: "brave", wantSKey: "brave-from-the-keychain", wantState: SearchOn},
+		{name: "a You.com key never serves Brave", judge: keyringJudge, search: policy.WebSearchKey{Provider: "brave"},
+			env:     map[string]string{policy.DefaultWebSearchKeyEnv: "ydc-from-the-variable"},
+			wantJev: "jev-from-the-keychain", wantState: SearchNoKey},
 		{name: "no Jev key means no search either", search: keyringSearch, wantErr: ErrNoJevKey},
 	}
 	for _, c := range cases {

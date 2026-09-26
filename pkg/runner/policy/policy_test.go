@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/websearch"
 )
 
 func TestDefaultFileMatchesDefault(t *testing.T) {
@@ -553,5 +555,68 @@ func TestResolveNamesThePathAndHowItWasChosen(t *testing.T) {
 	f, err = Resolve("")
 	if err != nil || f.Path != filepath.Join(cwd, "rel-home", "policy.yaml") || f.Source != receipt.PolicySourceEnv {
 		t.Fatalf("relative env: %+v %v", f, err)
+	}
+}
+
+// TestWebSearchNamesAProviderTheImageBuilds: webSearch.provider admits none
+// and exactly the providers the runner image's copy of the core's
+// pkg/websearch builds, so a name the policy passes is one the tools server
+// can search with (agentry-cli#369). Each reads its own variable by default,
+// so a You.com key never serves Brave, and the block round-trips.
+func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
+	var image []string
+	for _, name := range websearch.Providers() {
+		if name != "none" {
+			image = append(image, name)
+		}
+	}
+	slices.Sort(image)
+	if got := WebSearchProviders(); !slices.Equal(got, image) {
+		t.Fatalf("the policy admits %v, the image builds %v", got, image)
+	}
+	for _, name := range append([]string{"", "none"}, image...) {
+		pol := Default()
+		pol.WebSearch.Provider = name
+		if err := pol.Validate(); err != nil {
+			t.Fatalf("%q refused: %v", name, err)
+		}
+		if !pol.WebSearch.On() {
+			continue
+		}
+		if p, err := websearch.New(name, "", "a-key"); err != nil || p == nil {
+			t.Fatalf("the image does not build %q: %v", name, err)
+		}
+	}
+	pol := Default()
+	pol.WebSearch.Provider = "bing"
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), `webSearch.provider "bing" must be none, brave or youcom`) {
+		t.Fatalf("bing accepted: %v", err)
+	}
+
+	for _, c := range []struct {
+		key       WebSearchKey
+		env, name string
+	}{
+		{WebSearchKey{Provider: "youcom"}, "YDC_API_KEY", "You.com"},
+		{WebSearchKey{Provider: "brave"}, "BRAVE_API_KEY", "Brave"},
+		{WebSearchKey{Provider: "brave", APIKeyEnv: "MY_SEARCH_KEY"}, "MY_SEARCH_KEY", "Brave"},
+	} {
+		if got := c.key.KeyEnv(); got != c.env {
+			t.Fatalf("%+v reads $%s, want $%s", c.key, got, c.env)
+		}
+		if got := c.key.ProviderName(); got != c.name {
+			t.Fatalf("%+v is called %q, want %q", c.key, got, c.name)
+		}
+	}
+
+	p := filepath.Join(t.TempDir(), "policy.yaml")
+	pol = Default()
+	pol.WebSearch = WebSearchKey{Provider: "brave", APIKeySource: "keyring"}
+	if err := Save(p, pol); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Load(p)
+	if err != nil || got.WebSearch != pol.WebSearch {
+		t.Fatalf("load: %+v %v", got.WebSearch, err)
 	}
 }

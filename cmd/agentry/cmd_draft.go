@@ -84,7 +84,8 @@ func newDraftCmd() *cobra.Command {
 			"and the draft lists it. On this computer that takes your own Jev key ($TYPESAFE_API_KEY, or the\n" +
 			"policy's judge block), and the Drafter does not run without one. It runs against the model your runner\n" +
 			"policy names, for no credits. Web search needs a search provider of your own in the policy's webSearch\n" +
-			"block; without one the Drafter reads pages and the registry only.\n\n" +
+			"block (brave, with $BRAVE_API_KEY, or youcom, with $YDC_API_KEY); without one the Drafter reads pages\n" +
+			"and the registry only.\n\n" +
 			"The description, the searches and the pages go to the search provider, to TypeSafe and to the sites\n" +
 			"read, so the description should hold no secret.\n\n" +
 			"The draft is written to DIR/draft.json, and rendered as a package in DIR/package, checked with the same\n" +
@@ -239,9 +240,9 @@ func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
 	}
 	switch search {
 	case drafter.SearchOn:
-		return w, fmt.Sprintf("Its searches go to %s with your key.", w.Search), nil
+		return w, fmt.Sprintf("Its searches go to %s with your key.", pol.WebSearch.ProviderName()), nil
 	case drafter.SearchNoKey:
-		return w, fmt.Sprintf("It has no web search: no %s key in $%s.", pol.WebSearch.Provider, pol.WebSearch.KeyEnv()), nil
+		return w, fmt.Sprintf("It has no web search: no %s key in $%s.", pol.WebSearch.ProviderName(), pol.WebSearch.KeyEnv()), nil
 	}
 	return w, "It has no web search (name a provider in your runner policy's webSearch block), so it reads the registry and pages it knows.", nil
 }

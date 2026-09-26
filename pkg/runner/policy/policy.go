@@ -18,12 +18,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/dirpublish"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/websearch"
 )
 
 // runtimeNameRE is the shape of a daemon-registered runtime name (runc,
@@ -369,20 +371,43 @@ type JudgeKey struct {
 // WebSearchKey is the person's own search provider, and where its key
 // comes from, as JudgeKey (keychain entry provider:<provider>).
 type WebSearchKey struct {
-	// Provider is "" or "none" (no search) or "youcom".
+	// Provider is "" or "none" (no search), or one of WebSearchProviders.
 	Provider string `yaml:"provider,omitempty"`
-	// APIKeyEnv names the variable; empty is DefaultWebSearchKeyEnv.
+	// APIKeyEnv names the variable; empty is the provider's own
+	// (DefaultWebSearchKeyEnv for youcom, BraveSearchKeyEnv for brave).
 	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"`
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
 }
 
 // The default variables the person's own keys are read from, and the
-// keychain provider name of the Jev key.
+// keychain provider name of the Jev key. DefaultWebSearchKeyEnv is
+// You.com's, the first search provider.
 const (
 	DefaultJudgeKeyEnv     = "TYPESAFE_API_KEY"
 	DefaultWebSearchKeyEnv = "YDC_API_KEY"
+	BraveSearchKeyEnv      = "BRAVE_API_KEY"
 	JudgeKeyProvider       = "typesafe"
 )
+
+// webSearchProviders is each search provider a person may name: a name the
+// runner image's copy of the core's pkg/websearch builds, the variable its
+// key is read from by default, and its name as a person knows it. Brave's
+// LLM Context API joined You.com with agentry#631 (DEV-157).
+var webSearchProviders = map[string]struct{ keyEnv, name string }{
+	websearch.YouComName: {DefaultWebSearchKeyEnv, "You.com"},
+	websearch.BraveName:  {BraveSearchKeyEnv, "Brave"},
+}
+
+// WebSearchProviders is the names webSearch.provider admits besides none,
+// sorted.
+func WebSearchProviders() []string {
+	names := make([]string, 0, len(webSearchProviders))
+	for name := range webSearchProviders {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
 
 // KeyEnv is the variable the Jev key is read from.
 func (j JudgeKey) KeyEnv() string {
@@ -395,12 +420,24 @@ func (j JudgeKey) KeyEnv() string {
 // On reports whether a search provider is named.
 func (w WebSearchKey) On() bool { return w.Provider != "" && w.Provider != "none" }
 
-// KeyEnv is the variable the search key is read from.
+// KeyEnv is the variable the search key is read from: the one the policy
+// names, else the provider's own, so a You.com key never serves Brave.
 func (w WebSearchKey) KeyEnv() string {
 	if w.APIKeyEnv != "" {
 		return w.APIKeyEnv
 	}
+	if p, ok := webSearchProviders[w.Provider]; ok {
+		return p.keyEnv
+	}
 	return DefaultWebSearchKeyEnv
+}
+
+// ProviderName is the provider as a person knows it ("Brave", "You.com").
+func (w WebSearchKey) ProviderName() string {
+	if p, ok := webSearchProviders[w.Provider]; ok {
+		return p.name
+	}
+	return w.Provider
 }
 
 // envVarRE is an environment variable name.
@@ -720,10 +757,8 @@ func (p *Policy) Validate() error {
 			return fmt.Errorf("%s.apiKeySource %q must be env or keyring", name, k.src)
 		}
 	}
-	switch p.WebSearch.Provider {
-	case "", "none", "youcom":
-	default:
-		return fmt.Errorf("webSearch.provider %q must be none or youcom", p.WebSearch.Provider)
+	if _, ok := webSearchProviders[p.WebSearch.Provider]; p.WebSearch.On() && !ok {
+		return fmt.Errorf("webSearch.provider %q must be none, %s", p.WebSearch.Provider, strings.Join(WebSearchProviders(), " or "))
 	}
 	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
 		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
@@ -901,11 +936,13 @@ mcpRegistries:
 
 # webSearch:
 #   # Your own web search, for agentry draft's web_search: none (the
-#   # default: the Drafter reads the registry and the pages it knows) or
-#   # youcom. The key as for judge (default YDC_API_KEY; keychain entry
-#   # provider:youcom).
-#   provider: youcom
-#   apiKeyEnv: YDC_API_KEY
+#   # default: the Drafter reads the registry and the pages it knows),
+#   # brave (Brave's LLM Context API) or youcom (You.com's Web Search API).
+#   # The key as for judge: the variable (default BRAVE_API_KEY for brave,
+#   # YDC_API_KEY for youcom), else, with apiKeySource keyring, the OS
+#   # keychain entry provider:brave or provider:youcom.
+#   provider: brave
+#   apiKeyEnv: BRAVE_API_KEY
 
 # exec:
 #   # The exec catalog: which binaries this machine provides to a BriefAgent
