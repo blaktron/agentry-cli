@@ -8,9 +8,11 @@
 // its model does.
 //
 // Around the run this package holds the task the Drafter is given, the
-// description's scan before the run starts (Prescan), the draft it returns
-// (Draft, draft.json's shape, plan §7.5) and the package a draft renders
-// into, which the CLI's post-step validates.
+// description's scan before the run starts (Prescan), the person's own keys
+// for a draft on this computer (LocalWeb), the draft it returns (Draft,
+// draft.json's shape, plan §7.5) with AI Review's record (Finish), and the
+// package a draft renders into, which the CLI's post-step validates. The
+// CLI's `agentry draft` and the desktop's Describe it both drive it.
 package drafter
 
 import (

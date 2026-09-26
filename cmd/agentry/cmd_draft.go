@@ -226,78 +226,37 @@ func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
 		return &engine.WebRun{Scan: toolsrv.WebScanRegistry, Search: toolsrv.WebScanRegistry, Registry: reg, JobToken: tok},
 			"The registry searches the web.", nil
 	}
-	jev, err := personalKey(pol.Judge.KeyEnv(), pol.Judge.APIKeySource, policy.JudgeKeyProvider)
-	if err != nil {
-		return nil, "", err
-	}
-	if jev == "" {
+	w, search, err := drafter.LocalWeb(pol, reg)
+	switch {
+	case errors.Is(err, drafter.ErrNoJevKey):
 		return nil, "", engine.Classify(engine.ExitPolicy, fmt.Errorf(
 			"the Drafter runs only with AI Review reading everything first: the description, every search result, every page. "+
 				"On this computer that takes your own TypeSafe Jev key, and none was found. Set $%s, or name another variable in "+
 				"your runner policy's judge.apiKeyEnv; with judge.apiKeySource: keyring it is read from the OS keychain entry %s",
 			pol.Judge.KeyEnv(), modelkey.Account(policy.JudgeKeyProvider)))
-	}
-	w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: reg}
-	note := "It has no web search (name a provider in your runner policy's webSearch block), so it reads the registry and pages it knows."
-	if pol.WebSearch.On() {
-		key, err := personalKey(pol.WebSearch.KeyEnv(), pol.WebSearch.APIKeySource, pol.WebSearch.Provider)
-		switch {
-		case err != nil:
-			return nil, "", err
-		case key == "":
-			note = fmt.Sprintf("It has no web search: no %s key in $%s.", pol.WebSearch.Provider, pol.WebSearch.KeyEnv())
-		default:
-			w.Search, w.SearchKey = pol.WebSearch.Provider, key
-			note = fmt.Sprintf("Its searches go to %s with your key.", pol.WebSearch.Provider)
-		}
-	}
-	return w, note, nil
-}
-
-// personalKey reads one of the person's keys: the variable, else, with the
-// keyring source, the keychain entry provider:<provider>. "" is no key; an
-// error is a keychain the policy names that could not be read.
-func personalKey(env, source, provider string) (string, error) {
-	if v := strings.TrimSpace(os.Getenv(env)); v != "" {
-		return v, nil
-	}
-	if source != modelkey.SourceKeyring {
-		return "", nil
-	}
-	present, err := modelkey.Present(provider)
-	if err != nil {
-		return "", engine.Classify(engine.ExitPolicy, err)
-	}
-	if !present {
-		return "", nil
-	}
-	v, err := modelkey.Lookup(provider)
-	if err != nil {
-		return "", engine.Classify(engine.ExitPolicy, err)
-	}
-	return strings.TrimSpace(v), nil
-}
-
-// finishDraft is the post-step (plan §7.5): the Drafter's answer as a draft,
-// rendered as a package and checked as `agentry validate` checks one, with
-// AI Review's record, written to outDir/draft.json. A draft that fails the
-// rules is kept, with its problems.
-func finishDraft(env *receipt.Envelope, outDir string, desc webscan.Result) (*drafter.Draft, error) {
-	d, err := drafter.Parse(env.Result)
-	if err != nil {
-		return nil, engine.Classify(engine.ExitOutputSchema, err)
-	}
-	d.Drafter = &drafter.Made{Ref: localrun.Drafter().Ref(), Build: version.Build(), Model: env.Harness.Model, RunID: env.RunID}
-	d.AIReview = aiReviewOf(env.Web, desc, filepath.Join(outDir, "receipts", engine.WebLedgerFile))
-	d.NoteWithheld()
-	pkg := filepath.Join(outDir, "package")
-	switch err := drafter.FromReports(d, filepath.Join(outDir, "reports")); {
 	case err != nil:
-		d.ManifestError = err.Error()
-	case strings.TrimSpace(d.Instructions) == "":
-		d.ManifestError = "the Drafter wrote no instructions (AGENT.md), so the package was not rendered"
-	default:
-		d.ManifestError, d.Validation = renderAndValidate(d, pkg)
+		return nil, "", err
+	}
+	switch search {
+	case drafter.SearchOn:
+		return w, fmt.Sprintf("Its searches go to %s with your key.", w.Search), nil
+	case drafter.SearchNoKey:
+		return w, fmt.Sprintf("It has no web search: no %s key in $%s.", pol.WebSearch.Provider, pol.WebSearch.KeyEnv()), nil
+	}
+	return w, "It has no web search (name a provider in your runner policy's webSearch block), so it reads the registry and pages it knows.", nil
+}
+
+// finishDraft is the post-step (plan §7.5): the Drafter's answer as a draft
+// with AI Review's record (drafter.Finish), rendered as a package and
+// checked as `agentry validate` checks one, written to outDir/draft.json. A
+// draft that fails the rules is kept, with its problems.
+func finishDraft(env *receipt.Envelope, outDir string, desc webscan.Result) (*drafter.Draft, error) {
+	d, err := drafter.Finish(env, outDir, desc, localrun.Drafter().Ref(), version.Build())
+	if err != nil {
+		return nil, err
+	}
+	if d.ManifestError == "" {
+		d.ManifestError, d.Validation = renderAndValidate(d, filepath.Join(outDir, "package"))
 	}
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
@@ -326,26 +285,6 @@ func renderAndValidate(d *drafter.Draft, pkg string) (string, json.RawMessage) {
 		return err.Error(), nil
 	}
 	return "", b
-}
-
-// aiReviewOf is the draft's AI Review record: the receipt's counts, and
-// each text the model was not given, from the run's ledger.
-func aiReviewOf(w *receipt.Web, desc webscan.Result, ledger string) *drafter.AIReview {
-	a := &drafter.AIReview{Description: desc.Verdict, WithheldSources: []drafter.WithheldSource{}}
-	if w != nil {
-		a.Web = *w
-	}
-	if a.Model == "" {
-		a.Model, a.QuestionSet = desc.Model, desc.QuestionSet
-	}
-	entries, _, _ := engine.ReadWebLedger(ledger)
-	for _, e := range entries {
-		if e.Refused != "" || e.Search || e.Passed() {
-			continue
-		}
-		a.WithheldSources = append(a.WithheldSources, drafter.WithheldSource{Tool: e.Tool, URL: e.URL, Reason: e.Reason()})
-	}
-	return a
 }
 
 // printDraft says where the draft is and what it holds. What the Drafter
