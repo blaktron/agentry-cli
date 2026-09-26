@@ -278,10 +278,13 @@ which the gateway's docker filter lets no other container join.
   a page's text.
 - `registry_search` reads the registry's search, a BriefAgent's manifest,
   and its vulnerability check of an exact MCP server version.
-- `web_search` needs a search provider of your own: `webSearch: {provider:
-  youcom}` in the policy, with the key in `$YDC_API_KEY` (or
-  `webSearch.apiKeyEnv`, or the keychain). Without one the Drafter reads the
-  registry and the pages it already knows.
+- `web_search` needs a search provider of your own in the policy:
+  `webSearch: {provider: brave}` (Brave's LLM Context API) with the key in
+  `$BRAVE_API_KEY`, or `webSearch: {provider: youcom}` (You.com) with the key
+  in `$YDC_API_KEY`; or the variable `webSearch.apiKeyEnv` names, or, with
+  `webSearch.apiKeySource: keyring`, the keychain entry `provider:brave` or
+  `provider:youcom`. Without one the Drafter reads the registry and the pages
+  it already knows.
 
 The description, the searches and the pages go to the search provider, to
 TypeSafe and to the sites read, so the description should hold no secret.
