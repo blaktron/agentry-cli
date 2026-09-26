@@ -177,3 +177,48 @@ func TestExtractTreeIntoANonEmptyDirectoryIsRefused(t *testing.T) {
 		t.Fatalf("the person's file was touched: %q %v", got, err)
 	}
 }
+
+// TestUnpackMakesAPackFromATree (agentry-cli#364): a registry's tree tar
+// becomes a pack directory the Creator and the runner load, its manifest's
+// counts and digest the tree's own whatever the caller said; a tree that
+// is not its digest leaves nothing.
+func TestUnpackMakesAPackFromATree(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{
+		"wiki/index.md":    "# Index\n",
+		"wiki/log.md":      "# Log\n",
+		"wiki/topics/a.md": "---\ntitle: A\n---\nA [src: doc:a.md]\n",
+		"sources/a.md":     "# A\n",
+	})
+	var buf bytes.Buffer
+	d, err := WriteTree(root, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "notes")
+	p, err := Unpack(bytes.NewReader(buf.Bytes()), d.SHA256, dst, Manifest{Name: "notes", ID: "kp_0123", Pages: 99, Bytes: 1, SHA256: "sha256:lie"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := p.Manifest
+	if m.Schema != Schema || m.Name != "notes" || m.ID != "kp_0123" || m.Pages != 1 || m.Bytes != d.Bytes || m.SHA256 != d.SHA256 {
+		t.Fatalf("manifest = %+v, want the tree's counts and digest", m)
+	}
+	if _, err := Load(dst); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(t.TempDir(), "bad")
+	if _, err := Unpack(bytes.NewReader(buf.Bytes()), "sha256:"+strings.Repeat("0", 64), bad, Manifest{Name: "notes"}); err == nil {
+		t.Fatal("a tree that is not its digest was unpacked")
+	}
+	if entries, _ := os.ReadDir(bad); len(entries) != 0 {
+		t.Fatalf("a refused tree left %d entries", len(entries))
+	}
+	named := filepath.Join(t.TempDir(), "named")
+	if _, err := Unpack(bytes.NewReader(buf.Bytes()), d.SHA256, named, Manifest{Name: "Bad Name"}); err == nil {
+		t.Fatal("a pack with a name that is not a pack's was unpacked")
+	}
+	if entries, _ := os.ReadDir(named); len(entries) != 0 {
+		t.Fatalf("a refused pack left %d entries", len(entries))
+	}
+}

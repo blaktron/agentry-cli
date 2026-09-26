@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -174,4 +175,40 @@ func cleanup(dst string, made bool) {
 	for _, e := range entries {
 		_ = os.RemoveAll(filepath.Join(dst, e.Name()))
 	}
+}
+
+// Unpack makes the pack directory dst from a canonical tree tar whose
+// digest is want: the tree extracted and checked (ExtractTree), a
+// manifest written from m with the tree's own schema, counts and digest
+// in place of whatever m said, and the pack loaded. It is how a pack kept
+// somewhere as a tree — a registry's copy downloaded, a sandbox host's
+// staged tree for a hosted build (agentry-cli#364) — becomes a directory
+// the Creator and the runner read. A refused tree or pack leaves nothing
+// in dst.
+func Unpack(r io.Reader, want, dst string, m Manifest) (p *Pack, err error) {
+	d, err := ExtractTree(r, dst, want)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			entries, _ := os.ReadDir(dst)
+			for _, e := range entries {
+				_ = os.RemoveAll(filepath.Join(dst, e.Name()))
+			}
+		}
+	}()
+	pages, err := Pages(dst)
+	if err != nil {
+		return nil, err
+	}
+	m.Schema, m.Pages, m.Bytes, m.SHA256 = Schema, pages, d.Bytes, d.SHA256
+	raw, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dst, ManifestFile), append(raw, '\n'), 0o600); err != nil {
+		return nil, err
+	}
+	return Load(dst)
 }
