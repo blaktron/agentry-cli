@@ -129,6 +129,10 @@ type LedgerEntry struct {
 	Bytes int `json:"bytes,omitempty"`
 	// Refused says why a call read nothing (an address, a budget, a type).
 	Refused string `json:"refused,omitempty"`
+	// Search marks a web search that answered, with Results results; each
+	// result has a line of its own after it.
+	Search  bool `json:"search,omitempty"`
+	Results int  `json:"results,omitempty"`
 	webscan.Result
 }
 
@@ -359,6 +363,8 @@ func (s *server) record(e LedgerEntry) {
 	switch {
 	case e.Refused != "":
 		_, _ = fmt.Fprintf(s.logw, "web: %s refused %s: %s\n", e.Tool, e.URL, e.Refused)
+	case e.Search:
+		_, _ = fmt.Fprintf(s.logw, "web: %s answered %d result(s)\n", e.Tool, e.Results)
 	default:
 		line := fmt.Sprintf("web: %s %s %s score=%d", e.Tool, e.Source, e.Verdict, e.Score)
 		if len(e.Flagged) > 0 {
@@ -585,6 +591,7 @@ func (s *server) toolWebSearch(raw json.RawMessage) (string, bool) {
 		s.record(LedgerEntry{Tool: ToolWebSearch, Refused: "the search did not answer"})
 		return "web_search: the search did not answer; try again, or read a page you already know", true
 	}
+	s.record(LedgerEntry{Tool: ToolWebSearch, Search: true, Results: len(hits)})
 	var b strings.Builder
 	shown, held := 0, 0
 	for _, h := range hits {

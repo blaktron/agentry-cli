@@ -67,7 +67,7 @@ type Spec struct {
 	// Web gates the built-in Drafter's web tools (web.go). The compiler
 	// sets Enabled for the Drafter alone; the engine stamps the rest into
 	// the run's own copy of this file.
-	Web Web `json:"web,omitempty"`
+	Web Web `json:"web,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
 	// Owner, when set, is the host user who ran the command: every file

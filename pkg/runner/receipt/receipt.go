@@ -73,6 +73,44 @@ type Envelope struct {
 	// class verify; agentry-cli#326), so a client can show the files and
 	// offer the repair without parsing Error. Absent otherwise.
 	InstalledChanges *InstalledChanges `json:"installedChanges,omitempty"`
+	// Web counts what the built-in Drafter's web tools read and what AI
+	// Review withheld (plan builder-rework.md §7.3; agentry-cli#345), from
+	// the run's web ledger (receipts/web.ndjson, which names each address
+	// and verdict). Absent for a run without the web tools.
+	Web *Web `json:"web,omitempty"`
+}
+
+// Web is a run's count of the web tools' reads and AI Review's verdicts.
+type Web struct {
+	// Scan is where the texts were scanned: "registry" (the registry's
+	// route, with the job's credential) or "jev" (the person's own key).
+	Scan string `json:"scan"`
+	// Search is where web_search went ("registry", a provider, or "" when
+	// it was not granted).
+	Search string `json:"search,omitempty"`
+	// Pages, Searches and RegistryCalls are the calls that read something.
+	Pages         int `json:"pages"`
+	Searches      int `json:"searches"`
+	RegistryCalls int `json:"registryCalls"`
+	// Read is every text the tools brought back: a page, a search result,
+	// a registry answer. Each was sent to AI Review before the model.
+	Read int `json:"read"`
+	// Passed reached the model. Withheld were flagged; NotScanned could not
+	// be scanned and were withheld as well.
+	Passed     int `json:"passed"`
+	Withheld   int `json:"withheld"`
+	NotScanned int `json:"notScanned"`
+	// Refused are calls the tools refused before reading anything: an
+	// address that is not public, a spent budget, a type that is not text.
+	Refused int `json:"refused"`
+	// ScanRequests and ScanInputTokens are what the scans cost the judge,
+	// for the record; AI Review is 1 credit an operation (DEV-150).
+	ScanRequests    int   `json:"scanRequests"`
+	ScanInputTokens int64 `json:"scanInputTokens"`
+	// Model and QuestionSet name the judge and what it was asked, when a
+	// scan answered.
+	Model       string `json:"model,omitempty"`
+	QuestionSet string `json:"questionSet,omitempty"`
 }
 
 // InstalledChanges is an installed release's difference from what was laid

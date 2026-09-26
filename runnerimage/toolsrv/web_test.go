@@ -522,7 +522,7 @@ func TestWebSearchThroughTheRegistry(t *testing.T) {
 		t.Fatalf("token %v", route.tokens)
 	}
 	led := ledgerOf(t, spec)
-	if len(led) != 2 || !led[0].Passed() || led[1].Passed() || led[1].URL != "https://evil.example/" {
+	if len(led) != 3 || !led[0].Search || led[0].Results != 2 || !led[1].Passed() || led[2].Passed() || led[2].URL != "https://evil.example/" {
 		t.Fatalf("ledger %+v", led)
 	}
 }

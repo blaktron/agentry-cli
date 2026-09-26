@@ -1,0 +1,16 @@
+{
+  "id": "feed-digest",
+  "description": "Read the RSS feeds of the tech blogs I list and write a digest of this week's posts.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "open": true,
+    "anyHosts": true
+  }
+}

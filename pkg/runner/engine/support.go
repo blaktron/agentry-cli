@@ -154,6 +154,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := grantKnowledge(filepath.Join(rd.cfg, "gateway"), rd.knowledge, p.Knowledge); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
 	}
+	if err := grantWeb(filepath.Join(rd.cfg, "gateway"), p.Web); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
+	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
 	// plan.json re-read from disk, which could have changed since it was
@@ -356,6 +359,11 @@ func secretValues(p Params) (map[string]string, error) {
 				values[compile.ServerSecretKey(srv.Name, name)] = v
 			}
 		}
+	}
+	// The web tools' keys (web.go), for the tools container alone; each
+	// is written even when empty.
+	for k, v := range webSecrets(p) {
+		values[k] = v
 	}
 	missing := make([]string, 0, len(missingSet))
 	for name := range missingSet {

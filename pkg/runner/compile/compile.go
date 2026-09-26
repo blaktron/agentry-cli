@@ -68,6 +68,14 @@ type Inputs struct {
 	// install step, not here: the compiler stays offline and
 	// deterministic over its inputs.
 	MCPServers []spec.MCPServerSpec
+	// Web grants the built-in Drafter's web tools (plan builder-rework.md
+	// §7.3, D6; agentry-cli#345). Only a built-in package may be granted
+	// them (Source "builtin", set by pkg/runner/localrun for the Drafter
+	// alone), and only one that declares no egress, exec, filesystem
+	// write, secret or MCP server: their container has no network
+	// allowlist of its own, so nothing else may run beside them. Anything
+	// else asking is refused by policy (exit 11).
+	Web bool
 	// IntegrityKey is the runner home's plan-integrity key (IntegrityKey).
 	// It is not part of the plan: when set, the compile also writes
 	// plan.json.hmac, so a later run can reuse the plan only as compiled
@@ -139,6 +147,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	caps, err := summarizeCapabilities(m, in.Policy)
 	if err != nil {
 		return nil, err
+	}
+	if in.Web {
+		if err := checkWebGrant(in, caps); err != nil {
+			return nil, err
+		}
+		caps.WebTools = true
 	}
 	instructionPath, instruction, err := deriveInstruction(m, in.WorkspaceDir)
 	if err != nil {
@@ -563,6 +577,28 @@ func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
 	return c.Compile(OutputSchemaFile)
 }
 
+// checkWebGrant is the web tools' gate: a built-in package that declares
+// nothing their unrestricted container could widen (plan builder-rework.md
+// §7.3: "refused at compile for any release").
+func checkWebGrant(in Inputs, caps spec.CapSummary) error {
+	if in.Source != "builtin" {
+		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-in Drafter's alone; a %s package is never granted them",
+			toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, cmpOr(in.Source, "release"))}
+	}
+	c := in.Manifest.Capabilities
+	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || len(c.MCPServers) > 0 || len(in.MCPServers) > 0 {
+		return &PolicyRefusal{Reason: "the web tools are granted only to a package that declares no egress, exec, filesystem write, secret or MCP server: their container has no network allowlist of its own"}
+	}
+	return nil
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 // toolSpec compiles the capability summary into the tools-server spec —
 // the single choke point deciding which tools exist (§R3, §R11 inv. 4).
 func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
@@ -589,6 +625,9 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 			SecretEnv: sortedCopy(secrets),
 		},
 		Exec: toolsrv.Exec{Commands: caps.ExecCommands},
+		// The run's half of Web (where it scans, searches, which registry,
+		// the ledger) is the engine's, stamped per run.
+		Web: toolsrv.Web{Enabled: caps.WebTools},
 	}
 }
 
@@ -906,11 +945,21 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 			hosts = append(hosts, h+":443")
 		}
 		e.set("allowHosts", strListNode(hosts))
-	} else if !tspec.Fetch.Enabled {
+	} else if !tspec.Fetch.Enabled && !tspec.Web.Enabled {
 		e.set("disableNetwork", boolNode(true))
 	}
-	// AllowAll: neither key — unrestricted, policy-gated, disclosed.
+	// AllowAll: neither key — unrestricted, policy-gated, disclosed. The
+	// web tools likewise: web_read reaches any public address, and holds
+	// its own address rule (toolsrv/web.go), and the scans and searches go
+	// to the registry or to the person's own vendors.
 
+	// The web tools' keys (the job's credential hosted, the person's Jev
+	// and search keys local) are the tools container's alone, as a
+	// declared secret is; checkWebGrant leaves no declared secret beside
+	// them.
+	if tspec.Web.Enabled {
+		secrets = append(append([]string(nil), secrets...), toolsrv.WebSecretEnv()...)
+	}
 	if len(secrets) > 0 {
 		var entries []*yaml.Node
 		for _, name := range sortedCopy(secrets) {
@@ -1021,6 +1070,13 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 		e["network"] = "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: " + strings.Join(caps.EgressHosts, ", ")
 	case "all":
 		e["network"] = "UNRESTRICTED tool-plane egress (manifest \"*\", permitted by operator policy allowWildcardEgress)"
+	}
+	if caps.WebTools {
+		e["network"] = "no declared egress and no fetch tool; the built-in Drafter's web tools alone reach out, from a tools container with no network allowlist of its own, each holding its own bounds (see web)"
+		e["web"] = "the built-in Drafter's web tools " + toolsrv.ToolWebSearch + " (only with a search to use), " + toolsrv.ToolWebRead + " and " + toolsrv.ToolRegistrySearch +
+			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +
+			"every page, search result and registry answer is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
+			"the keys (the job's credential, or the person's own Jev and search keys) are injected into the tools container only"
 	}
 	e["filesystem"] = "read " + fsDesc(caps.FSReadMode, caps.FSReadPaths) +
 		"; write " + fsDesc(caps.FSWriteMode, caps.FSWritePaths) +

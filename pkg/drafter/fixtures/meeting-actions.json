@@ -1,0 +1,15 @@
+{
+  "id": "meeting-actions",
+  "description": "Turn the meeting notes I give it into a list of decisions and action items, each action with an owner and a due date when the notes say one.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false
+  }
+}

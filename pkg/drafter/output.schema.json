@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A Builder draft, as the Drafter returns it",
+  "description": "The draft's shape. The manifest's own rules are checked after the run by the CLI's post-step, which writes any problem into draft.json rather than refusing the draft (plan builder-rework.md D15).",
+  "type": "object",
+  "required": ["manifest", "instructions"],
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "description": "The v2 manifest (agent.yaml) as JSON.",
+      "required": ["schemaVersion", "name", "summary", "modes"]
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60000,
+      "description": "The instruction file (AGENT.md), in the Drafter's own words."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "Markdown for the person: what was found, what was chosen and why."
+    },
+    "matches": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["ref", "why"],
+        "properties": {
+          "ref": {"type": "string", "maxLength": 200},
+          "why": {"type": "string", "maxLength": 1000}
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["url", "used"],
+        "properties": {
+          "url": {"type": "string", "maxLength": 2048},
+          "used": {"type": "string", "maxLength": 1000},
+          "withheld": {"type": "boolean"}
+        }
+      }
+    },
+    "openQuestions": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {"type": "string", "maxLength": 1000}
+    }
+  }
+}

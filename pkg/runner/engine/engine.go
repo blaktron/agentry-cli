@@ -104,6 +104,9 @@ type Params struct {
 	// Decoded, when set, is the decode step the caller ran on the inputs
 	// before this run (pkg/runner/decode); the receipt names it.
 	Decoded *decode.Result
+	// Web is the built-in Drafter's web configuration and keys (web.go):
+	// required for a plan with the web tools, refused for any other.
+	Web *WebRun
 	// Intake holds the answers to the manifest's up-front questions (plan
 	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
 	// secret answers already merged into SecretOverrides by the caller.
@@ -204,6 +207,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	}
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
+	// A plan with the web tools runs only with its scanner, before
+	// anything touches the daemon.
+	if err := checkWeb(p); err != nil {
+		return fail(env, redact, err)
+	}
 
 	// Everything below must tear down whatever it built, success or not
 	// (§R11 invariant 6): td runs in reverse order via defer, then sweeps
@@ -282,6 +290,10 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	}
 	writeMeta(rd.receiptsDir, runID, p, start)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
+	// The agent has ended, so the web ledger is complete.
+	if env.Web = webRecord(rd.receiptsDir, p.Web); env.Web != nil {
+		env.CapabilitiesEnforced["web.aiReview"] = webLine(env.Web)
+	}
 
 	if outcome.err != nil {
 		env.Result = receipt.TextResult(outcome.lastText)

@@ -88,6 +88,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return nil, cerr
 	}
 
+	// The web tools are an autonomous draft's; a session never runs them.
+	if p.Plan.Capabilities.WebTools || p.Web != nil {
+		return fail(Classify(ExitPolicy, errors.New("the web tools do not run in an interactive session")))
+	}
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
 		return fail(err)

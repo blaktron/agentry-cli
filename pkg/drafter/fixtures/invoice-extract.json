@@ -1,0 +1,15 @@
+{
+  "id": "invoice-extract",
+  "description": "Extract the invoice number, date, vendor, line items and totals from the invoices I add, which are already text, and return them as JSON.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false
+  }
+}
