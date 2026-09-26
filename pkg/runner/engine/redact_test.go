@@ -10,6 +10,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // TestRedactorErrKeepsClassAndIdentity: an error that carries a value is
@@ -115,4 +116,84 @@ func TestRedactionNoteReadsServerScopedSecrets(t *testing.T) {
 	if _, touched := in["redaction"]; touched {
 		t.Error("the input map was changed")
 	}
+}
+
+// TestRedactorMasksTheGatewaysPartialMask (agentry-cli#372): a held value's
+// first four characters followed by "****", the gateway's own listing of it,
+// is masked whole; a short value is held in neither form, and a bare "****"
+// or another value's prefix is left alone.
+func TestRedactorMasksTheGatewaysPartialMask(t *testing.T) {
+	r := newRedactor("tok-0123456789", map[string]string{"A": "sekret-value-1234", "B": "seven77"}, nil)
+	in := "    - A: sekr****\n    - T: tok-****\n    - B: seve****\n    - C: ****\n    - D: xyzw****\nfull sekret-value-1234\n"
+	want := "    - A: [redacted]\n    - T: [redacted]\n    - B: seve****\n    - C: ****\n    - D: xyzw****\nfull [redacted]\n"
+	if got := r.String(in); got != want {
+		t.Errorf("String = %q, want %q", got, want)
+	}
+}
+
+// TestGatewaySecretListingKeepsNoCharacterOfTheValue (agentry-cli#372): the
+// gateway (docker/mcp-gateway v0.43.3, verbose by default) lists each secret
+// it injects at a server's start as "    - NAME: " + the value's first four
+// characters + "****" (pkg/gateway/clientpool.go maskSecret). That prefix is
+// no whole value, so it must be masked as one: gateway.log keeps the line and
+// the name, and no character of the value — for a declared server's secret
+// and for the web tools' keys alike.
+func TestGatewaySecretListingKeepsNoCharacterOfTheValue(t *testing.T) {
+	const serverSecret = "server-sekret-5678"
+	listing := func(pairs ...string) string {
+		var b strings.Builder
+		b.WriteString("- Starting the servers\n")
+		for i := 0; i < len(pairs); i += 2 {
+			b.WriteString("    - " + pairs[i] + ": " + pairs[i+1][:4] + "****\n")
+		}
+		return b.String()
+	}
+	masked := func(names ...string) string {
+		var b strings.Builder
+		b.WriteString("- Starting the servers\n")
+		for _, n := range names {
+			b.WriteString("    - " + n + ": [redacted]\n")
+		}
+		return b.String()
+	}
+	check := func(t *testing.T, dir, want string, values ...string) {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(dir, "gateway.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != want {
+			t.Errorf("gateway.log = %q, want %q", b, want)
+		}
+		for _, v := range values {
+			if strings.Contains(string(b), v[:4]+"****") {
+				t.Errorf("gateway.log keeps %q, the first characters of a secret", v[:4])
+			}
+		}
+	}
+	t.Run("declared secrets", func(t *testing.T) {
+		p, f := serverFixture(t)
+		happyFake(f)
+		p.Plan.MCPServers[0].Secrets = []string{"SERVER_TEST_TOKEN"}
+		t.Setenv("SERVER_TEST_TOKEN", serverSecret)
+		f.LogsByName = map[string]string{"agentry-cafe0000-gateway": listing(
+			"ENGINE_TEST_TOKEN", "sekret-value-1234", "SERVER_TEST_TOKEN", serverSecret)}
+		env, err := Run(context.Background(), f, p)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		check(t, env.Receipts.Dir, masked("ENGINE_TEST_TOKEN", "SERVER_TEST_TOKEN"), "sekret-value-1234", serverSecret)
+	})
+	t.Run("the web tools' keys", func(t *testing.T) {
+		p, f := webFixture(t)
+		p.Web.JobToken = testJobToken
+		happyFake(f)
+		f.LogsByName = map[string]string{"agentry-d4af0000-gateway": listing(
+			toolsrv.EnvWebJevKey, testJevKey, toolsrv.EnvWebJobToken, testJobToken, toolsrv.EnvWebSearchKey, testSearchKey)}
+		env, err := Run(context.Background(), f, p)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		check(t, env.Receipts.Dir, masked(toolsrv.EnvWebJevKey, toolsrv.EnvWebJobToken, toolsrv.EnvWebSearchKey), testJevKey, testJobToken, testSearchKey)
+	})
 }

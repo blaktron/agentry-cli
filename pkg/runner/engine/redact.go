@@ -24,6 +24,16 @@ import (
 // result.json (agentry-cli#109).
 type redactor struct{ values []string }
 
+// gatewayMask is how docker/mcp-gateway (v0.43.3, pkg/gateway/clientpool.go
+// and pkg/mcp/remote.go maskSecret) lists a secret it injects at a server's
+// start, verbose being its default: "    - NAME: " + the value's first four
+// characters + "****". Four characters are no whole value, so the redactor
+// masks this form of every value it holds as well, and the line keeps the
+// name and none of the value (agentry-cli#372). A value shorter than
+// redactMinLen is held by neither form, and is named in the receipt instead
+// (withRedactionNote); redactMinLen >= 4 keeps the slice in range.
+func gatewayMask(v string) string { return v[:4] + "****" }
+
 // redactMinLen is the shortest value the redactor masks: a shorter one
 // (`none`, `true`, a port) is a switch, not a credential, and masking it
 // would garble every receipt that happens to contain the word.
@@ -45,6 +55,11 @@ func newRedactor(token string, secrets map[string]string, extra []string) *redac
 	}
 	// Longest first so a value that contains another is masked whole.
 	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
+	// The gateway's partial masks after every whole value, so none of them
+	// can split a value that is masked whole.
+	for _, v := range slices.Clone(vals) {
+		vals = append(vals, gatewayMask(v))
+	}
 	return &redactor{values: vals}
 }
 
