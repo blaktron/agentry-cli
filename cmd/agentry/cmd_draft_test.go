@@ -230,15 +230,35 @@ func TestDraftSearchAndHosted(t *testing.T) {
 	t.Setenv(policy.DefaultWebSearchKeyEnv, "")
 	_, _, webs := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
 	_, stderr, err := runCLI(t, nil, "draft", "Weather brief.", "--out", filepath.Join(t.TempDir(), "a"), "--policy", policyPath)
-	if err != nil || (*webs)[0].Search != "" || !strings.Contains(stderr, "no youcom key in $YDC_API_KEY") {
+	if err != nil || (*webs)[0].Search != "" || !strings.Contains(stderr, "no You.com key in $YDC_API_KEY") {
 		t.Fatalf("%v %+v\n%s", err, (*webs)[0], stderr)
 	}
 
 	t.Setenv(policy.DefaultWebSearchKeyEnv, "ydc-person-search-key")
 	_, _, webs = draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
 	_, stderr, err = runCLI(t, nil, "draft", "Weather brief.", "--out", filepath.Join(t.TempDir(), "b"), "--policy", policyPath)
-	if err != nil || (*webs)[0].Search != "youcom" || (*webs)[0].SearchKey != "ydc-person-search-key" || strings.Contains(stderr, "ydc-person-search-key") {
-		t.Fatalf("%v %+v", err, (*webs)[0])
+	if err != nil || (*webs)[0].Search != "youcom" || (*webs)[0].SearchKey != "ydc-person-search-key" || strings.Contains(stderr, "ydc-person-search-key") ||
+		!strings.Contains(stderr, "Its searches go to You.com with your key.") {
+		t.Fatalf("%v %+v\n%s", err, (*webs)[0], stderr)
+	}
+
+	// Brave (agentry-cli#369): its own variable, never You.com's.
+	pol.WebSearch = policy.WebSearchKey{Provider: "brave"}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(policy.BraveSearchKeyEnv, "")
+	_, _, webs = draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+	_, stderr, err = runCLI(t, nil, "draft", "Weather brief.", "--out", filepath.Join(t.TempDir(), "c"), "--policy", policyPath)
+	if err != nil || (*webs)[0].Search != "" || !strings.Contains(stderr, "no Brave key in $BRAVE_API_KEY") {
+		t.Fatalf("%v %+v\n%s", err, (*webs)[0], stderr)
+	}
+	t.Setenv(policy.BraveSearchKeyEnv, "brave-person-search-key")
+	_, _, webs = draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+	_, stderr, err = runCLI(t, nil, "draft", "Weather brief.", "--out", filepath.Join(t.TempDir(), "d"), "--policy", policyPath)
+	if err != nil || (*webs)[0].Search != "brave" || (*webs)[0].SearchKey != "brave-person-search-key" || strings.Contains(stderr, "brave-person-search-key") ||
+		!strings.Contains(stderr, "Its searches go to Brave with your key.") {
+		t.Fatalf("%v %+v\n%s", err, (*webs)[0], stderr)
 	}
 
 	// Hosted: the job's credential, the registry's scan and search, and no
