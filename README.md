@@ -290,9 +290,10 @@ The result, in `DIR` (default `./agentry-out/agentry-drafter-<runid>`):
 
 A draft that fails the rules is kept with its problems for you to fix. Review
 every part before you publish it. `--timeout`, `--max-turns` and `--max-cost`
-bound the run. `agentry draft --hosted` is how a sandbox host runs a draft
-made in Agentry: the scans and the search then go through the registry, with
-the job's credential in `$AGENTRY_JOB_TOKEN`.
+bound the run. `agentry draft --hosted` is the form a sandbox host will run
+for a draft made in Agentry: the scans and the search go through the
+registry, with the job's credential in `$AGENTRY_JOB_TOKEN`. No sandbox host
+runs it yet; the hosted draft kind is Builder M5 (blaktron/agentry-enterprise#183).
 
 ### Signing keys and `verify`
 
