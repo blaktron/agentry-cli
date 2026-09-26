@@ -273,7 +273,7 @@ func TestKnowledgeCreateAndAddKeepThePackSealed(t *testing.T) {
 	var builtIn, outs []string
 	prev := knowledgeBuilder
 	t.Cleanup(func() { knowledgeBuilder = prev })
-	knowledgeBuilder = func(_ *cobra.Command, dir, name string, o knowledgeBuildOpts) (*build.Result, string, error) {
+	knowledgeBuilder = func(_ *cobra.Command, dir, name string, o *knowledgeBuildOpts) (*build.Result, string, error) {
 		builtIn = append(builtIn, dir)
 		outs = append(outs, o.out)
 		files := map[string]string{

@@ -193,7 +193,15 @@ A local build costs no credits, and nothing it reads or writes is scanned:
 the command says so before it starts, and the pack records `not scanned`.
 `--timeout`, `--max-turns` and `--max-cost` bound the run. A run stopped by
 one keeps the pages it wrote, and an `add` with the same documents
-continues. With `--json` the result is one document on stdout. Attach a
+continues. With `--json` the result is one document on stdout. With
+`--output-format json`, as `run` takes it, stdout is instead the Creator
+run's result envelope (its usage split into input and output tokens, the
+attestation `builtin`, `capabilities_enforced`) with that document under
+`knowledge`, and the harness's usage is narrated live on stderr
+(`usage: input=… output=… total=… turns=…`); a build that fails before the
+Creator runs still writes one envelope, with its class and stage. It is the
+form a sandbox host drives for a build made in Agentry, which settles on
+the envelope and stops a build at its hold from the narration. Attach a
 pack to a run with `agentry run <ref> --knowledge NAME` (or `DIR`).
 
 ### Keeping packs: the local store, and Agentry
