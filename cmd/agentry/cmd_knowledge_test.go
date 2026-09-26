@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -192,6 +194,37 @@ func TestKnowledgeBuildOutputFormatJSON(t *testing.T) {
 		wantClassified(t, err, engine.ExitUsage)
 		if d.Status != "error" || d.ExitClass != "usage" || d.Stage != receipt.StagePrepare || d.Ref != localrun.KnowledgeCreator().Ref() || d.Knowledge != nil {
 			t.Fatalf("envelope = %+v", d)
+		}
+	})
+	t.Run("a build interrupted says so, over what the run reported, and still reports what it applied", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		b := builder(creatorEnv("ok", 0), nil, nil)
+		interrupting := func(cmd *cobra.Command, dir, name string, o *knowledgeBuildOpts) (*build.Result, string, error) {
+			res, out, err := b(cmd, dir, name, o)
+			cancel() // the driver's SIGINT arrived while the build ran
+			return res, out, err
+		}
+		prev := knowledgeBuilder
+		t.Cleanup(func() { knowledgeBuilder = prev })
+		knowledgeBuilder = interrupting
+		root := newRootCmd()
+		var out, errOut bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&errOut)
+		root.SetArgs([]string{"knowledge", "create", "notes", "--dir", filepath.Join(t.TempDir(), "notes"), "--file", doc, "--policy", policyPath, "--output-format", "json"})
+		_ = root.ExecuteContext(ctx)
+		raw, ok := runexecLastJSONObject(out.String())
+		if !ok {
+			t.Fatalf("no envelope:\n%s", out.String())
+		}
+		var d struct {
+			Status    string          `json:"status"`
+			Error     string          `json:"error"`
+			Knowledge json.RawMessage `json:"knowledge"`
+		}
+		_ = json.Unmarshal(raw, &d)
+		if d.Status != "error" || d.Error != "interrupted" || len(d.Knowledge) == 0 {
+			t.Fatalf("envelope = %s", raw)
 		}
 	})
 	t.Run("an unknown output format is refused", func(t *testing.T) {

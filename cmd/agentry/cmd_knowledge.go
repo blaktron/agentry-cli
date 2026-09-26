@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -145,10 +146,14 @@ func printKnowledgeFailure(cmd *cobra.Command, stage string, err error) {
 // A build that failed after the run (no page written, the pack past its
 // cap) says so in the envelope's status, class and stage, over the run's
 // own; one the run stopped short keeps the run's word (a budget, a
-// timeout), since what it wrote was applied.
-func printKnowledgeEnvelope(out io.Writer, res *build.Result, report knowledgeBuildReport, buildErr error) {
+// timeout), since what it wrote was applied; one interrupted (a driver's
+// SIGINT, which is how a sandbox host stops a build at its hold) says
+// "interrupted", as run's failure envelope does, whatever it applied.
+func printKnowledgeEnvelope(ctx context.Context, out io.Writer, res *build.Result, report knowledgeBuildReport, buildErr error) {
 	env := *res.Envelope
-	if buildErr != nil {
+	if ctx.Err() != nil {
+		env.Status, env.Error = "error", "interrupted"
+	} else if buildErr != nil {
 		env.Status, env.ExitCode, env.Error, env.Stage = "error", engine.ExitCLI, buildErr.Error(), receipt.StageOutput
 		var ce *engine.ClassifiedError
 		if errors.As(buildErr, &ce) {
@@ -306,7 +311,7 @@ func finishDirBuild(cmd *cobra.Command, dir, outDir string, res *build.Result, e
 	if err != nil {
 		return failedAfterRun(cmd, dir, outDir, res, err, format)
 	}
-	printKnowledgeBuild(cmd.OutOrStdout(), cmd.ErrOrStderr(), dir, outDir, res, nil, format)
+	printKnowledgeBuild(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), dir, outDir, res, nil, format)
 	return printedOr(stoppedShort(cmd, dir, res), format)
 }
 
@@ -317,7 +322,7 @@ func failedAfterRun(cmd *cobra.Command, dir, outDir string, res *build.Result, e
 	if format != "json" || res == nil || res.Envelope == nil {
 		return err
 	}
-	printKnowledgeEnvelope(cmd.OutOrStdout(), res, buildReport(dir, outDir, res, nil), err)
+	printKnowledgeEnvelope(cmd.Context(), cmd.OutOrStdout(), res, buildReport(dir, outDir, res, nil), err)
 	return &envelopePrinted{err: err}
 }
 
@@ -383,7 +388,7 @@ func createKept(cmd *cobra.Command, name string, o *knowledgeBuildOpts) error {
 	if private {
 		outDir = ""
 	}
-	printKnowledgeBuild(cmd.OutOrStdout(), cmd.ErrOrStderr(), "", outDir, res, &e, o.outputFormat)
+	printKnowledgeBuild(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), "", outDir, res, &e, o.outputFormat)
 	return printedOr(stoppedShort(cmd, name, res), o.outputFormat)
 }
 
@@ -424,7 +429,7 @@ func addKept(cmd *cobra.Command, name string, o *knowledgeBuildOpts) error {
 	if private {
 		outDir = ""
 	}
-	printKnowledgeBuild(cmd.OutOrStdout(), cmd.ErrOrStderr(), "", outDir, res, &e, o.outputFormat)
+	printKnowledgeBuild(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), "", outDir, res, &e, o.outputFormat)
 	if e.Key.Agentry != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Agentry still keeps the copy from before; send this one with `agentry knowledge upload %s`\n", name)
 	}
@@ -495,13 +500,13 @@ func buildReport(dir, outDir string, res *build.Result, kept *store.Entry) knowl
 // printKnowledgeBuild says what a build made, in dir or kept in the store:
 // text, one --json document, or, in the json output format, the Creator
 // run's envelope with that document under knowledge.
-func printKnowledgeBuild(out, errOut io.Writer, dir, outDir string, res *build.Result, kept *store.Entry, format string) {
+func printKnowledgeBuild(ctx context.Context, out, errOut io.Writer, dir, outDir string, res *build.Result, kept *store.Entry, format string) {
 	m := res.Applied.Manifest
 	if kept != nil {
 		m = kept.Manifest
 	}
 	if format == "json" && res.Envelope != nil {
-		printKnowledgeEnvelope(out, res, buildReport(dir, outDir, res, kept), nil)
+		printKnowledgeEnvelope(ctx, out, res, buildReport(dir, outDir, res, kept), nil)
 		return
 	}
 	if flags.jsonOut {
