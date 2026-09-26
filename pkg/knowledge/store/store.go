@@ -752,29 +752,18 @@ func (s *Store) checkDownload(name string, r Remote, h packseal.Header, sealed, 
 	if err != nil {
 		return knowledge.Manifest{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
 	}
-	d, err := knowledge.ExtractTree(plain, scratch, h.Digest)
-	if err != nil {
-		return knowledge.Manifest{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
-	}
-	pages, err := knowledge.Pages(scratch)
-	if err != nil {
-		return knowledge.Manifest{}, err
-	}
 	m := knowledge.Manifest{
-		Schema: knowledge.Schema, Name: r.Name, ID: h.Pack,
+		Name: r.Name, ID: h.Pack,
 		Created: r.Created.UTC().Truncate(time.Second), Updated: r.Updated.UTC().Truncate(time.Second),
-		Pages: pages, Bytes: d.Bytes, SHA256: d.SHA256,
 	}
 	if len(r.Scan) > 0 {
 		m.Scan = knowledge.Scan{Scanned: true, Report: r.Scan}
 	}
-	if err := writeJSON(filepath.Join(scratch, knowledge.ManifestFile), m); err != nil {
-		return knowledge.Manifest{}, err
-	}
-	if _, err := knowledge.Load(scratch); err != nil {
+	p, err := knowledge.Unpack(plain, h.Digest, scratch, m)
+	if err != nil {
 		return knowledge.Manifest{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
 	}
-	return m, nil
+	return p.Manifest, nil
 }
 
 // downloadTarget is the entry a download replaces ("" for none): only the
