@@ -261,3 +261,50 @@ func TestDraftSearchAndHosted(t *testing.T) {
 		t.Fatal("both a description and a file")
 	}
 }
+
+// TestTheLongTextsComeFromTheReports: a last message with the manifest and
+// the lists takes its instructions and notes from the reports the Drafter
+// wrote; with no instructions at all the draft is kept, unrendered, and
+// says why.
+func TestTheLongTextsComeFromTheReports(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	var raw map[string]any
+	_ = json.Unmarshal([]byte(goodDraft), &raw)
+	delete(raw, "instructions")
+	delete(raw, "notes")
+	short, _ := json.Marshal(raw)
+	for _, withReports := range []bool{true, false} {
+		draftSeams(t, webscan.Result{Verdict: webscan.Pass}, string(short), "")
+		prev := draftRun
+		draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+			if withReports {
+				_ = os.MkdirAll(filepath.Join(r.OutDir, "reports"), 0o755)
+				_ = os.WriteFile(filepath.Join(r.OutDir, "reports", "AGENT.md"), []byte("# Meeting actions\n\nRead the notes.\n"), 0o644)
+				_ = os.WriteFile(filepath.Join(r.OutDir, "reports", "notes.md"), []byte("Pure text.\n"), 0o644)
+			}
+			return prev(cmd, r)
+		}
+		out := filepath.Join(t.TempDir(), "o")
+		if _, _, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
+			t.Fatal(err)
+		}
+		var d drafter.Draft
+		b, _ := os.ReadFile(filepath.Join(out, "draft.json"))
+		_ = json.Unmarshal(b, &d)
+		if withReports {
+			var v validateOutput
+			_ = json.Unmarshal(d.Validation, &v)
+			if d.Instructions != "# Meeting actions\n\nRead the notes.\n" || d.Notes != "Pure text.\n" || !v.Passed {
+				t.Fatalf("%+v", d)
+			}
+			inst, _ := os.ReadFile(filepath.Join(out, "package", "AGENT.md"))
+			if string(inst) != d.Instructions {
+				t.Fatalf("package AGENT.md %q", inst)
+			}
+		} else if !strings.Contains(d.ManifestError, "no instructions") || d.Validation != nil {
+			t.Fatalf("%+v", d)
+		}
+	}
+}

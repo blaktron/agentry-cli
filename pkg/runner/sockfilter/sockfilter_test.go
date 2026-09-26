@@ -76,6 +76,10 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return "A", true // the runner's, for run A
 		case strings.HasPrefix(id, "agentry-B-relays"):
 			return "B", true
+		case id == "agentry-A-web":
+			return "A", true // the runner's web network, for run A
+		case id == "agentry-B-web":
+			return "B", true
 		}
 		return "", false
 	}
@@ -915,5 +919,57 @@ func TestEventsAreScopedToTheRun(t *testing.T) {
 	}
 	if strings.Join(filters["label"], ",") != own+"=A" || strings.Join(filters["type"], ",") != "container" {
 		t.Errorf("filters = %v", filters)
+	}
+}
+
+// The built-in Drafter's web tools (agentry-cli#345): their server asks for
+// the daemon's default network, which the filter gives no container; it
+// joins the run's own web network instead, and nothing else does.
+func TestTheWebNetworkTakesOnlyTheWebToolsServer(t *testing.T) {
+	web := func(c *Config) { c.WebNetwork, c.WebImage = "agentry-A-web", "agentry-runner:test" }
+	g := newRig(t, Limits{}, web)
+	for _, doc := range []map[string]any{
+		{"Image": "agentry-runner:test", "HostConfig": map[string]any{"NetworkMode": "default"},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}}}},
+		{"Image": "agentry-runner:test", "HostConfig": map[string]any{}},
+	} {
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("the web tools' server: %d %s", code, body)
+		}
+		sent := g.body("POST /containers/create")
+		hc, _ := sent["HostConfig"].(map[string]any)
+		if hc["NetworkMode"] != "id-agentry-A-web" {
+			t.Fatalf("forwarded on %v, want the run's web network", hc["NetworkMode"])
+		}
+		if nc, ok := sent["NetworkingConfig"].(map[string]any); ok {
+			eps, _ := nc["EndpointsConfig"].(map[string]any)
+			if len(eps) != 1 || eps["id-agentry-A-web"] == nil {
+				t.Fatalf("endpoints %v", eps)
+			}
+		}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", map[string]any{"Image": "mcp/osv",
+		"HostConfig":       map[string]any{"NetworkMode": "default"},
+		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}}}}); code == http.StatusCreated {
+		t.Fatalf("another image on the default network: %d %s", code, body)
+	}
+	g.refused(t, "another image on the web network", "POST", "/containers/create", map[string]any{"Image": "mcp/osv",
+		"HostConfig": map[string]any{"NetworkMode": "agentry-A-web"}}, "web tools' server only")
+	g.refused(t, "another image on the web network, by endpoint", "POST", "/containers/create", map[string]any{"Image": "mcp/osv",
+		"HostConfig":       map[string]any{"NetworkMode": "none"},
+		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"agentry-A-web": map[string]any{}}}}, "web tools' server only")
+	g.refused(t, "the web tools' server on the bridge", "POST", "/containers/create", map[string]any{"Image": "agentry-runner:test",
+		"HostConfig": map[string]any{"NetworkMode": "bridge"}}, "default bridge")
+	g.refused(t, "another run's web network", "POST", "/containers/create", map[string]any{"Image": "agentry-runner:test",
+		"HostConfig": map[string]any{"NetworkMode": "agentry-B-web"}}, "not this run's")
+	g.refused(t, "connecting another container to the web network", "POST", "/networks/agentry-A-web/connect", map[string]any{"Container": "runa-1"}, "web tools' server only")
+	g.refused(t, "removing the run's web network", "DELETE", "/networks/agentry-A-web", nil, "not the gateway's to remove")
+
+	// A run without the web tools gives the image no network either.
+	plain := newRig(t, Limits{})
+	if code, body := plain.do(t, "POST", "/containers/create", map[string]any{"Image": "agentry-runner:test",
+		"HostConfig":       map[string]any{"NetworkMode": "default"},
+		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}}}}); code == http.StatusCreated {
+		t.Fatalf("the runner image without the web tools: %d %s", code, body)
 	}
 }

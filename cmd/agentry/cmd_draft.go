@@ -295,12 +295,13 @@ func finishDraft(env *receipt.Envelope, outDir string, desc webscan.Result) (*dr
 	d.Drafter = &drafter.Made{Ref: localrun.Drafter().Ref(), Build: version.Build(), Model: env.Harness.Model, RunID: env.RunID}
 	d.AIReview = aiReviewOf(env.Web, desc, filepath.Join(outDir, "receipts", engine.WebLedgerFile))
 	pkg := filepath.Join(outDir, "package")
-	if _, err := drafter.Render(d, pkg); err != nil {
+	switch err := drafter.FromReports(d, filepath.Join(outDir, "reports")); {
+	case err != nil:
 		d.ManifestError = err.Error()
-	} else if report, verr := validateWorkspace(io.Discard, io.Discard, pkg, false); verr != nil {
-		d.ManifestError = verr.Error()
-	} else if b, merr := json.Marshal(report); merr == nil {
-		d.Validation = b
+	case strings.TrimSpace(d.Instructions) == "":
+		d.ManifestError = "the Drafter wrote no instructions (AGENT.md), so the package was not rendered"
+	default:
+		d.ManifestError, d.Validation = renderAndValidate(d, pkg)
 	}
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
@@ -310,6 +311,25 @@ func finishDraft(env *receipt.Envelope, outDir string, desc webscan.Result) (*dr
 		return nil, engine.Classify(engine.ExitCLI, err)
 	}
 	return d, nil
+}
+
+// renderAndValidate renders the draft into pkg and checks it with
+// validate's own code: the report, or why there is none.
+func renderAndValidate(d *drafter.Draft, pkg string) (string, json.RawMessage) {
+	if _, err := drafter.Render(d, pkg); err != nil {
+		// A manifest that does not parse is rendered all the same, for the
+		// person to fix; validate would stop at the same error.
+		return err.Error(), nil
+	}
+	report, err := validateWorkspace(io.Discard, io.Discard, pkg, false)
+	if err != nil {
+		return err.Error(), nil
+	}
+	b, err := json.Marshal(report)
+	if err != nil {
+		return err.Error(), nil
+	}
+	return "", b
 }
 
 // aiReviewOf is the draft's AI Review record: the receipt's counts, and each
@@ -350,6 +370,8 @@ func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 		} `json:"counts"`
 	}
 	switch {
+	case d.ManifestError != "" && isDir(filepath.Join(outDir, "package")):
+		_, _ = fmt.Fprintf(w, "  package:   %s holds the draft, which does not pass yet: %s\n", filepath.Join(outDir, "package"), d.ManifestError)
 	case d.ManifestError != "":
 		_, _ = fmt.Fprintf(w, "  package:   not rendered: %s\n", d.ManifestError)
 	case json.Unmarshal(d.Validation, &v) == nil && v.Passed:

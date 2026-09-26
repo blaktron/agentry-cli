@@ -164,6 +164,9 @@ func (f *Filter) shared(name string) bool {
 			return true
 		}
 	}
+	if f.cfg.WebNetwork != "" && name == f.cfg.WebNetwork {
+		return true
+	}
 	_, egress := f.cfg.EgressNetworks[name]
 	return egress
 }
@@ -171,6 +174,12 @@ func (f *Filter) shared(name string) bool {
 // egressAllowed says whether a container of this image may join a
 // network: an egress network takes only its pinned relays.
 func (f *Filter) egressAllowed(ctx context.Context, network, imageID string) error {
+	if f.cfg.WebNetwork != "" && network == f.cfg.WebNetwork {
+		if web, err := f.webImage(ctx); err != nil || imageID == "" || imageID != web {
+			return deny("network %s reaches past the host and takes the web tools' server only, not image %s", network, short(strings.TrimPrefix(imageID, "sha256:")))
+		}
+		return nil
+	}
 	pins, ok := f.cfg.EgressNetworks[network]
 	if !ok {
 		return nil
@@ -183,6 +192,24 @@ func (f *Filter) egressAllowed(ctx context.Context, network, imageID string) err
 		return deny("network %s reaches past the host and takes the pinned relays only, not image %s", network, short(strings.TrimPrefix(imageID, "sha256:")))
 	}
 	return nil
+}
+
+// webImage is the web tools' server's image id (Config.WebImage),
+// resolved the first time it is needed and kept once it resolved: the check
+// compares the image a container is made from with the id, never with a
+// name a build or a pull could re-point after it.
+func (f *Filter) webImage(ctx context.Context) (string, error) {
+	f.webMu.Lock()
+	defer f.webMu.Unlock()
+	if f.webImageID != "" {
+		return f.webImageID, nil
+	}
+	id, err := f.resolveImage(ctx, f.cfg.WebImage)
+	if err != nil {
+		return "", err
+	}
+	f.webImageID = id
+	return id, nil
 }
 
 // relayPin is the pinned relay digest an image, by id, is, or "" when it

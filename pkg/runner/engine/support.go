@@ -43,6 +43,10 @@ type runDirs struct {
 	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
 	outDir      string
 	receiptsDir string
+	// webLedger is receipts/web.ndjson for a run with the web tools: made
+	// here and labelled for the tools container, the one file of the
+	// receipts it may write (web.go).
+	webLedger string
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
@@ -125,6 +129,12 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			_ = os.RemoveAll(root)
 		}
 	})
+	if p.Web != nil {
+		rd.webLedger = filepath.Join(rd.receiptsDir, WebLedgerFile)
+		if err := os.WriteFile(rd.webLedger, nil, 0o644); err != nil { //nolint:gosec // appended by the tools container
+			return nil, Classify(ExitCLI, fmt.Errorf("create the web ledger: %w", err))
+		}
+	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
 	}
@@ -535,6 +545,9 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 		{rd.serversDir, true},
 		{rd.outDir, false},
 		{filepath.Join(rd.outDir, "reports"), true},
+		// The web ledger alone of the receipts: the tools server appends
+		// to it, and nothing else of receipts/ is the tools container's.
+		{rd.webLedger, false},
 	}
 }
 

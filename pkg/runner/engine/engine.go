@@ -488,6 +488,15 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			return err
 		}
 	}
+	// The web tools' server has a network of the run's own, where the
+	// filter runs; elsewhere the gateway gives it the daemon's default and
+	// the receipt's daemon line says the filter did not run. The tools
+	// hold their own address rule either way (toolsrv/web.go).
+	if filterSupported && p.Plan.Capabilities.WebTools {
+		if err := makeWebNetwork(ctx, d, runID, td); err != nil {
+			return err
+		}
+	}
 	// The gateway's daemon socket is this run's filter, not the daemon's
 	// (dockerfilter.go, agentry-cli#219). Queued before the gateway's
 	// teardown, so it closes after the gateway has stopped and reaped the

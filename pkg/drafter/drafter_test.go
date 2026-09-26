@@ -96,6 +96,9 @@ func TestTheInstructionCarriesTheRules(t *testing.T) {
 		"`namespace`: `\"draft\"`",
 		"Never call\nanything \"safe\" or \"secure\".",
 		"`openQuestions`",
+		"`write_report` with `path` `AGENT.md`",
+		"`write_report` with `path` `notes.md`",
+		"Your last message starts with `{\"manifest\": {`",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the instruction does not say %q", want)
@@ -154,8 +157,11 @@ func TestTheOutputSchemaHoldsTheShape(t *testing.T) {
 	if err := check(sampleDraft); err != nil {
 		t.Fatalf("a draft: %v", err)
 	}
-	for _, bad := range []string{`{"instructions":"x"}`, `{"manifest":{"schemaVersion":"2","name":"x","summary":"s","modes":["autonomous"]}}`,
-		`{"manifest":"agent.yaml","instructions":"x"}`, `[]`} {
+	if err := check(`{"manifest":{"schemaVersion":"2","name":"x","summary":"s","modes":["autonomous"]},"matches":[],"sources":[],"openQuestions":[]}`); err != nil {
+		t.Fatalf("the manifest and the lists, the long texts as reports: %v", err)
+	}
+	for _, bad := range []string{`{"instructions":"x"}`, `{"manifest":"agent.yaml","instructions":"x"}`, `[]`,
+		`[{"url":"https://x.example","used":"y"}]`, `{"manifest":{"name":"x"}}`} {
 		if check(bad) == nil {
 			t.Errorf("accepted %s", bad)
 		}
@@ -231,6 +237,22 @@ func TestParseAndRender(t *testing.T) {
 		}
 		if _, err := os.Stat(out); !os.IsNotExist(err) {
 			t.Fatalf("%q: the package was rendered", hostile)
+		}
+	}
+	// A manifest pkg/manifest cannot parse is rendered for the person to
+	// fix, and the parse error comes back with it.
+	var raw map[string]any
+	_ = json.Unmarshal([]byte(sampleDraft), &raw)
+	raw["manifest"].(map[string]any)["guide"] = map[string]any{"connect": "No keys needed."}
+	b, _ := json.Marshal(raw)
+	bd, _ := Parse(b)
+	bdir := filepath.Join(t.TempDir(), "p")
+	if _, err := Render(bd, bdir); err == nil || !strings.Contains(err.Error(), "does not parse") {
+		t.Fatalf("want the parse error, got %v", err)
+	}
+	for _, f := range []string{"agent.yaml", "AGENT.md", "README.md", "LICENSE"} {
+		if _, err := os.Stat(filepath.Join(bdir, f)); err != nil {
+			t.Fatalf("an unparseable draft's package lacks %s", f)
 		}
 	}
 	for _, bad := range []string{`{"manifest": "x", "instructions": "y"}`, `{"instructions": "y"}`, `nope`} {
@@ -323,5 +345,45 @@ func TestTheFixtureSet(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("shape check missed %q: %s", want, got)
 		}
+	}
+}
+
+// TestFromReports: the long texts come back from the reports, a field the
+// message carried is kept, and a report that is too large, not text, or
+// not a regular file is not read.
+func TestFromReports(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(InstructionsReport, "# Do it\n")
+	write(NotesReport, "Chose nothing.\n")
+	d := &Draft{Notes: "from the message"}
+	if err := FromReports(d, dir); err != nil {
+		t.Fatal(err)
+	}
+	if d.Instructions != "# Do it\n" || d.Notes != "from the message" {
+		t.Fatalf("%+v", d)
+	}
+	write(InstructionsReport, strings.Repeat("x", maxInstructions+1))
+	if err := FromReports(&Draft{}, dir); err == nil {
+		t.Fatal("an instruction report over the bound was read")
+	}
+	write(InstructionsReport, "\xff\xfe")
+	if err := FromReports(&Draft{}, dir); err == nil {
+		t.Fatal("a report that is not text was read")
+	}
+	_ = os.Remove(filepath.Join(dir, InstructionsReport))
+	if err := os.Symlink("/etc/passwd", filepath.Join(dir, InstructionsReport)); err != nil {
+		t.Fatal(err)
+	}
+	if err := FromReports(&Draft{}, dir); err == nil {
+		t.Fatal("a symlinked report was read")
+	}
+	empty := &Draft{}
+	if err := FromReports(empty, t.TempDir()); err != nil || empty.Instructions != "" {
+		t.Fatalf("no reports: %v %+v", err, empty)
 	}
 }

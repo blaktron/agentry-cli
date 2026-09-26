@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -117,6 +119,50 @@ func Parse(result json.RawMessage) (*Draft, error) {
 	return &d, nil
 }
 
+// The reports the Drafter writes its two long texts as, and the most read
+// of each (the output schema's bounds on the same fields).
+const (
+	InstructionsReport = "AGENT.md"
+	NotesReport        = "notes.md"
+	maxInstructions    = 60000
+	maxNotes           = 20000
+)
+
+// FromReports fills the instructions and the notes from the reports the
+// Drafter wrote (plan §7.5): its last message carries the manifest and the
+// lists, and each long text comes as a report of its own, which a model
+// writes more reliably than one large JSON answer. A field the message
+// carried is kept. A report that is not a regular file, or is over its
+// bound, is not read, and the error says so.
+func FromReports(d *Draft, reportsDir string) error {
+	var errs []error
+	for _, r := range []struct {
+		name  string
+		max   int
+		field *string
+	}{{InstructionsReport, maxInstructions, &d.Instructions}, {NotesReport, maxNotes, &d.Notes}} {
+		if strings.TrimSpace(*r.field) != "" {
+			continue
+		}
+		p := filepath.Join(reportsDir, r.name)
+		fi, err := os.Lstat(p)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || !fi.Mode().IsRegular() || fi.Size() > int64(r.max) {
+			errs = append(errs, fmt.Errorf("the report %s is not a text of at most %d bytes", r.name, r.max))
+			continue
+		}
+		b, err := os.ReadFile(p) //nolint:gosec // the run's own reports
+		if err != nil || !utf8.Valid(b) {
+			errs = append(errs, fmt.Errorf("the report %s is not text", r.name))
+			continue
+		}
+		*r.field = string(b)
+	}
+	return errors.Join(errs...)
+}
+
 // instructionRE is an instruction file the rendered package may hold: one
 // file name at the package's root.
 var instructionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.md$`)
@@ -127,20 +173,28 @@ var instructionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.md$`)
 // as `agentry init` does, a README.md from the manifest's own summary and
 // overview and a LICENSE placeholder naming its SPDX id, since public
 // publication needs both (V7) and the person writes the real ones.
-// The manifest is parsed with pkg/manifest first; one that does not parse
-// is not rendered, and the error says why. An instruction path that is not
-// one Markdown file name at the root is refused rather than written: a
-// draft is agent-written, and its paths are data.
+//
+// A manifest pkg/manifest cannot parse is still rendered, so the person
+// fixes it in the package, and the parse error is returned with it. An
+// instruction path that is not one Markdown file name at the root is
+// refused, and nothing is written: a draft is agent-written, and its paths
+// are data.
 func Render(d *Draft, dir string) (*manifest.Manifest, error) {
 	yml, err := ManifestYAML(d.Manifest)
 	if err != nil {
 		return nil, err
 	}
-	m, err := manifest.Parse(yml)
-	if err != nil {
-		return nil, fmt.Errorf("the draft's manifest does not parse: %w", err)
+	var loose map[string]any
+	_ = json.Unmarshal(d.Manifest, &loose)
+	m, perr := manifest.Parse(yml)
+	if perr != nil {
+		perr = fmt.Errorf("the draft's manifest does not parse: %w", perr)
+		m = nil
 	}
-	inst := m.Entrypoints.Instruction
+	inst := looseString(loose, "entrypoints", "instruction")
+	if m != nil {
+		inst = m.Entrypoints.Instruction
+	}
 	if inst == "" {
 		inst = manifest.DefaultInstructionFile
 	}
@@ -150,30 +204,41 @@ func Render(d *Draft, dir string) (*manifest.Manifest, error) {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return m, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), yml, 0o644); err != nil { //nolint:gosec // the person's own output folder
-		return m, err
-	}
-	if err := os.WriteFile(filepath.Join(dir, inst), []byte(d.Instructions), 0o644); err != nil { //nolint:gosec // ditto
-		return m, err
-	}
-	for name, body := range map[string]string{"README.md": readme(m), "LICENSE": licenseNote(m.License)} {
-		if name == inst {
-			continue
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil { //nolint:gosec // ditto
+	files := map[string][]byte{"agent.yaml": yml}
+	files["README.md"] = []byte(readme(looseString(loose, "name"), looseString(loose, "summary"), looseString(loose, "guide", "overview")))
+	files["LICENSE"] = []byte(licenseNote(looseString(loose, "license")))
+	files[inst] = []byte(d.Instructions)
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil { //nolint:gosec // the person's own output folder
 			return m, err
 		}
 	}
-	return m, nil
+	return m, perr
+}
+
+// looseString reads a string at a path of the manifest as it came, or "":
+// what renders the README and the LICENSE note of a manifest whose other
+// fields may not parse.
+func looseString(v map[string]any, path ...string) string {
+	var cur any = v
+	for _, k := range path {
+		obj, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur = obj[k]
+	}
+	s, _ := cur.(string)
+	return s
 }
 
 // readme is the rendered package's README: what the draft says of itself,
 // marked as a draft.
-func readme(m *manifest.Manifest) string {
+func readme(name, summary, overview string) string {
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "# %s\n\n%s\n", m.Name, m.Summary)
-	if m.Guide != nil && m.Guide.Overview != "" {
-		fmt.Fprintf(&b, "\n%s\n", m.Guide.Overview)
+	fmt.Fprintf(&b, "# %s\n\n%s\n", name, summary)
+	if overview != "" {
+		fmt.Fprintf(&b, "\n%s\n", overview)
 	}
 	b.WriteString("\nDrafted by the Drafter (`agentry draft`). Review the manifest, the instructions and this file before you publish;\n" +
 		"this README renders on the BriefAgent's page.\n")

@@ -113,6 +113,12 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		egress = map[string][]string{out: relayImages}
 		names = map[string]string{relayNetwork: internal, relayEgressNetwork: out}
 	}
+	// The web tools' server runs in the runner image (the compiler grants
+	// the tools to no package with exec, so no exec image).
+	var webNet, webImage string
+	if plan.Capabilities.WebTools {
+		webNet, webImage = webNetwork(runID), plan.Proxy.Image
+	}
 	f, err := sockfilter.Start(sockfilter.Config{
 		RunID:          runID,
 		Label:          runLabel,
@@ -125,6 +131,8 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		EgressNetworks: egress,
 		NetworkNames:   names,
 		RelayHosts:     relayHosts(plan),
+		WebNetwork:     webNet,
+		WebImage:       webImage,
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
@@ -226,6 +234,22 @@ func makeRelayNetworks(ctx context.Context, d dockerx.Client, runID string, td *
 		td.add(func(c context.Context) { _ = d.NetworkRemove(c, name) })
 		td.networks = append(td.networks, name)
 	}
+	return nil
+}
+
+// webNetwork is the run's own network with a way out of the host for the
+// web tools' server (sockfilter.Config.WebNetwork, agentry-cli#345).
+func webNetwork(runID string) string { return "agentry-" + runID + "-web" }
+
+// makeWebNetwork makes the run's web network and queues its removal, which
+// runs after the gateway and the tools server are gone.
+func makeWebNetwork(ctx context.Context, d dockerx.Client, runID string, td *teardown) error {
+	name := webNetwork(runID)
+	if err := d.NetworkCreate(ctx, name, false, runLabels(runID)); err != nil {
+		return Classify(ExitGateway, fmt.Errorf("create the run's web network %s: %w", name, err))
+	}
+	td.add(func(c context.Context) { _ = d.NetworkRemove(c, name) })
+	td.networks = append(td.networks, name)
 	return nil
 }
 

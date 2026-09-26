@@ -634,7 +634,21 @@ func namespaceMode(field, mode string) error {
 // the rules to its name: the run's or a shared one, and an egress network
 // only for a pinned relay.
 func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) error {
-	mode := f.runNetwork(c.HostConfig.NetworkMode)
+	// The web tools' server asks for the daemon's default network; it gets
+	// the run's web network (Config.WebNetwork), and nothing else does.
+	web := false
+	if f.cfg.WebNetwork != "" && c.Image != "" {
+		id, err := f.webImage(ctx)
+		web = err == nil && c.Image == id
+	}
+	netName := func(name string) string {
+		name = f.runNetwork(name)
+		if web && (name == "" || name == "default") {
+			return f.cfg.WebNetwork
+		}
+		return name
+	}
+	mode := netName(c.HostConfig.NetworkMode)
 	switch {
 	case mode == "" || mode == "none" || mode == "default":
 	case mode == "host":
@@ -660,7 +674,7 @@ func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) erro
 	}
 	byID := map[string]*endpointSettings{}
 	for key, ep := range c.NetworkingConfig.EndpointsConfig {
-		n, err := f.ownNetwork(ctx, f.runNetwork(key), true)
+		n, err := f.ownNetwork(ctx, netName(key), true)
 		if err != nil {
 			return err
 		}
