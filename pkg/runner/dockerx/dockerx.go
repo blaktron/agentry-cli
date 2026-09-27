@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,9 +31,10 @@ const LogsAll = 0
 type Client interface {
 	// Available errors when no usable docker daemon answers.
 	Available(ctx context.Context) error
-	// Runtimes lists the OCI runtimes the daemon has registered (runc,
-	// runsc, …), by name — what a policy's docker.runtime may name.
-	Runtimes(ctx context.Context) ([]string, error)
+	// Runtimes is the daemon's runtime table: each registered OCI runtime
+	// (runc, runsc, …) by the name a policy's docker.runtime may give,
+	// with the binary it runs and the arguments its registration adds.
+	Runtimes(ctx context.Context) (map[string]Runtime, error)
 	// ContainerIP is a running container's address on one network.
 	ContainerIP(ctx context.Context, name, network string) (string, error)
 	// ImageExists reports whether ref is present locally.
@@ -244,23 +246,91 @@ func (c *CLI) Available(ctx context.Context) error {
 	return nil
 }
 
+// Runtime is one entry of the daemon's runtime table: the binary it runs
+// and the arguments its registration adds (daemon.json's runtimes).
+type Runtime struct {
+	Path string   `json:"path"`
+	Args []string `json:"runtimeArgs"`
+}
+
+// HostUDSOpen is the gVisor flag that lets a sandboxed container open a
+// Unix socket bind-mounted from the host: the gateway's way to its run's
+// docker filter (docker.gatewayRuntime, agentry-cli#337).
+const HostUDSOpen = "--host-uds=open"
+
 // Runtimes implements Client from `docker info`: the daemon's runtime
 // table keyed by name. The names are what `--runtime` accepts.
-func (c *CLI) Runtimes(ctx context.Context) ([]string, error) {
+func (c *CLI) Runtimes(ctx context.Context) (map[string]Runtime, error) {
 	out, err := c.run(ctx, "info", "--format", "{{json .Runtimes}}")
 	if err != nil {
 		return nil, fmt.Errorf("docker daemon not reachable: %w", err)
 	}
-	var table map[string]json.RawMessage
+	var table map[string]Runtime
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &table); err != nil {
 		return nil, fmt.Errorf("docker info runtimes: %w", err)
 	}
+	return table, nil
+}
+
+// SortedRuntimeNames lists a runtime table's names, sorted, for a message.
+func SortedRuntimeNames(table map[string]Runtime) []string {
 	names := make([]string, 0, len(table))
 	for name := range table {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names, nil
+	return names
+}
+
+// CheckHostUDSRegistration says why the registration named gateway is not
+// the one named runtime plus HostUDSOpen: the same binary, the runtime's
+// own arguments and that flag, nothing more. The receipt says the gateway
+// ran under that runtime, so a registration that runs runc, or adds a flag
+// such as --network=host or --host-uds=all, would make the claim false
+// (DR-23; agentry-cli#396). A name missing from the table, or a
+// registration with no binary, is refused too. nil when it is right.
+func CheckHostUDSRegistration(table map[string]Runtime, runtime, gateway string) error {
+	rt, ok := table[runtime]
+	if !ok {
+		return fmt.Errorf("%q cannot be checked: the runtime %q is not registered", gateway, runtime)
+	}
+	gw, ok := table[gateway]
+	switch {
+	case !ok:
+		return fmt.Errorf("%q is not registered: register %q again under that name with runtimeArgs [%q]", gateway, runtime, HostUDSOpen)
+	case rt.Path == "" || gw.Path == "":
+		return fmt.Errorf("%q cannot be checked: the daemon names no binary for %q or %q", gateway, runtime, gateway)
+	case gw.Path != rt.Path:
+		return fmt.Errorf("%q runs %s, not %s as %q does: it must be %q registered again with %s", gateway, gw.Path, rt.Path, runtime, runtime, HostUDSOpen)
+	}
+	extra, missing := argsDiff(gw.Args, append(slices.Clone(rt.Args), HostUDSOpen))
+	if len(extra) > 0 || len(missing) > 0 {
+		return fmt.Errorf("%q is registered with runtimeArgs %q: it must be %q's own (%q) plus %s, nothing else (extra %q, missing %q)", gateway, gw.Args, runtime, rt.Args, HostUDSOpen, extra, missing)
+	}
+	return nil
+}
+
+// argsDiff compares two argument lists as multisets: what got has beyond
+// want, and what it lacks.
+func argsDiff(got, want []string) (extra, missing []string) {
+	count := map[string]int{}
+	for _, a := range want {
+		count[a]++
+	}
+	for _, a := range got {
+		if count[a] > 0 {
+			count[a]--
+			continue
+		}
+		extra = append(extra, a)
+	}
+	for _, a := range want {
+		if count[a] > 0 {
+			count[a]--
+			missing = append(missing, a)
+		}
+	}
+	return extra, missing
 }
 
 // ContainerIP implements Client from `docker inspect`.
