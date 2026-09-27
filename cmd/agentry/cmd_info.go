@@ -175,7 +175,7 @@ func renderAgentInfo(out io.Writer, agent *apiclient.Agent, latest *apiclient.Re
 	_, _ = fmt.Fprintf(out, "  latest:  %s (%s)\n", latest.Version, latest.Digest)
 	if m, err := manifestFromResolve(latest); err == nil {
 		_, _ = fmt.Fprintln(out, "  capabilities:")
-		for _, line := range capabilityLines(m.Capabilities) {
+		for _, line := range capabilityLines(m.Contract()) {
 			_, _ = fmt.Fprintf(out, "    %s\n", line)
 		}
 		_, _ = fmt.Fprintf(out, "  install: agentry install %s/%s\n", agent.Namespace, agent.Name)

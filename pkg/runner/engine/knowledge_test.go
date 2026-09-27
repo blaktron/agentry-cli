@@ -220,3 +220,20 @@ func TestKnowledgeTwoPacksOneNameRefused(t *testing.T) {
 		t.Fatalf("want exit %d, got %v", ExitCLI, err)
 	}
 }
+
+// TestShippedKnowledgeLine: a pack the release ships is named as the
+// release's in the receipt, by the archive digest the attestation covers,
+// beside an attached pack named as before (plan knowledge.md §4.6,
+// agentry-cli#320).
+func TestShippedKnowledgeLine(t *testing.T) {
+	got := withKnowledge(nil, []AttachedPack{
+		{Name: "aws-docs", Digest: "sha256:ab", Pages: 1, Bytes: 216, ShippedWith: "sha256:arch"},
+		{Name: "voice", Digest: "sha256:cd", Pages: 3, Bytes: 10},
+	}, nil)
+	want := "aws-docs shipped with the release (archive sha256:arch) mounted read-only at /knowledge/aws-docs (sha256:ab, 1 page, 216 bytes)" +
+		"; voice mounted read-only at /knowledge/voice (sha256:cd, 3 pages, 10 bytes, scan: not scanned)" +
+		"; tools knowledge_list, knowledge_search and knowledge_read, on the tools container only"
+	if got["knowledge"] != want {
+		t.Fatalf("got\n%q\nwant\n%q", got["knowledge"], want)
+	}
+}

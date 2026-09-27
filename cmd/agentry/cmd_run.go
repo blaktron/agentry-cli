@@ -79,11 +79,13 @@ type runOpts struct {
 	// recording nothing, and materializing into a temp dir rather than the
 	// runner cache. --dry-run keeps its meaning (the plan for a person who
 	// consented on the terminal).
-	plan               bool
-	keepRunDir         bool
-	listAdapters       bool
-	files              []string
-	knowledge          []string
+	plan         bool
+	keepRunDir   bool
+	listAdapters bool
+	files        []string
+	knowledge    []string
+	// shippedSizes are the release's shipped packs' sizes, for the consent.
+	shippedSizes       map[string]int64
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
 }
@@ -283,6 +285,15 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitCompile, err)
 	}
+	shipped, err := shippedKnowledge(workspaceDir, m, meta.Digest)
+	if err != nil {
+		return err
+	}
+	if attached, err = withShipped(shipped, attached); err != nil {
+		return err
+	}
+	opts.shippedSizes = packSizes(shipped)
+	sayShipped(cmd.ErrOrStderr(), shipped)
 	// An install cached before the registry path validated (agentry-cli#158)
 	// is held to the same rules at run; the compiler refuses the mount
 	// shapes on its own besides.
@@ -564,7 +575,7 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 	topts := tui.Options{
 		Ref:        plan.Ref,
 		Model:      plan.Harness.Model,
-		Caps:       capabilityLines(m.Capabilities),
+		Caps:       capabilityLines(m.Contract()),
 		MaxTurns:   params.Budgets.MaxTurns,
 		MaxCostUSD: params.Budgets.MaxCostUSD,
 		HasTask:    opts.input != "",
@@ -785,7 +796,7 @@ func describeRunConsent(m *manifest.Manifest, meta *installdir.Meta, home string
 	if serr != nil {
 		state = installed.State{}
 	}
-	next := installed.Snapshot(m.Capabilities)
+	next := installed.Snapshot(m.Contract())
 	if prev := state.Find(key); prev != nil {
 		c.Installed = &installPlanPrior{Version: prev.Version, Dir: prev.Dir}
 		c.Diff = installed.DiffCapabilities(prev.Capabilities, next)
@@ -985,7 +996,7 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 	if err != nil {
 		return err
 	}
-	contract, cdigest, err := contractJSON(m.Capabilities)
+	contract, cdigest, err := contractJSON(m.Contract())
 	if err != nil {
 		return err
 	}
@@ -1433,7 +1444,7 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}
 	_, _ = fmt.Fprintln(out, "capabilities:")
-	for _, line := range capabilityLines(m.Capabilities) {
+	for _, line := range contractLines(m.Contract(), opts.shippedSizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 	if mode == manifest.ModeInteractive {
@@ -1446,8 +1457,8 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
 		state = installed.State{}
 	}
-	next := installed.Snapshot(m.Capabilities)
-	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Capabilities, opts.yes); err != nil {
+	next := installed.Snapshot(m.Contract())
+	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Contract(), opts.yes); err != nil {
 		return err
 	}
 	// An install owns the agent's directory (managed, agentry-cli#190); a
@@ -1561,7 +1572,7 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 	newProf, err := setup.GuidedProfile(prompter, setup.GuidedProfileOpts{
 		Ref:             meta.Ref,
 		Digest:          meta.Digest,
-		CapabilityLines: capabilityLines(m.Capabilities),
+		CapabilityLines: capabilityLines(m.Contract()),
 		Secrets:         secrets,
 		DefaultKeep:     keep,
 		KeepDecided:     keepDecided,

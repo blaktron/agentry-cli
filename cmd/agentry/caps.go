@@ -48,6 +48,11 @@ func capabilityLines(c manifest.Capabilities) []string {
 		}
 		lines = append(lines, line)
 	}
+	// Shipped knowledge (plan knowledge.md §4.6): packs inside the release
+	// the agent reads, part of what is consented to.
+	if len(c.Knowledge) > 0 {
+		lines = append(lines, "knowledge: ships "+strings.Join(c.Knowledge, ", "))
+	}
 	return lines
 }
 
@@ -63,7 +68,7 @@ func isZeroCapabilities(c manifest.Capabilities) bool {
 		c.Filesystem.Read.IsZero() && c.Filesystem.Write.IsZero() &&
 		c.Exec.IsZero() &&
 		len(c.Secrets) == 0 && len(c.DataAccess) == 0 &&
-		len(c.MCPServers) == 0
+		len(c.MCPServers) == 0 && len(c.Knowledge) == 0
 }
 
 // renderEgress prints an egress declaration; "*" is flagged as policy-gated.

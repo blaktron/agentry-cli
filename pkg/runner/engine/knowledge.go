@@ -37,6 +37,12 @@ type AttachedPack struct {
 	Pages  int
 	Bytes  int64
 	Scan   knowledge.Scan
+	// ShippedWith is the release's archive digest when the pack is one the
+	// release ships in its own archive (plan knowledge.md §4.6): its trust
+	// is the release's — the attestation over the archive, the scan of the
+	// version — not its own manifest's scan record. Empty for a pack the
+	// person attaches.
+	ShippedWith string
 }
 
 // AttachPack is the attachment of a pack knowledge.Load verified.
@@ -179,6 +185,13 @@ func withKnowledge(enforced map[string]string, packs []AttachedPack, execCommand
 	}
 	parts := make([]string, 0, len(packs))
 	for _, a := range packs {
+		if a.ShippedWith != "" {
+			// The pack is part of the release: the attestation line says
+			// what covers the archive and whether it was scanned.
+			parts = append(parts, fmt.Sprintf("%s shipped with the release (archive %s) mounted read-only at %s/%s (%s, %s, %d bytes)",
+				a.Name, a.ShippedWith, spec.KnowledgeMount, a.Name, a.Digest, knowledge.CountPages(a.Pages), a.Bytes))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("%s mounted read-only at %s/%s (%s, %s, %d bytes, scan: %s)",
 			a.Name, spec.KnowledgeMount, a.Name, a.Digest, knowledge.CountPages(a.Pages), a.Bytes, a.Scan.Describe()))
 	}

@@ -7,6 +7,7 @@ package installed
 import (
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -393,5 +394,25 @@ func TestArchiveWideningsHoldTheArchiveToTheConsentedContract(t *testing.T) {
 				t.Fatalf("widenings %q do not say %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestShippedKnowledgeIsInTheSnapshot: the packs a release ships are part
+// of the recorded contract, so a later release shipping one more re-asks
+// and the record reads back what was consented (agentry-cli#320).
+func TestShippedKnowledgeIsInTheSnapshot(t *testing.T) {
+	before := Snapshot(manifest.Capabilities{})
+	after := Snapshot(manifest.Capabilities{Knowledge: []string{"aws-docs"}})
+	if !slices.Equal(after.Knowledge, []string{"aws-docs"}) {
+		t.Fatalf("snapshot = %+v", after)
+	}
+	if d := DiffCapabilities(before, after); !slices.Contains(d.Widened, "ships knowledge: aws-docs") {
+		t.Fatalf("a newly shipped pack did not widen: %+v", d)
+	}
+	if d := DiffCapabilities(after, after); !d.Empty() {
+		t.Fatalf("the same packs changed the contract: %+v", d)
+	}
+	if got := Snapshot(after.capabilities()); !slices.Equal(got.Knowledge, after.Knowledge) {
+		t.Fatalf("round trip = %+v", got)
 	}
 }
