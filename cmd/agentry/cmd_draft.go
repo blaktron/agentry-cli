@@ -105,7 +105,7 @@ func newDraftCmd() *cobra.Command {
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
-	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host does for a draft made in Agentry (the hosted draft kind, with --output-format json): scans and search through the registry with the job's credential in $"+envJobToken)
+	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host will for a draft made in Agentry (the hosted draft kind, blaktron/agentry-enterprise#183, with --output-format json): scans and search through the registry with the job's credential in $"+envJobToken)
 	f.IntVar(&o.timeout, "timeout", 0, "the Drafter run's wall-clock budget in seconds (default: the policy's)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Drafter run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Drafter run once the harness reports this much cost in USD (default: the policy's)")
@@ -127,7 +127,15 @@ func draftRunE(cmd *cobra.Command, args []string, o *draftOpts) error {
 		return printed.err
 	}
 	if err != nil && o.outputFormat == "json" {
-		printDraftFailure(cmd, o.stage, err)
+		// A description AI Review did not pass is exit 11 at stage
+		// description, so a driver can say why nothing ran without
+		// keeping the error's text.
+		printBuiltinFailure(cmd, localrun.Drafter().Ref(), o.stage, err)
+	}
+	if err != nil && cmd.Context().Err() != nil {
+		// The envelope says interrupted under the cli class; so does the
+		// exit (a scan cut short by the signal reads as not scanned).
+		return engine.Classify(engine.ExitCLI, fmt.Errorf("interrupted: %w", err))
 	}
 	return err
 }
@@ -221,6 +229,9 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	d, err := finishDraft(env, outDir, desc)
 	if o.outputFormat == "json" {
 		printDraftEnvelope(cmd, env, outDir, d, err)
+		if err == nil && cmd.Context().Err() != nil {
+			err = engine.Classify(engine.ExitCLI, errors.New("interrupted"))
+		}
 		if err != nil {
 			return &envelopePrinted{err: err}
 		}
@@ -261,64 +272,18 @@ func draftReportOf(outDir string, d *drafter.Draft) draftReport {
 }
 
 // printDraftEnvelope is the json form of a draft the Drafter ran in: its
-// run's envelope, with the draft's report beside it under draft and its
-// result left empty — the answer is the draft, in draft.json and the
-// run's own result.json, so nothing the Drafter wrote rides on stdout. A draft
-// whose post-step failed says so in the envelope's status, class and stage
-// over the run's own; one interrupted (a driver's SIGINT, which is how a
-// sandbox host stops a draft at its cap) says "interrupted".
+// run's envelope with the draft's report under draft (none for a run that
+// failed), and its result left empty — the answer is the draft, in
+// draft.json and the run's own result.json, so nothing the Drafter wrote
+// rides on stdout.
 func printDraftEnvelope(cmd *cobra.Command, run *receipt.Envelope, outDir string, d *drafter.Draft, finishErr error) {
 	env := *run
 	env.Result = receipt.TextResult("")
-	if cmd.Context().Err() != nil {
-		env.Status, env.Error = "error", "interrupted"
-	} else if finishErr != nil {
-		env.Status, env.ExitCode, env.Error, env.Stage = "error", engine.ExitCLI, finishErr.Error(), receipt.StageOutput
-		var ce *engine.ClassifiedError
-		if errors.As(finishErr, &ce) {
-			env.ExitCode = ce.Code
-		}
+	var report any
+	if d != nil {
+		report = draftReportOf(outDir, d)
 	}
-	raw, err := env.Marshal()
-	if err != nil {
-		return
-	}
-	if d == nil {
-		_, _ = cmd.OutOrStdout().Write(raw)
-		return
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return
-	}
-	if fields["draft"], err = json.Marshal(draftReportOf(outDir, d)); err != nil {
-		return
-	}
-	b, err := json.MarshalIndent(fields, "", "  ")
-	if err != nil {
-		return
-	}
-	_, _ = cmd.OutOrStdout().Write(append(b, '\n'))
-}
-
-// printDraftFailure is the json form's envelope for a draft that stopped
-// before the Drafter's run wrote one: the class and the stage, no usage. A
-// description AI Review did not pass is exit 11 at stage description, so a
-// driver can say why nothing ran without keeping the error's text.
-func printDraftFailure(cmd *cobra.Command, stage string, err error) {
-	code := engine.ExitCLI
-	var ce *engine.ClassifiedError
-	if errors.As(err, &ce) {
-		code = ce.Code
-	}
-	msg := err.Error()
-	if cmd.Context().Err() != nil {
-		code, msg = engine.ExitCLI, "interrupted"
-	}
-	printEnvelope(cmd, &receipt.Envelope{
-		Agentry: receipt.EnvelopeVersion, Status: "error", ExitCode: code, Error: msg, Stage: stage,
-		Ref: localrun.Drafter().Ref(), CapabilitiesEnforced: map[string]string{}, Result: receipt.TextResult(""),
-	}, "json")
+	printBuiltinEnvelope(cmd.Context(), cmd.OutOrStdout(), env, "draft", report, finishErr)
 }
 
 // draftDescription is the argument or the file, exactly one.

@@ -308,14 +308,15 @@ Drafter run's result envelope (its usage, the attestation `builtin`, the
 `web` counts) with the draft's report under `draft`: where `draft.json` is,
 whether the package was rendered and passed, and how many matches, open
 questions and withheld sources it has. The envelope's `result` is empty,
-because the draft is in `draft.json`. The harness's usage is narrated live on stderr
-(`usage: input=… output=… total=… turns=…`). A draft that stops before the
+because the draft is in `draft.json`. The harness's usage is narrated live
+on stderr (`usage: input=… output=… total=… turns=…`). A draft that stops before the
 Drafter runs still writes one envelope with its class and stage; a
 description AI Review did not pass is exit 11 at stage `description`.
 `agentry draft --hosted --output-format json` is the form a sandbox host
-runs for a draft made in Agentry: the scans and the search go through the
-registry, with the job's credential in `$AGENTRY_JOB_TOKEN`. The hosted draft
-kind is Builder M5 (blaktron/agentry-enterprise#183).
+will run for a draft made in Agentry: the scans and the search go through
+the registry, with the job's credential in `$AGENTRY_JOB_TOKEN`. No sandbox
+host runs it until the hosted draft kind, Builder M5
+(blaktron/agentry-enterprise#183), lands.
 
 ### Signing keys and `verify`
 

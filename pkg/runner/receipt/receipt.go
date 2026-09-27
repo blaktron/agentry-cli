@@ -280,8 +280,8 @@ func ExitClassName(code int) string {
 // the policy: its description read by AI Review (agentry-cli#384), which
 // stops the Drafter before anything else runs when it does not pass.
 const (
-	StageDescription = "description"
 	StagePolicy      = "policy"
+	StageDescription = "description"
 	StageVerify      = "verify"
 	StageConsent     = "consent"
 	StageMCPServers  = "mcp-servers"

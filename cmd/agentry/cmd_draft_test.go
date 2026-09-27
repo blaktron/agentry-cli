@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -469,7 +470,9 @@ func TestDraftJSONFailures(t *testing.T) {
 
 	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
 	desc := filepath.Join(t.TempDir(), "description.txt")
-	_ = os.WriteFile(desc, []byte("Weather brief."), 0o644)
+	if err := os.WriteFile(desc, []byte("Weather brief."), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	stdout, _, err := runCLI(t, nil, "draft", "x", "--description-file", desc, "--policy", policyPath, "--output-format", "json")
 	wantClassified(t, err, engine.ExitUsage)
 	env := draftEnvelope(t, stdout)
@@ -505,5 +508,70 @@ func TestDraftJSONRunFailure(t *testing.T) {
 	}
 	if strings.Count(stdout, "\n{") != 0 {
 		t.Fatalf("more than one envelope:\n%s", stdout)
+	}
+}
+
+// cancelScan cancels the command's context as it scans, as a driver's
+// SIGINT during the description's scan does, and answers not scanned.
+type cancelScan struct{ cancel context.CancelFunc }
+
+func (s cancelScan) Scan(context.Context, webscan.Source, string) webscan.Result {
+	s.cancel()
+	return webscan.Result{Verdict: webscan.NotScanned, Failure: "timeout"}
+}
+
+// TestDraftJSONInterrupted: a draft interrupted while its description is
+// scanned says interrupted under the cli class, in the envelope and in
+// its exit alike — not the policy refusal a scan cut short would read as.
+func TestDraftJSONInterrupted(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	draftScanner = func(*engine.WebRun) (webscan.Scanner, error) { return cancelScan{cancel}, nil }
+	root := newRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"draft", "Weather brief.", "--policy", policyPath, "--output-format", "json"})
+	err := root.ExecuteContext(ctx)
+	wantClassified(t, err, engine.ExitCLI)
+	if len(*runs) != 0 {
+		t.Fatal("the Drafter started after an interrupted scan")
+	}
+	env := draftEnvelope(t, out.String())
+	wantField(t, env, "exitCode", `1`)
+	wantField(t, env, "error", `"interrupted"`)
+	wantField(t, env, "stage", `"description"`)
+}
+
+// TestDraftHostedJSONKeepsTheTokenOut: a hosted draft's job credential
+// reaches neither stdout nor stderr in the json form, on a refused
+// description and on a failed run alike.
+func TestDraftHostedJSONKeepsTheTokenOut(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	const token = "agyj_the-job-credential-that-must-stay-out"
+	t.Setenv(envJobToken, token)
+	args := []string{"draft", "--hosted", "Weather brief.", "--registry", "https://registry.example", "--policy", policyPath, "--output-format", "json"}
+
+	draftSeams(t, webscan.Result{Verdict: webscan.Withheld, Score: 3, Flagged: []string{"injection"}}, goodDraft, "")
+	stdout, stderr, err := runCLI(t, nil, append(args, "--out", filepath.Join(t.TempDir(), "a"))...)
+	wantClassified(t, err, engine.ExitPolicy)
+	if strings.Contains(stdout+stderr, token) || strings.Contains(err.Error(), token) {
+		t.Fatalf("the job credential reached the output of a refused draft:\n%s\n%s", stdout, stderr)
+	}
+
+	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+	draftRun = func(_ *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+		return &receipt.Envelope{Agentry: receipt.EnvelopeVersion, Status: "error", ExitCode: engine.ExitHarness, Stage: receipt.StageAgent,
+			Ref: r.Builtin.Ref(), Result: receipt.TextResult("")}, engine.Classify(engine.ExitHarness, errors.New("the harness failed"))
+	}
+	stdout, stderr, err = runCLI(t, nil, append(args, "--out", filepath.Join(t.TempDir(), "b"))...)
+	wantClassified(t, err, engine.ExitHarness)
+	if strings.Contains(stdout+stderr, token) {
+		t.Fatalf("the job credential reached the output of a failed draft:\n%s\n%s", stdout, stderr)
 	}
 }
