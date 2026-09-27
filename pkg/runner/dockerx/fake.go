@@ -32,13 +32,16 @@ type Fake struct {
 
 	// AvailableErr fails Available.
 	AvailableErr error
-	// RuntimeNames is what Runtimes answers, each with an empty
-	// registration; nil answers the daemon's usual pair
-	// ("io.containerd.runc.v2", "runc"). RuntimeTable, when set, is
-	// answered instead, registrations and all. RuntimesErr fails it.
+	// RuntimeNames is what Runtimes answers when RuntimeTable is nil, each
+	// name with an empty registration; nil answers the daemon's usual pair
+	// ("io.containerd.runc.v2", "runc").
 	RuntimeNames []string
+	// RuntimeTable, when set, is what Runtimes answers, each name with
+	// its binary and arguments: what a gateway registration is checked
+	// against.
 	RuntimeTable map[string]Runtime
-	RuntimesErr  error
+	// RuntimesErr fails Runtimes.
+	RuntimesErr error
 	// IPs answers ContainerIP by container name; a name with no entry gets
 	// a made-up address, so a test need not script every container.
 	IPs map[string]string

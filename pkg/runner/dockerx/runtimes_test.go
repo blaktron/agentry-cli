@@ -51,7 +51,10 @@ func TestCheckHostUDSRegistration(t *testing.T) {
 		"forged uds":      {with("runsc-uds", Runtime{Path: "runc", Args: []string{"--host-uds=open"}}), "runsc-uds", "runs runc"},
 		"host network":    {with("runsc-uds", Runtime{Path: "/usr/local/bin/runsc", Args: []string{"--host-uds=open", "--network=host"}}), "runsc-uds", "nothing else"},
 		"wider uds":       {with("runsc-uds", Runtime{Path: "/usr/local/bin/runsc", Args: []string{"--host-uds=all", "--host-uds=open"}}), "runsc-uds", "nothing else"},
-		"flag used twice": {with("runsc-uds", Runtime{Path: "/usr/local/bin/runsc", Args: []string{"--host-uds=open", "--host-uds=open"}}), "runsc-uds", "nothing else"},
+		"flag used twice": {with("runsc-uds", Runtime{Path: "/usr/local/bin/runsc", Args: []string{"--host-uds=open", "--host-uds=open"}}), "runsc-uds", `extra ["--host-uds=open"]`},
+		"named extra":     {with("runsc-uds", Runtime{Path: "/usr/local/bin/runsc", Args: []string{"--host-uds=open", "--network=host"}}), "runsc-uds", `extra ["--network=host"], missing []`},
+		"no binary":       {with("runsc-uds", Runtime{Args: []string{"--host-uds=open"}}), "runsc-uds", "names no binary"},
+		"not registered":  {dev, "runsc-gw", `"runsc-gw" is not registered`},
 	} {
 		err := CheckHostUDSRegistration(c.table, "runsc", c.gateway)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -68,7 +71,15 @@ func TestCheckHostUDSRegistration(t *testing.T) {
 	if err := CheckHostUDSRegistration(systrap, "runsc", "runsc-uds"); err == nil {
 		t.Error("a registration dropping the runtime's own arguments was accepted")
 	}
-	if got := RuntimeNames(dev); strings.Join(got, ",") != "io.containerd.runc.v2,runc,runsc,runsc-nat,runsc-uds" {
+	if err := CheckHostUDSRegistration(dev, "kata", "runsc-uds"); err == nil || !strings.Contains(err.Error(), `the runtime "kata" is not registered`) {
+		t.Errorf("a missing runtime: %v", err)
+	}
+	// Two registrations naming no binary are not "the same binary".
+	bare := map[string]Runtime{"runsc": {}, "runsc-uds": {Args: []string{HostUDSOpen}}}
+	if err := CheckHostUDSRegistration(bare, "runsc", "runsc-uds"); err == nil {
+		t.Error("registrations with no binary were accepted")
+	}
+	if got := SortedRuntimeNames(dev); strings.Join(got, ",") != "io.containerd.runc.v2,runc,runsc,runsc-nat,runsc-uds" {
 		t.Errorf("RuntimeNames: %v", got)
 	}
 }

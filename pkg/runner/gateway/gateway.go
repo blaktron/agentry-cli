@@ -111,7 +111,7 @@ func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) er
 			continue
 		}
 		return fmt.Errorf("%s %q is not registered on this docker daemon (it has: %s): %s, or unset %s in the policy — the runner never falls back to another runtime",
-			w.key, w.want, strings.Join(dockerx.RuntimeNames(table), ", "), w.how, w.key)
+			w.key, w.want, strings.Join(dockerx.SortedRuntimeNames(table), ", "), w.how, w.key)
 	}
 	if gw := pol.Docker.GatewayRuntime; gw != "" {
 		if err := dockerx.CheckHostUDSRegistration(table, pol.Docker.Runtime, gw); err != nil {
