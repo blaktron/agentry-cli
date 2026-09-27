@@ -316,6 +316,9 @@ type ProxySpec struct {
 // the run beyond the image: the OCI runtime (docker run --runtime).
 type DockerSpec struct {
 	Runtime string `json:"runtime"`
+	// Resolvers are the name servers the web tools resolve through
+	// (policy docker.resolvers, agentry-cli#386); absent, docker's DNS.
+	Resolvers []string `json:"resolvers,omitempty"`
 }
 
 // Runtime is the OCI runtime the plan asks for, or "" for the daemon's
@@ -325,6 +328,15 @@ func (p *Plan) Runtime() string {
 		return ""
 	}
 	return p.Docker.Runtime
+}
+
+// Resolvers are the name servers the plan's web tools resolve through, or
+// none for docker's embedded DNS.
+func (p *Plan) Resolvers() []string {
+	if p == nil || p.Docker == nil {
+		return nil
+	}
+	return p.Docker.Resolvers
 }
 
 // ContainerSpec is a docker container the engine will run. Sources and env

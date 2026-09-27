@@ -271,3 +271,50 @@ func TestTheWebLedgerIsCountedIntoTheReceipt(t *testing.T) {
 		t.Fatalf("%v", env.CapabilitiesEnforced)
 	}
 }
+
+// TestTheWebToolsResolvConf (agentry-cli#386): a plan with the web tools
+// and name servers gets a resolv.conf of the run's own beside its tools
+// spec, one nameserver line each, readable by the tools server's user; a
+// plan without either gets none; the receipt says which servers resolve
+// the web tools' names, and where the filter cannot bind the file, that it
+// is not applied.
+func TestTheWebToolsResolvConf(t *testing.T) {
+	dir := t.TempDir()
+	plan := &spec.Plan{Capabilities: spec.CapSummary{WebTools: true}, Docker: &spec.DockerSpec{Runtime: "runsc", Resolvers: []string{"192.168.122.1", "2001:db8::53"}}}
+	if err := writeResolvConf(dir, plan); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, resolvConfFile))
+	if err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("the resolv.conf: %v %v", info, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, resolvConfFile))
+	var servers []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if s, ok := strings.CutPrefix(l, "nameserver "); ok {
+			servers = append(servers, s)
+		}
+	}
+	if !slices.Equal(servers, []string{"192.168.122.1", "2001:db8::53"}) {
+		t.Fatalf("the resolv.conf reads:\n%s", b)
+	}
+	for name, p := range map[string]*spec.Plan{
+		"no web tools": {Docker: &spec.DockerSpec{Resolvers: []string{"192.168.122.1"}}},
+		"no servers":   {Capabilities: spec.CapSummary{WebTools: true}, Docker: &spec.DockerSpec{Runtime: "runsc"}},
+	} {
+		d := t.TempDir()
+		if err := writeResolvConf(d, p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(d, resolvConfFile)); !os.IsNotExist(err) {
+			t.Fatalf("%s: a resolv.conf was written", name)
+		}
+	}
+	line := resolversLine(plan.Resolvers())
+	if !strings.Contains(line, "192.168.122.1, 2001:db8::53") || !strings.Contains(line, "docker.resolvers") {
+		t.Fatalf("the receipt line: %s", line)
+	}
+	if filterSupported && !strings.Contains(line, "bound read-only in place of docker's") {
+		t.Fatalf("the receipt line on Linux: %s", line)
+	}
+}

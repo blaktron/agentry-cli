@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -144,6 +145,18 @@ type DockerPolicy struct {
 	// (exit 13) rather than falling back, so the receipt's runtime line
 	// is never a claim the run did not have.
 	Runtime string `yaml:"runtime,omitempty"`
+	// Resolvers are the name servers the built-in Drafter's web tools
+	// resolve through, by address (agentry-cli#386): at most three, as a
+	// resolv.conf reads them. A sandboxed runtime's own network stack does
+	// not reach docker's embedded DNS on the run's web network (DR-23,
+	// measured under gVisor), and `--dns` only sets that server's upstream,
+	// so the runner writes these into a resolv.conf of the run's own that
+	// the tools server reads in place of docker's. They are the host's to
+	// name: the host's upstream resolvers, never a loopback stub. Empty
+	// keeps docker's DNS, which a run on the daemon's default reaches; a
+	// run of the web tools under a runtime with none is refused (exit 11)
+	// rather than left to read nothing.
+	Resolvers []string `yaml:"resolvers,omitempty"`
 	// Limits bound every container the runner starts for a run
 	// (agentry-cli#163). The engine also drops every capability and sets
 	// no-new-privileges on each. A zero field takes its default
@@ -763,6 +776,9 @@ func (p *Policy) Validate() error {
 	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
 		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
 	}
+	if err := validResolvers(p.Docker.Resolvers); err != nil {
+		return err
+	}
 	if l := p.Docker.Limits; l.Memory != "" && !memoryRE.MatchString(l.Memory) {
 		return fmt.Errorf("docker.limits.memory %q must be a size in m or g, such as 512m or 2g", l.Memory)
 	}
@@ -1045,4 +1061,31 @@ func KeySource(hp HarnessPolicy, m Model) string {
 		return ""
 	}
 	return src
+}
+
+// MaxResolvers is how many name servers a resolv.conf reads.
+const MaxResolvers = 3
+
+// validResolvers holds docker.resolvers to addresses a container can
+// reach: IPv4 or IPv6, no zone, not loopback (a host's stub, such as
+// systemd-resolved's 127.0.0.53, is the container's own loopback inside
+// it), unspecified or multicast, and at most MaxResolvers, each once.
+func validResolvers(rs []string) error {
+	if len(rs) > MaxResolvers {
+		return fmt.Errorf("docker.resolvers names %d servers; a resolv.conf reads at most %d", len(rs), MaxResolvers)
+	}
+	seen := map[netip.Addr]bool{}
+	for _, r := range rs {
+		a, err := netip.ParseAddr(r)
+		switch {
+		case err != nil || a.Zone() != "":
+			return fmt.Errorf("docker.resolvers %q must be a name server's IP address", r)
+		case a.IsLoopback() || a.IsUnspecified() || a.IsMulticast():
+			return fmt.Errorf("docker.resolvers %q is not an address a container reaches: name the host's upstream resolvers, not a loopback stub", r)
+		case seen[a]:
+			return fmt.Errorf("docker.resolvers names %q twice", r)
+		}
+		seen[a] = true
+	}
+	return nil
 }

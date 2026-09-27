@@ -294,6 +294,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Files:  map[string]string{},
 	}
 
+	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && in.Web {
+		// The web tools' name servers are part of the plan too: a changed
+		// list recompiles. Only a run with the web tools reads them.
+		plan.Docker = &spec.DockerSpec{Resolvers: slices.Clone(rs)}
+	}
 	if rt := in.Policy.Docker.Runtime; rt != "" {
 		// The runtime is part of the plan and so of its hash: an operator
 		// who changes it recompiles rather than reinterpreting a stored
@@ -303,7 +308,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		// each class, and the ones on the daemon's default and why
 		// (engine.runtimeLine, agentry-cli#221), so `runtime:` never
 		// claims more ground than the engine holds.
-		plan.Docker = &spec.DockerSpec{Runtime: rt}
+		if plan.Docker == nil {
+			plan.Docker = &spec.DockerSpec{}
+		}
+		plan.Docker.Runtime = rt
 		if plan.Enforcement == nil {
 			plan.Enforcement = map[string]string{}
 		}
@@ -593,6 +601,13 @@ func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 	c := in.Manifest.Capabilities
 	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || len(c.MCPServers) > 0 || len(in.MCPServers) > 0 {
 		return &PolicyRefusal{Reason: "the web tools are granted only to a package that declares no egress, exec, filesystem write, secret or MCP server: their container has no network allowlist of its own"}
+	}
+	// Under a sandboxed runtime the tools server's own network stack does
+	// not reach docker's embedded DNS on the run's web network (DR-23,
+	// agentry-cli#386): with no resolvers of the host's it would resolve
+	// nothing and the draft would read nothing, so it does not run.
+	if rt := in.Policy.Docker.Runtime; rt != "" && len(in.Policy.Docker.Resolvers) == 0 {
+		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools under the %s runtime resolve host names only through the host's own name servers: name them in the runner policy's docker.resolvers (docker's embedded DNS is not reachable from %s)", rt, rt)}
 	}
 	return nil
 }

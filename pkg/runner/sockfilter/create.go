@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -322,8 +323,14 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err := f.checkStorage(ctx, hc); err != nil {
 		return nil, err
 	}
-	if err := f.webShape(ctx, &c); err != nil {
+	web, err := f.webShape(ctx, &c)
+	if err != nil {
 		return nil, err
+	}
+	if web && f.cfg.WebResolvConf != "" {
+		// Added after the storage check: the run's own file, not one the
+		// gateway named.
+		hc.Binds = append(hc.Binds, f.cfg.WebResolvConf+":"+resolvConfTarget+":ro")
 	}
 	if err := f.bound(hc); err != nil {
 		return nil, err
@@ -416,19 +423,24 @@ var (
 	relayPortRE  = regexp.MustCompile(`^[0-9]{1,5}$`)
 )
 
+// resolvConfTarget is where a container reads its name servers.
+const resolvConfTarget = "/etc/resolv.conf"
+
 // webShape holds a container on the run's web network to the web tools'
 // server (Config.WebNetwork): its image's own entrypoint, the one command
 // WebCmd, the run's tools spec read-only at WebSpecTarget, the web network
-// and no other, no link. The network reaches past the host, and the server's
-// own address rule is what bounds it; any other code there would be bounded
-// by nothing.
-func (f *Filter) webShape(ctx context.Context, c *containerCreateBody) error {
+// and no other, no link, and name resolution as the run gives it (no
+// resolv.conf, DNS setting or hosts entry of the gateway's). The network
+// reaches past the host, and the server's own address rule is what bounds
+// it; any other code there would be bounded by nothing. It answers whether
+// the container is that server.
+func (f *Filter) webShape(ctx context.Context, c *containerCreateBody) (bool, error) {
 	if f.cfg.WebNetwork == "" {
-		return nil
+		return false, nil
 	}
 	web, err := f.ownNetwork(ctx, f.cfg.WebNetwork, true)
 	if err != nil {
-		return err
+		return false, err
 	}
 	hc := c.HostConfig
 	joins := hc.NetworkMode == web.id
@@ -446,38 +458,47 @@ func (f *Filter) webShape(ctx context.Context, c *containerCreateBody) error {
 		}
 	}
 	if !joins {
-		return nil
+		return false, nil
 	}
 	var cmd []string
 	switch {
 	case others || len(hc.Links) > 0:
-		return deny("the web tools' server joins the web network and no other, with no link")
+		return false, deny("the web tools' server joins the web network and no other, with no link")
 	case present(c.Entrypoint) || present(c.Shell) || present(c.Healthcheck) || present(c.OnBuild):
-		return deny("the web tools' server runs its image's own entrypoint, nothing else")
+		return false, deny("the web tools' server runs its image's own entrypoint, nothing else")
 	case json.Unmarshal(c.Cmd, &cmd) != nil || !slices.Equal(cmd, f.cfg.WebCmd):
-		return deny("the web tools' server runs its tools role with the run's spec, nothing else")
+		return false, deny("the web tools' server runs its tools role with the run's spec, nothing else")
 	case c.User != "" || c.WorkingDir != "":
-		return deny("the web tools' server's user and working directory are its image's")
+		return false, deny("the web tools' server's user and working directory are its image's")
+	case len(hc.DNS) > 0 || len(hc.DNSSearch) > 0 || len(hc.DNSOptions) > 0 || len(hc.ExtraHosts) > 0:
+		// Each would decide what a page's host name resolves to.
+		return false, deny("the web tools' server resolves names as the run does")
 	}
 	spec := false
 	for _, b := range hc.Binds {
 		parts := strings.Split(b, ":")
+		if len(parts) >= 2 && path.Clean(parts[1]) == resolvConfTarget {
+			return false, deny("the web tools' server resolves names as the run does")
+		}
 		if len(parts) >= 2 && parts[1] == f.cfg.WebSpecTarget {
 			if len(parts) != 3 || !slices.Contains(strings.Split(parts[2], ","), "ro") || !f.sameFile(parts[0], f.cfg.WebSpec) {
-				return deny("the web tools' server reads the run's own tools spec, read-only")
+				return false, deny("the web tools' server reads the run's own tools spec, read-only")
 			}
 			spec = true
 		}
 	}
 	for _, m := range hc.Mounts {
 		if m.Target == f.cfg.WebSpecTarget {
-			return deny("the web tools' server reads the run's own tools spec, read-only")
+			return false, deny("the web tools' server reads the run's own tools spec, read-only")
+		}
+		if path.Clean(m.Target) == resolvConfTarget {
+			return false, deny("the web tools' server resolves names as the run does")
 		}
 	}
 	if !spec {
-		return deny("the web tools' server reads the run's own tools spec, read-only")
+		return false, deny("the web tools' server reads the run's own tools spec, read-only")
 	}
-	return nil
+	return true, nil
 }
 
 // sameFile says whether two host paths name one file.

@@ -103,6 +103,13 @@ type Config struct {
 	WebCmd        []string
 	WebSpec       string
 	WebSpecTarget string
+	// WebResolvConf, when set, is the host path of the run's own
+	// resolv.conf naming the policy's resolvers (agentry-cli#386): the
+	// filter binds it read-only at /etc/resolv.conf in the web tools'
+	// server, in place of docker's, whose embedded DNS a sandboxed runtime
+	// does not reach (DR-23). The gateway may not name a resolv.conf or DNS
+	// settings of its own for that server.
+	WebResolvConf string
 	// WebImage is the tools server's image, by reference; the filter
 	// resolves it to the image id the check compares, once, when a check
 	// first needs it, and refuses the web network while it cannot.

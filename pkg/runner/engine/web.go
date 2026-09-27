@@ -18,6 +18,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -222,4 +223,35 @@ func webLine(rec *receipt.Web) string {
 		line += "; judge " + rec.Model + ", question set " + rec.QuestionSet
 	}
 	return line + "; each address and verdict is in receipts/" + WebLedgerFile + " and gateway.log"
+}
+
+// resolvConfFile is the run's own resolv.conf for the web tools' server,
+// beside its tools spec in the gateway's configuration.
+const resolvConfFile = "resolv.conf"
+
+// writeResolvConf writes, for a run of the web tools with name servers in
+// its plan (policy docker.resolvers, agentry-cli#386), the resolv.conf the
+// docker filter binds read-only into the tools server in place of docker's:
+// a sandboxed runtime does not reach docker's embedded DNS on the run's web
+// network (DR-23). Readable by the tools server's user; nothing for any
+// other run.
+func writeResolvConf(gatewayDir string, plan *spec.Plan) error {
+	rs := plan.Resolvers()
+	if !plan.Capabilities.WebTools || len(rs) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("# The web tools' name servers: the runner policy's docker.resolvers (agentry-cli#386).\n")
+	for _, r := range rs {
+		b.WriteString("nameserver " + r + "\n")
+	}
+	return os.WriteFile(filepath.Join(gatewayDir, resolvConfFile), []byte(b.String()), 0o644) //nolint:gosec // read by the tools server's user
+}
+
+// resolversLine is the receipt's account of how the web tools resolve.
+func resolversLine(rs []string) string {
+	if !filterSupported {
+		return "docker.resolvers names " + strings.Join(rs, ", ") + ", which only the per-run docker filter binds into the web tools' server; without it (Docker Desktop, agentry-cli#322) the server keeps docker's DNS"
+	}
+	return "the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, whose embedded DNS a sandboxed runtime does not reach (DR-23)"
 }
