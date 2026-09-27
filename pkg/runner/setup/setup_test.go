@@ -627,3 +627,17 @@ func TestConfigureModelCustomPlainHTTPIsAllowedWithAWarning(t *testing.T) {
 		}
 	}
 }
+
+// An IPv6 endpoint's allowlist entry is bracketed, the form the proxy
+// parses (agentry-cli#377 review).
+func TestHostPortOfBracketsIPv6(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://[fe80::1]:8000/v1": "[fe80::1]:8000",
+		"https://llm.lan/v1":       "llm.lan:443",
+		"http://llm.lan/v1":        "llm.lan:80",
+	} {
+		if got, err := hostPortOf(in); err != nil || got != want {
+			t.Errorf("hostPortOf(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+}

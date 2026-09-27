@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os/exec"
 	"strings"
@@ -199,7 +200,7 @@ func withEndpointCheck(r Result, pol *policy.Policy, hp policy.HarnessPolicy) Re
 			port = "80"
 		}
 	}
-	ep.HostPort = u.Hostname() + ":" + port
+	ep.HostPort = net.JoinHostPort(u.Hostname(), port)
 	for _, allowed := range pol.Model.ProxyAllow {
 		if allowed == ep.HostPort {
 			ep.Allowed = true

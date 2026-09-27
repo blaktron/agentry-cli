@@ -13,6 +13,7 @@ package setup
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -331,7 +332,7 @@ func hostPortOf(raw string) (string, error) {
 			port = "443"
 		}
 	}
-	return host + ":" + port, nil
+	return net.JoinHostPort(host, port), nil
 }
 
 // GuidedProfileOpts parameterizes the §P3 flow.
