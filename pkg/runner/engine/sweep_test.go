@@ -63,7 +63,7 @@ func TestSweepRemovesOnlyWhatADeadRunLeft(t *testing.T) {
 	ops := f.Ops()
 	for _, want := range []string{
 		"RemoveForce:agentry-dead0001-gateway", "RemoveForce:agentry-dead0001-agent", "RemoveForce:agentry-mcpinstall-srv",
-		"NetworkRemove:agentry-dead0001-net", "VolumeRemove:agentry-dead0001-session",
+		"NetworkRemove:agentry-dead0001-net", "NetworkRemove:agentry-dead0001-egress", "NetworkRemove:agentry-dead0001-web", "VolumeRemove:agentry-dead0001-session",
 	} {
 		if !slices.Contains(ops, want) {
 			t.Errorf("missing %s in %v", want, ops)
