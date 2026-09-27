@@ -51,6 +51,13 @@ type draftOpts struct {
 	timeout         int
 	maxTurns        int
 	maxCost         float64
+	// outputFormat json is the form a sandbox host drives for a hosted
+	// draft (agentry-cli#384): the Drafter run's envelope on stdout, with
+	// the draft's report under draft, and its usage narrated on stderr.
+	outputFormat string
+	// stage is where a draft that fails before the Drafter's run writes an
+	// envelope stopped, for that form's failure envelope.
+	stage string
 }
 
 // draftDocker is the docker client a draft uses; a seam for tests.
@@ -91,23 +98,51 @@ func newDraftCmd() *cobra.Command {
 			"The draft is written to DIR/draft.json, and rendered as a package in DIR/package, checked with the same\n" +
 			"rules as `agentry validate`; the problems are in draft.json. Review every part before you publish it.",
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runDraft(cmd, args, o) },
+		RunE: func(cmd *cobra.Command, args []string) error { return draftRunE(cmd, args, &o) },
 	}
 	f := cmd.Flags()
 	f.StringArrayVar(&o.hints, "hint", nil, "a hint: the services or sites it works with, whether it runs on its own or in a conversation, an example of the output wanted (repeatable)")
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
-	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host will for a draft made in Agentry (the hosted draft kind, not yet built): scans and search through the registry with the job's credential in $"+envJobToken)
+	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host will for a draft made in Agentry (the hosted draft kind, blaktron/agentry-enterprise#183, with --output-format json): scans and search through the registry with the job's credential in $"+envJobToken)
 	f.IntVar(&o.timeout, "timeout", 0, "the Drafter run's wall-clock budget in seconds (default: the policy's)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Drafter run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Drafter run once the harness reports this much cost in USD (default: the policy's)")
+	f.StringVar(&o.outputFormat, "output-format", "text", "stdout format: text | json (json = the Drafter run's result envelope, as `agentry run` writes one, with the draft's report under draft; the harness's usage is narrated on stderr)")
 	return cmd
 }
 
-func runDraft(cmd *cobra.Command, args []string, o draftOpts) error {
+// draftRunE checks the output format first and, in its json form, writes
+// the envelope of a draft that failed before the Drafter's run wrote one,
+// as `agentry run` and `agentry knowledge` do.
+func draftRunE(cmd *cobra.Command, args []string, o *draftOpts) error {
+	if o.outputFormat != "text" && o.outputFormat != "json" {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("unknown --output-format %q (want text or json)", o.outputFormat))
+	}
+	o.stage = receipt.StagePolicy
+	err := runDraft(cmd, args, o)
+	var printed *envelopePrinted
+	if errors.As(err, &printed) {
+		return printed.err
+	}
+	if err != nil && o.outputFormat == "json" {
+		// A description AI Review did not pass is exit 11 at stage
+		// description, so a driver can say why nothing ran without
+		// keeping the error's text.
+		printBuiltinFailure(cmd, localrun.Drafter().Ref(), o.stage, err)
+	}
+	if err != nil && cmd.Context().Err() != nil {
+		// The envelope says interrupted under the cli class; so does the
+		// exit (a scan cut short by the signal reads as not scanned).
+		return engine.Classify(engine.ExitCLI, fmt.Errorf("interrupted: %w", err))
+	}
+	return err
+}
+
+func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	errOut := cmd.ErrOrStderr()
-	description, err := draftDescription(args, o)
+	description, err := draftDescription(args, *o)
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
@@ -127,7 +162,7 @@ func runDraft(cmd *cobra.Command, args []string, o draftOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
-	web, searchNote, err := draftWeb(pol, o)
+	web, searchNote, err := draftWeb(pol, *o)
 	if err != nil {
 		return err
 	}
@@ -138,10 +173,12 @@ func runDraft(cmd *cobra.Command, args []string, o draftOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("AI Review cannot scan with this key: %w", err))
 	}
+	o.stage = receipt.StageDescription
 	desc, err := drafter.Prescan(cmd.Context(), sc, task)
 	if err != nil {
 		return err
 	}
+	o.stage = receipt.StagePrepare
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	if o.hosted {
 		_, _ = fmt.Fprintf(errOut, "AI Review passed the description. The Drafter runs as a hosted draft against %s; the registry scans\n"+
@@ -176,16 +213,30 @@ func runDraft(cmd *cobra.Command, args []string, o draftOpts) error {
 	env, runErr := draftRun(cmd, localrun.Run{
 		Builtin: localrun.Drafter(), Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Task: strings.NewReader(task), OutDir: outDir, Budgets: &budgets,
-		RunID: runID, Stderr: errOut, Web: web,
+		RunID: runID, Stderr: errOut, Web: web, OnUsage: usageReporter(o.outputFormat, errOut),
 	})
 	if runErr != nil {
 		var ce *engine.ClassifiedError
 		if errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema {
 			_, _ = fmt.Fprintf(errOut, "The Drafter's answer was not a draft, so none was written; its answer and the run's receipts are in %s.\n", outDir)
 		}
+		if o.outputFormat == "json" && env != nil {
+			printDraftEnvelope(cmd, env, outDir, nil, nil)
+			return &envelopePrinted{err: runErr}
+		}
 		return runErr
 	}
 	d, err := finishDraft(env, outDir, desc)
+	if o.outputFormat == "json" {
+		printDraftEnvelope(cmd, env, outDir, d, err)
+		if err == nil && cmd.Context().Err() != nil {
+			err = engine.Classify(engine.ExitCLI, errors.New("interrupted"))
+		}
+		if err != nil {
+			return &envelopePrinted{err: err}
+		}
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -194,6 +245,45 @@ func runDraft(cmd *cobra.Command, args []string, o draftOpts) error {
 	}
 	printDraft(cmd.OutOrStdout(), outDir, d)
 	return nil
+}
+
+// draftReport is what the json form's envelope says of the draft, under
+// draft: where it is and how it stands, never a word the Drafter wrote
+// (the draft itself is draft.json, in the output folder).
+type draftReport struct {
+	File          string `json:"file"`
+	Rendered      bool   `json:"rendered"`
+	Passed        bool   `json:"passed"`
+	ManifestError bool   `json:"manifestError"`
+	Matches       int    `json:"matches"`
+	OpenQuestions int    `json:"openQuestions"`
+	Withheld      int    `json:"withheld"`
+}
+
+func draftReportOf(outDir string, d *drafter.Draft) draftReport {
+	r := draftReport{File: filepath.Join(outDir, "draft.json"), ManifestError: d.ManifestError != "",
+		Matches: len(d.Matches), OpenQuestions: len(d.OpenQuestions), Rendered: isDir(filepath.Join(outDir, "package"))}
+	var v validateOutput
+	r.Passed = d.ManifestError == "" && json.Unmarshal(d.Validation, &v) == nil && v.Passed
+	if a := d.AIReview; a != nil {
+		r.Withheld = len(a.WithheldSources)
+	}
+	return r
+}
+
+// printDraftEnvelope is the json form of a draft the Drafter ran in: its
+// run's envelope with the draft's report under draft (none for a run that
+// failed), and its result left empty — the answer is the draft, in
+// draft.json and the run's own result.json, so nothing the Drafter wrote
+// rides on stdout.
+func printDraftEnvelope(cmd *cobra.Command, run *receipt.Envelope, outDir string, d *drafter.Draft, finishErr error) {
+	env := *run
+	env.Result = receipt.TextResult("")
+	var report any
+	if d != nil {
+		report = draftReportOf(outDir, d)
+	}
+	printBuiltinEnvelope(cmd.Context(), cmd.OutOrStdout(), env, "draft", report, finishErr)
 }
 
 // draftDescription is the argument or the file, exactly one.

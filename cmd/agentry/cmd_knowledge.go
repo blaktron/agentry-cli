@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -107,75 +106,13 @@ func knowledgeBuildRunE(o *knowledgeBuildOpts, work func(cmd *cobra.Command, arg
 		err := work(cmd, args)
 		var printed *envelopePrinted
 		if err != nil && o.outputFormat == "json" && !errors.As(err, &printed) {
-			printKnowledgeFailure(cmd, o.stage, err)
+			printBuiltinFailure(cmd, localrun.KnowledgeCreator().Ref(), o.stage, err)
 		}
 		if errors.As(err, &printed) {
 			return printed.err
 		}
 		return err
 	}
-}
-
-// envelopePrinted marks a build's error whose envelope is already on
-// stdout, so the wrapper does not write a second.
-type envelopePrinted struct{ err error }
-
-func (e *envelopePrinted) Error() string { return e.err.Error() }
-func (e *envelopePrinted) Unwrap() error { return e.err }
-
-// printKnowledgeFailure is the json form's envelope for a build that
-// stopped before the Creator ran: the class and the stage, no usage.
-func printKnowledgeFailure(cmd *cobra.Command, stage string, err error) {
-	code := engine.ExitCLI
-	var ce *engine.ClassifiedError
-	if errors.As(err, &ce) {
-		code = ce.Code
-	}
-	msg := err.Error()
-	if cmd.Context().Err() != nil {
-		code, msg = engine.ExitCLI, "interrupted"
-	}
-	printEnvelope(cmd, &receipt.Envelope{
-		Agentry: receipt.EnvelopeVersion, Status: "error", ExitCode: code, Error: msg, Stage: stage,
-		Ref: localrun.KnowledgeCreator().Ref(), CapabilitiesEnforced: map[string]string{}, Result: receipt.TextResult(""),
-	}, "json")
-}
-
-// printKnowledgeEnvelope is the json form of a build the Creator ran in:
-// its run's envelope, with the build's report beside it under knowledge.
-// A build that failed after the run (no page written, the pack past its
-// cap) says so in the envelope's status, class and stage, over the run's
-// own; one the run stopped short keeps the run's word (a budget, a
-// timeout), since what it wrote was applied; one interrupted (a driver's
-// SIGINT, which is how a sandbox host stops a build at its hold) says
-// "interrupted", as run's failure envelope does, whatever it applied.
-func printKnowledgeEnvelope(ctx context.Context, out io.Writer, res *build.Result, report knowledgeBuildReport, buildErr error) {
-	env := *res.Envelope
-	if ctx.Err() != nil {
-		env.Status, env.Error = "error", "interrupted"
-	} else if buildErr != nil {
-		env.Status, env.ExitCode, env.Error, env.Stage = "error", engine.ExitCLI, buildErr.Error(), receipt.StageOutput
-		var ce *engine.ClassifiedError
-		if errors.As(buildErr, &ce) {
-			env.ExitCode = ce.Code
-		}
-	}
-	raw, err := env.Marshal()
-	if err != nil {
-		return
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return
-	}
-	if fields["knowledge"], err = json.Marshal(report); err != nil {
-		return
-	}
-	b, err := json.MarshalIndent(fields, "", "  ")
-	if err != nil {
-		return
-	}
-	_, _ = out.Write(append(b, '\n'))
 }
 
 func newKnowledgeCreateCmd() *cobra.Command {
@@ -322,7 +259,7 @@ func failedAfterRun(cmd *cobra.Command, dir, outDir string, res *build.Result, e
 	if format != "json" || res == nil || res.Envelope == nil {
 		return err
 	}
-	printKnowledgeEnvelope(cmd.Context(), cmd.OutOrStdout(), res, buildReport(dir, outDir, res, nil), err)
+	printBuiltinEnvelope(cmd.Context(), cmd.OutOrStdout(), *res.Envelope, "knowledge", buildReport(dir, outDir, res, nil), err)
 	return &envelopePrinted{err: err}
 }
 
@@ -506,7 +443,7 @@ func printKnowledgeBuild(ctx context.Context, out, errOut io.Writer, dir, outDir
 		m = kept.Manifest
 	}
 	if format == "json" && res.Envelope != nil {
-		printKnowledgeEnvelope(ctx, out, res, buildReport(dir, outDir, res, kept), nil)
+		printBuiltinEnvelope(ctx, out, *res.Envelope, "knowledge", buildReport(dir, outDir, res, kept), nil)
 		return
 	}
 	if flags.jsonOut {
