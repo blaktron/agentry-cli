@@ -959,6 +959,17 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 	if proxySandboxed(p.Plan) {
 		t.Error("a host harness's proxy is sandboxed")
 	}
+	// One class named takes the singular (a hosted draft's line, which
+	// read "the llm-proxy resolve", agentry-cli#337).
+	p.Plan.Harness.Host = nil
+	p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode = true, "none"
+	p.Plan.MCPServers = nil
+	if relaysNeeded(p.Plan) {
+		t.Fatalf("the lone-class case still needs relays: %+v", p.Plan.Capabilities)
+	}
+	if line := runtimeLine(p); !strings.Contains(line, "; the llm-proxy resolves host names") {
+		t.Errorf("a lone class: %q", line)
+	}
 
 	// Where the docker filter does not run, the gateway holds the daemon's
 	// own socket and is not given its runtime, the relays keep the default,
