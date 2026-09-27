@@ -195,7 +195,11 @@ func runtimeLine(p Params) string {
 		named = append(named, "the relays, which the filter gives "+rt)
 	}
 	if len(named) > 0 {
-		line += "; " + strings.Join(named, ", ") + " resolve host names through " + strings.Join(rs, ", ") +
+		verb := " resolve"
+		if len(named) == 1 {
+			verb = " resolves"
+		}
+		line += "; " + strings.Join(named, ", ") + verb + " host names through " + strings.Join(rs, ", ") +
 			" (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, each created with every network it joins"
 	}
 	var gaps []string
