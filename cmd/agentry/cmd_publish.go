@@ -112,6 +112,9 @@ func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, ou
 	if len(include) == 0 {
 		return nil, fmt.Errorf("publish.include matches no files in %s (V4)", dir)
 	}
+	if err := shippedPacksIncluded(m, include); err != nil {
+		return nil, err
+	}
 	var archive bytes.Buffer
 	info, err := pkgarchive.BuildArchive(dir, include, &archive)
 	if err != nil {
@@ -134,6 +137,10 @@ func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, ou
 	}
 	if err := mw.Close(); err != nil {
 		return nil, fmt.Errorf("finish multipart body: %w", err)
+	}
+	if body.Len() > maxUploadBytes {
+		return nil, fmt.Errorf("this release's upload is %s compressed; the registry takes at most %s through an upload (the edge's request cap) — publish it from its tag instead: push the tag to the registry's git remote, which publishes it when the agent auto-publishes tags, or push it and run agentry publish --tag vX.Y.Z",
+			byteSize(int64(body.Len())), byteSize(maxUploadBytes))
 	}
 
 	key, err := newIdempotencyKey()
@@ -254,4 +261,28 @@ func verdict(out io.Writer, ns, name string, v *apiclient.AgentVersion) (bool, e
 	default: // submitted, scanning, approved — keep polling
 		return false, nil
 	}
+}
+
+// maxUploadBytes is the most the registry takes through an upload: the
+// edge's request cap on /api/, which the core's own cap matches
+// (agentry#594). A release that ships knowledge packs can pass it; its tag
+// push has no such cap.
+const maxUploadBytes = 16 << 20
+
+// shippedPacksIncluded refuses, before anything is uploaded, a release whose
+// shipped knowledge packs (knowledge.ships) publish.include leaves out of the
+// archive: the registry would refuse it under V11, and the runner mounts a
+// shipped pack from the release's own files.
+func shippedPacksIncluded(m *manifest.Manifest, include []manifest.FileInfo) error {
+	have := map[string]bool{}
+	for _, f := range include {
+		have[f.Path] = true
+	}
+	for _, name := range m.ShippedPacks() {
+		if mf := manifest.KnowledgeDir + "/" + name + "/manifest.json"; !have[mf] {
+			return fmt.Errorf("knowledge.ships names %s, and publish.include does not put %s in the archive (V11): add %s/** to publish.include, or the pack to %s/%s/",
+				name, mf, manifest.KnowledgeDir, manifest.KnowledgeDir, name)
+		}
+	}
+	return nil
 }

@@ -245,6 +245,29 @@ pack. A kept `create` or `add` works on the pack in the same kind of
 directory, and removes it with the Creator run's output, which holds the
 pages it wrote, unless `--out DIR` asks to keep that output.
 
+### Shipping a pack with a release
+
+A BriefAgent can carry packs of its own. Put each one, as `knowledge
+create --dir` or `add` keeps it, under `knowledge/<name>/` in the package,
+name it in the manifest's `knowledge.ships`, and include `knowledge/**` in
+`publish.include`. The registry refuses a release whose pack is not the one
+its `manifest.json` describes, so change a shipped pack with `agentry
+knowledge add`, never by hand. The registry scans each shipped pack as part
+of the version's scan and signs it with the rest of the archive.
+
+- **Publishing.** `agentry publish` refuses, before uploading, a release
+  whose `publish.include` leaves a shipped pack out. It also refuses an
+  upload past 16 MiB compressed, the most the registry's upload takes;
+  publish a larger release from its tag instead.
+- **Installing.** The consent lists `knowledge: ships <name> (<size>)` with
+  the other capabilities, and `installed.yaml` records the names. An update
+  that ships one more pack asks again.
+- **Running.** A run mounts each shipped pack read-only at
+  `/knowledge/<name>` beside any pack you attach with `--knowledge`, from
+  the release's own verified files, never fetched again. A pack you attach
+  cannot take a shipped pack's name. The receipt names a shipped pack as the
+  release's: `<name> shipped with the release (archive sha256:…)`.
+
 ### Drafting a BriefAgent: `draft`
 
 `agentry draft "<description>" [--hint TEXT…] [--out DIR]` drafts a
@@ -287,6 +310,15 @@ which the gateway's docker filter lets no other container join.
   `webSearch.apiKeySource: keyring`, the keychain entry `provider:brave` or
   `provider:youcom`. Without one the Drafter reads the registry and the pages
   it already knows.
+- Under a sandboxed runtime (`docker.runtime: runsc`) the tools container
+  cannot reach docker's own DNS on its network, so name your host's upstream
+  name servers in the policy: `docker: {runtime: runsc, resolvers:
+  [192.168.122.1]}`, at most three addresses, never a loopback stub such as
+  `127.0.0.53`. The runner writes them into a `resolv.conf` of the run's own
+  that the tools container reads in place of docker's, and the receipt's
+  `web.resolvers` line names them. Without them the Drafter does not run
+  under a runtime (exit 11), and `agentry doctor` says so. On the daemon's
+  default runtime nothing needs setting.
 
 The description, the searches and the pages go to the search provider, to
 TypeSafe and to the sites read, so the description should hold no secret.

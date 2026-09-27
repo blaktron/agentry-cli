@@ -220,3 +220,79 @@ func TestKnowledgeTwoPacksOneNameRefused(t *testing.T) {
 		t.Fatalf("want exit %d, got %v", ExitCLI, err)
 	}
 }
+
+// TestShippedKnowledgeLine: a pack the release ships is named as the
+// release's in the receipt, by the archive digest the attestation covers,
+// beside an attached pack named as before (plan knowledge.md §4.6,
+// agentry-cli#320).
+func TestShippedKnowledgeLine(t *testing.T) {
+	got := withKnowledge(nil, []AttachedPack{
+		{Name: "aws-docs", Digest: "sha256:ab", Pages: 1, Bytes: 216, Shipped: &ShippedFrom{InWorkspace: "knowledge/aws-docs", Release: "archive sha256:arch"}},
+		{Name: "voice", Digest: "sha256:cd", Pages: 3, Bytes: 10},
+	}, nil)
+	want := "aws-docs shipped with the release (archive sha256:arch) mounted read-only at /knowledge/aws-docs (sha256:ab, 1 page, 216 bytes)" +
+		"; voice mounted read-only at /knowledge/voice (sha256:cd, 3 pages, 10 bytes, scan: not scanned)" +
+		"; tools knowledge_list, knowledge_search and knowledge_read, on the tools container only"
+	if got["knowledge"] != want {
+		t.Fatalf("got\n%q\nwant\n%q", got["knowledge"], want)
+	}
+}
+
+// TestAShippedPackIsStagedFromTheVerifiedWorkspace: a pack the release
+// ships is copied from the run's own copy of the workspace, after
+// CheckWorkspace held that copy to the install record, and held to the
+// digest its caller pinned: a pack swapped in the install after it was
+// loaded is refused before any container starts, even if it is swapped
+// back for the workspace check (agentry-cli#320).
+func TestAShippedPackIsStagedFromTheVerifiedWorkspace(t *testing.T) {
+	shipIn := func(t *testing.T, p *Params, pack *knowledge.Pack) AttachedPack {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(p.WorkspaceSrc, "knowledge"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := knowledge.CopyPack(pack.Dir, filepath.Join(p.WorkspaceSrc, "knowledge", pack.Manifest.Name)); err != nil {
+			t.Fatal(err)
+		}
+		a := AttachPack(pack)
+		a.Dir = filepath.Join(t.TempDir(), "never-read")
+		a.Shipped = &ShippedFrom{InWorkspace: "knowledge/" + pack.Manifest.Name, Release: "archive sha256:arch"}
+		return a
+	}
+	t.Run("staged from the workspace copy", func(t *testing.T) {
+		p, f := fixture(t)
+		happyFake(f)
+		a := shipIn(t, &p, makePack(t, "aws-docs"))
+		p.Knowledge = []AttachedPack{a}
+		env, err := Run(context.Background(), f, p)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if got := env.CapabilitiesEnforced["knowledge"]; !strings.HasPrefix(got, "aws-docs shipped with the release (archive sha256:arch) mounted read-only at /knowledge/aws-docs") {
+			t.Fatalf("receipt knowledge line = %q", got)
+		}
+	})
+	t.Run("a pack that is not the one pinned", func(t *testing.T) {
+		p, f := fixture(t)
+		happyFake(f)
+		a := shipIn(t, &p, makePack(t, "aws-docs"))
+		// What the workspace holds is another, self-consistent pack of the
+		// same name: the digest pinned before the consent does not match.
+		other := knowledgetest.Make(t, "aws-docs", map[string]string{"sources/extra.txt": "another pack\n"})
+		dst := filepath.Join(p.WorkspaceSrc, "knowledge", "aws-docs")
+		if err := os.RemoveAll(dst); err != nil {
+			t.Fatal(err)
+		}
+		if err := knowledge.CopyPack(other.Dir, dst); err != nil {
+			t.Fatal(err)
+		}
+		p.Knowledge = []AttachedPack{a}
+		_, err := Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitVerify || !strings.Contains(err.Error(), "aws-docs") {
+			t.Fatalf("want exit %d naming the pack, got %v", ExitVerify, err)
+		}
+		if _, ran := f.FindRun("-agent"); ran {
+			t.Fatal("the agent ran on a shipped pack that is not the one pinned")
+		}
+	})
+}

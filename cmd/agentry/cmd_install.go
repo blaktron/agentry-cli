@@ -476,7 +476,10 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}
 	_, _ = fmt.Fprintln(out, "capabilities:")
-	for _, line := range capabilityLines(m.Capabilities) {
+	// The archive is in hand and verified: each shipped pack's size is read
+	// from its headers. A size that cannot be read leaves the names alone.
+	sizes, _ := archivePackSizes(archive, m.ShippedPacks())
+	for _, line := range capabilityLinesSized(m.Contract(), sizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 
@@ -486,7 +489,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		_, _ = fmt.Fprintf(errOut, "warning: %v — treating this as a first install\n", serr)
 		state = installed.State{}
 	}
-	nextCaps := installed.Snapshot(m.Capabilities)
+	nextCaps := installed.Snapshot(m.Contract())
 	if opts.plan {
 		refusal := attErr
 		if refusal == nil {
@@ -494,7 +497,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		}
 		return writeInstallPlan(cmd, res, m, computed, att, refusal, &state, key, nextCaps, target, paths)
 	}
-	if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Capabilities, opts.yes); err != nil {
+	if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Contract(), opts.yes); err != nil {
 		return err
 	}
 
@@ -524,11 +527,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// wider, possibly narrower (agentry-cli#252). A legacy archive without
 	// agent.yaml hands back m itself, which has nothing to be held to.
 	if am != m {
-		if widened := installed.ArchiveWidenings(m.Capabilities, am.Capabilities); len(widened) > 0 {
+		if widened := installed.ArchiveWidenings(m.Contract(), am.Contract()); len(widened) > 0 {
 			return fmt.Errorf("the archive of %s/%s@%s declares more than the registry said it would — refusing to install: its agent.yaml %s",
 				res.Namespace, res.Name, res.Version, strings.Join(widened, "; "))
 		}
-		nextCaps = installed.Snapshot(am.Capabilities)
+		nextCaps = installed.Snapshot(am.Contract())
 		m = am
 	}
 
@@ -557,7 +560,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		}
 	}
 	if flags.jsonOut {
-		contract, cdigest, err := contractJSON(m.Capabilities)
+		contract, cdigest, err := contractJSON(m.Contract())
 		if err != nil {
 			return err
 		}
@@ -579,7 +582,7 @@ func writeInstallPlan(cmd *cobra.Command, res *apiclient.ResolveResult, m *manif
 	att trust.AttestationResult, attErr error, state *installed.State, key installed.Key,
 	next installed.CapSnapshot, target string, paths installPaths,
 ) error {
-	contract, cdigest, err := contractJSON(m.Capabilities)
+	contract, cdigest, err := contractJSON(m.Contract())
 	if err != nil {
 		return err
 	}

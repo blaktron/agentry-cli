@@ -152,10 +152,6 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := stageIntake(p, rd); err != nil {
 		return nil, err
 	}
-	if err := stageKnowledge(p.Knowledge, rd.knowledge); err != nil {
-		return nil, err
-	}
-
 	if err := copyTree(p.WorkspaceSrc, rd.workspace); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("copy workspace: %w", err))
 	}
@@ -163,6 +159,11 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		if err := p.CheckWorkspace(rd.workspace); err != nil {
 			return nil, Classify(ExitVerify, err)
 		}
+	}
+	// After the workspace check: a pack the release ships is staged from
+	// the copy just verified.
+	if err := stageKnowledge(p.Knowledge, rd.knowledge, rd.workspace); err != nil {
+		return nil, err
 	}
 	// Gateway files now; harness files once the infrastructure is up, so a
 	// host-run harness sees the published addresses (Run / StartSession).
@@ -177,6 +178,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	if err := grantWeb(filepath.Join(rd.cfg, "gateway"), p.Web); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
+	}
+	if err := writeResolvConf(filepath.Join(rd.cfg, "gateway"), p.Plan); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("write the web tools' resolv.conf: %w", err))
 	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not

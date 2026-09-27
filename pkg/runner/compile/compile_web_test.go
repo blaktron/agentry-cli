@@ -33,6 +33,12 @@ publish:
 
 func compileWeb(t *testing.T, yaml, source string, web bool) (*spec.Plan, string, error) {
 	t.Helper()
+	return compileWebWith(t, yaml, source, web, nil)
+}
+
+// compileWebWith is compileWeb with the policy edited first.
+func compileWebWith(t *testing.T, yaml, source string, web bool, edit func(*policy.Policy)) (*spec.Plan, string, error) {
+	t.Helper()
 	m, err := manifest.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +50,9 @@ func compileWeb(t *testing.T, yaml, source string, web bool) (*spec.Plan, string
 	pol := policy.Default()
 	pol.AllowWildcardEgress = true
 	pol.Exec.Packages = map[string]string{"git": "git"}
+	if edit != nil {
+		edit(pol)
+	}
 	dir := filepath.Join(t.TempDir(), "plan")
 	plan, err := Compile(Inputs{Manifest: m, Digest: "sha256:x", Source: source, Web: web, WorkspaceDir: ws,
 		Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test"}, dir)
@@ -115,5 +124,41 @@ func TestTheWebGrantCompilesItsContainer(t *testing.T) {
 	if !strings.Contains(string(catalog), "disableNetwork: true") || strings.Contains(string(catalog), "AGENTRY_WEB") ||
 		plain.Capabilities.WebTools || slices.Contains(plain.Tools, toolsrv.ToolWebRead) || plain.Enforcement["web"] != "" {
 		t.Fatalf("without the grant:\n%s\n%+v", catalog, plain.Capabilities)
+	}
+}
+
+// TestTheWebToolsUnderARuntimeNeedTheHostsResolvers (agentry-cli#386): a
+// sandboxed runtime's network stack does not reach docker's embedded DNS
+// on the run's web network (DR-23), so the web tools under a runtime with
+// no docker.resolvers are refused by policy rather than left to resolve
+// nothing; with them, the plan carries the name servers (and so its hash
+// changes with them); a run without the web tools carries none, and one
+// on the daemon's default needs none.
+func TestTheWebToolsUnderARuntimeNeedTheHostsResolvers(t *testing.T) {
+	_, _, err := compileWebWith(t, webTextAgent, "builtin", true, func(p *policy.Policy) { p.Docker.Runtime = "runsc" })
+	var refusal *PolicyRefusal
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "docker.resolvers") || !strings.Contains(refusal.Reason, "runsc") {
+		t.Fatalf("the web tools under runsc with no resolvers: %v", err)
+	}
+	plan, _, err := compileWebWith(t, webTextAgent, "builtin", true, func(p *policy.Policy) {
+		p.Docker.Runtime, p.Docker.Resolvers = "runsc", []string{"192.168.122.1", "192.0.2.53"}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Runtime() != "runsc" || !slices.Equal(plan.WebResolvers(), []string{"192.168.122.1", "192.0.2.53"}) {
+		t.Fatalf("the plan's docker: %+v", plan.Docker)
+	}
+	// On the daemon's default the web tools keep docker's DNS.
+	plan, _, err = compileWebWith(t, webTextAgent, "builtin", true, nil)
+	if err != nil || plan.WebResolvers() != nil || plan.Docker != nil {
+		t.Fatalf("the web tools on the default runtime: %+v %v", plan, err)
+	}
+	// A run without the web tools reads no resolvers, under any runtime.
+	plan, _, err = compileWebWith(t, webTextAgent, "builtin", false, func(p *policy.Policy) {
+		p.Docker.Runtime, p.Docker.Resolvers = "runsc", []string{"192.168.122.1"}
+	})
+	if err != nil || plan.WebResolvers() != nil || plan.Runtime() != "runsc" {
+		t.Fatalf("a run without the web tools: %+v %v", plan.Docker, err)
 	}
 }

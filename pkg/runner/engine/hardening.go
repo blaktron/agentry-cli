@@ -140,6 +140,11 @@ func runtimeLine(p Params) string {
 	if filterSupported {
 		line += "; " + launched + ", which the gateway launches, " + is + " given " + rt + " by the run's docker filter" +
 			" (a server's relay links pinned into its /etc/hosts at the relay's address)"
+		if rs := p.Plan.WebResolvers(); len(rs) > 0 {
+			// The web tools' server reaches past the host by name
+			// (agentry-cli#386): it resolves through the host's servers.
+			line += "; the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own"
+		}
 	} else {
 		line += "; " + launched + ", which the gateway launches, " + takes + " the daemon's default: the docker filter that sets the runtime runs on Linux only (agentry-cli#322)"
 	}

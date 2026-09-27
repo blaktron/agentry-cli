@@ -73,8 +73,7 @@ func attachKnowledge(cmd *cobra.Command, args []string) (_ []engine.AttachedPack
 		}
 		seen[name] = arg
 		a := engine.AttachPack(p)
-		_, _ = fmt.Fprintf(errOut, "knowledge pack %s: %s, %d bytes, %s, %s — mounted read-only at %s/%s\n",
-			name, knowledge.CountPages(a.Pages), a.Bytes, a.Digest, a.Scan.Describe(), spec.KnowledgeMount, name)
+		sayKnowledge(errOut, []engine.AttachedPack{a})
 		out = append(out, a)
 	}
 	return out, done, nil

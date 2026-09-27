@@ -37,6 +37,24 @@ type AttachedPack struct {
 	Pages  int
 	Bytes  int64
 	Scan   knowledge.Scan
+	// Shipped is set for a pack the release ships in its own archive (plan
+	// knowledge.md §4.6): its trust is the release's, the attestation over
+	// the archive and the scan of the version, not its own manifest's scan
+	// record. Nil for a pack the person attaches.
+	Shipped *ShippedFrom
+}
+
+// ShippedFrom is where a shipped pack comes from: its directory in the
+// release's workspace, which the engine stages from the run's own copy of
+// the workspace once CheckWorkspace has held that copy to the install
+// record, and how the receipt names the release.
+type ShippedFrom struct {
+	// InWorkspace is the pack's slash path in the workspace,
+	// "knowledge/<name>".
+	InWorkspace string
+	// Release names the release's bytes: "archive sha256:…" for an
+	// installed release, "local package tree sha256:…" for --local.
+	Release string
 }
 
 // AttachPack is the attachment of a pack knowledge.Load verified.
@@ -47,8 +65,11 @@ func AttachPack(p *knowledge.Pack) AttachedPack {
 
 // stageKnowledge copies each pack into dest/<name> — regular files only,
 // within the pack cap — and verifies the copy: what the run reads is what
-// the caller verified, whatever happened to the original in between.
-func stageKnowledge(packs []AttachedPack, dest string) error {
+// the caller verified, whatever happened to the original in between. A
+// shipped pack is copied from the run's own copy of the workspace, which
+// CheckWorkspace verified first, so it is held both to the digest its
+// caller pinned and to the install record.
+func stageKnowledge(packs []AttachedPack, dest, workspace string) error {
 	seen := map[string]bool{}
 	for _, a := range packs {
 		if err := knowledge.ValidName(a.Name); err != nil {
@@ -59,7 +80,11 @@ func stageKnowledge(packs []AttachedPack, dest string) error {
 		}
 		seen[a.Name] = true
 		staged := filepath.Join(dest, a.Name)
-		if err := knowledge.CopyPack(a.Dir, staged); err != nil {
+		src := a.Dir
+		if a.Shipped != nil {
+			src = filepath.Join(workspace, filepath.FromSlash(a.Shipped.InWorkspace))
+		}
+		if err := knowledge.CopyPack(src, staged); err != nil {
 			return Classify(ExitVerify, fmt.Errorf("knowledge pack %s changed after it was verified: %w", a.Name, err))
 		}
 		got, err := knowledge.Load(staged)
@@ -179,6 +204,13 @@ func withKnowledge(enforced map[string]string, packs []AttachedPack, execCommand
 	}
 	parts := make([]string, 0, len(packs))
 	for _, a := range packs {
+		if a.Shipped != nil {
+			// The pack is part of the release: the attestation line says
+			// what covers the archive and whether it was scanned.
+			parts = append(parts, fmt.Sprintf("%s shipped with the release (%s) mounted read-only at %s/%s (%s, %s, %d bytes)",
+				a.Name, a.Shipped.Release, spec.KnowledgeMount, a.Name, a.Digest, knowledge.CountPages(a.Pages), a.Bytes))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("%s mounted read-only at %s/%s (%s, %s, %d bytes, scan: %s)",
 			a.Name, spec.KnowledgeMount, a.Name, a.Digest, knowledge.CountPages(a.Pages), a.Bytes, a.Scan.Describe()))
 	}
