@@ -380,3 +380,27 @@ func TestDoctorSaysASubscriptionTokenIsClaudeCodeOnly(t *testing.T) {
 		}
 	}
 }
+
+// A custom endpoint over plain http off this machine is a warning, never a
+// failure (agentry-cli#377).
+func TestDoctorWarnsOnAPlainHTTPModelEndpoint(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model.BaseURL = "http://gpu-box.lan:8000/v1"
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	for _, want := range []string{"warn  model:endpoint", "plain http", "Use https"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "FAIL  model:endpoint") {
+		t.Errorf("plain http failed doctor:\n%s", out)
+	}
+}

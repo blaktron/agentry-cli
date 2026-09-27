@@ -17,10 +17,12 @@ import (
 )
 
 // Catalog is what a provider's models endpoint listed, in the provider's
-// own order.
+// own order. Warning, when set, is PlainHTTPWarning's sentence for the
+// endpoint the key was sent to: the caller shows it beside the listing.
 type Catalog struct {
 	Provider string
 	Models   []Model
+	Warning  string
 }
 
 // Model is one listed model: the id a policy names, and the name a
@@ -62,10 +64,13 @@ var httpClient = &http.Client{
 
 // ListModels asks provider's models endpoint with key and returns what
 // it listed. baseURL is required for custom and ignored for the table
-// providers. Plain http is refused for any host but loopback before a
-// request is made; no redirect is followed; the key is scrubbed from any
-// error, the provider's own message included. An empty listing is an
-// error: a form offering nothing is worse than one saying so.
+// providers. A scheme other than http or https is refused before a
+// request is made; plain http off loopback, which only a custom endpoint
+// can be, is the operator's choice and is carried out with the warning
+// on the Catalog (agentry-cli#377, amending DR-25); no redirect is
+// followed; the key is scrubbed from any error, the provider's own
+// message included. An empty listing is an error: a form offering
+// nothing is worse than one saying so.
 func ListModels(ctx context.Context, provider, baseURL, key string) (*Catalog, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	key = strings.TrimSpace(key)
@@ -84,10 +89,11 @@ func listModels(ctx context.Context, provider, baseURL, key string) (*Catalog, e
 	if err != nil {
 		return nil, err
 	}
-	if err := requireHTTPS(endpoint); err != nil {
+	warning, err := checkScheme(endpoint)
+	if err != nil {
 		return nil, err
 	}
-	cat := &Catalog{Provider: provider}
+	cat := &Catalog{Provider: provider, Warning: warning}
 	cursor := ""
 	for n := 0; n < modelsMaxPages; n++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pg.url(endpoint, cursor), nil)
@@ -149,29 +155,47 @@ func modelsEndpoint(provider, baseURL string) (string, *pager, error) {
 	}
 }
 
-// requireHTTPS refuses a plain-http endpoint on any host but loopback:
-// the key rides the request, and a host on the operator's own machine is
-// the one place it may ride in clear (agentry-desktop#123).
-func requireHTTPS(endpoint string) error {
+// checkScheme admits an http or https endpoint with a host and refuses
+// anything else before a request is made. Plain http off loopback is
+// admitted with PlainHTTPWarning's sentence: the key rides the request,
+// so it travels in clear, and the operator who typed the address is told
+// so rather than refused (agentry-cli#377, amending DR-25). Loopback http
+// is a server on the operator's own machine and carries no warning
+// (agentry-desktop#123).
+func checkScheme(endpoint string) (string, error) {
 	u, err := url.Parse(endpoint)
-	if err != nil || u.Host == "" {
-		return fmt.Errorf("%q is not a URL with a host", endpoint)
+	if err != nil || u.Host == "" || u.Hostname() == "" {
+		return "", fmt.Errorf("%q is not a URL with a host", endpoint)
 	}
 	switch u.Scheme {
-	case "https":
-		return nil
-	case "http":
-		host := u.Hostname()
-		if host == "localhost" {
-			return nil
-		}
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			return nil
-		}
-		return fmt.Errorf("%s is plain http off this machine — the key would travel in clear; use https", u.Redacted())
+	case "https", "http":
+		return PlainHTTPWarning(endpoint), nil
 	default:
-		return fmt.Errorf("%q: the scheme must be https", endpoint)
+		return "", fmt.Errorf("%q: the scheme must be https (or http)", endpoint)
 	}
+}
+
+// PlainHTTPWarning is the sentence a caller shows for a model endpoint
+// the key would reach over plain http off this machine, and "" for https,
+// for loopback http, and for anything that is not an http URL. It is the
+// one wording the CLI's setup, doctor and the desktop share.
+func PlainHTTPWarning(endpoint string) string {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || u.Scheme != "http" || u.Hostname() == "" || IsLoopbackHost(u.Hostname()) {
+		return ""
+	}
+	return fmt.Sprintf("%s uses plain http: the API key and the prompts travel unencrypted to %s. Use https if the endpoint supports it.",
+		u.Redacted(), u.Hostname())
+}
+
+// IsLoopbackHost is true for localhost, a *.localhost name, and a
+// loopback address: a server on the operator's own machine.
+func IsLoopbackHost(host string) bool {
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // pager is one listing shape: how the URL carries the page cursor, how

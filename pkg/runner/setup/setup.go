@@ -226,6 +226,11 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 			return err
 		}
 		proxyAllow = []string{hp}
+		// Plain http off this machine is allowed and said out loud
+		// (agentry-cli#377): the key rides every model call.
+		if w := PlainHTTPWarning(baseURL); w != "" {
+			p.Say("warning: " + w)
+		}
 	}
 
 	// Where the key comes from when the variable is unset. A form-driven
