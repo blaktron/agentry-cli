@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1033,5 +1034,117 @@ func TestTheWebNetworkTakesOnlyTheWebToolsServer(t *testing.T) {
 		"HostConfig":       map[string]any{"NetworkMode": "default"},
 		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}}}}); code == http.StatusCreated {
 		t.Fatalf("the runner image without the web tools: %d %s", code, body)
+	}
+}
+
+// TestTheWebToolsServerResolvesThroughTheRunsResolvConf (agentry-cli#386):
+// with the run's resolv.conf configured, the filter binds it read-only at
+// /etc/resolv.conf in the web tools' server, and in no other container; the
+// gateway may not bind a resolv.conf of its own there, nor set DNS servers,
+// options or hosts entries for it. Without one, the server keeps docker's.
+func TestTheWebToolsServerResolvesThroughTheRunsResolvConf(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	var specPath, resolv string
+	web := func(withResolvers bool) func(c *Config) {
+		return func(c *Config) {
+			specPath = filepath.Join(c.BindRoots[0], "cfg", "toolspec.json")
+			resolv = filepath.Join(c.BindRoots[0], "cfg", "resolv.conf")
+			if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range []string{specPath, resolv} {
+				if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c.WebNetwork, c.WebImage = "agentry-A-web", "agentry-runner:test"
+			c.WebCmd, c.WebSpec, c.WebSpecTarget = []string{"tools", "--spec", target}, specPath, target
+			if withResolvers {
+				c.WebResolvConf = resolv
+			}
+		}
+	}
+	server := func(edit func(hc map[string]any)) map[string]any {
+		hc := map[string]any{"NetworkMode": "default", "Binds": []string{specPath + ":" + target + ":ro"}}
+		if edit != nil {
+			edit(hc)
+		}
+		return map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", target}, "HostConfig": hc}
+	}
+	binds := func(g *rig) []string {
+		hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+		var out []string
+		list, _ := hc["Binds"].([]any)
+		for _, b := range list {
+			out = append(out, b.(string))
+		}
+		return out
+	}
+
+	g := newRig(t, Limits{}, web(true))
+	if code, body := g.do(t, "POST", "/containers/create", server(nil)); code != http.StatusCreated {
+		t.Fatalf("the web tools' server: %d %s", code, body)
+	}
+	if got := binds(g); !slices.Contains(got, resolv+":/etc/resolv.conf:ro") {
+		t.Fatalf("the run's resolv.conf is not bound: %v", got)
+	}
+	for name, edit := range map[string]func(hc map[string]any){
+		"its own resolv.conf": func(hc map[string]any) {
+			hc["Binds"] = []string{specPath + ":" + target + ":ro", specPath + ":/etc/resolv.conf:ro"}
+		},
+		"a resolv.conf path not clean": func(hc map[string]any) {
+			hc["Binds"] = []string{specPath + ":" + target + ":ro", specPath + ":/etc//resolv.conf:ro"}
+		},
+		"DNS servers":   func(hc map[string]any) { hc["Dns"] = []string{"203.0.113.9"} },
+		"DNS options":   func(hc map[string]any) { hc["DnsOptions"] = []string{"ndots:0"} },
+		"a DNS search":  func(hc map[string]any) { hc["DnsSearch"] = []string{"evil.example"} },
+		"a hosts entry": func(hc map[string]any) { hc["ExtraHosts"] = []string{"vuln.go.dev:203.0.113.9"} },
+		"a resolv.conf mount": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "bind", "Source": specPath, "Target": "/etc/resolv.conf", "ReadOnly": true}}
+		},
+		"a bind over /etc": func(hc map[string]any) {
+			hc["Binds"] = []string{specPath + ":" + target + ":ro", filepath.Dir(specPath) + ":/etc:ro"}
+		},
+		"a tmpfs at the resolv.conf": func(hc map[string]any) { hc["Tmpfs"] = map[string]string{"/etc/resolv.conf": ""} },
+		"a tmpfs over /etc":          func(hc map[string]any) { hc["Tmpfs"] = map[string]string{"/etc": ""} },
+		"volumes from another":       func(hc map[string]any) { hc["VolumesFrom"] = []string{"runa-other"} },
+		"a hosts file": func(hc map[string]any) {
+			hc["Binds"] = []string{specPath + ":" + target + ":ro", specPath + ":/etc/hosts:ro"}
+		},
+		"a hosts mount": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "bind", "Source": specPath, "Target": "/etc/hosts", "ReadOnly": true}}
+		},
+		"a tmpfs mount elsewhere": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "tmpfs", "Target": "/var/cache"}}
+		},
+		"a volume mount": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "volume", "Source": "runa-vol", "Target": "/data"}}
+		},
+	} {
+		if code, body := g.do(t, "POST", "/containers/create", server(edit)); code != http.StatusForbidden {
+			t.Errorf("the web tools' server with %s: %d %s, want it refused", name, code, body)
+		}
+	}
+	// Another container on a network of the run's gets no resolv.conf.
+	if code, body := g.do(t, "POST", "/containers/create", map[string]any{"Image": "mcp/osv",
+		"HostConfig": map[string]any{"NetworkMode": "runa-net"}}); code == http.StatusCreated {
+		for _, b := range binds(g) {
+			if strings.Contains(b, "resolv.conf") {
+				t.Fatalf("another container got the run's resolv.conf: %v", b)
+			}
+		}
+	} else if code != http.StatusForbidden {
+		t.Fatalf("another container: %d %s", code, body)
+	}
+
+	// Without resolvers the server keeps docker's DNS: nothing is bound.
+	g = newRig(t, Limits{}, web(false))
+	if code, body := g.do(t, "POST", "/containers/create", server(nil)); code != http.StatusCreated {
+		t.Fatalf("the web tools' server without resolvers: %d %s", code, body)
+	}
+	for _, b := range binds(g) {
+		if strings.Contains(b, "resolv.conf") {
+			t.Fatalf("a run without resolvers bound %v", b)
+		}
 	}
 }

@@ -287,6 +287,15 @@ which the gateway's docker filter lets no other container join.
   `webSearch.apiKeySource: keyring`, the keychain entry `provider:brave` or
   `provider:youcom`. Without one the Drafter reads the registry and the pages
   it already knows.
+- Under a sandboxed runtime (`docker.runtime: runsc`) the tools container
+  cannot reach docker's own DNS on its network, so name your host's upstream
+  name servers in the policy: `docker: {runtime: runsc, resolvers:
+  [192.168.122.1]}`, at most three addresses, never a loopback stub such as
+  `127.0.0.53`. The runner writes them into a `resolv.conf` of the run's own
+  that the tools container reads in place of docker's, and the receipt's
+  `web.resolvers` line names them. Without them the Drafter does not run
+  under a runtime (exit 11), and `agentry doctor` says so. On the daemon's
+  default runtime nothing needs setting.
 
 The description, the searches and the pages go to the search provider, to
 TypeSafe and to the sites read, so the description should hold no secret.

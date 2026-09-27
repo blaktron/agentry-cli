@@ -620,3 +620,40 @@ func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 		t.Fatalf("load: %+v %v", got.WebSearch, err)
 	}
 }
+
+// TestDockerResolvers (agentry-cli#386): docker.resolvers takes at most
+// three name servers by address, each one a container can reach: a
+// loopback stub such as systemd-resolved's is the container's own inside
+// it, and is refused with the reason.
+func TestDockerResolvers(t *testing.T) {
+	for _, ok := range [][]string{nil, {"192.168.122.1"}, {"108.61.10.10"}, {"1.1.1.1", "9.9.9.9", "8.8.8.8"}} {
+		p := Default()
+		p.Docker.Resolvers = ok
+		if err := p.Validate(); err != nil {
+			t.Errorf("%v refused: %v", ok, err)
+		}
+	}
+	for name, bad := range map[string][]string{
+		"a host name":   {"dns.example.com"},
+		"a port":        {"192.168.122.1:53"},
+		"loopback":      {"127.0.0.53"},
+		"IPv6 loopback": {"::1"},
+		"unspecified":   {"0.0.0.0"},
+		"multicast":     {"224.0.0.251"},
+		"a zone":        {"fe80::1%eth0"},
+		"twice":         {"9.9.9.9", "9.9.9.9"},
+		"IPv6":          {"2001:19f0:300:1704::6"},
+		"IPv4 in IPv6":  {"::ffff:9.9.9.9"},
+		"four":          {"1.1.1.1", "9.9.9.9", "8.8.8.8", "8.8.4.4"},
+	} {
+		p := Default()
+		p.Docker.Resolvers = bad
+		err := p.Validate()
+		if err == nil || !strings.Contains(err.Error(), "docker.resolvers") {
+			t.Errorf("%s (%v): %v, want a refusal naming docker.resolvers", name, bad, err)
+		}
+		if name == "loopback" && !strings.Contains(err.Error(), "loopback stub") {
+			t.Errorf("the loopback refusal does not say why: %v", err)
+		}
+	}
+}

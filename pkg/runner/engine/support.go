@@ -178,6 +178,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := grantWeb(filepath.Join(rd.cfg, "gateway"), p.Web); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
 	}
+	if err := writeResolvConf(filepath.Join(rd.cfg, "gateway"), p.Plan); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("write the web tools' resolv.conf: %w", err))
+	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
 	// plan.json re-read from disk, which could have changed since it was

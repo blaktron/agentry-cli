@@ -115,12 +115,15 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 	}
 	// The web tools' server runs in the runner image (the compiler grants
 	// the tools to no package with exec, so no exec image).
-	var webNet, webImage, webSpec string
+	var webNet, webImage, webSpec, webResolv string
 	var webCmd []string
 	if plan.Capabilities.WebTools {
 		webNet, webImage = webNetwork(runID), plan.Proxy.Image
 		webCmd = []string{"tools", "--spec", spec.ToolSpecMount}
 		webSpec = filepath.Join(rd.cfg, "gateway", "toolspec.json")
+		if len(plan.WebResolvers()) > 0 {
+			webResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
+		}
 	}
 	f, err := sockfilter.Start(sockfilter.Config{
 		RunID:          runID,
@@ -139,6 +142,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		WebCmd:         webCmd,
 		WebSpec:        webSpec,
 		WebSpecTarget:  spec.ToolSpecMount,
+		WebResolvConf:  webResolv,
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
