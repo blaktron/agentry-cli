@@ -70,6 +70,12 @@ type CapSnapshot struct {
 	// to what the server receives and re-asks for consent. Absent in
 	// records written before env existed, which reads as "no env".
 	MCPServerEnv map[string]map[string]string `yaml:"mcpServerEnv,omitempty" json:"mcpServerEnv,omitempty"`
+	// Knowledge lists the knowledge packs the release ships in its archive
+	// (the manifest's knowledge.ships, as manifest.Contract carries them):
+	// a new one is text entering the agent's context, a widening the
+	// consent gate re-asks about. Absent in records written before shipped
+	// knowledge existed, which reads as "ships none".
+	Knowledge []string `yaml:"knowledge,omitempty" json:"knowledge,omitempty"`
 }
 
 // Snapshot flattens a manifest capability block for storage.
@@ -97,6 +103,7 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 	for _, d := range c.DataAccess {
 		s.DataAccess = append(s.DataAccess, string(d))
 	}
+	s.Knowledge = slices.Clone(c.Knowledge)
 	return s
 }
 
@@ -116,8 +123,9 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 			Read:  manifest.FSAccess{Mode: manifest.FSMode(s.FSRead), Paths: slices.Clone(s.FSReadPaths)},
 			Write: manifest.FSAccess{Mode: manifest.FSMode(s.FSWrite), Paths: slices.Clone(s.FSWritePaths)},
 		},
-		Exec:    manifest.ExecCapability{Commands: slices.Clone(s.ExecCommands)},
-		Secrets: slices.Clone(s.Secrets),
+		Exec:      manifest.ExecCapability{Commands: slices.Clone(s.ExecCommands)},
+		Secrets:   slices.Clone(s.Secrets),
+		Knowledge: slices.Clone(s.Knowledge),
 	}
 	for _, d := range s.DataAccess {
 		c.DataAccess = append(c.DataAccess, manifest.DataAccess(d))

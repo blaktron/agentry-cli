@@ -293,6 +293,17 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 		return engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid:\n  %s", meta.Ref, strings.Join(msgs, "\n  ")))
 	}
+	// The release's shipped packs, loaded once its manifest is valid: the
+	// pack names are its knowledge.ships, held to the name rule by V11.
+	shipped, err := shippedKnowledge(workspaceDir, m, meta)
+	if err != nil {
+		return err
+	}
+	if attached, err = withShipped(shipped, attached); err != nil {
+		return err
+	}
+	shippedSizes := packSizes(shipped)
+	sayKnowledge(cmd.ErrOrStderr(), shipped)
 
 	// The §R5 capability gate: same semantics as install — egress/exec
 	// (or a widened contract vs the last accepted run) needs consent.
@@ -316,7 +327,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.at(receipt.StageConsent)
 	if opts.plan {
 		consent = describeRunConsent(m, meta, consentHome)
-	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode); err != nil {
+	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode, shippedSizes); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
@@ -564,7 +575,7 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 	topts := tui.Options{
 		Ref:        plan.Ref,
 		Model:      plan.Harness.Model,
-		Caps:       capabilityLines(m.Capabilities),
+		Caps:       capabilityLines(m.Contract()),
 		MaxTurns:   params.Budgets.MaxTurns,
 		MaxCostUSD: params.Budgets.MaxCostUSD,
 		HasTask:    opts.input != "",
@@ -785,7 +796,7 @@ func describeRunConsent(m *manifest.Manifest, meta *installdir.Meta, home string
 	if serr != nil {
 		state = installed.State{}
 	}
-	next := installed.Snapshot(m.Capabilities)
+	next := installed.Snapshot(m.Contract())
 	if prev := state.Find(key); prev != nil {
 		c.Installed = &installPlanPrior{Version: prev.Version, Dir: prev.Dir}
 		c.Diff = installed.DiffCapabilities(prev.Capabilities, next)
@@ -985,7 +996,7 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 	if err != nil {
 		return err
 	}
-	contract, cdigest, err := contractJSON(m.Capabilities)
+	contract, cdigest, err := contractJSON(m.Contract())
 	if err != nil {
 		return err
 	}
@@ -1424,7 +1435,7 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 // confirmRunCapabilities applies the install-time consent semantics to
 // runs, keyed on the runner install dir: first run asks about egress/exec,
 // upgrades ask again only when the contract widened (§R1).
-func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installdir.Meta, home string, opts runOpts, mode manifest.Mode) error {
+func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installdir.Meta, home string, opts runOpts, mode manifest.Mode, shippedSizes map[string]int64) error {
 	// Everything here narrates to stderr: stdout is the run's result
 	// channel (§R8) and must stay pipeline-clean.
 	out := cmd.ErrOrStderr()
@@ -1433,7 +1444,7 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}
 	_, _ = fmt.Fprintln(out, "capabilities:")
-	for _, line := range capabilityLines(m.Capabilities) {
+	for _, line := range capabilityLinesSized(m.Contract(), shippedSizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 	if mode == manifest.ModeInteractive {
@@ -1446,8 +1457,8 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
 		state = installed.State{}
 	}
-	next := installed.Snapshot(m.Capabilities)
-	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Capabilities, opts.yes); err != nil {
+	next := installed.Snapshot(m.Contract())
+	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Contract(), opts.yes); err != nil {
 		return err
 	}
 	// An install owns the agent's directory (managed, agentry-cli#190); a
@@ -1561,7 +1572,7 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 	newProf, err := setup.GuidedProfile(prompter, setup.GuidedProfileOpts{
 		Ref:             meta.Ref,
 		Digest:          meta.Digest,
-		CapabilityLines: capabilityLines(m.Capabilities),
+		CapabilityLines: capabilityLines(m.Contract()),
 		Secrets:         secrets,
 		DefaultKeep:     keep,
 		KeepDecided:     keepDecided,
