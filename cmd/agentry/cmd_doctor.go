@@ -34,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
@@ -230,6 +231,11 @@ func doctorHarness(ctx context.Context, rep *doctorReport, pol *policy.Policy, n
 		rep.fail(check+":endpoint", "harness.%s.baseUrl points at %s, which model.proxyAllow does not list — the run's proxy would deny it",
 			name, r.Endpoint.HostPort)
 	}
+	if r.Endpoint.Valid {
+		if w := setup.PlainHTTPWarning(r.Endpoint.BaseURL); w != "" {
+			rep.warn(check+":endpoint", "%s", w)
+		}
+	}
 }
 
 // doctorPolicy loads the operator policy and checks the model block.
@@ -265,6 +271,11 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		rep.fail("model", "%s/%s: $%s is not set in this environment", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
 	default:
 		rep.ok("model", "%s/%s (key from $%s)", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
+	}
+	// A custom endpoint over plain http off this machine is allowed
+	// (agentry-cli#377) and is worth a warning on every check.
+	if w := setup.PlainHTTPWarning(pol.Model.BaseURL); w != "" {
+		rep.warn("model:endpoint", "%s", w)
 	}
 	// A subscription token (agentry-cli#171) drives Claude Code alone; a
 	// machine whose default adapter is the container harness cannot run

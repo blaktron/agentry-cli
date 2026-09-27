@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -278,8 +280,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			Session:    res.Session,
 		},
 		Proxy: spec.ProxySpec{
-			Image: in.RunnerImage,
-			Allow: append([]string(nil), in.Policy.Model.ProxyAllow...),
+			Image:     in.RunnerImage,
+			Allow:     append([]string(nil), in.Policy.Model.ProxyAllow...),
+			PlainHTTP: plainHTTPTargets(in.Policy),
 		},
 		Secrets: sortedCopy(m.Capabilities.Secrets),
 		Budgets: spec.Budgets{
@@ -1086,9 +1089,13 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 	} else {
 		e["secrets"] = "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: " + strings.Join(sortedCopy(secrets), ", ")
 	}
+	proxyLine := fmt.Sprintf("CONNECT allowlist: %s", strings.Join(pol.Model.ProxyAllow, ", "))
+	if plain := plainHTTPTargets(pol); len(plain) > 0 {
+		proxyLine += "; plain http forwarded, unencrypted, to the operator's http model endpoint(s): " + strings.Join(plain, ", ")
+	}
 	e["agentContainer"] = "internal-only run network; reachable endpoints: " + spec.GatewayAlias +
-		fmt.Sprintf(":%d (Bearer auth) and %s:%d (CONNECT allowlist: %s); no workspace, output, or docker-socket mounts; model API key present by necessity",
-			spec.GatewayPort, spec.ProxyAlias, spec.ProxyPort, strings.Join(pol.Model.ProxyAllow, ", "))
+		fmt.Sprintf(":%d (Bearer auth) and %s:%d (%s); no workspace, output, or docker-socket mounts; model API key present by necessity",
+			spec.GatewayPort, spec.ProxyAlias, spec.ProxyPort, proxyLine)
 	if len(caps.DataAccess) > 0 {
 		if len(extraServers) > 0 {
 			e["dataAccess"] = "declared " + strings.Join(caps.DataAccess, ", ") + "; operator-cataloged servers attached: " + strings.Join(extraServers, ", ")
@@ -1188,4 +1195,43 @@ func modelKeySource(pol *policy.Policy, adapterName string) (keyEnv, account str
 		account = modelkey.Account(pol.Model.Provider)
 	}
 	return keyEnv, account
+}
+
+// plainHTTPTargets is the host:port of every plain-http model base URL in
+// the policy (the model's and each host harness's) that the CONNECT
+// allowlist already names: the targets the proxy may forward plain http
+// to (DR-45, agentry-cli#377). Intersecting with the allowlist means a
+// plain target never reaches a host a tunnel could not; https endpoints
+// contribute nothing, so an all-https policy compiles as before.
+func plainHTTPTargets(pol *policy.Policy) []string {
+	if pol == nil {
+		return nil
+	}
+	urls := []string{pol.Model.BaseURL}
+	for _, hp := range pol.Harness {
+		urls = append(urls, hp.BaseURL)
+	}
+	allowed := map[string]bool{}
+	for _, a := range pol.Model.ProxyAllow {
+		allowed[strings.ToLower(strings.TrimSpace(a))] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range urls {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.Scheme != "http" || u.Hostname() == "" {
+			continue
+		}
+		port := u.Port()
+		if port == "" {
+			port = "80"
+		}
+		hp := strings.ToLower(net.JoinHostPort(u.Hostname(), port))
+		if allowed[hp] && !seen[hp] {
+			seen[hp] = true
+			out = append(out, hp)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

@@ -1019,3 +1019,25 @@ func TestCompileIgnoresTheGuide(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Plain-http targets are the http model base URLs the CONNECT allowlist
+// already names, nothing else (DR-45, agentry-cli#377).
+func TestPlainHTTPTargetsAreHTTPEndpointsOnTheAllowlist(t *testing.T) {
+	pol := policy.Default()
+	pol.Model.BaseURL = "http://gpu-box.lan:8000/v1"
+	pol.Model.ProxyAllow = []string{"gpu-box.lan:8000", "api.anthropic.com:443", "other.lan:80"}
+	pol.Harness = map[string]policy.HarnessPolicy{
+		"codex":  {BaseURL: "http://other.lan/v1"},       // on the allowlist as :80
+		"claude": {BaseURL: "https://api.anthropic.com"}, // https: never plain
+		"x":      {BaseURL: "http://not-allowed.lan:9/"}, // not on the allowlist
+	}
+	got := strings.Join(plainHTTPTargets(pol), ",")
+	if got != "gpu-box.lan:8000,other.lan:80" {
+		t.Fatalf("plain targets = %q", got)
+	}
+	pol.Model.BaseURL = "https://llm.internal:8443/v1"
+	pol.Harness = nil
+	if got := plainHTTPTargets(pol); len(got) != 0 {
+		t.Fatalf("an all-https policy has plain targets: %v", got)
+	}
+}

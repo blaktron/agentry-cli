@@ -7,6 +7,10 @@
 //
 // The proxy deliberately does not inspect TLS (RUNNER-DEVIATIONS DR-6):
 // the control is which host:port a tunnel may reach, not what crosses it.
+// One exception to "tunnels only": a plain-http model endpoint the
+// operator chose (DR-45, agentry-cli#377) is served by forwarding the
+// harness's absolute-form request, for the host:ports in PlainHTTP and
+// nothing else.
 // A harness that ignores HTTPS_PROXY fails closed — the internal network
 // has no other route out — which is the acceptable failure direction.
 //
@@ -15,6 +19,7 @@
 package netproxy
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -33,17 +38,29 @@ type Proxy struct {
 	// exactly; no wildcards, because a wildcard here would quietly widen
 	// the one hole in the agent's network isolation.
 	Allow []string
-	// Logw receives one line per CONNECT decision; nil discards. The
+	// PlainHTTP lists the host[:port] targets a plain-http request may be
+	// forwarded to (an entry without a port means 80): the operator's
+	// http model endpoints, each also on Allow (DR-45). Empty — the zero
+	// value, and every run whose model endpoints are https — means no
+	// plaintext proxying at all.
+	PlainHTTP []string
+	// Logw receives one line per decision (CONNECT, and plain http as
+	// "allow http" / "deny http"); nil discards. The
 	// engine points this at stderr, which lands in the run's receipts.
 	Logw io.Writer
 
-	logMu sync.Mutex
+	logMu     sync.Mutex
+	transport *http.Transport
+	tOnce     sync.Once
 }
 
 // ListenAndServe runs the proxy on addr until the listener fails (the
 // container's lifetime — the engine tears the proxy down with the run).
 func (p *Proxy) ListenAndServe(addr string) error {
 	p.logf("llm-proxy listening on %s (allow: %s)", addr, strings.Join(p.Allow, ", "))
+	if len(p.PlainHTTP) > 0 {
+		p.logf("llm-proxy forwards plain http to: %s", strings.Join(p.PlainHTTP, ", "))
+	}
 	srv := &http.Server{Addr: addr, Handler: p.Handler()}
 	return srv.ListenAndServe()
 }
@@ -56,8 +73,12 @@ func (p *Proxy) Handler() http.Handler {
 
 func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
-		// No plaintext proxying: model endpoints are TLS, and CONNECT is
-		// the only mode whose target this proxy can allowlist honestly.
+		// Plaintext proxying only toward an http model endpoint the
+		// operator named (DR-45); anything else is refused as before.
+		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 {
+			p.forwardPlain(w, r)
+			return
+		}
 		http.Error(w, "method not allowed: this proxy accepts CONNECT tunnels only", http.StatusMethodNotAllowed)
 		return
 	}
@@ -117,10 +138,119 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = upstream.Close()
 }
 
+// hopHeaders are the connection-scoped headers a proxy must not pass on
+// (RFC 9110 §7.6.1), Proxy-Authorization and Proxy-Connection included.
+var hopHeaders = []string{
+	"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate",
+	"Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
+}
+
+func dropHopHeaders(h http.Header) {
+	for _, f := range h.Values("Connection") {
+		for _, name := range strings.Split(f, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				h.Del(name)
+			}
+		}
+	}
+	for _, name := range hopHeaders {
+		h.Del(name)
+	}
+}
+
+// forwardPlain relays one absolute-form http request to a PlainHTTP
+// target. The upstream connection goes to the URL's host:port, which is
+// what the allowlist judged, and the Host header is set to it, so a
+// request cannot name one host to the check and another to the server.
+// No redirect is followed (the transport does not follow, and the 30x
+// goes back to the harness as it came); the body streams both ways, and
+// the response is flushed as it arrives, since a model streams its
+// answer.
+func (p *Proxy) forwardPlain(w http.ResponseWriter, r *http.Request) {
+	host, port := r.URL.Hostname(), r.URL.Port()
+	if port == "" {
+		port = "80"
+	}
+	// On PlainHTTP and on the CONNECT allowlist both: the plain list is
+	// never wider than what a tunnel could reach, whoever built it.
+	if host == "" || !permitsIn(p.PlainHTTP, "80", host, port) || !p.permits(host, port) {
+		p.logf("deny http %s:%s", host, port)
+		http.Error(w, fmt.Sprintf("forbidden: http://%s:%s is not a plain-http model endpoint of this run", host, port), http.StatusForbidden)
+		return
+	}
+	p.logf("allow http %s:%s", host, port)
+	out := r.Clone(r.Context())
+	out.RequestURI = ""
+	out.Host = r.URL.Host
+	out.Header = r.Header.Clone()
+	dropHopHeaders(out.Header)
+	resp, err := p.plainTransport().RoundTrip(out)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("bad gateway: http://%s:%s: %v", host, port, err), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	dropHopHeaders(resp.Header)
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	rc := http.NewResponseController(w)
+	buf := make([]byte, 32<<10)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			_ = rc.Flush()
+		}
+		if rerr == io.EOF {
+			return
+		}
+		if rerr != nil {
+			// A stream cut upstream must not reach the harness as a
+			// clean end: abort, so the client sees a reset connection
+			// rather than a closing chunk on half an answer.
+			p.logf("upstream http %s:%s: %v", host, port, rerr)
+			panic(http.ErrAbortHandler)
+		}
+	}
+}
+
+// plainTransport is the one upstream transport for plain forwarding: no
+// proxy of its own, no transparent decompression (the harness asked for
+// the encoding it can read), and no HTTP/2 over cleartext.
+func (p *Proxy) plainTransport() *http.Transport {
+	p.tOnce.Do(func() {
+		p.transport = &http.Transport{
+			Proxy: nil,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, network, addr)
+			},
+			// No response-header timeout: a slow model may think for
+			// minutes before its first byte, as it may through a
+			// tunnel; the request's context (the harness hanging up,
+			// the run's own timeout) bounds it.
+			DisableCompression: true,
+			IdleConnTimeout:    90 * time.Second,
+		}
+	})
+	return p.transport
+}
+
 // permits applies the allowlist to one host:port pair.
 func (p *Proxy) permits(host, port string) bool {
-	for _, entry := range p.Allow {
-		eh, ep := splitAllowEntry(entry)
+	return permitsIn(p.Allow, "443", host, port)
+}
+
+// permitsIn is true when list names host:port exactly, an entry without
+// a port meaning defPort.
+func permitsIn(list []string, defPort, host, port string) bool {
+	for _, entry := range list {
+		eh, ep := splitEntry(entry, defPort)
 		if strings.EqualFold(eh, host) && ep == port {
 			return true
 		}
@@ -128,13 +258,13 @@ func (p *Proxy) permits(host, port string) bool {
 	return false
 }
 
-// splitAllowEntry parses one allowlist entry, defaulting the port to 443.
-func splitAllowEntry(entry string) (host, port string) {
+// splitEntry parses one list entry, defaulting the port to defPort.
+func splitEntry(entry, defPort string) (host, port string) {
 	entry = strings.TrimSpace(entry)
 	if h, p, err := net.SplitHostPort(entry); err == nil {
 		return h, p
 	}
-	return entry, "443"
+	return entry, defPort
 }
 
 // logf serializes decision lines: handlers run concurrently and receipts
@@ -147,3 +277,7 @@ func (p *Proxy) logf(format string, args ...any) {
 	defer p.logMu.Unlock()
 	_, _ = fmt.Fprintf(p.Logw, format+"\n", args...)
 }
+
+// splitAllowEntry parses one CONNECT allowlist entry, defaulting the port
+// to 443.
+func splitAllowEntry(entry string) (host, port string) { return splitEntry(entry, "443") }

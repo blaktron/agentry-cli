@@ -598,3 +598,46 @@ func TestGuidedProfileSaysEachKeysHelp(t *testing.T) {
 		t.Fatalf("help said = %v", help)
 	}
 }
+
+// A custom endpoint over plain http off this machine is configured, with
+// the warning said (agentry-cli#377); https and loopback say nothing.
+func TestConfigureModelCustomPlainHTTPIsAllowedWithAWarning(t *testing.T) {
+	for _, tc := range []struct {
+		url  string
+		warn bool
+	}{
+		{"http://gpu-box.lan:8000/v1", true},
+		{"https://llm.internal:8443/v1", false},
+		{"http://127.0.0.1:11434/v1", false},
+	} {
+		pol := policy.Default()
+		p := &scriptPrompter{}
+		if err := ConfigureModel(p, pol, ModelOpts{Provider: "custom", Model: "m", APIKeyEnv: "K", BaseURL: tc.url, Yes: true}); err != nil {
+			t.Fatalf("%s: %v", tc.url, err)
+		}
+		if pol.Model.BaseURL != tc.url {
+			t.Fatalf("%s: base url = %q", tc.url, pol.Model.BaseURL)
+		}
+		warned := strings.Contains(strings.Join(p.said, "\n"), "warning: ")
+		if warned != tc.warn {
+			t.Errorf("%s: warned=%v, want %v (said %q)", tc.url, warned, tc.warn, p.said)
+		}
+		if err := pol.Validate(); err != nil {
+			t.Fatalf("%s: configured policy invalid: %v", tc.url, err)
+		}
+	}
+}
+
+// An IPv6 endpoint's allowlist entry is bracketed, the form the proxy
+// parses (agentry-cli#377 review).
+func TestHostPortOfBracketsIPv6(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://[fe80::1]:8000/v1": "[fe80::1]:8000",
+		"https://llm.lan/v1":       "llm.lan:443",
+		"http://llm.lan/v1":        "llm.lan:80",
+	} {
+		if got, err := hostPortOf(in); err != nil || got != want {
+			t.Errorf("hostPortOf(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+}

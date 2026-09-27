@@ -142,6 +142,7 @@ func runTools(args []string) error {
 func runProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	allow := fs.String("allow", "", "comma-separated host[:port] CONNECT allowlist")
+	plain := fs.String("plain-http", "", "comma-separated host[:port] plain-http model endpoints (DR-45); each must also be on --allow")
 	addr := fs.String("addr", ":3128", "listen address")
 	type forward struct{ listen, target string }
 	var forwards []forward
@@ -178,7 +179,13 @@ func runProxy(args []string) error {
 		fmt.Fprintln(os.Stderr, "agentry-runner proxy: --allow must list at least one host[:port]")
 		os.Exit(2)
 	}
-	p := &netproxy.Proxy{Allow: hosts, Logw: os.Stderr}
+	var plainHosts []string
+	for _, h := range strings.Split(*plain, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			plainHosts = append(plainHosts, h)
+		}
+	}
+	p := &netproxy.Proxy{Allow: hosts, PlainHTTP: plainHosts, Logw: os.Stderr}
 	return p.ListenAndServe(*addr)
 }
 
