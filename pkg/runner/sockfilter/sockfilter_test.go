@@ -1114,15 +1114,33 @@ func TestTheWebToolsServerResolvesThroughTheRunsResolvConf(t *testing.T) {
 		"a hosts mount": func(hc map[string]any) {
 			hc["Mounts"] = []map[string]any{{"Type": "bind", "Source": specPath, "Target": "/etc/hosts", "ReadOnly": true}}
 		},
-		"a tmpfs mount elsewhere": func(hc map[string]any) {
-			hc["Mounts"] = []map[string]any{{"Type": "tmpfs", "Target": "/var/cache"}}
+		"a tmpfs mount over /etc": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "tmpfs", "Target": "/etc"}}
 		},
-		"a volume mount": func(hc map[string]any) {
-			hc["Mounts"] = []map[string]any{{"Type": "volume", "Source": "runa-vol", "Target": "/data"}}
+		"a volume mount at the hosts file": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "volume", "Source": "runa-vol", "Target": "/etc/hosts"}}
 		},
 	} {
 		if code, body := g.do(t, "POST", "/containers/create", server(edit)); code != http.StatusForbidden {
 			t.Errorf("the web tools' server with %s: %d %s, want it refused", name, code, body)
+		}
+	}
+	// The gateway declares its binds' targets in Volumes, as docker's
+	// clients do: that passes, and a declared volume over /etc does not.
+	withVolumes := func(v map[string]any) map[string]any {
+		d := server(nil)
+		d["Volumes"] = v
+		return d
+	}
+	if code, body := g.do(t, "POST", "/containers/create", withVolumes(map[string]any{target: map[string]any{}})); code != http.StatusCreated {
+		t.Fatalf("the web tools' server declaring its spec's target: %d %s", code, body)
+	}
+	if !slices.Contains(binds(g), resolv+":/etc/resolv.conf:ro") {
+		t.Fatalf("the run's resolv.conf is not bound: %v", binds(g))
+	}
+	for _, v := range []string{"/etc", "/etc/resolv.conf", "/etc/hosts"} {
+		if code, body := g.do(t, "POST", "/containers/create", withVolumes(map[string]any{v: map[string]any{}})); code != http.StatusForbidden {
+			t.Errorf("a declared volume at %s: %d %s, want it refused", v, code, body)
 		}
 	}
 	// Another container on a network of the run's gets no resolv.conf.

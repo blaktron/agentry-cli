@@ -473,10 +473,26 @@ func (f *Filter) webShape(ctx context.Context, c *containerCreateBody) (bool, er
 	case len(hc.DNS) > 0 || len(hc.DNSSearch) > 0 || len(hc.DNSOptions) > 0 || len(hc.ExtraHosts) > 0:
 		// Each would decide what a page's host name resolves to.
 		return false, deny("the web tools' server resolves names as the run does")
-	case present(c.Volumes) || len(hc.Tmpfs) > 0 || len(hc.VolumesFrom) > 0:
-		// A volume or a tmpfs could sit over /etc, where its name
-		// resolution and its spec are read.
-		return false, deny("the web tools' server takes no volume or tmpfs")
+	}
+	// Nothing may sit over /etc, where its name resolution is read, but
+	// its own spec: no declared volume, tmpfs or mount there. Elsewhere the
+	// storage rules hold as for any container (the pinned gateway declares
+	// its binds' targets in Volumes too, as docker's clients do).
+	var declared map[string]json.RawMessage
+	if present(c.Volumes) {
+		if err := json.Unmarshal(c.Volumes, &declared); err != nil {
+			return false, deny("the web tools' server's Volumes are a map of targets")
+		}
+	}
+	for target := range declared {
+		if path.Clean(target) != f.cfg.WebSpecTarget && coversResolvConf(target) {
+			return false, deny("the web tools' server resolves names as the run does")
+		}
+	}
+	for target := range hc.Tmpfs {
+		if coversResolvConf(target) {
+			return false, deny("the web tools' server resolves names as the run does")
+		}
 	}
 	spec := false
 	for _, b := range hc.Binds {
@@ -496,8 +512,8 @@ func (f *Filter) webShape(ctx context.Context, c *containerCreateBody) (bool, er
 		if path.Clean(m.Target) == f.cfg.WebSpecTarget {
 			return false, deny("the web tools' server reads the run's own tools spec, read-only")
 		}
-		if coversResolvConf(m.Target) || !strings.EqualFold(m.Type, "bind") {
-			return false, deny("the web tools' server takes no volume or tmpfs, and resolves names as the run does")
+		if coversResolvConf(m.Target) {
+			return false, deny("the web tools' server resolves names as the run does")
 		}
 	}
 	if !spec {
