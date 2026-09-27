@@ -554,6 +554,7 @@ func (r RunSpec) args(detach bool) []string {
 	for _, h := range r.ExtraHosts {
 		args = append(args, "--add-host", h)
 	}
+	var alias []string
 	switch {
 	case r.Network != "" && len(r.ExtraNetworks) > 0:
 		// docker's long form scopes the alias to the network it names.
@@ -567,13 +568,14 @@ func (r RunSpec) args(detach bool) []string {
 		}
 	case r.Network != "":
 		args = append(args, "--network", r.Network)
+		if r.Alias != "" {
+			alias = []string{"--network-alias", r.Alias}
+		}
 	}
 	if r.Hostname != "" {
 		args = append(args, "--hostname", r.Hostname)
 	}
-	if r.Alias != "" && len(r.ExtraNetworks) == 0 {
-		args = append(args, "--network-alias", r.Alias)
-	}
+	args = append(args, alias...)
 	for _, k := range sortedKeys(r.Labels) {
 		args = append(args, "--label", k+"="+r.Labels[k])
 	}

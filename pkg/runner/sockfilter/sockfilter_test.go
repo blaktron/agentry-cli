@@ -117,8 +117,9 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"Id": id + "-full", "Image": image, "Config": map[string]any{"Labels": labelsFor(id, run)},
 			"NetworkSettings": map[string]any{"Networks": map[string]any{"agentry-A-relays": map[string]any{"NetworkID": "id-agentry-A-relays", "IPAddress": "10.9.0.5"}}},
-			// A container whose id says so has started.
-			"State": map[string]any{"Running": strings.Contains(id, "running")},
+			// A container whose id says so has started, or runs under runsc.
+			"State":      map[string]any{"Running": strings.Contains(id, "running")},
+			"HostConfig": map[string]any{"Runtime": map[bool]string{true: "runsc"}[strings.Contains(id, "runsc")]},
 		})
 		return
 	case strings.HasPrefix(p, "/networks/") && r.Method == http.MethodGet && !gateway:
@@ -861,10 +862,15 @@ func TestRelaysRunUnderTheRuntimeWithTheHostsResolvers(t *testing.T) {
 	}
 	g.refused(t, "the gateway naming a relay's resolv.conf", "POST", "/containers/create",
 		map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext, "Binds": []string{conf + ":/etc/resolv.conf:ro"}}}, "")
-	g.refused(t, "a started relay joining the way out", "POST", "/networks/"+ext+"/connect", map[string]any{"Container": "runa-relay-running"}, "no network connected after start")
-	g.refused(t, "a started server joining a network", "POST", "/networks/runa-net/connect", map[string]any{"Container": "runa-running"}, "no network connected after start")
-	if code, body := g.do(t, "POST", "/networks/"+ext+"/connect", map[string]any{"Container": "runa-relay"}); code == http.StatusForbidden {
+	g.refused(t, "a started relay under runsc joining the way out", "POST", "/networks/"+ext+"/connect", map[string]any{"Container": "runa-relay-running-runsc"}, "no network connected after start")
+	g.refused(t, "a started server under runsc joining a network", "POST", "/networks/runa-net/connect", map[string]any{"Container": "runa-running-runsc"}, "no network connected after start")
+	if code, body := g.do(t, "POST", "/networks/"+ext+"/connect", map[string]any{"Container": "runa-relay-runsc"}); code == http.StatusForbidden {
 		t.Errorf("a relay joining before it starts was refused: %s", body)
+	}
+	// A started container on the daemon's default takes a join, whatever
+	// the run's runtime: only a sandbox would miss it.
+	if code, body := g.do(t, "POST", "/networks/runa-net/connect", map[string]any{"Container": "runa-running"}); code == http.StatusForbidden {
+		t.Errorf("a started container on the default was refused a join: %s", body)
 	}
 
 	plain := newRig(t, Limits{}, relays, func(c *Config) { c.Runtime = "runsc" })

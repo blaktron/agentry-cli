@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -252,12 +253,7 @@ func writeResolvConf(gatewayDir string, plan *spec.Plan) error {
 	if len(rs) == 0 {
 		return nil
 	}
-	var b strings.Builder
-	b.WriteString("# The run's name servers: the runner policy's docker.resolvers (agentry-cli#386, #337).\n")
-	for _, r := range rs {
-		b.WriteString("nameserver " + r + "\n")
-	}
-	return os.WriteFile(filepath.Join(gatewayDir, resolvConfFile), []byte(b.String()), 0o644) //nolint:gosec // read by the tools server's user
+	return os.WriteFile(filepath.Join(gatewayDir, resolvConfFile), policy.ResolvConf(rs), 0o644) //nolint:gosec // read by the tools server's user
 }
 
 // resolversLine is the receipt's account of how the web tools resolve.

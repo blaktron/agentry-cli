@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -142,7 +143,8 @@ func (e *installEgress) env() map[string]string {
 // startInstallProxy creates the install's internal network and starts the
 // proxy on it, joined to the bridge as its second leg; under the policy's
 // runtime with the host's name servers (agentry-cli#337), to a network of
-// the install's own at create instead, reading a resolv.conf of its own. The runner image
+// the install's own at create instead, reading a resolv.conf of its own.
+// The runner image
 // must already be built (the install step builds it before any server is
 // installed); a missing one is refused rather than left to docker, which
 // would try to pull a name that is only ever built locally.
@@ -178,8 +180,8 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow [
 		// agentry-cli#221, #337).
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	spec.ReadOnly, spec.Tmpfs = true, []string{"/tmp"}
-	if docker.Runtime != "" && len(docker.Resolvers) > 0 {
-		if err := e.sandbox(ctx, id, labels, docker, &spec); err != nil {
+	if docker.SandboxesProxies() {
+		if err := e.sandboxProxy(ctx, id, labels, docker, &spec); err != nil {
 			e.stop(ctx, "")
 			return nil, err
 		}
@@ -198,10 +200,10 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow [
 	return e, nil
 }
 
-// sandbox puts the proxy under the policy's runtime (agentry-cli#337): its
-// egress network, made here and joined at create, and a resolv.conf of the
-// install's own naming the host's name servers, bound over docker's.
-func (e *installEgress) sandbox(ctx context.Context, id string, labels map[string]string,
+// sandboxProxy puts the proxy under the policy's runtime (agentry-cli#337):
+// its egress network, made here and joined at create, and a resolv.conf of
+// the install's own naming the host's name servers, bound over docker's.
+func (e *installEgress) sandboxProxy(ctx context.Context, id string, labels map[string]string,
 	docker policy.DockerPolicy, spec *dockerx.RunSpec,
 ) error {
 	_ = e.d.NetworkRemove(ctx, installEgressName(id))
@@ -211,24 +213,19 @@ func (e *installEgress) sandbox(ctx context.Context, id string, labels map[strin
 	e.out = installEgressName(id)
 	dir, err := os.MkdirTemp("", "agentry-mcpinstall-dns-")
 	if err != nil {
-		return fmt.Errorf("the install proxy's resolv.conf: %w", err)
+		return fmt.Errorf("make the install proxy's resolv.conf directory: %w", err)
 	}
 	e.dnsDir = dir
 	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // read by the proxy's user
-		return fmt.Errorf("the install proxy's resolv.conf: %w", err)
+		return fmt.Errorf("open the install proxy's resolv.conf directory to it: %w", err)
 	}
-	var b strings.Builder
-	b.WriteString("# The install proxy's name servers: the runner policy's docker.resolvers (agentry-cli#337).\n")
-	for _, r := range docker.Resolvers {
-		b.WriteString("nameserver " + r + "\n")
-	}
-	conf := dir + "/resolv.conf"
-	if err := os.WriteFile(conf, []byte(b.String()), 0o644); err != nil { //nolint:gosec // read by the proxy's user
-		return fmt.Errorf("the install proxy's resolv.conf: %w", err)
+	conf := filepath.Join(dir, "resolv.conf")
+	if err := os.WriteFile(conf, policy.ResolvConf(docker.Resolvers), 0o644); err != nil { //nolint:gosec // read by the proxy's user
+		return fmt.Errorf("write the install proxy's resolv.conf: %w", err)
 	}
 	spec.Runtime = docker.Runtime
 	spec.ExtraNetworks = []string{e.out}
-	spec.Mounts = append(spec.Mounts, dockerx.Mount{Source: conf, Target: "/etc/resolv.conf", ReadOnly: true, Relabel: true})
+	spec.Mounts = append(spec.Mounts, dockerx.Mount{Source: conf, Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true})
 	return nil
 }
 

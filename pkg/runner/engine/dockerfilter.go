@@ -129,7 +129,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 	// it too, reading the run's own resolv.conf (agentry-cli#337); each is
 	// created with both its networks, so none is connected after start.
 	var relayResolv string
-	if len(plan.SandboxResolvers()) > 0 && relaysNeeded(plan) {
+	if relaysSandboxed(plan) {
 		relayResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
 	}
 	f, err := sockfilter.Start(sockfilter.Config{

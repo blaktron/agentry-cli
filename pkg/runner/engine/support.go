@@ -729,12 +729,6 @@ func containerName(runID, role string) string { return "agentry-" + runID + "-" 
 func networkName(runID string) string         { return "agentry-" + runID + "-net" }
 func proxyEgressNetwork(runID string) string  { return "agentry-" + runID + "-egress" }
 
-// proxySandboxed says whether the run's llm-proxy runs under the plan's
-// runtime (agentry-cli#337): only with the host's name servers to read, and
-// never for a host-run harness, whose proxy publishes ports to the host.
-func proxySandboxed(plan *spec.Plan) bool {
-	return len(plan.SandboxResolvers()) > 0 && plan.Harness.Host == nil
-}
 func sessionVolumeName(runID string) string { return "agentry-" + runID + "-session" }
 func runLabels(runID string) map[string]string {
 	return owner.With(map[string]string{runLabel: runID})

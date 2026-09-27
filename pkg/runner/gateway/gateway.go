@@ -102,7 +102,7 @@ func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) er
 	}
 	for _, w := range []struct{ key, want, how string }{
 		{"docker.runtime", pol.Docker.Runtime, "install it and register it in the daemon's runtimes"},
-		{"docker.gatewayRuntime", pol.Docker.GatewayRuntime, "register runsc again under that name with runtimeArgs [\"--host-uds=open\"]"},
+		{"docker.gatewayRuntime", pol.Docker.GatewayRuntime, "register " + pol.Docker.Runtime + " again under that name with runtimeArgs [\"--host-uds=open\"]"},
 	} {
 		if w.want == "" || slices.Contains(have, w.want) {
 			continue

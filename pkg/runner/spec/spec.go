@@ -357,8 +357,9 @@ func (p *Plan) SandboxResolvers() []string {
 }
 
 // WebResolvers are the name servers the plan's web tools resolve through,
-// or none for docker's embedded DNS: only a plan with the web tools has
-// them (the compiler records them for such a plan alone).
+// or none for docker's embedded DNS: only a plan with the web tools reads
+// them here (the compiler also records them under a runtime, for
+// SandboxResolvers).
 func (p *Plan) WebResolvers() []string {
 	if p == nil || p.Docker == nil || !p.Capabilities.WebTools {
 		return nil

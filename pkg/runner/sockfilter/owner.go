@@ -26,8 +26,10 @@ type container struct {
 	// networks are its endpoints by network name: the network's id and
 	// the container's address there.
 	networks map[string]endpoint
-	// running says whether its process has started (State.Running).
+	// running says whether its process has started (State.Running), and
+	// runtime which OCI runtime it was created with (HostConfig.Runtime).
 	running bool
+	runtime string
 }
 
 type endpoint struct {
@@ -48,6 +50,9 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 		State struct {
 			Running bool
 		}
+		HostConfig struct {
+			Runtime string
+		}
 	}
 	code, err := f.inspect(ctx, "/containers/"+url.PathEscape(id)+"/json", &c)
 	if err != nil {
@@ -59,7 +64,7 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 	if !f.ours(c.Config.Labels) {
 		return container{}, deny("container %s is not this run's", short(id))
 	}
-	return container{id: c.ID, imageID: c.ImageID, networks: c.NetworkSettings.Networks, running: c.State.Running}, nil
+	return container{id: c.ID, imageID: c.ImageID, networks: c.NetworkSettings.Networks, running: c.State.Running, runtime: c.HostConfig.Runtime}, nil
 }
 
 // linkedAddress is the address a container of this run's gateway has on

@@ -1122,14 +1122,8 @@ func (f *Filter) connect(r *http.Request, network string, joining bool) error {
 		// it starts: a sandboxed runtime's network stack takes none
 		// connected once it runs (agentry-cli#337), so the join would
 		// succeed and leave it with no way there.
-		if c.running && f.cfg.Runtime != "" {
-			relay, err := f.relayPin(r.Context(), c.imageID)
-			if err != nil {
-				return err
-			}
-			if relay == "" || f.cfg.RelayResolvConf != "" {
-				return deny("container %s is running under %s, which takes no network connected after start", short(c.id), f.cfg.Runtime)
-			}
+		if c.running && f.cfg.Runtime != "" && c.runtime == f.cfg.Runtime {
+			return deny("container %s is running under %s, which takes no network connected after start", short(c.id), f.cfg.Runtime)
 		}
 		if ep := doc.EndpointConfig; ep != nil && len(ep.DriverOpts) > 0 {
 			return deny("network driver options on %s", network)

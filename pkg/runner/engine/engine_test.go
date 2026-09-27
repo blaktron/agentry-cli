@@ -959,6 +959,32 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 	if proxySandboxed(p.Plan) {
 		t.Error("a host harness's proxy is sandboxed")
 	}
+
+	// Where the docker filter does not run, the gateway holds the daemon's
+	// own socket and is not given its runtime, the relays keep the default,
+	// and the line never ends by claiming no class is on the default.
+	p, f := fixtureWith(t, func(pol *policy.Policy) {
+		pol.Docker.Runtime = "runsc"
+		pol.Docker.GatewayRuntime = "runsc-uds"
+		pol.Docker.Resolvers = []string{"192.0.2.53"}
+	})
+	defer func(was bool) { filterSupported = was }(filterSupported)
+	filterSupported = false
+	line = runtimeLine(p)
+	for _, bad := range []string{"no container class", "the gateway is created with docker --runtime", "the relays, which the filter gives"} {
+		if strings.Contains(line, bad) {
+			t.Errorf("without the filter the line says %q: %q", bad, line)
+		}
+	}
+	for _, want := range []string{"the tools server (the docker filter does not run here)", "the relays (the docker filter that gives them runsc does not run here)", "docker.gatewayRuntime is not applied"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("without the filter the line lacks %q: %q", want, line)
+		}
+	}
+	if gatewaySandboxed(p.Plan) {
+		t.Error("the gateway is sandboxed without the filter")
+	}
+	_ = f
 }
 
 // The receipt's runtime line follows the run: relays and servers when the

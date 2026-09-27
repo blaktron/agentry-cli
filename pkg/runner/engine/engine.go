@@ -421,7 +421,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		proxySpec.ExtraNetworks = []string{egress}
 		proxySpec.Runtime = p.Plan.Runtime()
 		proxySpec.Mounts = append(proxySpec.Mounts, dockerx.Mount{
-			Source: filepath.Join(rd.cfg, "gateway", resolvConfFile), Target: "/etc/resolv.conf", ReadOnly: true, Relabel: true,
+			Source: filepath.Join(rd.cfg, "gateway", resolvConfFile), Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true,
 		})
 	}
 	if err := d.RunDetached(ctx, proxySpec); err != nil {
@@ -490,7 +490,9 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// The gateway's own runtime, a registration that opens the bind-mounted
 	// socket of the run's docker filter (docker.gatewayRuntime,
 	// agentry-cli#337); "" is the daemon's default.
-	gwSpec.Runtime = p.Plan.GatewayRuntime()
+	if gatewaySandboxed(p.Plan) {
+		gwSpec.Runtime = p.Plan.GatewayRuntime()
+	}
 	// A run that will give the gateway relays to start: where the docker
 	// filter runs, the relay networks are its own (agentry-cli#220);
 	// elsewhere it refuses to share the host's one relay network with
