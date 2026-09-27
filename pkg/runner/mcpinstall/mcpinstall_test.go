@@ -594,6 +594,52 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 		inst.CPUs != policy.DefaultCPUs || inst.PidsLimit != policy.DefaultPids {
 		t.Fatalf("installer posture: cap-drop %v nnp %v memory %q cpus %d pids %d", inst.CapDrop, inst.NoNewPrivileges, inst.Memory, inst.CPUs, inst.PidsLimit)
 	}
+	// With the host's name servers the proxy runs under the runtime too
+	// (agentry-cli#337): on an egress network of the install's own, joined
+	// at create, reading a resolv.conf of its own; nothing is connected
+	// after it starts, and both networks and the file go with the install.
+	fake3 := &dockerx.Fake{}
+	withRunner(fake3)
+	var conf string
+	fake3.OnDetached = func(r dockerx.RunSpec) {
+		for _, m := range r.Mounts {
+			if m.Target == "/etc/resolv.conf" && m.ReadOnly {
+				b, _ := os.ReadFile(m.Source)
+				conf = m.Source + "\n" + string(b)
+			}
+		}
+	}
+	if err := EnsureInstalled(t.Context(), fake3, res, t.TempDir(), httpsRegs(regs), images, policy.DockerPolicy{Runtime: "runsc", Resolvers: []string{"192.0.2.53"}}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	proxy, _ := fake3.FindRun("agentry-mcpproxy-")
+	if proxy.Runtime != "runsc" || len(proxy.ExtraNetworks) != 1 || !strings.HasSuffix(proxy.ExtraNetworks[0], "-out") {
+		t.Fatalf("install proxy runtime = %q networks %v, want runsc on the install's egress network", proxy.Runtime, proxy.ExtraNetworks)
+	}
+	if !strings.Contains(conf, "nameserver 192.0.2.53\n") {
+		t.Fatalf("the install proxy's resolv.conf = %q", conf)
+	}
+	started, removedAfter := false, false
+	for _, c := range fake3.Calls {
+		if c.Op == "NetworkConnect" {
+			t.Errorf("a connect after start under the runtime: %s", c.Arg)
+		}
+		if c.Op == "RunDetached" && c.Arg == proxy.Name {
+			started = true
+		}
+		if c.Op == "NetworkRemove" && c.Arg == proxy.ExtraNetworks[0] && started {
+			removedAfter = true
+		}
+	}
+	if !removedAfter {
+		t.Error("the install's egress network was left behind")
+	}
+	if path, _, _ := strings.Cut(conf, "\n"); path != "" {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("the install proxy's resolv.conf was left behind: %v", err)
+		}
+	}
+
 	fake2 := &dockerx.Fake{}
 	withRunner(fake2)
 	if err := EnsureInstalled(t.Context(), fake2, res, t.TempDir(), httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {

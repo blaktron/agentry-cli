@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -226,26 +227,33 @@ func webLine(rec *receipt.Web) string {
 }
 
 // resolvConfFile is the run's own resolv.conf for the web tools' server,
-// beside its tools spec in the gateway's configuration.
+// beside its tools spec in the gateway's configuration, and for the
+// classes under the run's runtime that resolve host names.
 const resolvConfFile = "resolv.conf"
 
-// writeResolvConf writes, for a run of the web tools with name servers in
-// its plan (policy docker.resolvers, agentry-cli#386), the resolv.conf the
-// docker filter binds read-only into the tools server in place of docker's:
-// a sandboxed runtime does not reach docker's embedded DNS on the run's web
-// network (DR-23). Readable by the tools server's user; nothing for any
-// other run.
+// runResolvers are the name servers of the run's own resolv.conf: the web
+// tools' (agentry-cli#386) or, under a runtime, those of the llm-proxy and
+// the relays (agentry-cli#337). Both are the policy's docker.resolvers.
+func runResolvers(plan *spec.Plan) []string {
+	if rs := plan.WebResolvers(); len(rs) > 0 {
+		return rs
+	}
+	return plan.SandboxResolvers()
+}
+
+// writeResolvConf writes, for a run with name servers in its plan (policy
+// docker.resolvers), the resolv.conf read in place of docker's: the docker
+// filter binds it read-only into the web tools' server (agentry-cli#386)
+// and, under a runtime, into each relay, and the engine into the llm-proxy
+// (agentry-cli#337). A sandboxed runtime does not reach docker's embedded
+// DNS (DR-23). Readable by each of those containers' users; nothing for a
+// run without resolvers.
 func writeResolvConf(gatewayDir string, plan *spec.Plan) error {
-	rs := plan.WebResolvers()
+	rs := runResolvers(plan)
 	if len(rs) == 0 {
 		return nil
 	}
-	var b strings.Builder
-	b.WriteString("# The web tools' name servers: the runner policy's docker.resolvers (agentry-cli#386).\n")
-	for _, r := range rs {
-		b.WriteString("nameserver " + r + "\n")
-	}
-	return os.WriteFile(filepath.Join(gatewayDir, resolvConfFile), []byte(b.String()), 0o644) //nolint:gosec // read by the tools server's user
+	return os.WriteFile(filepath.Join(gatewayDir, resolvConfFile), policy.ResolvConf(rs), 0o644) //nolint:gosec // read by the tools server's user
 }
 
 // resolversLine is the receipt's account of how the web tools resolve.

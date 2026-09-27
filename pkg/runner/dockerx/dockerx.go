@@ -104,6 +104,13 @@ type RunSpec struct {
 	// Network and Alias attach the container to the run network.
 	Network string
 	Alias   string
+	// ExtraNetworks are the container's other networks, joined at create
+	// rather than by a connect after start: a sandboxed runtime's network
+	// stack takes no network connected once it runs (measured under gVisor
+	// on dev, agentry-cli#337), and docker refuses the default bridge
+	// beside a user-defined network at create, so each is user-defined.
+	// Alias, if any, is Network's alone.
+	ExtraNetworks []string
 	// Hostname sets the container's hostname when it must differ from
 	// the container name (the gateway looks itself up by hostname).
 	Hostname string
@@ -547,15 +554,28 @@ func (r RunSpec) args(detach bool) []string {
 	for _, h := range r.ExtraHosts {
 		args = append(args, "--add-host", h)
 	}
-	if r.Network != "" {
+	var alias []string
+	switch {
+	case r.Network != "" && len(r.ExtraNetworks) > 0:
+		// docker's long form scopes the alias to the network it names.
+		first := "name=" + r.Network
+		if r.Alias != "" {
+			first += ",alias=" + r.Alias
+		}
+		args = append(args, "--network", first)
+		for _, n := range r.ExtraNetworks {
+			args = append(args, "--network", n)
+		}
+	case r.Network != "":
 		args = append(args, "--network", r.Network)
+		if r.Alias != "" {
+			alias = []string{"--network-alias", r.Alias}
+		}
 	}
 	if r.Hostname != "" {
 		args = append(args, "--hostname", r.Hostname)
 	}
-	if r.Alias != "" {
-		args = append(args, "--network-alias", r.Alias)
-	}
+	args = append(args, alias...)
 	for _, k := range sortedKeys(r.Labels) {
 		args = append(args, "--label", k+"="+r.Labels[k])
 	}

@@ -343,6 +343,15 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		if err := f.relayShape(&c, relay); err != nil {
 			return nil, err
 		}
+		if f.cfg.RelayResolvConf != "" && f.cfg.Runtime != "" {
+			// Under the run's runtime, with the run's own name servers
+			// (agentry-cli#337): added after the shape check, which holds
+			// the gateway to naming no file of a relay's. A relay is
+			// created with both its networks, so none is connected after
+			// it starts (a sandbox takes no such network).
+			hc.Binds = append(hc.Binds, f.cfg.RelayResolvConf+":"+resolvConfTarget+":ro")
+			hc.Runtime = f.cfg.Runtime
+		}
 	} else if f.cfg.Runtime != "" {
 		if err := f.pinLinks(ctx, &c); err != nil {
 			return nil, err
@@ -1108,6 +1117,13 @@ func (f *Filter) connect(r *http.Request, network string, joining bool) error {
 	if joining {
 		if err := f.egressAllowed(r.Context(), network, c.imageID); err != nil {
 			return err
+		}
+		// A container under the run's runtime takes its networks before
+		// it starts: a sandboxed runtime's network stack takes none
+		// connected once it runs (agentry-cli#337), so the join would
+		// succeed and leave it with no way there.
+		if c.running && f.cfg.Runtime != "" && c.runtime == f.cfg.Runtime {
+			return deny("container %s is running under %s, which takes no network connected after start", short(c.id), f.cfg.Runtime)
 		}
 		if ep := doc.EndpointConfig; ep != nil && len(ep.DriverOpts) > 0 {
 			return deny("network driver options on %s", network)

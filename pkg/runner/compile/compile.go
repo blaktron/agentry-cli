@@ -294,9 +294,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Files:  map[string]string{},
 	}
 
-	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && in.Web {
-		// The web tools' name servers are part of the plan too: a changed
-		// list recompiles. Only a run with the web tools reads them.
+	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && (in.Web || in.Policy.Docker.Runtime != "") {
+		// The name servers are part of the plan too: a changed list
+		// recompiles. A run with the web tools reads them, and under a
+		// runtime so do the classes that resolve host names
+		// (agentry-cli#337).
 		plan.Docker = &spec.DockerSpec{Resolvers: slices.Clone(rs)}
 	}
 	if rt := in.Policy.Docker.Runtime; rt != "" {
@@ -312,6 +314,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			plan.Docker = &spec.DockerSpec{}
 		}
 		plan.Docker.Runtime = rt
+		plan.Docker.GatewayRuntime = in.Policy.Docker.GatewayRuntime
 		if plan.Enforcement == nil {
 			plan.Enforcement = map[string]string{}
 		}

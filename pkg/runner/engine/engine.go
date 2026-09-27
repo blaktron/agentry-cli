@@ -403,15 +403,39 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Publish: proxyPublish,
 	}
 	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
+	// Under the run's runtime where the host's name servers are named
+	// (agentry-cli#337): it reads the run's own resolv.conf, and its egress
+	// leg is a network of the run's own joined at create, since a
+	// sandboxed runtime takes no network connected after start and docker
+	// refuses the default bridge beside the run network at create. A
+	// host-run harness's proxy publishes ports to the host and stays on
+	// the daemon's default, as measured.
+	sandboxed := proxySandboxed(p.Plan)
+	if sandboxed {
+		egress := proxyEgressNetwork(runID)
+		if err := d.NetworkCreate(ctx, egress, false, labels); err != nil {
+			return Classify(ExitGateway, fmt.Errorf("create the llm proxy's egress network: %w", err))
+		}
+		td.add(func(c context.Context) { _ = d.NetworkRemove(c, egress) })
+		td.networks = append(td.networks, egress)
+		proxySpec.ExtraNetworks = []string{egress}
+		proxySpec.Runtime = p.Plan.Runtime()
+		proxySpec.Mounts = append(proxySpec.Mounts, dockerx.Mount{
+			Source: filepath.Join(rd.cfg, "gateway", resolvConfFile), Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true,
+		})
+	}
 	if err := d.RunDetached(ctx, proxySpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start llm proxy: %w", err))
 	}
 	td.add(func(c context.Context) { _ = d.RemoveForce(c, proxyName) })
 	// The proxy needs a route to the model endpoint; the run network is
 	// internal by design, so it joins the default bridge as its second
-	// leg. The agent container never does (§R11 invariant 2).
-	if err := d.NetworkConnect(ctx, "bridge", proxyName); err != nil {
-		return Classify(ExitGateway, fmt.Errorf("connect proxy to bridge: %w", err))
+	// leg (or, sandboxed, took its own egress network at create). The
+	// agent container never does (§R11 invariant 2).
+	if !sandboxed {
+		if err := d.NetworkConnect(ctx, "bridge", proxyName); err != nil {
+			return Classify(ExitGateway, fmt.Errorf("connect proxy to bridge: %w", err))
+		}
 	}
 	if p.Plan.Harness.Host != nil {
 		port, perr := waitPublishedPort(ctx, d, proxyName, spec.ProxyPort)
@@ -463,6 +487,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// DAC_READ_SEARCH, which it keeps and nothing else.
 	gwSpec = hardened(gwSpec, p.limits())
 	gwSpec.CapAdd = []string{"DAC_READ_SEARCH"}
+	// The gateway's own runtime, a registration that opens the bind-mounted
+	// socket of the run's docker filter (docker.gatewayRuntime,
+	// agentry-cli#337); "" is the daemon's default.
+	if gatewaySandboxed(p.Plan) {
+		gwSpec.Runtime = p.Plan.GatewayRuntime()
+	}
 	// A run that will give the gateway relays to start: where the docker
 	// filter runs, the relay networks are its own (agentry-cli#220);
 	// elsewhere it refuses to share the host's one relay network with

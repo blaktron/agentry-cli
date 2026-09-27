@@ -8,6 +8,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // Container hardening (agentry-cli#163, DR-30). Every container the
@@ -111,6 +112,29 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	return out
 }
 
+// proxySandboxed says whether the run's llm-proxy runs under the plan's
+// runtime (agentry-cli#337): only with the host's name servers to read, and
+// never for a host-run harness, whose proxy publishes ports to the host.
+func proxySandboxed(plan *spec.Plan) bool {
+	return len(plan.SandboxResolvers()) > 0 && plan.Harness.Host == nil
+}
+
+// relaysSandboxed says whether the run's relays run under its runtime
+// (agentry-cli#337): the docker filter gives it to them, with the run's
+// resolv.conf, where it runs and the host's name servers are named.
+func relaysSandboxed(plan *spec.Plan) bool {
+	return filterSupported && relaysNeeded(plan) && len(plan.SandboxResolvers()) > 0
+}
+
+// gatewaySandboxed says whether the gateway runs under
+// docker.gatewayRuntime (agentry-cli#337): only through the docker filter,
+// whose socket is the one the registration's --host-uds=open opens. Where
+// the filter does not run the gateway holds the daemon's own socket, and
+// no sandbox is claimed for it.
+func gatewaySandboxed(plan *spec.Plan) bool {
+	return filterSupported && plan.GatewayRuntime() != ""
+}
+
 // runtimeLine is the receipt's account of the policy's runtime (DR-23,
 // agentry-cli#221): which of the run's container classes it holds, and why
 // each other one takes the daemon's default. It is written at run time,
@@ -120,6 +144,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 func runtimeLine(p Params) string {
 	rt := p.Plan.Runtime()
 	servers := len(p.Plan.MCPServers) > 0
+	rs := p.Plan.SandboxResolvers()
 	var under []string
 	if p.Plan.Harness.Host == nil {
 		under = append(under, "the agent container (the BriefAgent's code)")
@@ -131,8 +156,14 @@ func runtimeLine(p Params) string {
 		under = append(under, "the MCP server installer")
 	}
 	under = append(under, "the gateway's health probe")
+	if proxySandboxed(p.Plan) {
+		under = append(under, "the llm-proxy (on an egress network of the run's own, joined at create)")
+	}
 	line := rt + ": created with docker --runtime " + rt + ": " + strings.Join(under, ", ") +
 		" (each finds the containers it talks to through /etc/hosts, since a sandboxed network stack does not reach docker's embedded DNS)"
+	if gatewaySandboxed(p.Plan) {
+		line += "; the gateway is created with docker --runtime " + p.Plan.GatewayRuntime() + " (docker.gatewayRuntime), which opens the bind-mounted socket of the run's docker filter"
+	}
 	launched, is, takes := "the tools server", "is", "takes"
 	if servers {
 		launched, is, takes = "the tools server and the declared MCP servers", "are", "take"
@@ -151,13 +182,56 @@ func runtimeLine(p Params) string {
 	if p.Plan.Harness.Host != nil {
 		line += "; the harness is a host process, under no container runtime at all"
 	}
-	gaps := []string{"the llm-proxy (it resolves the model endpoint through docker's embedded DNS, which " + rt + " does not reach)"}
-	if servers {
+	// The classes that resolve host names read the host's own name servers
+	// under the runtime (agentry-cli#337).
+	var named []string
+	if proxySandboxed(p.Plan) {
+		named = append(named, "the llm-proxy")
+	}
+	if servers && len(rs) > 0 {
+		named = append(named, "the MCP server install proxy")
+	}
+	if relaysSandboxed(p.Plan) {
+		named = append(named, "the relays, which the filter gives "+rt)
+	}
+	if len(named) > 0 {
+		verb := " resolve"
+		if len(named) == 1 {
+			verb = " resolves"
+		}
+		line += "; " + strings.Join(named, ", ") + verb + " host names through " + strings.Join(rs, ", ") +
+			" (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, each created with every network it joins"
+	}
+	var gaps []string
+	if !filterSupported {
+		gaps = append(gaps, launched+" (the docker filter does not run here)")
+	}
+	switch {
+	case proxySandboxed(p.Plan):
+	case len(rs) > 0:
+		gaps = append(gaps, "the llm-proxy (it publishes ports to the host-run harness)")
+	default:
+		gaps = append(gaps, "the llm-proxy (it resolves the model endpoint through docker's embedded DNS, which "+rt+" does not reach, and docker.resolvers names no server)")
+	}
+	if servers && len(rs) == 0 {
 		gaps = append(gaps, "the MCP server install proxy (it resolves the registry the same way)")
 	}
-	if relaysNeeded(p.Plan) {
-		gaps = append(gaps, "the relays (each resolves its declared host the same way)")
+	switch {
+	case !relaysNeeded(p.Plan) || relaysSandboxed(p.Plan):
+	case len(rs) == 0:
+		gaps = append(gaps, "the relays (each resolves its declared host through docker's embedded DNS, which "+rt+" does not reach)")
+	default:
+		gaps = append(gaps, "the relays (the docker filter that gives them "+rt+" does not run here)")
 	}
-	gaps = append(gaps, "the gateway (it reaches the daemon through a host Unix socket, which "+rt+" does not open)")
+	switch {
+	case gatewaySandboxed(p.Plan):
+	case p.Plan.GatewayRuntime() != "":
+		gaps = append(gaps, "the gateway (it holds the daemon's own socket where the docker filter does not run, so docker.gatewayRuntime is not applied)")
+	default:
+		gaps = append(gaps, "the gateway (it reaches the daemon through a host Unix socket, which "+rt+" does not open; docker.gatewayRuntime names no registration with --host-uds=open)")
+	}
+	if len(gaps) == 0 {
+		return line + "; no container class of the run is on the daemon's default runtime"
+	}
 	return line + "; on the daemon's default runtime, as measured under " + rt + " (DR-23): " + strings.Join(gaps, ", ")
 }

@@ -336,10 +336,22 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		// The Drafter's web tools under a runtime resolve names only
 		// through the host's own name servers (agentry-cli#386): without
 		// them a draft is refused at compile, so doctor says so first.
+		// The llm-proxy, the install proxy and the relays take the runtime
+		// only with them (agentry-cli#337).
 		if len(pol.Docker.Resolvers) == 0 {
-			rep.warn("docker:resolvers", "policy docker.runtime is %q and docker.resolvers is empty: `agentry draft` will be refused (its web tools cannot reach docker's DNS under %s) — name the host's upstream name servers in docker.resolvers", want, want)
+			rep.warn("docker:resolvers", "policy docker.runtime is %q and docker.resolvers is empty: `agentry draft` will be refused (its web tools cannot reach docker's DNS under %s), and the llm-proxy, the install proxy and the relays stay on the daemon's default — name the host's upstream name servers in docker.resolvers", want, want)
 		} else {
-			rep.ok("docker:resolvers", "the web tools resolve through %s", strings.Join(pol.Docker.Resolvers, ", "))
+			rep.ok("docker:resolvers", "under %s, the Drafter's web tools, the llm-proxy, the install proxy and, where the per-run docker filter runs, the relays resolve through %s (a host-run harness's proxy stays on the daemon's default)", want, strings.Join(pol.Docker.Resolvers, ", "))
+		}
+		// The gateway takes a runtime of its own, registered to open a
+		// host Unix socket (agentry-cli#337).
+		switch gw := pol.Docker.GatewayRuntime; {
+		case gw == "":
+			rep.warn("docker:gatewayRuntime", "the gateway stays on the daemon's default: it reaches the run's docker filter through a host Unix socket, which %s opens only when registered with --host-uds=open — register it again under a name of its own and set docker.gatewayRuntime", want)
+		case err == nil && slices.Contains(have, gw):
+			rep.ok("docker:gatewayRuntime", "%s registered on the daemon, for the gateway", gw)
+		case err == nil:
+			rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime is %q but the daemon has only: %s — register %s again under that name with runtimeArgs [\"--host-uds=open\"], or unset docker.gatewayRuntime", gw, strings.Join(have, ", "), want)
 		}
 	}
 	images := []struct{ name, ref, fix string }{

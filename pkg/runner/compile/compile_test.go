@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -908,6 +909,30 @@ func TestRuntimeIsPartOfThePlanHash(t *testing.T) {
 	}
 	if runsc.Runtime() != "runsc" || !strings.HasPrefix(runsc.Enforcement["runtime"], "runsc:") {
 		t.Fatalf("runtime plan: docker=%+v enforcement=%q", runsc.Docker, runsc.Enforcement["runtime"])
+	}
+}
+
+// Under a runtime, the host's name servers and the gateway's runtime are
+// part of any plan, not only a draft's (agentry-cli#337): the classes that
+// resolve host names read them. Without a runtime a plain run carries
+// neither, so its bytes are what they were.
+func TestTheSandboxSettingsArePartOfThePlan(t *testing.T) {
+	m := parseManifest(t, fullCapsYAML)
+	ws := workspaceFor(t, m, nil)
+	both, _ := compileFixtureModeWith(t, m, ws, manifest.ModeAutonomous, func(p *policy.Policy) {
+		p.Docker.Runtime, p.Docker.GatewayRuntime, p.Docker.Resolvers = "runsc", "runsc-uds", []string{"192.0.2.53"}
+	})
+	if both.GatewayRuntime() != "runsc-uds" || !slices.Equal(both.SandboxResolvers(), []string{"192.0.2.53"}) || both.WebResolvers() != nil {
+		t.Fatalf("docker block %+v: want the gateway runtime and the resolvers for the sandbox, none for web tools it lacks", both.Docker)
+	}
+	bare, _ := compileFixtureModeWith(t, m, ws, manifest.ModeAutonomous, func(p *policy.Policy) { p.Docker.Resolvers = []string{"192.0.2.53"} })
+	if bare.Docker != nil {
+		t.Fatalf("resolvers without a runtime or the web tools reached the plan: %+v", bare.Docker)
+	}
+	h1, _ := both.Hash()
+	runsc, _ := compileFixtureModeWith(t, m, ws, manifest.ModeAutonomous, func(p *policy.Policy) { p.Docker.Runtime = "runsc" })
+	if h2, _ := runsc.Hash(); h1 == h2 {
+		t.Fatal("the gateway runtime and resolvers leave the plan's hash unchanged")
 	}
 }
 

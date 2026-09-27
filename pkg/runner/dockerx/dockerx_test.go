@@ -93,6 +93,14 @@ func TestRunSpecArgs(t *testing.T) {
 		}
 	}
 
+	// A container joining several networks at create (agentry-cli#337):
+	// the alias rides the first network's long form, never a flag that
+	// would apply to every one.
+	multi := RunSpec{Name: "p", Image: "i", Network: "run-net", Alias: "llm-proxy", ExtraNetworks: []string{"run-egress"}}
+	if got, want := multi.args(true), []string{"run", "-d", "--name", "p", "--network", "name=run-net,alias=llm-proxy", "--network", "run-egress", "i"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("several networks: %q, want %q", got, want)
+	}
+
 	interactive := RunSpec{Name: "n", Image: "i", Interactive: true}
 	got := interactive.args(false)
 	want := []string{"run", "-i", "--name", "n", "i"}

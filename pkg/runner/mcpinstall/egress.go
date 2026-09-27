@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -45,7 +46,13 @@ const (
 // before the next install of that server (and the proxy by the owner
 // sweep, agentry-cli#161).
 func installNetworkName(id string) string { return "agentry-mcpinstall-" + id + "-net" }
-func installProxyName(id string) string   { return "agentry-mcpproxy-" + id }
+
+// installEgressName is the proxy's own way out when it runs under the
+// policy's runtime (agentry-cli#337): a network joined at create, since a
+// sandbox takes no network connected after start and docker refuses the
+// default bridge beside a user-defined network at create.
+func installEgressName(id string) string { return "agentry-mcpinstall-" + id + "-out" }
+func installProxyName(id string) string  { return "agentry-mcpproxy-" + id }
 
 // proxyImage is the runner image, whose proxy role is the run's own
 // CONNECT proxy: the tag both clients build from the embedded context
@@ -113,6 +120,10 @@ type installEgress struct {
 	network string
 	proxy   string
 	logw    io.Writer
+	// out and dnsDir are set when the proxy runs under the runtime: its
+	// egress network and the directory holding its resolv.conf.
+	out    string
+	dnsDir string
 }
 
 // env is the builder's proxy environment: both spellings of the https and
@@ -130,7 +141,10 @@ func (e *installEgress) env() map[string]string {
 }
 
 // startInstallProxy creates the install's internal network and starts the
-// proxy on it, joined to the bridge as its second leg. The runner image
+// proxy on it, joined to the bridge as its second leg; under the policy's
+// runtime with the host's name servers (agentry-cli#337), to a network of
+// the install's own at create instead, reading a resolv.conf of its own.
+// The runner image
 // must already be built (the install step builds it before any server is
 // installed); a missing one is refused rather than left to docker, which
 // would try to pull a name that is only ever built locally.
@@ -159,22 +173,60 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow [
 		Network: e.network,
 		Alias:   installProxyAlias,
 		Labels:  labels,
-		// The daemon's default runtime, like the run's llm-proxy: it is
-		// the runner's own binary, and it resolves the registry's hosts
-		// through docker's embedded DNS, which a sandboxed runtime does not
-		// reach (measured under runsc on dev, DR-23, agentry-cli#221).
+		// The daemon's default runtime, like the run's llm-proxy, unless
+		// the host's name servers are named: it resolves the registry's
+		// hosts by name, and a sandboxed runtime does not reach docker's
+		// embedded DNS (measured under runsc on dev, DR-23,
+		// agentry-cli#221, #337).
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	spec.ReadOnly, spec.Tmpfs = true, []string{"/tmp"}
+	if docker.SandboxesProxies() {
+		if err := e.sandboxProxy(ctx, id, labels, docker, &spec); err != nil {
+			e.stop(ctx, "")
+			return nil, err
+		}
+	}
 	if err := d.RunDetached(ctx, spec); err != nil {
-		_ = d.NetworkRemove(ctx, e.network)
+		e.stop(ctx, "")
 		return nil, fmt.Errorf("start install proxy: %w", err)
 	}
-	if err := d.NetworkConnect(ctx, "bridge", e.proxy); err != nil {
-		e.stop(ctx, "")
-		return nil, fmt.Errorf("connect install proxy to bridge: %w", err)
+	if e.out == "" {
+		if err := d.NetworkConnect(ctx, "bridge", e.proxy); err != nil {
+			e.stop(ctx, "")
+			return nil, fmt.Errorf("connect install proxy to bridge: %w", err)
+		}
 	}
 	_, _ = fmt.Fprintf(logw, "mcp server install egress: through the install proxy, allowing %s\n", strings.Join(allow, ", "))
 	return e, nil
+}
+
+// sandboxProxy puts the proxy under the policy's runtime (agentry-cli#337):
+// its egress network, made here and joined at create, and a resolv.conf of
+// the install's own naming the host's name servers, bound over docker's.
+func (e *installEgress) sandboxProxy(ctx context.Context, id string, labels map[string]string,
+	docker policy.DockerPolicy, spec *dockerx.RunSpec,
+) error {
+	_ = e.d.NetworkRemove(ctx, installEgressName(id))
+	if err := e.d.NetworkCreate(ctx, installEgressName(id), false, labels); err != nil {
+		return fmt.Errorf("create the install proxy's egress network: %w", err)
+	}
+	e.out = installEgressName(id)
+	dir, err := os.MkdirTemp("", "agentry-mcpinstall-dns-")
+	if err != nil {
+		return fmt.Errorf("make the install proxy's resolv.conf directory: %w", err)
+	}
+	e.dnsDir = dir
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // read by the proxy's user
+		return fmt.Errorf("open the install proxy's resolv.conf directory to it: %w", err)
+	}
+	conf := filepath.Join(dir, "resolv.conf")
+	if err := os.WriteFile(conf, policy.ResolvConf(docker.Resolvers), 0o644); err != nil { //nolint:gosec // read by the proxy's user
+		return fmt.Errorf("write the install proxy's resolv.conf: %w", err)
+	}
+	spec.Runtime = docker.Runtime
+	spec.ExtraNetworks = []string{e.out}
+	spec.Mounts = append(spec.Mounts, dockerx.Mount{Source: conf, Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true})
+	return nil
 }
 
 // hosts pins the proxy's alias into a builder that runs under a
@@ -210,4 +262,10 @@ func (e *installEgress) stop(ctx context.Context, logPath string) {
 	}
 	_ = e.d.RemoveForce(keep, e.proxy)
 	_ = e.d.NetworkRemove(keep, e.network)
+	if e.out != "" {
+		_ = e.d.NetworkRemove(keep, e.out)
+	}
+	if e.dnsDir != "" {
+		_ = os.RemoveAll(e.dnsDir)
+	}
 }
