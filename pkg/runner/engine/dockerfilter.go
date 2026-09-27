@@ -125,24 +125,32 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 			webResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
 		}
 	}
+	// Under a runtime with the host's name servers, the relays run under
+	// it too, reading the run's own resolv.conf (agentry-cli#337); each is
+	// created with both its networks, so none is connected after start.
+	var relayResolv string
+	if relaysSandboxed(plan) {
+		relayResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
+	}
 	f, err := sockfilter.Start(sockfilter.Config{
-		RunID:          runID,
-		Label:          runLabel,
-		OwnerLabel:     gatewayOwnerLabel,
-		Listen:         sock,
-		Upstream:       DockerSocket,
-		BindRoots:      pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]),
-		WritableRoots:  pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
-		SharedNetworks: shared,
-		EgressNetworks: egress,
-		NetworkNames:   names,
-		RelayHosts:     relayHosts(plan),
-		WebNetwork:     webNet,
-		WebImage:       webImage,
-		WebCmd:         webCmd,
-		WebSpec:        webSpec,
-		WebSpecTarget:  spec.ToolSpecMount,
-		WebResolvConf:  webResolv,
+		RunID:           runID,
+		Label:           runLabel,
+		OwnerLabel:      gatewayOwnerLabel,
+		Listen:          sock,
+		Upstream:        DockerSocket,
+		BindRoots:       pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]),
+		WritableRoots:   pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
+		SharedNetworks:  shared,
+		EgressNetworks:  egress,
+		NetworkNames:    names,
+		RelayHosts:      relayHosts(plan),
+		WebNetwork:      webNet,
+		WebImage:        webImage,
+		WebCmd:          webCmd,
+		WebSpec:         webSpec,
+		WebSpecTarget:   spec.ToolSpecMount,
+		WebResolvConf:   webResolv,
+		RelayResolvConf: relayResolv,
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,

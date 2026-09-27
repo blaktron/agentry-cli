@@ -134,21 +134,33 @@ type Policy struct {
 type DockerPolicy struct {
 	// Runtime names the daemon's OCI runtime (`docker run --runtime`) for
 	// a run's containers: gVisor's "runsc" on a host that has it
-	// registered. It holds every class but four, which stay on the
-	// daemon's default because they need what a sandbox does not give
-	// (DR-23, agentry-cli#221): the llm-proxy, the MCP server install
-	// proxy and the relays (docker's embedded DNS) and the gateway (a host
-	// Unix socket); the receipt's runtime line names each class. Empty
+	// registered. With Resolvers named it also holds the llm-proxy, the
+	// MCP server install proxy and the relays (agentry-cli#337), save a
+	// host-run harness's proxy and, where the docker filter does not run,
+	// the relays; without them those three stay on the daemon's default,
+	// because they resolve hosts through docker's embedded DNS, which a
+	// sandbox does not reach (DR-23, agentry-cli#221). The gateway takes
+	// GatewayRuntime. The receipt's runtime line names each class. Empty
 	// means the daemon's default —
 	// every run before the knob existed. A set value is enforced, not
 	// preferred: a daemon without it refuses the run at the ensure step
 	// (exit 13) rather than falling back, so the receipt's runtime line
 	// is never a claim the run did not have.
 	Runtime string `yaml:"runtime,omitempty"`
+	// GatewayRuntime names the runtime the gateway is created with: a
+	// second registration of gVisor with `--host-uds=open` (agentry-cli
+	// #337), since the gateway reaches the run's docker filter through a
+	// bind-mounted host Unix socket, which runsc without that flag does
+	// not open (measured on dev, DR-23). It needs Runtime: the gateway is
+	// never sandboxed while the BriefAgent's code is not. Empty leaves the
+	// gateway on the daemon's default. Enforced like Runtime (exit 13).
+	GatewayRuntime string `yaml:"gatewayRuntime,omitempty"`
 	// Resolvers are the name servers the built-in Drafter's web tools
-	// resolve through, by address (agentry-cli#386): at most three, as a
-	// resolv.conf reads them. A sandboxed runtime's own network stack does
-	// not reach docker's embedded DNS on the run's web network (DR-23,
+	// resolve through, by address (agentry-cli#386), and, under Runtime,
+	// the llm-proxy, the MCP server install proxy and the relays too
+	// (agentry-cli#337): at most three, as a resolv.conf reads them. A
+	// sandboxed runtime's own network stack does not reach docker's
+	// embedded DNS on a user-defined network (DR-23,
 	// measured under gVisor), and `--dns` only sets that server's upstream,
 	// so the runner writes these into a resolv.conf of the run's own that
 	// the tools server reads in place of docker's. They are the host's to
@@ -776,6 +788,14 @@ func (p *Policy) Validate() error {
 	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
 		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
 	}
+	if rt := p.Docker.GatewayRuntime; rt != "" {
+		if !runtimeNameRE.MatchString(rt) {
+			return fmt.Errorf("docker.gatewayRuntime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
+		}
+		if p.Docker.Runtime == "" {
+			return fmt.Errorf("docker.gatewayRuntime %q needs docker.runtime: the gateway is sandboxed only where the BriefAgent's code is", rt)
+		}
+	}
 	if err := validResolvers(p.Docker.Resolvers); err != nil {
 		return err
 	}
@@ -922,13 +942,24 @@ mcpRegistries:
 # docker:
 #   # The OCI runtime a run's containers are created with (docker run
 #   # --runtime): gVisor's runsc on a host that has it registered with the
-#   # daemon. The llm-proxy, the install proxy, the relays and the gateway
-#   # stay on the daemon's default (DR-23). Unset, the daemon's default
+#   # daemon. The llm-proxy, the install proxy and the relays take it only
+#   # with resolvers below (never a host-run harness's proxy, and the relays
+#   # only where the per-run docker filter runs, on Linux), and the gateway
+#   # only with gatewayRuntime; each other stays on the daemon's default
+#   # (DR-23). Unset, the daemon's default
 #   # applies and the receipt says nothing about it. Set, it is enforced,
 #   # not preferred: a daemon that does not have the runtime refuses the run
 #   # at the ensure step (exit 13) and never falls back to runc; the receipt
 #   # then names the runtime of each container class.
 #   runtime: runsc
+#   # The gateway's runtime: runsc registered again with --host-uds=open,
+#   # since the gateway reaches the run's docker filter through a host
+#   # Unix socket (agentry-cli#337). Needs runtime.
+#   gatewayRuntime: runsc-uds
+#   # The host's upstream name servers (at most three IPv4 addresses): the
+#   # run's own resolv.conf for the classes under the runtime that resolve
+#   # host names, since a sandbox does not reach docker's embedded DNS.
+#   resolvers: [192.0.2.53]
 #   # The bounds of every container a run starts (agentry-cli#163): memory
 #   # (at least 6m, as 512m or 2g), whole CPUs (never more than this host
 #   # has: docker refuses them), and processes. Unset fields take these
@@ -1066,8 +1097,30 @@ func KeySource(hp HarnessPolicy, m Model) string {
 // maxResolvers is how many name servers a resolv.conf reads.
 const maxResolvers = 3
 
+// ResolvConfTarget is where a container reads its name servers.
+const ResolvConfTarget = "/etc/resolv.conf"
+
+// ResolvConf is the resolv.conf naming rs, the policy's docker.resolvers:
+// the one the runner binds over docker's wherever a container under a
+// sandboxed runtime resolves host names (agentry-cli#386, #337).
+func ResolvConf(rs []string) []byte {
+	var b strings.Builder
+	b.WriteString("# The runner policy's docker.resolvers (agentry-cli#386, #337).\n")
+	for _, r := range rs {
+		b.WriteString("nameserver " + r + "\n")
+	}
+	return []byte(b.String())
+}
+
+// SandboxesProxies says whether the proxies run under the policy's
+// runtime: only where the host's name servers are named for them to read
+// (agentry-cli#337).
+func (d DockerPolicy) SandboxesProxies() bool {
+	return d.Runtime != "" && len(d.Resolvers) > 0
+}
+
 // validResolvers holds docker.resolvers to addresses a container can
-// reach: IPv4 (the run's web network has no IPv6), not loopback (a host's stub, such as
+// reach: IPv4 (the run's networks have no IPv6), not loopback (a host's stub, such as
 // systemd-resolved's 127.0.0.53, is the container's own loopback inside
 // it), unspecified or multicast, and at most maxResolvers, each once.
 func validResolvers(rs []string) error {
@@ -1086,7 +1139,7 @@ func validResolvers(rs []string) error {
 			// The run's web network is docker's default IPv4 bridge
 			// network, and gVisor's IPv6 is not what a draft should
 			// depend on: an IPv6 server would validate and answer nothing.
-			return fmt.Errorf("docker.resolvers %q: name IPv4 name servers; the run's web network has no IPv6", r)
+			return fmt.Errorf("docker.resolvers %q: name IPv4 name servers; the run's networks have no IPv6", r)
 		case seen[a]:
 			return fmt.Errorf("docker.resolvers names %q twice", r)
 		}

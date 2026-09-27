@@ -625,6 +625,25 @@ func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 // three name servers by address, each one a container can reach: a
 // loopback stub such as systemd-resolved's is the container's own inside
 // it, and is refused with the reason.
+// The gateway's runtime is a runtime name, and only beside the run's own:
+// the gateway is never sandboxed while the BriefAgent's code is not
+// (agentry-cli#337).
+func TestDockerGatewayRuntime(t *testing.T) {
+	p := Default()
+	p.Docker.Runtime, p.Docker.GatewayRuntime = "runsc", "runsc-uds"
+	if err := p.Validate(); err != nil {
+		t.Errorf("runsc with runsc-uds refused: %v", err)
+	}
+	p.Docker.GatewayRuntime = "runsc uds"
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "docker.gatewayRuntime") {
+		t.Errorf("a bad name: %v", err)
+	}
+	p.Docker.Runtime, p.Docker.GatewayRuntime = "", "runsc-uds"
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "needs docker.runtime") {
+		t.Errorf("a gateway runtime alone: %v", err)
+	}
+}
+
 func TestDockerResolvers(t *testing.T) {
 	for _, ok := range [][]string{nil, {"192.168.122.1"}, {"108.61.10.10"}, {"1.1.1.1", "9.9.9.9", "8.8.8.8"}} {
 		p := Default()

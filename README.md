@@ -413,6 +413,18 @@ manifest + operator policy into a deterministic run plan → execute:
   memory and CPU bounds through its flags, and its own no-new-privileges;
   their capabilities are the gateway's defaults. The receipt names what
   was applied.
+- **Under a sandboxed runtime** (`docker.runtime: runsc`, gVisor), the
+  containers that hold the BriefAgent's code run under it, and so do the
+  tools and MCP server containers the gateway launches (through the run's
+  docker filter, on Linux). The llm-proxy, the MCP server install proxy and
+  the relays join them when `docker.resolvers` names your host's upstream
+  name servers, since a sandbox cannot reach docker's own DNS. The gateway
+  joins them when `docker.gatewayRuntime` names a second registration of
+  runsc with `--host-uds=open` (agentry-cli#337):
+  `docker: {runtime: runsc, gatewayRuntime: runsc-uds, resolvers: [192.168.122.1]}`.
+  A runtime the daemon has not registered stops the run (exit 13), and
+  `agentry doctor` checks each. The receipt's runtime line names every
+  container class and says why any is on the daemon's default.
 - **Everything the run produces** lands in the output folder: the
   BriefAgent's report files, `result.json` (the machine-readable envelope),
   and `receipts/` (event stream, gateway log, the exact run plan).

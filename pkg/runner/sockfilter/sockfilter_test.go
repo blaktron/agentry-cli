@@ -117,6 +117,9 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"Id": id + "-full", "Image": image, "Config": map[string]any{"Labels": labelsFor(id, run)},
 			"NetworkSettings": map[string]any{"Networks": map[string]any{"agentry-A-relays": map[string]any{"NetworkID": "id-agentry-A-relays", "IPAddress": "10.9.0.5"}}},
+			// A container whose id says so has started, or runs under runsc.
+			"State":      map[string]any{"Running": strings.Contains(id, "running")},
+			"HostConfig": map[string]any{"Runtime": map[bool]string{true: "runsc"}[strings.Contains(id, "runsc")]},
 		})
 		return
 	case strings.HasPrefix(p, "/networks/") && r.Method == http.MethodGet && !gateway:
@@ -832,6 +835,55 @@ func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
 	hc, _ = plain.body("POST /containers/create")["HostConfig"].(map[string]any)
 	if hc["Runtime"] != nil || hc["ExtraHosts"] != nil {
 		t.Errorf("without a runtime the server was given runtime %v, hosts %v", hc["Runtime"], hc["ExtraHosts"])
+	}
+}
+
+// With the run's own resolv.conf, a relay runs under the run's runtime and
+// reads that file in place of docker's; without it, the relay stays on the
+// daemon's default as before. Under the runtime, a started container is
+// never connected to a network: a sandbox would take no such network
+// (agentry-cli#337).
+func TestRelaysRunUnderTheRuntimeWithTheHostsResolvers(t *testing.T) {
+	relays := func(c *Config) {
+		c.SharedNetworks = []string{"agentry-A-relays"}
+		c.EgressNetworks = map[string][]string{"agentry-A-relays-out": {relayPin}}
+		c.NetworkNames = map[string]string{intNet: "agentry-A-relays", ext: "agentry-A-relays-out"}
+	}
+	conf := filepath.Join(t.TempDir(), "resolv.conf")
+	g := newRig(t, Limits{}, relays, func(c *Config) { c.Runtime, c.RelayResolvConf = "runsc", conf })
+	relay := map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}}
+	if code, body := g.do(t, "POST", "/containers/create", relay); code != http.StatusCreated {
+		t.Fatalf("the relay: %d %s", code, body)
+	}
+	hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+	binds, _ := hc["Binds"].([]any)
+	if hc["Runtime"] != "runsc" || len(binds) != 1 || binds[0] != conf+":/etc/resolv.conf:ro" {
+		t.Errorf("relay forwarded with runtime %v, binds %v; want runsc and the run's resolv.conf read-only", hc["Runtime"], hc["Binds"])
+	}
+	g.refused(t, "the gateway naming a relay's resolv.conf", "POST", "/containers/create",
+		map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext, "Binds": []string{conf + ":/etc/resolv.conf:ro"}}}, "")
+	g.refused(t, "a started relay under runsc joining the way out", "POST", "/networks/"+ext+"/connect", map[string]any{"Container": "runa-relay-running-runsc"}, "no network connected after start")
+	g.refused(t, "a started server under runsc joining a network", "POST", "/networks/runa-net/connect", map[string]any{"Container": "runa-running-runsc"}, "no network connected after start")
+	if code, body := g.do(t, "POST", "/networks/"+ext+"/connect", map[string]any{"Container": "runa-relay-runsc"}); code == http.StatusForbidden {
+		t.Errorf("a relay joining before it starts was refused: %s", body)
+	}
+	// A started container on the daemon's default takes a join, whatever
+	// the run's runtime: only a sandbox would miss it.
+	if code, body := g.do(t, "POST", "/networks/runa-net/connect", map[string]any{"Container": "runa-running"}); code == http.StatusForbidden {
+		t.Errorf("a started container on the default was refused a join: %s", body)
+	}
+
+	plain := newRig(t, Limits{}, relays, func(c *Config) { c.Runtime = "runsc" })
+	if code, body := plain.do(t, "POST", "/containers/create", relay); code != http.StatusCreated {
+		t.Fatalf("the relay without resolvers: %d %s", code, body)
+	}
+	hc, _ = plain.body("POST /containers/create")["HostConfig"].(map[string]any)
+	if hc["Runtime"] != nil || hc["Binds"] != nil {
+		t.Errorf("without resolvers the relay was given runtime %v, binds %v", hc["Runtime"], hc["Binds"])
+	}
+	// A relay on the daemon's default takes a join at any time, as before.
+	if code, body := plain.do(t, "POST", "/networks/"+ext+"/connect", map[string]any{"Container": "runa-relay-running"}); code == http.StatusForbidden {
+		t.Errorf("a started relay on the default was refused a join: %s", body)
 	}
 }
 

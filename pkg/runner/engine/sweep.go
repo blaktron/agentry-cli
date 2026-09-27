@@ -58,6 +58,10 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 	}
 	for r := range runs {
 		_ = d.NetworkRemove(ctx, networkName(r))
+		// The llm-proxy's egress network under a runtime (agentry-cli#337)
+		// and the web tools' network (agentry-cli#386) are the run's too.
+		_ = d.NetworkRemove(ctx, proxyEgressNetwork(r))
+		_ = d.NetworkRemove(ctx, webNetwork(r))
 		internal, out := relayNetworks(r)
 		_ = d.NetworkRemove(ctx, internal)
 		_ = d.NetworkRemove(ctx, out)

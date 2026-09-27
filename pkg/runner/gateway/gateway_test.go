@@ -88,4 +88,16 @@ func TestEnsureRuntime(t *testing.T) {
 	if strings.Contains(strings.Join(f.Ops(), " "), "Runtimes") {
 		t.Error("an unset runtime queried the daemon's runtimes")
 	}
+
+	// The gateway's own runtime is held to the same rule (agentry-cli#337).
+	pol.Docker.GatewayRuntime = "runsc-uds"
+	f = &dockerx.Fake{RuntimeNames: []string{"runc", "runsc"}}
+	err = EnsureRuntime(context.Background(), f, pol)
+	if err == nil || !strings.Contains(err.Error(), `docker.gatewayRuntime "runsc-uds"`) || !strings.Contains(err.Error(), "--host-uds=open") {
+		t.Errorf("an unregistered gateway runtime: %v", err)
+	}
+	f = &dockerx.Fake{RuntimeNames: []string{"runc", "runsc", "runsc-uds"}}
+	if err := EnsureRuntime(context.Background(), f, pol); err != nil {
+		t.Errorf("a registered gateway runtime was refused: %v", err)
+	}
 }

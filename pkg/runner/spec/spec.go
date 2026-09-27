@@ -316,8 +316,14 @@ type ProxySpec struct {
 // the run beyond the image: the OCI runtime (docker run --runtime).
 type DockerSpec struct {
 	Runtime string `json:"runtime"`
+	// GatewayRuntime is the gateway's own runtime (policy
+	// docker.gatewayRuntime, agentry-cli#337); absent, the daemon's
+	// default.
+	GatewayRuntime string `json:"gatewayRuntime,omitempty"`
 	// Resolvers are the name servers the web tools resolve through
-	// (policy docker.resolvers, agentry-cli#386); absent, docker's DNS.
+	// (policy docker.resolvers, agentry-cli#386), and under Runtime the
+	// classes that resolve host names (agentry-cli#337); absent, docker's
+	// DNS.
 	Resolvers []string `json:"resolvers,omitempty"`
 }
 
@@ -330,9 +336,30 @@ func (p *Plan) Runtime() string {
 	return p.Docker.Runtime
 }
 
+// GatewayRuntime is the OCI runtime the plan asks for the gateway, or ""
+// for the daemon's default.
+func (p *Plan) GatewayRuntime() string {
+	if p == nil || p.Docker == nil {
+		return ""
+	}
+	return p.Docker.GatewayRuntime
+}
+
+// SandboxResolvers are the name servers the run's containers under its
+// runtime that resolve host names read (agentry-cli#337): the llm-proxy,
+// the MCP server install proxy and the relays. None without a runtime, or
+// without resolvers, and those classes then stay on the daemon's default.
+func (p *Plan) SandboxResolvers() []string {
+	if p.Runtime() == "" {
+		return nil
+	}
+	return p.Docker.Resolvers
+}
+
 // WebResolvers are the name servers the plan's web tools resolve through,
-// or none for docker's embedded DNS: only a plan with the web tools has
-// them (the compiler records them for such a plan alone).
+// or none for docker's embedded DNS: only a plan with the web tools reads
+// them here (the compiler also records them under a runtime, for
+// SandboxResolvers).
 func (p *Plan) WebResolvers() []string {
 	if p == nil || p.Docker == nil || !p.Capabilities.WebTools {
 		return nil
