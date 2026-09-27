@@ -96,8 +96,23 @@ func TestEnsureRuntime(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `docker.gatewayRuntime "runsc-uds"`) || !strings.Contains(err.Error(), "--host-uds=open") {
 		t.Errorf("an unregistered gateway runtime: %v", err)
 	}
-	f = &dockerx.Fake{RuntimeNames: []string{"runc", "runsc", "runsc-uds"}}
+	// It is held to what it runs, not its name (agentry-cli#396): the
+	// runtime's binary registered again with --host-uds=open alone.
+	runsc := dockerx.Runtime{Path: "/usr/bin/runsc"}
+	f = &dockerx.Fake{RuntimeTable: map[string]dockerx.Runtime{"runc": {Path: "runc"}, "runsc": runsc,
+		"runsc-uds": {Path: "/usr/bin/runsc", Args: []string{dockerx.HostUDSOpen}}}}
 	if err := EnsureRuntime(context.Background(), f, pol); err != nil {
 		t.Errorf("a registered gateway runtime was refused: %v", err)
+	}
+	for name, reg := range map[string]dockerx.Runtime{
+		"runc named runsc-uds": {Path: "runc", Args: []string{dockerx.HostUDSOpen}},
+		"no --host-uds=open":   runsc,
+		"a flag beside it":     {Path: "/usr/bin/runsc", Args: []string{dockerx.HostUDSOpen, "--network=host"}},
+	} {
+		f = &dockerx.Fake{RuntimeTable: map[string]dockerx.Runtime{"runc": {Path: "runc"}, "runsc": runsc, "runsc-uds": reg}}
+		err := EnsureRuntime(context.Background(), f, pol)
+		if err == nil || !strings.Contains(err.Error(), `docker.gatewayRuntime "runsc-uds"`) || !strings.Contains(err.Error(), "claim a sandbox") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

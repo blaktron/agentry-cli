@@ -324,7 +324,8 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		// The policy's runtime is enforced, never preferred (DR-23): a
 		// run on a daemon without it stops at ensure, so doctor says so
 		// here, with the fix.
-		have, err := d.Runtimes(ctx)
+		table, err := d.Runtimes(ctx)
+		have := dockerx.RuntimeNames(table)
 		switch {
 		case err != nil:
 			rep.fail("docker:runtime", "%v", err)
@@ -348,8 +349,14 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		switch gw := pol.Docker.GatewayRuntime; {
 		case gw == "":
 			rep.warn("docker:gatewayRuntime", "the gateway stays on the daemon's default: it reaches the run's docker filter through a host Unix socket, which %s opens only when registered with --host-uds=open — register it again under a name of its own and set docker.gatewayRuntime", want)
+		case err == nil && slices.Contains(have, gw) && slices.Contains(have, want):
+			if rerr := dockerx.CheckHostUDSRegistration(table, want, gw); rerr != nil {
+				rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime: %v — fix the registration in the daemon's runtimes, or unset docker.gatewayRuntime", rerr)
+			} else {
+				rep.ok("docker:gatewayRuntime", "%s registered on the daemon as %s with %s, for the gateway", gw, want, dockerx.HostUDSOpen)
+			}
 		case err == nil && slices.Contains(have, gw):
-			rep.ok("docker:gatewayRuntime", "%s registered on the daemon, for the gateway", gw)
+			// docker:runtime has already failed for the missing runtime.
 		case err == nil:
 			rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime is %q but the daemon has only: %s — register %s again under that name with runtimeArgs [\"--host-uds=open\"], or unset docker.gatewayRuntime", gw, strings.Join(have, ", "), want)
 		}

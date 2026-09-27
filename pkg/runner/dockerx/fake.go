@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"sync"
 )
@@ -31,9 +32,12 @@ type Fake struct {
 
 	// AvailableErr fails Available.
 	AvailableErr error
-	// RuntimeNames is what Runtimes answers; nil answers the daemon's
-	// usual pair ("io.containerd.runc.v2", "runc"). RuntimesErr fails it.
+	// RuntimeNames is what Runtimes answers, each with an empty
+	// registration; nil answers the daemon's usual pair
+	// ("io.containerd.runc.v2", "runc"). RuntimeTable, when set, is
+	// answered instead, registrations and all. RuntimesErr fails it.
 	RuntimeNames []string
+	RuntimeTable map[string]Runtime
 	RuntimesErr  error
 	// IPs answers ContainerIP by container name; a name with no entry gets
 	// a made-up address, so a test need not script every container.
@@ -138,16 +142,24 @@ func (f *Fake) Available(context.Context) error {
 	return f.AvailableErr
 }
 
-// Runtimes implements Client from RuntimeNames.
-func (f *Fake) Runtimes(context.Context) ([]string, error) {
+// Runtimes implements Client from RuntimeTable, else RuntimeNames.
+func (f *Fake) Runtimes(context.Context) (map[string]Runtime, error) {
 	f.record("Runtimes", "", RunSpec{})
 	if f.RuntimesErr != nil {
 		return nil, f.RuntimesErr
 	}
-	if f.RuntimeNames == nil {
-		return []string{"io.containerd.runc.v2", "runc"}, nil
+	if f.RuntimeTable != nil {
+		return maps.Clone(f.RuntimeTable), nil
 	}
-	return append([]string(nil), f.RuntimeNames...), nil
+	names := f.RuntimeNames
+	if names == nil {
+		names = []string{"io.containerd.runc.v2", "runc"}
+	}
+	table := make(map[string]Runtime, len(names))
+	for _, n := range names {
+		table[n] = Runtime{}
+	}
+	return table, nil
 }
 
 // ContainerIP implements Client from IPs.
