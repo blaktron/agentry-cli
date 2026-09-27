@@ -110,6 +110,14 @@ type Config struct {
 	// does not reach (DR-23). The gateway may not name a resolv.conf or DNS
 	// settings of its own for that server.
 	WebResolvConf string
+	// RelayResolvConf, when set, is the host path of the run's own
+	// resolv.conf for the relays (agentry-cli#337): the filter binds it
+	// read-only at /etc/resolv.conf in each relay and creates the relay
+	// under Runtime, since a relay resolves its declared host by name and
+	// a sandboxed runtime does not reach docker's embedded DNS (DR-23).
+	// Empty leaves the relays on the daemon's default and docker's DNS.
+	// The gateway still names no file, DNS setting or runtime for a relay.
+	RelayResolvConf string
 	// WebImage is the tools server's image, by reference; the filter
 	// resolves it to the image id the check compares, once, when a check
 	// first needs it, and refuses the web network while it cannot.
@@ -123,9 +131,10 @@ type Config struct {
 	// asking for more is refused, one asking for none gets these.
 	Limits Limits
 	// Runtime is the OCI runtime (the policy's docker.runtime) every
-	// container the gateway creates runs under, the relays excepted: a
-	// relay resolves its declared host through docker's embedded DNS,
-	// which a sandboxed runtime does not reach (DR-23). For the same
+	// container the gateway creates runs under, the relays excepted unless
+	// RelayResolvConf is set: a relay resolves its declared host by name,
+	// and a sandboxed runtime does not reach docker's embedded DNS (DR-23),
+	// so it runs under Runtime only with the host's name servers. For the same
 	// reason a container under it reaches what it links to through
 	// /etc/hosts entries the filter pins. Empty leaves the daemon's
 	// default. The gateway never chooses a runtime itself.

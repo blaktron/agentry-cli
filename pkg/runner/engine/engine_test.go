@@ -872,6 +872,95 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 	}
 }
 
+// With the host's name servers named, the llm-proxy runs under the
+// runtime too, on an egress network of the run's own joined at create and
+// reading the run's own resolv.conf; with docker.gatewayRuntime, the
+// gateway under that (agentry-cli#337). Nothing is connected after start.
+func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
+	p, f := fixtureWith(t, func(pol *policy.Policy) {
+		pol.Docker.Runtime = "runsc"
+		pol.Docker.GatewayRuntime = "runsc-uds"
+		pol.Docker.Resolvers = []string{"192.0.2.53"}
+	})
+	happyFake(f)
+	var conf string
+	prev := f.OnDetached
+	f.OnDetached = func(r dockerx.RunSpec) {
+		if strings.HasSuffix(r.Name, "-proxy") {
+			for _, m := range r.Mounts {
+				if m.Target == "/etc/resolv.conf" {
+					b, _ := os.ReadFile(m.Source)
+					conf = string(b)
+				}
+			}
+		}
+		if prev != nil {
+			prev(r)
+		}
+	}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	proxy, ok := f.FindRun("-proxy")
+	if !ok {
+		t.Fatal("no proxy ran")
+	}
+	if proxy.Runtime != "runsc" || len(proxy.ExtraNetworks) != 1 || !strings.HasSuffix(proxy.ExtraNetworks[0], "-egress") {
+		t.Fatalf("proxy runtime=%q networks=%v, want runsc on the run's egress network", proxy.Runtime, proxy.ExtraNetworks)
+	}
+	for _, m := range proxy.Mounts {
+		if m.Target == "/etc/resolv.conf" && !m.ReadOnly {
+			t.Errorf("the proxy's resolv.conf is writable: %+v", m)
+		}
+	}
+	if !strings.Contains(conf, "nameserver 192.0.2.53\n") {
+		t.Errorf("the resolv.conf the proxy started with = %q", conf)
+	}
+	created := false
+	for _, c := range f.Calls {
+		if c.Op == "NetworkConnect" {
+			t.Errorf("a connect after start under the runtime: %s", c.Arg)
+		}
+		if c.Op == "NetworkCreate" && c.Arg == proxy.ExtraNetworks[0]+"(internal=false)" {
+			created = true
+		}
+	}
+	if !created {
+		t.Errorf("the egress network %s was never created", proxy.ExtraNetworks[0])
+	}
+	if gw, _ := f.FindRun("-gateway"); gw.Runtime != "runsc-uds" {
+		t.Errorf("gateway runtime = %q, want runsc-uds", gw.Runtime)
+	}
+	line := env.CapabilitiesEnforced["runtime"]
+	for _, want := range []string{"the llm-proxy (on an egress network of the run's own", "the gateway is created with docker --runtime runsc-uds",
+		"the relays, which the filter gives runsc", "through 192.0.2.53 (docker.resolvers)", "no container class of the run is on the daemon's default runtime"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("receipt runtime line lacks %q: %q", want, line)
+		}
+	}
+}
+
+// A host-run harness's proxy publishes ports to the host and stays on the
+// daemon's default even with resolvers; so does the gateway without
+// docker.gatewayRuntime, and the line names both (agentry-cli#337).
+func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
+	p, _ := fixtureWith(t, func(pol *policy.Policy) {
+		pol.Docker.Runtime = "runsc"
+		pol.Docker.Resolvers = []string{"192.0.2.53"}
+	})
+	p.Plan.Harness.Host = &spec.HostProcessSpec{}
+	line := runtimeLine(p)
+	for _, want := range []string{"the llm-proxy (it publishes ports to the host-run harness)", "the gateway (it reaches the daemon through a host Unix socket", "the relays, which the filter gives runsc"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("line lacks %q: %q", want, line)
+		}
+	}
+	if proxySandboxed(p.Plan) {
+		t.Error("a host harness's proxy is sandboxed")
+	}
+}
+
 // The receipt's runtime line follows the run: relays and servers when the
 // plan declares them, and, where the docker filter does not run, the
 // gateway's containers on the daemon's default.

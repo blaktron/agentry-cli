@@ -89,21 +89,28 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 // whose docker.runtime the daemon has not registered (DR-23): a run that
 // quietly landed on runc after asking for runsc would carry a receipt
 // claiming an isolation it did not have. The error names the runtime the
-// policy wants and the ones the daemon has. An unset runtime asks nothing.
+// policy wants and the ones the daemon has. The gateway's own runtime
+// (docker.gatewayRuntime, agentry-cli#337) is held to the same rule. An
+// unset runtime asks nothing.
 func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) error {
-	want := pol.Docker.Runtime
-	if want == "" {
+	if pol.Docker.Runtime == "" && pol.Docker.GatewayRuntime == "" {
 		return nil
 	}
 	have, err := d.Runtimes(ctx)
 	if err != nil {
 		return err
 	}
-	if slices.Contains(have, want) {
-		return nil
+	for _, w := range []struct{ key, want, how string }{
+		{"docker.runtime", pol.Docker.Runtime, "install it and register it in the daemon's runtimes"},
+		{"docker.gatewayRuntime", pol.Docker.GatewayRuntime, "register runsc again under that name with runtimeArgs [\"--host-uds=open\"]"},
+	} {
+		if w.want == "" || slices.Contains(have, w.want) {
+			continue
+		}
+		return fmt.Errorf("%s %q is not registered on this docker daemon (it has: %s): %s, or unset %s in the policy — the runner never falls back to another runtime",
+			w.key, w.want, strings.Join(have, ", "), w.how, w.key)
 	}
-	return fmt.Errorf("docker.runtime %q is not registered on this docker daemon (it has: %s): install it and register it in the daemon's runtimes, or unset docker.runtime in the policy — the runner never falls back to another runtime",
-		want, strings.Join(have, ", "))
+	return nil
 }
 
 // ExecPackagesFile is where the exec image build records the resolved

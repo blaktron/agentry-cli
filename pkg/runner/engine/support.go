@@ -180,7 +180,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		return nil, Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
 	}
 	if err := writeResolvConf(filepath.Join(rd.cfg, "gateway"), p.Plan); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("write the web tools' resolv.conf: %w", err))
+		return nil, Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
 	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
@@ -727,7 +727,15 @@ func (t *teardown) run() {
 // sibling's (SweepAbandoned).
 func containerName(runID, role string) string { return "agentry-" + runID + "-" + role }
 func networkName(runID string) string         { return "agentry-" + runID + "-net" }
-func sessionVolumeName(runID string) string   { return "agentry-" + runID + "-session" }
+func proxyEgressNetwork(runID string) string  { return "agentry-" + runID + "-egress" }
+
+// proxySandboxed says whether the run's llm-proxy runs under the plan's
+// runtime (agentry-cli#337): only with the host's name servers to read, and
+// never for a host-run harness, whose proxy publishes ports to the host.
+func proxySandboxed(plan *spec.Plan) bool {
+	return len(plan.SandboxResolvers()) > 0 && plan.Harness.Host == nil
+}
+func sessionVolumeName(runID string) string { return "agentry-" + runID + "-session" }
 func runLabels(runID string) map[string]string {
 	return owner.With(map[string]string{runLabel: runID})
 }
