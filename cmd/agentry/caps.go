@@ -15,7 +15,13 @@ import (
 
 // capabilityLines renders the §5.4 capability block as stable, indentable
 // lines. A fully-zero block renders as the single pure-text line.
-func capabilityLines(c manifest.Capabilities) []string {
+func capabilityLines(c manifest.Capabilities) []string { return capabilityLinesSized(c, nil) }
+
+// capabilityLinesSized is capabilityLines with each shipped knowledge pack's
+// size beside its name where sizes has it, "knowledge: ships aws-docs
+// (4.2 MiB)": the consent shows what the release carries into the agent's
+// context as well as its name (plan knowledge.md §4.6).
+func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []string {
 	if isZeroCapabilities(c) {
 		return []string{"none declared (pure text agent)"}
 	}
@@ -51,7 +57,14 @@ func capabilityLines(c manifest.Capabilities) []string {
 	// Shipped knowledge (plan knowledge.md §4.6): packs inside the release
 	// the agent reads, part of what is consented to.
 	if len(c.Knowledge) > 0 {
-		lines = append(lines, "knowledge: ships "+strings.Join(c.Knowledge, ", "))
+		names := make([]string, 0, len(c.Knowledge))
+		for _, name := range c.Knowledge {
+			if n, ok := sizes[name]; ok {
+				name += " (" + byteSize(n) + ")"
+			}
+			names = append(names, name)
+		}
+		lines = append(lines, "knowledge: ships "+strings.Join(names, ", "))
 	}
 	return lines
 }

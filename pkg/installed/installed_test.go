@@ -416,3 +416,17 @@ func TestShippedKnowledgeIsInTheSnapshot(t *testing.T) {
 		t.Fatalf("round trip = %+v", got)
 	}
 }
+
+// TestArchiveWideningsCatchAShippedPackTheResolveDidNotName: an archive
+// whose own agent.yaml ships a pack the consented contract did not name is
+// a widening the install refuses.
+func TestArchiveWideningsCatchAShippedPackTheResolveDidNotName(t *testing.T) {
+	consented := manifest.Capabilities{Knowledge: []string{"aws-docs"}}
+	archive := manifest.Capabilities{Knowledge: []string{"aws-docs", "extra"}}
+	if got := ArchiveWidenings(consented, archive); !slices.Contains(got, "ships knowledge: extra") {
+		t.Fatalf("widenings = %v", got)
+	}
+	if got := ArchiveWidenings(archive, consented); len(got) != 0 {
+		t.Fatalf("a narrower archive widened: %v", got)
+	}
+}

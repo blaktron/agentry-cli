@@ -59,7 +59,7 @@ func TestRunMountsTheReleasesShippedPack(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v (stderr %q)", err, stderr)
 		}
-		if !strings.Contains(stderr, "knowledge pack runbooks: shipped with the release, 1 page") ||
+		if !strings.Contains(stderr, "knowledge pack runbooks: 1 page") || !strings.Contains(stderr, "shipped with the release — mounted read-only at /knowledge/runbooks") ||
 			!strings.Contains(stderr, "knowledge: ships runbooks (") {
 			t.Fatalf("stderr does not name the shipped pack and its size: %q", stderr)
 		}
@@ -87,7 +87,7 @@ func TestRunMountsTheReleasesShippedPack(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v (stderr %q)", err, stderr)
 		}
-		if !strings.Contains(stderr, "knowledge pack runbooks: shipped with the release") || !strings.Contains(stderr, "knowledge pack notes: 1 page") {
+		if !strings.Contains(stderr, "shipped with the release — mounted read-only at /knowledge/runbooks") || !strings.Contains(stderr, "knowledge pack notes: 1 page") {
 			t.Fatalf("stderr = %q", stderr)
 		}
 	})
@@ -118,7 +118,7 @@ func TestShippedPackSizesFromTheArchive(t *testing.T) {
 	if sizes["runbooks"] != p.Manifest.Bytes {
 		t.Fatalf("archive size %d, pack bytes %d", sizes["runbooks"], p.Manifest.Bytes)
 	}
-	lines := contractLines(m.Contract(), sizes)
+	lines := capabilityLinesSized(m.Contract(), sizes)
 	if got := lines[len(lines)-1]; got != "knowledge: ships runbooks ("+byteSize(p.Manifest.Bytes)+")" {
 		t.Fatalf("contract line = %q", got)
 	}
@@ -146,7 +146,7 @@ func TestPublishRefusesAShippedPackLeftOutOfTheArchive(t *testing.T) {
 }
 
 func TestByteSize(t *testing.T) {
-	for n, want := range map[int64]string{216: "216 bytes", 48_000: "48.0 KB", 4_200_000: "4.2 MB", 10 << 20: "10.5 MB"} {
+	for n, want := range map[int64]string{216: "216 bytes", 48_000: "46.9 KiB", 4_200_000: "4.0 MiB", 16 << 20: "16.0 MiB"} {
 		if got := byteSize(n); got != want {
 			t.Errorf("byteSize(%d) = %q, want %q", n, got, want)
 		}

@@ -479,7 +479,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// The archive is in hand and verified: each shipped pack's size is read
 	// from its headers. A size that cannot be read leaves the names alone.
 	sizes, _ := archivePackSizes(archive, m.ShippedPacks())
-	for _, line := range contractLines(m.Contract(), sizes) {
+	for _, line := range capabilityLinesSized(m.Contract(), sizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 

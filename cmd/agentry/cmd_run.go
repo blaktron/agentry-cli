@@ -79,13 +79,11 @@ type runOpts struct {
 	// recording nothing, and materializing into a temp dir rather than the
 	// runner cache. --dry-run keeps its meaning (the plan for a person who
 	// consented on the terminal).
-	plan         bool
-	keepRunDir   bool
-	listAdapters bool
-	files        []string
-	knowledge    []string
-	// shippedSizes are the release's shipped packs' sizes, for the consent.
-	shippedSizes       map[string]int64
+	plan               bool
+	keepRunDir         bool
+	listAdapters       bool
+	files              []string
+	knowledge          []string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
 }
@@ -285,15 +283,6 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitCompile, err)
 	}
-	shipped, err := shippedKnowledge(workspaceDir, m, meta.Digest)
-	if err != nil {
-		return err
-	}
-	if attached, err = withShipped(shipped, attached); err != nil {
-		return err
-	}
-	opts.shippedSizes = packSizes(shipped)
-	sayShipped(cmd.ErrOrStderr(), shipped)
 	// An install cached before the registry path validated (agentry-cli#158)
 	// is held to the same rules at run; the compiler refuses the mount
 	// shapes on its own besides.
@@ -304,6 +293,17 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 		return engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid:\n  %s", meta.Ref, strings.Join(msgs, "\n  ")))
 	}
+	// The release's shipped packs, loaded once its manifest is valid: the
+	// pack names are its knowledge.ships, held to the name rule by V11.
+	shipped, err := shippedKnowledge(workspaceDir, m, meta)
+	if err != nil {
+		return err
+	}
+	if attached, err = withShipped(shipped, attached); err != nil {
+		return err
+	}
+	shippedSizes := packSizes(shipped)
+	sayKnowledge(cmd.ErrOrStderr(), shipped)
 
 	// The §R5 capability gate: same semantics as install — egress/exec
 	// (or a widened contract vs the last accepted run) needs consent.
@@ -327,7 +327,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.at(receipt.StageConsent)
 	if opts.plan {
 		consent = describeRunConsent(m, meta, consentHome)
-	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode); err != nil {
+	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode, shippedSizes); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
@@ -1435,7 +1435,7 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 // confirmRunCapabilities applies the install-time consent semantics to
 // runs, keyed on the runner install dir: first run asks about egress/exec,
 // upgrades ask again only when the contract widened (§R1).
-func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installdir.Meta, home string, opts runOpts, mode manifest.Mode) error {
+func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installdir.Meta, home string, opts runOpts, mode manifest.Mode, shippedSizes map[string]int64) error {
 	// Everything here narrates to stderr: stdout is the run's result
 	// channel (§R8) and must stay pipeline-clean.
 	out := cmd.ErrOrStderr()
@@ -1444,7 +1444,7 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}
 	_, _ = fmt.Fprintln(out, "capabilities:")
-	for _, line := range contractLines(m.Contract(), opts.shippedSizes) {
+	for _, line := range capabilityLinesSized(m.Contract(), shippedSizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 	if mode == manifest.ModeInteractive {

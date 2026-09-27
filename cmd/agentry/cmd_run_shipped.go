@@ -13,6 +13,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -27,7 +28,12 @@ import (
 // not is a verification failure, since the registry refuses such a release
 // at submit (V11). The engine copies each into the run and verifies the copy
 // as it does an attached pack.
-func shippedKnowledge(workspaceDir string, m *manifest.Manifest, releaseDigest string) ([]engine.AttachedPack, error) {
+func shippedKnowledge(workspaceDir string, m *manifest.Manifest, meta *installdir.Meta) ([]engine.AttachedPack, error) {
+	release := "archive " + meta.Digest
+	if meta.Source == "local" {
+		// A local package has no archive: its digest is its tree's.
+		release = "local package tree " + meta.Digest
+	}
 	var out []engine.AttachedPack
 	for _, name := range m.ShippedPacks() {
 		p, err := knowledge.Load(filepath.Join(workspaceDir, manifest.KnowledgeDir, name))
@@ -38,7 +44,7 @@ func shippedKnowledge(workspaceDir string, m *manifest.Manifest, releaseDigest s
 			return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("the release ships the knowledge pack %s, and its manifest.json names %s", name, p.Manifest.Name))
 		}
 		a := engine.AttachPack(p)
-		a.ShippedWith = releaseDigest
+		a.Shipped = &engine.ShippedFrom{InWorkspace: manifest.KnowledgeDir + "/" + name, Release: release}
 		out = append(out, a)
 	}
 	return out, nil
@@ -57,42 +63,22 @@ func withShipped(shipped, attached []engine.AttachedPack) ([]engine.AttachedPack
 	}
 	for _, a := range attached {
 		if names[a.Name] {
-			return nil, engine.Classify(engine.ExitCLI, errors.New("--knowledge "+a.Name+": the release ships a knowledge pack of that name, mounted at "+spec.KnowledgeMount+"/"+a.Name+"; attach a pack with another name"))
+			return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("--knowledge %s: the release ships a knowledge pack of that name, mounted at %s/%s; attach a pack with another name", a.Name, spec.KnowledgeMount, a.Name))
 		}
 	}
 	return append(append([]engine.AttachedPack(nil), shipped...), attached...), nil
 }
 
-// contractLines are capabilityLines with each shipped pack's size on the
-// knowledge line, "knowledge: ships aws-docs (4.2 MB)", when the sizes are
-// known: the consent shows what the release carries into the agent's
-// context as well as its name (plan knowledge.md §4.6).
-func contractLines(c manifest.Capabilities, sizes map[string]int64) []string {
-	lines := capabilityLines(c)
-	if len(c.Knowledge) == 0 || len(sizes) == 0 {
-		return lines
-	}
-	parts := make([]string, 0, len(c.Knowledge))
-	for _, name := range c.Knowledge {
-		if n, ok := sizes[name]; ok {
-			parts = append(parts, fmt.Sprintf("%s (%s)", name, byteSize(n)))
-		} else {
-			parts = append(parts, name)
-		}
-	}
-	lines[len(lines)-1] = "knowledge: ships " + strings.Join(parts, ", ")
-	return lines
-}
-
-// byteSize is a size as a person reads it: "216 bytes", "48.0 KB", "4.2 MB".
+// byteSize is a size as a person reads it, in the binary units the rest of
+// the CLI and the registry's caps use: "216 bytes", "46.9 KiB", "4.2 MiB".
 func byteSize(n int64) string {
 	switch {
-	case n < 1000:
+	case n < 1<<10:
 		return fmt.Sprintf("%d bytes", n)
-	case n < 1000*1000:
-		return fmt.Sprintf("%.1f KB", float64(n)/1000)
+	case n < 1<<20:
+		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
 	}
-	return fmt.Sprintf("%.1f MB", float64(n)/(1000*1000))
+	return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
 }
 
 // packSizes are the loaded packs' sizes: each tree's bytes, as the CLI
@@ -117,26 +103,39 @@ func archivePackSizes(archive []byte, ships []string) (map[string]int64, error) 
 		return nil, err
 	}
 	defer zr.Close()
-	tr := tar.NewReader(zr)
+	// Bounded as the install's extraction is, since this reads before the
+	// consent: past its file count or its total, the sizes are left out.
+	lim := installExtractLimits()
+	tr := tar.NewReader(io.LimitReader(zr, lim.MaxTotalBytes+(64<<20)))
 	out := map[string]int64{}
-	for {
+	var total int64
+	for files := 0; ; files++ {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return out, nil
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read the archive's entries: %w", err)
 		}
+		if files >= lim.MaxFiles || hdr.Size < 0 || hdr.Size > lim.MaxTotalBytes-total {
+			return nil, errors.New("the archive is past the install's bounds")
+		}
+		total += hdr.Size
 		if name, ok := manifest.ShippedPackFile(ships, strings.TrimPrefix(hdr.Name, "./")); ok && hdr.Typeflag == tar.TypeReg {
 			out[name] += hdr.Size
 		}
 	}
 }
 
-// sayShipped narrates each shipped pack as an attached one is narrated.
-func sayShipped(w io.Writer, shipped []engine.AttachedPack) {
-	for _, a := range shipped {
-		_, _ = fmt.Fprintf(w, "knowledge pack %s: shipped with the release, %s, %d bytes, %s — mounted read-only at %s/%s\n",
-			a.Name, knowledge.CountPages(a.Pages), a.Bytes, a.Digest, spec.KnowledgeMount, a.Name)
+// sayKnowledge narrates each pack a run mounts, a shipped one as the
+// release's and an attached one with its scan record.
+func sayKnowledge(w io.Writer, packs []engine.AttachedPack) {
+	for _, a := range packs {
+		from := a.Scan.Describe()
+		if a.Shipped != nil {
+			from = "shipped with the release"
+		}
+		_, _ = fmt.Fprintf(w, "knowledge pack %s: %s, %d bytes, %s, %s — mounted read-only at %s/%s\n",
+			a.Name, knowledge.CountPages(a.Pages), a.Bytes, a.Digest, from, spec.KnowledgeMount, a.Name)
 	}
 }

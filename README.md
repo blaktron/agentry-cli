@@ -245,6 +245,29 @@ pack. A kept `create` or `add` works on the pack in the same kind of
 directory, and removes it with the Creator run's output, which holds the
 pages it wrote, unless `--out DIR` asks to keep that output.
 
+### Shipping a pack with a release
+
+A BriefAgent can carry packs of its own. Put each one, as `knowledge
+create --dir` or `add` keeps it, under `knowledge/<name>/` in the package,
+name it in the manifest's `knowledge.ships`, and include `knowledge/**` in
+`publish.include`. The registry refuses a release whose pack is not the one
+its `manifest.json` describes, so change a shipped pack with `agentry
+knowledge add`, never by hand. The registry scans each shipped pack as part
+of the version's scan and signs it with the rest of the archive.
+
+- **Publishing.** `agentry publish` refuses, before uploading, a release
+  whose `publish.include` leaves a shipped pack out. It also refuses an
+  upload past 16 MiB compressed, the most the registry's upload takes;
+  publish a larger release from its tag instead.
+- **Installing.** The consent lists `knowledge: ships <name> (<size>)` with
+  the other capabilities, and `installed.yaml` records the names. An update
+  that ships one more pack asks again.
+- **Running.** A run mounts each shipped pack read-only at
+  `/knowledge/<name>` beside any pack you attach with `--knowledge`, from
+  the release's own verified files, never fetched again. A pack you attach
+  cannot take a shipped pack's name. The receipt names a shipped pack as the
+  release's: `<name> shipped with the release (archive sha256:…)`.
+
 ### Drafting a BriefAgent: `draft`
 
 `agentry draft "<description>" [--hint TEXT…] [--out DIR]` drafts a
