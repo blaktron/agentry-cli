@@ -448,3 +448,65 @@ func TestNoKeyValueReachesAnyOutput(t *testing.T) {
 		}
 	}
 }
+
+// TestSharedKnowledgeCommands (Knowledge M8, agentry-cli#380): a member
+// lists an organization's shared packs, keeps one, attaches it to a run and
+// exports it only as the registry allows; once removed, the kept copy no
+// longer opens.
+func TestSharedKnowledgeCommands(t *testing.T) {
+	isolateEnv(t)
+	reg := knowledgetest.NewRegistry(t)
+	_, policyPath := newInstall(t)
+	signIn(t, reg, "alice")
+	reg.Join("acme", "alice", "member")
+	id := reg.SeedShared(t, "acme", "handbook", map[string]string{
+		"sources/handbook.md": "# Handbook\nThe rota changes on Mondays.\n",
+		"wiki/index.md":       "# Index\n\n- [Rota](topics/rota.md)\n",
+		"wiki/log.md":         "# Log\n",
+		"wiki/topics/rota.md": "---\ntitle: Rota\n---\nThe rota changes on Mondays. [src: doc:handbook.md]\n",
+	})
+	r := []string{"--registry", reg.URL}
+	kn := func(args ...string) (string, string, error) {
+		return runCLI(t, strings.NewReader(""), append(append([]string{"knowledge"}, args...), r...)...)
+	}
+
+	out, _, err := kn("list", "--org", "acme")
+	if err != nil || !strings.Contains(out, "handbook") || !strings.Contains(out, "no (admins only)") {
+		t.Fatalf("list --org: %q %v", out, err)
+	}
+	if out, _, err = kn("download", "--org", "acme", "handbook"); err != nil || !strings.Contains(out, "handbook") {
+		t.Fatalf("download --org: %q %v", out, err)
+	}
+	out, _, err = runCLI(t, nil, "--json", "knowledge", "list", "--registry", reg.URL)
+	var got []knowledgeEntryJSON
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got) != 1 || got[0].Org != "acme" || !strings.Contains(got[0].Key, "acme's organization key") {
+		t.Fatalf("list --json: %q %v", out, err)
+	}
+
+	pkg := repoPath(t, "testdata/runner/pure-text")
+	dry := func() (string, string, error) {
+		return runCLI(t, strings.NewReader(""), "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath, "--registry", reg.URL, "--knowledge", "handbook")
+	}
+	if _, stderr, err := dry(); err != nil || !strings.Contains(stderr, "knowledge pack handbook") {
+		t.Fatalf("run --knowledge a shared pack: %v (stderr %q)", err, stderr)
+	}
+
+	dst := filepath.Join(t.TempDir(), "out")
+	if _, _, err := kn("export", "handbook", "--to", dst, "--yes"); err == nil || !strings.Contains(err.Error(), "admins") {
+		t.Fatalf("a member's export of an unmarked pack: %v", err)
+	}
+	reg.SetExportable("acme", id, true)
+	if out, _, err := kn("export", "handbook", "--to", dst, "--yes"); err != nil || !strings.Contains(out, "exported unencrypted") {
+		t.Fatalf("a member's export of a marked pack: %q %v", out, err)
+	}
+
+	reg.Remove("acme", "alice")
+	if _, _, err := dry(); err == nil || !strings.Contains(err.Error(), "handbook") {
+		t.Fatalf("a removed member's run with the kept shared pack: %v", err)
+	} else {
+		wantClassified(t, err, engine.ExitPolicy)
+	}
+	if _, _, err := kn("upload", "handbook"); err == nil || !strings.Contains(err.Error(), "shared pack") {
+		t.Fatalf("upload of a shared pack: %v", err)
+	}
+}
