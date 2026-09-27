@@ -226,10 +226,12 @@ a random data key per pack, the core's `pkg/packseal` format), and
 | Command | What it does |
 |---|---|
 | `knowledge list` | the packs kept here: pages, size, scan record, where they are kept, what their key is wrapped to |
+| `knowledge list --org ORG` | the packs your organization ORG shares in Agentry, and whether its members may export each |
 | `knowledge import DIR` | keep a pack directory sealed here (DIR is left as it is) |
 | `knowledge upload NAME` | send it to the registry, sealed, where it is scanned and counted against your allocation |
 | `knowledge download NAME` | keep Agentry's copy here, checked in full |
-| `knowledge export NAME --to DIR` | write it out unencrypted into a new or empty DIR, after a typed `yes` (`--yes` for scripts) |
+| `knowledge download --org ORG NAME` | keep ORG's shared pack here: its key stays the organization's, asked for at every open and never kept in the keychain, so it opens only while you are a member and signed in |
+| `knowledge export NAME --to DIR` | write it out unencrypted into a new or empty DIR, after a typed `yes` (`--yes` for scripts); a shared pack is exported by Agentry, for the organization's admins, and for its members once an admin marks it exportable |
 | `knowledge delete NAME` | delete it and its cached key; `--remote` also deletes Agentry's copy. The only copy is deleted after a typed `yes` (`--yes`) |
 
 `run --knowledge NAME` opens a kept pack into a 0700 directory inside the

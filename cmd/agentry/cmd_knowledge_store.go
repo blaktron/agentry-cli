@@ -44,16 +44,31 @@ func knowledgeStoreFor(cmd *cobra.Command, current string) (*store.Store, error)
 		Keys:    knowledgeKeychain(),
 		Current: current,
 		Registries: func(u string) (store.Registry, error) {
-			token := credentialFor(u)
-			if token == "" {
-				return nil, fmt.Errorf("%s: %w (sign in with `agentry login --registry %s`)", u, store.ErrSignedOut, u)
-			}
-			if err := minVersionGate(cmd.Context(), cmd.ErrOrStderr(), u, token); err != nil {
+			return knowledgeClient(cmd, u)
+		},
+		// An organization's shared packs (Knowledge M8): the same account's
+		// client, under the organization's routes.
+		Shared: func(u, org string) (store.Shared, error) {
+			c, err := knowledgeClient(cmd, u)
+			if err != nil {
 				return nil, err
 			}
-			return remote.New(u, token, httpClient)
+			return c.Shared(org), nil
 		},
 	}), nil
+}
+
+// knowledgeClient is the signed-in client of the registry at u, past the
+// registry's minimum-version gate.
+func knowledgeClient(cmd *cobra.Command, u string) (*remote.Client, error) {
+	token := credentialFor(u)
+	if token == "" {
+		return nil, fmt.Errorf("%s: %w (sign in with `agentry login --registry %s`)", u, store.ErrSignedOut, u)
+	}
+	if err := minVersionGate(cmd.Context(), cmd.ErrOrStderr(), u, token); err != nil {
+		return nil, err
+	}
+	return remote.New(u, token, httpClient)
 }
 
 // rewrapOnSignIn moves packs kept under this machine's key to the account's
@@ -70,22 +85,24 @@ func rewrapOnSignIn(cmd *cobra.Command, s *store.Store) {
 
 // knowledgeEntryJSON is a kept pack in --json output.
 type knowledgeEntryJSON struct {
-	Name    string             `json:"name"`
-	ID      string             `json:"id"`
-	Pages   int                `json:"pages"`
-	Bytes   int64              `json:"bytes"`
-	SHA256  string             `json:"sha256"`
-	Scan    knowledge.Scan     `json:"scan"`
-	Where   string             `json:"where"`
-	Key     string             `json:"key"`
-	Wrapper store.Wrapper      `json:"wrapper"`
+	Name    string         `json:"name"`
+	ID      string         `json:"id"`
+	Pages   int            `json:"pages"`
+	Bytes   int64          `json:"bytes"`
+	SHA256  string         `json:"sha256"`
+	Scan    knowledge.Scan `json:"scan"`
+	Where   string         `json:"where"`
+	Key     string         `json:"key"`
+	Wrapper store.Wrapper  `json:"wrapper"`
+	// Org is the organization whose shared pack this is (Knowledge M8).
+	Org     string             `json:"org,omitempty"`
 	Agentry *store.AgentryCopy `json:"agentry,omitempty"`
 }
 
 func entryJSON(e store.Entry) knowledgeEntryJSON {
 	return knowledgeEntryJSON{Name: e.Name(), ID: e.ID(), Pages: e.Manifest.Pages, Bytes: e.Manifest.Bytes,
 		SHA256: e.Manifest.SHA256, Scan: e.Manifest.Scan, Where: e.Where(), Key: e.KeyHolder(),
-		Wrapper: e.Key.Wrapper, Agentry: e.Key.Agentry}
+		Wrapper: e.Key.Wrapper, Org: e.Key.Org, Agentry: e.Key.Agentry}
 }
 
 func printJSON(out io.Writer, v any) {
@@ -103,11 +120,18 @@ func storeErr(err error) error {
 }
 
 func newKnowledgeListCmd() *cobra.Command {
-	return &cobra.Command{
+	var org string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the knowledge packs kept sealed on this computer",
-		Args:  cobra.NoArgs,
+		Long: "List the knowledge packs kept sealed on this computer: your own, and any organization's shared packs you\n" +
+			"downloaded. With --org ORG, list instead the packs ORG shares in Agentry, which you can download while you\n" +
+			"are one of its members.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if org != "" {
+				return listShared(cmd, org)
+			}
 			s, err := knowledgeStore(cmd)
 			if err != nil {
 				return err
@@ -141,6 +165,55 @@ func newKnowledgeListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&org, "org", "", "list the packs this organization shares in Agentry instead")
+	return cmd
+}
+
+// listShared prints the packs org shares at the registry this invocation
+// speaks to, for one of its members.
+func listShared(cmd *cobra.Command, org string) error {
+	c, err := knowledgeClient(cmd, registryURL())
+	if err != nil {
+		return err
+	}
+	packs, err := c.Shared(org).List(cmd.Context())
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	if flags.jsonOut {
+		type sharedJSON struct {
+			Name       string `json:"name"`
+			ID         string `json:"id"`
+			State      string `json:"state"`
+			Pages      int    `json:"pages"`
+			Bytes      int64  `json:"bytes"`
+			Org        string `json:"org"`
+			Exportable bool   `json:"exportable"`
+		}
+		list := make([]sharedJSON, 0, len(packs))
+		for _, p := range packs {
+			list = append(list, sharedJSON{Name: p.Name, ID: p.ID, State: p.State, Pages: p.Pages, Bytes: p.Bytes, Org: org, Exportable: p.Exportable})
+		}
+		printJSON(out, list)
+		return nil
+	}
+	if len(packs) == 0 {
+		_, _ = fmt.Fprintf(out, "%s shares no knowledge packs in Agentry.\n", org)
+		return nil
+	}
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "NAME\tPAGES\tBYTES\tSTATE\tMEMBERS MAY EXPORT")
+	for _, p := range packs {
+		may := "no (admins only)"
+		if p.Exportable {
+			may = "yes"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%s\t%s\n", p.Name, p.Pages, p.Bytes, p.State, may)
+	}
+	_ = tw.Flush()
+	_, _ = fmt.Fprintf(out, "Keep one on this computer with `agentry knowledge download --org %s NAME`. Its key is %s's, which Agentry hands only to its members, so it opens only while you are one.\n", org, org)
+	return nil
 }
 
 func newKnowledgeImportCmd() *cobra.Command {
@@ -209,25 +282,36 @@ func newKnowledgeUploadCmd() *cobra.Command {
 }
 
 func newKnowledgeDownloadCmd() *cobra.Command {
-	return &cobra.Command{
+	var org string
+	cmd := &cobra.Command{
 		Use:   "download NAME",
 		Short: "Keep the copy Agentry holds of a knowledge pack on this computer",
 		Long: "Download the pack NAME from the registry you are signed in to, sealed as it is kept there, open it with the\n" +
 			"key the registry unwraps for your account, check it, and keep it here. A pack kept here with the same id is\n" +
-			"replaced by Agentry's copy; a different pack with the same name is not.",
+			"replaced by Agentry's copy; a different pack with the same name is not.\n\n" +
+			"With --org ORG, download ORG's shared pack NAME instead. Its key stays the organization's: it is asked for\n" +
+			"every time the pack is opened, never kept in the keychain, so the pack opens only while you are a member and\n" +
+			"signed in.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := knowledgeStore(cmd)
 			if err != nil {
 				return err
 			}
-			e, err := s.Download(cmd.Context(), args[0])
+			var e store.Entry
+			if org != "" {
+				e, err = s.DownloadShared(cmd.Context(), org, args[0])
+			} else {
+				e, err = s.Download(cmd.Context(), args[0])
+			}
 			if err != nil {
 				return storeErr(err)
 			}
 			return printKept(cmd, e, "downloaded and kept")
 		},
 	}
+	cmd.Flags().StringVar(&org, "org", "", "download this organization's shared pack")
+	return cmd
 }
 
 func newKnowledgeExportCmd() *cobra.Command {
@@ -238,7 +322,8 @@ func newKnowledgeExportCmd() *cobra.Command {
 		Short: "Write a kept knowledge pack out unencrypted, into a new or empty directory",
 		Long: "Open the kept pack NAME and write its manifest, pages and documents in the clear into DIR, which must be\n" +
 			"new or empty; nothing is written anywhere else. On a terminal you are asked to type \"yes\" first; --yes\n" +
-			"skips the question for scripts.",
+			"skips the question for scripts. An organization's shared pack is exported by Agentry, which allows it to\n" +
+			"the organization's admins, and to its members once an admin marks the pack exportable.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if to == "" {
@@ -263,7 +348,7 @@ func newKnowledgeExportCmd() *cobra.Command {
 					return engine.Classify(engine.ExitUsage, err)
 				}
 			}
-			p, err := s.Open(cmd.Context(), args[0], dst)
+			p, err := s.Export(cmd.Context(), args[0], dst)
 			if err != nil {
 				return err
 			}

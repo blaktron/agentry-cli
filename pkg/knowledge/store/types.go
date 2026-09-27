@@ -24,6 +24,14 @@
 // first opening on a machine. The registry holds what wraps the key, so a
 // pack kept on one install opens on a fresh one after sign-in, with
 // nothing carried between the two (D4).
+//
+// An organization's shared pack (Knowledge M8, agentry-cli#380; plan §4.7,
+// D13) is kept the same way, its key.json naming the organization, with
+// one difference: its data key is never cached. It is unwrapped through
+// the organization's route every time the pack is opened, which the
+// registry answers only while the person is an active member, so a member
+// who is removed keeps sealed bytes they can no longer open, and a shared
+// pack does not open offline.
 package store
 
 import (
@@ -73,7 +81,12 @@ type KeyRecord struct {
 	Wrapper Wrapper `json:"wrapper"`
 	// Registry is the registry that wrapped the key (WrapperRegistry): the
 	// one that can unwrap it, for the account signed in when it did.
-	Registry   string     `json:"registry,omitempty"`
+	Registry string `json:"registry,omitempty"`
+	// Org is the organization whose shared pack this is (Knowledge M8),
+	// by its handle: its key is the organization's, unwrapped through the
+	// organization's route at every open and never cached. Empty for the
+	// person's own.
+	Org        string     `json:"org,omitempty"`
 	WrappedKey WrappedKey `json:"wrappedKey"`
 	// Agentry is the registry's copy, once the pack is uploaded.
 	Agentry *AgentryCopy `json:"agentry,omitempty"`
@@ -103,6 +116,12 @@ type Remote struct {
 	Scan    json.RawMessage
 	Created time.Time
 	Updated time.Time
+	// Shared, Org and Exportable describe an organization's shared pack
+	// (Knowledge M8): the organization's handle, and whether its admins
+	// marked it exportable by members (D26).
+	Shared     bool
+	Org        string
+	Exportable bool
 }
 
 // The states a registry's pack is in.
@@ -129,6 +148,26 @@ type Registry interface {
 // Registries resolves a client for the registry at url, signed in; an
 // error wrapping ErrSignedOut when there is no credential for it.
 type Registries func(url string) (Registry, error)
+
+// Shared is a registry's routes for one organization's shared packs, for
+// the account signed in, which the registry answers only while it is an
+// active member of the organization (Knowledge M8; the core's
+// /orgs/{org}/knowledge/, agentry#646).
+type Shared interface {
+	URL() string
+	Unwrap(ctx context.Context, wk WrappedKey) ([]byte, error)
+	List(ctx context.Context) ([]Remote, error)
+	GetTree(ctx context.Context, id string) (sealed []byte, digest string, err error)
+	// Export is the pack's tree decrypted by the registry, the canonical
+	// tar, and its digest: an admin's always, a member's only once the
+	// pack is marked exportable (ErrNotExportable otherwise, D26).
+	Export(ctx context.Context, id string) (tree []byte, digest string, err error)
+}
+
+// SharedRegistries resolves a client for org's shared packs at the
+// registry at url, signed in; an error wrapping ErrSignedOut when there is
+// no credential for it.
+type SharedRegistries func(url, org string) (Shared, error)
 
 // Keychain is the OS keychain, as the store uses it (OSKeychain is the
 // real one; a test passes a map).
@@ -164,4 +203,11 @@ var (
 	ErrNoKeychain = errors.New("the OS keychain is not available")
 	// ErrNoEntry is a keychain account with no value.
 	ErrNoEntry = errors.New("no such keychain entry")
+	// ErrNotExportable is a member's export of an organization's shared
+	// pack its admins have not marked exportable (403
+	// knowledge-not-exportable, D26).
+	ErrNotExportable = errors.New("only the organization's admins export this pack unencrypted, unless one of them marks it exportable")
+	// ErrShared is a change to an organization's shared pack from this
+	// computer: its admins write it in Agentry.
+	ErrShared = errors.New("it is an organization's shared pack, which its admins change in Agentry, not from this computer")
 )
