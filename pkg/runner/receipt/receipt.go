@@ -276,20 +276,23 @@ func ExitClassName(code int) string {
 // and installed (mcp-servers, on both sides of the compile); the images
 // installed; the profile loaded; the intake answered; the run's
 // directories and secrets prepared; the proxy, gateway and probe started;
-// the agent run; and its output checked.
+// the agent run; and its output checked. A draft adds one step after
+// the policy: its description read by AI Review (agentry-cli#384), which
+// stops the Drafter before anything else runs when it does not pass.
 const (
-	StagePolicy     = "policy"
-	StageVerify     = "verify"
-	StageConsent    = "consent"
-	StageMCPServers = "mcp-servers"
-	StageCompile    = "compile"
-	StageImages     = "images"
-	StageProfile    = "profile"
-	StageIntake     = "intake"
-	StagePrepare    = "prepare"
-	StageInfra      = "infra"
-	StageAgent      = "agent"
-	StageOutput     = "output"
+	StageDescription = "description"
+	StagePolicy      = "policy"
+	StageVerify      = "verify"
+	StageConsent     = "consent"
+	StageMCPServers  = "mcp-servers"
+	StageCompile     = "compile"
+	StageImages      = "images"
+	StageProfile     = "profile"
+	StageIntake      = "intake"
+	StagePrepare     = "prepare"
+	StageInfra       = "infra"
+	StageAgent       = "agent"
+	StageOutput      = "output"
 )
 
 // Marshal renders the envelope for stdout and result.json, deriving the
