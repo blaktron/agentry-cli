@@ -22,6 +22,9 @@ import (
 type keychain struct {
 	mu sync.Mutex
 	m  map[string]string
+	// sets is every account ever written, in order: what a test reads to
+	// say nothing was put in the keychain.
+	sets []string
 }
 
 func newKeychain() *keychain { return &keychain{m: map[string]string{}} }
@@ -40,6 +43,7 @@ func (k *keychain) Set(a, v string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.m[a] = v
+	k.sets = append(k.sets, a)
 	return nil
 }
 
@@ -77,6 +81,16 @@ func (m *machine) store() *store.Store {
 				return nil, fmt.Errorf("%s: %w", u, store.ErrSignedOut)
 			}
 			return remote.New(u, m.reg.Token(m.owner), nil)
+		},
+		Shared: func(u, org string) (store.Shared, error) {
+			if m.owner == "" || u != m.reg.URL {
+				return nil, fmt.Errorf("%s: %w", u, store.ErrSignedOut)
+			}
+			c, err := remote.New(u, m.reg.Token(m.owner), nil)
+			if err != nil {
+				return nil, err
+			}
+			return c.Shared(org), nil
 		},
 	})
 }

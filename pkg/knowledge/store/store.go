@@ -32,6 +32,9 @@ type Options struct {
 	// the one the person is signed in to. Signed out of it (or none), a
 	// new pack is wrapped by this machine's key.
 	Current string
+	// Shared resolves a signed-in client for an organization's shared
+	// packs at a registry (nil: this client keeps no shared pack).
+	Shared SharedRegistries
 }
 
 // Store is the local knowledge store under one runner home.
@@ -74,6 +77,9 @@ func (e Entry) Where() string {
 // KeyHolder says what the pack's data key is wrapped to, in the words the
 // clients show (plan §3: never "safe", "secure" or "private").
 func (e Entry) KeyHolder() string {
+	if e.Key.Org != "" {
+		return e.Key.Org + "'s organization key at " + hostOf(e.Key.Registry) + ", which Agentry holds and hands only to its current members"
+	}
 	if e.Key.Wrapper == WrapperMachine {
 		return "this computer's key, in its keychain (not portable; rewrapped to your account at your next sign-in)"
 	}
@@ -169,6 +175,14 @@ func (s *Store) registry(u string) (Registry, error) {
 		return nil, fmt.Errorf("%s: %w", u, ErrSignedOut)
 	}
 	return s.opts.Registries(u)
+}
+
+// shared is the signed-in client of org's shared packs at the registry at u.
+func (s *Store) shared(u, org string) (Shared, error) {
+	if s.opts.Shared == nil {
+		return nil, fmt.Errorf("%s: %w", u, ErrSignedOut)
+	}
+	return s.opts.Shared(u, org)
 }
 
 // Keep seals the pack at packDir into the store under a new data key,
@@ -402,6 +416,23 @@ func writeJSON(path string, v any) error {
 // fromCache says which, so a cached key that fails to open is dropped and
 // the pack asked for again.
 func (s *Store) dataKey(ctx context.Context, e Entry, skipCache bool) (key []byte, fromCache bool, err error) {
+	if e.Key.Org != "" {
+		// An organization's shared pack: its key is asked for every time,
+		// never read from the keychain nor written to it, so the registry's
+		// check of membership is made at every open (D13).
+		sh, err := s.shared(e.Key.Registry, e.Key.Org)
+		if err != nil {
+			return nil, false, fmt.Errorf("knowledge pack %s: it is %s's shared pack at %s: %w", e.Name(), e.Key.Org, e.Key.Registry, err)
+		}
+		k, err := sh.Unwrap(ctx, e.Key.WrappedKey)
+		if err != nil {
+			return nil, false, fmt.Errorf("knowledge pack %s: unwrap %s's key at %s: %w", e.Name(), e.Key.Org, e.Key.Registry, err)
+		}
+		if len(k) != packseal.KeySize {
+			return nil, false, fmt.Errorf("knowledge pack %s: %s answered a key of %d bytes", e.Name(), e.Key.Registry, len(k))
+		}
+		return k, false, nil
+	}
 	if !skipCache {
 		if k, ok := s.cached(e.ID()); ok {
 			return k, true, nil
@@ -511,6 +542,9 @@ func (s *Store) Reseal(ctx context.Context, name, packDir string) (Entry, error)
 	if err != nil {
 		return Entry{}, err
 	}
+	if e.Key.Org != "" {
+		return Entry{}, fmt.Errorf("knowledge pack %s: %w", name, ErrShared)
+	}
 	p, err := knowledge.Load(packDir)
 	if err != nil {
 		return Entry{}, err
@@ -538,6 +572,9 @@ func (s *Store) Delete(ctx context.Context, name string, everywhere bool) (Entry
 	e, err := s.Find(name)
 	if err != nil {
 		return Entry{}, err
+	}
+	if everywhere && e.Key.Org != "" {
+		return Entry{}, fmt.Errorf("knowledge pack %s: delete Agentry's copy: %w; delete it from this computer alone", name, ErrShared)
 	}
 	if a := e.Key.Agentry; everywhere && a != nil {
 		reg, err := s.registry(a.Registry)
@@ -633,6 +670,9 @@ func (s *Store) Upload(ctx context.Context, name string) (Entry, Remote, error) 
 	if err != nil {
 		return Entry{}, Remote{}, err
 	}
+	if e.Key.Org != "" {
+		return Entry{}, Remote{}, fmt.Errorf("upload knowledge pack %s: %w", name, ErrShared)
+	}
 	if e.Key.Wrapper == WrapperMachine {
 		if err := s.rewrapOne(ctx, reg, e); err != nil {
 			return Entry{}, Remote{}, err
@@ -685,9 +725,31 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
 	}
-	remotes, err := reg.List(ctx)
+	return s.download(ctx, reg, "", name)
+}
+
+// source is what a download reads a pack from: the person's own packs at a
+// registry (Registry), or an organization's shared ones (Shared).
+type source interface {
+	URL() string
+	List(ctx context.Context) ([]Remote, error)
+	GetTree(ctx context.Context, id string) (sealed []byte, digest string, err error)
+	Unwrap(ctx context.Context, wk WrappedKey) ([]byte, error)
+}
+
+// download is the one path a pack is fetched and kept by: listed by name
+// at src, its sealed tree checked against what src describes, opened with
+// the key src unwraps and checked in full, kept under that wrapped key. A
+// person's own pack's key is cached; an organization's (org set) is not,
+// and a key a personal pack of the same id left in the keychain is removed.
+func (s *Store) download(ctx context.Context, src source, org, name string) (Entry, error) {
+	what := "knowledge pack " + name
+	if org != "" {
+		what = org + "'s knowledge pack " + name
+	}
+	remotes, err := src.List(ctx)
 	if err != nil {
-		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
+		return Entry{}, fmt.Errorf("download %s: %w", what, err)
 	}
 	var r Remote
 	found := false
@@ -699,26 +761,26 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 	}
 	switch {
 	case !found:
-		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, ErrRemoteNotFound)
+		return Entry{}, fmt.Errorf("download %s: %w", what, ErrRemoteNotFound)
 	case r.State == StateScanning:
-		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, ErrScanning)
+		return Entry{}, fmt.Errorf("download %s: %w", what, ErrScanning)
 	case r.State != StateReady:
-		return Entry{}, fmt.Errorf("download knowledge pack %s: it is %q in Agentry, with no tree to download", name, r.State)
+		return Entry{}, fmt.Errorf("download %s: it is %q in Agentry, with no tree to download", what, r.State)
 	}
-	sealed, digest, err := reg.GetTree(ctx, r.ID)
+	sealed, digest, err := src.GetTree(ctx, r.ID)
 	if err != nil {
-		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
+		return Entry{}, fmt.Errorf("download %s: %w", what, err)
 	}
 	h, err := packseal.ReadHeader(bytes.NewReader(sealed))
 	if err != nil {
-		return Entry{}, fmt.Errorf("download knowledge pack %s: %w", name, err)
+		return Entry{}, fmt.Errorf("download %s: %w", what, err)
 	}
 	if !validID(h.Pack) || h.Digest != r.Digest || digest != r.Digest {
-		return Entry{}, fmt.Errorf("download knowledge pack %s: the tree served is pack %q with digest %q, which does not match the pack Agentry describes (%q)", name, h.Pack, h.Digest, r.Digest)
+		return Entry{}, fmt.Errorf("download %s: the tree served is pack %q with digest %q, which does not match the pack Agentry describes (%q)", what, h.Pack, h.Digest, r.Digest)
 	}
-	key, err := reg.Unwrap(ctx, r.WrappedKey)
+	key, err := src.Unwrap(ctx, r.WrappedKey)
 	if err != nil {
-		return Entry{}, fmt.Errorf("download knowledge pack %s: unwrap its key: %w", name, err)
+		return Entry{}, fmt.Errorf("download %s: unwrap its key: %w", what, err)
 	}
 	m, err := s.checkDownload(name, r, h, sealed, key)
 	if err != nil {
@@ -728,14 +790,18 @@ func (s *Store) Download(ctx context.Context, name string) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	kr := KeyRecord{Schema: KeySchema, Wrapper: WrapperRegistry, Registry: reg.URL(), WrappedKey: r.WrappedKey,
-		Agentry: &AgentryCopy{Registry: reg.URL(), ID: r.ID, Digest: r.Digest}}
+	kr := KeyRecord{Schema: KeySchema, Wrapper: WrapperRegistry, Registry: src.URL(), Org: org, WrappedKey: r.WrappedKey,
+		Agentry: &AgentryCopy{Registry: src.URL(), ID: r.ID, Digest: r.Digest}}
 	e, err := s.install(m, kr, func(w io.Writer) error { _, err := w.Write(sealed); return err }, replacing)
 	if err != nil {
-		return Entry{}, fmt.Errorf("download knowledge pack %s: keep it: %w", name, err)
+		return Entry{}, fmt.Errorf("download %s: keep it: %w", what, err)
 	}
-	_ = s.uncache(h.Pack)
-	s.cache(h.Pack, key)
+	if err := s.uncache(h.Pack); err != nil && org != "" {
+		return e, fmt.Errorf("%s was kept, but a key a pack of its id left in the OS keychain would not leave it: %w", what, err)
+	}
+	if org == "" {
+		s.cache(h.Pack, key)
+	}
 	return e, nil
 }
 
@@ -788,4 +854,59 @@ func (s *Store) downloadTarget(name, id, digest string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// DownloadShared keeps the pack named name that org shares at the current
+// registry (Knowledge M8, D13): its sealed tree, opened with the key the
+// organization's route unwraps and checked in full, then kept here under
+// that wrapped key and the organization's name. Nothing of the key is
+// cached; every later open asks the registry again. A pack kept here with
+// the same id is replaced, as a download replaces one; another pack of
+// that name, the person's own included, is not.
+func (s *Store) DownloadShared(ctx context.Context, org, name string) (Entry, error) {
+	s.sweep()
+	if s.opts.Current == "" {
+		return Entry{}, fmt.Errorf("download %s's knowledge pack %s: %w", org, name, ErrSignedOut)
+	}
+	sh, err := s.shared(s.opts.Current, org)
+	if err != nil {
+		return Entry{}, fmt.Errorf("download %s's knowledge pack %s: %w", org, name, err)
+	}
+	return s.download(ctx, sh, org, name)
+}
+
+// Export writes the pack named name, in the clear, into dst (new, or an
+// empty directory), and returns it loaded and verified. The person's own
+// pack is opened here. An organization's shared pack is exported by the
+// registry, which decides whether this person may (D26: its admins
+// always, a member only once the pack is marked exportable;
+// ErrNotExportable otherwise), and its tree is the one Agentry keeps now.
+func (s *Store) Export(ctx context.Context, name, dst string) (*knowledge.Pack, error) {
+	e, err := s.Find(name)
+	if err != nil {
+		return nil, err
+	}
+	if e.Key.Org == "" {
+		return s.openEntry(ctx, e, dst)
+	}
+	if e.Key.Agentry == nil {
+		return nil, fmt.Errorf("export knowledge pack %s: its record names no copy in Agentry to export", name)
+	}
+	sh, err := s.shared(e.Key.Registry, e.Key.Org)
+	if err != nil {
+		return nil, fmt.Errorf("export knowledge pack %s: %w", name, err)
+	}
+	tree, digest, err := sh.Export(ctx, e.Key.Agentry.ID)
+	if err != nil {
+		return nil, fmt.Errorf("export knowledge pack %s: %w", name, err)
+	}
+	if digest == "" {
+		return nil, fmt.Errorf("export knowledge pack %s: the registry named no digest for the tree it sent, so it cannot be checked", name)
+	}
+	m := e.Manifest
+	p, err := knowledge.Unpack(bytes.NewReader(tree), digest, dst, m)
+	if err != nil {
+		return nil, fmt.Errorf("export knowledge pack %s: %w", name, err)
+	}
+	return p, nil
 }
