@@ -215,6 +215,26 @@ func TestDoctorReportsTheDockerRuntime(t *testing.T) {
 	if err != nil || !strings.Contains(out, "ok    docker:runtime") {
 		t.Fatalf("a registered runtime was not reported ok (%v):\n%s", err, out)
 	}
+
+	// The gateway's runtime is reported by what it runs, not its name
+	// (agentry-cli#396): the same refusal ensure makes, with the fix.
+	pol.Docker.GatewayRuntime = "runsc-uds"
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	runsc := dockerx.Runtime{Path: "/usr/bin/runsc"}
+	fake.RuntimeTable = map[string]dockerx.Runtime{"runc": {Path: "runc"}, "runsc": runsc,
+		"runsc-uds": {Path: "/usr/bin/runsc", Args: []string{dockerx.HostUDSOpen}}}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "ok    docker:gatewayRuntime") || !strings.Contains(out, "registered on the daemon as runsc with --host-uds=open") {
+		t.Fatalf("a right gateway registration was not reported ok:\n%s", out)
+	}
+	fake.RuntimeTable["runsc-uds"] = dockerx.Runtime{Path: "runc", Args: []string{dockerx.HostUDSOpen}}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker:gatewayRuntime") || !strings.Contains(out, "runs runc, not /usr/bin/runsc") {
+		t.Fatalf("a runsc-uds that runs runc was not reported:\n%s", out)
+	}
+	fake.RuntimeTable = nil
 }
 
 // TestDoctorAdapterHarness (agentry-cli#147): --adapter renders the

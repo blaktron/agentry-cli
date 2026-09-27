@@ -90,25 +90,33 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 // quietly landed on runc after asking for runsc would carry a receipt
 // claiming an isolation it did not have. The error names the runtime the
 // policy wants and the ones the daemon has. The gateway's own runtime
-// (docker.gatewayRuntime, agentry-cli#337) is held to the same rule. An
-// unset runtime asks nothing.
+// (docker.gatewayRuntime, agentry-cli#337) is held to the same rule, and
+// by what it runs as well as its name: it must be docker.runtime's binary
+// registered again with --host-uds=open and nothing else, since the
+// receipt says the gateway ran under it (agentry-cli#396). An unset
+// runtime asks nothing.
 func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) error {
 	if pol.Docker.Runtime == "" && pol.Docker.GatewayRuntime == "" {
 		return nil
 	}
-	have, err := d.Runtimes(ctx)
+	table, err := d.Runtimes(ctx)
 	if err != nil {
 		return err
 	}
 	for _, w := range []struct{ key, want, how string }{
 		{"docker.runtime", pol.Docker.Runtime, "install it and register it in the daemon's runtimes"},
-		{"docker.gatewayRuntime", pol.Docker.GatewayRuntime, "register " + pol.Docker.Runtime + " again under that name with runtimeArgs [\"--host-uds=open\"]"},
+		{"docker.gatewayRuntime", pol.Docker.GatewayRuntime, "register " + pol.Docker.Runtime + " again under that name with runtimeArgs [\"" + dockerx.HostUDSOpen + "\"]"},
 	} {
-		if w.want == "" || slices.Contains(have, w.want) {
+		if _, ok := table[w.want]; w.want == "" || ok {
 			continue
 		}
 		return fmt.Errorf("%s %q is not registered on this docker daemon (it has: %s): %s, or unset %s in the policy — the runner never falls back to another runtime",
-			w.key, w.want, strings.Join(have, ", "), w.how, w.key)
+			w.key, w.want, strings.Join(dockerx.SortedRuntimeNames(table), ", "), w.how, w.key)
+	}
+	if gw := pol.Docker.GatewayRuntime; gw != "" {
+		if err := dockerx.CheckHostUDSRegistration(table, pol.Docker.Runtime, gw); err != nil {
+			return fmt.Errorf("docker.gatewayRuntime %s, or unset docker.gatewayRuntime in the policy — the receipt would claim a sandbox the gateway did not have", err)
+		}
 	}
 	return nil
 }
