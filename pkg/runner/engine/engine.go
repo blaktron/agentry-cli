@@ -382,6 +382,9 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	proxyArgv := []string{"proxy",
 		"--allow", strings.Join(p.Plan.Proxy.Allow, ","),
 		"--addr", fmt.Sprintf(":%d", spec.ProxyPort)}
+	if len(p.Plan.Proxy.PlainHTTP) > 0 {
+		proxyArgv = append(proxyArgv, "--plain-http", strings.Join(p.Plan.Proxy.PlainHTTP, ","))
+	}
 	proxyPublish := hostPublish(p, spec.ProxyPort)
 	if p.Plan.Harness.Host != nil {
 		proxyArgv = append(proxyArgv, "--forward", fmt.Sprintf(":%d=%s:%d", spec.GatewayPort, spec.GatewayAlias, spec.GatewayPort))

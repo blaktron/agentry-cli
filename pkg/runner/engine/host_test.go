@@ -391,3 +391,25 @@ func TestRunHostHarnessRefusesAmbientContextInAnAncestor(t *testing.T) {
 		t.Errorf("leftovers: %v", f.Leftover)
 	}
 }
+
+// The proxy is started with --plain-http only when the plan lists plain
+// targets (DR-45): an all-https plan starts it CONNECT-only, as before.
+func TestProxyArgvCarriesPlainHTTPTargetsOnlyWhenPlanned(t *testing.T) {
+	p, f, _, _ := hostFixture(t)
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	proxy, _ := f.FindRun("-proxy")
+	if strings.Contains(strings.Join(proxy.Argv, " "), "--plain-http") {
+		t.Fatalf("an all-https plan's proxy argv carries --plain-http: %v", proxy.Argv)
+	}
+	p, f, _, _ = hostFixture(t)
+	p.Plan.Proxy.PlainHTTP = []string{"llm.lan:8000"}
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	proxy, _ = f.FindRun("-proxy")
+	if !strings.Contains(strings.Join(proxy.Argv, " "), "--plain-http llm.lan:8000") {
+		t.Fatalf("proxy argv lacks the plain targets: %v", proxy.Argv)
+	}
+}

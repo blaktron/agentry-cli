@@ -306,6 +306,10 @@ type ProxySpec struct {
 	Image string `json:"image"`
 	// Allow is the host:port allowlist (policy model endpoints only).
 	Allow []string `json:"allow"`
+	// PlainHTTP is the subset of Allow the proxy may forward plain http
+	// to: the http model endpoints the operator chose (DR-45). Empty for
+	// a run whose model endpoints are all https.
+	PlainHTTP []string `json:"plainHttp,omitempty"`
 }
 
 // DockerSpec is what the engine asks of the daemon for every container of

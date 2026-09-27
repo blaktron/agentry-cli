@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -376,4 +377,200 @@ func TestConnectHijackFailurePaths(t *testing.T) {
 		// Must return (closing both sides), not panic or hang.
 		p.Handler().ServeHTTP(rec, req)
 	})
+}
+
+// plainClient is a harness's HTTP client: HTTP_PROXY pointed at the proxy,
+// so an http:// URL goes to it as an absolute-form request.
+func plainClient(t *testing.T, proxyAddr string) *http.Client {
+	t.Helper()
+	pu, err := url.Parse("http://" + proxyAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{
+		Timeout:       5 * time.Second,
+		Transport:     &http.Transport{Proxy: http.ProxyURL(pu)},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// A plain-http model endpoint the operator chose is forwarded (DR-45): the
+// request reaches it with its body and key, the Host header is the target,
+// hop-by-hop and proxy headers are dropped, and an event-stream answer
+// arrives intact.
+func TestPlainHTTPForwardedToAListedEndpoint(t *testing.T) {
+	var got struct {
+		host, auth, proxyAuth, conn, body string
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.host, got.auth, got.proxyAuth, got.conn = r.Host, r.Header.Get("Authorization"), r.Header.Get("Proxy-Authorization"), r.Header.Get("X-Hop")
+		b, _ := io.ReadAll(r.Body)
+		got.body = string(b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for i := 0; i < 3; i++ {
+			_, _ = fmt.Fprintf(w, "data: %d\n\n", i)
+			fl.Flush()
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	target := strings.TrimPrefix(upstream.URL, "http://")
+	logs := &lockedBuf{}
+	addr := startProxy(t, &Proxy{Allow: []string{target}, PlainHTTP: []string{target}, Logw: logs})
+	req, _ := http.NewRequest(http.MethodPost, upstream.URL+"/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+	req.Header.Set("Authorization", "Bearer k")
+	req.Header.Set("Proxy-Authorization", "Basic c2VjcmV0")
+	req.Header.Set("Connection", "X-Hop")
+	req.Header.Set("X-Hop", "drop me")
+	resp, err := plainClient(t, addr).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "data: 0\n\ndata: 1\n\ndata: 2\n\n" {
+		t.Fatalf("status %d body %q", resp.StatusCode, body)
+	}
+	if got.host != target || got.auth != "Bearer k" || got.body != `{"model":"m"}` {
+		t.Fatalf("upstream saw host=%q auth=%q body=%q", got.host, got.auth, got.body)
+	}
+	if got.proxyAuth != "" || got.conn != "" {
+		t.Fatalf("hop headers forwarded: Proxy-Authorization=%q X-Hop=%q", got.proxyAuth, got.conn)
+	}
+	if !strings.Contains(logs.String(), "allow http "+target) {
+		t.Fatalf("no decision line: %q", logs.String())
+	}
+}
+
+// A plain-http request to anything not on PlainHTTP is refused before a
+// connection is made: a host on the CONNECT allowlist only, and an
+// unlisted host. With PlainHTTP empty the proxy is CONNECT-only as before.
+func TestPlainHTTPRefusedOffTheList(t *testing.T) {
+	hit := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	t.Cleanup(upstream.Close)
+	target := strings.TrimPrefix(upstream.URL, "http://")
+	logs := &lockedBuf{}
+	addr := startProxy(t, &Proxy{Allow: []string{target, "llm.lan:8000"}, PlainHTTP: []string{"llm.lan:8000"}, Logw: logs})
+	resp, err := plainClient(t, addr).Get(upstream.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || hit {
+		t.Fatalf("status %d, upstream hit=%v", resp.StatusCode, hit)
+	}
+	if !strings.Contains(logs.String(), "deny http") {
+		t.Fatalf("no deny line: %q", logs.String())
+	}
+	addr = startProxy(t, &Proxy{Allow: []string{target}})
+	resp, err = plainClient(t, addr).Get(upstream.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed || hit {
+		t.Fatalf("CONNECT-only proxy: status %d, upstream hit=%v", resp.StatusCode, hit)
+	}
+}
+
+// The proxy follows no redirect for a plain request: a 30x goes back to
+// the harness as it came, so a key never rides to a Location.
+func TestPlainHTTPFollowsNoRedirect(t *testing.T) {
+	other := false
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { other = true }))
+	t.Cleanup(elsewhere.Close)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/steal", http.StatusFound)
+	}))
+	t.Cleanup(upstream.Close)
+	target := strings.TrimPrefix(upstream.URL, "http://")
+	addr := startProxy(t, &Proxy{Allow: []string{target}, PlainHTTP: []string{target}})
+	resp, err := plainClient(t, addr).Get(upstream.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || other {
+		t.Fatalf("status %d, redirect followed=%v", resp.StatusCode, other)
+	}
+}
+
+// A PlainHTTP entry without a port means 80.
+func TestPlainHTTPEntryDefaultsToPort80(t *testing.T) {
+	if !permitsIn([]string{"llm.lan"}, "80", "llm.lan", "80") || permitsIn([]string{"llm.lan"}, "80", "llm.lan", "443") {
+		t.Fatal("a portless PlainHTTP entry must mean :80 and only :80")
+	}
+}
+
+// A streamed answer reaches the harness as it is written: the client reads
+// the first event before the upstream will write the second.
+func TestPlainHTTPStreamsAsItArrives(t *testing.T) {
+	next := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: 0\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-next:
+		case <-time.After(3 * time.Second):
+			return
+		}
+		_, _ = fmt.Fprint(w, "data: 1\n\n")
+	}))
+	t.Cleanup(upstream.Close)
+	target := strings.TrimPrefix(upstream.URL, "http://")
+	addr := startProxy(t, &Proxy{Allow: []string{target}, PlainHTTP: []string{target}})
+	resp, err := plainClient(t, addr).Get(upstream.URL + "/v1/chat/completions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	br := bufio.NewReader(resp.Body)
+	first, err := br.ReadString('\n')
+	if err != nil || first != "data: 0\n" {
+		t.Fatalf("first event %q, %v: the proxy held the stream", first, err)
+	}
+	close(next)
+	rest, _ := io.ReadAll(br)
+	if string(rest) != "\ndata: 1\n\n" {
+		t.Fatalf("rest = %q", rest)
+	}
+}
+
+// The upstream is the URL's host:port, whatever the Host header says: a
+// request cannot pass the check under one name and reach another.
+func TestPlainHTTPGoesToTheURLNotTheHostHeader(t *testing.T) {
+	var sawHost string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { sawHost = r.Host }))
+	t.Cleanup(upstream.Close)
+	target := strings.TrimPrefix(upstream.URL, "http://")
+	addr := startProxy(t, &Proxy{Allow: []string{target}, PlainHTTP: []string{target}})
+	_, _, status := dialProxy(t, addr, http.MethodGet, upstream.URL+"/v1/models", "metadata.internal")
+	if !strings.HasPrefix(status, "HTTP/1.1 200") || sawHost != target {
+		t.Fatalf("status %q, upstream saw Host %q, want %q", status, sawHost, target)
+	}
+	// And origin-form with a listed Host is not a forward request at all.
+	_, _, status = dialProxy(t, addr, http.MethodGet, "/v1/models", target)
+	if !strings.HasPrefix(status, "HTTP/1.1 405") {
+		t.Fatalf("origin-form request: status %q, want 405", status)
+	}
+}
+
+// A PlainHTTP entry the CONNECT allowlist does not name is not forwarded:
+// the proxy holds the subset rule itself, whoever built its flags.
+func TestPlainHTTPMustAlsoBeOnTheAllowlist(t *testing.T) {
+	hit := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	t.Cleanup(upstream.Close)
+	target := strings.TrimPrefix(upstream.URL, "http://")
+	addr := startProxy(t, &Proxy{Allow: []string{"api.anthropic.com"}, PlainHTTP: []string{target}})
+	resp, err := plainClient(t, addr).Get(upstream.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || hit {
+		t.Fatalf("status %d, upstream hit=%v", resp.StatusCode, hit)
+	}
 }

@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -173,15 +174,70 @@ func TestListModelsCustomIsTheOpenAIShapeAtTheBaseURL(t *testing.T) {
 	}
 }
 
-func TestListModelsRefusesPlainHTTPOffLoopbackBeforeAnyRequest(t *testing.T) {
-	_, err := ListModels(context.Background(), "custom", "http://llm.example.net/v1", "k")
-	if err == nil || !strings.Contains(err.Error(), "https") {
-		t.Fatalf("plain http to a remote host: %v", err)
+// Plain http off loopback is the operator's choice for a custom endpoint
+// (agentry-cli#377): the listing is made, and the Catalog carries the
+// warning. A stub transport stands in for the remote host.
+func TestListModelsAllowsPlainHTTPOffLoopbackWithAWarning(t *testing.T) {
+	old := httpClient.Transport
+	var asked string
+	httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		asked = r.URL.String()
+		if got := r.Header.Get("Authorization"); got != "Bearer k" {
+			t.Errorf("the key header = %q", got)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"qwen"}]}`)), Request: r}, nil
+	})
+	t.Cleanup(func() { httpClient.Transport = old })
+	cat, err := ListModels(context.Background(), "custom", "http://gpu-box.lan:8000/v1", "k")
+	if err != nil {
+		t.Fatalf("plain http to a LAN host: %v", err)
 	}
-	// The loopback exception is what the tests above rely on; a name
-	// that resolves to loopback is not enough, the host must be one.
-	if _, err := ListModels(context.Background(), "custom", "http://localhost:1/v1", "k"); err == nil || strings.Contains(err.Error(), "https") {
-		t.Fatalf("localhost over http is allowed (the refusal must be the connection, not the scheme): %v", err)
+	if asked != "http://gpu-box.lan:8000/v1/models" {
+		t.Fatalf("asked %q", asked)
+	}
+	if len(cat.Models) != 1 || cat.Models[0].ID != "qwen" {
+		t.Fatalf("models = %+v", cat.Models)
+	}
+	if !strings.Contains(cat.Warning, "plain http") || !strings.Contains(cat.Warning, "https") || !strings.Contains(cat.Warning, "gpu-box.lan") {
+		t.Fatalf("warning = %q", cat.Warning)
+	}
+}
+
+// https and loopback http carry no warning: the fake server is on
+// 127.0.0.1, and https is the recommended form.
+func TestListModelsWarnsOnlyForPlainHTTPOffLoopback(t *testing.T) {
+	_, srv := newFakeModels(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"m"}]}`))
+	})
+	cat, err := ListModels(context.Background(), "custom", srv.URL+"/v1", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cat.Warning != "" {
+		t.Fatalf("loopback http warned: %q", cat.Warning)
+	}
+	for _, tc := range []struct {
+		url  string
+		warn bool
+	}{
+		{"https://llm.example.net/v1", false},
+		{"http://localhost:8000/v1", false},
+		{"http://127.0.0.1:8000/v1", false},
+		{"http://[::1]:8000/v1", false},
+		{"http://ollama.localhost/v1", false},
+		{"http://llm.example.net/v1", true},
+		{"http://100.64.1.2:8000/v1", true},
+		{"http://192.168.1.20/v1", true},
+		{"ftp://llm.example.net/v1", false},
+		{"not a url", false},
+	} {
+		if got := PlainHTTPWarning(tc.url) != ""; got != tc.warn {
+			t.Errorf("PlainHTTPWarning(%q) warned=%v, want %v", tc.url, got, tc.warn)
+		}
+	}
+	if w := PlainHTTPWarning("http://user:secret@llm.example.net/v1"); strings.Contains(w, "secret") {
+		t.Errorf("the warning carries the URL's password: %q", w)
 	}
 }
 
@@ -264,17 +320,19 @@ func TestListModelsStopsAtThePageCap(t *testing.T) {
 	}
 }
 
-// Plain http off loopback is refused before any request: a transport
-// that fails the test if used proves it.
-func TestListModelsMakesNoRequestBeforeTheHTTPSRefusal(t *testing.T) {
+// A scheme other than http or https is refused before any request: a
+// transport that fails the test if used proves it.
+func TestListModelsMakesNoRequestForANonHTTPScheme(t *testing.T) {
 	old := httpClient.Transport
 	httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Fatalf("a request was made to %s", r.URL)
 		return nil, nil
 	})
 	t.Cleanup(func() { httpClient.Transport = old })
-	if _, err := ListModels(context.Background(), "custom", "http://llm.example.net/v1", "k"); err == nil {
-		t.Fatal("expected the https refusal")
+	for _, u := range []string{"ftp://llm.example.net/v1", "file:///etc", "llm.example.net/v1"} {
+		if _, err := ListModels(context.Background(), "custom", u, "k"); err == nil {
+			t.Fatalf("%q: expected the scheme refusal", u)
+		}
 	}
 }
 
