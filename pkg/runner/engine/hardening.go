@@ -192,15 +192,16 @@ func runtimeLine(p Params) string {
 		named = append(named, "the MCP server install proxy")
 	}
 	if relaysSandboxed(p.Plan) {
-		named = append(named, "the relays, which the filter gives "+rt)
+		named = append(named, "the relays (which the filter gives "+rt+")")
 	}
 	if len(named) > 0 {
-		verb := " resolve"
+		// One class takes the singular, several an "each" (agentry-cli#397).
+		verb, each := " resolve", "each "
 		if len(named) == 1 {
-			verb = " resolves"
+			verb, each = " resolves", ""
 		}
-		line += "; " + strings.Join(named, ", ") + verb + " host names through " + strings.Join(rs, ", ") +
-			" (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, each created with every network it joins"
+		line += "; " + joinAnd(named) + verb + " host names through " + strings.Join(rs, ", ") +
+			" (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, " + each + "created with every network it joins"
 	}
 	var gaps []string
 	if !filterSupported {
@@ -234,4 +235,12 @@ func runtimeLine(p Params) string {
 		return line + "; no container class of the run is on the daemon's default runtime"
 	}
 	return line + "; on the daemon's default runtime, as measured under " + rt + " (DR-23): " + strings.Join(gaps, ", ")
+}
+
+// joinAnd lists items for a sentence: "a", "a and b", "a, b and c".
+func joinAnd(items []string) string {
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 }
