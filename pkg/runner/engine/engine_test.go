@@ -934,7 +934,10 @@ func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
 	}
 	line := env.CapabilitiesEnforced["runtime"]
 	for _, want := range []string{"the llm-proxy (on an egress network of the run's own", "the gateway is created with docker --runtime runsc-uds",
-		"the relays, which the filter gives runsc", "through 192.0.2.53 (docker.resolvers)", "no container class of the run is on the daemon's default runtime"} {
+		"through 192.0.2.53 (docker.resolvers)", "no container class of the run is on the daemon's default runtime",
+		// Several classes: joined with "and", the relays' clause theirs
+		// alone, and "each" (agentry-cli#397).
+		"; the llm-proxy and the relays (which the filter gives runsc) resolve host names through 192.0.2.53 (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, each created with every network it joins"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("receipt runtime line lacks %q: %q", want, line)
 		}
@@ -951,7 +954,7 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 	})
 	p.Plan.Harness.Host = &spec.HostProcessSpec{}
 	line := runtimeLine(p)
-	for _, want := range []string{"the llm-proxy (it publishes ports to the host-run harness)", "the gateway (it reaches the daemon through a host Unix socket", "the relays, which the filter gives runsc"} {
+	for _, want := range []string{"the llm-proxy (it publishes ports to the host-run harness)", "the gateway (it reaches the daemon through a host Unix socket", "the relays (which the filter gives runsc)"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line lacks %q: %q", want, line)
 		}
@@ -962,12 +965,19 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 	// One class named takes the singular (a hosted draft's line, which
 	// read "the llm-proxy resolve", agentry-cli#337).
 	p.Plan.Harness.Host = nil
+	servers := p.Plan.MCPServers
+	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "osv", Egress: []string{"api.osv.dev"}}}
+	if line := runtimeLine(p); !strings.Contains(line, "; the llm-proxy, the MCP server install proxy and the relays (which the filter gives runsc) resolve host names through 192.0.2.53") {
+		t.Errorf("three classes: %q", line)
+	}
+	p.Plan.MCPServers = servers
 	p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode = true, "none"
 	p.Plan.MCPServers = nil
 	if relaysNeeded(p.Plan) {
 		t.Fatalf("the lone-class case still needs relays: %+v", p.Plan.Capabilities)
 	}
-	if line := runtimeLine(p); !strings.Contains(line, "; the llm-proxy resolves host names") {
+	if line := runtimeLine(p); !strings.Contains(line, "; the llm-proxy resolves host names through 192.0.2.53 (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, created with every network it joins") ||
+		strings.Contains(line, "each created") {
 		t.Errorf("a lone class: %q", line)
 	}
 
@@ -982,7 +992,7 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 	defer func(was bool) { filterSupported = was }(filterSupported)
 	filterSupported = false
 	line = runtimeLine(p)
-	for _, bad := range []string{"no container class", "the gateway is created with docker --runtime", "the relays, which the filter gives"} {
+	for _, bad := range []string{"no container class", "the gateway is created with docker --runtime", "the relays (which the filter gives"} {
 		if strings.Contains(line, bad) {
 			t.Errorf("without the filter the line says %q: %q", bad, line)
 		}
