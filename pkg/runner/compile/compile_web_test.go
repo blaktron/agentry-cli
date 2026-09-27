@@ -141,24 +141,24 @@ func TestTheWebToolsUnderARuntimeNeedTheHostsResolvers(t *testing.T) {
 		t.Fatalf("the web tools under runsc with no resolvers: %v", err)
 	}
 	plan, _, err := compileWebWith(t, webTextAgent, "builtin", true, func(p *policy.Policy) {
-		p.Docker.Runtime, p.Docker.Resolvers = "runsc", []string{"192.168.122.1", "2001:db8::53"}
+		p.Docker.Runtime, p.Docker.Resolvers = "runsc", []string{"192.168.122.1", "192.0.2.53"}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Runtime() != "runsc" || !slices.Equal(plan.Resolvers(), []string{"192.168.122.1", "2001:db8::53"}) {
+	if plan.Runtime() != "runsc" || !slices.Equal(plan.WebResolvers(), []string{"192.168.122.1", "192.0.2.53"}) {
 		t.Fatalf("the plan's docker: %+v", plan.Docker)
 	}
 	// On the daemon's default the web tools keep docker's DNS.
 	plan, _, err = compileWebWith(t, webTextAgent, "builtin", true, nil)
-	if err != nil || plan.Resolvers() != nil || plan.Docker != nil {
+	if err != nil || plan.WebResolvers() != nil || plan.Docker != nil {
 		t.Fatalf("the web tools on the default runtime: %+v %v", plan, err)
 	}
 	// A run without the web tools reads no resolvers, under any runtime.
 	plan, _, err = compileWebWith(t, webTextAgent, "builtin", false, func(p *policy.Policy) {
 		p.Docker.Runtime, p.Docker.Resolvers = "runsc", []string{"192.168.122.1"}
 	})
-	if err != nil || plan.Resolvers() != nil || plan.Runtime() != "runsc" {
+	if err != nil || plan.WebResolvers() != nil || plan.Runtime() != "runsc" {
 		t.Fatalf("a run without the web tools: %+v %v", plan.Docker, err)
 	}
 }

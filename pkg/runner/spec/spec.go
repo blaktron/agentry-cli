@@ -330,10 +330,11 @@ func (p *Plan) Runtime() string {
 	return p.Docker.Runtime
 }
 
-// Resolvers are the name servers the plan's web tools resolve through, or
-// none for docker's embedded DNS.
-func (p *Plan) Resolvers() []string {
-	if p == nil || p.Docker == nil {
+// WebResolvers are the name servers the plan's web tools resolve through,
+// or none for docker's embedded DNS: only a plan with the web tools has
+// them (the compiler records them for such a plan alone).
+func (p *Plan) WebResolvers() []string {
+	if p == nil || p.Docker == nil || !p.Capabilities.WebTools {
 		return nil
 	}
 	return p.Docker.Resolvers

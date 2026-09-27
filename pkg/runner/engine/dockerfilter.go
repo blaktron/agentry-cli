@@ -121,7 +121,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		webNet, webImage = webNetwork(runID), plan.Proxy.Image
 		webCmd = []string{"tools", "--spec", spec.ToolSpecMount}
 		webSpec = filepath.Join(rd.cfg, "gateway", "toolspec.json")
-		if len(plan.Resolvers()) > 0 {
+		if len(plan.WebResolvers()) > 0 {
 			webResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
 		}
 	}

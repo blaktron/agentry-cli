@@ -333,6 +333,14 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		default:
 			rep.fail("docker:runtime", "policy docker.runtime is %q but the daemon has only: %s — install it and register it in the daemon's runtimes, or unset docker.runtime", want, strings.Join(have, ", "))
 		}
+		// The Drafter's web tools under a runtime resolve names only
+		// through the host's own name servers (agentry-cli#386): without
+		// them a draft is refused at compile, so doctor says so first.
+		if len(pol.Docker.Resolvers) == 0 {
+			rep.warn("docker:resolvers", "policy docker.runtime is %q and docker.resolvers is empty: `agentry draft` will be refused (its web tools cannot reach docker's DNS under %s) — name the host's upstream name servers in docker.resolvers", want, want)
+		} else {
+			rep.ok("docker:resolvers", "the web tools resolve through %s", strings.Join(pol.Docker.Resolvers, ", "))
+		}
 	}
 	images := []struct{ name, ref, fix string }{
 		{"image:gateway", pol.Images.Gateway, "`agentry setup` pulls it"},

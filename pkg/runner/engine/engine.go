@@ -294,7 +294,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	if env.Web = webRecord(rd.receiptsDir, p.Web); env.Web != nil {
 		env.CapabilitiesEnforced["web.aiReview"] = webLine(env.Web)
 	}
-	if rs := p.Plan.Resolvers(); p.Plan.Capabilities.WebTools && len(rs) > 0 {
+	if rs := p.Plan.WebResolvers(); len(rs) > 0 {
 		env.CapabilitiesEnforced["web.resolvers"] = resolversLine(rs)
 	}
 

@@ -473,32 +473,46 @@ func (f *Filter) webShape(ctx context.Context, c *containerCreateBody) (bool, er
 	case len(hc.DNS) > 0 || len(hc.DNSSearch) > 0 || len(hc.DNSOptions) > 0 || len(hc.ExtraHosts) > 0:
 		// Each would decide what a page's host name resolves to.
 		return false, deny("the web tools' server resolves names as the run does")
+	case present(c.Volumes) || len(hc.Tmpfs) > 0 || len(hc.VolumesFrom) > 0:
+		// A volume or a tmpfs could sit over /etc, where its name
+		// resolution and its spec are read.
+		return false, deny("the web tools' server takes no volume or tmpfs")
 	}
 	spec := false
 	for _, b := range hc.Binds {
 		parts := strings.Split(b, ":")
-		if len(parts) >= 2 && path.Clean(parts[1]) == resolvConfTarget {
-			return false, deny("the web tools' server resolves names as the run does")
-		}
-		if len(parts) >= 2 && parts[1] == f.cfg.WebSpecTarget {
+		if len(parts) >= 2 && path.Clean(parts[1]) == f.cfg.WebSpecTarget {
 			if len(parts) != 3 || !slices.Contains(strings.Split(parts[2], ","), "ro") || !f.sameFile(parts[0], f.cfg.WebSpec) {
 				return false, deny("the web tools' server reads the run's own tools spec, read-only")
 			}
 			spec = true
+			continue
+		}
+		if len(parts) >= 2 && coversResolvConf(parts[1]) {
+			return false, deny("the web tools' server resolves names as the run does")
 		}
 	}
 	for _, m := range hc.Mounts {
-		if m.Target == f.cfg.WebSpecTarget {
+		if path.Clean(m.Target) == f.cfg.WebSpecTarget {
 			return false, deny("the web tools' server reads the run's own tools spec, read-only")
 		}
-		if path.Clean(m.Target) == resolvConfTarget {
-			return false, deny("the web tools' server resolves names as the run does")
+		if coversResolvConf(m.Target) || !strings.EqualFold(m.Type, "bind") {
+			return false, deny("the web tools' server takes no volume or tmpfs, and resolves names as the run does")
 		}
 	}
 	if !spec {
 		return false, deny("the web tools' server reads the run's own tools spec, read-only")
 	}
 	return true, nil
+}
+
+// coversResolvConf says whether a mount at target would decide the
+// container's name resolution: anything under /etc (resolv.conf, hosts,
+// nsswitch.conf, gai.conf), /etc itself or the root. The web tools'
+// server's own spec, under /etc/agentry, is checked on its own first.
+func coversResolvConf(target string) bool {
+	t := path.Clean(target)
+	return t == "/" || t == "/etc" || strings.HasPrefix(t, "/etc/")
 }
 
 // sameFile says whether two host paths name one file.

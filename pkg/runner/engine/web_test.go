@@ -280,7 +280,7 @@ func TestTheWebLedgerIsCountedIntoTheReceipt(t *testing.T) {
 // is not applied.
 func TestTheWebToolsResolvConf(t *testing.T) {
 	dir := t.TempDir()
-	plan := &spec.Plan{Capabilities: spec.CapSummary{WebTools: true}, Docker: &spec.DockerSpec{Runtime: "runsc", Resolvers: []string{"192.168.122.1", "2001:db8::53"}}}
+	plan := &spec.Plan{Capabilities: spec.CapSummary{WebTools: true}, Docker: &spec.DockerSpec{Runtime: "runsc", Resolvers: []string{"192.168.122.1", "192.0.2.53"}}}
 	if err := writeResolvConf(dir, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestTheWebToolsResolvConf(t *testing.T) {
 			servers = append(servers, s)
 		}
 	}
-	if !slices.Equal(servers, []string{"192.168.122.1", "2001:db8::53"}) {
+	if !slices.Equal(servers, []string{"192.168.122.1", "192.0.2.53"}) {
 		t.Fatalf("the resolv.conf reads:\n%s", b)
 	}
 	for name, p := range map[string]*spec.Plan{
@@ -310,11 +310,15 @@ func TestTheWebToolsResolvConf(t *testing.T) {
 			t.Fatalf("%s: a resolv.conf was written", name)
 		}
 	}
-	line := resolversLine(plan.Resolvers())
-	if !strings.Contains(line, "192.168.122.1, 2001:db8::53") || !strings.Contains(line, "docker.resolvers") {
+	line := resolversLine(plan.WebResolvers())
+	if !strings.Contains(line, "192.168.122.1, 192.0.2.53") || !strings.Contains(line, "docker.resolvers") {
 		t.Fatalf("the receipt line: %s", line)
 	}
 	if filterSupported && !strings.Contains(line, "bound read-only in place of docker's") {
 		t.Fatalf("the receipt line on Linux: %s", line)
+	}
+	// The runtime line says how the web tools' server resolves, too.
+	if rl := runtimeLine(Params{Plan: plan}); filterSupported && !strings.Contains(rl, "the web tools' server resolves host names through 192.168.122.1, 192.0.2.53") {
+		t.Fatalf("the runtime line: %s", rl)
 	}
 }

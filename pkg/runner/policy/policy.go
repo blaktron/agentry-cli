@@ -1063,16 +1063,16 @@ func KeySource(hp HarnessPolicy, m Model) string {
 	return src
 }
 
-// MaxResolvers is how many name servers a resolv.conf reads.
-const MaxResolvers = 3
+// maxResolvers is how many name servers a resolv.conf reads.
+const maxResolvers = 3
 
 // validResolvers holds docker.resolvers to addresses a container can
-// reach: IPv4 or IPv6, no zone, not loopback (a host's stub, such as
+// reach: IPv4 (the run's web network has no IPv6), not loopback (a host's stub, such as
 // systemd-resolved's 127.0.0.53, is the container's own loopback inside
-// it), unspecified or multicast, and at most MaxResolvers, each once.
+// it), unspecified or multicast, and at most maxResolvers, each once.
 func validResolvers(rs []string) error {
-	if len(rs) > MaxResolvers {
-		return fmt.Errorf("docker.resolvers names %d servers; a resolv.conf reads at most %d", len(rs), MaxResolvers)
+	if len(rs) > maxResolvers {
+		return fmt.Errorf("docker.resolvers names %d servers; a resolv.conf reads at most %d", len(rs), maxResolvers)
 	}
 	seen := map[netip.Addr]bool{}
 	for _, r := range rs {
@@ -1082,6 +1082,11 @@ func validResolvers(rs []string) error {
 			return fmt.Errorf("docker.resolvers %q must be a name server's IP address", r)
 		case a.IsLoopback() || a.IsUnspecified() || a.IsMulticast():
 			return fmt.Errorf("docker.resolvers %q is not an address a container reaches: name the host's upstream resolvers, not a loopback stub", r)
+		case !a.Is4():
+			// The run's web network is docker's default IPv4 bridge
+			// network, and gVisor's IPv6 is not what a draft should
+			// depend on: an IPv6 server would validate and answer nothing.
+			return fmt.Errorf("docker.resolvers %q: name IPv4 name servers; the run's web network has no IPv6", r)
 		case seen[a]:
 			return fmt.Errorf("docker.resolvers names %q twice", r)
 		}

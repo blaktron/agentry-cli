@@ -236,8 +236,8 @@ const resolvConfFile = "resolv.conf"
 // network (DR-23). Readable by the tools server's user; nothing for any
 // other run.
 func writeResolvConf(gatewayDir string, plan *spec.Plan) error {
-	rs := plan.Resolvers()
-	if !plan.Capabilities.WebTools || len(rs) == 0 {
+	rs := plan.WebResolvers()
+	if len(rs) == 0 {
 		return nil
 	}
 	var b strings.Builder

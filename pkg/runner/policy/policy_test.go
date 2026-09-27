@@ -626,7 +626,7 @@ func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 // loopback stub such as systemd-resolved's is the container's own inside
 // it, and is refused with the reason.
 func TestDockerResolvers(t *testing.T) {
-	for _, ok := range [][]string{nil, {"192.168.122.1"}, {"108.61.10.10", "2001:19f0:300:1704::6"}, {"1.1.1.1", "9.9.9.9", "8.8.8.8"}} {
+	for _, ok := range [][]string{nil, {"192.168.122.1"}, {"108.61.10.10"}, {"1.1.1.1", "9.9.9.9", "8.8.8.8"}} {
 		p := Default()
 		p.Docker.Resolvers = ok
 		if err := p.Validate(); err != nil {
@@ -642,6 +642,8 @@ func TestDockerResolvers(t *testing.T) {
 		"multicast":     {"224.0.0.251"},
 		"a zone":        {"fe80::1%eth0"},
 		"twice":         {"9.9.9.9", "9.9.9.9"},
+		"IPv6":          {"2001:19f0:300:1704::6"},
+		"IPv4 in IPv6":  {"::ffff:9.9.9.9"},
 		"four":          {"1.1.1.1", "9.9.9.9", "8.8.8.8", "8.8.4.4"},
 	} {
 		p := Default()

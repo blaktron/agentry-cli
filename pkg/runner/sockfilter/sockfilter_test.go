@@ -1102,6 +1102,24 @@ func TestTheWebToolsServerResolvesThroughTheRunsResolvConf(t *testing.T) {
 		"a resolv.conf mount": func(hc map[string]any) {
 			hc["Mounts"] = []map[string]any{{"Type": "bind", "Source": specPath, "Target": "/etc/resolv.conf", "ReadOnly": true}}
 		},
+		"a bind over /etc": func(hc map[string]any) {
+			hc["Binds"] = []string{specPath + ":" + target + ":ro", filepath.Dir(specPath) + ":/etc:ro"}
+		},
+		"a tmpfs at the resolv.conf": func(hc map[string]any) { hc["Tmpfs"] = map[string]string{"/etc/resolv.conf": ""} },
+		"a tmpfs over /etc":          func(hc map[string]any) { hc["Tmpfs"] = map[string]string{"/etc": ""} },
+		"volumes from another":       func(hc map[string]any) { hc["VolumesFrom"] = []string{"runa-other"} },
+		"a hosts file": func(hc map[string]any) {
+			hc["Binds"] = []string{specPath + ":" + target + ":ro", specPath + ":/etc/hosts:ro"}
+		},
+		"a hosts mount": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "bind", "Source": specPath, "Target": "/etc/hosts", "ReadOnly": true}}
+		},
+		"a tmpfs mount elsewhere": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "tmpfs", "Target": "/var/cache"}}
+		},
+		"a volume mount": func(hc map[string]any) {
+			hc["Mounts"] = []map[string]any{{"Type": "volume", "Source": "runa-vol", "Target": "/data"}}
+		},
 	} {
 		if code, body := g.do(t, "POST", "/containers/create", server(edit)); code != http.StatusForbidden {
 			t.Errorf("the web tools' server with %s: %d %s, want it refused", name, code, body)
