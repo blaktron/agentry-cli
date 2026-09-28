@@ -1,4 +1,5 @@
-# A throwaway box for running Go test binaries built for Windows under Wine.
+# The box scripts/windows-tests/run.sh runs Windows test binaries in:
+# docker build -t agentry-winebox:local scripts/windows-tests.
 # Wine maps Z: to / and follows links when it deletes, so a test that links
 # to a system path must meet the container's filesystem, never the host's.
 FROM registry.fedoraproject.org/fedora:44

@@ -49,7 +49,7 @@ func check(root *os.Root, rel string, dir bool) (fs.FileInfo, error) {
 			// directory that is also a reparse point (ModeDir|ModeIrregular)
 			// is not.
 			if fi.Mode().Type() != fs.ModeDir {
-				return nil, fmt.Errorf("%s is not a directory (a link or a file stands there)", sofar)
+				return nil, fmt.Errorf("%s is not a directory (a link, a file or a special file stands there)", sofar)
 			}
 			continue
 		}

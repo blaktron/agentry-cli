@@ -451,6 +451,9 @@ func set(list []string) map[string]bool {
 func copyBetween(src, dst *os.Root, rel string, limit int64) (int64, error) {
 	name := filepath.FromSlash(rel)
 	if _, err := plainpath.File(src, rel); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, err
+		}
 		return 0, fmt.Errorf("%w; a knowledge pack holds only files and directories", err)
 	}
 	in, err := src.Open(name)

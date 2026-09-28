@@ -251,7 +251,9 @@ func TestApplyRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 		link := filepath.Join(out, "sources", "linked")
-		if err := os.Symlink(filepath.Join(out, "other"), link); err != nil {
+		// Relative, so os.Root follows it (it refuses an absolute
+		// target by itself): only the check refuses this.
+		if err := os.Symlink(filepath.Join("..", "other"), link); err != nil {
 			t.Skipf("symlink: %v", err)
 		}
 		t.Cleanup(func() { _ = os.Remove(link) })

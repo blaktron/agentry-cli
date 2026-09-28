@@ -20,8 +20,10 @@ func TestFileAndDir(t *testing.T) {
 	must(os.MkdirAll(filepath.Join(dir, "wiki", "real"), 0o755))
 	must(os.WriteFile(filepath.Join(dir, "wiki", "real", "page.md"), []byte("# Page\n"), 0o644))
 	must(os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644))
-	linked := os.Symlink(filepath.Join(dir, "wiki", "real"), filepath.Join(dir, "wiki", "linked")) == nil &&
-		os.Symlink(filepath.Join(dir, "file.txt"), filepath.Join(dir, "link.txt")) == nil
+	// Relative targets: os.Root follows those when they stay inside it
+	// (an absolute one it refuses by itself), so only the check is tested.
+	linked := os.Symlink("real", filepath.Join(dir, "wiki", "linked")) == nil &&
+		os.Symlink("file.txt", filepath.Join(dir, "link.txt")) == nil
 	root, err := os.OpenRoot(dir)
 	must(err)
 	t.Cleanup(func() { _ = root.Close() })
@@ -44,8 +46,9 @@ func TestFileAndDir(t *testing.T) {
 	if !linked {
 		t.Skip("symlinks are not available")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "wiki", "linked", "page.md")); err != nil {
-		t.Fatalf("the fixture's link does not resolve: %v", err)
+	// The fixture proves itself: os.Root reads through these links.
+	if _, err := root.Stat(filepath.Join("wiki", "linked", "page.md")); err != nil {
+		t.Fatalf("os.Root does not follow the fixture's link, so the check is not what is tested: %v", err)
 	}
 	if _, err := File(root, "wiki/linked/page.md"); err == nil || !strings.Contains(err.Error(), "wiki/linked is not a directory") {
 		t.Errorf("a linked directory on the way, inside the root: %v", err)

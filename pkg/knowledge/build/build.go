@@ -334,8 +334,12 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 			if b := path.Base(rel); b == knowledge.IndexFile || rel == knowledge.WikiDir+"/"+knowledge.LogFile {
 				return nil // the apply step writes these
 			}
-			if _, err := plainpath.File(root, rel); err != nil {
+			fi, err := plainpath.File(root, rel)
+			if err != nil {
 				return nil //nolint:nilerr // a link on the way: skipped, never followed
+			}
+			if fi.Size() > knowledge.MaxBytes {
+				return fmt.Errorf("the Creator wrote %s past the pack's cap", rel)
 			}
 			body, err := fs.ReadFile(root.FS(), rel)
 			if err != nil {
