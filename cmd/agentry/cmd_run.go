@@ -455,8 +455,15 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return nil
 	}
 
+	var profSecrets map[string]string
+	if prof != nil {
+		profSecrets = prof.Secrets
+	}
+
 	opts.progress.at(receipt.StageIntake)
-	answers, err := collectIntake(cmd, m, opts)
+	answers, err := collectIntake(cmd, m, opts, func(name string) bool {
+		return engine.SecretResolvable(name, profSecrets, pol.SecretSource)
+	})
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, err)
 	}
@@ -482,10 +489,6 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		budgets.MaxCostUSD = opts.maxCost
 	}
 
-	var profSecrets map[string]string
-	if prof != nil {
-		profSecrets = prof.Secrets
-	}
 	overrides := secretOverrides(profSecrets, answers)
 
 	// A driver metering a live run reads the harness's usage two ways, both
@@ -1041,8 +1044,10 @@ func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
 }
 
 // collectIntake answers the manifest's up-front questions (plan §3.5):
-// --intake presets first, then the terminal when there is one.
-func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts) (*intake.Answers, error) {
+// --intake presets first, then the terminal when there is one; with no
+// terminal, a secret question the run's profile or secret source already
+// holds is answered from there (fromSource; agentry-cli#402).
+func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromSource func(string) bool) (*intake.Answers, error) {
 	preset, err := intake.ParsePreset(opts.intake)
 	if err != nil {
 		return nil, err
@@ -1060,7 +1065,7 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts) (*int
 			sayGuide(cmd.ErrOrStderr(), m, opts)
 		}
 	}
-	return intake.Collect(p, m.Intake, preset, m.Capabilities.Secrets)
+	return intake.CollectWithSource(p, m.Intake, preset, m.Capabilities.Secrets, fromSource)
 }
 
 // sayGuide prints the release guide's overview and its list of what to
