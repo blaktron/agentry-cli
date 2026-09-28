@@ -1125,6 +1125,13 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 			e["secrets"] += "; " + serverPart
 		}
 	}
+	// "Injected only into" is where a value is put, not every place it is:
+	// the gateway reads the whole --secrets file to inject them, so its own
+	// container holds every value, the release's and each server's
+	// (agentry-cli#404).
+	if e["secrets"] != "none declared" {
+		e["secrets"] += "; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
+	}
 	proxyLine := fmt.Sprintf("CONNECT allowlist: %s", strings.Join(pol.Model.ProxyAllow, ", "))
 	if plain := plainHTTPTargets(pol); len(plain) > 0 {
 		proxyLine += "; plain http forwarded, unencrypted, to the operator's http model endpoint(s): " + strings.Join(plain, ", ")

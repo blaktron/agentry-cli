@@ -309,6 +309,9 @@ func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
 func TestEnforcementNamesEverySecretWithWhereItGoes(t *testing.T) {
 	const ownLine = "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: API_KEY"
 	const serverPart = "each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT"
+	// agentry-cli#404: the gateway injects them from the run's whole secrets
+	// file, so its own container holds every value; the line says so.
+	const gatewayHolds = "; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
 	for _, tc := range []struct {
 		name    string
 		own     bool
@@ -316,17 +319,17 @@ func TestEnforcementNamesEverySecretWithWhereItGoes(t *testing.T) {
 		want    string
 	}{
 		{name: "none", want: "none declared"},
-		{name: "own only", own: true, want: ownLine},
+		{name: "own only", own: true, want: ownLine + gatewayHolds},
 		{
 			name:    "server only",
 			servers: []spec.MCPServerSpec{githubServerSpec()},
-			want:    "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart,
+			want:    "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart + gatewayHolds,
 		},
 		{
 			name:    "both",
 			own:     true,
 			servers: []spec.MCPServerSpec{githubServerSpec()},
-			want:    ownLine + "; " + serverPart,
+			want:    ownLine + "; " + serverPart + gatewayHolds,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
