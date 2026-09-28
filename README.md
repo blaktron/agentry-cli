@@ -333,13 +333,43 @@ The result, in `DIR` (default `./agentry-out/agentry-drafter-<runid>`):
 - `package/` holds that package: `agent.yaml`, `AGENT.md`, a README and a
   LICENSE placeholder.
 
-A draft that fails the rules is kept with its problems for you to fix. Review
-every part before you publish it. `--timeout`, `--max-turns` and `--max-cost`
-bound the run. With `--output-format json`, as `run` takes it, stdout is the
-Drafter run's result envelope (its usage, the attestation `builtin`, the
-`web` counts) with the draft's report under `draft`: where `draft.json` is,
-whether the package was rendered and passed, and how many matches, open
-questions and withheld sources it has. The envelope's `result` is empty,
+The Drafter decides rather than asks: it picks a default for what the
+description leaves open and names it in its notes, asks at most three intake
+questions (most drafts none or one), lists at most five things to prepare,
+leaves at most two open questions, and keeps its notes to five bullets. The
+instruction it writes has four parts: Role, Inputs, Steps and Output.
+
+Before a draft is written, the CLI checks it in three steps:
+1. **Mechanical slips are corrected without the model.** A mode, a tag or a
+   choice named twice loses the second one. An optional part left empty, or
+   holding a placeholder such as "None", is removed. A list past its limit
+   is cut to the limit, and a text past its limit is shortened at a word,
+   ending with "…". The limits are the rules' own. The notes name each
+   correction under "Corrected after drafting", and nothing is invented.
+2. **The rules check it**, with `agentry validate`'s own code.
+3. **One repair turn.** If the rules still refuse it, the Drafter runs once
+   more, without its web tools. Its task is the rules' report and its own
+   manifest and instructions, and nothing else: no description, no notes,
+   no page. A last message that was not a draft at all (not one JSON object,
+   exit 17) gets the same turn, given the error and that message back. It returns the manifest again, and the instruction file too if
+   the report names it. The second answer is corrected and checked like the
+   first, and kept whether or not it passes; its notes say "Repaired once"
+   and what the rules said of the first. A repair turn that returns no draft
+   leaves the first, with its problems and a note saying why, or, when the
+   first was not a draft either, ends with exit 17 as before. The turn's
+   budget is the draft's, capped at 300 seconds and 8 tool calls, and what
+   is left of `--max-cost`. Its receipts are in `DIR/repair/`.
+
+A draft that still fails the rules is kept with its problems for you to fix.
+Review every part before you publish it. `--timeout`, `--max-turns` and
+`--max-cost` bound the run. With `--output-format json`, as `run` takes it,
+stdout is the Drafter run's result envelope (its usage, the attestation
+`builtin`, the `web` counts) with the draft's report under `draft`: where
+`draft.json` is, whether the package was rendered and passed, how many
+matches, open questions and withheld sources it has, how many slips were
+corrected (`corrections`), and whether it was repaired (`repaired`). The
+envelope's usage is both turns' together, and the usage lines the repair
+turn narrates count from the first turn's total. The envelope's `result` is empty,
 because the draft is in `draft.json`. The harness's usage is narrated live
 on stderr (`usage: input=… output=… total=… turns=…`). A draft that stops before the
 Drafter runs still writes one envelope with its class and stage; a

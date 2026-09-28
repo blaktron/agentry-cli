@@ -129,6 +129,58 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	}
 	if strings.TrimSpace(d.Instructions) == "" {
 		out = append(out, "no instructions")
+	} else if !inOrder(d.Instructions, instructionShape) {
+		out = append(out, "the instructions are not in the shape Role, Inputs, Steps, Output")
+	}
+	// The Drafter's own caps (plan builder-simplify.md §5.1, D8).
+	if n := len(m.Intake); n > MaxIntake {
+		out = append(out, fmt.Sprintf("%d intake questions, want at most %d", n, MaxIntake))
+	}
+	if m.Guide != nil && len(m.Guide.Prepare) > MaxPrepare {
+		out = append(out, fmt.Sprintf("%d prepare items, want at most %d", len(m.Guide.Prepare), MaxPrepare))
+	}
+	if n := len(d.OpenQuestions); n > MaxOpenQuestions {
+		out = append(out, fmt.Sprintf("%d open questions, want at most %d", n, MaxOpenQuestions))
+	}
+	if n := noteBullets(d.Notes); n > MaxNoteBullets {
+		out = append(out, fmt.Sprintf("a note of %d bullets, want at most %d", n, MaxNoteBullets))
 	}
 	return out
+}
+
+// instructionShape is the generated AGENT.md's fixed shape (plan
+// builder-simplify.md §5.1): its four headings, in this order.
+var instructionShape = []string{"## Role", "## Inputs", "## Steps", "## Output"}
+
+// inOrder says every heading is a line of text, in order.
+func inOrder(text string, headings []string) bool {
+	at := 0
+	lines := strings.Split(text, "\n")
+	for _, l := range lines {
+		if at < len(headings) && strings.TrimSpace(l) == headings[at] {
+			at++
+		}
+	}
+	return at == len(headings)
+}
+
+// postStepSections open the sections the post-step adds to the notes.
+var postStepSections = []string{"## Corrected after drafting", "## Repaired once", "## Not repaired", "## Withheld by AI Review"}
+
+// noteBullets counts the list items of the notes the Drafter wrote, before
+// the post-step's own sections.
+func noteBullets(notes string) int {
+	for _, h := range postStepSections {
+		if i := strings.Index(notes, h); i >= 0 {
+			notes = notes[:i]
+		}
+	}
+	n := 0
+	for _, l := range strings.Split(notes, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "- ") || strings.HasPrefix(l, "* ") || (len(l) > 2 && l[0] >= '0' && l[0] <= '9' && strings.HasPrefix(l[1:], ". ")) {
+			n++
+		}
+	}
+	return n
 }
