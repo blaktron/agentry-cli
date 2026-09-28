@@ -120,15 +120,3 @@ func TestAnEmptyTaskWithTheInstructionGoneIsRefused(t *testing.T) {
 		t.Error("the agent ran without its instruction")
 	}
 }
-
-func TestAnEmptyTaskSendsTheOwnInstructionToAHostHarness(t *testing.T) {
-	p, f, _, taskFile := hostFixture(t)
-	p.Task = nil
-	if _, err := Run(context.Background(), f, p); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	task, _ := os.ReadFile(taskFile) //nolint:gosec // test file
-	if string(task) != "Do the host test.\n" {
-		t.Errorf("task on stdin = %q, want the agent's own instruction", task)
-	}
-}

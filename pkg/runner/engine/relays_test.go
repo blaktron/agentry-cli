@@ -409,7 +409,5 @@ func (r *reapProbe) RemoveForce(ctx context.Context, name string) error {
 // filter, where the relay network is the host's one fixed network (DR-22).
 func withoutFilter(t *testing.T) {
 	t.Helper()
-	was := filterSupported
-	filterSupported = false
-	t.Cleanup(func() { filterSupported = was })
+	withFilter(t, false)
 }

@@ -16,6 +16,17 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
+// withFilter sets filterSupported for one test. The receipt's lines are
+// pure functions of it, so a test can check both platforms' wording on
+// every OS; a test that runs the engine asserts the branch its own OS
+// takes instead.
+func withFilter(t *testing.T, on bool) {
+	t.Helper()
+	was := filterSupported
+	filterSupported = on
+	t.Cleanup(func() { filterSupported = was })
+}
+
 func TestMemoryBytesReadsDockersSizes(t *testing.T) {
 	for in, want := range map[string]int64{
 		"": 0, "2g": 2 << 30, "2G": 2 << 30, "512m": 512 << 20, "1.5g": 3 << 29, "64k": 64 << 10, "1073741824": 1 << 30, "100b": 100,
