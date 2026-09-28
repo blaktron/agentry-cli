@@ -137,6 +137,14 @@ func Drafter() Builtin {
 	return Builtin{namespace: drafter.Namespace, name: drafter.Name, version: drafter.Version, fsys: drafter.FS(), web: true}
 }
 
+// WithoutWebTools is the same package with no web tools: the Drafter's
+// repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing. A
+// grant can only be taken away here, never given.
+func (b Builtin) WithoutWebTools() Builtin {
+	b.web = false
+	return b
+}
+
 // Builtins is every package that may run as builtin.
 func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter()} }
 
@@ -228,7 +236,13 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	if _, err := os.Stat(filepath.Join(in.InstallDir, "plan", "plan.json")); err == nil {
 		_ = os.RemoveAll(filepath.Join(in.InstallDir, "plan"))
 	}
+	// A plan with the web tools has a directory of its own, so the
+	// Drafter's two plans (with them, and without for its repair turn) do
+	// not recompile each other.
 	planDir := filepath.Join(in.InstallDir, "plan", string(in.Mode))
+	if in.Web {
+		planDir += "-web"
+	}
 	runnerImage := in.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	b, rerr := compile.ReadInstalledPlan(key, planDir)
 	var tampered *compile.TamperedPlanError

@@ -33,3 +33,14 @@ const (
 	Name      = "drafter"
 	Version   = "1.0.0"
 )
+
+// The Drafter's own caps (plan builder-simplify.md §5.1, D8): tighter than
+// the manifest's bounds, which stay as they are for a BriefAgent written by
+// hand. AGENT.md states each by value (TestTheInstructionStatesItsBoundsByValue)
+// and the fixtures' shape check holds a draft to them (CheckShape).
+const (
+	MaxIntake        = 3
+	MaxPrepare       = 5
+	MaxOpenQuestions = 2
+	MaxNoteBullets   = 5
+)
