@@ -68,9 +68,10 @@ func TestGatewaySeesWindowsPathsItCanCheck(t *testing.T) {
 	roots := strings.Split(env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"], ":")
 	writable := strings.Split(env["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"], ":")
 	for _, r := range append(append([]string{}, roots...), writable...) {
-		// The run's own directories, and cfg, which is a real temporary
-		// directory: /tmp/… on Linux, /c/…/Temp/… on Windows.
-		if !strings.HasPrefix(r, "/c/") && !strings.HasPrefix(r, "/tmp/") {
+		// The run's own directories, all C:\ paths, and cfg, which is a
+		// real temporary directory wherever TMPDIR puts it (agentry-cli#442):
+		// the gateway's spelling of it, whatever that is on this host.
+		if !strings.HasPrefix(r, "/c/") && r != gatewayPath(rd.cfg) {
 			t.Errorf("gateway root %q is not a /c/ path (roots %q)", r, roots)
 		}
 	}
