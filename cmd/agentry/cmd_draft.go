@@ -223,8 +223,20 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		RunID: runID, Stderr: errOut, Web: web, OnUsage: usageReporter(o.outputFormat, errOut),
 	}
 	env, runErr := draftRun(cmd, first)
+	var d *drafter.Draft
+	var ce *engine.ClassifiedError
+	if runErr != nil && env != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && cmd.Context().Err() == nil {
+		// The last message was not a draft: its repair turn is given the
+		// error and that message back, and a draft it returns is kept.
+		d, env = repairDraft(cmd, first, drafter.Unparsed(env, outDir, desc, localrun.Drafter().Ref(), version.Build(), runErr), env)
+		if d.IsRepaired() {
+			// The draft is the repair turn's answer, so the run stands as
+			// that turn ended; the usage stays both turns'.
+			runErr = nil
+			env.Status, env.ExitCode, env.ExitClass, env.Error, env.Stage = "ok", engine.ExitOK, receipt.ExitClassName(engine.ExitOK), "", ""
+		}
+	}
 	if runErr != nil {
-		var ce *engine.ClassifiedError
 		if errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema {
 			_, _ = fmt.Fprintf(errOut, "The Drafter's answer was not a draft, so none was written; its answer and the run's receipts are in %s.\n", outDir)
 		}
@@ -234,9 +246,13 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		}
 		return runErr
 	}
-	d, err := finishDraft(env, outDir, desc)
+	err = nil
+	if d == nil {
+		if d, err = finishDraft(env, outDir, desc); err == nil {
+			d, env = repairDraft(cmd, first, d, env)
+		}
+	}
 	if err == nil {
-		d, env = repairDraft(cmd, first, d, env)
 		err = writeDraft(outDir, d)
 	}
 	if o.outputFormat == "json" {

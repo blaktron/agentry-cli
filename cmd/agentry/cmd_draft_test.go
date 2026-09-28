@@ -837,3 +837,63 @@ func TestTheRepairTurnHasOnlyWhatTheFirstLeft(t *testing.T) {
 		}
 	}
 }
+
+// TestAnAnswerThatIsNotADraftGetsTheRepairTurn: a last message the output
+// schema refused (exit 17) is given back to the Drafter once with the error;
+// a draft it returns is kept and the run stands ok, with both turns' usage,
+// and a second answer that is still not a draft is exit 17, as before.
+func TestAnAnswerThatIsNotADraftGetsTheRepairTurn(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	for _, c := range []struct {
+		name  string
+		fixed bool
+	}{{"repaired", true}, {"still not a draft", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+			seam := draftRun
+			draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+				env, _ := seam(cmd, r)
+				env.Usage = receipt.Usage{InputTokens: 1000, Turns: 2}
+				if r.Web != nil || !c.fixed {
+					env.Status, env.ExitCode, env.Result = "error", engine.ExitOutputSchema, receipt.TextResult(`{"manifest": {"name": "x"} Wait`)
+					return env, engine.Classify(engine.ExitOutputSchema, errors.New("the final message is not valid JSON"))
+				}
+				return env, nil
+			}
+			out := filepath.Join(t.TempDir(), "o")
+			stdout, _, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath, "--output-format", "json")
+			if len(*runs) != 2 {
+				t.Fatalf("%d run(s)", len(*runs))
+			}
+			task, _ := io.ReadAll((*runs)[1].Task)
+			if !strings.Contains(string(task), "## Your last message\n\n{\"manifest\": {\"name\": \"x\"} Wait") ||
+				!strings.Contains(string(task), "the final message is not valid JSON") || strings.Contains(string(task), "Summarize my notes.") {
+				t.Fatalf("the repair task:\n%s", task)
+			}
+			env := draftEnvelope(t, stdout)
+			var usage receipt.Usage
+			_ = json.Unmarshal(env["usage"], &usage)
+			if usage.InputTokens != 2000 || usage.Turns != 4 {
+				t.Fatalf("usage %s", env["usage"])
+			}
+			if !c.fixed {
+				wantClassified(t, err, engine.ExitOutputSchema)
+				if _, serr := os.Stat(filepath.Join(out, "draft.json")); !os.IsNotExist(serr) {
+					t.Fatal("a draft was written from answers that were never a draft")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantField(t, env, "status", `"ok"`)
+			wantField(t, env, "exitCode", `0`)
+			d, v := readDraft(t, out)
+			if !v.Passed || !strings.Contains(d.Notes, "## Repaired once") || !strings.Contains(d.Notes, "was not a draft") {
+				t.Fatalf("draft %s\n%s", d.Validation, d.Notes)
+			}
+		})
+	}
+}

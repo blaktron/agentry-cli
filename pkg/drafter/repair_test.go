@@ -204,3 +204,34 @@ func TestTheNotesStayWithinTheirBound(t *testing.T) {
 		t.Fatal("own notes kept past the bound")
 	}
 }
+
+// TestAnAnswerThatIsNotADraftIsRepairedFromItsOwnLastMessage: an answer the
+// output schema refused keeps its reports and AI Review's record, and its
+// repair turn is given the error and its own last message, nothing else.
+func TestAnAnswerThatIsNotADraftIsRepairedFromItsOwnLastMessage(t *testing.T) {
+	out := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(out, "reports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(out, "reports", "AGENT.md"), []byte("# X\n\n## Role\n\nReads.\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(out, "reports", "notes.md"), []byte("NOTES-MARKER\n"), 0o644)
+	last := `{"manifest": {"name": "x"}} Wait, resending. {"manifest": {"name": "x"}}`
+	env := &receipt.Envelope{RunID: "run-1", Result: receipt.TextResult("\n\n" + last), Harness: receipt.Harness{Model: "m"}}
+	d := Unparsed(env, out, webscan.Result{Verdict: webscan.Pass}, "agentry/drafter@1.0.0", "b", errors.New("the final message is not valid JSON"))
+	if len(d.Manifest) != 0 || d.ManifestError != "the Drafter's last message was not a draft: the final message is not valid JSON" ||
+		d.Instructions != "# X\n\n## Role\n\nReads.\n" || d.Notes != "NOTES-MARKER\n" || d.Drafter.RunID != "run-1" || d.AIReview == nil {
+		t.Fatalf("%+v", d)
+	}
+	task, err := RepairTask(d, []string{"the draft: " + d.ManifestError})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(task, "\n## Your last message\n\n"+last+"\n\n## Your instructions (AGENT.md)\n\n# X") ||
+		strings.Contains(task, "NOTES-MARKER") || strings.Contains(task, "## Your manifest") {
+		t.Fatalf("task:\n%s", task)
+	}
+	env.Result = receipt.TextResult(strings.Repeat("y", maxLastMessage+10))
+	if d := Unparsed(env, out, webscan.Result{}, "", "", errors.New("x")); len(d.lastMessage) > maxLastMessage+20 {
+		t.Fatalf("the last message is not bounded: %d", len(d.lastMessage))
+	}
+}

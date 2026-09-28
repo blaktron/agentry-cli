@@ -54,6 +54,8 @@ type Draft struct {
 	ownNotes    string
 	corrections []string
 	repaired    bool
+	// lastMessage is an unparsed answer's last message (Unparsed).
+	lastMessage string
 }
 
 // Match is a published BriefAgent that does the task, or most of it.

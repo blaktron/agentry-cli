@@ -10,6 +10,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
 // The repair turn's bounds: the most lines of the rules' report it is given,
@@ -25,7 +26,7 @@ const (
 // text in the task besides it is the rules' report and the Drafter's own
 // draft (RepairTask).
 const repairFraming = "This is your one repair turn. The Agentry rules refused the draft you returned, and their report is below, " +
-	"with your manifest and your instructions as you wrote them. You have no web tools this turn and nothing new to read: " +
+	"with your manifest (or, when it was not a draft, your last message) and your instructions as you wrote them. You have no web tools this turn and nothing new to read: " +
 	"fix the draft from what is here.\n\n" +
 	"- Change what the report names, and only what a fix to it needs. Keep every choice it does not name.\n" +
 	"- Your last message is the whole manifest again, corrected: `{\"manifest\": {…}, \"matches\": [], \"sources\": [], \"openQuestions\": []}`. " +
@@ -36,7 +37,8 @@ const repairFraming = "This is your one repair turn. The Agentry rules refused t
 // RepairTask is the repair turn's task (plan builder-simplify.md §5.2 step
 // 3): the constant framing, the rules' own report on the draft, and the
 // draft's manifest and instructions as the Drafter wrote them (after the
-// post-step's corrections). Nothing else goes in: not the description, not
+// post-step's corrections), or, for an answer the output schema refused,
+// its last message as it wrote it. Nothing else goes in: not the description, not
 // the notes, the sources, the matches or AI Review's record, and no text the
 // Drafter read. The turn runs without the web tools, so the report is the
 // only thing in it the model did not write itself.
@@ -50,12 +52,19 @@ func RepairTask(d *Draft, report []string) (string, error) {
 	for _, line := range reportLines(report, maxReportLines, maxReportLine) {
 		b.WriteString("- " + line + "\n")
 	}
-	var m bytes.Buffer
-	if err := json.Indent(&m, d.Manifest, "", "  "); err != nil {
-		return "", fmt.Errorf("the draft's manifest is not JSON: %w", err)
+	if len(d.Manifest) == 0 {
+		// An answer the output schema refused (Unparsed): its last message
+		// as it wrote it, for it to send again as one JSON object.
+		b.WriteString("\n## Your last message\n\n")
+		b.WriteString(d.lastMessage)
+	} else {
+		var m bytes.Buffer
+		if err := json.Indent(&m, d.Manifest, "", "  "); err != nil {
+			return "", fmt.Errorf("the draft's manifest is not JSON: %w", err)
+		}
+		b.WriteString("\n## Your manifest\n\n")
+		b.Write(m.Bytes())
 	}
-	b.WriteString("\n## Your manifest\n\n")
-	b.Write(m.Bytes())
 	b.WriteString("\n\n## Your instructions (AGENT.md)\n\n")
 	if strings.TrimSpace(d.Instructions) == "" {
 		b.WriteString("(You wrote none. Write them this turn.)\n")
@@ -84,6 +93,37 @@ func reportLines(report []string, maxLines, maxChars int) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// maxLastMessage is the most of an unparsed last message a repair turn is
+// given back: the whole of any draft's, which is a manifest and three lists.
+const maxLastMessage = 32 << 10
+
+// Unparsed is the draft of an answer the output schema refused (exit 17,
+// why): the Drafter's last message was not one JSON object with a
+// manifest. It has no manifest and says why in ManifestError, and it keeps
+// what Finish would (its reports, AI Review's record, what made it) and the
+// last message, bounded, for its repair turn (RepairTask), the one thing
+// the turn is given back besides the error. It is never rendered or
+// written as a draft unless that turn returns one.
+func Unparsed(env *receipt.Envelope, outDir string, desc webscan.Result, ref, build string, why error) *Draft {
+	d := &Draft{Matches: []Match{}, Sources: []Source{}, OpenQuestions: []string{},
+		ManifestError: "the Drafter's last message was not a draft: " + why.Error()}
+	d.Drafter = &Made{Ref: ref, Build: build, Model: env.Harness.Model, RunID: env.RunID}
+	d.AIReview = reviewOf(env.Web, desc, filepath.Join(outDir, "receipts", engine.WebLedgerFile))
+	_ = FromReports(d, filepath.Join(outDir, "reports"))
+	var last string
+	if json.Unmarshal(env.Result, &last) != nil {
+		last = string(env.Result)
+	}
+	last = strings.TrimSpace(last)
+	if len(last) > maxLastMessage {
+		last = strings.ToValidUTF8(last[:maxLastMessage], "") + "\n(… cut here)"
+	}
+	d.lastMessage = last
+	d.ownNotes = d.Notes
+	d.composeNotes("")
+	return d
 }
 
 // Repaired is the post-step over the repair turn's answer (§5.2 step 3):

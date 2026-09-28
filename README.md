@@ -350,11 +350,13 @@ Before a draft is written, the CLI checks it in three steps:
 3. **One repair turn.** If the rules still refuse it, the Drafter runs once
    more, without its web tools. Its task is the rules' report and its own
    manifest and instructions, and nothing else: no description, no notes,
-   no page. It returns the manifest again, and the instruction file too if
+   no page. A last message that was not a draft at all (not one JSON object,
+   exit 17) gets the same turn, given the error and that message back. It returns the manifest again, and the instruction file too if
    the report names it. The second answer is corrected and checked like the
    first, and kept whether or not it passes; its notes say "Repaired once"
    and what the rules said of the first. A repair turn that returns no draft
-   leaves the first, with its problems and a note saying why. The turn's
+   leaves the first, with its problems and a note saying why, or, when the
+   first was not a draft either, ends with exit 17 as before. The turn's
    budget is the draft's, capped at 300 seconds and 8 tool calls, and what
    is left of `--max-cost`. Its receipts are in `DIR/repair/`.
 
