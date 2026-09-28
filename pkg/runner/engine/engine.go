@@ -276,6 +276,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if outcome.hostInfo != "" {
 		env.Harness.Host = outcome.hostInfo
 	}
+	if len(outcome.hostEnv) > 0 {
+		env.CapabilitiesEnforced["harness.env"] = hostEnvLine(outcome.hostEnv)
+	}
 	// The harness's final text is the result; it is masked like every
 	// other receipt (the session does the same with its last message).
 	outcome.lastText = redact.String(outcome.lastText)
@@ -364,8 +367,9 @@ type agentOutcome struct {
 	usage    receipt.Usage
 	err      error // classified, nil on success
 	// hostInfo names the executable (and version) a host-run harness
-	// ran, for the envelope.
+	// ran, for the envelope; hostEnv the host variables it could inherit.
 	hostInfo string
+	hostEnv  []string
 }
 
 // startInfra creates the run network and starts proxy + gateway, then

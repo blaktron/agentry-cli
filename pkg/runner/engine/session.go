@@ -304,12 +304,16 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	s.exited = make(chan struct{})
 	run := func() (int, error) { return s.d.RunForeground(agentCtx, runSpec, stdinR, stdoutW, stderrFile) }
 	if p.Plan.Harness.Host != nil {
-		wait, info, herr := startHostProcess(agentCtx, p, s.rd, rep, token, stdinR, stdoutW, stderrFile)
+		wait, started, herr := startHostProcess(agentCtx, p, s.rd, rep, token, stdinR, stdoutW, stderrFile)
+		info := started.info
 		if herr != nil {
 			cancel(herr)
 			return herr
 		}
 		s.env.Harness.Host = info
+		if len(started.inherited) > 0 {
+			s.env.CapabilitiesEnforced["harness.env"] = hostEnvLine(started.inherited)
+		}
 		run = wait
 	}
 	go func() {
