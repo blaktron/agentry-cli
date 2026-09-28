@@ -112,3 +112,47 @@ func TestCollectRefusals(t *testing.T) {
 		t.Errorf("parse = %v, %v", got, err)
 	}
 }
+
+// TestCollectAnswersASecretFromTheSource (agentry-cli#402): with no
+// prompter and no preset, a secret question whose declared capability
+// secret the run's source holds is answered from it — a hosted run's
+// vault-filled envFile — and named, never valued; one the source does not
+// hold still fails as required.
+func TestCollectAnswersASecretFromTheSource(t *testing.T) {
+	qs := []manifest.IntakeQuestion{{ID: "api_token", Prompt: "API token", Type: manifest.IntakeSecret, Required: true}}
+	var looked []string
+	holds := func(name string) bool { looked = append(looked, name); return name == "API_TOKEN" }
+
+	a, err := CollectFrom(nil, qs, nil, []string{"API_TOKEN"}, holds)
+	if err != nil {
+		t.Fatalf("a secret the source holds failed intake: %v", err)
+	}
+	if len(looked) != 1 || looked[0] != "API_TOKEN" {
+		t.Errorf("source asked for %v, want [API_TOKEN]", looked)
+	}
+	if _, has := a.Secrets["api_token"]; has {
+		t.Error("the source's value was copied into the answers; it must stay in the source")
+	}
+	if sec, _ := a.Document("/inputs")["api_token"].(map[string]string); sec["secret"] != "API_TOKEN" {
+		t.Errorf("document = %v, want the secret named", a.Document("/inputs"))
+	}
+	if a.Empty() {
+		t.Error("an intake answered from the source reads as empty")
+	}
+
+	none := func(string) bool { return false }
+	if _, err := CollectFrom(nil, qs, nil, []string{"API_TOKEN"}, none); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("a secret the source lacks: err = %v, want the required refusal", err)
+	}
+	if _, err := CollectFrom(nil, qs, nil, []string{"API_TOKEN"}, nil); err == nil {
+		t.Fatal("with no source a required secret question must still fail")
+	}
+
+	// A terminal still asks: the person may mean another value than the
+	// source holds, and the prompt is how they say so.
+	p := &scriptPrompter{answers: map[string]string{"API token": "typed"}}
+	a, err = CollectFrom(p, qs, nil, []string{"API_TOKEN"}, holds)
+	if err != nil || a.Secrets["api_token"] != "typed" {
+		t.Fatalf("with a terminal: answers = %+v, err = %v", a, err)
+	}
+}

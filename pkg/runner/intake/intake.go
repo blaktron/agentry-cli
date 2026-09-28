@@ -30,6 +30,11 @@ type Answers struct {
 	// Secrets are secret answers: id → value. Never written anywhere but
 	// the run's secrets file, under SecretName(id).
 	Secrets map[string]string
+	// FromSource are secret questions the run's secret source answers
+	// (agentry-cli#402): their value never passes through here, since the
+	// engine resolves the declared capability secret SecretName(id) from
+	// that source itself; only the name is recorded.
+	FromSource map[string]bool
 }
 
 // SecretName is the declared capability secret a secret intake answer
@@ -59,7 +64,18 @@ func ParsePreset(flags []string) (map[string]string, error) {
 // the manifest's capability secrets; a secret question whose upper-cased
 // id is not among them has nowhere safe to go and is refused.
 func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string) (*Answers, error) {
-	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}}
+	return CollectFrom(p, qs, preset, declaredSecrets, nil)
+}
+
+// CollectFrom is Collect with the run's secret source in view. fromSource
+// (nil: none) reports whether that source holds a declared secret. With no
+// preset and no terminal, a secret question it holds is answered from the
+// source rather than refused as unanswerable: a hosted run's envFile,
+// filled from the account's vault, carries the key an intake question asks
+// for (agentry-cli#402). A terminal still asks, so a person can mean
+// another value than the source holds.
+func CollectFrom(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool) (*Answers, error) {
+	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}, FromSource: map[string]bool{}}
 	known := map[string]bool{}
 	for _, q := range qs {
 		known[q.ID] = true
@@ -82,6 +98,10 @@ func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 			return nil, fmt.Errorf("intake question %q is a secret but the manifest declares no capability secret named %s to carry it", q.ID, SecretName(q.ID))
 		}
 		val, given := preset[q.ID]
+		if !given && p == nil && typ == manifest.IntakeSecret && fromSource != nil && fromSource(SecretName(q.ID)) {
+			a.FromSource[q.ID] = true
+			continue
+		}
 		if !given && p != nil {
 			var err error
 			if val, err = ask(p, q, typ); err != nil {
@@ -153,7 +173,7 @@ func check(q manifest.IntakeQuestion, typ manifest.IntakeType, val string) error
 
 // Empty reports whether nothing was answered.
 func (a *Answers) Empty() bool {
-	return a == nil || (len(a.Values) == 0 && len(a.Files) == 0 && len(a.Secrets) == 0)
+	return a == nil || (len(a.Values) == 0 && len(a.Files) == 0 && len(a.Secrets) == 0 && len(a.FromSource) == 0)
 }
 
 // Document is the agent-side /inputs/intake.json: values as given, files
@@ -170,6 +190,9 @@ func (a *Answers) Document(inputsMount string) map[string]any {
 		doc[id] = inputsMount + "/" + filepath.Base(path)
 	}
 	for id := range a.Secrets {
+		doc[id] = map[string]string{"secret": SecretName(id)}
+	}
+	for id := range a.FromSource {
 		doc[id] = map[string]string{"secret": SecretName(id)}
 	}
 	return doc
