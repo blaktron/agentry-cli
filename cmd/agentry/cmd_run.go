@@ -100,8 +100,8 @@ func newRunCmd() *cobra.Command {
 			"Task input: --input FILE, else piped stdin; with no task (or an empty one) the\n" +
 			"agent is sent its own instruction and runs that. The result goes to stdout\n" +
 			"(--output-format text|json); reports the BriefAgent writes and the full\n" +
-			"receipts land in the output folder. Every failure class has its\n" +
-			"own exit code: 0 ok, 1 cli (interrupted, unknown adapter, intake), 2 usage,\n" +
+			"receipts land in the output folder. Every failure class has its own exit\n" +
+			"code: 0 ok, 1 cli (interrupted, unknown adapter, intake), 2 usage,\n" +
 			"10 verify, 11 policy/secret, 12 compile, 13 gateway/docker, 14 agent, 15\n" +
 			"timeout, 16 budget, 17 output schema.\n\n" +
 			"Run modes: --mode autonomous runs from the files and ends; --mode interactive\n" +
@@ -146,7 +146,7 @@ func newRunCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.input, "input", "", "task input file (default: piped stdin, else empty)")
+	f.StringVar(&opts.input, "input", "", "task input file (default: piped stdin, else the agent's own instruction)")
 	f.StringVar(&opts.out, "out", "", "output folder for reports and receipts (default ./agentry-out/<ns>-<name>-<runid>)")
 	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope)")
 	f.StringVar(&opts.eventsPath, "events", "", "append the harness event stream to FILE as JSON lines while the run is live (the receipt keeps its own copy either way)")

@@ -727,7 +727,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	if logs, lerr := s.d.Logs(ctx, containerName(s.runID, "proxy"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "proxy.log"), []byte(s.redact.String(logs)), 0o644)
 	}
-	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start)
+	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start, "")
 	daemon := daemonLine(s.rd)
 
 	s.mu.Lock()

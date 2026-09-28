@@ -401,7 +401,7 @@ func TestInstructionRules(t *testing.T) {
 		m := parseManifest(t, fullCapsYAML)
 		ws := workspaceFor(t, m, nil)
 		plan, _ := compileFixture(t, m, ws)
-		got, err := ReadInstruction(ws, plan.Instruction.SourcePath)
+		got, err := ReadInstruction(ws, plan.Instruction)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -409,9 +409,15 @@ func TestInstructionRules(t *testing.T) {
 			t.Errorf("ReadInstruction = %q, want the body without frontmatter or postscript", got)
 		}
 		for _, rel := range []string{"", "../outside.md", "/etc/passwd"} {
-			if _, err := ReadInstruction(ws, rel); err == nil {
+			if _, err := ReadInstruction(ws, spec.InstructionSpec{SourcePath: rel, SHA256: plan.Instruction.SHA256}); err == nil {
 				t.Errorf("ReadInstruction(%q) read a path outside the package", rel)
 			}
+		}
+		if err := os.WriteFile(filepath.Join(ws, plan.Instruction.SourcePath), []byte("Do another task.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadInstruction(ws, plan.Instruction); err == nil || !strings.Contains(err.Error(), "changed after the plan was compiled") {
+			t.Errorf("an instruction that is not the plan's was read: %v", err)
 		}
 	})
 	t.Run("v1 mcp-server is not runnable", func(t *testing.T) {

@@ -246,7 +246,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err != nil {
 		return fail(env, redact, err)
 	}
-	if task, err = ownInstructionWhenEmpty(task, p.Plan, rd.workspace); err != nil {
+	task, taskSent, err := ownInstructionWhenEmpty(task, p.Plan, rd.workspace)
+	if err != nil {
 		return fail(env, redact, err)
 	}
 
@@ -300,7 +301,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if logs, lerr := d.Logs(keep, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(redact.String(logs)), 0o644)
 	}
-	writeMeta(rd.receiptsDir, runID, p, start)
+	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.
 	if env.Web = webRecord(rd.receiptsDir, p.Web); env.Web != nil {
