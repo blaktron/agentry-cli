@@ -352,7 +352,7 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 				return err
 			}
 			if len(body) > knowledge.MaxBytes {
-				return fmt.Errorf("the Creator wrote %s past the pack's cap", rel)
+				return fmt.Errorf("the Creator wrote %s past %s, more than a page can be", rel, knowledge.FormatCap(knowledge.MaxBytes))
 			}
 			pages++
 			ch.Write = append(ch.Write, rel)

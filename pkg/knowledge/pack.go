@@ -375,6 +375,9 @@ func CopyPack(src, dst string) error {
 	var total int64
 	for _, rel := range append([]string{ManifestFile}, files...) {
 		n, err := copyBetween(from, to, rel, localCap-total)
+		if errors.Is(err, ErrTooLarge) {
+			return fmt.Errorf("%s: the pack is past %s: %w", rel, FormatCap(localCap), err)
+		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}

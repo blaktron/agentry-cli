@@ -691,7 +691,14 @@ func (s *Store) Upload(ctx context.Context, name string) (Entry, Remote, error) 
 	if e.Key.Registry != reg.URL() {
 		return Entry{}, Remote{}, fmt.Errorf("upload knowledge pack %s: its key is wrapped by %s, not %s; upload it there", name, e.Key.Registry, reg.URL())
 	}
-	if e.Manifest.Bytes > knowledge.MaxBytes {
+	// Held to Agentry's cap by the manifest's count and by the sealed
+	// file's own size, so an edited manifest cannot make this read a
+	// gigabyte for the registry to refuse (agentry-cli#429).
+	sealedSize := int64(-1)
+	if fi, err := os.Stat(filepath.Join(e.Dir, SealedFile)); err == nil {
+		sealedSize = fi.Size()
+	}
+	if e.Manifest.Bytes > knowledge.MaxBytes || sealedSize > packseal.MaxSealedSize(knowledge.MaxBytes) {
 		return Entry{}, Remote{}, fmt.Errorf("upload knowledge pack %s: it is %d bytes and Agentry keeps packs of at most %s, so it stays on this computer: %w",
 			name, e.Manifest.Bytes, knowledge.FormatCap(knowledge.MaxBytes), ErrPastAgentryCap)
 	}

@@ -595,4 +595,26 @@ func TestAPackPastAgentrysCapStaysHere(t *testing.T) {
 	if _, _, err := a.store().Upload(ctx, "archive"); !errors.Is(err, store.ErrPastAgentryCap) || !strings.Contains(err.Error(), "stays on this computer") {
 		t.Fatalf("upload: %v", err)
 	}
+	if n := reg.Packs("alice"); n != 0 {
+		t.Fatalf("a refused upload reached the registry: %d packs", n)
+	}
+	// Extended here, it is resealed under the key it had.
+	work := filepath.Join(t.TempDir(), "work")
+	op, err := a.store().Open(ctx, "archive", work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "sources", "more.txt"), []byte("more\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d2, err := knowledge.TreeDigest(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2 := op.Manifest
+	m2.SHA256, m2.Bytes = d2.SHA256, d2.Bytes
+	writeManifest(t, work, m2)
+	if got, err := a.store().Reseal(ctx, "archive", work); err != nil || got.Manifest.Bytes <= knowledge.MaxBytes {
+		t.Fatalf("reseal: %v", err)
+	}
 }

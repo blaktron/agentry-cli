@@ -74,7 +74,7 @@ func ExtractTree(r io.Reader, dst, want string) (d Digest, err error) {
 		// A download is bounded to Agentry's cap before it gets here
 		// (remote); a pack opened from the store may be a local one.
 		if hdr.Size < 0 || d.Bytes+hdr.Size > localCap {
-			return Digest{}, fmt.Errorf("knowledge tree: %w", ErrTooLarge)
+			return Digest{}, fmt.Errorf("knowledge tree: past %s: %w", FormatCap(localCap), ErrTooLarge)
 		}
 		if err := writeTreeFile(root, hdr.Name, tr, hdr.Size); err != nil {
 			return Digest{}, fmt.Errorf("knowledge tree: %s: %w", hdr.Name, err)

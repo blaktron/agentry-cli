@@ -76,7 +76,8 @@ func newKnowledgeCmd() *cobra.Command {
 		Long: "A knowledge pack is an LLM wiki — cited pages with an index, and the documents they were compiled\n" +
 			"from — that a run searches with the knowledge tools (`agentry run REF --knowledge NAME`). A pack made on\n" +
 			"this machine holds up to 1 GB, documents included; Agentry keeps packs of at most 10 MB, so a larger one\n" +
-			"stays on this computer.\n" +
+			"stays on this computer. Before the Creator reads them, the documents are decoded on this machine, at most\n" +
+			"2,000 files and 30 minutes, and each document's decoded text is cut to 10 MiB.\n" +
 			"`create` and `add` run the built-in Knowledge Creator on this machine, against the model your runner\n" +
 			"policy names: it costs no credits, and nothing it reads or writes is scanned.\n\n" +
 			"Packs are kept sealed on this computer, each under a key of its own that the registry you are signed in\n" +
