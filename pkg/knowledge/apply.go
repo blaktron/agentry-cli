@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -296,7 +295,13 @@ func changePath(rel string) error {
 // pack's version, or removes it if it is new. Findings on files this
 // change did not touch are the pack's own, and left alone.
 func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]bool, res *Result) error {
-	for range len(written) + len(deleted) + 1 {
+	// unlinked are the pages already unlinked once: a page that still fails
+	// after its unlink (a link the raw text cannot match, or one the unlink
+	// uncovered) is dropped like any other, so every pass takes a file out
+	// of written or deleted, or unlinks a page not unlinked before, and the
+	// loop ends within its budget.
+	unlinked := map[string]bool{}
+	for range 2*len(written) + len(deleted) + 1 {
 		findings, err := lintPages(stageDir)
 		if err != nil {
 			return err
@@ -334,7 +339,8 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 			if explained || !written[pg] {
 				continue
 			}
-			if hrefs := deadLinksOnly(byPage[pg]); len(hrefs) > 0 {
+			if hrefs := deadLinksOnly(byPage[pg]); len(hrefs) > 0 && !unlinked[pg] {
+				unlinked[pg] = true
 				if err := unlink(stage, pg, hrefs); err != nil {
 					return err
 				}
@@ -346,6 +352,7 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 				return err
 			}
 			delete(written, pg)
+			forgetKept(res, pg)
 			reasons := make([]string, 0, len(byPage[pg]))
 			for _, f := range byPage[pg] {
 				reasons = append(reasons, string(f.Rule)+": "+f.Message)
@@ -354,10 +361,35 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 			changed = true
 		}
 		if !changed {
-			return nil
+			break
 		}
 	}
+	// A backstop: whatever this change wrote that still fails is backed
+	// out, so a page that fails the lint never lands. The passes above
+	// already make progress each time, so no test reaches it today; it is
+	// here so that a future rule in them cannot land a failing page.
+	findings, err := lintPages(stageDir)
+	if err != nil {
+		return err
+	}
+	for _, f := range findings {
+		if !written[f.Page] {
+			continue
+		}
+		if err := restore(pack, stage, f.Page); err != nil {
+			return err
+		}
+		delete(written, f.Page)
+		forgetKept(res, f.Page)
+		res.Dropped = append(res.Dropped, Drop{Path: f.Page, Reason: string(f.Rule) + ": " + f.Message})
+	}
 	return nil
+}
+
+// forgetKept takes back the note that a page was kept unlinked, once the
+// page is dropped after all.
+func forgetKept(res *Result, pg string) {
+	res.Dropped = slices.DeleteFunc(res.Dropped, func(d Drop) bool { return d.Path == pg && d.Kept && strings.HasPrefix(d.Path, WikiDir+"/") })
 }
 
 // deadLinksOnly answers the links a page writes to nothing in the pack,
@@ -376,31 +408,70 @@ func deadLinksOnly(fs []Finding) []string {
 }
 
 // unlink rewrites the staged page rel with each link to one of hrefs made
-// its plain text: "[the depot](rotterdam.md)" becomes "the depot".
+// its plain text: "[the depot](rotterdam.md)" becomes "the depot", and an
+// image "![map](m.md)" becomes "map". It reads the page as the lint does
+// (lintPage): only the body after the frontmatter, line by line, outside
+// fenced blocks and code spans, with linkRE's own grammar.
 func unlink(stage *os.Root, rel string, hrefs []string) error {
 	f, err := stage.Open(rel)
 	if err != nil {
 		return err
 	}
-	body, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	body, err := io.ReadAll(f)
 	_ = f.Close()
 	if err != nil {
 		return err
 	}
-	text := string(body)
-	for _, h := range hrefs {
-		re := regexp.MustCompile(`\[([^\]]*)\]\(` + regexp.QuoteMeta(h) + `(?:\s+"[^"]*")?\)`)
-		text = re.ReplaceAllString(text, "$1")
-	}
-	w, err := stage.OpenFile(rel, os.O_WRONLY|os.O_TRUNC, 0o644)
+	w, err := stage.OpenFile(rel, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return err
 	}
-	if _, err := w.WriteString(text); err != nil {
+	if _, err := w.WriteString(unlinkText(string(body), hrefs)); err != nil {
 		_ = w.Close()
 		return err
 	}
 	return w.Close()
+}
+
+func unlinkText(text string, hrefs []string) string {
+	fm, ok := parseFrontmatter(text)
+	if !ok {
+		return text
+	}
+	raw := strings.Split(text, "\n")
+	stripped := strings.Split(stripCode(text), "\n")
+	for i := fm.bodyLine; i < len(raw) && i < len(stripped); i++ {
+		line := raw[i]
+		if strings.TrimSpace(stripped[i]) == "" {
+			// Blank, or inside a fenced block the lint does not read.
+			continue
+		}
+		code := codeRE.FindAllStringIndex(line, -1)
+		ms := linkRE.FindAllStringSubmatchIndex(line, -1)
+		for j := len(ms) - 1; j >= 0; j-- {
+			m := ms[j]
+			if !slices.Contains(hrefs, line[m[2]:m[3]]) || inSpan(code, m[0], m[1]) {
+				continue
+			}
+			from, textEnd := m[0], strings.IndexByte(line[m[0]:], ']')+m[0]
+			if from > 0 && line[from-1] == '!' {
+				from--
+			}
+			line = line[:from] + line[m[0]+1:textEnd] + line[m[1]:]
+		}
+		raw[i] = line
+	}
+	return strings.Join(raw, "\n")
+}
+
+// inSpan says whether [from, to) overlaps any of spans.
+func inSpan(spans [][]int, from, to int) bool {
+	for _, sp := range spans {
+		if from < sp[1] && sp[0] < to {
+			return true
+		}
+	}
+	return false
 }
 
 // restore puts rel in the stage back to what the pack held, or removes it

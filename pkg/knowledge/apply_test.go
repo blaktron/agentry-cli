@@ -300,3 +300,52 @@ func TestApplyKeepsAPageWhoseOnlyFaultIsADeadLink(t *testing.T) {
 		t.Fatalf("the result does not lint: %v", fs)
 	}
 }
+
+// The unlink reads a page as the lint does, and a page it cannot make pass
+// is dropped rather than landing with a finding: a bracket lines above a
+// dead link is not taken for the link's start, the same link in code is
+// left as written, an image loses its '!', the frontmatter is not
+// touched; a link whose text holds a code span with ']' (the raw text
+// cannot match it) and a nest of links whose unlink uncovers one that
+// points outside the pack are dropped, and the result lints clean
+// (agentry-cli#433's review).
+func TestApplyUnlinksAsTheLintReads(t *testing.T) {
+	packDir := filepath.Join(t.TempDir(), "aws-docs")
+	res, err := Apply(packDir, outputs(t, Changes{
+		Write: []string{"wiki/topics/prose.md", "wiki/topics/stuck.md", "wiki/topics/nested.md", "sources/guide.txt"},
+	}, map[string]string{
+		"wiki/topics/prose.md":  page("Prose", "s", "arr[i is odd [src: doc:guide.txt]\n\nsee [D](d.md), `[D](d.md)` and ![a map](d.md)\n\n```\n[D](d.md)\n```\n"),
+		"wiki/topics/stuck.md":  page("Stuck", "s", "see [a `]` b](d.md) [src: doc:guide.txt]\n"),
+		"wiki/topics/nested.md": page("Nested", "s", "[[[[a](d.md)](e.md)](f.md)](../../../x.md) [src: doc:guide.txt]\n"),
+		"sources/guide.txt":     "g\n",
+	}), opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, filepath.Join(packDir, "wiki", "topics", "prose.md"))
+	for _, want := range []string{"arr[i is odd [src: doc:guide.txt]", "see D, `[D](d.md)` and a map", "```\n[D](d.md)\n```", "title: Prose"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prose.md lacks %q:\n%s", want, got)
+		}
+	}
+	for _, gone := range []string{"stuck.md", "nested.md"} {
+		if _, err := os.Stat(filepath.Join(packDir, "wiki", "topics", gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s landed", gone)
+		}
+	}
+	notes := map[string]int{}
+	for _, d := range res.Dropped {
+		notes[d.Path]++
+		if d.Kept && d.Path != "wiki/topics/prose.md" {
+			t.Errorf("%s is reported kept although it was dropped: %+v", d.Path, d)
+		}
+	}
+	for p, n := range notes {
+		if n != 1 {
+			t.Errorf("%s is reported %d times: %+v", p, n, res.Dropped)
+		}
+	}
+	if fs, _ := Lint(packDir, "aws-docs"); len(fs) != 0 {
+		t.Fatalf("the result does not lint: %v", fs)
+	}
+}
