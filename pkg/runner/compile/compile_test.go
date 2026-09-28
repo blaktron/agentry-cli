@@ -1013,6 +1013,13 @@ func TestCompileIgnoresTheGuide(t *testing.T) {
 		Prepare:  []string{"GUIDE-PREPARE-MARKER"},
 		Files:    "GUIDE-FILES-MARKER",
 		Task:     "GUIDE-TASK-MARKER",
+		Connect:  map[string]string{},
+	}
+	for _, name := range m.Capabilities.Secrets {
+		guided.Guide.Connect[name] = "GUIDE-CONNECT-MARKER\nsecond line"
+	}
+	if len(guided.Guide.Connect) == 0 {
+		t.Fatal("the fixture declares no secret to give connect help for")
 	}
 	withGuide, planDir := compileFixture(t, &guided, ws)
 

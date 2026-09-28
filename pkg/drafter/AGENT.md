@@ -106,8 +106,9 @@ fewer than 15 pages. Stop reading when you know enough to write the draft.
    `prepare` (up to 10 things to gather first, each at most 200
    characters), `files` (what files to bring, if any, at most 500
    characters), `task` (a placeholder, "e.g. …", at most 200 characters),
-   and `connect`, an object with one line of help per declared key, each
-   at most 300 characters
+   and `connect`, an object with help per declared key in Markdown, each
+   at most 2,000 characters: where to get the key and the permission it
+   needs, in a sentence or a few numbered steps
    (`{"GITHUB_TOKEN": "Where to get it and the permission it needs."}`).
 
    **Leave out a field that has nothing to say.** Never write `"None"`,

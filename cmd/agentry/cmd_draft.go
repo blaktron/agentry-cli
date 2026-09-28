@@ -34,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/termtext"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
@@ -383,7 +384,7 @@ func renderAndValidate(d *drafter.Draft, pkg string) (string, json.RawMessage) {
 // control characters before it is printed.
 func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 	say := func(format string, args ...any) {
-		_, _ = fmt.Fprintln(w, termSafe(strings.ReplaceAll(fmt.Sprintf(format, args...), "\n", " ")))
+		_, _ = fmt.Fprintln(w, termtext.Safe(strings.ReplaceAll(fmt.Sprintf(format, args...), "\n", " ")))
 	}
 	pkg := filepath.Join(outDir, "package")
 	say("Draft written: %s", filepath.Join(outDir, "draft.json"))

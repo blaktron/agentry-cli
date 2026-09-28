@@ -42,6 +42,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/termtext"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/pkg/tui"
 )
@@ -1073,7 +1074,8 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 // the first question a run asks: the guided profile's keys or the intake.
 // A run that asks nothing prints nothing, and so do a --output-format json
 // run and a run with no terminal, whose callers never reach here. The
-// overview is markdown and is printed as its text.
+// overview is markdown and is printed as its text behind termtext's gutter,
+// so no line of it can read as the CLI's own (agentry-cli#419).
 func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
 	if m.Guide == nil || opts.outputFormat == "json" || (opts.guideShown != nil && *opts.guideShown) {
 		return
@@ -1082,36 +1084,19 @@ func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
 		*opts.guideShown = true
 	}
 	g := m.Guide
-	if ov := termSafe(strings.TrimSpace(g.Overview)); ov != "" {
-		_, _ = fmt.Fprintf(w, "\n%s\n", ov)
+	if ov := strings.TrimSpace(g.Overview); ov != "" {
+		_, _ = fmt.Fprintf(w, "\n%s\n", termtext.Quote(ov))
 	}
 	if len(g.Prepare) > 0 {
 		_, _ = fmt.Fprintln(w, "\nHave these ready:")
 		for _, item := range g.Prepare {
-			_, _ = fmt.Fprintf(w, "  - %s\n", termSafe(item))
+			_, _ = fmt.Fprintf(w, "  - %s\n", termtext.Safe(item))
 		}
 	}
 	if g.Files != "" {
-		_, _ = fmt.Fprintf(w, "Files: %s\n", termSafe(g.Files))
+		_, _ = fmt.Fprintf(w, "Files: %s\n", termtext.Safe(g.Files))
 	}
 	_, _ = fmt.Fprintln(w)
-}
-
-// termSafe is author text as a terminal may show it: every control
-// character but a newline or a tab becomes "?", so a guide cannot send
-// escape sequences (colours, cursor moves, a window title, a hyperlink) to
-// the terminal it is printed on. The core refuses them in the single-line
-// parts already; the overview may span lines, so it is cleaned here.
-func termSafe(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' {
-			return r
-		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
-			return '?'
-		}
-		return r
-	}, s)
 }
 
 // secretOverrides merges the profile's stored secrets with the intake's

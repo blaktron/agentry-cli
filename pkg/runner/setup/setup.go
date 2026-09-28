@@ -21,6 +21,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
+
+	"github.com/blaktron/agentry-cli/pkg/termtext"
 )
 
 // Prompter is the interaction surface guided flows run through.
@@ -348,8 +350,9 @@ type GuidedProfileOpts struct {
 	// KeepDecided suppresses the keep question (the flag already chose).
 	KeepDecided bool
 	// Help is the release guide's connect help per secret name (DEV-141):
-	// where to create the key, which scopes it needs. Printed before the
-	// question for that key.
+	// where to create the key, which scopes it needs, in markdown that may
+	// span lines (DEV-167). Printed as text before the question for that
+	// key, beneath its name behind termtext's gutter when it spans lines.
 	Help map[string]string
 }
 
@@ -369,10 +372,16 @@ func GuidedProfile(p Prompter, opts GuidedProfileOpts) (*profile.Profile, error)
 	names := append([]string(nil), opts.Secrets...)
 	sort.Strings(names)
 	for _, name := range names {
-		if h := opts.Help[name]; h != "" {
-			// The core refuses control and format characters in connect
-			// help (DEV-141); printed as the manifest gives it.
-			p.Say(fmt.Sprintf("%s: %s", name, h))
+		if h := strings.TrimSpace(opts.Help[name]); h != "" {
+			// The help is markdown that may span lines (DEV-167), so it is
+			// said beneath the key's name behind the gutter: no line of it
+			// can read as the CLI's own (another key's prompt, a contract
+			// line). A one-line help is said beside the name, as before.
+			if strings.Contains(h, "\n") {
+				p.Say(name + ":\n" + termtext.Quote(h))
+			} else {
+				p.Say(name + ": " + termtext.Safe(h))
+			}
 		}
 		v, err := p.AskSecret(fmt.Sprintf("Value for %s (empty = resolve from the environment at run time)", name))
 		if err != nil {
