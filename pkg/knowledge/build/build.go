@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/plainpath"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -313,18 +314,32 @@ func task(name string, current *knowledge.Pack, docs []decode.Document, now time
 func collect(reports string, dec *decode.Result, docs []decode.Document, applyDir string, runErr error) (int, error) {
 	ch := knowledge.Changes{Schema: knowledge.ChangesSchema}
 	pages := 0
-	if _, err := os.Stat(filepath.Join(reports, knowledge.WikiDir)); err == nil {
+	if _, err := os.Lstat(filepath.Join(reports, knowledge.WikiDir)); err == nil {
 		root, err := os.OpenRoot(reports)
 		if err != nil {
 			return 0, err
 		}
 		defer func() { _ = root.Close() }()
+		// A link in the reports is never followed (agentry-cli#421): a
+		// linked wiki/ fails the build, since there is no tree to take the
+		// pages from; a linked page is skipped, and a linked changes.json
+		// is not read, as if the Creator had not written them.
+		if err := plainpath.Dir(root, knowledge.WikiDir); err != nil {
+			return 0, fmt.Errorf("the Creator's reports: %w", err)
+		}
 		err = fs.WalkDir(root.FS(), knowledge.WikiDir, func(rel string, e fs.DirEntry, err error) error {
 			if err != nil || e.IsDir() || !e.Type().IsRegular() || !strings.HasSuffix(rel, ".md") {
 				return err
 			}
 			if b := path.Base(rel); b == knowledge.IndexFile || rel == knowledge.WikiDir+"/"+knowledge.LogFile {
 				return nil // the apply step writes these
+			}
+			fi, err := plainpath.File(root, rel)
+			if err != nil {
+				return nil //nolint:nilerr // a link on the way: skipped, never followed
+			}
+			if fi.Size() > knowledge.MaxBytes {
+				return fmt.Errorf("the Creator wrote %s past the pack's cap", rel)
 			}
 			body, err := fs.ReadFile(root.FS(), rel)
 			if err != nil {
@@ -340,18 +355,15 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		if err != nil {
 			return 0, err
 		}
-		if raw, err := fs.ReadFile(root.FS(), knowledge.ChangesFile); err == nil && len(raw) <= 1<<20 {
-			var own knowledge.Changes
-			if json.Unmarshal(raw, &own) == nil {
-				// The model removes pages and nothing else: sources/ is the
-				// build's, and holds the documents as given.
-				for _, rel := range own.Delete {
-					if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
-						ch.Delete = append(ch.Delete, rel)
-					}
+		if own, ok := ownChanges(root); ok {
+			// The model removes pages and nothing else: sources/ is the
+			// build's, and holds the documents as given.
+			for _, rel := range own.Delete {
+				if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
+					ch.Delete = append(ch.Delete, rel)
 				}
-				ch.Summary = own.Summary
 			}
+			ch.Summary = own.Summary
 		}
 	}
 	if runErr != nil {
@@ -379,6 +391,20 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		return 0, err
 	}
 	return pages, writeOut(filepath.Join(applyDir, knowledge.ChangesFile), raw)
+}
+
+// ownChanges reads the changes.json the Creator wrote, if it wrote one as
+// a plain file within the pack's bound; a link is not read (agentry-cli#421).
+func ownChanges(root *os.Root) (knowledge.Changes, bool) {
+	var own knowledge.Changes
+	if _, err := plainpath.File(root, knowledge.ChangesFile); err != nil {
+		return own, false
+	}
+	raw, err := fs.ReadFile(root.FS(), knowledge.ChangesFile)
+	if err != nil || len(raw) > 1<<20 {
+		return own, false
+	}
+	return own, json.Unmarshal(raw, &own) == nil
 }
 
 func writeOut(dst string, b []byte) error {

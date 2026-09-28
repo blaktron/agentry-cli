@@ -231,11 +231,48 @@ func TestApplyRefusals(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(out, "sources"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(outside, filepath.Join(out, "sources", "linked")); err != nil {
+		link := filepath.Join(out, "sources", "linked")
+		if err := os.Symlink(outside, link); err != nil {
 			t.Skipf("symlink: %v", err)
 		}
+		// Removed before the temporary directories are: under Wine,
+		// RemoveAll does not remove a directory link inside a directory.
+		t.Cleanup(func() { _ = os.Remove(link) })
 		if _, err := Apply(packDir, out, opts()); err == nil {
 			t.Fatal("Apply read through a linked directory out of the outputs")
+		}
+		if _, err := os.Stat(packDir); err == nil {
+			t.Fatal("a pack was made from it")
+		}
+	})
+	t.Run("a linked directory that stays in the outputs is refused too", func(t *testing.T) {
+		// os.Root follows a link inside its root; only the check refuses
+		// it, so this case holds the check on any host (agentry-cli#421).
+		packDir := filepath.Join(t.TempDir(), "aws-docs")
+		out := outputs(t, Changes{Write: []string{"sources/linked/page.md"}}, map[string]string{"other/page.md": "# Page\n"})
+		if err := os.MkdirAll(filepath.Join(out, "sources"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(out, "sources", "linked")
+		// Relative, so os.Root follows it (it refuses an absolute
+		// target by itself): only the check refuses this.
+		if err := os.Symlink(filepath.Join("..", "other"), link); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(link) })
+		if _, err := Apply(packDir, out, opts()); err == nil || !strings.Contains(err.Error(), "sources/linked is not a directory") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a changes.json that is a link is not read", func(t *testing.T) {
+		packDir := filepath.Join(t.TempDir(), "aws-docs")
+		outside := outputs(t, Changes{Write: []string{"wiki/page.md"}}, map[string]string{"wiki/page.md": "# Page\n"})
+		out := t.TempDir()
+		if err := os.Symlink(filepath.Join(outside, ChangesFile), filepath.Join(out, ChangesFile)); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		if _, err := Apply(packDir, out, opts()); err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("Apply read a changes.json through a link: err = %v", err)
 		}
 		if _, err := os.Stat(packDir); err == nil {
 			t.Fatal("a pack was made from it")

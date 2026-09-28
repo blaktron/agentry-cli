@@ -310,3 +310,56 @@ func TestBuildRefusals(t *testing.T) {
 		}
 	})
 }
+
+// The Creator's reports are written by the run, so a link among them is
+// refused, never followed: a wiki/ that is a link to a directory outside,
+// or a changes.json that is a link to a file outside, contributes nothing.
+// os.Root refuses such escapes on Linux; under Wine it followed one, so
+// the build checks each part itself (agentry-cli#421).
+func TestCollectRefusesLinksInTheReports(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "wiki"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "wiki", "secret.md"), []byte("# Host file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, knowledge.ChangesFile), []byte(`{"schema":"`+knowledge.ChangesSchema+`","delete":["wiki/keep.md"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("a linked wiki", func(t *testing.T) {
+		reports, applyDir := t.TempDir(), t.TempDir()
+		if err := os.Symlink(filepath.Join(outside, "wiki"), filepath.Join(reports, "wiki")); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		if _, err := collect(reports, &decode.Result{}, nil, applyDir, nil); err == nil {
+			t.Error("collect read a wiki/ that is a link out of the reports")
+		}
+		if _, err := os.Stat(filepath.Join(applyDir, "wiki", "secret.md")); err == nil {
+			t.Error("a page from outside the reports reached the apply step")
+		}
+	})
+	t.Run("a linked changes.json", func(t *testing.T) {
+		reports, applyDir := t.TempDir(), t.TempDir()
+		if err := os.MkdirAll(filepath.Join(reports, "wiki"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(reports, "wiki", "page.md"), []byte("# Page\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, knowledge.ChangesFile), filepath.Join(reports, knowledge.ChangesFile)); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		if _, err := collect(reports, &decode.Result{}, nil, applyDir, nil); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(applyDir, knowledge.ChangesFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "keep.md") {
+			t.Errorf("a changes.json outside the reports was read:\n%s", raw)
+		}
+	})
+}

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/blaktron/agentry-cli/pkg/plainpath"
 )
 
 // The apply step (plan knowledge.md §4.2): one Creator run is one bounded
@@ -229,6 +231,9 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 
 // readChanges decodes and holds changes.json to its rules.
 func readChanges(out *os.Root) (*Changes, error) {
+	if _, err := plainpath.File(out, ChangesFile); err != nil {
+		return nil, fmt.Errorf("read %s: %w", ChangesFile, err)
+	}
 	raw, err := out.ReadFile(ChangesFile)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ChangesFile, err)
@@ -584,12 +589,11 @@ func set(list []string) map[string]bool {
 // anything but a regular file and more than limit bytes.
 func copyBetween(src, dst *os.Root, rel string, limit int64) (int64, error) {
 	name := filepath.FromSlash(rel)
-	fi, err := src.Lstat(name)
-	if err != nil {
-		return 0, err
-	}
-	if !fi.Mode().IsRegular() {
-		return 0, fmt.Errorf("not a regular file; a knowledge pack holds only files")
+	if _, err := plainpath.File(src, rel); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, err
+		}
+		return 0, fmt.Errorf("%w; a knowledge pack holds only files and directories", err)
 	}
 	in, err := src.Open(name)
 	if err != nil {
