@@ -23,12 +23,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/removal"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -181,8 +183,8 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// secrets, nor a pack's pages, which a pack kept sealed on the machine
 	// would otherwise leave in the clear there; DR-42).
 	td.add(func(context.Context) {
-		_ = os.Remove(rd.secretsPath)
-		_ = os.RemoveAll(rd.knowledge)
+		td.removeSensitive(rd.secretsPath, false)
+		td.removeSensitive(rd.knowledge, true)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
 		}
@@ -762,13 +764,72 @@ func stderrTail(path string) string {
 type teardown struct {
 	// networks are the ones the run made, removed again after the sweep.
 	networks []string
-	d        dockerx.Client
-	stderr   io.Writer
-	funcs    []func(context.Context)
-	runID    string
+	// leftBehind are what removeSensitive could not delete, with why:
+	// report tells the person and the receipt (agentry-cli#422).
+	leftBehind []leftBehind
+	d          dockerx.Client
+	stderr     io.Writer
+	funcs      []func(context.Context)
+	runID      string
 }
 
 func (t *teardown) add(f func(context.Context)) { t.funcs = append(t.funcs, f) }
+
+// removeSensitivePath is removal.Remove, a variable so a test can hold a
+// file the way Docker Desktop can.
+var removeSensitivePath = removal.Remove
+
+type leftBehind struct {
+	path string
+	err  error
+}
+
+// removeSensitive deletes what must not outlive the run (secrets.env, the
+// run's copies of knowledge packs), retrying on Windows while Docker
+// Desktop lets go of it, and records it if it still stands.
+func (t *teardown) removeSensitive(path string, all bool) {
+	if err := removeSensitivePath(path, all); err != nil {
+		t.leftBehind = append(t.leftBehind, leftBehind{path, err})
+	}
+}
+
+// report says what teardown could not delete, after it has run: a warning
+// on stderr, a teardown line in the receipt (result.json is written again,
+// having been written before teardown) and an error, so a run that leaves
+// a secret or a pack's pages on disk does not end as if it had not. What a
+// later removal of the run directory took after all is not reported.
+func (t *teardown) report(env *receipt.Envelope) error {
+	var still []string
+	for _, l := range t.leftBehind {
+		if !removal.Gone(l.path) {
+			still = append(still, fmt.Sprintf("%s (%v)", l.path, l.err))
+		}
+	}
+	if len(still) == 0 {
+		return nil
+	}
+	msg := "could not delete " + strings.Join(still, "; ") +
+		": it may hold secret values or a knowledge pack's pages in the clear; delete it by hand"
+	_, _ = fmt.Fprintf(t.stderr, "warning: %s\n", msg)
+	if env == nil {
+		return Classify(ExitCLI, errors.New(msg))
+	}
+	if env.CapabilitiesEnforced == nil {
+		env.CapabilitiesEnforced = map[string]string{}
+	}
+	env.CapabilitiesEnforced["teardown"] = msg
+	if env.Status == "ok" {
+		env.Status, env.ExitCode, env.Error = "error", ExitCLI, msg
+	} else {
+		env.Error += "; and " + msg
+	}
+	if env.OutDir != "" {
+		if err := env.Write(env.OutDir); err != nil {
+			_, _ = fmt.Fprintf(t.stderr, "warning: %v\n", err)
+		}
+	}
+	return Classify(ExitCLI, errors.New(msg))
+}
 
 func (t *teardown) run() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

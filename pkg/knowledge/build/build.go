@@ -29,6 +29,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/plainpath"
+	"github.com/blaktron/agentry-cli/pkg/removal"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -125,7 +126,14 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if err != nil {
 		return nil, engine.Classify(engine.ExitCLI, err)
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	// It holds the documents' copies, their decoded text and the pages in
+	// the clear: a delete that fails even after removal's retry (Windows,
+	// agentry-cli#422) is named, never passed over.
+	defer func() {
+		if err := removeWork(work, true); err != nil {
+			_, _ = fmt.Fprintf(logw, "warning: could not delete %s (%v): it holds the documents and the pages in the clear; delete it by hand\n", work, err)
+		}
+	}()
 	docsDir, decodedDir, inputsDir, applyDir := filepath.Join(work, "docs"), filepath.Join(work, "decoded"), filepath.Join(work, "inputs"), filepath.Join(work, "apply")
 	for _, dir := range []string{docsDir, decodedDir, inputsDir, applyDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -427,6 +435,10 @@ func ownChanges(root *os.Root) (knowledge.Changes, bool) {
 	}
 	return own, json.Unmarshal(raw, &own) == nil
 }
+
+// removeWork is removal.Remove, a variable so a test can hold the
+// directory the way Docker Desktop can.
+var removeWork = removal.Remove
 
 func writeOut(dst string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {

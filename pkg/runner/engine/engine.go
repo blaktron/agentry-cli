@@ -170,7 +170,7 @@ type Params struct {
 // Run executes the plan. The returned envelope is always usable — on
 // failure it carries status "error", the exit class, and whatever was
 // known — and the returned error (nil on success) is already classified.
-func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, error) {
+func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envelope, outErr error) {
 	start := time.Now()
 	runID := p.RunID
 	if runID == "" {
@@ -220,7 +220,14 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	// run adds its own (agentry-cli#161).
 	SweepAbandoned(ctx, d, p.Stderr)
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
-	defer td.run()
+	defer func() {
+		td.run()
+		// What teardown could not delete turns the run's outcome
+		// (agentry-cli#422).
+		if err := td.report(env); err != nil && outErr == nil {
+			outErr = err
+		}
+	}()
 
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
