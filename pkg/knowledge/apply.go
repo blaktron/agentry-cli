@@ -209,6 +209,14 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 	if err := os.WriteFile(filepath.Join(stageDir, ManifestFile), raw, 0o644); err != nil { //nolint:gosec // the pack's clear manifest
 		return nil, err
 	}
+	// Windows refuses to rename a directory a handle is open on ("sharing
+	// violation"), and both roots are open on the directories the swap
+	// renames: they are closed first (agentry-cli#420). Nothing reads
+	// through them after this point.
+	_ = stage.Close()
+	if packRoot != nil {
+		_ = packRoot.Close()
+	}
 	if err := swapIn(stageDir, packDir, prev != nil); err != nil {
 		return nil, err
 	}

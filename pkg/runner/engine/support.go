@@ -70,8 +70,15 @@ type runDirs struct {
 
 // replacer substitutes the §R4 placeholders with this run's real values.
 func (rd *runDirs) replacer() *strings.Replacer {
-	return rd.replacerWith(func(p string) string { return p })
+	return rd.replacerWith(nativePath)
 }
+
+// nativePath spells a host path as the host does: for the runner's own
+// docker calls and for what a host-run harness reads.
+func nativePath(p string) string { return p }
+
+// gatewayPath spells a host path for the gateway (gatewayHostPath).
+func gatewayPath(p string) string { return gatewayHostPath(p, gatewayOS) }
 
 // gatewayReplacer is replacer for what only the gateway reads — its env
 // and its rendered config files — where each host path is spelled as
@@ -79,7 +86,13 @@ func (rd *runDirs) replacer() *strings.Replacer {
 // daemon on its socket (agentry-cli#414). The CLI's own docker calls keep
 // replacer's native paths.
 func (rd *runDirs) gatewayReplacer() *strings.Replacer {
-	return rd.replacerWith(func(p string) string { return gatewayHostPath(p, gatewayOS) })
+	return rd.replacerWith(gatewayPath)
+}
+
+// tomlEscape escapes a value for a TOML basic string, as the codex
+// adapter's tomlString does for the values it writes itself.
+func tomlEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
 }
 
 // gatewayEnv resolves the gateway container's env: its bind allow-lists
@@ -271,7 +284,7 @@ func stageIntake(p Params, rd *runDirs) error {
 // paths are spelled its way (gatewayReplacer, agentry-cli#414).
 func renderGatewayConfig(p Params, rd *runDirs) error {
 	gwRep := rd.gatewayReplacer()
-	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, gwRep, "gateway"); err != nil {
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, gatewayPath, "gateway"); err != nil {
 		return err
 	}
 	dir := filepath.Join(rd.cfg, "gateway")
@@ -296,7 +309,13 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 // file is held to the plan's hash of it as it is read: the plan was
 // verified before the run started, and a file changed or added since is
 // refused rather than mounted (agentry-cli#266).
-func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, rep *strings.Replacer, subs ...string) error {
+func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, hostPath func(string) string, subs ...string) error {
+	rep := rd.replacerWith(hostPath)
+	// A TOML file (codex's config.toml) holds its paths in basic strings,
+	// where a Windows path's backslashes are escapes: "C:\Users\…" does
+	// not parse (agentry-cli#420). Paths substituted into one are escaped
+	// the way the adapter escaped everything else in it.
+	tomlRep := rd.replacerWith(func(p string) string { return tomlEscape(hostPath(p)) })
 	for _, sub := range subs {
 		src := filepath.Join(planDir, sub)
 		err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
@@ -318,7 +337,11 @@ func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, rep *strings.
 			if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil {
 				return mkErr
 			}
-			return os.WriteFile(dest, []byte(rep.Replace(string(b))), 0o644)
+			r := rep
+			if filepath.Ext(rel) == ".toml" {
+				r = tomlRep
+			}
+			return os.WriteFile(dest, []byte(r.Replace(string(b))), 0o644)
 		})
 		var changed *planFileChangedError
 		if errors.As(err, &changed) {

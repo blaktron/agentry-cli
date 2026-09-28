@@ -48,6 +48,9 @@ func TestEnsureExecImage(t *testing.T) {
 				"FROM agentry-runner:v1\n",
 				"apk add --no-cache git jq",
 				"apk list --installed git jq",
+				// Paths inside the image, spelled for its Linux shell on
+				// any host (agentry-cli#420).
+				" && mkdir -p /etc/agentry && ",
 				ExecPackagesFile,
 				"git config --system --add safe.directory '/workspace'",
 				"git config --system --add safe.directory '/workspace/*'",
@@ -57,6 +60,9 @@ func TestEnsureExecImage(t *testing.T) {
 				if !strings.Contains(string(df), want) {
 					t.Fatalf("dockerfile lacks %q:\n%s", want, df)
 				}
+			}
+			if strings.Contains(string(df), `\`) {
+				t.Fatalf("a Windows path separator in the image's Dockerfile:\n%s", df)
 			}
 			if strings.Contains(string(df), "/etc/apk/repositories") {
 				t.Fatalf("no mirror was configured, yet the dockerfile rewrites the repositories:\n%s", df)
