@@ -131,6 +131,10 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	// agentry-cli#422) is named, never passed over.
 	defer func() {
 		if err := removeWork(work, true); err != nil {
+			var pe *fs.PathError
+			if errors.As(err, &pe) {
+				err = pe.Err // the path is named already
+			}
 			_, _ = fmt.Fprintf(logw, "warning: could not delete %s (%v): it holds the documents and the pages in the clear; delete it by hand\n", work, err)
 		}
 	}()

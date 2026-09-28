@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -764,13 +765,13 @@ func stderrTail(path string) string {
 type teardown struct {
 	// networks are the ones the run made, removed again after the sweep.
 	networks []string
-	// leftBehind are what removeSensitive could not delete, with why:
-	// report tells the person and the receipt (agentry-cli#422).
-	leftBehind []leftBehind
-	d          dockerx.Client
-	stderr     io.Writer
-	funcs      []func(context.Context)
-	runID      string
+	// leftFiles are what removeSensitive could not delete, with why:
+	// reportLeftFiles tells the person and the receipt (agentry-cli#422).
+	leftFiles []leftFile
+	d         dockerx.Client
+	stderr    io.Writer
+	funcs     []func(context.Context)
+	runID     string
 }
 
 func (t *teardown) add(f func(context.Context)) { t.funcs = append(t.funcs, f) }
@@ -779,7 +780,7 @@ func (t *teardown) add(f func(context.Context)) { t.funcs = append(t.funcs, f) }
 // file the way Docker Desktop can.
 var removeSensitivePath = removal.Remove
 
-type leftBehind struct {
+type leftFile struct {
 	path string
 	err  error
 }
@@ -789,27 +790,38 @@ type leftBehind struct {
 // Desktop lets go of it, and records it if it still stands.
 func (t *teardown) removeSensitive(path string, all bool) {
 	if err := removeSensitivePath(path, all); err != nil {
-		t.leftBehind = append(t.leftBehind, leftBehind{path, err})
+		t.leftFiles = append(t.leftFiles, leftFile{path, err})
 	}
 }
 
-// report says what teardown could not delete, after it has run: a warning
-// on stderr, a teardown line in the receipt (result.json is written again,
-// having been written before teardown) and an error, so a run that leaves
-// a secret or a pack's pages on disk does not end as if it had not. What a
-// later removal of the run directory took after all is not reported.
-func (t *teardown) report(env *receipt.Envelope) error {
+// reportLeftFiles says what teardown could not delete, after the whole
+// teardown (the sweep included) has run: each is tried once more, since a
+// container only the sweep removed may have held it, and what is still
+// there becomes a warning on stderr, a teardown line in the receipt
+// (result.json is written again with it) and an error, so a run that
+// leaves a secret or a pack's pages on disk does not end as if it had not.
+func (t *teardown) reportLeftFiles(env *receipt.Envelope) error {
 	var still []string
-	for _, l := range t.leftBehind {
-		if !removal.Gone(l.path) {
-			still = append(still, fmt.Sprintf("%s (%v)", l.path, l.err))
+	for _, l := range t.leftFiles {
+		err := removeSensitivePath(l.path, true)
+		if err == nil || removal.Gone(l.path) {
+			continue
 		}
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err // the path is named already
+		}
+		still = append(still, fmt.Sprintf("%s (%v)", l.path, err))
 	}
 	if len(still) == 0 {
 		return nil
 	}
-	msg := "could not delete " + strings.Join(still, "; ") +
-		": it may hold secret values or a knowledge pack's pages in the clear; delete it by hand"
+	what, them := "it", "it"
+	if len(still) > 1 {
+		what, them = "they", "them"
+	}
+	msg := "could not delete " + strings.Join(still, "; ") + ": " + what +
+		" may hold secret values or a knowledge pack's pages in the clear; delete " + them + " by hand"
 	_, _ = fmt.Fprintf(t.stderr, "warning: %s\n", msg)
 	if env == nil {
 		return Classify(ExitCLI, errors.New(msg))
@@ -818,9 +830,12 @@ func (t *teardown) report(env *receipt.Envelope) error {
 		env.CapabilitiesEnforced = map[string]string{}
 	}
 	env.CapabilitiesEnforced["teardown"] = msg
-	if env.Status == "ok" {
+	switch {
+	case env.Status == "ok":
 		env.Status, env.ExitCode, env.Error = "error", ExitCLI, msg
-	} else {
+	case env.Error == "":
+		env.Error = msg
+	default:
 		env.Error += "; and " + msg
 	}
 	if env.OutDir != "" {

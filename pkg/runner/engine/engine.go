@@ -224,7 +224,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		td.run()
 		// What teardown could not delete turns the run's outcome
 		// (agentry-cli#422).
-		if err := td.report(env); err != nil && outErr == nil {
+		if err := td.reportLeftFiles(env); err != nil && outErr == nil {
 			outErr = err
 		}
 	}()

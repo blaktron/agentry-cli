@@ -76,3 +76,32 @@ func TestTeardownDoesNotReportWhatTheRunDirRemovalTook(t *testing.T) {
 		t.Errorf("reported a file that is gone:\n%s", stderr.String())
 	}
 }
+
+// A file held only until the sweep removed the container holding it is
+// deleted when the report tries it again, and is not reported.
+func TestTeardownRetriesWhatTheSweepFreed(t *testing.T) {
+	old := removeSensitivePath
+	held := true
+	removeSensitivePath = func(path string, all bool) error {
+		if filepath.Base(path) == "secrets.env" && held {
+			held = false // the first try fails; the sweep then lets go of it
+			return errors.New("in use by another process")
+		}
+		return removal.Remove(path, all)
+	}
+	t.Cleanup(func() { removeSensitivePath = old })
+	p, f := fixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	var stderr bytes.Buffer
+	p.Stderr = &stderr
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if strings.Contains(stderr.String(), "could not delete") {
+		t.Errorf("reported a file the second try deleted:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "cfg", "gateway", "secrets.env")); !os.IsNotExist(err) {
+		t.Error("secrets.env is still there")
+	}
+}
