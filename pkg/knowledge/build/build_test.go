@@ -228,6 +228,29 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 	})
 }
 
+// A build on this computer takes documents past Agentry's 10 MB when its
+// caller names this computer's cap, and makes a pack past it
+// (agentry-cli#429).
+func TestABuildOnThisComputerTakesMoreThanAgentry(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	writeFile(t, filepath.Join(fx.docs, "runbook.md"), "# Runbook\n"+strings.Repeat("A long runbook line.\n", (knowledge.MaxBytes+(1<<20))/21))
+	fx.opts.Documents = []string{filepath.Join(fx.docs, "runbook.md")}
+	fx.opts.MaxBytes = knowledge.MaxLocalBytes
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
+		"wiki/procedures/night.md": page("Night shift", "runbook.md"),
+	})
+	if _, err := Build(context.Background(), fx.fake, fx.opts); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	p, err := knowledge.Load(fx.opts.PackDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Manifest.Bytes <= knowledge.MaxBytes || p.Manifest.Pages != 1 {
+		t.Fatalf("manifest %+v", p.Manifest)
+	}
+}
+
 func TestBuildStoppedAtABudgetKeepsWhatItWrote(t *testing.T) {
 	// Three tool calls against a budget of one turn: the engine stops the
 	// run (exit 16) after the Creator wrote one page.
@@ -298,6 +321,23 @@ func TestBuildRefusals(t *testing.T) {
 		writeFile(t, filepath.Join(other, "runbook.md"), "# another\n")
 		fx.opts.Documents = []string{filepath.Join(fx.docs, "runbook.md"), filepath.Join(other, "runbook.md")}
 		if _, err := Build(context.Background(), fx.fake, fx.opts); err == nil || !strings.Contains(err.Error(), "would both be the document runbook.md") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("documents past the pack's cap, alone or together", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		big := t.TempDir()
+		writeFile(t, filepath.Join(big, "a.txt"), strings.Repeat("a", 600<<10))
+		writeFile(t, filepath.Join(big, "b.txt"), strings.Repeat("b", 600<<10))
+		fx.opts.Documents = []string{big}
+		fx.opts.MaxBytes = 1 << 20 // each fits; together they do not
+		var ce *engine.ClassifiedError
+		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.As(err, &ce) || ce.Code != engine.ExitUsage || !strings.Contains(err.Error(), "is at most 1 MB") {
+			t.Fatalf("err = %v", err)
+		}
+		fx.opts.MaxBytes = 0 // Agentry's cap when none is named
+		writeFile(t, filepath.Join(big, "c.txt"), strings.Repeat("c", knowledge.MaxBytes))
+		if _, err := Build(context.Background(), fx.fake, fx.opts); err == nil || !strings.Contains(err.Error(), "is at most 10 MB") {
 			t.Fatalf("err = %v", err)
 		}
 	})

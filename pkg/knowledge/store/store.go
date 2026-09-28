@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -475,10 +476,13 @@ func (s *Store) Open(ctx context.Context, name, dst string) (*knowledge.Pack, er
 }
 
 func (s *Store) openEntry(ctx context.Context, e Entry, dst string) (*knowledge.Pack, error) {
-	sealed, err := os.ReadFile(filepath.Join(e.Dir, SealedFile)) //nolint:gosec // an entry of the store
+	// The sealed tree is streamed, never read whole: a pack kept here may
+	// be up to knowledge.MaxLocalBytes (agentry-cli#429).
+	sealed, err := os.Open(filepath.Join(e.Dir, SealedFile)) //nolint:gosec // an entry of the store
 	if err != nil {
 		return nil, fmt.Errorf("knowledge pack %s: %w", e.Name(), err)
 	}
+	defer func() { _ = sealed.Close() }()
 	key, fromCache, err := s.dataKey(ctx, e, false)
 	if err != nil {
 		return nil, err
@@ -492,13 +496,16 @@ func (s *Store) openEntry(ctx context.Context, e Entry, dst string) (*knowledge.
 		if key, _, err = s.dataKey(ctx, e, true); err != nil {
 			return nil, err
 		}
+		if _, err := sealed.Seek(0, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("knowledge pack %s: %w", e.Name(), err)
+		}
 		p, err = s.openWith(e, sealed, key, dst)
 	}
 	return p, err
 }
 
-func (s *Store) openWith(e Entry, sealed, key []byte, dst string) (*knowledge.Pack, error) {
-	h, plain, err := packseal.Open(bytes.NewReader(sealed), key)
+func (s *Store) openWith(e Entry, sealed io.Reader, key []byte, dst string) (*knowledge.Pack, error) {
+	h, plain, err := packseal.Open(bufio.NewReaderSize(sealed, 1<<20), key)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge pack %s: %w", e.Name(), err)
 	}
@@ -683,6 +690,17 @@ func (s *Store) Upload(ctx context.Context, name string) (Entry, Remote, error) 
 	}
 	if e.Key.Registry != reg.URL() {
 		return Entry{}, Remote{}, fmt.Errorf("upload knowledge pack %s: its key is wrapped by %s, not %s; upload it there", name, e.Key.Registry, reg.URL())
+	}
+	// Held to Agentry's cap by the manifest's count and by the sealed
+	// file's own size, so an edited manifest cannot make this read a
+	// gigabyte for the registry to refuse (agentry-cli#429).
+	sealedSize := int64(-1)
+	if fi, err := os.Stat(filepath.Join(e.Dir, SealedFile)); err == nil {
+		sealedSize = fi.Size()
+	}
+	if e.Manifest.Bytes > knowledge.MaxBytes || sealedSize > packseal.MaxSealedSize(knowledge.MaxBytes) {
+		return Entry{}, Remote{}, fmt.Errorf("upload knowledge pack %s: it is %d bytes and Agentry keeps packs of at most %s, so it stays on this computer: %w",
+			name, e.Manifest.Bytes, knowledge.FormatCap(knowledge.MaxBytes), ErrPastAgentryCap)
 	}
 	sealed, err := os.ReadFile(filepath.Join(e.Dir, SealedFile)) //nolint:gosec // an entry of the store
 	if err != nil {

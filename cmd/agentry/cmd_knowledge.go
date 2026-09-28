@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,10 @@ type knowledgeBuildOpts struct {
 	timeout    int
 	maxTurns   int
 	maxCost    float64
+	// maxPackMB caps the pack, documents included, in MiB: 1024 (1 GB,
+	// knowledge.MaxLocalBytes) for a build on this machine; a sandbox host
+	// building In Agentry passes 10, Agentry's cap (agentry-cli#429).
+	maxPackMB int
 	// outputFormat json is the form a sandbox host drives for a hosted
 	// build (agentry-cli#364): the Creator run's envelope on stdout, its
 	// usage narrated on stderr.
@@ -68,8 +73,11 @@ func newKnowledgeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "knowledge",
 		Short: "Make, keep and move the knowledge packs a run can search",
-		Long: "A knowledge pack is an LLM wiki of at most 10 MB — cited pages with an index, and the documents\n" +
-			"they were compiled from — that a run searches with the knowledge tools (`agentry run REF --knowledge NAME`).\n" +
+		Long: "A knowledge pack is an LLM wiki — cited pages with an index, and the documents they were compiled\n" +
+			"from — that a run searches with the knowledge tools (`agentry run REF --knowledge NAME`). A pack made on\n" +
+			"this machine holds up to 1 GB, documents included; Agentry keeps packs of at most 10 MB, so a larger one\n" +
+			"stays on this computer. Before the Creator reads them, the documents are decoded on this machine, at most\n" +
+			"2,000 files and 30 minutes, and each document's decoded text is cut to 10 MiB.\n" +
 			"`create` and `add` run the built-in Knowledge Creator on this machine, against the model your runner\n" +
 			"policy names: it costs no credits, and nothing it reads or writes is scanned.\n\n" +
 			"Packs are kept sealed on this computer, each under a key of its own that the registry you are signed in\n" +
@@ -90,6 +98,7 @@ func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f.IntVar(&o.timeout, "timeout", 0, "the Creator run's wall-clock budget in seconds (default: the policy's)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Creator run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Creator run once the harness reports this much cost in USD (default: the policy's)")
+	f.IntVar(&o.maxPackMB, "max-pack-mb", knowledge.MaxLocalBytes>>20, "the pack's cap in MiB, documents included (at most 1024; Agentry keeps packs of at most 10)")
 	f.StringVar(&o.outputFormat, "output-format", "text", "stdout format: text | json (json = the Creator run's result envelope, as `agentry run` writes one, with the build's report under knowledge; the harness's usage is narrated on stderr)")
 }
 
@@ -201,6 +210,11 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 		"It costs no credits, and nothing it reads or writes is scanned: the documents are not, and the pack it makes\n"+
 		"is recorded as \"not scanned\" until a registry scans it.\n", model)
 
+	limit, err := packLimit(o.maxPackMB, o.files, errOut)
+	if err != nil {
+		return nil, "", err
+	}
+
 	runID, err := engine.NewRunID()
 	if err != nil {
 		return nil, "", err
@@ -227,7 +241,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 		PackDir: dir, Name: name, Documents: o.files,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Now: time.Now(), OutDir: outDir, Budgets: &budgets,
-		RunID: runID, Stderr: errOut, OnUsage: o.onUsage,
+		RunID: runID, Stderr: errOut, OnUsage: o.onUsage, MaxBytes: limit,
 	})
 	if err != nil {
 		if res != nil && len(res.Skipped) > 0 {
@@ -488,4 +502,39 @@ func keptPackNamed(cmd *cobra.Command, arg string) bool {
 	}
 	_, err = s.Find(arg)
 	return err == nil
+}
+
+// packLimit is the pack's cap from --max-pack-mb, and says first, when the
+// documents come to more than Agentry keeps, that a build that size can
+// take a very long time and that its pack stays on this computer
+// (agentry-cli#429). A build past the cap itself is refused by the build,
+// before anything runs.
+func packLimit(maxPackMB int, files []string, errOut io.Writer) (int64, error) {
+	limit := int64(maxPackMB) << 20
+	if maxPackMB <= 0 || limit > knowledge.MaxLocalBytes {
+		return 0, fmt.Errorf("--max-pack-mb %d: a pack's cap is 1 to %d MiB", maxPackMB, knowledge.MaxLocalBytes>>20)
+	}
+	if total := documentsBytes(files); total > knowledge.MaxBytes && total <= limit {
+		_, _ = fmt.Fprintf(errOut, "The documents come to %.1f MB. A build that size can take a very long time, and the pack will stay on\n"+
+			"this computer: Agentry keeps packs of at most %s.\n", float64(total)/(1<<20), knowledge.FormatCap(knowledge.MaxBytes))
+	}
+	return limit, nil
+}
+
+// documentsBytes is the size of the regular files the paths name, walking
+// directories, for the warning a large build gets; a path it cannot read
+// counts nothing here, and the build says why.
+func documentsBytes(paths []string) int64 {
+	var total int64
+	for _, p := range paths {
+		_ = filepath.WalkDir(p, func(_ string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				if info, err := d.Info(); err == nil {
+					total += info.Size()
+				}
+			}
+			return nil
+		})
+	}
+	return total
 }

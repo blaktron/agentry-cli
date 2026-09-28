@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +73,35 @@ func TestRunMountsTheReleasesShippedPack(t *testing.T) {
 		_, _, err := dry(pkg)
 		wantClassified(t, err, engine.ExitVerify)
 		if !strings.Contains(err.Error(), "the release ships the knowledge pack runbooks") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a shipped pack past Agentry's cap", func(t *testing.T) {
+		pkg := shippingPackage(t, "runbooks")
+		dir := filepath.Join(pkg, "knowledge", "runbooks")
+		if err := os.WriteFile(filepath.Join(dir, "sources", "big.txt"), bytes.Repeat([]byte("x"), knowledge.MaxBytes+1), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		d, err := knowledge.TreeDigest(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, knowledge.ManifestFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m knowledge.Manifest
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		m.SHA256, m.Bytes = d.SHA256, d.Bytes
+		raw, _ = json.MarshalIndent(m, "", "  ")
+		if err := os.WriteFile(filepath.Join(dir, knowledge.ManifestFile), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = dry(pkg)
+		wantClassified(t, err, engine.ExitVerify)
+		if !strings.Contains(err.Error(), "a shipped pack is at most 10 MB") {
 			t.Fatalf("err = %v", err)
 		}
 	})

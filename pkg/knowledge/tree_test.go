@@ -134,7 +134,7 @@ func TestExtractTreeRefuses(t *testing.T) {
 		{name: "a name twice", entries: []tarEntry{{name: "sources/a.txt", body: "a"}, {name: "sources/a.txt", body: "b"}}, errHas: "order"},
 		{name: "out of byte order", entries: []tarEntry{{name: "wiki/index.md", body: "i"}, {name: "sources/a.txt", body: "a"}}, errHas: "order"},
 		{name: "too many files", entries: many, errHas: "files"},
-		{name: "too large", entries: []tarEntry{{name: "sources/big.bin", body: strings.Repeat("x", MaxBytes+1)}}, errHas: "10 MB"},
+		{name: "too large", entries: []tarEntry{{name: "sources/big.bin", body: strings.Repeat("x", MaxBytes+1)}}, errHas: "size cap"},
 		{name: "not the digest named", entries: ok, want: "sha256:" + strings.Repeat("0", 64), errHas: "digest"},
 		{name: "bytes after the end", entries: ok, trailer: "garbage", want: "", errHas: "canonical"},
 		{name: "not canonical (a mode)", entries: []tarEntry{{name: "sources/a.txt", body: "a", mode: 0o755}}, errHas: "canonical"},
@@ -142,6 +142,7 @@ func TestExtractTreeRefuses(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			lowerLocalCap(t)
 			raw, sum := handTar(t, c.entries, c.trailer)
 			want := c.want
 			if want == "" {
