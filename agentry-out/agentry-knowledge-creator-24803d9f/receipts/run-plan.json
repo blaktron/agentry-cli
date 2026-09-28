@@ -1,0 +1,172 @@
+{
+  "planVersion": "2",
+  "compiledBy": "0.0.0-dev+exe.5488be22dc62cc1a",
+  "ref": "agentry/knowledge-creator@1.0.0",
+  "digest": "sha256:8f25f28782cba3ab0e7d2d707788ff0056838c45a2587d29192d74c408bf727c",
+  "source": "builtin",
+  "modes": [
+    "autonomous"
+  ],
+  "mode": "autonomous",
+  "summary": "Builds and extends a knowledge pack: compiles the documents it is given into an LLM wiki of cited pages, section by section.",
+  "policySha256": "042644720f32772cd67f8cdbfa79f0d2e017629ab7898fcbee50580dc79e01c7",
+  "instruction": {
+    "sourcePath": "INSTRUCTION.md",
+    "sha256": "a0dbd642767433fe8d0f8862b1cde8495c96c74a6dd88e23347ae8df8f959894"
+  },
+  "capabilities": {
+    "egressMode": "none",
+    "fsReadMode": "none",
+    "fsWriteMode": "none",
+    "dataAccess": [
+      "files"
+    ]
+  },
+  "tools": [
+    "list_inputs",
+    "read_input",
+    "write_report"
+  ],
+  "enforcement": {
+    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: token-plan.ap-southeast-1.maas.aliyuncs.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
+    "dataAccess": "declared files; no servers cataloged by policy (declaration recorded for audit)",
+    "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
+    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
+    "model.apiKey": "$OPENAI_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
+    "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "secrets": "none declared"
+  },
+  "gateway": {
+    "image": "docker/mcp-gateway:v0.43.3",
+    "args": [
+      "--transport",
+      "streaming",
+      "--port",
+      "8811",
+      "--servers",
+      "agentry-tools",
+      "--catalog",
+      "/root/.docker/mcp/catalogs/catalog.yaml",
+      "--registry",
+      "/root/.docker/mcp/catalogs/registry.yaml",
+      "--config",
+      "/root/.docker/mcp/catalogs/config.yaml",
+      "--tools-config",
+      "/root/.docker/mcp/catalogs/tools.yaml",
+      "--secrets",
+      "/root/.docker/mcp/catalogs/secrets.env",
+      "--block-network",
+      "--verify-signatures",
+      "--log-calls",
+      "--block-secrets"
+    ],
+    "env": [
+      {
+        "name": "MCP_GATEWAY_AUTH_TOKEN",
+        "fromRunToken": true
+      },
+      {
+        "name": "HOME",
+        "value": "/root"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
+        "value": "@@RUN_WORKSPACE@@:@@RUN_OUT@@:@@RUN_CFG@@:@@RUN_INPUTS@@:@@RUN_KNOWLEDGE@@"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
+        "value": "@@RUN_OUT@@"
+      }
+    ],
+    "mounts": [
+      {
+        "source": "@@RUN_CFG@@/gateway",
+        "target": "/root/.docker/mcp/catalogs",
+        "readOnly": true
+      },
+      {
+        "source": "/var/run/docker.sock",
+        "target": "/var/run/docker.sock"
+      }
+    ],
+    "servers": [
+      "agentry-tools"
+    ]
+  },
+  "harness": {
+    "adapter": "docker-agent",
+    "model": "custom/qwen3.8-flash",
+    "agent": {
+      "image": "docker/docker-agent:1.128.0",
+      "argv": [
+        "run",
+        "--exec",
+        "--json",
+        "--safety",
+        "autonomous",
+        "/plan/agent.yaml",
+        "-"
+      ],
+      "env": [
+        {
+          "name": "MCP_GATEWAY_TOKEN",
+          "fromRunToken": true
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "fromHostEnv": "OPENAI_API_KEY"
+        },
+        {
+          "name": "HTTPS_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "HTTP_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "NO_PROXY",
+          "value": "gateway,localhost,127.0.0.1"
+        },
+        {
+          "name": "TELEMETRY_ENABLED",
+          "value": "false"
+        }
+      ],
+      "mounts": [
+        {
+          "source": "@@RUN_CFG@@/harness",
+          "target": "/plan",
+          "readOnly": true
+        }
+      ],
+      "stdinTask": true,
+      "readOnlyRoot": true,
+      "tmpfs": [
+        "/tmp:mode=1777",
+        "/work:mode=1777",
+        "/home/docker-agent:mode=1777"
+      ]
+    },
+    "resultKind": "text"
+  },
+  "proxy": {
+    "image": "agentry-runner:c0c505707efb6",
+    "allow": [
+      "token-plan.ap-southeast-1.maas.aliyuncs.com:443"
+    ]
+  },
+  "budgets": {
+    "timeoutSeconds": 900,
+    "maxTurns": 60
+  },
+  "output": {},
+  "files": {
+    "gateway/catalog.yaml": "af8ef933b7b30e74f37a844b13b2d49ef953c2f22173d0ad7e22b0d9458c55c8",
+    "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
+    "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
+    "gateway/tools.yaml": "88a8dc133a5f0fbdac4dac0486123c3273a0436b6b86594cd73c7881e618304f",
+    "gateway/toolspec.json": "5e3adebda7a1b2f93e7cea7766f895dfdbabcd111470cc627697cc77d676463e",
+    "harness/agent.yaml": "d664da9ce83011ed03c6465b24d0074ae618a5312c88c4bf79245a623d93bbcd"
+  }
+}

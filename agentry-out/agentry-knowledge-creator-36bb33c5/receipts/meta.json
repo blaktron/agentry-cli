@@ -1,0 +1,11 @@
+{
+  "adapter": "docker-agent",
+  "budgets": {
+    "maxTurns": 14,
+    "timeoutSeconds": 900
+  },
+  "ended": "2026-09-28T16:34:44Z",
+  "ref": "agentry/knowledge-creator@1.0.0",
+  "runId": "36bb33c5",
+  "started": "2026-09-28T16:33:31Z"
+}
