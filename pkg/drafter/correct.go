@@ -41,10 +41,10 @@ func Correct(raw json.RawMessage) (json.RawMessage, []string) {
 	root := doc.Content[0]
 	c.dedupe(root, "modes")
 	c.dedupe(root, "tags")
-	c.cut(root, "tags", manifest.MaxTags, "tags")
-	c.line(root, "summary", "summary", manifest.MaxSummaryChars)
+	c.cut(root, "tags", "tags", manifest.MaxTags, "tags")
+	c.shortenAt(root, "summary", "summary", manifest.MaxSummaryChars, false)
 	if intake := value(root, "intake"); intake != nil && intake.Kind == yaml.SequenceNode {
-		c.cut(root, "intake", manifest.MaxIntakeQuestions, "intake questions")
+		c.cut(root, "intake", "intake", manifest.MaxIntakeQuestions, "intake questions")
 		for i, q := range intake.Content {
 			if q.Kind != yaml.MappingNode {
 				continue
@@ -63,7 +63,7 @@ func Correct(raw json.RawMessage) (json.RawMessage, []string) {
 	c.dropIfEmpty(root, "guide", "")
 	if in := value(root, "interactive"); in != nil && in.Kind == yaml.MappingNode {
 		c.dropIfEmpty(in, "opening", "interactive")
-		c.line(in, "opening", "interactive.opening", manifest.MaxOpeningChars)
+		c.shortenAt(in, "opening", "interactive.opening", manifest.MaxOpeningChars, false)
 	}
 	c.dropIfEmpty(root, "interactive", "")
 	if len(c.did) == 0 {
@@ -81,14 +81,14 @@ func (c *corrector) guide(g *yaml.Node) {
 	for _, k := range []string{"overview", "files", "task"} {
 		c.dropIfEmpty(g, k, "guide")
 	}
-	c.textBytes(g, "overview", "guide.overview", manifest.MaxGuideOverviewBytes)
-	c.line(g, "files", "guide.files", manifest.MaxGuideFilesChars)
-	c.line(g, "task", "guide.task", manifest.MaxGuideTaskChars)
+	c.shortenAt(g, "overview", "guide.overview", manifest.MaxGuideOverviewBytes, true)
+	c.shortenAt(g, "files", "guide.files", manifest.MaxGuideFilesChars, false)
+	c.shortenAt(g, "task", "guide.task", manifest.MaxGuideTaskChars, false)
 	if p := value(g, "prepare"); p != nil && p.Kind == yaml.SequenceNode {
 		c.dropEmptyItems(p, "guide.prepare", "prepare item")
-		c.cut(g, "prepare", manifest.MaxGuidePrepare, "guide.prepare items")
+		c.cut(g, "prepare", "guide.prepare", manifest.MaxGuidePrepare, "prepare items")
 		for i := range p.Content {
-			c.item(p, i, fmt.Sprintf("guide.prepare[%d]", i), manifest.MaxGuidePrepareChars)
+			c.shorten(p.Content[i], fmt.Sprintf("guide.prepare[%d]", i), manifest.MaxGuidePrepareChars, false)
 		}
 	}
 	c.dropIfEmpty(g, "prepare", "guide")
@@ -101,7 +101,7 @@ func (c *corrector) guide(g *yaml.Node) {
 				i -= 2
 				continue
 			}
-			c.item(k, i+1, "guide.connect."+name, manifest.MaxGuideConnectChars)
+			c.shorten(help, "guide.connect."+name, manifest.MaxGuideConnectChars, false)
 		}
 	}
 	c.dropIfEmpty(g, "connect", "guide")
@@ -132,12 +132,12 @@ func (c *corrector) dedupe(m *yaml.Node, key string, at ...string) {
 }
 
 // cut holds a list at key to its first max entries.
-func (c *corrector) cut(m *yaml.Node, key string, maxItems int, what string) {
+func (c *corrector) cut(m *yaml.Node, key, where string, maxItems int, what string) {
 	l := value(m, key)
 	if l == nil || l.Kind != yaml.SequenceNode || len(l.Content) <= maxItems {
 		return
 	}
-	c.did = append(c.did, fmt.Sprintf("%s: %d %s, over the limit of %d, so the first %d were kept.", key, len(l.Content), what, maxItems, maxItems))
+	c.did = append(c.did, fmt.Sprintf("%s: %d %s, over the limit of %d, so the first %d were kept.", where, len(l.Content), what, maxItems, maxItems))
 	l.Content = l.Content[:maxItems]
 }
 
@@ -172,29 +172,14 @@ func (c *corrector) dropIfEmpty(m *yaml.Node, key string, at string) {
 	}
 }
 
-// line shortens the one-line text at key to max characters.
-func (c *corrector) line(m *yaml.Node, key, where string, maxChars int) {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			c.shorten(m.Content[i+1], where, maxChars, false)
-		}
+// shortenAt shortens the text at key to maxLen characters, or bytes.
+func (c *corrector) shortenAt(m *yaml.Node, key, where string, maxLen int, inBytes bool) {
+	if v := value(m, key); v != nil {
+		c.shorten(v, where, maxLen, inBytes)
 	}
 }
 
-// textBytes shortens the text at key to max bytes.
-func (c *corrector) textBytes(m *yaml.Node, key, where string, maxBytes int) {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			c.shorten(m.Content[i+1], where, maxBytes, true)
-		}
-	}
-}
-
-// item shortens the text at index i of a list or a mapping's values.
-func (c *corrector) item(l *yaml.Node, i int, where string, maxChars int) {
-	c.shorten(l.Content[i], where, maxChars, false)
-}
-
+// shorten shortens a text past its bound at a word, and names it.
 func (c *corrector) shorten(v *yaml.Node, where string, maxLen int, inBytes bool) {
 	if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
 		return
@@ -304,8 +289,9 @@ func jsonOf(n *yaml.Node) (json.RawMessage, error) {
 				if i > 0 {
 					b.WriteByte(',')
 				}
-				k, _ := json.Marshal(n.Content[i].Value)
-				b.Write(k)
+				if err := writeString(&b, n.Content[i].Value); err != nil {
+					return err
+				}
 				b.WriteByte(':')
 				if err := write(n.Content[i+1]); err != nil {
 					return err
@@ -326,8 +312,9 @@ func jsonOf(n *yaml.Node) (json.RawMessage, error) {
 		case yaml.ScalarNode:
 			switch n.Tag {
 			case "!!str":
-				s, _ := json.Marshal(n.Value)
-				b.Write(s)
+				if err := writeString(&b, n.Value); err != nil {
+					return err
+				}
 			case "!!null":
 				b.WriteString("null")
 			case "!!bool", "!!int", "!!float":
@@ -347,4 +334,15 @@ func jsonOf(n *yaml.Node) (json.RawMessage, error) {
 		return nil, err
 	}
 	return b.Bytes(), nil
+}
+
+// writeString writes s as a JSON string, leaving <, > and & as they came.
+func writeString(b *bytes.Buffer, s string) error {
+	enc := json.NewEncoder(b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return err
+	}
+	b.Truncate(b.Len() - 1) // Encode's newline
+	return nil
 }

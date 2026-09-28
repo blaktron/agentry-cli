@@ -229,19 +229,18 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 			_, _ = fmt.Fprintf(errOut, "The Drafter's answer was not a draft, so none was written; its answer and the run's receipts are in %s.\n", outDir)
 		}
 		if o.outputFormat == "json" && env != nil {
-			printDraftEnvelope(cmd, env, outDir, nil, false, nil)
+			printDraftEnvelope(cmd, env, outDir, nil, nil)
 			return &envelopePrinted{err: runErr}
 		}
 		return runErr
 	}
 	d, err := finishDraft(env, outDir, desc)
-	repaired := false
 	if err == nil {
-		d, env, repaired = repairDraft(cmd, first, d, env)
+		d, env = repairDraft(cmd, first, d, env)
 		err = writeDraft(outDir, d)
 	}
 	if o.outputFormat == "json" {
-		printDraftEnvelope(cmd, env, outDir, d, repaired, err)
+		printDraftEnvelope(cmd, env, outDir, d, err)
 		if err == nil && cmd.Context().Err() != nil {
 			err = engine.Classify(engine.ExitCLI, errors.New("interrupted"))
 		}
@@ -256,7 +255,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), d)
 	}
-	printDraft(cmd.OutOrStdout(), outDir, d, repaired)
+	printDraft(cmd.OutOrStdout(), outDir, d)
 	return nil
 }
 
@@ -278,10 +277,10 @@ type draftReport struct {
 	Repaired    bool `json:"repaired"`
 }
 
-func draftReportOf(outDir string, d *drafter.Draft, repaired bool) draftReport {
+func draftReportOf(outDir string, d *drafter.Draft) draftReport {
 	r := draftReport{File: filepath.Join(outDir, "draft.json"), ManifestError: d.ManifestError != "",
 		Matches: len(d.Matches), OpenQuestions: len(d.OpenQuestions), Rendered: isDir(filepath.Join(outDir, "package")),
-		Corrections: len(d.Corrections()), Repaired: repaired}
+		Corrections: len(d.Corrections()), Repaired: d.IsRepaired()}
 	var v validateOutput
 	r.Passed = d.ManifestError == "" && json.Unmarshal(d.Validation, &v) == nil && v.Passed
 	if a := d.AIReview; a != nil {
@@ -295,12 +294,12 @@ func draftReportOf(outDir string, d *drafter.Draft, repaired bool) draftReport {
 // failed), and its result left empty — the answer is the draft, in
 // draft.json and the run's own result.json, so nothing the Drafter wrote
 // rides on stdout.
-func printDraftEnvelope(cmd *cobra.Command, run *receipt.Envelope, outDir string, d *drafter.Draft, repaired bool, finishErr error) {
+func printDraftEnvelope(cmd *cobra.Command, run *receipt.Envelope, outDir string, d *drafter.Draft, finishErr error) {
 	env := *run
 	env.Result = receipt.TextResult("")
 	var report any
 	if d != nil {
-		report = draftReportOf(outDir, d, repaired)
+		report = draftReportOf(outDir, d)
 	}
 	printBuiltinEnvelope(cmd.Context(), cmd.OutOrStdout(), env, "draft", report, finishErr)
 }
@@ -390,10 +389,10 @@ func writeDraft(outDir string, d *drafter.Draft) error {
 	return nil
 }
 
-// The repair turn's own budgets (plan builder-simplify.md §5.2 step 3): it
+// The repair turn's own caps (plan builder-simplify.md §5.2 step 3): it
 // reads nothing and writes one manifest, and at most the instruction file,
-// so it takes a few minutes and a few tool calls at most, within the
-// draft's own.
+// so it needs a few minutes and a few tool calls at most. It also gets no
+// more than the draft's budgets left after the first turn (repairBudgets).
 const (
 	repairTimeoutSeconds = 300
 	repairMaxTurns       = 8
@@ -408,26 +407,26 @@ const (
 // why. The envelope that comes back carries both turns' usage, and the live
 // usage lines the repair turn narrates count from the first turn's total,
 // so a sandbox host meters the draft as a whole.
-func repairDraft(cmd *cobra.Command, first localrun.Run, d *drafter.Draft, env *receipt.Envelope) (*drafter.Draft, *receipt.Envelope, bool) {
+func repairDraft(cmd *cobra.Command, first localrun.Run, d *drafter.Draft, env *receipt.Envelope) (*drafter.Draft, *receipt.Envelope) {
 	report, ok := repairReport(d)
 	if !ok || cmd.Context().Err() != nil {
-		return d, env, false
+		return d, env
 	}
 	errOut := cmd.ErrOrStderr()
 	task, err := drafter.RepairTask(d, report)
 	if err != nil {
 		d.NoteNotRepaired("its task could not be written")
-		return d, env, false
+		return d, env
 	}
 	budgets, ok := repairBudgets(*first.Budgets, env.Usage)
 	if !ok {
-		d.NoteNotRepaired("the draft's cost budget was already spent")
-		return d, env, false
+		d.NoteNotRepaired("the first turn had spent the draft's budget")
+		return d, env
 	}
 	runID, err := engine.NewRunID()
 	if err != nil {
 		d.NoteNotRepaired("it could not be given a run id")
-		return d, env, false
+		return d, env
 	}
 	_, _ = fmt.Fprintf(errOut, "The rules refused the draft (%d problem(s)). The Drafter has one repair turn, given only their report and its own draft, without its web tools.\n", len(report))
 	spent := env.Usage
@@ -452,20 +451,20 @@ func repairDraft(cmd *cobra.Command, first localrun.Run, d *drafter.Draft, env *
 			why = fmt.Sprintf("its run ended with exit %d", ce.Code)
 		}
 		d.NoteNotRepaired(why)
-		return d, &total, false
+		return d, &total
 	}
 	rd, err := drafter.Repaired(d, renv, dir, report)
 	if err != nil {
 		d.NoteNotRepaired("its answer was not a draft")
-		return d, &total, false
+		return d, &total
 	}
 	pkg := filepath.Join(first.OutDir, "package")
 	if err := os.RemoveAll(pkg); err != nil {
 		d.NoteNotRepaired("the first answer's package could not be replaced")
-		return d, &total, false
+		return d, &total
 	}
 	checkDraft(rd, pkg)
-	return rd, &total, true
+	return rd, &total
 }
 
 // repairReport is what the rules said of a draft that did not pass, one
@@ -511,12 +510,28 @@ func repairReport(d *drafter.Draft) ([]string, bool) {
 	return out, len(out) > 0
 }
 
-// repairBudgets is the repair turn's budgets within the draft's b, after
-// the first turn spent spent; ok is false when the cost budget is spent.
+// repairBudgets is the repair turn's budgets: what the first turn left of
+// the draft's b, after it spent spent, under the repair turn's own caps; ok
+// is false when the first turn left none of the time, the tool calls or
+// the cost.
 func repairBudgets(b spec.Budgets, spent receipt.Usage) (spec.Budgets, bool) {
 	r := b
-	r.TimeoutSeconds = minBudget(b.TimeoutSeconds, repairTimeoutSeconds)
-	r.MaxTurns = minBudget(b.MaxTurns, repairMaxTurns)
+	r.TimeoutSeconds = repairTimeoutSeconds
+	if b.TimeoutSeconds > 0 {
+		left := b.TimeoutSeconds - int(spent.WallMS/1000)
+		if left <= 0 {
+			return r, false
+		}
+		r.TimeoutSeconds = min(left, repairTimeoutSeconds)
+	}
+	r.MaxTurns = repairMaxTurns
+	if b.MaxTurns > 0 {
+		left := b.MaxTurns - spent.Turns
+		if left <= 0 {
+			return r, false
+		}
+		r.MaxTurns = min(left, repairMaxTurns)
+	}
 	if b.MaxCostUSD > 0 {
 		left := b.MaxCostUSD - spent.CostUSD
 		if left <= 0 {
@@ -525,14 +540,6 @@ func repairBudgets(b spec.Budgets, spent receipt.Usage) (spec.Budgets, bool) {
 		r.MaxCostUSD = left
 	}
 	return r, true
-}
-
-// minBudget is the smaller of a budget, where 0 is none, and a cap.
-func minBudget(budget, limit int) int {
-	if budget > 0 && budget < limit {
-		return budget
-	}
-	return limit
 }
 
 // addUsage is two turns' usage as one draft's.
@@ -573,7 +580,7 @@ func renderAndValidate(d *drafter.Draft, pkg string) (string, json.RawMessage) {
 // printDraft says where the draft is and what it holds. What the Drafter
 // wrote is agent-written text: every line of it is cleaned of terminal
 // control characters before it is printed.
-func printDraft(w io.Writer, outDir string, d *drafter.Draft, repaired bool) {
+func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 	say := func(format string, args ...any) {
 		_, _ = fmt.Fprintln(w, termtext.Safe(strings.ReplaceAll(fmt.Sprintf(format, args...), "\n", " ")))
 	}
@@ -601,7 +608,7 @@ func printDraft(w io.Writer, outDir string, d *drafter.Draft, repaired bool) {
 	if n := len(d.Corrections()); n > 0 {
 		say("  corrected: %d slip(s) without the model, each named in the notes", n)
 	}
-	if repaired {
+	if d.IsRepaired() {
 		say("  repaired:  the rules refused the first answer; this is the Drafter's second, after one repair turn")
 	}
 	for _, m := range d.Matches {

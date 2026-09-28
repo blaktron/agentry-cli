@@ -36,7 +36,7 @@ func TestCorrect(t *testing.T) {
 		`intake[1].choices: the empty value [] was removed.`,
 		`guide.prepare: the empty prepare item "" was removed.`,
 		`guide.prepare: the empty prepare item "n/a" was removed.`,
-		`prepare: 11 guide.prepare items, over the limit of 10, so the first 10 were kept.`,
+		`guide.prepare: 11 prepare items, over the limit of 10, so the first 10 were kept.`,
 		`guide.prepare[0]: 250 characters, over the limit of 200`,
 		`guide.files: the placeholder value "None." was removed.`,
 		`guide.task: the empty value "" was removed.`,
@@ -76,6 +76,10 @@ func TestCorrect(t *testing.T) {
 		t.Errorf("the key order changed: %s", out[:60])
 	}
 
+	// A corrected manifest keeps its characters as they came.
+	if out, _ := Correct(json.RawMessage(`{"summary": "a <b> & c", "tags": ["x", "x"]}`)); string(out) != `{"summary":"a <b> & c","tags":["x"]}` {
+		t.Errorf("got %s", out)
+	}
 	for _, same := range []string{
 		`{"schemaVersion": "2", "name": "x", "summary": "Fine.", "modes": ["autonomous"], "n": 1.5, "b": true, "z": null}`,
 		`"not an object"`, `[1,2]`, `{"a": 1, "a": 2}`,

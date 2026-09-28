@@ -251,6 +251,50 @@ func TestEnsurePlan(t *testing.T) {
 	}
 }
 
+// TestTheDraftersTwoPlansKeepTheirOwnDirectories: the Drafter's plan with
+// the web tools and its repair turn's without them live side by side, each
+// reused as it is, and neither is taken for the other (agentry-cli#417).
+func TestTheDraftersTwoPlansKeepTheirOwnDirectories(t *testing.T) {
+	home := t.TempDir()
+	meta, dir, err := Drafter().Materialize(home, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(dir, "workspace")
+	m, err := ManifestFrom(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	in := func(web bool, log *strings.Builder) PlanInputs {
+		return PlanInputs{Home: home, Manifest: m, Meta: meta, InstallDir: dir, WorkspaceDir: ws, Policy: pol, Web: web,
+			PolicySHA: "sha", Adapter: "docker-agent", Mode: manifest.ModeAutonomous, CompiledBy: "b1", Log: log}
+	}
+	var log strings.Builder
+	withWeb, webDir, err := EnsurePlan(in(true, &log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, plainDir, err := EnsurePlan(in(false, &log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if webDir == plainDir || !withWeb.Capabilities.WebTools || without.Capabilities.WebTools {
+		t.Fatalf("plans %s (web %v) and %s (web %v)", webDir, withWeb.Capabilities.WebTools, plainDir, without.Capabilities.WebTools)
+	}
+	log.Reset()
+	for _, web := range []bool{true, false, true} {
+		p, _, err := EnsurePlan(in(web, &log))
+		if err != nil || p.Capabilities.WebTools != web {
+			t.Fatalf("web=%v: %v %+v", web, err, p.Capabilities)
+		}
+	}
+	if strings.Contains(log.String(), "recompiling") {
+		t.Fatalf("one plan recompiled the other: %s", log.String())
+	}
+}
+
 // TestRunBuiltinRunsTheCreator drives a built-in run end to end on the fake
 // docker client: the receipt's attestation is builtin with the build, the
 // decode line is the one the caller's decode wrote, and the Creator's

@@ -53,6 +53,7 @@ type Draft struct {
 	// post-step's sections; corrections is what Correct did.
 	ownNotes    string
 	corrections []string
+	repaired    bool
 }
 
 // Match is a published BriefAgent that does the task, or most of it.
@@ -147,23 +148,34 @@ func FromReports(d *Draft, reportsDir string) error {
 		if strings.TrimSpace(*r.field) != "" {
 			continue
 		}
-		p := filepath.Join(reportsDir, r.name)
-		fi, err := os.Lstat(p)
-		if errors.Is(err, os.ErrNotExist) {
+		text, err := readReport(reportsDir, r.name, r.max)
+		if err != nil {
+			errs = append(errs, err)
 			continue
 		}
-		if err != nil || !fi.Mode().IsRegular() || fi.Size() > int64(r.max) {
-			errs = append(errs, fmt.Errorf("the report %s is not a text of at most %d bytes", r.name, r.max))
-			continue
+		if text != "" {
+			*r.field = text
 		}
-		b, err := os.ReadFile(p) //nolint:gosec // the run's own reports
-		if err != nil || !utf8.Valid(b) {
-			errs = append(errs, fmt.Errorf("the report %s is not text", r.name))
-			continue
-		}
-		*r.field = string(b)
 	}
 	return errors.Join(errs...)
+}
+
+// readReport reads one report the Drafter wrote: "" when it wrote none, and
+// an error for one that is not a regular text file of at most maxBytes.
+func readReport(reportsDir, name string, maxBytes int) (string, error) {
+	p := filepath.Join(reportsDir, name)
+	fi, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > int64(maxBytes) {
+		return "", fmt.Errorf("the report %s is not a text of at most %d bytes", name, maxBytes)
+	}
+	b, err := os.ReadFile(p) //nolint:gosec // the run's own reports
+	if err != nil || !utf8.Valid(b) {
+		return "", fmt.Errorf("the report %s is not text", name)
+	}
+	return string(b), nil
 }
 
 // instructionRE is an instruction file the rendered package may hold: one
@@ -231,15 +243,11 @@ func (d *Draft) NoteWithheld() {
 		return
 	}
 	var b strings.Builder
-	b.WriteString(strings.TrimRight(d.Notes, "\n"))
-	if b.Len() > 0 {
-		b.WriteString("\n\n")
-	}
 	b.WriteString("## Withheld by AI Review\n\nThe Drafter was given the address and the reason for each of these, never the text:\n\n")
 	for _, w := range d.AIReview.WithheldSources {
 		fmt.Fprintf(&b, "- %s (%s): %s\n", w.URL, w.Tool, w.Reason)
 	}
-	d.Notes = b.String()
+	d.noteSection(b.String())
 }
 
 // looseString reads a string at a path of the manifest as it came, or "":

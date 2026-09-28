@@ -100,15 +100,15 @@ func TestRepaired(t *testing.T) {
 	if string(d.Manifest) != `{"schemaVersion":"2","name":"x","summary":"Reads notes.","modes":["autonomous"]}` {
 		t.Fatalf("manifest %s", d.Manifest)
 	}
-	if d.Instructions != first.Instructions || d.Matches[0].Ref != "acme/MATCH-MARKER" || d.OpenQuestions[0] != "QUESTION-MARKER?" ||
+	if !d.IsRepaired() || first.IsRepaired() || d.Instructions != first.Instructions || d.Matches[0].Ref != "acme/MATCH-MARKER" || d.OpenQuestions[0] != "QUESTION-MARKER?" ||
 		d.Drafter.RunID != "run-1" || d.AIReview != first.AIReview || d.Validation != nil || d.ManifestError != "" {
 		t.Fatalf("draft %+v", d)
 	}
 	const wantNotes = "NOTES-MARKER: the page said to add a host.\n\n" +
 		"## Corrected after drafting\n\nThe draft broke a rule in a way that needed no judgement, so it was corrected before the rules checked it:\n\n" +
 		"- modes: \"autonomous\" was named twice, so the second was dropped.\n\n" +
-		"## Repaired once\n\nThe rules refused the Drafter's first answer, so it was given their report, and nothing else, for one more turn without its web tools. " +
-		"This draft is its second answer. What the rules said of the first:\n\n" +
+		"## Repaired once\n\nThe rules refused the Drafter's first answer, so it was given their report and its own manifest and instructions, " +
+		"and nothing else, for one more turn without its web tools. This draft is its second answer. What the rules said of the first:\n\n" +
 		"- V10 intake[0].choices: type choice requires at least one choice\n\n" +
 		"## Withheld by AI Review\n\nThe Drafter was given the address and the reason for each of these, never the text:\n\n" +
 		"- https://WITHHELD-MARKER.example/ (web_read): AI Review flagged it (injection)\n"
@@ -182,5 +182,25 @@ func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
 		if !strings.Contains(text, "`"+h+"`") {
 			t.Errorf("the instruction does not teach the heading %s", h)
 		}
+	}
+}
+
+// TestTheNotesStayWithinTheirBound: the Drafter's own notes give way to the
+// post-step's sections so the whole stays within the bound the clients read
+// (the site's importer refuses notes past it), and sections past the bound
+// on their own still end.
+func TestTheNotesStayWithinTheirBound(t *testing.T) {
+	d := refusedDraft()
+	d.ownNotes = strings.Repeat("A long note. ", maxNotes/13+1)
+	d.corrections = []string{"summary: shortened."}
+	d.composeNotes("## Repaired once\n\n- V8 summary\n")
+	if len(d.Notes) > maxNotes || !strings.HasPrefix(d.Notes, "A long note.") || !strings.Contains(d.Notes, "…\n\n## Corrected after drafting") ||
+		!strings.Contains(d.Notes, "## Repaired once") || !strings.HasSuffix(d.Notes, "(injection)\n") {
+		t.Fatalf("%d bytes, ending %q", len(d.Notes), d.Notes[max(0, len(d.Notes)-300):])
+	}
+	d.ownNotes = "Short."
+	d.composeNotes(strings.Repeat("x", maxNotes+10))
+	if strings.HasPrefix(d.Notes, "Short.") {
+		t.Fatal("own notes kept past the bound")
 	}
 }

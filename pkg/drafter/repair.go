@@ -12,22 +12,13 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
-// The Drafter's own caps (plan builder-simplify.md §5.1, D8): tighter than
-// the manifest's bounds, which stay as they are for a BriefAgent written by
-// hand. AGENT.md states each by value (TestTheInstructionStatesItsCapsByValue)
-// and the fixtures' shape check holds a draft to them (CheckShape).
-const (
-	MaxIntake        = 3
-	MaxPrepare       = 5
-	MaxOpenQuestions = 2
-	MaxNoteBullets   = 5
-)
-
 // The repair turn's bounds: the most lines of the rules' report it is given,
-// and the most characters of each.
+// and the most characters of each; the notes carry fewer and shorter.
 const (
 	maxReportLines = 40
 	maxReportLine  = 400
+	maxNoteLines   = 10
+	maxNoteLine    = 200
 )
 
 // repairFraming opens the repair turn's task. It is a constant: the only
@@ -56,7 +47,7 @@ func RepairTask(d *Draft, report []string) (string, error) {
 	var b strings.Builder
 	b.WriteString(repairFraming)
 	b.WriteString("\n## The rules' report\n\n")
-	for _, line := range reportLines(report) {
+	for _, line := range reportLines(report, maxReportLines, maxReportLine) {
 		b.WriteString("- " + line + "\n")
 	}
 	var m bytes.Buffer
@@ -77,18 +68,18 @@ func RepairTask(d *Draft, report []string) (string, error) {
 	return b.String(), nil
 }
 
-// reportLines is the report as the repair turn and the notes carry it: one
-// line each, bounded, at most maxReportLines of them.
-func reportLines(report []string) []string {
+// reportLines is the report as the repair turn or the notes carry it: one
+// line each, at most maxChars characters, at most maxLines of them.
+func reportLines(report []string, maxLines, maxChars int) []string {
 	var out []string
 	for i, line := range report {
-		if i == maxReportLines {
-			out = append(out, fmt.Sprintf("… and %d more", len(report)-maxReportLines))
+		if i == maxLines {
+			out = append(out, fmt.Sprintf("… and %d more", len(report)-maxLines))
 			break
 		}
 		line = strings.Join(strings.Fields(line), " ")
-		if utf8.RuneCountInString(line) > maxReportLine {
-			line = string([]rune(line)[:maxReportLine]) + ellipsis
+		if utf8.RuneCountInString(line) > maxChars {
+			line = string([]rune(line)[:maxChars]) + ellipsis
 		}
 		out = append(out, line)
 	}
@@ -111,24 +102,28 @@ func Repaired(first *Draft, env *receipt.Envelope, outDir string, report []strin
 		return nil, engine.Classify(engine.ExitOutputSchema, err)
 	}
 	d := *first
-	d.Manifest, d.Validation, d.ManifestError = ans.Manifest, nil, ""
+	d.Manifest, d.Validation, d.ManifestError, d.repaired = ans.Manifest, nil, "", true
 	// Only the instruction file is read back: the turn was told the notes
 	// are kept.
-	again := Draft{Instructions: ans.Instructions, Notes: "-"}
-	if err := FromReports(&again, filepath.Join(outDir, "reports")); err != nil {
-		d.ManifestError = err.Error()
+	inst := ans.Instructions
+	if strings.TrimSpace(inst) == "" {
+		inst, err = readReport(filepath.Join(outDir, "reports"), instructionsReport, maxInstructions)
+		if err != nil {
+			d.ManifestError = err.Error()
+		}
 	}
-	if strings.TrimSpace(again.Instructions) != "" {
-		d.Instructions = again.Instructions
+	if strings.TrimSpace(inst) != "" {
+		d.Instructions = inst
 	}
 	if strings.TrimSpace(d.Instructions) == "" && d.ManifestError == "" {
 		d.ManifestError = "the Drafter wrote no instructions (AGENT.md)"
 	}
 	d.Manifest, d.corrections = Correct(d.Manifest)
 	var s strings.Builder
-	s.WriteString("## Repaired once\n\nThe rules refused the Drafter's first answer, so it was given their report, and nothing else, " +
-		"for one more turn without its web tools. This draft is its second answer. What the rules said of the first:\n\n")
-	for _, line := range reportLines(report) {
+	s.WriteString("## Repaired once\n\nThe rules refused the Drafter's first answer, so it was given their report and its own manifest " +
+		"and instructions, and nothing else, for one more turn without its web tools. This draft is its second answer. " +
+		"What the rules said of the first:\n\n")
+	for _, line := range reportLines(report, maxNoteLines, maxNoteLine) {
 		s.WriteString("- " + line + "\n")
 	}
 	d.composeNotes(s.String())
@@ -146,26 +141,48 @@ func (d *Draft) NoteNotRepaired(why string) {
 // without the model (Correct), in the order it was done.
 func (d *Draft) Corrections() []string { return d.corrections }
 
+// IsRepaired says the draft is the Drafter's second answer, after its
+// repair turn (Repaired).
+func (d *Draft) IsRepaired() bool { return d.repaired }
+
 // composeNotes writes the notes: the Drafter's own, then the post-step's
 // sections (what it corrected, then extra, then what AI Review withheld).
+// They stay within the bound the clients read them at (the output schema's,
+// maxNotes): the Drafter's own words give way to the sections, which say
+// what was done to the draft.
 func (d *Draft) composeNotes(extra string) {
-	d.Notes = d.ownNotes
+	sections := &Draft{AIReview: d.AIReview}
 	if len(d.corrections) > 0 {
 		var b strings.Builder
 		b.WriteString("## Corrected after drafting\n\nThe draft broke a rule in a way that needed no judgement, so it was corrected before the rules checked it:\n\n")
 		for _, c := range d.corrections {
 			b.WriteString("- " + c + "\n")
 		}
-		d.noteSection(b.String())
+		sections.noteSection(b.String())
 	}
 	if extra != "" {
-		d.noteSection(extra)
+		sections.noteSection(extra)
 	}
-	d.NoteWithheld()
+	sections.NoteWithheld()
+	own := d.ownNotes
+	d.Notes = own
+	d.noteSection(sections.Notes)
+	if over := len(d.Notes) - maxNotes; over > 0 {
+		if keep := len(own) - over; keep > len(ellipsis) {
+			own = shortenAtWord(own, func(s string) bool { return len(s) <= keep })
+		} else {
+			own = ""
+		}
+		d.Notes = own
+		d.noteSection(sections.Notes)
+	}
 }
 
 // noteSection adds one section to the notes.
 func (d *Draft) noteSection(s string) {
+	if s == "" {
+		return
+	}
 	notes := strings.TrimRight(d.Notes, "\n")
 	if notes != "" {
 		notes += "\n\n"
