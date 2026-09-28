@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -194,7 +195,7 @@ func execDockerfile(runnerImage string, img spec.ExecImageSpec) string {
 			names = append(names, strings.SplitN(p, "=", 2)[0])
 		}
 		b.WriteString("RUN apk add --no-cache " + strings.Join(img.Packages, " ") +
-			" && mkdir -p " + filepath.Dir(ExecPackagesFile) +
+			" && mkdir -p " + path.Dir(ExecPackagesFile) +
 			" && apk list --installed " + strings.Join(names, " ") + " | cut -d' ' -f1 > " + ExecPackagesFile + "\n")
 	}
 	if slices.Contains(img.Commands, "git") {

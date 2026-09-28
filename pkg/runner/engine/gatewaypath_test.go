@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,7 +10,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 func TestGatewayHostPath(t *testing.T) {
@@ -64,7 +68,9 @@ func TestGatewaySeesWindowsPathsItCanCheck(t *testing.T) {
 	roots := strings.Split(env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"], ":")
 	writable := strings.Split(env["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"], ":")
 	for _, r := range append(append([]string{}, roots...), writable...) {
-		if !strings.HasPrefix(r, "/c/Users/blakt/") && !strings.HasPrefix(r, "/tmp/") {
+		// The run's own directories, and cfg, which is a real temporary
+		// directory: /tmp/… on Linux, /c/…/Temp/… on Windows.
+		if !strings.HasPrefix(r, "/c/") && !strings.HasPrefix(r, "/tmp/") {
 			t.Errorf("gateway root %q is not a /c/ path (roots %q)", r, roots)
 		}
 	}
@@ -147,4 +153,115 @@ func underAny(p string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// A host-run codex reads its config.toml from the run's cfg, and the path
+// of its instruction file is substituted into a TOML basic string. On
+// Windows that path's backslashes are escapes: "C:\Users\…" is an invalid
+// \U escape and codex, run with --strict-config, refuses the file
+// (agentry-cli#420). The rendered string must read back as the path.
+func TestCodexConfigHoldsAWindowsPathTOMLCanRead(t *testing.T) {
+	m, err := manifest.Parse([]byte(engineManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installDir := t.TempDir()
+	ws := filepath.Join(installDir, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "SKILL.md"), []byte("Do the codex test.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	pol.Exec.Packages = map[string]string{"echo": "busybox"}
+	planDir := filepath.Join(installDir, "plan")
+	plan, err := compile.Compile(compile.Inputs{
+		Manifest: m, Digest: "sha256:feedface", Source: "local", AdapterName: "codex",
+		WorkspaceDir: ws, Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test",
+	}, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// On Linux a Windows path is only a strange relative name; rendering
+	// under a scratch working directory writes it there. On Windows the
+	// temp directory is a C:\ path already.
+	t.Chdir(t.TempDir())
+	// A quote in a Linux path would have broken out of the string too.
+	cfg := `C:\Users\O'Neil\q"uote\.agentry\runner\runs\cafe0002\cfg`
+	if os.PathSeparator == '\\' {
+		cfg = filepath.Join(t.TempDir(), "cfg")
+	}
+	rd := &runDirs{root: filepath.Dir(cfg), cfg: cfg}
+	if err := renderPlanFiles(plan, planDir, rd, nativePath, "harness"); err != nil {
+		t.Fatal(err)
+	}
+	var tomls []string
+	_ = filepath.Walk(filepath.Join(cfg, "harness"), func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && filepath.Ext(p) == ".toml" {
+			tomls = append(tomls, p)
+		}
+		return nil
+	})
+	if len(tomls) == 0 {
+		t.Fatalf("the codex plan rendered no .toml file under %s", filepath.Join(cfg, "harness"))
+	}
+	var got string
+	for _, f := range tomls {
+		b, err := os.ReadFile(f) //nolint:gosec // the test's own render
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			k, v, ok := strings.Cut(line, " = ")
+			if !ok || !strings.HasPrefix(v, `"`) {
+				continue
+			}
+			s, err := tomlBasicString(v)
+			if err != nil {
+				t.Errorf("%s: %s does not parse as a TOML string: %v", filepath.Base(f), line, err)
+				continue
+			}
+			if k == "model_instructions_file" {
+				got = s
+			}
+		}
+	}
+	if want := cfg + "/harness/"; !strings.HasPrefix(got, want) {
+		t.Errorf("model_instructions_file reads back %q, want the run's own %q…", got, want)
+	}
+}
+
+// tomlBasicString decodes a TOML basic string, accepting only the escapes
+// the adapter writes (stricter than TOML): enough for the test's question.
+func tomlBasicString(v string) (string, error) {
+	if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' {
+		return "", fmt.Errorf("not a basic string")
+	}
+	var b strings.Builder
+	in := v[1 : len(v)-1]
+	for i := 0; i < len(in); i++ {
+		c := in[i]
+		if c != '\\' {
+			b.WriteByte(c)
+			continue
+		}
+		i++
+		if i == len(in) {
+			return "", fmt.Errorf("a trailing backslash")
+		}
+		switch in[i] {
+		case '\\', '"':
+			b.WriteByte(in[i])
+		case 'n':
+			b.WriteByte('\n')
+		case 't':
+			b.WriteByte('\t')
+		default:
+			return "", fmt.Errorf(`the escape \%c`, in[i])
+		}
+	}
+	return b.String(), nil
 }
