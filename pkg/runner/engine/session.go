@@ -85,11 +85,16 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	fail := func(err error) (session.Session, error) {
 		// Only End closes the events receipt; a start that fails never
 		// reaches it, and on Windows an open receipt cannot be moved or
-		// deleted until the process exits (agentry-cli#459). Nothing
-		// writes it yet: the pump starts after a successful start.
+		// deleted until the process exits (agentry-cli#459). A harness
+		// that already exited has written its session_end (awaitExit
+		// waits for it); emit writes under s.mu and skips a nil file, so
+		// a later write is dropped, never made to a closed file.
+		s.mu.Lock()
 		if s.eventsFile != nil {
 			_ = s.eventsFile.Close()
+			s.eventsFile = nil
 		}
+		s.mu.Unlock()
 		td.run()
 		_, cerr := fail(env, s.redact, err)
 		_ = td.reportLeftFiles(env) // the session already failed; the report amends it
@@ -348,6 +353,14 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		select {
 		case <-s.exited:
 		case <-time.After(15 * time.Second):
+			return
+		}
+		// The goroutine ends the session right after the exit: wait for
+		// its session_end to reach the events receipt, which the failure
+		// then closes (agentry-cli#459).
+		select {
+		case <-s.done:
+		case <-time.After(5 * time.Second):
 		}
 	}
 	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: p.Plan.Tools})
