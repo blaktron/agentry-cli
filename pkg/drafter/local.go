@@ -99,8 +99,9 @@ func personalKey(env, source, provider string) (string, error) {
 // env as a draft, named by the Drafter's ref and the build that ran it (the
 // model and the run id are the envelope's), its long texts from the reports
 // under outDir, AI Review's record from the receipt and the run's ledger,
-// and the notes followed by a list of every text AI Review withheld (its
-// address, tool and reason, never the text). A draft whose reports were
+// its manifest's mechanical slips corrected (Correct), and the notes
+// followed by what was corrected and a list of every text AI Review
+// withheld (its address, tool and reason, never the text). A draft whose reports were
 // refused, or that has no instructions, carries why in ManifestError; a
 // caller renders and checks only a draft whose ManifestError is empty. An
 // answer that is not a draft is exit 17.
@@ -119,7 +120,9 @@ func Finish(env *receipt.Envelope, outDir string, desc webscan.Result, ref, buil
 	case strings.TrimSpace(d.Instructions) == "":
 		d.ManifestError = "the Drafter wrote no instructions (AGENT.md)"
 	}
-	d.NoteWithheld()
+	d.ownNotes = d.Notes
+	d.Manifest, d.corrections = Correct(d.Manifest)
+	d.composeNotes("")
 	return d, nil
 }
 

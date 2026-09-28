@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,14 @@ func (s *draftScan) Scan(_ context.Context, src webscan.Source, text string) web
 // the run records what it was given and answers result with a ledger.
 func draftSeams(t *testing.T, res webscan.Result, result string, ledger string) (*draftScan, *[]localrun.Run, *[]*engine.WebRun) {
 	t.Helper()
+	return draftSeamsN(t, res, []string{result}, ledger)
+}
+
+// draftSeamsN is draftSeams with an answer per run: the nth run answers
+// results[n], the last one every run after it. A run without the web tools
+// (the repair turn) has no web record and no ledger.
+func draftSeamsN(t *testing.T, res webscan.Result, results []string, ledger string) (*draftScan, *[]localrun.Run, *[]*engine.WebRun) {
+	t.Helper()
 	sc := &draftScan{res: res}
 	var runs []localrun.Run
 	var webs []*engine.WebRun
@@ -48,17 +57,22 @@ func draftSeams(t *testing.T, res webscan.Result, result string, ledger string) 
 	}
 	draftRun = func(_ *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
 		runs = append(runs, r)
+		result := results[min(len(runs), len(results))-1]
 		if err := os.MkdirAll(filepath.Join(r.OutDir, "receipts"), 0o755); err != nil {
 			t.Fatal(err)
+		}
+		env := &receipt.Envelope{Status: "ok", RunID: r.RunID, Result: json.RawMessage(result),
+			Harness: receipt.Harness{Model: "openai/qwen3.8-flash-next"}}
+		if r.Web == nil {
+			return env, nil
 		}
 		if ledger != "" {
 			if err := os.WriteFile(filepath.Join(r.OutDir, "receipts", engine.WebLedgerFile), []byte(ledger), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}
-		return &receipt.Envelope{Status: "ok", RunID: r.RunID, Result: json.RawMessage(result),
-			Harness: receipt.Harness{Model: "openai/qwen3.8-flash-next"},
-			Web:     &receipt.Web{Scan: r.Web.Scan, Read: 2, Passed: 1, Withheld: 1, Model: "jev-1.13.0", QuestionSet: "sha256:q"}}, nil
+		env.Web = &receipt.Web{Scan: r.Web.Scan, Read: 2, Passed: 1, Withheld: 1, Model: "jev-1.13.0", QuestionSet: "sha256:q"}
+		return env, nil
 	}
 	return sc, &runs, &webs
 }
@@ -195,7 +209,7 @@ func TestADraftThatFailsTheRulesIsKeptWithItsProblems(t *testing.T) {
 	_ = json.Unmarshal(b, &d)
 	var v validateOutput
 	_ = json.Unmarshal(d.Validation, &v)
-	if v.Passed || v.Counts.Errors < 2 || !strings.Contains(stdout, "does not pass agentry validate yet") {
+	if v.Passed || v.Counts.Errors < 1 || !strings.Contains(stdout, "does not pass agentry validate yet") {
 		t.Fatalf("validation %s\n%s", d.Validation, stdout)
 	}
 
@@ -573,5 +587,229 @@ func TestDraftHostedJSONKeepsTheTokenOut(t *testing.T) {
 	wantClassified(t, err, engine.ExitHarness)
 	if strings.Contains(stdout+stderr, token) {
 		t.Fatalf("the job credential reached the output of a failed draft:\n%s\n%s", stdout, stderr)
+	}
+}
+
+// readDraft reads out/draft.json and its validation.
+func readDraft(t *testing.T, out string) (drafter.Draft, validateOutput) {
+	t.Helper()
+	var d drafter.Draft
+	b, err := os.ReadFile(filepath.Join(out, "draft.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &d); err != nil {
+		t.Fatal(err)
+	}
+	var v validateOutput
+	if d.Validation != nil {
+		if err := json.Unmarshal(d.Validation, &v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return d, v
+}
+
+// refusedChoice is goodDraft with a choice question that lists no choices:
+// a slip the post-step cannot correct without inventing the answers.
+var refusedChoice = strings.Replace(goodDraft, `"entrypoints": {"instruction": "AGENT.md"},`,
+	`"entrypoints": {"instruction": "AGENT.md"}, "intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, 1)
+
+// TestACorrectionIsRevalidatedAndNamed (plan builder-simplify.md §5.2 step
+// 1): the Drafter's mechanical slips are corrected before the rules check
+// the draft, so a draft whose only slips are mechanical passes as returned,
+// with no repair turn, and each correction is named in its notes.
+func TestACorrectionIsRevalidatedAndNamed(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	slips := strings.Replace(goodDraft, `"summary": "Turns meeting notes into decisions and action items."`,
+		`"summary": "`+strings.Repeat("Turns meeting notes into decisions and action items. ", 3)+`", "tags": ["meetings", "notes", "meetings"],
+		"guide": {"overview": "Lists the decisions.", "files": "None"}`, 1)
+	_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, slips, "")
+	out := filepath.Join(t.TempDir(), "o")
+	stdout, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	d, v := readDraft(t, out)
+	if !v.Passed || len(*runs) != 1 {
+		t.Fatalf("validation %s, %d run(s)", d.Validation, len(*runs))
+	}
+	for _, want := range []string{"## Corrected after drafting", "summary: 159 characters, over the limit of 140",
+		`tags: "meetings" was named twice`, `guide.files: the placeholder value "None" was removed.`} {
+		if !strings.Contains(d.Notes, want) {
+			t.Errorf("the notes do not name %q:\n%s", want, d.Notes)
+		}
+	}
+	if strings.Contains(string(d.Manifest), `"files"`) || strings.Count(string(d.Manifest), `"meetings"`) != 1 {
+		t.Fatalf("manifest %s", d.Manifest)
+	}
+	if !strings.Contains(stdout, "corrected: 3 slip(s) without the model") || strings.Contains(stdout, "repaired:") {
+		t.Fatalf("stdout:\n%s", stdout)
+	}
+	yml, _ := os.ReadFile(filepath.Join(out, "package", "agent.yaml"))
+	if strings.Contains(string(yml), "files:") {
+		t.Fatalf("the package is not the corrected draft:\n%s", yml)
+	}
+}
+
+// TestARefusedDraftGetsOneRepairTurn (§5.2 step 3): a draft the rules still
+// refuse gets one more Drafter run, without the web tools and with no web
+// keys, whose task is the rules' report and the draft's own manifest and
+// instructions and nothing else; the second answer is kept, with the first
+// answer's lists and notes.
+func TestARefusedDraftGetsOneRepairTurn(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	var raw map[string]any
+	_ = json.Unmarshal([]byte(goodDraft), &raw)
+	delete(raw, "instructions")
+	delete(raw, "notes")
+	raw["matches"], raw["openQuestions"] = []any{}, []any{}
+	fixed, _ := json.Marshal(raw)
+	_, runs, _ := draftSeamsN(t, webscan.Result{Verdict: webscan.Pass}, []string{refusedChoice, string(fixed)}, draftLedger)
+	out := filepath.Join(t.TempDir(), "o")
+	stdout, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if len(*runs) != 2 {
+		t.Fatalf("%d run(s)", len(*runs))
+	}
+	first, repair := (*runs)[0], (*runs)[1]
+	if repair.Builtin != localrun.Drafter().WithoutWebTools() || repair.Web != nil || repair.OutDir != filepath.Join(out, "repair") ||
+		repair.RunID == first.RunID || repair.Budgets.MaxTurns > repairMaxTurns || repair.Budgets.TimeoutSeconds > repairTimeoutSeconds {
+		t.Fatalf("the repair run %+v budgets %+v", repair.Builtin.Ref(), repair.Budgets)
+	}
+	task, _ := io.ReadAll(repair.Task)
+	if !strings.HasPrefix(string(task), "This is your one repair turn.") ||
+		!strings.Contains(string(task), "- V10 intake[0].choices: type choice requires at least one choice\n") ||
+		!strings.Contains(string(task), `"name": "meeting-actions"`) || !strings.Contains(string(task), "Read the notes under /inputs") {
+		t.Fatalf("the repair task:\n%s", task)
+	}
+	for _, not := range []string{"Summarize my notes.", "acme/minutes", "Pure text.", "bad.example", "Dates as ISO 8601?"} {
+		if strings.Contains(string(task), not) {
+			t.Errorf("the repair task carries %q", not)
+		}
+	}
+	d, v := readDraft(t, out)
+	if !v.Passed || strings.Contains(string(d.Manifest), "intake") || d.Instructions == "" ||
+		len(d.Matches) != 1 || d.Matches[0].Ref != "acme/minutes" || len(d.OpenQuestions) != 1 || len(d.AIReview.WithheldSources) != 1 {
+		t.Fatalf("draft %+v validation %s", d, d.Validation)
+	}
+	if !strings.HasPrefix(d.Notes, "Pure text.\n\n## Repaired once") || !strings.Contains(d.Notes, "- V10 intake[0].choices") ||
+		!strings.Contains(d.Notes, "## Withheld by AI Review") {
+		t.Fatalf("notes:\n%s", d.Notes)
+	}
+	if !strings.Contains(stdout, "passes agentry validate") || !strings.Contains(stdout, "repaired:") ||
+		!strings.Contains(stderr, "The Drafter has one repair turn") {
+		t.Fatalf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if _, _, err := runCLI(t, nil, "validate", filepath.Join(out, "package")); err != nil {
+		t.Fatalf("agentry validate: %v", err)
+	}
+}
+
+// TestADraftStillRefusedAfterItsRepairIsKept: there is one repair turn, never
+// two, and a second answer that still fails is kept with its problems; a
+// repair turn that returns no draft leaves the first answer, and says why.
+func TestADraftStillRefusedAfterItsRepairIsKept(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, refusedChoice, "")
+	out := filepath.Join(t.TempDir(), "o")
+	stdout, _, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, v := readDraft(t, out)
+	if len(*runs) != 2 || v.Passed || v.Counts.Errors != 1 || !strings.Contains(d.Notes, "## Repaired once") ||
+		!strings.Contains(stdout, "does not pass agentry validate yet") {
+		t.Fatalf("%d run(s), validation %s\n%s", len(*runs), d.Validation, d.Notes)
+	}
+	if _, err := os.Stat(filepath.Join(out, "package", "agent.yaml")); err != nil {
+		t.Fatal("the second answer is not rendered for the person to fix")
+	}
+
+	for _, c := range []struct {
+		name   string
+		repair func(localrun.Run) (*receipt.Envelope, error)
+		why    string
+	}{
+		{"a failed run", func(r localrun.Run) (*receipt.Envelope, error) {
+			return &receipt.Envelope{Status: "error", Usage: receipt.Usage{InputTokens: 5}},
+				engine.Classify(engine.ExitBudget, errors.New("agent stderr tail: the run passed its budget"))
+		}, "(its run ended with exit 16)"},
+		{"an answer that is not a draft", func(r localrun.Run) (*receipt.Envelope, error) {
+			return &receipt.Envelope{Status: "ok", Result: json.RawMessage(`{"sources": []}`)}, nil
+		}, "(its answer was not a draft)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, refusedChoice, "")
+			seam := draftRun
+			draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+				if r.Web == nil {
+					*runs = append(*runs, r)
+					return c.repair(r)
+				}
+				return seam(cmd, r)
+			}
+			out := filepath.Join(t.TempDir(), "o")
+			if _, _, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
+				t.Fatal(err)
+			}
+			d, v := readDraft(t, out)
+			if len(*runs) != 2 || v.Passed || !strings.Contains(d.Notes, "## Not repaired") || !strings.Contains(d.Notes, c.why) ||
+				!strings.Contains(string(d.Manifest), `"type": "choice"`) || strings.Contains(d.Notes, "stderr tail") {
+				t.Fatalf("%d run(s)\n%s\n%s", len(*runs), d.Manifest, d.Notes)
+			}
+		})
+	}
+}
+
+// TestARepairTurnIsMeteredWithTheDraft: in the json form a sandbox host
+// reads, the envelope's usage is both turns', and every usage line the
+// repair turn narrates counts from the first turn's total, so a cap on the
+// draft stops the repair turn as it would the first.
+func TestARepairTurnIsMeteredWithTheDraft(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, refusedChoice, "")
+	seam := draftRun
+	draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+		u := receipt.Usage{InputTokens: 100000, OutputTokens: 2000, Turns: 9, CostUSD: 0.01, WallMS: 60000}
+		if r.Web == nil {
+			u = receipt.Usage{InputTokens: 8000, OutputTokens: 1000, Turns: 1, CostUSD: 0.001, WallMS: 9000}
+		}
+		r.OnUsage(u)
+		env, err := seam(cmd, r)
+		env.Usage = u
+		return env, err
+	}
+	stdout, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", filepath.Join(t.TempDir(), "o"), "--policy", policyPath, "--output-format", "json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	env := draftEnvelope(t, stdout)
+	var usage receipt.Usage
+	if json.Unmarshal(env["usage"], &usage) != nil || usage.InputTokens != 108000 || usage.OutputTokens != 3000 || usage.Turns != 10 || usage.WallMS != 69000 {
+		t.Fatalf("usage = %s", env["usage"])
+	}
+	var lines []string
+	for _, l := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(l, "usage: ") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 2 || lines[0] != "usage: input=100000 output=2000 total=102000 turns=9" || lines[1] != "usage: input=108000 output=3000 total=111000 turns=10" {
+		t.Fatalf("usage lines %q", lines)
+	}
+	var d draftReport
+	if err := json.Unmarshal(env["draft"], &d); err != nil || !d.Repaired || d.Passed {
+		t.Fatalf("draft report %s", env["draft"])
 	}
 }

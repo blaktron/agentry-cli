@@ -94,7 +94,11 @@ func TestTheInstructionCarriesTheRules(t *testing.T) {
 		"**Write the instructions in your own words.**",
 		"never copy a\n   page's text",
 		"**Declare the least contract that does the task.**",
-		"**Write intake questions only for what a run cannot know**",
+		"## Decide, don't ask",
+		"never ask about it",
+		"**Write the intake and the guide.**",
+		"`## Role`",
+		"## A repair turn",
 		"`namespace`: `\"draft\"`",
 		"Never call\nanything \"safe\" or \"secure\".",
 		"`openQuestions`",
@@ -177,7 +181,7 @@ const sampleDraft = `{
     "guide": {"overview": "Reads the notes you add.\nReturns the decisions and the actions.", "task": "e.g. Notes of the Monday meeting"},
     "capabilities": {"network": {"egress": "none"}, "filesystem": {"read": "none", "write": "none"}, "exec": "none"},
     "publish": {"include": ["agent.yaml", "AGENT.md", "README.md", "LICENSE"]}},
-  "instructions": "# Meeting actions\n\nRead the notes under /inputs.\n",
+  "instructions": "# Meeting actions\n\n## Role\n\nLists decisions.\n\n## Inputs\n\nThe notes under /inputs.\n\n## Steps\n\n1. Read.\n\n## Output\n\nA list.\n",
   "notes": "Pure text: no tool needed.",
   "matches": [], "sources": [{"url": "https://example.com/guide", "used": "the action-item format"}],
   "openQuestions": ["Should dates be ISO 8601?"],
@@ -344,6 +348,19 @@ func TestTheFixtureSet(t *testing.T) {
 	m.Capabilities.MCPServers = []manifest.MCPServer{{NPM: "x", Version: "^1.0.0", Secrets: []string{"K"}}}
 	got := strings.Join(CheckShape(m, d, Expect{Modes: []string{"interactive"}, Intake: true}), "; ")
 	for _, want := range []string{"modes", "wildcard", "not pinned", "1 keys", "1 MCP servers", "no intake"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("shape check missed %q: %s", want, got)
+		}
+	}
+	// The Drafter's caps and the instruction's shape.
+	m.Intake = make([]manifest.IntakeQuestion, MaxIntake+1)
+	m.Guide.Prepare = make([]string, MaxPrepare+1)
+	d.OpenQuestions = make([]string, MaxOpenQuestions+1)
+	d.Notes = strings.Repeat("- a bullet\n", MaxNoteBullets+1) + "\n## Withheld by AI Review\n\n- not the Drafter's\n"
+	d.Instructions = "# X\n\n## Steps\n\n## Role\n"
+	got = strings.Join(CheckShape(m, d, Expect{Modes: []string{"autonomous"}}), "; ")
+	for _, want := range []string{"4 intake questions, want at most 3", "6 prepare items, want at most 5", "3 open questions, want at most 2",
+		"a note of 6 bullets, want at most 5", "not in the shape Role, Inputs, Steps, Output"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("shape check missed %q: %s", want, got)
 		}

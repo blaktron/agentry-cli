@@ -46,6 +46,13 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if (Builtin{}).web {
 			t.Fatal("the zero Builtin carries the web tools")
 		}
+		// The Drafter's repair turn: the same package, the grant taken away.
+		if r := Drafter().WithoutWebTools(); r.web || r.Ref() != Drafter().Ref() || !Drafter().web {
+			t.Fatalf("without web tools: %+v", r)
+		}
+		if KnowledgeCreator().WithoutWebTools() != KnowledgeCreator() {
+			t.Fatal("taking away a grant the Creator never had changed it")
+		}
 	})
 	t.Run("the Drafter materializes as builtin, its tree the embedded one", func(t *testing.T) {
 		home := t.TempDir()

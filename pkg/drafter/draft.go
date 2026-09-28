@@ -48,6 +48,11 @@ type Draft struct {
 	// to fix), its instruction path or its reports were refused (nothing is
 	// rendered), or validation could not run. Validation is then absent.
 	ManifestError string `json:"manifestError,omitempty"`
+
+	// ownNotes is the notes as the Drafter wrote them, before the
+	// post-step's sections; corrections is what Correct did.
+	ownNotes    string
+	corrections []string
 }
 
 // Match is a published BriefAgent that does the task, or most of it.
