@@ -344,11 +344,13 @@ because the draft is in `draft.json`. The harness's usage is narrated live
 on stderr (`usage: input=… output=… total=… turns=…`). A draft that stops before the
 Drafter runs still writes one envelope with its class and stage; a
 description AI Review did not pass is exit 11 at stage `description`.
-`agentry draft --hosted --output-format json` is the form a sandbox host
-will run for a draft made in Agentry: the scans and the search go through
-the registry, with the job's credential in `$AGENTRY_JOB_TOKEN`. No sandbox
-host runs it until the hosted draft kind, Builder M5
-(blaktron/agentry-enterprise#183), lands.
+`agentry draft --hosted --output-format json` is what a sandbox host runs
+for a draft made in Agentry, from the site's or the desktop's Describe it:
+the scans and the search go through the registry, with the job's credential
+in `$AGENTRY_JOB_TOKEN`, and no Jev or search key is on the host. The draft
+kind, its hold and its settlement are in the core's
+[hosted runs](https://github.com/blaktron/agentry/blob/main/docs/hosted-runs.md#a-hosted-draft)
+page.
 
 ### Signing keys and `verify`
 
