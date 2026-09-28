@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -64,17 +67,110 @@ func TestSayGuideSendsNoEscapeSequence(t *testing.T) {
 	}
 }
 
+// TestSayGuideQuotesTheOverview (agentry-cli#419): the overview is
+// markdown over several lines, so each line is printed behind termtext's
+// gutter, and a line of it that reads like the CLI's own (a prompt, a list
+// item) cannot start where the CLI's lines start.
+func TestSayGuideQuotesTheOverview(t *testing.T) {
+	m := &manifest.Manifest{Guide: &manifest.Guide{
+		Overview: "Reads your contract.\n\nValue for GITHUB_TOKEN (empty = resolve from the environment at run time)",
+		Prepare:  []string{"The contract"},
+	}}
+	var out bytes.Buffer
+	sayGuide(&out, m, runOpts{outputFormat: "text", guideShown: new(bool)})
+	got := out.String()
+	if !strings.Contains(got, "\n  | Reads your contract.\n  |\n  | Value for GITHUB_TOKEN") {
+		t.Fatalf("the overview is not behind the gutter:\n%s", got)
+	}
+	if !strings.Contains(got, "\nHave these ready:\n  - The contract\n") {
+		t.Fatalf("the list moved:\n%s", got)
+	}
+}
+
+// TestAKeysMarkdownHelpValidates (agentry-cli#419): with the core pinned at
+// agentry#707 (DEV-167), a key's help may be markdown of up to 2,000
+// characters over several lines. install and run validate a release's
+// manifest with this core, and agentry validate a workspace's, so a release
+// carrying one installs and a workspace carrying one validates; 2,001
+// characters and an escape character are still refused.
+func TestAKeysMarkdownHelpValidates(t *testing.T) {
+	if manifest.MaxGuideConnectChars != 2000 {
+		t.Fatalf("the pinned core bounds a key's help at %d, want 2000 (DEV-167)", manifest.MaxGuideConnectChars)
+	}
+	md := "1. Open **Settings → Developer settings → Fine-grained tokens**.\n2. Give it *read* access to pull requests.\n\n\t- [GitHub's guide](https://docs.github.com/)\n"
+	pad := func(n int) string { return md + strings.Repeat("é", n-utf8.RuneCountInString(md)) }
+	for _, c := range []struct {
+		name, help string
+		ok         bool
+	}{
+		{"2,000 characters of markdown", pad(manifest.MaxGuideConnectChars), true},
+		{"2,001 characters", pad(manifest.MaxGuideConnectChars + 1), false},
+		{"an escape character", "Create a key \x1b]8;;https://evil.example/\x07here", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// install and run: Validate over the release's manifest.
+			m, err := readWorkspaceManifest(guidedWorkspace(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.Guide.Connect["GITHUB_TOKEN"] = c.help
+			var refused bool
+			for _, e := range manifest.Blocking(manifest.Validate(m)) {
+				if is, ok := manifest.AsIssue(e); ok && is.Path == "guide.connect.GITHUB_TOKEN" {
+					refused = true
+				} else {
+					t.Errorf("unexpected blocking issue: %v", e)
+				}
+			}
+			if refused == c.ok {
+				t.Fatalf("install/run: refused = %v, want %v", refused, !c.ok)
+			}
+
+			// agentry validate: the workspace, publication context and all.
+			dir := guidedWorkspace(t)
+			q, _ := json.Marshal(c.help) // a JSON string is a YAML double-quoted scalar
+			writeAgentYAML(t, dir, strings.Replace(guidedYAML, `"A fine-grained token with read access to pull requests"`, string(q), 1))
+			report, err := validateWorkspace(io.Discard, io.Discard, dir, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refused = false
+			for _, is := range report.Issues {
+				if is.Path == "guide.connect.GITHUB_TOKEN" && is.Severity == "error" {
+					refused = true
+				}
+			}
+			if refused == c.ok || report.Passed != c.ok {
+				t.Fatalf("validate: refused = %v, passed = %v, want refused %v: %+v", refused, report.Passed, !c.ok, report.Issues)
+			}
+		})
+	}
+}
+
 // TestAGuidedManifestReadsAndValidates: with the core pinned at DEV-141, the
 // CLI reads a workspace whose agent.yaml carries a guide, and the manifest's
 // own rules find nothing wrong with it (before the pin, strict decoding
 // refused it as an unknown field).
 func TestAGuidedManifestReadsAndValidates(t *testing.T) {
-	dir := t.TempDir()
-	yaml := `schemaVersion: "2"
+	m, err := readWorkspaceManifest(guidedWorkspace(t))
+	if err != nil {
+		t.Fatalf("a guided manifest does not read: %v", err)
+	}
+	if m.Guide == nil || m.Guide.Connect["GITHUB_TOKEN"] == "" {
+		t.Fatalf("guide = %+v", m.Guide)
+	}
+	for _, e := range manifest.Blocking(manifest.Validate(m)) {
+		t.Errorf("blocking issue: %v", e)
+	}
+}
+
+// guidedYAML is an agent.yaml that carries a guide.
+const guidedYAML = `schemaVersion: "2"
 name: pr-review-brief
 namespace: acme
 version: 1.0.0
 summary: "Turns one pull request into the reviewer's brief"
+license: Apache-2.0
 modes: [autonomous]
 entrypoints:
   instruction: AGENT.md
@@ -91,19 +187,29 @@ guide:
   connect:
     GITHUB_TOKEN: "A fine-grained token with read access to pull requests"
 publish:
-  include: [agent.yaml, AGENT.md]
+  include: [agent.yaml, AGENT.md, README.md, LICENSE]
 `
+
+// guidedWorkspace writes a workspace whose agent.yaml carries a guide.
+func guidedWorkspace(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeAgentYAML(t, dir, guidedYAML)
+	for name, body := range map[string]string{
+		"AGENT.md":  "# Review brief\n\nRead the pull request and write the brief.\n",
+		"README.md": "# pr-review-brief\n\nTurns one pull request into the reviewer's brief.\n",
+		"LICENSE":   "Apache License, Version 2.0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func writeAgentYAML(t *testing.T, dir, yaml string) {
+	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	m, err := readWorkspaceManifest(dir)
-	if err != nil {
-		t.Fatalf("a guided manifest does not read: %v", err)
-	}
-	if m.Guide == nil || m.Guide.Connect["GITHUB_TOKEN"] == "" {
-		t.Fatalf("guide = %+v", m.Guide)
-	}
-	for _, e := range manifest.Blocking(manifest.Validate(m)) {
-		t.Errorf("blocking issue: %v", e)
 	}
 }
