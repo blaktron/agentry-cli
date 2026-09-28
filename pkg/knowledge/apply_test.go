@@ -407,3 +407,33 @@ func TestApplyHoldsThePackToItsCap(t *testing.T) {
 		t.Fatalf("with this computer's cap: %v, %+v", err, res)
 	}
 }
+
+// knowledge create DIR takes an existing empty DIR: the pack replaces it.
+// Linux renames onto an empty directory; Windows refuses to, so the empty
+// directory is removed first (agentry-cli#426).
+func TestApplyMakesANewPackInAnExistingEmptyDirectory(t *testing.T) {
+	packDir := filepath.Join(t.TempDir(), "aws-docs")
+	if err := os.Mkdir(packDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := outputs(t, Changes{Write: []string{"wiki/page.md"}}, map[string]string{"wiki/page.md": "# Page\n\nA page.\n"})
+	if _, err := Apply(packDir, out, opts()); err != nil {
+		t.Fatalf("Apply into an empty directory: %v", err)
+	}
+	if _, err := Load(packDir); err != nil {
+		t.Fatalf("the pack does not load: %v", err)
+	}
+}
+
+// A directory that holds something and is not a pack is never replaced.
+func TestApplyRefusesANonEmptyDirectoryThatIsNotAPack(t *testing.T) {
+	packDir := filepath.Join(t.TempDir(), "aws-docs")
+	write(t, packDir, map[string]string{"notes.txt": "mine\n"})
+	out := outputs(t, Changes{Write: []string{"wiki/page.md"}}, map[string]string{"wiki/page.md": "# Page\n\nA page.\n"})
+	if _, err := Apply(packDir, out, opts()); err == nil {
+		t.Fatal("Apply replaced a directory that holds someone's files")
+	}
+	if got, err := os.ReadFile(filepath.Join(packDir, "notes.txt")); err != nil || string(got) != "mine\n" {
+		t.Fatalf("the person's file changed: %q %v", got, err)
+	}
+}
