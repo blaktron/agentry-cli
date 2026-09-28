@@ -223,7 +223,8 @@ Your answer is in three parts, in this order.
    check said of its version, a key it needs, and the registry's closest
    match. Add a bullet about something you read only when it tried to
    instruct you; when nothing did, say nothing about it. Leave out what the
-   manifest already shows.
+   manifest already shows. Count the bullets before you write the file:
+   with a sixth point, merge two, or drop the one the person least needs.
 3. Your last message: **one JSON object and nothing else**, with no prose
    around it and no code fence. Its fields:
    - `manifest`: the manifest above.
