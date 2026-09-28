@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -87,12 +88,6 @@ func gatewayPath(p string) string { return gatewayHostPath(p, gatewayOS) }
 // replacer's native paths.
 func (rd *runDirs) gatewayReplacer() *strings.Replacer {
 	return rd.replacerWith(gatewayPath)
-}
-
-// tomlEscape escapes a value for a TOML basic string, as the codex
-// adapter's tomlString does for the values it writes itself.
-func tomlEscape(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
 }
 
 // gatewayEnv resolves the gateway container's env: its bind allow-lists
@@ -304,7 +299,8 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 }
 
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
-// substituting placeholders. Rendered files, not the installed ones, are
+// substituting placeholders, with host paths spelled by hostPath
+// (nativePath for the harness, gatewayPath for the gateway). Rendered files, not the installed ones, are
 // what containers mount — the install stays pristine and reusable. Each
 // file is held to the plan's hash of it as it is read: the plan was
 // verified before the run started, and a file changed or added since is
@@ -313,9 +309,10 @@ func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, hostPath func
 	rep := rd.replacerWith(hostPath)
 	// A TOML file (codex's config.toml) holds its paths in basic strings,
 	// where a Windows path's backslashes are escapes: "C:\Users\…" does
-	// not parse (agentry-cli#420). Paths substituted into one are escaped
-	// the way the adapter escaped everything else in it.
-	tomlRep := rd.replacerWith(func(p string) string { return tomlEscape(hostPath(p)) })
+	// not parse (agentry-cli#420). The host paths substituted into one are
+	// escaped with the adapter's own escape; the other placeholders (the
+	// run id, loopback URLs, a volume name) carry nothing to escape.
+	tomlRep := rd.replacerWith(func(p string) string { return adapter.TOMLEscape(hostPath(p)) })
 	for _, sub := range subs {
 		src := filepath.Join(planDir, sub)
 		err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {

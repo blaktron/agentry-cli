@@ -189,7 +189,8 @@ func TestCodexConfigHoldsAWindowsPathTOMLCanRead(t *testing.T) {
 	// under a scratch working directory writes it there. On Windows the
 	// temp directory is a C:\ path already.
 	t.Chdir(t.TempDir())
-	cfg := `C:\Users\O'Neil\.agentry\runner\runs\cafe0002\cfg`
+	// A quote in a Linux path would have broken out of the string too.
+	cfg := `C:\Users\O'Neil\q"uote\.agentry\runner\runs\cafe0002\cfg`
 	if os.PathSeparator == '\\' {
 		cfg = filepath.Join(t.TempDir(), "cfg")
 	}
@@ -233,8 +234,8 @@ func TestCodexConfigHoldsAWindowsPathTOMLCanRead(t *testing.T) {
 	}
 }
 
-// tomlBasicString decodes a TOML basic string as codex's parser would,
-// refusing the escapes TOML refuses: enough for the test's one question.
+// tomlBasicString decodes a TOML basic string, accepting only the escapes
+// the adapter writes (stricter than TOML): enough for the test's question.
 func tomlBasicString(v string) (string, error) {
 	if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' {
 		return "", fmt.Errorf("not a basic string")

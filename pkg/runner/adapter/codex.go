@@ -110,8 +110,14 @@ func (c *codexAdapter) MCPCommand() string {
 // model ids, URLs and variable names; the escape covers what such values
 // could carry.
 func tomlString(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
-	return `"` + r.Replace(s) + `"`
+	return `"` + TOMLEscape(s) + `"`
+}
+
+// TOMLEscape escapes s for the inside of a TOML basic string. The engine
+// uses it too, for the host paths it substitutes into a rendered .toml
+// file after the plan was compiled (agentry-cli#420).
+func TOMLEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`).Replace(s)
 }
 
 // codexConfig renders the run-scoped config.toml. Hand-written rather
