@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -181,6 +182,7 @@ func TestLoadVerifiesAPack(t *testing.T) {
 			rewriteManifest(t, root, func(m *Manifest) { m.Bytes = 7 })
 		}, wantErr: "7 bytes"},
 		{name: "past the cap", break_: func(t *testing.T, root string) {
+			lowerLocalCap(t)
 			write(t, root, map[string]string{"sources/big.bin": strings.Repeat("x", MaxBytes)})
 			reseal(t, root)
 		}, is: ErrTooLarge},
@@ -284,10 +286,49 @@ func TestCopyPack(t *testing.T) {
 		}
 	})
 	t.Run("more than the cap is refused", func(t *testing.T) {
+		lowerLocalCap(t)
 		src := validPack(t, "aws-docs")
 		write(t, src, map[string]string{"sources/big.bin": strings.Repeat("x", MaxBytes)})
 		if err := CopyPack(src, filepath.Join(t.TempDir(), "copy")); !errors.Is(err, ErrTooLarge) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// lowerLocalCap holds this computer's cap to Agentry's for one test, so a
+// test past it writes ten megabytes rather than a gigabyte.
+func lowerLocalCap(t *testing.T) {
+	t.Helper()
+	prev := localCap
+	localCap = MaxBytes
+	t.Cleanup(func() { localCap = prev })
+}
+
+// A pack past Agentry's 10 MB is a pack on this computer (agentry-cli#429):
+// it loads, copies, and goes through the canonical tree and back.
+func TestAPackPastAgentrysCapIsALocalPack(t *testing.T) {
+	root := validPack(t, "aws-docs")
+	write(t, root, map[string]string{"sources/big.bin": strings.Repeat("x", MaxBytes+1<<20)})
+	reseal(t, root)
+	p, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load refused a pack past 10 MB: %v", err)
+	}
+	if p.Manifest.Bytes <= MaxBytes {
+		t.Fatalf("the pack is %d bytes", p.Manifest.Bytes)
+	}
+	if err := CopyPack(root, filepath.Join(t.TempDir(), "copy")); err != nil {
+		t.Fatalf("CopyPack: %v", err)
+	}
+	var tree bytes.Buffer
+	d, err := WriteTree(root, &tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExtractTree(&tree, filepath.Join(t.TempDir(), "x"), d.SHA256); err != nil {
+		t.Fatalf("ExtractTree: %v", err)
+	}
+	if FormatCap(MaxBytes) != "10 MB" || FormatCap(MaxLocalBytes) != "1 GB" {
+		t.Fatalf("FormatCap: %s, %s", FormatCap(MaxBytes), FormatCap(MaxLocalBytes))
+	}
 }

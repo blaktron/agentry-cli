@@ -61,9 +61,13 @@ type Options struct {
 	OutDir string
 	// Budgets, when set, replace the Creator plan's.
 	Budgets *spec.Budgets
-	RunID   string
-	Stderr  io.Writer
-	OnUsage func(receipt.Usage)
+	// MaxBytes caps the pack, documents included: knowledge.MaxBytes when
+	// zero, Agentry's cap, which a build In Agentry keeps; a build on this
+	// computer passes knowledge.MaxLocalBytes (agentry-cli#429).
+	MaxBytes int64
+	RunID    string
+	Stderr   io.Writer
+	OnUsage  func(receipt.Usage)
 }
 
 // Result is what one build did.
@@ -127,7 +131,11 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 			return nil, engine.Classify(engine.ExitCLI, err)
 		}
 	}
-	given, err := stageDocuments(o.Documents, docsDir)
+	limit := o.MaxBytes
+	if limit <= 0 {
+		limit = knowledge.MaxBytes
+	}
+	given, err := stageDocuments(o.Documents, docsDir, limit)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
@@ -190,7 +198,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		return res, engine.Classify(engine.ExitHarness, errors.New("the Knowledge Creator wrote no page"))
 	}
 	applied, err := knowledge.Apply(o.PackDir, applyDir, knowledge.ApplyOptions{
-		Name: name, Now: o.Now, Creator: knowledge.Creator{CLI: o.Build, Model: o.Policy.Model.Name},
+		Name: name, Now: o.Now, Creator: knowledge.Creator{CLI: o.Build, Model: o.Policy.Model.Name}, MaxBytes: limit,
 	})
 	if err != nil {
 		if errors.Is(err, knowledge.ErrTooLarge) {
@@ -207,8 +215,17 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 // carry — letters, digits, '.', '-' and '_', anything else a '-' — so
 // "Q3 report.pdf" is cited as doc:Q3-report.pdf; a directory keeps its
 // layout below its own name. Two documents of one name are refused.
-func stageDocuments(paths []string, dst string) (map[string]string, error) {
+func stageDocuments(paths []string, dst string, limit int64) (map[string]string, error) {
 	out := map[string]string{}
+	// The documents together are held to the pack's cap before anything
+	// runs: they are kept in the pack beside its pages.
+	var total int64
+	tooLarge := func(p string, size int64) error {
+		if total += size; size > limit || total > limit {
+			return fmt.Errorf("document %s brings the documents to %d bytes; a knowledge pack, its documents included, is at most %s", p, total, knowledge.FormatCap(limit))
+		}
+		return nil
+	}
 	add := func(rel, from string) error {
 		if rel == decode.DocumentsFile {
 			return fmt.Errorf("%s: a document may not be named %s, the Creator's own list; rename it", from, decode.DocumentsFile)
@@ -229,8 +246,10 @@ func stageDocuments(paths []string, dst string) (map[string]string, error) {
 			return nil, fmt.Errorf("document %s: %w", p, err)
 		}
 		base := safeName(filepath.Base(abs))
-		if !fi.IsDir() && fi.Size() > knowledge.MaxBytes {
-			return nil, fmt.Errorf("document %s is %d bytes; a knowledge pack, its documents included, is at most 10 MB", p, fi.Size())
+		if !fi.IsDir() {
+			if err := tooLarge(p, fi.Size()); err != nil {
+				return nil, err
+			}
 		}
 		if !fi.IsDir() {
 			if err := add(base, p); err != nil {
@@ -248,8 +267,10 @@ func stageDocuments(paths []string, dst string) (map[string]string, error) {
 			if !e.Type().IsRegular() {
 				return nil // a link is not a document
 			}
-			if info, err := e.Info(); err == nil && info.Size() > knowledge.MaxBytes {
-				return fmt.Errorf("document %s is %d bytes; a knowledge pack, its documents included, is at most 10 MB", q, info.Size())
+			if info, err := e.Info(); err == nil {
+				if err := tooLarge(q, info.Size()); err != nil {
+					return err
+				}
 			}
 			r, _ := filepath.Rel(abs, q)
 			parts := strings.Split(filepath.ToSlash(r), "/")

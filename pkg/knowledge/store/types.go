@@ -210,4 +210,8 @@ var (
 	// ErrShared is a change to an organization's shared pack from this
 	// computer: its admins write it in Agentry.
 	ErrShared = errors.New("it is an organization's shared pack, which its admins change in Agentry, not from this computer")
+	// ErrPastAgentryCap is a pack kept here that is larger than Agentry
+	// keeps (knowledge.MaxBytes): a local build may make one up to
+	// knowledge.MaxLocalBytes, and it stays on this computer (agentry-cli#429).
+	ErrPastAgentryCap = errors.New("the pack is larger than Agentry keeps")
 )

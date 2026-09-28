@@ -510,3 +510,34 @@ func TestSharedKnowledgeCommands(t *testing.T) {
 		t.Fatalf("upload of a shared pack: %v", err)
 	}
 }
+
+// A build's cap: 1 GB by default, 10 MB when a sandbox host asks for
+// Agentry's, nothing past 1 GB; and past 10 MB of documents it says first
+// that the build can take a very long time and the pack stays here
+// (agentry-cli#429).
+func TestPackLimit(t *testing.T) {
+	small := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(small, []byte("# notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bigDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bigDir, "big.txt"), []byte(strings.Repeat("x", knowledge.MaxBytes+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if l, err := packLimit(1024, []string{small}, &out); err != nil || l != knowledge.MaxLocalBytes || out.Len() != 0 {
+		t.Fatalf("default: %d, %v, %q", l, err, out.String())
+	}
+	if l, err := packLimit(1024, []string{small, bigDir}, &out); err != nil || l != knowledge.MaxLocalBytes || !strings.Contains(out.String(), "can take a very long time") || !strings.Contains(out.String(), "at most 10 MB") {
+		t.Fatalf("past 10 MB: %d, %v, %q", l, err, out.String())
+	}
+	out.Reset()
+	if l, err := packLimit(10, []string{small}, &out); err != nil || l != knowledge.MaxBytes {
+		t.Fatalf("Agentry's cap: %d, %v", l, err)
+	}
+	for _, bad := range []int{0, -1, 1025} {
+		if _, err := packLimit(bad, nil, &out); err == nil {
+			t.Fatalf("--max-pack-mb %d passed", bad)
+		}
+	}
+}

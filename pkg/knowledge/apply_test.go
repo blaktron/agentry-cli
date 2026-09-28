@@ -349,3 +349,24 @@ func TestApplyUnlinksAsTheLintReads(t *testing.T) {
 		t.Fatalf("the result does not lint: %v", fs)
 	}
 }
+
+// Apply holds the pack to the cap its caller names: Agentry's 10 MB when
+// none, this computer's when a local build names it (agentry-cli#429).
+func TestApplyHoldsThePackToItsCap(t *testing.T) {
+	files := func() map[string]string {
+		return map[string]string{
+			"wiki/topics/big.md": page("Big", "s", "a fact [src: doc:big.txt]\n"),
+			"sources/big.txt":    strings.Repeat("x", MaxBytes+1),
+		}
+	}
+	ch := Changes{Write: []string{"wiki/topics/big.md", "sources/big.txt"}}
+	if _, err := Apply(filepath.Join(t.TempDir(), "aws-docs"), outputs(t, ch, files()), opts()); !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "10 MB") {
+		t.Fatalf("with no cap named: %v", err)
+	}
+	local := opts()
+	local.MaxBytes = MaxLocalBytes
+	res, err := Apply(filepath.Join(t.TempDir(), "aws-docs"), outputs(t, ch, files()), local)
+	if err != nil || res.Manifest.Bytes <= MaxBytes {
+		t.Fatalf("with this computer's cap: %v, %+v", err, res)
+	}
+}

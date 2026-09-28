@@ -556,3 +556,43 @@ func TestDeleteEverywhereRemovesAgentrysCopyFirst(t *testing.T) {
 		t.Fatal("Agentry's copy was kept")
 	}
 }
+
+// A pack past Agentry's cap is kept and opened here, and its upload is
+// refused before anything is sent: it stays on this computer
+// (agentry-cli#429).
+func TestAPackPastAgentrysCapStaysHere(t *testing.T) {
+	ctx := context.Background()
+	reg := knowledgetest.NewRegistry(t)
+	a := newMachine(t, reg, "alice")
+	dir := knowledgetest.Make(t, "archive", nil).Dir
+	if err := os.WriteFile(filepath.Join(dir, "sources", "big.txt"), []byte(strings.Repeat("x", knowledge.MaxBytes+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := knowledge.TreeDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, knowledge.ManifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m knowledge.Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.SHA256, m.Bytes = d.SHA256, d.Bytes
+	writeManifest(t, dir, m)
+	p, err := knowledge.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store().Keep(ctx, dir); err != nil {
+		t.Fatalf("Keep: %v", err)
+	}
+	if got, err := open(t, a.store(), "archive"); err != nil || got.Manifest.Bytes != p.Manifest.Bytes {
+		t.Fatalf("open: %v", err)
+	}
+	if _, _, err := a.store().Upload(ctx, "archive"); !errors.Is(err, store.ErrPastAgentryCap) || !strings.Contains(err.Error(), "stays on this computer") {
+		t.Fatalf("upload: %v", err)
+	}
+}

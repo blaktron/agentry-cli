@@ -40,10 +40,31 @@ import (
 // Schema is the pack format this package reads and writes.
 const Schema = "knowledge/v1"
 
-// MaxBytes caps a pack — every file in it, the manifest included — made,
-// uploaded or shipped (plan D16: "no knowledge set should exceed 10mb").
-// Counted in MiB, the unit of the release archive's own cap (rule V8).
+// MaxBytes caps a pack Agentry keeps or builds — every file in it, the
+// manifest included: one uploaded, downloaded, shared, shipped in a release
+// or made by a build In Agentry (plan D16: "no knowledge set should exceed
+// 10mb"). Counted in MiB, the unit of the release archive's own cap (rule
+// V8). It is also a build's cap when the caller names none.
 const MaxBytes = 10 << 20
+
+// MaxLocalBytes caps a pack made and kept on this computer, documents
+// included (operator decision 2026-09-28, agentry-cli#429, DR-48): a local
+// build may take up to 1 GB of documents. Such a pack past MaxBytes stays
+// on this computer: Agentry takes none past MaxBytes.
+const MaxLocalBytes = 1 << 30
+
+// localCap is MaxLocalBytes, the cap Load, CopyPack and ExtractTree hold
+// a pack on this computer to; a test lowers it rather than write a
+// gigabyte.
+var localCap int64 = MaxLocalBytes
+
+// FormatCap is a cap as a person reads it: "10 MB", "1 GB".
+func FormatCap(n int64) string {
+	if n >= 1<<30 && n%(1<<30) == 0 {
+		return fmt.Sprintf("%d GB", n>>30)
+	}
+	return fmt.Sprintf("%d MB", n>>20)
+}
 
 // maxPackName bounds a pack name, which is also a directory name.
 const maxPackName = 64
@@ -58,8 +79,9 @@ const (
 )
 
 var (
-	// ErrTooLarge is a pack past MaxBytes.
-	ErrTooLarge = errors.New("knowledge pack is larger than 10 MB")
+	// ErrTooLarge is a pack past its cap: MaxLocalBytes on this computer,
+	// MaxBytes for Agentry or a build that names none.
+	ErrTooLarge = errors.New("knowledge pack is past its size cap")
 	// ErrDigestMismatch is a tree that no longer matches its manifest.
 	ErrDigestMismatch = errors.New("knowledge pack's files do not match the digest in its manifest")
 )
@@ -281,7 +303,8 @@ type Pack struct {
 // Load reads and verifies the pack at dir: the manifest parses and names
 // this schema and a valid name, the layout is the pack's (manifest.json,
 // wiki/ with its index and log, sources/, nothing else), the whole pack is
-// within MaxBytes, and the tree's digest is the manifest's.
+// within MaxLocalBytes, and the tree's digest is the manifest's. Agentry's
+// smaller cap is checked where a pack goes to Agentry (the store's upload).
 func Load(dir string) (*Pack, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, ManifestFile)) //nolint:gosec // the pack the caller named
 	if err != nil {
@@ -304,8 +327,8 @@ func Load(dir string) (*Pack, error) {
 	if err != nil {
 		return nil, fmt.Errorf("knowledge pack %s: %w", m.Name, err)
 	}
-	if size := d.Bytes + int64(len(raw)); size > MaxBytes {
-		return nil, fmt.Errorf("knowledge pack %s is %d bytes: %w", m.Name, size, ErrTooLarge)
+	if size := d.Bytes + int64(len(raw)); size > localCap {
+		return nil, fmt.Errorf("knowledge pack %s is %d bytes, past %s: %w", m.Name, size, FormatCap(localCap), ErrTooLarge)
 	}
 	if d.SHA256 != m.SHA256 {
 		return nil, fmt.Errorf("knowledge pack %s: %w (manifest %s, files %s)", m.Name, ErrDigestMismatch, m.SHA256, d.SHA256)
@@ -328,7 +351,7 @@ func CountPages(n int) string { return count(n, "page") }
 // CopyPack copies the pack at src to dst, which must not exist: the
 // manifest and the regular files under wiki/ and sources/, nothing else —
 // a link, a device or a pipe is refused, never followed — and never more
-// than MaxBytes in all, so a pack changed after it was checked cannot pull
+// than MaxLocalBytes in all, so a pack changed after it was checked cannot pull
 // anything else into the copy. Every read goes through an os.Root at src.
 // The copy is for Load to verify; CopyPack itself checks no digest.
 func CopyPack(src, dst string) error {
@@ -351,7 +374,7 @@ func CopyPack(src, dst string) error {
 	defer func() { _ = to.Close() }()
 	var total int64
 	for _, rel := range append([]string{ManifestFile}, files...) {
-		n, err := copyBetween(from, to, rel, MaxBytes-total)
+		n, err := copyBetween(from, to, rel, localCap-total)
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}
