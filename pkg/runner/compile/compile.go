@@ -695,7 +695,9 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore
 			{Name: "HOME", Value: "/root"},
 			// Bind-mount containment (gateway v0.43.1+): sources must
 			// resolve under these roots; writable binds need exact
-			// entries. Separator ":" — verified empirically at M-R2.
+			// entries. Separator ":" — verified empirically at M-R2. On a
+			// Windows host the engine spells these roots /c/… so no drive
+			// colon splits them (gatewayHostPath, agentry-cli#414).
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
 				Value: strings.Join(bindRoots(withStore), ":")},
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",

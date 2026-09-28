@@ -255,7 +255,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (*receipt.Envelope, er
 	// harness (plan runner-m-r4-adapters §5) needs the published gateway
 	// and proxy addresses, known only now; the replacer learns them too.
 	rep = rd.replacer()
-	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, "harness"); err != nil {
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, rep, "harness"); err != nil {
 		return fail(env, redact, err)
 	}
 
@@ -451,7 +451,10 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 
 	gwName := containerName(runID, "gateway")
-	gwEnv, err := resolveEnv(p.Plan.Gateway.Env, rep, token)
+	// The gateway's env names host paths (its bind allow-lists) in the
+	// gateway's spelling; its mounts are made by this CLI, in the host's,
+	// and its argv names only paths inside it (agentry-cli#414).
+	gwEnv, err := rd.gatewayEnv(p.Plan, token)
 	if err != nil {
 		return err
 	}
