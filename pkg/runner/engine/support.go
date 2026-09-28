@@ -82,6 +82,12 @@ func (rd *runDirs) gatewayReplacer() *strings.Replacer {
 	return rd.replacerWith(func(p string) string { return gatewayHostPath(p, gatewayOS) })
 }
 
+// gatewayEnv resolves the gateway container's env: its bind allow-lists
+// name host paths, in the gateway's spelling.
+func (rd *runDirs) gatewayEnv(plan *spec.Plan, token string) (map[string]string, error) {
+	return resolveEnv(plan.Gateway.Env, rd.gatewayReplacer(), token)
+}
+
 // gatewayOS is the host OS gatewayHostPath spells for; a variable so a
 // test on any host can take the Windows path.
 var gatewayOS = runtime.GOOS
@@ -207,20 +213,8 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	// Gateway files now; harness files once the infrastructure is up, so a
 	// host-run harness sees the published addresses (Run / StartSession).
-	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, "gateway"); err != nil {
+	if err := renderGatewayConfig(p, rd); err != nil {
 		return nil, err
-	}
-	if err := stampOwner(filepath.Join(rd.cfg, "gateway", "toolspec.json")); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
-	}
-	if err := grantKnowledge(filepath.Join(rd.cfg, "gateway"), gatewayHostPath(rd.knowledge, gatewayOS), p.Knowledge); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
-	}
-	if err := grantWeb(filepath.Join(rd.cfg, "gateway"), p.Web); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
-	}
-	if err := writeResolvConf(filepath.Join(rd.cfg, "gateway"), p.Plan); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
 	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
@@ -272,20 +266,38 @@ func stageIntake(p Params, rd *runDirs) error {
 	return nil
 }
 
+// renderGatewayConfig renders cfg/gateway: the plan's gateway files and
+// what the run adds to them. The gateway alone reads them, so their host
+// paths are spelled its way (gatewayReplacer, agentry-cli#414).
+func renderGatewayConfig(p Params, rd *runDirs) error {
+	gwRep := rd.gatewayReplacer()
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, gwRep, "gateway"); err != nil {
+		return err
+	}
+	dir := filepath.Join(rd.cfg, "gateway")
+	if err := stampOwner(filepath.Join(dir, "toolspec.json")); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
+	}
+	if err := grantKnowledge(dir, gwRep.Replace(spec.PHKnowledge), p.Knowledge); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
+	}
+	if err := grantWeb(dir, p.Web); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
+	}
+	if err := writeResolvConf(dir, p.Plan); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
+	}
+	return nil
+}
+
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
 // substituting placeholders. Rendered files, not the installed ones, are
 // what containers mount — the install stays pristine and reusable. Each
 // file is held to the plan's hash of it as it is read: the plan was
 // verified before the run started, and a file changed or added since is
 // refused rather than mounted (agentry-cli#266).
-func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, subs ...string) error {
+func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, rep *strings.Replacer, subs ...string) error {
 	for _, sub := range subs {
-		// The gateway's files are read by the gateway alone, and spell
-		// host paths its way (gatewayReplacer, agentry-cli#414).
-		rep := rd.replacer()
-		if sub == "gateway" {
-			rep = rd.gatewayReplacer()
-		}
 		src := filepath.Join(planDir, sub)
 		err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
