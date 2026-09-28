@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -69,19 +70,64 @@ type runDirs struct {
 
 // replacer substitutes the §R4 placeholders with this run's real values.
 func (rd *runDirs) replacer() *strings.Replacer {
+	return rd.replacerWith(func(p string) string { return p })
+}
+
+// gatewayReplacer is replacer for what only the gateway reads — its env
+// and its rendered config files — where each host path is spelled as
+// gatewayHostPath has it, the form the gateway can check and hand to the
+// daemon on its socket (agentry-cli#414). The CLI's own docker calls keep
+// replacer's native paths.
+func (rd *runDirs) gatewayReplacer() *strings.Replacer {
+	return rd.replacerWith(func(p string) string { return gatewayHostPath(p, gatewayOS) })
+}
+
+// gatewayEnv resolves the gateway container's env: its bind allow-lists
+// name host paths, in the gateway's spelling.
+func (rd *runDirs) gatewayEnv(plan *spec.Plan, token string) (map[string]string, error) {
+	return resolveEnv(plan.Gateway.Env, rd.gatewayReplacer(), token)
+}
+
+// gatewayOS is the host OS gatewayHostPath spells for; a variable so a
+// test on any host can take the Windows path.
+var gatewayOS = runtime.GOOS
+
+func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer {
 	return strings.NewReplacer(
-		spec.PHWorkspace, rd.workspace,
-		spec.PHOut, rd.outDir,
-		spec.PHCfg, rd.cfg,
-		spec.PHSecrets, rd.secretsPath,
-		spec.PHInputs, rd.inputs,
-		spec.PHKnowledge, rd.knowledge,
+		spec.PHWorkspace, hostPath(rd.workspace),
+		spec.PHOut, hostPath(rd.outDir),
+		spec.PHCfg, hostPath(rd.cfg),
+		spec.PHSecrets, hostPath(rd.secretsPath),
+		spec.PHInputs, hostPath(rd.inputs),
+		spec.PHKnowledge, hostPath(rd.knowledge),
 		spec.PHSession, rd.session,
-		spec.PHServers, rd.serversDir,
+		spec.PHServers, hostPath(rd.serversDir),
 		spec.PHHostGatewayURL, rd.hostGatewayURL,
 		spec.PHHostProxyURL, rd.hostProxyURL,
 		spec.PHRunID, filepath.Base(rd.root),
 	)
+}
+
+// gatewayHostPath spells a host path for the gateway, which runs in a
+// Linux container and drives the daemon through its socket. On Windows a
+// drive path becomes /<drive>/…: the gateway splits its bind allow-lists
+// on ":" (filepath.SplitList on Linux), so a C:\ root never survives the
+// list, and /c/Users/… is the form Docker Desktop's socket takes for a
+// sibling container's bind of a Windows path (docker/for-win#6700).
+// Elsewhere the path is unchanged.
+func gatewayHostPath(p, goos string) string {
+	if goos != "windows" || len(p) < 2 || p[1] != ':' {
+		return p
+	}
+	drive := p[0] | 0x20 // ASCII lower case
+	if drive < 'a' || drive > 'z' {
+		return p
+	}
+	rest := strings.Trim(strings.ReplaceAll(p[2:], `\`, "/"), "/")
+	if rest == "" {
+		return "/" + string(drive)
+	}
+	return "/" + string(drive) + "/" + rest
 }
 
 // prepareRunDirs materializes the per-run tree: a fresh workspace copy
@@ -167,20 +213,8 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	// Gateway files now; harness files once the infrastructure is up, so a
 	// host-run harness sees the published addresses (Run / StartSession).
-	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, "gateway"); err != nil {
+	if err := renderGatewayConfig(p, rd); err != nil {
 		return nil, err
-	}
-	if err := stampOwner(filepath.Join(rd.cfg, "gateway", "toolspec.json")); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
-	}
-	if err := grantKnowledge(filepath.Join(rd.cfg, "gateway"), rd.knowledge, p.Knowledge); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
-	}
-	if err := grantWeb(filepath.Join(rd.cfg, "gateway"), p.Web); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
-	}
-	if err := writeResolvConf(filepath.Join(rd.cfg, "gateway"), p.Plan); err != nil {
-		return nil, Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
 	}
 	// The plan this run executes, for audit: the verified plan in memory,
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
@@ -232,14 +266,37 @@ func stageIntake(p Params, rd *runDirs) error {
 	return nil
 }
 
+// renderGatewayConfig renders cfg/gateway: the plan's gateway files and
+// what the run adds to them. The gateway alone reads them, so their host
+// paths are spelled its way (gatewayReplacer, agentry-cli#414).
+func renderGatewayConfig(p Params, rd *runDirs) error {
+	gwRep := rd.gatewayReplacer()
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, gwRep, "gateway"); err != nil {
+		return err
+	}
+	dir := filepath.Join(rd.cfg, "gateway")
+	if err := stampOwner(filepath.Join(dir, "toolspec.json")); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
+	}
+	if err := grantKnowledge(dir, gwRep.Replace(spec.PHKnowledge), p.Knowledge); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
+	}
+	if err := grantWeb(dir, p.Web); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
+	}
+	if err := writeResolvConf(dir, p.Plan); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
+	}
+	return nil
+}
+
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
 // substituting placeholders. Rendered files, not the installed ones, are
 // what containers mount — the install stays pristine and reusable. Each
 // file is held to the plan's hash of it as it is read: the plan was
 // verified before the run started, and a file changed or added since is
 // refused rather than mounted (agentry-cli#266).
-func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, subs ...string) error {
-	rep := rd.replacer()
+func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, rep *strings.Replacer, subs ...string) error {
 	for _, sub := range subs {
 		src := filepath.Join(planDir, sub)
 		err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
