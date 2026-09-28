@@ -615,6 +615,55 @@ func TestSessionHandshakeFailureMasksStderr(t *testing.T) {
 	if got := string(b); got != "boot: ENGINE_TEST_TOKEN=[redacted] ANTHROPIC_API_KEY=[redacted]\nfatal: no model\n" {
 		t.Errorf("agent-stderr.log = %q", got)
 	}
+	// Nothing holds the receipts: on Windows an open one could not be
+	// moved or deleted until the process exits (agentry-cli#459). The
+	// events receipt was closed after the harness's session_end, not
+	// before it.
+	assertReceiptsReleased(t, p.OutDir, "a session whose handshake failed")
+	if ev, _ := os.ReadFile(filepath.Join(p.OutDir, "receipts", "events.ndjson")); !strings.Contains(string(ev), `"session_end"`) {
+		t.Errorf("events.ndjson lacks the session's end: %q", ev)
+	}
+}
+
+// failingSessionAdapter is the default adapter with no interactive
+// transport to give: its Session fails as a driver that cannot be made.
+type failingSessionAdapter struct{ adapter.Adapter }
+
+func (failingSessionAdapter) Session(context.Context, io.ReadWriteCloser, adapter.SessionOptions) (adapter.SessionDriver, error) {
+	return nil, errors.New("no session transport")
+}
+
+// A driver that cannot be made fails the start with the harness running:
+// its receipts are released once it has exited (agentry-cli#459).
+func TestSessionWhoseDriverCannotBeMadeClosesItsReceipts(t *testing.T) {
+	p, f := sessionFixture(t)
+	happyFake(f)
+	p.Adapter = failingSessionAdapter{p.Adapter}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: func(ctx context.Context, _ dockerx.RunSpec, _ io.Reader, _, _ io.Writer) (int, error) {
+		<-ctx.Done()
+		return 137, nil
+	}}
+	_, err := StartSession(context.Background(), f, p)
+	if err == nil || !strings.Contains(err.Error(), "no session transport") {
+		t.Fatalf("err = %v, want the driver's failure", err)
+	}
+	assertReceiptsReleased(t, p.OutDir, "a session whose driver could not be made")
+}
+
+// A host-run harness that cannot be started fails the session before
+// the goroutine that closes its stderr receipt exists: the start's
+// failure closes both receipts itself (agentry-cli#459).
+func TestSessionWhoseHostHarnessCannotStartClosesItsReceipts(t *testing.T) {
+	p, f := sessionFixture(t)
+	happyFake(f)
+	t.Setenv("PATH", t.TempDir())
+	p.Plan.Harness.Host = &spec.HostProcessSpec{Command: "agentry-no-such-harness"}
+	_, err := StartSession(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "agentry-no-such-harness") {
+		t.Fatalf("err = %v, want the harness named as not runnable", err)
+	}
+	assertReceiptsReleased(t, p.OutDir, "a session whose harness could not start")
 }
 
 // TestSessionStoreIsARunVolume (agentry-cli#90): an interactive run's
