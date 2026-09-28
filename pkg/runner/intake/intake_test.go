@@ -38,7 +38,7 @@ func questions() []manifest.IntakeQuestion {
 	}
 }
 
-func TestCollectFromPrompterAndPreset(t *testing.T) {
+func TestCollectWithSourcePrompterAndPreset(t *testing.T) {
 	data := filepath.Join(t.TempDir(), "data.csv")
 	if err := os.WriteFile(data, []byte("a,b\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -123,15 +123,15 @@ func TestCollectAnswersASecretFromTheSource(t *testing.T) {
 	var looked []string
 	holds := func(name string) bool { looked = append(looked, name); return name == "API_TOKEN" }
 
-	a, err := CollectFrom(nil, qs, nil, []string{"API_TOKEN"}, holds)
+	a, err := CollectWithSource(nil, qs, nil, []string{"API_TOKEN"}, holds)
 	if err != nil {
 		t.Fatalf("a secret the source holds failed intake: %v", err)
 	}
 	if len(looked) != 1 || looked[0] != "API_TOKEN" {
 		t.Errorf("source asked for %v, want [API_TOKEN]", looked)
 	}
-	if _, has := a.Secrets["api_token"]; has {
-		t.Error("the source's value was copied into the answers; it must stay in the source")
+	if len(a.Secrets) != 0 || !a.FromSource["api_token"] {
+		t.Errorf("answers = %+v; want api_token answered from the source with no value held here", a)
 	}
 	if sec, _ := a.Document("/inputs")["api_token"].(map[string]string); sec["secret"] != "API_TOKEN" {
 		t.Errorf("document = %v, want the secret named", a.Document("/inputs"))
@@ -141,17 +141,31 @@ func TestCollectAnswersASecretFromTheSource(t *testing.T) {
 	}
 
 	none := func(string) bool { return false }
-	if _, err := CollectFrom(nil, qs, nil, []string{"API_TOKEN"}, none); err == nil || !strings.Contains(err.Error(), "required") {
+	if _, err := CollectWithSource(nil, qs, nil, []string{"API_TOKEN"}, none); err == nil || !strings.Contains(err.Error(), "required") {
 		t.Fatalf("a secret the source lacks: err = %v, want the required refusal", err)
 	}
-	if _, err := CollectFrom(nil, qs, nil, []string{"API_TOKEN"}, nil); err == nil {
+	if _, err := CollectWithSource(nil, qs, nil, []string{"API_TOKEN"}, nil); err == nil {
 		t.Fatal("with no source a required secret question must still fail")
+	}
+
+	// A preset wins over the source, as it wins over a terminal.
+	a, err = CollectWithSource(nil, qs, map[string]string{"api_token": "given"}, []string{"API_TOKEN"}, holds)
+	if err != nil || a.Secrets["api_token"] != "given" || a.FromSource["api_token"] {
+		t.Fatalf("with a preset: answers = %+v, err = %v", a, err)
+	}
+
+	// An optional secret question the source holds is recorded as answered
+	// from it too: the secret reaches the run either way, so intake.json
+	// says so rather than leaving the question out.
+	opt := []manifest.IntakeQuestion{{ID: "api_token", Prompt: "API token", Type: manifest.IntakeSecret}}
+	if a, err = CollectWithSource(nil, opt, nil, []string{"API_TOKEN"}, holds); err != nil || !a.FromSource["api_token"] {
+		t.Fatalf("an optional question: answers = %+v, err = %v", a, err)
 	}
 
 	// A terminal still asks: the person may mean another value than the
 	// source holds, and the prompt is how they say so.
 	p := &scriptPrompter{answers: map[string]string{"API token": "typed"}}
-	a, err = CollectFrom(p, qs, nil, []string{"API_TOKEN"}, holds)
+	a, err = CollectWithSource(p, qs, nil, []string{"API_TOKEN"}, holds)
 	if err != nil || a.Secrets["api_token"] != "typed" {
 		t.Fatalf("with a terminal: answers = %+v, err = %v", a, err)
 	}

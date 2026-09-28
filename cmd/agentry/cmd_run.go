@@ -1065,7 +1065,7 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 			sayGuide(cmd.ErrOrStderr(), m, opts)
 		}
 	}
-	return intake.CollectFrom(p, m.Intake, preset, m.Capabilities.Secrets, fromSource)
+	return intake.CollectWithSource(p, m.Intake, preset, m.Capabilities.Secrets, fromSource)
 }
 
 // sayGuide prints the release guide's overview and its list of what to

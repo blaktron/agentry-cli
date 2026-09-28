@@ -64,17 +64,17 @@ func ParsePreset(flags []string) (map[string]string, error) {
 // the manifest's capability secrets; a secret question whose upper-cased
 // id is not among them has nowhere safe to go and is refused.
 func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string) (*Answers, error) {
-	return CollectFrom(p, qs, preset, declaredSecrets, nil)
+	return CollectWithSource(p, qs, preset, declaredSecrets, nil)
 }
 
-// CollectFrom is Collect with the run's secret source in view. fromSource
+// CollectWithSource is Collect with the run's secret source in view. fromSource
 // (nil: none) reports whether that source holds a declared secret. With no
 // preset and no terminal, a secret question it holds is answered from the
 // source rather than refused as unanswerable: a hosted run's envFile,
 // filled from the account's vault, carries the key an intake question asks
 // for (agentry-cli#402). A terminal still asks, so a person can mean
 // another value than the source holds.
-func CollectFrom(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool) (*Answers, error) {
+func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool) (*Answers, error) {
 	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}, FromSource: map[string]bool{}}
 	known := map[string]bool{}
 	for _, q := range qs {
@@ -109,6 +109,9 @@ func CollectFrom(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[stri
 			}
 		}
 		if strings.TrimSpace(val) == "" {
+			if q.Required && typ == manifest.IntakeSecret && fromSource != nil {
+				return nil, fmt.Errorf("intake question %q is required (answer it on a terminal, pass --intake %s=..., or set the secret %s in the run's secret source)", q.ID, q.ID, SecretName(q.ID))
+			}
 			if q.Required {
 				return nil, fmt.Errorf("intake question %q is required (answer it on a terminal or pass --intake %s=...)", q.ID, q.ID)
 			}
