@@ -413,3 +413,61 @@ func TestProxyArgvCarriesPlainHTTPTargetsOnlyWhenPlanned(t *testing.T) {
 		t.Fatalf("proxy argv lacks the plain targets: %v", proxy.Argv)
 	}
 }
+
+// On Windows a host-run harness also inherits what a Windows program needs
+// to find its profile, its npm shims and a temporary directory — and still
+// nothing else — and the receipt names the allowlist (agentry-cli#423).
+func TestHostHarnessInheritsWindowsProfileVariablesOnWindowsOnly(t *testing.T) {
+	for _, goos := range []string{"windows", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			old := hostOS
+			hostOS = goos
+			t.Cleanup(func() { hostOS = old })
+			p, f, envFile, _ := hostFixture(t)
+			t.Setenv("USERPROFILE", `C:\Users\blakt`)
+			t.Setenv("APPDATA", `C:\Users\blakt\AppData\Roaming`)
+			t.Setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+			env, err := Run(context.Background(), f, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen, err := os.ReadFile(envFile) //nolint:gosec // test file
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(seen)
+			has := strings.Contains(got, "USERPROFILE=") && strings.Contains(got, "APPDATA=") && strings.Contains(got, "PATHEXT=")
+			if has != (goos == "windows") {
+				t.Errorf("on %s the harness has the Windows profile variables: %v\n%s", goos, has, got)
+			}
+			for _, leak := range []string{"ENGINE_TEST_TOKEN", "sekret-value-1234", "UNRELATED_HOST_VAR"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("harness environment leaks %q", leak)
+				}
+			}
+			line := env.CapabilitiesEnforced["harness.env"]
+			if !strings.Contains(line, "HOME") || !strings.Contains(line, "PATH") || strings.Contains(line, "USERPROFILE") != (goos == "windows") {
+				t.Errorf("receipt harness.env = %q", line)
+			}
+		})
+	}
+}
+
+func TestHostInherit(t *testing.T) {
+	if got := hostInherit([]string{"HOME", "PATH"}, "linux"); strings.Join(got, ",") != "HOME,PATH" {
+		t.Errorf("linux: %v", got)
+	}
+	// The exact allowlist: widening it is a decision, not an edit.
+	want := "HOME,PATH,temp,USERPROFILE,APPDATA,LOCALAPPDATA,TMP,PATHEXT,ComSpec,SystemRoot"
+	got := hostInherit([]string{"HOME", "PATH", "temp"}, "windows")
+	if strings.Join(got, ",") != want {
+		t.Errorf("windows: %v, want %s (a name the plan has in another case is not added again)", got, want)
+	}
+	seen := map[string]int{}
+	for _, n := range got {
+		seen[n]++
+		if seen[n] > 1 {
+			t.Errorf("windows: %s twice in %v", n, got)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -265,4 +266,43 @@ func tomlBasicString(v string) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// On Windows a folder the gateway cannot be given as a /<drive>/… path is
+// refused before the run makes anything, naming the folder (agentry-cli#425).
+func TestGatewayCanMount(t *testing.T) {
+	for _, c := range []struct {
+		path, goos string
+		ok         bool
+	}{
+		{`C:\Users\blakt\.agentry\runner`, "windows", true},
+		{`d:\out`, "windows", true},
+		{"", "windows", true},
+		{`\\server\share\runner`, "windows", false},
+		{`\\?\C:\Users\blakt\.agentry\runner`, "windows", false},
+		{`//server/share/runner`, "windows", false},
+		{`runner`, "windows", false}, // relative: the engine is always given absolute folders
+		{`\\server\share\runner`, "linux", true},
+		{"/home/u/.agentry/runner", "linux", true},
+	} {
+		err := gatewayCanMount(c.path, c.goos)
+		if (err == nil) != c.ok {
+			t.Errorf("gatewayCanMount(%q, %s) = %v, want ok=%v", c.path, c.goos, err, c.ok)
+		}
+	}
+}
+
+func TestRunRefusesAUNCRunnerHomeOnWindows(t *testing.T) {
+	p, f := fixture(t)
+	setGatewayOS(t, "windows")
+	p.RunRoot = `\\server\share\runner`
+	_, err := Run(context.Background(), f, p)
+	if err == nil || !strings.Contains(err.Error(), `the runner home \\server\share\runner`) || !strings.Contains(err.Error(), "local drive") {
+		t.Fatalf("err = %v", err)
+	}
+	for _, op := range f.Ops() {
+		if strings.HasPrefix(op, "Run:") || strings.HasPrefix(op, "NetworkCreate") {
+			t.Fatalf("the run reached docker before refusing: %v", f.Ops())
+		}
+	}
 }

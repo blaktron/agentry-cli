@@ -93,6 +93,24 @@ func (rd *runDirs) gatewayReplacer() *strings.Replacer {
 	return rd.replacerWith(gatewayPath)
 }
 
+// gatewayCanMount says whether a host folder can be handed to the gateway
+// for a bind. On Windows only a drive-letter path can: a network share
+// (\\server\share\…) or a long-form path (\\?\C:\…) would reach the
+// gateway with its backslashes, and its bind check would refuse the run
+// with nothing that names the folder (agentry-cli#425).
+func gatewayCanMount(path, goos string) error {
+	if goos != "windows" || path == "" {
+		return nil
+	}
+	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
+		return fmt.Errorf("is a network share or a long-form path, which Docker Desktop cannot give a run's containers; use a folder on a local drive (C:\\…)")
+	}
+	if gatewayHostPath(path, goos) == path {
+		return fmt.Errorf("is not on a drive (C:\\…); use a folder on a local drive")
+	}
+	return nil
+}
+
 // gatewayEnv resolves the gateway container's env: its bind allow-lists
 // name host paths, in the gateway's spelling.
 func (rd *runDirs) gatewayEnv(plan *spec.Plan, token string) (map[string]string, error) {
@@ -166,6 +184,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	if len(p.Plan.MCPServers) > 0 && rd.serversDir == "" {
 		return nil, Classify(ExitCLI, fmt.Errorf("plan declares MCP servers but no server store was provided"))
+	}
+	// Before anything is made: a folder the gateway could not be given as
+	// a /<drive>/… path is refused by name (agentry-cli#425).
+	for _, f := range []struct{ what, path string }{
+		{"the runner home", p.RunRoot}, {"the output folder", p.OutDir}, {"the MCP server store", p.ServersDir},
+	} {
+		if err := gatewayCanMount(f.path, gatewayOS); err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("%s %s: %w", f.what, f.path, err))
+		}
 	}
 	// inputs/ and knowledge/ exist even when empty: the compiled catalog
 	// always mounts both :ro, and an absent bind source would fail the tools
@@ -716,9 +743,41 @@ func readTask(r io.Reader, receiptsDir string) ([]byte, error) {
 	return b, nil
 }
 
+// ownInstructionWhenEmpty stands in for an empty task on the autonomous
+// path: the harness is sent the agent's own instruction, read from the
+// run's checked workspace copy, as its first message. The run setup
+// promises that ("its own instruction runs"), and an autonomous harness
+// refuses an empty stdin (docker-agent exits 1 on "no message received on
+// stdin"; agentry-cli#449). A task that is given is sent as it is.
+//
+// The second result is the receipt's word for what was sent in the task's
+// place, empty when the task went as given.
+func ownInstructionWhenEmpty(task []byte, plan *spec.Plan, workspace string) ([]byte, string, error) {
+	if len(bytes.TrimSpace(task)) > 0 || !takesStdinTask(plan) {
+		return task, "", nil
+	}
+	s, err := compile.ReadInstruction(workspace, plan.Instruction)
+	if err != nil {
+		// The plan names the file and its digest: a copy that lacks it or
+		// disagrees with it is the release's fault, not the person's.
+		return nil, "", Classify(ExitVerify, err)
+	}
+	return []byte(s), fmt.Sprintf("none given: sent the agent's own instruction, %s (sha256:%s with the runner contract)",
+		plan.Instruction.SourcePath, plan.Instruction.SHA256), nil
+}
+
+// takesStdinTask reports whether the plan's harness reads its task on
+// stdin (the autonomous path, container or host process).
+func takesStdinTask(plan *spec.Plan) bool {
+	if plan.Harness.Host != nil {
+		return plan.Harness.Host.StdinTask
+	}
+	return plan.Harness.Agent.StdinTask
+}
+
 // writeMeta records run identity and timing (timestamps live here, never
 // in the plan — determinism, §R4).
-func writeMeta(receiptsDir, runID string, p Params, start time.Time) {
+func writeMeta(receiptsDir, runID string, p Params, start time.Time, taskSent string) {
 	meta := map[string]any{
 		"runId":   runID,
 		"ref":     p.Plan.Ref,
@@ -729,6 +788,10 @@ func writeMeta(receiptsDir, runID string, p Params, start time.Time) {
 		},
 		"started": start.UTC().Format(time.RFC3339),
 		"ended":   time.Now().UTC().Format(time.RFC3339),
+	}
+	if taskSent != "" {
+		// task.txt keeps the task as given; this says what went instead.
+		meta["task"] = taskSent
 	}
 	if b, err := json.MarshalIndent(meta, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(receiptsDir, "meta.json"), append(b, '\n'), 0o644)

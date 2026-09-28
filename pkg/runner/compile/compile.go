@@ -528,15 +528,50 @@ func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, 
 		return "", "", fmt.Errorf("%s/%s declares no instruction file, so it is not a runnable BriefAgent (RUNNER-PLAN §R2; the withdrawn mcp-server kind is a tool server)", m.Namespace, m.Name)
 	}
 	for _, rel := range candidates {
-		b, err := os.ReadFile(filepath.Join(workspace, filepath.FromSlash(rel))) //nolint:gosec // path from the verified archive
+		body, err := readInstructionFile(workspace, rel)
 		if err == nil {
-			return rel, stripFrontmatter(string(b)), nil
+			return rel, body, nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			return "", "", fmt.Errorf("read instruction %s: %w", rel, err)
+			return "", "", err
 		}
 	}
 	return "", "", fmt.Errorf("instruction file missing from the package: looked for %s (RUNNER-PLAN §R2)", strings.Join(candidates, ", "))
+}
+
+// ReadInstruction reads the instruction a plan was compiled from out of a
+// workspace and returns its prose as the compile read it: frontmatter
+// stripped, without the runner-contract postscript. The text is held to
+// the digest the plan records, so what it returns is the instruction the
+// plan was built on, whichever client ran it and whether or not that
+// client checked the workspace. The engine sends it as the task of a run
+// given none (agentry-cli#449).
+func ReadInstruction(workspace string, in spec.InstructionSpec) (string, error) {
+	body, err := readInstructionFile(workspace, in.SourcePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("the instruction file %s is missing from the package", in.SourcePath)
+	}
+	if err != nil {
+		return "", err
+	}
+	if sha256hex([]byte(body+contractPostscript)) != in.SHA256 {
+		return "", fmt.Errorf("the instruction file %s changed after the plan was compiled", in.SourcePath)
+	}
+	return body, nil
+}
+
+// readInstructionFile reads one archive-relative instruction file, its
+// frontmatter stripped. A path that leaves the package is refused.
+func readInstructionFile(workspace, rel string) (string, error) {
+	p := filepath.FromSlash(rel)
+	if rel == "" || !filepath.IsLocal(p) {
+		return "", fmt.Errorf("instruction path %q is not a file inside the package", rel)
+	}
+	b, err := os.ReadFile(filepath.Join(workspace, p)) //nolint:gosec // local path from the verified archive
+	if err != nil {
+		return "", fmt.Errorf("read instruction %s: %w", rel, err)
+	}
+	return stripFrontmatter(string(b)), nil
 }
 
 // stripFrontmatter drops a leading YAML frontmatter block: the harness
