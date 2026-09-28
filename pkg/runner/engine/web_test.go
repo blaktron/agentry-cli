@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -285,7 +286,7 @@ func TestTheWebToolsResolvConf(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(dir, resolvConfFile))
-	if err != nil || info.Mode().Perm() != 0o644 {
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o644) { // Windows has no POSIX modes
 		t.Fatalf("the resolv.conf: %v %v", info, err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, resolvConfFile))

@@ -243,15 +243,20 @@ func TestRunHappyPath(t *testing.T) {
 		t.Errorf("bind allowlist unresolved: %q", gw.Env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"])
 	}
 	// The gateway's daemon socket is the run's filter, never the daemon's
-	// own (agentry-cli#219), and the receipt says so.
+	// own (agentry-cli#219), and the receipt says so. Where the filter
+	// does not run (off Linux, agentry-cli#322) the gateway holds the
+	// daemon's own socket, and the receipt says that instead.
 	var sockMounts int
 	for _, m := range gw.Mounts {
 		if m.Target != DockerSocket {
 			continue
 		}
 		sockMounts++
-		if m.Source == DockerSocket || !strings.HasSuffix(m.Source, "/docker.sock") {
+		switch {
+		case filterSupported && (m.Source == DockerSocket || !strings.HasSuffix(m.Source, "/docker.sock")):
 			t.Errorf("gateway mounts %q at the daemon socket, want the run's filter", m.Source)
+		case !filterSupported && m.Source != DockerSocket:
+			t.Errorf("gateway mounts %q at the daemon socket, want the daemon's own where the filter does not run", m.Source)
 		}
 	}
 	if sockMounts != 1 {
@@ -260,8 +265,12 @@ func TestRunHappyPath(t *testing.T) {
 	if !gw.DisableSELinuxLabel {
 		t.Error("the gateway lost its SELinux exemption for the socket")
 	}
-	if line := env.CapabilitiesEnforced["daemon"]; !strings.Contains(line, "only through this run's filter") {
-		t.Errorf("receipt daemon line = %q", line)
+	daemonSays := "only through this run's filter"
+	if !filterSupported {
+		daemonSays = "the per-run filter runs on Linux only"
+	}
+	if line := env.CapabilitiesEnforced["daemon"]; !strings.Contains(line, daemonSays) {
+		t.Errorf("receipt daemon line = %q, want it to say %q", line, daemonSays)
 	}
 
 	// Task reached the agent's stdin.
@@ -305,7 +314,8 @@ func TestRunKeepRunDirStillDeletesSecrets(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(runDir, "cfg", "gateway", "secrets.env")); !os.IsNotExist(err) {
 		t.Fatal("secrets.env survived --keep-run-dir")
 	}
-	// Rendered catalog must carry real paths.
+	// Rendered catalog must carry real paths, spelled as the gateway reads
+	// them (on Windows /c/…, agentry-cli#414).
 	b, err := os.ReadFile(filepath.Join(runDir, "cfg", "gateway", "catalog.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +323,7 @@ func TestRunKeepRunDirStillDeletesSecrets(t *testing.T) {
 	if strings.Contains(string(b), "@@RUN_") {
 		t.Error("rendered catalog still has placeholders")
 	}
-	if !strings.Contains(string(b), runDir) {
+	if !strings.Contains(string(b), gatewayPath(runDir)) {
 		t.Error("rendered catalog lacks the run workspace path")
 	}
 }
@@ -350,7 +360,7 @@ func TestInputsStagedIntoRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), runDir+"/inputs:/inputs:ro") {
+	if !strings.Contains(string(b), gatewayPath(filepath.Join(runDir, "inputs"))+":/inputs:ro") {
 		t.Errorf("rendered catalog lacks the ro inputs mount:\n%s", b)
 	}
 }
@@ -859,8 +869,12 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 		}
 	}
 	line := env.CapabilitiesEnforced["runtime"]
+	launched := "the tools server, which the gateway launches, is given runsc by the run's docker filter"
+	if !filterSupported {
+		launched = "the tools server, which the gateway launches, takes the daemon's default: the docker filter that sets the runtime runs on Linux only"
+	}
 	for _, want := range []string{"runsc: created with docker --runtime runsc: the agent container", "the gateway's health probe",
-		"the tools server, which the gateway launches, is given runsc by the run's docker filter", "daemon's default runtime", "the llm-proxy (", "the gateway ("} {
+		launched, "daemon's default runtime", "the llm-proxy (", "the gateway ("} {
 		if !strings.Contains(line, want) {
 			t.Errorf("receipt runtime line lacks %q: %q", want, line)
 		}
@@ -929,10 +943,25 @@ func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
 	if !created {
 		t.Errorf("the egress network %s was never created", proxy.ExtraNetworks[0])
 	}
+	line := env.CapabilitiesEnforced["runtime"]
+	if !filterSupported {
+		// The gateway's runtime opens the filter's socket, and the filter
+		// gives the relays theirs: neither applies where it does not run
+		// (agentry-cli#322), and the line says so.
+		if gw, _ := f.FindRun("-gateway"); gw.Runtime != "" {
+			t.Errorf("gateway runtime = %q without the docker filter, want the daemon's default", gw.Runtime)
+		}
+		for _, want := range []string{"the llm-proxy (on an egress network of the run's own", "docker.gatewayRuntime is not applied",
+			"; the llm-proxy resolves host names through 192.0.2.53 (docker.resolvers)"} {
+			if !strings.Contains(line, want) {
+				t.Errorf("receipt runtime line lacks %q: %q", want, line)
+			}
+		}
+		return
+	}
 	if gw, _ := f.FindRun("-gateway"); gw.Runtime != "runsc-uds" {
 		t.Errorf("gateway runtime = %q, want runsc-uds", gw.Runtime)
 	}
-	line := env.CapabilitiesEnforced["runtime"]
 	for _, want := range []string{"the llm-proxy (on an egress network of the run's own", "the gateway is created with docker --runtime runsc-uds",
 		"through 192.0.2.53 (docker.resolvers)", "no container class of the run is on the daemon's default runtime",
 		// Several classes: joined with "and", the relays' clause theirs
@@ -948,6 +977,7 @@ func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
 // daemon's default even with resolvers; so does the gateway without
 // docker.gatewayRuntime, and the line names both (agentry-cli#337).
 func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
+	withFilter(t, true)
 	p, _ := fixtureWith(t, func(pol *policy.Policy) {
 		pol.Docker.Runtime = "runsc"
 		pol.Docker.Resolvers = []string{"192.0.2.53"}
@@ -989,8 +1019,7 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 		pol.Docker.GatewayRuntime = "runsc-uds"
 		pol.Docker.Resolvers = []string{"192.0.2.53"}
 	})
-	defer func(was bool) { filterSupported = was }(filterSupported)
-	filterSupported = false
+	withFilter(t, false)
 	line = runtimeLine(p)
 	for _, bad := range []string{"no container class", "the gateway is created with docker --runtime", "the relays (which the filter gives"} {
 		if strings.Contains(line, bad) {
@@ -1012,6 +1041,7 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 // plan declares them, and, where the docker filter does not run, the
 // gateway's containers on the daemon's default.
 func TestTheRuntimeLineNamesEachClass(t *testing.T) {
+	withFilter(t, true)
 	p, _ := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Runtime = "runsc" })
 	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "osv", Egress: []string{"api.osv.dev"}}}
 	line := runtimeLine(p)
@@ -1037,8 +1067,7 @@ func TestTheRuntimeLineNamesEachClass(t *testing.T) {
 		t.Errorf("a host harness: %q", line)
 	}
 	p.Plan.Harness.Host = nil
-	defer func(was bool) { filterSupported = was }(filterSupported)
-	filterSupported = false
+	withFilter(t, false)
 	if line := runtimeLine(p); !strings.Contains(line, "take the daemon's default: the docker filter") || strings.Contains(line, "given runsc") {
 		t.Errorf("without the filter: %q", line)
 	}

@@ -253,6 +253,9 @@ func TestTeardownLeakSweep(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
 	f.Leftover = []string{"agentry-cafe0000-zombie"}
+	// A run container, not a relay: where the filter does not run, the run
+	// first checks the shared relay network, and it is empty.
+	f.ByLabel = map[string][]string{relayLabel: nil}
 	if _, err := Run(context.Background(), f, p); err != nil {
 		t.Fatal(err)
 	}
@@ -442,13 +445,13 @@ func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
 		got[tgt.dir] = tgt.recursive
 	}
 	want := map[string]bool{
-		"/run/x/workspace":                   true,
-		"/run/x/inputs":                      true,
-		"/run/x/knowledge":                   true,
-		"/run/x/cfg":                         true,
-		"/home/me/.agentry/servers":          true,
-		"/home/me/somewhere-of-mine":         false,
-		"/home/me/somewhere-of-mine/reports": true,
+		"/run/x/workspace":           true,
+		"/run/x/inputs":              true,
+		"/run/x/knowledge":           true,
+		"/run/x/cfg":                 true,
+		"/home/me/.agentry/servers":  true,
+		"/home/me/somewhere-of-mine": false,
+		filepath.Join("/home/me/somewhere-of-mine", "reports"): true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("labelled %d directories, want %d: %v", len(got), len(want), got)

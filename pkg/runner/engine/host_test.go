@@ -471,3 +471,18 @@ func TestHostInherit(t *testing.T) {
 		}
 	}
 }
+
+// An empty task sends the agent's own instruction to a host harness too
+// (on its stdin). It lives here with the other host-harness tests: the
+// fixture's harness is a shell script, so none of them run on Windows.
+func TestAnEmptyTaskSendsTheOwnInstructionToAHostHarness(t *testing.T) {
+	p, f, _, taskFile := hostFixture(t)
+	p.Task = nil
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	task, _ := os.ReadFile(taskFile) //nolint:gosec // test file
+	if string(task) != "Do the host test.\n" {
+		t.Errorf("task on stdin = %q, want the agent's own instruction", task)
+	}
+}
