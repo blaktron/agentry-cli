@@ -2,6 +2,9 @@
 /agentry
 .DS_Store
 /dist/
+# A run or a knowledge build from a checkout writes its output here; it
+# holds pages and receipts and never enters the tree (agentry-cli#436).
+/agentry-out/
 __pycache__/
 *.pyc
 # Local credentials never enter the tree (agentry-cli#165): the estate's
