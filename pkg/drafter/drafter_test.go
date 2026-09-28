@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -386,4 +388,28 @@ func TestFromReports(t *testing.T) {
 	if err := FromReports(empty, t.TempDir()); err != nil || empty.Instructions != "" {
 		t.Fatalf("no reports: %v %+v", err, empty)
 	}
+}
+
+// TestTheInstructionStatesTheConnectBoundByValue (agentry-cli#419): the
+// instruction names a key's help bound as a number, and it is the one the
+// pinned core enforces, so a moved bound cannot leave the Drafter writing
+// to the old one (it went from 300 to 2,000 characters in DEV-167).
+func TestTheInstructionStatesTheConnectBoundByValue(t *testing.T) {
+	raw, err := fs.ReadFile(FS(), "AGENT.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(string(raw)), " ")
+	if want := fmt.Sprintf("`connect`, an object with help per declared key in Markdown, each at most %s characters", thousands(manifest.MaxGuideConnectChars)); !strings.Contains(text, want) {
+		t.Errorf("the instruction does not state a key's help bound as %q", want)
+	}
+}
+
+// thousands writes n as the instruction does: 2,000, not 2000.
+func thousands(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }

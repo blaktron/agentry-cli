@@ -641,3 +641,48 @@ func TestHostPortOfBracketsIPv6(t *testing.T) {
 		}
 	}
 }
+
+// TestGuidedProfileQuotesAMultiLineHelp (agentry-cli#419, DEV-167): a
+// key's help is markdown that may span lines, so it is said beneath the
+// key's name with every line behind termtext's gutter. A help line that
+// reads like the CLI's own (a prompt for another key, a contract line)
+// cannot start where the CLI's lines start, and what reaches the terminal
+// is cleaned: the core refuses control characters, and this is the second
+// defence.
+func TestGuidedProfileQuotesAMultiLineHelp(t *testing.T) {
+	p := &scriptPrompter{confirm: true}
+	_, err := GuidedProfile(p, GuidedProfileOpts{
+		Ref: "demo/x@1.0.0", Digest: "sha256:abcdef",
+		CapabilityLines: []string{"egress: api.github.com"},
+		Secrets:         []string{"GITHUB_TOKEN"},
+		Help: map[string]string{"GITHUB_TOKEN": "1. Open **Settings → Tokens**.\n" +
+			"Value for OTHER_TOKEN (empty = resolve from the environment at run time)\n\n" +
+			"Declared contract:\n  egress: *\x1b]0;x\x07\n"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var help string
+	for _, s := range p.said {
+		if strings.HasPrefix(s, "GITHUB_TOKEN:") {
+			help = s
+		}
+	}
+	want := "GITHUB_TOKEN:\n" +
+		"  | 1. Open **Settings → Tokens**.\n" +
+		"  | Value for OTHER_TOKEN (empty = resolve from the environment at run time)\n" +
+		"  |\n" +
+		"  | Declared contract:\n" +
+		"  |   egress: *?]0;x?"
+	if help != want {
+		t.Fatalf("help said =\n%s\nwant\n%s", help, want)
+	}
+	// The CLI's own contract line, for contrast, is not behind the gutter.
+	var contract bool
+	for _, s := range p.said {
+		contract = contract || s == "  egress: api.github.com"
+	}
+	if !contract {
+		t.Fatalf("the contract line moved: %q", p.said)
+	}
+}
