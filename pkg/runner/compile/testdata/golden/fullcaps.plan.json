@@ -51,7 +51,7 @@
     "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
-    "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN"
+    "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
   },
   "gateway": {
     "image": "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3",
