@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/blaktron/agentry-cli/pkg/plainpath"
 )
 
 // The apply step (plan knowledge.md §4.2): one Creator run is one bounded
@@ -55,6 +57,17 @@ type ApplyOptions struct {
 	Now time.Time
 	// Creator is recorded as what last extended the pack.
 	Creator Creator
+	// MaxBytes caps the pack Apply makes, documents included: MaxBytes
+	// when zero (a build In Agentry's, and any caller that names none);
+	// MaxLocalBytes for a build on this computer (agentry-cli#429).
+	MaxBytes int64
+}
+
+func (o ApplyOptions) limit() int64 {
+	if o.MaxBytes > 0 {
+		return o.MaxBytes
+	}
+	return MaxBytes
 }
 
 // Drop is a change Apply did not make as written: a written file that
@@ -141,13 +154,16 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 			return nil, err
 		}
 		for _, rel := range files {
-			if _, err := copyBetween(packRoot, stage, rel, MaxBytes); err != nil {
+			if _, err := copyBetween(packRoot, stage, rel, o.limit()); err != nil {
 				return nil, fmt.Errorf("%s: %w", rel, err)
 			}
 		}
 	}
 	for _, rel := range ch.Write {
-		if _, err := copyBetween(out, stage, rel, MaxBytes); err != nil {
+		if _, err := copyBetween(out, stage, rel, o.limit()); err != nil {
+			if errors.Is(err, ErrTooLarge) {
+				return nil, fmt.Errorf("changes.json writes %s, past the pack's %s: %w", rel, FormatCap(o.limit()), err)
+			}
 			return nil, fmt.Errorf("changes.json writes %s: %w", rel, err)
 		}
 	}
@@ -162,7 +178,7 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 
 	res := &Result{}
 	written, deleted := set(ch.Write), set(ch.Delete)
-	if err := settle(stageDir, stage, packRoot, written, deleted, res); err != nil {
+	if err := settle(stageDir, stage, packRoot, written, deleted, res, o.limit()); err != nil {
 		return nil, err
 	}
 	if err := WriteIndex(stageDir, name); err != nil {
@@ -206,8 +222,8 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 		return nil, err
 	}
 	raw = append(raw, '\n')
-	if size := d.Bytes + int64(len(raw)); size > MaxBytes {
-		return nil, fmt.Errorf("the pack would be %d bytes: %w", size, ErrTooLarge)
+	if size := d.Bytes + int64(len(raw)); size > o.limit() {
+		return nil, fmt.Errorf("the pack would be %d bytes, past %s: %w", size, FormatCap(o.limit()), ErrTooLarge)
 	}
 	if err := os.WriteFile(filepath.Join(stageDir, ManifestFile), raw, 0o644); err != nil { //nolint:gosec // the pack's clear manifest
 		return nil, err
@@ -229,6 +245,9 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 
 // readChanges decodes and holds changes.json to its rules.
 func readChanges(out *os.Root) (*Changes, error) {
+	if _, err := plainpath.File(out, ChangesFile); err != nil {
+		return nil, fmt.Errorf("read %s: %w", ChangesFile, err)
+	}
 	raw, err := out.ReadFile(ChangesFile)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ChangesFile, err)
@@ -294,7 +313,7 @@ func changePath(rel string) error {
 // Any other finding on a file this change wrote reverts the file to the
 // pack's version, or removes it if it is new. Findings on files this
 // change did not touch are the pack's own, and left alone.
-func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]bool, res *Result) error {
+func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]bool, res *Result, limit int64) error {
 	// unlinked are the pages already unlinked once: a page that still fails
 	// after its unlink (a link the raw text cannot match, or one the unlink
 	// uncovered) is dropped like any other, so every pass takes a file out
@@ -327,7 +346,7 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 					continue
 				}
 				if f.Target != "" && deleted[f.Target] {
-					if err := restore(pack, stage, f.Target); err != nil {
+					if err := restore(pack, stage, f.Target, limit); err != nil {
 						return err
 					}
 					delete(deleted, f.Target)
@@ -348,7 +367,7 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 				changed = true
 				continue
 			}
-			if err := restore(pack, stage, pg); err != nil {
+			if err := restore(pack, stage, pg, limit); err != nil {
 				return err
 			}
 			delete(written, pg)
@@ -376,7 +395,7 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 		if !written[f.Page] {
 			continue
 		}
-		if err := restore(pack, stage, f.Page); err != nil {
+		if err := restore(pack, stage, f.Page, limit); err != nil {
 			return err
 		}
 		delete(written, f.Page)
@@ -476,10 +495,10 @@ func inSpan(spans [][]int, from, to int) bool {
 
 // restore puts rel in the stage back to what the pack held, or removes it
 // when the pack held none (or there is no pack yet).
-func restore(pack, stage *os.Root, rel string) error {
+func restore(pack, stage *os.Root, rel string, limit int64) error {
 	if pack != nil {
 		if _, err := pack.Lstat(filepath.FromSlash(rel)); err == nil {
-			_, err := copyBetween(pack, stage, rel, MaxBytes)
+			_, err := copyBetween(pack, stage, rel, limit)
 			return err
 		}
 	}
@@ -584,12 +603,11 @@ func set(list []string) map[string]bool {
 // anything but a regular file and more than limit bytes.
 func copyBetween(src, dst *os.Root, rel string, limit int64) (int64, error) {
 	name := filepath.FromSlash(rel)
-	fi, err := src.Lstat(name)
-	if err != nil {
-		return 0, err
-	}
-	if !fi.Mode().IsRegular() {
-		return 0, fmt.Errorf("not a regular file; a knowledge pack holds only files")
+	if _, err := plainpath.File(src, rel); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, err
+		}
+		return 0, fmt.Errorf("%w; a knowledge pack holds only files and directories", err)
 	}
 	in, err := src.Open(name)
 	if err != nil {

@@ -228,6 +228,29 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 	})
 }
 
+// A build on this computer takes documents past Agentry's 10 MB when its
+// caller names this computer's cap, and makes a pack past it
+// (agentry-cli#429).
+func TestABuildOnThisComputerTakesMoreThanAgentry(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	writeFile(t, filepath.Join(fx.docs, "runbook.md"), "# Runbook\n"+strings.Repeat("A long runbook line.\n", (knowledge.MaxBytes+(1<<20))/21))
+	fx.opts.Documents = []string{filepath.Join(fx.docs, "runbook.md")}
+	fx.opts.MaxBytes = knowledge.MaxLocalBytes
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
+		"wiki/procedures/night.md": page("Night shift", "runbook.md"),
+	})
+	if _, err := Build(context.Background(), fx.fake, fx.opts); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	p, err := knowledge.Load(fx.opts.PackDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Manifest.Bytes <= knowledge.MaxBytes || p.Manifest.Pages != 1 {
+		t.Fatalf("manifest %+v", p.Manifest)
+	}
+}
+
 func TestBuildStoppedAtABudgetKeepsWhatItWrote(t *testing.T) {
 	// Three tool calls against a budget of one turn: the engine stops the
 	// run (exit 16) after the Creator wrote one page.
@@ -301,12 +324,82 @@ func TestBuildRefusals(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("documents past the pack's cap, alone or together", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		big := t.TempDir()
+		writeFile(t, filepath.Join(big, "a.txt"), strings.Repeat("a", 600<<10))
+		writeFile(t, filepath.Join(big, "b.txt"), strings.Repeat("b", 600<<10))
+		fx.opts.Documents = []string{big}
+		fx.opts.MaxBytes = 1 << 20 // each fits; together they do not
+		var ce *engine.ClassifiedError
+		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.As(err, &ce) || ce.Code != engine.ExitUsage || !strings.Contains(err.Error(), "is at most 1 MB") {
+			t.Fatalf("err = %v", err)
+		}
+		fx.opts.MaxBytes = 0 // Agentry's cap when none is named
+		writeFile(t, filepath.Join(big, "c.txt"), strings.Repeat("c", knowledge.MaxBytes))
+		if _, err := Build(context.Background(), fx.fake, fx.opts); err == nil || !strings.Contains(err.Error(), "is at most 10 MB") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 	t.Run("a directory that is not a pack", func(t *testing.T) {
 		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
 		writeFile(t, filepath.Join(fx.opts.PackDir, "something.txt"), "x")
 		var ce *engine.ClassifiedError
 		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.As(err, &ce) || ce.Code != engine.ExitUsage {
 			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+// The Creator's reports are written by the run, so a link among them is
+// refused, never followed: a wiki/ that is a link to a directory outside,
+// or a changes.json that is a link to a file outside, contributes nothing.
+// os.Root refuses such escapes on Linux; under Wine it followed one, so
+// the build checks each part itself (agentry-cli#421).
+func TestCollectRefusesLinksInTheReports(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "wiki"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "wiki", "secret.md"), []byte("# Host file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, knowledge.ChangesFile), []byte(`{"schema":"`+knowledge.ChangesSchema+`","delete":["wiki/keep.md"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("a linked wiki", func(t *testing.T) {
+		reports, applyDir := t.TempDir(), t.TempDir()
+		if err := os.Symlink(filepath.Join(outside, "wiki"), filepath.Join(reports, "wiki")); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		if _, err := collect(reports, &decode.Result{}, nil, applyDir, nil); err == nil {
+			t.Error("collect read a wiki/ that is a link out of the reports")
+		}
+		if _, err := os.Stat(filepath.Join(applyDir, "wiki", "secret.md")); err == nil {
+			t.Error("a page from outside the reports reached the apply step")
+		}
+	})
+	t.Run("a linked changes.json", func(t *testing.T) {
+		reports, applyDir := t.TempDir(), t.TempDir()
+		if err := os.MkdirAll(filepath.Join(reports, "wiki"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(reports, "wiki", "page.md"), []byte("# Page\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, knowledge.ChangesFile), filepath.Join(reports, knowledge.ChangesFile)); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		if _, err := collect(reports, &decode.Result{}, nil, applyDir, nil); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(applyDir, knowledge.ChangesFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "keep.md") {
+			t.Errorf("a changes.json outside the reports was read:\n%s", raw)
 		}
 	})
 }

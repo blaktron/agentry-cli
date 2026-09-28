@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/plainpath"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -212,8 +213,8 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 		if f.Output != f.Path+".txt" {
 			return rep, fmt.Errorf("%s names an output outside the output root: %q is not %q", runnerdecode.ReportFile, f.Output, f.Path+".txt")
 		}
-		ti, err := outRoot.Lstat(filepath.FromSlash(f.Output))
-		if err != nil || !ti.Mode().IsRegular() || ti.Size() > MaxTextBytes {
+		ti, err := plainpath.File(outRoot, f.Output)
+		if err != nil || ti.Size() > MaxTextBytes {
 			return rep, fmt.Errorf("%s: the text of %q is not a regular file within %d bytes", runnerdecode.ReportFile, f.Path, MaxTextBytes)
 		}
 	}
@@ -240,12 +241,8 @@ func relPath(p string) bool {
 // readRegular reads a regular file under root, refusing a link, a device
 // or more than limit bytes.
 func readRegular(root *os.Root, name string, limit int64) ([]byte, error) {
-	fi, err := root.Lstat(name)
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", name)
+	if _, err := plainpath.File(root, filepath.ToSlash(name)); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	f, err := root.Open(name)
 	if err != nil {

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/plainpath"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -61,9 +62,13 @@ type Options struct {
 	OutDir string
 	// Budgets, when set, replace the Creator plan's.
 	Budgets *spec.Budgets
-	RunID   string
-	Stderr  io.Writer
-	OnUsage func(receipt.Usage)
+	// MaxBytes caps the pack, documents included: knowledge.MaxBytes when
+	// zero, Agentry's cap, which a build In Agentry keeps; a build on this
+	// computer passes knowledge.MaxLocalBytes (agentry-cli#429).
+	MaxBytes int64
+	RunID    string
+	Stderr   io.Writer
+	OnUsage  func(receipt.Usage)
 }
 
 // Result is what one build did.
@@ -127,7 +132,11 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 			return nil, engine.Classify(engine.ExitCLI, err)
 		}
 	}
-	given, err := stageDocuments(o.Documents, docsDir)
+	limit := o.MaxBytes
+	if limit <= 0 {
+		limit = knowledge.MaxBytes
+	}
+	given, err := stageDocuments(o.Documents, docsDir, limit)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
@@ -190,7 +199,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		return res, engine.Classify(engine.ExitHarness, errors.New("the Knowledge Creator wrote no page"))
 	}
 	applied, err := knowledge.Apply(o.PackDir, applyDir, knowledge.ApplyOptions{
-		Name: name, Now: o.Now, Creator: knowledge.Creator{CLI: o.Build, Model: o.Policy.Model.Name},
+		Name: name, Now: o.Now, Creator: knowledge.Creator{CLI: o.Build, Model: o.Policy.Model.Name}, MaxBytes: limit,
 	})
 	if err != nil {
 		if errors.Is(err, knowledge.ErrTooLarge) {
@@ -207,8 +216,17 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 // carry — letters, digits, '.', '-' and '_', anything else a '-' — so
 // "Q3 report.pdf" is cited as doc:Q3-report.pdf; a directory keeps its
 // layout below its own name. Two documents of one name are refused.
-func stageDocuments(paths []string, dst string) (map[string]string, error) {
+func stageDocuments(paths []string, dst string, limit int64) (map[string]string, error) {
 	out := map[string]string{}
+	// The documents together are held to the pack's cap before anything
+	// runs: they are kept in the pack beside its pages.
+	var total int64
+	tooLarge := func(p string, size int64) error {
+		if total += size; size > limit || total > limit {
+			return fmt.Errorf("document %s brings the documents to %d bytes; a knowledge pack, its documents included, is at most %s", p, total, knowledge.FormatCap(limit))
+		}
+		return nil
+	}
 	add := func(rel, from string) error {
 		if rel == decode.DocumentsFile {
 			return fmt.Errorf("%s: a document may not be named %s, the Creator's own list; rename it", from, decode.DocumentsFile)
@@ -229,8 +247,10 @@ func stageDocuments(paths []string, dst string) (map[string]string, error) {
 			return nil, fmt.Errorf("document %s: %w", p, err)
 		}
 		base := safeName(filepath.Base(abs))
-		if !fi.IsDir() && fi.Size() > knowledge.MaxBytes {
-			return nil, fmt.Errorf("document %s is %d bytes; a knowledge pack, its documents included, is at most 10 MB", p, fi.Size())
+		if !fi.IsDir() {
+			if err := tooLarge(p, fi.Size()); err != nil {
+				return nil, err
+			}
 		}
 		if !fi.IsDir() {
 			if err := add(base, p); err != nil {
@@ -248,8 +268,10 @@ func stageDocuments(paths []string, dst string) (map[string]string, error) {
 			if !e.Type().IsRegular() {
 				return nil // a link is not a document
 			}
-			if info, err := e.Info(); err == nil && info.Size() > knowledge.MaxBytes {
-				return fmt.Errorf("document %s is %d bytes; a knowledge pack, its documents included, is at most 10 MB", q, info.Size())
+			if info, err := e.Info(); err == nil {
+				if err := tooLarge(q, info.Size()); err != nil {
+					return err
+				}
 			}
 			r, _ := filepath.Rel(abs, q)
 			parts := strings.Split(filepath.ToSlash(r), "/")
@@ -313,12 +335,19 @@ func task(name string, current *knowledge.Pack, docs []decode.Document, now time
 func collect(reports string, dec *decode.Result, docs []decode.Document, applyDir string, runErr error) (int, error) {
 	ch := knowledge.Changes{Schema: knowledge.ChangesSchema}
 	pages := 0
-	if _, err := os.Stat(filepath.Join(reports, knowledge.WikiDir)); err == nil {
+	if _, err := os.Lstat(filepath.Join(reports, knowledge.WikiDir)); err == nil {
 		root, err := os.OpenRoot(reports)
 		if err != nil {
 			return 0, err
 		}
 		defer func() { _ = root.Close() }()
+		// A link in the reports is never followed (agentry-cli#421): a
+		// linked wiki/ fails the build, since there is no tree to take the
+		// pages from; a linked page is skipped, and a linked changes.json
+		// is not read, as if the Creator had not written them.
+		if err := plainpath.Dir(root, knowledge.WikiDir); err != nil {
+			return 0, fmt.Errorf("the Creator's reports: %w", err)
+		}
 		err = fs.WalkDir(root.FS(), knowledge.WikiDir, func(rel string, e fs.DirEntry, err error) error {
 			if err != nil || e.IsDir() || !e.Type().IsRegular() || !strings.HasSuffix(rel, ".md") {
 				return err
@@ -326,12 +355,19 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 			if b := path.Base(rel); b == knowledge.IndexFile || rel == knowledge.WikiDir+"/"+knowledge.LogFile {
 				return nil // the apply step writes these
 			}
+			fi, err := plainpath.File(root, rel)
+			if err != nil {
+				return nil //nolint:nilerr // a link on the way: skipped, never followed
+			}
+			if fi.Size() > knowledge.MaxBytes {
+				return fmt.Errorf("the Creator wrote %s past the pack's cap", rel)
+			}
 			body, err := fs.ReadFile(root.FS(), rel)
 			if err != nil {
 				return err
 			}
 			if len(body) > knowledge.MaxBytes {
-				return fmt.Errorf("the Creator wrote %s past the pack's cap", rel)
+				return fmt.Errorf("the Creator wrote %s past %s, more than a page can be", rel, knowledge.FormatCap(knowledge.MaxBytes))
 			}
 			pages++
 			ch.Write = append(ch.Write, rel)
@@ -340,18 +376,15 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		if err != nil {
 			return 0, err
 		}
-		if raw, err := fs.ReadFile(root.FS(), knowledge.ChangesFile); err == nil && len(raw) <= 1<<20 {
-			var own knowledge.Changes
-			if json.Unmarshal(raw, &own) == nil {
-				// The model removes pages and nothing else: sources/ is the
-				// build's, and holds the documents as given.
-				for _, rel := range own.Delete {
-					if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
-						ch.Delete = append(ch.Delete, rel)
-					}
+		if own, ok := ownChanges(root); ok {
+			// The model removes pages and nothing else: sources/ is the
+			// build's, and holds the documents as given.
+			for _, rel := range own.Delete {
+				if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
+					ch.Delete = append(ch.Delete, rel)
 				}
-				ch.Summary = own.Summary
 			}
+			ch.Summary = own.Summary
 		}
 	}
 	if runErr != nil {
@@ -379,6 +412,20 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		return 0, err
 	}
 	return pages, writeOut(filepath.Join(applyDir, knowledge.ChangesFile), raw)
+}
+
+// ownChanges reads the changes.json the Creator wrote, if it wrote one as
+// a plain file within the pack's bound; a link is not read (agentry-cli#421).
+func ownChanges(root *os.Root) (knowledge.Changes, bool) {
+	var own knowledge.Changes
+	if _, err := plainpath.File(root, knowledge.ChangesFile); err != nil {
+		return own, false
+	}
+	raw, err := fs.ReadFile(root.FS(), knowledge.ChangesFile)
+	if err != nil || len(raw) > 1<<20 {
+		return own, false
+	}
+	return own, json.Unmarshal(raw, &own) == nil
 }
 
 func writeOut(dst string, b []byte) error {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/blaktron/agentry-cli/pkg/plainpath"
+
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
@@ -135,7 +137,7 @@ func (r *Result) CopyText(path, dst string) error {
 }
 
 // copyOut copies a regular file under root to dst, through an os.Root:
-// never a link, never out of root, never past limit.
+// never through a link, never out of root, never past limit.
 func copyOut(root, rel, dst string, limit int64) error {
 	r, err := os.OpenRoot(root)
 	if err != nil {
@@ -143,11 +145,9 @@ func copyOut(root, rel, dst string, limit int64) error {
 	}
 	defer func() { _ = r.Close() }()
 	name := filepath.FromSlash(rel)
-	fi, err := r.Lstat(name)
-	if err != nil {
-		return err
-	}
-	if !fi.Mode().IsRegular() || fi.Size() > limit {
+	// Every part of the path, not only the last (agentry-cli#421).
+	fi, err := plainpath.File(r, rel)
+	if err != nil || fi.Size() > limit {
 		return fmt.Errorf("%s is not a regular file within %d bytes", rel, limit)
 	}
 	in, err := r.Open(name)

@@ -23,7 +23,7 @@ const MaxFiles = 2000
 // since what lands in it is a pack's words in the clear.
 //
 // Every entry must be a regular file with a clean slash path under wiki/
-// or sources/, in byte order, each once; the whole tree at most MaxBytes
+// or sources/, in byte order, each once; the whole tree at most MaxLocalBytes
 // and MaxFiles. The stream's SHA-256 must be want, and the files written
 // must re-encode to the same digest, so the bytes were the canonical tar
 // of their files and nothing else ("one pack, one digest"). Every write
@@ -71,8 +71,10 @@ func ExtractTree(r io.Reader, dst, want string) (d Digest, err error) {
 		if d.Files++; d.Files > MaxFiles {
 			return Digest{}, fmt.Errorf("knowledge tree: more than %d files", MaxFiles)
 		}
-		if hdr.Size < 0 || d.Bytes+hdr.Size > MaxBytes {
-			return Digest{}, fmt.Errorf("knowledge tree: %w", ErrTooLarge)
+		// A download is bounded to Agentry's cap before it gets here
+		// (remote); a pack opened from the store may be a local one.
+		if hdr.Size < 0 || d.Bytes+hdr.Size > localCap {
+			return Digest{}, fmt.Errorf("knowledge tree: past %s: %w", FormatCap(localCap), ErrTooLarge)
 		}
 		if err := writeTreeFile(root, hdr.Name, tr, hdr.Size); err != nil {
 			return Digest{}, fmt.Errorf("knowledge tree: %s: %w", hdr.Name, err)
