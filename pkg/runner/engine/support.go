@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,12 +24,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/removal"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -181,8 +184,8 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// secrets, nor a pack's pages, which a pack kept sealed on the machine
 	// would otherwise leave in the clear there; DR-42).
 	td.add(func(context.Context) {
-		_ = os.Remove(rd.secretsPath)
-		_ = os.RemoveAll(rd.knowledge)
+		td.removeSensitive(rd.secretsPath, false)
+		td.removeSensitive(rd.knowledge, true)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
 		}
@@ -762,13 +765,86 @@ func stderrTail(path string) string {
 type teardown struct {
 	// networks are the ones the run made, removed again after the sweep.
 	networks []string
-	d        dockerx.Client
-	stderr   io.Writer
-	funcs    []func(context.Context)
-	runID    string
+	// leftFiles are what removeSensitive could not delete, with why:
+	// reportLeftFiles tells the person and the receipt (agentry-cli#422).
+	leftFiles []leftFile
+	d         dockerx.Client
+	stderr    io.Writer
+	funcs     []func(context.Context)
+	runID     string
 }
 
 func (t *teardown) add(f func(context.Context)) { t.funcs = append(t.funcs, f) }
+
+// removeSensitivePath is removal.Remove, a variable so a test can hold a
+// file the way Docker Desktop can.
+var removeSensitivePath = removal.Remove
+
+type leftFile struct {
+	path string
+	err  error
+}
+
+// removeSensitive deletes what must not outlive the run (secrets.env, the
+// run's copies of knowledge packs), retrying on Windows while Docker
+// Desktop lets go of it, and records it if it still stands.
+func (t *teardown) removeSensitive(path string, all bool) {
+	if err := removeSensitivePath(path, all); err != nil {
+		t.leftFiles = append(t.leftFiles, leftFile{path, err})
+	}
+}
+
+// reportLeftFiles says what teardown could not delete, after the whole
+// teardown (the sweep included) has run: each is tried once more, since a
+// container only the sweep removed may have held it, and what is still
+// there becomes a warning on stderr, a teardown line in the receipt
+// (result.json is written again with it) and an error, so a run that
+// leaves a secret or a pack's pages on disk does not end as if it had not.
+func (t *teardown) reportLeftFiles(env *receipt.Envelope) error {
+	var still []string
+	for _, l := range t.leftFiles {
+		err := removeSensitivePath(l.path, true)
+		if err == nil || removal.Gone(l.path) {
+			continue
+		}
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err // the path is named already
+		}
+		still = append(still, fmt.Sprintf("%s (%v)", l.path, err))
+	}
+	if len(still) == 0 {
+		return nil
+	}
+	what, them := "it", "it"
+	if len(still) > 1 {
+		what, them = "they", "them"
+	}
+	msg := "could not delete " + strings.Join(still, "; ") + ": " + what +
+		" may hold secret values or a knowledge pack's pages in the clear; delete " + them + " by hand"
+	_, _ = fmt.Fprintf(t.stderr, "warning: %s\n", msg)
+	if env == nil {
+		return Classify(ExitCLI, errors.New(msg))
+	}
+	if env.CapabilitiesEnforced == nil {
+		env.CapabilitiesEnforced = map[string]string{}
+	}
+	env.CapabilitiesEnforced["teardown"] = msg
+	switch {
+	case env.Status == "ok":
+		env.Status, env.ExitCode, env.Error = "error", ExitCLI, msg
+	case env.Error == "":
+		env.Error = msg
+	default:
+		env.Error += "; and " + msg
+	}
+	if env.OutDir != "" {
+		if err := env.Write(env.OutDir); err != nil {
+			_, _ = fmt.Fprintf(t.stderr, "warning: %v\n", err)
+		}
+	}
+	return Classify(ExitCLI, errors.New(msg))
+}
 
 func (t *teardown) run() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
