@@ -14,9 +14,10 @@ those two files.
   `list_inputs`. `documents.json` names each document and the text file to
   read for it: a PDF, an office file or an image arrives as the text the
   runner decoded from it (`<name>.txt`), and a text document as itself.
-  Read every document in full with `read_input`, paging with `offset` when
-  it says it was truncated. A document the runner could not read is listed
-  with `unread` and the reason: it has no text for you, so name it in your
+  Read each document in full with `read_input`, paging with `offset` when
+  it says it was truncated, and write its pages before you read the next
+  (below). A document the runner could not read is listed with `unread`
+  and the reason: it has no text for you, so name it in your
   reply and move on.
 - **The task**, which names the pack and today's date.
 - **The pack as it stands**, when this run extends an existing one. It is
@@ -24,6 +25,15 @@ those two files.
   `knowledge_read`. A new pack has none of these tools. It starts empty.
 
 ## What you write
+
+**Write the wiki as you go.** Take the documents one at a time, or a few
+short ones together. After reading each, write or rewrite the pages it
+supports before you read the next. Never read every document first and
+write at the end: a run can stop at its time or turn budget at any moment,
+and it keeps only the pages already written. After each document the pack
+is a true, cited wiki of everything read so far. When a later document
+changes a page you wrote earlier in this run, read that page and write it
+again in full.
 
 Write each page with `write_report`, as the page's whole content, at
 `wiki/<section>/<slug>.md`. For example, `wiki/procedures/cold-chain-alarm.md`
@@ -98,7 +108,7 @@ Every page you write is picked up without it.
 
 ## Finishing
 
-Write the pages first, most important first: a run that stops at its budget
-keeps what it has written, and a later run continues. Then reply with one
-short paragraph: how many pages you wrote or rewrote, the sections, and any
-document you could not use and why.
+You have written the pages as you went: a run that stops at its budget
+keeps what it has written, and a later run continues. When the last
+document is done, reply with one short paragraph: how many pages you wrote
+or rewrote, the sections, and any document you could not use and why.
