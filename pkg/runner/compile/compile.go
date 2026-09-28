@@ -1102,10 +1102,28 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 	} else {
 		e["exec"] = execEnforcement(caps.ExecCommands, pol.Exec)
 	}
-	if len(secrets) == 0 {
+	// A declared server's secrets are resolved and refused exactly as the
+	// release's own (engine.secretValues) but reach only that server's
+	// container, so the line names each with its server (agentry-cli#376):
+	// "none declared" beside a server that was handed a key would state less
+	// than the run enforced.
+	var serverSecrets []string
+	for _, srv := range mcpServers {
+		if len(srv.Secrets) > 0 {
+			serverSecrets = append(serverSecrets, srv.Package+"@"+srv.Version+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
+		}
+	}
+	serverPart := "each declared server's own, injected only into that server's container via gateway secret scoping: " + strings.Join(serverSecrets, "; ")
+	switch {
+	case len(secrets) == 0 && len(serverSecrets) == 0:
 		e["secrets"] = "none declared"
-	} else {
+	case len(secrets) == 0:
+		e["secrets"] = "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart
+	default:
 		e["secrets"] = "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: " + strings.Join(sortedCopy(secrets), ", ")
+		if len(serverSecrets) > 0 {
+			e["secrets"] += "; " + serverPart
+		}
 	}
 	proxyLine := fmt.Sprintf("CONNECT allowlist: %s", strings.Join(pol.Model.ProxyAllow, ", "))
 	if plain := plainHTTPTargets(pol); len(plain) > 0 {
