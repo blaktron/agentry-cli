@@ -228,11 +228,29 @@ func TestApplyRefusals(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(out, "sources"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(outside, filepath.Join(out, "sources", "linked")); err != nil {
+		link := filepath.Join(out, "sources", "linked")
+		if err := os.Symlink(outside, link); err != nil {
 			t.Skipf("symlink: %v", err)
 		}
+		// Removed before the temporary directories are: under Wine,
+		// RemoveAll does not remove a directory link inside a directory.
+		t.Cleanup(func() { _ = os.Remove(link) })
 		if _, err := Apply(packDir, out, opts()); err == nil {
 			t.Fatal("Apply read through a linked directory out of the outputs")
+		}
+		if _, err := os.Stat(packDir); err == nil {
+			t.Fatal("a pack was made from it")
+		}
+	})
+	t.Run("a changes.json that is a link is not read", func(t *testing.T) {
+		packDir := filepath.Join(t.TempDir(), "aws-docs")
+		outside := outputs(t, Changes{Write: []string{"wiki/page.md"}}, map[string]string{"wiki/page.md": "# Page\n"})
+		out := t.TempDir()
+		if err := os.Symlink(filepath.Join(outside, ChangesFile), filepath.Join(out, ChangesFile)); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		if _, err := Apply(packDir, out, opts()); err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("Apply read a changes.json through a link: err = %v", err)
 		}
 		if _, err := os.Stat(packDir); err == nil {
 			t.Fatal("a pack was made from it")

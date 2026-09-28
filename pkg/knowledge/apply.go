@@ -226,6 +226,9 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 
 // readChanges decodes and holds changes.json to its rules.
 func readChanges(out *os.Root) (*Changes, error) {
+	if err := CheckPlainFile(out, ChangesFile); err != nil {
+		return nil, fmt.Errorf("read %s: %w", ChangesFile, err)
+	}
 	raw, err := out.ReadFile(ChangesFile)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ChangesFile, err)
@@ -445,12 +448,8 @@ func set(list []string) map[string]bool {
 // anything but a regular file and more than limit bytes.
 func copyBetween(src, dst *os.Root, rel string, limit int64) (int64, error) {
 	name := filepath.FromSlash(rel)
-	fi, err := src.Lstat(name)
-	if err != nil {
+	if err := CheckPlainFile(src, rel); err != nil {
 		return 0, err
-	}
-	if !fi.Mode().IsRegular() {
-		return 0, fmt.Errorf("not a regular file; a knowledge pack holds only files")
 	}
 	in, err := src.Open(name)
 	if err != nil {
@@ -474,4 +473,41 @@ func copyBetween(src, dst *os.Root, rel string, limit int64) (int64, error) {
 		err = ErrTooLarge
 	}
 	return n, err
+}
+
+// CheckPlainFile says whether rel, a slash path under root, is a regular
+// file reached through plain directories only: every part is looked at
+// with Lstat, and a link, a device or anything else in the way is refused
+// with "not a regular file". os.Root already refuses a link out of the
+// root; this does not rest on that, because under Wine a Windows build
+// followed one (agentry-cli#421). What the Creator writes is read only
+// through this.
+func CheckPlainFile(root *os.Root, rel string) error {
+	return checkPlain(root, rel, false)
+}
+
+// CheckPlainDir is CheckPlainFile for a directory.
+func CheckPlainDir(root *os.Root, rel string) error {
+	return checkPlain(root, rel, true)
+}
+
+func checkPlain(root *os.Root, rel string, dir bool) error {
+	parts := strings.Split(rel, "/")
+	for i := range parts {
+		p := filepath.FromSlash(strings.Join(parts[:i+1], "/"))
+		fi, err := root.Lstat(p)
+		if err != nil {
+			return err
+		}
+		last := i == len(parts)-1
+		switch {
+		case !last || dir:
+			if !fi.IsDir() {
+				return fmt.Errorf("%s is not a plain directory (a link or a special file); a knowledge pack holds only files", strings.Join(parts[:i+1], "/"))
+			}
+		case !fi.Mode().IsRegular():
+			return fmt.Errorf("not a regular file; a knowledge pack holds only files")
+		}
+	}
+	return nil
 }
