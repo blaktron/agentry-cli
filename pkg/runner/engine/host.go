@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -117,24 +119,63 @@ func ancestorFile(dir string, names []string) (string, error) {
 	}
 }
 
+// hostStart is what startHostProcess reports: the executable (and version)
+// for the receipts, and the host variables the process was allowed to
+// inherit.
+type hostStart struct {
+	info      string
+	inherited []string
+}
+
+// hostOS is the host's OS, a variable so a test can take Windows' path.
+var hostOS = runtime.GOOS
+
+// windowsHostEnv are what a Windows program needs to find its profile, its
+// npm shims (%APPDATA%\npm), a temporary directory, the extensions it may
+// run and its shell (agentry-cli#423). Still an allowlist: nothing else in
+// the runner's environment reaches the harness (RUNNER-PLAN §R6).
+var windowsHostEnv = []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PATHEXT", "ComSpec", "SystemRoot"}
+
+// hostInherit is the plan's InheritEnv, with windowsHostEnv added on
+// Windows. The plan itself stays the same on every host.
+func hostInherit(names []string, goos string) []string {
+	out := append([]string{}, names...)
+	if goos != "windows" {
+		return out
+	}
+	for _, n := range windowsHostEnv {
+		if !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// hostEnvLine is the receipt's word on what a host-run harness inherited.
+func hostEnvLine(inherited []string) string {
+	return "host process with only these of the runner's environment variables, where set: " + strings.Join(inherited, ", ") +
+		"; everything else it has is set by the plan"
+}
+
 // startHostProcess starts the harness process with stdin/stdout/stderr
 // wired as given and returns a wait function (exit code, or a run error),
 // plus the executable and version line for the receipts.
 func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.Replacer, token string,
 	stdin io.Reader, stdout, stderr io.Writer,
-) (func() (int, error), string, error) {
+) (func() (int, error), hostStart, error) {
 	hs := p.Plan.Harness.Host
 	path, err := resolveHostCommand(p.Policy, p.Plan.Harness.Adapter, hs.Command)
 	if err != nil {
-		return nil, "", err
+		return nil, hostStart{}, err
 	}
 	envMap, err := resolveEnv(hs.Env, rep, token)
 	if err != nil {
-		return nil, "", err
+		return nil, hostStart{}, err
 	}
 	envMap[spec.HostGatewayURLEnv] = rd.hostGatewayURL
 	envMap[spec.HostProxyURLEnv] = rd.hostProxyURL
-	for _, name := range hs.InheritEnv {
+	inherited := hostInherit(hs.InheritEnv, hostOS)
+	for _, name := range inherited {
 		if _, set := envMap[name]; set {
 			continue
 		}
@@ -145,12 +186,12 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	env := envPairs(envMap)
 	dir := filepath.Join(rd.cfg, "harness")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, "", Classify(ExitCLI, fmt.Errorf("harness dir: %w", err))
+		return nil, hostStart{}, Classify(ExitCLI, fmt.Errorf("harness dir: %w", err))
 	}
 	if found, err := ancestorFile(dir, hs.RefuseAncestorFiles); err != nil {
-		return nil, "", Classify(ExitCLI, err)
+		return nil, hostStart{}, Classify(ExitCLI, err)
 	} else if found != "" {
-		return nil, "", Classify(ExitPolicy, fmt.Errorf("harness %s: %s would enter the run as context — the harness reads it from every ancestor of its working directory, and this run has no --bare to skip it; move it, or use an API key (agentry-cli#171)",
+		return nil, hostStart{}, Classify(ExitPolicy, fmt.Errorf("harness %s: %s would enter the run as context — the harness reads it from every ancestor of its working directory, and this run has no --bare to skip it; move it, or use an API key (agentry-cli#171)",
 			p.Plan.Harness.Adapter, found))
 	}
 	info := path
@@ -183,7 +224,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	procx.NoWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		waited()
-		return nil, info, Classify(ExitHarness, fmt.Errorf("start harness %s: %w", hs.Command, err))
+		return nil, hostStart{info: info, inherited: inherited}, Classify(ExitHarness, fmt.Errorf("start harness %s: %w", hs.Command, err))
 	}
 	wait := func() (int, error) {
 		// The leader's pid is the process group's id, and once it is reaped
@@ -200,7 +241,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 		}
 		return -1, err
 	}
-	return wait, info, nil
+	return wait, hostStart{info: info, inherited: inherited}, nil
 }
 
 // runHostHarness is runAgent for a host-run harness: the same event
@@ -245,11 +286,12 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		return agentOutcome{err: Classify(ExitCLI, fmt.Errorf("create stderr receipt: %w", err))}
 	}
 	defer func() { _ = stderrFile.Close() }()
-	wait, info, err := startHostProcess(agentCtx, p, rd, rep, token, stdin, pw, stderrFile)
+	wait, started, err := startHostProcess(agentCtx, p, rd, rep, token, stdin, pw, stderrFile)
+	info := started.info
 	if err != nil {
 		_ = pw.Close()
 		<-done
-		return agentOutcome{err: err, hostInfo: info}
+		return agentOutcome{err: err, hostInfo: info, hostEnv: started.inherited}
 	}
 	exit, runErr := wait()
 	_ = pw.Close()
@@ -258,7 +300,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	// before the tail below quotes it.
 	_ = stderrFile.Close()
 	rd.redact.File(stderrPath)
-	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info}
+	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info, hostEnv: started.inherited}
 	switch {
 	// First, as in the container path: a panic that stopped the reader is the
 	// reason anything downstream looks wrong (agentry-cli#161).
