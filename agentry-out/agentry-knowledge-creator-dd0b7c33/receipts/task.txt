@@ -1,0 +1,9 @@
+Knowledge pack: depots. It is new: this run makes its first pages. Today is 2026-09-28.
+
+Ingest these 6 documents (documents.json names the file to read for each):
+- docs/alarms.md
+- docs/carriers.md
+- docs/depots.md
+- docs/returns.md
+- docs/safety.md
+- docs/staff.md
