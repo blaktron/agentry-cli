@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,7 +128,9 @@ type hostStart struct {
 	inherited []string
 }
 
-// hostOS is the host's OS, a variable so a test can take Windows' path.
+// hostOS is the host's OS for the harness's environment, a variable so a
+// test can take Windows' path without also moving the gateway's spelling
+// of host paths (gatewayOS), which other tests hold on the real OS.
 var hostOS = runtime.GOOS
 
 // windowsHostEnv are what a Windows program needs to find its profile, its
@@ -144,17 +147,25 @@ func hostInherit(names []string, goos string) []string {
 		return out
 	}
 	for _, n := range windowsHostEnv {
-		if !slices.Contains(out, n) {
+		if !slices.ContainsFunc(out, func(o string) bool { return sameEnvName(o, n, goos) }) {
 			out = append(out, n)
 		}
 	}
 	return out
 }
 
+// sameEnvName compares variable names as the OS does: Windows ignores case.
+func sameEnvName(a, b, goos string) bool {
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
 // hostEnvLine is the receipt's word on what a host-run harness inherited.
 func hostEnvLine(inherited []string) string {
-	return "host process with only these of the runner's environment variables, where set: " + strings.Join(inherited, ", ") +
-		"; everything else it has is set by the plan"
+	return "host process given only these of the runner's environment variables, where set, unchanged: " + strings.Join(inherited, ", ") +
+		"; everything else it has is set by the plan and the run (the run token, the model key the policy names, the gateway and proxy addresses)"
 }
 
 // startHostProcess starts the harness process with stdin/stdout/stderr
@@ -176,7 +187,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	envMap[spec.HostProxyURLEnv] = rd.hostProxyURL
 	inherited := hostInherit(hs.InheritEnv, hostOS)
 	for _, name := range inherited {
-		if _, set := envMap[name]; set {
+		if slices.ContainsFunc(slices.Collect(maps.Keys(envMap)), func(k string) bool { return sameEnvName(k, name, hostOS) }) {
 			continue
 		}
 		if v, ok := os.LookupEnv(name); ok {

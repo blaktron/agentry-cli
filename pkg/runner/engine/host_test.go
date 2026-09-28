@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -458,9 +457,11 @@ func TestHostInherit(t *testing.T) {
 	if got := hostInherit([]string{"HOME", "PATH"}, "linux"); strings.Join(got, ",") != "HOME,PATH" {
 		t.Errorf("linux: %v", got)
 	}
-	got := hostInherit([]string{"HOME", "PATH", "TEMP"}, "windows")
-	if strings.Join(got[:3], ",") != "HOME,PATH,TEMP" || !slices.Contains(got, "USERPROFILE") || !slices.Contains(got, "ComSpec") {
-		t.Errorf("windows: %v", got)
+	// The exact allowlist: widening it is a decision, not an edit.
+	want := "HOME,PATH,temp,USERPROFILE,APPDATA,LOCALAPPDATA,TMP,PATHEXT,ComSpec,SystemRoot"
+	got := hostInherit([]string{"HOME", "PATH", "temp"}, "windows")
+	if strings.Join(got, ",") != want {
+		t.Errorf("windows: %v, want %s (a name the plan has in another case is not added again)", got, want)
 	}
 	seen := map[string]int{}
 	for _, n := range got {
