@@ -403,3 +403,25 @@ func TestCollectRefusesLinksInTheReports(t *testing.T) {
 		}
 	})
 }
+
+// A work directory the build could not delete (Windows keeps a handle for
+// a moment after the decode container) is named to the person, never
+// passed over: it holds the documents and the pages in the clear
+// (agentry-cli#422).
+func TestBuildNamesAWorkDirectoryItCouldNotDelete(t *testing.T) {
+	old := removeWork
+	removeWork = func(string, bool) error { return errors.New("in use by another process") }
+	t.Cleanup(func() { removeWork = old })
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
+		"wiki/topics/power-loss.md": page("Power loss", "incident-report.pdf"),
+	})
+	var stderr strings.Builder
+	fx.opts.Stderr = &stderr
+	if _, err := Build(context.Background(), fx.fake, fx.opts); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "could not delete") || !strings.Contains(stderr.String(), filepath.Join(fx.opts.Home, "work")) {
+		t.Errorf("stderr does not name the work directory:\n%s", stderr.String())
+	}
+}

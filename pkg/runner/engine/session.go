@@ -85,6 +85,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	fail := func(err error) (session.Session, error) {
 		td.run()
 		_, cerr := fail(env, s.redact, err)
+		_ = td.reportLeftFiles(env) // the session already failed; the report amends it
 		return nil, cerr
 	}
 
@@ -796,6 +797,9 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		}
 	}
 	s.td.run()
+	if err := s.td.reportLeftFiles(env); err != nil && outErr == nil {
+		outErr = err
+	}
 	s.mu.Lock()
 	s.envelope, s.envelopeErr = env, outErr
 	s.mu.Unlock()
