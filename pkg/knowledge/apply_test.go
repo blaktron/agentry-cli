@@ -120,11 +120,12 @@ func TestApplyDropsAFailingPageNotTheBuild(t *testing.T) {
 		// A rewrite that fails keeps the page as it was.
 		"wiki/topics/buckets.md": "no frontmatter now\n",
 		// A new page that fails is not added.
-		"wiki/topics/broken.md": page("Broken", "s", "[x](nowhere.md)\n"),
+		"wiki/topics/broken.md": page("Broken", "s", "cites a document the pack lacks [src: doc:missing.txt]\n"),
 		// A page that passes lands.
 		"wiki/topics/good.md": page("Good", "s", "fine [src: doc:guide.txt]\n"),
-		// A page that links only to a dropped page is dropped with it.
-		"wiki/topics/leans.md": page("Leans", "s", "[broken](broken.md) [src: doc:guide.txt]\n"),
+		// A page whose only fault is a link to a dropped page is kept, the
+		// link made plain text, so the drop does not cascade (agentry-cli#433).
+		"wiki/topics/leans.md": page("Leans", "s", "see [the broken page](broken.md) [src: doc:guide.txt]\n"),
 	}), opts())
 	if err != nil {
 		t.Fatalf("the build failed on its pages: %v", err)
@@ -132,15 +133,17 @@ func TestApplyDropsAFailingPageNotTheBuild(t *testing.T) {
 	if !strings.Contains(read(t, filepath.Join(packDir, "wiki", "topics", "buckets.md")), "v1") {
 		t.Fatal("a failing rewrite replaced the page")
 	}
-	for _, gone := range []string{"broken.md", "leans.md"} {
-		if _, err := os.Stat(filepath.Join(packDir, "wiki", "topics", gone)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("%s landed", gone)
-		}
+	if _, err := os.Stat(filepath.Join(packDir, "wiki", "topics", "broken.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("broken.md landed")
+	}
+	if got := read(t, filepath.Join(packDir, "wiki", "topics", "leans.md")); !strings.Contains(got, "see the broken page [src: doc:guide.txt]") || strings.Contains(got, "](broken.md)") {
+		t.Fatalf("leans.md was not kept with its dead link unlinked:\n%s", got)
 	}
 	if _, err := os.Stat(filepath.Join(packDir, "wiki", "topics", "good.md")); err != nil {
 		t.Fatal("the good page did not land")
 	}
-	// Two pages cite the source, so its delete is kept back.
+	// Three pages cite the source, so its delete is kept back, once, and
+	// none of them is dropped for it.
 	if _, err := os.Stat(filepath.Join(packDir, "sources", "guide.txt")); err != nil {
 		t.Fatal("a delete that broke citations went through")
 	}
@@ -152,7 +155,7 @@ func TestApplyDropsAFailingPageNotTheBuild(t *testing.T) {
 		t.Fatalf("dropped %v", res.Dropped)
 	}
 	log := read(t, filepath.Join(packDir, "wiki", "log.md"))
-	for _, want := range []string{"- dropped wiki/topics/broken.md: ", "- dropped wiki/topics/buckets.md: ", "- kept sources/guide.txt: "} {
+	for _, want := range []string{"- dropped wiki/topics/broken.md: ", "- dropped wiki/topics/buckets.md: ", "- kept sources/guide.txt: ", "- kept wiki/topics/leans.md: links to pages not in the pack made plain text: broken.md"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q:\n%s", want, log)
 		}
@@ -251,4 +254,98 @@ func TestApplyRefusals(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// A stopped run's pages link to pages it never wrote. Each is kept with
+// those links made plain text rather than dropped, so a chain of pages
+// linking forward survives; a link that points outside the pack, or any
+// other fault, still drops the page (agentry-cli#433).
+func TestApplyKeepsAPageWhoseOnlyFaultIsADeadLink(t *testing.T) {
+	packDir := filepath.Join(t.TempDir(), "aws-docs")
+	res, err := Apply(packDir, outputs(t, Changes{
+		Write: []string{"wiki/topics/a.md", "wiki/topics/b.md", "wiki/topics/outside.md", "wiki/topics/twofaults.md", "sources/guide.txt"},
+	}, map[string]string{
+		"wiki/topics/a.md":         page("A", "s", "see [B](b.md) and [C, not written](c.md \"C\") [src: doc:guide.txt]\n"),
+		"wiki/topics/b.md":         page("B", "s", "see [D](../entities/d.md) [src: doc:guide.txt]\n\n`[code](e.md)` stays\n"),
+		"wiki/topics/outside.md":   page("Outside", "s", "see [x](../../../escape.md) [src: doc:guide.txt]\n"),
+		"wiki/topics/twofaults.md": page("Two", "s", "see [y](y.md) [src: doc:missing.txt]\n"),
+		"sources/guide.txt":        "g\n",
+	}), opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := read(t, filepath.Join(packDir, "wiki", "topics", "a.md"))
+	if !strings.Contains(a, "see [B](b.md) and C, not written [src") {
+		t.Fatalf("a.md =\n%s", a)
+	}
+	b := read(t, filepath.Join(packDir, "wiki", "topics", "b.md"))
+	if !strings.Contains(b, "see D [src") || !strings.Contains(b, "`[code](e.md)` stays") {
+		t.Fatalf("b.md =\n%s", b)
+	}
+	for _, gone := range []string{"outside.md", "twofaults.md"} {
+		if _, err := os.Stat(filepath.Join(packDir, "wiki", "topics", gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s landed", gone)
+		}
+	}
+	var kept []string
+	for _, d := range res.Dropped {
+		if d.Kept {
+			kept = append(kept, d.Path)
+		}
+	}
+	if strings.Join(kept, ",") != "wiki/topics/a.md,wiki/topics/b.md" || res.Manifest.Pages != 2 {
+		t.Fatalf("dropped %+v, pages %d", res.Dropped, res.Manifest.Pages)
+	}
+	if fs, _ := Lint(packDir, "aws-docs"); len(fs) != 0 {
+		t.Fatalf("the result does not lint: %v", fs)
+	}
+}
+
+// The unlink reads a page as the lint does, and a page it cannot make pass
+// is dropped rather than landing with a finding: a bracket lines above a
+// dead link is not taken for the link's start, the same link in code is
+// left as written, an image loses its '!', the frontmatter is not
+// touched; a link whose text holds a code span with ']' (the raw text
+// cannot match it) and a nest of links whose unlink uncovers one that
+// points outside the pack are dropped, and the result lints clean
+// (agentry-cli#433's review).
+func TestApplyUnlinksAsTheLintReads(t *testing.T) {
+	packDir := filepath.Join(t.TempDir(), "aws-docs")
+	res, err := Apply(packDir, outputs(t, Changes{
+		Write: []string{"wiki/topics/prose.md", "wiki/topics/stuck.md", "wiki/topics/nested.md", "sources/guide.txt"},
+	}, map[string]string{
+		"wiki/topics/prose.md":  page("Prose", "s", "arr[i is odd [src: doc:guide.txt]\n\nsee [D](d.md), `[D](d.md)` and ![a map](d.md)\n\n```\n[D](d.md)\n```\n"),
+		"wiki/topics/stuck.md":  page("Stuck", "s", "see [a `]` b](d.md) [src: doc:guide.txt]\n"),
+		"wiki/topics/nested.md": page("Nested", "s", "[[[[a](d.md)](e.md)](f.md)](../../../x.md) [src: doc:guide.txt]\n"),
+		"sources/guide.txt":     "g\n",
+	}), opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, filepath.Join(packDir, "wiki", "topics", "prose.md"))
+	for _, want := range []string{"arr[i is odd [src: doc:guide.txt]", "see D, `[D](d.md)` and a map", "```\n[D](d.md)\n```", "title: Prose"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prose.md lacks %q:\n%s", want, got)
+		}
+	}
+	for _, gone := range []string{"stuck.md", "nested.md"} {
+		if _, err := os.Stat(filepath.Join(packDir, "wiki", "topics", gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s landed", gone)
+		}
+	}
+	notes := map[string]int{}
+	for _, d := range res.Dropped {
+		notes[d.Path]++
+		if d.Kept && d.Path != "wiki/topics/prose.md" {
+			t.Errorf("%s is reported kept although it was dropped: %+v", d.Path, d)
+		}
+	}
+	for p, n := range notes {
+		if n != 1 {
+			t.Errorf("%s is reported %d times: %+v", p, n, res.Dropped)
+		}
+	}
+	if fs, _ := Lint(packDir, "aws-docs"); len(fs) != 0 {
+		t.Fatalf("the result does not lint: %v", fs)
+	}
 }

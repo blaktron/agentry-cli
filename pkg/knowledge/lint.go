@@ -39,7 +39,11 @@ type Finding struct {
 	Rule Rule
 	// Target is, for a link or a citation, the slash path relative to the
 	// pack that it names and that is missing; empty otherwise.
-	Target  string
+	Target string
+	// Href is, for a link to nothing in the pack, the link as the page
+	// writes it, so the apply step can make it plain text
+	// (agentry-cli#433).
+	Href    string
 	Message string
 }
 
@@ -160,7 +164,7 @@ func lintPage(rel, text string, present map[string]bool) []Finding {
 			case strings.HasPrefix(target, "/") || resolved == ".." || strings.HasPrefix(resolved, "../"):
 				out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleLink, Message: "link " + m[1] + " points outside the pack"})
 			case !present[resolved]:
-				out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleLink, Target: resolved, Message: "link " + m[1] + " resolves to nothing in the pack"})
+				out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleLink, Target: resolved, Href: m[1], Message: "link " + m[1] + " resolves to nothing in the pack"})
 			}
 		}
 		for _, m := range citationRE.FindAllStringSubmatch(lines[i], -1) {
