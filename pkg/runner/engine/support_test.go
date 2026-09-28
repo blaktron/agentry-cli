@@ -451,7 +451,7 @@ func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
 		"/run/x/cfg":                 true,
 		"/home/me/.agentry/servers":  true,
 		"/home/me/somewhere-of-mine": false,
-		filepath.Join("/home/me/somewhere-of-mine", "reports"): true,
+		filepath.Join("/home/me/somewhere-of-mine", "reports"): true, // joined by the code: \ on Windows
 	}
 	if len(got) != len(want) {
 		t.Fatalf("labelled %d directories, want %d: %v", len(got), len(want), got)

@@ -1,5 +1,9 @@
 //go:build !windows
 
+// The host-harness tests are built off Windows only: the test harness they
+// put on PATH is a shell script, which Windows cannot execute
+// (agentry-cli#446). So no test covers the engine's host path on Windows.
+
 package engine
 
 import (
@@ -473,8 +477,8 @@ func TestHostInherit(t *testing.T) {
 }
 
 // An empty task sends the agent's own instruction to a host harness too
-// (on its stdin). It lives here with the other host-harness tests: the
-// fixture's harness is a shell script, so none of them run on Windows.
+// (on its stdin, agentry-cli#449). It lives here with the other
+// host-harness tests, for the reason at the top of this file.
 func TestAnEmptyTaskSendsTheOwnInstructionToAHostHarness(t *testing.T) {
 	p, f, _, taskFile := hostFixture(t)
 	p.Task = nil

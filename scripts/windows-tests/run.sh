@@ -10,7 +10,8 @@
 #
 # Run from the module root. The box has no network, no capabilities and
 # only read-only mounts; never give it a writable one, since its user has
-# the host user's uid and SELinux labelling is off for the mounts.
+# the host user's uid and SELinux labelling is off for the mounts. The whole
+# module is mounted (read-only), so keep the module root free of secrets.
 set -euo pipefail
 docker image inspect agentry-winebox:local >/dev/null 2>&1 || {
   echo "no agentry-winebox:local image: docker build -t agentry-winebox:local scripts/windows-tests" >&2
