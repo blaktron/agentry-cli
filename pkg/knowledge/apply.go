@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -56,13 +58,15 @@ type ApplyOptions struct {
 	Creator Creator
 }
 
-// Drop is a change Apply did not make: a written file that failed the lint
-// (reverted to what the pack held, or not added), or a delete kept back
-// because a page that stays needs the file.
+// Drop is a change Apply did not make as written: a written file that
+// failed the lint (reverted to what the pack held, or not added), a delete
+// kept back because a page that stays needs the file, or a written page
+// kept with its links to nothing in the pack made plain text.
 type Drop struct {
 	Path   string
 	Reason string
-	// Kept is true for a delete kept back.
+	// Kept is true for a delete kept back, and for a page kept with its
+	// dead links unlinked.
 	Kept bool
 }
 
@@ -283,10 +287,14 @@ func changePath(rel string) error {
 
 // settle lints the staged tree and backs out the changes that fail, until
 // what remains passes or nothing this change did can be backed out. A
-// finding that a delete explains keeps that file; any other finding on a
-// file this change wrote reverts the file to the pack's version, or
-// removes it if it is new. Findings on files this change did not touch
-// are the pack's own, and left alone.
+// finding that a delete explains keeps that file. A page this change wrote
+// whose only findings are links to nothing in the pack is kept with those
+// links made plain text (agentry-cli#433): a run stopped at its budget has
+// pages that link to ones it had not yet written, and dropping each would
+// drop the pages linking to it in turn, leaving a stopped build nothing.
+// Any other finding on a file this change wrote reverts the file to the
+// pack's version, or removes it if it is new. Findings on files this
+// change did not touch are the pack's own, and left alone.
 func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]bool, res *Result) error {
 	for range len(written) + len(deleted) + 1 {
 		findings, err := lintPages(stageDir)
@@ -302,19 +310,36 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 			}
 			byPage[f.Page] = append(byPage[f.Page], f)
 		}
+		// restored are the deletes kept back in this pass: a finding on
+		// one explains the same finding on every page, which the next
+		// pass lints again with the file back.
+		restored := map[string]bool{}
 		for _, pg := range order {
 			explained := false
 			for _, f := range byPage[pg] {
+				if f.Target != "" && restored[f.Target] {
+					explained = true
+					continue
+				}
 				if f.Target != "" && deleted[f.Target] {
 					if err := restore(pack, stage, f.Target); err != nil {
 						return err
 					}
 					delete(deleted, f.Target)
+					restored[f.Target] = true
 					res.Dropped = append(res.Dropped, Drop{Path: f.Target, Kept: true, Reason: pg + " needs it (" + f.Message + ")"})
 					explained, changed = true, true
 				}
 			}
 			if explained || !written[pg] {
+				continue
+			}
+			if hrefs := deadLinksOnly(byPage[pg]); len(hrefs) > 0 {
+				if err := unlink(stage, pg, hrefs); err != nil {
+					return err
+				}
+				res.Dropped = append(res.Dropped, Drop{Path: pg, Kept: true, Reason: "links to pages not in the pack made plain text: " + strings.Join(hrefs, ", ")})
+				changed = true
 				continue
 			}
 			if err := restore(pack, stage, pg); err != nil {
@@ -333,6 +358,49 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 		}
 	}
 	return nil
+}
+
+// deadLinksOnly answers the links a page writes to nothing in the pack,
+// when those are its only findings; nil when it has any other.
+func deadLinksOnly(fs []Finding) []string {
+	var hrefs []string
+	for _, f := range fs {
+		if f.Rule != RuleLink || f.Href == "" {
+			return nil
+		}
+		if !slices.Contains(hrefs, f.Href) {
+			hrefs = append(hrefs, f.Href)
+		}
+	}
+	return hrefs
+}
+
+// unlink rewrites the staged page rel with each link to one of hrefs made
+// its plain text: "[the depot](rotterdam.md)" becomes "the depot".
+func unlink(stage *os.Root, rel string, hrefs []string) error {
+	f, err := stage.Open(rel)
+	if err != nil {
+		return err
+	}
+	body, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	_ = f.Close()
+	if err != nil {
+		return err
+	}
+	text := string(body)
+	for _, h := range hrefs {
+		re := regexp.MustCompile(`\[([^\]]*)\]\(` + regexp.QuoteMeta(h) + `(?:\s+"[^"]*")?\)`)
+		text = re.ReplaceAllString(text, "$1")
+	}
+	w, err := stage.OpenFile(rel, os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := w.WriteString(text); err != nil {
+		_ = w.Close()
+		return err
+	}
+	return w.Close()
 }
 
 // restore puts rel in the stage back to what the pack held, or removes it
