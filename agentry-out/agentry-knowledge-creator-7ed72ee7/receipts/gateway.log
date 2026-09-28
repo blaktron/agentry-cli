@@ -1,0 +1,136 @@
+Note: dynamic-tools disabled when using --servers flag
+- Reading configuration...
+  - Reading catalog from [/root/.docker/mcp/catalogs/catalog.yaml]
+  - Reading config from /root/.docker/mcp/catalogs/config.yaml
+  - Reading tools from /root/.docker/mcp/catalogs/tools.yaml
+- Configuration read in 574.731µs
+- Using images:
+  - agentry-runner:c0c505707efb6
+> Images pulled in 29.410789ms
+- Those servers are enabled: agentry-tools
+- Listing MCP tools...
+  - Running agentry-runner:c0c505707efb6 with [run --rm -i --init --security-opt no-new-privileges --cpus 1 --memory 2g --pull never -l docker-mcp=true -l docker-mcp-tool-type=mcp -l docker-mcp-name=agentry-tools -l docker-mcp-transport=stdio --network none -v /home/agentry/scratch/knowledge-windows-issues/ab430/home-old-4/agents/agentry/knowledge-creator/1.0.0-8f25f28782cb/runs/7ed72ee7/cfg/gateway/toolspec.json:/etc/agentry/toolspec.json:ro -v /home/agentry/scratch/knowledge-windows-issues/ab430/home-old-4/agents/agentry/knowledge-creator/1.0.0-8f25f28782cb/runs/7ed72ee7/inputs:/inputs:ro -v /home/agentry/scratch/knowledge-windows-issues/ab430/home-old-4/agents/agentry/knowledge-creator/1.0.0-8f25f28782cb/runs/7ed72ee7/knowledge:/knowledge:ro -v /home/agentry/agentry/.worktrees/agentry-cli/430-creator-writes-as-it-goes/agentry-out/agentry-knowledge-creator-7ed72ee7:/out:rw] and command [tools --spec /etc/agentry/toolspec.json]
+  > agentry-tools: (3 tools)
+> 3 tools listed in 1.404351623s
+> Initialized in 1.435801981s
+> Start streaming server on port 8811
+> Gateway URL: http://localhost:8811/mcp
+> Use Bearer token from MCP_GATEWAY_AUTH_TOKEN environment variable
+- Client initialized docker agent@1.0.0 
+- Current working directory: /
+- Initialize request:
+  {
+    "capabilities": {
+      "roots": {
+        "listChanged": true
+      },
+      "sampling": {
+        "tools": {}
+      },
+      "elicitation": {
+        "form": {}
+      }
+    },
+    "clientInfo": {
+      "name": "docker agent",
+      "version": "1.0.0"
+    },
+    "protocolVersion": "2025-11-25"
+  }
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool list_inputs with arguments: object with 1 field(s)
+  - Running agentry-runner:c0c505707efb6 with [run --rm -i --init --security-opt no-new-privileges --cpus 1 --memory 2g --pull never -l docker-mcp=true -l docker-mcp-tool-type=mcp -l docker-mcp-name=agentry-tools -l docker-mcp-transport=stdio --network none -v /home/agentry/scratch/knowledge-windows-issues/ab430/home-old-4/agents/agentry/knowledge-creator/1.0.0-8f25f28782cb/runs/7ed72ee7/cfg/gateway/toolspec.json:/etc/agentry/toolspec.json:ro -v /home/agentry/scratch/knowledge-windows-issues/ab430/home-old-4/agents/agentry/knowledge-creator/1.0.0-8f25f28782cb/runs/7ed72ee7/inputs:/inputs:ro -v /home/agentry/scratch/knowledge-windows-issues/ab430/home-old-4/agents/agentry/knowledge-creator/1.0.0-8f25f28782cb/runs/7ed72ee7/knowledge:/knowledge:ro -v /home/agentry/agentry/.worktrees/agentry-cli/430-creator-writes-as-it-goes/agentry-out/agentry-knowledge-creator-7ed72ee7:/out:rw] and command [tools --spec /etc/agentry/toolspec.json]
+  > Calling tool list_inputs took: 1.315918428s
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool list_inputs with arguments: object with 1 field(s)
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool read_input with arguments: object with 3 field(s)
+  > Calling tool list_inputs took: 2.844035ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > Calling tool read_input took: 1.522334ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool read_input with arguments: object with 3 field(s)
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool read_input with arguments: object with 3 field(s)
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Scanning tool call arguments for secrets...
+  - Calling tool read_input with arguments: object with 3 field(s)
+  > No secret found in arguments.
+  - Calling tool read_input with arguments: object with 3 field(s)
+  - Scanning tool call arguments for secrets...
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  > No secret found in arguments.
+  - Calling tool read_input with arguments: object with 3 field(s)
+  - Calling tool read_input with arguments: object with 3 field(s)
+  > Calling tool read_input took: 1.242735ms
+  - Scanning tool call response for secrets...
+  > Calling tool read_input took: 966.234µs
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > Calling tool read_input took: 1.423583ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > No secret found in response.
+  > Calling tool read_input took: 1.7535ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > Calling tool read_input took: 1.297299ms
+  - Scanning tool call response for secrets...
+  > Calling tool read_input took: 1.479126ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > No secret found in response.
+  - Scanning tool call arguments for secrets...
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool write_report with arguments: object with 3 field(s)
+  > No secret found in arguments.
+  - Calling tool write_report with arguments: object with 3 field(s)
+  > Calling tool write_report took: 1.865781ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > Calling tool write_report took: 2.047973ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  - Scanning tool call arguments for secrets...
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool write_report with arguments: object with 3 field(s)
+  > No secret found in arguments.
+  - Calling tool write_report with arguments: object with 3 field(s)
+  - Scanning tool call arguments for secrets...
+  > Calling tool write_report took: 1.399987ms
+  - Scanning tool call response for secrets...
+  > No secret found in arguments.
+  - Calling tool write_report with arguments: object with 3 field(s)
+  > No secret found in response.
+  > Calling tool write_report took: 1.544744ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > Calling tool write_report took: 1.472593ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  - Scanning tool call arguments for secrets...
+  > No secret found in arguments.
+  - Calling tool write_report with arguments: object with 3 field(s)
+  - Scanning tool call arguments for secrets...
+  > Calling tool write_report took: 3.162927ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.
+  > No secret found in arguments.
+  - Calling tool write_report with arguments: object with 3 field(s)
+  > Calling tool write_report took: 1.706727ms
+  - Scanning tool call response for secrets...
+  > No secret found in response.

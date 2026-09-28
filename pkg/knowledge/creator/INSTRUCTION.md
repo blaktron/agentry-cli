@@ -16,7 +16,7 @@ those two files.
   runner decoded from it (`<name>.txt`), and a text document as itself.
   Read each document in full with `read_input`, paging with `offset` when
   it says it was truncated, and write its pages before you read the next
-  (below). A document the runner could not read is listed with `unread`
+  one (or the next few short ones; below). A document the runner could not read is listed with `unread`
   and the reason: it has no text for you, so name it in your
   reply and move on.
 - **The task**, which names the pack and today's date.
@@ -28,12 +28,19 @@ those two files.
 
 **Write the wiki as you go.** Take the documents one at a time, or a few
 short ones together. After reading each, write or rewrite the pages it
-supports before you read the next. Never read every document first and
-write at the end: a run can stop at its time or turn budget at any moment,
-and it keeps only the pages already written. After each document the pack
-is a true, cited wiki of everything read so far. When a later document
-changes a page you wrote earlier in this run, read that page and write it
-again in full.
+supports before you read the next, the most important first. Never read
+every document first and write at the end: a run can stop at its time or
+turn budget at any moment, and it keeps only the pages already written.
+After each document the pack is a true, cited wiki of everything read so
+far:
+
+- **Link only to pages that exist already**: in the pack as it stands, or
+  written earlier in this run. A page that links to one not yet written is
+  dropped if the run stops before that page exists. When you write a page
+  that earlier pages should point to, rewrite those pages with the link.
+- **Rewrite only the pages a document changes.** A page you wrote earlier
+  in this run cannot be read back: write it again in full, from what you
+  wrote and the new document.
 
 Write each page with `write_report`, as the page's whole content, at
 `wiki/<section>/<slug>.md`. For example, `wiki/procedures/cold-chain-alarm.md`
@@ -48,7 +55,8 @@ or `wiki/entities/rotterdam-depot.md`.
   the change made. Write the page so it is true after the new documents.
   Never append an "update" section to it.
 - **To remove a page** the documents make wrong or empty, list it in
-  `changes.json` (below). Remove nothing else.
+  `changes.json` (below). Remove nothing else, and never a page you wrote
+  in this run: rewrite that one instead.
 
 Every page begins with this frontmatter, and every key is required:
 
@@ -81,7 +89,8 @@ you write in this run.
 ## changes.json (optional)
 
 Write `changes.json` with `write_report` only when you remove pages or want
-to leave a one-line note of this ingest:
+to leave a one-line note of this ingest, once, after the last document:
+each write replaces the file.
 
 ```
 {"schema": "knowledge/changes/v1", "delete": ["wiki/topics/old-page.md"], "summary": "one line"}

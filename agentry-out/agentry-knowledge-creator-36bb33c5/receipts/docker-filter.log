@@ -1,0 +1,15 @@
+2026-09-28T16:33:33Z allow HEAD /_ping
+2026-09-28T16:33:33Z allow GET /images/agentry-runner:c0c505707efb6/json
+2026-09-28T16:33:33Z absent GET /containers/gw-36bb33c5/json: No such container: gw-36bb33c5
+2026-09-28T16:33:33Z allow HEAD /_ping
+2026-09-28T16:33:33Z allow HEAD /_ping
+2026-09-28T16:33:33Z allow POST /containers/create
+2026-09-28T16:33:33Z allow POST /containers/23a9bba73ee902f2fbbc31d4dfe43f6b1235585616dd0374d1ec3a41ce5c4a8e/attach
+2026-09-28T16:33:33Z allow POST /containers/23a9bba73ee902f2fbbc31d4dfe43f6b1235585616dd0374d1ec3a41ce5c4a8e/wait
+2026-09-28T16:33:33Z allow POST /containers/23a9bba73ee902f2fbbc31d4dfe43f6b1235585616dd0374d1ec3a41ce5c4a8e/start
+2026-09-28T16:33:36Z allow HEAD /_ping
+2026-09-28T16:33:36Z allow HEAD /_ping
+2026-09-28T16:33:36Z allow POST /containers/create
+2026-09-28T16:33:36Z allow POST /containers/e4c82db2b1f72adbf91be08b0fed3a79bcbe0eed1880107b2bf80602ddc4bd37/attach
+2026-09-28T16:33:36Z allow POST /containers/e4c82db2b1f72adbf91be08b0fed3a79bcbe0eed1880107b2bf80602ddc4bd37/wait
+2026-09-28T16:33:36Z allow POST /containers/e4c82db2b1f72adbf91be08b0fed3a79bcbe0eed1880107b2bf80602ddc4bd37/start

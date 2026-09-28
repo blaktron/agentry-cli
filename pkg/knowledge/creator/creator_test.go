@@ -78,7 +78,9 @@ func TestTheInstructionCarriesTheRules(t *testing.T) {
 		// keeps the pages of what it read (agentry-cli#430).
 		"**Write the wiki as you go.**",
 		"write or rewrite the pages it\nsupports before you read the next",
-		"Never read every document first",
+		"Never read\nevery document first",
+		"**Link only to pages that exist already**",
+		"never a page you wrote\n  in this run",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the instruction does not say %q", want)
