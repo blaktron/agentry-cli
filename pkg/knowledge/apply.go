@@ -569,6 +569,13 @@ func oneLine(s string) string {
 // swapIn replaces the pack with the staged tree by rename.
 func swapIn(stage, packDir string, hadPack bool) error {
 	if !hadPack {
+		// knowledge create DIR takes an existing empty DIR. os.Rename will
+		// not rename onto a directory (Go refuses on every OS, Windows
+		// itself too), so an empty one is removed first; os.Remove never
+		// removes one that holds anything (agentry-cli#426).
+		if err := os.Remove(packDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s is not empty and holds no knowledge pack; use an empty or a new folder: %w", packDir, err)
+		}
 		return os.Rename(stage, packDir)
 	}
 	old := packDir + ".old-" + filepath.Base(stage)
