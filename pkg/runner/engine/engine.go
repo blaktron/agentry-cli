@@ -451,7 +451,9 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 
 	gwName := containerName(runID, "gateway")
-	gwEnv, err := resolveEnv(p.Plan.Gateway.Env, rep, token)
+	// Its env names host paths (the bind allow-lists) in its own
+	// spelling; its mounts are ours to make, in the host's (agentry-cli#414).
+	gwEnv, err := resolveEnv(p.Plan.Gateway.Env, rd.gatewayReplacer(), token)
 	if err != nil {
 		return err
 	}
