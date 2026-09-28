@@ -301,3 +301,46 @@ func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
 		t.Fatalf("declared host is not a TCP relay in the catalog:\n%s", b)
 	}
 }
+
+// TestEnforcementNamesEverySecretWithWhereItGoes (agentry-cli#376): the
+// receipt's secrets line names a declared server's secrets beside the
+// release's own, each with the container it reaches, so a run that injected
+// a server's key never reads "none declared". Names only, never a value.
+func TestEnforcementNamesEverySecretWithWhereItGoes(t *testing.T) {
+	const ownLine = "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: API_KEY"
+	const serverPart = "each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT"
+	for _, tc := range []struct {
+		name    string
+		own     bool
+		servers []spec.MCPServerSpec
+		want    string
+	}{
+		{name: "none", want: "none declared"},
+		{name: "own only", own: true, want: ownLine},
+		{
+			name:    "server only",
+			servers: []spec.MCPServerSpec{githubServerSpec()},
+			want:    "values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart,
+		},
+		{
+			name:    "both",
+			own:     true,
+			servers: []spec.MCPServerSpec{githubServerSpec()},
+			want:    ownLine + "; " + serverPart,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mcpFixtureInputs(t, tc.servers, policy.Default())
+			if tc.own {
+				in.Manifest.Capabilities.Secrets = []string{"API_KEY"}
+			}
+			plan, err := Compile(in, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := plan.Enforcement["secrets"]; got != tc.want {
+				t.Fatalf("secrets line\n got: %s\nwant: %s", got, tc.want)
+			}
+		})
+	}
+}
