@@ -93,6 +93,24 @@ func (rd *runDirs) gatewayReplacer() *strings.Replacer {
 	return rd.replacerWith(gatewayPath)
 }
 
+// gatewayCanMount says whether a host folder can be handed to the gateway
+// for a bind. On Windows only a drive-letter path can: a network share
+// (\\server\share\…) or a long-form path (\\?\C:\…) would reach the
+// gateway with its backslashes, and its bind check would refuse the run
+// with nothing that names the folder (agentry-cli#425).
+func gatewayCanMount(path, goos string) error {
+	if goos != "windows" || path == "" {
+		return nil
+	}
+	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
+		return fmt.Errorf("is a network share or a long-form path, which Docker Desktop cannot give a run's containers; use a folder on a local drive (C:\\…)")
+	}
+	if gatewayHostPath(path, goos) == path {
+		return fmt.Errorf("is not on a drive (C:\\…); use a folder on a local drive")
+	}
+	return nil
+}
+
 // gatewayEnv resolves the gateway container's env: its bind allow-lists
 // name host paths, in the gateway's spelling.
 func (rd *runDirs) gatewayEnv(plan *spec.Plan, token string) (map[string]string, error) {
@@ -166,6 +184,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	if len(p.Plan.MCPServers) > 0 && rd.serversDir == "" {
 		return nil, Classify(ExitCLI, fmt.Errorf("plan declares MCP servers but no server store was provided"))
+	}
+	// Before anything is made: a folder the gateway could not be given as
+	// a /<drive>/… path is refused by name (agentry-cli#425).
+	for _, f := range []struct{ what, path string }{
+		{"the runner home", p.RunRoot}, {"the output folder", p.OutDir}, {"the MCP server store", p.ServersDir},
+	} {
+		if err := gatewayCanMount(f.path, gatewayOS); err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("%s %s: %w", f.what, f.path, err))
+		}
 	}
 	// inputs/ and knowledge/ exist even when empty: the compiled catalog
 	// always mounts both :ro, and an absent bind source would fail the tools
