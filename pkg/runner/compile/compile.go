@@ -1118,7 +1118,7 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 	case len(secrets) == 0 && len(serverSecrets) == 0:
 		e["secrets"] = "none declared"
 	case len(secrets) == 0:
-		e["secrets"] = "values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart
+		e["secrets"] = "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart
 	default:
 		e["secrets"] = "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: " + strings.Join(sortedCopy(secrets), ", ")
 		if len(serverSecrets) > 0 {

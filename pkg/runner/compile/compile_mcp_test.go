@@ -320,7 +320,7 @@ func TestEnforcementNamesEverySecretWithWhereItGoes(t *testing.T) {
 		{
 			name:    "server only",
 			servers: []spec.MCPServerSpec{githubServerSpec()},
-			want:    "values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart,
+			want:    "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart,
 		},
 		{
 			name:    "both",

@@ -30,7 +30,7 @@
     "mcpServers": "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network with a TCP relay linked under each host's name — a network the runner refuses to share: the run does not start while another gateway's relays are on it (checked as the run starts; a gateway started during the run is not refused), and its own relays are removed at teardown — one with none has no network — with server-scoped secrets and the manifest's plain env: @scope/server-x@1.2.3 (npm, egress api.github.com, tools filtered to list_issues, env keys GITHUB_PERMISSION)",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
-    "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT"
+    "secrets": "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT"
   },
   "gateway": {
     "image": "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3",
