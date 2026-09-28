@@ -91,7 +91,9 @@ type Params struct {
 	RunnerHome string
 	// OutDir is the mounted output folder (RQ3), already absolute.
 	OutDir string
-	// Task is the task input (may be nil for an empty task).
+	// Task is the task input (may be nil for an empty task). An empty
+	// task on the autonomous path sends the agent's own instruction
+	// instead (agentry-cli#449).
 	Task io.Reader
 	// InputPaths are operator-provided files/directories copied into the
 	// run's read-only inputs channel (RUNNER-PLAN-2 §P4).
@@ -242,6 +244,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	task, err := readTask(p.Task, rd.receiptsDir)
 	if err != nil {
+		return fail(env, redact, err)
+	}
+	if task, err = ownInstructionWhenEmpty(task, p.Plan, rd.workspace); err != nil {
 		return fail(env, redact, err)
 	}
 

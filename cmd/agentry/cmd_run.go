@@ -97,9 +97,10 @@ func newRunCmd() *cobra.Command {
 		Short: "Verify, install, and execute one BriefAgent in an isolated container",
 		Long: "Run a single-purpose BriefAgent once (RUNNER-PLAN.md):\n\n" +
 			"  agentry run ns/name@^1.2 --input task.json --out ./reports\n\n" +
-			"Task input: --input FILE, else piped stdin, else an empty task. The result\n" +
-			"goes to stdout (--output-format text|json); reports the BriefAgent writes\n" +
-			"and the full receipts land in the output folder. Every failure class has its\n" +
+			"Task input: --input FILE, else piped stdin; with no task (or an empty one) the\n" +
+			"agent is sent its own instruction and runs that. The result goes to stdout\n" +
+			"(--output-format text|json); reports the BriefAgent writes and the full\n" +
+			"receipts land in the output folder. Every failure class has its\n" +
 			"own exit code: 0 ok, 1 cli (interrupted, unknown adapter, intake), 2 usage,\n" +
 			"10 verify, 11 policy/secret, 12 compile, 13 gateway/docker, 14 agent, 15\n" +
 			"timeout, 16 budget, 17 output schema.\n\n" +

@@ -397,6 +397,23 @@ func TestInstructionRules(t *testing.T) {
 			t.Fatalf("v1 plan = %s / modes %v", plan.Instruction.SourcePath, plan.Modes)
 		}
 	})
+	t.Run("ReadInstruction gives the plan's instruction as the compile read it", func(t *testing.T) {
+		m := parseManifest(t, fullCapsYAML)
+		ws := workspaceFor(t, m, nil)
+		plan, _ := compileFixture(t, m, ws)
+		got, err := ReadInstruction(ws, plan.Instruction.SourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, "name: x") || !strings.Contains(got, "Do the skill task well.") || strings.Contains(got, "Runner contract") {
+			t.Errorf("ReadInstruction = %q, want the body without frontmatter or postscript", got)
+		}
+		for _, rel := range []string{"", "../outside.md", "/etc/passwd"} {
+			if _, err := ReadInstruction(ws, rel); err == nil {
+				t.Errorf("ReadInstruction(%q) read a path outside the package", rel)
+			}
+		}
+	})
 	t.Run("v1 mcp-server is not runnable", func(t *testing.T) {
 		m := parseManifest(t, `schemaVersion: "1"
 name: toolsrv

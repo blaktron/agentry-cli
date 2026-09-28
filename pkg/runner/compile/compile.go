@@ -539,6 +539,23 @@ func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, 
 	return "", "", fmt.Errorf("instruction file missing from the package: looked for %s (RUNNER-PLAN §R2)", strings.Join(candidates, ", "))
 }
 
+// ReadInstruction reads the instruction file a plan names (its
+// Instruction.SourcePath, archive-relative) from a workspace and returns
+// its prose as the compile read it: frontmatter stripped, without the
+// runner-contract postscript. The engine sends it as the task of a run
+// given none (agentry-cli#449).
+func ReadInstruction(workspace, rel string) (string, error) {
+	p := filepath.FromSlash(rel)
+	if rel == "" || !filepath.IsLocal(p) {
+		return "", fmt.Errorf("instruction path %q is not a file inside the package", rel)
+	}
+	b, err := os.ReadFile(filepath.Join(workspace, p)) //nolint:gosec // local path from the verified plan
+	if err != nil {
+		return "", fmt.Errorf("read instruction %s: %w", rel, err)
+	}
+	return stripFrontmatter(string(b)), nil
+}
+
 // stripFrontmatter drops a leading YAML frontmatter block: the harness
 // wants the prose, and skill frontmatter is install-target metadata.
 func stripFrontmatter(s string) string {

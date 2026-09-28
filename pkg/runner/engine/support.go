@@ -716,6 +716,34 @@ func readTask(r io.Reader, receiptsDir string) ([]byte, error) {
 	return b, nil
 }
 
+// ownInstructionWhenEmpty stands in for an empty task on the autonomous
+// path: the harness is sent the agent's own instruction, read from the
+// run's checked workspace copy, as its first message. The run setup
+// promises that ("its own instruction runs"), and an autonomous harness
+// refuses an empty stdin (docker-agent exits 1 on "no message received on
+// stdin"; agentry-cli#449). A task that is given is sent as it is.
+func ownInstructionWhenEmpty(task []byte, plan *spec.Plan, workspace string) ([]byte, error) {
+	if len(bytes.TrimSpace(task)) > 0 || !takesStdinTask(plan) {
+		return task, nil
+	}
+	s, err := compile.ReadInstruction(workspace, plan.Instruction.SourcePath)
+	if err != nil {
+		// The plan names the file and the copy was verified: its absence
+		// is the release's, not the person's.
+		return nil, Classify(ExitVerify, fmt.Errorf("a run with no task sends the agent's own instruction: %w", err))
+	}
+	return []byte(s), nil
+}
+
+// takesStdinTask reports whether the plan's harness reads its task on
+// stdin (the autonomous path, container or host process).
+func takesStdinTask(plan *spec.Plan) bool {
+	if plan.Harness.Host != nil {
+		return plan.Harness.Host.StdinTask
+	}
+	return plan.Harness.Agent.StdinTask
+}
+
 // writeMeta records run identity and timing (timestamps live here, never
 // in the plan — determinism, §R4).
 func writeMeta(receiptsDir, runID string, p Params, start time.Time) {
