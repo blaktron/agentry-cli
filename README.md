@@ -457,7 +457,8 @@ Exit codes: `0` ok · `1` cli (an interrupted run, an unknown adapter, an
 intake error) · `2` usage · `10` verify · `11` policy/secret ·
 `12` compile · `13` gateway/docker · `14` agent · `15` timeout ·
 `16` budget · `17` output schema. Task input: `--input FILE`, else piped
-stdin. Runs compose: `agentry run a ... | agentry run b ...`.
+stdin; with no task (or an empty one) the agent is sent its own instruction
+and runs that. Runs compose: `agentry run a ... | agentry run b ...`.
 
 Around the enforcement core (v2): **`agentry setup`** configures your LLM
 provider and stands up the gateway plane before any agent is involved.

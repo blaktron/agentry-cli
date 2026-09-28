@@ -743,9 +743,41 @@ func readTask(r io.Reader, receiptsDir string) ([]byte, error) {
 	return b, nil
 }
 
+// ownInstructionWhenEmpty stands in for an empty task on the autonomous
+// path: the harness is sent the agent's own instruction, read from the
+// run's checked workspace copy, as its first message. The run setup
+// promises that ("its own instruction runs"), and an autonomous harness
+// refuses an empty stdin (docker-agent exits 1 on "no message received on
+// stdin"; agentry-cli#449). A task that is given is sent as it is.
+//
+// The second result is the receipt's word for what was sent in the task's
+// place, empty when the task went as given.
+func ownInstructionWhenEmpty(task []byte, plan *spec.Plan, workspace string) ([]byte, string, error) {
+	if len(bytes.TrimSpace(task)) > 0 || !takesStdinTask(plan) {
+		return task, "", nil
+	}
+	s, err := compile.ReadInstruction(workspace, plan.Instruction)
+	if err != nil {
+		// The plan names the file and its digest: a copy that lacks it or
+		// disagrees with it is the release's fault, not the person's.
+		return nil, "", Classify(ExitVerify, err)
+	}
+	return []byte(s), fmt.Sprintf("none given: sent the agent's own instruction, %s (sha256:%s with the runner contract)",
+		plan.Instruction.SourcePath, plan.Instruction.SHA256), nil
+}
+
+// takesStdinTask reports whether the plan's harness reads its task on
+// stdin (the autonomous path, container or host process).
+func takesStdinTask(plan *spec.Plan) bool {
+	if plan.Harness.Host != nil {
+		return plan.Harness.Host.StdinTask
+	}
+	return plan.Harness.Agent.StdinTask
+}
+
 // writeMeta records run identity and timing (timestamps live here, never
 // in the plan — determinism, §R4).
-func writeMeta(receiptsDir, runID string, p Params, start time.Time) {
+func writeMeta(receiptsDir, runID string, p Params, start time.Time, taskSent string) {
 	meta := map[string]any{
 		"runId":   runID,
 		"ref":     p.Plan.Ref,
@@ -756,6 +788,10 @@ func writeMeta(receiptsDir, runID string, p Params, start time.Time) {
 		},
 		"started": start.UTC().Format(time.RFC3339),
 		"ended":   time.Now().UTC().Format(time.RFC3339),
+	}
+	if taskSent != "" {
+		// task.txt keeps the task as given; this says what went instead.
+		meta["task"] = taskSent
 	}
 	if b, err := json.MarshalIndent(meta, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(receiptsDir, "meta.json"), append(b, '\n'), 0o644)

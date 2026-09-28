@@ -91,7 +91,9 @@ type Params struct {
 	RunnerHome string
 	// OutDir is the mounted output folder (RQ3), already absolute.
 	OutDir string
-	// Task is the task input (may be nil for an empty task).
+	// Task is the task input (may be nil for an empty task). An empty
+	// task on the autonomous path sends the agent's own instruction
+	// instead (agentry-cli#449).
 	Task io.Reader
 	// InputPaths are operator-provided files/directories copied into the
 	// run's read-only inputs channel (RUNNER-PLAN-2 §P4).
@@ -244,6 +246,10 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err != nil {
 		return fail(env, redact, err)
 	}
+	task, taskSent, err := ownInstructionWhenEmpty(task, p.Plan, rd.workspace)
+	if err != nil {
+		return fail(env, redact, err)
+	}
 
 	token, err := newToken()
 	if err != nil {
@@ -298,7 +304,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if logs, lerr := d.Logs(keep, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(redact.String(logs)), 0o644)
 	}
-	writeMeta(rd.receiptsDir, runID, p, start)
+	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.
 	if env.Web = webRecord(rd.receiptsDir, p.Web); env.Web != nil {
