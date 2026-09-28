@@ -242,6 +242,23 @@ func TestApplyRefusals(t *testing.T) {
 			t.Fatal("a pack was made from it")
 		}
 	})
+	t.Run("a linked directory that stays in the outputs is refused too", func(t *testing.T) {
+		// os.Root follows a link inside its root; only the check refuses
+		// it, so this case holds the check on any host (agentry-cli#421).
+		packDir := filepath.Join(t.TempDir(), "aws-docs")
+		out := outputs(t, Changes{Write: []string{"sources/linked/page.md"}}, map[string]string{"other/page.md": "# Page\n"})
+		if err := os.MkdirAll(filepath.Join(out, "sources"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(out, "sources", "linked")
+		if err := os.Symlink(filepath.Join(out, "other"), link); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(link) })
+		if _, err := Apply(packDir, out, opts()); err == nil || !strings.Contains(err.Error(), "sources/linked is not a directory") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 	t.Run("a changes.json that is a link is not read", func(t *testing.T) {
 		packDir := filepath.Join(t.TempDir(), "aws-docs")
 		outside := outputs(t, Changes{Write: []string{"wiki/page.md"}}, map[string]string{"wiki/page.md": "# Page\n"})

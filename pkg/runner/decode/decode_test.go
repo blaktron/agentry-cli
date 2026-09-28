@@ -161,7 +161,13 @@ func TestRunFailures(t *testing.T) {
 		{name: "a text reached through a directory link inside the output", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: func(r dockerx.RunSpec) {
 				out := mountSource(r, "/out")
-				_ = os.Symlink("/", filepath.Join(out, "sub"))
+				// A tree shaped like the host's root, not the root itself:
+				// Wine's RemoveAll follows a directory link, and this test's
+				// cleanup once walked a real / that way (agentry-cli#421).
+				elsewhere := t.TempDir()
+				_ = os.MkdirAll(filepath.Join(elsewhere, "etc"), 0o755)
+				_ = os.WriteFile(filepath.Join(elsewhere, "etc", "hostname"), []byte("host\n"), 0o644)
+				_ = os.Symlink(elsewhere, filepath.Join(out, "sub"))
 				b, _ := json.Marshal(runnerdecode.Report{Schema: runnerdecode.Schema, Files: []runnerdecode.File{{Path: "report.pdf", Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: "sub/etc/hostname"}}})
 				_ = os.WriteFile(filepath.Join(out, runnerdecode.ReportFile), b, 0o644)
 			}}

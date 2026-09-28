@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/plainpath"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -319,9 +320,11 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 			return 0, err
 		}
 		defer func() { _ = root.Close() }()
-		// Not followed if it is a link (agentry-cli#421): the walk below
-		// skips links inside wiki/, but would start inside a linked one.
-		if err := knowledge.CheckPlainDir(root, knowledge.WikiDir); err != nil {
+		// A link in the reports is never followed (agentry-cli#421): a
+		// linked wiki/ fails the build, since there is no tree to take the
+		// pages from; a linked page is skipped, and a linked changes.json
+		// is not read, as if the Creator had not written them.
+		if err := plainpath.Dir(root, knowledge.WikiDir); err != nil {
 			return 0, fmt.Errorf("the Creator's reports: %w", err)
 		}
 		err = fs.WalkDir(root.FS(), knowledge.WikiDir, func(rel string, e fs.DirEntry, err error) error {
@@ -330,6 +333,9 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 			}
 			if b := path.Base(rel); b == knowledge.IndexFile || rel == knowledge.WikiDir+"/"+knowledge.LogFile {
 				return nil // the apply step writes these
+			}
+			if _, err := plainpath.File(root, rel); err != nil {
+				return nil //nolint:nilerr // a link on the way: skipped, never followed
 			}
 			body, err := fs.ReadFile(root.FS(), rel)
 			if err != nil {
@@ -387,7 +393,7 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 // a plain file within the pack's bound; a link is not read (agentry-cli#421).
 func ownChanges(root *os.Root) (knowledge.Changes, bool) {
 	var own knowledge.Changes
-	if knowledge.CheckPlainFile(root, knowledge.ChangesFile) != nil {
+	if _, err := plainpath.File(root, knowledge.ChangesFile); err != nil {
 		return own, false
 	}
 	raw, err := fs.ReadFile(root.FS(), knowledge.ChangesFile)
