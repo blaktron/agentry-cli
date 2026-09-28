@@ -615,6 +615,35 @@ func TestSessionHandshakeFailureMasksStderr(t *testing.T) {
 	if got := string(b); got != "boot: ENGINE_TEST_TOKEN=[redacted] ANTHROPIC_API_KEY=[redacted]\nfatal: no model\n" {
 		t.Errorf("agent-stderr.log = %q", got)
 	}
+	// Nothing holds the receipts: on Windows an open one could not be
+	// moved or deleted until the process exits (agentry-cli#459).
+	for _, name := range []string{"events.ndjson", "agent-stderr.log"} {
+		if heldOpen(t, filepath.Join(p.OutDir, "receipts", name)) {
+			t.Errorf("a session that failed to start still holds %s open", name)
+		}
+	}
+}
+
+// A host-run harness that cannot be started fails the session before
+// the goroutine that closes its stderr receipt exists: the start's
+// failure closes both receipts itself (agentry-cli#459).
+func TestSessionWhoseHostHarnessCannotStartClosesItsReceipts(t *testing.T) {
+	p, f := sessionFixture(t)
+	happyFake(f)
+	t.Setenv("PATH", t.TempDir())
+	p.Plan.Harness.Host = &spec.HostProcessSpec{Command: "agentry-no-such-harness"}
+	if _, err := StartSession(context.Background(), f, p); err == nil {
+		t.Fatal("a session started without its harness")
+	}
+	for _, name := range []string{"events.ndjson", "agent-stderr.log"} {
+		path := filepath.Join(p.OutDir, "receipts", name)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("the failure never reached the receipts: %v", err)
+		}
+		if heldOpen(t, path) {
+			t.Errorf("a session whose harness could not start still holds %s open", name)
+		}
+	}
 }
 
 // TestSessionStoreIsARunVolume (agentry-cli#90): an interactive run's

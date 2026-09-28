@@ -83,6 +83,13 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		budgets:  p.Plan.Harness.Session.Budgets,
 	}
 	fail := func(err error) (session.Session, error) {
+		// Only End closes the events receipt; a start that fails never
+		// reaches it, and on Windows an open receipt cannot be moved or
+		// deleted until the process exits (agentry-cli#459). Nothing
+		// writes it yet: the pump starts after a successful start.
+		if s.eventsFile != nil {
+			_ = s.eventsFile.Close()
+		}
 		td.run()
 		_, cerr := fail(env, s.redact, err)
 		_ = td.reportLeftFiles(env) // the session already failed; the report amends it
@@ -307,6 +314,9 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		wait, started, herr := startHostProcess(agentCtx, p, s.rd, rep, token, stdinR, stdoutW, stderrFile)
 		info := started.info
 		if herr != nil {
+			// No harness process, so no goroutine to close the stderr
+			// receipt (agentry-cli#459).
+			_ = stderrFile.Close()
 			cancel(herr)
 			return herr
 		}
