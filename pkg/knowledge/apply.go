@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -56,13 +57,15 @@ type ApplyOptions struct {
 	Creator Creator
 }
 
-// Drop is a change Apply did not make: a written file that failed the lint
-// (reverted to what the pack held, or not added), or a delete kept back
-// because a page that stays needs the file.
+// Drop is a change Apply did not make as written: a written file that
+// failed the lint (reverted to what the pack held, or not added), a delete
+// kept back because a page that stays needs the file, or a written page
+// kept with its links to nothing in the pack made plain text.
 type Drop struct {
 	Path   string
 	Reason string
-	// Kept is true for a delete kept back.
+	// Kept is true for a delete kept back, and for a page kept with its
+	// dead links unlinked.
 	Kept bool
 }
 
@@ -283,12 +286,22 @@ func changePath(rel string) error {
 
 // settle lints the staged tree and backs out the changes that fail, until
 // what remains passes or nothing this change did can be backed out. A
-// finding that a delete explains keeps that file; any other finding on a
-// file this change wrote reverts the file to the pack's version, or
-// removes it if it is new. Findings on files this change did not touch
-// are the pack's own, and left alone.
+// finding that a delete explains keeps that file. A page this change wrote
+// whose only findings are links to nothing in the pack is kept with those
+// links made plain text (agentry-cli#433): a run stopped at its budget has
+// pages that link to ones it had not yet written, and dropping each would
+// drop the pages linking to it in turn, leaving a stopped build nothing.
+// Any other finding on a file this change wrote reverts the file to the
+// pack's version, or removes it if it is new. Findings on files this
+// change did not touch are the pack's own, and left alone.
 func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]bool, res *Result) error {
-	for range len(written) + len(deleted) + 1 {
+	// unlinked are the pages already unlinked once: a page that still fails
+	// after its unlink (a link the raw text cannot match, or one the unlink
+	// uncovered) is dropped like any other, so every pass takes a file out
+	// of written or deleted, or unlinks a page not unlinked before, and the
+	// loop ends within its budget.
+	unlinked := map[string]bool{}
+	for range 2*len(written) + len(deleted) + 1 {
 		findings, err := lintPages(stageDir)
 		if err != nil {
 			return err
@@ -302,14 +315,23 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 			}
 			byPage[f.Page] = append(byPage[f.Page], f)
 		}
+		// restored are the deletes kept back in this pass: a finding on
+		// one explains the same finding on every page, which the next
+		// pass lints again with the file back.
+		restored := map[string]bool{}
 		for _, pg := range order {
 			explained := false
 			for _, f := range byPage[pg] {
+				if f.Target != "" && restored[f.Target] {
+					explained = true
+					continue
+				}
 				if f.Target != "" && deleted[f.Target] {
 					if err := restore(pack, stage, f.Target); err != nil {
 						return err
 					}
 					delete(deleted, f.Target)
+					restored[f.Target] = true
 					res.Dropped = append(res.Dropped, Drop{Path: f.Target, Kept: true, Reason: pg + " needs it (" + f.Message + ")"})
 					explained, changed = true, true
 				}
@@ -317,10 +339,20 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 			if explained || !written[pg] {
 				continue
 			}
+			if hrefs := deadLinksOnly(byPage[pg]); len(hrefs) > 0 && !unlinked[pg] {
+				unlinked[pg] = true
+				if err := unlink(stage, pg, hrefs); err != nil {
+					return err
+				}
+				res.Dropped = append(res.Dropped, Drop{Path: pg, Kept: true, Reason: "links to pages not in the pack made plain text: " + strings.Join(hrefs, ", ")})
+				changed = true
+				continue
+			}
 			if err := restore(pack, stage, pg); err != nil {
 				return err
 			}
 			delete(written, pg)
+			forgetKept(res, pg)
 			reasons := make([]string, 0, len(byPage[pg]))
 			for _, f := range byPage[pg] {
 				reasons = append(reasons, string(f.Rule)+": "+f.Message)
@@ -329,10 +361,117 @@ func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]b
 			changed = true
 		}
 		if !changed {
-			return nil
+			break
 		}
 	}
+	// A backstop: whatever this change wrote that still fails is backed
+	// out, so a page that fails the lint never lands. The passes above
+	// already make progress each time, so no test reaches it today; it is
+	// here so that a future rule in them cannot land a failing page.
+	findings, err := lintPages(stageDir)
+	if err != nil {
+		return err
+	}
+	for _, f := range findings {
+		if !written[f.Page] {
+			continue
+		}
+		if err := restore(pack, stage, f.Page); err != nil {
+			return err
+		}
+		delete(written, f.Page)
+		forgetKept(res, f.Page)
+		res.Dropped = append(res.Dropped, Drop{Path: f.Page, Reason: string(f.Rule) + ": " + f.Message})
+	}
 	return nil
+}
+
+// forgetKept takes back the note that a page was kept unlinked, once the
+// page is dropped after all.
+func forgetKept(res *Result, pg string) {
+	res.Dropped = slices.DeleteFunc(res.Dropped, func(d Drop) bool { return d.Path == pg && d.Kept && strings.HasPrefix(d.Path, WikiDir+"/") })
+}
+
+// deadLinksOnly answers the links a page writes to nothing in the pack,
+// when those are its only findings; nil when it has any other.
+func deadLinksOnly(fs []Finding) []string {
+	var hrefs []string
+	for _, f := range fs {
+		if f.Rule != RuleLink || f.Href == "" {
+			return nil
+		}
+		if !slices.Contains(hrefs, f.Href) {
+			hrefs = append(hrefs, f.Href)
+		}
+	}
+	return hrefs
+}
+
+// unlink rewrites the staged page rel with each link to one of hrefs made
+// its plain text: "[the depot](rotterdam.md)" becomes "the depot", and an
+// image "![map](m.md)" becomes "map". It reads the page as the lint does
+// (lintPage): only the body after the frontmatter, line by line, outside
+// fenced blocks and code spans, with linkRE's own grammar.
+func unlink(stage *os.Root, rel string, hrefs []string) error {
+	f, err := stage.Open(rel)
+	if err != nil {
+		return err
+	}
+	body, err := io.ReadAll(f)
+	_ = f.Close()
+	if err != nil {
+		return err
+	}
+	w, err := stage.OpenFile(rel, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := w.WriteString(unlinkText(string(body), hrefs)); err != nil {
+		_ = w.Close()
+		return err
+	}
+	return w.Close()
+}
+
+func unlinkText(text string, hrefs []string) string {
+	fm, ok := parseFrontmatter(text)
+	if !ok {
+		return text
+	}
+	raw := strings.Split(text, "\n")
+	stripped := strings.Split(stripCode(text), "\n")
+	for i := fm.bodyLine; i < len(raw) && i < len(stripped); i++ {
+		line := raw[i]
+		if strings.TrimSpace(stripped[i]) == "" {
+			// Blank, or inside a fenced block the lint does not read.
+			continue
+		}
+		code := codeRE.FindAllStringIndex(line, -1)
+		ms := linkRE.FindAllStringSubmatchIndex(line, -1)
+		for j := len(ms) - 1; j >= 0; j-- {
+			m := ms[j]
+			if !slices.Contains(hrefs, line[m[2]:m[3]]) || inSpan(code, m[0], m[1]) {
+				continue
+			}
+			from, textEnd := m[0], strings.IndexByte(line[m[0]:], ']')+m[0]
+			if from > 0 && line[from-1] == '!' {
+				from--
+			}
+			line = line[:from] + line[m[0]+1:textEnd] + line[m[1]:]
+		}
+		raw[i] = line
+	}
+	return strings.Join(raw, "\n")
+}
+
+// inSpan says whether [from, to) overlaps any of spans.
+func inSpan(spans [][]int, from, to int) bool {
+	for _, sp := range spans {
+		if from < sp[1] && sp[0] < to {
+			return true
+		}
+	}
+	return false
 }
 
 // restore puts rel in the stage back to what the pack held, or removes it
