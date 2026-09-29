@@ -19,8 +19,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry/pkg/apiclient"
-	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -104,21 +104,13 @@ func runPublish(cmd *cobra.Command, dir, tag string) error {
 // ResolveInclude → BuildArchive, §6.5) and POSTs it as multipart with the
 // client-computed digest for the server cross-check.
 func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, dir string, m *manifest.Manifest) (*apiclient.SubmitVersionResponse, error) {
-	files, err := pkgarchive.WalkWorkspace(dir)
+	var archive bytes.Buffer
+	info, err := localrun.PackWorkspace(dir, m, &archive)
 	if err != nil {
-		return nil, fmt.Errorf("walk workspace %s: %w", dir, err)
-	}
-	include := manifest.ResolveInclude(m.Publish.Include, files)
-	if len(include) == 0 {
-		return nil, fmt.Errorf("publish.include matches no files in %s (V4)", dir)
-	}
-	if err := shippedPacksIncluded(m, include); err != nil {
 		return nil, err
 	}
-	var archive bytes.Buffer
-	info, err := pkgarchive.BuildArchive(dir, include, &archive)
-	if err != nil {
-		return nil, fmt.Errorf("build archive: %w", err)
+	if err := shippedPacksIncluded(m, info.Files); err != nil {
+		return nil, err
 	}
 	_, _ = fmt.Fprintf(out, "submitting %s/%s %s (cli-upload source): %d file(s), %d bytes, %s\n",
 		m.Namespace, m.Name, m.Version, len(info.Files), info.Size, info.Digest)

@@ -1,0 +1,12 @@
+# The release identity of every built-in package (agentry-cli#470): its
+# ns/name@version and the digest of the archive PackWorkspace makes of its
+# embedded tree, which is the digest the registry holds for that release.
+#
+# Append only. A line is never edited or removed, because a published
+# version is never rebuilt. A built-in whose tree changes takes a new version
+# (its agent.yaml and its package's Version constant) and a new line here.
+# TestTheBuiltinsLockHoldsEveryBuiltin checks the current versions, and
+# scripts/builtins-lock-check.sh (CI) refuses a change to a line the base
+# branch already has.
+agentry/knowledge-creator@1.1.0 sha256:e2ae6aaf0d773c4e203e9a0edaa9b2f0f89a58f46feb654555ab292825072532
+agentry/drafter@1.1.0 sha256:d926e1bd2063dc3602bb004852ae97a69f71e663219961ab5408c9718eb12099

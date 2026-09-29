@@ -31,7 +31,7 @@ func refusedDraft() *Draft {
 		OpenQuestions: []string{"QUESTION-MARKER?"},
 		AIReview: &AIReview{Description: webscan.Pass,
 			WithheldSources: []WithheldSource{{Tool: "web_read", URL: "https://WITHHELD-MARKER.example/", Reason: "AI Review flagged it (injection)"}}},
-		Drafter: &Made{Ref: "agentry/drafter@1.0.0", RunID: "run-1"},
+		Drafter: &Made{Ref: "agentry/drafter@1.1.0", RunID: "run-1"},
 	}
 }
 
@@ -296,7 +296,7 @@ func TestAnAnswerThatIsNotADraftIsRepairedFromItsOwnLastMessage(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(out, "reports", "notes.md"), []byte("NOTES-MARKER\n"), 0o644)
 	last := `{"manifest": {"name": "x"}} Wait, resending. {"manifest": {"name": "x"}}`
 	env := &receipt.Envelope{RunID: "run-1", Result: receipt.TextResult("\n\n" + last), Harness: receipt.Harness{Model: "m"}}
-	d := Unparsed(env, out, webscan.Result{Verdict: webscan.Pass}, "agentry/drafter@1.0.0", "b", errors.New("the final message is not valid JSON"))
+	d := Unparsed(env, out, webscan.Result{Verdict: webscan.Pass}, "agentry/drafter@1.1.0", "b", errors.New("the final message is not valid JSON"))
 	if len(d.Manifest) != 0 || d.ManifestError != "the Drafter's last message was not a draft: the final message is not valid JSON" ||
 		d.Instructions != "# X\n\n## Role\n\nReads.\n" || d.Notes != "NOTES-MARKER\n" || d.Drafter.RunID != "run-1" || d.AIReview == nil {
 		t.Fatalf("%+v", d)

@@ -455,3 +455,61 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.prerelease }}
           draft: ${{ needs.preflight.outputs.draft }}
           make_latest: ${{ needs.preflight.outputs.latest }}
+
+  # Every built-in package this release carries (the Knowledge Creator, the
+  # Drafter, any later entry of localrun.Builtins()) is published to the
+  # channel's registry by the release's own Linux binary, from the bytes it
+  # embeds, so the directory shows the packages that run (agentry-cli#470).
+  # A version the registry already holds with the same digest is skipped.
+  # The built-ins live in the agentry organization's namespace, and only an
+  # account with publish rights there can put them on the registry (the
+  # operator, 2026-09-29): the secret AGENTRY_BUILTINS_TOKEN_DEV or
+  # AGENTRY_BUILTINS_TOKEN_PRODUCTION is that account's PAT. Without it the
+  # job fails: the release is out and its built-ins are not in the registry.
+  # A version that goes to review publishes when platform staff approve it;
+  # the summary says which.
+  builtins:
+    needs: [preflight, build]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      CHANNEL: ${{ needs.preflight.outputs.channel }}
+      REGISTRY: ${{ needs.preflight.outputs.registry }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: agentry-cli-${{ needs.preflight.outputs.version }}
+          path: ${{ runner.temp }}/bundle
+      - name: Publish the built-in packages
+        env:
+          TOKEN_DEV: ${{ secrets.AGENTRY_BUILTINS_TOKEN_DEV }}
+          TOKEN_PRODUCTION: ${{ secrets.AGENTRY_BUILTINS_TOKEN_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          case "$CHANNEL" in
+            production) tok="$TOKEN_PRODUCTION"; name=AGENTRY_BUILTINS_TOKEN_PRODUCTION ;;
+            dev) tok="$TOKEN_DEV"; name=AGENTRY_BUILTINS_TOKEN_DEV ;;
+            *) echo "::error::channel '$CHANNEL' is neither production nor dev"; exit 1 ;;
+          esac
+          [ -n "$tok" ] || { echo "::error::no $name secret: the built-ins of $VERSION are not published to $REGISTRY"; exit 1; }
+          bin="$RUNNER_TEMP/bundle/agentry-$VERSION-linux-amd64"
+          chmod +x "$bin"
+          # A config directory of this job's own: the runner is persistent.
+          export AGENTRY_CONFIG_DIR="$RUNNER_TEMP/agentry-config"
+          "$bin" --registry "$REGISTRY" builtins | tee "$RUNNER_TEMP/builtins.txt"
+          set +e
+          AGENTRY_TOKEN="$tok" "$bin" --registry "$REGISTRY" builtins publish 2>&1 | tee "$RUNNER_TEMP/publish.txt"
+          st=${PIPESTATUS[0]}
+          set -e
+          {
+            echo "### Built-in packages on $REGISTRY"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/builtins.txt"
+            echo
+            cat "$RUNNER_TEMP/publish.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$st"
