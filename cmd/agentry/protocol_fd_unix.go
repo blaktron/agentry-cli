@@ -37,6 +37,12 @@ func openProtocolEvents() (io.Writer, error) {
 	if fl&unix.O_ACCMODE == unix.O_RDONLY {
 		return nil, errors.New("--session-protocol writes its events to descriptor 3, and it is open for reading only")
 	}
+	// The descriptor came from the driver without close-on-exec, and a
+	// descriptor without it survives every exec: every process the CLI
+	// starts (the docker client, a host-run harness) would inherit the
+	// events, could write lines the driver takes as the session's, and would
+	// hold the pipe open past the CLI (agentry-cli#482).
+	unix.CloseOnExec(fd)
 	return os.NewFile(fd, "session-events"), nil
 }
 
