@@ -1,8 +1,9 @@
 // `agentry validate` (§11, D-12): offline parity with the server's submit
-// validation — manifest rules V1–V8 via pkg/manifest, the S1 inventory
-// subset and the S3/S4 scan via pkg/rules, run over the files that publish
-// would actually ship. The check itself is pkg/validate (agentry-cli#478);
-// the command adds the rule bundle's precedence and the --rules-update fetch.
+// validation — the manifest rules via pkg/manifest, the S1 inventory subset
+// via pkg/archive's sniffers, and the S3/S4 scan via pkg/rules, run over the
+// files that publish would actually ship. The check itself is pkg/validate
+// (agentry-cli#478); the command adds the rule bundle's precedence and the
+// --rules-update fetch.
 package main
 
 import (
@@ -15,7 +16,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/validate"
 	"github.com/blaktron/agentry/pkg/manifest"
 	"github.com/blaktron/agentry/pkg/rules"
-	"github.com/blaktron/agentry/pkg/ruleset"
 )
 
 // newValidateCmd builds the validate command.
@@ -145,9 +145,5 @@ func loadRulesBundle() (*rules.Bundle, string, error) {
 	if b, _ := newestCachedBundle(); b != nil {
 		return b, "cached via --rules-update", nil
 	}
-	b, err := ruleset.Load()
-	if err != nil {
-		return nil, "", fmt.Errorf("load embedded rule bundle: %w", err)
-	}
-	return b, "embedded", nil
+	return validate.Embedded()
 }

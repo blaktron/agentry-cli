@@ -17,7 +17,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/validate"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
-	"github.com/blaktron/agentry/pkg/rules"
 )
 
 // The repair turn's own caps (plan builder-simplify.md §5.2 step 3): it
@@ -53,16 +52,18 @@ type PostStep struct {
 	Ref, Build string
 	// Budgets are the first turn's; the repair turn gets what it left.
 	Budgets spec.Budgets
-	// Checker asks AI Review's check of the finished draft (CheckerFor);
-	// nil when none could be made, which the draft records as unanswered.
-	Checker Checker
+	// Checker asks AI Review's check of the finished draft (CheckerFor).
+	// CheckerErr is why CheckerFor could make none; a nil Checker (an
+	// untyped nil) is recorded as unanswered, never as a pass.
+	Checker    Checker
+	CheckerErr error
 	// Repair runs the Drafter's one repair turn. It must run the Drafter
 	// without its web tools and with no web configuration, so no key and
 	// nothing to read: localrun.RepairRun builds that run.
 	Repair func(context.Context, RepairTurn) (*receipt.Envelope, error)
 	// Rules loads the S4 bundle the package is validated under; nil is the
 	// bundle embedded in this binary (validate.Embedded).
-	Rules func() (*rules.Bundle, string, error)
+	Rules validate.RulesLoader
 	// Log takes the line announcing the repair turn; nil discards it.
 	Log io.Writer
 	// OnUsage is the live usage reporter the first turn had; the repair
@@ -106,8 +107,8 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 	var ce *engine.ClassifiedError
 	if runErr != nil && env != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && ctx.Err() == nil {
 		u := Unparsed(env, p.OutDir, p.Scan, p.Ref, p.Build, runErr)
-		rules, _ := rulesReport(u)
-		d, env = p.repair(ctx, u, env, RepairReport{Rules: rules})
+		lines, _ := rulesReport(u)
+		d, env = p.repair(ctx, u, env, RepairReport{Rules: lines})
 		if d.IsRepaired() {
 			runErr = nil
 			env.Status, env.ExitCode, env.ExitClass, env.Error, env.Stage = "ok", engine.ExitOK, receipt.ExitClassName(engine.ExitOK), "", ""
@@ -263,8 +264,13 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 // was spent before (an answer that was not a draft).
 func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Envelope, repairSpent bool) (*Draft, *receipt.Envelope) {
 	var checkerErr error
-	if p.Checker == nil {
+	switch {
+	case p.CheckerErr != nil:
+		// The key's own error is not recorded: draft.json says why in the
+		// CLI's words.
 		checkerErr = errors.New("AI Review cannot check with this key")
+	case p.Checker == nil:
+		checkerErr = errors.New("this client asks AI Review for no check")
 	}
 	checks := 0
 	var spent Check
@@ -300,9 +306,9 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 
 	c, err := ask(d)
 	r := RepairReport{Task: p.Task}
-	rules, refused := rulesReport(d)
+	lines, refused := rulesReport(d)
 	if refused {
-		r.Rules = rules
+		r.Rules = lines
 	}
 	if c != nil {
 		r.Flagged = c.Repairable()

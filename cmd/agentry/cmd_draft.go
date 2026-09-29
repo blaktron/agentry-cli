@@ -236,19 +236,16 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	}
 	env, runErr := draftRun(cmd, first)
 	checker, checkerErr := draftChecker(web)
-	if checkerErr != nil {
-		checker = nil
-	}
 	post := drafter.PostStep{
 		OutDir: outDir, Description: description, Task: task, Scan: desc, Ref: localrun.Drafter().Ref(), Build: version.Build(),
-		Budgets: budgets, Checker: checker, Log: errOut, OnUsage: first.OnUsage,
+		Budgets: budgets, Checker: checker, CheckerErr: checkerErr, Log: errOut, OnUsage: first.OnUsage,
 		Repair: func(_ context.Context, t drafter.RepairTurn) (*receipt.Envelope, error) {
 			return draftRun(cmd, localrun.RepairRun(first, t))
 		},
 		Rules: loadRulesBundle,
 	}
 	d, env, err := post.Run(cmd.Context(), env, runErr)
-	if d == nil && runErr != nil && errors.Is(err, runErr) {
+	if runErr != nil && err != nil {
 		// The run failed, or its answer was not a draft and its repair turn
 		// returned none either.
 		var ce *engine.ClassifiedError

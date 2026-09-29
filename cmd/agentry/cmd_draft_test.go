@@ -1172,3 +1172,23 @@ func TestARepairSpentOnAnAnswerThatWasNotADraftIsNotSpentAgain(t *testing.T) {
 		t.Fatalf("%d run(s), %d check(s), check %+v", len(*runs), len(checks.asked), d.AIReview.Check)
 	}
 }
+
+// TestADraftIsValidatedUnderValidatesOwnBundle: agentry draft checks its
+// package under the rule bundle agentry validate resolves, so an override
+// that will not load leaves the draft unchecked and saying so, never
+// validated under another bundle (DEV-011).
+func TestADraftIsValidatedUnderValidatesOwnBundle(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	t.Setenv(envRulesDir, t.TempDir())
+	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+	out := filepath.Join(t.TempDir(), "o")
+	if _, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	d, _ := readDraft(t, out)
+	if !strings.HasPrefix(d.ManifestError, "the draft could not be checked: load rule bundle from") || d.Validation != nil {
+		t.Fatalf("manifestError %q, validation %s", d.ManifestError, d.Validation)
+	}
+}

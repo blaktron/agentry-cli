@@ -29,7 +29,7 @@ type Report struct {
 	Passed bool `json:"passed"`
 	// Manifest is what agent.yaml said about itself.
 	Manifest Manifest `json:"manifest"`
-	// Issues are the manifest rules V1–V9, errors and warnings.
+	// Issues are the manifest rules' results, errors and warnings.
 	Issues []Issue `json:"issues"`
 	// Inventory is the S1 subset over the resolved include set.
 	Inventory []InventoryFinding `json:"inventory"`
@@ -91,6 +91,9 @@ type Finding struct {
 	Detail     map[string]string `json:"detail,omitempty"`
 }
 
+// RulesLoader loads the S4 signature bundle and says where it came from.
+type RulesLoader func() (*rules.Bundle, string, error)
+
 // Options are how a workspace is checked.
 type Options struct {
 	// Strict treats manifest warnings as errors.
@@ -101,7 +104,7 @@ type Options struct {
 	// is the bundle embedded in this binary (Embedded). A loader that fails
 	// fails the check: it never passes content S4 did not examine
 	// (DEV-011).
-	Rules func() (*rules.Bundle, string, error)
+	Rules RulesLoader
 }
 
 // Embedded is the S4 bundle embedded in this binary, the floor every client

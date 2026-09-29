@@ -128,6 +128,51 @@ func TestThePostStepsRepairTurnIsGivenTheRulesReportAndItsOwnDraftAlone(t *testi
 	}
 }
 
+// flagChecker flags the first answer off_task and passes the second.
+type flagChecker struct{ postChecker }
+
+func (c *flagChecker) Check(ctx context.Context, p draftcheck.Package) (*Check, error) {
+	ch, err := c.postChecker.Check(ctx, p)
+	if len(c.asked) == 1 {
+		ch.Draft = &CheckDraft{Verdict: CheckFlagged, Score: 3, Scores: map[string]int{"off_task": 3}, Flagged: []string{"off_task"}, QuestionSet: "sha256:d"}
+	}
+	return ch, err
+}
+
+// TestAFlaggedDraftsRepairTurnIsAlsoGivenTheTask: a draft the rules pass
+// and AI Review's check flags gets the one repair turn with what the check
+// flagged and the task the first turn was given, which AI Review passed
+// before that turn, and still nothing else of the first turn's.
+func TestAFlaggedDraftsRepairTurnIsAlsoGivenTheTask(t *testing.T) {
+	out := t.TempDir()
+	var tasks []string
+	passing := strings.Replace(postDraft, `"intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, "", 1)
+	p := PostStep{
+		OutDir: out, Description: "DESCRIPTION-MARKER", Task: "TASK-MARKER: summarize my notes.",
+		Scan: webscan.Result{Verdict: webscan.Pass}, Ref: "agentry/drafter@1.1.1", Checker: &flagChecker{},
+		Repair: func(_ context.Context, rt RepairTurn) (*receipt.Envelope, error) {
+			tasks = append(tasks, rt.Task)
+			return &receipt.Envelope{Status: "ok", Result: json.RawMessage(postRepaired)}, nil
+		},
+	}
+	d, _, err := p.Run(context.Background(), firstTurn(t, out, passing), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || !strings.Contains(tasks[0], "## What AI Review flagged\n\n- AI Review off_task, score 3:") ||
+		!strings.Contains(tasks[0], "## The task you were given\n\nTASK-MARKER") || strings.Contains(tasks[0], "## The rules' report") {
+		t.Fatalf("the repair task(s):\n%s", strings.Join(tasks, "\n---\n"))
+	}
+	for _, not := range []string{"DESCRIPTION-MARKER", "NOTES-MARKER", "MATCH-MARKER", "SOURCE-MARKER", "QUESTION-MARKER", "WITHHELD-MARKER"} {
+		if strings.Contains(tasks[0], not) {
+			t.Errorf("the repair task carries %q", not)
+		}
+	}
+	if !d.IsRepaired() || d.AIReview.Check.Checks != 2 || d.AIReview.Check.Verdict() != CheckPass {
+		t.Fatalf("the draft's check %+v", d.AIReview.Check)
+	}
+}
+
 // TestAPostStepWithNoCheckerAndNoRepairSaysSo: a client that could make no
 // checker, or runs no repair turn, gets a draft that says so, never one
 // that reads as checked or as refused with nothing tried.
@@ -141,7 +186,7 @@ func TestAPostStepWithNoCheckerAndNoRepairSaysSo(t *testing.T) {
 	if d.Passed() || d.IsRepaired() || !strings.Contains(d.Notes, "## Not repaired") || !strings.Contains(d.Notes, "this client runs no repair turn") {
 		t.Fatalf("notes:\n%s", d.Notes)
 	}
-	if c := d.AIReview.Check; c == nil || c.Unanswered != "AI Review cannot check with this key" || c.Checks != 0 {
+	if c := d.AIReview.Check; c == nil || c.Unanswered != "this client asks AI Review for no check" || c.Checks != 0 {
 		t.Fatalf("the check %+v", d.AIReview.Check)
 	}
 }
