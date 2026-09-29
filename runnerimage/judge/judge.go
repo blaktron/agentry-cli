@@ -5,11 +5,14 @@
 // yes/no questions ("Nouls"), and each question is answered with a
 // probability.
 //
-// Two question sets exist, both constants:
+// Three question sets exist, all constants:
 //   - the rubric's six, which stage S5 of the publication pipeline asks
-//     about a release (RubricQuestions);
+//     about a release (RubricQuestions), through RubricScanner, which a
+//     finished draft's check asks through too;
 //   - the model-input four, which a scan of text a model is about to read
-//     asks (ModelInputQuestions), through ModelInputScanner.
+//     asks (ModelInputQuestions), through ModelInputScanner;
+//   - the draft set, which the check of a finished draft asks about its
+//     instruction beside the rubric (DraftQuestions), through DraftScanner.
 //
 // Nothing a caller scans is ever rendered into a question: the text travels
 // in the request's state, the data the questions are asked about, so a
@@ -147,8 +150,8 @@ func (c *Client) Model() string { return c.model }
 func (c *Client) Endpoint() string { return c.endpoint }
 
 // Question is one yes/no question: an id the answer is keyed by, and its
-// text. The text is a constant of this package; see RubricQuestions and
-// ModelInputQuestions.
+// text. The text is a constant of this package; see RubricQuestions,
+// ModelInputQuestions and DraftQuestions.
 type Question struct {
 	ID   string
 	Text string
@@ -368,4 +371,56 @@ func Chunk(s string, n int) []string {
 		s = s[cut:]
 	}
 	return append(out, s)
+}
+
+// askBanded asks one request's questions, then, up to samples in all,
+// asks again the ones whose answer fell in the borderline band, and keeps
+// each question's highest answer, never the mean: disagreement escalates. Every question
+// must be answered. The model-input scan and the draft scan share it.
+func askBanded(ctx context.Context, a Asker, state map[string]string, qs []Question, samples int) (map[string]float64, Usage, error) {
+	var usage Usage
+	first, u, err := a.Ask(ctx, state, qs)
+	usage.Add(u)
+	if err != nil {
+		return nil, usage, err
+	}
+	best := make(map[string]float64, len(qs))
+	for _, q := range qs {
+		p, ok := first[q.ID]
+		if !ok {
+			return nil, usage, fmt.Errorf("judge: no answer for %s", q.ID)
+		}
+		best[q.ID] = p
+	}
+	for i := 1; i < samples; i++ {
+		var again []Question
+		for _, q := range qs {
+			if p := best[q.ID]; p >= BandLow && p <= BandHigh {
+				again = append(again, q)
+			}
+		}
+		if len(again) == 0 {
+			break
+		}
+		probs, u, err := a.Ask(ctx, state, again)
+		usage.Add(u)
+		if err != nil {
+			return nil, usage, err
+		}
+		for id, p := range probs {
+			if p > best[id] {
+				best[id] = p
+			}
+		}
+	}
+	return best, usage, nil
+}
+
+// FailureOf is the failure word for an answer the judge could not give:
+// FailureTimeout when the call's deadline passed, else FailureJudgeError.
+func FailureOf(ctx context.Context, err error) string {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return FailureTimeout
+	}
+	return FailureJudgeError
 }

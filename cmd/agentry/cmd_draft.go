@@ -9,9 +9,12 @@
 // every result read by AI Review before its model does; its answer, held to
 // output.schema.json by the runner, has its mechanical slips corrected, is
 // rendered into a package and checked by the same code as `agentry
-// validate`; a draft the rules still refuse gets one repair turn
-// (builder-simplify.md §5.2, agentry-cli#417), and the problems of the
-// answer kept are written into draft.json rather than refusing the draft.
+// validate`; AI Review checks the finished draft as the pipeline will at
+// publish (§5.2 step 4, agentry-cli#418); a draft the rules still refuse,
+// or one the check flagged for something it can fix, gets one repair turn
+// (builder-simplify.md §5.2, agentry-cli#417), and is checked again; and
+// the problems and verdicts of the answer kept are written into draft.json
+// rather than refusing the draft.
 
 package main
 
@@ -73,6 +76,17 @@ var draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, erro
 	return r.Execute(cmd.Context(), draftDocker())
 }
 
+// draftChecker builds the check of the finished draft: the registry's
+// route with the job's credential for a hosted draft, the core's
+// pkg/draftcheck with the person's own Jev key on this computer. A seam for
+// tests.
+var draftChecker = func(w *engine.WebRun) (drafter.Checker, error) {
+	if w.Scan == toolsrv.WebScanRegistry {
+		return &drafter.RegistryChecker{Base: w.Registry, JobToken: w.JobToken}, nil
+	}
+	return drafter.CoreCheck(w.JevKey)
+}
+
 // draftScanner builds the description's scanner; a seam for tests.
 var draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
 	if w.Scan == toolsrv.WebScanRegistry {
@@ -101,9 +115,12 @@ func newDraftCmd() *cobra.Command {
 			"read, so the description should hold no secret.\n\n" +
 			"The draft is written to DIR/draft.json, and rendered as a package in DIR/package, checked with the same\n" +
 			"rules as `agentry validate`. Its mechanical slips (a value named twice, an empty part, a list or a line\n" +
-			"past its limit) are corrected first and named in the notes. If the rules still refuse it, the Drafter\n" +
-			"gets one repair turn, without its web tools, given only their report and its own draft; the second\n" +
-			"answer is kept, with any problems in draft.json. Review every part before you publish it.",
+			"past its limit) are corrected first and named in the notes. AI Review then checks the finished package:\n" +
+			"the release rubric, asked as the pipeline asks it at publish, and whether the instructions do the task\n" +
+			"described; its verdicts go into draft.json. If the rules still refuse the draft, or the check flagged\n" +
+			"something it can fix, the Drafter gets one repair turn, without its web tools, given only their report,\n" +
+			"what the check flagged (with the task) and its own draft; the second answer is checked again and kept,\n" +
+			"with any problems in draft.json. Review every part before you publish it.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return draftRunE(cmd, args, &o) },
 	}
@@ -228,7 +245,9 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if runErr != nil && env != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && cmd.Context().Err() == nil {
 		// The last message was not a draft: its repair turn is given the
 		// error and that message back, and a draft it returns is kept.
-		d, env = repairDraft(cmd, first, drafter.Unparsed(env, outDir, desc, localrun.Drafter().Ref(), version.Build(), runErr), env)
+		u := drafter.Unparsed(env, outDir, desc, localrun.Drafter().Ref(), version.Build(), runErr)
+		rules, _ := repairReport(u)
+		d, env = repairDraft(cmd, first, u, env, drafter.RepairReport{Rules: rules})
 		if d.IsRepaired() {
 			// The draft is the repair turn's answer, so the run stands as
 			// that turn ended; the usage stays both turns'.
@@ -247,12 +266,13 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		return runErr
 	}
 	err = nil
+	// A draft that came from the unparsed answer's repair turn has spent it.
+	repairSpent := d != nil
 	if d == nil {
-		if d, err = finishDraft(env, outDir, desc); err == nil {
-			d, env = repairDraft(cmd, first, d, env)
-		}
+		d, err = finishDraft(env, outDir, desc)
 	}
 	if err == nil {
+		d, env = repairAndCheck(cmd, first, web, description, task, d, env, repairSpent)
 		err = writeDraft(outDir, d)
 	}
 	if o.outputFormat == "json" {
@@ -291,16 +311,26 @@ type draftReport struct {
 	// its repair turn.
 	Corrections int  `json:"corrections"`
 	Repaired    bool `json:"repaired"`
+	// Check is AI Review's check of the finished draft as one word: pass,
+	// flagged or not_scanned, unanswered when it has no answer, absent
+	// when the draft could not be rendered to check.
+	Check string `json:"check,omitempty"`
+}
+
+// validationPassed says the rules pass the draft's rendered package.
+func validationPassed(d *drafter.Draft) bool {
+	var v validateOutput
+	return d.ManifestError == "" && json.Unmarshal(d.Validation, &v) == nil && v.Passed
 }
 
 func draftReportOf(outDir string, d *drafter.Draft) draftReport {
 	r := draftReport{File: filepath.Join(outDir, "draft.json"), ManifestError: d.ManifestError != "",
 		Matches: len(d.Matches), OpenQuestions: len(d.OpenQuestions), Rendered: isDir(filepath.Join(outDir, "package")),
 		Corrections: len(d.Corrections()), Repaired: d.IsRepaired()}
-	var v validateOutput
-	r.Passed = d.ManifestError == "" && json.Unmarshal(d.Validation, &v) == nil && v.Passed
+	r.Passed = validationPassed(d)
 	if a := d.AIReview; a != nil {
 		r.Withheld = len(a.WithheldSources)
+		r.Check = a.Check.Word()
 	}
 	return r
 }
@@ -423,28 +453,32 @@ const (
 // why. The envelope that comes back carries both turns' usage, and the live
 // usage lines the repair turn narrates count from the first turn's total,
 // so a sandbox host meters the draft as a whole.
-func repairDraft(cmd *cobra.Command, first localrun.Run, d *drafter.Draft, env *receipt.Envelope) (*drafter.Draft, *receipt.Envelope) {
-	report, ok := repairReport(d)
-	if !ok || cmd.Context().Err() != nil {
+//
+// r says what sent the draft to it: the rules' report, what AI Review's
+// check flagged that the draft can fix, or both; with a flag the turn is
+// also given the first turn's task, which AI Review passed before that
+// turn started.
+func repairDraft(cmd *cobra.Command, first localrun.Run, d *drafter.Draft, env *receipt.Envelope, r drafter.RepairReport) (*drafter.Draft, *receipt.Envelope) {
+	if r.Empty() || cmd.Context().Err() != nil {
 		return d, env
 	}
 	errOut := cmd.ErrOrStderr()
-	task, err := drafter.RepairTask(d, report)
+	task, err := drafter.RepairTask(d, r)
 	if err != nil {
-		d.NoteNotRepaired("its task could not be written")
+		d.NoteNotRepaired(r, "its task could not be written")
 		return d, env
 	}
 	budgets, ok := repairBudgets(*first.Budgets, env.Usage)
 	if !ok {
-		d.NoteNotRepaired("the first turn had spent the draft's budget")
+		d.NoteNotRepaired(r, "the first turn had spent the draft's budget")
 		return d, env
 	}
 	runID, err := engine.NewRunID()
 	if err != nil {
-		d.NoteNotRepaired("it could not be given a run id")
+		d.NoteNotRepaired(r, "it could not be given a run id")
 		return d, env
 	}
-	_, _ = fmt.Fprintf(errOut, "The rules refused the draft (%d problem(s)). The Drafter has one repair turn, given only their report and its own draft, without its web tools.\n", len(report))
+	_, _ = fmt.Fprintln(errOut, drafter.RepairAnnouncement(r))
 	spent := env.Usage
 	onUsage := first.OnUsage
 	if onUsage != nil {
@@ -466,21 +500,106 @@ func repairDraft(cmd *cobra.Command, first localrun.Run, d *drafter.Draft, env *
 		if errors.As(rerr, &ce) {
 			why = fmt.Sprintf("its run ended with exit %d", ce.Code)
 		}
-		d.NoteNotRepaired(why)
+		d.NoteNotRepaired(r, why)
 		return d, &total
 	}
-	rd, err := drafter.Repaired(d, renv, dir, report)
+	rd, err := drafter.Repaired(d, renv, dir, r)
 	if err != nil {
-		d.NoteNotRepaired("its answer was not a draft")
+		d.NoteNotRepaired(r, "its answer was not a draft")
 		return d, &total
 	}
 	pkg := filepath.Join(first.OutDir, "package")
 	if err := os.RemoveAll(pkg); err != nil {
-		d.NoteNotRepaired("the first answer's package could not be replaced")
+		d.NoteNotRepaired(r, "the first answer's package could not be replaced")
 		return d, &total
 	}
 	checkDraft(rd, pkg)
 	return rd, &total
+}
+
+// repairAndCheck is the post-step's last two steps (plan builder-simplify.md
+// §5.2 steps 3 and 4, D6; agentry-cli#417, #418). AI Review checks the
+// rendered package (the release rubric as S5 will ask it at publish, and
+// the draft question set against the person's description), and the
+// verdicts go into draft.json under aiReview.check. A draft the rules
+// refuse, or one the check flagged for something it can fix
+// (Check.Repairable: off_task, or a rubric finding but C3, which editing
+// the draft does not clear until blaktron/agentry#731), is given its one
+// repair turn with the rules' report and what the check flagged, and the
+// second answer is checked again. So a draft asks at most two checks, the
+// runs extension's cap for a hosted one (agentry-enterprise#265), and none
+// is ever retried: the registry counts a check as it admits it. A second
+// answer that breaks rules the first passed is not kept. A draft that
+// could not be rendered is not checked; repairSpent is a draft whose turn
+// was spent before (an answer that was not a draft).
+func repairAndCheck(cmd *cobra.Command, first localrun.Run, web *engine.WebRun, description, task string,
+	d *drafter.Draft, env *receipt.Envelope, repairSpent bool) (*drafter.Draft, *receipt.Envelope) {
+	pkg := filepath.Join(first.OutDir, "package")
+	checker, checkerErr := draftChecker(web)
+	if checkerErr != nil {
+		checkerErr = errors.New("AI Review cannot check with this key")
+	}
+	checks := 0
+	var spent drafter.Check
+	// ask checks d's package as it now stands: nil for a draft that could
+	// not be rendered, or when there is no checker.
+	ask := func(d *drafter.Draft) (*drafter.Check, error) {
+		if d.ManifestError != "" || checkerErr != nil {
+			return nil, checkerErr
+		}
+		p, err := drafter.CheckPackage(description, pkg)
+		if err != nil {
+			return nil, err
+		}
+		checks++
+		c, err := checker.Check(cmd.Context(), p)
+		if c != nil {
+			spent.Requests += c.Requests
+			spent.InputTokens += c.InputTokens
+		}
+		return c, err
+	}
+	record := func(d *drafter.Draft, c *drafter.Check, err error) (*drafter.Draft, *receipt.Envelope) {
+		switch {
+		case d.ManifestError != "":
+		case err != nil:
+			d.RecordCheck(&drafter.Check{Requests: spent.Requests, InputTokens: spent.InputTokens}, checks, err)
+		default:
+			c.Requests, c.InputTokens = spent.Requests, spent.InputTokens
+			d.RecordCheck(c, checks, nil)
+		}
+		return d, env
+	}
+
+	c, err := ask(d)
+	r := drafter.RepairReport{Task: task}
+	rules, refused := repairReport(d)
+	if refused {
+		r.Rules = rules
+	}
+	if c != nil {
+		r.Flagged = c.Repairable()
+	}
+	if repairSpent || r.Empty() || cmd.Context().Err() != nil {
+		return record(d, c, err)
+	}
+	rd, renv := repairDraft(cmd, first, d, env, r)
+	env = renv
+	if !rd.IsRepaired() || d.IsRepaired() {
+		return record(d, c, err)
+	}
+	if !refused && !validationPassed(rd) {
+		// The check's flag sent a draft the rules passed; its second
+		// answer breaks them, so the first is kept, and its package put
+		// back.
+		d.NoteSecondAnswerRefused()
+		if os.RemoveAll(pkg) == nil {
+			checkDraft(d, pkg)
+		}
+		return record(d, c, err)
+	}
+	c, err = ask(rd)
+	return record(rd, c, err)
 }
 
 // repairReport is what the rules said of a draft that did not pass, one
@@ -632,6 +751,13 @@ func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 	}
 	if a := d.AIReview; a != nil {
 		say("  AI Review: read %d result(s); %d withheld", a.Read, a.Withheld+a.NotScanned)
+		switch c := a.Check; c.Word() {
+		case "":
+		case drafter.CheckUnanswered:
+			say("  checked:   no answer: %s", safeTerminalText(c.Unanswered, 300))
+		default:
+			say("  checked:   the finished draft, %s (release rubric %s, the task %s), in draft.json", c.Word(), c.Rubric.Verdict, c.Draft.Verdict)
+		}
 		for _, s := range a.WithheldSources {
 			say("             withheld %s: %s", safeTerminalText(s.URL, 200), s.Reason)
 		}

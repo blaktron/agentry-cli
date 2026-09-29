@@ -339,7 +339,7 @@ questions (most drafts none or one), lists at most five things to prepare,
 leaves at most two open questions, and keeps its notes to five bullets. The
 instruction it writes has four parts: Role, Inputs, Steps and Output.
 
-Before a draft is written, the CLI checks it in three steps:
+Before a draft is written, the CLI checks it in four steps:
 1. **Mechanical slips are corrected without the model.** A mode, a tag or a
    choice named twice loses the second one. An optional part left empty, or
    holding a placeholder such as "None", is removed. A list past its limit
@@ -347,10 +347,32 @@ Before a draft is written, the CLI checks it in three steps:
    ending with "…". The limits are the rules' own. The notes name each
    correction under "Corrected after drafting", and nothing is invented.
 2. **The rules check it**, with `agentry validate`'s own code.
-3. **One repair turn.** If the rules still refuse it, the Drafter runs once
-   more, without its web tools. Its task is the rules' report and its own
-   manifest and instructions, and nothing else: no description, no notes,
-   no page. A last message that was not a draft at all (not one JSON object,
+3. **AI Review checks the finished draft** (agentry-cli#418). It reads the
+   rendered package, exactly the files `publish.include` takes, the licence
+   among them, two ways: with the release rubric, asked as the pipeline's
+   stage S5 asks it at publish, and with one question on whether the
+   instructions do the task you described (`off_task`). On this computer it
+   uses your own Jev key; `--hosted`, the registry's
+   `POST /api/v1/model-input/check` with the job's credential, which the
+   registry admits at most twice a draft and which the CLI never retries.
+   The verdicts go into `draft.json` under `aiReview.check`, and the notes
+   say what a flag means under "AI Review's check". The rubric's C3 (a
+   capability used but not declared) is recorded and never sent to the
+   repair turn: it reads an instruction that uses its own inputs and writes
+   its report that way, editing the draft does not clear it, and at publish
+   it sends the version to review, not to refusal. A description over 8 KiB
+   is not checked, and neither is a draft that could not be rendered. A
+   pass does not mean the draft does all of the task, and the pipeline
+   scans the whole version at publish whatever the check said.
+4. **One repair turn.** If the rules still refuse it, or the check flagged
+   something the draft can fix (`off_task`, or a rubric finding other than
+   C3), the Drafter runs once more, without its web tools. Its task is the
+   rules' report, what the check flagged, and its own manifest and
+   instructions, and nothing else: no notes, no page. With a flag it is also
+   given the task the first turn was given, which AI Review passed before
+   that turn started. The second answer is checked again, so a draft asks
+   at most two checks; a second answer that breaks rules the first passed
+   is not kept. A last message that was not a draft at all (not one JSON object,
    exit 17) gets the same turn, given the error and that message back. It returns the manifest again, and the instruction file too if
    the report names it. The second answer is corrected and checked like the
    first, and kept whether or not it passes; its notes say "Repaired once"
@@ -367,7 +389,9 @@ stdout is the Drafter run's result envelope (its usage, the attestation
 `builtin`, the `web` counts) with the draft's report under `draft`: where
 `draft.json` is, whether the package was rendered and passed, how many
 matches, open questions and withheld sources it has, how many slips were
-corrected (`corrections`), and whether it was repaired (`repaired`). The
+corrected (`corrections`), whether it was repaired (`repaired`), and AI
+Review's check as one word (`check`: `pass`, `flagged`, `not_scanned`, or
+`unanswered` when it has no answer). The
 envelope's usage is both turns' together, and the usage lines the repair
 turn narrates count from the first turn's total. The envelope's `result` is empty,
 because the draft is in `draft.json`. The harness's usage is narrated live

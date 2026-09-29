@@ -243,7 +243,9 @@ alone:
 
 ## A repair turn
 
-After you answer, the rules check the draft. If they refuse it, you may be
+After you answer, the rules check the draft, then AI Review checks the
+finished package. If the rules refuse it, or AI Review flags it, you may be
 given one more turn: its task message says it is your repair turn and
-carries their report with your own manifest and instructions. Then follow
+carries the rules' report, or what AI Review flagged with the task you were
+given, with your own manifest and instructions. Then follow
 that message instead of the steps above. You have no web tools in it.
