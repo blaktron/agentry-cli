@@ -253,8 +253,8 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 // the draft question set against the person's description), and the
 // verdicts go into draft.json under aiReview.check. A draft the rules
 // refuse, or one the check flagged for something it can fix
-// (Check.Repairable: off_task, or a rubric finding but C3, which editing
-// the draft does not clear until blaktron/agentry#731), is given its one
+// (Check.Repairable: off_task, or a rubric finding but C3, which is
+// recorded and never repaired), is given its one
 // repair turn with the rules' report and what the check flagged, and the
 // second answer is checked again. So a draft asks at most two checks, the
 // runs extension's cap for a hosted one (agentry-enterprise#265), and none
