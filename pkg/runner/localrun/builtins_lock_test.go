@@ -9,6 +9,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	pkgarchive "github.com/blaktron/agentry/pkg/archive"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // TestTheBuiltinsLockHoldsEveryBuiltin (agentry-cli#470): every built-in is
@@ -58,6 +61,22 @@ func TestTheBuiltinsLockHoldsEveryBuiltin(t *testing.T) {
 			return err
 		}); err != nil {
 			t.Fatal(err)
+		}
+
+		// The registry's own rules for a public publish (V1-V9, V7's
+		// LICENSE and README included), as `agentry validate` runs them: a
+		// built-in the registry would refuse fails here, not at release.
+		walked, err := pkgarchive.WalkWorkspace(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, issue := range manifest.ValidateInContext(m, manifest.Context{
+			Namespace: b.Namespace(), Name: b.Name(), Public: true, Files: walked,
+			ReadFile: func(p string) ([]byte, error) { return os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))) },
+		}) {
+			if !manifest.IsWarning(issue) {
+				t.Errorf("%s: the registry would refuse it: %v", b.Ref(), issue)
+			}
 		}
 
 		// The README says what the application grants beyond the manifest,
