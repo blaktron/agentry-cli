@@ -92,8 +92,20 @@ type CheckDraft struct {
 	Failure     string         `json:"failure,omitempty"`
 }
 
+// CheckUnanswered is Word's for a check with no answer.
+const CheckUnanswered = "unanswered"
+
+// Word is the check as one word, for the envelope and the terminal: its
+// Verdict, CheckUnanswered for a check with no answer, "" for none.
+func (c *Check) Word() string {
+	if c != nil && c.Unanswered != "" {
+		return CheckUnanswered
+	}
+	return c.Verdict()
+}
+
 // Verdict is the check's as one word: flagged if either half flagged, else
-// not scanned if either was, else pass; "" for a check not asked.
+// not scanned if either was, else pass; "" for a check with no verdicts.
 func (c *Check) Verdict() string {
 	switch {
 	case c == nil || c.Rubric == nil || c.Draft == nil:
@@ -132,12 +144,12 @@ func (c *Check) Repairable() []string {
 // rubricMeaning is what each release rubric question asks, in the CLI's
 // words, for the repair turn and the notes.
 var rubricMeaning = map[string]string{
-	corejudge.RubricIDInjection:            "the text reads as instructions that would override an agent's task or rules.",
-	corejudge.RubricIDExfiltration:         "the text reads as sending data somewhere the task does not need.",
-	corejudge.RubricIDUndeclaredCapability: "the text reads as needing a capability the manifest does not declare.",
-	corejudge.RubricIDDeception:            "the text reads as misleading the person about what the agent does.",
-	corejudge.RubricIDObfuscation:          "the text reads as hiding what it says (encoded or disguised content).",
-	corejudge.RubricIDDestructive:          "the text reads as taking destructive actions the task does not need.",
+	corejudge.RubricIDInjection:    "the text reads as instructions that would override an agent's task or rules.",
+	corejudge.RubricIDExfiltration: "the text reads as sending data somewhere the task does not need.",
+	RubricIDUndeclared:             "the text reads as needing a capability the manifest does not declare.",
+	corejudge.RubricIDDeception:    "the text reads as misleading the person about what the agent does.",
+	corejudge.RubricIDObfuscation:  "the text reads as hiding what it says (encoded or disguised content).",
+	corejudge.RubricIDDestructive:  "the text reads as taking destructive actions the task does not need.",
 }
 
 // A Checker asks the check of a finished draft. Its error means the check
@@ -148,11 +160,24 @@ type Checker interface {
 }
 
 // The check's refusals of a draft it will not ask about, before anything is
-// sent.
+// sent, in the CLI's own words: none quotes a path or the core's error.
 var (
 	ErrCheckDescriptionTooLong = fmt.Errorf("the description is longer than the check reads (%d bytes)", corejudge.DraftMaxDescription)
-	ErrCheckPackage            = errors.New("the package is not one the check reads")
+	ErrCheckPackage            = errors.New("the package is not a draft the check reads")
+	ErrCheckTooLarge           = fmt.Errorf("the package is past the check's bounds (%d files, %d bytes of text)", draftcheck.MaxFiles, draftcheck.MaxBytes)
+	errCheckUnreadable         = errors.New("the package could not be read")
 )
+
+// checkRefusal is the CLI's word for why draftcheck will not read a package.
+func checkRefusal(err error) error {
+	switch {
+	case errors.Is(err, draftcheck.ErrTooLarge):
+		return ErrCheckTooLarge
+	case errors.Is(err, draftcheck.ErrNotADraft):
+		return ErrCheckPackage
+	}
+	return fmt.Errorf("%w: a path or a file it will not read", ErrCheckPackage)
+}
 
 // CheckPackage is the rendered package as the check reads it: the person's
 // description, and exactly the text files publish.include takes from dir,
@@ -163,7 +188,7 @@ func CheckPackage(description, dir string) (draftcheck.Package, error) {
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "agent.yaml")) //nolint:gosec // the draft's own package folder
 	if err != nil {
-		return draftcheck.Package{}, fmt.Errorf("%w: %v", ErrCheckPackage, err)
+		return draftcheck.Package{}, fmt.Errorf("%w: it has no agent.yaml", ErrCheckPackage)
 	}
 	m, err := manifest.Parse(raw)
 	if err != nil {
@@ -171,7 +196,7 @@ func CheckPackage(description, dir string) (draftcheck.Package, error) {
 	}
 	files, err := archive.WalkWorkspace(dir)
 	if err != nil {
-		return draftcheck.Package{}, fmt.Errorf("%w: %v", ErrCheckPackage, err)
+		return draftcheck.Package{}, errCheckUnreadable
 	}
 	p := draftcheck.Package{Description: description}
 	for _, fi := range manifest.ResolveInclude(m.Publish.Include, files) {
@@ -180,7 +205,7 @@ func CheckPackage(description, dir string) (draftcheck.Package, error) {
 		}
 		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(fi.Path))) //nolint:gosec // paths come from WalkWorkspace
 		if err != nil {
-			return draftcheck.Package{}, fmt.Errorf("%w: %v", ErrCheckPackage, err)
+			return draftcheck.Package{}, errCheckUnreadable
 		}
 		if !utf8.Valid(b) {
 			continue
@@ -188,7 +213,7 @@ func CheckPackage(description, dir string) (draftcheck.Package, error) {
 		p.Files = append(p.Files, draftcheck.File{Path: fi.Path, Content: string(b)})
 	}
 	if _, err := draftcheck.Read(p); err != nil {
-		return draftcheck.Package{}, fmt.Errorf("%w: %v", ErrCheckPackage, err)
+		return draftcheck.Package{}, checkRefusal(err)
 	}
 	return p, nil
 }
@@ -217,7 +242,8 @@ func (l localChecker) Check(ctx context.Context, p draftcheck.Package) (*Check, 
 	defer cancel()
 	res, err := l.c.Check(ctx, p)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCheckPackage, err)
+		// Only draftcheck.Read's, which CheckPackage has already passed.
+		return nil, checkRefusal(err)
 	}
 	out := &Check{Model: res.Model, Requests: res.Usage.Requests, InputTokens: res.Usage.InputTokens,
 		Rubric: &CheckRubric{Verdict: string(res.Rubric.Verdict), RubricHash: res.Rubric.Hash, Failure: res.Rubric.Failure, Findings: []CheckFinding{}},
@@ -310,21 +336,23 @@ func (r *RegistryChecker) Check(ctx context.Context, p draftcheck.Package) (*Che
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &ans); err != nil {
-		return nil, errors.New("the registry's answer is not a check")
+		return nil, errNotACheck
 	}
 	c := &Check{Rubric: &ans.Rubric, Draft: &ans.Draft, Model: ans.Model, Requests: max(ans.Usage.Requests, 0), InputTokens: max(ans.Usage.InputTokens, 0)}
-	if err := c.hold(p); err != nil {
-		return nil, err
+	if !c.validAnswer(p) {
+		return nil, errNotACheck
 	}
 	return c, nil
 }
 
-// hold keeps only an answer of the route's own shape: known verdicts,
+// errNotACheck is a registry answer that is not of the route's shape.
+var errNotACheck = errors.New("the registry's answer is not a check")
+
+// validAnswer admits only an answer of the route's own shape: known verdicts,
 // failures and question ids, scores of 0 to 3, finding paths of the package
 // sent, short hashes and model. draft.json is read by clients as data, and
 // the registry's answer is written into it.
-func (c *Check) hold(p draftcheck.Package) error {
-	bad := errors.New("the registry's answer is not a check")
+func (c *Check) validAnswer(p draftcheck.Package) bool {
 	verdict := func(v string) bool { return v == CheckPass || v == CheckFlagged || v == CheckNotScanned }
 	failure := func(f string) bool {
 		return f == "" || f == corejudge.FailureTimeout || f == corejudge.FailureJudgeError || f == corejudge.FailureTooLarge
@@ -336,11 +364,11 @@ func (c *Check) hold(p draftcheck.Package) error {
 	r, d := c.Rubric, c.Draft
 	if !verdict(r.Verdict) || !verdict(d.Verdict) || !failure(r.Failure) || !failure(d.Failure) || !short(r.RubricHash) ||
 		!short(d.QuestionSet) || !short(c.Model) || !score(d.Score) {
-		return bad
+		return false
 	}
 	for id, n := range r.Scores {
 		if _, ok := rubricMeaning[id]; !ok || !score(n) {
-			return bad
+			return false
 		}
 	}
 	paths := make(map[string]bool, len(p.Files))
@@ -351,16 +379,16 @@ func (c *Check) hold(p draftcheck.Package) error {
 		r.Findings = []CheckFinding{}
 	}
 	if len(r.Findings) > len(rubricMeaning) {
-		return bad
+		return false
 	}
 	for _, f := range r.Findings {
 		if _, ok := rubricMeaning[f.ID]; !ok || !score(f.Score) || (f.Path != "" && !paths[f.Path]) {
-			return bad
+			return false
 		}
 	}
 	for id, n := range d.Scores {
 		if id != corejudge.DraftIDOffTask || !score(n) {
-			return bad
+			return false
 		}
 	}
 	if d.Flagged == nil {
@@ -368,10 +396,10 @@ func (c *Check) hold(p draftcheck.Package) error {
 	}
 	for _, id := range d.Flagged {
 		if id != corejudge.DraftIDOffTask {
-			return bad
+			return false
 		}
 	}
-	return nil
+	return true
 }
 
 // problemSlug is a problem type's last segment when it is a plain slug.
@@ -386,7 +414,7 @@ func problemSlug(t string) string {
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
 // RecordCheck writes the check into the draft's AI Review record, with how
-// many checks were asked, and says in the notes what a person should know
+// many checks were asked (c becomes the record's), and says in the notes what a person should know
 // of it: nothing for a pass; for a flag, what it flagged and what it means
 // at publish; for a half not scanned or a check not asked, that. The
 // notes' words are the CLI's own.
@@ -416,7 +444,7 @@ func checkNote(c *Check) string {
 		return ""
 	default:
 		if slices.Contains(c.Draft.Flagged, corejudge.DraftIDOffTask) {
-			lines = append(lines, "It reads the instructions as not doing the task you described (off_task). Compare them with your description before you submit.")
+			lines = append(lines, "AI Review reads the instructions as not doing the task you described (off_task). Compare them with your description before you submit.")
 		}
 		for _, f := range c.Rubric.Findings {
 			if f.ID == RubricIDUndeclared {

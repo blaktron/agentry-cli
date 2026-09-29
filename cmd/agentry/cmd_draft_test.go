@@ -1055,23 +1055,56 @@ func TestACheckFlagGetsTheRepairTurnTheRulesLeft(t *testing.T) {
 	}
 }
 
-// TestARepairTheRulesSpentIsNotSpentAgain: a draft the rules refused has
-// had its repair turn, so a check that flags its second answer is recorded
-// and nothing more runs: one repair turn a draft, one check.
-func TestARepairTheRulesSpentIsNotSpentAgain(t *testing.T) {
+// TestTheRepairTurnSeesTheRulesAndTheCheck: a draft the rules refuse is
+// checked too, and its one repair turn is given the rules' report and what
+// the check flagged, with the task; the second answer is checked again, so
+// the draft asks two checks and has one repair turn.
+func TestTheRepairTurnSeesTheRulesAndTheCheck(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
 	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
 	_, runs, _ := draftSeamsN(t, webscan.Result{Verdict: webscan.Pass}, []string{refusedChoice, repairedGood(t)}, draftLedger)
+	checks := draftChecks(t, offTaskCheck(), passCheck())
+	out := filepath.Join(t.TempDir(), "o")
+	if _, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if len(*runs) != 2 || len(checks.asked) != 2 {
+		t.Fatalf("%d run(s), %d check(s)", len(*runs), len(checks.asked))
+	}
+	task, _ := io.ReadAll((*runs)[1].Task)
+	if !strings.Contains(string(task), "## The rules' report\n\n- V10 intake[0].choices") ||
+		!strings.Contains(string(task), "## What AI Review flagged\n\n- AI Review off_task") || !strings.Contains(string(task), "## The task you were given") {
+		t.Fatalf("the repair task:\n%s", task)
+	}
+	d, v := readDraft(t, out)
+	if !v.Passed || d.AIReview.Check.Checks != 2 || d.AIReview.Check.Verdict() != drafter.CheckPass ||
+		!strings.Contains(d.Notes, "The rules refused the Drafter's first answer and AI Review's check flagged it") {
+		t.Fatalf("check %+v, notes:\n%s", d.AIReview.Check, d.Notes)
+	}
+}
+
+// TestASecondAnswerThatBreaksTheRulesIsNotKept: a draft the rules pass,
+// flagged by the check, whose repair turn returns one the rules refuse,
+// keeps its first answer and its package, with the first check's verdicts.
+func TestASecondAnswerThatBreaksTheRulesIsNotKept(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeamsN(t, webscan.Result{Verdict: webscan.Pass}, []string{goodDraft, refusedChoice}, draftLedger)
 	checks := draftChecks(t, offTaskCheck())
 	out := filepath.Join(t.TempDir(), "o")
 	if _, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
-	d, _ := readDraft(t, out)
-	if len(*runs) != 2 || len(checks.asked) != 1 || !strings.Contains(d.Notes, "## Repaired once") || d.AIReview.Check.Checks != 1 || d.AIReview.Check.Verdict() != drafter.CheckFlagged ||
-		!strings.Contains(d.Notes, "(off_task)") {
+	d, v := readDraft(t, out)
+	if len(*runs) != 2 || len(checks.asked) != 1 || !v.Passed || strings.Contains(string(d.Manifest), "intake") ||
+		d.AIReview.Check.Checks != 1 || d.AIReview.Check.Verdict() != drafter.CheckFlagged ||
+		!strings.Contains(d.Notes, "Its second answer broke rules this one passes") || strings.Contains(d.Notes, "## Repaired once") {
 		t.Fatalf("%d run(s), %d check(s), check %+v, notes:\n%s", len(*runs), len(checks.asked), d.AIReview.Check, d.Notes)
+	}
+	if _, _, err := runCLI(t, nil, "validate", filepath.Join(out, "package")); err != nil {
+		t.Fatalf("the first answer's package was not put back: %v", err)
 	}
 }
 
@@ -1097,6 +1130,10 @@ func TestACheckWithNoAnswerIsKeptAndNotRetried(t *testing.T) {
 		checks.webs[0].Registry != "https://registry.example" {
 		t.Fatalf("%d check(s), built for %+v", len(checks.asked), checks.webs)
 	}
+	raw, err := os.ReadFile(filepath.Join(out, "draft.json"))
+	if err != nil || strings.Contains(string(raw), token) {
+		t.Fatalf("draft.json carries the job credential (%v)", err)
+	}
 	d, _ := readDraft(t, out)
 	if c := d.AIReview.Check; c.Unanswered != "the registry refused it (503 model-input-unavailable)" || c.Checks != 1 || c.Rubric != nil ||
 		!strings.Contains(d.Notes, "has no answer: the registry refused it (503 model-input-unavailable).") {
@@ -1107,5 +1144,55 @@ func TestACheckWithNoAnswerIsKeptAndNotRetried(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(stdout), &env); err != nil || env.Draft.Check != "unanswered" || strings.Contains(stdout+stderr, token) {
 		t.Fatalf("stdout:\n%s", stdout)
+	}
+}
+
+// TestACheckRefusedBeforeItIsSentCountsNone: a description past the check's
+// bound is not sent, and the record says so with no check counted.
+func TestACheckRefusedBeforeItIsSentCountsNone(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, draftLedger)
+	checks := draftChecks(t, passCheck())
+	desc := filepath.Join(t.TempDir(), "desc.txt")
+	if err := os.WriteFile(desc, []byte(strings.Repeat("Summarize my meeting notes. ", 400)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "o")
+	if _, stderr, err := runCLI(t, nil, "draft", "--description-file", desc, "--out", out, "--policy", policyPath); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	d, _ := readDraft(t, out)
+	if c := d.AIReview.Check; len(checks.asked) != 0 || c.Checks != 0 || !strings.HasPrefix(c.Unanswered, "the description is longer than the check reads") {
+		t.Fatalf("%d asked, check %+v", len(checks.asked), c)
+	}
+}
+
+// TestARepairSpentOnAnAnswerThatWasNotADraftIsNotSpentAgain: an answer that
+// was not a draft has used the one repair turn, so a check that flags the
+// draft it returned is recorded and nothing more runs.
+func TestARepairSpentOnAnAnswerThatWasNotADraftIsNotSpentAgain(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+	checks := draftChecks(t, offTaskCheck())
+	seam := draftRun
+	draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+		env, _ := seam(cmd, r)
+		if r.Web != nil {
+			env.Status, env.ExitCode, env.Result = "error", engine.ExitOutputSchema, receipt.TextResult(`{"manifest": {"name": "x"} Wait`)
+			return env, engine.Classify(engine.ExitOutputSchema, errors.New("the final message is not valid JSON"))
+		}
+		return env, nil
+	}
+	out := filepath.Join(t.TempDir(), "o")
+	if _, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	d, _ := readDraft(t, out)
+	if len(*runs) != 2 || len(checks.asked) != 1 || d.AIReview.Check.Checks != 1 || d.AIReview.Check.Verdict() != drafter.CheckFlagged {
+		t.Fatalf("%d run(s), %d check(s), check %+v", len(*runs), len(checks.asked), d.AIReview.Check)
 	}
 }

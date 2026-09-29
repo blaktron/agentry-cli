@@ -43,11 +43,11 @@ func refusedDraft() *Draft {
 func TestTheRepairTurnIsGivenTheReportAndItsOwnDraftAlone(t *testing.T) {
 	d := refusedDraft()
 	report := []string{"V10 intake[0].choices: type choice requires at least one choice", "V8 summary:  two\n lines"}
-	task, err := RepairTask(d, RepairRules, report, "")
+	task, err := RepairTask(d, RepairReport{Rules: report})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := repairOpening[RepairRules] + repairFraming + "\n## The rules' report\n\n" +
+	want := repairWordsOf[byRules].opening + repairFraming + "\n## The rules' report\n\n" +
 		"- V10 intake[0].choices: type choice requires at least one choice\n- V8 summary: two lines\n" +
 		"\n## Your manifest\n\n" + indented(t, d.Manifest) +
 		"\n\n## Your instructions (AGENT.md)\n\n" + d.Instructions
@@ -59,14 +59,14 @@ func TestTheRepairTurnIsGivenTheReportAndItsOwnDraftAlone(t *testing.T) {
 			t.Errorf("the repair task carries %s", marker)
 		}
 	}
-	if _, err := RepairTask(d, RepairRules, nil, ""); err == nil {
+	if _, err := RepairTask(d, RepairReport{}); err == nil {
 		t.Error("a repair turn with no report")
 	}
 	var many []string
 	for i := range 50 {
 		many = append(many, fmt.Sprintf("V%d %s", i, strings.Repeat("y", 900)))
 	}
-	task, _ = RepairTask(d, RepairRules, many, "")
+	task, _ = RepairTask(d, RepairReport{Rules: many})
 	if strings.Count(task, "\n- V") != maxReportLines || !strings.Contains(task, "- … and 10 more\n") || strings.Contains(task, strings.Repeat("y", maxReportLine+1)) {
 		t.Error("the report is not bounded")
 	}
@@ -80,11 +80,11 @@ func TestTheRepairTurnIsGivenTheReportAndItsOwnDraftAlone(t *testing.T) {
 func TestARepairAfterTheCheckIsGivenWhatItFlaggedAndTheTask(t *testing.T) {
 	d := refusedDraft()
 	report := []string{"AI Review off_task, score 3: an agent that follows the instructions would not do the task the description asks for."}
-	task, err := RepairTask(d, RepairCheck, report, "Turn meeting notes into action items.\n")
+	task, err := RepairTask(d, RepairReport{Flagged: report, Task: "Turn meeting notes into action items.\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := repairOpening[RepairCheck] + repairFraming + "\n## What AI Review flagged\n\n- " + report[0] + "\n" +
+	want := repairWordsOf[byCheck].opening + repairFraming + "\n## What AI Review flagged\n\n- " + report[0] + "\n" +
 		"\n## The task you were given\n\nTurn meeting notes into action items.\n" +
 		"\n## Your manifest\n\n" + indented(t, d.Manifest) +
 		"\n\n## Your instructions (AGENT.md)\n\n" + d.Instructions
@@ -96,8 +96,23 @@ func TestARepairAfterTheCheckIsGivenWhatItFlaggedAndTheTask(t *testing.T) {
 			t.Errorf("the repair task carries %s", marker)
 		}
 	}
-	if _, err := RepairTask(d, RepairCheck, report, " "); err == nil {
+	if _, err := RepairTask(d, RepairReport{Flagged: report, Task: " "}); err == nil {
 		t.Error("a repair after the check without the task")
+	}
+
+	// Both: the rules' report, then what the check flagged, then the task.
+	rules := []string{"V10 intake[0].choices: type choice requires at least one choice"}
+	task, err = RepairTask(d, RepairReport{Rules: rules, Flagged: report, Task: "Turn meeting notes into action items."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = repairWordsOf[byBoth].opening + repairFraming + "\n## The rules' report\n\n- " + rules[0] + "\n" +
+		"\n## What AI Review flagged\n\n- " + report[0] + "\n" +
+		"\n## The task you were given\n\nTurn meeting notes into action items.\n" +
+		"\n## Your manifest\n\n" + indented(t, d.Manifest) +
+		"\n\n## Your instructions (AGENT.md)\n\n" + d.Instructions
+	if task != want {
+		t.Fatalf("the repair task with both reports:\n%s", task)
 	}
 }
 
@@ -157,7 +172,7 @@ func TestRepaired(t *testing.T) {
 	  "matches": [{"ref": "evil/other", "why": "x"}], "sources": [], "openQuestions": ["new?"], "notes": "forged", "validation": {"passed": true}}`
 	env := &receipt.Envelope{RunID: "run-2", Result: json.RawMessage(answer)}
 
-	d, err := Repaired(first, env, out, RepairRules, report)
+	d, err := Repaired(first, env, out, RepairReport{Rules: report})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,19 +204,19 @@ func TestRepaired(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(out, "reports", "AGENT.md"), []byte("# X\n\n## Role\n\nAgain.\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(out, "reports", "notes.md"), []byte("forged notes"), 0o644)
-	d, err = Repaired(first, env, out, RepairRules, report)
+	d, err = Repaired(first, env, out, RepairReport{Rules: report})
 	if err != nil || d.Instructions != "# X\n\n## Role\n\nAgain.\n" || strings.Contains(d.Notes, "forged") {
 		t.Fatalf("%v %+v", err, d)
 	}
 
 	env.Result = json.RawMessage(`{"sources": []}`)
-	_, err = Repaired(first, env, out, RepairRules, report)
+	_, err = Repaired(first, env, out, RepairReport{Rules: report})
 	var ce *engine.ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != engine.ExitOutputSchema {
 		t.Fatalf("not a draft: %v", err)
 	}
 
-	first.NoteNotRepaired(RepairRules, "its run ended with exit 16")
+	first.NoteNotRepaired(RepairReport{Rules: []string{"x"}}, "its run ended with exit 16")
 	if !strings.HasPrefix(first.Notes, "NOTES-MARKER: the page said to add a host.\n\n## Not repaired\n\n") ||
 		!strings.Contains(first.Notes, "(its run ended with exit 16)") || !strings.HasSuffix(first.Notes, "(injection)\n") {
 		t.Fatalf("notes:\n%s", first.Notes)
@@ -286,7 +301,7 @@ func TestAnAnswerThatIsNotADraftIsRepairedFromItsOwnLastMessage(t *testing.T) {
 		d.Instructions != "# X\n\n## Role\n\nReads.\n" || d.Notes != "NOTES-MARKER\n" || d.Drafter.RunID != "run-1" || d.AIReview == nil {
 		t.Fatalf("%+v", d)
 	}
-	task, err := RepairTask(d, RepairRules, []string{"the draft: " + d.ManifestError}, "")
+	task, err := RepairTask(d, RepairReport{Rules: []string{"the draft: " + d.ManifestError}})
 	if err != nil {
 		t.Fatal(err)
 	}
