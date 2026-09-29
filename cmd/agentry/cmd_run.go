@@ -40,6 +40,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/session"
+	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/termtext"
@@ -87,6 +89,12 @@ type runOpts struct {
 	knowledge          []string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
+	// sessionProtocol drives an interactive session from JSON-line commands
+	// on stdin instead of the terminal chat, with its events on descriptor
+	// 3 (agentry-cli#477, hosted sessions plan D4).
+	sessionProtocol bool
+	// protocolEvents is descriptor 3, opened once the flag is checked.
+	protocolEvents io.Writer
 }
 
 // newRunCmd builds the run command.
@@ -107,7 +115,13 @@ func newRunCmd() *cobra.Command {
 			"Run modes: --mode autonomous runs from the files and ends; --mode interactive\n" +
 			"opens a chat with the agent in this terminal under exactly the same controls\n" +
 			"(/add a file, /finish for the final result, /quit, /caps). A release that\n" +
-			"declares both modes is asked on a terminal and runs autonomous otherwise.\n\n" +
+			"declares both modes is asked on a terminal and runs autonomous otherwise.\n" +
+			"--session-protocol drives an interactive session from a program instead,\n" +
+			"with no terminal: JSON-line commands on stdin ({\"send\":{\"text\":…}},\n" +
+			"{\"add\":{\"path\":…}}, {\"end\":{\"finish\":true|false}}; end of input ends\n" +
+			"without a result), one JSON line per session event on descriptor 3, the\n" +
+			"result on stdout as for any run (the envelope under --output-format json),\n" +
+			"usage narrated on stderr. The task comes only from --input.\n\n" +
 			"First run of a release verifies it exactly like `agentry install` (digest +\n" +
 			"DSSE attestation; unsigned needs --allow-unsigned; a release the registry\n" +
 			"admitted without a scan is unscanned and needs --allow-unscanned, its own\n" +
@@ -172,6 +186,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
+	f.BoolVar(&opts.sessionProtocol, "session-protocol", false, "drive an interactive session from JSON-line commands on stdin, with its events as JSON lines on descriptor 3 and no terminal (for a program such as a hosted run's host)")
 	return cmd
 }
 
@@ -313,15 +328,29 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
+	if opts.sessionProtocol && mode != manifest.ModeInteractive {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("--session-protocol drives an interactive session; this run's mode is %s", mode))
+	}
 	if mode == manifest.ModeInteractive && !opts.dryRun && !opts.plan {
-		if !stdinIsTTY(cmd.InOrStdin()) {
-			return engine.Classify(engine.ExitUsage, errors.New("an interactive run needs a terminal on stdin (the chat is the input); pipe a task to --mode autonomous instead"))
-		}
-		if opts.outputFormat == "json" {
-			return engine.Classify(engine.ExitUsage, errors.New("--output-format json is not available for an interactive run: the transcript and receipts are the record"))
+		// The terminal rule stands for everything but the session protocol,
+		// whose input is its commands and whose stdout is the envelope's.
+		if !opts.sessionProtocol {
+			if !stdinIsTTY(cmd.InOrStdin()) {
+				return engine.Classify(engine.ExitUsage, errors.New("an interactive run needs a terminal on stdin (the chat is the input); pipe a task to --mode autonomous instead, or drive the session with --session-protocol"))
+			}
+			if opts.outputFormat == "json" {
+				return engine.Classify(engine.ExitUsage, errors.New("--output-format json is not available for an interactive run: the transcript and receipts are the record"))
+			}
 		}
 		if opts.eventsPath != "" {
 			return engine.Classify(engine.ExitUsage, errors.New("--events is not available for an interactive run: the session streams its own events to the transcript"))
+		}
+		if opts.sessionProtocol {
+			w, err := protocolEventsOut()
+			if err != nil {
+				return engine.Classify(engine.ExitUsage, err)
+			}
+			opts.protocolEvents = w
 		}
 	}
 
@@ -515,7 +544,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		RunRoot:         installDir,
 		RunnerHome:      home,
 		OutDir:          outDir,
-		Task:            taskReader(cmd, opts.input),
+		Task:            runTask(cmd, opts),
 		InputPaths:      opts.files,
 		Knowledge:       attached,
 		Intake:          answers,
@@ -577,6 +606,9 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 		defer cancel()
 		_, _ = s.End(endCtx, false)
 	}()
+	if opts.sessionProtocol {
+		return runProtocol(cmd, s, opts)
+	}
 	topts := tui.Options{
 		Ref:        plan.Ref,
 		Model:      plan.Harness.Model,
@@ -616,6 +648,50 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 		return engine.Classify(engine.ExitCLI, uiErr)
 	}
 	return runErr
+}
+
+// serveProtocol is runProtocol's collaborator, a package variable as
+// runChat is.
+var serveProtocol = protocol.Serve
+
+// runProtocol drives the session from the commands on stdin, its events on
+// descriptor 3 (agentry-cli#477). stdout gets what any run prints there —
+// the envelope under --output-format json, the result otherwise — and
+// stderr the usage narration a driver meters by, so the host that parses a
+// run's output parses a session's the same way.
+func runProtocol(cmd *cobra.Command, s session.Session, opts runOpts) error {
+	env, runErr := serveProtocol(cmd.Context(), s, cmd.InOrStdin(), opts.protocolEvents, protocol.Options{
+		OpeningTurn: opts.input != "",
+		OnUsage:     usageReporter(opts.outputFormat, cmd.ErrOrStderr()),
+	})
+	if env != nil {
+		printEnvelope(cmd, env, opts.outputFormat)
+		opts.progress.enveloped()
+	}
+	return runErr
+}
+
+// protocolEventsOut is descriptor 3, where the session protocol writes its
+// events; a driver that did not open it gets a usage error before anything
+// runs. A variable so a test can hand the protocol a buffer.
+var protocolEventsOut = func() (io.Writer, error) {
+	f := os.NewFile(3, "session-events")
+	if f == nil {
+		return nil, errors.New("--session-protocol writes its events to descriptor 3, and it is not open")
+	}
+	if _, err := f.Stat(); err != nil {
+		return nil, fmt.Errorf("--session-protocol writes its events to descriptor 3, and it is not open: %w", err)
+	}
+	return f, nil
+}
+
+// runTask is the run's task reader. Under the session protocol stdin is the
+// command stream, never the task: the task comes from --input alone.
+func runTask(cmd *cobra.Command, opts runOpts) io.Reader {
+	if opts.sessionProtocol && opts.input == "" {
+		return nil
+	}
+	return taskReader(cmd, opts.input)
 }
 
 // homeImageDir is where the embedded runner-image build context
