@@ -22,13 +22,18 @@ type builtinsRegistry struct {
 	// versions holds the digest of each ns/name@version the registry has.
 	versions map[string]string
 	// state is the status a held version reports; published when empty.
-	state  string
+	state string
+	// agents maps ns/name to whether the agent is marked built-in.
 	agents map[string]bool
 	// refuse answers 403 to creation and upload: an account that may not
 	// publish to the namespace.
 	refuse bool
 	// review leaves every upload in needs_review.
-	review  bool
+	review bool
+	// refuseMark answers 403 to the built-in mark: a token without staff.
+	refuseMark bool
+	// marks records each agent the mark was sent for.
+	marks   []string
 	created []map[string]any
 	uploads []string // the sha256 of each uploaded archive
 	srv     *httptest.Server
@@ -61,16 +66,33 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 	})
 	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}", func(w http.ResponseWriter, r *http.Request) {
 		br.mu.Lock()
-		ok := br.agents[r.PathValue("ns")+"/"+r.PathValue("name")]
+		marked, ok := br.agents[r.PathValue("ns")+"/"+r.PathValue("name")]
 		br.mu.Unlock()
 		if !ok {
 			writeProblem(w, http.StatusNotFound, "agent not found", "")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"id": "00000000-0000-0000-0000-000000000001",
-			"namespace": r.PathValue("ns"), "name": r.PathValue("name"), "modes": []string{"autonomous"},
-			"visibility": "public", "quarantineState": "none", "defaultBranch": "main",
-			"gitHttpUrl": "http://x/git", "createdAt": "2026-01-02T03:04:05Z"})
+		writeJSON(w, http.StatusOK, agentDoc(r.PathValue("ns"), r.PathValue("name"), marked))
+	})
+	mux.HandleFunc("PATCH /api/v1/agents/{ns}/{name}", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("ns") + "/" + r.PathValue("name")
+		var body struct {
+			Builtin *bool `json:"builtin"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Builtin == nil {
+			writeProblem(w, http.StatusBadRequest, "no builtin", "")
+			return
+		}
+		if br.refuseMark {
+			writeProblem(w, http.StatusForbidden, "Access denied", "Marking or unmarking a QuickAgent as built-in is open to platform staff only.")
+			return
+		}
+		br.mu.Lock()
+		br.marks = append(br.marks, key)
+		br.agents[key] = *body.Builtin
+		br.mu.Unlock()
+		writeJSON(w, http.StatusOK, agentDoc(r.PathValue("ns"), r.PathValue("name"), *body.Builtin))
 	})
 	mux.HandleFunc("POST /api/v1/agents", func(w http.ResponseWriter, r *http.Request) {
 		if br.refuse {
@@ -81,12 +103,9 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		br.mu.Lock()
 		br.created = append(br.created, body)
-		br.agents[body["namespace"].(string)+"/"+body["name"].(string)] = true
+		br.agents[body["namespace"].(string)+"/"+body["name"].(string)] = false
 		br.mu.Unlock()
-		writeJSON(w, http.StatusCreated, map[string]any{"id": "00000000-0000-0000-0000-000000000001",
-			"namespace": body["namespace"], "name": body["name"], "modes": body["modes"],
-			"visibility": body["visibility"], "quarantineState": "none", "defaultBranch": "main",
-			"gitHttpUrl": "http://x/git", "createdAt": "2026-01-02T03:04:05Z"})
+		writeJSON(w, http.StatusCreated, agentDoc(body["namespace"].(string), body["name"].(string), false))
 	})
 	mux.HandleFunc("POST /api/v1/agents/{ns}/{name}/versions", func(w http.ResponseWriter, r *http.Request) {
 		if br.refuse {
@@ -123,6 +142,14 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 	br.srv = httptest.NewServer(mux)
 	t.Cleanup(br.srv.Close)
 	return br
+}
+
+// agentDoc is the registry's agent document, with the built-in mark.
+func agentDoc(ns, name string, builtin bool) map[string]any {
+	return map[string]any{"id": "00000000-0000-0000-0000-000000000001",
+		"namespace": ns, "name": name, "modes": []string{"autonomous"},
+		"visibility": "public", "quarantineState": "none", "defaultBranch": "main",
+		"gitHttpUrl": "http://x/git", "createdAt": "2026-01-02T03:04:05Z", "builtin": builtin}
 }
 
 func builtinDigests(t *testing.T) map[string]string {
@@ -166,6 +193,56 @@ func TestBuiltinsPublishUploadsTheEmbeddedBytes(t *testing.T) {
 		if !strings.Contains(stdout, "published "+b.Ref()) {
 			t.Errorf("no verdict for %s in %q", b.Ref(), stdout)
 		}
+		// Created, then marked built-in, so the directory labels it so
+		// (agentry-cli#474).
+		key := b.Namespace() + "/" + b.Name()
+		if !br.agents[key] || !strings.Contains(stdout, "marked "+key+" built-in") {
+			t.Errorf("%s is not marked built-in: %v\n%s", key, br.agents[key], stdout)
+		}
+	}
+}
+
+// TestBuiltinsPublishMarksWhatIsNotMarked (agentry-cli#474): an agent the
+// registry already holds, with its version, is marked when it is not, and
+// left alone when it is; nothing is uploaded either way.
+func TestBuiltinsPublishMarksWhatIsNotMarked(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv(envToken, "agy_testtoken")
+	br := newBuiltinsRegistry(t)
+	creator, drafter := localrun.KnowledgeCreator(), localrun.Drafter()
+	for ref, d := range builtinDigests(t) {
+		br.versions[ref] = d
+	}
+	br.agents[creator.Namespace()+"/"+creator.Name()] = false
+	br.agents[drafter.Namespace()+"/"+drafter.Name()] = true
+
+	if _, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish"); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if want := creator.Namespace() + "/" + creator.Name(); strings.Join(br.marks, ",") != want {
+		t.Fatalf("marks sent %v, want [%s]", br.marks, want)
+	}
+	if len(br.uploads) != 0 || len(br.created) != 0 {
+		t.Errorf("uploads %v created %v", br.uploads, br.created)
+	}
+}
+
+// TestBuiltinsPublishFailsWhenTheMarkIsRefused: the mark is platform
+// staff's alone (agentry#737), so a token without it fails every built-in
+// before anything is uploaded; the release job's token must be a staff
+// admin's.
+func TestBuiltinsPublishFailsWhenTheMarkIsRefused(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv(envToken, "agy_testtoken")
+	br := newBuiltinsRegistry(t)
+	br.refuseMark = true
+
+	_, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+	if err == nil || !strings.Contains(err.Error(), "2 of 2 built-ins not published") || !strings.Contains(stderr, "platform staff only") {
+		t.Fatalf("err = %v stderr %s", err, stderr)
+	}
+	if len(br.uploads) != 0 {
+		t.Errorf("uploaded %v", br.uploads)
 	}
 }
 
