@@ -127,7 +127,7 @@ func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) er
 // line, `apk list --installed`), read back into the receipt.
 const ExecPackagesFile = "/etc/agentry/exec-packages"
 
-// EnsureExecImage builds the per-BriefAgent exec image for a plan when
+// EnsureExecImage builds the per-QuickAgent exec image for a plan when
 // absent (agentry-cli#9, #100): `FROM <runnerImage>`, the operator's
 // catalogued apk packages installed (from the policy's mirror when one is
 // named) with their resolved versions recorded into the image, git's

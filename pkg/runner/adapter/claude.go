@@ -17,7 +17,7 @@
 //   - No ambient context. --bare skips the person's hooks, plugins,
 //     skills, auto memory and CLAUDE.md; --setting-sources "" loads no
 //     user, project or local settings; CLAUDE_CONFIG_DIR points at a
-//     run-scoped directory. What the model sees is the BriefAgent's
+//     run-scoped directory. What the model sees is the QuickAgent's
 //     instruction and nothing else, which is also what makes a run
 //     reproducible on someone else's machine. For a subscription token
 //     the run has no --bare (see Compile): the config dir and the

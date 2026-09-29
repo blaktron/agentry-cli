@@ -1,11 +1,11 @@
 // `agentry uninstall` removes this machine's RUNNER state for a
-// BriefAgent: the verified install cache (workspace + compiled plans)
+// QuickAgent: the verified install cache (workspace + compiled plans)
 // and, BY DEFAULT, its MCP profile — stored keys, identities, and the
 // installed MCP-server store (RUNNER-PLAN-3: remove on uninstall is the
 // default; keeping credentials is the explicit choice). --keep-mcp
 // retains the profile directory, which is signature-locked: only a
 // reinstall of the exact same release digest can ever use it again — not
-// another BriefAgent, not another user, not a newer version of this one.
+// another QuickAgent, not another user, not a newer version of this one.
 //
 // Embedded installs (claude-skill / agents-md exports, and the mcp exports
 // of older clients) are separate
@@ -53,8 +53,8 @@ func newUninstallCmd() *cobra.Command {
 	var keepMCP, plan bool
 	cmd := &cobra.Command{
 		Use:   "uninstall <ns/name[@version]>",
-		Short: "Remove a BriefAgent's runner install (and, by default, its MCP profile and servers)",
-		Long: "Remove this machine's runner state for a BriefAgent: the verified install\n" +
+		Short: "Remove a QuickAgent's runner install (and, by default, its MCP profile and servers)",
+		Long: "Remove this machine's runner state for a QuickAgent: the verified install\n" +
 			"cache and, by default, its MCP profile — stored keys and installed MCP\n" +
 			"servers included (remove is the default). --keep-mcp retains the profile,\n" +
 			"which stays locked to the exact release digest it was created for.",

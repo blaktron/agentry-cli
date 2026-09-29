@@ -1,4 +1,4 @@
-// Package profile stores a BriefAgent's MCP profile (RUNNER-PLAN-2 §P2):
+// Package profile stores a QuickAgent's MCP profile (RUNNER-PLAN-2 §P2):
 // the persistent, credentialed half of its gateway configuration, keyed by
 // signature — ns/name@version plus the archive digest, the same identity
 // the install cache uses. A profile holds the application keys and
@@ -25,7 +25,7 @@ import (
 // Version is the profile schema major.
 const Version = "1"
 
-// Profile is one BriefAgent signature's stored configuration.
+// Profile is one QuickAgent signature's stored configuration.
 type Profile struct {
 	// ProfileVersion pins the schema ("1").
 	ProfileVersion string `json:"profileVersion"`

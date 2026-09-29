@@ -38,7 +38,7 @@ func TestWhoamiShowsTheAccountAndTheSubscriptionWhereThereIsOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"tier:     Standard", "credits:  40 of 50 (a submission costs 10; resets on 11 October 2026)", "private:  4 of 10 BriefAgents"} {
+	for _, want := range []string{"tier:     Standard", "credits:  40 of 50 (a submission costs 10; resets on 11 October 2026)", "private:  4 of 10 QuickAgents"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("whoami lacks %q:\n%s", want, stdout)
 		}
@@ -345,10 +345,10 @@ func TestWhoamiPrivateAgentLineReadsEnabled(t *testing.T) {
 		want    string // "" means no private line at all
 	}{
 		{"disabled", map[string]any{"enabled": false, "max": 0, "used": 0}, "private:  none\n"},
-		{"disabled with agents held", map[string]any{"enabled": false, "max": 0, "used": 2}, "private:  none may be added (2 BriefAgents held)\n"},
-		{"enabled, no cap", map[string]any{"enabled": true, "max": 0, "used": 4}, "private:  4 BriefAgents, no cap\n"},
-		{"enabled, capped", map[string]any{"enabled": true, "max": 10, "used": 4}, "private:  4 of 10 BriefAgents\n"},
-		{"absent field, capped", map[string]any{"max": 10, "used": 4}, "private:  4 of 10 BriefAgents\n"},
+		{"disabled with agents held", map[string]any{"enabled": false, "max": 0, "used": 2}, "private:  none may be added (2 QuickAgents held)\n"},
+		{"enabled, no cap", map[string]any{"enabled": true, "max": 0, "used": 4}, "private:  4 QuickAgents, no cap\n"},
+		{"enabled, capped", map[string]any{"enabled": true, "max": 10, "used": 4}, "private:  4 of 10 QuickAgents\n"},
+		{"absent field, capped", map[string]any{"max": 10, "used": 4}, "private:  4 of 10 QuickAgents\n"},
 		{"absent field, max 0", map[string]any{"max": 0, "used": 4}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

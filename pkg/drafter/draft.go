@@ -58,7 +58,7 @@ type Draft struct {
 	lastMessage string
 }
 
-// Match is a published BriefAgent that does the task, or most of it.
+// Match is a published QuickAgent that does the task, or most of it.
 type Match struct {
 	Ref string `json:"ref"`
 	Why string `json:"why"`
@@ -277,7 +277,7 @@ func readme(name, summary, overview string) string {
 		fmt.Fprintf(&b, "\n%s\n", overview)
 	}
 	b.WriteString("\nDrafted by the Drafter (`agentry draft`). Review the manifest, the instructions and this file before you publish;\n" +
-		"this README renders on the BriefAgent's page.\n")
+		"this README renders on the QuickAgent's page.\n")
 	return b.String()
 }
 

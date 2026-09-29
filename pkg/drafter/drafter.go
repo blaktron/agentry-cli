@@ -1,5 +1,5 @@
 // Package drafter is the Drafter (plan builder-rework.md §7.2, D6;
-// agentry-cli#345): the BriefAgent package that turns a person's
+// agentry-cli#345): the QuickAgent package that turns a person's
 // description into a draft for the Builder, embedded in the CLI beside the
 // Knowledge Creator and run by the runner as the second built-in package.
 // Its manifest declares no egress, no filesystem, no exec and no secret; its
@@ -35,7 +35,7 @@ const (
 )
 
 // The Drafter's own caps (plan builder-simplify.md §5.1, D8): tighter than
-// the manifest's bounds, which stay as they are for a BriefAgent written by
+// the manifest's bounds, which stay as they are for a QuickAgent written by
 // hand. AGENT.md states each by value (TestTheInstructionStatesItsBoundsByValue)
 // and the fixtures' shape check holds a draft to them (CheckShape).
 const (

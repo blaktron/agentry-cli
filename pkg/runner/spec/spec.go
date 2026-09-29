@@ -521,7 +521,7 @@ func ParsePlan(b []byte) (*Plan, error) {
 	return &p, nil
 }
 
-// ExecImageSpec is the per-BriefAgent exec image a plan runs its tools
+// ExecImageSpec is the per-QuickAgent exec image a plan runs its tools
 // server in when the manifest declares exec (agentry-cli#9, #100): the
 // runner image with the operator's catalogued packages installed, then
 // minimized to exactly the declared commands.
@@ -538,7 +538,7 @@ type ExecImageSpec struct {
 	APKMirror string `json:"apkMirror,omitempty"`
 }
 
-// ExecImageTag names the per-BriefAgent exec image (agentry-cli#9, DR-1
+// ExecImageTag names the per-QuickAgent exec image (agentry-cli#9, DR-1
 // closure; #100): the runner image with the catalogued packages installed
 // and minimized to exactly the declared commands. Deterministic in
 // (runner image, sorted commands, sorted packages, mirror) so the compiler

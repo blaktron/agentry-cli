@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # M-R4 acceptance (plan runner-m-r4-adapters §6 and §7, RUNNER-DEVIATIONS
 # DR-6): per-adapter proxy evidence, and the envelope diff that says every
-# adapter runs the same BriefAgent the same way.
+# adapter runs the same QuickAgent the same way.
 #
 #   scripts/acceptance/runner-r4.sh [adapter...]   (default: docker-agent)
 #
-# Per adapter, two runs of one fixture BriefAgent:
+# Per adapter, two runs of one fixture QuickAgent:
 #   1. the policy allowlists the model host — the run succeeds and
 #      receipts/proxy.log shows the CONNECT allowed;
 #   2. the policy does not — the run ends classified (never hangs: the
@@ -139,7 +139,7 @@ for A in "${ADAPTERS[@]}"; do
   RAN+=("$A")
 done
 
-# §7 conformance diffing: the same BriefAgent through every adapter must
+# §7 conformance diffing: the same QuickAgent through every adapter must
 # produce the same envelope once the model-dependent parts are masked.
 if [ ${#RAN[@]} -gt 1 ]; then
   for A in "${RAN[@]}"; do

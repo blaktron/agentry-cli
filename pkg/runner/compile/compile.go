@@ -101,7 +101,7 @@ const OutputSchemaFile = "output.schema.json"
 // instruction (§R2). Golden tests pin it; changing it changes every plan
 // hash, which is the point.
 const contractPostscript = "\n\n----\n" +
-	"Runner contract (Agentry): You are running as a one-shot BriefAgent inside " +
+	"Runner contract (Agentry): You are running as a one-shot QuickAgent inside " +
 	"an isolated container. Your only tools are those provided by the connected MCP " +
 	"gateway — there is no other shell, filesystem, or network access. The task " +
 	"workspace, as seen by your tools, is rooted at " + spec.WorkspaceMount + ". Input " +
@@ -525,7 +525,7 @@ func modeStrings(modes []manifest.Mode) []string {
 func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, error) {
 	candidates := m.InstructionCandidates()
 	if len(candidates) == 0 {
-		return "", "", fmt.Errorf("%s/%s declares no instruction file, so it is not a runnable BriefAgent (RUNNER-PLAN §R2; the withdrawn mcp-server kind is a tool server)", m.Namespace, m.Name)
+		return "", "", fmt.Errorf("%s/%s declares no instruction file, so it is not a runnable QuickAgent (RUNNER-PLAN §R2; the withdrawn mcp-server kind is a tool server)", m.Namespace, m.Name)
 	}
 	for _, rel := range candidates {
 		body, err := readInstructionFile(workspace, rel)
@@ -966,8 +966,8 @@ func ServerSecretKey(serverName, envName string) string {
 // contract translated into the gateway's server-entry vocabulary.
 func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, runnerImage string) *yaml.Node {
 	e := yamlMap{}
-	e.set("description", strNode("Agentry BriefAgent tools server (generated per run)"))
-	e.set("title", strNode("BriefAgent Tools"))
+	e.set("description", strNode("Agentry QuickAgent tools server (generated per run)"))
+	e.set("title", strNode("QuickAgent Tools"))
 	e.set("type", strNode("server"))
 	e.set("image", strNode(runnerImage))
 	e.set("command", strListNode([]string{"tools", "--spec", spec.ToolSpecMount}))
@@ -1217,7 +1217,7 @@ func execEnforcement(commands []string, cat policy.ExecPolicy) string {
 	}
 	line := "run_command restricted to argv0 allowlist + shim PATH {" + strings.Join(commands, ", ") +
 		"}; tools container is the runner image with the operator's catalogued packages installed (" + strings.Join(from, ", ") +
-		") and minimized to exactly those binaries (per-BriefAgent exec image, agentry-cli#9, #100)"
+		") and minimized to exactly those binaries (per-QuickAgent exec image, agentry-cli#9, #100)"
 	if git {
 		// The workspace is a bind mount owned by the host user and the
 		// tools container runs as root; git refuses such a repository as

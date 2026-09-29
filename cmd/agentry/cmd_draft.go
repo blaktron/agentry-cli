@@ -85,10 +85,10 @@ func newDraftCmd() *cobra.Command {
 	var o draftOpts
 	cmd := &cobra.Command{
 		Use:   `draft "<description>" [--hint TEXT…] [--out DIR]`,
-		Short: "Draft a BriefAgent from a description, with the built-in Drafter",
-		Long: "Draft a BriefAgent from a plain description of what it should do. The built-in Drafter searches the\n" +
+		Short: "Draft a QuickAgent from a description, with the built-in Drafter",
+		Long: "Draft a QuickAgent from a plain description of what it should do. The built-in Drafter searches the\n" +
 			"registry and the web, reads what it finds, and returns a draft: the manifest, the instructions, notes on\n" +
-			"what it chose and why, the published BriefAgents that already do the task, its sources, and what it\n" +
+			"what it chose and why, the published QuickAgents that already do the task, its sources, and what it\n" +
 			"could not settle. It never submits anything.\n\n" +
 			"AI Review (TypeSafe's Jev) reads the description before the Drafter starts, and every search result,\n" +
 			"page and registry answer before the Drafter's model does; what it flags, or cannot scan, is withheld,\n" +
@@ -334,7 +334,7 @@ func draftDescription(args []string, o draftOpts) (string, error) {
 		}
 		return string(b), nil
 	}
-	return "", errors.New(`describe what the BriefAgent should do: agentry draft "<description>"`)
+	return "", errors.New(`describe what the QuickAgent should do: agentry draft "<description>"`)
 }
 
 // draftWeb is the run's web configuration: the person's own keys, or, with

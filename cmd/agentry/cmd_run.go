@@ -94,12 +94,12 @@ func newRunCmd() *cobra.Command {
 	var opts runOpts
 	cmd := &cobra.Command{
 		Use:   "run [ns/name[@range]]",
-		Short: "Verify, install, and execute one BriefAgent in an isolated container",
-		Long: "Run a single-purpose BriefAgent once (RUNNER-PLAN.md):\n\n" +
+		Short: "Verify, install, and execute one QuickAgent in an isolated container",
+		Long: "Run a single-purpose QuickAgent once (RUNNER-PLAN.md):\n\n" +
 			"  agentry run ns/name@^1.2 --input task.json --out ./reports\n\n" +
 			"Task input: --input FILE, else piped stdin; with no task (or an empty one) the\n" +
 			"agent is sent its own instruction and runs that. The result goes to stdout\n" +
-			"(--output-format text|json); reports the BriefAgent writes and the full\n" +
+			"(--output-format text|json); reports the QuickAgent writes and the full\n" +
 			"receipts land in the output folder. Every failure class has its own exit\n" +
 			"code: 0 ok, 1 cli (interrupted, unknown adapter, intake), 2 usage,\n" +
 			"10 verify, 11 policy/secret, 12 compile, 13 gateway/docker, 14 agent, 15\n" +
@@ -117,14 +117,14 @@ func newRunCmd() *cobra.Command {
 			"an unscanned one --allow-unscanned. --prepare stops after that install\n" +
 			"step; --dry-run prints the\n" +
 			"compiled plan and touches no docker. --local DIR runs an unpublished\n" +
-			"BriefAgent directory (treated as unsigned).\n\n" +
+			"QuickAgent directory (treated as unsigned).\n\n" +
 			"For drivers (a hosted run's worker): AGENTRY_RUN_GRANT is sent as the\n" +
 			"X-Agentry-Run-Grant header on every request to the --registry host and\n" +
 			"nowhere else, for a registry prefix that answers for one run;\n" +
 			"AGENTRY_PIN_REGISTRY names the registry whose pinned signing keys verify\n" +
 			"the release, so pointing --registry at such a prefix keeps the pins made\n" +
 			"at login.\n\n" +
-			"Tools: BriefAgents get exactly the tools their manifest capabilities grant,\n" +
+			"Tools: QuickAgents get exactly the tools their manifest capabilities grant,\n" +
 			"served through a per-run Docker MCP Gateway (never from inside the agent\n" +
 			"container). The operator policy at ~/.agentry/runner/policy.yaml pins\n" +
 			"images and the model endpoint.",
@@ -151,7 +151,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope)")
 	f.StringVar(&opts.eventsPath, "events", "", "append the harness event stream to FILE as JSON lines while the run is live (the receipt keeps its own copy either way)")
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+"); see --list-adapters")
-	f.StringVar(&opts.local, "local", "", "run an unpublished BriefAgent DIRECTORY instead of a registry ref")
+	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
 	f.IntVar(&opts.timeout, "timeout", 0, "override the policy timeout (seconds)")
@@ -170,7 +170,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
 	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack to attach read-only at /knowledge/<name>, searched with the knowledge tools: a pack kept on this computer by NAME, or a pack DIRECTORY (repeatable)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
-	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the BriefAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
+	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	return cmd
 }
@@ -418,7 +418,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		plan.Harness.Host == nil); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
-	// The per-BriefAgent exec image the plan names (agentry-cli#9, #100):
+	// The per-QuickAgent exec image the plan names (agentry-cli#9, #100):
 	// built with the operator's catalogued packages; the versions it
 	// resolved go into the receipt.
 	var execPackages []string
@@ -442,7 +442,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 
-	// The BriefAgent's MCP profile (RUNNER-PLAN-2 §P2/§P3): load or, on a
+	// The QuickAgent's MCP profile (RUNNER-PLAN-2 §P2/§P3): load or, on a
 	// terminal, run guided setup. Part of the install step, so --prepare
 	// includes it; --dry-run (above) never prompts.
 	opts.progress.at(receipt.StageProfile)
@@ -811,7 +811,7 @@ func describeRunConsent(m *manifest.Manifest, meta *installdir.Meta, home string
 		}
 	} else if capabilityNeedsConfirm(m.Capabilities) {
 		c.NeedsConfirmation = true
-		c.Reason = "a first run of a BriefAgent that declares network egress or exec"
+		c.Reason = "a first run of a QuickAgent that declares network egress or exec"
 	}
 	return c
 }
@@ -1056,7 +1056,7 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 	}
 	if len(m.Intake) == 0 {
 		if len(preset) > 0 {
-			return nil, errors.New("--intake given but the BriefAgent asks no intake questions")
+			return nil, errors.New("--intake given but the QuickAgent asks no intake questions")
 		}
 		return nil, nil
 	}
@@ -1101,7 +1101,7 @@ func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
 }
 
 // secretOverrides merges the profile's stored secrets with the intake's
-// secret answers (under their SecretName). answers is nil for a BriefAgent
+// secret answers (under their SecretName). answers is nil for a QuickAgent
 // that asks no intake questions — the common case, which used to panic
 // here (agentry-cli#49).
 func secretOverrides(profSecrets map[string]string, answers *intake.Answers) map[string]string {
@@ -1139,7 +1139,7 @@ func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (man
 		return manifest.ModeAutonomous, nil
 	}
 	p := &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
-	answer, err := p.Ask("This BriefAgent runs autonomous or interactive. Mode", string(manifest.ModeAutonomous))
+	answer, err := p.Ask("This QuickAgent runs autonomous or interactive. Mode", string(manifest.ModeAutonomous))
 	if err != nil {
 		return "", err
 	}
@@ -1495,7 +1495,7 @@ func requireValidManifest(cmd *cobra.Command, m *manifest.Manifest, what string)
 }
 
 // ensureProfile loads — or, on a terminal, guides the creation of — the
-// BriefAgent's MCP profile for this signature (RUNNER-PLAN-2 §P2/§P3).
+// QuickAgent's MCP profile for this signature (RUNNER-PLAN-2 §P2/§P3).
 // Returns the profile (nil when none applies), its directory, and the
 // effective keep choice: flag > stored profile > policy default.
 func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *manifest.Manifest,

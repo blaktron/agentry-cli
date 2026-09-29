@@ -130,7 +130,7 @@ func (s *server) buildTools() {
 			add(name, "Read a public web page as text (GET only; at most 32 KiB of text). AI Review reads the page before you do; a page it flagged, or could not scan, is withheld and you get only its address and the reason.",
 				webReadSchema(), s.toolWebRead)
 		case ToolRegistrySearch:
-			add(name, "Ask the Agentry registry: search its published BriefAgents (query), read one BriefAgent's manifest (ref), or read its vulnerability check of an exact MCP server version (ecosystem, package, version). AI Review reads each answer before you do.",
+			add(name, "Ask the Agentry registry: search its published QuickAgents (query), read one QuickAgent's manifest (ref), or read its vulnerability check of an exact MCP server version (ecosystem, package, version). AI Review reads each answer before you do.",
 				registrySearchSchema(), s.toolRegistrySearch)
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
@@ -784,7 +784,7 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shim, a.Args...)
 	// The command runs in the workspace when the contract mounted one;
-	// exec and filesystem are independent grants, so a BriefAgent that
+	// exec and filesystem are independent grants, so a QuickAgent that
 	// declares exec and no filesystem access (it works on /inputs) gets a
 	// scratch directory instead of a failed chdir (agentry-cli#120).
 	cmd.Dir = s.execDir()

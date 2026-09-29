@@ -1,11 +1,11 @@
-// Package mcpinstall resolves and installs the MCP servers a BriefAgent
+// Package mcpinstall resolves and installs the MCP servers a QuickAgent
 // declares (RUNNER-PLAN-3): resolution turns each manifest pin into the
 // exact registry artifact (npm / PyPI metadata, integrity recorded);
 // installation materializes the dependency closure into the signature's
 // server store inside a pinned runtime container. The store lives under
 // the release's profile directory, which is what makes every isolation
 // property hold: attachment is derived from the signature, so no other
-// BriefAgent, user, or version can ever reference it.
+// QuickAgent, user, or version can ever reference it.
 package mcpinstall
 
 import (

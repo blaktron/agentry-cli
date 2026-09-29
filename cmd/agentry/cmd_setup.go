@@ -1,4 +1,4 @@
-// `agentry setup` (RUNNER-PLAN-2 §P1): prepare a machine for BriefAgent
+// `agentry setup` (RUNNER-PLAN-2 §P1): prepare a machine for QuickAgent
 // runs before any agent is involved — configure the operator's preferred
 // LLM provider into the policy, then stand up the docker-mcp-gateway plane
 // (pull pinned images, build the runner image) right away instead of
@@ -37,8 +37,8 @@ func newSetupCmd() *cobra.Command {
 	var opts setupOpts
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Prepare this machine for BriefAgent runs (LLM provider + docker MCP gateway)",
-		Long: "One-time (and re-runnable) machine setup for the BriefAgent runner\n" +
+		Short: "Prepare this machine for QuickAgent runs (LLM provider + docker MCP gateway)",
+		Long: "One-time (and re-runnable) machine setup for the QuickAgent runner\n" +
 			"(RUNNER-PLAN-2 §P1):\n\n" +
 			"  1. Configure your preferred LLM provider for agent runs into the operator\n" +
 			"     policy — interactively on a terminal, or from --provider/--model/\n" +
@@ -145,6 +145,6 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		return emitJSON(cmd.OutOrStdout(), result)
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(),
-		"setup complete — gateway, harness, and runner images ready; BriefAgents can run")
+		"setup complete — gateway, harness, and runner images ready; QuickAgents can run")
 	return nil
 }
