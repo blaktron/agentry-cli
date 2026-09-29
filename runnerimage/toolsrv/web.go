@@ -694,8 +694,8 @@ func (s *server) toolWebSearch(raw json.RawMessage) (string, bool) {
 
 func registrySearchSchema() map[string]any {
 	return objSchema(map[string]any{
-		"query":     strProp("Search the registry's published BriefAgents for this text."),
-		"ref":       strProp("Resolve one BriefAgent (ns/name, ns/name@1.2.3 or ns/name@^1) and read its manifest."),
+		"query":     strProp("Search the registry's published QuickAgents for this text."),
+		"ref":       strProp("Resolve one QuickAgent (ns/name, ns/name@1.2.3 or ns/name@^1) and read its manifest."),
 		"ecosystem": strProp("With package and version: an MCP server's ecosystem, npm or pypi."),
 		"package":   strProp("With ecosystem and version: the MCP server's package name."),
 		"version":   strProp("With ecosystem and package: the exact version, to read the registry's vulnerability check of it."),
@@ -788,7 +788,7 @@ func renderRegistry(path string, status int, body []byte, ref, server string) st
 	if status == http.StatusNotFound {
 		switch path {
 		case "/api/v1/resolve":
-			return fmt.Sprintf("No published BriefAgent resolves from %q.", ref)
+			return fmt.Sprintf("No published QuickAgent resolves from %q.", ref)
 		case "/api/v1/mcp-servers/scan":
 			return fmt.Sprintf("The registry has no check of %s: no published manifest has declared that version yet.", server)
 		}
@@ -812,7 +812,7 @@ func renderRegistry(path string, status int, body []byte, ref, server string) st
 		if err := json.Unmarshal(body, &r); err != nil {
 			return "The registry's answer was not the search's shape."
 		}
-		fmt.Fprintf(&b, "%d published BriefAgent(s) match (of %d):\n", len(r.Results), r.Total)
+		fmt.Fprintf(&b, "%d published QuickAgent(s) match (of %d):\n", len(r.Results), r.Total)
 		for _, h := range r.Results {
 			fmt.Fprintf(&b, "- %s/%s (%s; %d installs in 30 days): %s\n", h.Namespace, h.Name, strings.Join(h.Modes, ", "), h.Installs30d, h.Summary)
 		}

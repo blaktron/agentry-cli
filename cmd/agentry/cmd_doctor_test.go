@@ -84,7 +84,7 @@ func TestDoctorReportsTheExecCatalog(t *testing.T) {
 	}
 }
 
-// A local BriefAgent whose declared secret is unset, on a machine missing
+// A local QuickAgent whose declared secret is unset, on a machine missing
 // the runner image, fails both checks — naming the variable, never a value
 // — and the JSON form carries the same report.
 func TestDoctorLocalAgentReportsMissingImageAndSecret(t *testing.T) {
@@ -162,7 +162,7 @@ func TestDoctorWithoutPolicy(t *testing.T) {
 }
 
 // TestDoctorFlagsUncataloguedExecCommand (agentry-cli#100): a local
-// BriefAgent declaring a command the machine's exec catalog does not carry
+// QuickAgent declaring a command the machine's exec catalog does not carry
 // fails the exec check naming the command — what a run would refuse at
 // plan time, said before the run; with the catalog entry it passes.
 func TestDoctorFlagsUncataloguedExecCommand(t *testing.T) {

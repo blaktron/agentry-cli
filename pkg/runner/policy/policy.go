@@ -107,7 +107,7 @@ type Policy struct {
 	// §5), keyed by adapter name.
 	Harness map[string]HarnessPolicy `yaml:"harness,omitempty"`
 	// Exec is the operator's exec catalog: which binaries this machine
-	// provides to a BriefAgent that declares `exec: {commands}`, and from
+	// provides to a QuickAgent that declares `exec: {commands}`, and from
 	// where (plan examples-declared-servers §5.2, D1).
 	Exec ExecPolicy `yaml:"exec,omitempty"`
 	// Docker is how the runner drives the daemon beyond the images: the
@@ -152,7 +152,7 @@ type DockerPolicy struct {
 	// #337), since the gateway reaches the run's docker filter through a
 	// bind-mounted host Unix socket, which runsc without that flag does
 	// not open (measured on dev, DR-23). It needs Runtime: the gateway is
-	// never sandboxed while the BriefAgent's code is not. Empty leaves the
+	// never sandboxed while the QuickAgent's code is not. Empty leaves the
 	// gateway on the daemon's default. Enforced like Runtime (exit 13).
 	GatewayRuntime string `yaml:"gatewayRuntime,omitempty"`
 	// Resolvers are the name servers the built-in Drafter's web tools
@@ -793,7 +793,7 @@ func (p *Policy) Validate() error {
 			return fmt.Errorf("docker.gatewayRuntime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
 		}
 		if p.Docker.Runtime == "" {
-			return fmt.Errorf("docker.gatewayRuntime %q needs docker.runtime: the gateway is sandboxed only where the BriefAgent's code is", rt)
+			return fmt.Errorf("docker.gatewayRuntime %q needs docker.runtime: the gateway is sandboxed only where the QuickAgent's code is", rt)
 		}
 	}
 	if err := validResolvers(p.Docker.Resolvers); err != nil {
@@ -865,7 +865,7 @@ images:
   gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
   harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
-  # Runtimes for MCP servers a BriefAgent declares (capabilities.mcpServers).
+  # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:22-alpine
   pythonRuntime: ghcr.io/blaktron/agentry-python-alpine:3.12-alpine
 
@@ -926,7 +926,7 @@ sessions:
 #     # apiKeyEnv: ANTHROPIC_API_KEY
 
 profiles:
-  # A BriefAgent's MCP profile stores the keys/identities guided setup
+  # A QuickAgent's MCP profile stores the keys/identities guided setup
   # collected, per exact release. keepByDefault: true retains it after a
   # run so the next run of the same version reuses the authenticated
   # resources; per-run --keep-profile overrides.
@@ -992,7 +992,7 @@ mcpRegistries:
 #   apiKeyEnv: BRAVE_API_KEY
 
 # exec:
-#   # The exec catalog: which binaries this machine provides to a BriefAgent
+#   # The exec catalog: which binaries this machine provides to a QuickAgent
 #   # that declares exec.commands, as command name → apk package (optionally
 #   # =version). A declared command that is not catalogued is refused at plan
 #   # time. Busybox applets the runner image already has (sh, sed, sort, …)

@@ -151,7 +151,7 @@ else
   if grep -q '"runtime":' "$OUT/result.json"; then echo "FAIL: the receipt names a runtime the policy never set"; exit 1; fi
 fi
 
-# The exec catalog (agentry-cli#100): a BriefAgent declaring exec [git]
+# The exec catalog (agentry-cli#100): a QuickAgent declaring exec [git]
 # runs in an exec image built from the catalogued package, and the receipt
 # names the packages the build resolved. The model's use of git is not
 # asserted (its tool-call shape varies; agentry-cli#113) — the build, the

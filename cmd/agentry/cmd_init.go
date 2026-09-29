@@ -23,10 +23,10 @@ func newInitCmd() *cobra.Command {
 	var ff fromFlags
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
-		Short: "Scaffold a new BriefAgent workspace (agent.yaml, README, LICENSE, AGENT.md)",
-		Long: "Scaffold a new BriefAgent workspace: a manifest schema v2 agent.yaml declaring the\n" +
+		Short: "Scaffold a new QuickAgent workspace (agent.yaml, README, LICENSE, AGENT.md)",
+		Long: "Scaffold a new QuickAgent workspace: a manifest schema v2 agent.yaml declaring the\n" +
 			"run modes, README.md, a LICENSE placeholder note, and the AGENT.md instruction file.\n\n" +
-			"--modes lists the run modes the BriefAgent supports: autonomous (runs from its\n" +
+			"--modes lists the run modes the QuickAgent supports: autonomous (runs from its\n" +
 			"files, writes its output and receipts, and ends), interactive (a chat session in\n" +
 			"the terminal or the desktop app under exactly the same controls), or both,\n" +
 			"comma-separated. Interactive adds an interactive: block with the opening message.\n\n" +
@@ -51,7 +51,7 @@ func newInitCmd() *cobra.Command {
 			return runInit(cmd, dir, modes, name, namespace)
 		},
 	}
-	cmd.Flags().StringVar(&modes, "modes", string(manifest.ModeAutonomous), "run modes the BriefAgent supports: autonomous | interactive | autonomous,interactive")
+	cmd.Flags().StringVar(&modes, "modes", string(manifest.ModeAutonomous), "run modes the QuickAgent supports: autonomous | interactive | autonomous,interactive")
 	// The v1 flag stays parseable so an old habit gets a pointer to --modes
 	// rather than cobra's "unknown flag".
 	cmd.Flags().StringVar(&kind, "kind", "", "withdrawn: use --modes")
@@ -62,7 +62,7 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&ff.exec, "exec", "", "with --from: commands the agent executes (comma-separated; default none)")
 	cmd.Flags().StringVar(&ff.fsRead, "fs-read", "none", "with --from: filesystem read: none | workspace")
 	cmd.Flags().StringVar(&ff.fsWrite, "fs-write", "none", "with --from: filesystem write: none | workspace")
-	cmd.Flags().StringVar(&name, "name", "", "BriefAgent name (default: the directory basename)")
+	cmd.Flags().StringVar(&name, "name", "", "QuickAgent name (default: the directory basename)")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "owning namespace handle (default: derived from $USER)")
 	return cmd
 }
@@ -116,7 +116,7 @@ func runInit(cmd *cobra.Command, dir, modesFlag, name, namespace string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "initialized BriefAgent %s/%s (modes: %s) in %s\n", namespace, name, modesLabel(modes), absDir)
+	_, _ = fmt.Fprintf(out, "initialized QuickAgent %s/%s (modes: %s) in %s\n", namespace, name, modesLabel(modes), absDir)
 	for _, p := range created {
 		_, _ = fmt.Fprintf(out, "  created %s\n", p)
 	}
@@ -162,7 +162,7 @@ func scaffoldFiles(modes []manifest.Mode, name, namespace string) []scaffoldFile
 
 // todoSummary is the placeholder summary; AGENT.md's frontmatter repeats it
 // so V9 (frontmatter vs manifest) is quiet until the author edits both.
-const todoSummary = "TODO one line (at most 140 chars) saying what this BriefAgent does"
+const todoSummary = "TODO one line (at most 140 chars) saying what this QuickAgent does"
 
 // agentYAML renders the schema v2 manifest template (PLAN §5.2): every mode
 // field is present, commented out where the chosen modes do not use it.
@@ -171,7 +171,7 @@ func agentYAML(modes []manifest.Mode, name, namespace string) string {
 	_, _ = fmt.Fprintf(&b, `schemaVersion: "2"
 name: %s
 namespace: %s
-# Run modes this BriefAgent supports, one or both:
+# Run modes this QuickAgent supports, one or both:
 #   autonomous  — runs from its files (after any intake questions), writes
 #                 its output and receipts, and ends
 #   interactive — the same plan and the same controls, run as a chat session
@@ -237,7 +237,7 @@ publish:
 func readmeMD(name, namespace string) string {
 	return fmt.Sprintf(`# %s
 
-TODO describe this BriefAgent. This file renders on the BriefAgent page and is
+TODO describe this QuickAgent. This file renders on the QuickAgent page and is
 required for public publishing (validation rule V7).
 
 ## Install

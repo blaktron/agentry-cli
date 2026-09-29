@@ -25,7 +25,7 @@ const webManifest = `schemaVersion: "2"
 name: drafter
 namespace: agentry
 version: 1.0.0
-summary: "Drafts a BriefAgent."
+summary: "Drafts a QuickAgent."
 license: Apache-2.0
 modes: [autonomous]
 entrypoints:

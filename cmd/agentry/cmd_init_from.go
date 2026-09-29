@@ -1,5 +1,5 @@
 // `agentry init --from` (agentry#71, PLAN §5.6/§11): import wizards that
-// seed a BriefAgent workspace from something that already exists — an
+// seed a QuickAgent workspace from something that already exists — an
 // Agent Skills SKILL.md (with its sibling files) or an MCP registry
 // server.json — and populate the manifest from what the source states.
 // The capability contract is never guessed: what the source cannot state
@@ -208,7 +208,7 @@ func runInitFrom(cmd *cobra.Command, dir, name, namespace string, ff fromFlags) 
 	sort.Strings(created)
 
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "imported BriefAgent %s/%s (modes: autonomous) from %s into %s\n", imp.Namespace, imp.Name, ff.from, absDir)
+	_, _ = fmt.Fprintf(out, "imported QuickAgent %s/%s (modes: autonomous) from %s into %s\n", imp.Namespace, imp.Name, ff.from, absDir)
 	for _, p := range created {
 		_, _ = fmt.Fprintf(out, "  created %s\n", p)
 	}
@@ -279,7 +279,7 @@ func readSkill(path string) (*imported, error) {
 		imp.Name = filepath.Base(srcDir)
 	}
 	if imp.Summary == "" {
-		imp.Summary = "TODO one line (at most 140 chars) saying what this BriefAgent does"
+		imp.Summary = "TODO one line (at most 140 chars) saying what this QuickAgent does"
 	}
 	if v, ok := front.Metadata["version"].(string); ok && v != "" {
 		imp.Version = v
@@ -407,9 +407,9 @@ type serverJSON struct {
 	} `json:"remotes"`
 }
 
-// readServerJSON imports a server.json as a skill BriefAgent that declares
+// readServerJSON imports a server.json as a skill QuickAgent that declares
 // the published package under capabilities.mcpServers (DEV-060): the
-// registry entry describes an installable server, and a BriefAgent that
+// registry entry describes an installable server, and a QuickAgent that
 // uses one names it there with an exact pin and its secret names.
 func readServerJSON(path string) (*imported, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec // user-named source
@@ -461,7 +461,7 @@ func readServerJSON(path string) (*imported, error) {
 		imp.Name = lastSegment(sj.Name)
 	}
 	if imp.Summary == "" {
-		imp.Summary = "TODO one line (at most 140 chars) saying what this BriefAgent does"
+		imp.Summary = "TODO one line (at most 140 chars) saying what this QuickAgent does"
 	}
 	for _, r := range sj.Remotes {
 		for _, m := range hostRE.FindAllStringSubmatch(strings.ToLower(r.URL), -1) {

@@ -1,5 +1,5 @@
 // `agentry profiles` (RUNNER-PLAN-2 §P2): list and remove the MCP profiles
-// guided setup created — the persistent keys/identities per BriefAgent
+// guided setup created — the persistent keys/identities per QuickAgent
 // signature. Secret VALUES are never printed by any subcommand.
 package main
 
@@ -18,7 +18,7 @@ import (
 func newProfilesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "profiles",
-		Short: "Manage BriefAgent MCP profiles (stored keys and identities per release)",
+		Short: "Manage QuickAgent MCP profiles (stored keys and identities per release)",
 	}
 	cmd.AddCommand(newProfilesListCmd(), newProfilesRemoveCmd())
 	return cmd
@@ -40,7 +40,7 @@ func newProfilesListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if len(entries) == 0 {
-				_, _ = fmt.Fprintln(out, "no MCP profiles stored (guided setup creates one on a BriefAgent's first run)")
+				_, _ = fmt.Fprintln(out, "no MCP profiles stored (guided setup creates one on a QuickAgent's first run)")
 				return nil
 			}
 			for _, e := range entries {
@@ -72,7 +72,7 @@ func newProfilesRemoveCmd() *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
 		Use:   "remove [ns/name[@version]]",
-		Short: "Remove stored MCP profiles for a BriefAgent (or --all)",
+		Short: "Remove stored MCP profiles for a QuickAgent (or --all)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {

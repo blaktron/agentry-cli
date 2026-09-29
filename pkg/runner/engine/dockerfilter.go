@@ -56,7 +56,7 @@ const maxSocketPath = 103
 // it. Under runhost the CLI runs in a container whose /tmp the daemon
 // cannot see; the runner home is the path it shares with the host, at the
 // same place inside and out. The run's own directory is under the
-// installed BriefAgent's, too deep for a socket path there (measured on
+// installed QuickAgent's, too deep for a socket path there (measured on
 // dev's runhost, 2026-09-25), so the socket is <runner home>/s/<run>.sock.
 // A home too long even for that falls back (startDaemonFilter) to a short
 // private directory under the system's temp directory; were that ever

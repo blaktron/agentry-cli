@@ -63,7 +63,7 @@ type installOpts struct {
 }
 
 // providerTargets maps the per-provider install entry points
-// (RUNNER-PLAN-2 §P5) onto the §5.6 targets: the BriefAgent then runs on
+// (RUNNER-PLAN-2 §P5) onto the §5.6 targets: the QuickAgent then runs on
 // that application's own MCP servers and built-in tools, never through the
 // docker gateway path.
 var providerTargets = map[string]string{
@@ -104,7 +104,7 @@ func newInstallCmd() *cobra.Command {
 	var opts installOpts
 	cmd := &cobra.Command{
 		Use:   "install <ns/name[@range]>",
-		Short: "Resolve, download, verify, and install a BriefAgent on this machine",
+		Short: "Resolve, download, verify, and install a QuickAgent on this machine",
 		Long: "Resolve ns/name[@range] (§9.4), download the release archive, verify its\n" +
 			"sha256 digest AND its DSSE attestation signature (§8.8), show the declared\n" +
 			"capability contract (§5.4) diffed against the installed version, and lay\n" +
@@ -605,7 +605,7 @@ func writeInstallPlan(cmd *cobra.Command, res *apiclient.ResolveResult, m *manif
 		}
 	} else if capabilityNeedsConfirm(m.Capabilities) {
 		plan.NeedsConfirmation = true
-		plan.Reason = "a first install of a BriefAgent that declares network egress or exec"
+		plan.Reason = "a first install of a QuickAgent that declares network egress or exec"
 	}
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), plan)
@@ -792,7 +792,7 @@ func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed
 	prompt := fmt.Sprintf("this update to %s widens what %s/%s may do — continue? type \"yes\": ",
 		version, key.Namespace, key.Name)
 	return promptYes(cmd, prompt,
-		"this update widens the BriefAgent's declared capabilities; re-run with --yes to accept in non-interactive mode",
+		"this update widens the QuickAgent's declared capabilities; re-run with --yes to accept in non-interactive mode",
 		"install aborted (widened capability contract not accepted)")
 }
 
@@ -804,8 +804,8 @@ func confirmCapabilities(cmd *cobra.Command, caps manifest.Capabilities, yes boo
 		return nil
 	}
 	return promptYes(cmd,
-		"this BriefAgent declares network egress and/or exec — type \"yes\" to continue: ",
-		"this BriefAgent declares network egress and/or exec; re-run with --yes to accept in non-interactive mode",
+		"this QuickAgent declares network egress and/or exec — type \"yes\" to continue: ",
+		"this QuickAgent declares network egress and/or exec; re-run with --yes to accept in non-interactive mode",
 		"install aborted (capability contract not accepted)")
 }
 

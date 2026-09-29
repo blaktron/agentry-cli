@@ -610,7 +610,7 @@ const containerFileType = "container_file_t"
 // Our own mounts carry docker's `z` option, but the workspace, the output
 // folder, the inputs and the config dir are bound by the gateway rather
 // than by us, so docker never relabels them on our behalf. Without this a
-// confined tool container is refused every read: the BriefAgent's fs_read
+// confined tool container is refused every read: the QuickAgent's fs_read
 // comes back denied, the model retries, and the run dies on the turn budget
 // instead of on anything that names the real cause (agentry-cli#85).
 //

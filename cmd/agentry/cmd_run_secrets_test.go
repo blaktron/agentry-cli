@@ -6,7 +6,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 )
 
-// A BriefAgent with no intake questions yields nil answers; the overrides
+// A QuickAgent with no intake questions yields nil answers; the overrides
 // must still be the profile's secrets, not a panic (agentry-cli#49).
 func TestSecretOverridesNilAnswers(t *testing.T) {
 	got := secretOverrides(map[string]string{"GITHUB_TOKEN": "p1"}, nil)

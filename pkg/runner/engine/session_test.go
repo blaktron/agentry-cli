@@ -743,7 +743,7 @@ func TestSessionStoreIsARunVolume(t *testing.T) {
 	}
 }
 
-// An interactive run's containers that hold the BriefAgent's code — the
+// An interactive run's containers that hold the QuickAgent's code — the
 // session store's ownership one-shot on the harness image and the agent
 // — are created under the policy runtime too; the runner's own proxy and
 // gateway are not (DR-23).

@@ -52,7 +52,7 @@ func EnsureSkillFrontmatter(content []byte, name, summary string) []byte {
 }
 
 // AgentsMDSection renders the AGENTS.md section for one installed
-// BriefAgent (§5.6 agents-md target).
+// QuickAgent (§5.6 agents-md target).
 func AgentsMDSection(ns, name, version, summary, installPath string) string {
 	return AgentsMDSectionNote(ns, name, version, summary, installPath, "")
 }
