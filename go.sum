@@ -9,8 +9,6 @@ github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiE
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/aymanbagabas/go-udiff v0.3.1 h1:LV+qyBQ2pqe0u42ZsUEtPiCaUoqgA9gYRDs3vj1nolY=
 github.com/aymanbagabas/go-udiff v0.3.1/go.mod h1:G0fsKmG+P6ylD0r6N/KgQD/nWzgfnl8ZBcNLgcbrw8E=
-github.com/blaktron/agentry v0.6.15-dev.6.0.20260928233504-f4ce3e19d24a h1:Kwz0B6kQVetFKpsLuNPWxOstt1fgryvEyYTMdozP1aI=
-github.com/blaktron/agentry v0.6.15-dev.6.0.20260928233504-f4ce3e19d24a/go.mod h1:DoxM2Gh//daes3ObXxzQrYR1TkiuI6osLuWUrFyzStQ=
 github.com/blaktron/agentry v0.6.15-dev.7.0.20260929133518-aba01e96cdfa h1:atZHvsUquZP621UiLMJe/GlREgRLF54E1QSqYtnzS6s=
 github.com/blaktron/agentry v0.6.15-dev.7.0.20260929133518-aba01e96cdfa/go.mod h1:DoxM2Gh//daes3ObXxzQrYR1TkiuI6osLuWUrFyzStQ=
 github.com/bmatcuk/doublestar v1.1.1/go.mod h1:UD6OnuiIn0yFxxA2le/rnRU1G4RaI4UvFv1sNto9p6w=
