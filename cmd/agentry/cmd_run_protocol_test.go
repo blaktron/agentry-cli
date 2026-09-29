@@ -148,9 +148,10 @@ func TestSessionProtocolOpeningTurnFollowsTheTask(t *testing.T) {
 
 // TestProtocolEventsDescriptor runs the real check of descriptor 3 in a
 // child process, because what fd 3 is depends on what the process was
-// started with: a pipe the driver opened for writing is taken; the read end
-// of one, /dev/null, and nothing at all (where the Go runtime puts a file
-// of its own) are refused.
+// started with: a pipe the driver opened for writing is taken, and a
+// process started after it does not inherit it; the read end of one,
+// /dev/null, and nothing at all (where the Go runtime puts a file of its
+// own) are refused.
 func TestProtocolEventsDescriptor(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		if _, err := openProtocolEvents(); err == nil {
@@ -161,9 +162,12 @@ func TestProtocolEventsDescriptor(t *testing.T) {
 	if os.Getenv("AGENTRY_TEST_FD3_CHILD") == "1" {
 		if _, err := openProtocolEvents(); err != nil {
 			fmt.Println("refused:", err)
-		} else {
-			fmt.Println("accepted")
+			return
 		}
+		fmt.Println("accepted")
+		// A process the CLI starts must not inherit the events (agentry-cli#482).
+		out, _ := exec.Command("sh", "-c", `if ( : >&3 ) 2>/dev/null; then echo "grandchild: holds fd 3"; else echo "grandchild: no fd 3"; fi`).Output()
+		fmt.Print(string(out))
 		return
 	}
 	child := func(extra *os.File) string {
@@ -194,7 +198,7 @@ func TestProtocolEventsDescriptor(t *testing.T) {
 		fd   *os.File
 		want string
 	}{
-		{"a pipe open for writing", w, "accepted"},
+		{"a pipe open for writing", w, "accepted\ngrandchild: no fd 3"},
 		{"the read end of a pipe", r, "refused: --session-protocol writes its events to descriptor 3, and it is open for reading only"},
 		{"/dev/null", devNull, "refused: --session-protocol writes its events to descriptor 3, and it is not a pipe or a socket the driver opened"},
 		{"nothing", nil, "refused: --session-protocol writes its events to descriptor 3"},
