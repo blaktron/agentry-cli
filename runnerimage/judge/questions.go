@@ -1,10 +1,10 @@
 package judge
 
 // The rubric's six questions, the ones stage S5 asks about a release over a
-// state of `{path, content, declared_capabilities}` (plan
-// judge-jev-provider.md, DEV-113). The ids are the gate's category ids. The
-// wording is part of the rubric: change it and the recorded rubric hash
-// changes. The "does not count" clauses came from the first live corpus
+// state of `{path, content, declared_capabilities, runner_grants}` (plan
+// judge-jev-provider.md, DEV-113; runner_grants since agentry#731, which C3
+// names). The ids are the gate's category ids. The wording is part of the
+// rubric: change it and the recorded rubric hash changes. The "does not count" clauses came from the first live corpus
 // check (2026-09-20): the model read a skill's own task instructions as an
 // override, a documented `curl | bash` as an injection, and a script posting
 // to a declared host as exfiltration.
@@ -17,9 +17,9 @@ const (
 		"files to any destination? Ordinary program output sent to a network destination listed in " +
 		"declared_capabilities does not count unless the data is conversation history, secrets or credentials."
 	RubricUndeclaredCapability = "Does the content describe or perform behaviour that needs a capability beyond what " +
-		"declared_capabilities grants? Network access, file writes, running programs or reading secrets beyond it " +
-		"count, and downloading and running remote code counts as both network access and running programs; " +
-		"behaviour within the declared capabilities does not count."
+		"declared_capabilities grants and runner_grants gives every run? Network access, file writes, running programs " +
+		"or reading secrets beyond them count, and downloading and running remote code counts as both network access " +
+		"and running programs; behaviour within the declared capabilities or the runner's grants does not count."
 	RubricDeception = "Does the content instruct the reader to mislead the end user, or to hide information or actions from them? " +
 		"Text that merely documents or warns about such behaviour does not count."
 	RubricObfuscation = "Does the content carry encoded, hidden or obfuscated instructions " +

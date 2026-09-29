@@ -39,10 +39,11 @@ const (
 	CheckNotScanned = "not_scanned"
 )
 
-// RubricIDUndeclared is the release rubric's C3. A drafted instruction that
-// reads its own inputs and writes its report scores on it, because the
-// rubric's state does not say what the runner grants every run
-// (blaktron/agentry#731), and editing the draft does not clear it.
+// RubricIDUndeclared is the release rubric's C3: a capability the
+// instructions use that the manifest does not declare. It is recorded and
+// never sent to the repair turn. Until blaktron/agentry#731 the rubric read
+// an instruction that reads its own inputs and writes its report that way,
+// which editing the draft could not clear.
 const RubricIDUndeclared = corejudge.RubricIDUndeclaredCapability
 
 // Check is draft.json's record of the check, under aiReview.check: the
@@ -449,7 +450,7 @@ func checkNote(c *Check) string {
 		for _, f := range c.Rubric.Findings {
 			if f.ID == RubricIDUndeclared {
 				lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, reads %s as needing a capability the manifest does not declare (C3). "+
-					"It reads an instruction that uses its own inputs and writes its report that way, so this is common; at publish it sends the version to review, not to refusal.", f.Path))
+					"Check that the manifest declares every host, program, file access and secret the instructions use; at publish it sends the version to review, not to refusal.", f.Path))
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, flagged %s: %s At publish the pipeline records it as a finding and sends the version to review.",
