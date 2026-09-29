@@ -1,9 +1,9 @@
 schemaVersion: "2"
 name: knowledge-creator
 namespace: agentry
-version: 1.0.0
+version: 1.1.1
 summary: "Builds and extends a knowledge pack: compiles the documents it is given into an LLM wiki of cited pages, section by section."
-license: Apache-2.0
+license: MIT
 authors:
   - name: Agentry
 modes: [autonomous]
@@ -18,4 +18,4 @@ capabilities:
   exec: none
   dataAccess: [files]
 publish:
-  include: [agent.yaml, INSTRUCTION.md]
+  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE]

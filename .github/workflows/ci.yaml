@@ -52,6 +52,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+          # HEAD^1 for the builtins.lock check below: a pull request's merge
+          # ref's first parent is its base branch.
+          fetch-depth: 2
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -93,6 +96,11 @@ jobs:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
       - name: make check
         run: make check
+      # Every built-in is published from its embedded tree and a published
+      # version is never rebuilt, so builtins.lock is append-only
+      # (agentry-cli#470): a changed tree takes a new version.
+      - name: builtins.lock is append-only
+        run: scripts/builtins-lock-check.sh
       # ARCHITECTURE §9's runner row names runner-r0/r1 as its evidence;
       # until agentry-cli#160 no workflow ran them. Both need no docker and
       # no registry (r2 needs a docker host and a model key, and stays a

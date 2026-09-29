@@ -38,6 +38,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
+	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -151,6 +152,73 @@ func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter()} }
 // Ref is the package's ns/name@version.
 func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }
 
+// Namespace is the package's namespace, as its manifest declares it.
+func (b Builtin) Namespace() string { return b.namespace }
+
+// Name is the package's name.
+func (b Builtin) Name() string { return b.name }
+
+// Version is the package's version.
+func (b Builtin) Version() string { return b.version }
+
+// Stage copies the embedded tree into dir, which must not hold any of its
+// files: the workspace `agentry builtins publish` uploads (agentry-cli#470).
+func (b Builtin) Stage(dir string) error {
+	if b.fsys == nil {
+		return errors.New("not a built-in package")
+	}
+	if err := os.CopyFS(dir, b.fsys); err != nil {
+		return fmt.Errorf("stage %s: %w", b.Ref(), err)
+	}
+	return nil
+}
+
+// ArchiveDigest is the digest of the archive PackWorkspace makes of the
+// embedded tree: the release identity the registry holds for this package,
+// since the registry publishes every built-in from these bytes and its own
+// build must equal the digest the upload claims (agentry-cli#470). It is not
+// the tree digest Materialize keys the runner home and the receipt by.
+func (b Builtin) ArchiveDigest() (string, error) {
+	stage, err := os.MkdirTemp("", "agentry-builtin-*")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
+	if err := b.Stage(stage); err != nil {
+		return "", err
+	}
+	m, err := ManifestFrom(stage)
+	if err != nil {
+		return "", err
+	}
+	info, err := PackWorkspace(stage, m, io.Discard)
+	if err != nil {
+		return "", fmt.Errorf("pack %s: %w", b.Ref(), err)
+	}
+	return info.Digest, nil
+}
+
+// PackWorkspace writes the deterministic archive of a package directory to
+// w, filtered by the manifest's publish.include (plan §6.5, D-15), and
+// returns its identity. `agentry publish` uploads exactly this, and a
+// built-in's ArchiveDigest is this over its embedded tree, so the two cannot
+// pack differently.
+func PackWorkspace(dir string, m *manifest.Manifest, w io.Writer) (pkgarchive.ArchiveInfo, error) {
+	files, err := pkgarchive.WalkWorkspace(dir)
+	if err != nil {
+		return pkgarchive.ArchiveInfo{}, fmt.Errorf("walk workspace %s: %w", dir, err)
+	}
+	include := manifest.ResolveInclude(m.Publish.Include, files)
+	if len(include) == 0 {
+		return pkgarchive.ArchiveInfo{}, fmt.Errorf("publish.include matches no files in %s (V4)", dir)
+	}
+	info, err := pkgarchive.BuildArchive(dir, include, w)
+	if err != nil {
+		return pkgarchive.ArchiveInfo{}, fmt.Errorf("build archive: %w", err)
+	}
+	return info, nil
+}
+
 // Materialize lays the embedded tree down in the runner home's release
 // directory, keyed by its digest, and returns the record of it with the
 // attestation state builtin and the build that carries it. The record is
@@ -165,8 +233,8 @@ func (b Builtin) Materialize(home, build string) (*installdir.Meta, string, erro
 		return nil, "", err
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
-	if err := os.CopyFS(stage, b.fsys); err != nil {
-		return nil, "", fmt.Errorf("stage %s: %w", b.Ref(), err)
+	if err := b.Stage(stage); err != nil {
+		return nil, "", err
 	}
 	digest, err := TreeDigest(stage)
 	if err != nil {

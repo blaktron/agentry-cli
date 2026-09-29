@@ -183,11 +183,11 @@ func TestFinish(t *testing.T) {
 	env := &receipt.Envelope{RunID: "run-7", Result: json.RawMessage(answer), Harness: receipt.Harness{Model: "openai/qwen"},
 		Web: &receipt.Web{Scan: toolsrv.WebScanJev, Read: 2, Passed: 1, Withheld: 1, Model: "jev-1.13.0", QuestionSet: "sha256:q"}}
 
-	d, err := Finish(env, out, webscan.Result{Verdict: webscan.Pass}, "agentry/drafter@1.0.0", "agentry 0.6.4")
+	d, err := Finish(env, out, webscan.Result{Verdict: webscan.Pass}, "agentry/drafter@1.1.1", "agentry 0.6.4")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *d.Drafter != (Made{Ref: "agentry/drafter@1.0.0", Build: "agentry 0.6.4", Model: "openai/qwen", RunID: "run-7"}) {
+	if *d.Drafter != (Made{Ref: "agentry/drafter@1.1.1", Build: "agentry 0.6.4", Model: "openai/qwen", RunID: "run-7"}) {
 		t.Fatalf("drafter %+v", d.Drafter)
 	}
 	a := d.AIReview
