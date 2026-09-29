@@ -1,4 +1,4 @@
-package main
+package validate
 
 // D-12 parity for the S1 subset: the local checks must agree with the ones
 // the registry runs at submit, or the round-trip they exist to prevent comes
@@ -27,7 +27,7 @@ func TestLocalS1FlagsBinariesArchivesAndEncoding(t *testing.T) {
 		files = append(files, localFile{Path: name, Content: content})
 	}
 	got := map[string]string{}
-	for _, f := range scanS1Local(files) {
+	for _, f := range scanS1(files) {
 		got[f.FilePath] = f.Scanner
 	}
 
@@ -54,16 +54,16 @@ func TestLocalS1FlagsBinariesArchivesAndEncoding(t *testing.T) {
 // one to a reviewer rather than rejecting it, and a local check stricter than
 // the server is its own parity bug.
 func TestLocalS1SeverityGatesExitCode(t *testing.T) {
-	critical := scanS1Local([]localFile{{Path: "a.md", Content: []byte{0x7f, 0x45, 0x4c, 0x46}}})
-	if n := localFailingFindings(critical); n != 1 {
+	critical := scanS1([]localFile{{Path: "a.md", Content: []byte{0x7f, 0x45, 0x4c, 0x46}}})
+	if n := failingFindings(critical); n != 1 {
 		t.Errorf("executable: failing findings = %d, want 1", n)
 	}
 	// A short opaque blob: not exec, not archive, not image, not text.
-	opaque := scanS1Local([]localFile{{Path: "blob.dat", Content: []byte{0x00, 0x01, 0x02, 0x03}}})
+	opaque := scanS1([]localFile{{Path: "blob.dat", Content: []byte{0x00, 0x01, 0x02, 0x03}}})
 	if len(opaque) != 1 || opaque[0].Scanner != "S1/opaque-binary" {
 		t.Fatalf("opaque blob: %+v", opaque)
 	}
-	if n := localFailingFindings(opaque); n != 0 {
+	if n := failingFindings(opaque); n != 0 {
 		t.Errorf("opaque binary: failing findings = %d, want 0 (server routes it to review)", n)
 	}
 }
