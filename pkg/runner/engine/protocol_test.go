@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,17 +94,33 @@ type protocolDriver struct {
 	t      *testing.T
 	in     *io.PipeWriter
 	events chan protocol.Event
-	lines  chan string // every event line, verbatim, in order
+	mu     sync.Mutex
+	lines  []string // every event line, verbatim, in order
+	seen   []protocol.Event
 	done   chan struct{}
 	env    *receipt.Envelope
 	err    error
 }
 
+// allLines is every event line written, once Serve has returned.
+func (d *protocolDriver) allLines() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.lines...)
+}
+
 func serveProtocol(t *testing.T, ctx context.Context, s session.Session, opts protocol.Options) *protocolDriver {
 	t.Helper()
-	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	d := &protocolDriver{t: t, in: inW, events: make(chan protocol.Event, 1024), lines: make(chan string, 1024), done: make(chan struct{})}
+	return serveProtocolTo(t, ctx, s, opts, outR, outW)
+}
+
+// serveProtocolTo is serveProtocol with the events stream given: outR is
+// what the test reads, outW what Serve writes.
+func serveProtocolTo(t *testing.T, ctx context.Context, s session.Session, opts protocol.Options, outR io.Reader, outW io.WriteCloser) *protocolDriver {
+	t.Helper()
+	inR, inW := io.Pipe()
+	d := &protocolDriver{t: t, in: inW, events: make(chan protocol.Event, 1024), done: make(chan struct{})}
 	go func() {
 		sc := bufio.NewScanner(outR)
 		sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
@@ -113,11 +130,12 @@ func serveProtocol(t *testing.T, ctx context.Context, s session.Session, opts pr
 				t.Errorf("an event line is not JSON: %q", sc.Text())
 				continue
 			}
-			d.lines <- sc.Text()
+			d.mu.Lock()
+			d.lines = append(d.lines, sc.Text())
+			d.mu.Unlock()
 			d.events <- ev
 		}
 		close(d.events)
-		close(d.lines)
 	}()
 	go func() {
 		d.env, d.err = protocol.Serve(ctx, s, inR, outW, opts)
@@ -149,6 +167,7 @@ func (d *protocolDriver) until(ok func(protocol.Event) bool) []protocol.Event {
 				d.t.Fatalf("the event stream closed first; read %v", eventKinds(got))
 			}
 			got = append(got, ev)
+			d.seen = append(d.seen, ev)
 			if ok(ev) {
 				return got
 			}
@@ -170,6 +189,7 @@ func (d *protocolDriver) wait() []protocol.Event {
 	var rest []protocol.Event
 	for ev := range d.events {
 		rest = append(rest, ev)
+		d.seen = append(d.seen, ev)
 	}
 	return rest
 }
@@ -183,7 +203,7 @@ func eventKinds(evs []protocol.Event) []string {
 	for i, ev := range evs {
 		out[i] = string(ev.Kind)
 		if ev.Refused != "" {
-			out[i] += "/" + ev.Refused
+			out[i] += "/" + string(ev.Refused)
 		}
 	}
 	return out
@@ -230,10 +250,11 @@ func comparableEnvelope(env *receipt.Envelope) sameEnvelope {
 	return sameEnvelope{env.Status, env.ExitCode, env.Error, string(env.Result), u, env.Harness.Mode, enforced}
 }
 
-// stagedInput writes a file for an add, outside the run.
-func stagedInput(t *testing.T, name, body string) string {
+// stagedInput writes a file for an add in dir, the driver's staging
+// directory, outside the run.
+func stagedInput(t *testing.T, dir, name, body string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +276,8 @@ func TestProtocolMatchesTheSessionAPI(t *testing.T) {
 				label = name + "/finish"
 			}
 			t.Run(label, func(t *testing.T) {
-				input := stagedInput(t, "notes.txt", "the notes")
+				inputs := t.TempDir()
+				input := stagedInput(t, inputs, "notes.txt", "the notes")
 				ctx := context.Background()
 
 				// Through the API, as a chat surface calls it.
@@ -279,10 +301,10 @@ func TestProtocolMatchesTheSessionAPI(t *testing.T) {
 
 				// Through the protocol.
 				s2, _, f2 := startAdapterSession(t, ctx, name, nil)
-				d := serveProtocol(t, ctx, s2, protocol.Options{})
+				d := serveProtocol(t, ctx, s2, protocol.Options{InputsDir: inputs})
 				d.send(`{"send":{"text":"hello"}}`)
 				d.until(isKind(session.KindAssistantTurn))
-				d.send(`{"add":{"path":` + jsonString(input) + `}}`)
+				d.send(`{"add":{"path":"notes.txt"}}`)
 				d.until(isKind(session.KindAssistantTurn))
 				d.send(`{"send":{"text":"and again"}}`)
 				d.until(isKind(session.KindAssistantTurn))
@@ -292,10 +314,7 @@ func TestProtocolMatchesTheSessionAPI(t *testing.T) {
 					d.send(`{"end":{"finish":false}}`)
 				}
 				d.wait()
-				var lines []string
-				for l := range d.lines {
-					lines = append(lines, l)
-				}
+				lines := d.allLines()
 				var protoEvents []sameEvent
 				for _, l := range lines {
 					var ev protocol.Event
@@ -430,20 +449,18 @@ func TestProtocolReachesEveryEndReason(t *testing.T) {
 			if tc.cancel {
 				cancel()
 			}
-			rest := d.wait()
-			_ = rest
-			var last *protocol.Event
-			for i := range rest {
-				if rest[i].Kind == session.KindSessionEnd {
-					last = &rest[i]
+			d.wait()
+			var ends []session.EndReason
+			for _, ev := range d.seen {
+				if ev.Kind == session.KindSessionEnd {
+					ends = append(ends, ev.Reason)
 				}
 			}
-			ended, reason := s.Ended()
-			if !ended || reason != tc.reason {
-				t.Errorf("session ended=%v reason=%q, want %q", ended, reason, tc.reason)
+			if len(ends) != 1 || ends[0] != tc.reason {
+				t.Errorf("session_end events %v, want one, %q", ends, tc.reason)
 			}
-			if last != nil && last.Reason != tc.reason {
-				t.Errorf("session_end reason %q, want %q", last.Reason, tc.reason)
+			if ended, reason := s.Ended(); !ended || reason != tc.reason {
+				t.Errorf("session ended=%v reason=%q, want %q", ended, reason, tc.reason)
 			}
 			if d.env == nil || d.env.ExitCode != tc.wantCode {
 				t.Errorf("envelope %+v, want exit %d", d.env, tc.wantCode)
@@ -471,12 +488,21 @@ func TestProtocolRefusesWithoutEndingTheSession(t *testing.T) {
 	ctx := context.Background()
 	gate := make(chan struct{})
 	s, _, f := startAdapterSession(t, ctx, adapter.DefaultName, func(_ *Params, h *fakeHarness) { h.gate = gate })
-	d := serveProtocol(t, ctx, s, protocol.Options{})
+	inputs := t.TempDir()
+	d := serveProtocol(t, ctx, s, protocol.Options{InputsDir: inputs})
 
-	dir := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link.txt")
-	linkable := os.Symlink(stagedInput(t, "target.txt", "x"), link) == nil
-	refused := []struct{ line, class string }{
+	sub := filepath.Join(inputs, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := stagedInput(t, t.TempDir(), "outside.txt", "not the driver's to add")
+	nested := stagedInput(t, sub, "nested.txt", "one level down")
+	link := filepath.Join(inputs, "link.txt")
+	linkable := os.Symlink(outside, link) == nil
+	refused := []struct {
+		line  string
+		class protocol.Refusal
+	}{
 		{`this is not json`, protocol.RefusedMalformed},
 		{`["send"]`, protocol.RefusedMalformed},
 		{`{}`, protocol.RefusedMalformed},
@@ -504,10 +530,13 @@ func TestProtocolRefusesWithoutEndingTheSession(t *testing.T) {
 	if got := d.until(func(ev protocol.Event) bool { return ev.Refused != "" }); got[len(got)-1].Refused != protocol.RefusedBusy {
 		t.Errorf("a second send in flight: %v, want busy", eventKinds(got))
 	}
-	// An add naming anything but a regular file, while the turn is in flight.
-	adds := []string{dir, filepath.Join(dir, "missing.txt")}
+	// An add naming anything but a regular file directly in the inputs
+	// directory, while the turn is in flight: a directory, a missing file,
+	// a file outside (by absolute path and by ..), one in a subdirectory,
+	// and a link out.
+	adds := []string{sub, "sub", "missing.txt", outside, "../" + filepath.Base(filepath.Dir(outside)) + "/outside.txt", nested, "sub/nested.txt"}
 	if linkable {
-		adds = append(adds, link)
+		adds = append(adds, link, "link.txt")
 	}
 	for _, path := range adds {
 		d.send(`{"add":{"path":` + jsonString(path) + `}}`)
@@ -542,6 +571,66 @@ func TestProtocolRefusesWithoutEndingTheSession(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(d.env.Receipts.Dir, "events.ndjson"))
 	if strings.Contains(string(b), "refused") || strings.Contains(string(b), "unknown command") {
 		t.Errorf("a refusal reached the receipt: %s", b)
+	}
+	assertTornDown(t, f)
+}
+
+// TestProtocolTakesNoFilesWithoutAnInputsDirectory: a driver that named no
+// staging directory adds nothing, whatever path it sends.
+func TestProtocolTakesNoFilesWithoutAnInputsDirectory(t *testing.T) {
+	ctx := context.Background()
+	s, _, f := startAdapterSession(t, ctx, adapter.DefaultName, nil)
+	d := serveProtocol(t, ctx, s, protocol.Options{})
+	file := stagedInput(t, t.TempDir(), "notes.txt", "the notes")
+	d.send(`{"add":{"path":` + jsonString(file) + `}}`)
+	got := d.until(func(ev protocol.Event) bool { return ev.Refused != "" })
+	if last := got[len(got)-1]; last.Refused != protocol.RefusedInput || !strings.Contains(last.Text, "takes no files") {
+		t.Errorf("add without an inputs directory: %+v", last)
+	}
+	d.send(`{"end":{"finish":false}}`)
+	d.wait()
+	for _, ev := range d.seen {
+		if ev.Kind == session.KindInputAdded {
+			t.Errorf("a file was added: %+v", ev)
+		}
+	}
+	assertTornDown(t, f)
+}
+
+// TestProtocolNeverWaitsForTheReader: a driver that keeps descriptor 3 open
+// and stops reading it does not hold the session up — the idle cap still
+// ends it and the sandbox is still torn down — because the protocol writes
+// events from its own queue and never makes the session wait (the session's
+// events feed the pump that enforces the budgets).
+func TestProtocolNeverWaitsForTheReader(t *testing.T) {
+	ctx := context.Background()
+	s, _, f := startAdapterSession(t, ctx, adapter.DefaultName, func(p *Params, _ *fakeHarness) {
+		p.Plan.Harness.Session.Budgets.IdleTimeoutSeconds = 1
+	})
+	stuckR, stuckW := io.Pipe() // nothing ever reads stuckR
+	defer func() { _ = stuckR.Close() }()
+	done := make(chan struct{})
+	var env *receipt.Envelope
+	var err error
+	inR, inW := io.Pipe() // the driver keeps its command stream open too
+	defer func() { _ = inW.Close() }()
+	go func() {
+		env, err = protocol.Serve(ctx, s, inR, stuckW, protocol.Options{})
+		close(done)
+	}()
+	// A turn whose events the reader will never take; after it, silence.
+	go func() { _, _ = io.WriteString(inW, `{"send":{"text":"hello"}}`+"\n") }()
+	select {
+	case <-done:
+	case <-time.After(45 * time.Second):
+		t.Fatal("Serve never returned: the session waited for a reader that stopped reading")
+	}
+	if ended, reason := s.Ended(); !ended || reason != session.EndIdle {
+		t.Errorf("ended=%v reason=%q, want the idle cap", ended, reason)
+	}
+	var ce *ClassifiedError
+	if env == nil || !errors.As(err, &ce) || ce.Code != ExitTimeout {
+		t.Errorf("Serve = %v, %+v; want the idle cap's timeout", err, env)
 	}
 	assertTornDown(t, f)
 }

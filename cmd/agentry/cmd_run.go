@@ -95,6 +95,9 @@ type runOpts struct {
 	sessionProtocol bool
 	// protocolEvents is descriptor 3, opened once the flag is checked.
 	protocolEvents io.Writer
+	// sessionInputs is the directory the protocol's driver stages the files
+	// it adds in; an add names a file directly in it.
+	sessionInputs string
 }
 
 // newRunCmd builds the run command.
@@ -121,7 +124,8 @@ func newRunCmd() *cobra.Command {
 			"{\"add\":{\"path\":…}}, {\"end\":{\"finish\":true|false}}; end of input ends\n" +
 			"without a result), one JSON line per session event on descriptor 3, the\n" +
 			"result on stdout as for any run (the envelope under --output-format json),\n" +
-			"usage narrated on stderr. The task comes only from --input.\n\n" +
+			"usage narrated on stderr. The task comes only from --input; an add names a\n" +
+			"file directly in --session-inputs DIR.\n\n" +
 			"First run of a release verifies it exactly like `agentry install` (digest +\n" +
 			"DSSE attestation; unsigned needs --allow-unsigned; a release the registry\n" +
 			"admitted without a scan is unscanned and needs --allow-unscanned, its own\n" +
@@ -187,6 +191,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	f.BoolVar(&opts.sessionProtocol, "session-protocol", false, "drive an interactive session from JSON-line commands on stdin, with its events as JSON lines on descriptor 3 and no terminal (for a program such as a hosted run's host)")
+	f.StringVar(&opts.sessionInputs, "session-inputs", "", "with --session-protocol: the DIRECTORY the driver stages files in; an add names a regular file directly in it (without it, the session takes no files)")
 	return cmd
 }
 
@@ -328,6 +333,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
+	if opts.sessionInputs != "" && !opts.sessionProtocol {
+		return engine.Classify(engine.ExitUsage, errors.New("--session-inputs is for --session-protocol"))
+	}
 	if opts.sessionProtocol && mode != manifest.ModeInteractive {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("--session-protocol drives an interactive session; this run's mode is %s", mode))
 	}
@@ -346,11 +354,17 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 			return engine.Classify(engine.ExitUsage, errors.New("--events is not available for an interactive run: the session streams its own events to the transcript"))
 		}
 		if opts.sessionProtocol {
+			if opts.sessionInputs != "" {
+				if fi, err := os.Stat(opts.sessionInputs); err != nil || !fi.IsDir() {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("--session-inputs %s is not a directory", opts.sessionInputs))
+				}
+			}
 			w, err := protocolEventsOut()
 			if err != nil {
 				return engine.Classify(engine.ExitUsage, err)
 			}
 			opts.protocolEvents = w
+			ignoreBrokenPipes()
 		}
 	}
 
@@ -660,9 +674,14 @@ var serveProtocol = protocol.Serve
 // stderr the usage narration a driver meters by, so the host that parses a
 // run's output parses a session's the same way.
 func runProtocol(cmd *cobra.Command, s session.Session, opts runOpts) error {
+	errOut := cmd.ErrOrStderr()
 	env, runErr := serveProtocol(cmd.Context(), s, cmd.InOrStdin(), opts.protocolEvents, protocol.Options{
-		OpeningTurn: opts.input != "",
-		OnUsage:     usageReporter(opts.outputFormat, cmd.ErrOrStderr()),
+		OpeningTurn: sendsOpeningTurn(opts.input),
+		InputsDir:   opts.sessionInputs,
+		OnUsage:     usageReporter(opts.outputFormat, errOut),
+		OnDropped: func() {
+			_, _ = fmt.Fprintln(errOut, "session protocol: the events reader stopped taking events; the rest are in the receipts only")
+		},
 	})
 	if env != nil {
 		printEnvelope(cmd, env, opts.outputFormat)
@@ -674,15 +693,17 @@ func runProtocol(cmd *cobra.Command, s session.Session, opts runOpts) error {
 // protocolEventsOut is descriptor 3, where the session protocol writes its
 // events; a driver that did not open it gets a usage error before anything
 // runs. A variable so a test can hand the protocol a buffer.
-var protocolEventsOut = func() (io.Writer, error) {
-	f := os.NewFile(3, "session-events")
-	if f == nil {
-		return nil, errors.New("--session-protocol writes its events to descriptor 3, and it is not open")
+var protocolEventsOut = openProtocolEvents
+
+// sendsOpeningTurn says whether the session will send the task as its first
+// turn: the engine sends a task only when it is not blank. A task file that
+// cannot be read fails the session's start, so false is never acted on.
+func sendsOpeningTurn(input string) bool {
+	if input == "" {
+		return false
 	}
-	if _, err := f.Stat(); err != nil {
-		return nil, fmt.Errorf("--session-protocol writes its events to descriptor 3, and it is not open: %w", err)
-	}
-	return f, nil
+	b, err := os.ReadFile(input) //nolint:gosec // the user-named task file the run reads too
+	return err == nil && len(strings.TrimSpace(string(b))) > 0
 }
 
 // runTask is the run's task reader. Under the session protocol stdin is the
