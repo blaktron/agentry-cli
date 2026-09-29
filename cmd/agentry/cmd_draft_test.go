@@ -18,7 +18,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
-	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/draftcheck"
@@ -741,7 +740,7 @@ func TestARefusedDraftGetsOneRepairTurn(t *testing.T) {
 	}
 	first, repair := (*runs)[0], (*runs)[1]
 	if repair.Builtin != localrun.Drafter().WithoutWebTools() || repair.Web != nil || repair.OutDir != filepath.Join(out, "repair") ||
-		repair.RunID == first.RunID || repair.Budgets.MaxTurns > repairMaxTurns || repair.Budgets.TimeoutSeconds > repairTimeoutSeconds {
+		repair.RunID == first.RunID || repair.Budgets.MaxTurns > drafter.RepairMaxTurns || repair.Budgets.TimeoutSeconds > drafter.RepairTimeoutSeconds {
 		t.Fatalf("the repair run %+v budgets %+v", repair.Builtin.Ref(), repair.Budgets)
 	}
 	task, _ := io.ReadAll(repair.Task)
@@ -872,29 +871,6 @@ func TestARepairTurnIsMeteredWithTheDraft(t *testing.T) {
 	var d draftReport
 	if err := json.Unmarshal(env["draft"], &d); err != nil || !d.Repaired || d.Passed {
 		t.Fatalf("draft report %s", env["draft"])
-	}
-}
-
-// TestTheRepairTurnHasOnlyWhatTheFirstLeft: the repair turn's time, tool
-// calls and cost are what the first turn left of the draft's, under its own
-// caps, and none is made once the first turn spent any of them.
-func TestTheRepairTurnHasOnlyWhatTheFirstLeft(t *testing.T) {
-	b := spec.Budgets{TimeoutSeconds: 900, MaxTurns: 60, MaxCostUSD: 1}
-	r, ok := repairBudgets(b, receipt.Usage{WallMS: 120000, Turns: 20, CostUSD: 0.25})
-	if !ok || r.TimeoutSeconds != repairTimeoutSeconds || r.MaxTurns != repairMaxTurns || r.MaxCostUSD != 0.75 {
-		t.Fatalf("%+v", r)
-	}
-	r, ok = repairBudgets(b, receipt.Usage{WallMS: 800000, Turns: 57})
-	if !ok || r.TimeoutSeconds != 100 || r.MaxTurns != 3 {
-		t.Fatalf("%+v", r)
-	}
-	if r, ok := repairBudgets(spec.Budgets{}, receipt.Usage{WallMS: 1 << 30, Turns: 1000}); !ok || r.TimeoutSeconds != repairTimeoutSeconds || r.MaxTurns != repairMaxTurns || r.MaxCostUSD != 0 {
-		t.Fatalf("no budgets: %+v", r)
-	}
-	for _, spent := range []receipt.Usage{{WallMS: 900000}, {Turns: 60}, {CostUSD: 1}} {
-		if _, ok := repairBudgets(b, spent); ok {
-			t.Errorf("a repair after the first turn spent %+v", spent)
-		}
 	}
 }
 

@@ -23,10 +23,9 @@
 // over the same resolved include set, in the same command, and reporting one
 // oversized file twice would make the output worse rather than safer.
 //
-// Parity is asserted rather than asserted-to: TestLocalS1MatchesPipeline runs
-// the real internal/scan orchestrator over the same fixtures and requires the
-// two to agree, so a change to the server's magic tables breaks this build.
-package main
+// Parity is by construction: the detection predicates are pkg/archive's, the
+// ones the server's S1 stage classifies with (below).
+package validate
 
 import (
 	"fmt"
@@ -57,10 +56,10 @@ type localFinding struct {
 // the same predicates the server's S1 stage classifies with, which is what
 // makes this subset parity by construction rather than by mirroring.
 
-// scanS1Local runs the S1 subset over already-read file contents. It takes
+// scanS1 runs the S1 subset over already-read file contents. It takes
 // the same []rules.File-shaped pairs validate already assembled, so no file
 // is read twice.
-func scanS1Local(files []localFile) []localFinding {
+func scanS1(files []localFile) []localFinding {
 	var out []localFinding
 	for _, f := range files {
 		switch {
@@ -137,12 +136,12 @@ func printLocalFindings(w io.Writer, findings []localFinding) {
 	}
 }
 
-// localFailingFindings counts the S1 findings that would fail the command.
+// failingFindings counts the S1 findings that would fail the command.
 //
 // "info" does not fail: the pipeline routes an opaque binary to a REVIEWER,
 // it does not reject the submission, and a local check that is stricter than
 // the server is a different parity bug from the one this file fixes.
-func localFailingFindings(findings []localFinding) int {
+func failingFindings(findings []localFinding) int {
 	n := 0
 	for _, f := range findings {
 		if f.Severity != "info" {

@@ -20,11 +20,11 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,12 +80,7 @@ var draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, erro
 // route with the job's credential for a hosted draft, the core's
 // pkg/draftcheck with the person's own Jev key on this computer. A seam for
 // tests.
-var draftChecker = func(w *engine.WebRun) (drafter.Checker, error) {
-	if w.Scan == toolsrv.WebScanRegistry {
-		return &drafter.RegistryChecker{Base: w.Registry, JobToken: w.JobToken}, nil
-	}
-	return drafter.CoreCheck(w.JevKey)
-}
+var draftChecker = drafter.CheckerFor
 
 // draftScanner builds the description's scanner; a seam for tests.
 var draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
@@ -240,39 +235,33 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		RunID: runID, Stderr: errOut, Web: web, OnUsage: usageReporter(o.outputFormat, errOut),
 	}
 	env, runErr := draftRun(cmd, first)
-	var d *drafter.Draft
-	var ce *engine.ClassifiedError
-	if runErr != nil && env != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && cmd.Context().Err() == nil {
-		// The last message was not a draft: its repair turn is given the
-		// error and that message back, and a draft it returns is kept.
-		u := drafter.Unparsed(env, outDir, desc, localrun.Drafter().Ref(), version.Build(), runErr)
-		rules, _ := repairReport(u)
-		d, env = repairDraft(cmd, first, u, env, drafter.RepairReport{Rules: rules})
-		if d.IsRepaired() {
-			// The draft is the repair turn's answer, so the run stands as
-			// that turn ended; the usage stays both turns'.
-			runErr = nil
-			env.Status, env.ExitCode, env.ExitClass, env.Error, env.Stage = "ok", engine.ExitOK, receipt.ExitClassName(engine.ExitOK), "", ""
-		}
+	checker, checkerErr := draftChecker(web)
+	if checkerErr != nil {
+		checker = nil
 	}
-	if runErr != nil {
-		if errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema {
+	post := drafter.PostStep{
+		OutDir: outDir, Description: description, Task: task, Scan: desc, Ref: localrun.Drafter().Ref(), Build: version.Build(),
+		Budgets: budgets, Checker: checker, Log: errOut, OnUsage: first.OnUsage,
+		Repair: func(_ context.Context, t drafter.RepairTurn) (*receipt.Envelope, error) {
+			return draftRun(cmd, localrun.RepairRun(first, t))
+		},
+		Rules: loadRulesBundle,
+	}
+	d, env, err := post.Run(cmd.Context(), env, runErr)
+	if d == nil && runErr != nil && errors.Is(err, runErr) {
+		// The run failed, or its answer was not a draft and its repair turn
+		// returned none either.
+		var ce *engine.ClassifiedError
+		if errors.As(err, &ce) && ce.Code == engine.ExitOutputSchema {
 			_, _ = fmt.Fprintf(errOut, "The Drafter's answer was not a draft, so none was written; its answer and the run's receipts are in %s.\n", outDir)
 		}
 		if o.outputFormat == "json" && env != nil {
 			printDraftEnvelope(cmd, env, outDir, nil, nil)
-			return &envelopePrinted{err: runErr}
+			return &envelopePrinted{err: err}
 		}
-		return runErr
-	}
-	err = nil
-	// A draft that came from the unparsed answer's repair turn has spent it.
-	repairSpent := d != nil
-	if d == nil {
-		d, err = finishDraft(env, outDir, desc)
+		return err
 	}
 	if err == nil {
-		d, env = repairAndCheck(cmd, first, web, description, task, d, env, repairSpent)
 		err = writeDraft(outDir, d)
 	}
 	if o.outputFormat == "json" {
@@ -317,17 +306,11 @@ type draftReport struct {
 	Check string `json:"check,omitempty"`
 }
 
-// validationPassed says the rules pass the draft's rendered package.
-func validationPassed(d *drafter.Draft) bool {
-	var v validateOutput
-	return d.ManifestError == "" && json.Unmarshal(d.Validation, &v) == nil && v.Passed
-}
-
 func draftReportOf(outDir string, d *drafter.Draft) draftReport {
 	r := draftReport{File: filepath.Join(outDir, "draft.json"), ManifestError: d.ManifestError != "",
 		Matches: len(d.Matches), OpenQuestions: len(d.OpenQuestions), Rendered: isDir(filepath.Join(outDir, "package")),
 		Corrections: len(d.Corrections()), Repaired: d.IsRepaired()}
-	r.Passed = validationPassed(d)
+	r.Passed = d.Passed()
 	if a := d.AIReview; a != nil {
 		r.Withheld = len(a.WithheldSources)
 		r.Check = a.Check.Word()
@@ -401,28 +384,6 @@ func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
 	return w, "It has no web search (name a provider in your runner policy's webSearch block), so it reads the registry and pages it knows.", nil
 }
 
-// finishDraft is the post-step over the Drafter's answer (plan §7.5;
-// builder-simplify.md §5.2 steps 1 and 2): the answer as a draft with AI
-// Review's record and its mechanical slips corrected (drafter.Finish),
-// rendered as a package and checked as `agentry validate` checks one. A
-// draft that fails the rules is kept, with its problems.
-func finishDraft(env *receipt.Envelope, outDir string, desc webscan.Result) (*drafter.Draft, error) {
-	d, err := drafter.Finish(env, outDir, desc, localrun.Drafter().Ref(), version.Build())
-	if err != nil {
-		return nil, err
-	}
-	checkDraft(d, filepath.Join(outDir, "package"))
-	return d, nil
-}
-
-// checkDraft renders a draft into pkg and checks it, when its answer let it
-// be rendered at all.
-func checkDraft(d *drafter.Draft, pkg string) {
-	if d.ManifestError == "" {
-		d.ManifestError, d.Validation = renderAndValidate(d, pkg)
-	}
-}
-
 // writeDraft writes outDir/draft.json.
 func writeDraft(outDir string, d *drafter.Draft) error {
 	b, err := json.MarshalIndent(d, "", "  ")
@@ -433,283 +394,6 @@ func writeDraft(outDir string, d *drafter.Draft) error {
 		return engine.Classify(engine.ExitCLI, fmt.Errorf("write draft.json: %w", err))
 	}
 	return nil
-}
-
-// The repair turn's own caps (plan builder-simplify.md §5.2 step 3): it
-// reads nothing and writes one manifest, and at most the instruction file,
-// so it needs a few minutes and a few tool calls at most. It also gets no
-// more than the draft's budgets left after the first turn (repairBudgets).
-const (
-	repairTimeoutSeconds = 300
-	repairMaxTurns       = 8
-)
-
-// repairDraft is the post-step's third step (§5.2 step 3): a draft the rules
-// still refuse gets one more turn of the Drafter, without its web tools,
-// whose task is the rules' report on it and the draft itself
-// (drafter.RepairTask), and nothing else. The second answer is corrected and
-// checked like the first and kept whether or not it passes; a turn that
-// returns no draft leaves the first, with its problems and a note saying
-// why. The envelope that comes back carries both turns' usage, and the live
-// usage lines the repair turn narrates count from the first turn's total,
-// so a sandbox host meters the draft as a whole.
-//
-// r says what sent the draft to it: the rules' report, what AI Review's
-// check flagged that the draft can fix, or both; with a flag the turn is
-// also given the first turn's task, which AI Review passed before that
-// turn started.
-func repairDraft(cmd *cobra.Command, first localrun.Run, d *drafter.Draft, env *receipt.Envelope, r drafter.RepairReport) (*drafter.Draft, *receipt.Envelope) {
-	if r.Empty() || cmd.Context().Err() != nil {
-		return d, env
-	}
-	errOut := cmd.ErrOrStderr()
-	task, err := drafter.RepairTask(d, r)
-	if err != nil {
-		d.NoteNotRepaired(r, "its task could not be written")
-		return d, env
-	}
-	budgets, ok := repairBudgets(*first.Budgets, env.Usage)
-	if !ok {
-		d.NoteNotRepaired(r, "the first turn had spent the draft's budget")
-		return d, env
-	}
-	runID, err := engine.NewRunID()
-	if err != nil {
-		d.NoteNotRepaired(r, "it could not be given a run id")
-		return d, env
-	}
-	_, _ = fmt.Fprintln(errOut, drafter.RepairAnnouncement(r))
-	spent := env.Usage
-	onUsage := first.OnUsage
-	if onUsage != nil {
-		onUsage = func(u receipt.Usage) { first.OnUsage(addUsage(spent, u)) }
-	}
-	dir := filepath.Join(first.OutDir, "repair")
-	renv, rerr := draftRun(cmd, localrun.Run{
-		Builtin: first.Builtin.WithoutWebTools(), Home: first.Home, Policy: first.Policy, PolicySHA: first.PolicySHA,
-		PolicyFile: first.PolicyFile, Build: first.Build, Task: strings.NewReader(task), OutDir: dir, Budgets: &budgets,
-		RunID: runID, Stderr: errOut, OnUsage: onUsage,
-	})
-	total := *env
-	if renv != nil {
-		total.Usage = addUsage(spent, renv.Usage)
-	}
-	if rerr != nil {
-		why := "its run did not finish"
-		var ce *engine.ClassifiedError
-		if errors.As(rerr, &ce) {
-			why = fmt.Sprintf("its run ended with exit %d", ce.Code)
-		}
-		d.NoteNotRepaired(r, why)
-		return d, &total
-	}
-	rd, err := drafter.Repaired(d, renv, dir, r)
-	if err != nil {
-		d.NoteNotRepaired(r, "its answer was not a draft")
-		return d, &total
-	}
-	pkg := filepath.Join(first.OutDir, "package")
-	if err := os.RemoveAll(pkg); err != nil {
-		d.NoteNotRepaired(r, "the first answer's package could not be replaced")
-		return d, &total
-	}
-	checkDraft(rd, pkg)
-	return rd, &total
-}
-
-// repairAndCheck is the post-step's last two steps (plan builder-simplify.md
-// §5.2 steps 3 and 4, D6; agentry-cli#417, #418). AI Review checks the
-// rendered package (the release rubric as S5 will ask it at publish, and
-// the draft question set against the person's description), and the
-// verdicts go into draft.json under aiReview.check. A draft the rules
-// refuse, or one the check flagged for something it can fix
-// (Check.Repairable: off_task, or a rubric finding but C3, which editing
-// the draft does not clear until blaktron/agentry#731), is given its one
-// repair turn with the rules' report and what the check flagged, and the
-// second answer is checked again. So a draft asks at most two checks, the
-// runs extension's cap for a hosted one (agentry-enterprise#265), and none
-// is ever retried: the registry counts a check as it admits it. A second
-// answer that breaks rules the first passed is not kept. A draft that
-// could not be rendered is not checked; repairSpent is a draft whose turn
-// was spent before (an answer that was not a draft).
-func repairAndCheck(cmd *cobra.Command, first localrun.Run, web *engine.WebRun, description, task string,
-	d *drafter.Draft, env *receipt.Envelope, repairSpent bool) (*drafter.Draft, *receipt.Envelope) {
-	pkg := filepath.Join(first.OutDir, "package")
-	checker, checkerErr := draftChecker(web)
-	if checkerErr != nil {
-		checkerErr = errors.New("AI Review cannot check with this key")
-	}
-	checks := 0
-	var spent drafter.Check
-	// ask checks d's package as it now stands: nil for a draft that could
-	// not be rendered, or when there is no checker.
-	ask := func(d *drafter.Draft) (*drafter.Check, error) {
-		if d.ManifestError != "" || checkerErr != nil {
-			return nil, checkerErr
-		}
-		p, err := drafter.CheckPackage(description, pkg)
-		if err != nil {
-			return nil, err
-		}
-		checks++
-		c, err := checker.Check(cmd.Context(), p)
-		if c != nil {
-			spent.Requests += c.Requests
-			spent.InputTokens += c.InputTokens
-		}
-		return c, err
-	}
-	record := func(d *drafter.Draft, c *drafter.Check, err error) (*drafter.Draft, *receipt.Envelope) {
-		switch {
-		case d.ManifestError != "":
-		case err != nil:
-			d.RecordCheck(&drafter.Check{Requests: spent.Requests, InputTokens: spent.InputTokens}, checks, err)
-		default:
-			c.Requests, c.InputTokens = spent.Requests, spent.InputTokens
-			d.RecordCheck(c, checks, nil)
-		}
-		return d, env
-	}
-
-	c, err := ask(d)
-	r := drafter.RepairReport{Task: task}
-	rules, refused := repairReport(d)
-	if refused {
-		r.Rules = rules
-	}
-	if c != nil {
-		r.Flagged = c.Repairable()
-	}
-	if repairSpent || r.Empty() || cmd.Context().Err() != nil {
-		return record(d, c, err)
-	}
-	rd, renv := repairDraft(cmd, first, d, env, r)
-	env = renv
-	if !rd.IsRepaired() || d.IsRepaired() {
-		return record(d, c, err)
-	}
-	if !refused && !validationPassed(rd) {
-		// The check's flag sent a draft the rules passed; its second
-		// answer breaks them, so the first is kept, and its package put
-		// back.
-		d.NoteSecondAnswerRefused()
-		if os.RemoveAll(pkg) == nil {
-			checkDraft(d, pkg)
-		}
-		return record(d, c, err)
-	}
-	c, err = ask(rd)
-	return record(rd, c, err)
-}
-
-// repairReport is what the rules said of a draft that did not pass, one
-// line each, in their own words; ok is false for a draft that passed, or
-// one whose check could not run for a reason of this computer's rather than
-// the draft's.
-func repairReport(d *drafter.Draft) ([]string, bool) {
-	if d.Validation == nil {
-		if d.ManifestError == "" || strings.HasPrefix(d.ManifestError, checkNotRun) {
-			return nil, false
-		}
-		return []string{"the draft: " + d.ManifestError}, true
-	}
-	var v validateOutput
-	if err := json.Unmarshal(d.Validation, &v); err != nil || v.Passed {
-		return nil, false
-	}
-	var out []string
-	for _, is := range v.Issues {
-		if is.Severity == "error" || v.Strict {
-			out = append(out, strings.TrimSpace(fmt.Sprintf("%s %s: %s", is.Rule, is.Path, is.Message)))
-		}
-	}
-	for _, f := range v.Inventory {
-		if f.Severity != "info" {
-			out = append(out, fmt.Sprintf("%s %s: %s", f.Scanner, f.FilePath, f.Title))
-		}
-	}
-	for _, f := range v.Findings {
-		line := fmt.Sprintf("%s %s %s", f.Scanner, f.RuleID, f.FilePath)
-		if f.LineStart > 0 {
-			line += fmt.Sprintf(" line %d", f.LineStart)
-		}
-		line += ": " + f.Title
-		if f.Excerpt != "" {
-			line += fmt.Sprintf(" (%q)", f.Excerpt)
-		}
-		out = append(out, line)
-	}
-	for _, e := range v.ReadErrors {
-		out = append(out, "read: "+e)
-	}
-	return out, len(out) > 0
-}
-
-// repairBudgets is the repair turn's budgets: what the first turn left of
-// the draft's b, after it spent spent, under the repair turn's own caps; ok
-// is false when the first turn left none of the time, the tool calls or
-// the cost.
-func repairBudgets(b spec.Budgets, spent receipt.Usage) (spec.Budgets, bool) {
-	r := b
-	r.TimeoutSeconds = repairTimeoutSeconds
-	if b.TimeoutSeconds > 0 {
-		left := b.TimeoutSeconds - int(spent.WallMS/1000)
-		if left <= 0 {
-			return r, false
-		}
-		r.TimeoutSeconds = min(left, repairTimeoutSeconds)
-	}
-	r.MaxTurns = repairMaxTurns
-	if b.MaxTurns > 0 {
-		left := b.MaxTurns - spent.Turns
-		if left <= 0 {
-			return r, false
-		}
-		r.MaxTurns = min(left, repairMaxTurns)
-	}
-	if b.MaxCostUSD > 0 {
-		left := b.MaxCostUSD - spent.CostUSD
-		if left <= 0 {
-			return r, false
-		}
-		r.MaxCostUSD = left
-	}
-	return r, true
-}
-
-// addUsage is two turns' usage as one draft's.
-func addUsage(a, b receipt.Usage) receipt.Usage {
-	return receipt.Usage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens,
-		TotalTokens: a.TotalTokens + b.TotalTokens, CostUSD: a.CostUSD + b.CostUSD, WallMS: a.WallMS + b.WallMS,
-		Turns: a.Turns + b.Turns, UserTurns: a.UserTurns + b.UserTurns}
-}
-
-// checkNotRun opens a ManifestError that is this computer's, not the
-// draft's: the package could not be written, or validate could not run.
-const checkNotRun = "the draft could not be checked: "
-
-// renderAndValidate renders the draft into pkg and checks it with
-// validate's own code: the report, or why there is none.
-func renderAndValidate(d *drafter.Draft, pkg string) (string, json.RawMessage) {
-	if _, err := drafter.Render(d, pkg); err != nil {
-		// A manifest that does not parse is rendered all the same, for the
-		// person to fix; validate would stop at the same error. A folder
-		// that could not be written is this computer's failure.
-		var pe *fs.PathError
-		if errors.As(err, &pe) {
-			return checkNotRun + err.Error(), nil
-		}
-		return err.Error(), nil
-	}
-	report, err := validateWorkspace(io.Discard, io.Discard, pkg, false)
-	if err != nil {
-		return checkNotRun + err.Error(), nil
-	}
-	b, err := json.Marshal(report)
-	if err != nil {
-		return err.Error(), nil
-	}
-	return "", b
 }
 
 // printDraft says where the draft is and what it holds. What the Drafter
