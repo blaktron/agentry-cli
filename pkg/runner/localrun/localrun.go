@@ -430,6 +430,20 @@ type Run struct {
 	Web *engine.WebRun
 }
 
+// RepairRun is the Drafter's one repair turn after first (plan
+// builder-simplify.md §5.2 step 3; drafter.PostStep): the same package
+// without its web tools and with no web configuration, so it holds no key
+// and has nothing to read, given the turn's task, folder, budgets, run id
+// and usage reporter. Both clients run the turn this way.
+func RepairRun(first Run, t drafter.RepairTurn) Run {
+	budgets := t.Budgets
+	return Run{
+		Builtin: first.Builtin.WithoutWebTools(), Home: first.Home, Policy: first.Policy, PolicySHA: first.PolicySHA,
+		PolicyFile: first.PolicyFile, Build: first.Build, Task: strings.NewReader(t.Task), OutDir: t.OutDir, Budgets: &budgets,
+		Adapter: first.Adapter, RunID: t.RunID, Stderr: first.Stderr, OnUsage: t.OnUsage,
+	}
+}
+
 // Execute runs it: materialize, validate, plan, ensure the images, run.
 // There is no consent prompt: the application declares the contract of
 // its own package, and the person's choice was to use the feature.

@@ -91,6 +91,12 @@ type fakeHarness struct {
 	// keeps the stream as docker-agent 1.128.0's own, which reports no
 	// cost at all (agentry-cli#222).
 	usage map[string]any
+	// gate, when set, holds every prompt's answer until a value arrives (or
+	// the channel closes), so a turn stays in flight as long as a test needs.
+	gate chan struct{}
+	// exitOnPrompt makes the harness exit when a prompt arrives, as a
+	// crashing harness does.
+	exitOnPrompt bool
 }
 
 func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
@@ -125,6 +131,12 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 		case "session/new":
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "s1"}})
 		case "session/prompt":
+			if h.exitOnPrompt {
+				return 1, nil
+			}
+			if h.gate != nil {
+				<-h.gate
+			}
 			text := ""
 			if len(m.Params.Prompt) > 0 {
 				text = m.Params.Prompt[0].Text

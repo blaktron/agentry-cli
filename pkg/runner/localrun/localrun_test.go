@@ -3,6 +3,7 @@ package localrun
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -329,5 +332,37 @@ func TestRunBuiltinRunsTheCreator(t *testing.T) {
 	}
 	if got := env.CapabilitiesEnforced["decode"]; got != dec.Line() {
 		t.Fatalf("decode line %q, want %q", got, dec.Line())
+	}
+}
+
+// TestTheRepairRunHasNoWebToolsAndNoKey (plan builder-simplify.md §5.2
+// step 3): the Drafter's repair turn, as both clients run it, is the same
+// package without its web tools and with no web configuration, so no key
+// reaches it and it has nothing to read; it is given the turn's own task,
+// folder, budgets and run id, and the first run's home and policy.
+func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
+	pol := policy.Default()
+	var usage []receipt.Usage
+	first := Run{Builtin: Drafter(), Home: "/home/x/.agentry", Policy: pol, PolicySHA: "sha256:p", Build: "b1",
+		Task: strings.NewReader("THE FIRST TASK"), OutDir: "/out", Budgets: &spec.Budgets{TimeoutSeconds: 900}, RunID: "run-1",
+		Web: &engine.WebRun{JevKey: "jev-person-key", SearchKey: "search-key"}}
+	turn := drafter.RepairTurn{Task: "the repair task", OutDir: "/out/repair", Budgets: spec.Budgets{TimeoutSeconds: 300, MaxTurns: 8},
+		RunID: "run-2", OnUsage: func(u receipt.Usage) { usage = append(usage, u) }}
+	r := RepairRun(first, turn)
+	if r.Builtin != Drafter().WithoutWebTools() || r.Web != nil {
+		t.Fatalf("the repair run has web tools %v or a web configuration %+v", r.Builtin == Drafter(), r.Web)
+	}
+	task, _ := io.ReadAll(r.Task)
+	if string(task) != "the repair task" || r.OutDir != "/out/repair" || r.RunID != "run-2" || *r.Budgets != turn.Budgets ||
+		r.Home != first.Home || r.Policy != pol || r.PolicySHA != "sha256:p" || r.Build != "b1" {
+		t.Fatalf("the repair run %+v", r)
+	}
+	r.OnUsage(receipt.Usage{Turns: 1})
+	if len(usage) != 1 {
+		t.Fatal("the repair run does not report its usage through the turn's reporter")
+	}
+	turn.Budgets.MaxTurns = 99
+	if r.Budgets.MaxTurns != 8 {
+		t.Fatal("the repair run shares its budgets with the caller's")
 	}
 }
