@@ -21,6 +21,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
+	"github.com/blaktron/agentry/pkg/draftcheck"
 )
 
 const testJev = "jev-person-key-for-the-draft-tests"
@@ -52,6 +53,9 @@ func draftSeamsN(t *testing.T, res webscan.Result, results []string, ledger stri
 	var webs []*engine.WebRun
 	prevScan, prevRun := draftScanner, draftRun
 	t.Cleanup(func() { draftScanner, draftRun = prevScan, prevRun })
+	// No test reaches Jev or a registry: the check passes unless a test
+	// says otherwise (draftChecks).
+	draftChecks(t, passCheck())
 	draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
 		webs = append(webs, w)
 		return sc, nil
@@ -76,6 +80,62 @@ func draftSeamsN(t *testing.T, res webscan.Result, results []string, ledger stri
 		return env, nil
 	}
 	return sc, &runs, &webs
+}
+
+// fakeChecker is the check of a finished draft as a test scripts it: the
+// nth check answers answers[n] (an error, or a check), and it keeps the
+// packages it was asked about and the web configuration it was built for.
+type fakeChecker struct {
+	answers []any
+	asked   []draftcheck.Package
+	webs    []*engine.WebRun
+}
+
+func (f *fakeChecker) Check(_ context.Context, p draftcheck.Package) (*drafter.Check, error) {
+	f.asked = append(f.asked, p)
+	switch a := f.answers[min(len(f.asked), len(f.answers))-1].(type) {
+	case error:
+		return nil, a
+	case *drafter.Check:
+		c := *a
+		return &c, nil
+	}
+	panic("a check answer is an error or a *drafter.Check")
+}
+
+// draftChecks replaces the check with one that answers answers in turn.
+func draftChecks(t *testing.T, answers ...any) *fakeChecker {
+	t.Helper()
+	f := &fakeChecker{answers: answers}
+	prev := draftChecker
+	t.Cleanup(func() { draftChecker = prev })
+	draftChecker = func(w *engine.WebRun) (drafter.Checker, error) {
+		f.webs = append(f.webs, w)
+		return f, nil
+	}
+	return f
+}
+
+// passCheck, c3Check and offTaskCheck are the check's answers: both halves
+// passed; the rubric flagged C3 on AGENT.md, which the draft cannot clear;
+// the draft question flagged off_task.
+func passCheck() *drafter.Check {
+	return &drafter.Check{Model: "jev-1.13.0", Requests: 5, InputTokens: 4000,
+		Rubric: &drafter.CheckRubric{Verdict: drafter.CheckPass, Findings: []drafter.CheckFinding{}, RubricHash: "sha256:r"},
+		Draft:  &drafter.CheckDraft{Verdict: drafter.CheckPass, Flagged: []string{}, QuestionSet: "sha256:d"}}
+}
+
+func c3Check() *drafter.Check {
+	c := passCheck()
+	c.Rubric = &drafter.CheckRubric{Verdict: drafter.CheckFlagged, RubricHash: "sha256:r",
+		Findings: []drafter.CheckFinding{{ID: drafter.RubricIDUndeclared, Score: 3, Path: "AGENT.md"}}}
+	return c
+}
+
+func offTaskCheck() *drafter.Check {
+	c := passCheck()
+	c.Draft = &drafter.CheckDraft{Verdict: drafter.CheckFlagged, Score: 3, Scores: map[string]int{"off_task": 3}, Flagged: []string{"off_task"}, QuestionSet: "sha256:d"}
+	return c
 }
 
 const goodDraft = `{
@@ -895,5 +955,157 @@ func TestAnAnswerThatIsNotADraftGetsTheRepairTurn(t *testing.T) {
 				t.Fatalf("draft %s\n%s", d.Validation, d.Notes)
 			}
 		})
+	}
+}
+
+// repairedGood is a second answer after a repair turn: the manifest again,
+// its lists empty, the instructions kept from the first unless written.
+func repairedGood(t *testing.T) string {
+	t.Helper()
+	var raw map[string]any
+	_ = json.Unmarshal([]byte(goodDraft), &raw)
+	delete(raw, "notes")
+	raw["matches"], raw["openQuestions"] = []any{}, []any{}
+	b, _ := json.Marshal(raw)
+	return string(b)
+}
+
+// TestTheFinishedDraftIsChecked: a draft the rules pass is checked once,
+// with the person's description and exactly the rendered package's text
+// files, and the verdicts go into draft.json under aiReview.check, the
+// envelope's draft.check and the notes; a flag the draft cannot clear (C3)
+// does not spend the repair turn.
+func TestTheFinishedDraftIsChecked(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, draftLedger)
+	checks := draftChecks(t, c3Check())
+	out := filepath.Join(t.TempDir(), "o")
+	stdout, stderr, err := runCLI(t, nil, "draft", "Summarize my meeting notes.", "--hint", "a hint", "--out", out, "--policy", policyPath, "--output-format", "json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if len(*runs) != 1 || len(checks.asked) != 1 {
+		t.Fatalf("%d run(s), %d check(s)", len(*runs), len(checks.asked))
+	}
+	p := checks.asked[0]
+	var paths []string
+	for _, f := range p.Files {
+		paths = append(paths, f.Path)
+	}
+	if p.Description != "Summarize my meeting notes." || strings.Join(paths, ",") != "AGENT.md,LICENSE,README.md,agent.yaml" ||
+		checks.webs[0].Scan != toolsrv.WebScanJev || checks.webs[0].JevKey != testJev {
+		t.Fatalf("the check was asked of %q %v with %+v", p.Description, paths, checks.webs[0])
+	}
+	d, _ := readDraft(t, out)
+	c := d.AIReview.Check
+	if c == nil || c.Checks != 1 || c.Verdict() != drafter.CheckFlagged || c.Rubric.Findings[0].ID != drafter.RubricIDUndeclared || strings.Contains(d.Notes, "## Repaired once") ||
+		!strings.Contains(d.Notes, "## AI Review's check") || !strings.Contains(d.Notes, "(C3)") {
+		t.Fatalf("the draft's check %+v, notes:\n%s", c, d.Notes)
+	}
+	var env struct {
+		Draft draftReport `json:"draft"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil || env.Draft.Check != drafter.CheckFlagged || env.Draft.Repaired {
+		t.Fatalf("the envelope's draft: %+v (%v)\n%s", env.Draft, err, stdout)
+	}
+}
+
+// TestACheckFlagGetsTheRepairTurnTheRulesLeft: a draft the rules pass and
+// the check flags off_task is given the one repair turn, with what the
+// check flagged and the task the first turn was given, and its second
+// answer is checked again: two checks, their judge counts summed, the
+// second's verdicts kept.
+func TestACheckFlagGetsTheRepairTurnTheRulesLeft(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeamsN(t, webscan.Result{Verdict: webscan.Pass}, []string{goodDraft, repairedGood(t)}, draftLedger)
+	checks := draftChecks(t, offTaskCheck(), passCheck())
+	out := filepath.Join(t.TempDir(), "o")
+	_, stderr, err := runCLI(t, nil, "draft", "Summarize my meeting notes.", "--hint", "HINT-MARKER", "--out", out, "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if len(*runs) != 2 || len(checks.asked) != 2 {
+		t.Fatalf("%d run(s), %d check(s)", len(*runs), len(checks.asked))
+	}
+	repair := (*runs)[1]
+	task, _ := io.ReadAll(repair.Task)
+	if repair.Web != nil || !strings.Contains(string(task), "AI Review's check of the finished draft flagged it") ||
+		!strings.Contains(string(task), "## What AI Review flagged\n\n- AI Review off_task, score 3:") ||
+		!strings.Contains(string(task), "## The task you were given\n\n") || !strings.Contains(string(task), "Summarize my meeting notes.") ||
+		!strings.Contains(string(task), "HINT-MARKER") {
+		t.Fatalf("the repair task:\n%s", task)
+	}
+	for _, not := range []string{"acme/minutes", "Pure text.", "bad.example", "Dates as ISO 8601?"} {
+		if strings.Contains(string(task), not) {
+			t.Errorf("the repair task carries %q", not)
+		}
+	}
+	d, v := readDraft(t, out)
+	c := d.AIReview.Check
+	if !v.Passed || !strings.Contains(d.Notes, "## Repaired once") || c.Checks != 2 || c.Verdict() != drafter.CheckPass || c.Requests != 10 || c.InputTokens != 8000 ||
+		!strings.Contains(d.Notes, "AI Review's check flagged the Drafter's first answer") || strings.Contains(d.Notes, "## AI Review's check") {
+		t.Fatalf("the draft's check %+v, notes:\n%s", c, d.Notes)
+	}
+	if !strings.Contains(stderr, "AI Review's check flagged the draft") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+}
+
+// TestARepairTheRulesSpentIsNotSpentAgain: a draft the rules refused has
+// had its repair turn, so a check that flags its second answer is recorded
+// and nothing more runs: one repair turn a draft, one check.
+func TestARepairTheRulesSpentIsNotSpentAgain(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeamsN(t, webscan.Result{Verdict: webscan.Pass}, []string{refusedChoice, repairedGood(t)}, draftLedger)
+	checks := draftChecks(t, offTaskCheck())
+	out := filepath.Join(t.TempDir(), "o")
+	if _, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", out, "--policy", policyPath); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	d, _ := readDraft(t, out)
+	if len(*runs) != 2 || len(checks.asked) != 1 || !strings.Contains(d.Notes, "## Repaired once") || d.AIReview.Check.Checks != 1 || d.AIReview.Check.Verdict() != drafter.CheckFlagged ||
+		!strings.Contains(d.Notes, "(off_task)") {
+		t.Fatalf("%d run(s), %d check(s), check %+v, notes:\n%s", len(*runs), len(checks.asked), d.AIReview.Check, d.Notes)
+	}
+}
+
+// TestACheckWithNoAnswerIsKeptAndNotRetried: a check the registry refuses
+// or cannot answer is asked once, never again (the registry counts it as it
+// admits it), and the draft is written with why; a hosted draft's check is
+// built for the registry and the job's credential, never a Jev key.
+func TestACheckWithNoAnswerIsKeptAndNotRetried(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	const token = "agyj_the-job-credential"
+	t.Setenv(envJobToken, token)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, draftLedger)
+	checks := draftChecks(t, errors.New("the registry refused it (503 model-input-unavailable)"), passCheck())
+	out := filepath.Join(t.TempDir(), "o")
+	stdout, stderr, err := runCLI(t, nil, "draft", "--hosted", "Weather brief.", "--registry", "https://registry.example", "--out", out,
+		"--policy", policyPath, "--output-format", "json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if len(checks.asked) != 1 || checks.webs[0].Scan != toolsrv.WebScanRegistry || checks.webs[0].JobToken != token || checks.webs[0].JevKey != "" ||
+		checks.webs[0].Registry != "https://registry.example" {
+		t.Fatalf("%d check(s), built for %+v", len(checks.asked), checks.webs)
+	}
+	d, _ := readDraft(t, out)
+	if c := d.AIReview.Check; c.Unanswered != "the registry refused it (503 model-input-unavailable)" || c.Checks != 1 || c.Rubric != nil ||
+		!strings.Contains(d.Notes, "has no answer: the registry refused it (503 model-input-unavailable).") {
+		t.Fatalf("the check %+v, notes:\n%s", c, d.Notes)
+	}
+	var env struct {
+		Draft draftReport `json:"draft"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil || env.Draft.Check != "unanswered" || strings.Contains(stdout+stderr, token) {
+		t.Fatalf("stdout:\n%s", stdout)
 	}
 }

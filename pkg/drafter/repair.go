@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -22,16 +23,38 @@ const (
 	maxNoteLine    = 200
 )
 
-// repairFraming opens the repair turn's task. It is a constant: the only
-// text in the task besides it is the rules' report and the Drafter's own
-// draft (RepairTask).
-const repairFraming = "This is your one repair turn. The Agentry rules refused the draft you returned, and their report is below, " +
-	"with your manifest (or, when it was not a draft, your last message) and your instructions as you wrote them. You have no web tools this turn and nothing new to read: " +
+// RepairCause is what sent a draft to its one repair turn: the rules
+// refused it, or AI Review's check of the finished draft flagged something
+// the draft can fix (plan builder-simplify.md §5.2 steps 3 and 4). A draft
+// has one repair turn whatever sent it.
+type RepairCause int
+
+const (
+	// RepairRules: the rules (validate's own code) refused the draft.
+	RepairRules RepairCause = iota
+	// RepairCheck: the check flagged the draft (Check.Repairable).
+	RepairCheck
+)
+
+// repairOpening is the first sentence of the repair turn's task, by cause.
+// Each is a constant: the only text in the task besides the framing is the
+// report, the Drafter's own draft and, after a check, the task it was
+// given (RepairTask).
+var repairOpening = map[RepairCause]string{
+	RepairRules: "This is your one repair turn. The Agentry rules refused the draft you returned, and their report is below, " +
+		"with your manifest (or, when it was not a draft, your last message) and your instructions as you wrote them. ",
+	RepairCheck: "This is your one repair turn. The draft you returned passed the Agentry rules, but AI Review's check of the finished draft " +
+		"flagged it, and what it flagged is below, with the task you were given, your manifest and your instructions as you wrote them. ",
+}
+
+// repairFraming is the rest of the repair turn's framing, the same for
+// either cause.
+const repairFraming = "You have no web tools this turn and nothing new to read: " +
 	"fix the draft from what is here.\n\n" +
 	"- Change what the report names, and only what a fix to it needs. Keep every choice it does not name.\n" +
 	"- Your last message is the whole manifest again, corrected: `{\"manifest\": {…}, \"matches\": [], \"sources\": [], \"openQuestions\": []}`. " +
 	"The lists you returned before are kept, so leave them empty.\n" +
-	"- If the report names the instruction file (AGENT.md, or a rule S1, S3 or S4), write the whole file again with `write_report`, " +
+	"- If the report names the instruction file (AGENT.md, the instructions, or a rule S1, S3 or S4), write the whole file again with `write_report`, " +
 	"`path` `AGENT.md`. Otherwise do not write it: the one you wrote before is kept. Do not write notes.md.\n"
 
 // RepairTask is the repair turn's task (plan builder-simplify.md §5.2 step
@@ -42,15 +65,35 @@ const repairFraming = "This is your one repair turn. The Agentry rules refused t
 // the notes, the sources, the matches or AI Review's record, and no text the
 // Drafter read. The turn runs without the web tools, so the report is the
 // only thing in it the model did not write itself.
-func RepairTask(d *Draft, report []string) (string, error) {
-	if len(report) == 0 {
-		return "", fmt.Errorf("a repair turn needs the rules' report")
+//
+// A repair after the check (RepairCheck) is also given task, the task the
+// Drafter's first turn was given, which AI Review passed before that turn
+// started: a draft flagged as not doing the task cannot be fixed without
+// it. It is the one text in the turn the Drafter was given before, and
+// nothing it read.
+func RepairTask(d *Draft, cause RepairCause, report []string, task string) (string, error) {
+	opening, ok := repairOpening[cause]
+	switch {
+	case !ok:
+		return "", fmt.Errorf("a repair turn has no cause %d", cause)
+	case len(report) == 0:
+		return "", fmt.Errorf("a repair turn needs the report")
+	case cause == RepairCheck && strings.TrimSpace(task) == "":
+		return "", fmt.Errorf("a repair after the check needs the task")
 	}
 	var b strings.Builder
-	b.WriteString(repairFraming)
-	b.WriteString("\n## The rules' report\n\n")
+	b.WriteString(opening + repairFraming)
+	if cause == RepairCheck {
+		b.WriteString("\n## What AI Review flagged\n\n")
+	} else {
+		b.WriteString("\n## The rules' report\n\n")
+	}
 	for _, line := range reportLines(report, maxReportLines, maxReportLine) {
 		b.WriteString("- " + line + "\n")
+	}
+	if cause == RepairCheck {
+		b.WriteString("\n## The task you were given\n\n")
+		b.WriteString(strings.TrimRight(task, "\n") + "\n")
 	}
 	if len(d.Manifest) == 0 {
 		// An answer the output schema refused (Unparsed): its last message
@@ -136,12 +179,13 @@ func Unparsed(env *receipt.Envelope, outDir string, desc webscan.Result, ref, bu
 // repair run's own output folder. The caller checks the result as it
 // checked the first, and keeps it whether or not it passes; an answer that
 // is not a draft is exit 17, and the caller keeps the first draft.
-func Repaired(first *Draft, env *receipt.Envelope, outDir string, report []string) (*Draft, error) {
+func Repaired(first *Draft, env *receipt.Envelope, outDir string, cause RepairCause, report []string) (*Draft, error) {
 	ans, err := Parse(env.Result)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitOutputSchema, err)
 	}
 	d := *first
+	d.extras = slices.Clone(first.extras)
 	d.Manifest, d.Validation, d.ManifestError, d.repaired = ans.Manifest, nil, "", true
 	// Only the instruction file is read back: the turn was told the notes
 	// are kept.
@@ -160,9 +204,15 @@ func Repaired(first *Draft, env *receipt.Envelope, outDir string, report []strin
 	}
 	d.Manifest, d.corrections = Correct(d.Manifest)
 	var s strings.Builder
-	s.WriteString("## Repaired once\n\nThe rules refused the Drafter's first answer, so it was given their report and its own manifest " +
-		"and instructions, and nothing else, for one more turn without its web tools. This draft is its second answer. " +
-		"What the rules said of the first:\n\n")
+	if cause == RepairCheck {
+		s.WriteString("## Repaired once\n\nAI Review's check flagged the Drafter's first answer, so it was given what the check flagged, " +
+			"its task and its own manifest and instructions, and nothing else, for one more turn without its web tools. " +
+			"This draft is its second answer. What the check said of the first:\n\n")
+	} else {
+		s.WriteString("## Repaired once\n\nThe rules refused the Drafter's first answer, so it was given their report and its own manifest " +
+			"and instructions, and nothing else, for one more turn without its web tools. This draft is its second answer. " +
+			"What the rules said of the first:\n\n")
+	}
 	for _, line := range reportLines(report, maxNoteLines, maxNoteLine) {
 		s.WriteString("- " + line + "\n")
 	}
@@ -172,8 +222,12 @@ func Repaired(first *Draft, env *receipt.Envelope, outDir string, report []strin
 
 // NoteNotRepaired says in the notes that the rules refused this draft and
 // its repair turn returned no draft, with why in the CLI's own words.
-func (d *Draft) NoteNotRepaired(why string) {
-	d.composeNotes("## Not repaired\n\nThe rules refused this answer. The Drafter was given their report for one more turn, " +
+func (d *Draft) NoteNotRepaired(cause RepairCause, why string) {
+	refused := "The rules refused this answer. The Drafter was given their report"
+	if cause == RepairCheck {
+		refused = "AI Review's check flagged this answer. The Drafter was given what it flagged"
+	}
+	d.composeNotes("## Not repaired\n\n" + refused + " for one more turn, " +
 		"and that turn returned no draft (" + why + "), so this is its first answer, with its problems.\n")
 }
 
@@ -186,7 +240,8 @@ func (d *Draft) Corrections() []string { return d.corrections }
 func (d *Draft) IsRepaired() bool { return d.repaired }
 
 // composeNotes writes the notes: the Drafter's own, then the post-step's
-// sections (what it corrected, then extra, then what AI Review withheld).
+// sections (what it corrected, then each extra added so far and extra, in
+// that order, then what AI Review withheld).
 // They stay within the bound the clients read them at (the output schema's,
 // maxNotes): the Drafter's own words give way to the sections, which say
 // what was done to the draft.
@@ -201,7 +256,10 @@ func (d *Draft) composeNotes(extra string) {
 		sections.noteSection(b.String())
 	}
 	if extra != "" {
-		sections.noteSection(extra)
+		d.extras = append(d.extras, extra)
+	}
+	for _, e := range d.extras {
+		sections.noteSection(e)
 	}
 	sections.NoteWithheld()
 	own := d.ownNotes
