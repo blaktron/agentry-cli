@@ -433,9 +433,11 @@ inside the binary.
 
 The CLI's tag release publishes them: its `builtins` job runs the release's
 own Linux binary as `agentry builtins publish` against the channel's registry.
-The job creates the agent record when it is missing, skips a version the
-registry already has with the same digest, and fails on one it has with a
-different digest. The built-ins live in the `agentry` organization's
+The job creates the agent record when it is missing and marks it built-in
+(the registry's `builtin`, which only platform staff set and the directory
+labels Built-in in place of the run modes, agentry-cli#474). It skips a
+version the registry already has with the same digest, and fails on one it
+has with a different digest. The built-ins live in the `agentry` organization's
 namespace, so only an account with publish rights there can publish them. The
 job reads that account's PAT from `AGENTRY_BUILTINS_TOKEN_DEV` or
 `AGENTRY_BUILTINS_TOKEN_PRODUCTION`, and the registry refuses anyone else.

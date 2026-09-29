@@ -81,6 +81,9 @@ func newBuiltinsPublishCmd() *cobra.Command {
 		Long: "Publish every package this binary embeds to the registry, public, under\n" +
 			"its own namespace, from the embedded bytes: the upload claims the\n" +
 			"archive's digest and the registry's own build must equal it.\n\n" +
+			"Each agent is marked built-in in the registry, which the directory\n" +
+			"labels Built-in in place of its run modes; the mark is platform\n" +
+			"staff's, so the token must be a staff admin's.\n\n" +
 			"A version the registry already holds with the same digest is skipped;\n" +
 			"one it holds with a different digest is an error, since a published\n" +
 			"version is never rebuilt. A version that goes to review publishes when\n" +
@@ -120,13 +123,31 @@ func runBuiltinsPublish(cmd *cobra.Command) error {
 }
 
 // publishBuiltin publishes one built-in unless the registry already holds
-// its version, creating the agent record, public, when it has none.
+// its version. First it makes sure the agent record exists, public, and is
+// marked built-in (agentry-cli#474), so that a version already published
+// is labelled too.
 func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, reg, token string, out io.Writer, b localrun.Builtin) error {
 	want, err := b.ArchiveDigest()
 	if err != nil {
 		return err
 	}
 	ns, name, version := b.Namespace(), b.Name(), b.Version()
+
+	stage, err := os.MkdirTemp("", "agentry-builtin-publish-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
+	if err := b.Stage(stage); err != nil {
+		return err
+	}
+	m, err := localrun.ManifestFrom(stage)
+	if err != nil {
+		return err
+	}
+	if err := ensureBuiltinAgent(ctx, client, out, m); err != nil {
+		return err
+	}
 
 	vr, err := client.GetVersionInfoWithResponse(ctx, ns, name, version)
 	if err != nil {
@@ -154,21 +175,6 @@ func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, 
 		return apiProblem("look up "+b.Ref(), vr.StatusCode(), vr.ApplicationproblemJSONDefault, vr.Body)
 	}
 
-	stage, err := os.MkdirTemp("", "agentry-builtin-publish-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(stage) }()
-	if err := b.Stage(stage); err != nil {
-		return err
-	}
-	m, err := localrun.ManifestFrom(stage)
-	if err != nil {
-		return err
-	}
-	if err := ensureBuiltinAgent(ctx, client, out, m); err != nil {
-		return err
-	}
 	resp, err := submitUpload(ctx, client, out, stage, m)
 	if err != nil {
 		return err
@@ -184,15 +190,22 @@ func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, 
 }
 
 // ensureBuiltinAgent creates the built-in's agent record, public, when the
-// registry has none. The namespace is the organization that owns the
-// built-ins, which the publishing token must be able to publish to.
+// registry has none, and marks it built-in when it is not (agentry#737,
+// agentry-cli#474): the directory then labels it Built-in in place of its
+// run modes. The namespace is the organization that owns the built-ins,
+// which the publishing token must be able to publish to; the mark is
+// platform staff's alone, so the release's token is a staff admin's, and a
+// registry that refuses the mark fails this built-in.
 func ensureBuiltinAgent(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, m *manifest.Manifest) error {
 	ar, err := client.GetAgentWithResponse(ctx, m.Namespace, m.Name)
 	if err != nil {
 		return err
 	}
 	if ar.JSON200 != nil {
-		return nil
+		if ar.JSON200.Builtin {
+			return nil
+		}
+		return markBuiltin(ctx, client, out, m)
 	}
 	if ar.StatusCode() != http.StatusNotFound {
 		return apiProblem("look up "+m.Namespace+"/"+m.Name, ar.StatusCode(), ar.ApplicationproblemJSONDefault, ar.Body)
@@ -220,5 +233,22 @@ func ensureBuiltinAgent(ctx context.Context, client *apiclient.ClientWithRespons
 		return apiProblem("create "+m.Namespace+"/"+m.Name, cr.StatusCode(), p, cr.Body)
 	}
 	_, _ = fmt.Fprintf(out, "created %s/%s, public\n", m.Namespace, m.Name)
+	return markBuiltin(ctx, client, out, m)
+}
+
+// markBuiltin sets the registry's built-in mark on the agent.
+func markBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, m *manifest.Manifest) error {
+	yes := true
+	ur, err := client.UpdateAgentWithResponse(ctx, m.Namespace, m.Name, apiclient.UpdateAgentJSONRequestBody{Builtin: &yes})
+	if err != nil {
+		return err
+	}
+	if ur.JSON200 == nil {
+		return apiProblem("mark "+m.Namespace+"/"+m.Name+" built-in", ur.StatusCode(), ur.ApplicationproblemJSONDefault, ur.Body)
+	}
+	if !ur.JSON200.Builtin {
+		return fmt.Errorf("the registry answered the mark on %s/%s without it: does it carry the built-in attribute (agentry#737)?", m.Namespace, m.Name)
+	}
+	_, _ = fmt.Fprintf(out, "marked %s/%s built-in\n", m.Namespace, m.Name)
 	return nil
 }
