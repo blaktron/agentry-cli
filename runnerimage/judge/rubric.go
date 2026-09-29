@@ -24,6 +24,21 @@ import (
 const RubricStatement = "agentry/judge-rubric/v1;categories=C1..C6;scores=0-3;" +
 	"content-is-data;no-tools;temperature=0;structured-output"
 
+// RunnerGrants is what the runner gives every run whatever its manifest
+// declares (the capability contract's "always" row), stated in the
+// rubric's state beside declared_capabilities (agentry#731): without it
+// the judge read an instruction that reads its inputs and writes its
+// report as needing an undeclared capability. It is a constant, never
+// built from the version, and it closes in C3's own terms with what it
+// does not grant; its wording was chosen on a live bench (DEV-113's
+// addendum). It is part of every rubric hash.
+const RunnerGrants = "Every run is given, whatever its manifest declares: the files the person gives the run, " +
+	"read-only at /inputs, through the tools list_inputs and read_input; its own output files, written through the " +
+	"tool write_report under any name or folder the agent picks, all kept in reports/ in the run's output folder; " +
+	"and its final answer, returned as the result. Nothing else is given: writing or changing any other file, " +
+	"keeping anything from one run to the next, reaching any host, running any program or reading any secret " +
+	"needs declared_capabilities."
+
 // DeclaredCapabilitiesCap bounds the declared-capabilities JSON that rides
 // in the state beside the content: a manifest's `mcpServers[].env` and
 // `tools` can carry tens of kilobytes of free text, and the questions are
@@ -95,15 +110,17 @@ func (s *RubricScanner) Model() string { return s.asker.Model() }
 
 // Hash is the rubric hash a scan run records: everything that changes a
 // verdict — the model, the questions and their wording, the request shape,
-// the chunk size, the capability bound, the thresholds, the band and the
+// the chunk size, the capability bound, the runner's grants, the
+// thresholds, the band and the
 // sample count.
 func (s *RubricScanner) Hash() string {
-	return rubricHashOf(s.asker.Model(), s.batch, RubricQuestions())
+	return rubricHashOf(s.asker.Model(), s.batch, RubricQuestions(), RunnerGrants)
 }
 
-// rubricHashOf is the hash over a given set, so a test can show that a
-// question's wording is in it.
-func rubricHashOf(model string, batch int, qs []Question) string {
+// rubricHashOf is the hash over a given set and statement of the runner's
+// grants, so a test can show that each question's wording and the grants
+// are in it.
+func rubricHashOf(model string, batch int, qs []Question, grants string) string {
 	parts := make([]string, 0, len(qs))
 	for _, q := range qs {
 		parts = append(parts, q.ID+"="+q.Text)
@@ -111,7 +128,7 @@ func rubricHashOf(model string, batch int, qs []Question) string {
 	return Hash(RubricStatement, "provider=typesafe", "model="+model,
 		"axes=C1..C6", "questions="+strings.Join(parts, "\n"),
 		fmt.Sprintf("batch=%d", batch), fmt.Sprintf("chunk=%d", ChunkSize),
-		fmt.Sprintf("declared-cap=%d", DeclaredCapabilitiesCap),
+		fmt.Sprintf("declared-cap=%d", DeclaredCapabilitiesCap), "runner-grants="+grants,
 		"thresholds=0.5/0.7/0.9", fmt.Sprintf("band=%.2f/%.2f", BandLow, BandHigh),
 		fmt.Sprintf("samples=%d", Samples))
 }
@@ -159,7 +176,7 @@ func (s *RubricScanner) Scan(ctx context.Context, manifestJSON []byte, ships []s
 func (s *RubricScanner) askChunk(ctx context.Context, path, chunk, declared string, usage *Usage) (map[string][]float64, error) {
 	groups := s.groups()
 	out := map[string][]float64{}
-	state := map[string]string{"path": path, "content": chunk, "declared_capabilities": declared}
+	state := RubricState(path, chunk, declared)
 	for _, g := range groups {
 		probs, u, err := s.asker.Ask(ctx, state, g)
 		usage.Add(u)
@@ -192,6 +209,14 @@ func (s *RubricScanner) askChunk(ctx context.Context, path, chunk, declared stri
 		}
 	}
 	return out, nil
+}
+
+// RubricState is the state one rubric request is asked over: the chunk,
+// where it is, what the manifest declares (DeclaredCapabilities) and what
+// the runner grants every run (RunnerGrants). A bench that asks one
+// question by hand builds its state here, so it asks what S5 asks.
+func RubricState(path, chunk, declared string) map[string]string {
+	return map[string]string{"path": path, "content": chunk, "declared_capabilities": declared, "runner_grants": RunnerGrants}
 }
 
 // groups is the request shape: which questions travel together.
