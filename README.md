@@ -107,6 +107,16 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   missing input fail too, so removing a credential cannot quietly turn signing
   off.
 
+**The built-in packages.** Every tag also publishes the packages the binary
+embeds (the Knowledge Creator and the Drafter) to its channel's registry. The
+`builtins` job runs the release's own Linux binary as `agentry builtins
+publish` ([below](#the-built-in-packages-builtins)). It reads the PAT of an
+account with publish rights in the registry's `agentry` organization from the
+`release` environment's secret `AGENTRY_BUILTINS_TOKEN_DEV` for a `-dev.N` tag
+or `AGENTRY_BUILTINS_TOKEN_PRODUCTION` for a `vX.Y.Z` tag, and only the
+channel's own token reaches the step. With the secret
+missing, the job fails and the release's built-ins are not in the registry.
+
 What the checks do not stop: a pushed tag runs the workflow of the tagged
 commit's own tree, so they bind a tag on `main`'s or `dev`'s head (reviewed
 code) and catch a mistaken tag elsewhere only while its tree carries them;
@@ -412,7 +422,7 @@ The Knowledge Creator (`agentry/knowledge-creator`, behind `knowledge create`
 and `add`) and the Drafter (`agentry/drafter`, behind `draft`) are QuickAgent
 packages built into this binary, and run as built-ins: attestation state
 `builtin`, no registry resolve, and grants no other package gets (the
-Drafter's web tools). Every one of them is also published in the registry,
+Drafter's `registry_search`, `web_search` and `web_read`). Every one of them is also published in the registry,
 public, from the same bytes, so anyone can read the instruction that runs
 (agentry-cli#470). `agentry builtins` (or `--json builtins`) lists each with the
 digest of its release archive. The registry built that archive from these

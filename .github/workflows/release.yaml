@@ -463,8 +463,9 @@ jobs:
   # A version the registry already holds with the same digest is skipped.
   # The built-ins live in the agentry organization's namespace, and only an
   # account with publish rights there can put them on the registry (the
-  # operator, 2026-09-29): the secret AGENTRY_BUILTINS_TOKEN_DEV or
-  # AGENTRY_BUILTINS_TOKEN_PRODUCTION is that account's PAT. Without it the
+  # operator, 2026-09-29): the release environment's secret
+  # AGENTRY_BUILTINS_TOKEN_DEV or AGENTRY_BUILTINS_TOKEN_PRODUCTION is that
+  # account's PAT. Without it the
   # job fails: the release is out and its built-ins are not in the registry.
   # A version that goes to review publishes when platform staff approve it;
   # the summary says which.
@@ -472,6 +473,9 @@ jobs:
     needs: [preflight, build]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: [self-hosted, linux, x64]
+    # The two tokens are the release environment's secrets, like the
+    # signing inputs: no other workflow, and no pull request, can read them.
+    environment: release
     timeout-minutes: 30
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
@@ -484,8 +488,11 @@ jobs:
           path: ${{ runner.temp }}/bundle
       - name: Publish the built-in packages
         env:
-          TOKEN_DEV: ${{ secrets.AGENTRY_BUILTINS_TOKEN_DEV }}
-          TOKEN_PRODUCTION: ${{ secrets.AGENTRY_BUILTINS_TOKEN_PRODUCTION }}
+          # Only the channel's own token reaches the step (the runner is
+          # shared); each expression is empty for the other channel, so a
+          # missing production token can never fall back to dev's.
+          TOKEN_DEV: ${{ needs.preflight.outputs.channel == 'dev' && secrets.AGENTRY_BUILTINS_TOKEN_DEV || '' }}
+          TOKEN_PRODUCTION: ${{ needs.preflight.outputs.channel == 'production' && secrets.AGENTRY_BUILTINS_TOKEN_PRODUCTION || '' }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in

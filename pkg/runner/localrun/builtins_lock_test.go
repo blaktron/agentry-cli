@@ -2,7 +2,10 @@ package localrun
 
 import (
 	"bufio"
+	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -30,15 +33,37 @@ func TestTheBuiltinsLockHoldsEveryBuiltin(t *testing.T) {
 
 		// The version the runner names is the one the manifest declares,
 		// so the release the registry builds from the tree is this ref.
-		m, err := ManifestFrom(stageBuiltin(t, b))
+		dir := stageBuiltin(t, b)
+		m, err := ManifestFrom(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if m.Namespace != b.Namespace() || m.Name != b.Name() || m.Version != b.Version() {
 			t.Errorf("%s: its manifest declares %s/%s@%s", b.Ref(), m.Namespace, m.Name, m.Version)
 		}
-		if !slices.Contains(m.Publish.Include, "README.md") {
-			t.Errorf("%s: publish.include leaves out README.md, which the directory shows first", b.Ref())
+		// "The same bytes": the release carries every file the binary
+		// embeds, so publish.include must leave none out.
+		info, err := PackWorkspace(dir, m, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packed := map[string]bool{}
+		for _, f := range info.Files {
+			packed[f.Path] = true
+		}
+		if err := fs.WalkDir(os.DirFS(dir), ".", func(p string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && !packed[p] {
+				t.Errorf("%s embeds %s, and publish.include leaves it out of the release", b.Ref(), p)
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		// The README says what the application grants beyond the manifest,
+		// and the directory shows it first: embedded and published both.
+		if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil || !slices.Contains(m.Publish.Include, "README.md") {
+			t.Errorf("%s: README.md is not both embedded and in publish.include (%v)", b.Ref(), err)
 		}
 	}
 }

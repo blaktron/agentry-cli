@@ -152,8 +152,7 @@ func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter()} }
 // Ref is the package's ns/name@version.
 func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }
 
-// Namespace, Name and Version are the package's identity, as its manifest
-// declares it.
+// Namespace is the package's namespace, as its manifest declares it.
 func (b Builtin) Namespace() string { return b.namespace }
 
 // Name is the package's name.
@@ -234,8 +233,8 @@ func (b Builtin) Materialize(home, build string) (*installdir.Meta, string, erro
 		return nil, "", err
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
-	if err := os.CopyFS(stage, b.fsys); err != nil {
-		return nil, "", fmt.Errorf("stage %s: %w", b.Ref(), err)
+	if err := b.Stage(stage); err != nil {
+		return nil, "", err
 	}
 	digest, err := TreeDigest(stage)
 	if err != nil {

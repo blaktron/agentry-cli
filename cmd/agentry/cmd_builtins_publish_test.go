@@ -21,7 +21,9 @@ type builtinsRegistry struct {
 	mu sync.Mutex
 	// versions holds the digest of each ns/name@version the registry has.
 	versions map[string]string
-	agents   map[string]bool
+	// state is the status a held version reports; published when empty.
+	state  string
+	agents map[string]bool
 	// refuse answers 403 to creation and upload: an account that may not
 	// publish to the namespace.
 	refuse bool
@@ -51,7 +53,11 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 			writeProblem(w, http.StatusNotFound, "version not found", "")
 			return
 		}
-		writeJSON(w, http.StatusOK, version(r.PathValue("v"), "published", d))
+		st := br.state
+		if st == "" {
+			st = "published"
+		}
+		writeJSON(w, http.StatusOK, version(r.PathValue("v"), st, d))
 	})
 	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}", func(w http.ResponseWriter, r *http.Request) {
 		br.mu.Lock()
@@ -224,5 +230,27 @@ func TestBuiltinsPublishReportsReview(t *testing.T) {
 	}
 	if strings.Count(stdout, "needs human review") != 2 {
 		t.Errorf("stdout %s", stdout)
+	}
+}
+
+// TestBuiltinsPublishFailsOnARejectedVersion: a version the registry holds
+// with the same digest but rejected fails every later release too, not
+// only the one that submitted it: the directory does not show it, and its
+// version string is burned.
+func TestBuiltinsPublishFailsOnARejectedVersion(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv(envToken, "agy_testtoken")
+	br := newBuiltinsRegistry(t)
+	for ref, d := range builtinDigests(t) {
+		br.versions[ref] = d
+	}
+	br.state = "rejected"
+
+	_, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+	if err == nil || !strings.Contains(err.Error(), "2 of 2 built-ins not published") || !strings.Contains(stderr, "state rejected") {
+		t.Fatalf("err = %v stderr %s", err, stderr)
+	}
+	if len(br.uploads) != 0 {
+		t.Errorf("uploaded %v", br.uploads)
 	}
 }

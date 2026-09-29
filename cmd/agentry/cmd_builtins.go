@@ -26,6 +26,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry/pkg/apiclient"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 func newBuiltinsCmd() *cobra.Command {
@@ -140,14 +141,17 @@ func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, 
 		if have != want {
 			return fmt.Errorf("the registry holds this version as %s and this binary's package packs to %s: a published version is never rebuilt, so the built-in needs a new version", have, want)
 		}
-		_, _ = fmt.Fprintf(out, "%s already in the registry (%s, %s)\n", b.Ref(), vr.JSON200.Status, have)
-		return nil
+		switch vr.JSON200.Status {
+		case "published", "needs_review", "submitted", "scanning", "approved":
+			_, _ = fmt.Fprintf(out, "%s already in the registry (%s, %s)\n", b.Ref(), vr.JSON200.Status, have)
+			return nil
+		default:
+			// rejected, quarantined, blocked, yanked: the version string is
+			// burned, and the directory does not show what this binary runs.
+			return fmt.Errorf("the registry holds this version in state %s: the built-in needs a new version", vr.JSON200.Status)
+		}
 	case vr.StatusCode() != http.StatusNotFound:
 		return apiProblem("look up "+b.Ref(), vr.StatusCode(), vr.ApplicationproblemJSONDefault, vr.Body)
-	}
-
-	if err := ensureBuiltinAgent(ctx, client, out, b); err != nil {
-		return err
 	}
 
 	stage, err := os.MkdirTemp("", "agentry-builtin-publish-*")
@@ -160,6 +164,9 @@ func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, 
 	}
 	m, err := localrun.ManifestFrom(stage)
 	if err != nil {
+		return err
+	}
+	if err := ensureBuiltinAgent(ctx, client, out, m); err != nil {
 		return err
 	}
 	resp, err := submitUpload(ctx, client, out, stage, m)
@@ -179,8 +186,8 @@ func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, 
 // ensureBuiltinAgent creates the built-in's agent record, public, when the
 // registry has none. The namespace is the organization that owns the
 // built-ins, which the publishing token must be able to publish to.
-func ensureBuiltinAgent(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, b localrun.Builtin) error {
-	ar, err := client.GetAgentWithResponse(ctx, b.Namespace(), b.Name())
+func ensureBuiltinAgent(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, m *manifest.Manifest) error {
+	ar, err := client.GetAgentWithResponse(ctx, m.Namespace, m.Name)
 	if err != nil {
 		return err
 	}
@@ -188,20 +195,7 @@ func ensureBuiltinAgent(ctx context.Context, client *apiclient.ClientWithRespons
 		return nil
 	}
 	if ar.StatusCode() != http.StatusNotFound {
-		return apiProblem("look up "+b.Namespace()+"/"+b.Name(), ar.StatusCode(), ar.ApplicationproblemJSONDefault, ar.Body)
-	}
-
-	stage, err := os.MkdirTemp("", "agentry-builtin-agent-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(stage) }()
-	if err := b.Stage(stage); err != nil {
-		return err
-	}
-	m, err := localrun.ManifestFrom(stage)
-	if err != nil {
-		return err
+		return apiProblem("look up "+m.Namespace+"/"+m.Name, ar.StatusCode(), ar.ApplicationproblemJSONDefault, ar.Body)
 	}
 	var modes apiclient.AgentModes
 	for _, md := range m.SupportedModes() {
@@ -213,7 +207,7 @@ func ensureBuiltinAgent(ctx context.Context, client *apiclient.ClientWithRespons
 	public := apiclient.CreateAgentRequestVisibilityPublic
 	summary := m.Summary
 	cr, err := client.CreateAgentWithResponse(ctx, apiclient.CreateAgentJSONRequestBody{
-		Namespace: b.Namespace(), Name: b.Name(), Modes: modes, Summary: &summary, Visibility: &public,
+		Namespace: m.Namespace, Name: m.Name, Modes: modes, Summary: &summary, Visibility: &public,
 	})
 	if err != nil {
 		return err
@@ -223,8 +217,8 @@ func ensureBuiltinAgent(ctx context.Context, client *apiclient.ClientWithRespons
 		if p == nil {
 			p = cr.ApplicationproblemJSONDefault
 		}
-		return apiProblem("create "+b.Namespace()+"/"+b.Name(), cr.StatusCode(), p, cr.Body)
+		return apiProblem("create "+m.Namespace+"/"+m.Name, cr.StatusCode(), p, cr.Body)
 	}
-	_, _ = fmt.Fprintf(out, "created %s/%s, public\n", b.Namespace(), b.Name())
+	_, _ = fmt.Fprintf(out, "created %s/%s, public\n", m.Namespace, m.Name)
 	return nil
 }
