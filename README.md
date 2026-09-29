@@ -107,6 +107,16 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   missing input fail too, so removing a credential cannot quietly turn signing
   off.
 
+**The built-in packages.** Every tag also publishes the packages the binary
+embeds (the Knowledge Creator and the Drafter) to its channel's registry. The
+`builtins` job runs the release's own Linux binary as `agentry builtins
+publish` ([below](#the-built-in-packages-builtins)). It reads the PAT of an
+account with publish rights in the registry's `agentry` organization from the
+`release` environment's secret `AGENTRY_BUILTINS_TOKEN_DEV` for a `-dev.N` tag
+or `AGENTRY_BUILTINS_TOKEN_PRODUCTION` for a `vX.Y.Z` tag, and only the
+channel's own token reaches the step. With the secret
+missing, the job fails and the release's built-ins are not in the registry.
+
 What the checks do not stop: a pushed tag runs the workflow of the tagged
 commit's own tree, so they bind a tag on `main`'s or `dev`'s head (reviewed
 code) and catch a mistaken tag elsewhere only while its tree carries them;
@@ -150,7 +160,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `run` · `knowledge` · `draft` · `uninstall` · `profiles` · `verify` ·
+`setup` · `doctor` · `run` · `knowledge` · `draft` · `builtins` · `uninstall` · `profiles` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -405,6 +415,37 @@ in `$AGENTRY_JOB_TOKEN`, and no Jev or search key is on the host. The draft
 kind, its hold and its settlement are in the core's
 [hosted runs](https://github.com/blaktron/agentry/blob/main/docs/hosted-runs.md#a-hosted-draft)
 page.
+
+### The built-in packages: `builtins`
+
+The Knowledge Creator (`agentry/knowledge-creator`, behind `knowledge create`
+and `add`) and the Drafter (`agentry/drafter`, behind `draft`) are QuickAgent
+packages built into this binary, and run as built-ins: attestation state
+`builtin`, no registry resolve, and grants no other package gets (the
+Drafter's `registry_search`, `web_search` and `web_read`). Every one of them is also published in the registry,
+public, from the same bytes, so anyone can read the instruction that runs
+(agentry-cli#470). `agentry builtins` (or `--json builtins`) lists each with the
+digest of its release archive. The registry built that archive from these
+bytes, so the digest on the package's page in the directory is the same.
+Installing a published built-in runs it as an ordinary release with only
+what its manifest declares. A built-in runs as `builtin` only from the copy
+inside the binary.
+
+The CLI's tag release publishes them: its `builtins` job runs the release's
+own Linux binary as `agentry builtins publish` against the channel's registry.
+The job creates the agent record when it is missing, skips a version the
+registry already has with the same digest, and fails on one it has with a
+different digest. The built-ins live in the `agentry` organization's
+namespace, so only an account with publish rights there can publish them. The
+job reads that account's PAT from `AGENTRY_BUILTINS_TOKEN_DEV` or
+`AGENTRY_BUILTINS_TOKEN_PRODUCTION`, and the registry refuses anyone else.
+
+A published version is never rebuilt, so **a change to a built-in's tree
+takes a new version**. Bump its `agent.yaml` and its package's `Version`
+constant, and append the new line `agentry builtins` prints to
+`pkg/runner/localrun/builtins.lock`. `TestTheBuiltinsLockHoldsEveryBuiltin`
+fails until you do, and CI's `scripts/builtins-lock-check.sh` refuses an
+edited line.
 
 ### Signing keys and `verify`
 

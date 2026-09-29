@@ -175,7 +175,7 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 		t.Fatalf("documents %v skipped %v", res.Documents, res.Skipped)
 	}
 	env := res.Envelope
-	if env.Attestation.State != "builtin" || env.Ref != "agentry/knowledge-creator@1.0.0" {
+	if env.Attestation.State != "builtin" || env.Ref != "agentry/knowledge-creator@1.1.0" {
 		t.Fatalf("attestation %+v ref %s", env.Attestation, env.Ref)
 	}
 	if !strings.Contains(env.CapabilitiesEnforced["decode"], "1 decoded, 1 read as text, 1 not decoded (blob.bin)") {
