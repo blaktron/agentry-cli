@@ -1,9 +1,9 @@
 schemaVersion: "2"
 name: drafter
 namespace: agentry
-version: 1.1.0
+version: 1.1.1
 summary: "Drafts a QuickAgent from a description, searching the registry and the web; AI Review reads every result first."
-license: Apache-2.0
+license: MIT
 authors:
   - name: Agentry
 modes: [autonomous]
@@ -17,4 +17,4 @@ capabilities:
     write: none
   exec: none
 publish:
-  include: [agent.yaml, AGENT.md, output.schema.json, README.md]
+  include: [agent.yaml, AGENT.md, output.schema.json, README.md, LICENSE]

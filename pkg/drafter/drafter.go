@@ -20,18 +20,19 @@ import (
 	"io/fs"
 )
 
-//go:embed agent.yaml AGENT.md output.schema.json README.md
+//go:embed agent.yaml AGENT.md output.schema.json README.md LICENSE
 var files embed.FS
 
-// FS is the package's tree: agent.yaml, AGENT.md, output.schema.json and
-// README.md at its root.
+// FS is the package's tree: agent.yaml, AGENT.md, output.schema.json,
+// README.md and LICENSE at its root (a public release carries the last two,
+// V7).
 func FS() fs.FS { return files }
 
 // The package's identity, as its manifest declares it.
 const (
 	Namespace = "agentry"
 	Name      = "drafter"
-	Version   = "1.1.0"
+	Version   = "1.1.1"
 )
 
 // The Drafter's own caps (plan builder-simplify.md §5.1, D8): tighter than

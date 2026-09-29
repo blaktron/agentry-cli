@@ -10,3 +10,7 @@
 # branch already has.
 agentry/knowledge-creator@1.1.0 sha256:e2ae6aaf0d773c4e203e9a0edaa9b2f0f89a58f46feb654555ab292825072532
 agentry/drafter@1.1.0 sha256:d926e1bd2063dc3602bb004852ae97a69f71e663219961ab5408c9718eb12099
+# 1.1.0 was refused by the registry at submission (V7: a public release
+# carries a LICENSE) and never published; 1.1.1 adds the LICENSE.
+agentry/knowledge-creator@1.1.1 sha256:1a4f58329dfb5ff26e15bd55e32959fb695563a876b1ec8fdc5ae2621b7e982b
+agentry/drafter@1.1.1 sha256:a8d3935621212a04428738154c2e6280b94c980a824860129ffea724ef95178d
