@@ -1,7 +1,7 @@
 # agentry — the Agentry CLI
 
 The command-line client for [Agentry](https://secureagentry.net):
-publish, install, verify, and **run** BriefAgents — single-purpose AI
+publish, install, verify, and **run** QuickAgents — single-purpose AI
 agents. Every install checks the archive digest and DSSE signature before
 anything lands on your machine. An unsigned release, one the registry
 published no attestation for, requires `--allow-unsigned`. An unscanned
@@ -12,7 +12,7 @@ findings, no report and no attestation stand behind it. It requires
 reports it as "unscanned, no attestation", and the run's receipt names the
 consent that admitted it. `agentry validate`
 runs the same manifest rules and content scanners the registry runs at submit
-time — offline. Start a new BriefAgent from the
+time — offline. Start a new QuickAgent from the
 [template](https://github.com/blaktron/agentry-template).
 
 This repository holds the CLI only. It depends on the core module
@@ -247,7 +247,7 @@ pages it wrote, unless `--out DIR` asks to keep that output.
 
 ### Shipping a pack with a release
 
-A BriefAgent can carry packs of its own. Put each one, as `knowledge
+A QuickAgent can carry packs of its own. Put each one, as `knowledge
 create --dir` or `add` keeps it, under `knowledge/<name>/` in the package,
 name it in the manifest's `knowledge.ships`, and include `knowledge/**` in
 `publish.include`. The registry refuses a release whose pack is not the one
@@ -268,14 +268,14 @@ of the version's scan and signs it with the rest of the archive.
   cannot take a shipped pack's name. The receipt names a shipped pack as the
   release's: `<name> shipped with the release (archive sha256:…)`.
 
-### Drafting a BriefAgent: `draft`
+### Drafting a QuickAgent: `draft`
 
 `agentry draft "<description>" [--hint TEXT…] [--out DIR]` drafts a
-BriefAgent from a plain description of what it should do
+QuickAgent from a plain description of what it should do
 (`--description-file FILE` reads it from a file). The built-in
 **Drafter** does the work: a second package this binary embeds, run with the
 attestation state `builtin` like the Knowledge Creator. It searches the
-registry for a published BriefAgent that already does the task, researches
+registry for a published QuickAgent that already does the task, researches
 how the task is done, and writes a draft. It never submits anything.
 
 **AI Review reads what the Drafter reads, first.** TypeSafe's Jev reads the
@@ -301,7 +301,7 @@ which the gateway's docker filter lets no other container join.
   and redirect hop, so a name that resolves somewhere private is refused
   too. It sends no cookie and no credential, and returns at most 32 KiB of
   a page's text.
-- `registry_search` reads the registry's search, a BriefAgent's manifest,
+- `registry_search` reads the registry's search, a QuickAgent's manifest,
   and its vulnerability check of an exact MCP server version.
 - `web_search` needs a search provider of your own in the policy:
   `webSearch: {provider: brave}` (Brave's LLM Context API) with the key in
@@ -326,7 +326,7 @@ The draft runs against the model your runner policy names, for no credits.
 
 The result, in `DIR` (default `./agentry-out/agentry-drafter-<runid>`):
 - `draft.json` holds the manifest, the instructions, the notes, the
-  published BriefAgents that match (`matches`), the sources, the open
+  published QuickAgents that match (`matches`), the sources, the open
   questions, AI Review's record (what was read and every withheld source
   with its reason), and `validation`, the report `agentry validate --json`
   gives on the rendered package.
@@ -339,7 +339,7 @@ questions (most drafts none or one), lists at most five things to prepare,
 leaves at most two open questions, and keeps its notes to five bullets. The
 instruction it writes has four parts: Role, Inputs, Steps and Output.
 
-Before a draft is written, the CLI checks it in three steps:
+Before a draft is written, the CLI checks it in four steps:
 1. **Mechanical slips are corrected without the model.** A mode, a tag or a
    choice named twice loses the second one. An optional part left empty, or
    holding a placeholder such as "None", is removed. A list past its limit
@@ -347,10 +347,32 @@ Before a draft is written, the CLI checks it in three steps:
    ending with "…". The limits are the rules' own. The notes name each
    correction under "Corrected after drafting", and nothing is invented.
 2. **The rules check it**, with `agentry validate`'s own code.
-3. **One repair turn.** If the rules still refuse it, the Drafter runs once
-   more, without its web tools. Its task is the rules' report and its own
-   manifest and instructions, and nothing else: no description, no notes,
-   no page. A last message that was not a draft at all (not one JSON object,
+3. **AI Review checks the finished draft** (agentry-cli#418). It reads the
+   rendered package, exactly the files `publish.include` takes, the licence
+   among them, two ways: with the release rubric, asked as the pipeline's
+   stage S5 asks it at publish, and with one question on whether the
+   instructions do the task you described (`off_task`). On this computer it
+   uses your own Jev key; `--hosted`, the registry's
+   `POST /api/v1/model-input/check` with the job's credential, which the
+   registry admits at most twice a draft and which the CLI never retries.
+   The verdicts go into `draft.json` under `aiReview.check`, and the notes
+   say what a flag means under "AI Review's check". The rubric's C3 (a
+   capability used but not declared) is recorded and never sent to the
+   repair turn: it reads an instruction that uses its own inputs and writes
+   its report that way, editing the draft does not clear it, and at publish
+   it sends the version to review, not to refusal. A description over 8 KiB
+   is not checked, and neither is a draft that could not be rendered. A
+   pass does not mean the draft does all of the task, and the pipeline
+   scans the whole version at publish whatever the check said.
+4. **One repair turn.** If the rules still refuse it, or the check flagged
+   something the draft can fix (`off_task`, or a rubric finding other than
+   C3), the Drafter runs once more, without its web tools. Its task is the
+   rules' report, what the check flagged, and its own manifest and
+   instructions, and nothing else: no notes, no page. With a flag it is also
+   given the task the first turn was given, which AI Review passed before
+   that turn started. The second answer is checked again, so a draft asks
+   at most two checks; a second answer that breaks rules the first passed
+   is not kept. A last message that was not a draft at all (not one JSON object,
    exit 17) gets the same turn, given the error and that message back. It returns the manifest again, and the instruction file too if
    the report names it. The second answer is corrected and checked like the
    first, and kept whether or not it passes; its notes say "Repaired once"
@@ -367,7 +389,9 @@ stdout is the Drafter run's result envelope (its usage, the attestation
 `builtin`, the `web` counts) with the draft's report under `draft`: where
 `draft.json` is, whether the package was rendered and passed, how many
 matches, open questions and withheld sources it has, how many slips were
-corrected (`corrections`), and whether it was repaired (`repaired`). The
+corrected (`corrections`), whether it was repaired (`repaired`), and AI
+Review's check as one word (`check`: `pass`, `flagged`, `not_scanned`, or
+`unanswered` when it has no answer). The
 envelope's usage is both turns' together, and the usage lines the repair
 turn narrates count from the first turn's total. The envelope's `result` is empty,
 because the draft is in `draft.json`. The harness's usage is narrated live
@@ -411,7 +435,7 @@ and `keyRetiredAt`. The key still verifies exactly as it did before.
 ## The runner (`agentry run`)
 
 The runner turns a release's declared capability contract into actual
-enforcement and executes the BriefAgent once, with an output folder for
+enforcement and executes the QuickAgent once, with an output folder for
 its reports. The default adapter (`docker-agent`) runs the harness in an
 isolated container; `--adapter claude` or `codex` runs your own installed
 Claude Code or Codex as a host process behind the same gateway and egress
@@ -426,7 +450,7 @@ manifest + operator policy into a deterministic run plan → execute:
 
 - **Tools come only from a per-run [Docker MCP Gateway](https://github.com/docker/mcp-gateway)**
   fronting the companion tools server this CLI ships (built locally from an
-  embedded context on first use). BriefAgents carry no tool code; an
+  embedded context on first use). QuickAgents carry no tool code; an
   undeclared capability means the tool does not exist.
 - **The agent container is isolated**: internal-only network whose sole
   reachable endpoints are the gateway (Bearer-token MCP) and an
@@ -446,7 +470,7 @@ manifest + operator policy into a deterministic run plan → execute:
   their capabilities are the gateway's defaults. The receipt names what
   was applied.
 - **Under a sandboxed runtime** (`docker.runtime: runsc`, gVisor), the
-  containers that hold the BriefAgent's code run under it, and so do the
+  containers that hold the QuickAgent's code run under it, and so do the
   tools and MCP server containers the gateway launches (through the run's
   docker filter, on Linux). The llm-proxy, the MCP server install proxy and
   the relays join them when `docker.resolvers` names your host's upstream
@@ -458,7 +482,7 @@ manifest + operator policy into a deterministic run plan → execute:
   `agentry doctor` checks each. The receipt's runtime line names every
   container class and says why any is on the daemon's default.
 - **Everything the run produces** lands in the output folder: the
-  BriefAgent's report files, `result.json` (the machine-readable envelope),
+  QuickAgent's report files, `result.json` (the machine-readable envelope),
   and `receipts/` (event stream, gateway log, the exact run plan).
   The runner tears down containers, networks, and secret files on every
   exit path. Each teardown step is best effort: a docker call that fails
@@ -492,7 +516,7 @@ and runs that. Runs compose: `agentry run a ... | agentry run b ...`.
 
 Around the enforcement core (v2): **`agentry setup`** configures your LLM
 provider and stands up the gateway plane before any agent is involved.
-**MCP profiles** store a BriefAgent's keys and identities once per exact
+**MCP profiles** store a QuickAgent's keys and identities once per exact
 release — guided setup on first run, then keep or remove on completion
 (`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
 run external files read-only under `/inputs`. **`--knowledge NAME`** (a

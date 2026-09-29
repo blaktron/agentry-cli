@@ -167,7 +167,7 @@ func TestSearchEmptyResultNamesTheFilters(t *testing.T) {
 	}
 	// "no agents match" with the filters spelled out, so an over-filtered
 	// query never reads as an empty registry.
-	if !strings.Contains(stdout, `no BriefAgents match "nada" with mode=autonomous, verified`) {
+	if !strings.Contains(stdout, `no QuickAgents match "nada" with mode=autonomous, verified`) {
 		t.Errorf("empty-result line = %q", stdout)
 	}
 }

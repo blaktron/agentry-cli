@@ -123,7 +123,7 @@ type Params struct {
 	// leaves the envelope's policy block out.
 	PolicyFile *policy.File
 	// SecretOverrides resolve declared secrets ahead of the policy source
-	// — the BriefAgent's MCP profile rides in here (P2 §P2); the engine
+	// — the QuickAgent's MCP profile rides in here (P2 §P2); the engine
 	// itself stays profile-agnostic.
 	SecretOverrides map[string]string
 	// ServersDir is the signature's installed MCP-server store

@@ -81,7 +81,7 @@ func TestInitFromSkillWithAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init --from: %v\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "imported BriefAgent acme/issue-triage") {
+	if !strings.Contains(stdout, "imported QuickAgent acme/issue-triage") {
 		t.Errorf("banner:\n%s", stdout)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "agent.yaml"))
@@ -172,7 +172,7 @@ func TestInitFromServerJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init --from server.json: %v\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "imported BriefAgent acme/mcp-github-issues") {
+	if !strings.Contains(stdout, "imported QuickAgent acme/mcp-github-issues") {
 		t.Errorf("banner:\n%s", stdout)
 	}
 	raw, _ := os.ReadFile(filepath.Join(dir, "agent.yaml"))

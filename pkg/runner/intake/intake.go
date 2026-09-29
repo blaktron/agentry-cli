@@ -1,4 +1,4 @@
-// Package intake collects a BriefAgent's up-front questions (manifest v2
+// Package intake collects a QuickAgent's up-front questions (manifest v2
 // `intake`, plan §3.5): asked before the sandbox starts, in either run
 // mode, through the same prompter that collects MCP profile secrets, or
 // answered non-interactively with --intake id=value. The answers are
@@ -82,7 +82,7 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 	}
 	for id := range preset {
 		if !known[id] {
-			return nil, fmt.Errorf("--intake %s: the BriefAgent asks no question with that id", id)
+			return nil, fmt.Errorf("--intake %s: the QuickAgent asks no question with that id", id)
 		}
 	}
 	declared := map[string]bool{}

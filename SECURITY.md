@@ -17,7 +17,7 @@ Particularly interesting here:
   whose digest or DSSE attestation does not verify, or that accepts a
   signing key the registry did not publish (`pkg/trust` pins keys on first
   use).
-- **Runner containment** — a BriefAgent reaching the network, the filesystem,
+- **Runner containment** — a QuickAgent reaching the network, the filesystem,
   a subprocess or a secret its manifest did not declare; a gateway started
   without its network block; a receipt that misstates what was enforced.
 - **Archive extraction** — path traversal, links or bombs in `pkg/archive`

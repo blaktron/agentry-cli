@@ -98,11 +98,11 @@ func newDoctorCmd() *cobra.Command {
 	var opts doctorOpts
 	cmd := &cobra.Command{
 		Use:   "doctor [ns/name[@range]]",
-		Short: "Check that this machine (and optionally one BriefAgent) is ready to run",
+		Short: "Check that this machine (and optionally one QuickAgent) is ready to run",
 		Long: "Report, without changing anything, whether `agentry run` would get past its\n" +
 			"preflight on this machine: the operator policy and model, the docker engine\n" +
 			"and the pinned gateway/harness/runner images, and the registry. With a ref\n" +
-			"(or --local DIR) it also checks that BriefAgent's verified install, its\n" +
+			"(or --local DIR) it also checks that QuickAgent's verified install, its\n" +
 			"declared MCP servers' store, its MCP profile, and that every declared secret\n" +
 			"resolves — the exit-11 refusal a scheduled run would otherwise meet.\n\n" +
 			"Exit status 0 when every check passes (warnings allowed), 1 otherwise.\n" +
@@ -117,7 +117,7 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.local, "local", "", "check a local BriefAgent directory instead of a registry ref")
+	f.StringVar(&opts.local, "local", "", "check a local QuickAgent directory instead of a registry ref")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.StringVar(&opts.adapter, "adapter", "", "also check this harness adapter's installation (e.g. claude)")
 	return cmd
@@ -295,7 +295,7 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	// The exec catalog (agentry-cli#100): what a declared exec command
 	// resolves to on this machine, or the fact that nothing does.
 	if len(pol.Exec.Packages) == 0 {
-		rep.warn("exec", "no packages catalogued — a BriefAgent declaring exec.commands is refused at plan time until exec.packages names each command's apk package")
+		rep.warn("exec", "no packages catalogued — a QuickAgent declaring exec.commands is refused at plan time until exec.packages names each command's apk package")
 	} else {
 		var entries []string
 		for _, c := range slices.Sorted(maps.Keys(pol.Exec.Packages)) {
@@ -429,7 +429,7 @@ func doctorRegistry(ctx context.Context, rep *doctorReport) {
 	rep.ok("registry", "%s reachable (credential stored)", reg)
 }
 
-// doctorAgent locates the BriefAgent: a cached verified install for a
+// doctorAgent locates the QuickAgent: a cached verified install for a
 // registry ref (resolved without downloading), or a local directory.
 func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string) (*manifest.Manifest, *installdir.Meta, string) {
 	if local != "" {
@@ -513,8 +513,8 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 }
 
 // doctorAgentState checks the server store, the profile and the secrets
-// for one located BriefAgent.
-// doctorExecCatalog checks a BriefAgent's declared exec commands against
+// for one located QuickAgent.
+// doctorExecCatalog checks a QuickAgent's declared exec commands against
 // the machine's catalog: what the compiler will refuse, said here first
 // (agentry-cli#100).
 func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manifest) {
@@ -632,7 +632,7 @@ func printDoctorReport(w io.Writer, rep *doctorReport) {
 	if rep.Ref != "" {
 		_, _ = fmt.Fprintf(w, "agentry doctor — %s\n", rep.Ref)
 	} else {
-		_, _ = fmt.Fprintln(w, "agentry doctor — machine checks (pass a ref to check one BriefAgent)")
+		_, _ = fmt.Fprintln(w, "agentry doctor — machine checks (pass a ref to check one QuickAgent)")
 	}
 	for _, c := range rep.Checks {
 		mark := map[string]string{"ok": "ok  ", "warn": "warn", "fail": "FAIL"}[c.Status]

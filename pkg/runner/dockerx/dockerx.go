@@ -125,7 +125,7 @@ type RunSpec struct {
 	User string
 	// Runtime names the daemon's OCI runtime for this container
 	// (`--runtime`): a policy's docker.runtime, so the container that runs
-	// the BriefAgent's code can sit behind gVisor on a host that has it
+	// the QuickAgent's code can sit behind gVisor on a host that has it
 	// (DR-23). Empty leaves the daemon's default, which is what every local
 	// run had before the knob.
 	Runtime string

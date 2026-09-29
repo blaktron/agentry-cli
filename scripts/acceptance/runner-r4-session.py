@@ -4,7 +4,7 @@ an adapter is done when BOTH modes pass).
 
     scripts/acceptance/runner-r4-session.py <adapter> [out-dir]
 
-Drives one interactive BriefAgent session end to end and then checks the
+Drives one interactive QuickAgent session end to end and then checks the
 run's own record rather than the screen: the envelope is ok and says which
 mode, adapter and harness ran; the agent answered from what its gateway
 tools read out of the workspace; and the transcript and event receipts

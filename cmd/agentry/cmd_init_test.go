@@ -26,7 +26,7 @@ func TestInitScaffoldsValidate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("init: %v", err)
 			}
-			if !strings.Contains(stdout, "initialized BriefAgent acme/"+name+" (modes: "+modes+")") {
+			if !strings.Contains(stdout, "initialized QuickAgent acme/"+name+" (modes: "+modes+")") {
 				t.Errorf("init banner = %s", stdout)
 			}
 

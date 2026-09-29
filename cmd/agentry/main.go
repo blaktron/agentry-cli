@@ -70,7 +70,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "agentry",
-		Short:         "Agentry CLI — develop, validate, publish, install, and run BriefAgents (single-purpose AI agents)",
+		Short:         "Agentry CLI — develop, validate, publish, install, and run QuickAgents (single-purpose AI agents)",
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,

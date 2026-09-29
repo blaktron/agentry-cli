@@ -222,13 +222,13 @@ func privatePhrase(p privateAgentsView) string {
 	case p.Enabled == nil && p.Max <= 0:
 		return ""
 	case p.Enabled != nil && !*p.Enabled && p.Used > 0:
-		return fmt.Sprintf("none may be added (%d BriefAgents held)", p.Used)
+		return fmt.Sprintf("none may be added (%d QuickAgents held)", p.Used)
 	case p.Enabled != nil && !*p.Enabled:
 		return "none"
 	case p.Max <= 0:
-		return fmt.Sprintf("%d BriefAgents, no cap", p.Used)
+		return fmt.Sprintf("%d QuickAgents, no cap", p.Used)
 	}
-	return fmt.Sprintf("%d of %d BriefAgents", p.Used, p.Max)
+	return fmt.Sprintf("%d of %d QuickAgents", p.Used, p.Max)
 }
 
 // seatsPhrase renders held seats against the allowance. The extension's

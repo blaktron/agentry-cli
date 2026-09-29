@@ -21,7 +21,7 @@ import (
 func newInfoCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "info <ns/name>",
-		Short: "Show a BriefAgent, its latest published version, and its capability contract",
+		Short: "Show a QuickAgent, its latest published version, and its capability contract",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInfo(cmd, args[0])
@@ -44,16 +44,16 @@ func newSearchCmd() *cobra.Command {
 	var opts searchOpts
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Full-text search over public BriefAgents, with facet filters",
-		Long: "Search public BriefAgents via GET /search (§10.4). A query containing \"/\" is\n" +
-			"treated as ns/name and shows that BriefAgent's info instead.\n\n" +
+		Short: "Full-text search over public QuickAgents, with facet filters",
+		Long: "Search public QuickAgents via GET /search (§10.4). A query containing \"/\" is\n" +
+			"treated as ns/name and shows that QuickAgent's info instead.\n\n" +
 			"Facets narrow the result set:\n\n" +
-			"  --mode        autonomous | interactive (a BriefAgent supporting both matches either)\n" +
+			"  --mode        autonomous | interactive (a QuickAgent supporting both matches either)\n" +
 			"  --capability  a capability the latest version actually asks for\n" +
 			"                (network, filesystem, exec, secrets, dataAccess) —\n" +
 			"                a capability declared as \"none\" does not match\n" +
 			"  --license     SPDX identifier from the latest published manifest\n" +
-			"  --verified    only BriefAgents in an org namespace with a verified domain\n" +
+			"  --verified    only QuickAgents in an org namespace with a verified domain\n" +
 			"  --sort        relevance (default) | installs | newest\n\n" +
 			"With --json the full response, including facet counts, is printed.",
 		Args: cobra.ExactArgs(1),
@@ -64,7 +64,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.mode, "mode", "", "filter by run mode: autonomous | interactive")
 	cmd.Flags().StringVar(&opts.capability, "capability", "", "filter by declared capability (network, filesystem, exec, secrets, dataAccess)")
 	cmd.Flags().StringVar(&opts.license, "license", "", "filter by SPDX license identifier")
-	cmd.Flags().BoolVar(&opts.verified, "verified", false, "only BriefAgents in orgs with a verified domain")
+	cmd.Flags().BoolVar(&opts.verified, "verified", false, "only QuickAgents in orgs with a verified domain")
 	cmd.Flags().StringVar(&opts.sort, "sort", "", "sort order: relevance | installs | newest")
 	cmd.Flags().IntVar(&opts.limit, "limit", 0, "maximum results (server default when unset)")
 	return cmd
@@ -241,7 +241,7 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 		return nil
 	}
 	if len(results.Results) == 0 {
-		_, _ = fmt.Fprintf(out, "no BriefAgents match %q%s\n", query, describeFacets(opts))
+		_, _ = fmt.Fprintf(out, "no QuickAgents match %q%s\n", query, describeFacets(opts))
 		return nil
 	}
 	for _, hit := range results.Results {

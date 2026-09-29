@@ -43,7 +43,7 @@ type Tool struct {
 
 // Catalogue is every external decoder, named once for every caller. It is
 // the application's, not the operator's exec catalogue: a decode step is
-// the runner's own, like its proxy, and runs no command a BriefAgent
+// the runner's own, like its proxy, and runs no command a QuickAgent
 // declared. The policy's apkMirror still applies to the image build.
 var Catalogue = []Tool{
 	{Command: "pandoc", Packages: []string{"pandoc-cli"}},

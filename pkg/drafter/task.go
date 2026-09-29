@@ -25,10 +25,10 @@ const maxTask = 32 << 10
 func Task(description string, hints []string) (string, error) {
 	description = strings.TrimSpace(description)
 	if description == "" {
-		return "", errors.New("describe what the BriefAgent should do")
+		return "", errors.New("describe what the QuickAgent should do")
 	}
 	var b strings.Builder
-	b.WriteString("Draft a BriefAgent for the person's description below. AI Review read the description and the hints before you did.\n\n")
+	b.WriteString("Draft a QuickAgent for the person's description below. AI Review read the description and the hints before you did.\n\n")
 	b.WriteString("## Description\n\n")
 	b.WriteString(description)
 	b.WriteString("\n")

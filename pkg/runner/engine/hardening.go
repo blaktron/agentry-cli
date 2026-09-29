@@ -147,7 +147,7 @@ func runtimeLine(p Params) string {
 	rs := p.Plan.SandboxResolvers()
 	var under []string
 	if p.Plan.Harness.Host == nil {
-		under = append(under, "the agent container (the BriefAgent's code)")
+		under = append(under, "the agent container (the QuickAgent's code)")
 		if s := p.Plan.Harness.Session; p.Plan.Mode == "interactive" && s != nil && s.StoreOwner != "" {
 			under = append(under, "the session store's one-shot")
 		}

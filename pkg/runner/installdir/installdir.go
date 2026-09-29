@@ -1,6 +1,6 @@
 // Package installdir is the runner home's per-release directory: where a
 // verified release is laid down for runs, and since agentry-cli#190 where
-// `agentry install` and the desktop put a BriefAgent by default (plan
+// `agentry install` and the desktop put a QuickAgent by default (plan
 // desktop-one-click-install.md, D3/D10). One layout, one metadata file,
 // one copy of the code — a run finds an installed release by its digest
 // and skips the fetch; an install is what a run's first fetch would have
@@ -66,7 +66,7 @@ const ConsentRegistry = "runner"
 // ConsentKey is the installed.yaml key the runner's record lives under —
 // the run's consent record since agentry-cli#124, and since agentry-cli#190
 // the install's record too, so a consent given by either covers the other
-// and there is one record per BriefAgent.
+// and there is one record per QuickAgent.
 func ConsentKey(home, namespace, name string) installed.Key {
 	return installed.Key{
 		Registry: ConsentRegistry, Namespace: namespace, Name: name,
@@ -342,7 +342,7 @@ func notPartOfARelease(name string) bool { return name == ".git" || name == "age
 var ErrNotARelease = errors.New("not a release of this agent")
 
 // RemoveOtherVersions removes every entry of agentDir but keep — the
-// replace rule of an update (D9): one release per BriefAgent, the older
+// replace rule of an update (D9): one release per QuickAgent, the older
 // one's directory gone once the new one is verified and recorded, while a
 // staging or retired sibling another process is still using is left to
 // it. Runs keep their receipts in the person's output folder, not here.

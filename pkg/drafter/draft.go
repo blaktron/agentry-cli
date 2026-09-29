@@ -50,15 +50,17 @@ type Draft struct {
 	ManifestError string `json:"manifestError,omitempty"`
 
 	// ownNotes is the notes as the Drafter wrote them, before the
-	// post-step's sections; corrections is what Correct did.
+	// post-step's sections; corrections is what Correct did; extras are
+	// the post-step's other sections, in the order they were added.
 	ownNotes    string
 	corrections []string
+	extras      []string
 	repaired    bool
 	// lastMessage is an unparsed answer's last message (Unparsed).
 	lastMessage string
 }
 
-// Match is a published BriefAgent that does the task, or most of it.
+// Match is a published QuickAgent that does the task, or most of it.
 type Match struct {
 	Ref string `json:"ref"`
 	Why string `json:"why"`
@@ -90,6 +92,9 @@ type AIReview struct {
 	receipt.Web
 	// WithheldSources is every text AI Review kept from the model, with why.
 	WithheldSources []WithheldSource `json:"withheldSources"`
+	// Check is AI Review's check of the finished draft (the post-step's,
+	// agentry-cli#418): absent for a draft that could not be rendered.
+	Check *Check `json:"check,omitempty"`
 }
 
 // WithheldSource is one text the model was not given.
@@ -277,7 +282,7 @@ func readme(name, summary, overview string) string {
 		fmt.Fprintf(&b, "\n%s\n", overview)
 	}
 	b.WriteString("\nDrafted by the Drafter (`agentry draft`). Review the manifest, the instructions and this file before you publish;\n" +
-		"this README renders on the BriefAgent's page.\n")
+		"this README renders on the QuickAgent's page.\n")
 	return b.String()
 }
 

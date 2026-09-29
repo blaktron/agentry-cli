@@ -1,6 +1,6 @@
 // Package setup implements the operator-experience flows of RUNNER-PLAN-2:
 // first-run machine setup with LLM-provider configuration (§P1), the
-// guided MCP-profile setup that collects a BriefAgent's keys and
+// guided MCP-profile setup that collects a QuickAgent's keys and
 // identities (§P3), and the model catalog — one read of a provider's
 // models listing with the operator's key, so a form can offer the models
 // rather than ask for one to be typed, which is also the endpoint test the
@@ -128,7 +128,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 				prov = "anthropic"
 			}
 		} else {
-			ans, err := p.Ask(fmt.Sprintf("LLM provider for BriefAgent runs (%s)", strings.Join(Providers(), " | ")), defaultOr(pol.Model.Provider, "anthropic"))
+			ans, err := p.Ask(fmt.Sprintf("LLM provider for QuickAgent runs (%s)", strings.Join(Providers(), " | ")), defaultOr(pol.Model.Provider, "anthropic"))
 			if err != nil {
 				return err
 			}

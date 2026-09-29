@@ -102,7 +102,7 @@ func TestRefusalsReachTheOutcome(t *testing.T) {
 }
 
 // The socket sits under the runner home, the path runhost shares with the
-// host, not under the installed BriefAgent's run directory, which is too
+// host, not under the installed QuickAgent's run directory, which is too
 // deep for a socket path there (dev's runhost, 2026-09-25).
 func TestTheSocketIsUnderTheRunnerHome(t *testing.T) {
 	if !filterSupported {

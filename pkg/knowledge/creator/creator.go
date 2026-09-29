@@ -1,5 +1,5 @@
 // Package creator is the Knowledge Creator (plan knowledge.md §4.2, D6;
-// agentry-cli#318): the BriefAgent package that compiles documents into a
+// agentry-cli#318): the QuickAgent package that compiles documents into a
 // knowledge pack, embedded in the CLI and run by the runner as a built-in
 // package — part of the application, never a release a person installs.
 // Its contract declares no egress, no filesystem, no exec and the files

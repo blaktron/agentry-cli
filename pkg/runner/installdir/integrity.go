@@ -20,13 +20,13 @@ import (
 // A release is checked once, when it is laid down (the digest, the
 // attestation, the consent), and then run from workspace/ for as long as
 // it stays installed. Nothing checked the tree again, so an edit to an
-// installed BriefAgent's prompt, tool config or schema (by the person or
+// installed QuickAgent's prompt, tool config or schema (by the person or
 // another program) ran under the signature and review of a release it no
 // longer matched, and the receipt named a release whose bytes did not
 // run. install.json, which says how the
 // release was admitted, was plain JSON anything with write access to the
 // runner home could rewrite (agentry-cli#326; the operator, 2026-09-25: "a
-// signed BriefAgent should only run if it has not been altered locally").
+// signed QuickAgent should only run if it has not been altered locally").
 //
 // The integrity record closes that. Every lay-down writes
 // <release>/integrity.json inside the tree it publishes: a digest of every

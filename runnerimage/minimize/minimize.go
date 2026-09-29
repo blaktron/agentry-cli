@@ -1,6 +1,6 @@
 // Package minimize is the runner image's `minimize` role (agentry-cli#9,
 // DR-1 closure): run once by `docker build`, it turns the shared runner
-// image into a per-BriefAgent exec image that holds ONLY the declared
+// image into a per-QuickAgent exec image that holds ONLY the declared
 // commands.
 package minimize
 

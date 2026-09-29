@@ -626,7 +626,7 @@ func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 // loopback stub such as systemd-resolved's is the container's own inside
 // it, and is refused with the reason.
 // The gateway's runtime is a runtime name, and only beside the run's own:
-// the gateway is never sandboxed while the BriefAgent's code is not
+// the gateway is never sandboxed while the QuickAgent's code is not
 // (agentry-cli#337).
 func TestDockerGatewayRuntime(t *testing.T) {
 	p := Default()
