@@ -678,7 +678,7 @@ func TestRunCommandScrubsGrantedSecrets(t *testing.T) {
 
 // run_command's description tells the agent the PATH it will actually get
 // (agentry-cli#502): the shims alone by default, the image's PATH after the
-// shims in Unsafe Mode (DR-53). The default posture's sentence is pinned
+// shims in Unsafe Mode (RUNNER-DEVIATIONS DR-53). The default posture's sentence is pinned
 // verbatim; Unsafe Mode's must still say only a declared command can be
 // called, since the argv[0] allowlist holds there too.
 func TestRunCommandDescriptionFollowsThePath(t *testing.T) {

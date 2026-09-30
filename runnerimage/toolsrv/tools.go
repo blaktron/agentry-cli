@@ -751,26 +751,34 @@ func (s *server) buildShims() error {
 
 // execPath is a declared command's PATH: the shim directory alone, or, in
 // Unsafe Mode (Exec.ImagePath), the shims first and then the image's own
-// PATH, which is this server's (the image's ENV; nothing in the run sets
-// it).
+// PATH.
 func (s *server) execPath() string {
-	if s.spec.Exec.ImagePath {
-		if p := os.Getenv("PATH"); p != "" {
-			return s.shimDir + string(os.PathListSeparator) + p
-		}
+	if p := s.imagePath(); p != "" {
+		return s.shimDir + string(os.PathListSeparator) + p
 	}
 	return s.shimDir
 }
 
-// runCommandDescription says the PATH execPath gives a declared command
-// (agentry-cli#502): in Unsafe Mode (DR-53) the image's, after the shims,
-// so the agent is not told a narrower posture than the one enforced.
-func (s *server) runCommandDescription() string {
-	const result = " Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."
-	if s.spec.Exec.ImagePath {
-		return "Run one declared command in the workspace. Only a declared command can be called; it runs with the image's own PATH after the declared commands, so it can start the programs the image holds." + result
+// imagePath is the PATH a declared command gets after the shims: the
+// image's own in Unsafe Mode, which is this server's (the image's ENV;
+// nothing in the run sets it), and empty otherwise. execPath and
+// run_command's description both read it, so they cannot disagree.
+func (s *server) imagePath() string {
+	if !s.spec.Exec.ImagePath {
+		return ""
 	}
-	return "Run one declared command in the workspace with a PATH restricted to the declared commands." + result
+	return os.Getenv("PATH")
+}
+
+// runCommandDescription says the PATH execPath gives a declared command
+// (agentry-cli#502): with the image's PATH (RUNNER-DEVIATIONS DR-53), the
+// agent is not told a narrower posture than the one enforced.
+func (s *server) runCommandDescription() string {
+	const returns = " Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."
+	if s.imagePath() != "" {
+		return "Run one declared command in the workspace. Only a declared command can be called; it runs with the image's own PATH after the declared commands, so it can start the programs the image holds." + returns
+	}
+	return "Run one declared command in the workspace with a PATH restricted to the declared commands." + returns
 }
 
 func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
