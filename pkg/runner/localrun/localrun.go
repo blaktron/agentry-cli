@@ -125,17 +125,22 @@ type Builtin struct {
 	fsys                     fs.FS
 	// web grants the web tools: the Drafter's alone.
 	web bool
+	// localTimeoutFloor is the least time, in seconds, a run of the package
+	// on this computer is given (LocalBudgets).
+	localTimeoutFloor int
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator).
 func KnowledgeCreator() Builtin {
-	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS()}
+	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS(),
+		localTimeoutFloor: creator.LocalTimeoutFloorSeconds}
 }
 
 // Drafter is the Drafter (pkg/drafter), the second built-in package (plan
 // builder-rework.md D6), and the one granted the web tools.
 func Drafter() Builtin {
-	return Builtin{namespace: drafter.Namespace, name: drafter.Name, version: drafter.Version, fsys: drafter.FS(), web: true}
+	return Builtin{namespace: drafter.Namespace, name: drafter.Name, version: drafter.Version, fsys: drafter.FS(), web: true,
+		localTimeoutFloor: drafter.LocalTimeoutFloorSeconds}
 }
 
 // WithoutWebTools is the same package with no web tools: the Drafter's
@@ -144,6 +149,21 @@ func Drafter() Builtin {
 func (b Builtin) WithoutWebTools() Builtin {
 	b.web = false
 	return b
+}
+
+// LocalBudgets are the budgets a run of the package on this computer
+// starts from (plan scan-and-run-tweaks.md §6.1, §6.2; agentry-cli#500,
+// DR-54): the runner policy's, with a timeout no shorter than the package's
+// own floor. This is the one place a run is given longer than the policy's
+// run timeout without the person naming it: that timeout is sized for an
+// agent answering a task, and a draft or a pack build outruns it. A caller
+// lays whatever was named for this run over them. The floor is on the
+// timeout alone: the tool-call and cost caps are the policy's, and no
+// budget of a run on this computer counts tokens. It is exported so that
+// the desktop can start a draft or a build from the same budgets
+// (agentry-desktop#458).
+func (b Builtin) LocalBudgets(p policy.Budgets) spec.Budgets {
+	return spec.Budgets{TimeoutSeconds: max(p.TimeoutSeconds, b.localTimeoutFloor), MaxTurns: p.MaxTurns, MaxCostUSD: p.MaxCostUSD}
 }
 
 // Builtins is every package that may run as builtin.

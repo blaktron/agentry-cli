@@ -418,3 +418,34 @@ func TestEnsurePlanNeverReusesAnUnsafeModePlan(t *testing.T) {
 		t.Fatalf("log = %q", log.String())
 	}
 }
+
+// TestABuiltinsBudgetsOnThisComputer (plan scan-and-run-tweaks.md §6.1,
+// §6.2, D13, D14; agentry-cli#500): a draft made on this computer is given
+// 30 minutes and a knowledge build 60, however short the runner policy's
+// run timeout is; a policy that allows more keeps its own. Nothing else
+// moves: the tool-call and cost caps are the policy's, and no budget here
+// counts tokens. The floors themselves are drafter.LocalTimeoutFloorSeconds
+// and creator.LocalTimeoutFloorSeconds, held here by value.
+func TestABuiltinsBudgetsOnThisComputer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		builtin Builtin
+		policy  policy.Budgets
+		want    spec.Budgets
+	}{
+		{"a draft under the default policy", Drafter(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 60}},
+		{"a draft under a policy that allows more", Drafter(), policy.Budgets{TimeoutSeconds: 2400, MaxTurns: 0, MaxCostUSD: 2.5},
+			spec.Budgets{TimeoutSeconds: 2400, MaxTurns: 0, MaxCostUSD: 2.5}},
+		{"a draft's repair turn is the same package", Drafter().WithoutWebTools(), policy.Budgets{TimeoutSeconds: 60, MaxTurns: 5},
+			spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 5}},
+		{"a build under the default policy", KnowledgeCreator(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 60}},
+		{"a build under a policy that allowed the draft's 30 minutes", KnowledgeCreator(), policy.Budgets{TimeoutSeconds: 1800, MaxTurns: 300, MaxCostUSD: 9},
+			spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 300, MaxCostUSD: 9}},
+		{"a build under a policy that allows more", KnowledgeCreator(), policy.Budgets{TimeoutSeconds: 7200, MaxTurns: 60},
+			spec.Budgets{TimeoutSeconds: 7200, MaxTurns: 60}},
+	} {
+		if got := tc.builtin.LocalBudgets(tc.policy); got != tc.want {
+			t.Errorf("%s: %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
