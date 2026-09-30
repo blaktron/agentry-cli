@@ -106,8 +106,7 @@ func (s *server) buildTools() {
 			add(name, "Make an HTTP(S) request to an allowlisted host. Credentials go via the auth parameter, which injects a granted secret server-side; Authorization/Cookie headers are refused.",
 				fetchSchema(), s.toolFetch)
 		case ToolRunCommand:
-			add(name, "Run one declared command in the workspace with a PATH restricted to the declared commands. Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error.",
-				runCommandSchema(), s.toolRunCommand)
+			add(name, s.runCommandDescription(), runCommandSchema(), s.toolRunCommand)
 		case ToolListInputs:
 			add(name, "List the read-only input files provided for this run: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for the inputs root; empty when no inputs were provided.",
 				listInputsSchema(), s.toolListInputs)
@@ -761,6 +760,17 @@ func (s *server) execPath() string {
 		}
 	}
 	return s.shimDir
+}
+
+// runCommandDescription says the PATH execPath gives a declared command
+// (agentry-cli#502): in Unsafe Mode (DR-53) the image's, after the shims,
+// so the agent is not told a narrower posture than the one enforced.
+func (s *server) runCommandDescription() string {
+	const result = " Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."
+	if s.spec.Exec.ImagePath {
+		return "Run one declared command in the workspace. Only a declared command can be called; it runs with the image's own PATH after the declared commands, so it can start the programs the image holds." + result
+	}
+	return "Run one declared command in the workspace with a PATH restricted to the declared commands." + result
 }
 
 func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
