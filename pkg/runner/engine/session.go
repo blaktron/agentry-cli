@@ -238,6 +238,10 @@ type liveSession struct {
 	// would otherwise find the session busy and its notice would wait for
 	// the next user turn (agentry-cli#487).
 	inTurn bool
+	// ending is set once End has begun: an input added after it starts no
+	// turn, so nothing can run between End's final-result turn and the end
+	// and replace the result it asked for (agentry-cli#487's review).
+	ending bool
 	// pendingNotices are input notices to prepend to the next user turn
 	// because one was in flight when the input arrived.
 	pendingNotices []string
@@ -631,8 +635,8 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	s.pendingNotices = nil
 	s.inTurn = true
 	s.mu.Unlock()
-	// Cleared again on every way out, a panic in the driver included, so no
-	// later add waits on a turn that is gone.
+	// Every return clears it before the last event; this covers a panic
+	// in the driver, so no later add waits on a turn that is gone.
 	defer func() {
 		s.mu.Lock()
 		s.inTurn = false
@@ -715,12 +719,15 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	s.emit(session.Event{Kind: session.KindInputAdded, Path: agentPath, Digest: digest, Text: base})
 	notice := fmt.Sprintf("A new input file is available at %s (%s); read it with read_input.", agentPath, digest)
 	s.mu.Lock()
-	busy := s.inTurn
-	if busy {
+	ending, busy := s.ending, s.inTurn
+	if busy && !ending {
 		s.pendingNotices = append(s.pendingNotices, notice)
 	}
 	s.mu.Unlock()
-	if busy {
+	switch {
+	case ending:
+		return session.ErrEnded
+	case busy:
 		return nil
 	}
 	return s.turn(ctx, notice, true)
@@ -736,6 +743,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		s.mu.Unlock()
 		return env, err
 	}
+	s.ending = true
 	s.mu.Unlock()
 
 	if ended, _ := s.Ended(); !ended {

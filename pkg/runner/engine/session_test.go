@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -870,20 +870,29 @@ func TestAnInputAddedAsATurnEndsGetsItsNoticeTurn(t *testing.T) {
 		if err := os.WriteFile(path, []byte("notes"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		deadline := time.After(10 * time.Second)
 		sent := make(chan error, 1)
 		go func() { sent <- s.Send(ctx, fmt.Sprintf("turn %d", i)) }()
 		// Read to this user turn's assistant_turn, as the protocol's reader
 		// does, and add the file at once.
-		for ev := range s.Events() {
-			if ev.Kind == session.KindAssistantTurn {
-				break
+		for answered := false; !answered; {
+			select {
+			case ev := <-s.Events():
+				answered = ev.Kind == session.KindAssistantTurn
+			case <-deadline:
+				t.Fatalf("round %d: the user turn was never answered", i)
 			}
 		}
 		if err := s.AddInput(ctx, path); err != nil {
 			t.Fatalf("round %d: add: %v", i, err)
 		}
-		if err := <-sent; err != nil {
-			t.Fatalf("round %d: send: %v", i, err)
+		select {
+		case err := <-sent:
+			if err != nil {
+				t.Fatalf("round %d: send: %v", i, err)
+			}
+		case <-deadline:
+			t.Fatalf("round %d: Send never returned", i)
 		}
 		// The add's own turn: its input_added, the synthetic user turn that
 		// tells the agent, and that turn's answer, before anything else.
@@ -900,15 +909,23 @@ func TestAnInputAddedAsATurnEndsGetsItsNoticeTurn(t *testing.T) {
 					synthetic = ev.Synthetic
 				}
 				got = append(got, ev.Kind)
-			case <-time.After(10 * time.Second):
+			case <-deadline:
 				t.Fatalf("round %d: the add's notice turn never came; read %v", i, got)
 			}
 		}
-		if !reflect.DeepEqual(got, want) || !synthetic {
+		if !slices.Equal(got, want) || !synthetic {
 			t.Fatalf("round %d: after the add read %v (synthetic user turn %v), want %v", i, got, synthetic, want)
 		}
 	}
 	if _, err := s.End(ctx, false); err != nil {
 		t.Logf("end: %v", err)
+	}
+	// After End, an add starts no turn.
+	path := filepath.Join(inputs, "late.txt")
+	if err := os.WriteFile(path, []byte("late"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddInput(ctx, path); !errors.Is(err, session.ErrEnded) {
+		t.Fatalf("an add after End: %v, want ErrEnded", err)
 	}
 }
