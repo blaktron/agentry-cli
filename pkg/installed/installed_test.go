@@ -430,3 +430,32 @@ func TestArchiveWideningsCatchAShippedPackTheResolveDidNotName(t *testing.T) {
 		t.Fatalf("a narrower archive widened: %v", got)
 	}
 }
+
+// Reconsent keeps what an install recorded (agentry-cli#491): a run of the
+// local install keeps its mark and digest, a run of another tree records
+// nothing over it, and a registry record stays a registry record.
+func TestReconsentKeepsALocalInstall(t *testing.T) {
+	var st State
+	k := Key{Registry: "runner", Namespace: "me", Name: "x", Target: "runner", Dir: "/h/agents/me/x"}
+	st.Upsert(k, "0.1.0", CapSnapshot{}, true)
+	st.MarkLocal(k, "sha256:aaa")
+	if !st.Reconsent(k, "0.1.0", CapSnapshot{}, "sha256:aaa") {
+		t.Fatal("a run of the local install recorded nothing")
+	}
+	if r := st.Find(k); !r.Local() || r.Digest != "sha256:aaa" || !r.Managed {
+		t.Fatalf("after a run of the local install: %+v", r)
+	}
+	if st.Reconsent(k, "0.2.0", CapSnapshot{}, "sha256:bbb") {
+		t.Fatal("a run of another tree overwrote the local install's record")
+	}
+	if r := st.Find(k); !r.Local() || r.Digest != "sha256:aaa" || r.Version != "0.1.0" {
+		t.Fatalf("after a run of another tree: %+v", r)
+	}
+	st.Upsert(k, "1.0.0", CapSnapshot{}, true)
+	if r := st.Find(k); r.Local() || r.Digest != "" {
+		t.Fatalf("an install from a registry kept the local mark: %+v", r)
+	}
+	if !st.Reconsent(k, "1.0.0", CapSnapshot{}, "sha256:ccc") || st.Find(k).Local() {
+		t.Fatal("a registry record became local")
+	}
+}
