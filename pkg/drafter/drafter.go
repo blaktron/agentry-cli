@@ -35,6 +35,16 @@ const (
 	Version   = "1.1.1"
 )
 
+// LocalTimeoutFloorSeconds is the least a draft made on this computer is
+// given (plan scan-and-run-tweaks.md §6.1, D14; agentry-cli#500, DR-54): 30
+// minutes, where the runner policy's run timeout defaults to 15. A policy
+// that allows more keeps its own, and a timeout the person names for the
+// draft wins either way (localrun.Builtin.LocalBudgets). It is a timeout
+// alone: a draft on this computer has no token limit, and its tool-call
+// cap is the policy's. A draft made in Agentry runs under the caps its job
+// carries.
+const LocalTimeoutFloorSeconds = 1800
+
 // The Drafter's own caps (plan builder-simplify.md §5.1, D8): tighter than
 // the manifest's bounds, which stay as they are for a QuickAgent written by
 // hand. AGENT.md states each by value (TestTheInstructionStatesItsBoundsByValue)

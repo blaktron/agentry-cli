@@ -72,6 +72,20 @@ func TestKnowledgeCommands(t *testing.T) {
 	})
 }
 
+// layDownTestPack lays a one-page pack named name down in dir, as a build
+// that ran would leave it, and answers its manifest.
+func layDownTestPack(t *testing.T, name, dir string) knowledge.Manifest {
+	t.Helper()
+	made := knowledgetest.Make(t, name, map[string]string{
+		"wiki/topics/a.md": "---\ntitle: A\ntype: topic\nsummary: A\nsources: [doc:notes.md]\nupdated: 2026-09-26\n---\n\nA [src: doc:notes.md].\n",
+		"sources/notes.md": "# notes\n",
+	})
+	if err := copyTreeForTest(made.Dir, dir); err != nil {
+		t.Fatal(err)
+	}
+	return made.Manifest
+}
+
 // TestKnowledgeBuildOutputFormatJSON (agentry-cli#364): the form a sandbox
 // host drives for a hosted build — the Creator run's envelope as the last
 // JSON object on stdout with the build's report under knowledge, its usage
@@ -105,14 +119,8 @@ func TestKnowledgeBuildOutputFormatJSON(t *testing.T) {
 			if env == nil {
 				return nil, "", err
 			}
-			made := knowledgetest.Make(t, name, map[string]string{
-				"wiki/topics/a.md": "---\ntitle: A\ntype: topic\nsummary: A\nsources: [doc:notes.md]\nupdated: 2026-09-26\n---\n\nA [src: doc:notes.md].\n",
-				"sources/notes.md": "# notes\n",
-			})
-			if err := copyTreeForTest(made.Dir, dir); err != nil {
-				t.Fatal(err)
-			}
-			return &build.Result{Envelope: env, Applied: &knowledge.Result{Manifest: made.Manifest, Written: []string{"wiki/topics/a.md"}},
+			made := layDownTestPack(t, name, dir)
+			return &build.Result{Envelope: env, Applied: &knowledge.Result{Manifest: made, Written: []string{"wiki/topics/a.md"}},
 				Documents: []string{"notes.md"}, RunErr: runErr}, o.out, err
 		}
 	}

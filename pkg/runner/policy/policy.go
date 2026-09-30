@@ -94,8 +94,9 @@ type Policy struct {
 	// catalog server-entry YAML files to attach for agents declaring it
 	// (RUNNER-PLAN §R3; default empty).
 	DataAccessServers map[string][]string `yaml:"dataAccessServers,omitempty"`
-	// Budgets are the default hard stops, overridable per run (tighter
-	// only) by flags.
+	// Budgets are the default hard stops. A run's flags override them, and
+	// a built-in package run on this computer starts from a longer timeout
+	// of its own (localrun.Builtin.LocalBudgets, DR-54).
 	Budgets Budgets `yaml:"budgets"`
 	// Sessions caps interactive sessions (plan §6.7).
 	Sessions Sessions `yaml:"sessions"`

@@ -27,3 +27,12 @@ const (
 	Name      = "knowledge-creator"
 	Version   = "1.1.1"
 )
+
+// LocalTimeoutFloorSeconds is the least a knowledge build on this computer
+// is given (plan scan-and-run-tweaks.md §6.2, D13; agentry-cli#500, DR-54):
+// 60 minutes, what a build in Agentry gets on the tiers that can build,
+// where the runner policy's run timeout defaults to 15. A policy that
+// allows more keeps its own, and a timeout named for the build wins either
+// way (localrun.Builtin.LocalBudgets). It is a timeout alone: a build on
+// this computer has no token limit, and its tool-call cap is the policy's.
+const LocalTimeoutFloorSeconds = 3600

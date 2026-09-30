@@ -175,8 +175,10 @@ type Plan struct {
 	// alongside the tools server (RUNNER-PLAN-3). Empty for agents that
 	// declare none — such plans are byte-identical to pre-PLAN-3 output.
 	MCPServers []MCPServerSpec `json:"mcpServers,omitempty"`
-	// Budgets are the compiled defaults; run flags may tighten them and
-	// the receipt records what actually applied.
+	// Budgets are the compiled defaults; run flags replace them, a
+	// built-in package's run on this computer starts from its own
+	// (localrun.Builtin.LocalBudgets), and the receipt records what
+	// actually applied.
 	Budgets Budgets `json:"budgets"`
 	// Output describes the optional structured-output convention (§R2).
 	Output OutputSpec `json:"output"`
