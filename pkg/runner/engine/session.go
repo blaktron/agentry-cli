@@ -231,6 +231,13 @@ type liveSession struct {
 	ended  bool
 	reason session.EndReason
 	log    []session.Event
+	// inTurn is true while a turn has the harness, from after its checks
+	// until just before its last event. AddInput reads it rather than
+	// turnMu: a turn emits assistant_turn (or error) while it still holds
+	// turnMu, so a client that adds a file the moment it sees that event
+	// would otherwise find the session busy and its notice would wait for
+	// the next user turn (agentry-cli#487).
+	inTurn bool
 	// pendingNotices are input notices to prepend to the next user turn
 	// because one was in flight when the input arrived.
 	pendingNotices []string
@@ -622,7 +629,15 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	}
 	notices := s.pendingNotices
 	s.pendingNotices = nil
+	s.inTurn = true
 	s.mu.Unlock()
+	// Cleared again on every way out, a panic in the driver included, so no
+	// later add waits on a turn that is gone.
+	defer func() {
+		s.mu.Lock()
+		s.inTurn = false
+		s.mu.Unlock()
+	}()
 	if len(notices) > 0 {
 		text = strings.Join(notices, "\n") + "\n\n" + text
 	}
@@ -638,6 +653,10 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	}()
 	res, err := s.drv.Prompt(turnCtx, text)
 	s.syncPump()
+	// The turn is over before its last event is seen.
+	s.mu.Lock()
+	s.inTurn = false
+	s.mu.Unlock()
 	if err != nil {
 		if ended, _ := s.Ended(); ended {
 			return session.ErrEnded
@@ -695,14 +714,16 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	digest := "sha256:" + hex.EncodeToString(sum[:])
 	s.emit(session.Event{Kind: session.KindInputAdded, Path: agentPath, Digest: digest, Text: base})
 	notice := fmt.Sprintf("A new input file is available at %s (%s); read it with read_input.", agentPath, digest)
-	if s.turnMu.TryLock() {
-		s.turnMu.Unlock()
-		return s.turn(ctx, notice, true)
-	}
 	s.mu.Lock()
-	s.pendingNotices = append(s.pendingNotices, notice)
+	busy := s.inTurn
+	if busy {
+		s.pendingNotices = append(s.pendingNotices, notice)
+	}
 	s.mu.Unlock()
-	return nil
+	if busy {
+		return nil
+	}
+	return s.turn(ctx, notice, true)
 }
 
 // End implements session.Session.
