@@ -66,6 +66,11 @@ const (
 	// (RUNNER-PLAN-3 §P2).
 	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:22-alpine"
 	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-alpine:3.12-alpine"
+	// DefaultUnsafeImage is the Unsafe Mode base (agentry-notes
+	// plans/unsafe-mode.md §4.1; agentry-dockerimages#15): Kali with a
+	// command index and an extras list, pinned by digest, amd64 and arm64.
+	// It moves with a CLI release, re-pinned monthly (D10).
+	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.2@sha256:87fa4ae406a9621cef3a4cffcdccf2a512da03141ca21727ce663ca715a191da"
 	// Default trusted repositories for capabilities.mcpServers.
 	DefaultNPMRegistry  = "https://registry.npmjs.org"
 	DefaultPyPIRegistry = "https://pypi.org"
@@ -343,6 +348,22 @@ type Images struct {
 	// servers (RUNNER-PLAN-3). Empty resolves to the pinned defaults.
 	NodeRuntime   string `yaml:"nodeRuntime,omitempty"`
 	PythonRuntime string `yaml:"pythonRuntime,omitempty"`
+	// Unsafe is the base Unsafe Mode builds a QuickAgent's exec image on,
+	// pinned by digest ("" = DefaultUnsafeImage; see UnsafeImage). It
+	// names an image and turns nothing on: only a client that passes
+	// compile.Inputs.Unsafe uses Unsafe Mode, and no policy key or
+	// `agentry run` flag does (plan unsafe-mode.md D5).
+	Unsafe string `yaml:"unsafe,omitempty"`
+}
+
+// UnsafeImage is the Unsafe Mode base this policy names: images.unsafe,
+// else the CLI's pinned default. Resolved at use rather than written into
+// a generated policy file, so a saved file never holds back a re-pin.
+func (i Images) UnsafeImage() string {
+	if i.Unsafe != "" {
+		return i.Unsafe
+	}
+	return DefaultUnsafeImage
 }
 
 // Model configures the operator-owned model endpoint (annex Q-R2: the key
@@ -868,6 +889,12 @@ images:
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:22-alpine
   pythonRuntime: ghcr.io/blaktron/agentry-python-alpine:3.12-alpine
+  # The base of the desktop's Unsafe Mode exec images: Kali Linux with a
+  # command index and an extras list, pinned by digest. Unset, the CLI's
+  # pinned default is used, and it moves with the CLI. This key names the
+  # image and turns nothing on: only the desktop's Unsafe Mode switch uses
+  # it, for runs on that computer, and nothing in this file enables it.
+  # unsafe: ghcr.io/blaktron/agentry-unsafe-kali:<tag>@sha256:<digest>
 
 model:
   # anthropic | openai | google, or custom for an OpenAI-compatible

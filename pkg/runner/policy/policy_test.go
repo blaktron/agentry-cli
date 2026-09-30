@@ -676,3 +676,34 @@ func TestDockerResolvers(t *testing.T) {
 		}
 	}
 }
+
+// images.unsafe names the Unsafe Mode base and turns nothing on (plan
+// unsafe-mode.md D5): the default is pinned by digest and resolved at use,
+// so the generated policy file never carries it, and a policy that sets
+// it only changes which image a client's Unsafe Mode builds on.
+func TestTheUnsafeImageIsAPinnedDefaultAndSwitchesNothingOn(t *testing.T) {
+	if !strings.Contains(DefaultUnsafeImage, "@sha256:") {
+		t.Fatalf("DefaultUnsafeImage %q is not pinned by digest", DefaultUnsafeImage)
+	}
+	p := Default()
+	if p.Images.Unsafe != "" {
+		t.Fatalf("Default() writes images.unsafe = %q; it is resolved at use", p.Images.Unsafe)
+	}
+	if p.Images.UnsafeImage() != DefaultUnsafeImage {
+		t.Fatalf("UnsafeImage() = %q", p.Images.UnsafeImage())
+	}
+	p.Images.Unsafe = "registry.example/kali@sha256:" + strings.Repeat("0", 64)
+	if p.Images.UnsafeImage() != p.Images.Unsafe {
+		t.Fatal("an operator's images.unsafe was not used")
+	}
+	// No key anywhere in the schema names Unsafe Mode as a switch.
+	for _, key := range []string{"unsafeMode", "unsafe_mode", "enableUnsafe", "allowUnsafe"} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		if err := os.WriteFile(path, []byte("policyVersion: \"1\"\n"+key+": true\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("the policy accepted %q (err %v)", key, err)
+		}
+	}
+}

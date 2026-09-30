@@ -104,3 +104,43 @@ func TestExecImageTagMovesWithTheCatalog(t *testing.T) {
 		t.Fatal("no commands must mean no exec image")
 	}
 }
+
+// An Unsafe Mode exec image's tag covers the base (pinned by digest), the
+// runner image, the sorted commands, the resolved packages and the extras
+// (plan unsafe-mode.md invariant 9), so a re-pin or a changed index is a
+// new image; it stays in the runner's -exec repository, where the
+// desktop's image removal finds it, and never equals a catalogue tag.
+func TestUnsafeExecImageTagCoversWhatBuildsIt(t *testing.T) {
+	base := "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.2@sha256:87fa4ae406a9621cef3a4cffcdccf2a512da03141ca21727ce663ca715a191da"
+	u := UnsafeExecSpec{Base: base, Extras: []UnsafeExtra{{Command: "decompyle3", Kind: "pip", Spec: "decompyle3==3.9.3"}}}
+	cmds := []string{"decompyle3", "file", "r2"}
+	pkgs := []string{"file", "radare2"}
+	a := UnsafeExecImageTag("agentry-runner:v1", u, cmds, pkgs)
+	if !strings.HasPrefix(a, "agentry-runner-exec:v1-u") {
+		t.Fatalf("tag = %q, want the runner's -exec repository and a u tag", a)
+	}
+	if a == ExecImageTag("agentry-runner:v1", cmds, pkgs, "") {
+		t.Fatal("an unsafe tag equals the catalogue's for the same commands")
+	}
+	if b := UnsafeExecImageTag("agentry-runner:v1", u, []string{"r2", "file", "decompyle3"}, []string{"radare2", "file"}); b != a {
+		t.Fatalf("order changed the tag: %q vs %q", a, b)
+	}
+	changed := map[string]string{}
+	repinned := u
+	repinned.Base = strings.Replace(base, "87fa4ae4", "00000000", 1)
+	changed["the base digest"] = UnsafeExecImageTag("agentry-runner:v1", repinned, cmds, pkgs)
+	changed["the runner image"] = UnsafeExecImageTag("agentry-runner:v2", u, cmds, pkgs)
+	changed["the commands"] = UnsafeExecImageTag("agentry-runner:v1", u, append(cmds, "xxd"), pkgs)
+	changed["the packages"] = UnsafeExecImageTag("agentry-runner:v1", u, cmds, append(pkgs, "xxd"))
+	other := u
+	other.Extras = []UnsafeExtra{{Command: "decompyle3", Kind: "pip", Spec: "decompyle3==3.9.4"}}
+	changed["an extra's version"] = UnsafeExecImageTag("agentry-runner:v1", other, cmds, pkgs)
+	for what, b := range changed {
+		if b == a {
+			t.Errorf("%s did not change the tag", what)
+		}
+	}
+	if UnsafeExecImageTag("agentry-runner:v1", u, nil, nil) != "" {
+		t.Fatal("no commands must mean no exec image")
+	}
+}

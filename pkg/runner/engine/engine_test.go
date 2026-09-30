@@ -1277,3 +1277,29 @@ func TestEnvelopeNamesThePolicyFile(t *testing.T) {
 		t.Fatalf("a caller that names no policy file got a policy block: %s", raw)
 	}
 }
+
+// An Unsafe Mode exec image build that could not install a package or an
+// extra goes on without it (plan unsafe-mode.md D8), and the receipt says
+// so apart from what did install, with the reason (invariant 8): the
+// forced failure here is the one a mirror or a vanished package gives.
+func TestReceiptNamesWhatAnUnsafeBuildDidNotInstall(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p.Plan.Enforcement["exec"] = "UNSAFE MODE: run_command restricted to the argv0 allowlist {analyzeHeadless, strings}; …"
+	p.ExecPackages = []string{
+		"binutils=2.45-7",
+		"pip decompyle3==3.9.3 sha256:ab12",
+		spec.ExecNotInstalledPrefix + "ghidra (E: Unable to locate package ghidra)",
+		spec.ExecNotInstalledPrefix + "analyzeHeadless (/usr/share/ghidra/support/analyzeHeadless is not in the image)",
+	}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "UNSAFE MODE: run_command restricted to the argv0 allowlist {analyzeHeadless, strings}; …" +
+		"; packages resolved at image build: binutils=2.45-7, pip decompyle3==3.9.3 sha256:ab12" +
+		"; NOT installed at image build, so absent from this run: ghidra (E: Unable to locate package ghidra), analyzeHeadless (/usr/share/ghidra/support/analyzeHeadless is not in the image)"
+	if got := env.CapabilitiesEnforced["exec"]; got != want {
+		t.Fatalf("exec line:\n%s\nwant\n%s", got, want)
+	}
+}

@@ -536,6 +536,64 @@ type ExecImageSpec struct {
 	// APKMirror replaces the image's Alpine repositories at build time;
 	// empty means the image's own.
 	APKMirror string `json:"apkMirror,omitempty"`
+	// Unsafe is set for an Unsafe Mode exec image (agentry-notes
+	// plans/unsafe-mode.md §4.3; agentry-cli#490): built FROM the unsafe
+	// base rather than the runner image, with Packages as Kali packages
+	// installed one at a time, the extras applied, and no minimize (D4).
+	// Nil for the catalogue's exec image, whose plan bytes it leaves
+	// unchanged.
+	Unsafe *UnsafeExecSpec `json:"unsafe,omitempty"`
+}
+
+// ExecNotInstalledPrefix marks an entry of an exec image build's result
+// that did not install (an Unsafe Mode build goes on without it, D8), so
+// the receipt names it apart from what did.
+const ExecNotInstalledPrefix = "not installed: "
+
+// UnsafeExecSpec is what an Unsafe Mode exec image adds to the catalogue's:
+// the base it is built from and how each declared command was placed.
+// This machine's exec catalogue was not consulted (D1).
+type UnsafeExecSpec struct {
+	// Base is the unsafe base image, pinned by digest (policy
+	// images.unsafe), whose command index and extras list placed the
+	// commands.
+	Base string `json:"base"`
+	// Extras are the declared commands placed by the base's extras list,
+	// sorted by command.
+	Extras []UnsafeExtra `json:"extras,omitempty"`
+	// Unplaced are the declared commands neither the extras list nor the
+	// index could place (D8): the run goes ahead without them, and the
+	// plan, the consent and the receipt name them. Sorted by command.
+	Unplaced []UnplacedCommand `json:"unplaced,omitempty"`
+}
+
+// UnsafeExtra is one extras-list recipe for a declared command: "pip" (a
+// PyPI name==version installed into a venv, its command linked onto PATH)
+// or "link" (a path inside a Kali package linked onto PATH).
+type UnsafeExtra struct {
+	Command string `json:"command"`
+	Kind    string `json:"kind"`
+	// Spec is the pip requirement, name==version.
+	Spec string `json:"spec,omitempty"`
+	// Package and Path are a link's package and its path inside it.
+	Package string `json:"package,omitempty"`
+	Path    string `json:"path,omitempty"`
+}
+
+// String is the recipe as the plan and the receipt name it.
+func (e UnsafeExtra) String() string {
+	if e.Kind == "pip" {
+		return "pip " + e.Spec
+	}
+	return "link " + e.Package + ":/" + e.Path
+}
+
+// UnplacedCommand is a declared command Unsafe Mode's image cannot place,
+// with the packages that ship it when there are several (the base's
+// ambiguous list), so the plan can say why.
+type UnplacedCommand struct {
+	Command    string   `json:"command"`
+	Candidates []string `json:"candidates,omitempty"`
 }
 
 // ExecImageTag names the per-QuickAgent exec image (agentry-cli#9, DR-1
@@ -554,13 +612,42 @@ func ExecImageTag(runnerImage string, commands, packages []string, apkMirror str
 	pkgs := append([]string(nil), packages...)
 	sort.Strings(pkgs)
 	sum := sha256.Sum256([]byte(runnerImage + "\x00" + strings.Join(sorted, "\x00") + "\x01" + strings.Join(pkgs, "\x00") + "\x01" + apkMirror))
+	return execImageName(runnerImage, "", sum)
+}
+
+// UnsafeExecImageTag names an Unsafe Mode exec image (plan unsafe-mode.md
+// invariant 9): deterministic in the base (pinned by digest), the runner
+// image whose binary it copies, the sorted commands, the sorted packages
+// and the extras, so a re-pin of the base or a changed index or extras
+// list is a new image. It lives in the same repository as the catalogue's
+// exec images (<runner>-exec), under a "u" tag, so the desktop's image
+// removal (agentry-desktop#424, internal/dockerimages.Select) takes it
+// with them.
+func UnsafeExecImageTag(runnerImage string, u UnsafeExecSpec, commands, packages []string) string {
+	if len(commands) == 0 {
+		return ""
+	}
+	sorted := append([]string(nil), commands...)
+	sort.Strings(sorted)
+	pkgs := append([]string(nil), packages...)
+	sort.Strings(pkgs)
+	extras := make([]string, 0, len(u.Extras))
+	for _, e := range u.Extras {
+		extras = append(extras, e.Command+"="+e.String())
+	}
+	sort.Strings(extras)
+	sum := sha256.Sum256([]byte("unsafe\x00" + u.Base + "\x00" + runnerImage + "\x00" + strings.Join(sorted, "\x00") +
+		"\x01" + strings.Join(pkgs, "\x00") + "\x01" + strings.Join(extras, "\x00")))
+	return execImageName(runnerImage, "u", sum)
+}
+
+// execImageName is <runner repository>-exec:<runner tag>-<prefix><hash>.
+func execImageName(runnerImage, prefix string, sum [32]byte) string {
 	name := runnerImage
 	if i := strings.LastIndex(name, ":"); i > 0 && !strings.Contains(name[i:], "/") {
-		name = name[:i] + "-exec:" + name[i+1:] + "-" + hex.EncodeToString(sum[:6])
-	} else {
-		name += "-exec:" + hex.EncodeToString(sum[:6])
+		return name[:i] + "-exec:" + name[i+1:] + "-" + prefix + hex.EncodeToString(sum[:6])
 	}
-	return name
+	return name + "-exec:" + prefix + hex.EncodeToString(sum[:6])
 }
 
 // HostProcessSpec runs the harness as a process of this user from the
