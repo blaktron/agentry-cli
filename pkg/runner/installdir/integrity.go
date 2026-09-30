@@ -107,6 +107,11 @@ type ChangedError struct {
 	Changed, Added, Removed []string
 	// Record is set when the record or install.json itself failed.
 	Record RecordFailure
+	// Repair, when set, is the command that lays the release down again
+	// in place of `agentry install --repair <ref>`: a local install
+	// (agentry-cli#491) is laid down again from its folder, since no
+	// registry holds it.
+	Repair string
 }
 
 // maxNamed bounds how many paths of each kind the message spells out; the
@@ -139,12 +144,19 @@ func (e *ChangedError) Error() string {
 		}
 		parts = append(parts, fmt.Sprintf("%s %s%s", k.label, strings.Join(named, ", "), more))
 	}
+	if e.Repair != "" {
+		return fmt.Sprintf("installed release %s changed after it was installed: %s — refused; `%s` lays it down again from its folder",
+			what, strings.Join(parts, "; "), e.Repair)
+	}
 	return fmt.Sprintf("installed release %s changed after it was installed: %s — refused; `%s` lays it down again from a fresh download, checked as any install is",
 		what, strings.Join(parts, "; "), e.RepairCommand())
 }
 
 // RepairCommand is the command that lays the release down again.
 func (e *ChangedError) RepairCommand() string {
+	if e.Repair != "" {
+		return e.Repair
+	}
 	if e.Ref == "" {
 		return "agentry install --repair <ns/name@version>"
 	}

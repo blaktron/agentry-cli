@@ -21,6 +21,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/runnerimage"
 
@@ -51,6 +52,10 @@ import (
 
 // runOpts carries the run command's flags.
 type runOpts struct {
+	// consentHome is the real runner home, where a local install lives
+	// (agentry-cli#491); --plan materializes into a temp home, and a
+	// local install is looked up here all the same. Empty: the home.
+	consentHome  string
 	mode         string
 	intake       []string
 	input        string
@@ -267,6 +272,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 		defer func() { _ = os.RemoveAll(tmp) }()
 		home = tmp
+		matOpts.consentHome = consentHome
 		matOpts.allowUnsigned = true
 		matOpts.allowUnscanned = true
 	}
@@ -920,7 +926,7 @@ func attestationRefusal(att receipt.Attestation, allowUnsigned, allowUnscanned b
 	switch att.State {
 	case "verified":
 		return ""
-	case trust.StateUnsigned, "local":
+	case trust.StateUnsigned, trust.StateLocal:
 		if allowUnsigned {
 			return ""
 		}
@@ -946,7 +952,7 @@ func cachedAttestationGate(meta *installdir.Meta, allowUnsigned, allowUnscanned 
 		// record is made in memory on each run (localrun.Builtin): a
 		// cached install that claims it is not one of them.
 		return fmt.Errorf("%s is recorded as built in (cached install), which only the application's own packages are; remove %s and install it again", meta.Ref, installdir.AgentDir("<runner home>", meta.Namespace, meta.Name))
-	case trust.StateUnsigned, "local":
+	case trust.StateUnsigned, trust.StateLocal:
 		if !allowUnsigned {
 			return fmt.Errorf("%s is %s (cached install); re-run with --allow-unsigned to run it anyway", meta.Ref, meta.Attestation.State)
 		}
@@ -1085,7 +1091,7 @@ func installedIntegrity(home string, meta *installdir.Meta) (installIntegrity, *
 // consent a run would record for it (receipt.Consent*), or none.
 func attestationLift(att receipt.Attestation) string {
 	switch att.State {
-	case trust.StateUnsigned, "local":
+	case trust.StateUnsigned, trust.StateLocal:
 		return receipt.ConsentAllowUnsigned
 	case trust.StateUnscanned:
 		return receipt.ConsentAllowUnscanned
@@ -1285,8 +1291,46 @@ func resolveOutDir(flag string, meta *installdir.Meta, runID string) (string, er
 // materializeRegistry resolves, verifies, and caches a registry release
 // (§R1: the same gate as install — digest, DSSE, --allow-unsigned).
 func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*installdir.Meta, string, error) {
-	if _, err := manifest.ParseRef(ref); err != nil {
+	parsed, err := manifest.ParseRef(ref)
+	if err != nil {
 		return nil, "", err
+	}
+	// A QuickAgent installed from a local folder (agentry-cli#491) runs from
+	// the runner home, never resolved: no registry holds it. It is held to
+	// its integrity record like an installed release, and it is unsigned,
+	// so every run needs --allow-unsigned. A version range, or a version the
+	// local install is not, resolves through the registry as before.
+	localHome := home
+	if opts.consentHome != "" {
+		localHome = opts.consentHome
+	}
+	// A channel other than stable asks the registry for its releases.
+	onChannel := parsed.Channel == "" || parsed.Channel == "stable"
+	if meta, dir, ok, lerr := localinstall.Materialize(localHome, parsed.Namespace, parsed.Name, parsed.Range); onChannel && ok {
+		if lerr != nil {
+			return nil, "", engine.Classify(engine.ExitVerify, lerr)
+		}
+		if opts.pin != "" && opts.pin != meta.Digest {
+			return nil, "", engine.Classify(engine.ExitVerify,
+				fmt.Errorf("--pin mismatch: the local install is %s, pin requires %s", meta.Digest, opts.pin))
+		}
+		if opts.consentHome != "" && opts.consentHome != home {
+			// --plan: every later write (the compiled plan inside the
+			// release) stays in the temp home, so the verified local
+			// release is copied there and previewed from the copy.
+			planDir := installdir.ReleaseDir(home, meta.Namespace, meta.Name, meta.Version, meta.Digest)
+			if err := installdir.Write(planDir, filepath.Join(dir, "workspace"), meta); err != nil {
+				return nil, "", err
+			}
+			dir = planDir
+		}
+		if err := cachedAttestationGate(meta, opts.allowUnsigned, opts.allowUnscanned); err != nil {
+			return nil, "", engine.Classify(engine.ExitVerify, err)
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s: installed from a local folder, unsigned (%s)\n", meta.Ref, installdir.DigestSuffix(meta.Digest))
+		return meta, dir, nil
+	} else if lerr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v — a local install of %s/%s could not be looked for; resolving it through the registry\n", lerr, parsed.Namespace, parsed.Name)
 	}
 	reg := registryURL()
 	token := credentialFor(reg)
@@ -1416,7 +1460,7 @@ func narrateCachedConsent(errOut io.Writer, meta *installdir.Meta, plan bool) {
 	switch meta.Attestation.State {
 	case trust.StateUnscanned:
 		_, _ = fmt.Fprintf(errOut, "warning: unscanned — %s %s (cached install), which the registry admitted without a scan, because --allow-unscanned was given\n", doing, meta.Ref)
-	case trust.StateUnsigned, "local":
+	case trust.StateUnsigned, trust.StateLocal:
 		_, _ = fmt.Fprintf(errOut, "warning: %s — %s %s (cached install) because --allow-unsigned was given\n", meta.Attestation.State, doing, meta.Ref)
 	default:
 		_, _ = fmt.Fprintf(errOut, "using verified install %s\n", meta.Ref)
@@ -1549,14 +1593,12 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Contract(), opts.yes); err != nil {
 		return err
 	}
-	// An install owns the agent's directory (managed, agentry-cli#190); a
-	// run that re-consents keeps that, and records nothing managed of its
-	// own — its cache is not an install.
-	managed := false
-	if prev := state.Find(key); prev != nil {
-		managed = prev.Managed
+	// An install owns the agent's directory (managed, agentry-cli#190) and
+	// a local install its record (agentry-cli#491); Reconsent keeps both.
+	if !state.Reconsent(key, meta.Version, next, meta.Digest) {
+		_, _ = fmt.Fprintf(out, "note: %s/%s's record is its local install; this run's consent is not kept\n", meta.Namespace, meta.Name)
+		return nil
 	}
-	state.Upsert(key, meta.Version, next, managed)
 	if err := installed.Save(state); err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v — the next run will re-ask about capabilities\n", err)
 	}
