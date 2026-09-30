@@ -421,7 +421,8 @@ type WebSearchKey struct {
 	// Provider is "" or "none" (no search), or one of WebSearchProviders.
 	Provider string `yaml:"provider,omitempty"`
 	// APIKeyEnv names the variable; empty is the provider's own
-	// (DefaultWebSearchKeyEnv for youcom, BraveSearchKeyEnv for brave).
+	// (DefaultWebSearchKeyEnv for youcom, BraveSearchKeyEnv for brave, and
+	// so on through webSearchProviders).
 	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"`
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
 }
@@ -433,16 +434,25 @@ const (
 	DefaultJudgeKeyEnv     = "TYPESAFE_API_KEY"
 	DefaultWebSearchKeyEnv = "YDC_API_KEY"
 	BraveSearchKeyEnv      = "BRAVE_API_KEY"
+	TavilySearchKeyEnv     = "TAVILY_API_KEY"
+	ExaSearchKeyEnv        = "EXA_API_KEY"
+	PerplexitySearchKeyEnv = "PERPLEXITY_API_KEY"
 	JudgeKeyProvider       = "typesafe"
 )
 
 // webSearchProviders is each search provider a person may name: a name the
 // runner image's copy of the core's pkg/websearch builds, the variable its
-// key is read from by default, and its name as a person knows it. Brave's
-// LLM Context API joined You.com with agentry#631 (DEV-157).
+// key is read from by default (each provider's own, the name its own
+// tools document), and its name as a person knows it. Brave's LLM Context
+// API joined You.com with agentry#631 (DEV-157); Tavily, Exa and Perplexity
+// joined for a person's own key with agentry-cli#513 (DEV-185, whose terms
+// question is the person's to weigh).
 var webSearchProviders = map[string]struct{ keyEnv, name string }{
-	websearch.YouComName: {DefaultWebSearchKeyEnv, "You.com"},
-	websearch.BraveName:  {BraveSearchKeyEnv, "Brave"},
+	websearch.YouComName:     {DefaultWebSearchKeyEnv, "You.com"},
+	websearch.BraveName:      {BraveSearchKeyEnv, "Brave"},
+	websearch.TavilyName:     {TavilySearchKeyEnv, "Tavily"},
+	websearch.ExaName:        {ExaSearchKeyEnv, "Exa"},
+	websearch.PerplexityName: {PerplexitySearchKeyEnv, "Perplexity"},
 }
 
 // WebSearchProviders is the names webSearch.provider admits besides none,
@@ -479,7 +489,7 @@ func (w WebSearchKey) KeyEnv() string {
 	return DefaultWebSearchKeyEnv
 }
 
-// ProviderName is the provider as a person knows it ("Brave", "You.com").
+// ProviderName is the provider as a person knows it ("Brave", "Tavily").
 func (w WebSearchKey) ProviderName() string {
 	if p, ok := webSearchProviders[w.Provider]; ok {
 		return p.name
@@ -805,7 +815,9 @@ func (p *Policy) Validate() error {
 		}
 	}
 	if _, ok := webSearchProviders[p.WebSearch.Provider]; p.WebSearch.On() && !ok {
-		return fmt.Errorf("webSearch.provider %q must be none, %s", p.WebSearch.Provider, strings.Join(WebSearchProviders(), " or "))
+		names := WebSearchProviders()
+		return fmt.Errorf("webSearch.provider %q must be none, %s or %s", p.WebSearch.Provider,
+			strings.Join(names[:len(names)-1], ", "), names[len(names)-1])
 	}
 	if rt := p.Docker.Runtime; rt != "" && !runtimeNameRE.MatchString(rt) {
 		return fmt.Errorf("docker.runtime %q must be a runtime name as the daemon registers it (%s)", rt, runtimeNameRE)
@@ -1012,10 +1024,12 @@ mcpRegistries:
 # webSearch:
 #   # Your own web search, for agentry draft's web_search: none (the
 #   # default: the Drafter reads the registry and the pages it knows),
-#   # brave (Brave's LLM Context API) or youcom (You.com's Web Search API).
-#   # The key as for judge: the variable (default BRAVE_API_KEY for brave,
-#   # YDC_API_KEY for youcom), else, with apiKeySource keyring, the OS
-#   # keychain entry provider:brave or provider:youcom.
+#   # brave (Brave's LLM Context API), tavily, exa, perplexity (their
+#   # search APIs) or youcom (You.com's Web Search API). Your searches go to
+#   # the provider under its own terms. The key as for judge: the variable
+#   # (default BRAVE_API_KEY, TAVILY_API_KEY, EXA_API_KEY,
+#   # PERPLEXITY_API_KEY or YDC_API_KEY), else, with apiKeySource keyring,
+#   # the OS keychain entry provider:<the provider>, e.g. provider:brave.
 #   provider: brave
 #   apiKeyEnv: BRAVE_API_KEY
 

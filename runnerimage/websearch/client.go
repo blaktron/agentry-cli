@@ -1,6 +1,9 @@
 package websearch
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,21 +31,25 @@ type ClientConfig struct {
 // ErrNoKey is a provider built without its key.
 var ErrNoKey = errors.New("websearch: a search provider key is required")
 
+// maxResponse is the most of an answer read: two MiB, far past what ten
+// results with bounded snippets need.
+const maxResponse = 2 << 20
+
 // client is the part of a provider's client every provider shares.
 type client struct {
 	provider string
 	endpoint string
 	apiKey   string
 	http     *http.Client
-	max      int64
 }
 
 // newClient checks the key and builds the HTTP client. A redirect is never
-// followed: each provider sends its key in a header, and Go carries a
-// custom header (X-API-Key, X-Subscription-Token) to another host on a
-// redirect, so following one could hand the key there. A 3xx is then a
+// followed: each provider sends its key in a header, and on a redirect Go
+// carries a custom header (X-API-Key, X-Subscription-Token, x-api-key) to
+// any other host, and Authorization to one in the same domain, so following
+// one could hand the key there. A 3xx is then a
 // non-200 answer, and an error.
-func newClient(provider string, cfg ClientConfig, defaultBase, path string, max int64) (*client, error) {
+func newClient(provider string, cfg ClientConfig, defaultBase, path string) (*client, error) {
 	key := strings.TrimSpace(cfg.APIKey)
 	if key == "" {
 		return nil, ErrNoKey
@@ -57,10 +64,10 @@ func newClient(provider string, cfg ClientConfig, defaultBase, path string, max 
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &client{provider: provider, endpoint: base + path, apiKey: key, http: hc, max: max}, nil
+	return &client{provider: provider, endpoint: base + path, apiKey: key, http: hc}, nil
 }
 
-// do sends req and reads at most c.max bytes of a 200 answer. Any other
+// do sends req and reads at most maxResponse bytes of a 200 answer. Any other
 // status is a StatusError; no error it returns carries the key.
 func (c *client) do(req *http.Request) ([]byte, error) {
 	resp, err := c.http.Do(req)
@@ -68,7 +75,7 @@ func (c *client) do(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("websearch: %s request: %w", c.provider, redactKey(err, c.apiKey))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, c.max))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 	if err != nil {
 		return nil, fmt.Errorf("websearch: %s response: %w", c.provider, err)
 	}
@@ -76,6 +83,24 @@ func (c *client) do(req *http.Request) ([]byte, error) {
 		return nil, statusError(c.provider, resp.StatusCode, raw, c.apiKey)
 	}
 	return raw, nil
+}
+
+// postJSON sends payload as JSON to the endpoint with the key in the
+// header auth sets, and reads the answer as do does. The key is never in the
+// URL or the body.
+func (c *client) postJSON(ctx context.Context, payload any, auth func(*http.Request)) ([]byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("websearch: %s payload: %w", c.provider, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("websearch: %s request: %w", c.provider, redactKey(err, c.apiKey))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	auth(req)
+	return c.do(req)
 }
 
 // redactKey strips a provider's key from an error's text. An error that
@@ -112,7 +137,9 @@ func statusError(provider string, status int, body []byte, key string) *StatusEr
 }
 
 // Providers lists the names a deployment may configure, "none" first.
-func Providers() []string { return []string{"none", YouComName, BraveName} }
+func Providers() []string {
+	return []string{"none", YouComName, BraveName, TavilyName, ExaName, PerplexityName}
+}
 
 // Known reports whether a configured name is one of Providers; "" is none.
 func Known(provider string) bool {
@@ -129,7 +156,8 @@ func Known(provider string) bool {
 }
 
 // New builds the provider a deployment names: "" or "none" is no provider
-// (nil, nil), "youcom" is You.com and "brave" is Brave's LLM Context API.
+// (nil, nil), "youcom" is You.com, "brave" is Brave's LLM Context API, and
+// "tavily", "exa" and "perplexity" are those providers' search APIs.
 // An unknown name, or a named provider without its key, is an error the
 // server refuses to start on.
 func New(provider, baseURL, apiKey string) (Provider, error) {
@@ -141,6 +169,12 @@ func New(provider, baseURL, apiKey string) (Provider, error) {
 		return NewYouCom(cfg)
 	case BraveName:
 		return NewBrave(cfg)
+	case TavilyName:
+		return NewTavily(cfg)
+	case ExaName:
+		return NewExa(cfg)
+	case PerplexityName:
+		return NewPerplexity(cfg)
 	}
 	return nil, fmt.Errorf("websearch: unknown provider %q (%s)", provider, strings.Join(Providers(), "|"))
 }

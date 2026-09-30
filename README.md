@@ -316,13 +316,17 @@ which the gateway's docker filter lets no other container join.
   a page's text.
 - `registry_search` reads the registry's search, a QuickAgent's manifest,
   and its vulnerability check of an exact MCP server version.
-- `web_search` needs a search provider of your own in the policy:
-  `webSearch: {provider: brave}` (Brave's LLM Context API) with the key in
-  `$BRAVE_API_KEY`, or `webSearch: {provider: youcom}` (You.com) with the key
-  in `$YDC_API_KEY`; or the variable `webSearch.apiKeyEnv` names, or, with
-  `webSearch.apiKeySource: keyring`, the keychain entry `provider:brave` or
-  `provider:youcom`. Without one the Drafter reads the registry and the pages
-  it already knows.
+- `web_search` needs a search provider of your own in the policy, each
+  with its own key: `webSearch: {provider: brave}` (Brave's LLM Context API,
+  `$BRAVE_API_KEY`), `tavily` (`$TAVILY_API_KEY`), `exa` (`$EXA_API_KEY`),
+  `perplexity` (Perplexity's Search API, `$PERPLEXITY_API_KEY`) or `youcom`
+  (You.com, `$YDC_API_KEY`); or the variable `webSearch.apiKeyEnv` names,
+  or, with `webSearch.apiKeySource: keyring`, the keychain entry
+  `provider:<the provider>`, such as `provider:brave`. Your searches go to
+  that provider under its own terms: Tavily's and Exa's keep a right to use
+  queries, and Perplexity's no-training statement covers its chat
+  completions, not its search (agentry DEV-185). Without one the Drafter reads the registry and
+  the pages it already knows.
 - Under a sandboxed runtime (`docker.runtime: runsc`) the tools container
   cannot reach docker's own DNS on its network, so name your host's upstream
   name servers in the policy: `docker: {runtime: runsc, resolvers:

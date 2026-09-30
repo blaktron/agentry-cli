@@ -2,8 +2,10 @@ package drafter
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -56,18 +58,38 @@ func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState,
 		return nil, "", ErrNoJevKey
 	}
 	w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: registry}
-	if !pol.WebSearch.On() {
-		return w, SearchNoProvider, nil
-	}
-	key, err := personalKey(pol.WebSearch.KeyEnv(), pol.WebSearch.APIKeySource, pol.WebSearch.Provider)
+	key, state, err := SearchKey(pol)
 	if err != nil {
 		return nil, "", err
 	}
-	if key == "" {
-		return w, SearchNoKey, nil
+	if state == SearchOn {
+		w.Search, w.SearchKey = pol.WebSearch.Provider, key
 	}
-	w.Search, w.SearchKey = pol.WebSearch.Provider, key
-	return w, SearchOn, nil
+	return w, state, nil
+}
+
+// SearchKey is the person's own search key as a local draft reads it, and
+// whether search is on: the policy's provider, its key from the variable
+// the policy names or the provider's own, else, for a keyring source, the
+// keychain entry provider:<provider>. It needs no Jev key, so a client can
+// test the search key alone, and it is the one LocalWeb searches with.
+func SearchKey(pol *policy.Policy) (string, SearchState, error) {
+	if !pol.WebSearch.On() {
+		return "", SearchNoProvider, nil
+	}
+	// A loaded policy is validated; one a client built in memory may not
+	// be, and an unknown provider would read the default variable.
+	if !slices.Contains(policy.WebSearchProviders(), pol.WebSearch.Provider) {
+		return "", "", engine.Classify(engine.ExitPolicy, fmt.Errorf("webSearch.provider %q is not a provider the runner policy admits", pol.WebSearch.Provider))
+	}
+	key, err := personalKey(pol.WebSearch.KeyEnv(), pol.WebSearch.APIKeySource, pol.WebSearch.Provider)
+	if err != nil {
+		return "", "", err
+	}
+	if key == "" {
+		return "", SearchNoKey, nil
+	}
+	return key, SearchOn, nil
 }
 
 // personalKey reads one of the person's own keys as the runner policy says
