@@ -40,6 +40,9 @@ import (
 
 // installOpts carries the install command's flags.
 type installOpts struct {
+	// local is a folder to install from instead of a registry ref
+	// (agentry-cli#491, cmd_install_local.go).
+	local         string
 	target        string
 	provider      string
 	dir           string
@@ -103,7 +106,7 @@ func resolveProviderTarget(opts *installOpts) error {
 func newInstallCmd() *cobra.Command {
 	var opts installOpts
 	cmd := &cobra.Command{
-		Use:   "install <ns/name[@range]>",
+		Use:   "install <ns/name[@range]> | install --local DIR --allow-unsigned",
 		Short: "Resolve, download, verify, and install a QuickAgent on this machine",
 		Long: "Resolve ns/name[@range] (§9.4), download the release archive, verify its\n" +
 			"sha256 digest AND its DSSE attestation signature (§8.8), show the declared\n" +
@@ -137,12 +140,28 @@ func newInstallCmd() *cobra.Command {
 			"home's integrity key, and `agentry run` refuses one whose files changed\n" +
 			"after it was installed (exit 10), naming them. So does an install of the\n" +
 			"same release over it: --repair lays it down again from a fresh download,\n" +
-			"checked as any install is, in place of the changed copy.",
-		Args: cobra.ExactArgs(1),
+			"checked as any install is, in place of the changed copy.\n\n" +
+			"Local: --local DIR installs a QuickAgent folder on this machine that was\n" +
+			"never published into the runner home, where it lists with the installed\n" +
+			"ones and `agentry run ns/name` runs it. It is unsigned, so the install and\n" +
+			"every run of it need --allow-unsigned. The folder is packed as publish\n" +
+			"packs it, the contract shown is the packed manifest's, and that packed\n" +
+			"copy is what is installed and sealed: a run refuses it once its files\n" +
+			"change, and installing the folder again replaces it.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if opts.local != "" {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.local != "" {
+				return runLocalInstall(cmd, opts.local, opts)
+			}
 			return runInstall(cmd, args[0], opts)
 		},
 	}
+	cmd.Flags().StringVar(&opts.local, "local", "", "install this QuickAgent folder, never published, into the runner home (unsigned: needs --allow-unsigned)")
 	cmd.Flags().StringVar(&opts.target, "target", "", "install target: runner | claude-skill | agents-md (default runner: the runner home, where `agentry run` reads it)")
 	cmd.Flags().StringVar(&opts.provider, "provider", "", "install for an agent application: claude | codex | openclaw (picks the target; RUNNER-PLAN-2 §P5)")
 	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory for claude-skill and agents-md (see help for per-target defaults); the runner target has one home")

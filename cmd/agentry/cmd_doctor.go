@@ -29,6 +29,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -464,9 +465,26 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		rep.ok("install", "verified install %s", installDir)
 		return m, meta, installDir
 	}
-	if _, err := manifest.ParseRef(ref); err != nil {
+	parsed, err := manifest.ParseRef(ref)
+	if err != nil {
 		rep.fail("resolve", "%v", err)
 		return nil, nil, ""
+	}
+	// A local install (agentry-cli#491) is checked where a run reads it,
+	// against its integrity record, with no registry to resolve.
+	if meta, installDir, ok, lerr := localinstall.Materialize(home, parsed.Namespace, parsed.Name, parsed.Range); ok {
+		if lerr != nil {
+			rep.fail("install", "%v", lerr)
+			return nil, nil, ""
+		}
+		rep.ok("resolve", "%s: installed from a local folder, unsigned (%s) — a run needs --allow-unsigned", meta.Ref, installdir.DigestSuffix(meta.Digest))
+		m, merr := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))
+		if merr != nil {
+			rep.fail("install", "%v", merr)
+			return nil, nil, ""
+		}
+		rep.ok("install", "verified install %s", installDir)
+		return m, meta, installDir
 	}
 	reg := registryURL()
 	client, err := newAPIClientChecked(cmd, reg, credentialFor(reg))

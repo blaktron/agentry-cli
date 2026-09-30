@@ -78,6 +78,11 @@ const (
 	// release. Only localrun's Materialize of an embedded package sets it,
 	// in memory; no record on disk carries it into a run.
 	StateBuiltin = "builtin"
+	// StateLocal is a package from a folder on this machine: a `run
+	// --local` directory, or a QuickAgent installed from one and never
+	// published (agentry-cli#491). Nothing attests to it, so every client
+	// gates it as it gates unsigned.
+	StateLocal = "local"
 )
 
 // Unscanned is the result for a version the registry says was admitted

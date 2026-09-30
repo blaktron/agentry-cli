@@ -541,10 +541,18 @@ manifest + operator policy into a deterministic run plan → execute:
   refuses one whose files changed after the install (exit 10, naming
   them; `run --plan` says so first). `agentry install --repair ns/name@version`
   lays it down again from a fresh download, checked as any install is. A
-  `--local` directory is the one exemption: its cached copy is replaced
+  `run --local` directory is the one exemption: its cached copy is replaced
   from the directory. The record stops an edit by anyone who cannot also
   read or replace the runner home's key; it does not stand against
   someone who can write the runner home itself.
+- **`agentry install --local DIR --allow-unsigned`** installs a QuickAgent
+  folder that was never published, such as a draft, into the runner home:
+  it lists as local and unsigned, `agentry run ns/name` runs it with no
+  registry, and every run needs `--allow-unsigned`. The folder is packed as
+  `agentry publish` packs it, the contract you confirm is the packed
+  manifest's, and that packed copy is installed and sealed like a
+  release: unlike `run --local`, a run refuses it once its files change,
+  and installing the folder again replaces it (agentry-cli#491).
 - **Installed into an existing coding agent instead** (`agentry install
   --target claude-skill|agents-md`), the same contract compiles to the
   host's built-in tool grants — nothing is bundled in either mode.

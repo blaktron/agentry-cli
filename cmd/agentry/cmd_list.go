@@ -75,7 +75,8 @@ func runList(cmd *cobra.Command, check bool) error {
 	for _, r := range state.Records {
 		info, statErr := os.Stat(r.Dir)
 		rec := listedRecord{Record: r, Present: statErr == nil && info.IsDir()}
-		if check {
+		// A local install (agentry-cli#491) has no registry to ask.
+		if check && !r.Local() {
 			checkUpdate(cmd, &rec)
 		}
 		recs = append(recs, rec)
@@ -100,6 +101,9 @@ func runList(cmd *cobra.Command, check bool) error {
 	}
 	for _, r := range recs {
 		mark := ""
+		if r.Local() {
+			mark = "  (local, unsigned)"
+		}
 		if !r.Present {
 			mark = "  (directory missing)"
 		}

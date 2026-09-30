@@ -186,7 +186,22 @@ type Record struct {
 	// agentry client put there. Optional so files written before this field
 	// existed still load; absent means NOT managed (the safe reading).
 	Managed bool `yaml:"managed,omitempty" json:"managed,omitempty"`
+	// Source is SourceLocal for a QuickAgent installed from a folder on
+	// this machine and never published (agentry-cli#491), empty for a
+	// registry release. A local record names no registry to ask for an
+	// update, and a run of it by name reads the release Digest names from
+	// the runner home instead of resolving it.
+	Source string `yaml:"source,omitempty" json:"source,omitempty"`
+	// Digest is a local install's archive digest: which release directory
+	// holds it. Empty for a registry release, which a run resolves.
+	Digest string `yaml:"digest,omitempty" json:"digest,omitempty"`
 }
+
+// SourceLocal marks a record installed from a local folder.
+const SourceLocal = "local"
+
+// Local reports whether the record is a local, unpublished install.
+func (r Record) Local() bool { return r.Source == SourceLocal }
 
 // State is ~/.config/agentry/installed.yaml.
 type State struct {
@@ -289,6 +304,40 @@ func (st *State) Upsert(k Key, version string, caps CapSnapshot, managed bool) {
 		return
 	}
 	st.Records = append(st.Records, rec)
+}
+
+// MarkLocal marks the key's record as a local install of the release with
+// this archive digest (agentry-cli#491). Upsert writes a registry record,
+// as an install from a registry does; a local install calls this after it.
+func (st *State) MarkLocal(k Key, digest string) {
+	if cur := st.Find(k); cur != nil {
+		cur.Source, cur.Digest = SourceLocal, digest
+	}
+}
+
+// Reconsent records a run's consent to the contract of the release with
+// this digest, keeping what an install recorded: whether the client chose
+// the directory, and a local install's mark (agentry-cli#491). A run of
+// another tree than the agent's local install (a --local folder, a
+// registry release by range) records nothing, so the local install stays
+// what `run ns/name` finds; the consent was still asked and given for the
+// run, and a later run asks it again. It reports whether it recorded.
+// Every client's run records its consent through this, never Upsert.
+func (st *State) Reconsent(k Key, version string, caps CapSnapshot, digest string) bool {
+	cur := st.Find(k)
+	if cur == nil {
+		st.Upsert(k, version, caps, false)
+		return true
+	}
+	managed, local, localDigest := cur.Managed, cur.Local(), cur.Digest
+	if local && digest != localDigest {
+		return false
+	}
+	st.Upsert(k, version, caps, managed)
+	if local {
+		st.MarkLocal(k, localDigest)
+	}
+	return true
 }
 
 // Remove deletes the record for a key, reporting whether one was present.
