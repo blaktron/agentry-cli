@@ -137,9 +137,17 @@ const ExecPackagesFile = "/etc/agentry/exec-packages"
 // context is a generated Dockerfile under ctxDir. Returns the resolved
 // package versions, read from the image whether it was built now or
 // found; nil when no exec is declared.
+//
+// An Unsafe Mode exec image (img.Unsafe; agentry-cli#490) is built from
+// the unsafe base instead and rebuilt when its last build left tools
+// uninstalled; its result lists what installed, then what did not, each of
+// those marked spec.ExecNotInstalledPrefix.
 func EnsureExecImage(ctx context.Context, d dockerx.Client, runnerImage string, img spec.ExecImageSpec, ctxDir string, logw io.Writer) ([]string, error) {
 	if img.Tag == "" {
 		return nil, nil
+	}
+	if img.Unsafe != nil {
+		return ensureUnsafeExecImage(ctx, d, runnerImage, img, ctxDir, logw)
 	}
 	ok, err := d.ImageExists(ctx, img.Tag)
 	if err != nil {

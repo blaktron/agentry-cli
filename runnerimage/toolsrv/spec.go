@@ -134,6 +134,14 @@ type Exec struct {
 	// Enforcement is argv[0] membership plus a shim PATH containing only
 	// these commands (RUNNER-DEVIATIONS DR-1 discloses the residual).
 	Commands []string `json:"commands,omitempty"`
+	// ImagePath is Unsafe Mode's (agentry-notes plans/unsafe-mode.md;
+	// agentry-cli#490, the operator's decision of 2026-09-30): a declared
+	// command runs with the image's own PATH after the shim directory,
+	// so a declared script finds its interpreter and the programs it
+	// calls (Ghidra's analyzeHeadless is a `#!/usr/bin/env bash` script
+	// that runs java). The argv[0] allowlist is unchanged: only a declared
+	// command can be called. Off, the PATH is the shim directory alone.
+	ImagePath bool `json:"imagePath,omitempty"`
 }
 
 // Limits bounds tool I/O sizes and exec time.

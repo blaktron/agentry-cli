@@ -36,6 +36,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -86,6 +87,16 @@ type Inputs struct {
 	// (ReadInstalledPlan, agentry-cli#266). Nil writes no record, and a
 	// reader then recompiles rather than trust the plan.
 	IntegrityKey []byte
+	// Unsafe turns on Unsafe Mode for this compile (agentry-notes
+	// plans/unsafe-mode.md §4.3; agentry-cli#490): the declared exec
+	// commands are placed through the unsafe base's extras list and
+	// command index (unsafeexec.Load) instead of the policy's exec
+	// catalogue, which is not consulted; a command neither places is
+	// named, never refused (D8). Only a client passes it — the desktop,
+	// for runs on this computer, when the person has turned Unsafe Mode
+	// on — and no policy key or CLI flag sets it (D5). Nil compiles
+	// exactly as before.
+	Unsafe *unsafeexec.Data
 }
 
 // PolicyRefusal is a run refused by operator policy — the §R8 exit-11
@@ -210,12 +221,17 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	// the runner image with the operator's catalogued packages installed,
 	// minimized to the declared commands (agentry-cli#9, #100).
 	toolsImage := in.RunnerImage
-	execImage, err := execImageFor(caps.ExecCommands, in.RunnerImage, in.Policy.Exec)
-	if err != nil {
+	var execImage *spec.ExecImageSpec
+	if in.Unsafe != nil {
+		execImage = unsafeExecImageFor(caps.ExecCommands, in.RunnerImage, in.Unsafe)
+	} else if execImage, err = execImageFor(caps.ExecCommands, in.RunnerImage, in.Policy.Exec); err != nil {
 		return nil, err
 	}
 	if execImage != nil {
 		toolsImage = execImage.Tag
+		// Unsafe Mode's image is not minimized, and a declared command
+		// runs with its PATH (the operator's decision of 2026-09-30).
+		tspec.Exec.ImagePath = execImage.Unsafe != nil
 	}
 	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, extraServers, extraEntries, in.MCPServers); err != nil {
 		return nil, err
@@ -292,6 +308,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		},
 		Output: output,
 		Files:  map[string]string{},
+	}
+	if execImage != nil && execImage.Unsafe != nil {
+		plan.Enforcement["exec"] = unsafeExecEnforcement(execImage)
 	}
 
 	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && (in.Web || in.Policy.Docker.Runtime != "") {
@@ -886,6 +905,23 @@ func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) 
 	}, nil
 }
 
+// unsafeExecImageFor is execImageFor under Unsafe Mode: the declared
+// commands placed through the unsafe base's extras list, then its index,
+// never refused (D8); this machine's exec catalogue is not consulted (D1).
+// Nil when nothing is declared.
+func unsafeExecImageFor(commands []string, runnerImage string, data *unsafeexec.Data) *spec.ExecImageSpec {
+	if len(commands) == 0 {
+		return nil
+	}
+	pkgs, u := data.Place(commands)
+	return &spec.ExecImageSpec{
+		Tag:      spec.UnsafeExecImageTag(runnerImage, u, commands, pkgs),
+		Commands: sortedCopy(commands),
+		Packages: pkgs,
+		Unsafe:   &u,
+	}
+}
+
 // bindRoots lists the host roots the gateway may bind into the containers
 // it launches: the run's own directories, plus the signature's server
 // store when declared servers exist — each server is launched from a
@@ -1223,6 +1259,50 @@ func execEnforcement(commands []string, cat policy.ExecPolicy) string {
 		// tools container runs as root; git refuses such a repository as
 		// "dubious ownership". The run's mounts are the only places a
 		// repository can be, so those paths are trusted, nothing wider.
+		line += "; git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned"
+	}
+	return line
+}
+
+// unsafeExecEnforcement is the exec line of an Unsafe Mode plan: it names
+// Unsafe Mode, the base by digest, where each declared command comes from,
+// every command the image cannot place, and what is not enforced that the
+// catalogue's line enforces (no minimize, the image's PATH).
+func unsafeExecEnforcement(img *spec.ExecImageSpec) string {
+	u := img.Unsafe
+	commands := img.Commands
+	from := map[string]string{}
+	for _, e := range u.Extras {
+		from[e.Command] = e.String()
+	}
+	unplaced := map[string]bool{}
+	var missing []string
+	for _, c := range u.Unplaced {
+		unplaced[c.Command] = true
+		m := c.Command
+		if len(c.Candidates) > 0 {
+			m += " (several packages ship it: " + strings.Join(c.Candidates, ", ") + ")"
+		}
+		missing = append(missing, m)
+	}
+	var placed []string
+	for _, c := range sortedCopy(commands) {
+		switch {
+		case unplaced[c]:
+		case from[c] != "":
+			placed = append(placed, c+" ← "+from[c])
+		default:
+			placed = append(placed, c+" ← apt")
+		}
+	}
+	line := "UNSAFE MODE: run_command restricted to the argv0 allowlist {" + strings.Join(commands, ", ") +
+		"}; the tools container is the Unsafe Mode image " + u.Base + " with the declared commands installed one at a time, from Kali Linux's repository or, for a pip extra, PyPI (" +
+		strings.Join(placed, ", ") + " — apt packages: " + cmp.Or(strings.Join(img.Packages, ", "), "none") +
+		"); this machine's exec catalogue was not consulted; the image is not minimized, and a declared command runs with the image's own PATH after its shims, so it can reach every program the image holds (per-QuickAgent Unsafe Mode exec image, plan unsafe-mode.md, agentry-cli#490)"
+	if len(missing) > 0 {
+		line += "; not available in Unsafe Mode's image: " + strings.Join(missing, "; ")
+	}
+	if slices.Contains(commands, "git") {
 		line += "; git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned"
 	}
 	return line
