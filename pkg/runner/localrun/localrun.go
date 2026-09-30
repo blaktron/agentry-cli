@@ -351,6 +351,11 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", cmp.Or(plan.CompiledBy, "unknown"), in.CompiledBy)
 			case plan.Proxy.Image != runnerImage:
 				_, _ = fmt.Fprintf(errOut, "installed plan names runner image %s, this CLI builds %s — recompiling\n", plan.Proxy.Image, runnerImage)
+			case plan.ExecImage != nil && plan.ExecImage.Unsafe != nil:
+				// This path never compiles Unsafe Mode (plan unsafe-mode.md
+				// D5): a plan the desktop compiled with it on, sharing the
+				// runner home, is not reused here (invariant 4).
+				_, _ = fmt.Fprintln(errOut, "installed plan was compiled in Unsafe Mode — recompiling without it")
 			default:
 				if verr := compile.VerifyFiles(plan, planDir); verr == nil {
 					return plan, planDir, nil

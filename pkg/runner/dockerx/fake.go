@@ -49,6 +49,8 @@ type Fake struct {
 	ExistingImages map[string]bool
 	// ImageFiles answers ImageFile by "ref:path"; a missing entry is an error.
 	ImageFiles map[string]string
+	// BuildArgs records the build args of the last Build of each tag.
+	BuildArgs map[string]map[string]string
 	// FailPull/FailBuild/FailDetached script failures by ref/name.
 	FailPull     map[string]error
 	FailBuild    map[string]error
@@ -198,8 +200,14 @@ func (f *Fake) Pull(_ context.Context, ref string) error {
 }
 
 // Build implements Client.
-func (f *Fake) Build(_ context.Context, dir, tag string, _ map[string]string) error {
+func (f *Fake) Build(_ context.Context, dir, tag string, args map[string]string) error {
 	f.record("Build", tag+"<-"+dir, RunSpec{})
+	f.mu.Lock()
+	if f.BuildArgs == nil {
+		f.BuildArgs = map[string]map[string]string{}
+	}
+	f.BuildArgs[tag] = args
+	f.mu.Unlock()
 	return f.FailBuild[tag]
 }
 

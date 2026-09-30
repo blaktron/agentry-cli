@@ -675,3 +675,44 @@ func TestRunCommandScrubsGrantedSecrets(t *testing.T) {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
+
+// In Unsafe Mode (Exec.ImagePath; agentry-cli#490, the operator's decision
+// of 2026-09-30) a declared command runs with the image's PATH after the
+// shims, so a declared script finds the interpreter and programs it calls.
+// The argv[0] allowlist does not move: an undeclared bash is still refused
+// (plan unsafe-mode.md invariant 2). Off, the PATH is the shims alone.
+func TestRunCommandImagePathInUnsafeModeOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("exec tests use sh semantics")
+	}
+	// A declared script whose shebang looks its interpreter up on PATH,
+	// the way Ghidra's analyzeHeadless does.
+	dir := t.TempDir()
+	script := filepath.Join(dir, "declared-script")
+	if err := os.WriteFile(script, []byte("#!/usr/bin/env sh\necho ran \"$(basename \"$(command -v cat)\")\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	jailed := baseSpec(t)
+	jailed.Exec = Exec{Commands: []string{"declared-script"}}
+	got, isErr := newTestServer(t, jailed).toolRunCommand(rawArgs(t, map[string]any{"command": "declared-script"}))
+	// env finds no sh on the shim PATH: the script does not run at all.
+	if isErr || !strings.HasPrefix(got, "exit code 127\n") || strings.Contains(got, "ran") {
+		t.Fatalf("under the shim PATH = %q (isError %v), want env's exit 127", got, isErr)
+	}
+
+	unsafe := baseSpec(t)
+	unsafe.Exec = Exec{Commands: []string{"declared-script"}, ImagePath: true}
+	us := newTestServer(t, unsafe)
+	got, isErr = us.toolRunCommand(rawArgs(t, map[string]any{"command": "declared-script"}))
+	if isErr || got != "exit code 0\nran cat\n" {
+		t.Fatalf("with the image PATH = %q (isError %v)", got, isErr)
+	}
+	for _, undeclared := range []string{"bash", "sh", "cat"} {
+		got, isErr := us.toolRunCommand(rawArgs(t, map[string]any{"command": undeclared}))
+		if !isErr || !strings.Contains(got, "not in the declared exec allowlist") {
+			t.Fatalf("undeclared %s with the image PATH = %q (isError %v)", undeclared, got, isErr)
+		}
+	}
+}
