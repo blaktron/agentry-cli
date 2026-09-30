@@ -31,6 +31,19 @@ func localKeys(t *testing.T) {
 	t.Setenv(policy.PerplexitySearchKeyEnv, "")
 }
 
+// SearchKey refuses a provider the policy does not admit, rather than read
+// the default variable for it: a policy a client built in memory is not
+// validated as a loaded one is.
+func TestSearchKeyRefusesAProviderThePolicyDoesNotAdmit(t *testing.T) {
+	localKeys(t)
+	t.Setenv(policy.DefaultWebSearchKeyEnv, "ydc-from-the-variable")
+	pol := policy.Default()
+	pol.WebSearch = policy.WebSearchKey{Provider: "bing"}
+	if k, s, err := SearchKey(pol); err == nil || k != "" || s != "" {
+		t.Fatalf("an unknown provider was read: %q %s %v", k, s, err)
+	}
+}
+
 // TestLocalWebReadsThePersonsKeysAsThePolicySays: the variable wins; with
 // apiKeySource keyring and the variable unset, the keychain entry
 // provider:typesafe (the one the desktop writes); a keychain entry is never
@@ -101,6 +114,9 @@ func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 		{name: "Perplexity from the keychain entry provider:perplexity", judge: keyringJudge,
 			search:  policy.WebSearchKey{Provider: "perplexity", APIKeySource: modelkey.SourceKeyring},
 			wantJev: "jev-from-the-keychain", wantSearch: "perplexity", wantSKey: "pplx-from-the-keychain", wantState: SearchOn},
+		{name: "a You.com key never serves Exa", judge: keyringJudge, search: policy.WebSearchKey{Provider: "exa"},
+			env:     map[string]string{policy.DefaultWebSearchKeyEnv: "ydc-from-the-variable"},
+			wantJev: "jev-from-the-keychain", wantState: SearchNoKey},
 		{name: "a Brave key never serves Tavily, by variable or keychain", judge: keyringJudge,
 			search:  policy.WebSearchKey{Provider: "tavily", APIKeySource: modelkey.SourceKeyring},
 			env:     map[string]string{policy.BraveSearchKeyEnv: "brave-from-the-variable"},
@@ -114,12 +130,6 @@ func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 			pol := policy.Default()
 			pol.Judge, pol.WebSearch = c.judge, c.search
 			w, state, err := LocalWeb(pol, reg)
-			if c.wantErr == nil {
-				// SearchKey is LocalWeb's search half, read alone.
-				if k, s, serr := SearchKey(pol); serr != nil || s != c.wantState || k != c.wantSKey {
-					t.Fatalf("SearchKey: %q %s %v, want %q %s", k, s, serr, c.wantSKey, c.wantState)
-				}
-			}
 			if c.wantErr != nil {
 				if !errors.Is(err, c.wantErr) || w != nil || state != "" {
 					t.Fatalf("got %+v, %v; want %v", w, err, c.wantErr)
@@ -132,6 +142,10 @@ func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 			if w.Scan != toolsrv.WebScanJev || w.JevKey != c.wantJev || w.Search != c.wantSearch || w.SearchKey != c.wantSKey ||
 				w.Registry != reg || w.JobToken != "" || state != c.wantState {
 				t.Fatalf("got %+v, %q", w, state)
+			}
+			// SearchKey is LocalWeb's search half, read alone.
+			if k, s, serr := SearchKey(pol); serr != nil || s != c.wantState || k != c.wantSKey {
+				t.Fatalf("SearchKey: %q %s %v, want %q %s", k, s, serr, c.wantSKey, c.wantState)
 			}
 		})
 	}

@@ -2,8 +2,10 @@ package drafter
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -74,6 +76,11 @@ func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState,
 func SearchKey(pol *policy.Policy) (string, SearchState, error) {
 	if !pol.WebSearch.On() {
 		return "", SearchNoProvider, nil
+	}
+	// A loaded policy is validated; one a client built in memory may not
+	// be, and an unknown provider would read the default variable.
+	if !slices.Contains(policy.WebSearchProviders(), pol.WebSearch.Provider) {
+		return "", "", engine.Classify(engine.ExitPolicy, fmt.Errorf("webSearch.provider %q is not a provider the runner policy admits", pol.WebSearch.Provider))
 	}
 	key, err := personalKey(pol.WebSearch.KeyEnv(), pol.WebSearch.APIKeySource, pol.WebSearch.Provider)
 	if err != nil {

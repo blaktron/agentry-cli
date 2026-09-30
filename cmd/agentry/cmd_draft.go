@@ -102,8 +102,8 @@ func newDraftCmd() *cobra.Command {
 			"and the draft lists it. On this computer that takes your own Jev key ($TYPESAFE_API_KEY, or the\n" +
 			"policy's judge block), and the Drafter does not run without one. It runs against the model your runner\n" +
 			"policy names, for no credits. Web search needs a search provider of your own in the policy's webSearch\n" +
-			"block (brave, tavily, exa, perplexity or youcom, each with its own key: $BRAVE_API_KEY, $TAVILY_API_KEY,\n" +
-			"$EXA_API_KEY, $PERPLEXITY_API_KEY or $YDC_API_KEY); without one the Drafter reads pages and the\n" +
+			"block, each with its own key: brave ($BRAVE_API_KEY), tavily ($TAVILY_API_KEY), exa ($EXA_API_KEY),\n" +
+			"perplexity ($PERPLEXITY_API_KEY) or youcom ($YDC_API_KEY); without one the Drafter reads pages and the\n" +
 			"registry only.\n\n" +
 			"The description, the searches and the pages go to the search provider, to TypeSafe and to the sites\n" +
 			"read, so the description should hold no secret.\n\n" +

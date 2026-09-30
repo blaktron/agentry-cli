@@ -323,8 +323,9 @@ which the gateway's docker filter lets no other container join.
   (You.com, `$YDC_API_KEY`); or the variable `webSearch.apiKeyEnv` names,
   or, with `webSearch.apiKeySource: keyring`, the keychain entry
   `provider:<the provider>`, such as `provider:brave`. Your searches go to
-  that provider under its own terms; Tavily's and Exa's keep a right to use
-  queries (agentry DEV-185). Without one the Drafter reads the registry and
+  that provider under its own terms: Tavily's and Exa's keep a right to use
+  queries, and Perplexity's no-training statement covers its chat
+  completions, not its search (agentry DEV-185). Without one the Drafter reads the registry and
   the pages it already knows.
 - Under a sandboxed runtime (`docker.runtime: runsc`) the tools container
   cannot reach docker's own DNS on its network, so name your host's upstream
