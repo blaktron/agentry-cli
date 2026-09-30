@@ -201,9 +201,12 @@ release anyone installs.
 
 A local build costs no credits, and nothing it reads or writes is scanned:
 the command says so before it starts, and the pack records `not scanned`.
-`--timeout`, `--max-turns` and `--max-cost` bound the run. A run stopped by
-one keeps the pages it wrote, and an `add` with the same documents
-continues. With `--json` the result is one document on stdout. With
+`--timeout`, `--max-turns` and `--max-cost` bound the run. A build has 60
+minutes, or your runner policy's run timeout when that is longer; `--timeout`
+sets it for one build, shorter or longer. It has no token limit, and its
+tool-call cap is the policy's. A run stopped at one of these bounds keeps
+the pages it wrote, and an `add` with the same documents continues. With
+`--json` the result is one document on stdout. With
 `--output-format json`, as `run` takes it, stdout is instead the Creator
 run's result envelope (its usage split into input and output tokens, the
 attestation `builtin`, `capabilities_enforced`) with that document under
@@ -393,7 +396,11 @@ Before a draft is written, the CLI checks it in four steps:
 
 A draft that still fails the rules is kept with its problems for you to fix.
 Review every part before you publish it. `--timeout`, `--max-turns` and
-`--max-cost` bound the run. With `--output-format json`, as `run` takes it,
+`--max-cost` bound the run. On this computer a draft has 30 minutes, or your
+runner policy's run timeout when that is longer; `--timeout` sets it for one
+draft, shorter or longer. It has no token limit, and its tool-call cap is
+the policy's. A hosted draft runs under the caps its job carries. With
+`--output-format json`, as `run` takes it,
 stdout is the Drafter run's result envelope (its usage, the attestation
 `builtin`, the `web` counts) with the draft's report under `draft`: where
 `draft.json` is, whether the package was rendered and passed, how many

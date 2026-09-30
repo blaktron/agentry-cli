@@ -27,7 +27,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
-	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // knowledgeBuildOpts are create's and add's shared flags.
@@ -36,9 +35,7 @@ type knowledgeBuildOpts struct {
 	dir        string
 	out        string
 	policyPath string
-	timeout    int
-	maxTurns   int
-	maxCost    float64
+	budgetFlags
 	// maxPackMB caps the pack, documents included, in MiB: 1024 (1 GB,
 	// knowledge.MaxLocalBytes) for a build on this machine; a sandbox host
 	// building In Agentry passes 10, Agentry's cap (agentry-cli#429).
@@ -57,6 +54,11 @@ type knowledgeBuildOpts struct {
 
 // knowledgeDocker is the docker client a build uses; a seam for tests.
 var knowledgeDocker = func() dockerx.Client { return dockerx.New() }
+
+// creatorBuild is the build itself (pkg/knowledge/build), the step inside
+// knowledgeBuilder that starts the Creator; a seam for the tests of what
+// runKnowledgeBuild hands it, its budgets above all.
+var creatorBuild = build.Build
 
 // knowledgeBuilder runs the Creator over a pack directory; a seam for the
 // commands' tests, which check what is kept and said around a build (the
@@ -79,7 +81,8 @@ func newKnowledgeCmd() *cobra.Command {
 			"stays on this computer. Before the Creator reads them, the documents are decoded on this machine, at most\n" +
 			"2,000 files and 30 minutes, and each document's decoded text is cut to 10 MiB.\n" +
 			"`create` and `add` run the built-in Knowledge Creator on this machine, against the model your runner\n" +
-			"policy names: it costs no credits, and nothing it reads or writes is scanned.\n\n" +
+			"policy names: it costs no credits, and nothing it reads or writes is scanned. A build has 60 minutes, or\n" +
+			"your policy's run timeout when that is longer (--timeout sets it for one build), and no token limit.\n\n" +
 			"Packs are kept sealed on this computer, each under a key of its own that the registry you are signed in\n" +
 			"to wraps for your account (Agentry holds that key), so the same pack opens on another computer after you\n" +
 			"sign in there. Signed out, this computer's key wraps it instead, until your next sign-in. `upload` keeps a\n" +
@@ -95,7 +98,7 @@ func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f.StringArrayVar(&o.files, "file", nil, "a document or a directory of documents to ingest (repeatable; required)")
 	f.StringVar(&o.out, "out", "", "output folder for the Creator run's reports and receipts (default ./agentry-out/agentry-knowledge-creator-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
-	f.IntVar(&o.timeout, "timeout", 0, "the Creator run's wall-clock budget in seconds (default: the policy's)")
+	f.IntVar(&o.timeout, "timeout", 0, "the Creator run's wall-clock budget in seconds (default: the policy's or 3600, whichever is longer)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Creator run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Creator run once the harness reports this much cost in USD (default: the policy's)")
 	f.IntVar(&o.maxPackMB, "max-pack-mb", knowledge.MaxLocalBytes>>20, "the pack's cap in MiB, documents included (at most 1024; Agentry keeps packs of at most 10)")
@@ -226,18 +229,12 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 	if outDir, err = filepath.Abs(outDir); err != nil {
 		return nil, "", err
 	}
-	budgets := spec.Budgets{TimeoutSeconds: pol.Budgets.TimeoutSeconds, MaxTurns: pol.Budgets.MaxTurns, MaxCostUSD: pol.Budgets.MaxCostUSD}
-	if o.timeout > 0 {
-		budgets.TimeoutSeconds = o.timeout
-	}
-	if o.maxTurns >= 0 {
-		budgets.MaxTurns = o.maxTurns
-	}
-	if o.maxCost >= 0 {
-		budgets.MaxCostUSD = o.maxCost
-	}
+	// The Creator's own budgets (the policy's, with at least 60 minutes),
+	// then the command line's. A sandbox host always names its job's caps,
+	// so a build made in Agentry never takes the floor.
+	budgets := o.over(localrun.KnowledgeCreator().LocalBudgets(pol.Budgets))
 
-	res, err := build.Build(cmd.Context(), knowledgeDocker(), build.Options{
+	res, err := creatorBuild(cmd.Context(), knowledgeDocker(), build.Options{
 		PackDir: dir, Name: name, Documents: o.files,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Now: time.Now(), OutDir: outDir, Budgets: &budgets,

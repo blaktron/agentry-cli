@@ -55,9 +55,7 @@ type draftOpts struct {
 	out             string
 	policyPath      string
 	hosted          bool
-	timeout         int
-	maxTurns        int
-	maxCost         float64
+	budgetFlags
 	// outputFormat json is the form a sandbox host drives for a hosted
 	// draft (agentry-cli#384): the Drafter run's envelope on stdout, with
 	// the draft's report under draft, and its usage narrated on stderr.
@@ -115,7 +113,9 @@ func newDraftCmd() *cobra.Command {
 			"described; its verdicts go into draft.json. If the rules still refuse the draft, or the check flagged\n" +
 			"something it can fix, the Drafter gets one repair turn, without its web tools, given only their report,\n" +
 			"what the check flagged (with the task) and its own draft; the second answer is checked again and kept,\n" +
-			"with any problems in draft.json. Review every part before you publish it.",
+			"with any problems in draft.json. Review every part before you publish it.\n\n" +
+			"On this computer the draft has 30 minutes, or your runner policy's run timeout when that is longer, and\n" +
+			"--timeout sets it for one draft. It has no token limit; the tool-call cap is your policy's.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return draftRunE(cmd, args, &o) },
 	}
@@ -125,7 +125,7 @@ func newDraftCmd() *cobra.Command {
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host will for a draft made in Agentry (the hosted draft kind, blaktron/agentry-enterprise#183, with --output-format json): scans and search through the registry with the job's credential in $"+envJobToken)
-	f.IntVar(&o.timeout, "timeout", 0, "the Drafter run's wall-clock budget in seconds (default: the policy's)")
+	f.IntVar(&o.timeout, "timeout", 0, "the Drafter run's wall-clock budget in seconds (default: the policy's or 1800, whichever is longer; with --hosted, the policy's)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Drafter run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Drafter run once the harness reports this much cost in USD (default: the policy's)")
 	f.StringVar(&o.outputFormat, "output-format", "text", "stdout format: text | json (json = the Drafter run's result envelope, as `agentry run` writes one, with the draft's report under draft; the harness's usage is narrated on stderr)")
@@ -219,16 +219,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if _, err := os.Stat(filepath.Join(outDir, "draft.json")); err == nil {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s already holds a draft; name another folder with --out", outDir))
 	}
-	budgets := spec.Budgets{TimeoutSeconds: pol.Budgets.TimeoutSeconds, MaxTurns: pol.Budgets.MaxTurns, MaxCostUSD: pol.Budgets.MaxCostUSD}
-	if o.timeout > 0 {
-		budgets.TimeoutSeconds = o.timeout
-	}
-	if o.maxTurns >= 0 {
-		budgets.MaxTurns = o.maxTurns
-	}
-	if o.maxCost >= 0 {
-		budgets.MaxCostUSD = o.maxCost
-	}
+	budgets := o.over(draftBudgets(pol, o.hosted))
 	first := localrun.Run{
 		Builtin: localrun.Drafter(), Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Task: strings.NewReader(task), OutDir: outDir, Budgets: &budgets,
@@ -279,6 +270,19 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	}
 	printDraft(cmd.OutOrStdout(), outDir, d)
 	return nil
+}
+
+// draftBudgets are the budgets a draft starts from, before the command
+// line's. On this computer they are the Drafter's own
+// (localrun.Builtin.LocalBudgets): the runner policy's, with at least 30
+// minutes. A hosted draft takes the staged policy's as they are: its caps
+// travel in its job and arrive as flags, and this computer's rule is not
+// the sandbox host's.
+func draftBudgets(pol *policy.Policy, hosted bool) spec.Budgets {
+	if hosted {
+		return spec.Budgets{TimeoutSeconds: pol.Budgets.TimeoutSeconds, MaxTurns: pol.Budgets.MaxTurns, MaxCostUSD: pol.Budgets.MaxCostUSD}
+	}
+	return localrun.Drafter().LocalBudgets(pol.Budgets)
 }
 
 // draftReport is what the json form's envelope says of the draft, under
