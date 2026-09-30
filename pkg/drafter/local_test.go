@@ -26,14 +26,18 @@ func localKeys(t *testing.T) {
 	t.Setenv(policy.DefaultJudgeKeyEnv, "")
 	t.Setenv(policy.DefaultWebSearchKeyEnv, "")
 	t.Setenv(policy.BraveSearchKeyEnv, "")
+	t.Setenv(policy.TavilySearchKeyEnv, "")
+	t.Setenv(policy.ExaSearchKeyEnv, "")
+	t.Setenv(policy.PerplexitySearchKeyEnv, "")
 }
 
 // TestLocalWebReadsThePersonsKeysAsThePolicySays: the variable wins; with
 // apiKeySource keyring and the variable unset, the keychain entry
 // provider:typesafe (the one the desktop writes); a keychain entry is never
 // read for an env source; no Jev key is ErrNoJevKey. Search is on only with
-// a provider named and its own key found: You.com's or Brave's
-// (plan builder-rework.md D22, D25; agentry-cli#363, agentry-cli#369).
+// a provider named and its own key found: each provider's own variable or
+// keychain entry, never another's (plan builder-rework.md D22, D25;
+// agentry-cli#363, agentry-cli#369, agentry-cli#513).
 func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 	localKeys(t)
 	if err := modelkey.Store(policy.JudgeKeyProvider, "jev-from-the-keychain"); err != nil {
@@ -43,6 +47,9 @@ func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := modelkey.Store("brave", "brave-from-the-keychain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := modelkey.Store("perplexity", "pplx-from-the-keychain"); err != nil {
 		t.Fatal(err)
 	}
 	const reg = "https://registry.example"
@@ -85,6 +92,19 @@ func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 			env:     map[string]string{policy.DefaultWebSearchKeyEnv: "ydc-from-the-variable"},
 			wantJev: "jev-from-the-keychain", wantState: SearchNoKey},
 		{name: "no Jev key means no search either", search: keyringSearch, wantErr: ErrNoJevKey},
+		{name: "Tavily from its own variable", judge: keyringJudge, search: policy.WebSearchKey{Provider: "tavily"},
+			env:     map[string]string{policy.TavilySearchKeyEnv: "tvly-from-the-variable"},
+			wantJev: "jev-from-the-keychain", wantSearch: "tavily", wantSKey: "tvly-from-the-variable", wantState: SearchOn},
+		{name: "Exa from its own variable", judge: keyringJudge, search: policy.WebSearchKey{Provider: "exa"},
+			env:     map[string]string{policy.ExaSearchKeyEnv: "exa-from-the-variable"},
+			wantJev: "jev-from-the-keychain", wantSearch: "exa", wantSKey: "exa-from-the-variable", wantState: SearchOn},
+		{name: "Perplexity from the keychain entry provider:perplexity", judge: keyringJudge,
+			search:  policy.WebSearchKey{Provider: "perplexity", APIKeySource: modelkey.SourceKeyring},
+			wantJev: "jev-from-the-keychain", wantSearch: "perplexity", wantSKey: "pplx-from-the-keychain", wantState: SearchOn},
+		{name: "a Brave key never serves Tavily, by variable or keychain", judge: keyringJudge,
+			search:  policy.WebSearchKey{Provider: "tavily", APIKeySource: modelkey.SourceKeyring},
+			env:     map[string]string{policy.BraveSearchKeyEnv: "brave-from-the-variable"},
+			wantJev: "jev-from-the-keychain", wantState: SearchNoKey},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -94,6 +114,12 @@ func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 			pol := policy.Default()
 			pol.Judge, pol.WebSearch = c.judge, c.search
 			w, state, err := LocalWeb(pol, reg)
+			if c.wantErr == nil {
+				// SearchKey is LocalWeb's search half, read alone.
+				if k, s, serr := SearchKey(pol); serr != nil || s != c.wantState || k != c.wantSKey {
+					t.Fatalf("SearchKey: %q %s %v, want %q %s", k, s, serr, c.wantSKey, c.wantState)
+				}
+			}
 			if c.wantErr != nil {
 				if !errors.Is(err, c.wantErr) || w != nil || state != "" {
 					t.Fatalf("got %+v, %v; want %v", w, err, c.wantErr)
