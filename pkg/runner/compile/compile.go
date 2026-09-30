@@ -310,7 +310,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Files:  map[string]string{},
 	}
 	if execImage != nil && execImage.Unsafe != nil {
-		plan.Enforcement["exec"] = unsafeExecEnforcement(caps.ExecCommands, execImage)
+		plan.Enforcement["exec"] = unsafeExecEnforcement(execImage)
 	}
 
 	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && (in.Web || in.Policy.Docker.Runtime != "") {
@@ -1268,8 +1268,9 @@ func execEnforcement(commands []string, cat policy.ExecPolicy) string {
 // Unsafe Mode, the base by digest, where each declared command comes from,
 // every command the image cannot place, and what is not enforced that the
 // catalogue's line enforces (no minimize, the image's PATH).
-func unsafeExecEnforcement(commands []string, img *spec.ExecImageSpec) string {
+func unsafeExecEnforcement(img *spec.ExecImageSpec) string {
 	u := img.Unsafe
+	commands := img.Commands
 	from := map[string]string{}
 	for _, e := range u.Extras {
 		from[e.Command] = e.String()
@@ -1295,8 +1296,8 @@ func unsafeExecEnforcement(commands []string, img *spec.ExecImageSpec) string {
 		}
 	}
 	line := "UNSAFE MODE: run_command restricted to the argv0 allowlist {" + strings.Join(commands, ", ") +
-		"}; the tools container is the Unsafe Mode image " + u.Base + " with the declared commands installed from Kali Linux's repository, one package at a time (" +
-		strings.Join(placed, ", ") + " — apt packages: " + strings.Join(img.Packages, ", ") +
+		"}; the tools container is the Unsafe Mode image " + u.Base + " with the declared commands installed one at a time, from Kali Linux's repository or, for a pip extra, PyPI (" +
+		strings.Join(placed, ", ") + " — apt packages: " + cmp.Or(strings.Join(img.Packages, ", "), "none") +
 		"); this machine's exec catalogue was not consulted; the image is not minimized, and a declared command runs with the image's own PATH after its shims, so it can reach every program the image holds (per-QuickAgent Unsafe Mode exec image, plan unsafe-mode.md, agentry-cli#490)"
 	if len(missing) > 0 {
 		line += "; not available in Unsafe Mode's image: " + strings.Join(missing, "; ")

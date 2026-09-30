@@ -12,13 +12,16 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
+	"github.com/blaktron/agentry-cli/runnerimage"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -364,5 +367,54 @@ func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
 	turn.Budgets.MaxTurns = 99
 	if r.Budgets.MaxTurns != 8 {
 		t.Fatal("the repair run shares its budgets with the caller's")
+	}
+}
+
+// A plan the desktop compiled in Unsafe Mode, in the runner home this CLI
+// shares, integrity record and all, is not reused by a run that did not
+// ask for it: EnsurePlan never compiles Unsafe Mode (plan unsafe-mode.md
+// D5, invariant 4), so it recompiles without it, and the exec image is
+// the catalogue's again.
+func TestEnsurePlanNeverReusesAnUnsafeModePlan(t *testing.T) {
+	home := t.TempDir()
+	meta, dir, err := KnowledgeCreator().Materialize(home, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(dir, "workspace")
+	m, err := ManifestFrom(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Capabilities.Exec = manifest.ExecCapability{Commands: []string{"strings"}}
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	pol.Exec.Packages = map[string]string{"strings": "binutils"}
+	key, err := compile.IntegrityKey(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := unsafeexec.Parse(policy.DefaultUnsafeImage, []byte("strings\tbinutils\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDir := filepath.Join(dir, "plan", string(manifest.ModeAutonomous))
+	unsafePlan, err := compile.Compile(compile.Inputs{Manifest: m, Mode: manifest.ModeAutonomous, Digest: meta.Digest, Source: meta.Source,
+		WorkspaceDir: ws, Policy: pol, PolicySHA: "sha", AdapterName: "docker-agent",
+		RunnerImage: pol.RunnerImageTag(runnerimage.ContentVersion()), CompiledBy: "b1", IntegrityKey: key, Unsafe: data}, planDir)
+	if err != nil || unsafePlan.ExecImage == nil || unsafePlan.ExecImage.Unsafe == nil {
+		t.Fatalf("the desktop's Unsafe Mode compile: %v %+v", err, unsafePlan)
+	}
+	var log strings.Builder
+	plan, _, err := EnsurePlan(PlanInputs{Home: home, Manifest: m, Meta: meta, InstallDir: dir, WorkspaceDir: ws, Policy: pol,
+		PolicySHA: "sha", Adapter: "docker-agent", Mode: manifest.ModeAutonomous, CompiledBy: "b1", Log: &log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ExecImage == nil || plan.ExecImage.Unsafe != nil {
+		t.Fatalf("the run reused the Unsafe Mode plan: %+v", plan.ExecImage)
+	}
+	if !strings.Contains(log.String(), "compiled in Unsafe Mode — recompiling without it") {
+		t.Fatalf("log = %q", log.String())
 	}
 }

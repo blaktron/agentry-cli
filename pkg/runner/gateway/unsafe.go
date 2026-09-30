@@ -46,7 +46,7 @@ func ensureUnsafeExecImage(ctx context.Context, d dockerx.Client, runnerImage st
 			return nil, fmt.Errorf("read the Unsafe Mode exec image's failure record: %w", err)
 		}
 		if strings.TrimSpace(string(failed)) == "" {
-			return unsafeRecords(ctx, d, img.Tag)
+			return unsafeRecords(ctx, d, img)
 		}
 		// A new attempt value busts the build cache from the install step
 		// on, so the failed installs are tried again, not replayed.
@@ -65,14 +65,14 @@ func ensureUnsafeExecImage(ctx context.Context, d dockerx.Client, runnerImage st
 	if err := d.Build(ctx, dir, img.Tag, args); err != nil {
 		return nil, fmt.Errorf("build Unsafe Mode exec image %s: %w", img.Tag, err)
 	}
-	return unsafeRecords(ctx, d, img.Tag)
+	return unsafeRecords(ctx, d, img)
 }
 
 // unsafeWhat names what the build installs, for its progress line.
 func unsafeWhat(img spec.ExecImageSpec) []string {
 	what := append([]string(nil), img.Packages...)
 	for _, e := range img.Unsafe.Extras {
-		if e.Kind == "pip" {
+		if e.Kind == spec.ExtraPip {
 			what = append(what, e.Spec)
 		}
 	}
@@ -90,12 +90,15 @@ func writeUnsafeContext(dir, runnerImage string, img spec.ExecImageSpec) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("exec image context: %w", err)
 	}
-	var pip, links strings.Builder
+	var packages, pip, links strings.Builder
+	for _, p := range img.Packages {
+		packages.WriteString(p + "\n")
+	}
 	for _, e := range img.Unsafe.Extras {
 		switch e.Kind {
-		case "pip":
+		case spec.ExtraPip:
 			pip.WriteString(e.Command + "\t" + e.Spec + "\n")
-		case "link":
+		case spec.ExtraLink:
 			links.WriteString(e.Command + "\t" + e.Package + "\t" + e.Path + "\n")
 		}
 	}
@@ -103,12 +106,14 @@ func writeUnsafeContext(dir, runnerImage string, img spec.ExecImageSpec) error {
 		"Dockerfile":    []byte(unsafeDockerfile(runnerImage, img)),
 		"install.sh":    unsafeInstallScript,
 		"pip-record.py": unsafePipRecord,
-		"packages.txt":  []byte(strings.Join(img.Packages, "\n") + "\n"),
+		"packages.txt":  []byte(packages.String()),
 		"pip.txt":       []byte(pip.String()),
 		"links.txt":     []byte(links.String()),
 	}
 	if slices.Contains(img.Commands, "git") {
-		files["git"] = []byte("declared\n")
+		// The directories git trusts, the run's mounts and nothing wider,
+		// as the catalogue's exec image trusts them.
+		files["git-safe-directories"] = []byte(spec.WorkspaceMount + "\n" + spec.WorkspaceMount + "/*\n" + spec.InputsMount + "/*\n")
 	}
 	for name, b := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), b, 0o600); err != nil {
@@ -118,34 +123,29 @@ func writeUnsafeContext(dir, runnerImage string, img spec.ExecImageSpec) error {
 	return nil
 }
 
-// checkUnsafeValues holds each value the context will carry to the
-// grammar unsafeexec parsed it with: a plan file is data, and a hand-edited
-// one must not become a shell line either.
+// checkUnsafeValues holds each value the context carries to the grammar
+// unsafeexec parsed it with, before anything is written: a plan file is
+// data, and a hand-edited one must not become a Dockerfile line or an
+// install argument (plan unsafe-mode.md invariant 3). Declared commands
+// that were never placed are not written anywhere, so only the placed
+// ones are held to the command grammar.
 func checkUnsafeValues(img spec.ExecImageSpec) error {
-	// Parse holds the base, the packages and the extras to their grammars
-	// exactly as it held the image's own files.
-	var extras strings.Builder
-	for _, e := range img.Unsafe.Extras {
-		if e.Kind == "pip" {
-			extras.WriteString("pip\t" + e.Command + "\t" + e.Spec + "\n")
-		} else {
-			extras.WriteString("link\t" + e.Command + "\t" + e.Package + "\t" + e.Path + "\n")
-		}
-	}
-	var index strings.Builder
-	for _, p := range img.Packages {
-		index.WriteString("x\t" + p + "\n")
-	}
-	data, err := unsafeexec.Parse(img.Unsafe.Base, []byte(index.String()), []byte(extras.String()), nil)
-	if err != nil {
+	if err := unsafeexec.ValidBase(img.Unsafe.Base); err != nil {
 		return fmt.Errorf("the plan's Unsafe Mode exec image: %w", err)
 	}
-	if data.Dropped > 0 {
-		return fmt.Errorf("the plan's Unsafe Mode exec image names a package that is not a package name")
+	for _, p := range img.Packages {
+		if !unsafeexec.ValidPackage(p) {
+			return fmt.Errorf("the plan's Unsafe Mode exec image names %q, which is not a package name", p)
+		}
 	}
-	for _, c := range img.Commands {
-		if strings.ContainsAny(c, "\t\n\"") {
-			return fmt.Errorf("the plan's Unsafe Mode exec image names a command %q that cannot be written", c)
+	for _, a := range img.Unsafe.Apt {
+		if !unsafeexec.ValidCommand(a.Command) || !unsafeexec.ValidPackage(a.Package) {
+			return fmt.Errorf("the plan's Unsafe Mode exec image places %q from %q, which the grammar refuses", a.Command, a.Package)
+		}
+	}
+	for _, e := range img.Unsafe.Extras {
+		if err := unsafeexec.CheckExtra(e); err != nil {
+			return fmt.Errorf("the plan's Unsafe Mode exec image: %w", err)
 		}
 	}
 	return nil
@@ -165,13 +165,16 @@ func unsafeDockerfile(runnerImage string, img spec.ExecImageSpec) string {
 	b.WriteString("COPY . /agentry-build/\n")
 	b.WriteString("ARG AGENTRY_ATTEMPT=0\n")
 	b.WriteString("RUN [\"/bin/sh\", \"/agentry-build/install.sh\"]\n")
-	b.WriteString("RUN [\"rm\", \"-rf\", \"/agentry-build\"]\n")
 	b.WriteString("ENTRYPOINT [\"/usr/local/bin/agentry-runner\"]\n")
 	return b.String()
 }
 
-// unsafeRecords reads what the build installed and what it did not.
-func unsafeRecords(ctx context.Context, d dockerx.Client, tag string) ([]string, error) {
+// unsafeRecords reads what the build installed and what it did not, and
+// names, for each failure, the declared commands it leaves without their
+// software: a package serves every command the index placed on it, an
+// extra its own command.
+func unsafeRecords(ctx context.Context, d dockerx.Client, img spec.ExecImageSpec) ([]string, error) {
+	tag := img.Tag
 	installed, err := d.ImageFile(ctx, tag, ExecPackagesFile)
 	if err != nil {
 		return nil, fmt.Errorf("read the Unsafe Mode exec image's package record: %w", err)
@@ -191,9 +194,30 @@ func unsafeRecords(ctx context.Context, d dockerx.Client, tag string) ([]string,
 			continue
 		}
 		what, why, _ := strings.Cut(line, "\t")
-		notInstalled = append(notInstalled, spec.ExecNotInstalledPrefix+what+" ("+strings.TrimSpace(why)+")")
+		entry := spec.ExecNotInstalledPrefix + what + " (" + strings.TrimSpace(why) + ")"
+		if cmds := commandsOf(img, what); len(cmds) > 0 {
+			entry += " for " + strings.Join(cmds, ", ")
+		}
+		notInstalled = append(notInstalled, entry)
 	}
 	sort.Strings(out)
 	sort.Strings(notInstalled)
 	return append(out, notInstalled...), nil
+}
+
+// commandsOf names the declared commands a failed package or extra served.
+func commandsOf(img spec.ExecImageSpec, what string) []string {
+	var cmds []string
+	for _, a := range img.Unsafe.Apt {
+		if a.Package == what {
+			cmds = append(cmds, a.Command)
+		}
+	}
+	for _, e := range img.Unsafe.Extras {
+		if e.Command == what || (e.Kind == spec.ExtraLink && e.Package == what) {
+			cmds = append(cmds, e.Command)
+		}
+	}
+	slices.Sort(cmds)
+	return slices.Compact(cmds)
 }

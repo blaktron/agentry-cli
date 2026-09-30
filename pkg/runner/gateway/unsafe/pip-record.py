@@ -9,7 +9,8 @@ distribution whose report carries no hash is printed without one.
 import json
 import sys
 
-report = json.load(open(sys.argv[1], encoding="utf-8"))
+with open(sys.argv[1], encoding="utf-8") as fh:
+    report = json.load(fh)
 for item in report.get("install", []):
     meta = item.get("metadata", {})
     line = "pip %s==%s" % (meta.get("name", "?"), meta.get("version", "?"))

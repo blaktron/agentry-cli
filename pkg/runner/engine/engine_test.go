@@ -1298,7 +1298,7 @@ func TestReceiptNamesWhatAnUnsafeBuildDidNotInstall(t *testing.T) {
 	}
 	want := "UNSAFE MODE: run_command restricted to the argv0 allowlist {analyzeHeadless, strings}; …" +
 		"; packages resolved at image build: binutils=2.45-7, pip decompyle3==3.9.3 sha256:ab12" +
-		"; NOT installed at image build, so absent from this run: ghidra (E: Unable to locate package ghidra), analyzeHeadless (/usr/share/ghidra/support/analyzeHeadless is not in the image)"
+		"; NOT installed at image build (the commands named are absent from this run unless the base image already carries them): ghidra (E: Unable to locate package ghidra); analyzeHeadless (/usr/share/ghidra/support/analyzeHeadless is not in the image)"
 	if got := env.CapabilitiesEnforced["exec"]; got != want {
 		t.Fatalf("exec line:\n%s\nwant\n%s", got, want)
 	}

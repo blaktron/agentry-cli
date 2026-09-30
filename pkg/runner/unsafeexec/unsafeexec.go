@@ -42,19 +42,38 @@ const (
 )
 
 // The grammars, the same the image's make-index.py applies: a plain
-// command name, a Debian package name, an exact pip requirement, and a
-// relative path inside a package.
+// command name, a Debian package name (never ending in "-", which apt
+// reads as "remove"), an exact pip requirement, a relative path inside a
+// package, and an image reference pinned by digest, anchored at both ends
+// so no line can ride before the digest into a FROM.
 var (
 	commandRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
-	packageRE = regexp.MustCompile(`^[a-z0-9][a-z0-9.+-]+$`)
+	packageRE = regexp.MustCompile(`^[a-z0-9][a-z0-9.+-]*[a-z0-9+]$`)
 	pipSpecRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*$`)
 	pathRE    = regexp.MustCompile(`^(?:[A-Za-z0-9._+-]+/)*[A-Za-z0-9._+-]+$`)
-	digestRE  = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
+	baseRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$`)
 )
 
-// ValidCommand says whether a declared command is a name the index could
-// hold. A declared command that is not is never placed.
-func ValidCommand(c string) bool { return commandRE.MatchString(c) }
+// RunnerCommand is the runner binary's name in the exec image, its
+// entrypoint: no declared command may be placed onto it.
+const RunnerCommand = "agentry-runner"
+
+// The grammars, for a caller that holds a plan's values to them again
+// (pkg/runner/gateway, before a build).
+func ValidCommand(c string) bool { return commandRE.MatchString(c) && c != RunnerCommand }
+func ValidPackage(p string) bool { return packageRE.MatchString(p) }
+func ValidPipSpec(s string) bool { return pipSpecRE.MatchString(s) }
+func ValidLinkPath(p string) bool {
+	return pathRE.MatchString(p) && !strings.Contains("/"+p+"/", "/../")
+}
+
+// ValidBase says whether an image reference is pinned by digest.
+func ValidBase(ref string) error {
+	if !baseRE.MatchString(ref) {
+		return fmt.Errorf("the Unsafe Mode base %q is not an image reference pinned by digest (policy images.unsafe wants name:tag@sha256:…)", ref)
+	}
+	return nil
+}
 
 // Data is the unsafe base's placement data.
 type Data struct {
@@ -72,25 +91,25 @@ type Data struct {
 // the closed recipe set is refused whole, because it is maintained by
 // hand and a bad row is a mistake to fix, not a row to skip.
 func Parse(base string, commands, extras, ambiguous []byte) (*Data, error) {
-	if !digestRE.MatchString(base) {
-		return nil, fmt.Errorf("the Unsafe Mode base %q is not pinned by digest (policy images.unsafe wants name:tag@sha256:…)", base)
+	if err := ValidBase(base); err != nil {
+		return nil, err
 	}
 	d := &Data{Base: base, index: map[string]string{}, extras: map[string]spec.UnsafeExtra{}, ambiguous: map[string][]string{}}
 	for _, f := range rows(commands) {
-		if len(f) != 2 || !commandRE.MatchString(f[0]) || !packageRE.MatchString(f[1]) {
+		if len(f) != 2 || !ValidCommand(f[0]) || !ValidPackage(f[1]) {
 			d.Dropped++
 			continue
 		}
 		d.index[f[0]] = f[1]
 	}
 	for _, f := range rows(ambiguous) {
-		if len(f) != 2 || !commandRE.MatchString(f[0]) {
+		if len(f) != 2 || !ValidCommand(f[0]) {
 			d.Dropped++
 			continue
 		}
 		var pkgs []string
 		for _, p := range strings.Split(f[1], ",") {
-			if packageRE.MatchString(p) {
+			if ValidPackage(p) {
 				pkgs = append(pkgs, p)
 			}
 		}
@@ -112,18 +131,40 @@ func Parse(base string, commands, extras, ambiguous []byte) (*Data, error) {
 
 func extra(f []string) (spec.UnsafeExtra, error) {
 	switch {
-	case len(f) == 3 && f[0] == "pip":
-		if !commandRE.MatchString(f[1]) || !pipSpecRE.MatchString(f[2]) {
-			return spec.UnsafeExtra{}, fmt.Errorf("pip wants a command name and name==version, got %q %q", f[1], f[2])
+	case len(f) == 3 && f[0] == string(spec.ExtraPip):
+		e := spec.UnsafeExtra{Command: f[1], Kind: spec.ExtraPip, Spec: f[2]}
+		if err := CheckExtra(e); err != nil {
+			return spec.UnsafeExtra{}, err
 		}
-		return spec.UnsafeExtra{Command: f[1], Kind: "pip", Spec: f[2]}, nil
-	case len(f) == 4 && f[0] == "link":
-		if !commandRE.MatchString(f[1]) || !packageRE.MatchString(f[2]) || !pathRE.MatchString(f[3]) || strings.Contains("/"+f[3]+"/", "/../") {
-			return spec.UnsafeExtra{}, fmt.Errorf("link wants a command name, a package name and a relative path, got %q %q %q", f[1], f[2], f[3])
+		return e, nil
+	case len(f) == 4 && f[0] == string(spec.ExtraLink):
+		e := spec.UnsafeExtra{Command: f[1], Kind: spec.ExtraLink, Package: f[2], Path: f[3]}
+		if err := CheckExtra(e); err != nil {
+			return spec.UnsafeExtra{}, err
 		}
-		return spec.UnsafeExtra{Command: f[1], Kind: "link", Package: f[2], Path: f[3]}, nil
+		return e, nil
 	}
 	return spec.UnsafeExtra{}, fmt.Errorf("want pip<TAB>command<TAB>name==version or link<TAB>command<TAB>package<TAB>path, got %q", strings.Join(f, "\t"))
+}
+
+// CheckExtra holds one recipe to its kind's grammar.
+func CheckExtra(e spec.UnsafeExtra) error {
+	if !ValidCommand(e.Command) {
+		return fmt.Errorf("an extra's command %q is not a command name, or is the runner's own", e.Command)
+	}
+	switch e.Kind {
+	case spec.ExtraPip:
+		if !ValidPipSpec(e.Spec) {
+			return fmt.Errorf("pip %s wants name==version, got %q", e.Command, e.Spec)
+		}
+	case spec.ExtraLink:
+		if !ValidPackage(e.Package) || !ValidLinkPath(e.Path) {
+			return fmt.Errorf("link %s wants a package name and a relative path inside it, got %q %q", e.Command, e.Package, e.Path)
+		}
+	default:
+		return fmt.Errorf("an extra's kind %q is neither pip nor link", e.Kind)
+	}
+	return nil
 }
 
 // rows splits a tab-separated file into its non-comment rows.
@@ -160,19 +201,20 @@ func (d *Data) Place(commands []string) (packages []string, u spec.UnsafeExecSpe
 	sorted := append([]string(nil), commands...)
 	sort.Strings(sorted)
 	for _, c := range sorted {
-		if !commandRE.MatchString(c) {
+		if !ValidCommand(c) {
 			u.Unplaced = append(u.Unplaced, spec.UnplacedCommand{Command: c})
 			continue
 		}
 		if e, ok := d.extras[c]; ok {
 			u.Extras = append(u.Extras, e)
-			if e.Kind == "link" {
+			if e.Kind == spec.ExtraLink {
 				add(e.Package)
 			}
 			continue
 		}
 		if p, ok := d.index[c]; ok {
 			add(p)
+			u.Apt = append(u.Apt, spec.AptPlacement{Command: c, Package: p})
 			continue
 		}
 		u.Unplaced = append(u.Unplaced, spec.UnplacedCommand{Command: c, Candidates: d.ambiguous[c]})
@@ -185,8 +227,8 @@ func (d *Data) Place(commands []string) (packages []string, u spec.UnsafeExecSpe
 // machine does not have it (turning Unsafe Mode on pulls it, D2; a run
 // finds it here).
 func Load(ctx context.Context, docker dockerx.Client, base string, logw io.Writer) (*Data, error) {
-	if !digestRE.MatchString(base) {
-		return nil, fmt.Errorf("the Unsafe Mode base %q is not pinned by digest (policy images.unsafe wants name:tag@sha256:…)", base)
+	if err := ValidBase(base); err != nil {
+		return nil, err
 	}
 	ok, err := docker.ImageExists(ctx, base)
 	if err != nil {

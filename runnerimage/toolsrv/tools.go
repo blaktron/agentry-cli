@@ -752,7 +752,8 @@ func (s *server) buildShims() error {
 
 // execPath is a declared command's PATH: the shim directory alone, or, in
 // Unsafe Mode (Exec.ImagePath), the shims first and then the image's own
-// PATH as this server started with it.
+// PATH, which is this server's (the image's ENV; nothing in the run sets
+// it).
 func (s *server) execPath() string {
 	if s.spec.Exec.ImagePath {
 		if p := os.Getenv("PATH"); p != "" {
@@ -800,9 +801,10 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	// declares exec and no filesystem access (it works on /inputs) gets a
 	// scratch directory instead of a failed chdir (agentry-cli#120).
 	cmd.Dir = s.execDir()
-	// A minimal, explicit environment: PATH is the whole point of the
-	// shim; HOME and LANG exist because plenty of tools crash without
-	// them, and /tmp is the only writable non-mount in the container.
+	// A minimal, explicit environment: PATH is the shim directory (with,
+	// in Unsafe Mode, the image's PATH after it); HOME and LANG exist
+	// because plenty of tools crash without them, and /tmp is the only
+	// writable non-mount in the container.
 	cmd.Env = []string{"PATH=" + s.execPath(), "HOME=/tmp", "LANG=C.UTF-8"}
 	if a.Stdin != "" {
 		cmd.Stdin = strings.NewReader(a.Stdin)

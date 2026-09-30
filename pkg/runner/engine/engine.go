@@ -717,7 +717,7 @@ func enforcedWithPackages(enforced map[string]string, packages []string) map[str
 	if len(missing) > 0 {
 		// Unsafe Mode's build goes on without what it could not install
 		// (plan unsafe-mode.md D8), and the run without that tool.
-		out["exec"] += "; NOT installed at image build, so absent from this run: " + strings.Join(missing, ", ")
+		out["exec"] += "; NOT installed at image build (the commands named are absent from this run unless the base image already carries them): " + strings.Join(missing, "; ")
 	}
 	return out
 }

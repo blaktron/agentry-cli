@@ -558,6 +558,10 @@ type UnsafeExecSpec struct {
 	// images.unsafe), whose command index and extras list placed the
 	// commands.
 	Base string `json:"base"`
+	// Apt are the declared commands the base's index placed, each with its
+	// Kali package, sorted by command: a package that fails to install
+	// names the commands it leaves absent.
+	Apt []AptPlacement `json:"apt,omitempty"`
 	// Extras are the declared commands placed by the base's extras list,
 	// sorted by command.
 	Extras []UnsafeExtra `json:"extras,omitempty"`
@@ -567,12 +571,28 @@ type UnsafeExecSpec struct {
 	Unplaced []UnplacedCommand `json:"unplaced,omitempty"`
 }
 
-// UnsafeExtra is one extras-list recipe for a declared command: "pip" (a
-// PyPI name==version installed into a venv, its command linked onto PATH)
-// or "link" (a path inside a Kali package linked onto PATH).
-type UnsafeExtra struct {
+// AptPlacement is a declared command and the Kali package the index says
+// ships it.
+type AptPlacement struct {
 	Command string `json:"command"`
-	Kind    string `json:"kind"`
+	Package string `json:"package"`
+}
+
+// ExtraKind is an extras-list recipe's kind; there are exactly two.
+type ExtraKind string
+
+const (
+	// ExtraPip installs a PyPI name==version into a venv and links its
+	// command onto PATH.
+	ExtraPip ExtraKind = "pip"
+	// ExtraLink links a path inside a Kali package onto PATH.
+	ExtraLink ExtraKind = "link"
+)
+
+// UnsafeExtra is one extras-list recipe for a declared command.
+type UnsafeExtra struct {
+	Command string    `json:"command"`
+	Kind    ExtraKind `json:"kind"`
 	// Spec is the pip requirement, name==version.
 	Spec string `json:"spec,omitempty"`
 	// Package and Path are a link's package and its path inside it.
@@ -582,10 +602,13 @@ type UnsafeExtra struct {
 
 // String is the recipe as the plan and the receipt name it.
 func (e UnsafeExtra) String() string {
-	if e.Kind == "pip" {
+	switch e.Kind {
+	case ExtraPip:
 		return "pip " + e.Spec
+	case ExtraLink:
+		return "link " + e.Package + ":/" + e.Path
 	}
-	return "link " + e.Package + ":/" + e.Path
+	return string(e.Kind) + " (unknown)"
 }
 
 // UnplacedCommand is a declared command Unsafe Mode's image cannot place,

@@ -696,15 +696,16 @@ func TestRunCommandImagePathInUnsafeModeOnly(t *testing.T) {
 
 	jailed := baseSpec(t)
 	jailed.Exec = Exec{Commands: []string{"declared-script"}}
-	got, _ := newTestServer(t, jailed).toolRunCommand(rawArgs(t, map[string]any{"command": "declared-script"}))
-	if strings.Contains(got, "ran cat") {
-		t.Fatalf("under the shim PATH a declared script found sh and cat: %q", got)
+	got, isErr := newTestServer(t, jailed).toolRunCommand(rawArgs(t, map[string]any{"command": "declared-script"}))
+	// env finds no sh on the shim PATH: the script does not run at all.
+	if isErr || !strings.HasPrefix(got, "exit code 127\n") || strings.Contains(got, "ran") {
+		t.Fatalf("under the shim PATH = %q (isError %v), want env's exit 127", got, isErr)
 	}
 
 	unsafe := baseSpec(t)
 	unsafe.Exec = Exec{Commands: []string{"declared-script"}, ImagePath: true}
 	us := newTestServer(t, unsafe)
-	got, isErr := us.toolRunCommand(rawArgs(t, map[string]any{"command": "declared-script"}))
+	got, isErr = us.toolRunCommand(rawArgs(t, map[string]any{"command": "declared-script"}))
 	if isErr || got != "exit code 0\nran cat\n" {
 		t.Fatalf("with the image PATH = %q (isError %v)", got, isErr)
 	}

