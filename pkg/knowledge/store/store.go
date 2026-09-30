@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blaktron/agentry/pkg/packseal"
@@ -357,11 +358,42 @@ func (s *Store) privateDir(prefix string) (string, error) {
 }
 
 // staleAfter is how long a private directory may outlive the process that
-// made it before sweep removes it: a run's attachment is copied into the
-// run long before, and a build's working copy is touched as it goes.
+// made it before sweep removes it. The age is the directory's own
+// modification time, which nothing moves while the Creator runs: its pages
+// are written in nested directories, and only the apply step at the end,
+// which stages beside the pack, touches the directory itself. So a build's
+// working copy is kept from the sweep two ways (agentry-cli#507): the
+// process that holds it never sweeps it (held), and touches it every
+// scratchTouchEvery so that no other process on the same store takes it
+// for a leftover. A run's attachment needs neither: it is copied into the
+// run long before.
 const staleAfter = time.Hour
 
-// sweep removes private directories a process that died left behind.
+// scratchTouchEvery is how often a held working copy is touched. It is
+// short beside staleAfter because the ticker does not run while the
+// computer sleeps: after a sleep longer than staleAfter the copy reads
+// stale to another process until the next touch, and this is how long that
+// can be. A variable so a test can watch a touch happen.
+var scratchTouchEvery = time.Minute
+
+// held are the working copies this process has been given and has not given
+// back, by path. It is the process's, not one Store's: every command, and
+// the desktop at every call, makes a Store of its own over the same runner
+// home.
+var held = struct {
+	sync.Mutex
+	dirs map[string]struct{}
+}{dirs: map[string]struct{}{}}
+
+func isHeld(dir string) bool {
+	held.Lock()
+	defer held.Unlock()
+	_, ok := held.dirs[dir]
+	return ok
+}
+
+// sweep removes private directories a process that died left behind; one
+// this process holds is never among them, however old it reads.
 func (s *Store) sweep() {
 	dirs, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -371,16 +403,62 @@ func (s *Store) sweep() {
 		if !d.IsDir() || (!strings.HasPrefix(d.Name(), ".stage-") && !strings.HasPrefix(d.Name(), ".open-")) {
 			continue
 		}
+		dir := filepath.Join(s.dir, d.Name())
+		if isHeld(dir) {
+			continue
+		}
 		if fi, err := d.Info(); err == nil && time.Since(fi.ModTime()) > staleAfter {
-			_ = os.RemoveAll(filepath.Join(s.dir, d.Name()))
+			_ = os.RemoveAll(dir)
 		}
 	}
 }
 
 // Scratch is a fresh 0700 directory inside the store for a pack in the
-// clear while something works on it (the Creator adding to a kept pack),
-// and the function that removes it.
+// clear while something works on it (the Creator making a pack or adding
+// to a kept one), and the function that removes it. Until that function is
+// called the directory is held: no sweep in this process removes it, and
+// it is touched as time passes so that no other process's does. A build
+// may run for an hour or more, and until it applies what the Creator wrote
+// its working copy reads as old as the build: a sweep in that time (a
+// Download in the desktop beside a build, another command's build or run)
+// would take it for a leftover and remove it under the build.
 func (s *Store) Scratch() (dir string, done func(), err error) {
+	if dir, done, err = s.scratch(); err != nil {
+		return "", done, err
+	}
+	held.Lock()
+	held.dirs[dir] = struct{}{}
+	held.Unlock()
+	stop := make(chan struct{})
+	go func(every time.Duration) {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				_ = os.Chtimes(dir, now, now)
+			}
+		}
+	}(scratchTouchEvery)
+	var once sync.Once // closing stop twice would panic
+	remove := done
+	return dir, func() {
+		once.Do(func() {
+			close(stop)
+			held.Lock()
+			delete(held.dirs, dir)
+			held.Unlock()
+			remove()
+		})
+	}, nil
+}
+
+// scratch is a fresh 0700 directory inside the store and the function that
+// removes it, swept like any other private directory once it is an hour
+// old.
+func (s *Store) scratch() (dir string, done func(), err error) {
 	s.sweep()
 	if dir, err = s.privateDir(".open-"); err != nil {
 		return "", func() {}, err
@@ -393,7 +471,7 @@ func (s *Store) Scratch() (dir string, done func(), err error) {
 // the function that removes it. The pack's pages rest in the clear there
 // only until done is called (a run calls it at teardown).
 func (s *Store) OpenScratch(ctx context.Context, name string) (p *knowledge.Pack, done func(), err error) {
-	dir, done, err := s.Scratch()
+	dir, done, err := s.scratch()
 	if err != nil {
 		return nil, done, err
 	}
