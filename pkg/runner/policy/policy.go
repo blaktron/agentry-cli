@@ -69,8 +69,11 @@ const (
 	// DefaultUnsafeImage is the Unsafe Mode base (agentry-notes
 	// plans/unsafe-mode.md §4.1; agentry-dockerimages#15): Kali with a
 	// command index and an extras list, pinned by digest, amd64 and arm64.
-	// It moves with a CLI release, re-pinned monthly (D10).
-	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.2@sha256:87fa4ae406a9621cef3a4cffcdccf2a512da03141ca21727ce663ca715a191da"
+	// It moves with a CLI release, re-pinned monthly (D10). Since
+	// 2026.09.30.3 the index also holds the programs the base itself carries
+	// through alternatives links or that Contents left ambiguous
+	// (agentry-dockerimages#23; agentry-cli#516).
+	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.3@sha256:7c3da264fd0e8420f0367fa179e6b89110fa2f86bef8850f48d5f89ae21ab869"
 	// Default trusted repositories for capabilities.mcpServers.
 	DefaultNPMRegistry  = "https://registry.npmjs.org"
 	DefaultPyPIRegistry = "https://pypi.org"
