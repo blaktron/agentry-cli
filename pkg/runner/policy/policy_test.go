@@ -589,7 +589,7 @@ func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 	}
 	pol := Default()
 	pol.WebSearch.Provider = "bing"
-	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), `webSearch.provider "bing" must be none, brave or youcom`) {
+	if err := pol.Validate(); err == nil || !strings.Contains(err.Error(), `webSearch.provider "bing" must be none, brave, exa, perplexity, tavily or youcom`) {
 		t.Fatalf("bing accepted: %v", err)
 	}
 
@@ -600,6 +600,9 @@ func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 		{WebSearchKey{Provider: "youcom"}, "YDC_API_KEY", "You.com"},
 		{WebSearchKey{Provider: "brave"}, "BRAVE_API_KEY", "Brave"},
 		{WebSearchKey{Provider: "brave", APIKeyEnv: "MY_SEARCH_KEY"}, "MY_SEARCH_KEY", "Brave"},
+		{WebSearchKey{Provider: "tavily"}, "TAVILY_API_KEY", "Tavily"},
+		{WebSearchKey{Provider: "exa"}, "EXA_API_KEY", "Exa"},
+		{WebSearchKey{Provider: "perplexity"}, "PERPLEXITY_API_KEY", "Perplexity"},
 	} {
 		if got := c.key.KeyEnv(); got != c.env {
 			t.Fatalf("%+v reads $%s, want $%s", c.key, got, c.env)

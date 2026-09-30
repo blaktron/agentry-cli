@@ -31,7 +31,6 @@ const (
 	BraveName           = "brave"
 	BraveDefaultBaseURL = "https://api.search.brave.com"
 	bravePath           = "/res/v1/llm/context"
-	braveMaxResponse    = 2 << 20
 	braveTokenBudget    = 2048
 	braveTokensPerURL   = 512
 	braveSnippetJoin    = " … "
@@ -49,7 +48,7 @@ type BraveConfig = ClientConfig
 
 // NewBrave builds the client, refusing a missing key.
 func NewBrave(cfg BraveConfig) (*Brave, error) {
-	c, err := newClient(BraveName, cfg, BraveDefaultBaseURL, bravePath, braveMaxResponse)
+	c, err := newClient(BraveName, cfg, BraveDefaultBaseURL, bravePath)
 	if err != nil {
 		return nil, err
 	}

@@ -718,6 +718,30 @@ func TestWebSearchWithThePersonsBraveKey(t *testing.T) {
 	}
 }
 
+// TestEveryProviderTheImageBuildsSearchesWithThePersonsKey: whatever
+// provider the policy names (it admits exactly websearch.Providers), the
+// tools server builds that provider's client from the key in its own
+// environment, and a searcher never comes without the scanner
+// (agentry-cli#513: Tavily, Exa and Perplexity beside Brave and You.com).
+func TestEveryProviderTheImageBuildsSearchesWithThePersonsKey(t *testing.T) {
+	for _, name := range websearch.Providers() {
+		if name == "none" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			spec := baseSpec(t)
+			spec.Web = Web{Enabled: true, Scan: WebScanJev, Search: name,
+				Ledger: filepath.Join(spec.OutDir, "receipts", "web.ndjson")}
+			t.Setenv(EnvWebJevKey, "person-jev-key")
+			t.Setenv(EnvWebSearchKey, "person-search-key")
+			w := newTestServer(t, spec).newWebState()
+			if ps, ok := w.searcher.(webscan.ProviderSearch); !ok || ps.Provider.Name() != name || w.scanner == nil {
+				t.Fatalf("no %s searcher from the person's key: %#v", name, w.searcher)
+			}
+		})
+	}
+}
+
 // flagging withholds any text containing word.
 type flagging struct {
 	fakeScanner
