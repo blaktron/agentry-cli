@@ -359,12 +359,14 @@ func (s *Store) privateDir(prefix string) (string, error) {
 
 // staleAfter is how long a private directory may outlive the process that
 // made it before sweep removes it. The age is the directory's own
-// modification time, which nothing a build writes moves: its pages and the
-// pack it applies are in nested directories. So a build's working copy is
-// kept from the sweep two ways (agentry-cli#507): the process that holds it
-// never sweeps it (held), and touches it every scratchTouchEvery so that no
-// other process on the same store takes it for a leftover. A run's
-// attachment needs neither: it is copied into the run long before.
+// modification time, which nothing moves while the Creator runs: its pages
+// are written in nested directories, and only the apply step at the end,
+// which stages beside the pack, touches the directory itself. So a build's
+// working copy is kept from the sweep two ways (agentry-cli#507): the
+// process that holds it never sweeps it (held), and touches it every
+// scratchTouchEvery so that no other process on the same store takes it
+// for a leftover. A run's attachment needs neither: it is copied into the
+// run long before.
 const staleAfter = time.Hour
 
 // scratchTouchEvery is how often a held working copy is touched. It is
@@ -416,8 +418,10 @@ func (s *Store) sweep() {
 // to a kept one), and the function that removes it. Until that function is
 // called the directory is held: no sweep in this process removes it, and
 // it is touched as time passes so that no other process's does. A build
-// may run for an hour or more, and Keep and Reseal sweep before they seal
-// what it made.
+// may run for an hour or more, and until it applies what the Creator wrote
+// its working copy reads as old as the build: a sweep in that time (a
+// Download in the desktop beside a build, another command's build or run)
+// would take it for a leftover and remove it under the build.
 func (s *Store) Scratch() (dir string, done func(), err error) {
 	if dir, done, err = s.scratch(); err != nil {
 		return "", done, err

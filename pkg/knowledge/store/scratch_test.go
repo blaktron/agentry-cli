@@ -33,18 +33,23 @@ func exists(path string) bool {
 // TestABuildsWorkingCopyIsNotSweptByTheProcessThatHoldsIt (agentry-cli#507):
 // a build on this computer is given an hour (DR-54), and the store sweeps
 // private directories older than an hour as a dead process's leftovers.
-// Keep and Reseal sweep before they seal, so a build that used its hour had
-// its own working copy removed under it and the pages it wrote were lost.
-// A scratch a live process holds is never swept, by that process or by
-// another store on the same home in it; what a dead process left still is;
-// and a scratch given back is no longer held.
+// While the Creator runs nothing moves its working copy's own modification
+// time, so past the hour any sweep took it for one and removed it under
+// the build: seen live with v0.6.29, where another process's `knowledge
+// import` ended a running build with "wrote no page". In one process the
+// sweeps are another command's (the desktop's Download beside a build), and
+// Keep's and Reseal's own, which the apply step's staging happens to spare
+// by touching the directory just before them; this holds them all off
+// whatever the age. What a dead process left is still swept, and a working
+// copy given back is no longer held. (Another process's sweep is
+// TestAHeldWorkingCopyIsKeptFreshForOtherProcesses.)
 func TestABuildsWorkingCopyIsNotSweptByTheProcessThatHoldsIt(t *testing.T) {
 	ctx := context.Background()
 	reg := knowledgetest.NewRegistry(t)
 	a := newMachine(t, reg, "alice")
 
-	// Create: the pack is built inside a scratch, which is two hours old by
-	// the time it is kept.
+	// Create: the pack is built inside a scratch, which reads two days old
+	// while the build runs and when it is kept.
 	scratch, done, err := a.store().Scratch()
 	if err != nil {
 		t.Fatal(err)
@@ -59,23 +64,33 @@ func TestABuildsWorkingCopyIsNotSweptByTheProcessThatHoldsIt(t *testing.T) {
 	}
 	age(t, scratch)
 	age(t, dead)
+	// Mid-build, another command in this process sweeps: the desktop's
+	// Download, or a second build's Scratch.
+	_, otherDone, err := a.store().Scratch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDone()
+	if !exists(built) {
+		t.Fatal("another command's sweep removed a build's working copy under it")
+	}
+	if exists(dead) {
+		t.Fatal("a directory a dead process left two days ago was not swept")
+	}
 	e, err := a.store().Keep(ctx, built)
 	if err != nil {
-		t.Fatalf("a build that took two hours could not be kept: %v", err)
+		t.Fatalf("a build whose working copy reads two days old could not be kept: %v", err)
 	}
 	if !exists(built) {
 		t.Fatal("Keep swept the working copy it was sealing")
-	}
-	if exists(dead) {
-		t.Fatal("a directory a dead process left two hours ago was not swept")
 	}
 	done()
 	if exists(scratch) {
 		t.Fatal("a scratch given back is still there")
 	}
 
-	// Add: the kept pack is opened into a scratch, changed, and resealed
-	// two hours later.
+	// Add: the kept pack is opened into a scratch, changed, and resealed,
+	// its scratch reading two days old throughout.
 	scratch, done, err = a.store().Scratch()
 	if err != nil {
 		t.Fatal(err)
@@ -99,14 +114,17 @@ func TestABuildsWorkingCopyIsNotSweptByTheProcessThatHoldsIt(t *testing.T) {
 	age(t, scratch)
 	// Any sweep in the process leaves it: another command's scratch, then
 	// the reseal's own.
-	_, otherDone, err := a.store().Scratch()
+	_, otherDone, err = a.store().Scratch()
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherDone()
+	if !exists(work) {
+		t.Fatal("another command's sweep removed an add's working copy under it")
+	}
 	got, err := a.store().Reseal(ctx, "runbook", work)
 	if err != nil {
-		t.Fatalf("an add that took two hours could not be resealed: %v", err)
+		t.Fatalf("an add whose working copy reads two days old could not be resealed: %v", err)
 	}
 	if got.Manifest.SHA256 == e.Manifest.SHA256 {
 		t.Fatal("the reseal kept the first build's digest")
