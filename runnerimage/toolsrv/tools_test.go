@@ -676,6 +676,32 @@ func TestRunCommandScrubsGrantedSecrets(t *testing.T) {
 	}
 }
 
+// run_command's description tells the agent the PATH it will actually get
+// (agentry-cli#502): the shims alone by default, the image's PATH after the
+// shims in Unsafe Mode (RUNNER-DEVIATIONS DR-53). The default posture's sentence is pinned
+// verbatim; Unsafe Mode's must still say only a declared command can be
+// called, since the argv[0] allowlist holds there too.
+func TestRunCommandDescriptionFollowsThePath(t *testing.T) {
+	jailed := baseSpec(t)
+	jailed.Exec = Exec{Commands: []string{"echo"}}
+	if got, want := newTestServer(t, jailed).tools[ToolRunCommand].description,
+		"Run one declared command in the workspace with a PATH restricted to the declared commands. Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."; got != want {
+		t.Errorf("default description = %q, want %q", got, want)
+	}
+
+	unsafe := baseSpec(t)
+	unsafe.Exec = Exec{Commands: []string{"echo"}, ImagePath: true}
+	got := newTestServer(t, unsafe).tools[ToolRunCommand].description
+	for _, want := range []string{"Only a declared command can be called", "the image's own PATH", "programs the image holds"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Unsafe Mode description = %q, want it to say %q", got, want)
+		}
+	}
+	if strings.Contains(got, "restricted to the declared commands") {
+		t.Errorf("Unsafe Mode description = %q still claims the restricted PATH", got)
+	}
+}
+
 // In Unsafe Mode (Exec.ImagePath; agentry-cli#490, the operator's decision
 // of 2026-09-30) a declared command runs with the image's PATH after the
 // shims, so a declared script finds the interpreter and programs it calls.
