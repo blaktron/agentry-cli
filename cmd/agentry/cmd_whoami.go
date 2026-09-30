@@ -58,6 +58,27 @@ type billingAccount struct {
 	PeriodEnd      string            `json:"periodEnd"`
 	PendingTier    string            `json:"pendingTier,omitempty"`
 	PrivateAgents  privateAgentsView `json:"privateAgents"`
+	Promo          *promoView        `json:"promo,omitempty"`
+}
+
+// promoView is a promo trial on a person's own account (plan
+// promo-codes.md §4.6, agentry-enterprise#280): state "running" while
+// the trial runs, "eligible" while the account may still redeem a code.
+// During a trial the code's credits are the account's only credits, so
+// they, not the allowance (0 for Promo Pro), are what the balance is of.
+type promoView struct {
+	State   string `json:"state"`
+	Code    string `json:"code,omitempty"`
+	Credits int64  `json:"credits,omitempty"`
+	EndsAt  string `json:"endsAt,omitempty"`
+}
+
+// runningPromo is the account's promo trial while it runs, else nil.
+func (a *billingAccount) runningPromo() *promoView {
+	if a.Promo != nil && a.Promo.State == "running" {
+		return a.Promo
+	}
+	return nil
 }
 
 // privateAgentsView is the private-agent cap as the registry applies it.
@@ -178,6 +199,7 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 	}
 	_, _ = fmt.Fprintf(out, "tier:     %s\n", tier)
 	pool := a.MemberOf != ""
+	promo := a.runningPromo()
 	switch {
 	case pool && a.Unmetered:
 		// Nothing is ever debited, so a balance out of an allowance would
@@ -192,9 +214,17 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 	case pool:
 		_, _ = fmt.Fprintf(out, "pool:     %d of %d credits (a submission costs %d; resets on %s)\n",
 			a.Balance, a.Allowance, a.SubmissionCost, dayOf(a.PeriodEnd))
+	case promo != nil && promo.Credits > 0:
+		// Nothing resets: the promo credits expire at the trial's end and
+		// Standard's allowance starts then (plan promo-codes.md §4.5).
+		_, _ = fmt.Fprintf(out, "credits:  %d of %d promo credits (a submission costs %d; they expire on %s)\n",
+			a.Balance, promo.Credits, a.SubmissionCost, dayOf(a.promoEnd()))
 	default:
 		_, _ = fmt.Fprintf(out, "credits:  %d of %d (a submission costs %d; resets on %s)\n",
 			a.Balance, a.Allowance, a.SubmissionCost, dayOf(a.PeriodEnd))
+	}
+	if promo != nil {
+		_, _ = fmt.Fprintf(out, "promo:    code %s, until %s; you will not be charged\n", promo.Code, dayOf(a.promoEnd()))
 	}
 	if a.Seats != nil {
 		_, _ = fmt.Fprintf(out, "seats:    %s\n", seatsPhrase(*a.Seats))
@@ -308,12 +338,24 @@ func fetchBillingAccount(ctx context.Context, client *apiclient.ClientWithRespon
 	return &acct, json.RawMessage(body), nil
 }
 
-// tierLabel is the product's name for a tier — the two a person may hold
-// and the two an organization may (plan organization-subscriptions.md §4).
+// promoEnd is the day the running promo trial ends: its own endsAt, else
+// the period's end, which billing sets to the same instant.
+func (a *billingAccount) promoEnd() string {
+	if a.Promo != nil && a.Promo.EndsAt != "" {
+		return a.Promo.EndsAt
+	}
+	return a.PeriodEnd
+}
+
+// tierLabel is the product's name for a tier — the three a person may
+// hold and the two an organization may (plan organization-subscriptions.md
+// §4; Promo Pro, plan promo-codes.md §4.1).
 func tierLabel(t string) string {
 	switch t {
 	case "pro":
 		return "Pro"
+	case "promo_pro":
+		return "Promo Pro"
 	case "standard":
 		return "Standard"
 	case "business":
