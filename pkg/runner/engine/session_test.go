@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -842,5 +844,88 @@ func TestSessionEnvelopeNamesThePolicyFile(t *testing.T) {
 	<-done
 	if env.Policy == nil || env.Policy.Path != "/etc/agentry/policy.yaml" || env.Policy.Source != receipt.PolicySourceFlag || env.Policy.SHA256 != p.Plan.PolicySHA256 {
 		t.Fatalf("session policy = %+v", env.Policy)
+	}
+}
+
+// A file added the moment a turn's assistant_turn event is seen gets its
+// own notice turn (agentry-cli#487). The session protocol's client reacts
+// to that event at once, and a turn used to emit it while still holding the
+// turn lock, so an add in that window found the session "busy" and its
+// notice waited for the next user turn: the add gave input_added and
+// nothing more, and the protocol's events differed from the API's. The
+// test reacts to every assistant_turn from a user turn as that client does,
+// many times, so the window is hit if it is still there.
+func TestAnInputAddedAsATurnEndsGetsItsNoticeTurn(t *testing.T) {
+	ctx := context.Background()
+	const rounds = 200
+	// Room for every round's two turns: the fixture's caps are 3 user
+	// turns and 10 harness turns.
+	s, _, _ := startAdapterSession(t, ctx, adapter.DefaultName, func(p *Params, _ *fakeHarness) {
+		p.Plan.Harness.Session.Budgets.MaxUserTurns = rounds + 1
+		p.Budgets.MaxTurns = 4 * rounds
+	})
+	inputs := t.TempDir()
+	for i := 0; i < rounds; i++ {
+		path := filepath.Join(inputs, fmt.Sprintf("notes-%d.txt", i))
+		if err := os.WriteFile(path, []byte("notes"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.After(10 * time.Second)
+		sent := make(chan error, 1)
+		go func() { sent <- s.Send(ctx, fmt.Sprintf("turn %d", i)) }()
+		// Read to this user turn's assistant_turn, as the protocol's reader
+		// does, and add the file at once.
+		for answered := false; !answered; {
+			select {
+			case ev := <-s.Events():
+				answered = ev.Kind == session.KindAssistantTurn
+			case <-deadline:
+				t.Fatalf("round %d: the user turn was never answered", i)
+			}
+		}
+		if err := s.AddInput(ctx, path); err != nil {
+			t.Fatalf("round %d: add: %v", i, err)
+		}
+		select {
+		case err := <-sent:
+			if err != nil {
+				t.Fatalf("round %d: send: %v", i, err)
+			}
+		case <-deadline:
+			t.Fatalf("round %d: Send never returned", i)
+		}
+		// The add's own turn: its input_added, the synthetic user turn that
+		// tells the agent, and that turn's answer, before anything else.
+		want := []session.Kind{session.KindInputAdded, session.KindUserTurn, session.KindAssistantTurn}
+		var got []session.Kind
+		synthetic := false
+		for len(got) < len(want) {
+			select {
+			case ev := <-s.Events():
+				if ev.Kind != session.KindInputAdded && ev.Kind != session.KindUserTurn && ev.Kind != session.KindAssistantTurn {
+					continue
+				}
+				if ev.Kind == session.KindUserTurn {
+					synthetic = ev.Synthetic
+				}
+				got = append(got, ev.Kind)
+			case <-deadline:
+				t.Fatalf("round %d: the add's notice turn never came; read %v", i, got)
+			}
+		}
+		if !slices.Equal(got, want) || !synthetic {
+			t.Fatalf("round %d: after the add read %v (synthetic user turn %v), want %v", i, got, synthetic, want)
+		}
+	}
+	if _, err := s.End(ctx, false); err != nil {
+		t.Logf("end: %v", err)
+	}
+	// After End, an add starts no turn.
+	path := filepath.Join(inputs, "late.txt")
+	if err := os.WriteFile(path, []byte("late"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddInput(ctx, path); !errors.Is(err, session.ErrEnded) {
+		t.Fatalf("an add after End: %v, want ErrEnded", err)
 	}
 }
