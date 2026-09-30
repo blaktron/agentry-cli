@@ -372,3 +372,44 @@ func TestWhoamiPrivateAgentLineReadsEnabled(t *testing.T) {
 		})
 	}
 }
+
+// A promo trial (plan promo-codes.md §7, agentry-cli#486): the tier reads
+// Promo Pro, the credits are the code's rather than an allowance that
+// resets (Promo Pro's allowance is 0), the trial names its code and its
+// end, and the pending tier says Standard from that day.
+func TestWhoamiNamesAPromoTrial(t *testing.T) {
+	if got := tierLabel("promo_pro"); got != "Promo Pro" {
+		t.Errorf("tierLabel(promo_pro) = %q, want Promo Pro", got)
+	}
+	var out strings.Builder
+	writeSubscription(&out, &billingAccount{
+		Tier: "promo_pro", Balance: 88, Allowance: 0, SubmissionCost: 10,
+		PeriodEnd: "2026-10-30T09:00:00Z", PendingTier: "standard",
+		Promo: &promoView{State: "running", Code: "LAUNCH", Credits: 100, EndsAt: "2026-10-30T09:00:00Z"},
+	})
+	got := out.String()
+	for _, want := range []string{
+		"tier:     Promo Pro\n",
+		"credits:  88 of 100 promo credits (a submission costs 10; they expire on 30 October 2026)\n",
+		"promo:    code LAUNCH, until 30 October 2026; you will not be charged\n",
+		"changes:  Standard from 30 October 2026\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("whoami lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "resets on") || strings.Contains(got, "of 0") {
+		t.Errorf("a promo trial was given an allowance that resets:\n%s", got)
+	}
+
+	// An account that may still redeem is on Standard: nothing about a
+	// promo is printed (redeeming is the site's, out of scope here).
+	out.Reset()
+	writeSubscription(&out, &billingAccount{
+		Tier: "standard", Balance: 50, Allowance: 50, SubmissionCost: 10,
+		PeriodEnd: "2026-10-30T09:00:00Z", Promo: &promoView{State: "eligible"},
+	})
+	if s := out.String(); strings.Contains(s, "promo") || !strings.Contains(s, "credits:  50 of 50 (") {
+		t.Errorf("an eligible Standard account:\n%s", s)
+	}
+}
