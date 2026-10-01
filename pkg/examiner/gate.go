@@ -9,6 +9,7 @@ import (
 	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/judge"
 	"github.com/blaktron/agentry/pkg/manifest"
+	"github.com/blaktron/agentry/pkg/ruleset"
 )
 
 // The registry's gate, restated (plan desktop-review-key-and-run-cards.md
@@ -51,8 +52,11 @@ const (
 	branchOverThreshold        = "over-threshold"
 )
 
-// The gate's fallback auto-publish threshold, when the policy names none.
-const fallbackMaxAuto = "low"
+// fallbackMaxAuto is the gate's auto-publish threshold when the policy
+// names none: the ruleset's baseline, read from the core's own package as
+// the core's gate reads it (medium since ruleset 0.3.0, agentry#773), so a
+// core pin that moves it moves this too.
+func fallbackMaxAuto() string { return ruleset.BaselineMaxAutoPublishSeverity() }
 
 // couldNotScan are the scanner ids that say a stage could not read part of
 // the package: they force review whatever the threshold.
@@ -122,7 +126,7 @@ func AutoPublishUpTo(p gatecases.Policy) string {
 	if _, ok := severityRanks[p.MaxAutoPublishSeverity]; ok {
 		return p.MaxAutoPublishSeverity
 	}
-	return fallbackMaxAuto
+	return fallbackMaxAuto()
 }
 
 // held routes a needs_review decision: an organization's namespace goes to

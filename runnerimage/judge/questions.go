@@ -39,6 +39,24 @@ const (
 	RubricIDDestructive          = "C6_destructive_actions"
 )
 
+// RubricSeverity is the severity S5 records for a rubric question's score:
+// none below 2, medium at 2, high at 3. An attempted injection and an
+// undeclared capability are high from 2 (probable), so they reach a person
+// whatever the auto-publish threshold (D16 of plan scan-and-run-tweaks,
+// ruleset 0.2.2). The gate's S5 and the draft check both read it, so what a
+// draft is told and what the gate does cannot drift apart.
+func RubricSeverity(id string, score int) string {
+	switch {
+	case score >= 3:
+		return "high"
+	case score == 2 && (id == RubricIDInjection || id == RubricIDUndeclaredCapability):
+		return "high"
+	case score == 2:
+		return "medium"
+	}
+	return ""
+}
+
 // RubricQuestions is the rubric's six, in the gate's order (C1 to C6). It
 // returns a fresh slice, so no caller can change what another asks.
 func RubricQuestions() []Question {
