@@ -3,6 +3,7 @@ package drafter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,6 +174,52 @@ func TestAFlaggedDraftsRepairTurnIsAlsoGivenTheTask(t *testing.T) {
 	}
 }
 
+// TestAnInstructionPastTheCapGetsTheRepairTurn: a draft the rules pass
+// whose instructions are past the Drafter's cap (agentry-cli#521; plan
+// knowledge-and-drafter.md D13) gets the one repair turn, told the size and
+// the cap, and the shortened instructions it writes back are kept.
+func TestAnInstructionPastTheCapGetsTheRepairTurn(t *testing.T) {
+	out := t.TempDir()
+	passing := strings.Replace(postDraft, `"intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, "", 1)
+	long := "# Meeting actions\n\n## Background\n\n" + strings.Repeat("A decision is a choice the meeting made. ", 1000)
+	passing = strings.Replace(passing, `"instructions": "# Meeting actions\n\nRead the notes under /inputs and list the decisions and the actions.\n"`,
+		`"instructions": "`+strings.ReplaceAll(long, "\n", `\n`)+`"`, 1)
+	short := "# Meeting actions\n\n## Role\n\nLists decisions.\n"
+	var tasks []string
+	p := PostStep{
+		OutDir: out, Description: "Summarize my notes.", Task: "Summarize my notes.",
+		Scan: webscan.Result{Verdict: webscan.Pass}, Ref: Namespace + "/" + Name + "@" + Version, Checker: &postChecker{},
+		Repair: func(_ context.Context, rt RepairTurn) (*receipt.Envelope, error) {
+			tasks = append(tasks, rt.Task)
+			if err := os.MkdirAll(filepath.Join(rt.OutDir, "reports"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(rt.OutDir, "reports", instructionsReport), []byte(short), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return &receipt.Envelope{Status: "ok", Result: json.RawMessage(postRepaired)}, nil
+		},
+	}
+	d, _, err := p.Run(context.Background(), firstTurn(t, out, passing), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(long) <= MaxInstructionBytes {
+		t.Fatalf("the instructions are %d bytes, not past the cap", len(long))
+	}
+	want := fmt.Sprintf("- the instructions: %d bytes, past the Drafter's cap of %d bytes;", len(long), MaxInstructionBytes)
+	if len(tasks) != 1 || !strings.Contains(tasks[0], "## The rules' report\n\n"+want) {
+		t.Fatalf("the repair task(s):\n%.600s", strings.Join(tasks, "\n---\n"))
+	}
+	if !d.IsRepaired() || d.Instructions != short || !strings.Contains(d.Notes, "the instructions: ") {
+		t.Fatalf("the draft: repaired %v, %d bytes of instructions, notes %q", d.IsRepaired(), len(d.Instructions), d.Notes)
+	}
+	// Within the cap, nothing is sent back.
+	if lines, refused := rulesReport(&Draft{Instructions: strings.Repeat("x", MaxInstructionBytes)}); refused || len(lines) != 0 {
+		t.Fatalf("an instruction at the cap: %v", lines)
+	}
+}
+
 // TestAPostStepWithNoCheckerAndNoRepairSaysSo: a client that could make no
 // checker, or runs no repair turn, gets a draft that says so, never one
 // that reads as checked or as refused with nothing tried.
@@ -210,6 +257,35 @@ func TestTheRepairTurnHasOnlyWhatTheFirstLeft(t *testing.T) {
 	for _, spent := range []receipt.Usage{{WallMS: 900000}, {Turns: 60}, {CostUSD: 1}} {
 		if _, ok := repairBudgets(b, spent); ok {
 			t.Errorf("a repair after the first turn spent %+v", spent)
+		}
+	}
+}
+
+// TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed: a second answer is
+// not kept when it breaks a rule the first passed (validate's first, then
+// the instruction cap), and is kept when it mends what the first broke.
+func TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed(t *testing.T) {
+	draft := func(passed, long bool) *Draft {
+		d := &Draft{Validation: json.RawMessage(fmt.Sprintf(`{"passed":%t}`, passed)), Instructions: "# X\n"}
+		if long {
+			d.Instructions = strings.Repeat("x", MaxInstructionBytes+1)
+		}
+		return d
+	}
+	for _, tc := range []struct {
+		name          string
+		first, second *Draft
+		keepFirst     bool
+	}{
+		{"a flag's repair that goes past the cap", draft(true, false), draft(true, true), true},
+		{"a repair that breaks validate to come within the cap", draft(true, true), draft(false, false), true},
+		{"a repair that comes within the cap", draft(true, true), draft(true, false), false},
+		{"a repair that mends validate, past the cap", draft(false, false), draft(true, true), false},
+		{"a repair that breaks both", draft(true, false), draft(false, true), true},
+		{"a repair that changes neither", draft(true, false), draft(true, false), false},
+	} {
+		if got := keepFirst(tc.first, tc.second); got != tc.keepFirst {
+			t.Errorf("%s: keepFirst %v", tc.name, got)
 		}
 	}
 }

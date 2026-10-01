@@ -32,7 +32,7 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "drafter"
-	Version   = "1.1.1"
+	Version   = "1.2.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a draft made on this computer is
@@ -55,3 +55,15 @@ const (
 	MaxOpenQuestions = 2
 	MaxNoteBullets   = 5
 )
+
+// MaxInstructionBytes is the most the instruction file the Drafter writes
+// may hold (plan knowledge-and-drafter.md D5, D13; agentry-cli#521): most
+// QuickAgents run with no network, so a drafted instruction carries the
+// domain knowledge the run cannot look up, 20–30 KB for a big task. It is
+// held equal to the core's draft-check bound (judge.DraftMaxInstruction,
+// agentry#789), so no instruction it returns is past what the check reads.
+// The check also holds the description, the manifest and the instruction to
+// 48 KiB together (judge.DraftMaxState) and reads a draft past that as
+// not scanned, which the post-step records and never counts as a pass. A
+// longer instruction goes to the repair turn to be shortened.
+const MaxInstructionBytes = 32 << 10

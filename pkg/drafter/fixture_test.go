@@ -130,7 +130,10 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	if strings.TrimSpace(d.Instructions) == "" {
 		out = append(out, "no instructions")
 	} else if !inOrder(d.Instructions, instructionShape) {
-		out = append(out, "the instructions are not in the shape Role, Inputs, Steps, Output")
+		out = append(out, "the instructions are not in the shape Role, Inputs, Steps, Output, Background, Checks")
+	}
+	if n := len(d.Instructions); n > MaxInstructionBytes {
+		out = append(out, fmt.Sprintf("instructions of %d bytes, want at most %d", n, MaxInstructionBytes))
 	}
 	// The Drafter's own caps (plan builder-simplify.md §5.1, D8).
 	if n := len(m.Intake); n > MaxIntake {
@@ -149,8 +152,9 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 }
 
 // instructionShape is the generated AGENT.md's fixed shape (plan
-// builder-simplify.md §5.1): its four headings, in this order.
-var instructionShape = []string{"## Role", "## Inputs", "## Steps", "## Output"}
+// builder-simplify.md §5.1; Background and Checks since agentry-cli#521,
+// plan knowledge-and-drafter.md D5): its six headings, in this order.
+var instructionShape = []string{"## Role", "## Inputs", "## Steps", "## Output", "## Background", "## Checks"}
 
 // inOrder says every heading is a line of text, in order.
 func inOrder(text string, headings []string) bool {

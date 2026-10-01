@@ -45,11 +45,19 @@ const FailureTooLarge = "too-large"
 
 // The bounds of a draft scan's state. A draft asked about is one request,
 // under Jev's input window: a description the site admits, a manifest of
-// a few kilobytes, and an instruction of about a screen.
+// a few kilobytes, and an instruction of up to 32 KiB, since a drafted
+// instruction carries the domain knowledge a run with no network cannot
+// look up and runs 20–30 KB for a big task (plan knowledge-and-drafter.md
+// D13, agentry#789). The Drafter is to hold its own cap at this one
+// (agentry-cli#521). The three together are held to 48 KiB, the largest
+// state before the instruction bound rose, so no draft request is larger
+// than the window's figure (internal/scan's typesafe InputLimit, 50 KB
+// with the questions around it) for a long instruction to fit.
 const (
 	DraftMaxDescription = 8 << 10
 	DraftMaxManifest    = 16 << 10
-	DraftMaxInstruction = 24 << 10
+	DraftMaxInstruction = 32 << 10
+	DraftMaxState       = 48 << 10
 )
 
 // DraftInput is what a draft scan reads: the person's description, the
@@ -114,7 +122,7 @@ func draftHashOf(model string, qs []Question) string {
 	for _, q := range qs {
 		parts = append(parts, "question="+q.ID+"="+q.Text)
 	}
-	parts = append(parts, fmt.Sprintf("bounds=%d/%d/%d", DraftMaxDescription, DraftMaxManifest, DraftMaxInstruction),
+	parts = append(parts, fmt.Sprintf("bounds=%d/%d/%d/%d", DraftMaxDescription, DraftMaxManifest, DraftMaxInstruction, DraftMaxState),
 		"thresholds=0.5/0.7/0.9", fmt.Sprintf("flag=%d", WithholdScore),
 		fmt.Sprintf("band=%.2f/%.2f", BandLow, BandHigh), fmt.Sprintf("samples=%d", Samples))
 	return Hash(parts...)
@@ -127,10 +135,11 @@ func draftHashOf(model string, qs []Question) string {
 // is a verdict.
 func (s *DraftScanner) Scan(ctx context.Context, in DraftInput) DraftResult {
 	res := DraftResult{Model: s.asker.Model(), QuestionSet: s.QuestionSet()}
-	if len(in.Description) > DraftMaxDescription || len(in.ManifestJSON) > DraftMaxManifest || len(in.Instruction) > DraftMaxInstruction {
+	if len(in.Description) > DraftMaxDescription || len(in.ManifestJSON) > DraftMaxManifest || len(in.Instruction) > DraftMaxInstruction ||
+		len(in.Description)+len(in.ManifestJSON)+len(in.Instruction) > DraftMaxState {
 		res.Verdict, res.Failure = VerdictNotScanned, FailureTooLarge
-		res.Err = fmt.Errorf("judge: a draft of %d/%d/%d bytes is past the bounds %d/%d/%d", len(in.Description), len(in.ManifestJSON),
-			len(in.Instruction), DraftMaxDescription, DraftMaxManifest, DraftMaxInstruction)
+		res.Err = fmt.Errorf("judge: a draft of %d/%d/%d bytes is past the bounds %d/%d/%d, %d in all", len(in.Description), len(in.ManifestJSON),
+			len(in.Instruction), DraftMaxDescription, DraftMaxManifest, DraftMaxInstruction, DraftMaxState)
 		return res
 	}
 	qs := DraftQuestions()

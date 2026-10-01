@@ -393,7 +393,14 @@ The Drafter decides rather than asks: it picks a default for what the
 description leaves open and names it in its notes, asks at most three intake
 questions (most drafts none or one), lists at most five things to prepare,
 leaves at most two open questions, and keeps its notes to five bullets. The
-instruction it writes has four parts: Role, Inputs, Steps and Output.
+instruction it writes has six parts: Role, Inputs, Steps, Output, Background
+and Checks. Most QuickAgents run with no network and no web search, so the
+instruction carries the domain knowledge the run cannot look up: a few
+kilobytes for a small task, 20 to 30 KB for a big one, and at most 32 KiB,
+the instruction bound of AI Review's check of a finished draft. A longer one
+goes to the repair turn to be shortened. The check also holds the
+description, the manifest and the instruction to 48 KiB together, and a
+draft past that is recorded as not checked, never as passed.
 
 Before a draft is written, the CLI checks it in four steps:
 1. **Mechanical slips are corrected without the model.** A mode, a tag or a
@@ -419,7 +426,8 @@ Before a draft is written, the CLI checks it in four steps:
    is not checked, and neither is a draft that could not be rendered. A
    pass does not mean the draft does all of the task, and the pipeline
    scans the whole version at publish whatever the check said.
-4. **One repair turn.** If the rules still refuse it, or the check flagged
+4. **One repair turn.** If the rules still refuse it, its instruction is
+   past 32 KiB, or the check flagged
    something the draft can fix (`off_task`, or a rubric finding other than
    C3), the Drafter runs once more, without its web tools. Its task is the
    rules' report, what the check flagged, and its own manifest and
