@@ -116,10 +116,9 @@ type reviewState struct {
 	// verdicts are read_input's scans, one a file: a file is scanned once
 	// and every page of it is answered from that verdict. A scan that
 	// failed is not asked again in the run: the file stays withheld, and
-	// the model cannot spend the person's key retrying it. inflight holds
-	// a file whose scan is under way, so a second read waits for it.
+	// the model cannot spend the person's key retrying it. Requests are
+	// handled one at a time (mcp.go), so no two reads scan a file at once.
 	verdicts map[string]reviewVerdict
-	inflight map[string]chan struct{}
 	calls    int
 	ledger   *os.File
 }
@@ -136,7 +135,7 @@ type reviewVerdict struct {
 // newReviewState builds the scanner and the asker from the key in this
 // container's environment.
 func (s *server) newReviewState() *reviewState {
-	r := &reviewState{verdicts: map[string]reviewVerdict{}, inflight: map[string]chan struct{}{}}
+	r := &reviewState{verdicts: map[string]reviewVerdict{}}
 	key := os.Getenv(EnvReviewJevKey)
 	if key == "" {
 		_, _ = fmt.Fprintln(s.logw, "review: no AI Review key: every input file will be withheld")
@@ -213,29 +212,18 @@ func (s *server) recordReview(e ReviewEntry) {
 // release; read_input keeps its own rule, which never returns binary.)
 func (s *server) reviewedInput(rel, abs string, fi fs.FileInfo) (instead string, isErr, ok bool) {
 	r := s.review()
-	for {
-		r.mu.Lock()
-		v, cached := r.verdicts[rel]
-		if cached && v.size == fi.Size() && v.modTime.Equal(fi.ModTime()) {
-			r.mu.Unlock()
-			return v.answer(rel)
-		}
-		wait, busy := r.inflight[rel]
-		if !busy {
-			r.inflight[rel] = make(chan struct{})
-			r.mu.Unlock()
-			break
-		}
-		r.mu.Unlock()
-		<-wait
+	r.mu.Lock()
+	v, cached := r.verdicts[rel]
+	r.mu.Unlock()
+	if cached && v.size == fi.Size() && v.modTime.Equal(fi.ModTime()) {
+		return v.answer(rel)
 	}
-	v := reviewVerdict{size: fi.Size(), modTime: fi.ModTime()}
+	v = reviewVerdict{size: fi.Size(), modTime: fi.ModTime()}
 	switch data, err := readCapped(abs, ReviewFileBytes); {
 	case errors.Is(err, errTooLarge):
 		v.res = webscan.Result{Verdict: webscan.NotScanned, Failure: webscan.FailureTooLarge}
 		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: ReviewFileBytes + 1, Result: v.res})
 	case err != nil:
-		s.reviewDone(rel, nil)
 		return "read_input: " + err.Error(), true, false
 	case !utf8.Valid(data):
 		v.binary = true
@@ -244,23 +232,10 @@ func (s *server) reviewedInput(rel, abs string, fi fs.FileInfo) (instead string,
 		v.res = s.scanInput(string(data))
 		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: len(data), Result: v.res})
 	}
-	s.reviewDone(rel, &v)
-	return v.answer(rel)
-}
-
-// reviewDone stores a file's verdict, when there is one, and wakes the reads
-// waiting on its scan.
-func (s *server) reviewDone(rel string, v *reviewVerdict) {
-	r := s.review()
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if v != nil {
-		r.verdicts[rel] = *v
-	}
-	if ch, ok := r.inflight[rel]; ok {
-		close(ch)
-		delete(r.inflight, rel)
-	}
+	r.verdicts[rel] = v
+	r.mu.Unlock()
+	return v.answer(rel)
 }
 
 // answer is what read_input says for a verdict.
@@ -282,7 +257,7 @@ func (s *server) scanInput(text string) webscan.Result {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), reviewScanTimeout)
 	defer cancel()
-	return r.scanner.Scan(ctx, judge.SourceInputFile, text)
+	return r.scanner.Scan(ctx, webscan.SourceInputFile, text)
 }
 
 // withheldInput is what the model gets of an input file that did not pass.

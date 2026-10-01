@@ -985,9 +985,6 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	if fi.IsDir() {
 		return fmt.Sprintf("read_input: %q is a directory (use list_inputs)", path.Clean(a.Path)), true
 	}
-	// Under the review grant a file reaches the model only after AI Review
-	// passed it (review.go): the model gets a withheld file's path and the
-	// reason instead, which is an answer, not a tool failure.
 	if !s.spec.Review.Enabled {
 		text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
 		if err != nil {
@@ -995,6 +992,9 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 		}
 		return text, isErr
 	}
+	// Under the review grant a file reaches the model only after AI Review
+	// passed it (review.go): the model gets a withheld file's path and the
+	// reason instead, which is an answer, not a tool failure.
 	if instead, isErr, ok := s.reviewedInput(path.Clean(a.Path), abs, fi); !ok {
 		return s.scrubSecrets(instead), isErr
 	}

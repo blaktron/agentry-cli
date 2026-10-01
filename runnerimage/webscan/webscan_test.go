@@ -85,6 +85,29 @@ func TestJevWithThePersonsKey(t *testing.T) {
 	}
 }
 
+// TestWithMaxTextScansPastTheRoutesCap: a review's scanner takes a text
+// past MaxText whole, chunk by chunk (toolsrv's review grant), and still
+// refuses one past its own bound; the scanner it came from keeps MaxText.
+func TestWithMaxTextScansPastTheRoutesCap(t *testing.T) {
+	srv := fakeJev(t, 0.1, 0, nil)
+	defer srv.Close()
+	j, err := NewJev("k", srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("a line of text\n", (MaxText*2)/15)
+	wide := j.WithMaxText(1 << 20)
+	if res := wide.Scan(context.Background(), SourceInputFile, long); res.Verdict != Pass || res.Requests < 2*MaxText/(8<<10) {
+		t.Fatalf("past MaxText: %+v", res)
+	}
+	if res := wide.Scan(context.Background(), SourceInputFile, strings.Repeat("a", 1<<20+1)); res.Failure != FailureTooLarge {
+		t.Fatalf("past its own bound: %+v", res)
+	}
+	if res := j.Scan(context.Background(), SourceInputFile, long); res.Failure != FailureTooLarge {
+		t.Fatalf("the original scanner: %+v", res)
+	}
+}
+
 // TestTheRegistryRouteNeverFollowsARedirect: the job's credential rides on
 // every request, so an answer from anywhere but the route is not an answer.
 func TestTheRegistryRouteNeverFollowsARedirect(t *testing.T) {

@@ -47,17 +47,6 @@ func (f *fakeAsker) Ask(_ context.Context, state map[string]string, qs []judge.Q
 	return out, judge.Usage{InputTokens: 100, Requests: 1}, nil
 }
 
-// slowScanner holds every scan until release is closed.
-type slowScanner struct {
-	fakeScanner
-	release chan struct{}
-}
-
-func (f *slowScanner) Scan(ctx context.Context, source webscan.Source, text string) webscan.Result {
-	<-f.release
-	return f.fakeScanner.Scan(ctx, source, text)
-}
-
 // reviewServer is a tools server with the review grant, a fake scanner and a
 // fake rubric asker.
 func reviewServer(t *testing.T, sc webscan.Scanner, asker judge.Asker) (*server, *Spec) {
@@ -65,7 +54,7 @@ func reviewServer(t *testing.T, sc webscan.Scanner, asker judge.Asker) (*server,
 	spec := inputsSpec(t)
 	spec.Review = Review{Enabled: true, Ledger: filepath.Join(spec.OutDir, "receipts", "review.ndjson")}
 	s := newTestServer(t, spec)
-	s.reviewState = &reviewState{scanner: sc, asker: asker, verdicts: map[string]reviewVerdict{}, inflight: map[string]chan struct{}{}}
+	s.reviewState = &reviewState{scanner: sc, asker: asker, verdicts: map[string]reviewVerdict{}}
 	return s, spec
 }
 
@@ -200,34 +189,6 @@ func TestReadInputUnderReviewAnswersOnlyWhatPassed(t *testing.T) {
 		}
 	})
 
-	t.Run("reads of one file at once scan it once", func(t *testing.T) {
-		sc := &slowScanner{fakeScanner: fakeScanner{verdict: passAll}, release: make(chan struct{})}
-		s, spec := reviewServer(t, sc, &fakeAsker{})
-		mustWrite(t, filepath.Join(spec.InputsDir, "a.md"), []byte("hello"))
-		var wg sync.WaitGroup
-		texts := make([]string, 4)
-		for i := range texts {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				texts[i], _ = s.toolReadInput(rawArgs(t, map[string]any{"path": "a.md"}))
-			}()
-		}
-		close(sc.release)
-		wg.Wait()
-		if n := len(sc.calls()); n != 1 {
-			t.Fatalf("%d scans of one file read four times at once", n)
-		}
-		for _, text := range texts {
-			if text != "hello" {
-				t.Fatalf("answers %q", texts)
-			}
-		}
-		if n := len(reviewLedgerOf(t, spec)); n != 1 {
-			t.Fatalf("%d ledger lines", n)
-		}
-	})
-
 	t.Run("a file is scanned whole up to the 1 MiB cap", func(t *testing.T) {
 		sc := &fakeScanner{verdict: passAll}
 		s, spec := reviewServer(t, sc, &fakeAsker{})
@@ -235,13 +196,6 @@ func TestReadInputUnderReviewAnswersOnlyWhatPassed(t *testing.T) {
 		s.toolReadInput(rawArgs(t, map[string]any{"path": "long.md"}))
 		if calls := sc.calls(); len(calls) != 1 || len(calls[0].text) != 13*20000 {
 			t.Fatalf("scans %d", len(calls))
-		}
-		// And the scanner a key builds takes that much.
-		t.Setenv(EnvReviewJevKey, "k")
-		s2 := newTestServer(t, spec)
-		res := s2.review().scanner.Scan(t.Context(), judge.SourceInputFile, strings.Repeat("a", ReviewFileBytes+1))
-		if res.Failure != webscan.FailureTooLarge {
-			t.Fatalf("past the cap: %+v", res)
 		}
 	})
 

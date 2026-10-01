@@ -42,12 +42,14 @@ import (
 // Source is what kind of text a scan reads, the core's closed list.
 type Source = judge.Source
 
-// The sources the Drafter's scans read.
+// The sources the scans read.
 const (
 	SourceDescription  = judge.SourceDescription
 	SourceSearchResult = judge.SourceSearchResult
 	SourcePage         = judge.SourcePage
 	SourceRegistry     = judge.SourceRegistry
+	// SourceInputFile is a review's input file (toolsrv's review grant).
+	SourceInputFile = judge.SourceInputFile
 )
 
 // Verdict is a scan's answer.
