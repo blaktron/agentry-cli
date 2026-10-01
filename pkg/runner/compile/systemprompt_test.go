@@ -191,3 +191,60 @@ func TestTheSystemPromptStaysWithinItsSize(t *testing.T) {
 func capsNone(web bool) spec.CapSummary {
 	return spec.CapSummary{EgressMode: "none", FSReadMode: "none", FSWriteMode: "none", WebTools: web}
 }
+
+// TestTheSystemPromptNamesTheRunsMCPServers: a declared MCP server is named
+// in the System Prompt, and a run with none hears of no server.
+func TestTheSystemPromptNamesTheRunsMCPServers(t *testing.T) {
+	planDir := t.TempDir()
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{githubServerSpec()}, policy.Default()), planDir); err != nil {
+		t.Fatal(err)
+	}
+	got := renderedInstruction(t, planDir, "docker-agent")
+	if !strings.Contains(got, "**MCP servers.**") || !strings.Contains(got, "mcp-npm-scope-server-x") {
+		t.Errorf("a declared server is not named in the System Prompt:\n%s", got)
+	}
+	if none := systemPrompt(promptFacts{caps: capsNone(false)}); strings.Contains(none, "**MCP servers.**") {
+		t.Error("a run with no MCP server is told of servers")
+	}
+}
+
+// TestTheWorkspaceLineSaysReadAndWriteTogether: each combination of the
+// workspace grant gets one sentence that is true of it, a write-only
+// grant included.
+func TestTheWorkspaceLineSaysReadAndWriteTogether(t *testing.T) {
+	cases := []struct {
+		read, write string
+		want, not   []string
+	}{
+		{"none", "none", []string{"no workspace file access"}, []string{"fs_read", "fs_write"}},
+		{"workspace", "none", []string{"fs_read read the workspace", "cannot write"}, []string{"fs_write"}},
+		{"none", "paths", []string{"fs_write writes only these paths", "cannot read"}, []string{"fs_read", "no workspace file access"}},
+		{"none", "workspace", []string{"fs_write writes anywhere in the workspace"}, []string{"fs_read", "no workspace file access"}},
+		{"paths", "workspace", []string{"read only these paths", "fs_write writes anywhere"}, []string{"cannot"}},
+	}
+	for _, tc := range cases {
+		c := spec.CapSummary{FSReadMode: tc.read, FSWriteMode: tc.write, FSReadPaths: []string{"docs"}, FSWritePaths: []string{"out"}}
+		line := workspaceLine(c)
+		for _, w := range tc.want {
+			if !strings.Contains(line, w) {
+				t.Errorf("read %s, write %s: want %q in %q", tc.read, tc.write, w, line)
+			}
+		}
+		for _, n := range tc.not {
+			if strings.Contains(line, n) {
+				t.Errorf("read %s, write %s: %q should not be in %q", tc.read, tc.write, n, line)
+			}
+		}
+	}
+}
+
+// TestTheIntakeLineFollowsTheManifest: a QuickAgent with intake questions
+// is told where the answers are; one without is not.
+func TestTheIntakeLineFollowsTheManifest(t *testing.T) {
+	if !strings.Contains(systemPrompt(promptFacts{caps: capsNone(false), intake: true}), "/inputs/intake.json") {
+		t.Error("a QuickAgent with intake questions is not told where the answers are")
+	}
+	if strings.Contains(systemPrompt(promptFacts{caps: capsNone(false)}), "intake.json") {
+		t.Error("a QuickAgent with no intake is told of answers")
+	}
+}

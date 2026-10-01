@@ -199,16 +199,13 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	// The System Prompt, then the package's instruction (agentry-cli#520).
-	promptServers := append([]string(nil), extraServers...)
-	for _, srv := range in.MCPServers {
-		promptServers = append(promptServers, srv.Name)
-	}
-	sort.Strings(promptServers)
+	declared := mcpServerNames(extraServers, in.MCPServers)
 	instruction := renderInstruction(promptFacts{
 		caps:    caps,
 		secrets: sortedCopy(m.Capabilities.Secrets),
-		servers: promptServers,
+		servers: declared,
 		schema:  len(schemaJSON) > 0,
+		intake:  len(m.Intake) > 0,
 	}, body)
 
 	files := map[string][]byte{}
@@ -257,10 +254,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		files[filepath.ToSlash(filepath.Join("harness", name))] = content
 	}
 
-	servers := append([]string{spec.ToolServerName}, extraServers...)
-	for _, srv := range in.MCPServers {
-		servers = append(servers, srv.Name)
-	}
+	servers := append([]string{spec.ToolServerName}, declared...)
 	sort.Strings(servers)
 
 	plan := &spec.Plan{
@@ -508,6 +502,18 @@ func fsMode(a manifest.FSAccess) (string, []string) {
 	}
 }
 
+// mcpServerNames is every MCP server a run has besides the runner's own
+// tools server: the operator's dataAccess servers and the QuickAgent's
+// declared ones, sorted.
+func mcpServerNames(extra []string, declared []spec.MCPServerSpec) []string {
+	names := append([]string(nil), extra...)
+	for _, srv := range declared {
+		names = append(names, srv.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // sessionBudgets applies plan §6.7: the operator's caps, with the idle
 // timeout tightened by the manifest's interactive hint (never loosened).
 func sessionBudgets(m *manifest.Manifest, pol *policy.Policy) spec.SessionBudgets {
@@ -691,7 +697,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 			Paths:   caps.FSWritePaths,
 		},
 		Fetch: toolsrv.Fetch{
-			Enabled:   caps.EgressMode == "hosts" || caps.EgressMode == "all",
+			Enabled:   caps.Fetches(),
 			Hosts:     caps.EgressHosts,
 			AllowAll:  caps.EgressMode == "all",
 			SecretEnv: sortedCopy(secrets),

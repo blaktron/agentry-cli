@@ -224,6 +224,10 @@ type CapSummary struct {
 	WebTools bool `json:"webTools,omitempty"`
 }
 
+// Fetches reports whether the contract grants fetch: egress to named
+// hosts, or to any.
+func (c CapSummary) Fetches() bool { return c.EgressMode == "hosts" || c.EgressMode == "all" }
+
 // GatewaySpec is the gateway container launch description (§R4). Flags are
 // compiled, not chosen at run time, so tests can assert --block-network is
 // always present (§R11 invariant 1).

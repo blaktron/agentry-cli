@@ -414,7 +414,9 @@ func TestInstructionRules(t *testing.T) {
 			t.Errorf("a plan compiled before the System Prompt was read: %v", err)
 		}
 		for _, rel := range []string{"", "../outside.md", "/etc/passwd"} {
-			if _, err := ReadInstruction(ws, spec.InstructionSpec{SourcePath: rel, SHA256: plan.Instruction.SHA256}); err == nil {
+			outside := plan.Instruction
+			outside.SourcePath = rel
+			if _, err := ReadInstruction(ws, outside); err == nil {
 				t.Errorf("ReadInstruction(%q) read a path outside the package", rel)
 			}
 		}
