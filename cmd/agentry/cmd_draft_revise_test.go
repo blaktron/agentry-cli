@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -175,6 +177,9 @@ func TestDraftReviseRefusals(t *testing.T) {
 		{"draft", "A description.", "--instructions-file", instructions},
 		{"draft", "--revise-ref", "acme/meeting-minutes", "--problems-file", problems},
 		{"draft", "--hosted", "--revise", rel, "--problems-file", problems},
+		{"draft", "--revise", rel, "--revise-registry", "http://127.0.0.1:1/api/v1/x/runs/rel", "--problems-file", problems},
+		{"--registry", "http://127.0.0.1:1", "draft", "--revise-ref", "acme/meeting-minutes@1.2.0", "--revise-registry", "http://127.0.0.2:1/api/v1/x/runs/rel", "--problems-file", problems},
+		{"--registry", "http://127.0.0.1:1", "draft", "--revise-ref", "acme/meeting-minutes@1.2.0", "--revise-registry", "https://127.0.0.1:1/api/v1/x/runs/rel", "--problems-file", problems},
 	} {
 		sc, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
 		_, _, err := runCLI(t, nil, append(args, "--policy", policyPath, "--out", filepath.Join(t.TempDir(), "o"))...)
@@ -232,5 +237,75 @@ func TestDraftReviseRefFetchesTheReleaseHeldToItsDigest(t *testing.T) {
 	wantClassified(t, err, engine.ExitVerify)
 	if len(*runs) != 0 || len(sc.read) != 0 {
 		t.Fatalf("a release that is not its digest: runs %d scans %d", len(*runs), len(sc.read))
+	}
+}
+
+// TestDraftReviseRegistryFetchesFromItsOwnBase (agentry-cli#550): with
+// --revise-registry, the release is resolved and downloaded under that base
+// (a sandbox host's release prefix), with the run's grant, and nothing of
+// the fetch goes to --registry, which the draft's scans keep.
+func TestDraftReviseRegistryFetchesFromItsOwnBase(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	rel, _, problems := reviseRelease(t)
+	files := map[string]string{}
+	for _, name := range []string{"agent.yaml", "AGENT.md", "README.md", "LICENSE"} {
+		b, err := os.ReadFile(filepath.Join(rel, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[name] = string(b)
+	}
+	fr := newFakeRegistry(t)
+	fv := fr.addAgent("acme", "meeting-minutes", "autonomous", "minutes").addVersion(t, "1.2.0", files)
+
+	// The registry's origin: the prefix serves the fake registry to the
+	// run's grant alone, and the root answers nothing.
+	const prefix = "/api/v1/x/runs/rel"
+	var underPrefix, atRoot []string
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rest, ok := strings.CutPrefix(r.URL.Path, prefix)
+		if !ok {
+			atRoot = append(atRoot, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get(runGrantHeader) != "agyr_grant" {
+			http.Error(w, "no grant", http.StatusUnauthorized)
+			return
+		}
+		underPrefix = append(underPrefix, rest)
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = rest
+		fr.srv.Config.Handler.ServeHTTP(w, r2)
+	}))
+	defer front.Close()
+	before, beforeOrigin := http.DefaultTransport, grantOrigin
+	t.Cleanup(func() { http.DefaultTransport, grantOrigin = before, beforeOrigin })
+	t.Setenv(envRunGrant, "agyr_grant")
+	grantOrigin = func() string { return front.URL }
+	installRunGrant()
+
+	sc, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass, Model: "jev-1.13.0"}, goodDraft, draftLedger)
+	out := filepath.Join(t.TempDir(), "draft-out")
+	_, stderr, err := runCLI(t, nil, "--registry", front.URL, "draft", "--revise-ref", "acme/meeting-minutes@1.2.0",
+		"--revise-registry", front.URL+prefix+"/", "--problems-file", problems, "--out", out, "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if len(*runs) != 1 || len(sc.read) != 2 {
+		t.Fatalf("runs %d scans %d", len(*runs), len(sc.read))
+	}
+	if len(atRoot) != 0 {
+		t.Fatalf("the fetch went to --registry: %v", atRoot)
+	}
+	if !slices.Contains(underPrefix, "/api/v1/resolve") || !slices.Contains(underPrefix, "/api/v1/agents/acme/meeting-minutes/versions/1.2.0/download") {
+		t.Fatalf("the prefix was asked %v", underPrefix)
+	}
+	var d drafter.Draft
+	b, _ := os.ReadFile(filepath.Join(out, "draft.json"))
+	if err := json.Unmarshal(b, &d); err != nil || d.Revises == nil || d.Revises.Ref != "acme/meeting-minutes@1.2.0" || d.Revises.Digest != fv.digest {
+		t.Fatalf("revises %+v (%v)", d.Revises, err)
 	}
 }

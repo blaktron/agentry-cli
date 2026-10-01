@@ -464,7 +464,11 @@ does not pass stops the revision there. The revision keeps the
 release's name (a draft that names another is corrected, and the notes say
 so), its notes say what changed and why, and `draft.json` records the
 release under `revises`, its ref and its archive's digest. A revision takes
-no description, hints or knowledge packs.
+no description, hints or knowledge packs. A driver can fetch `--revise-ref`
+from a base of its own with `--revise-registry URL`, which must be on
+`--registry`'s origin. A sandbox host names the runs extension's release
+prefix there and opens it with the run's grant in `AGENTRY_RUN_GRANT`. The
+draft's scans keep `--registry`.
 
 Before a draft is written, the CLI checks it in four steps:
 1. **Mechanical slips are corrected without the model.** A mode, a tag or a
