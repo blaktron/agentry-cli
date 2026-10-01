@@ -14,6 +14,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
+	corejudge "github.com/blaktron/agentry/pkg/judge"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -248,6 +249,8 @@ func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
 		fmt.Sprintf("`prepare` (at most %d things to gather first)", MaxPrepare),
 		fmt.Sprintf("at most %d short Markdown bullets", MaxNoteBullets),
 		fmt.Sprintf("`openQuestions`: at most %d (above)", MaxOpenQuestions),
+		fmt.Sprintf("**at most %s bytes**", thousands(MaxInstructionBytes)),
+		fmt.Sprintf("Instructions past %s bytes are in the report", thousands(MaxInstructionBytes)),
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the instruction does not state %q", want)
@@ -256,6 +259,12 @@ func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
 	// The caps are the Drafter's, inside the rules' bounds.
 	if MaxIntake > manifest.MaxIntakeQuestions || MaxPrepare > manifest.MaxGuidePrepare {
 		t.Error("a cap is looser than the rule it sits inside")
+	}
+	// The instruction's cap is the draft check's instruction bound
+	// (agentry#789), and within the report's own read bound, so an over-cap
+	// one is read and repaired rather than lost.
+	if MaxInstructionBytes != corejudge.DraftMaxInstruction || MaxInstructionBytes >= maxInstructions {
+		t.Errorf("the instruction cap %d, the check's bound %d, the report bound %d", MaxInstructionBytes, corejudge.DraftMaxInstruction, maxInstructions)
 	}
 	for _, h := range instructionShape {
 		if !strings.Contains(text, "`"+h+"`") {
