@@ -113,6 +113,8 @@ func (s *server) buildTools() {
 		case ToolReadInput:
 			add(name, "Read one of the run's provided input files (read-only). Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
 				readInputSchema(), s.toolReadInput)
+		case ToolAIReview:
+			add(name, aiReviewDescription, aiReviewSchema(), s.toolAIReview)
 		case ToolKnowledgeList:
 			add(name, s.knowledgeListDescription(), knowledgeListSchema(), s.toolKnowledgeList)
 		case ToolKnowledgeSearch:
@@ -697,7 +699,11 @@ func (s *server) fetchHostAllowed(host string) bool {
 // the credential (auth debuggers, error pages) must not teach it to the
 // model. The gateway's --block-secrets does the same at its layer.
 func (s *server) scrubSecrets(text string) string {
-	for _, env := range append(append([]string(nil), s.spec.Fetch.SecretEnv...), webKeysForScrub(s.spec.Web)...) {
+	envs := append(append([]string(nil), s.spec.Fetch.SecretEnv...), webKeysForScrub(s.spec.Web)...)
+	if s.spec.Review.Enabled {
+		envs = append(envs, ReviewSecretEnv()...)
+	}
+	for _, env := range envs {
 		v := os.Getenv(env)
 		if v == "" {
 			continue
@@ -979,11 +985,19 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	if fi.IsDir() {
 		return fmt.Sprintf("read_input: %q is a directory (use list_inputs)", path.Clean(a.Path)), true
 	}
+	// Under the review grant a file reaches the model only after AI Review
+	// passed it (review.go): the model gets a withheld file's path and the
+	// reason instead, which is an answer, not a tool failure.
+	if s.spec.Review.Enabled {
+		if instead := s.reviewedInput(path.Clean(a.Path), abs, fi); instead != "" {
+			return s.scrubSecrets(instead), strings.HasPrefix(instead, "read_input: ")
+		}
+	}
 	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
 	if err != nil {
 		return "read_input: " + err.Error(), true
 	}
-	return text, isErr
+	return s.scrubSecrets(text), isErr
 }
 
 // readPaged is the paging read_input and the knowledge tools share: up to

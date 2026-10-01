@@ -52,6 +52,9 @@ type runDirs struct {
 	// here and labelled for the tools container, the one file of the
 	// receipts it may write (web.go).
 	webLedger string
+	// reviewLedger is receipts/review.ndjson for a run with the review
+	// grant, made as webLedger is.
+	reviewLedger string
 	// web says the run has the web tools, and runID names it, for the
 	// receipt's daemon line.
 	web   bool
@@ -230,6 +233,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		}
 		_ = f.Close()
 	}
+	if p.Review != nil {
+		rd.reviewLedger = filepath.Join(rd.receiptsDir, ReviewLedgerFile)
+		_ = os.Remove(rd.reviewLedger)
+		f, err := os.OpenFile(rd.reviewLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the review ledger: %w", err))
+		}
+		_ = f.Close()
+	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
 	}
@@ -327,6 +339,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	}
 	if err := grantWeb(dir, p.Web); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
+	}
+	if err := grantReview(dir, p.Review); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the review grant: %w", err))
 	}
 	if err := writeResolvConf(dir, p.Plan); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
@@ -501,6 +516,10 @@ func secretValues(p Params) (map[string]string, error) {
 	// The web tools' keys (web.go), for the tools container alone; each
 	// is written even when empty.
 	for k, v := range webSecrets(p) {
+		values[k] = v
+	}
+	// The review's key (review.go), for the tools container alone.
+	for k, v := range reviewSecrets(p) {
 		values[k] = v
 	}
 	missing := make([]string, 0, len(missingSet))
@@ -682,6 +701,9 @@ func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	t := relabelTargets(rd)
 	if rd.webLedger != "" {
 		t = append(t, relabelTarget{rd.webLedger, false})
+	}
+	if rd.reviewLedger != "" {
+		t = append(t, relabelTarget{rd.reviewLedger, false})
 	}
 	return t
 }

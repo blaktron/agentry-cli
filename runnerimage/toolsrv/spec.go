@@ -13,11 +13,12 @@ package toolsrv
 // the run-inputs channel (RUNNER-PLAN-2 §P4); "3" the knowledge packs a
 // run may search (plan knowledge.md §4.5, agentry-cli#317); "4" the
 // built-in Drafter's web tools (plan builder-rework.md §7.3,
-// agentry-cli#345). The server
+// agentry-cli#345); "5" the review grant (plan
+// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "4"
+const SpecVersion = "5"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -75,6 +76,10 @@ type Spec struct {
 	// sets Enabled for the Drafter alone; the engine stamps the rest into
 	// the run's own copy of this file.
 	Web Web `json:"web,omitzero"`
+	// Review gates the review grant (review.go): ai_review, and read_input
+	// answering only what AI Review passed. The compiler sets Enabled for a
+	// built-in granted it; the engine stamps the ledger.
+	Review Review `json:"review,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
 	// Owner, when set, is the host user who ran the command: every file
@@ -210,6 +215,9 @@ const (
 	ToolWebSearch      = "web_search"
 	ToolWebRead        = "web_read"
 	ToolRegistrySearch = "registry_search"
+	// The review grant's tool (plan desktop-review-key-and-run-cards.md
+	// §6.2): a built-in granted review alone.
+	ToolAIReview = "ai_review"
 )
 
 // GrantedTools returns the tool names this spec exposes, in the fixed
@@ -232,6 +240,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.InputsDir != "" {
 		names = append(names, ToolListInputs, ToolReadInput)
+		if s.Review.Enabled {
+			names = append(names, ToolAIReview)
+		}
 	}
 	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {
 		names = append(names, ToolKnowledgeList, ToolKnowledgeSearch, ToolKnowledgeRead)

@@ -81,6 +81,15 @@ type Inputs struct {
 	// allowlist of its own, so nothing else may run beside them. Anything
 	// else asking is refused by policy (exit 11).
 	Web bool
+	// Review grants a built-in the review grant (plan
+	// desktop-review-key-and-run-cards.md §6.2; agentry-cli#503): ai_review
+	// and scanned reads of its inputs, with the person's own TypeSafe key
+	// in the tools container alone, whose network reaches TypeSafe's API and
+	// nothing else. As with Web, only a built-in package may be granted it,
+	// and only one that declares no egress, exec, filesystem write, secret
+	// or MCP server; never beside the web tools, whose container reaches
+	// any public address. Anything else asking is refused by policy.
+	Review bool
 	// IntegrityKey is the runner home's plan-integrity key (IntegrityKey).
 	// It is not part of the plan: when set, the compile also writes
 	// plan.json.hmac, so a later run can reuse the plan only as compiled
@@ -152,6 +161,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, err
 		}
 		caps.WebTools = true
+	}
+	if in.Review {
+		if err := checkReviewGrant(in, caps); err != nil {
+			return nil, err
+		}
+		caps.ReviewTools = true
 	}
 	instructionPath, body, err := deriveInstruction(m, in.WorkspaceDir)
 	if err != nil {
@@ -677,6 +692,25 @@ func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 	return nil
 }
 
+// checkReviewGrant is the review grant's gate, as checkWebGrant is the web
+// tools': a built-in package that declares nothing its container could
+// widen, and never the web tools beside it, since their container's network
+// is the whole public web and the review's is TypeSafe's API alone.
+func checkReviewGrant(in Inputs, caps spec.CapSummary) error {
+	if in.Source != "builtin" {
+		return &PolicyRefusal{Reason: fmt.Sprintf("the review grant (%s) is a built-in's alone; a %s package is never granted it",
+			toolsrv.ToolAIReview, cmp.Or(in.Source, "release"))}
+	}
+	if in.Web {
+		return &PolicyRefusal{Reason: "the review grant is never given beside the web tools: its container reaches TypeSafe's API alone, theirs the public web"}
+	}
+	c := in.Manifest.Capabilities
+	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || len(c.MCPServers) > 0 || len(in.MCPServers) > 0 {
+		return &PolicyRefusal{Reason: "the review grant is given only to a package that declares no egress, exec, filesystem write, secret or MCP server: its container holds the person's key and reaches TypeSafe's API, and nothing else may run beside it"}
+	}
+	return nil
+}
+
 // toolSpec compiles the capability summary into the tools-server spec —
 // the single choke point deciding which tools exist (§R3, §R11 inv. 4).
 func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
@@ -706,6 +740,9 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// The run's half of Web (where it scans, searches, which registry,
 		// the ledger) is the engine's, stamped per run.
 		Web: toolsrv.Web{Enabled: caps.WebTools},
+		// The review grant: the run's ledger is the engine's, stamped per
+		// run.
+		Review: toolsrv.Review{Enabled: caps.ReviewTools},
 	}
 }
 
@@ -1042,6 +1079,11 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 			hosts = append(hosts, h+":443")
 		}
 		e.set("allowHosts", strListNode(hosts))
+	} else if tspec.Review.Enabled {
+		// The review grant reaches TypeSafe's API and nothing else, by the
+		// same gateway proxy a declared host is reached by: the judge's
+		// client reads the proxy variable the gateway sets.
+		e.set("allowHosts", strListNode([]string{toolsrv.ReviewHost + ":443"}))
 	} else if !tspec.Fetch.Enabled && !tspec.Web.Enabled {
 		e.set("disableNetwork", boolNode(true))
 	}
@@ -1056,6 +1098,10 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// them.
 	if tspec.Web.Enabled {
 		secrets = append(append([]string(nil), secrets...), toolsrv.WebSecretEnv()...)
+	}
+	// The review's key, the person's own, likewise (checkReviewGrant).
+	if tspec.Review.Enabled {
+		secrets = append(append([]string(nil), secrets...), toolsrv.ReviewSecretEnv()...)
 	}
 	if len(secrets) > 0 {
 		var entries []*yaml.Node
@@ -1174,6 +1220,13 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +
 			"every page, search result and registry answer is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
 			"the keys (the job's credential, or the person's own Jev and search keys) are injected into the tools container only"
+	}
+	if caps.ReviewTools {
+		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + toolsrv.ReviewHost + ":443 alone, TypeSafe's API, for the review grant, " +
+			"through the gateway's per-server proxy and DNS interception (--block-network)"
+		e["review"] = "the built-in's review grant, on the tools container only: " + toolsrv.ToolAIReview + " asks AI Review's release rubric (the six questions stage S5 asks) over the package in the run's inputs and answers with scores and file names, never the package's text; " +
+			toolsrv.ToolReadInput + " answers a file only after AI Review's model-input questions passed it, and one flagged or not scanned is withheld with its path and the reason; " +
+			"the person's own TypeSafe key is injected into the tools container only"
 	}
 	e["filesystem"] = "read " + fsDesc(caps.FSReadMode, caps.FSReadPaths) +
 		"; write " + fsDesc(caps.FSWriteMode, caps.FSWritePaths) +

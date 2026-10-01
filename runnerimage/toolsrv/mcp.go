@@ -86,6 +86,10 @@ type server struct {
 	// (web.go); a test may set it first.
 	webOnce  sync.Once
 	webState *webState
+	// reviewState is the review grant's per-run state, built on first use
+	// (review.go); a test may set it first.
+	reviewOnce  sync.Once
+	reviewState *reviewState
 }
 
 func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
@@ -169,6 +173,12 @@ func validateSpec(spec *Spec) error {
 		// (web.go): a fetch grant or a declared command beside them would
 		// reach whatever it liked, bounded by nothing of ours.
 		return errors.New("the web tools are never granted beside fetch or exec")
+	}
+	if spec.Review.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0 || spec.Web.Enabled || spec.InputsDir == "") {
+		// The review's container reaches TypeSafe alone (review.go): a
+		// fetch grant, a command or the web tools beside it would reach
+		// further, and without the inputs channel it has nothing to read.
+		return errors.New("the review grant is never granted beside fetch, exec or the web tools, nor without the inputs channel")
 	}
 	if err := validateKnowledge(spec); err != nil {
 		return err

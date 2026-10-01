@@ -105,6 +105,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if p.Plan.Capabilities.WebTools || p.Web != nil {
 		return fail(Classify(ExitPolicy, errors.New("the web tools do not run in an interactive session")))
 	}
+	// Nor the review grant, a built-in's autonomous review.
+	if p.Plan.Capabilities.ReviewTools || p.Review != nil {
+		return fail(Classify(ExitPolicy, errors.New("the review grant does not run in an interactive session")))
+	}
 	if err := checkVoice(p); err != nil {
 		return fail(err)
 	}
