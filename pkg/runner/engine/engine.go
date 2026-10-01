@@ -103,6 +103,11 @@ type Params struct {
 	// channel and verified there, the three knowledge tools granted and the
 	// receipt's knowledge line written only when there is one (DR-38).
 	Knowledge []AttachedPack
+	// Voice is the person's Writing Voice when the run attaches it (plan
+	// writing-voice.md §5): written under the run's /knowledge channel,
+	// voice_read granted and the receipt's voice line written only then.
+	// A built-in's run never carries one (D5).
+	Voice *AttachedVoice
 	// Decoded, when set, is the decode step the caller ran on the inputs
 	// before this run (pkg/runner/decode); the receipt names it.
 	Decoded *decode.Result
@@ -212,6 +217,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// A plan with the web tools runs only with its scanner, before
 	// anything touches the daemon.
 	if err := checkWeb(p); err != nil {
+		return fail(env, redact, err)
+	}
+	if err := checkVoice(p); err != nil {
 		return fail(env, redact, err)
 	}
 

@@ -126,7 +126,7 @@ func TestAttachedKnowledgeWidensNothing(t *testing.T) {
 		p, f := fixture(t)
 		happyFake(f)
 		if attach {
-			p.Knowledge = []AttachedPack{AttachPack(makePack(t, "aws-docs")), AttachPack(makePack(t, "voice"))}
+			p.Knowledge = []AttachedPack{AttachPack(makePack(t, "aws-docs")), AttachPack(makePack(t, "style-guide"))}
 		}
 		env, err := Run(context.Background(), f, p)
 		if err != nil {
@@ -191,8 +191,8 @@ func TestKnowledgeChangedAfterVerificationIsRefused(t *testing.T) {
 }
 
 func TestKnowledgeLineWithoutExec(t *testing.T) {
-	got := withKnowledge(map[string]string{"egress": "x"}, []AttachedPack{{Name: "voice", Digest: "sha256:ab", Pages: 3, Bytes: 10}}, nil)
-	want := "voice mounted read-only at /knowledge/voice (sha256:ab, 3 pages, 10 bytes, scan: not scanned); tools knowledge_list, knowledge_search and knowledge_read, on the tools container only"
+	got := withKnowledge(map[string]string{"egress": "x"}, []AttachedPack{{Name: "style-guide", Digest: "sha256:ab", Pages: 3, Bytes: 10}}, nil)
+	want := "style-guide mounted read-only at /knowledge/style-guide (sha256:ab, 3 pages, 10 bytes, scan: not scanned); tools knowledge_list, knowledge_search and knowledge_read, on the tools container only"
 	if got["knowledge"] != want || got["egress"] != "x" {
 		t.Fatalf("got %q", got)
 	}
@@ -206,7 +206,7 @@ func TestKnowledgeNeedsAPlanThatMountsIt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(gw, "catalog.yaml"), []byte("registry:\n  agentry-tools:\n    volumes:\n      - '/run/x/inputs:/inputs:ro'\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := grantKnowledge(gw, "/run/x/knowledge", []AttachedPack{{Name: "voice", Digest: "sha256:ab"}})
+	err := grantKnowledge(gw, "/run/x/knowledge", []AttachedPack{{Name: "style-guide", Digest: "sha256:ab"}})
 	if err == nil || !strings.Contains(err.Error(), "recompile") {
 		t.Fatalf("err = %v", err)
 	}
@@ -230,10 +230,10 @@ func TestKnowledgeTwoPacksOneNameRefused(t *testing.T) {
 func TestShippedKnowledgeLine(t *testing.T) {
 	got := withKnowledge(nil, []AttachedPack{
 		{Name: "aws-docs", Digest: "sha256:ab", Pages: 1, Bytes: 216, Shipped: &ShippedFrom{InWorkspace: "knowledge/aws-docs", Release: "archive sha256:arch"}},
-		{Name: "voice", Digest: "sha256:cd", Pages: 3, Bytes: 10},
+		{Name: "style-guide", Digest: "sha256:cd", Pages: 3, Bytes: 10},
 	}, nil)
 	want := "aws-docs shipped with the release (archive sha256:arch) mounted read-only at /knowledge/aws-docs (sha256:ab, 1 page, 216 bytes)" +
-		"; voice mounted read-only at /knowledge/voice (sha256:cd, 3 pages, 10 bytes, scan: not scanned)" +
+		"; style-guide mounted read-only at /knowledge/style-guide (sha256:cd, 3 pages, 10 bytes, scan: not scanned)" +
 		"; tools knowledge_list, knowledge_search and knowledge_read, on the tools container only"
 	if got["knowledge"] != want {
 		t.Fatalf("got\n%q\nwant\n%q", got["knowledge"], want)

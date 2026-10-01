@@ -56,6 +56,13 @@ type Spec struct {
 	// are attached (DR-38), and the three knowledge tools exist only then.
 	KnowledgeDir string          `json:"knowledgeDir,omitempty"`
 	Knowledge    []KnowledgePack `json:"knowledge,omitempty"`
+	// Voice is the person's Writing Voice when one is attached (plan
+	// writing-voice.md §5, D4; agentry-cli#531): its VOICE.md's container
+	// path, under the knowledge mount, and its digest. Like a pack it is
+	// chosen at run time and never in the compiled plan: the engine stamps
+	// it into the run's own copy of this file, and voice_read exists only
+	// then.
+	Voice *VoiceFile `json:"voice,omitempty"`
 	// FSRead gates fs_read and fs_list.
 	FSRead Access `json:"fsRead"`
 	// FSWrite gates fs_write.
@@ -87,6 +94,13 @@ type Spec struct {
 // the same terms as the receipt.
 type KnowledgePack struct {
 	Name   string `json:"name"`
+	Digest string `json:"digest"`
+}
+
+// VoiceFile is an attached Writing Voice: the file voice_read returns, and
+// the digest the receipt records for it.
+type VoiceFile struct {
+	File   string `json:"file"`
 	Digest string `json:"digest"`
 }
 
@@ -188,6 +202,9 @@ const (
 	ToolKnowledgeList   = "knowledge_list"
 	ToolKnowledgeSearch = "knowledge_search"
 	ToolKnowledgeRead   = "knowledge_read"
+	// The Writing Voice's one tool (plan writing-voice.md D4), granted
+	// only while a voice is attached.
+	ToolVoiceRead = "voice_read"
 	// The web tools (plan builder-rework.md §7.3), the built-in Drafter's
 	// alone: web_search only when the run has a search to use.
 	ToolWebSearch      = "web_search"
@@ -218,6 +235,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {
 		names = append(names, ToolKnowledgeList, ToolKnowledgeSearch, ToolKnowledgeRead)
+	}
+	if s.Voice != nil && s.Voice.File != "" {
+		names = append(names, ToolVoiceRead)
 	}
 	if s.Web.Enabled {
 		if s.Web.Search != "" {

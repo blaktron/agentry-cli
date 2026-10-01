@@ -105,6 +105,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if p.Plan.Capabilities.WebTools || p.Web != nil {
 		return fail(Classify(ExitPolicy, errors.New("the web tools do not run in an interactive session")))
 	}
+	if err := checkVoice(p); err != nil {
+		return fail(err)
+	}
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
 		return fail(err)
