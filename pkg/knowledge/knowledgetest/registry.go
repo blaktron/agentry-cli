@@ -30,6 +30,9 @@ import (
 // create, upload (opened and checked as the core checks it), list,
 // download and delete, answered in the core's JSON and problem shapes.
 //
+// It also serves the Writing Voice's routes (voice.go): one voice per
+// account, put for review and decided by Review or SetReviewOnRead.
+//
 // It also serves an organization's shared packs (Knowledge M8; the core's
 // /orgs/{org}/knowledge/): list, read, download, unwrap and export, for
 // the organization's members alone (404 to anyone else, as the core
@@ -44,6 +47,9 @@ type Registry struct {
 	accounts map[string]string // token → owner
 	packs    map[string]map[string]*fakePack
 	orgs     map[string]*fakeOrg
+	voices   map[string]*fakeVoice
+	// reviewOnRead decides a voice in review at the next read (SetReviewOnRead).
+	reviewOnRead VoiceVerdict
 	// Scanning leaves an uploaded pack scanning, as the core does until
 	// its job ends.
 	Scanning bool
@@ -76,7 +82,7 @@ func NewRegistry(t testing.TB) *Registry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &Registry{key: k, accounts: map[string]string{}, packs: map[string]map[string]*fakePack{}, orgs: map[string]*fakeOrg{}}
+	r := &Registry{key: k, accounts: map[string]string{}, packs: map[string]map[string]*fakePack{}, orgs: map[string]*fakeOrg{}, voices: map[string]*fakeVoice{}}
 	r.Server = httptest.NewServer(http.HandlerFunc(r.serve))
 	t.Cleanup(r.Close)
 	return r
@@ -122,6 +128,10 @@ func (r *Registry) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	if r.Forbid {
 		problem(w, http.StatusForbidden, "forbidden", "Forbidden", "This token does not carry the knowledge:write scope.")
+		return
+	}
+	if rest, ok := strings.CutPrefix(req.URL.Path, "/api/v1/voice"); ok {
+		r.serveVoice(w, req, owner, rest)
 		return
 	}
 	if rest, ok := strings.CutPrefix(req.URL.Path, "/api/v1/orgs/"); ok {

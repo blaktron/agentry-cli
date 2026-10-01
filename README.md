@@ -289,8 +289,18 @@ and its digest. A built-in's run never takes it.
 | Command | Does |
 | --- | --- |
 | `voice show` | print the voice (`--json`: its record) |
-| `voice attach on\|off` | attach it to every run here, or only with `--voice` |
+| `voice attach on\|off` | attach it to every run here, or only with `--voice`; with `--account`, set your account's flag for runs In Agentry |
 | `voice delete` | delete it and its cached key |
+| `voice upload` | submit this computer's voice to your account; AI Review reads it there, and once it passes it replaces the account's voice (`--wait` waits for the verdict; a flag exits non-zero with its findings). This computer's voice does not change |
+| `voice download` | keep your account's live voice on this computer, asking before it replaces a different one (`--yes`) |
+| `voice status` | this computer's voice and your account's: the live one, a pending one in review or flagged with its findings, the previous one (`--json`) |
+
+Your account keeps a voice of its own, for runs In Agentry, and the two are
+never synced on their own (plan D6). The text goes to the registry in the
+clear over TLS and is sealed there, because the registry reads it to review
+it; a downloaded voice is held to the digest the registry names before it is
+kept, and the receipt of a run that attaches it says it was reviewed in the
+account and not checked again here.
 
 For a driver such as a sandbox host: `create`, `improve` and `edit` take
 `--current FILE` (the voice as it stands, instead of the one kept here),
