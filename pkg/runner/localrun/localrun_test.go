@@ -39,7 +39,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.2.0,agentry/voice-writer@1.0.0,agentry/examiner@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.3.0,agentry/voice-writer@1.0.0,agentry/examiner@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
@@ -81,7 +81,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.2.0" {
+		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.3.0" {
 			t.Fatalf("meta %+v", meta)
 		}
 		for _, name := range []string{"agent.yaml", "AGENT.md", "output.schema.json"} {

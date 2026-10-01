@@ -23,6 +23,14 @@ const maxTask = 32 << 10
 // framed. It is exactly what the description's scan reads (Prescan) and
 // what the model is given.
 func Task(description string, hints []string) (string, error) {
+	return TaskWithKnowledge(description, hints, nil)
+}
+
+// TaskWithKnowledge is Task for a draft given the person's knowledge
+// packs (agentry-cli#522): the message also names the packs, so the
+// Drafter reads them first. The packs themselves reach it only through its
+// knowledge tools, after their scan (ReadyKnowledge).
+func TaskWithKnowledge(description string, hints, packs []string) (string, error) {
 	description = strings.TrimSpace(description)
 	if description == "" {
 		return "", errors.New("describe what the QuickAgent should do")
@@ -43,6 +51,10 @@ func Task(description string, hints []string) (string, error) {
 		for _, h := range kept {
 			b.WriteString("- " + strings.ReplaceAll(h, "\n", " ") + "\n")
 		}
+	}
+	if len(packs) > 0 {
+		b.WriteString("\n## Knowledge\n\nThe person attached their knowledge packs to this draft: " + strings.Join(packs, ", ") +
+			". Read them with your knowledge tools before you search the web.\n")
 	}
 	task := b.String()
 	if !utf8.ValidString(task) {

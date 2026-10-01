@@ -44,37 +44,57 @@ func attachKnowledge(cmd *cobra.Command, args []string) (_ []engine.AttachedPack
 	seen := map[string]string{}
 	var kept *store.Store
 	for _, arg := range args {
-		var p *knowledge.Pack
-		if !keptPackNamed(cmd, arg) && (knowledgeArgIsPath(arg) || isDir(arg)) {
-			if p, err = knowledge.Load(arg); err != nil {
-				if errors.Is(err, knowledge.ErrDigestMismatch) {
-					return nil, done, engine.Classify(engine.ExitVerify, fmt.Errorf("--knowledge %s: %w", arg, err))
-				}
-				return nil, done, engine.Classify(engine.ExitCLI, fmt.Errorf("--knowledge %s: %w", arg, err))
-			}
-		} else {
-			if err := knowledge.ValidName(arg); err != nil {
-				return nil, done, engine.Classify(engine.ExitCLI, fmt.Errorf("--knowledge %s: not a directory, and %w", arg, err))
-			}
-			if kept == nil {
-				if kept, err = knowledgeStore(cmd); err != nil {
-					return nil, done, err
-				}
-			}
-			var cleanup func()
-			if p, cleanup, err = kept.OpenScratch(cmd.Context(), arg); err != nil {
-				return nil, done, engine.Classify(engine.ExitPolicy, fmt.Errorf("--knowledge %s: %w", arg, err))
-			}
-			cleanups = append(cleanups, cleanup)
+		p, _, cleanup, err := loadKnowledgeArg(cmd, arg, &kept)
+		if err != nil {
+			return nil, done, err
 		}
-		name := p.Manifest.Name
-		if prev, dup := seen[name]; dup {
-			return nil, done, engine.Classify(engine.ExitCLI, fmt.Errorf("--knowledge %s and %s are both packs named %s; a run mounts each pack at %s/<name>", prev, arg, name, spec.KnowledgeMount))
+		cleanups = append(cleanups, cleanup)
+		if err := onePackPerName(seen, p, arg); err != nil {
+			return nil, done, err
 		}
-		seen[name] = arg
 		a := engine.AttachPack(p)
 		sayKnowledge(errOut, []engine.AttachedPack{a})
 		out = append(out, a)
 	}
 	return out, done, nil
+}
+
+// loadKnowledgeArg loads one --knowledge value as attachKnowledge describes:
+// a pack directory, or a pack kept in the local store, opened into a
+// private directory that cleanup removes. fromStore says which; *kept is
+// the store, opened at the first kept pack.
+func loadKnowledgeArg(cmd *cobra.Command, arg string, kept **store.Store) (p *knowledge.Pack, fromStore bool, cleanup func(), err error) {
+	cleanup = func() {}
+	if !keptPackNamed(cmd, arg) && (knowledgeArgIsPath(arg) || isDir(arg)) {
+		if p, err = knowledge.Load(arg); err != nil {
+			if errors.Is(err, knowledge.ErrDigestMismatch) {
+				return nil, false, cleanup, engine.Classify(engine.ExitVerify, fmt.Errorf("--knowledge %s: %w", arg, err))
+			}
+			return nil, false, cleanup, engine.Classify(engine.ExitCLI, fmt.Errorf("--knowledge %s: %w", arg, err))
+		}
+		return p, false, cleanup, nil
+	}
+	if err := knowledge.ValidName(arg); err != nil {
+		return nil, false, cleanup, engine.Classify(engine.ExitCLI, fmt.Errorf("--knowledge %s: not a directory, and %w", arg, err))
+	}
+	if *kept == nil {
+		if *kept, err = knowledgeStore(cmd); err != nil {
+			return nil, false, cleanup, err
+		}
+	}
+	if p, cleanup, err = (*kept).OpenScratch(cmd.Context(), arg); err != nil {
+		return nil, false, cleanup, engine.Classify(engine.ExitPolicy, fmt.Errorf("--knowledge %s: %w", arg, err))
+	}
+	return p, true, cleanup, nil
+}
+
+// onePackPerName refuses a second pack of a name already given: a run
+// mounts each pack at /knowledge/<name>.
+func onePackPerName(seen map[string]string, p *knowledge.Pack, arg string) error {
+	name := p.Manifest.Name
+	if prev, dup := seen[name]; dup {
+		return engine.Classify(engine.ExitCLI, fmt.Errorf("--knowledge %s and %s are both packs named %s; a run mounts each pack at %s/<name>", prev, arg, name, spec.KnowledgeMount))
+	}
+	seen[name] = arg
+	return nil
 }

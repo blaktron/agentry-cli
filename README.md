@@ -323,7 +323,7 @@ of the version's scan and signs it with the rest of the archive.
 
 ### Drafting a QuickAgent: `draft`
 
-`agentry draft "<description>" [--hint TEXT…] [--out DIR]` drafts a
+`agentry draft "<description>" [--hint TEXT…] [--knowledge PACK…] [--out DIR]` drafts a
 QuickAgent from a plain description of what it should do
 (`--description-file FILE` reads it from a file). The built-in
 **Drafter** does the work: a second package this binary embeds, run with the
@@ -380,6 +380,44 @@ which the gateway's docker filter lets no other container join.
 The description, the searches and the pages go to the search provider, to
 TypeSafe and to the sites read, so the description should hold no secret.
 The draft runs against the model your runner policy names, for no credits.
+
+**Your knowledge** (agentry-cli#522). `--knowledge PACK` (repeatable) gives
+the Drafter your knowledge packs: a pack directory, or the name of a pack
+kept on this computer, as `agentry run --knowledge` takes them, at most five
+packs and 10 MB in all, refused before anything is scanned. The Drafter reads
+them before the web, with the knowledge tools every run with a pack has: it
+learns the task's domain from them and writes what the QuickAgent needs into
+its instruction, so a draft with good packs makes fewer searches; it lists
+the pages it used in `sources` as `pack:<name>/<page>`; and when the
+QuickAgent needs your pack at run time it declares `knowledge.accepts`, with
+Steps that start from it. A draft never ships a pack: a `knowledge.ships`
+the Drafter writes is removed and named in the notes. `draft.json` records
+each pack under `knowledge`, with how it was scanned and what was withheld.
+
+Nothing of a pack reaches the Drafter's model unscanned:
+- A pack kept here that you uploaded to Agentry or downloaded from it is not
+  scanned again. Its scan in Agentry stands in, once the CLI has confirmed
+  it with that registry: the copy there is ready, holds this pack's tree,
+  and its scan finished every stage with AI Review reading every chunk. What
+  that scan flagged, and any file it could not read as text, is withheld.
+- Any other pack (a directory, a pack kept here only, one changed here since
+  its upload, or one you are signed out of) is **scanned first**. The CLI
+  says so before anything is scanned, then AI Review reads every file of it
+  with your Jev key, as model input, before the draft starts, in the pack
+  scan's chunks with each file's path. A chunk that does not pass is read
+  again a file at a time, so only the file it flags is withheld. A large pack
+  takes a while. A file it flags, cannot scan, or that is not text is
+  withheld.
+
+What is withheld is cut from a private copy of the pack, and its index is
+cut of the lines that linked a withheld page (a withheld index is replaced
+by a fixed line, never written again), so the Drafter's knowledge tools never
+serve it. What the Drafter reads in a pack can shape its searches and the
+pages it reads, which go to the search provider and the sites, as the
+description does. The notes' "Withheld by AI Review" names each file, with
+why, never its text. With `--hosted`, `--knowledge` takes only the
+directories a sandbox host laid down from Agentry's store, whose manifests
+carry Agentry's record.
 
 The result, in `DIR` (default `./agentry-out/agentry-drafter-<runid>`):
 - `draft.json` holds the manifest, the instructions, the notes, the
