@@ -67,7 +67,7 @@ var NotRunHere = []string{
 	"the publisher signals (S8): the name against popular QuickAgents, and the account's own record",
 	"the diff against the last published version (S9)",
 	"an organization's policy, which can be stricter than the platform's baseline",
-	"shipped knowledge packs, which the registry reads in a stage of their own",
+	"a shipped knowledge pack's secrets scan, URL reputation and AI Review, in the registry's stage for packs (its hidden-content and injection rules run here)",
 	"the text the registry recovers from image metadata, and its comparison of the instruction file's front matter with the manifest",
 	"Submit's own refusals: the policy's blocked capabilities, blocked MCP servers, allowed licences and required evaluations, a quota, two-step sign-in, credits, a version already published",
 }

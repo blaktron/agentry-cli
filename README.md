@@ -538,8 +538,10 @@ says where to add one.
   the schema passes it, and the reading is marked `recovered`.
 - `notRunHere`: the registry's secrets and scripts stages, the publisher
   signals, the diff against the last published version, an organization's
-  policy, shipped knowledge packs, the text recovered from image metadata,
-  Submit's own refusals, and whatever did not answer here.
+  policy, a shipped pack's secrets scan, URL reputation and AI Review (its
+  rules run here, as the registry's stage for packs runs them), the text
+  recovered from image metadata, Submit's own refusals, and whatever did
+  not answer here.
 - `notice`: the registry scans again at Submit, AI Review can answer
   differently on the same files, and the registry's answer is the one that
   counts.

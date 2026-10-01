@@ -177,7 +177,7 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 	// the rules' findings in a longer file are those of its first 1 MiB,
 	// scanned again here as the registry scans it. A shipped pack's text is
 	// read whole by the registry's stage for packs, whose findings are SK's.
-	p.Findings = ruleFindings(report, st.heads, st.packText)
+	p.Findings = ruleFindings(report, st.heads, st.packText, st.packUnread)
 	if len(st.heads) > 0 {
 		loadRules := o.Rules
 		if loadRules == nil {
@@ -202,7 +202,7 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 				Title: f.Title, File: f.FilePath, Line: f.LineStart, Excerpt: f.Excerpt})
 		}
 	}
-	p.Findings = append(p.Findings, st.truncated...)
+	p.Findings = append(p.Findings, st.unread...)
 
 	p.DeclaredServers = len(m.Capabilities.MCPServers)
 	if servers := m.Capabilities.MCPServers; len(servers) > 0 && o.Registry != "" {
@@ -217,17 +217,18 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 // stages rate them, and its unread files as S1's unreadable-file finding.
 // The rule findings of a file past the scan cap (in truncated) are left
 // out, since Prepare scans its first 1 MiB again; those of a shipped pack's
-// text are the stage for packs' (SK/), which reads it whole. The manifest's
+// text are the stage for packs' (SK/), which reads it whole, and which
+// reads nothing of a page it cannot read as UTF-8 (in packUnread). The manifest's
 // own rule errors are not findings: Submit refuses them before the gate
 // (Expected).
-func ruleFindings(r validate.Report, truncated map[string][]byte, packText map[string]bool) []Finding {
+func ruleFindings(r validate.Report, truncated map[string][]byte, packText, packUnread map[string]bool) []Finding {
 	var out []Finding
 	for _, f := range r.Inventory {
 		out = append(out, Finding{Kind: KindRegistryRules, Scanner: f.Scanner, Severity: f.Severity, Confidence: inventoryConfidence[f.Scanner],
 			Title: f.Title, File: f.FilePath, Detail: f.Detail})
 	}
 	for _, f := range r.Findings {
-		if _, ok := truncated[f.FilePath]; ok {
+		if _, ok := truncated[f.FilePath]; ok || packUnread[f.FilePath] {
 			continue
 		}
 		scanner := f.RuleID
@@ -278,14 +279,14 @@ func serverFindings(servers []mcpinstall.VulnStatus) []Finding {
 // staged is what stagePackage found while it copied.
 type staged struct {
 	files int
-	// truncated are S1's findings for text files past the scan cap, and
-	// SK's for a pack's text it cannot read; heads are the first 1 MiB of
-	// each file past the cap, all the registry's stages read of it.
-	truncated []Finding
-	heads     map[string][]byte
+	// unread are S1's findings for text files past the scan cap, and SK's
+	// for a pack's text it cannot read; heads are the first 1 MiB of each
+	// file past the cap, all the registry's stages read of it.
+	unread []Finding
+	heads  map[string][]byte
 	// packText are a shipped pack's text files, which the registry's stage
-	// for packs reads whole.
-	packText map[string]bool
+	// for packs reads whole, and packUnread those of them it cannot read.
+	packText, packUnread map[string]bool
 }
 
 // stagePackage copies the files a submission would carry (the manifest's
@@ -296,7 +297,7 @@ type staged struct {
 // truncation finding, and reports one it cannot read as UTF-8 as unread,
 // which forces review.
 func stagePackage(dir string, m *manifest.Manifest, ships []string, dest string) (staged, error) {
-	st := staged{heads: map[string][]byte{}, packText: map[string]bool{}}
+	st := staged{heads: map[string][]byte{}, packText: map[string]bool{}, packUnread: map[string]bool{}}
 	files, err := archive.WalkWorkspace(dir)
 	if err != nil {
 		return st, err
@@ -322,12 +323,13 @@ func stagePackage(dir string, m *manifest.Manifest, ships []string, dest string)
 		case text && packFile:
 			st.packText[fi.Path] = true
 			if !utf8.Valid(data) {
-				st.truncated = append(st.truncated, Finding{Kind: KindRegistryRules, Scanner: "SK/unread-text", Severity: "medium", Confidence: "high",
+				st.packUnread[fi.Path] = true
+				st.unread = append(st.unread, Finding{Kind: KindRegistryRules, Scanner: "SK/unread-text", Severity: "medium", Confidence: "high",
 					Title: "A text file in a shipped knowledge pack is not UTF-8 and was not read", File: fi.Path})
 			}
 		case text && len(data) > textScanCap:
 			st.heads[fi.Path] = data[:textScanCap]
-			st.truncated = append(st.truncated, Finding{Kind: KindRegistryRules, Scanner: "S1/text-scan-truncated", Severity: "medium", Confidence: "high",
+			st.unread = append(st.unread, Finding{Kind: KindRegistryRules, Scanner: "S1/text-scan-truncated", Severity: "medium", Confidence: "high",
 				Title: "Text file exceeds the scan cap — content past 1 MiB was not scanned", File: fi.Path})
 		}
 	}

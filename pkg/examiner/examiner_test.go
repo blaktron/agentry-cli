@@ -236,7 +236,7 @@ func TestEveryReportNamesWhatDidNotRunAndNeverClaimsSafety(t *testing.T) {
 	r := Finish(p, envWith(`{"summary":"s","findings":[],"notRead":[]}`), nil, out, "x", "y")
 	joined := strings.Join(r.NotRunHere, "\n")
 	for _, want := range []string{"secrets stage (S2)", "scripts stage (S6)", "publisher signals (S8)", "last published version (S9)",
-		"organization's policy", "shipped knowledge packs", "Submit's own refusals"} {
+		"organization's policy", "shipped knowledge pack", "Submit's own refusals"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("not run here leaves out %q", want)
 		}
@@ -419,8 +419,9 @@ func TestAServerRecordSubmitWouldLookUpAgainIsUnresolved(t *testing.T) {
 // TestAShippedPacksTextIsItsOwnStages: the registry's stage for packs
 // reads a pack's wiki and sources whole and gates its findings like any
 // other, as SK/; so a rule hit there stands (prefixed), a long page gets no
-// truncation finding, a page that is not UTF-8 is SK's unread text, and a
-// file beside the pack's text is scanned as any file.
+// truncation finding, a page that is not UTF-8 is SK's unread text with no
+// rule findings (SK reads nothing of it), and a file beside the pack's text
+// is scanned as any file.
 func TestAShippedPacksTextIsItsOwnStages(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.CopyFS(dir, os.DirFS(fixture)); err != nil {
@@ -432,7 +433,7 @@ func TestAShippedPacksTextIsItsOwnStages(t *testing.T) {
 	for path, body := range map[string]string{
 		"agent.yaml":                   m,
 		"knowledge/docs/wiki/index.md": strings.Repeat("padding text for the scan cap\n", textScanCap/29+1) + hit,
-		"knowledge/docs/sources/a.md":  "caf\xe9 au lait\n",
+		"knowledge/docs/sources/a.md":  "caf\xe9 au lait\n" + hit,
 		"knowledge/docs/notes.md":      hit,
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, path)), 0o755); err != nil {
@@ -456,6 +457,8 @@ func TestAShippedPacksTextIsItsOwnStages(t *testing.T) {
 			pastCap = true
 		case f.File == "knowledge/docs/sources/a.md" && f.Scanner == "SK/unread-text":
 			unread = true
+		case f.File == "knowledge/docs/sources/a.md" && strings.HasPrefix(f.Scanner, "SK/S"):
+			t.Errorf("a pack page the registry cannot read has rule findings: %+v", f)
 		case f.File == "knowledge/docs/notes.md" && !strings.HasPrefix(f.Scanner, "SK/"):
 			notes = true
 		}
