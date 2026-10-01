@@ -988,10 +988,15 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	// Under the review grant a file reaches the model only after AI Review
 	// passed it (review.go): the model gets a withheld file's path and the
 	// reason instead, which is an answer, not a tool failure.
-	if s.spec.Review.Enabled {
-		if instead := s.reviewedInput(path.Clean(a.Path), abs, fi); instead != "" {
-			return s.scrubSecrets(instead), strings.HasPrefix(instead, "read_input: ")
+	if !s.spec.Review.Enabled {
+		text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
+		if err != nil {
+			return "read_input: " + err.Error(), true
 		}
+		return text, isErr
+	}
+	if instead, isErr, ok := s.reviewedInput(path.Clean(a.Path), abs, fi); !ok {
+		return s.scrubSecrets(instead), isErr
 	}
 	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
 	if err != nil {

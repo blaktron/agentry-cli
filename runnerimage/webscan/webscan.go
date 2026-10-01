@@ -341,7 +341,11 @@ func (s RegistrySearch) Search(ctx context.Context, query string, count int) ([]
 // ---- the person's own keys (local) ----
 
 // Jev scans with the person's own key through the core's judge.
-type Jev struct{ s *judge.ModelInputScanner }
+type Jev struct {
+	s *judge.ModelInputScanner
+	// max is the most text one scan takes; zero is MaxText.
+	max int
+}
 
 // NewJev builds a scanner over the person's Jev key; baseURL empty is
 // TypeSafe's API.
@@ -353,9 +357,22 @@ func NewJev(key, baseURL string, hc *http.Client) (*Jev, error) {
 	return &Jev{s: judge.NewModelInputScanner(c)}, nil
 }
 
+// WithMaxText is the same scanner taking up to n bytes a text: a review's
+// input files (toolsrv's review grant) are scanned whole up to stage S1's
+// text cap, where the Drafter's texts keep the registry route's MaxText.
+func (j *Jev) WithMaxText(n int) *Jev {
+	c := *j
+	c.max = n
+	return &c
+}
+
 // Scan implements Scanner.
 func (j *Jev) Scan(ctx context.Context, source Source, text string) Result {
-	if len(text) > MaxText {
+	limit := MaxText
+	if j.max > 0 {
+		limit = j.max
+	}
+	if len(text) > limit {
 		return Result{Verdict: NotScanned, Failure: FailureTooLarge}
 	}
 	return fromJudge(j.s.Scan(ctx, source, text))

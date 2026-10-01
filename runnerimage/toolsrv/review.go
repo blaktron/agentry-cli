@@ -77,9 +77,9 @@ const (
 	ReviewMaxFiles = 500
 	// DefaultMaxReviewCalls bounds ai_review calls a run.
 	DefaultMaxReviewCalls = 3
-	// reviewScanTimeout bounds one file's scan; reviewRubricTimeout one
-	// ai_review call.
-	reviewScanTimeout   = 90 * time.Second
+	// reviewScanTimeout bounds one file's scan, up to ReviewFileBytes of
+	// it, 8 KiB a request; reviewRubricTimeout one ai_review call.
+	reviewScanTimeout   = 5 * time.Minute
 	reviewRubricTimeout = 15 * time.Minute
 	// reviewSniffBytes is the window S1's text sniff reads.
 	reviewSniffBytes = 512
@@ -114,8 +114,12 @@ type reviewState struct {
 	scanner webscan.Scanner
 	asker   judge.Asker
 	// verdicts are read_input's scans, one a file: a file is scanned once
-	// and every page of it is answered from that verdict.
+	// and every page of it is answered from that verdict. A scan that
+	// failed is not asked again in the run: the file stays withheld, and
+	// the model cannot spend the person's key retrying it. inflight holds
+	// a file whose scan is under way, so a second read waits for it.
 	verdicts map[string]reviewVerdict
+	inflight map[string]chan struct{}
 	calls    int
 	ledger   *os.File
 }
@@ -124,19 +128,22 @@ type reviewVerdict struct {
 	size    int64
 	modTime time.Time
 	res     webscan.Result
+	// binary is a file that is not UTF-8 text: read_input never returns
+	// one, under the grant or not.
+	binary bool
 }
 
 // newReviewState builds the scanner and the asker from the key in this
 // container's environment.
 func (s *server) newReviewState() *reviewState {
-	r := &reviewState{verdicts: map[string]reviewVerdict{}}
+	r := &reviewState{verdicts: map[string]reviewVerdict{}, inflight: map[string]chan struct{}{}}
 	key := os.Getenv(EnvReviewJevKey)
 	if key == "" {
 		_, _ = fmt.Fprintln(s.logw, "review: no AI Review key: every input file will be withheld")
 		return r
 	}
 	if j, err := webscan.NewJev(key, "", nil); err == nil {
-		r.scanner = j
+		r.scanner = j.WithMaxText(ReviewFileBytes)
 	}
 	if c, err := judge.New(judge.Config{APIKey: key}); err == nil {
 		r.asker = c
@@ -198,41 +205,73 @@ func (s *server) recordReview(e ReviewEntry) {
 // ---- read_input, scanned ----
 
 // reviewedInput answers whether read_input may page out the file at abs:
-// "" when it may, and otherwise what the model is told instead. The whole
-// file is scanned once; a file past ReviewFileBytes is withheld as too
-// large, and one that is not UTF-8 text is never returned, as read_input
-// never returns binary.
-func (s *server) reviewedInput(rel, abs string, fi fs.FileInfo) string {
+// ok when it may, and otherwise what the model is told instead and whether
+// that is a tool error. The whole file is scanned once; a file past
+// ReviewFileBytes is withheld as too large, and one that is not UTF-8 text
+// is refused as read_input refuses binary without the grant. (ai_review
+// picks its files by stage S1's sniff instead, as the registry reads a
+// release; read_input keeps its own rule, which never returns binary.)
+func (s *server) reviewedInput(rel, abs string, fi fs.FileInfo) (instead string, isErr, ok bool) {
 	r := s.review()
-	r.mu.Lock()
-	v, ok := r.verdicts[rel]
-	r.mu.Unlock()
-	if ok && v.size == fi.Size() && v.modTime.Equal(fi.ModTime()) {
-		if v.res.Passed() {
-			return ""
+	for {
+		r.mu.Lock()
+		v, cached := r.verdicts[rel]
+		if cached && v.size == fi.Size() && v.modTime.Equal(fi.ModTime()) {
+			r.mu.Unlock()
+			return v.answer(rel)
 		}
-		return withheldInput(rel, v.res)
+		wait, busy := r.inflight[rel]
+		if !busy {
+			r.inflight[rel] = make(chan struct{})
+			r.mu.Unlock()
+			break
+		}
+		r.mu.Unlock()
+		<-wait
 	}
-	var res webscan.Result
+	v := reviewVerdict{size: fi.Size(), modTime: fi.ModTime()}
 	switch data, err := readCapped(abs, ReviewFileBytes); {
 	case errors.Is(err, errTooLarge):
-		res = webscan.Result{Verdict: webscan.NotScanned, Failure: webscan.FailureTooLarge}
+		v.res = webscan.Result{Verdict: webscan.NotScanned, Failure: webscan.FailureTooLarge}
+		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: ReviewFileBytes + 1, Result: v.res})
 	case err != nil:
-		return "read_input: " + err.Error()
+		s.reviewDone(rel, nil)
+		return "read_input: " + err.Error(), true, false
 	case !utf8.Valid(data):
+		v.binary = true
 		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: len(data), Refused: "binary file"})
-		return fmt.Sprintf("binary file; %d bytes", len(data))
 	default:
-		res = s.scanInput(string(data))
+		v.res = s.scanInput(string(data))
+		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: len(data), Result: v.res})
 	}
-	s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: int(min(fi.Size(), ReviewFileBytes+1)), Result: res})
+	s.reviewDone(rel, &v)
+	return v.answer(rel)
+}
+
+// reviewDone stores a file's verdict, when there is one, and wakes the reads
+// waiting on its scan.
+func (s *server) reviewDone(rel string, v *reviewVerdict) {
+	r := s.review()
 	r.mu.Lock()
-	r.verdicts[rel] = reviewVerdict{size: fi.Size(), modTime: fi.ModTime(), res: res}
-	r.mu.Unlock()
-	if res.Passed() {
-		return ""
+	defer r.mu.Unlock()
+	if v != nil {
+		r.verdicts[rel] = *v
 	}
-	return withheldInput(rel, res)
+	if ch, ok := r.inflight[rel]; ok {
+		close(ch)
+		delete(r.inflight, rel)
+	}
+}
+
+// answer is what read_input says for a verdict.
+func (v reviewVerdict) answer(rel string) (instead string, isErr, ok bool) {
+	switch {
+	case v.binary:
+		return fmt.Sprintf("binary file; %d bytes", v.size), true, false
+	case v.res.Passed():
+		return "", false, true
+	}
+	return withheldInput(rel, v.res), false, false
 }
 
 // scanInput scans one input file's text, bounded in time.
@@ -370,7 +409,8 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return "ai_review: dir: " + err.Error(), true
 	}
-	files, notRead, err := reviewFiles(root, manifestAbs, ShippedPacks(manifestJSON))
+	ships := ShippedPacks(manifestJSON)
+	files, notRead, err := reviewFiles(root, manifestAbs, ships)
 	if err != nil {
 		return "ai_review: " + err.Error(), true
 	}
@@ -387,7 +427,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	sc := judge.NewRubricScanner(r.asker)
 	ctx, cancel := context.WithTimeout(context.Background(), reviewRubricTimeout)
 	defer cancel()
-	axes, usage, err := sc.Scan(ctx, manifestJSON, ShippedPacks(manifestJSON), files)
+	axes, usage, err := sc.Scan(ctx, manifestJSON, ships, files)
 	paths := make([]string, len(files))
 	for i, f := range files {
 		paths[i] = f.Path
