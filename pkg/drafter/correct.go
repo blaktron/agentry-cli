@@ -26,7 +26,11 @@ import (
 //   - a list past its bound (the tags, the intake questions, the guide's
 //     prepare items): cut to the bound;
 //   - a text past its bound (the summary, a guide part, a key's help, the
-//     interactive opening): shortened at a word, ending with "…".
+//     interactive opening, the knowledge prompt): shortened at a word,
+//     ending with "…";
+//   - a knowledge block under capabilities: moved to the top level, where
+//     the manifest takes it; knowledge.ships: removed, since a draft never
+//     ships a pack (agentry-cli#522).
 //
 // The bounds are pkg/manifest's own. It returns what it corrected, one plain
 // sentence each, which Finish names in the draft's notes; the rules then
@@ -66,6 +70,14 @@ func Correct(raw json.RawMessage) (json.RawMessage, []string) {
 		c.shortenAt(in, "opening", "interactive.opening", manifest.MaxOpeningChars, false)
 	}
 	c.dropIfEmpty(root, "interactive", "")
+	c.liftKnowledge(root)
+	if k := value(root, "knowledge"); k != nil && k.Kind == yaml.MappingNode {
+		c.noShips(k)
+		if a := value(k, "accepts"); a != nil && a.Kind == yaml.MappingNode {
+			c.shortenAt(a, "prompt", "knowledge.accepts.prompt", manifest.MaxKnowledgePromptChars, false)
+		}
+	}
+	c.dropIfEmpty(root, "knowledge", "")
 	if len(c.did) == 0 {
 		return raw, nil
 	}
@@ -152,6 +164,47 @@ func (c *corrector) dropEmptyItems(l *yaml.Node, where, what string) {
 		kept = append(kept, it)
 	}
 	l.Content = kept
+}
+
+// liftKnowledge moves a knowledge block written under capabilities to the
+// manifest's top level, where the manifest takes it (the Drafter's first
+// live draft with a pack put it there, agentry-cli#522). A manifest that
+// already has one keeps its own, and the misplaced one is removed.
+func (c *corrector) liftKnowledge(root *yaml.Node) {
+	caps := value(root, "capabilities")
+	if caps == nil || caps.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(caps.Content); i += 2 {
+		if caps.Content[i].Value != "knowledge" {
+			continue
+		}
+		key, v := caps.Content[i], caps.Content[i+1]
+		caps.Content = append(caps.Content[:i], caps.Content[i+2:]...)
+		if value(root, "knowledge") != nil {
+			c.did = append(c.did, "capabilities.knowledge was removed: knowledge is a field of the manifest itself, which already has one.")
+			return
+		}
+		root.Content = append(root.Content, key, v)
+		c.did = append(c.did, "capabilities.knowledge was moved to knowledge: it is a field of the manifest itself, not a capability.")
+		return
+	}
+}
+
+// noShips removes knowledge.ships: a draft never ships a pack (plan
+// knowledge-and-drafter.md §6, D4). The person's own packs stay theirs;
+// a QuickAgent that needs one at run time asks for it with
+// knowledge.accepts, and the person attaches it to the run.
+func (c *corrector) noShips(k *yaml.Node) {
+	for i := 0; i+1 < len(k.Content); i += 2 {
+		if k.Content[i].Value != "ships" {
+			continue
+		}
+		k.Content = append(k.Content[:i], k.Content[i+2:]...)
+		c.did = append(c.did, "knowledge.ships was removed: a draft never ships a knowledge pack. "+
+			"A QuickAgent that needs one asks for it with knowledge.accepts, and the person attaches their own when they run it.")
+		return
+	}
 }
 
 // dropIfEmpty removes the optional part at key when it says nothing: an

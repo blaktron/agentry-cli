@@ -618,3 +618,70 @@ func TestAPackPastAgentrysCapStaysHere(t *testing.T) {
 		t.Fatalf("reseal: %v", err)
 	}
 }
+
+// TestAgentryScanIsConfirmedWithTheRegistry: a kept pack's scan in Agentry
+// is the registry's record, asked now, only while Agentry's copy is this
+// pack's tree (agentry-cli#522, D14); anything else says why it could not
+// be confirmed, and a pack kept here only has nothing to confirm.
+func TestAgentryScanIsConfirmedWithTheRegistry(t *testing.T) {
+	ctx := context.Background()
+	reg := knowledgetest.NewRegistry(t)
+	a := newMachine(t, reg, "alice")
+	e, err := a.store().Keep(ctx, knowledgetest.Make(t, "runbook", nil).Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := e.Manifest.SHA256
+	if rec, err := a.store().AgentryScan(ctx, "runbook", digest); rec != nil || err != nil {
+		t.Fatalf("kept here only: %s %v", rec, err)
+	}
+	reg.Scanning = true
+	if _, _, err := a.store().Upload(ctx, "runbook"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store().AgentryScan(ctx, "runbook", digest); !errors.Is(err, store.ErrScanUnconfirmed) || !strings.Contains(err.Error(), `"scanning"`) {
+		t.Fatalf("while scanning: %v", err)
+	}
+	reg.Finish()
+	rec, err := a.store().AgentryScan(ctx, "runbook", digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report map[string]any
+	if json.Unmarshal(rec, &report) != nil || report["findings"] == nil {
+		t.Fatalf("record %s", rec)
+	}
+	if _, err := a.store().AgentryScan(ctx, "runbook", "sha256:another"); !errors.Is(err, store.ErrScanUnconfirmed) {
+		t.Fatalf("another tree: %v", err)
+	}
+	a.owner = ""
+	if _, err := a.store().AgentryScan(ctx, "runbook", digest); !errors.Is(err, store.ErrScanUnconfirmed) || !errors.Is(err, store.ErrSignedOut) {
+		t.Fatalf("signed out: %v", err)
+	}
+	a.owner = "alice"
+	// Changed here since its upload.
+	p, err := open(t, a.store(), "runbook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Dir, "sources", "guide.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := knowledge.WriteIndex(p.Dir, "runbook"); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := knowledge.TreeDigest(p.Dir)
+	m := p.Manifest
+	m.Bytes, m.SHA256 = d.Bytes, d.SHA256
+	raw, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(p.Dir, knowledge.ManifestFile), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e2, err := a.store().Reseal(ctx, "runbook", p.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store().AgentryScan(ctx, "runbook", e2.Manifest.SHA256); !errors.Is(err, store.ErrScanUnconfirmed) || !strings.Contains(err.Error(), "changed here") {
+		t.Fatalf("changed here: %v", err)
+	}
+}

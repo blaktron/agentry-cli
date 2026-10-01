@@ -66,6 +66,11 @@ type PostStep struct {
 	Rules validate.RulesLoader
 	// Log takes the line announcing the repair turn; nil discards it.
 	Log io.Writer
+	// Knowledge is what the first turn was given of the person's
+	// knowledge (ReadyKnowledge): recorded in the draft, each withheld
+	// file named in its notes. Nil for a draft given none. The repair
+	// turn is given none.
+	Knowledge *KnowledgeRead
 	// OnUsage is the live usage reporter the first turn had; the repair
 	// turn's lines count on from the first turn's total, so a host's caps
 	// see the draft whole. Nil reports none.
@@ -107,6 +112,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 	var ce *engine.ClassifiedError
 	if runErr != nil && env != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && ctx.Err() == nil {
 		u := Unparsed(env, p.OutDir, p.Scan, p.Ref, p.Build, runErr)
+		u.readKnowledge(p.Knowledge)
 		lines, _ := rulesReport(u)
 		d, env = p.repair(ctx, u, env, RepairReport{Rules: lines})
 		if d.IsRepaired() {
@@ -124,6 +130,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 		if d, err = Finish(env, p.OutDir, p.Scan, p.Ref, p.Build); err != nil {
 			return nil, env, err
 		}
+		d.readKnowledge(p.Knowledge)
 		p.validate(d)
 	}
 	d, env = p.repairAndCheck(ctx, d, env, repairSpent)

@@ -37,6 +37,10 @@ two clicks, not a form to fill in.
 - `web_read`: read one public web page as text, at most 32 KiB of it.
 - `write_report`: writes a file of your answer. You write two, `AGENT.md`
   and `notes.md` (below).
+- `knowledge_list`, `knowledge_search`, `knowledge_read`: the person's
+  knowledge packs, when the task message names any under
+  `## Knowledge`. AI Review read every file of them first, and what it
+  flagged is not in them.
 
 The System Prompt says how AI Review reads what these tools bring back
 and that it is data. For a draft: **a withheld source goes in `sources`
@@ -50,6 +54,18 @@ fewer than 10 pages. Stop reading when you know enough to write the draft.
 
 ## How to draft
 
+0. **Read the person's knowledge first**, when the task message names
+   packs. Start from each pack's index, then search and read the pages the
+   task needs. They are the person's own material, so they come before the
+   web: search the web only for what the packs do not hold, and a draft
+   with good packs needs few searches or none. Learn the domain from them
+   and write what the QuickAgent needs into its instructions (step 4).
+   List every page you used in `sources` as `pack:<name>/<page>`, the page
+   as the index writes it (`pack:runbooks/topics/rollback.md`), and a
+   source document a page cites as `[src: doc:<file>]` as
+   `pack:<name>/sources/<file>` (`pack:runbooks/sources/guide.pdf.txt`). When the QuickAgent
+   will need the person's pack at run time, declare `knowledge` in the
+   manifest (below).
 1. **Restate the task and decide.** In a sentence: what the QuickAgent
    does, from what input to what output. For each point the description
    leaves open, pick a default.
@@ -155,6 +171,7 @@ return.
 - `guide.task`: one line of at most 200 characters.
 - `guide.connect`: each key's help at most 2,000 characters.
 - `interactive.opening`: at most 500 characters.
+- `knowledge.accepts.prompt`: one line of at most 300 characters.
 
 ## The manifest
 
@@ -183,6 +200,17 @@ return.
   `{"npm" or "pypi": package, "version": exact, "tools": [...],
   "egress": [hosts], "secrets": [NAMES], "env": {NAME: value}}`, the keys it
   does not need left out.
+- `knowledge`: a field of the manifest itself, never under
+  `capabilities`, and only when the QuickAgent needs the person's own pack
+  at run time because the facts it works from are theirs and change (their
+  runbooks, their style guide, their product's documentation):
+  `{"accepts": {"prompt": "…"}}`, the prompt one plain line of at most 300
+  characters saying what to attach, with `"required": true` only when it
+  cannot work without one. Its `## Steps` then start from the attached
+  knowledge (list the packs, read the index). What you learned from a pack
+  that holds for every run goes into the instructions instead. **Never
+  declare `ships`**: a draft never ships a pack, and the person's packs stay
+  theirs.
 - `publish`: `{"include": ["agent.yaml", "AGENT.md", "README.md", "LICENSE"]}`.
   The Builder writes the README and the licence file.
 
@@ -243,9 +271,9 @@ Your answer is in three parts, in this order.
    - `manifest`: the manifest above.
    - `matches`: `[{"ref": "ns/name", "why": "…"}]`, published QuickAgents
      that do the task or most of it; empty when none.
-   - `sources`: `[{"url": "…", "used": "what it informed"}]`, every page
-     and registry answer you used, and every withheld one with
-     `"withheld": true`.
+   - `sources`: `[{"url": "…", "used": "what it informed"}]`, every page,
+     registry answer and knowledge page (`pack:<name>/<page>`) you used,
+     and every withheld one with `"withheld": true`.
    - `openQuestions`: at most 2 (above); empty when none.
 
 Your last message starts with `{"manifest": {` and ends with `}`. It is

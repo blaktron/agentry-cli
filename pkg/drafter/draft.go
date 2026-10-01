@@ -38,6 +38,10 @@ type Draft struct {
 	Drafter *Made `json:"drafter,omitempty"`
 	// AIReview is what AI Review read and withheld (the post-step's).
 	AIReview *AIReview `json:"aiReview,omitempty"`
+	// Knowledge is each of the person's knowledge packs the Drafter was
+	// given, how it was scanned and what of it was withheld (the
+	// post-step's; agentry-cli#522).
+	Knowledge []PackRead `json:"knowledge,omitempty"`
 	// Validation is `agentry validate --json`'s report over the rendered
 	// package (the post-step's): the manifest rules and the S1, S3 and S4
 	// scanners. A draft that fails them is kept, with its problems, for the
@@ -117,7 +121,7 @@ func Parse(result json.RawMessage) (*Draft, error) {
 	}
 	// Only the Drafter's own fields are read from its answer; the
 	// post-step's are Finish's and the CLI's to write.
-	d.Drafter, d.AIReview, d.Validation, d.ManifestError = nil, nil, nil, ""
+	d.Drafter, d.AIReview, d.Knowledge, d.Validation, d.ManifestError = nil, nil, nil, nil, ""
 	if d.Matches == nil {
 		d.Matches = []Match{}
 	}
@@ -250,7 +254,14 @@ func (d *Draft) NoteWithheld() {
 		return
 	}
 	var b strings.Builder
-	b.WriteString("## Withheld by AI Review\n\nThe Drafter was given the address and the reason for each of these, never the text:\n\n")
+	head := "The Drafter was given the address and the reason for each of these, never the text:"
+	for _, w := range d.AIReview.WithheldSources {
+		if w.Tool == "knowledge" {
+			head = "The Drafter was given the address and the reason for each of these, never the text; a file of a knowledge pack was left out of the pack it read:"
+			break
+		}
+	}
+	b.WriteString("## Withheld by AI Review\n\n" + head + "\n\n")
 	for _, w := range d.AIReview.WithheldSources {
 		fmt.Fprintf(&b, "- %s (%s): %s\n", w.URL, w.Tool, w.Reason)
 	}
