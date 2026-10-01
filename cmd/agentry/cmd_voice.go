@@ -56,11 +56,14 @@ func newVoiceCmd() *cobra.Command {
 			"`create`, `improve` and `edit` run the built-in Voice Writer on this computer, against the model your runner\n" +
 			"policy names: it costs no credits, and nothing it reads or writes is reviewed. `set` keeps your own text.\n" +
 			"The voice is kept sealed on this computer, under a key the registry you are signed in to wraps for your\n" +
-			"account (signed out, this computer's key). It stays here: a voice in your Agentry account is reviewed\n" +
-			"before it is used there.",
+			"account (signed out, this computer's key).\n\n" +
+			"Your Agentry account keeps a voice of its own, for runs In Agentry. The two are never synced on their own:\n" +
+			"`upload` submits this computer's voice to the account, where AI Review passes it before it is used there,\n" +
+			"`download` keeps the account's live voice on this computer, and `status` shows both.",
 	}
 	cmd.AddCommand(newVoiceCreateCmd(), newVoiceImproveCmd(), newVoiceEditCmd(), newVoiceShowCmd(),
-		newVoiceSetCmd(), newVoiceAttachCmd(), newVoiceDeleteCmd())
+		newVoiceSetCmd(), newVoiceAttachCmd(), newVoiceDeleteCmd(),
+		newVoiceUploadCmd(), newVoiceDownloadCmd(), newVoiceStatusCmd())
 	return cmd
 }
 
@@ -391,9 +394,11 @@ func newVoiceSetCmd() *cobra.Command {
 }
 
 func newVoiceAttachCmd() *cobra.Command {
-	return &cobra.Command{
+	var account bool
+	cmd := &cobra.Command{
 		Use:       "attach on|off",
 		Short:     "Turn attaching the Writing Voice to every run on or off",
+		Long:      "Turn attaching this computer's Writing Voice to every run here on or off; with --account, your account's, for runs In Agentry.",
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"on", "off"},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -404,6 +409,21 @@ func newVoiceAttachCmd() *cobra.Command {
 			case "off":
 			default:
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("attach takes on or off, not %q", args[0]))
+			}
+			if account {
+				c, err := voiceAccount(cmd)
+				if err != nil {
+					return voiceAccountErr(err)
+				}
+				if _, err := c.SetAlwaysAttach(cmd.Context(), on); err != nil {
+					return voiceAccountErr(err)
+				}
+				if on {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Your account's voice is on for every run In Agentry.")
+				} else {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Your account's voice is off for runs In Agentry.")
+				}
+				return nil
 			}
 			s, err := voiceStore(cmd)
 			if err != nil {
@@ -420,6 +440,8 @@ func newVoiceAttachCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&account, "account", false, "set your account's flag, for runs In Agentry, instead of this computer's")
+	return cmd
 }
 
 func newVoiceDeleteCmd() *cobra.Command {
@@ -487,7 +509,7 @@ func attachVoice(cmd *cobra.Command, opts runOpts) (*engine.AttachedVoice, error
 	if err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
-	v, err := engine.AttachVoice(text, "kept on this computer, "+kept.Meta.Source.Phrase()+", not reviewed")
+	v, err := engine.AttachVoice(text, kept.Meta.Origin())
 	if err != nil {
 		return nil, engine.Classify(engine.ExitVerify, err)
 	}

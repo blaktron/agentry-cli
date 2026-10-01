@@ -282,6 +282,27 @@ alone:
 
 {"manifest": {"schemaVersion": "2", "name": "…", "…": "…"}, "matches": [], "sources": [], "openQuestions": []}
 
+## A revision
+
+Your task may ask you to revise a QuickAgent its maintainer already
+published, instead of drafting a new one. Its release is under
+`/inputs/revise`: its `agent.yaml` and its instruction file. The task gives
+what the person wants changed and the problems they found in this version.
+
+- **Read the release first**, both files, before any search.
+- **Keep its name and what works:** the same task, the intake, the guide
+  and the contract, unless what the person wants or a problem they listed
+  needs a change. Write the whole manifest and the whole instruction file
+  again, in the shape this file teaches, never a patch.
+- **Solve each problem listed.** One you cannot solve within the bounds
+  above goes in the notes, with why.
+- **Search and read only what the change needs**; a revision often needs
+  nothing from the web.
+- **The notes say what changed from the release and why**, within the
+  bullets above, and leave out what stayed the same.
+- `namespace` stays `"draft"` and `version` stays `"0.1.0"`: the Builder
+  sets the person's own namespace and the next version.
+
 ## A repair turn
 
 After you answer, the rules check the draft, then AI Review checks the

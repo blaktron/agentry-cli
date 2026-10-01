@@ -42,6 +42,10 @@ type Draft struct {
 	// given, how it was scanned and what of it was withheld (the
 	// post-step's; agentry-cli#522).
 	Knowledge []PackRead `json:"knowledge,omitempty"`
+	// Revises is the release a revision was drafted from (the post-step's;
+	// agentry-cli#526): its ref and its archive's digest. Absent for a new
+	// QuickAgent.
+	Revises *Revises `json:"revises,omitempty"`
 	// Validation is `agentry validate --json`'s report over the rendered
 	// package (the post-step's): the manifest rules and the S1, S3 and S4
 	// scanners. A draft that fails them is kept, with its problems, for the
