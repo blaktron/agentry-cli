@@ -108,22 +108,6 @@ func (e *PolicyRefusal) Error() string { return "refused by policy: " + e.Reason
 // OutputSchemaFile is the §R2 structured-output convention.
 const OutputSchemaFile = "output.schema.json"
 
-// contractPostscript is the fixed runner contract appended to every
-// instruction (§R2). Golden tests pin it; changing it changes every plan
-// hash, which is the point.
-const contractPostscript = "\n\n----\n" +
-	"Runner contract (Agentry): You are running as a one-shot QuickAgent inside " +
-	"an isolated container. Your only tools are those provided by the connected MCP " +
-	"gateway — there is no other shell, filesystem, or network access. The task " +
-	"workspace, as seen by your tools, is rooted at " + spec.WorkspaceMount + ". Input " +
-	"files provided for this run, if any, are under " + spec.InputsMount + " — list " +
-	"them with list_inputs and read them with read_input. Knowledge packs attached " +
-	"to this run, if any, are searched with knowledge_search, listed with " +
-	"knowledge_list and read with knowledge_read. Files you want to deliver " +
-	"as reports must be written with the write_report tool; they land in the run's " +
-	"output folder. When the task is complete, send your final answer as your last " +
-	"message.\n"
-
 // Compile builds the plan and writes the generated file set under planDir:
 //
 //	planDir/plan.json
@@ -169,11 +153,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.WebTools = true
 	}
-	instructionPath, instruction, err := deriveInstruction(m, in.WorkspaceDir)
+	instructionPath, body, err := deriveInstruction(m, in.WorkspaceDir)
 	if err != nil {
 		return nil, err
 	}
-	instruction += contractPostscript
 
 	schemaJSON, output, err := loadOutputSchema(in.WorkspaceDir)
 	if err != nil {
@@ -214,6 +197,19 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 				"declared MCP server %s collides with an operator dataAccess server of the same name", srv.Name)}
 		}
 	}
+
+	// The System Prompt, then the package's instruction (agentry-cli#520).
+	promptServers := append([]string(nil), extraServers...)
+	for _, srv := range in.MCPServers {
+		promptServers = append(promptServers, srv.Name)
+	}
+	sort.Strings(promptServers)
+	instruction := renderInstruction(promptFacts{
+		caps:    caps,
+		secrets: sortedCopy(m.Capabilities.Secrets),
+		servers: promptServers,
+		schema:  len(schemaJSON) > 0,
+	}, body)
 
 	files := map[string][]byte{}
 	// The tools server runs in the shared runner image unless the agent
@@ -280,6 +276,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Instruction: spec.InstructionSpec{
 			SourcePath: instructionPath,
 			SHA256:     sha256hex([]byte(instruction)),
+			BodySHA256: sha256hex([]byte(body)),
 		},
 		Capabilities: caps,
 		Tools:        tspec.GrantedTools(),
@@ -560,11 +557,13 @@ func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, 
 
 // ReadInstruction reads the instruction a plan was compiled from out of a
 // workspace and returns its prose as the compile read it: frontmatter
-// stripped, without the runner-contract postscript. The text is held to
-// the digest the plan records, so what it returns is the instruction the
-// plan was built on, whichever client ran it and whether or not that
-// client checked the workspace. The engine sends it as the task of a run
-// given none (agentry-cli#449).
+// stripped, without the System Prompt. The text is held to the body's
+// digest the plan records, so what it returns is the instruction the plan
+// was built on, whichever client ran it and whether or not that client
+// checked the workspace. The engine sends it as the task of a run given
+// none (agentry-cli#449). A plan with no body digest was compiled before
+// the System Prompt (agentry-cli#520) and is refused: it is recompiled,
+// never reinterpreted.
 func ReadInstruction(workspace string, in spec.InstructionSpec) (string, error) {
 	body, err := readInstructionFile(workspace, in.SourcePath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -573,7 +572,10 @@ func ReadInstruction(workspace string, in spec.InstructionSpec) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	if sha256hex([]byte(body+contractPostscript)) != in.SHA256 {
+	if in.BodySHA256 == "" {
+		return "", fmt.Errorf("the plan records no digest of %s's own text: it was compiled by an older CLI and must be compiled again", in.SourcePath)
+	}
+	if sha256hex([]byte(body)) != in.BodySHA256 {
 		return "", fmt.Errorf("the instruction file %s changed after the plan was compiled", in.SourcePath)
 	}
 	return body, nil

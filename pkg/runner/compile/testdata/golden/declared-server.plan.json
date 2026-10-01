@@ -11,7 +11,8 @@
   "policySha256": "policysha",
   "instruction": {
     "sourcePath": "SKILL.md",
-    "sha256": "f642f2f8f750c9b110bb363e1934250ee2d0799cb8d05b87284cb004aea67258"
+    "sha256": "8920f4f8e59146e6521ce753f02804c138f441b032b0e89d4e031ac6a7fa2b95",
+    "bodySha256": "ab7eeb2d198a6e44757e77befdfde811a705e2556b46ea2398e5e13e0c4c95a1"
   },
   "capabilities": {
     "egressMode": "none",
@@ -194,6 +195,6 @@
     "gateway/registry.yaml": "cc21e4caab49d9b939989a497d4e1bf65dfcb9251550d5d95fd925fa82296a20",
     "gateway/tools.yaml": "9445dc7f35276a0546464cb91e304b2999754451452158ca8202513f2d9df82f",
     "gateway/toolspec.json": "5e3adebda7a1b2f93e7cea7766f895dfdbabcd111470cc627697cc77d676463e",
-    "harness/agent.yaml": "25969a8173b6da457db12fe1d74790576d597f96d3ff7f49ba77e36526b2d287"
+    "harness/agent.yaml": "2afed2804fdcf1db5d59def5e8639d49537d0195d8763354e6bbfa88bbc350b3"
   }
 }

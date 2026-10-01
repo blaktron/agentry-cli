@@ -192,9 +192,13 @@ type Plan struct {
 type InstructionSpec struct {
 	// SourcePath is the archive-relative file the instruction came from.
 	SourcePath string `json:"sourcePath"`
-	// SHA256 is the hash of the fully rendered instruction (body +
-	// runner-contract postscript), for receipts.
+	// SHA256 is the hash of the fully rendered instruction (the System
+	// Prompt, then the body), for receipts.
 	SHA256 string `json:"sha256"`
+	// BodySHA256 is the hash of the package's own instruction text alone,
+	// frontmatter stripped: what ReadInstruction holds the file to
+	// (agentry-cli#520).
+	BodySHA256 string `json:"bodySha256,omitempty"`
 }
 
 // CapSummary is the manifest capability contract, normalized to closed
