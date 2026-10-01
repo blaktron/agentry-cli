@@ -119,3 +119,53 @@ func TestShortenAtWord(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// TestADraftNeverShipsAPack: knowledge.ships is removed from a draft and
+// named (plan knowledge-and-drafter.md §6, D4; agentry-cli#522), what it
+// accepts is kept, and a block left with nothing is removed.
+func TestADraftNeverShipsAPack(t *testing.T) {
+	m := `{"schemaVersion":"2","name":"x","knowledge":{"ships":[{"name":"runbooks"}],"accepts":{"prompt":"Your runbooks","required":true}}}`
+	out, did := Correct(json.RawMessage(m))
+	var got struct {
+		Knowledge map[string]json.RawMessage `json:"knowledge"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Knowledge["ships"]; ok || string(got.Knowledge["accepts"]) != `{"prompt":"Your runbooks","required":true}` {
+		t.Fatalf("knowledge %s", out)
+	}
+	if len(did) != 1 || !strings.HasPrefix(did[0], "knowledge.ships was removed: a draft never ships a knowledge pack.") {
+		t.Fatalf("did %q", did)
+	}
+	out, _ = Correct(json.RawMessage(`{"schemaVersion":"2","name":"x","knowledge":{"ships":[{"name":"runbooks"}]}}`))
+	if strings.Contains(string(out), "knowledge") {
+		t.Fatalf("an empty knowledge block was kept: %s", out)
+	}
+}
+
+// TestKnowledgeUnderCapabilitiesIsLifted: a knowledge block the Drafter
+// wrote under capabilities is moved to the manifest's top level and named,
+// and the manifest then parses (agentry-cli#522).
+func TestKnowledgeUnderCapabilitiesIsLifted(t *testing.T) {
+	m := `{"schemaVersion":"2","name":"x","capabilities":{"exec":"none","knowledge":{"accepts":{"prompt":"Your runbooks"}}}}`
+	out, did := Correct(json.RawMessage(m))
+	var got struct {
+		Knowledge    *manifest.Knowledge        `json:"knowledge"`
+		Capabilities map[string]json.RawMessage `json:"capabilities"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Knowledge == nil || got.Knowledge.Accepts == nil || got.Knowledge.Accepts.Prompt != "Your runbooks" {
+		t.Fatalf("knowledge %s", out)
+	}
+	if _, ok := got.Capabilities["knowledge"]; ok || len(did) != 1 || !strings.HasPrefix(did[0], "capabilities.knowledge was moved to knowledge") {
+		t.Fatalf("%s %q", out, did)
+	}
+	both := `{"schemaVersion":"2","name":"x","knowledge":{"accepts":{"prompt":"Mine"}},"capabilities":{"knowledge":{"accepts":{"prompt":"Other"}}}}`
+	out, did = Correct(json.RawMessage(both))
+	if !strings.Contains(string(out), `"Mine"`) || strings.Contains(string(out), `"Other"`) || len(did) != 1 {
+		t.Fatalf("%s %q", out, did)
+	}
+}

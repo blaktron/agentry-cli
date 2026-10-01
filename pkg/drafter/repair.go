@@ -75,7 +75,7 @@ var repairWordsOf = [...]repairWords{
 			"and instructions, and nothing else, for one more turn without its web tools. This draft is its second answer. " +
 			"What the rules said of the first:",
 		refused:  "The rules refused this answer. The Drafter was given their report",
-		announce: "The rules refused the draft (%d problem(s)). The Drafter has one repair turn, given only their report and its own draft, without its web tools.",
+		announce: "The rules refused the draft (%[1]d problem(s)). The Drafter has one repair turn, given only their report and its own draft, without its web tools.",
 	},
 	byCheck: {
 		opening: "This is your one repair turn. The draft you returned passed the Agentry rules, but AI Review's check of the finished draft " +

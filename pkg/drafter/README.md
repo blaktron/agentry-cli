@@ -37,6 +37,13 @@ Drafter's model does. Anything it flags, or could not scan, is withheld from
 the model, and the draft's notes list what was withheld. AI Review also reads
 the description before the run starts and checks the finished draft.
 
+When you give a draft your knowledge packs, it also has the three knowledge
+tools every run with a pack has (`knowledge_list`, `knowledge_search`,
+`knowledge_read`). It reads the packs before the web, and never ships them.
+Nothing of a pack reaches its model unscanned: a pack Agentry scanned is read
+as that scan left it, and any other pack is scanned by AI Review before the
+draft starts. What a scan flagged is withheld, and the notes name it.
+
 ## What it returns
 
 `AGENT.md` and `notes.md`, written with `write_report`, and a final answer

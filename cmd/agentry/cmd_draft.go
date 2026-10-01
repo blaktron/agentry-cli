@@ -27,12 +27,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/drafter"
+	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -51,6 +53,7 @@ const envJobToken = "AGENTRY_JOB_TOKEN"
 
 type draftOpts struct {
 	hints           []string
+	knowledge       []string
 	descriptionFile string
 	out             string
 	policyPath      string
@@ -91,7 +94,7 @@ var draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
 func newDraftCmd() *cobra.Command {
 	var o draftOpts
 	cmd := &cobra.Command{
-		Use:   `draft "<description>" [--hint TEXT…] [--out DIR]`,
+		Use:   `draft "<description>" [--hint TEXT…] [--knowledge PACK…] [--out DIR]`,
 		Short: "Draft a QuickAgent from a description, with the built-in Drafter",
 		Long: "Draft a QuickAgent from a plain description of what it should do. The built-in Drafter searches the\n" +
 			"registry and the web, reads what it finds, and returns a draft: the manifest, the instructions, notes on\n" +
@@ -107,6 +110,14 @@ func newDraftCmd() *cobra.Command {
 			"registry only.\n\n" +
 			"The description, the searches and the pages go to the search provider, to TypeSafe and to the sites\n" +
 			"read, so the description should hold no secret.\n\n" +
+			"--knowledge gives the Drafter your knowledge packs, up to " + knowledge.FormatCap(drafter.MaxKnowledgeBytes) + " in all: it reads them before the web, writes\n" +
+			"what the QuickAgent needs into its instructions, lists the pages it used, and asks for your pack at run time\n" +
+			"(knowledge.accepts) when the QuickAgent needs it; a draft never ships a pack. A pack scanned in Agentry is not\n" +
+			"scanned again, and what that scan flagged is withheld. Any other pack is scanned first: AI Review reads every\n" +
+			"file of it with your key before the draft starts, which for a large pack takes a while, and what it flags,\n" +
+			"or cannot read, is withheld. The draft's notes name every file withheld. What the Drafter reads in your packs\n" +
+			"can shape its searches and the pages it reads, which go to the search provider and the sites, as the\n" +
+			"description does.\n\n" +
 			"The draft is written to DIR/draft.json, and rendered as a package in DIR/package, checked with the same\n" +
 			"rules as `agentry validate`. Its mechanical slips (a value named twice, an empty part, a list or a line\n" +
 			"past its limit) are corrected first and named in the notes. AI Review then checks the finished package:\n" +
@@ -121,6 +132,8 @@ func newDraftCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error { return draftRunE(cmd, args, &o) },
 	}
 	f := cmd.Flags()
+	f.StringArrayVar(&o.knowledge, "knowledge", nil, "a knowledge pack the Drafter reads first: a pack directory, or the name of a pack kept on this computer (repeatable; at most "+
+		strconv.Itoa(drafter.MaxKnowledgePacks)+" packs and "+knowledge.FormatCap(drafter.MaxKnowledgeBytes)+" in all). A pack not scanned in Agentry is scanned first")
 	f.StringArrayVar(&o.hints, "hint", nil, "a hint: the services or sites it works with, whether it runs on its own or in a conversation, an example of the output wanted (repeatable)")
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
@@ -166,7 +179,19 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
-	task, err := drafter.Task(description, o.hints)
+	// The packs are loaded and held to the draft's bounds before anything
+	// is scanned, and the person told which will be scanned first (D3).
+	packs, packsDone, err := draftKnowledge(cmd, o.knowledge, o.hosted)
+	if err != nil {
+		return err
+	}
+	defer packsDone()
+	noteKnowledge(cmd, packs, o.hosted)
+	names := make([]string, 0, len(packs))
+	for _, k := range packs {
+		names = append(names, k.Pack.Manifest.Name)
+	}
+	task, err := drafter.TaskWithKnowledge(description, o.hints, names)
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
@@ -182,7 +207,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
-	web, searchNote, err := draftWeb(pol, *o)
+	web, searchNote, err := draftWeb(pol, *o, len(packs) > 0)
 	if err != nil {
 		return err
 	}
@@ -209,6 +234,13 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 			"with your key before the model reads it, and this computer reads each page from its site. It submits nothing.\n", model, searchNote)
 	}
 
+	// A pack not scanned is scanned now, after the description and before
+	// the Drafter starts (D3).
+	read, readDone, err := readyDraftKnowledge(cmd, packs, sc)
+	if err != nil {
+		return err
+	}
+	defer readDone()
 	runID, err := engine.NewRunID()
 	if err != nil {
 		return err
@@ -226,11 +258,14 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		Build: version.Build(), Task: strings.NewReader(task), OutDir: outDir, Budgets: &budgets,
 		RunID: runID, Stderr: errOut, Web: web, OnUsage: usageReporter(o.outputFormat, errOut),
 	}
+	if read != nil {
+		first.Knowledge = read.Packs
+	}
 	env, runErr := draftRun(cmd, first)
 	checker, checkerErr := draftChecker(web)
 	post := drafter.PostStep{
 		OutDir: outDir, Description: description, Task: task, Scan: desc, Ref: localrun.Drafter().Ref(), Build: version.Build(),
-		Budgets: budgets, Checker: checker, CheckerErr: checkerErr, Log: errOut, OnUsage: first.OnUsage,
+		Budgets: budgets, Checker: checker, CheckerErr: checkerErr, Log: errOut, OnUsage: first.OnUsage, Knowledge: read,
 		Repair: func(_ context.Context, t drafter.RepairTurn) (*receipt.Envelope, error) {
 			return draftRun(cmd, localrun.RepairRun(first, t))
 		},
@@ -335,6 +370,29 @@ func printDraftEnvelope(cmd *cobra.Command, run *receipt.Envelope, outDir string
 	printBuiltinEnvelope(cmd.Context(), cmd.OutOrStdout(), env, "draft", report, finishErr)
 }
 
+// readyDraftKnowledge scans what must be scanned first and makes the copies
+// the Drafter reads (drafter.ReadyKnowledge), in a private directory of the
+// local store that done removes after the draft. Nil with no packs.
+func readyDraftKnowledge(cmd *cobra.Command, packs []drafter.KnowledgeIn, sc webscan.Scanner) (*drafter.KnowledgeRead, func(), error) {
+	if len(packs) == 0 {
+		return nil, func() {}, nil
+	}
+	kept, err := knowledgeStore(cmd)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	scratch, done, err := kept.Scratch()
+	if err != nil {
+		return nil, done, engine.Classify(engine.ExitCLI, err)
+	}
+	read, err := drafter.ReadyKnowledge(cmd.Context(), packs, sc, scratch, cmd.ErrOrStderr())
+	if err != nil {
+		done()
+		return nil, func() {}, err
+	}
+	return read, done, nil
+}
+
 // draftDescription is the argument or the file, exactly one.
 func draftDescription(args []string, o draftOpts) (string, error) {
 	switch {
@@ -356,7 +414,7 @@ func draftDescription(args []string, o draftOpts) (string, error) {
 // --hosted, the job's credential and the registry. It refuses a draft that
 // could not have AI Review read everything first (D22, D25), and says what
 // search the draft has.
-func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
+func draftWeb(pol *policy.Policy, o draftOpts, packs bool) (*engine.WebRun, string, error) {
 	reg := registryURL()
 	if o.hosted {
 		tok := strings.TrimSpace(os.Getenv(envJobToken))
@@ -369,8 +427,12 @@ func draftWeb(pol *policy.Policy, o draftOpts) (*engine.WebRun, string, error) {
 	w, search, err := drafter.LocalWeb(pol, reg)
 	switch {
 	case errors.Is(err, drafter.ErrNoJevKey):
+		also := ""
+		if packs {
+			also = "Your knowledge packs would be scanned first with it too, so none can be read without it. "
+		}
 		return nil, "", engine.Classify(engine.ExitPolicy, fmt.Errorf(
-			"the Drafter runs only with AI Review reading everything first: the description, every search result, every page. "+
+			"the Drafter runs only with AI Review reading everything first: the description, every search result, every page. "+also+
 				"On this computer that takes your own TypeSafe Jev key, and none was found. Set $%s, or name another variable in "+
 				"your runner policy's judge.apiKeyEnv; with judge.apiKeySource: keyring it is read from the OS keychain entry %s",
 			pol.Judge.KeyEnv(), modelkey.Account(policy.JudgeKeyProvider)))
@@ -434,6 +496,13 @@ func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 	}
 	for _, m := range d.Matches {
 		say("  registry:  %s already does some of this: %s", safeTerminalText(m.Ref, 120), safeTerminalText(m.Why, 300))
+	}
+	for _, k := range d.Knowledge {
+		how := "scanned in Agentry"
+		if k.Scan == drafter.ScannedForDraft {
+			how = "scanned by AI Review for this draft"
+		}
+		say("  knowledge: %s, %s; %d file(s) withheld", k.Name, how, len(k.Withheld))
 	}
 	if a := d.AIReview; a != nil {
 		say("  AI Review: read %d result(s); %d withheld", a.Read, a.Withheld+a.NotScanned)

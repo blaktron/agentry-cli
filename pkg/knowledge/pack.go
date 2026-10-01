@@ -259,6 +259,11 @@ func canonicalHeader(rel string, size int64) *tar.Header {
 	}
 }
 
+// TreeFiles lists the regular files of the pack at dir, under wiki/ and
+// sources/, as sorted slash paths relative to it: what TreeDigest hashes
+// and the knowledge tools serve.
+func TreeFiles(dir string) ([]string, error) { return treeFiles(dir) }
+
 // treeFiles lists the regular files under wiki/ and sources/ as sorted
 // slash paths relative to dir.
 func treeFiles(dir string) ([]string, error) {
