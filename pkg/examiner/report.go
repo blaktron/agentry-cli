@@ -2,15 +2,22 @@ package examiner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/judge"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
@@ -203,6 +210,49 @@ type Reading struct {
 	// Error says why there is no reading: the run failed, or its answer
 	// was not one.
 	Error string `json:"error,omitempty"`
+	// Recovered says the runner refused the model's last message at the
+	// output schema (exit 17), and the reading is the one JSON object in a
+	// fence inside it, which output.schema.json passes.
+	Recovered bool `json:"recovered,omitempty"`
+}
+
+// recoverReading is the reading inside a last message the runner refused at
+// its output schema, when the model wrote a sentence and then the object in
+// a ```json fence (as models do, however the instruction asks): the fenced
+// object, held to output.schema.json as the runner holds an answer. The
+// reading is never counted, so a recovered one changes nothing but the
+// report's third kind.
+func recoverReading(result json.RawMessage) (json.RawMessage, error) {
+	var text string
+	if err := json.Unmarshal(result, &text); err != nil {
+		return nil, errors.New("the refused message is not text")
+	}
+	start := strings.LastIndex(text, "```json")
+	if start < 0 {
+		return nil, errors.New("no fenced JSON in the refused message")
+	}
+	body := text[start+len("```json"):]
+	end := strings.Index(body, "```")
+	if end < 0 {
+		return nil, errors.New("the fence is not closed")
+	}
+	candidate := strings.TrimSpace(body[:end])
+	schemaBytes, err := fs.ReadFile(FS(), "output.schema.json")
+	if err != nil {
+		return nil, err
+	}
+	sch, err := compile.CompileOutputSchema(schemaBytes)
+	if err != nil {
+		return nil, err
+	}
+	val, err := jsonschema.UnmarshalJSON(strings.NewReader(candidate))
+	if err != nil {
+		return nil, err
+	}
+	if err := sch.Validate(val); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(candidate), nil
 }
 
 // NotRead is a file and why it was not read.
@@ -249,7 +299,13 @@ func Finish(p *Prepared, env *receipt.Envelope, runErr error, outDir, ref, build
 	if env != nil {
 		r.Examiner.Model, r.Examiner.RunID = env.Harness.Model, env.RunID
 	}
-	entries, _, _ := engine.ReadReviewLedger(filepath.Join(outDir, "receipts", engine.ReviewLedgerFile))
+	// The ledger is read only for a run whose own receipt counted a review:
+	// a run that failed before it was set up wrote none, and a ledger left
+	// in the folder by another run is never this one's.
+	var entries []toolsrv.ReviewEntry
+	if env != nil && env.Review != nil {
+		entries, _, _ = engine.ReadReviewLedger(filepath.Join(outDir, "receipts", engine.ReviewLedgerFile))
+	}
 	r.AIReview = aiReviewOf(entries)
 	if !r.AIReview.Ran && r.AIReview.Failure == "" {
 		r.AIReview.Failure = "the Examiner did not ask it"
@@ -262,11 +318,11 @@ func Finish(p *Prepared, env *receipt.Envelope, runErr error, outDir, ref, build
 		r.NotRunHere = append(r.NotRunHere, "AI Review: "+r.AIReview.Failure)
 	}
 	for _, s := range p.Servers {
-		if s.Status == "unknown" || s.Status == "unreachable" || (s.Status == "error" && len(s.Advisories) == 0) {
-			r.NotRunHere = append(r.NotRunHere, "the registry's record of "+s.Ref+" ("+s.Status+"): the registry looks it up again at Submit")
+		if unresolved(s) {
+			r.NotRunHere = append(r.NotRunHere, "a current lookup of "+s.Ref+" (the registry's record here: "+s.Status+"): the registry looks it up again at Submit")
 		}
 	}
-	if p.DeclaredServers > 0 && len(p.Servers) == 0 {
+	if serversNotAsked(p) {
 		r.NotRunHere = append(r.NotRunHere, "the registry's record of the declared MCP servers: no registry was asked")
 	}
 	if r.AIReview.Ran && p.OverReviewBudget {
@@ -367,16 +423,28 @@ func readingOf(env *receipt.Envelope, runErr error, entries []toolsrv.ReviewEntr
 			rd.Withheld = append(rd.Withheld, NotRead{File: e.Path, Why: e.Reason()})
 		}
 	}
+	result := json.RawMessage(nil)
+	if env != nil {
+		result = env.Result
+	}
+	var ce *engine.ClassifiedError
 	switch {
+	case runErr != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && env != nil:
+		recovered, err := recoverReading(env.Result)
+		if err != nil {
+			rd.Error = "the run did not finish: " + runErr.Error()
+			return rd
+		}
+		result, rd.Recovered = recovered, true
 	case runErr != nil:
 		rd.Error = "the run did not finish: " + runErr.Error()
 		return rd
-	case env == nil || len(env.Result) == 0:
+	case len(result) == 0:
 		rd.Error = "the run returned no answer"
 		return rd
 	}
 	var a answer
-	if err := json.Unmarshal(env.Result, &a); err != nil {
+	if err := json.Unmarshal(result, &a); err != nil {
 		rd.Error = "the Examiner's answer is not a reading: " + err.Error()
 		return rd
 	}
@@ -440,7 +508,9 @@ func Expect(p *Prepared, ai AIReview) Expected {
 	}
 	if unresolvedServers(p) {
 		open = append(open, "the registry had no record here of a declared MCP server")
-		worst = append(worst, gatecases.Finding{Scanner: "S7/unresolved", Severity: "critical", Confidence: "high"})
+		// The worst a server's lookup can add is an advisory rated critical,
+		// at high confidence, as stage S7 rates every advisory.
+		worst = append(worst, gatecases.Finding{Scanner: "S7/mcp-vuln-unresolved", Severity: "critical", Confidence: "high"})
 	}
 	best := Gate(in)
 	if len(open) == 0 {
@@ -456,7 +526,7 @@ func Expect(p *Prepared, ai AIReview) Expected {
 		return e
 	}
 	e.Outcome, e.Worst, e.Branch = best.Outcome, best.Worst, best.Branch
-	e.Reason = reasonOf(best) + " " + upperFirst(because) + ", and no answer could change that."
+	e.Reason = reasonOf(best) + " " + upperFirst(because) + ", and the gate would be expected to decide alike whatever it answered."
 	return e
 }
 
@@ -464,15 +534,35 @@ func Expect(p *Prepared, ai AIReview) Expected {
 // was not asked, did not answer, has never seen the version, or holds only
 // a failed lookup. At Submit it looks each one up again.
 func unresolvedServers(p *Prepared) bool {
-	if p.DeclaredServers > 0 && len(p.Servers) == 0 {
+	if serversNotAsked(p) {
 		return true
 	}
 	for _, s := range p.Servers {
-		if s.Status == "unknown" || s.Status == "unreachable" || (s.Status == "error" && len(s.Advisories) == 0) {
+		if unresolved(s) {
 			return true
 		}
 	}
 	return false
+}
+
+// serversNotAsked: the manifest declares servers and no registry was asked.
+func serversNotAsked(p *Prepared) bool { return p.DeclaredServers > 0 && len(p.Servers) == 0 }
+
+// serverRecordLifetime is how long the registry takes its record of a
+// server as settled (the core's mcpScanTTL): an older one is looked up
+// again at Submit.
+const serverRecordLifetime = 24 * time.Hour
+
+// unresolved: the registry's answer for this server here is not the one
+// Submit would weigh. It did not answer, has never seen the version, holds
+// a failed lookup (whose last known advisories are still counted), or a
+// record Submit would look up again for its age.
+func unresolved(s mcpinstall.VulnStatus) bool {
+	switch s.Status {
+	case "unknown", "unreachable", "error":
+		return true
+	}
+	return s.CheckedAt.IsZero() || time.Since(s.CheckedAt) >= serverRecordLifetime
 }
 
 func upperFirst(s string) string {

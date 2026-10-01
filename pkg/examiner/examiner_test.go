@@ -3,6 +3,7 @@ package examiner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/judge"
@@ -138,8 +140,10 @@ func answered(scores ...int) toolsrv.ReviewEntry {
 	return e
 }
 
+// envWith is a review run's envelope: its receipt counted a review, so the
+// post-step reads the run's ledger.
 func envWith(result string) *receipt.Envelope {
-	return &receipt.Envelope{RunID: "r1", Result: json.RawMessage(result), Harness: receipt.Harness{Model: "test-model"}}
+	return &receipt.Envelope{RunID: "r1", Result: json.RawMessage(result), Harness: receipt.Harness{Model: "test-model"}, Review: &receipt.Review{}}
 }
 
 // TestTheReportNeverTakesTheFirstTwoKindsFromTheModel: two answers from the
@@ -297,7 +301,7 @@ func TestWhatDidNotAnswerHereLeavesTheOutcomeOpen(t *testing.T) {
 			t.Errorf("%s: %+v", name, e)
 		}
 		p.Findings = append(p.Findings, Finding{Scanner: "S1/nested-archive", Severity: "critical", Confidence: "high"})
-		if e := Expect(p, clean); e.Outcome != OutcomeRejected || !strings.Contains(e.Reason, "no answer could change that") {
+		if e := Expect(p, clean); e.Outcome != OutcomeRejected || !strings.Contains(e.Reason, "decide alike whatever it answered") {
 			t.Errorf("%s with a critical finding: %+v", name, e)
 		}
 	}
@@ -334,5 +338,74 @@ func TestARuleHitPastTheScanCapIsTheRegistrysCouldNotScan(t *testing.T) {
 	}
 	if !truncated || !early || late {
 		t.Fatalf("truncated %v, the hit within the cap %v, the hit past it %v: %+v", truncated, early, late, p.Findings)
+	}
+}
+
+// TestALedgerIsReadOnlyForARunThatCountedAReview: a ledger in the output
+// folder is not this run's unless the run's own receipt counted a review,
+// so a run that failed before it was set up never takes another's scores.
+func TestALedgerIsReadOnlyForARunThatCountedAReview(t *testing.T) {
+	p := prepare(t, "")
+	out := t.TempDir()
+	writeLedger(t, out, answered(3, 3, 3, 3, 3, 3))
+	for name, env := range map[string]*receipt.Envelope{"no envelope": nil, "no review record": {Result: json.RawMessage(`{}`)}} {
+		if r := Finish(p, env, nil, out, "x", "y"); r.AIReview.Ran {
+			t.Errorf("%s: AI Review taken from a ledger the run did not count: %+v", name, r.AIReview)
+		}
+	}
+}
+
+// TestAReadingTheRunnerRefusedIsRecoveredOnlyWhenTheSchemaPassesIt: a model
+// that writes a sentence and then the object in a fence is refused by the
+// runner (exit 17); the fenced object is the reading when its own schema
+// passes it, marked recovered, and otherwise there is none.
+func TestAReadingTheRunnerRefusedIsRecoveredOnlyWhenTheSchemaPassesIt(t *testing.T) {
+	p := prepare(t, "")
+	refused := engine.Classify(engine.ExitOutputSchema, errors.New("not JSON"))
+	text := func(s string) json.RawMessage { b, _ := json.Marshal(s); return b }
+	good := "Read five files.\n\n```json\n{\"summary\":\"s\",\"findings\":[{\"kind\":\"other\",\"file\":\"AGENT.md\",\"title\":\"t\"}],\"notRead\":[]}\n```"
+	env := envWith("")
+	env.Result = text(good)
+	r := Finish(p, env, refused, t.TempDir(), "x", "y")
+	if !r.Reading.Recovered || r.Reading.Error != "" || len(r.Reading.Findings) != 1 {
+		t.Fatalf("reading %+v", r.Reading)
+	}
+	for _, bad := range []string{
+		"No fence: {\"summary\":\"s\",\"findings\":[],\"notRead\":[]}",
+		"```json\n{\"summary\":\"s\",\"findings\":[],\"notRead\":[],\"approved\":true}\n```",
+		"```json\n{\"summary\":\"s\"\n",
+	} {
+		env.Result = text(bad)
+		if r := Finish(p, env, refused, t.TempDir(), "x", "y"); r.Reading.Recovered || r.Reading.Error == "" {
+			t.Errorf("%q: %+v", bad, r.Reading)
+		}
+	}
+	// Any other failure is not recovered.
+	env.Result = text(good)
+	if r := Finish(p, env, engine.Classify(engine.ExitTimeout, errors.New("timeout")), t.TempDir(), "x", "y"); r.Reading.Recovered {
+		t.Fatal("a timed-out run's message was recovered")
+	}
+}
+
+// TestAServerRecordSubmitWouldLookUpAgainIsUnresolved: a record past the
+// registry's lifetime for it, or a failed lookup, is looked up again at
+// Submit; only a fresh answer settles a server here.
+func TestAServerRecordSubmitWouldLookUpAgainIsUnresolved(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		s    mcpinstall.VulnStatus
+		want bool
+	}{
+		{mcpinstall.VulnStatus{Status: "safe", CheckedAt: now.Add(-time.Hour)}, false},
+		{mcpinstall.VulnStatus{Status: "vulnerable", CheckedAt: now.Add(-time.Hour)}, false},
+		{mcpinstall.VulnStatus{Status: "safe", CheckedAt: now.Add(-25 * time.Hour)}, true},
+		{mcpinstall.VulnStatus{Status: "safe"}, true},
+		{mcpinstall.VulnStatus{Status: "error", CheckedAt: now, Advisories: []mcpinstall.VulnAdvisory{{ID: "X", Severity: "low"}}}, true},
+		{mcpinstall.VulnStatus{Status: "unknown"}, true},
+		{mcpinstall.VulnStatus{Status: "unreachable"}, true},
+	} {
+		if got := unresolved(tc.s); got != tc.want {
+			t.Errorf("%+v: %v", tc.s, got)
+		}
 	}
 }

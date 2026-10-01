@@ -3,6 +3,7 @@ package examiner
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/gatecases"
@@ -95,7 +96,8 @@ func Gate(in GateInput) Decision {
 			return held(in, maxSeverity(worst, "medium"), branchCouldNotScan)
 		}
 	}
-	always, when := reviewMode(in.Policy.RequireHumanReview)
+	// A form the gate cannot read is "never" to it.
+	always, when, _ := parseReviewMode(in.Policy.RequireHumanReview)
 	if always {
 		return held(in, worst, branchReviewAlways)
 	}
@@ -142,23 +144,31 @@ func maxSeverity(a, b string) string {
 	return b
 }
 
-// reviewMode reads requireHumanReview as the gate does: "always", or a
-// whenCapabilities list; anything else, absent included, is "never".
-func reviewMode(raw json.RawMessage) (always bool, when []string) {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return false, nil
+// parseReviewMode reads requireHumanReview: absent or null is "never", and
+// so are "never", "always" and a whenCapabilities list as they say. Any
+// other form is an error; the gate reads it as "never", and the pre-step
+// will not trust a registry's policy that holds it.
+func parseReviewMode(raw json.RawMessage) (always bool, when []string, err error) {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || string(t) == "null" {
+		return false, nil, nil
 	}
 	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s == "always", nil
+	if json.Unmarshal(t, &s) == nil {
+		if s != "never" && s != "always" {
+			return false, nil, fmt.Errorf("requireHumanReview is %q", s)
+		}
+		return s == "always", nil, nil
 	}
+	dec := json.NewDecoder(bytes.NewReader(t))
+	dec.DisallowUnknownFields()
 	var obj struct {
 		WhenCapabilities []string `json:"whenCapabilities"`
 	}
-	if json.Unmarshal(raw, &obj) == nil {
-		return false, obj.WhenCapabilities
+	if err := dec.Decode(&obj); err != nil {
+		return false, nil, fmt.Errorf("requireHumanReview %s is not a form the gate reads", t)
 	}
-	return false, nil
+	return false, obj.WhenCapabilities, nil
 }
 
 // manifestCaps is the capabilities block of the manifest's canonical JSON,

@@ -19,4 +19,4 @@ agentry/voice-writer@1.0.0 sha256:566ffb9688c63a3abcec32e544e56b1b2c8c2c214ee233
 # 1.2.0: the instruction for a run with no network, Background and Checks, at most 32 KiB (agentry-cli#521).
 agentry/drafter@1.2.0 sha256:4dd869afcc68d9466ee02b29454745d2485a5637faeb2b6c8b42d5e0e3996e97
 # The Examiner (plan desktop-review-key-and-run-cards.md §6, agentry-cli#504), the fourth built-in.
-agentry/examiner@1.0.0 sha256:c61d71b00a3fb58ee4ede1e04b47211c6b1c2aac4434b2981c66b0f85db3b75f
+agentry/examiner@1.0.0 sha256:5353379617ac4850cf03e0d46a23ff45942739396abb25644f697b101e805520

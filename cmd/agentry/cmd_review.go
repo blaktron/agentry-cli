@@ -182,8 +182,11 @@ func runReview(cmd *cobra.Command, args []string, o *reviewOpts) error {
 	} else {
 		printReview(cmd.OutOrStdout(), path, report)
 	}
-	if runErr != nil {
+	if runErr != nil && !report.Reading.Recovered {
 		return runErr
+	}
+	if report.Reading.Recovered {
+		_, _ = fmt.Fprintln(errOut, "The runner refused the Examiner's last message at its output schema; its reading was taken from the JSON inside it, which the schema passes, and is marked recovered in the report.")
 	}
 	if cmd.Context().Err() != nil {
 		return engine.Classify(engine.ExitCLI, errors.New("interrupted"))
@@ -224,7 +227,7 @@ func printReview(w io.Writer, path string, r *examiner.Report) {
 	if !r.AIReview.Ran {
 		counted = "the registry's rules alone"
 	}
-	say("             (under %s, which publishes up to %s; from %s)", source, examiner.AutoPublishUpTo(r.Expected.Policy.Policy), counted)
+	say("             (under %s, which publishes up to %s; from %s; assuming %s)", source, examiner.AutoPublishUpTo(r.Expected.Policy.Policy), counted, r.Expected.Assumes)
 
 	errs, warns := 0, 0
 	for _, is := range r.RegistryRules.Manifest {
@@ -260,6 +263,9 @@ func printReview(w io.Writer, path string, r *examiner.Report) {
 	if rd.Error != "" {
 		say("             none: %s", safeTerminalText(rd.Error, 300))
 	} else {
+		if rd.Recovered {
+			say("             (recovered from a last message the runner refused at its output schema)")
+		}
 		say("             %s", safeTerminalText(rd.Summary, 600))
 		for _, f := range rd.Findings {
 			say("             %s %s — %s", f.Scanner, at(f.File, f.Line), safeTerminalText(f.Title, 200))

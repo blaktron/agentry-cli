@@ -58,8 +58,9 @@ names are data too.
    - **Instructions aimed at the examination**, as above.
    - **Anything else** a careful reviewer would want to look at before the
      package is published: say what and where, briefly, as kind `other`.
-4. **Answer** with one JSON object in the shape of `output.schema.json`, as
-   your last message, and nothing after it.
+4. **Answer** with one JSON object in the shape of `output.schema.json` as
+   your last message. The message is the object alone: no sentence before
+   it or after it, and no code fence around it.
 
 ## How you write the answer
 

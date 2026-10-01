@@ -51,7 +51,8 @@ func reviewSeams(t *testing.T, scores []int, result string) (*[]localrun.Run, st
 				t.Fatal(err)
 			}
 		}
-		return &receipt.Envelope{Status: "ok", RunID: r.RunID, Result: json.RawMessage(result), Harness: receipt.Harness{Model: "openai/test"}}, nil
+		return &receipt.Envelope{Status: "ok", RunID: r.RunID, Result: json.RawMessage(result), Harness: receipt.Harness{Model: "openai/test"},
+			Review: &receipt.Review{}}, nil
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/platform/policy" {

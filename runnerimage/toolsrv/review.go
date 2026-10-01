@@ -346,7 +346,7 @@ const (
 	notReadBinary     = "not text"
 	notReadTooLarge   = "past the 1 MiB a file the registry scans as text"
 	notReadShipped    = "a shipped knowledge pack's text, which the registry reads in its own stage"
-	notReadOverBudget = "past what one review sends (4 MiB, 500 files)"
+	NotReadOverBudget = "past what one review sends (4 MiB, 500 files)"
 	notReadLink       = "a link, which a package archive does not carry"
 )
 
@@ -394,7 +394,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 		return "ai_review: dir: " + err.Error(), true
 	}
 	ships := ShippedPacks(manifestJSON)
-	files, notRead, err := reviewFiles(root, manifestAbs, ships)
+	files, notRead, err := ReviewFiles(root, manifestAbs, ships)
 	if err != nil {
 		return "ai_review: " + err.Error(), true
 	}
@@ -450,11 +450,12 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	return string(out), false
 }
 
-// reviewFiles is every text file under root, as stage S5 reads a release:
+// ReviewFiles is every text file under root, as stage S5 reads a release:
 // package paths relative to root, sorted, the manifest's own staged JSON
 // left out, and a shipped pack's tree left to its own stage. What is left
-// out is named.
-func reviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, []ReviewNotRead, error) {
+// out is named. The Examiner's host pre-step asks it of the staged package
+// too, to know whether one call sends all of it (agentry-cli#504).
+func ReviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, []ReviewNotRead, error) {
 	var files []judge.RubricFile
 	var notRead []ReviewNotRead
 	total := 0
@@ -489,7 +490,7 @@ func reviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, 
 			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadBinary})
 			return nil
 		case len(files) >= ReviewMaxFiles || total+len(data) > ReviewTotalBytes:
-			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadOverBudget})
+			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: NotReadOverBudget})
 			return nil
 		}
 		total += len(data)

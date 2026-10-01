@@ -108,8 +108,9 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   off.
 
 **The built-in packages.** Every tag also publishes the packages the binary
-embeds (the Knowledge Creator, the Drafter, the Voice Writer and the Examiner) to its
-channel's registry. The `builtins` job runs the release's own Linux binary as
+embeds (the Knowledge Creator, the Drafter, the Voice Writer and the
+Examiner) to its channel's registry. The `builtins` job runs the release's
+own Linux binary as
 `agentry builtins publish` ([below](#the-built-in-packages-builtins)). It
 reads the PAT of an account with publish rights in the registry's `agentry`
 organization from the `release` environment's secret
@@ -499,7 +500,8 @@ says where to add one.
    that reach past the declared capabilities, and for text aimed at the
    review. The task it is given carries none of the package's text.
 3. **After the run**, `DIR/report.json` is written beside the run's
-   receipts (`--out DIR`, default `./agentry-out/agentry-examiner-<runid>`),
+   receipts (`--out DIR`, default `./agentry-out/agentry-examiner-<runid>`;
+   a folder that already holds a report or a run's receipts is refused),
    printed, and the command exits by the expected outcome: `0` published,
    `20` held for review, `21` rejected, `22` refused at Submit (the
    manifest rules refuse it), `23` not determined here. A run that failed
@@ -512,7 +514,8 @@ says where to add one.
   `refused_at_submit`, `undetermined`), the worst severity and the gate's
   rule that decides it, a `reason`, the `policy` it was decided under with
   its `source` (`registry`, or `compiled` with the `error` that kept the
-  registry's out), and which kinds were `counted`.
+  registry's out), which kinds were `counted`, and what it `assumes` (a
+  public version, as the manifest rules check it; no review queue named).
 - `registryRules` (kind 1): the manifest rules' errors and warnings, the
   findings (scanner id, severity, confidence, title, file and line), the
   bundle, and each declared server's record.
@@ -521,10 +524,14 @@ says where to add one.
   2 or more as stage S5 rates them (2 medium and 3 high; an attempted
   injection or an undeclared capability high from 2). It is read from the
   run's own record (`receipts/review.ndjson`), never from what the model
-  said: the first answered call over the staged package counts.
+  said, and only for a run whose receipt counted a review: the first
+  answered call over the staged package counts.
 - `examinerReading` (kind 3): the model's summary and findings (`secret`,
   `script`, `instruction`, `other`), the files it did not read, and the files
-  AI Review withheld from it. It is never counted (`counted: false`).
+  AI Review withheld from it. It is never counted (`counted: false`). When
+  the runner refused the model's last message at the output schema (a
+  sentence before the object, say), the object fenced inside it is taken if
+  the schema passes it, and the reading is marked `recovered`.
 - `notRunHere`: the registry's secrets and scripts stages, the publisher
   signals, the diff against the last published version, an organization's
   policy, shipped knowledge packs, the text recovered from image metadata,
@@ -538,8 +545,12 @@ gate's rule restated in `pkg/examiner` (`Gate`). The gate's code is the
 core's, so `TestTheGateRestatementMatchesTheCoresTable` runs every case of
 the table the core publishes (`pkg/gatecases`, agentry#776) against the
 restatement, and a core pin that changes the gate fails until it follows.
-Without an answer from AI Review, the outcome is named only when no answer
-it could give would change it.
+Where something the gate weighs did not answer here (AI Review, or AI
+Review for part of a package past one call's 4 MiB or 500 files, or a
+declared server's current record, which the registry looks up again at
+Submit), the outcome is named only when its best and worst answers would
+decide alike, and is `undetermined` otherwise. A rule hit in a text file
+past 1 MiB is taken from the file's first 1 MiB, all the registry reads.
 
 ### The built-in packages: `builtins`
 
