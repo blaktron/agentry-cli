@@ -151,8 +151,13 @@ func runReview(cmd *cobra.Command, args []string, o *reviewOpts) error {
 	if outDir, err = filepath.Abs(outDir); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(outDir, examiner.ReportFile)); err == nil {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s already holds a report; name another folder with --out", outDir))
+	// A folder that holds another review's receipts is refused, not only one
+	// that holds its report: the post-step reads AI Review from the run's
+	// ledger there, and must never read another run's.
+	for _, name := range []string{examiner.ReportFile, "receipts"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err == nil {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("%s already holds a review or a run's receipts; name another folder with --out", outDir))
+		}
 	}
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	_, _ = fmt.Fprintf(errOut, "The registry's rules ran here. The Examiner runs on this computer against the model your runner policy names\n"+
@@ -212,10 +217,14 @@ func printReview(w io.Writer, path string, r *examiner.Report) {
 	}
 	say("Review written: %s", path)
 	say("  expected:  %s. %s", examiner.OutcomeWords(r.Expected.Outcome), r.Expected.Reason)
-	pol := r.Expected.Policy
-	say("             (under the %s baseline policy: auto-publish up to %s; from the registry's rules%s)",
-		map[bool]string{true: "registry's", false: "compiled"}[pol.Source == "registry"], cmp.Or(pol.MaxAutoPublishSeverity, "low"),
-		map[bool]string{true: " and AI Review", false: " alone"}[r.AIReview.Ran])
+	source, counted := "the registry's baseline policy", "the registry's rules and AI Review"
+	if r.Expected.Policy.Source != examiner.PolicyFromRegistry {
+		source = "the baseline policy compiled into this build"
+	}
+	if !r.AIReview.Ran {
+		counted = "the registry's rules alone"
+	}
+	say("             (under %s, which publishes up to %s; from %s)", source, examiner.AutoPublishUpTo(r.Expected.Policy.Policy), counted)
 
 	errs, warns := 0, 0
 	for _, is := range r.RegistryRules.Manifest {

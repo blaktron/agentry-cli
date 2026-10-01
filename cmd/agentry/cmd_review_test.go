@@ -41,7 +41,7 @@ func reviewSeams(t *testing.T, scores []int, result string) (*[]localrun.Run, st
 			t.Fatal(err)
 		}
 		if scores != nil {
-			e := toolsrv.ReviewEntry{Tool: toolsrv.ToolAIReview, Path: examiner.InputPackage, Manifest: examiner.InputManifest, Files: 4,
+			e := toolsrv.ReviewEntry{Tool: toolsrv.ToolAIReview, Dir: examiner.InputPackage, Manifest: examiner.InputManifest, Files: 4,
 				RubricHash: "sha256:r", Result: webscan.Result{Verdict: webscan.Pass, Model: "jev-1.13.0"}}
 			for i, q := range judge.RubricQuestions() {
 				e.Axes = append(e.Axes, toolsrv.ReviewAxis{ID: q.ID, Score: scores[i], File: "AGENT.md"})
@@ -159,6 +159,25 @@ func TestReviewRefusesAFolderWithNoManifest(t *testing.T) {
 	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
 	runs, reg := reviewSeams(t, nil, `{}`)
 	_, _, err := runCLI(t, nil, "--registry", reg, "review", t.TempDir(), "--policy", policyPath)
+	wantClassified(t, err, engine.ExitUsage)
+	if len(*runs) != 0 {
+		t.Fatal("ran")
+	}
+}
+
+// TestReviewRefusesAFolderThatHoldsReceipts: the post-step reads AI Review
+// from the run's ledger in the output folder, so a folder that already
+// holds a run's receipts is refused, and another run's ledger is never read.
+func TestReviewRefusesAFolderThatHoldsReceipts(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	runs, reg := reviewSeams(t, nil, `{}`)
+	out := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(out, "receipts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runCLI(t, nil, "--registry", reg, "review", reviewFixture, "--out", out, "--policy", policyPath)
 	wantClassified(t, err, engine.ExitUsage)
 	if len(*runs) != 0 {
 		t.Fatal("ran")

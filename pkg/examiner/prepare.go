@@ -1,6 +1,7 @@
 package examiner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/validate"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // The pre-step (plan §6.1, kind 1): what the registry runs that a client
@@ -79,7 +81,19 @@ type Prepared struct {
 	Inputs []string
 	// Files is how many files were staged.
 	Files int
+	// DeclaredServers counts the MCP servers the manifest declares.
+	DeclaredServers int
+	// OverReviewBudget says the package holds more text than one ai_review
+	// call sends (toolsrv.ReviewTotalBytes, ReviewMaxFiles), all of which
+	// the registry's AI Review reads: an answer here is partial.
+	OverReviewBudget bool
 }
+
+// Where the policy came from (PolicyUsed.Source).
+const (
+	PolicyFromRegistry = "registry"
+	PolicyCompiled     = "compiled"
+)
 
 // PolicyUsed is the publication policy the outcome is decided under, and
 // where it came from.
@@ -114,7 +128,7 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("the QuickAgent's folder: %w", err)
 	}
 	m, err := validate.ReadManifest(abs)
 	if err != nil {
@@ -132,9 +146,9 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 	p.Findings = ruleFindings(report)
 
 	if p.Stage, err = os.MkdirTemp("", "agentry-examiner-*"); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("stage the QuickAgent's files: %w", err)
 	}
-	truncated, n, err := stagePackage(abs, m, filepath.Join(p.Stage, InputPackage))
+	st, err := stagePackage(abs, m, toolsrv.ShippedPacks(canonical), filepath.Join(p.Stage, InputPackage))
 	if err == nil {
 		err = os.WriteFile(filepath.Join(p.Stage, InputManifest), canonical, 0o644) //nolint:gosec // staged input, read-only in the run
 	}
@@ -142,10 +156,11 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 		p.Cleanup()
 		return nil, fmt.Errorf("stage the QuickAgent's files: %w", err)
 	}
-	p.Files = n
+	p.Files, p.OverReviewBudget = st.files, st.overBudget
 	p.Inputs = []string{filepath.Join(p.Stage, InputManifest), filepath.Join(p.Stage, InputPackage)}
-	p.Findings = append(p.Findings, truncated...)
+	p.Findings = append(st.withinCap(p.Findings), st.truncated...)
 
+	p.DeclaredServers = len(m.Capabilities.MCPServers)
 	if servers := m.Capabilities.MCPServers; len(servers) > 0 && o.Registry != "" {
 		p.Servers = mcpinstall.CheckVulnerabilities(ctx, client, o.Registry, servers)
 		p.Findings = append(p.Findings, serverFindings(p.Servers)...)
@@ -206,17 +221,45 @@ func serverFindings(servers []mcpinstall.VulnStatus) []Finding {
 	return out
 }
 
+// staged is what stagePackage found while it copied.
+type staged struct {
+	files int
+	// truncated are S1's findings for text files past the scan cap, and
+	// capLines the last line of each that starts within it.
+	truncated []Finding
+	capLines  map[string]int
+	// overBudget: more text than one ai_review call sends.
+	overBudget bool
+}
+
+// withinCap drops the rule findings the registry could not have raised: a
+// hit on a line of a truncated file that starts past the scan cap, which
+// the registry's stages never read (its S1 finding sends the file to
+// review instead).
+func (s staged) withinCap(findings []Finding) []Finding {
+	out := findings[:0:0]
+	for _, f := range findings {
+		if last, ok := s.capLines[f.File]; ok && f.Line > last && (strings.HasPrefix(f.Scanner, "S3/") || strings.HasPrefix(f.Scanner, "S4/")) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 // stagePackage copies the files a submission would carry (the manifest's
 // publish.include over the folder, links left out as the archive leaves
-// them out) into dest, and reports each text file past the scan cap as
-// stage S1 does.
-func stagePackage(dir string, m *manifest.Manifest, dest string) ([]Finding, int, error) {
+// them out) into dest, reports each text file past the scan cap as stage
+// S1 does, and measures the text one ai_review call would send against its
+// budget, leaving out what it leaves out (a file past 1 MiB, one that is
+// not text, a shipped pack's tree).
+func stagePackage(dir string, m *manifest.Manifest, ships []string, dest string) (staged, error) {
+	st := staged{capLines: map[string]int{}}
 	files, err := archive.WalkWorkspace(dir)
 	if err != nil {
-		return nil, 0, err
+		return st, err
 	}
-	var findings []Finding
-	n := 0
+	reviewBytes, reviewFiles := 0, 0
 	for _, fi := range manifest.ResolveInclude(m.Publish.Include, files) {
 		if fi.Symlink {
 			continue
@@ -227,23 +270,40 @@ func stagePackage(dir string, m *manifest.Manifest, dest string) ([]Finding, int
 		}
 		target := filepath.Join(dest, filepath.FromSlash(fi.Path))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return nil, 0, err
+			return st, err
 		}
 		if err := os.WriteFile(target, data, 0o644); err != nil { //nolint:gosec // staged input, read-only in the run
-			return nil, 0, err
+			return st, err
 		}
-		n++
+		st.files++
 		if len(data) > textScanCap && isText(fi.Path, data) {
-			findings = append(findings, Finding{Kind: KindRegistryRules, Scanner: "S1/text-scan-truncated", Severity: "medium", Confidence: "high",
+			st.truncated = append(st.truncated, Finding{Kind: KindRegistryRules, Scanner: "S1/text-scan-truncated", Severity: "medium", Confidence: "high",
 				Title: "Text file exceeds the scan cap — content past 1 MiB was not scanned", File: fi.Path})
+			st.capLines[fi.Path] = bytes.Count(data[:textScanCap], []byte("\n")) + 1
+		}
+		if len(data) <= toolsrv.ReviewFileBytes && toolsrv.LooksText(data[:min(len(data), 512)]) && !shipped(ships, fi.Path) {
+			reviewBytes += len(data)
+			reviewFiles++
 		}
 	}
-	if n == 0 {
+	st.overBudget = reviewBytes > toolsrv.ReviewTotalBytes || reviewFiles > toolsrv.ReviewMaxFiles
+	if st.files == 0 {
 		if err := os.MkdirAll(dest, 0o755); err != nil {
-			return nil, 0, err
+			return st, err
 		}
 	}
-	return findings, n, nil
+	return st, nil
+}
+
+// shipped says a package path is in a shipped knowledge pack's tree, which
+// ai_review leaves to the registry's own stage for packs.
+func shipped(ships []string, path string) bool {
+	for _, name := range ships {
+		if strings.HasPrefix(path, "knowledge/"+name+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // isText is stage S1's classification of a text file.
@@ -257,9 +317,9 @@ func fetchPolicy(ctx context.Context, client *http.Client, registry string) Poli
 	fallback := func(why string) PolicyUsed {
 		t, err := gatecases.Load()
 		if err != nil {
-			return PolicyUsed{Source: "compiled", Error: why + "; " + err.Error()}
+			return PolicyUsed{Source: PolicyCompiled, Error: why + "; " + err.Error()}
 		}
-		return PolicyUsed{Policy: t.Baseline, Source: "compiled", Error: why}
+		return PolicyUsed{Policy: t.Baseline, Source: PolicyCompiled, Error: why}
 	}
 	if registry == "" {
 		return fallback("no registry was asked")
@@ -286,7 +346,7 @@ func fetchPolicy(ctx context.Context, client *http.Client, registry string) Poli
 	if err := checkPolicy(pol); err != nil {
 		return fallback("the registry's policy: " + err.Error())
 	}
-	return PolicyUsed{Policy: pol, Source: "registry"}
+	return PolicyUsed{Policy: pol, Source: PolicyFromRegistry}
 }
 
 // checkPolicy refuses a policy whose threshold or wildcard rule is not a
@@ -299,6 +359,23 @@ func checkPolicy(p gatecases.Policy) error {
 	case "", "review", "reject":
 	default:
 		return errors.New("wildcardEgress is " + p.WildcardEgress)
+	}
+	if raw := bytes.TrimSpace(p.RequireHumanReview); len(raw) > 0 {
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			if s != "never" && s != "always" {
+				return fmt.Errorf("requireHumanReview is %q", s)
+			}
+			return nil
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		var obj struct {
+			WhenCapabilities []string `json:"whenCapabilities"`
+		}
+		if err := dec.Decode(&obj); err != nil {
+			return fmt.Errorf("requireHumanReview %s is not a form the gate reads", raw)
+		}
 	}
 	return nil
 }

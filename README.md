@@ -108,7 +108,7 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   off.
 
 **The built-in packages.** Every tag also publishes the packages the binary
-embeds (the Knowledge Creator, the Drafter and the Voice Writer) to its
+embeds (the Knowledge Creator, the Drafter, the Voice Writer and the Examiner) to its
 channel's registry. The `builtins` job runs the release's own Linux binary as
 `agentry builtins publish` ([below](#the-built-in-packages-builtins)). It
 reads the PAT of an account with publish rights in the registry's `agentry`

@@ -295,7 +295,7 @@ func TestAIReviewAsksTheRubricAsS5AndNeverAnswersWithTheText(t *testing.T) {
 	}
 	// The ledger records what was read and the six scores the model was
 	// given, so a host post-step reads the review from it (agentry-cli#504).
-	if led[0].Path != "pkg" || led[0].Manifest != "agent.json" || !reflect.DeepEqual(led[0].Axes, ans.Axes) {
+	if led[0].Dir != "pkg" || led[0].Manifest != "agent.json" || !reflect.DeepEqual(led[0].Axes, ans.Axes) {
 		t.Fatalf("ledger read %q %q, axes %+v, want %+v", led[0].Path, led[0].Manifest, led[0].Axes, ans.Axes)
 	}
 }

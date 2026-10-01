@@ -1,8 +1,6 @@
 package examiner
 
 import (
-	"errors"
-
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -12,7 +10,7 @@ import (
 // of their own: a review does not run without one (plan D28), since AI
 // Review is asked with it and every file the model reads is scanned with it
 // first.
-var ErrNoJevKey = errors.New("no TypeSafe Jev key of your own was found")
+var ErrNoJevKey = drafter.ErrNoJevKey
 
 // LocalReview is a review's key on this computer: the person's own, read as
 // a draft reads it (drafter.JevKey). Without one it is ErrNoJevKey.

@@ -108,14 +108,19 @@ func Gate(in GateInput) Decision {
 			return held(in, worst, branchReviewCapability)
 		}
 	}
-	maxAuto := fallbackMaxAuto
-	if _, ok := severityRanks[in.Policy.MaxAutoPublishSeverity]; ok {
-		maxAuto = in.Policy.MaxAutoPublishSeverity
-	}
-	if severityRanks[worst] <= severityRanks[maxAuto] {
+	if severityRanks[worst] <= severityRanks[AutoPublishUpTo(in.Policy)] {
 		return Decision{Want: gatecases.Want{Outcome: gatecases.OutcomePublished}, Worst: worst, Branch: branchWithinThreshold}
 	}
 	return held(in, worst, branchOverThreshold)
+}
+
+// AutoPublishUpTo is the worst severity a policy publishes: its
+// maxAutoPublishSeverity, or the gate's fallback when it names none.
+func AutoPublishUpTo(p gatecases.Policy) string {
+	if _, ok := severityRanks[p.MaxAutoPublishSeverity]; ok {
+		return p.MaxAutoPublishSeverity
+	}
+	return fallbackMaxAuto
 }
 
 // held routes a needs_review decision: an organization's namespace goes to
@@ -237,7 +242,11 @@ func WildcardEgress(manifestJSON []byte) bool {
 // AIReviewFinding is one rubric question's answer as stage S5 rates it: a
 // score of 2 is medium and 3 high, except that an attempted injection and
 // an undeclared capability are high from 2 (the core's verdictFindings,
-// DEV-186); below 2 it is no finding.
+// DEV-186); below 2 it is no finding. The core's further finding for a
+// verdict showing manipulation comes from its generative-model providers
+// alone; the Jev judge AI Review asks never sets it. The core publishes no
+// table of this mapping, so nothing but this restatement holds it to the
+// core's.
 func AIReviewFinding(id string, score int) (gatecases.Finding, bool) {
 	if score < judge.WithholdScore {
 		return gatecases.Finding{}, false

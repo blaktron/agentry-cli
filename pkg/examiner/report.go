@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/judge"
@@ -63,7 +64,7 @@ var NotRunHere = []string{
 	"an organization's policy, which can be stricter than the platform's baseline",
 	"shipped knowledge packs, which the registry reads in a stage of their own",
 	"the text the registry recovers from image metadata, and its comparison of the instruction file's front matter with the manifest",
-	"Submit's own refusals: a quota, two-step sign-in, credits, a version already published",
+	"Submit's own refusals: the policy's blocked capabilities, blocked MCP servers, allowed licences and required evaluations, a quota, two-step sign-in, credits, a version already published",
 }
 
 // Finding is one finding of any kind.
@@ -124,8 +125,10 @@ type Expected struct {
 	Worst  string `json:"worstSeverity,omitempty"`
 	Branch string `json:"branch,omitempty"`
 	// Reason says why, in a sentence.
-	Reason string     `json:"reason"`
-	Policy PolicyUsed `json:"policy"`
+	Reason string `json:"reason"`
+	// Assumes says what the outcome takes as given that only Submit knows.
+	Assumes string     `json:"assumes"`
+	Policy  PolicyUsed `json:"policy"`
 	// Counted says which kinds of finding were weighed.
 	Counted []string `json:"counted"`
 }
@@ -263,7 +266,13 @@ func Finish(p *Prepared, env *receipt.Envelope, runErr error, outDir, ref, build
 			r.NotRunHere = append(r.NotRunHere, "the registry's record of "+s.Ref+" ("+s.Status+"): the registry looks it up again at Submit")
 		}
 	}
-	if p.Policy.Source != "registry" {
+	if p.DeclaredServers > 0 && len(p.Servers) == 0 {
+		r.NotRunHere = append(r.NotRunHere, "the registry's record of the declared MCP servers: no registry was asked")
+	}
+	if r.AIReview.Ran && p.OverReviewBudget {
+		r.NotRunHere = append(r.NotRunHere, "AI Review of the files one review leaves out past its budget (4 MiB, 500 files), which the registry reads")
+	}
+	if p.Policy.Source != PolicyFromRegistry {
 		r.NotRunHere = append(r.NotRunHere, "the registry's own baseline policy ("+p.Policy.Error+"); the baseline compiled into this build was used")
 	}
 	r.Expected = Expect(p, r.AIReview)
@@ -304,8 +313,8 @@ func aiReviewOf(entries []toolsrv.ReviewEntry) AIReview {
 		case e.Verdict == webscan.NotScanned:
 			failure = "it did not finish: " + e.Failure
 			continue
-		case e.Path != InputPackage || e.Manifest != InputManifest:
-			failure = fmt.Sprintf("the Examiner asked it about %s and %s, not the staged package", e.Manifest, e.Path)
+		case e.Dir != InputPackage || e.Manifest != InputManifest:
+			failure = fmt.Sprintf("the Examiner asked it about %s and %s, not the staged package", e.Manifest, e.Dir)
 			continue
 		case !allAxes(e.Axes):
 			failure = "its record does not hold the six questions' scores"
@@ -381,13 +390,20 @@ func readingOf(env *receipt.Envelope, runErr error, entries []toolsrv.ReviewEntr
 	return rd
 }
 
+// Assumption is what every expected outcome takes as given: the manifest
+// rules run as for a public version (V7), and a held version's queue is not
+// named, since only Submit knows the version's visibility and whether its
+// namespace is an organization's.
+const Assumption = "a public version, as the manifest rules check it; the review queue a held version would go to is not named"
+
 // Expect is the outcome the gate would be expected to reach from kinds 1
 // and 2 under the policy the pre-step found. A manifest the rules refuse is
-// refused at Submit, before the gate. Without AI Review's answer, the
-// outcome is the gate's only when no answer AI Review could give would
-// change it (none of its findings, and all six at score 3, decide alike).
+// refused at Submit, before the gate. Where something the gate weighs did
+// not answer here (AI Review, or answered for part of the package only; a
+// declared server's record), the outcome is named only when the best and
+// the worst answer it could give decide alike.
 func Expect(p *Prepared, ai AIReview) Expected {
-	e := Expected{Policy: p.Policy, Counted: []string{KindRegistryRules}}
+	e := Expected{Policy: p.Policy, Counted: []string{KindRegistryRules}, Assumes: Assumption}
 	errs := 0
 	for _, is := range p.Validation.Issues {
 		if is.Severity == "error" {
@@ -411,21 +427,59 @@ func Expect(p *Prepared, ai AIReview) Expected {
 		for _, f := range ai.Findings {
 			in.Findings = append(in.Findings, gatecases.Finding{Scanner: f.Scanner, Severity: f.Severity, Confidence: f.Confidence})
 		}
-		d := Gate(in)
-		e.Outcome, e.Worst, e.Branch, e.Reason = d.Outcome, d.Worst, d.Branch, reasonOf(d)
-		return e
+	}
+	var open []string
+	var worst []gatecases.Finding
+	switch {
+	case !ai.Ran:
+		open = append(open, "AI Review did not answer here")
+		worst = append(worst, worstAIReview()...)
+	case p.OverReviewBudget:
+		open = append(open, "AI Review read only part of the package here")
+		worst = append(worst, worstAIReview()...)
+	}
+	if unresolvedServers(p) {
+		open = append(open, "the registry had no record here of a declared MCP server")
+		worst = append(worst, gatecases.Finding{Scanner: "S7/unresolved", Severity: "critical", Confidence: "high"})
 	}
 	best := Gate(in)
+	if len(open) == 0 {
+		e.Outcome, e.Worst, e.Branch, e.Reason = best.Outcome, best.Worst, best.Branch, reasonOf(best)
+		return e
+	}
 	worstIn := in
-	worstIn.Findings = append(append([]gatecases.Finding{}, in.Findings...), worstAIReview()...)
-	if worst := Gate(worstIn); worst.Outcome != best.Outcome {
+	worstIn.Findings = append(append([]gatecases.Finding{}, in.Findings...), worst...)
+	because := strings.Join(open, ", and ")
+	if w := Gate(worstIn); w.Outcome != best.Outcome {
 		e.Outcome = OutcomeUndetermined
-		e.Reason = "AI Review did not answer here, and its answer would decide between " + outcomeWords(best.Outcome) + " and " + outcomeWords(worst.Outcome) + "."
+		e.Reason = upperFirst(because) + ", and the answer would decide between " + OutcomeWords(best.Outcome) + " and " + OutcomeWords(w.Outcome) + "."
 		return e
 	}
 	e.Outcome, e.Worst, e.Branch = best.Outcome, best.Worst, best.Branch
-	e.Reason = reasonOf(best) + " AI Review did not answer here, and no answer it could give would change that."
+	e.Reason = reasonOf(best) + " " + upperFirst(because) + ", and no answer could change that."
 	return e
+}
+
+// unresolvedServers says a declared server has no answer here: the registry
+// was not asked, did not answer, has never seen the version, or holds only
+// a failed lookup. At Submit it looks each one up again.
+func unresolvedServers(p *Prepared) bool {
+	if p.DeclaredServers > 0 && len(p.Servers) == 0 {
+		return true
+	}
+	for _, s := range p.Servers {
+		if s.Status == "unknown" || s.Status == "unreachable" || (s.Status == "error" && len(s.Advisories) == 0) {
+			return true
+		}
+	}
+	return false
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // worstAIReview is every rubric question at score 3.
@@ -463,8 +517,8 @@ func reasonOf(d Decision) string {
 	return ""
 }
 
-// outcomeWords is an outcome as the report says it.
-func outcomeWords(o string) string {
+// OutcomeWords is an outcome as a person reads it.
+func OutcomeWords(o string) string {
 	switch o {
 	case OutcomePublished:
 		return "published"
@@ -478,9 +532,6 @@ func outcomeWords(o string) string {
 	return "not determined here"
 }
 
-// OutcomeWords is an outcome as a person reads it.
-func OutcomeWords(o string) string { return outcomeWords(o) }
-
 // Write writes the report to outDir/report.json.
 func Write(outDir string, r *Report) (string, error) {
 	b, err := json.MarshalIndent(r, "", "  ")
@@ -489,7 +540,7 @@ func Write(outDir string, r *Report) (string, error) {
 	}
 	path := filepath.Join(outDir, ReportFile)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("the report's folder: %w", err)
 	}
 	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil { //nolint:gosec // the person's own output folder
 		return "", fmt.Errorf("write %s: %w", ReportFile, err)
