@@ -98,6 +98,7 @@ func newRootCmd() *cobra.Command {
 		newKnowledgeCmd(),
 		newVoiceCmd(),
 		newDraftCmd(),
+		newReviewCmd(),
 		newBuiltinsCmd(),
 		newProfilesCmd(),
 		newUninstallCmd(),

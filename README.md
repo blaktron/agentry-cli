@@ -161,7 +161,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `run` · `knowledge` · `voice` · `draft` · `builtins` · `uninstall` · `profiles` · `verify` ·
+`setup` · `doctor` · `run` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -473,13 +473,83 @@ kind, its hold and its settlement are in the core's
 [hosted runs](https://github.com/blaktron/agentry/blob/main/docs/hosted-runs.md#a-hosted-draft)
 page.
 
+### Reviewing a QuickAgent before Submit: `review`
+
+`agentry review [dir]` runs the built-in Examiner over the QuickAgent in
+`dir` (default `.`) and reports what Agentry's pipeline would be expected to
+say about it if you submitted it (plan
+`desktop-review-key-and-run-cards.md` §6; agentry-cli#504). It runs on this
+computer against the model your runner policy names, with your own TypeSafe
+Jev key for AI Review (`$TYPESAFE_API_KEY`, or the policy's `judge` block),
+for no credits, and submits nothing. Without a key it refuses (exit 11) and
+says where to add one.
+
+1. **Before the run**, the registry's own rules run here, as `agentry
+   validate` runs them: the manifest rules, the inventory checks, and the
+   hidden-content and injection rules under the registry's current rule
+   bundle (fetched first, as `validate --rules-update` does; the cached or
+   embedded bundle when the registry does not answer, and the report names
+   which). The registry is asked for its baseline publication policy
+   (`GET /platform/policy`) and for its record of each declared MCP server
+   (`GET /mcp-servers/scan`). The files a submission would carry are then
+   copied, with the manifest's canonical JSON, into the run's inputs.
+2. **The run** reads that copy read-only. Nothing of the QuickAgent runs.
+   The Examiner asks `ai_review` (the review grant above), and its model
+   reads every file, each read by AI Review first, for secrets, for scripts
+   that reach past the declared capabilities, and for text aimed at the
+   review. The task it is given carries none of the package's text.
+3. **After the run**, `DIR/report.json` is written beside the run's
+   receipts (`--out DIR`, default `./agentry-out/agentry-examiner-<runid>`),
+   printed, and the command exits by the expected outcome: `0` published,
+   `20` held for review, `21` rejected, `22` refused at Submit (the
+   manifest rules refuse it), `23` not determined here. A run that failed
+   writes the report as far as it got and exits with its own class.
+   `--json` prints the report itself.
+
+**The report** (`schemaVersion` `"1"`; `pkg/examiner.Report`):
+
+- `expected`: the `outcome` (`published`, `needs_review`, `rejected`,
+  `refused_at_submit`, `undetermined`), the worst severity and the gate's
+  rule that decides it, a `reason`, the `policy` it was decided under with
+  its `source` (`registry`, or `compiled` with the `error` that kept the
+  registry's out), and which kinds were `counted`.
+- `registryRules` (kind 1): the manifest rules' errors and warnings, the
+  findings (scanner id, severity, confidence, title, file and line), the
+  bundle, and each declared server's record.
+- `aiReview` (kind 2): whether it ran, the model, the rubric hash, the six
+  questions' scores with the file that drew each, and the findings at score
+  2 or more as stage S5 rates them (2 medium and 3 high; an attempted
+  injection or an undeclared capability high from 2). It is read from the
+  run's own record (`receipts/review.ndjson`), never from what the model
+  said: the first answered call over the staged package counts.
+- `examinerReading` (kind 3): the model's summary and findings (`secret`,
+  `script`, `instruction`, `other`), the files it did not read, and the files
+  AI Review withheld from it. It is never counted (`counted: false`).
+- `notRunHere`: the registry's secrets and scripts stages, the publisher
+  signals, the diff against the last published version, an organization's
+  policy, shipped knowledge packs, the text recovered from image metadata,
+  Submit's own refusals, and whatever did not answer here.
+- `notice`: the registry scans again at Submit, AI Review can answer
+  differently on the same files, and the registry's answer is the one that
+  counts.
+
+The expected outcome is computed from the first two kinds alone, by the
+gate's rule restated in `pkg/examiner` (`Gate`). The gate's code is the
+core's, so `TestTheGateRestatementMatchesTheCoresTable` runs every case of
+the table the core publishes (`pkg/gatecases`, agentry#776) against the
+restatement, and a core pin that changes the gate fails until it follows.
+Without an answer from AI Review, the outcome is named only when no answer
+it could give would change it.
+
 ### The built-in packages: `builtins`
 
 The Knowledge Creator (`agentry/knowledge-creator`, behind `knowledge create`
-and `add`) and the Drafter (`agentry/drafter`, behind `draft`) are QuickAgent
-packages built into this binary, and run as built-ins: attestation state
-`builtin`, no registry resolve, and grants no other package gets (the
-Drafter's `registry_search`, `web_search` and `web_read`). Every one of them is also published in the registry,
+and `add`), the Drafter (`agentry/drafter`, behind `draft`), the Voice Writer
+(`agentry/voice-writer`, behind `voice`) and the Examiner (`agentry/examiner`,
+behind `review`) are QuickAgent packages built into this binary, and run as
+built-ins: attestation state `builtin`, no registry resolve, and grants no
+other package gets (the Drafter's `registry_search`, `web_search` and
+`web_read`; the Examiner's review grant). Every one of them is also published in the registry,
 public, from the same bytes, so anyone can read the instruction that runs
 (agentry-cli#470). `agentry builtins` (or `--json builtins`) lists each with the
 digest of its release archive. The registry built that archive from these
@@ -490,7 +560,7 @@ inside the binary.
 
 **The review grant** is the second grant a built-in can be given, for the
 Examiner, which reviews a QuickAgent you built before you submit it
-(agentry-cli#504; no built-in carries the grant before it). Like the web
+(`review`, agentry-cli#504), and for it alone. Like the web
 tools it rides on the built-in itself: the compiler refuses it to any other
 package, beside the web tools, and to a built-in that declares egress, exec,
 a filesystem write, a secret or an MCP server. With it:
@@ -638,7 +708,8 @@ manifest + operator policy into a deterministic run plan → execute:
 Exit codes: `0` ok · `1` cli (an interrupted run, an unknown adapter, an
 intake error) · `2` usage · `10` verify · `11` policy/secret ·
 `12` compile · `13` gateway/docker · `14` agent · `15` timeout ·
-`16` budget · `17` output schema. Task input: `--input FILE`, else piped
+`16` budget · `17` output schema; `review` adds `20` held for review ·
+`21` rejected · `22` refused at Submit · `23` not determined. Task input: `--input FILE`, else piped
 stdin; with no task (or an empty one) the agent is sent its own instruction
 and runs that. Runs compose: `agentry run a ... | agentry run b ...`.
 

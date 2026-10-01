@@ -89,9 +89,12 @@ const (
 // refused, or one ai_review call.
 type ReviewEntry struct {
 	Tool string `json:"tool"`
-	// Path is the input file, inputs-relative.
-	Path  string `json:"path,omitempty"`
-	Bytes int    `json:"bytes,omitempty"`
+	// Path is the input file, inputs-relative; for ai_review, the package
+	// directory it read (dir, cleaned; "." is the inputs root).
+	Path string `json:"path,omitempty"`
+	// Manifest is the manifest JSON an ai_review call read, inputs-relative.
+	Manifest string `json:"manifest,omitempty"`
+	Bytes    int    `json:"bytes,omitempty"`
 	// Refused says why a call read nothing, in the words the model was
 	// given.
 	Refused string `json:"refused,omitempty"`
@@ -102,6 +105,11 @@ type ReviewEntry struct {
 	// that scored 2 or more.
 	RubricHash string `json:"rubricHash,omitempty"`
 	Findings   int    `json:"findings,omitempty"`
+	// Axes are an answered ai_review call's six scores, as the model was
+	// given them: the record a host post-step reads the review from, so
+	// that what it reports never rests on what the model says the tool
+	// answered (agentry-cli#504).
+	Axes []ReviewAxis `json:"axes,omitempty"`
 	webscan.Result
 }
 
@@ -407,7 +415,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	for i, f := range files {
 		paths[i] = f.Path
 	}
-	entry := ReviewEntry{Tool: ToolAIReview, Files: len(files), NotRead: len(notRead), RubricHash: sc.Hash(),
+	entry := ReviewEntry{Tool: ToolAIReview, Path: path.Clean(dir), Manifest: path.Clean(a.Manifest), Files: len(files), NotRead: len(notRead), RubricHash: sc.Hash(),
 		Result: webscan.Result{Model: sc.Model(), Requests: usage.Requests, InputTokens: int64(usage.InputTokens)}}
 	if err != nil {
 		entry.Verdict, entry.Failure = webscan.NotScanned, judge.FailureOf(ctx, err)
@@ -428,6 +436,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 			entry.Flagged = append(entry.Flagged, ax.ID)
 		}
 	}
+	entry.Axes = ans.Axes
 	entry.Findings, entry.Verdict = len(ans.Findings), webscan.Pass
 	if len(ans.Findings) > 0 {
 		entry.Verdict = webscan.Withheld

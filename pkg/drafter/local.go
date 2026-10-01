@@ -50,7 +50,7 @@ const (
 // exactly the one the draft scans with, so a client that tests a key tests
 // that one.
 func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState, error) {
-	jev, err := personalKey(pol.Judge.KeyEnv(), pol.Judge.APIKeySource, policy.JudgeKeyProvider)
+	jev, err := JevKey(pol)
 	if err != nil {
 		return nil, "", err
 	}
@@ -66,6 +66,14 @@ func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState,
 		w.Search, w.SearchKey = pol.WebSearch.Provider, key
 	}
 	return w, state, nil
+}
+
+// JevKey is the person's own TypeSafe key as work on this computer reads
+// it: the variable the policy's judge block names, else, for a keyring
+// source, the keychain entry provider:typesafe. "" is no key. A draft scans
+// with it (LocalWeb), and the Examiner reviews with it (agentry-cli#504).
+func JevKey(pol *policy.Policy) (string, error) {
+	return personalKey(pol.Judge.KeyEnv(), pol.Judge.APIKeySource, policy.JudgeKeyProvider)
 }
 
 // SearchKey is the person's own search key as a local draft reads it, and

@@ -1,0 +1,20 @@
+schemaVersion: "2"
+name: release-notes
+namespace: example
+version: 0.1.0
+summary: "Writes release notes from a list of merged changes."
+license: MIT
+authors:
+  - name: Example
+modes: [autonomous]
+entrypoints:
+  instruction: AGENT.md
+capabilities:
+  network:
+    egress: none
+  filesystem:
+    read: none
+    write: none
+  exec: none
+publish:
+  include: [agent.yaml, AGENT.md, README.md, LICENSE]

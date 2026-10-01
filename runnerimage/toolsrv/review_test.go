@@ -13,6 +13,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -291,6 +292,11 @@ func TestAIReviewAsksTheRubricAsS5AndNeverAnswersWithTheText(t *testing.T) {
 	led := reviewLedgerOf(t, spec)
 	if len(led) != 1 || led[0].Tool != ToolAIReview || led[0].Files != 3 || led[0].NotRead != 3 || led[0].Findings != 2 || led[0].RubricHash == "" {
 		t.Fatalf("ledger %+v", led)
+	}
+	// The ledger records what was read and the six scores the model was
+	// given, so a host post-step reads the review from it (agentry-cli#504).
+	if led[0].Path != "pkg" || led[0].Manifest != "agent.json" || !reflect.DeepEqual(led[0].Axes, ans.Axes) {
+		t.Fatalf("ledger read %q %q, axes %+v, want %+v", led[0].Path, led[0].Manifest, led[0].Axes, ans.Axes)
 	}
 }
 
