@@ -120,12 +120,17 @@ func LocalMeta(dir string) (*installdir.Meta, error) {
 // Builtin is only ever one of Builtins(): nothing else — a directory, a
 // release, a record on disk — can run with the attestation state builtin,
 // and nothing else can be granted the web tools, which ride on the Builtin
-// value itself (plan builder-rework.md D6, §7.3).
+// value itself (plan builder-rework.md D6, §7.3), as does the review grant
+// (plan desktop-review-key-and-run-cards.md §6.2; agentry-cli#503).
 type Builtin struct {
 	namespace, name, version string
 	fsys                     fs.FS
 	// web grants the web tools: the Drafter's alone.
 	web bool
+	// review grants ai_review and scanned reads of the inputs, with the
+	// person's own TypeSafe key (compile.Inputs.Review): the Examiner's,
+	// which agentry-cli#504 adds; no built-in before it carries it.
+	review bool
 	// localTimeoutFloor is the least time, in seconds, a run of the package
 	// on this computer is given (LocalBudgets).
 	localTimeoutFloor int
@@ -309,7 +314,9 @@ type PlanInputs struct {
 	// Web grants the web tools (compile.Inputs.Web): set from a Builtin
 	// that carries them, never from anything a caller passes in.
 	Web bool
-	Log io.Writer
+	// Review grants the review grant (compile.Inputs.Review), likewise.
+	Review bool
+	Log    io.Writer
 }
 
 // EnsurePlan reuses the installed plan when nothing it depends on changed
@@ -338,6 +345,9 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	planDir := filepath.Join(in.InstallDir, "plan", string(in.Mode))
 	if in.Web {
 		planDir += "-web"
+	}
+	if in.Review {
+		planDir += "-review"
 	}
 	runnerImage := in.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	b, rerr := compile.ReadInstalledPlan(key, planDir)
@@ -369,6 +379,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.PolicySHA256 == in.PolicySHA &&
 			plan.Harness.Adapter == in.Adapter &&
 			plan.Capabilities.WebTools == in.Web &&
+			plan.Capabilities.ReviewTools == in.Review &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
@@ -408,6 +419,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		CompiledBy:   in.CompiledBy,
 		MCPServers:   in.Servers,
 		Web:          in.Web,
+		Review:       in.Review,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {
@@ -461,6 +473,9 @@ type Run struct {
 	// Web is the web tools' configuration and keys, for a Builtin granted
 	// them (the Drafter); the engine refuses to run one without it.
 	Web *engine.WebRun
+	// Review is the person's own TypeSafe key, for a Builtin granted the
+	// review grant; Execute refuses to start one without it.
+	Review *engine.ReviewRun
 }
 
 // RepairRun is the Drafter's one repair turn after first (plan
@@ -484,6 +499,11 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	logw := r.Stderr
 	if logw == nil {
 		logw = io.Discard
+	}
+	// A review runs only with the person's key (D28, as a draft, DR-44):
+	// refused before anything is laid down, compiled or built.
+	if r.Builtin.review && (r.Review == nil || r.Review.JevKey == "") {
+		return nil, engine.Classify(engine.ExitPolicy, engine.ErrNoReviewKey)
 	}
 	meta, installDir, err := r.Builtin.Materialize(r.Home, r.Build)
 	if err != nil {
@@ -509,7 +529,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	plan, planDir, err := EnsurePlan(PlanInputs{
 		Home: r.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: r.Policy, PolicySHA: r.PolicySHA, Adapter: adapterName, Mode: manifest.ModeAutonomous,
-		CompiledBy: r.Build, Web: r.Builtin.web, Log: logw,
+		CompiledBy: r.Build, Web: r.Builtin.web, Review: r.Builtin.review, Log: logw,
 	})
 	if err != nil {
 		return nil, err
@@ -534,6 +554,6 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: r.Knowledge, Decoded: r.Decoded,
 		Adapter: ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
-		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web,
+		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
 	})
 }

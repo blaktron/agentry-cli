@@ -78,6 +78,11 @@ type Envelope struct {
 	// the run's web ledger (receipts/web.ndjson, which names each address
 	// and verdict). Absent for a run without the web tools.
 	Web *Web `json:"web,omitempty"`
+	// Review is AI Review's record of a run with the review grant (plan
+	// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503): what of
+	// the inputs it scanned before the model, and the rubric calls; absent
+	// for any other run.
+	Review *Review `json:"review,omitempty"`
 }
 
 // Web is a run's count of the web tools' reads and AI Review's verdicts.
@@ -113,6 +118,36 @@ type Web struct {
 	// scan answered.
 	Model       string `json:"model,omitempty"`
 	QuestionSet string `json:"questionSet,omitempty"`
+}
+
+// Review counts a review-grant run's ledger (receipts/review.ndjson).
+type Review struct {
+	// Read is every input file read_input scanned before the model; Passed
+	// reached the model, Withheld were flagged and NotScanned could not be
+	// scanned (too large, the judge failed), withheld as well.
+	Read       int `json:"read"`
+	Passed     int `json:"passed"`
+	Withheld   int `json:"withheld"`
+	NotScanned int `json:"notScanned"`
+	// Refused are reads and calls refused before anything was scanned: a
+	// file that is not text, a spent budget, no key.
+	Refused int `json:"refused"`
+	// Reviews are the ai_review calls that answered; Failed those that did
+	// not finish, and Findings the rubric questions that scored 2 or more
+	// over all of them.
+	Reviews  int `json:"reviews"`
+	Failed   int `json:"failed"`
+	Findings int `json:"findings"`
+	// ScanRequests and ScanInputTokens are what the scans and the rubric
+	// cost the judge, for the record; AI Review is 1 credit an operation
+	// (DEV-150).
+	ScanRequests    int   `json:"scanRequests"`
+	ScanInputTokens int64 `json:"scanInputTokens"`
+	// Model, QuestionSet and RubricHash name the judge and what it was
+	// asked, when it answered.
+	Model       string `json:"model,omitempty"`
+	QuestionSet string `json:"questionSet,omitempty"`
+	RubricHash  string `json:"rubricHash,omitempty"`
 }
 
 // InstalledChanges is an installed release's difference from what was laid

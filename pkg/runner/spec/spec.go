@@ -222,6 +222,13 @@ type CapSummary struct {
 	// It is never the manifest's: the compiler sets it for a built-in
 	// package the CLI grants it to, and refuses it to everything else.
 	WebTools bool `json:"webTools,omitempty"`
+	// ReviewTools is a built-in's review grant (ai_review, and read_input
+	// answering only what AI Review passed; plan
+	// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503). Like
+	// WebTools it is never the manifest's: the compiler sets it for a
+	// built-in package the CLI grants it to, and refuses it to everything
+	// else.
+	ReviewTools bool `json:"reviewTools,omitempty"`
 }
 
 // Fetches reports whether the contract grants fetch: egress to named

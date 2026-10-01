@@ -42,12 +42,14 @@ import (
 // Source is what kind of text a scan reads, the core's closed list.
 type Source = judge.Source
 
-// The sources the Drafter's scans read.
+// The sources the scans read.
 const (
 	SourceDescription  = judge.SourceDescription
 	SourceSearchResult = judge.SourceSearchResult
 	SourcePage         = judge.SourcePage
 	SourceRegistry     = judge.SourceRegistry
+	// SourceInputFile is a review's input file (toolsrv's review grant).
+	SourceInputFile = judge.SourceInputFile
 )
 
 // Verdict is a scan's answer.
@@ -341,7 +343,11 @@ func (s RegistrySearch) Search(ctx context.Context, query string, count int) ([]
 // ---- the person's own keys (local) ----
 
 // Jev scans with the person's own key through the core's judge.
-type Jev struct{ s *judge.ModelInputScanner }
+type Jev struct {
+	s *judge.ModelInputScanner
+	// max is the most text one scan takes; zero is MaxText.
+	max int
+}
 
 // NewJev builds a scanner over the person's Jev key; baseURL empty is
 // TypeSafe's API.
@@ -353,9 +359,26 @@ func NewJev(key, baseURL string, hc *http.Client) (*Jev, error) {
 	return &Jev{s: judge.NewModelInputScanner(c)}, nil
 }
 
+// WithMaxText is the same scanner taking up to n bytes a text: a review's
+// input files (toolsrv's review grant) are scanned whole up to stage S1's
+// text cap, where the Drafter's texts keep the registry route's MaxText.
+func (j *Jev) WithMaxText(n int) *Jev {
+	c := *j
+	c.max = n
+	return &c
+}
+
+// Limit is the most text one scan takes.
+func (j *Jev) Limit() int {
+	if j.max > 0 {
+		return j.max
+	}
+	return MaxText
+}
+
 // Scan implements Scanner.
 func (j *Jev) Scan(ctx context.Context, source Source, text string) Result {
-	if len(text) > MaxText {
+	if len(text) > j.Limit() {
 		return Result{Verdict: NotScanned, Failure: FailureTooLarge}
 	}
 	return fromJudge(j.s.Scan(ctx, source, text))

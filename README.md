@@ -480,6 +480,26 @@ Installing a published built-in runs it as an ordinary release with only
 what its manifest declares. A built-in runs as `builtin` only from the copy
 inside the binary.
 
+**The review grant** is the second grant a built-in can be given, for the
+Examiner, which reviews a QuickAgent you built before you submit it
+(agentry-cli#504; no built-in carries the grant before it). Like the web
+tools it rides on the built-in itself: the compiler refuses it to any other
+package, beside the web tools, and to a built-in that declares egress, exec,
+a filesystem write, a secret or an MCP server. With it:
+- `ai_review` asks AI Review's release rubric, the six questions the
+  registry's stage S5 asks, about the package in the run's inputs (its
+  manifest as canonical JSON, staged by the client, and every text file),
+  and answers with each question's score and the file that drew it, the
+  model and the rubric hash, never the package's text.
+- `read_input` gives the model a file only after AI Review's model-input
+  questions pass it. A file it flags, or cannot scan, is withheld: the model
+  gets its path and the reason.
+- Your own TypeSafe key reaches the tools container alone, and without it
+  the run does not start. The tools container reaches `api.typesafe.ai:443`
+  and nothing else, through the gateway's proxy; on Linux the run's docker
+  filter holds the proxy to that host as well. Every file scanned and every
+  review is in `receipts/review.ndjson`, counted in the receipt.
+
 The CLI's tag release publishes them: its `builtins` job runs the release's
 own Linux binary as `agentry builtins publish` against the channel's registry.
 The job creates the agent record when it is missing and marks it built-in

@@ -60,6 +60,18 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			t.Fatal("taking away a grant the Creator never had changed it")
 		}
 	})
+	t.Run("the review grant rides on a Builtin value alone", func(t *testing.T) {
+		// No built-in carries it before the Examiner (agentry-cli#504); the
+		// zero value never does, and neither does a repair turn's copy.
+		for _, b := range Builtins() {
+			if b.review {
+				t.Fatalf("%s: review grant", b.Ref())
+			}
+		}
+		if (Builtin{}).review || Drafter().WithoutWebTools().review {
+			t.Fatal("a Builtin no one granted it carries the review grant")
+		}
+	})
 	t.Run("the Drafter materializes as builtin, its tree the embedded one", func(t *testing.T) {
 		home := t.TempDir()
 		meta, dir, err := Drafter().Materialize(home, "agentry 9.9.9 (test)")
@@ -298,6 +310,79 @@ func TestTheDraftersTwoPlansKeepTheirOwnDirectories(t *testing.T) {
 	}
 	if strings.Contains(log.String(), "recompiling") {
 		t.Fatalf("one plan recompiled the other: %s", log.String())
+	}
+}
+
+// TestTheReviewGrantCompilesForABuiltinAlone (agentry-cli#503): a review
+// plan has a directory of its own beside the plain one, each reused as it
+// is; a package that is not a built-in asking for it is refused by policy;
+// and a run of a built-in granted it without the person's key is refused
+// before anything is laid down.
+func TestTheReviewGrantCompilesForABuiltinAlone(t *testing.T) {
+	home := t.TempDir()
+	meta, dir, err := VoiceWriter().Materialize(home, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(dir, "workspace")
+	m, err := ManifestFrom(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	in := func(review bool, log *strings.Builder) PlanInputs {
+		return PlanInputs{Home: home, Manifest: m, Meta: meta, InstallDir: dir, WorkspaceDir: ws, Policy: pol, Review: review,
+			PolicySHA: "sha", Adapter: "docker-agent", Mode: manifest.ModeAutonomous, CompiledBy: "b1", Log: log}
+	}
+	var log strings.Builder
+	withReview, reviewDir, err := EnsurePlan(in(true, &log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, plainDir, err := EnsurePlan(in(false, &log))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reviewDir == plainDir || !strings.HasSuffix(reviewDir, "-review") || !withReview.Capabilities.ReviewTools || without.Capabilities.ReviewTools {
+		t.Fatalf("plans %s (review %v) and %s (review %v)", reviewDir, withReview.Capabilities.ReviewTools, plainDir, without.Capabilities.ReviewTools)
+	}
+	log.Reset()
+	for _, review := range []bool{true, false, true} {
+		p, _, err := EnsurePlan(in(review, &log))
+		if err != nil || p.Capabilities.ReviewTools != review {
+			t.Fatalf("review=%v: %v %+v", review, err, p.Capabilities)
+		}
+	}
+	if strings.Contains(log.String(), "recompiling") {
+		t.Fatalf("one plan recompiled the other: %s", log.String())
+	}
+
+	// The same tree as a directory package is refused the grant.
+	local, err := LocalMeta(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	li := in(true, &log)
+	li.Meta, li.InstallDir = local, t.TempDir()
+	_, _, err = EnsurePlan(li)
+	var ce *engine.ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), "built-in's alone") {
+		t.Fatalf("a directory package with the review grant: %v", err)
+	}
+
+	// A built-in granted it, run without the key: nothing is laid down.
+	examiner := VoiceWriter()
+	examiner.review = true
+	for _, r := range []*engine.ReviewRun{nil, {}} {
+		runHome := t.TempDir()
+		_, err := Run{Builtin: examiner, Home: runHome, Policy: pol, Review: r}.Execute(context.Background(), &dockerx.Fake{})
+		if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !errors.Is(err, engine.ErrNoReviewKey) {
+			t.Fatalf("no key %+v: %v", r, err)
+		}
+		if entries, _ := os.ReadDir(runHome); len(entries) != 0 {
+			t.Fatalf("no key %+v: the runner home holds %v", r, entries)
+		}
 	}
 }
 

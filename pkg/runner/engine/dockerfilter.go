@@ -14,6 +14,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // The gateway's daemon socket is a per-run filter (hosted runs in
@@ -171,10 +172,10 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 const gatewayOwnerLabel = "agentry.gateway.run"
 
 // relayHosts are where a relay may be pointed (sockfilter.Config.
-// RelayHosts): the run's declared servers' egress entries, and the agent's
-// own egress hosts on 443, the port the compiler gives the tools server's
-// fetch (agentry-cli#346). Empty when nothing declares egress, which admits
-// no relay.
+// RelayHosts): the run's declared servers' egress entries, the agent's own
+// egress hosts on 443, the port the compiler gives the tools server's fetch
+// (agentry-cli#346), and the review grant's TypeSafe API on 443. Empty when
+// nothing declares egress, which admits no relay.
 func relayHosts(plan *spec.Plan) []string {
 	var hosts []string
 	for _, srv := range plan.MCPServers {
@@ -190,6 +191,11 @@ func relayHosts(plan *spec.Plan) []string {
 				hosts = append(hosts, h+":443")
 			}
 		}
+	}
+	// The review grant's one host, which the compiler gives the tools
+	// server as its allowHosts (agentry-cli#503).
+	if plan.Capabilities.ReviewTools {
+		hosts = append(hosts, toolsrv.ReviewHost+":443")
 	}
 	return hosts
 }
