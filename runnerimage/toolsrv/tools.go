@@ -114,8 +114,7 @@ func (s *server) buildTools() {
 			add(name, "Read one of the run's provided input files (read-only). Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
 				readInputSchema(), s.toolReadInput)
 		case ToolKnowledgeList:
-			add(name, "List a knowledge pack attached to this run: its index (every page, one line each, by section), or one section's pages. With several packs attached and none named, lists the packs.",
-				knowledgeListSchema(), s.toolKnowledgeList)
+			add(name, s.knowledgeListDescription(), knowledgeListSchema(), s.toolKnowledgeList)
 		case ToolKnowledgeSearch:
 			add(name, "Search an attached knowledge pack for a word or phrase over its pages' titles, summaries and text (or its source documents). Returns the matching pages, best first, each with the line that matched.",
 				knowledgeSearchSchema(), s.toolKnowledgeSearch)
@@ -773,6 +772,20 @@ func (s *server) imagePath() string {
 // runCommandDescription says the PATH execPath gives a declared command
 // (agentry-cli#502): with the image's PATH (RUNNER-DEVIATIONS DR-53), the
 // agent is not told a narrower posture than the one enforced.
+// knowledgeListDescription names the packs attached to this run, which the
+// System Prompt cannot: it is compiled before a run attaches any, and
+// attaching one must not move the plan (DR-38; agentry-cli#520). The tool
+// exists only while a pack is attached, so its description is where the
+// model learns that one is, and that it comes first.
+func (s *server) knowledgeListDescription() string {
+	names := make([]string, 0, len(s.spec.Knowledge))
+	for _, p := range s.spec.Knowledge {
+		names = append(names, p.Name)
+	}
+	return "Knowledge is attached to this run: " + strings.Join(names, ", ") + ". Start here, before your own knowledge or any other tool. " +
+		"Lists a knowledge pack: its index (every page, one line each, by section), or one section's pages. With several packs attached and none named, lists the packs."
+}
+
 func (s *server) runCommandDescription() string {
 	const returns = " Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."
 	if s.imagePath() != "" {

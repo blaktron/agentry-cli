@@ -357,3 +357,16 @@ func TestKnowledgeRead(t *testing.T) {
 		}
 	})
 }
+
+// TestKnowledgeListNamesTheAttachedPacks: the list tool's description says
+// which packs this run has and that they come first, since the System
+// Prompt is compiled before any is attached (agentry-cli#520).
+func TestKnowledgeListNamesTheAttachedPacks(t *testing.T) {
+	s := newTestServer(t, knowledgeSpec(t))
+	desc := s.tools[ToolKnowledgeList].description
+	for _, want := range []string{"Knowledge is attached to this run: aws-docs.", "Start here"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("knowledge_list's description lacks %q: %q", want, desc)
+		}
+	}
+}

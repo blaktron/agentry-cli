@@ -28,8 +28,8 @@ type Input struct {
 	// interactive); it selects the harness argv and the Session block and
 	// changes nothing else (plan §6.10 line 1).
 	Mode manifest.Mode
-	// Instruction is the fully rendered system instruction (§R2: prompt
-	// body + runner contract postscript).
+	// Instruction is the fully rendered system instruction: the System
+	// Prompt, then the package's instruction body (agentry-cli#520).
 	Instruction string
 	// Summary is the manifest one-liner (harness description fields).
 	Summary string
