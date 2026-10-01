@@ -350,9 +350,11 @@ func TestReviewAnswersAreScrubbedOfTheKey(t *testing.T) {
 	if strings.Contains(text, key) || !strings.Contains(text, "[redacted:"+EnvReviewJevKey+"]") {
 		t.Fatalf("read_input's answer: %q", text)
 	}
-	// And on the wire, through a server built from the environment.
+	// And a server built from the environment: its scanner takes a file
+	// whole up to the review's own cap, not the web route's 64 KiB.
 	s2 := newTestServer(t, spec)
-	if s2.review().scanner == nil || s2.review().asker == nil {
-		t.Fatal("a key in the environment built no scanner or asker")
+	j, ok := s2.review().scanner.(*webscan.Jev)
+	if !ok || s2.review().asker == nil || j.Limit() != ReviewFileBytes {
+		t.Fatalf("a key in the environment built scanner %T (limit %v) and asker %v", s2.review().scanner, j, s2.review().asker)
 	}
 }

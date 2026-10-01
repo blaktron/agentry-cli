@@ -368,13 +368,17 @@ func (j *Jev) WithMaxText(n int) *Jev {
 	return &c
 }
 
+// Limit is the most text one scan takes.
+func (j *Jev) Limit() int {
+	if j.max > 0 {
+		return j.max
+	}
+	return MaxText
+}
+
 // Scan implements Scanner.
 func (j *Jev) Scan(ctx context.Context, source Source, text string) Result {
-	limit := MaxText
-	if j.max > 0 {
-		limit = j.max
-	}
-	if len(text) > limit {
+	if len(text) > j.Limit() {
 		return Result{Verdict: NotScanned, Failure: FailureTooLarge}
 	}
 	return fromJudge(j.s.Scan(ctx, source, text))
