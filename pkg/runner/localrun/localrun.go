@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/drafter"
+	"github.com/blaktron/agentry-cli/pkg/examiner"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
@@ -128,8 +129,8 @@ type Builtin struct {
 	// web grants the web tools: the Drafter's alone.
 	web bool
 	// review grants ai_review and scanned reads of the inputs, with the
-	// person's own TypeSafe key (compile.Inputs.Review): the Examiner's,
-	// which agentry-cli#504 adds; no built-in before it carries it.
+	// person's own TypeSafe key (compile.Inputs.Review): the Examiner's
+	// alone (agentry-cli#504).
 	review bool
 	// localTimeoutFloor is the least time, in seconds, a run of the package
 	// on this computer is given (LocalBudgets).
@@ -156,6 +157,14 @@ func VoiceWriter() Builtin {
 		localTimeoutFloor: writer.LocalTimeoutFloorSeconds}
 }
 
+// Examiner is the Examiner (pkg/examiner), the fourth built-in package
+// (plan desktop-review-key-and-run-cards.md §6, D25; agentry-cli#504), and
+// the one granted the review grant.
+func Examiner() Builtin {
+	return Builtin{namespace: examiner.Namespace, name: examiner.Name, version: examiner.Version, fsys: examiner.FS(), review: true,
+		localTimeoutFloor: examiner.LocalTimeoutFloorSeconds}
+}
+
 // WithoutWebTools is the same package with no web tools: the Drafter's
 // repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing. A
 // grant can only be taken away here, never given.
@@ -180,7 +189,7 @@ func (b Builtin) LocalBudgets(p policy.Budgets) spec.Budgets {
 }
 
 // Builtins is every package that may run as builtin.
-func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter()} }
+func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter(), Examiner()} }
 
 // Ref is the package's ns/name@version.
 func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }

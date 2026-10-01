@@ -909,6 +909,14 @@ func finalResult(kind, lastText string, schema *jsonschema.Schema) (json.RawMess
 	return json.RawMessage(candidate), nil
 }
 
+// JSONResult is the §R2 output convention for a json-kind result, as the
+// run itself applies it: a host post-step that recovers an answer from a
+// message the run refused holds it to exactly this (the Examiner's,
+// agentry-cli#504).
+func JSONResult(text string, schema *jsonschema.Schema) (json.RawMessage, error) {
+	return finalResult("json", text, schema)
+}
+
 // stripJSONFences unwraps a ```json … ``` fenced final message — models
 // add fences no matter how firmly the prompt says not to.
 func stripJSONFences(s string) string {

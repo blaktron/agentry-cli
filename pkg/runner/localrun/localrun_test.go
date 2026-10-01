@@ -39,7 +39,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.2.0,agentry/voice-writer@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.2.0,agentry/voice-writer@1.0.0,agentry/examiner@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
@@ -60,13 +60,16 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			t.Fatal("taking away a grant the Creator never had changed it")
 		}
 	})
-	t.Run("the review grant rides on a Builtin value alone", func(t *testing.T) {
-		// No built-in carries it before the Examiner (agentry-cli#504); the
-		// zero value never does, and neither does a repair turn's copy.
+	t.Run("the review grant is the Examiner's alone", func(t *testing.T) {
+		// The Examiner carries it (agentry-cli#504) and no other built-in;
+		// the zero value never does, and neither does a repair turn's copy.
 		for _, b := range Builtins() {
-			if b.review {
-				t.Fatalf("%s: review grant", b.Ref())
+			if b.review != (b.Ref() == Examiner().Ref()) {
+				t.Fatalf("%s: review grant %v", b.Ref(), b.review)
 			}
+		}
+		if !Examiner().review || Examiner().web {
+			t.Fatalf("the Examiner: review %v, web %v", Examiner().review, Examiner().web)
 		}
 		if (Builtin{}).review || Drafter().WithoutWebTools().review {
 			t.Fatal("a Builtin no one granted it carries the review grant")
@@ -371,9 +374,8 @@ func TestTheReviewGrantCompilesForABuiltinAlone(t *testing.T) {
 		t.Fatalf("a directory package with the review grant: %v", err)
 	}
 
-	// A built-in granted it, run without the key: nothing is laid down.
-	examiner := VoiceWriter()
-	examiner.review = true
+	// The Examiner, run without the key: nothing is laid down.
+	examiner := Examiner()
 	for _, r := range []*engine.ReviewRun{nil, {}} {
 		runHome := t.TempDir()
 		_, err := Run{Builtin: examiner, Home: runHome, Policy: pol, Review: r}.Execute(context.Background(), &dockerx.Fake{})
