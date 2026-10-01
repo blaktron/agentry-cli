@@ -215,7 +215,7 @@ func TestDraftWritesTheDraftWithItsRecord(t *testing.T) {
 	}
 	r := (*runs)[0]
 	w := (*webs)[0]
-	if r.Builtin.Ref() != "agentry/drafter@1.3.0" || r.Web != w || w.Scan != toolsrv.WebScanJev || w.JevKey != testJev || w.Search != "" || w.Registry == "" {
+	if r.Builtin.Ref() != localrun.Drafter().Ref() || r.Web != w || w.Scan != toolsrv.WebScanJev || w.JevKey != testJev || w.Search != "" || w.Registry == "" {
 		t.Fatalf("run %+v web %+v", r.Builtin.Ref(), w)
 	}
 	task, _ := drafter.Task("Summarize my meeting notes.", nil)
@@ -242,7 +242,7 @@ func TestDraftWritesTheDraftWithItsRecord(t *testing.T) {
 		a.WithheldSources[0].URL != "https://bad.example/" || a.WithheldSources[0].Reason != "AI Review flagged it (injection)" {
 		t.Fatalf("aiReview %+v", a)
 	}
-	if d.Drafter == nil || d.Drafter.Ref != "agentry/drafter@1.3.0" || d.Drafter.Model != "openai/qwen3.8-flash-next" {
+	if d.Drafter == nil || d.Drafter.Ref != localrun.Drafter().Ref() || d.Drafter.Model != "openai/qwen3.8-flash-next" {
 		t.Fatalf("drafter %+v", d.Drafter)
 	}
 	for _, f := range []string{"agent.yaml", "AGENT.md", "README.md", "LICENSE"} {
@@ -488,7 +488,7 @@ func TestDraftJSONEnvelope(t *testing.T) {
 	wantField(t, env, "status", `"ok"`)
 	wantField(t, env, "exitCode", `0`)
 	wantField(t, env, "exitClass", `"ok"`)
-	wantField(t, env, "ref", `"agentry/drafter@1.3.0"`)
+	wantField(t, env, "ref", `"`+localrun.Drafter().Ref()+`"`)
 	var usage receipt.Usage
 	if json.Unmarshal(env["usage"], &usage) != nil || usage.InputTokens != 120000 || usage.OutputTokens != 3000 {
 		t.Fatalf("usage = %s", env["usage"])
@@ -544,7 +544,7 @@ func TestDraftJSONFailures(t *testing.T) {
 		wantField(t, env, "exitCode", `11`)
 		wantField(t, env, "exitClass", `"policy"`)
 		wantField(t, env, "stage", `"description"`)
-		wantField(t, env, "ref", `"agentry/drafter@1.3.0"`)
+		wantField(t, env, "ref", `"`+localrun.Drafter().Ref()+`"`)
 		var usage receipt.Usage
 		if json.Unmarshal(env["usage"], &usage) != nil || usage.Total() != 0 || usage.Turns != 0 {
 			t.Fatalf("usage = %s", env["usage"])

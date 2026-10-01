@@ -22,3 +22,5 @@ agentry/drafter@1.2.0 sha256:4dd869afcc68d9466ee02b29454745d2485a5637faeb2b6c8b4
 agentry/examiner@1.0.0 sha256:5353379617ac4850cf03e0d46a23ff45942739396abb25644f697b101e805520
 # 1.3.0: the person's knowledge packs, read first, scanned ahead; never ships a pack (agentry-cli#522).
 agentry/drafter@1.3.0 sha256:fa3c1a720edb466c7f49d0419b2beff7328a97f084f112ace49fd32359297202
+# 1.4.0: a revision of a published release, the person's two texts, the name kept (agentry-cli#526).
+agentry/drafter@1.4.0 sha256:f39780659e93b4134ca28cd5f33acef2eb220a135dbc2ef64d618efcaf38ffeb
