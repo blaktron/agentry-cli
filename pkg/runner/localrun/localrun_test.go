@@ -34,12 +34,12 @@ import (
 // had by the zero value, never verified — and the built-in's tree is the
 // embedded one on every run, whatever happened to the installed copy.
 func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
-	t.Run("the list is the Creator and the Drafter", func(t *testing.T) {
+	t.Run("the list is the Creator, the Drafter and the Voice Writer", func(t *testing.T) {
 		var refs []string
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.1.1" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.1.1,agentry/voice-writer@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})

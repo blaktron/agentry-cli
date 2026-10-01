@@ -1,0 +1,21 @@
+schemaVersion: "2"
+name: voice-writer
+namespace: agentry
+version: 1.0.0
+summary: "Writes a Writing Voice: reads samples of a person's writing and writes VOICE.md, how an LLM should write the way they do."
+license: MIT
+authors:
+  - name: Agentry
+modes: [autonomous]
+entrypoints:
+  instruction: INSTRUCTION.md
+capabilities:
+  network:
+    egress: none
+  filesystem:
+    read: none
+    write: none
+  exec: none
+  dataAccess: [files]
+publish:
+  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE]

@@ -202,10 +202,10 @@ func TestKnowledgeList(t *testing.T) {
 
 	t.Run("several packs and none named lists the packs", func(t *testing.T) {
 		two := knowledgeSpec(t)
-		two.Knowledge = append(two.Knowledge, KnowledgePack{Name: "voice", Digest: "sha256:bbbb"})
-		mustWrite(t, filepath.Join(two.KnowledgeDir, "voice", "manifest.json"), []byte(`{"schema":"knowledge/v1","name":"voice","pages":12,"bytes":5000}`))
+		two.Knowledge = append(two.Knowledge, KnowledgePack{Name: "style-guide", Digest: "sha256:bbbb"})
+		mustWrite(t, filepath.Join(two.KnowledgeDir, "style-guide", "manifest.json"), []byte(`{"schema":"knowledge/v1","name":"style-guide","pages":12,"bytes":5000}`))
 		got, isErr := newTestServer(t, two).toolKnowledgeList(rawArgs(t, map[string]any{}))
-		want := "Knowledge packs attached to this run (pass pack to choose one):\naws-docs\t3 pages\nvoice\t12 pages"
+		want := "Knowledge packs attached to this run (pass pack to choose one):\naws-docs\t3 pages\nstyle-guide\t12 pages"
 		if isErr || got != want {
 			t.Fatalf("(%q, %v), want %q", got, isErr, want)
 		}
@@ -321,8 +321,8 @@ func TestKnowledgeRead(t *testing.T) {
 			want: "binary file; 3 bytes", wantErr: true},
 		{name: "no path", args: map[string]any{},
 			want: "knowledge_read: path is required", wantErr: true},
-		{name: "an unknown pack", args: map[string]any{"pack": "voice", "path": "index.md"},
-			want: "knowledge_read: no pack named \"voice\" is attached (attached: aws-docs)", wantErr: true},
+		{name: "an unknown pack", args: map[string]any{"pack": "style-guide", "path": "index.md"},
+			want: "knowledge_read: no pack named \"style-guide\" is attached (attached: aws-docs)", wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -349,9 +349,9 @@ func TestKnowledgeRead(t *testing.T) {
 	})
 	t.Run("several packs and none named is refused by name", func(t *testing.T) {
 		two := knowledgeSpec(t)
-		two.Knowledge = append(two.Knowledge, KnowledgePack{Name: "voice", Digest: "sha256:bbbb"})
+		two.Knowledge = append(two.Knowledge, KnowledgePack{Name: "style-guide", Digest: "sha256:bbbb"})
 		got, isErr := newTestServer(t, two).toolKnowledgeRead(rawArgs(t, map[string]any{"path": "index.md"}))
-		want := "knowledge_read: several packs are attached; pass pack (one of: aws-docs, voice)"
+		want := "knowledge_read: several packs are attached; pass pack (one of: aws-docs, style-guide)"
 		if !isErr || got != want {
 			t.Fatalf("(%q, %v), want %q", got, isErr, want)
 		}

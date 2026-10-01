@@ -121,6 +121,8 @@ func (s *server) buildTools() {
 		case ToolKnowledgeRead:
 			add(name, "Read a page of an attached knowledge pack (read-only), by the path its index gives, or a source document by a citation's doc:<path>. Capped by the server's byte limit; use offset and maxBytes to page through.",
 				knowledgeReadSchema(), s.toolKnowledgeRead)
+		case ToolVoiceRead:
+			add(name, voiceReadDescription, objSchema(map[string]any{}), s.toolVoiceRead)
 		case ToolWebSearch:
 			add(name, "Search the web. AI Review reads every result before you see it; a result it flagged, or could not scan, is shown as withheld with its origin only.",
 				webSearchSchema(), s.toolWebSearch)

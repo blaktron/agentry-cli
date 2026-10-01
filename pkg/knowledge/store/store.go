@@ -518,34 +518,42 @@ func (s *Store) dataKey(ctx context.Context, e Entry, skipCache bool) (key []byt
 		}
 		return k, false, nil
 	}
+	return s.ownKey(ctx, e.ID(), "knowledge pack "+e.Name(), e.Key, skipCache)
+}
+
+// ownKey is the data key of something this store keeps for the person
+// (a pack, or the Writing Voice): the keychain's cached copy, else
+// unwrapped by the registry that wrapped it (and cached), else by this
+// machine's key. what names it in an error.
+func (s *Store) ownKey(ctx context.Context, id, what string, kr KeyRecord, skipCache bool) (key []byte, fromCache bool, err error) {
 	if !skipCache {
-		if k, ok := s.cached(e.ID()); ok {
+		if k, ok := s.cached(id); ok {
 			return k, true, nil
 		}
 	}
-	switch e.Key.Wrapper {
+	switch kr.Wrapper {
 	case WrapperMachine:
-		k, err := s.machineUnwrap(e.ID(), e.Key.WrappedKey)
+		k, err := s.machineUnwrap(id, kr.WrappedKey)
 		if err != nil {
-			return nil, false, fmt.Errorf("knowledge pack %s: %w", e.Name(), err)
+			return nil, false, fmt.Errorf("%s: %w", what, err)
 		}
 		return k, false, nil
 	case WrapperRegistry:
-		reg, err := s.registry(e.Key.Registry)
+		reg, err := s.registry(kr.Registry)
 		if err != nil {
-			return nil, false, fmt.Errorf("knowledge pack %s: its key is wrapped by %s: %w", e.Name(), e.Key.Registry, err)
+			return nil, false, fmt.Errorf("%s: its key is wrapped by %s: %w", what, kr.Registry, err)
 		}
-		k, err := reg.Unwrap(ctx, e.Key.WrappedKey)
+		k, err := reg.Unwrap(ctx, kr.WrappedKey)
 		if err != nil {
-			return nil, false, fmt.Errorf("knowledge pack %s: unwrap its key at %s: %w", e.Name(), e.Key.Registry, err)
+			return nil, false, fmt.Errorf("%s: unwrap its key at %s: %w", what, kr.Registry, err)
 		}
 		if len(k) != packseal.KeySize {
-			return nil, false, fmt.Errorf("knowledge pack %s: %s answered a key of %d bytes", e.Name(), e.Key.Registry, len(k))
+			return nil, false, fmt.Errorf("%s: %s answered a key of %d bytes", what, kr.Registry, len(k))
 		}
-		s.cache(e.ID(), k)
+		s.cache(id, k)
 		return k, false, nil
 	}
-	return nil, false, fmt.Errorf("knowledge pack %s: its key is wrapped by %q, which this client does not know", e.Name(), e.Key.Wrapper)
+	return nil, false, fmt.Errorf("%s: its key is wrapped by %q, which this client does not know", what, kr.Wrapper)
 }
 
 // Open writes the pack named name, in the clear, into dst (new, or an
