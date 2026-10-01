@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/santhosh-tekuri/jsonschema/v6"
-
 	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/judge"
 
@@ -218,26 +216,24 @@ type Reading struct {
 
 // recoverReading is the reading inside a last message the runner refused at
 // its output schema, when the model wrote a sentence and then the object in
-// a ```json fence (as models do, however the instruction asks): the fenced
-// object, held to output.schema.json as the runner holds an answer. The
-// reading is never counted, so a recovered one changes nothing but the
-// report's third kind.
+// a fence (as models do, however the instruction asks): the last fenced
+// block, held to output.schema.json by the runner's own convention
+// (engine.JSONResult). The reading is never counted, so a recovered one
+// changes nothing but the report's third kind.
 func recoverReading(result json.RawMessage) (json.RawMessage, error) {
 	var text string
 	if err := json.Unmarshal(result, &text); err != nil {
 		return nil, errors.New("the refused message is not text")
 	}
-	start := strings.LastIndex(text, "```json")
+	end := strings.LastIndex(text, "```")
+	start := -1
+	if end > 0 {
+		start = strings.LastIndex(text[:end], "```")
+	}
 	if start < 0 {
-		return nil, errors.New("no fenced JSON in the refused message")
+		return nil, errors.New("no fenced block in the refused message")
 	}
-	body := text[start+len("```json"):]
-	end := strings.Index(body, "```")
-	if end < 0 {
-		return nil, errors.New("the fence is not closed")
-	}
-	candidate := strings.TrimSpace(body[:end])
-	schemaBytes, err := fs.ReadFile(FS(), "output.schema.json")
+	schemaBytes, err := fs.ReadFile(FS(), compile.OutputSchemaFile)
 	if err != nil {
 		return nil, err
 	}
@@ -245,14 +241,7 @@ func recoverReading(result json.RawMessage) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	val, err := jsonschema.UnmarshalJSON(strings.NewReader(candidate))
-	if err != nil {
-		return nil, err
-	}
-	if err := sch.Validate(val); err != nil {
-		return nil, err
-	}
-	return json.RawMessage(candidate), nil
+	return engine.JSONResult(text[start:end+len("```")], sch)
 }
 
 // NotRead is a file and why it was not read.
@@ -548,10 +537,11 @@ func unresolvedServers(p *Prepared) bool {
 // serversNotAsked: the manifest declares servers and no registry was asked.
 func serversNotAsked(p *Prepared) bool { return p.DeclaredServers > 0 && len(p.Servers) == 0 }
 
-// serverRecordLifetime is how long the registry takes its record of a
-// server as settled (the core's mcpScanTTL): an older one is looked up
-// again at Submit.
-const serverRecordLifetime = 24 * time.Hour
+// serverRecordLifetime is how long a server's record is taken as settled
+// here: the registry looks a record up again at Submit once it is 24 hours
+// old (the core's mcpScanTTL), and an hour is left for the time between
+// this review and a Submit, and for the two clocks.
+const serverRecordLifetime = 23 * time.Hour
 
 // unresolved: the registry's answer for this server here is not the one
 // Submit would weigh. It did not answer, has never seen the version, holds

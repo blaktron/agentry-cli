@@ -174,8 +174,9 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 
 	// The registry's stages read a text file's first 1 MiB and no more, so
 	// the rules' findings in a longer file are those of its first 1 MiB,
-	// scanned again here as the registry scans it.
-	p.Findings = ruleFindings(report, st.heads)
+	// scanned again here as the registry scans it; a shipped pack's text is
+	// read by its own stage alone, not by the rules.
+	p.Findings = ruleFindings(report, st.ruleSkip)
 	if len(st.heads) > 0 {
 		loadRules := o.Rules
 		if loadRules == nil {
@@ -213,17 +214,18 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 
 // ruleFindings are validate's inventory and rule findings as the core's
 // stages rate them, and its unread files as S1's unreadable-file finding.
-// The rule findings of a file past the scan cap (in truncated) are left
-// out: Prepare scans its first 1 MiB again. The manifest's own rule errors
-// are not findings: Submit refuses them before the gate (Expected).
-func ruleFindings(r validate.Report, truncated map[string][]byte) []Finding {
+// The rule findings of a file in skip are left out (Prepare scans a long
+// file's first 1 MiB again; a shipped pack's text is its stage's). The
+// manifest's own rule errors are not findings: Submit refuses them before
+// the gate (Expected).
+func ruleFindings(r validate.Report, skip map[string]bool) []Finding {
 	var out []Finding
 	for _, f := range r.Inventory {
 		out = append(out, Finding{Kind: KindRegistryRules, Scanner: f.Scanner, Severity: f.Severity, Confidence: inventoryConfidence[f.Scanner],
 			Title: f.Title, File: f.FilePath, Detail: f.Detail})
 	}
 	for _, f := range r.Findings {
-		if _, ok := truncated[f.FilePath]; ok {
+		if skip[f.FilePath] {
 			continue
 		}
 		out = append(out, Finding{Kind: KindRegistryRules, Scanner: f.RuleID, Severity: f.Severity, Confidence: f.Confidence,
@@ -274,14 +276,19 @@ type staged struct {
 	// heads the first 1 MiB of each, all the registry's stages read of it.
 	truncated []Finding
 	heads     map[string][]byte
+	// ruleSkip are the files whose whole-file rule findings do not stand:
+	// those past the cap, and a shipped pack's text.
+	ruleSkip map[string]bool
 }
 
 // stagePackage copies the files a submission would carry (the manifest's
 // publish.include over the folder, links left out as the archive leaves
 // them out) into dest, and reports each text file past the scan cap as
-// stage S1 does, except a shipped pack's text, whose stage reads it whole.
+// stage S1 does. A shipped pack's text (manifest.ShippedPackFile) is left
+// to the registry's stage for packs, which reads it whole: no truncation
+// finding, no rule findings, as the registry leaves it out of the others.
 func stagePackage(dir string, m *manifest.Manifest, ships []string, dest string) (staged, error) {
-	st := staged{heads: map[string][]byte{}}
+	st := staged{heads: map[string][]byte{}, ruleSkip: map[string]bool{}}
 	files, err := archive.WalkWorkspace(dir)
 	if err != nil {
 		return st, err
@@ -302,12 +309,14 @@ func stagePackage(dir string, m *manifest.Manifest, ships []string, dest string)
 			return st, err
 		}
 		st.files++
-		if len(data) > textScanCap && isText(fi.Path, data) {
-			st.heads[fi.Path] = data[:textScanCap]
-			if !inShippedPack(ships, fi.Path) {
-				st.truncated = append(st.truncated, Finding{Kind: KindRegistryRules, Scanner: "S1/text-scan-truncated", Severity: "medium", Confidence: "high",
-					Title: "Text file exceeds the scan cap — content past 1 MiB was not scanned", File: fi.Path})
-			}
+		_, packFile := manifest.ShippedPackFile(ships, fi.Path)
+		switch text := isText(fi.Path, data); {
+		case text && packFile:
+			st.ruleSkip[fi.Path] = true
+		case text && len(data) > textScanCap:
+			st.heads[fi.Path], st.ruleSkip[fi.Path] = data[:textScanCap], true
+			st.truncated = append(st.truncated, Finding{Kind: KindRegistryRules, Scanner: "S1/text-scan-truncated", Severity: "medium", Confidence: "high",
+				Title: "Text file exceeds the scan cap — content past 1 MiB was not scanned", File: fi.Path})
 		}
 	}
 	if st.files == 0 {
@@ -316,18 +325,6 @@ func stagePackage(dir string, m *manifest.Manifest, ships []string, dest string)
 		}
 	}
 	return st, nil
-}
-
-// inShippedPack says a package path is in a shipped knowledge pack's tree,
-// knowledge/<name>/: the registry's stage for packs reads its text, and
-// drops S1's truncation finding for it.
-func inShippedPack(ships []string, path string) bool {
-	for _, name := range ships {
-		if strings.HasPrefix(path, "knowledge/"+name+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 // isText is stage S1's classification of a text file.

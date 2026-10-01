@@ -505,7 +505,11 @@ says where to add one.
    printed, and the command exits by the expected outcome: `0` published,
    `20` held for review, `21` rejected, `22` refused at Submit (the
    manifest rules refuse it), `23` not determined here. A run that failed
-   writes the report as far as it got and exits with its own class.
+   writes the report as far as it got and exits with its own class, except
+   one the runner refused only at the output schema whose reading was
+   recovered (below): its receipt still says it failed, the report marks
+   the reading `recovered`, stderr says so, and the command exits by the
+   outcome.
    `--json` prints the report itself.
 
 **The report** (`schemaVersion` `"1"`; `pkg/examiner.Report`):
@@ -547,8 +551,9 @@ the table the core publishes (`pkg/gatecases`, agentry#776) against the
 restatement, and a core pin that changes the gate fails until it follows.
 Where something the gate weighs did not answer here (AI Review, or AI
 Review for part of a package past one call's 4 MiB or 500 files, or a
-declared server's current record, which the registry looks up again at
-Submit), the outcome is named only when its best and worst answers would
+declared server's record, which the registry looks up again at Submit once
+it is a day old and which is taken as current here for 23 hours), the
+outcome is named only when its best and worst answers would
 decide alike, and is `undetermined` otherwise. A rule hit in a text file
 past 1 MiB is taken from the file's first 1 MiB, all the registry reads.
 
