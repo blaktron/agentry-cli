@@ -24,13 +24,13 @@
 #   APPLE_SIGNING_IDENTITY           the identity the signature must carry (build/release.env)
 #   APPLE_TEAM_ID                    its Team ID (build/release.env)
 #   SIGN_DARWIN_REPORT               optional: a file to write team= and notarized= into
-#   NOTARY_TIMEOUT                   optional: notarytool's wait, default 45m
+#   NOTARY_TIMEOUT_MINUTES           optional: how long to wait for Apple, default 45
 #
 # The certificate lives in a keychain this script creates in its own 0700
 # directory and deletes on exit, with the .p12 and the .p8; nothing persists
 # on the runner. The keychain is on the build user's search list only while
-# codesign runs (codesign finds no identity otherwise), and only its own
-# entry is removed again. Headless codesign also needs Apple's Developer ID
+# codesign runs (codesign finds no identity otherwise); `security
+# delete-keychain` takes its entry off again and leaves every other entry. Headless codesign also needs Apple's Developer ID
 # G2 intermediate in the host's System keychain (installed on maxbookpro on
 # 2026-10-01, agentry-desktop#152): without it codesign fails with
 # errSecInternalComponent. Nothing in the CLI's build or tests calls this
@@ -55,6 +55,9 @@ xcrun --find notarytool >/dev/null 2>&1 || fail "xcrun cannot find notarytool (t
 
 W=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/sign-darwin.XXXXXX") || fail "no temporary directory"
 chmod 700 "$W"
+# The search list holds resolved paths (/private/tmp, not /tmp): compare
+# against the same, or an entry is never recognised as this one.
+W=$(cd "$W" && pwd -P)
 KC="$W/signing.keychain-db"
 
 # The user's keychain search list, one path per line.
@@ -67,19 +70,12 @@ $(kc_list)
 EOF
   security list-keychains -d user -s "$@"
 }
-# Take only KC off the list; another job's entries stay.
-kc_remove() {
-  local l; set --
-  while IFS= read -r l; do [ -n "$l" ] && [ "$l" != "$KC" ] && set -- "$@" "$l"; done <<EOF
-$(kc_list)
-EOF
-  security list-keychains -d user -s "$@"
-}
+# Deleting the keychain also takes it off the list (`list-keychains -s` with
+# no argument changes nothing, so an emptied list cannot be written back).
 cleanup() {
-  kc_remove 2>/dev/null || true
   security delete-keychain "$KC" >/dev/null 2>&1 || true
   rm -rf "$W"
-  if kc_list | grep -qF "$W"; then echo "sign-darwin: the signing keychain is still on the search list" >&2; return 1; fi
+  if kc_list | grep -qF "$(basename "$W")"; then echo "sign-darwin: the signing keychain is still on the search list" >&2; return 1; fi
   return 0
 }
 # A keychain left on the list fails the run (plan os-code-signing.md M-M2 step 7).
@@ -114,7 +110,6 @@ for f in "$@"; do
   codesign --force --options runtime --timestamp --identifier "$IDENTIFIER" \
     --keychain "$KC" --sign "$sha1" "$f" || fail "codesign failed on $f"
 done
-kc_remove
 security delete-keychain "$KC"
 
 # The read-back: every claim the release makes about the signature.
@@ -129,27 +124,38 @@ for f in "$@"; do
   echo "signed $(basename "$f"): $(grep -E '^(Timestamp|TeamIdentifier)=' <<<"$d" | tr '\n' ' ')"
 done
 
-# Notarization: a zip per binary, waited for. Anything but Accepted prints
-# Apple's log and fails.
+# Notarization: a zip per binary, all submitted first so Apple works on them
+# together, then each polled until it is decided. A network error while
+# polling is retried until the deadline; anything but Accepted prints Apple's
+# log and fails.
+notary() { xcrun notarytool "$@" --key "$W/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID"; }
 ids=""
 for f in "$@"; do
   z="$W/$(basename "$f").zip"
   ditto -c -k --keepParent "$f" "$z"
-  set +e
-  xcrun notarytool submit "$z" --key "$W/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" \
-    --wait --timeout "${NOTARY_TIMEOUT:-45m}" --output-format json > "$W/submit.json" 2> "$W/submit.err"
-  st=$?
-  set -e
+  notary submit "$z" --output-format json > "$W/submit.json" 2> "$W/submit.err" || { cat "$W/submit.err" >&2; fail "notarytool could not submit $(basename "$f")"; }
   id=$(plutil -extract id raw -o - "$W/submit.json" 2>/dev/null || true)
-  status=$(plutil -extract status raw -o - "$W/submit.json" 2>/dev/null || true)
-  echo "notarization of $(basename "$f"): ${id:-no id} ${status:-no status} (notarytool exit $st)"
-  if [ "$status" != Accepted ]; then
-    cat "$W/submit.err" >&2
-    [ -z "$id" ] || xcrun notarytool log "$id" --key "$W/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" >&2 || true
-    fail "$(basename "$f") was not notarized (${status:-no status})"
-  fi
+  [ -n "$id" ] || { cat "$W/submit.json" "$W/submit.err" >&2; fail "notarytool returned no submission id for $(basename "$f")"; }
+  echo "submitted $(basename "$f") for notarization: $id"
   ids="$ids $id"
   rm -f "$z"
+done
+deadline=$(( $(date +%s) + ${NOTARY_TIMEOUT_MINUTES:-45} * 60 ))
+for id in $ids; do
+  while :; do
+    status=""
+    if notary info "$id" --output-format json > "$W/info.json" 2> "$W/info.err"; then
+      status=$(plutil -extract status raw -o - "$W/info.json" 2>/dev/null || true)
+    else
+      echo "notarytool info $id failed (retrying): $(head -c 200 "$W/info.err")"
+    fi
+    case "$status" in
+      Accepted) echo "notarization $id: Accepted"; break ;;
+      Invalid|Rejected) notary log "$id" >&2 || true; fail "notarization $id: $status" ;;
+    esac
+    [ "$(date +%s)" -lt "$deadline" ] || fail "notarization $id still ${status:-unknown} after ${NOTARY_TIMEOUT_MINUTES:-45} minutes"
+    sleep 30
+  done
 done
 rm -f "$W/notary.p8"
 
