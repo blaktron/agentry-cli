@@ -1,0 +1,21 @@
+schemaVersion: "2"
+name: examiner
+namespace: agentry
+version: 1.0.0
+summary: "Reviews a QuickAgent before Submit: asks AI Review as the registry does, and reads its files for secrets and scripts past its contract."
+license: MIT
+authors:
+  - name: Agentry
+modes: [autonomous]
+entrypoints:
+  instruction: INSTRUCTION.md
+capabilities:
+  network:
+    egress: none
+  filesystem:
+    read: none
+    write: none
+  exec: none
+  dataAccess: [files]
+publish:
+  include: [agent.yaml, INSTRUCTION.md, output.schema.json, README.md, LICENSE]

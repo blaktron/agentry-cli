@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -209,13 +210,13 @@ func TestBuiltinsPublishMarksWhatIsNotMarked(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_testtoken")
 	br := newBuiltinsRegistry(t)
-	creator, drafter, writer := localrun.KnowledgeCreator(), localrun.Drafter(), localrun.VoiceWriter()
+	creator := localrun.KnowledgeCreator()
 	for ref, d := range builtinDigests(t) {
 		br.versions[ref] = d
 	}
-	br.agents[creator.Namespace()+"/"+creator.Name()] = false
-	br.agents[drafter.Namespace()+"/"+drafter.Name()] = true
-	br.agents[writer.Namespace()+"/"+writer.Name()] = true
+	for _, b := range localrun.Builtins() {
+		br.agents[b.Namespace()+"/"+b.Name()] = b.Ref() != creator.Ref()
+	}
 
 	if _, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish"); err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
@@ -239,7 +240,7 @@ func TestBuiltinsPublishFailsWhenTheMarkIsRefused(t *testing.T) {
 	br.refuseMark = true
 
 	_, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
-	if err == nil || !strings.Contains(err.Error(), "3 of 3 built-ins not published") || !strings.Contains(stderr, "platform staff only") {
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "platform staff only") {
 		t.Fatalf("err = %v stderr %s", err, stderr)
 	}
 	if len(br.uploads) != 0 {
@@ -256,13 +257,14 @@ func TestBuiltinsPublishSkipsWhatTheRegistryHas(t *testing.T) {
 	t.Setenv(envToken, "agy_testtoken")
 	br := newBuiltinsRegistry(t)
 	want := builtinDigests(t)
-	creator, drafter, writer := localrun.KnowledgeCreator().Ref(), localrun.Drafter().Ref(), localrun.VoiceWriter().Ref()
-	br.versions[creator] = want[creator]
+	creator, drafter := localrun.KnowledgeCreator().Ref(), localrun.Drafter().Ref()
+	for ref, d := range want {
+		br.versions[ref] = d
+	}
 	br.versions[drafter] = "sha256:0000"
-	br.versions[writer] = want[writer]
 
 	stdout, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
-	if err == nil || !strings.Contains(err.Error(), "1 of 3 built-ins not published: "+drafter) {
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("1 of %d built-ins not published: %s", len(localrun.Builtins()), drafter)) {
 		t.Fatalf("err = %v", err)
 	}
 	if !strings.Contains(stdout, creator+" already in the registry") || !strings.Contains(stderr, "never rebuilt") {
@@ -284,7 +286,7 @@ func TestBuiltinsPublishNeedsTheNamespace(t *testing.T) {
 	br.refuse = true
 
 	_, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
-	if err == nil || !strings.Contains(err.Error(), "3 of 3 built-ins not published") {
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) {
 		t.Fatalf("err = %v", err)
 	}
 	if !strings.Contains(stderr, "403") && !strings.Contains(stderr, "Forbidden") {
@@ -307,7 +309,7 @@ func TestBuiltinsPublishReportsReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(stdout, "needs human review") != 3 {
+	if strings.Count(stdout, "needs human review") != len(localrun.Builtins()) {
 		t.Errorf("stdout %s", stdout)
 	}
 }
@@ -326,10 +328,16 @@ func TestBuiltinsPublishFailsOnARejectedVersion(t *testing.T) {
 	br.state = "rejected"
 
 	_, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
-	if err == nil || !strings.Contains(err.Error(), "3 of 3 built-ins not published") || !strings.Contains(stderr, "state rejected") {
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "state rejected") {
 		t.Fatalf("err = %v stderr %s", err, stderr)
 	}
 	if len(br.uploads) != 0 {
 		t.Errorf("uploaded %v", br.uploads)
 	}
+}
+
+// allNotPublished is the error's count when no built-in was published.
+func allNotPublished() string {
+	n := len(localrun.Builtins())
+	return fmt.Sprintf("%d of %d built-ins not published", n, n)
 }

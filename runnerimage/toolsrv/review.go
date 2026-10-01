@@ -90,8 +90,12 @@ const (
 type ReviewEntry struct {
 	Tool string `json:"tool"`
 	// Path is the input file, inputs-relative.
-	Path  string `json:"path,omitempty"`
-	Bytes int    `json:"bytes,omitempty"`
+	Path string `json:"path,omitempty"`
+	// Manifest and Dir are what an ai_review call read, inputs-relative and
+	// cleaned ("." is the inputs root).
+	Manifest string `json:"manifest,omitempty"`
+	Dir      string `json:"dir,omitempty"`
+	Bytes    int    `json:"bytes,omitempty"`
 	// Refused says why a call read nothing, in the words the model was
 	// given.
 	Refused string `json:"refused,omitempty"`
@@ -102,6 +106,11 @@ type ReviewEntry struct {
 	// that scored 2 or more.
 	RubricHash string `json:"rubricHash,omitempty"`
 	Findings   int    `json:"findings,omitempty"`
+	// Axes are an answered ai_review call's six scores, as the model was
+	// given them: the record a host post-step reads the review from, so
+	// that what it reports never rests on what the model says the tool
+	// answered (agentry-cli#504).
+	Axes []ReviewAxis `json:"axes,omitempty"`
 	webscan.Result
 }
 
@@ -337,7 +346,7 @@ const (
 	notReadBinary     = "not text"
 	notReadTooLarge   = "past the 1 MiB a file the registry scans as text"
 	notReadShipped    = "a shipped knowledge pack's text, which the registry reads in its own stage"
-	notReadOverBudget = "past what one review sends (4 MiB, 500 files)"
+	NotReadOverBudget = "past what one review sends (4 MiB, 500 files)"
 	notReadLink       = "a link, which a package archive does not carry"
 )
 
@@ -385,7 +394,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 		return "ai_review: dir: " + err.Error(), true
 	}
 	ships := ShippedPacks(manifestJSON)
-	files, notRead, err := reviewFiles(root, manifestAbs, ships)
+	files, notRead, err := ReviewFiles(root, manifestAbs, ships)
 	if err != nil {
 		return "ai_review: " + err.Error(), true
 	}
@@ -407,7 +416,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	for i, f := range files {
 		paths[i] = f.Path
 	}
-	entry := ReviewEntry{Tool: ToolAIReview, Files: len(files), NotRead: len(notRead), RubricHash: sc.Hash(),
+	entry := ReviewEntry{Tool: ToolAIReview, Manifest: path.Clean(a.Manifest), Dir: path.Clean(dir), Files: len(files), NotRead: len(notRead), RubricHash: sc.Hash(),
 		Result: webscan.Result{Model: sc.Model(), Requests: usage.Requests, InputTokens: int64(usage.InputTokens)}}
 	if err != nil {
 		entry.Verdict, entry.Failure = webscan.NotScanned, judge.FailureOf(ctx, err)
@@ -428,6 +437,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 			entry.Flagged = append(entry.Flagged, ax.ID)
 		}
 	}
+	entry.Axes = ans.Axes
 	entry.Findings, entry.Verdict = len(ans.Findings), webscan.Pass
 	if len(ans.Findings) > 0 {
 		entry.Verdict = webscan.Withheld
@@ -440,11 +450,12 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	return string(out), false
 }
 
-// reviewFiles is every text file under root, as stage S5 reads a release:
+// ReviewFiles is every text file under root, as stage S5 reads a release:
 // package paths relative to root, sorted, the manifest's own staged JSON
 // left out, and a shipped pack's tree left to its own stage. What is left
-// out is named.
-func reviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, []ReviewNotRead, error) {
+// out is named. The Examiner's host pre-step asks it of the staged package
+// too, to know whether one call sends all of it (agentry-cli#504).
+func ReviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, []ReviewNotRead, error) {
 	var files []judge.RubricFile
 	var notRead []ReviewNotRead
 	total := 0
@@ -464,7 +475,7 @@ func reviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, 
 		case d.Type()&fs.ModeSymlink != 0 || !d.Type().IsRegular():
 			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadLink})
 			return nil
-		case shippedFile(ships, rel):
+		case ShippedFile(ships, rel):
 			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadShipped})
 			return nil
 		}
@@ -479,7 +490,7 @@ func reviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, 
 			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadBinary})
 			return nil
 		case len(files) >= ReviewMaxFiles || total+len(data) > ReviewTotalBytes:
-			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadOverBudget})
+			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: NotReadOverBudget})
 			return nil
 		}
 		total += len(data)
@@ -537,11 +548,15 @@ func ShippedPacks(manifestJSON []byte) []string {
 	return slices.Compact(out)
 }
 
-// shippedFile reports whether a package path is in a shipped pack's tree,
-// knowledge/<name>/.
-func shippedFile(ships []string, rel string) bool {
+// ShippedFile reports whether a package path is a shipped pack's text, a
+// file under knowledge/<name>/wiki/ or knowledge/<name>/sources/, as the
+// core's manifest.ShippedPackFile reads it (a test holds the two equal):
+// the registry's stage for packs reads those, and its S5 every other file,
+// a pack's other files included.
+func ShippedFile(ships []string, rel string) bool {
 	for _, name := range ships {
-		if strings.HasPrefix(rel, "knowledge/"+name+"/") {
+		rest, ok := strings.CutPrefix(rel, "knowledge/"+name+"/")
+		if ok && (strings.HasPrefix(rest, "wiki/") || strings.HasPrefix(rest, "sources/")) {
 			return true
 		}
 	}
