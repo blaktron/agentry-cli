@@ -55,9 +55,14 @@ type draftOpts struct {
 	hints           []string
 	knowledge       []string
 	descriptionFile string
-	out             string
-	policyPath      string
-	hosted          bool
+	// A revision (agentry-cli#526): the release, as a package folder on
+	// this computer (revise) or a ref fetched from the registry
+	// (reviseRef), and the files holding the person's two texts.
+	revise, reviseRef              string
+	instructionsFile, problemsFile string
+	out                            string
+	policyPath                     string
+	hosted                         bool
 	budgetFlags
 	// outputFormat json is the form a sandbox host drives for a hosted
 	// draft (agentry-cli#384): the Drafter run's envelope on stdout, with
@@ -94,7 +99,7 @@ var draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
 func newDraftCmd() *cobra.Command {
 	var o draftOpts
 	cmd := &cobra.Command{
-		Use:   `draft "<description>" [--hint TEXT…] [--knowledge PACK…] [--out DIR]`,
+		Use:   `draft ("<description>" [--hint TEXT…] [--knowledge PACK…] | --revise DIR | --revise-ref REF) [--out DIR]`,
 		Short: "Draft a QuickAgent from a description, with the built-in Drafter",
 		Long: "Draft a QuickAgent from a plain description of what it should do. The built-in Drafter searches the\n" +
 			"registry and the web, reads what it finds, and returns a draft: the manifest, the instructions, notes on\n" +
@@ -127,7 +132,12 @@ func newDraftCmd() *cobra.Command {
 			"what the check flagged (with the task) and its own draft; the second answer is checked again and kept,\n" +
 			"with any problems in draft.json. Review every part before you publish it.\n\n" +
 			"On this computer the draft has 30 minutes, or your runner policy's run timeout when that is longer, and\n" +
-			"--timeout sets it for one draft. It has no token limit; the tool-call cap is your policy's.",
+			"--timeout sets it for one draft. It has no token limit; the tool-call cap is your policy's.\n\n" +
+			"--revise DIR (a package folder) or --revise-ref ns/name@version (a published release, fetched with this\n" +
+			"command's credential) drafts the release's next version instead: the Drafter is given its agent.yaml and\n" +
+			"instruction file, what you want changed (--instructions-file) and the problems you found (--problems-file),\n" +
+			"each at most " + strconv.Itoa(drafter.MaxRevisionTextBytes) + " bytes and at least one given. AI Review reads your two texts and the release's two\n" +
+			"files first; one it does not pass stops the revision. The revision keeps the release's name, and draft.json records the release under revises.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return draftRunE(cmd, args, &o) },
 	}
@@ -136,6 +146,10 @@ func newDraftCmd() *cobra.Command {
 		strconv.Itoa(drafter.MaxKnowledgePacks)+" packs and "+knowledge.FormatCap(drafter.MaxKnowledgeBytes)+" in all). A pack not scanned in Agentry is scanned first")
 	f.StringArrayVar(&o.hints, "hint", nil, "a hint: the services or sites it works with, whether it runs on its own or in a conversation, an example of the output wanted (repeatable)")
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
+	f.StringVar(&o.revise, "revise", "", "revise a release instead of drafting a new QuickAgent: its package folder (agent.yaml and its instruction file); with --instructions-file and/or --problems-file")
+	f.StringVar(&o.reviseRef, "revise-ref", "", "revise a published release, ns/name@version, fetched from the registry with this command's credential (a sandbox host's, for a hosted revision)")
+	f.StringVar(&o.instructionsFile, "instructions-file", "", "a revision's additional instructions: what to change (at most "+strconv.Itoa(drafter.MaxRevisionTextBytes)+" bytes)")
+	f.StringVar(&o.problemsFile, "problems-file", "", "a revision's problems with this draft: what is wrong with the release, to be solved (at most "+strconv.Itoa(drafter.MaxRevisionTextBytes)+" bytes)")
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host will for a draft made in Agentry (the hosted draft kind, blaktron/agentry-enterprise#183, with --output-format json): scans and search through the registry with the job's credential in $"+envJobToken)
@@ -175,25 +189,53 @@ func draftRunE(cmd *cobra.Command, args []string, o *draftOpts) error {
 
 func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	errOut := cmd.ErrOrStderr()
-	description, err := draftDescription(args, *o)
-	if err != nil {
+	if err := checkReviseFlags(args, *o); err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
-	// The packs are loaded and held to the draft's bounds before anything
-	// is scanned, and the person told which will be scanned first (D3).
-	packs, packsDone, err := draftKnowledge(cmd, o.knowledge, o.hosted)
+	runID, err := engine.NewRunID()
 	if err != nil {
 		return err
 	}
-	defer packsDone()
-	noteKnowledge(cmd, packs, o.hosted)
-	names := make([]string, 0, len(packs))
-	for _, k := range packs {
-		names = append(names, k.Pack.Manifest.Name)
+	outDir := cmp.Or(o.out, filepath.Join("agentry-out", "agentry-drafter-"+runID))
+	if outDir, err = filepath.Abs(outDir); err != nil {
+		return err
 	}
-	task, err := drafter.TaskWithKnowledge(description, o.hints, names)
-	if err != nil {
-		return engine.Classify(engine.ExitUsage, err)
+	if _, err := os.Stat(filepath.Join(outDir, "draft.json")); err == nil {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s already holds a draft; name another folder with --out", outDir))
+	}
+	var description, task string
+	var packs []drafter.KnowledgeIn
+	var rev *drafter.Revision
+	if o.revising() {
+		// A revision (agentry-cli#526): the release is laid down in the
+		// draft's folder, and the task is the person's two texts.
+		if rev, err = draftRevision(cmd, *o, filepath.Join(outDir, drafter.ReviseInput)); err != nil {
+			return err
+		}
+		if task, err = drafter.RevisionTask(rev); err != nil {
+			return engine.Classify(engine.ExitUsage, err)
+		}
+		description = drafter.RevisionDescription(rev)
+	} else {
+		if description, err = draftDescription(args, *o); err != nil {
+			return engine.Classify(engine.ExitUsage, err)
+		}
+		// The packs are loaded and held to the draft's bounds before
+		// anything is scanned, and the person told which will be scanned
+		// first (D3).
+		var packsDone func()
+		if packs, packsDone, err = draftKnowledge(cmd, o.knowledge, o.hosted); err != nil {
+			return err
+		}
+		defer packsDone()
+		noteKnowledge(cmd, packs, o.hosted)
+		names := make([]string, 0, len(packs))
+		for _, k := range packs {
+			names = append(names, k.Pack.Manifest.Name)
+		}
+		if task, err = drafter.TaskWithKnowledge(description, o.hints, names); err != nil {
+			return engine.Classify(engine.ExitUsage, err)
+		}
 	}
 	home, err := runnerHome()
 	if err != nil {
@@ -223,6 +265,13 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if err != nil {
 		return err
 	}
+	if rev != nil {
+		// And the release's two files, which reach the Drafter as inputs
+		// (DR-44): one AI Review does not pass stops the revision here.
+		if _, err := drafter.PrescanRelease(cmd.Context(), sc, rev); err != nil {
+			return err
+		}
+	}
 	o.stage = receipt.StagePrepare
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	if o.hosted {
@@ -241,17 +290,6 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		return err
 	}
 	defer readDone()
-	runID, err := engine.NewRunID()
-	if err != nil {
-		return err
-	}
-	outDir := cmp.Or(o.out, filepath.Join("agentry-out", "agentry-drafter-"+runID))
-	if outDir, err = filepath.Abs(outDir); err != nil {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join(outDir, "draft.json")); err == nil {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s already holds a draft; name another folder with --out", outDir))
-	}
 	budgets := o.over(draftBudgets(pol, o.hosted))
 	first := localrun.Run{
 		Builtin: localrun.Drafter(), Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
@@ -261,11 +299,16 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if read != nil {
 		first.Knowledge = read.Packs
 	}
+	if rev != nil {
+		// The release reaches the Drafter as files under /inputs/revise;
+		// its repair turn is given none (RepairRun).
+		first.Inputs = []string{rev.Dir}
+	}
 	env, runErr := draftRun(cmd, first)
 	checker, checkerErr := draftChecker(web)
 	post := drafter.PostStep{
 		OutDir: outDir, Description: description, Task: task, Scan: desc, Ref: localrun.Drafter().Ref(), Build: version.Build(),
-		Budgets: budgets, Checker: checker, CheckerErr: checkerErr, Log: errOut, OnUsage: first.OnUsage, Knowledge: read,
+		Budgets: budgets, Checker: checker, CheckerErr: checkerErr, Log: errOut, OnUsage: first.OnUsage, Knowledge: read, Revision: rev,
 		Repair: func(_ context.Context, t drafter.RepairTurn) (*receipt.Envelope, error) {
 			return draftRun(cmd, localrun.RepairRun(first, t))
 		},

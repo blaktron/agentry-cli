@@ -71,6 +71,11 @@ type PostStep struct {
 	// file named in its notes. Nil for a draft given none. The repair
 	// turn is given none.
 	Knowledge *KnowledgeRead
+	// Revision is the release a revision was drafted from and the person's
+	// two texts (agentry-cli#526): the draft records it in Revises and
+	// keeps its name, the first answer and the repair turn's alike. Nil for
+	// a new QuickAgent.
+	Revision *Revision
 	// OnUsage is the live usage reporter the first turn had; the repair
 	// turn's lines count on from the first turn's total, so a host's caps
 	// see the draft whole. Nil reports none.
@@ -131,6 +136,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 			return nil, env, err
 		}
 		d.readKnowledge(p.Knowledge)
+		d.revise(p.Revision)
 		p.validate(d)
 	}
 	d, env = p.repairAndCheck(ctx, d, env, repairSpent)
@@ -250,6 +256,7 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 		d.NoteNotRepaired(r, "the first answer's package could not be replaced")
 		return d, &total
 	}
+	rd.revise(p.Revision)
 	p.validate(rd)
 	return rd, &total
 }

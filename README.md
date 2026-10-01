@@ -441,6 +441,21 @@ goes to the repair turn to be shortened. The check also holds the
 description, the manifest and the instruction to 48 KiB together, and a
 draft past that is recorded as not checked, never as passed.
 
+`agentry draft --revise DIR` (a release's package folder) or `--revise-ref
+ns/name@version` (a published release, fetched with the command's credential
+and held to the digest the registry resolves) drafts that release's next
+version instead of a new QuickAgent. The Drafter is given the release's
+`agent.yaml` and instruction file as files under `/inputs/revise`, never the
+rest of the package, and the task holds what you want changed
+(`--instructions-file`) and the problems you found (`--problems-file`), each
+at most 4,000 bytes and at least one given. AI Review reads those two texts,
+then the release's two files, before the Drafter starts; a text or a file it
+does not pass stops the revision there. The revision keeps the
+release's name (a draft that names another is corrected, and the notes say
+so), its notes say what changed and why, and `draft.json` records the
+release under `revises`, its ref and its archive's digest. A revision takes
+no description, hints or knowledge packs.
+
 Before a draft is written, the CLI checks it in four steps:
 1. **Mechanical slips are corrected without the model.** A mode, a tag or a
    choice named twice loses the second one. An optional part left empty, or

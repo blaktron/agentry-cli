@@ -39,7 +39,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.3.0,agentry/voice-writer@1.0.0,agentry/examiner@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.4.0,agentry/voice-writer@1.0.0,agentry/examiner@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
@@ -81,7 +81,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.3.0" {
+		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.4.0" {
 			t.Fatalf("meta %+v", meta)
 		}
 		for _, name := range []string{"agent.yaml", "AGENT.md", "output.schema.json"} {
@@ -435,12 +435,17 @@ func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
 	var usage []receipt.Usage
 	first := Run{Builtin: Drafter(), Home: "/home/x/.agentry", Policy: pol, PolicySHA: "sha256:p", Build: "b1",
 		Task: strings.NewReader("THE FIRST TASK"), OutDir: "/out", Budgets: &spec.Budgets{TimeoutSeconds: 900}, RunID: "run-1",
-		Web: &engine.WebRun{JevKey: "jev-person-key", SearchKey: "search-key"}}
+		Web: &engine.WebRun{JevKey: "jev-person-key", SearchKey: "search-key"}, Inputs: []string{"/out/revise"}}
 	turn := drafter.RepairTurn{Task: "the repair task", OutDir: "/out/repair", Budgets: spec.Budgets{TimeoutSeconds: 300, MaxTurns: 8},
 		RunID: "run-2", OnUsage: func(u receipt.Usage) { usage = append(usage, u) }}
 	r := RepairRun(first, turn)
 	if r.Builtin != Drafter().WithoutWebTools() || r.Web != nil {
 		t.Fatalf("the repair run has web tools %v or a web configuration %+v", r.Builtin == Drafter(), r.Web)
+	}
+	// A revision's release is the first turn's input alone (agentry-cli#526):
+	// the repair turn is given its own draft and the report, nothing else.
+	if len(r.Inputs) != 0 || len(r.Knowledge) != 0 {
+		t.Fatalf("the repair run has inputs %v or knowledge %v", r.Inputs, r.Knowledge)
 	}
 	task, _ := io.ReadAll(r.Task)
 	if string(task) != "the repair task" || r.OutDir != "/out/repair" || r.RunID != "run-2" || *r.Budgets != turn.Budgets ||
