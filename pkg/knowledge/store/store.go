@@ -417,7 +417,8 @@ func (s *Store) sweep() {
 // clear while something works on it (the Creator making a pack or adding
 // to a kept one), and the function that removes it. Until that function is
 // called the directory is held: no sweep in this process removes it, and
-// it is touched as time passes so that no other process's does. A build
+// it is touched as time passes so that no other process's does; once it
+// returns, nothing in this process touches that path again. A build
 // may run for an hour or more, and until it applies what the Creator wrote
 // its working copy reads as old as the build: a sweep in that time (a
 // Download in the desktop beside a build, another command's build or run)
@@ -429,8 +430,9 @@ func (s *Store) Scratch() (dir string, done func(), err error) {
 	held.Lock()
 	held.dirs[dir] = struct{}{}
 	held.Unlock()
-	stop := make(chan struct{})
+	stop, stopped := make(chan struct{}), make(chan struct{})
 	go func(every time.Duration) {
+		defer close(stopped)
 		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
@@ -446,7 +448,11 @@ func (s *Store) Scratch() (dir string, done func(), err error) {
 	remove := done
 	return dir, func() {
 		once.Do(func() {
+			// Wait for the toucher to stop before the path is given up: a
+			// tick it has already taken would otherwise touch whatever is
+			// at that path next (agentry-cli#517).
 			close(stop)
+			<-stopped
 			held.Lock()
 			delete(held.dirs, dir)
 			held.Unlock()
