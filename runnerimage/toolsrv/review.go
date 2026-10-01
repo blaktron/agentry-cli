@@ -475,7 +475,7 @@ func ReviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, 
 		case d.Type()&fs.ModeSymlink != 0 || !d.Type().IsRegular():
 			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadLink})
 			return nil
-		case shippedFile(ships, rel):
+		case ShippedFile(ships, rel):
 			notRead = append(notRead, ReviewNotRead{Path: rel, Reason: notReadShipped})
 			return nil
 		}
@@ -548,11 +548,15 @@ func ShippedPacks(manifestJSON []byte) []string {
 	return slices.Compact(out)
 }
 
-// shippedFile reports whether a package path is in a shipped pack's tree,
-// knowledge/<name>/.
-func shippedFile(ships []string, rel string) bool {
+// ShippedFile reports whether a package path is a shipped pack's text, a
+// file under knowledge/<name>/wiki/ or knowledge/<name>/sources/, as the
+// core's manifest.ShippedPackFile reads it (a test holds the two equal):
+// the registry's stage for packs reads those, and its S5 every other file,
+// a pack's other files included.
+func ShippedFile(ships []string, rel string) bool {
 	for _, name := range ships {
-		if strings.HasPrefix(rel, "knowledge/"+name+"/") {
+		rest, ok := strings.CutPrefix(rel, "knowledge/"+name+"/")
+		if ok && (strings.HasPrefix(rest, "wiki/") || strings.HasPrefix(rest, "sources/")) {
 			return true
 		}
 	}

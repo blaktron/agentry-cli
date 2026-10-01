@@ -218,8 +218,10 @@ type Reading struct {
 // its output schema, when the model wrote a sentence and then the object in
 // a fence (as models do, however the instruction asks): the last fenced
 // block, held to output.schema.json by the runner's own convention
-// (engine.JSONResult). The reading is never counted, so a recovered one
-// changes nothing but the report's third kind.
+// (engine.JSONResult). A fence inside the answer's own text misplaces the
+// block, which the schema then refuses: nothing is recovered. The reading
+// is never counted, so a recovered one changes nothing but the report's
+// third kind.
 func recoverReading(result json.RawMessage) (json.RawMessage, error) {
 	var text string
 	if err := json.Unmarshal(result, &text); err != nil {
