@@ -58,11 +58,14 @@ type draftOpts struct {
 	// A revision (agentry-cli#526): the release, as a package folder on
 	// this computer (revise) or a ref fetched from the registry
 	// (reviseRef), and the files holding the person's two texts.
-	revise, reviseRef              string
-	instructionsFile, problemsFile string
-	out                            string
-	policyPath                     string
-	hosted                         bool
+	// reviseRegistry is where reviseRef is fetched from when that is not
+	// the registry the draft scans through: a sandbox host's release
+	// prefix, which the run's grant opens (agentry-cli#550).
+	revise, reviseRef, reviseRegistry string
+	instructionsFile, problemsFile    string
+	out                               string
+	policyPath                        string
+	hosted                            bool
 	budgetFlags
 	// outputFormat json is the form a sandbox host drives for a hosted
 	// draft (agentry-cli#384): the Drafter run's envelope on stdout, with
@@ -148,6 +151,7 @@ func newDraftCmd() *cobra.Command {
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
 	f.StringVar(&o.revise, "revise", "", "revise a release instead of drafting a new QuickAgent: its package folder (agent.yaml and its instruction file); with --instructions-file and/or --problems-file")
 	f.StringVar(&o.reviseRef, "revise-ref", "", "revise a published release, ns/name@version, fetched from the registry with this command's credential (a sandbox host's, for a hosted revision)")
+	f.StringVar(&o.reviseRegistry, "revise-registry", "", "for drivers: the registry --revise-ref is fetched from, on --registry's origin (default --registry); a sandbox host names its release prefix, which $"+envRunGrant+" opens")
 	f.StringVar(&o.instructionsFile, "instructions-file", "", "a revision's additional instructions: what to change (at most "+strconv.Itoa(drafter.MaxRevisionTextBytes)+" bytes)")
 	f.StringVar(&o.problemsFile, "problems-file", "", "a revision's problems with this draft: what is wrong with the release, to be solved (at most "+strconv.Itoa(drafter.MaxRevisionTextBytes)+" bytes)")
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
