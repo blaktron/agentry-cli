@@ -70,12 +70,16 @@ const (
 	SourceAIEdit Source = "ai-edit"
 	// SourceEdit is the person's own text.
 	SourceEdit Source = "edit"
+	// SourceDownload is the account's live voice, downloaded (V3,
+	// agentry-cli#532): AI Review passed it in the account before it was
+	// live there.
+	SourceDownload Source = "download"
 )
 
 // Valid says whether s is a source this client knows.
 func (s Source) Valid() bool {
 	switch s {
-	case SourceCreate, SourceImprove, SourceAIEdit, SourceEdit:
+	case SourceCreate, SourceImprove, SourceAIEdit, SourceEdit, SourceDownload:
 		return true
 	}
 	return false
@@ -114,7 +118,21 @@ func Stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 // Describe is how the receipt and the CLI name a version: its digest, its
 // size and where it came from.
 func (m Meta) Describe() string {
+	if m.Source == SourceDownload {
+		return fmt.Sprintf("%s, %d bytes, %s (reviewed there, not checked again here)", m.SHA256, m.Bytes, m.Source.Phrase())
+	}
 	return fmt.Sprintf("%s, %d bytes, %s on this computer, not reviewed", m.SHA256, m.Bytes, m.Source.Phrase())
+}
+
+// Origin is where this computer's voice came from, as a run's receipt
+// records it. A downloaded voice was reviewed in the account; nothing here
+// checks it again, and the record kept beside it is not authenticated
+// (DR-56), so the receipt says no more than that.
+func (m Meta) Origin() string {
+	if m.Source == SourceDownload {
+		return "kept on this computer, " + m.Source.Phrase() + " (reviewed there, not checked again here)"
+	}
+	return "kept on this computer, " + m.Source.Phrase() + ", not reviewed"
 }
 
 // Phrase is the source in a sentence.
@@ -128,6 +146,10 @@ func (s Source) Phrase() string {
 		return "edited by the Voice Writer"
 	case SourceEdit:
 		return "written by hand"
+	case SourceDownload:
+		// The record beside the voice is not authenticated (DR-56), so the
+		// phrase names where it came from and claims no review itself.
+		return "downloaded from your account"
 	}
 	return "of unknown origin"
 }

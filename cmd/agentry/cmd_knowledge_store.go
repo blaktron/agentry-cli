@@ -61,14 +61,24 @@ func knowledgeStoreFor(cmd *cobra.Command, current string) (*store.Store, error)
 // knowledgeClient is the signed-in client of the registry at u, past the
 // registry's minimum-version gate.
 func knowledgeClient(cmd *cobra.Command, u string) (*remote.Client, error) {
-	token := credentialFor(u)
-	if token == "" {
-		return nil, fmt.Errorf("%s: %w (sign in with `agentry login --registry %s`)", u, store.ErrSignedOut, u)
-	}
-	if err := minVersionGate(cmd.Context(), cmd.ErrOrStderr(), u, token); err != nil {
+	token, err := signedInToken(cmd, u)
+	if err != nil {
 		return nil, err
 	}
 	return remote.New(u, token, httpClient)
+}
+
+// signedInToken is the credential for the registry at u, past the
+// registry's minimum-version gate; store.ErrSignedOut when there is none.
+func signedInToken(cmd *cobra.Command, u string) (string, error) {
+	token := credentialFor(u)
+	if token == "" {
+		return "", fmt.Errorf("%s: %w (sign in with `agentry login --registry %s`)", u, store.ErrSignedOut, u)
+	}
+	if err := minVersionGate(cmd.Context(), cmd.ErrOrStderr(), u, token); err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 // rewrapOnSignIn moves packs kept under this machine's key to the account's
