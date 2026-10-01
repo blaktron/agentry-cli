@@ -87,11 +87,16 @@ type runOpts struct {
 	// recording nothing, and materializing into a temp dir rather than the
 	// runner cache. --dry-run keeps its meaning (the plan for a person who
 	// consented on the terminal).
-	plan               bool
-	keepRunDir         bool
-	listAdapters       bool
-	files              []string
-	knowledge          []string
+	plan         bool
+	keepRunDir   bool
+	listAdapters bool
+	files        []string
+	knowledge    []string
+	// voice and noVoice override the Writing Voice's always-attach flag
+	// for one run; voiceFile attaches a VOICE.md a driver names (plan
+	// writing-voice.md D5, D11).
+	voice, noVoice     bool
+	voiceFile          string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
 	// sessionProtocol drives an interactive session from JSON-line commands
@@ -192,6 +197,9 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
 	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack to attach read-only at /knowledge/<name>, searched with the knowledge tools: a pack kept on this computer by NAME, or a pack DIRECTORY (repeatable)")
+	f.BoolVar(&opts.voice, "voice", false, "attach the Writing Voice kept on this computer even when it is not set to attach to every run")
+	f.BoolVar(&opts.noVoice, "no-voice", false, "do not attach the Writing Voice to this run")
+	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
@@ -233,6 +241,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return err
 	}
 	defer detach()
+	var attachedVoice *engine.AttachedVoice
+	if !opts.plan && !opts.dryRun && !opts.prepare {
+		if attachedVoice, err = attachVoice(cmd, opts); err != nil {
+			return err
+		}
+	}
 	home, err := runnerHome()
 	if err != nil {
 		return err
@@ -567,6 +581,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		Task:            runTask(cmd, opts),
 		InputPaths:      opts.files,
 		Knowledge:       attached,
+		Voice:           attachedVoice,
 		Intake:          answers,
 		Adapter:         ad,
 		Policy:          pol,
