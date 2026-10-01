@@ -762,7 +762,7 @@ func ownInstructionWhenEmpty(task []byte, plan *spec.Plan, workspace string) ([]
 		// disagrees with it is the release's fault, not the person's.
 		return nil, "", Classify(ExitVerify, err)
 	}
-	return []byte(s), fmt.Sprintf("none given: sent the agent's own instruction, %s (sha256:%s with the runner contract)",
+	return []byte(s), fmt.Sprintf("none given: sent the agent's own instruction, %s (sha256:%s with the System Prompt)",
 		plan.Instruction.SourcePath, plan.Instruction.SHA256), nil
 }
 

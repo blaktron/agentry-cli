@@ -356,7 +356,7 @@ func TestWildcardEgressPolicyGate(t *testing.T) {
 }
 
 func TestInstructionRules(t *testing.T) {
-	t.Run("skill strips frontmatter and appends contract", func(t *testing.T) {
+	t.Run("skill strips frontmatter and follows the System Prompt", func(t *testing.T) {
 		m := parseManifest(t, fullCapsYAML)
 		ws := workspaceFor(t, m, nil)
 		_, planDir := compileFixture(t, m, ws)
@@ -371,8 +371,8 @@ func TestInstructionRules(t *testing.T) {
 		if !strings.Contains(s, "Do the skill task well.") {
 			t.Error("skill body missing from instruction")
 		}
-		if !strings.Contains(s, "Runner contract (Agentry)") {
-			t.Error("runner contract postscript missing")
+		if !strings.Contains(s, "# Agentry System Prompt") || strings.Index(s, "# Agentry System Prompt") > strings.Index(s, "Do the skill task well.") {
+			t.Error("the System Prompt is missing, or does not come before the instruction")
 		}
 	})
 	t.Run("v2 instruction defaults to AGENT.md and must exist", func(t *testing.T) {
@@ -405,11 +405,18 @@ func TestInstructionRules(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(got, "name: x") || !strings.Contains(got, "Do the skill task well.") || strings.Contains(got, "Runner contract") {
-			t.Errorf("ReadInstruction = %q, want the body without frontmatter or postscript", got)
+		if strings.Contains(got, "name: x") || !strings.Contains(got, "Do the skill task well.") || strings.Contains(got, "System Prompt") {
+			t.Errorf("ReadInstruction = %q, want the body without frontmatter or the System Prompt", got)
+		}
+		older := plan.Instruction
+		older.BodySHA256 = ""
+		if _, err := ReadInstruction(ws, older); err == nil || !strings.Contains(err.Error(), "compiled by an older CLI") {
+			t.Errorf("a plan compiled before the System Prompt was read: %v", err)
 		}
 		for _, rel := range []string{"", "../outside.md", "/etc/passwd"} {
-			if _, err := ReadInstruction(ws, spec.InstructionSpec{SourcePath: rel, SHA256: plan.Instruction.SHA256}); err == nil {
+			outside := plan.Instruction
+			outside.SourcePath = rel
+			if _, err := ReadInstruction(ws, outside); err == nil {
 				t.Errorf("ReadInstruction(%q) read a path outside the package", rel)
 			}
 		}
