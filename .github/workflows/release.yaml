@@ -362,8 +362,10 @@ jobs:
     if: needs.build.outputs.darwin == 'sign'
     runs-on: [self-hosted, macOS, ARM64]
     environment: release
-    # Two notarizations, each waited for (sign-darwin.sh allows 45 minutes).
-    timeout-minutes: 120
+    # Two notarizations, submitted together and waited for. A new team's
+    # took 40 to 75 minutes on 2026-10-01 (agentry-cli#198), so the script
+    # waits up to 100 and the job allows 150.
+    timeout-minutes: 150
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
     outputs:
@@ -384,6 +386,7 @@ jobs:
           APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          NOTARY_TIMEOUT_MINUTES: "100"
         run: |
           set -euo pipefail
           # The identity and Team ID the signature must carry: committed,
