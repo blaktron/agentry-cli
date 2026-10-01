@@ -19,13 +19,18 @@ echo "workspace note" >"$WORK/ws/notes.txt"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# The tools server refuses any spec version but its own, so the specs below
+# take it from the source rather than a number that ages.
+SPEC_VERSION=$(sed -n 's/^const SpecVersion = "\([0-9]*\)"$/\1/p' runnerimage/toolsrv/spec.go)
+[ -n "$SPEC_VERSION" ] || fail "cannot read toolsrv.SpecVersion"
+
 # A read-only spec: fs_read/fs_list + write_report and nothing else.
 mkdir -p "$WORK/in"
 echo "provided input" >"$WORK/in/brief.txt"
 
 cat >"$WORK/spec.json" <<EOF
 {
-  "specVersion": "4",
+  "specVersion": "$SPEC_VERSION",
   "workspaceDir": "$WORK/ws",
   "outDir": "$WORK/out",
   "inputsDir": "$WORK/in",
@@ -92,7 +97,7 @@ if [ -r /proc/self/status ]; then
     SECRET="r1-planted-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
     cat >"$WORK/spec-exec.json" <<EOF
 {
-  "specVersion": "4",
+  "specVersion": "$SPEC_VERSION",
   "workspaceDir": "$WORK/ws",
   "outDir": "$WORK/out",
   "fsRead": { "enabled": false },

@@ -114,6 +114,9 @@ type Params struct {
 	// Web is the built-in Drafter's web configuration and keys (web.go):
 	// required for a plan with the web tools, refused for any other.
 	Web *WebRun
+	// Review is a review-grant run's key (review.go): required for a plan
+	// with the review grant, refused for any other.
+	Review *ReviewRun
 	// Intake holds the answers to the manifest's up-front questions (plan
 	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
 	// secret answers already merged into SecretOverrides by the caller.
@@ -219,6 +222,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkWeb(p); err != nil {
 		return fail(env, redact, err)
 	}
+	if err := checkReview(p); err != nil {
+		return fail(env, redact, err)
+	}
 	if err := checkVoice(p); err != nil {
 		return fail(env, redact, err)
 	}
@@ -320,6 +326,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	if rs := p.Plan.WebResolvers(); len(rs) > 0 {
 		env.CapabilitiesEnforced["web.resolvers"] = resolversLine(rs)
+	}
+	if env.Review = reviewRecord(rd.receiptsDir, p.Review); env.Review != nil {
+		env.CapabilitiesEnforced["review.aiReview"] = reviewLine(env.Review)
 	}
 
 	if outcome.err != nil {

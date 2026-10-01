@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/runnerimage/websearch"
+
+	"github.com/blaktron/agentry-cli/runnerimage/judge"
 )
 
 // fakeJev answers every question with p, or with status when it is set.
@@ -82,6 +84,33 @@ func TestJevWithThePersonsKey(t *testing.T) {
 	j, _ := NewJev("k", "http://127.0.0.1:1", nil)
 	if res := j.Scan(context.Background(), SourcePage, strings.Repeat("x", MaxText+1)); res.Verdict != NotScanned || res.Failure != FailureTooLarge {
 		t.Fatalf("%+v", res)
+	}
+}
+
+// TestWithMaxTextScansPastTheRoutesCap: a review's scanner takes a text
+// past MaxText whole, chunk by chunk (toolsrv's review grant), and still
+// refuses one past its own bound; the scanner it came from keeps MaxText.
+func TestWithMaxTextScansPastTheRoutesCap(t *testing.T) {
+	srv := fakeJev(t, 0.1, 0, nil)
+	defer srv.Close()
+	j, err := NewJev("k", srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("a line of text\n", (MaxText*2)/15)
+	const bound = 1 << 20
+	wide := j.WithMaxText(bound)
+	if wide.Limit() != bound || j.Limit() != MaxText {
+		t.Fatalf("limits %d and %d", wide.Limit(), j.Limit())
+	}
+	if res := wide.Scan(context.Background(), SourceInputFile, long); res.Verdict != Pass || res.Requests < len(long)/judge.ChunkSize {
+		t.Fatalf("past MaxText: %+v", res)
+	}
+	if res := wide.Scan(context.Background(), SourceInputFile, strings.Repeat("a", bound+1)); res.Failure != FailureTooLarge {
+		t.Fatalf("past its own bound: %+v", res)
+	}
+	if res := j.Scan(context.Background(), SourceInputFile, long); res.Failure != FailureTooLarge {
+		t.Fatalf("the original scanner: %+v", res)
 	}
 }
 

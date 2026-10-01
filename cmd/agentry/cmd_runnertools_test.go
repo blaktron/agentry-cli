@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // toolSpecJSON renders a minimal valid tool spec (pure-text surface:
@@ -16,7 +18,7 @@ import (
 func toolSpecJSON(t *testing.T) string {
 	t.Helper()
 	doc := map[string]any{
-		"specVersion":  "4",
+		"specVersion":  toolsrv.SpecVersion,
 		"workspaceDir": t.TempDir(),
 		"outDir":       t.TempDir(),
 		"fsRead":       map[string]any{"enabled": false},
