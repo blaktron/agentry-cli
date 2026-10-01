@@ -170,7 +170,10 @@ func validateSpec(spec *Spec) error {
 		// reach whatever it liked, bounded by nothing of ours.
 		return errors.New("the web tools are never granted beside fetch or exec")
 	}
-	return validateKnowledge(spec)
+	if err := validateKnowledge(spec); err != nil {
+		return err
+	}
+	return validateVoice(spec)
 }
 
 // handleLine dispatches one message. Malformed traffic never kills the

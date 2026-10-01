@@ -37,6 +37,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
+	"github.com/blaktron/agentry-cli/pkg/voice/writer"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -143,6 +144,13 @@ func Drafter() Builtin {
 		localTimeoutFloor: drafter.LocalTimeoutFloorSeconds}
 }
 
+// VoiceWriter is the Voice Writer (pkg/voice/writer), the third built-in
+// package (plan writing-voice.md §6, D8): no web tools.
+func VoiceWriter() Builtin {
+	return Builtin{namespace: writer.Namespace, name: writer.Name, version: writer.Version, fsys: writer.FS(),
+		localTimeoutFloor: writer.LocalTimeoutFloorSeconds}
+}
+
 // WithoutWebTools is the same package with no web tools: the Drafter's
 // repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing. A
 // grant can only be taken away here, never given.
@@ -167,7 +175,7 @@ func (b Builtin) LocalBudgets(p policy.Budgets) spec.Budgets {
 }
 
 // Builtins is every package that may run as builtin.
-func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter()} }
+func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter()} }
 
 // Ref is the package's ns/name@version.
 func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }

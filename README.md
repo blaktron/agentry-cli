@@ -108,11 +108,12 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   off.
 
 **The built-in packages.** Every tag also publishes the packages the binary
-embeds (the Knowledge Creator and the Drafter) to its channel's registry. The
-`builtins` job runs the release's own Linux binary as `agentry builtins
-publish` ([below](#the-built-in-packages-builtins)). It reads the PAT of an
-account with publish rights in the registry's `agentry` organization from the
-`release` environment's secret `AGENTRY_BUILTINS_TOKEN_DEV` for a `-dev.N` tag
+embeds (the Knowledge Creator, the Drafter and the Voice Writer) to its
+channel's registry. The `builtins` job runs the release's own Linux binary as
+`agentry builtins publish` ([below](#the-built-in-packages-builtins)). It
+reads the PAT of an account with publish rights in the registry's `agentry`
+organization from the `release` environment's secret
+`AGENTRY_BUILTINS_TOKEN_DEV` for a `-dev.N` tag
 or `AGENTRY_BUILTINS_TOKEN_PRODUCTION` for a `vX.Y.Z` tag, and only the
 channel's own token reaches the step. With the secret
 missing, the job fails and the release's built-ins are not in the registry.
@@ -160,7 +161,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `run` · `knowledge` · `draft` · `builtins` · `uninstall` · `profiles` · `verify` ·
+`setup` · `doctor` · `run` · `knowledge` · `voice` · `draft` · `builtins` · `uninstall` · `profiles` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -257,6 +258,44 @@ account's, altered), is refused before the run with exit 11, naming the
 pack. A kept `create` or `add` works on the pack in the same kind of
 directory, and removes it with the Creator run's output, which holds the
 pages it wrote, unless `--out DIR` asks to keep that output.
+
+### Your Writing Voice: `voice`
+
+A **Writing Voice** is one file, `VOICE.md`, of instructions an LLM follows
+to write the way you do (plan `writing-voice.md`). `agentry voice create
+--file PATH…` runs the built-in **Voice Writer** on samples of your writing
+(decoded as the Knowledge Creator's documents are, 10 MB in all) and keeps
+the voice it writes on this computer; `improve --file PATH…` runs it again
+over the voice and more samples, `edit --note TEXT` changes the voice by a
+note (an AI Edit), and `set FILE|-` keeps your own text. `--brief TEXT`
+says how you want to sound. Like a knowledge build, it runs against the
+model your runner policy names, costs no credits, and nothing it reads or
+writes is reviewed.
+
+The voice is kept at `<runner home>/voice/`, sealed the way a kept pack is
+(`voice.sealed`, `key.json`, and `voice.json`, its record in the clear: the
+digest, the size, where it came from, whether it attaches to every run). It
+is at most 32 KiB, and it never rests on disk in the clear.
+
+Every `agentry run` attaches it while it is set to attach (the first voice
+is, and says so): `voice attach off` stops that, `--no-voice` skips it for
+one run and `--voice` attaches it for one run when it is off. A run reads it
+through one tool, `voice_read`, and the System Prompt says it governs how the
+run writes and nothing else, and that a format the task fixes wins.
+Attaching it changes neither the run plan nor its hash; the receipt names it
+and its digest. A built-in's run never takes it.
+
+| Command | Does |
+| --- | --- |
+| `voice show` | print the voice (`--json`: its record) |
+| `voice attach on\|off` | attach it to every run here, or only with `--voice` |
+| `voice delete` | delete it and its cached key |
+
+For a driver such as a sandbox host: `create`, `improve` and `edit` take
+`--current FILE` (the voice as it stands, instead of the one kept here),
+`--write FILE` (write the result there, keep nothing) and `--max-text-bytes
+N` (cap the samples' decoded text), with `--output-format json` as `knowledge
+create` has; `run --voice-file FILE` attaches a `VOICE.md` it names.
 
 ### Shipping a pack with a release
 

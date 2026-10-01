@@ -249,6 +249,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := stageKnowledge(p.Knowledge, rd.knowledge, rd.workspace); err != nil {
 		return nil, err
 	}
+	if err := stageVoice(p.Voice, rd.knowledge); err != nil {
+		return nil, err
+	}
 	// Gateway files now; harness files once the infrastructure is up, so a
 	// host-run harness sees the published addresses (Run / StartSession).
 	if err := renderGatewayConfig(p, rd); err != nil {
@@ -318,6 +321,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	}
 	if err := grantKnowledge(dir, gwRep.Replace(spec.PHKnowledge), p.Knowledge); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
+	}
+	if err := grantVoice(dir, gwRep.Replace(spec.PHKnowledge), p.Voice); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("grant the Writing Voice: %w", err))
 	}
 	if err := grantWeb(dir, p.Web); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the web tools: %w", err))
