@@ -108,11 +108,12 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   off.
 
 **The built-in packages.** Every tag also publishes the packages the binary
-embeds (the Knowledge Creator, the Drafter and the Voice Writer) to its channel's registry. The
-`builtins` job runs the release's own Linux binary as `agentry builtins
-publish` ([below](#the-built-in-packages-builtins)). It reads the PAT of an
-account with publish rights in the registry's `agentry` organization from the
-`release` environment's secret `AGENTRY_BUILTINS_TOKEN_DEV` for a `-dev.N` tag
+embeds (the Knowledge Creator, the Drafter and the Voice Writer) to its
+channel's registry. The `builtins` job runs the release's own Linux binary as
+`agentry builtins publish` ([below](#the-built-in-packages-builtins)). It
+reads the PAT of an account with publish rights in the registry's `agentry`
+organization from the `release` environment's secret
+`AGENTRY_BUILTINS_TOKEN_DEV` for a `-dev.N` tag
 or `AGENTRY_BUILTINS_TOKEN_PRODUCTION` for a `vX.Y.Z` tag, and only the
 channel's own token reaches the step. With the secret
 missing, the job fails and the release's built-ins are not in the registry.

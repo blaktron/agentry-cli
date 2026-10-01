@@ -15,4 +15,4 @@ agentry/drafter@1.1.0 sha256:d926e1bd2063dc3602bb004852ae97a69f71e663219961ab540
 agentry/knowledge-creator@1.1.1 sha256:1a4f58329dfb5ff26e15bd55e32959fb695563a876b1ec8fdc5ae2621b7e982b
 agentry/drafter@1.1.1 sha256:a8d3935621212a04428738154c2e6280b94c980a824860129ffea724ef95178d
 # The Voice Writer (plan writing-voice.md, agentry-cli#531), the third built-in.
-agentry/voice-writer@1.0.0 sha256:5dc07f8ad7f4cca1aac90663b2894c3c8bb351151b77c062eaf957ebd5f1aba0
+agentry/voice-writer@1.0.0 sha256:566ffb9688c63a3abcec32e544e56b1b2c8c2c214ee233d86fc1f39d7bc82816

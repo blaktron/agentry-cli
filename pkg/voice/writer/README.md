@@ -33,8 +33,8 @@ one data category, `files`. When Agentry writes a voice:
   current voice when there is one, through the inputs channel
   (`list_inputs`, `read_input`).
 - **During the run**, it writes `VOICE.md` with `write_report`.
-- **After the run**, the application checks the file (UTF-8 text, at most
-  32 KiB) and keeps it as the voice. A voice made on your computer stays
+- **After the run**, the application checks the file's form (UTF-8 text,
+  at most 32 KiB), not what it says, and keeps it as the voice. A voice made on your computer stays
   there and is not reviewed. A voice that reaches your Agentry account is
   reviewed before it is used there, to check that it holds only writing
   instructions.

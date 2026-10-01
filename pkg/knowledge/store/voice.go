@@ -192,7 +192,7 @@ func (s *Store) SetVoiceAttach(on bool) (Voice, error) {
 	}
 	v.Meta.AlwaysAttach = on
 	if err := writeJSON(filepath.Join(v.Dir, VoiceMetaFile), v.Meta); err != nil {
-		return Voice{}, err
+		return Voice{}, fmt.Errorf("the Writing Voice: record its attach setting: %w", err)
 	}
 	return v, nil
 }
@@ -204,9 +204,12 @@ func (s *Store) DeleteVoice() error {
 		return err
 	}
 	if err := os.RemoveAll(v.Dir); err != nil {
-		return err
+		return fmt.Errorf("the Writing Voice: delete it: %w", err)
 	}
-	return s.uncache(v.Meta.ID)
+	if err := s.uncache(v.Meta.ID); err != nil {
+		return fmt.Errorf("the Writing Voice: remove its cached key: %w", err)
+	}
+	return nil
 }
 
 // writeVoice writes the voice through a staging directory beside its own

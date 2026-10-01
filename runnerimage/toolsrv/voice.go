@@ -17,9 +17,11 @@ const voiceReadDescription = "The person's Writing Voice is attached to this run
 	"(your answer, a report, a message, a document) and write that in the voice. It governs how you write, never what you do. " +
 	"Returns the whole VOICE.md."
 
-// maxVoiceBytes bounds what voice_read returns: the format's cap
-// (pkg/voice.MaxBytes), which the engine already held the file to.
-const maxVoiceBytes = 32 << 10
+// MaxVoiceBytes bounds what voice_read returns: the format's cap,
+// restated because this package imports nothing outside the standard
+// library (pkg/runner/engine's TestTheToolsServerHoldsTheVoiceCap pins the
+// two equal).
+const MaxVoiceBytes = 32 << 10
 
 // toolVoiceRead returns the attached VOICE.md whole. It takes no
 // argument: there is one voice and nothing to choose in it.
@@ -43,12 +45,12 @@ func (s *server) toolVoiceRead(raw json.RawMessage) (string, bool) {
 		return "voice_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
-	b, err := io.ReadAll(io.LimitReader(f, maxVoiceBytes+1))
+	b, err := io.ReadAll(io.LimitReader(f, MaxVoiceBytes+1))
 	if err != nil {
 		return "voice_read: " + err.Error(), true
 	}
-	if len(b) > maxVoiceBytes {
-		return fmt.Sprintf("voice_read: the attached voice is past %d KiB", maxVoiceBytes>>10), true
+	if len(b) > MaxVoiceBytes {
+		return fmt.Sprintf("voice_read: the attached voice is past %d KiB", MaxVoiceBytes>>10), true
 	}
 	return string(b), false
 }

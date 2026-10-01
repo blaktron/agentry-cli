@@ -22,11 +22,11 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// VoiceDir is the voice's directory under the knowledge mount.
-const VoiceDir = ".voice"
+// VoiceChannelDir is the voice's directory in the run's knowledge channel.
+const VoiceChannelDir = ".voice"
 
 // VoiceFile is the voice's path in the tools container.
-var VoiceFile = path.Join(spec.KnowledgeMount, VoiceDir, voice.File)
+var VoiceFile = path.Join(spec.KnowledgeMount, VoiceChannelDir, voice.File)
 
 // AttachedVoice is a Writing Voice attached to a run: its text, held in
 // memory by the caller (it is at most voice.MaxBytes), the digest the
@@ -72,7 +72,7 @@ func stageVoice(v *AttachedVoice, knowledgeDir string) error {
 	if got := voice.Digest(v.Text); got != v.Digest {
 		return Classify(ExitVerify, fmt.Errorf("the Writing Voice changed after it was verified (verified %s, now %s)", v.Digest, got))
 	}
-	dir := filepath.Join(knowledgeDir, VoiceDir)
+	dir := filepath.Join(knowledgeDir, VoiceChannelDir)
 	if err := os.Mkdir(dir, 0o755); err != nil { //nolint:gosec // read by the tools container's user
 		return Classify(ExitCLI, fmt.Errorf("stage the Writing Voice: %w", err))
 	}
@@ -81,8 +81,11 @@ func stageVoice(v *AttachedVoice, knowledgeDir string) error {
 		return Classify(ExitCLI, fmt.Errorf("stage the Writing Voice: %w", err))
 	}
 	staged, err := os.ReadFile(file) //nolint:gosec // the run's own copy
-	if err != nil || voice.Digest(staged) != v.Digest {
-		return Classify(ExitVerify, fmt.Errorf("the Writing Voice changed as it was staged: %v", err))
+	if err != nil {
+		return Classify(ExitCLI, fmt.Errorf("stage the Writing Voice: %w", err))
+	}
+	if voice.Digest(staged) != v.Digest {
+		return Classify(ExitVerify, errors.New("the Writing Voice changed as it was staged"))
 	}
 	return nil
 }

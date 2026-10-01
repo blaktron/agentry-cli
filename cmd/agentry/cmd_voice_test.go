@@ -189,5 +189,11 @@ func TestARunAttachesTheVoiceByItsFlag(t *testing.T) {
 		if _, err := attachVoice(cmd, runOpts{voiceFile: f}); err == nil {
 			t.Fatal("an empty --voice-file was attached")
 		}
+		link := filepath.Join(t.TempDir(), "linked.md")
+		if err := os.Symlink(f, link); err == nil {
+			if _, err := attachVoice(cmd, runOpts{voiceFile: link}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("a linked --voice-file: %v", err)
+			}
+		}
 	})
 }

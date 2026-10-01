@@ -70,14 +70,12 @@ const (
 	SourceAIEdit Source = "ai-edit"
 	// SourceEdit is the person's own text.
 	SourceEdit Source = "edit"
-	// SourceDownload is the account's live voice, put on this computer.
-	SourceDownload Source = "download"
 )
 
 // Valid says whether s is a source this client knows.
 func (s Source) Valid() bool {
 	switch s {
-	case SourceCreate, SourceImprove, SourceAIEdit, SourceEdit, SourceDownload:
+	case SourceCreate, SourceImprove, SourceAIEdit, SourceEdit:
 		return true
 	}
 	return false
@@ -130,8 +128,6 @@ func (s Source) Phrase() string {
 		return "edited by the Voice Writer"
 	case SourceEdit:
 		return "written by hand"
-	case SourceDownload:
-		return "downloaded from the account"
 	}
 	return "of unknown origin"
 }

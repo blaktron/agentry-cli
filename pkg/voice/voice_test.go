@@ -34,7 +34,7 @@ func TestDigestIsSha256(t *testing.T) {
 }
 
 func TestEverySourceHasAPhrase(t *testing.T) {
-	for _, s := range []Source{SourceCreate, SourceImprove, SourceAIEdit, SourceEdit, SourceDownload} {
+	for _, s := range []Source{SourceCreate, SourceImprove, SourceAIEdit, SourceEdit} {
 		if !s.Valid() || s.Phrase() == "of unknown origin" {
 			t.Errorf("source %q has no phrase", s)
 		}

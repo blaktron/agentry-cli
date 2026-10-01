@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/voice"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -202,5 +203,80 @@ func TestVoiceNeedsAPlanThatMountsIt(t *testing.T) {
 	err := grantVoice(gw, "/run/x/knowledge", attachTestVoice(t))
 	if err == nil || !strings.Contains(err.Error(), "recompile") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestASessionCarriesTheVoiceAndDropsItAtTheEnd: an interactive session
+// stages and grants the voice as a run does, keeps it while it is live,
+// and its copy goes when the session ends.
+func TestASessionCarriesTheVoiceAndDropsItAtTheEnd(t *testing.T) {
+	p, f := sessionFixture(t)
+	happyFake(f)
+	h := &fakeHarness{}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+	p.Voice = attachTestVoice(t)
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	runDir := filepath.Join(p.RunRoot, "runs", "5e5510")
+	if got, err := os.ReadFile(filepath.Join(runDir, "knowledge", ".voice", "VOICE.md")); err != nil || string(got) != testVoice {
+		t.Fatalf("the live session's voice = %q, %v", got, err)
+	}
+	tools, err := os.ReadFile(filepath.Join(runDir, "cfg", "gateway", "tools.yaml"))
+	if err != nil || !strings.Contains(string(tools), "- voice_read\n") {
+		t.Fatalf("the session's tools.yaml does not route voice_read (%v):\n%s", err, tools)
+	}
+	env, err := s.End(context.Background(), false)
+	if err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	if !strings.Contains(env.CapabilitiesEnforced["voice"], "tool voice_read") {
+		t.Fatalf("the session's receipt voice line = %q", env.CapabilitiesEnforced["voice"])
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "knowledge")); !os.IsNotExist(err) {
+		t.Fatal("the session's copy of the voice outlived it")
+	}
+
+	t.Run("a built-in's session refuses one", func(t *testing.T) {
+		p, f := sessionFixture(t)
+		happyFake(f)
+		p.Plan.Source = "builtin"
+		p.Voice = attachTestVoice(t)
+		if _, err := StartSession(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "built-in") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+// TestAFailedRunDropsTheVoiceAndTheAgentSeesOnlyPlan: the voice reaches
+// the tools container alone (the agent container still mounts /plan and
+// nothing else), and its copy goes when the agent fails too.
+func TestAFailedRunDropsTheVoiceAndTheAgentSeesOnlyPlan(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	f.Foreground["-agent"].ExitCode = 1
+	p.KeepRunDir = true
+	p.Voice = attachTestVoice(t)
+	if _, err := Run(context.Background(), f, p); err == nil {
+		t.Fatal("a failing agent's run succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "knowledge")); !os.IsNotExist(err) {
+		t.Fatal("a failed run kept its copy of the voice")
+	}
+	agent, ok := f.FindRun("-agent")
+	if !ok {
+		t.Fatal("agent run not recorded")
+	}
+	if len(agent.Mounts) != 1 || agent.Mounts[0].Target != "/plan" || !agent.Mounts[0].ReadOnly {
+		t.Fatalf("with a voice attached, the agent mounts %+v", agent.Mounts)
+	}
+}
+
+// TestTheToolsServerHoldsTheVoiceCap pins the tools server's restated cap
+// to the format's.
+func TestTheToolsServerHoldsTheVoiceCap(t *testing.T) {
+	if toolsrv.MaxVoiceBytes != voice.MaxBytes {
+		t.Fatalf("voice_read caps at %d, the format at %d", toolsrv.MaxVoiceBytes, voice.MaxBytes)
 	}
 }

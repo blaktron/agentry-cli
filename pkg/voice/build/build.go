@@ -206,14 +206,10 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		inputs = append(inputs, dir)
 	}
 
-	var decoded *decode.Result
-	if res.Decoded != nil {
-		decoded = res.Decoded
-	}
 	env, runErr := localrun.Run{
 		Builtin: localrun.VoiceWriter(), Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
 		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(o, docs, res.Cut)),
-		Inputs: inputs, Decoded: decoded, OutDir: o.OutDir, Budgets: o.Budgets,
+		Inputs: inputs, Decoded: res.Decoded, OutDir: o.OutDir, Budgets: o.Budgets,
 		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage,
 	}.Execute(ctx, d)
 	res.Envelope = env
@@ -307,6 +303,11 @@ func task(o Options, docs []decode.Document, cut []string) string {
 	return b.String()
 }
 
+// stageSamples, safeName and copyFile follow pkg/knowledge/build's
+// stageDocuments and its helpers, copied rather than shared while
+// agentry-cli#523 rewrites that build path; they are folded into one once
+// it lands. The differences are the cap (MaxSampleBytes) and the words.
+//
 // stageSamples copies the samples under dst by names a document list can
 // carry: letters, digits, '.', '-' and '_', anything else a '-'; a
 // directory keeps its layout below its own name. Two samples of one name
@@ -322,7 +323,7 @@ func stageSamples(paths []string, dst string) (map[string]string, error) {
 			return fmt.Errorf("%s and %s would both be the sample %s; rename one", prev, from, rel)
 		}
 		if total += size; total > MaxSampleBytes {
-			return fmt.Errorf("sample %s brings the samples to %d bytes, past %d MB", from, total, MaxSampleBytes>>20)
+			return fmt.Errorf("sample %s brings the samples to %d bytes, past their %d MB", from, total, MaxSampleBytes>>20)
 		}
 		out[rel] = from
 		return copyFile(from, filepath.Join(dst, filepath.FromSlash(rel)))
@@ -378,7 +379,7 @@ func capText(docs []decode.Document, dir string, limit int64) ([]string, error) 
 		p := filepath.Join(dir, filepath.FromSlash(d.Read))
 		b, err := os.ReadFile(p) //nolint:gosec // a file this build staged
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("cap the samples' text: %w", err)
 		}
 		left := max(limit-used, 0)
 		if int64(len(b)) <= left {
@@ -390,7 +391,7 @@ func capText(docs []decode.Document, dir string, limit int64) ([]string, error) 
 			keep = keep[:len(keep)-1]
 		}
 		if err := os.WriteFile(p, keep, 0o644); err != nil { //nolint:gosec // an input the run reads
-			return nil, err
+			return nil, fmt.Errorf("cap the samples' text: %w", err)
 		}
 		// Once one is cut, every later one is emptied, so the Voice Writer
 		// reads whole samples and one cut short, never a stray fragment.
@@ -417,7 +418,7 @@ func collect(reports string) ([]byte, error) {
 	}
 	text, err := fs.ReadFile(root.FS(), voice.File)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read the Voice Writer's VOICE.md: %w", err)
 	}
 	if err := voice.Check(text); err != nil {
 		return nil, fmt.Errorf("the Voice Writer's VOICE.md: %w", err)

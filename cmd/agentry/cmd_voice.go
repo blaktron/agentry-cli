@@ -155,8 +155,8 @@ func voiceRunE(o *voiceOpts, work func(cmd *cobra.Command, args []string) error)
 	}
 }
 
-// voiceStore is the store the voice is kept in, wrapped by the registry
-// the person is signed in to.
+// voiceStore is the store the voice is kept in: the knowledge store's,
+// whose key wrapping the voice shares (plan writing-voice.md §4).
 func voiceStore(cmd *cobra.Command) (*store.Store, error) { return knowledgeStore(cmd) }
 
 // voiceReport is the json report of a Voice Writer command.
@@ -186,7 +186,7 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 	}
 	switch {
 	case o.current != "":
-		b, err := os.ReadFile(o.current) //nolint:gosec // a file the person named
+		b, err := readVoiceFile(o.current)
 		if err != nil {
 			return engine.Classify(engine.ExitUsage, fmt.Errorf("--current: %w", err))
 		}
@@ -224,7 +224,7 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 		// The run's reports hold the voice in the clear: a private folder
 		// in the runner home, removed with the build, unless --out named
 		// one.
-		if outDir, err = os.MkdirTemp(filepath.Join(home), ".voice-run-"); err != nil {
+		if outDir, err = os.MkdirTemp(home, ".voice-run-"); err != nil {
 			return err
 		}
 		defer func() { _ = os.RemoveAll(outDir) }()
@@ -264,7 +264,7 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 	created := false
 	if o.write != "" {
 		if err := os.WriteFile(o.write, res.Text, 0o600); err != nil {
-			err = fmt.Errorf("write %s: %w", o.write, err)
+			err = fmt.Errorf("write the Writing Voice to %s: %w", o.write, err)
 			return voiceAfterRun(cmd, o, res, report, err)
 		}
 		report.Written = o.write
@@ -306,7 +306,7 @@ func sayVoiceOn(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Your voice is on for every run. Turn it off with `agentry voice attach off`, or for one run with --no-voice.")
 }
 
-// voiceErr words a store's refusal for the command line.
+// voiceErr classes a store's refusal: no voice kept is a usage error.
 func voiceErr(err error) error {
 	if errors.Is(err, voice.ErrNoVoice) {
 		return engine.Classify(engine.ExitUsage, err)
@@ -453,13 +453,13 @@ func attachVoice(cmd *cobra.Command, opts runOpts) (*engine.AttachedVoice, error
 		return nil, nil
 	}
 	if opts.voiceFile != "" {
-		text, err := os.ReadFile(opts.voiceFile) //nolint:gosec // a file the driver named
+		text, err := readVoiceFile(opts.voiceFile)
 		if err != nil {
-			return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("--voice-file: %w", err))
+			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("--voice-file: %w", err))
 		}
 		v, err := engine.AttachVoice(text, "given with --voice-file")
 		if err != nil {
-			return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("--voice-file: %w", err))
+			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("--voice-file: %w", err))
 		}
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Writing Voice from %s attached (%d bytes)\n", opts.voiceFile, len(text))
 		return v, nil
@@ -468,7 +468,7 @@ func attachVoice(cmd *cobra.Command, opts runOpts) (*engine.AttachedVoice, error
 	if err != nil {
 		return nil, err
 	}
-	meta, err := s.Voice()
+	kept, err := s.Voice()
 	switch {
 	case errors.Is(err, voice.ErrNoVoice):
 		if opts.voice {
@@ -478,12 +478,14 @@ func attachVoice(cmd *cobra.Command, opts runOpts) (*engine.AttachedVoice, error
 	case err != nil:
 		return nil, err
 	}
-	if !opts.voice && !meta.Meta.AlwaysAttach {
+	if !opts.voice && !kept.Meta.AlwaysAttach {
 		return nil, nil
 	}
+	// A kept voice that will not open (signed out of the registry that
+	// wraps its key, altered) is a plan-time refusal, as a kept pack's is.
 	text, kept, err := s.OpenVoice(cmd.Context())
 	if err != nil {
-		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the Writing Voice: %w", err))
+		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
 	v, err := engine.AttachVoice(text, "kept on this computer, "+kept.Meta.Source.Phrase()+", not reviewed")
 	if err != nil {
@@ -491,4 +493,23 @@ func attachVoice(cmd *cobra.Command, opts runOpts) (*engine.AttachedVoice, error
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Writing Voice attached (%d bytes, %s; --no-voice skips it)\n", len(text), kept.Meta.Source.Phrase())
 	return v, nil
+}
+
+// readVoiceFile reads a VOICE.md a person or a driver named: a regular
+// file, never followed through a link, read no further than one byte past
+// the format's cap, so the format's own check is what refuses it.
+func readVoiceFile(path string) ([]byte, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	f, err := os.Open(path) //nolint:gosec // a file the person or the driver named
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(io.LimitReader(f, voice.MaxBytes+1))
 }

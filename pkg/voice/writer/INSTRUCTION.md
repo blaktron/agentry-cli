@@ -72,8 +72,9 @@ is usually 3–10 KB.
 
 ## What VOICE.md never says
 
-This file is checked before it is used, and a voice that says any of the
-following is refused, so it never says them:
+A voice that reaches the person's Agentry account is reviewed before it is
+used there, and one that says any of the following is refused. So it never
+says them:
 
 - Anything but how to write. No task, no goal, no subject matter to cover,
   no opinion to hold, no facts about the person.
