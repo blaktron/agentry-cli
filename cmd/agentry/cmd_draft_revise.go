@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -22,6 +24,14 @@ func (o draftOpts) revising() bool { return o.revise != "" || o.reviseRef != "" 
 // checkReviseFlags refuses a command line that mixes a revision with a new
 // draft's inputs, or names a revision's texts without a release.
 func checkReviseFlags(args []string, o draftOpts) error {
+	if o.reviseRegistry != "" {
+		if o.reviseRef == "" {
+			return errors.New("--revise-registry names where --revise-ref is fetched from: name the release with --revise-ref")
+		}
+		if !sameOrigin(o.reviseRegistry, registryURL()) {
+			return fmt.Errorf("--revise-registry must be on --registry's origin (%s)", registryURL())
+		}
+	}
 	if !o.revising() {
 		if o.instructionsFile != "" || o.problemsFile != "" {
 			return errors.New("--instructions-file and --problems-file belong to a revision: name the release with --revise or --revise-ref")
@@ -63,7 +73,7 @@ func draftRevision(cmd *cobra.Command, o draftOpts, dest string) (*drafter.Revis
 		if rev, err = readLocalRevision(o.revise, dest); err != nil {
 			return nil, err
 		}
-	} else if rev, err = fetchRevision(cmd, o.reviseRef, dest); err != nil {
+	} else if rev, err = fetchRevision(cmd, cmp.Or(strings.TrimRight(o.reviseRegistry, "/"), registryURL()), o.reviseRef, dest); err != nil {
 		return nil, err
 	}
 	if err := rev.WithTexts(instructions, problems); err != nil {
@@ -122,14 +132,14 @@ func readRevisionText(path, what string) (string, error) {
 }
 
 // fetchRevision fetches a published release, an exact ns/name@version, as
-// `agentry run` and `install` do: resolved with this command's credential
-// (a sandbox host's grant for a hosted revision), downloaded, and held to
-// the digest the registry resolved before anything of it is read.
-func fetchRevision(cmd *cobra.Command, ref, dest string) (*drafter.Revision, error) {
+// `agentry run` and `install` do: resolved from reg with this command's
+// credential (for a hosted revision, reg is the sandbox host's release
+// prefix and the run's grant opens it), downloaded, and held to the digest
+// the registry resolved before anything of it is read.
+func fetchRevision(cmd *cobra.Command, reg, ref, dest string) (*drafter.Revision, error) {
 	if at := strings.LastIndex(ref, "@"); at <= 0 || at == len(ref)-1 || !strings.Contains(ref[:at], "/") {
 		return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("--revise-ref takes an exact release, ns/name@version, not %q", ref))
 	}
-	reg := registryURL()
 	token := credentialFor(reg)
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
@@ -150,4 +160,13 @@ func fetchRevision(cmd *cobra.Command, ref, dest string) (*drafter.Revision, err
 		return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("digest mismatch: registry says %s, archive is %s — refusing to revise it", res.Digest, computed))
 	}
 	return releaseFromArchive(archive, dest, ref, res.Digest, engine.ExitVerify)
+}
+
+// sameOrigin is whether two registry URLs share a scheme and host: a
+// revision's fetch base may be a path of the registry the draft talks to,
+// where the run's grant travels, and never another host.
+func sameOrigin(a, b string) bool {
+	ua, err1 := url.Parse(a)
+	ub, err2 := url.Parse(b)
+	return err1 == nil && err2 == nil && ua.Host != "" && ua.Scheme == ub.Scheme && ua.Host == ub.Host
 }
