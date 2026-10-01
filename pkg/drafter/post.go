@@ -321,11 +321,10 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 	if !rd.IsRepaired() || d.IsRepaired() {
 		return record(d, c, err)
 	}
-	if !refused && !rd.Passed() {
-		// The check's flag sent a draft the rules passed; its second
-		// answer breaks them, so the first is kept, and its package put
-		// back.
-		d.NoteSecondAnswerRefused()
+	if keepFirst(d, rd) {
+		// The second answer broke a rule the first passed, so the first
+		// is kept, and its package put back.
+		d.NoteSecondAnswerRefused(r)
 		if os.RemoveAll(p.pkg()) == nil {
 			p.validate(d)
 		}
@@ -335,11 +334,45 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 	return record(rd, c, err)
 }
 
-// rulesReport is what the rules said of a draft that did not pass, one
-// line each, in their own words; ok is false for a draft that passed, or
-// one whose check could not run for a reason of this computer's rather than
-// the draft's.
-func rulesReport(d *Draft) ([]string, bool) {
+// keepFirst says a repair's second answer broke a rule its first passed:
+// validate's, which the registry enforces, or else the Drafter's cap on
+// the instructions, which keeps them within what AI Review's check reads.
+// A second answer that mends what the first broke is kept whatever else it
+// does.
+func keepFirst(first, second *Draft) bool {
+	if first.Passed() != second.Passed() {
+		return first.Passed()
+	}
+	return first.withinCap() && !second.withinCap()
+}
+
+// withinCap says the draft's instructions are within the Drafter's cap.
+func (d *Draft) withinCap() bool { return len(d.Instructions) <= MaxInstructionBytes }
+
+// rulesReport is what the rules said of a draft, one line each, in their
+// own words: validate's report on its package, and the Drafter's cap on its
+// instructions, which validate does not hold. refused is false for a draft
+// both pass, or one whose check could not run for a reason of this
+// computer's rather than the draft's.
+func rulesReport(d *Draft) (lines []string, refused bool) {
+	lines, refused = validationReport(d)
+	if !d.withinCap() {
+		lines = append(lines, instructionOverCap(len(d.Instructions)))
+		refused = true
+	}
+	return lines, refused
+}
+
+// instructionOverCap is the rules' line for an instruction past the
+// Drafter's own cap, which validate does not hold a package to.
+func instructionOverCap(n int) string {
+	return fmt.Sprintf("the instructions: %d bytes, past the Drafter's cap of %d bytes; shorten them to at most %d by cutting what the run does not need, keeping all six headings",
+		n, MaxInstructionBytes, MaxInstructionBytes)
+}
+
+// validationReport is what validate said of a draft's rendered package, as
+// rulesReport describes.
+func validationReport(d *Draft) ([]string, bool) {
 	if d.Validation == nil {
 		if d.ManifestError == "" || strings.HasPrefix(d.ManifestError, checkNotRun) {
 			return nil, false

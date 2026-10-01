@@ -275,12 +275,13 @@ func (d *Draft) NoteNotRepaired(r RepairReport, why string) {
 		"and that turn returned no draft (" + why + "), so this is its first answer, with its problems.\n")
 }
 
-// NoteSecondAnswerRefused says in the notes that the first answer is kept:
-// the rules passed it, and the second, given only the check's flags,
-// broke them. A repair meant to answer a flag does not trade a draft the
-// rules pass for one they refuse.
-func (d *Draft) NoteSecondAnswerRefused() {
-	d.composeNotes("## Not repaired\n\nAI Review's check flagged this answer, and the Drafter was given what it flagged for one more turn. " +
+// NoteSecondAnswerRefused says in the notes that the first answer is kept,
+// because the second broke a rule the first passed (keepFirst), r being
+// what sent the first to its repair turn. A repair does not trade a draft
+// the rules pass for one they refuse, nor one within the instruction cap
+// for one past it.
+func (d *Draft) NoteSecondAnswerRefused(r RepairReport) {
+	d.composeNotes("## Not repaired\n\n" + repairWordsOf[r.by()].refused + " for one more turn. " +
 		"Its second answer broke rules this one passes, so this is its first answer, with what the check said of it.\n")
 }
 
