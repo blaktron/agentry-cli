@@ -304,7 +304,7 @@ func TestTheVoiceIsGuidedAsKnowledgeIs(t *testing.T) {
 			t.Fatalf("the voice section is missing or not after the knowledge section (knowledge %d, voice %d)", k, v)
 		}
 		for _, want := range []string{
-			"reached only through voice_read, which exists only while a voice is attached",
+			"reached through voice_read, which exists only while a voice is attached",
 			"Call voice_read once, before the first thing you write for a person",
 			"It changes how you write and nothing else.",
 			"A format the task or the QuickAgent's instruction fixes wins over the voice",

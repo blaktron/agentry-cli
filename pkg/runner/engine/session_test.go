@@ -99,6 +99,11 @@ type fakeHarness struct {
 	// exitOnPrompt makes the harness exit when a prompt arrives, as a
 	// crashing harness does.
 	exitOnPrompt bool
+	// asks are more tools the harness requests permission for on each
+	// prompt, after its two; answers records the option the runner chose
+	// for each ("a" allow_once, "r" reject_once).
+	asks    []string
+	answers map[string]string
 }
 
 func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
@@ -170,6 +175,26 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 				_ = json.Unmarshal(sc.Bytes(), &ans)
 				h.mu.Lock()
 				h.denied = ans.Result.Outcome.OptionID == "r"
+				h.mu.Unlock()
+			}
+			for i, tool := range h.asks {
+				write(map[string]any{"jsonrpc": "2.0", "id": 100 + i, "method": "session/request_permission", "params": map[string]any{"sessionId": "s1", "toolCall": map[string]any{"title": tool}, "options": []any{map[string]any{"optionId": "a", "kind": "allow_once"}, map[string]any{"optionId": "r", "kind": "reject_once"}}}})
+				if !sc.Scan() {
+					break
+				}
+				var ans struct {
+					Result struct {
+						Outcome struct {
+							OptionID string `json:"optionId"`
+						} `json:"outcome"`
+					} `json:"result"`
+				}
+				_ = json.Unmarshal(sc.Bytes(), &ans)
+				h.mu.Lock()
+				if h.answers == nil {
+					h.answers = map[string]string{}
+				}
+				h.answers[tool] = ans.Result.Outcome.OptionID
 				h.mu.Unlock()
 			}
 			if h.usage != nil {
