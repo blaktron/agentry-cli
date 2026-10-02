@@ -84,10 +84,11 @@ deployed and checked on dev, a production release after its promotion. Then
 watch the `release` run to green and read the Release it published.
 
 **What the workflow does.** It builds the five binaries with `make dist`
-(linux and darwin on amd64 and arm64, windows on amd64), writes `BUILD-INFO`
-and `SHA256SUMS`, and signs what this repository can sign: signed where
-signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
-(inside the sums) and the Release's notes say which.
+(linux and darwin on amd64 and arm64, windows on amd64), signs what this
+repository can sign, then writes `BUILD-INFO` and `SHA256SUMS` over the
+signed set: signed where signing exists, unsigned where it does not
+(DEV-148), and `BUILD-INFO` (inside the sums) and the Release's notes say
+which.
 
 - The Windows exe is signed against Azure Artifact Signing in the same job
   when the five signing variables are set (agentry-cli#197). The job's
@@ -95,6 +96,20 @@ signing exists, unsigned where it does not (DEV-148), and `BUILD-INFO`
   so it holds no Azure secret; `jsign` signs, and `osslsigncode` verifies to
   the Microsoft root pinned in `build/windows/signing/` and the CN
   `release.env` names. With none set it ships unsigned (an empty `signed_windows=`, the site's grammar).
+- The two darwin binaries are signed on the Mac runner registered for this
+  repository (`mac-cli-1`, beside the desktop's `mac-1`) when the `release`
+  environment holds the five `APPLE_*` secrets (agentry-cli#198, DR-59).
+  `scripts/sign-darwin.sh` imports the Developer ID certificate into a
+  keychain it makes and deletes, signs each binary under the hardened
+  runtime with Apple's timestamp and the identifier `net.secureagentry.cli`,
+  checks the identity and Team ID `release.env` names, notarizes a zip of
+  each and waits for `Accepted`, and asks Gatekeeper for `Notarized Developer
+  ID` (`spctl --type open --context context:primary-signature`, and `codesign
+  --check-notarization`; `spctl --type execute` rejects every bare binary). A bare binary cannot be stapled, so macOS checks
+  the ticket online when a browser-downloaded copy first runs; a binary
+  fetched with `curl` is never checked. `BUILD-INFO` says
+  `signed_darwin=developer-id TEAM=<id> notarized=true`, or nothing when the
+  secrets are not set.
 - `SHA256SUMS` is signed with the estate's own update-signing key when the
   `AGENTRY_UPDATE_SIGNING_KEY` secret exists (the desktop's `signrelease
   -product agentry-cli`, at the desktop commit the workflow pins: the signed
@@ -141,10 +156,11 @@ bundle.
 build`, `make check` and `make dist` need no token, no certificate and no
 signing tool; the CLI never inspects its own signature. The signing scripts
 (`scripts/sign-windows.sh`, `scripts/signing-token.sh`,
-`scripts/check-windows-binary.sh`) are the release workflow's, and
-`scripts/acceptance/windows-signing.sh` proves that seam on every PR with a
-throwaway CA in place of the key. The macOS binaries are signed and notarized
-once the Apple credential exists (agentry-cli#198).
+`scripts/check-windows-binary.sh`, `scripts/sign-darwin.sh`) are the release
+workflow's, and `scripts/acceptance/windows-signing.sh` proves the Windows
+seam on every PR with a throwaway CA in place of the key. The macOS seam has
+no PR check (it needs a Mac and Apple's notary service); a `workflow_dispatch`
+dry run proves it.
 
 ## The registry it talks to
 
