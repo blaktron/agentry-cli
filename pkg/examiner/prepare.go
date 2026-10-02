@@ -255,7 +255,8 @@ var inventoryConfidence = map[string]string{
 }
 
 // serverFindings are each declared server's advisories as stage S7 rates
-// them: the advisory's own severity, at high confidence. A server the
+// them: the gate's rating where the registry serves it (agentry#774), else
+// the advisory's own severity, at high confidence. A server the
 // registry has no answer for here gives none; the report says it was not
 // determined (Finish).
 func serverFindings(servers []mcpinstall.VulnStatus) []Finding {
@@ -269,7 +270,7 @@ func serverFindings(servers []mcpinstall.VulnStatus) []Finding {
 			if len(a.Aliases) > 0 {
 				title += " (" + strings.Join(a.Aliases, ", ") + ")"
 			}
-			out = append(out, Finding{Kind: KindRegistryRules, Scanner: "S7/mcp-vuln-" + a.ID, Severity: a.Severity, Confidence: "high",
+			out = append(out, Finding{Kind: KindRegistryRules, Scanner: "S7/mcp-vuln-" + a.ID, Severity: a.Rating(), Confidence: "high",
 				Title: title, Detail: a.Summary})
 		}
 	}

@@ -217,6 +217,29 @@ release anyone installs.
 3. The build applies what it wrote. The documents and their decoded text are
    kept in the pack's `sources/`.
 
+A build takes documents, a brief, or both (agentry-cli#523). `--brief TEXT`
+(or `--brief-file F`) says what the pack should cover and for whom, at most
+8 KiB, and is kept as `sources/brief.md` (`brief-2.md` and on, beside an
+earlier one); `create NAME --brief "…"` with no `--file` makes a pack from
+research alone. Specific documents make the best knowledge: without them
+the Creator researches the web and its own knowledge, which can be wrong or
+out of date, and the command warns so. `--web` lets the Creator search,
+on by default for a new pack with no documents and off otherwise
+(`--no-web`; an `add` extends documents the pack holds, which searches would
+carry to the search provider): it is given `web_search` and `web_read`, the
+Drafter's web tools without `registry_search`, AI Review reads every result
+before its model does, and one flagged or not scanned is withheld. Because
+the Creator reads documents no one scanned, its `web_read` opens only an
+address one of its searches returned, so an instruction hidden in a document
+cannot send another document's text out in an address of its own. On this computer that takes your
+own TypeSafe key and a search key, as `draft` does; without either the build
+runs without the web and says why. Its instruction has it search only for
+what the documents and the pack do not hold. A page compiled from the web
+cites `[src: web:<url>]` and the pack keeps no copy of it; what the model
+knows itself is cited `[src: model]`. Searching can raise what a build
+costs. `--hosted` is a sandbox host's build, whose searches and scans go
+through the registry with the job's credential, as a hosted draft's do.
+
 A local build costs no credits, and nothing it reads or writes is scanned:
 the command says so before it starts, and the pack records `not scanned`.
 `--timeout`, `--max-turns` and `--max-cost` bound the run. A build has 60
@@ -649,8 +672,9 @@ and `add`), the Drafter (`agentry/drafter`, behind `draft`), the Voice Writer
 (`agentry/voice-writer`, behind `voice`) and the Examiner (`agentry/examiner`,
 behind `review`) are QuickAgent packages built into this binary, and run as
 built-ins: attestation state `builtin`, no registry resolve, and grants no
-other package gets (the Drafter's `registry_search`, `web_search` and
-`web_read`; the Examiner's review grant). Every one of them is also published in the registry,
+other package gets (`web_search` and `web_read` for the Drafter and the
+Knowledge Creator, `registry_search` for the Drafter alone; the Examiner's
+review grant). Every one of them is also published in the registry,
 public, from the same bytes, so anyone can read the instruction that runs
 (agentry-cli#470). `agentry builtins` (or `--json builtins`) lists each with the
 digest of its release archive. The registry built that archive from these

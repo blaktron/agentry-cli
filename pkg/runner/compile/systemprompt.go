@@ -103,14 +103,23 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 	case "all":
 		b.WriteString("\n- **Network.** fetch may reach any public host. There is no web search.\n")
 	default:
-		if c.WebTools {
+		if c.WebTools && c.RegistrySearch {
 			b.WriteString("\n- **Network.** None of your own: the web reaches you only through web_search, web_read and registry_search, described below.\n")
+		} else if c.WebTools {
+			b.WriteString("\n- **Network.** None of your own: the web reaches you only through web_search and web_read, described below.\n")
 		} else {
 			b.WriteString("\n- **Network.** None. You cannot browse, search or call an API, so work from your inputs, any attached knowledge and what you know, and never claim to have looked something up.\n")
 		}
 	}
 	if c.WebTools {
-		b.WriteString("- **The web tools.** AI Review reads every search result, page and registry answer before you do. A result it flagged, or could not scan, is withheld: you get only where it came from (and, for a page, why). Never guess at what a withheld source said.\n")
+		read := "every search result and page"
+		if c.RegistrySearch {
+			read = "every search result, page and registry answer"
+		}
+		if c.WebSearchedOnly {
+			b.WriteString("- **Reading the web.** web_read opens only an address one of your web_search results gave, exactly as given: search first.\n")
+		}
+		b.WriteString("- **The web tools.** AI Review reads " + read + " before you do. A result it flagged, or could not scan, is withheld: you get only where it came from (and, for a page, why). Never guess at what a withheld source said. Search only for what your inputs and any attached knowledge do not already hold: they come first, and every search and page costs time.\n")
 	}
 	b.WriteString(workspaceLine(c))
 	if len(c.ExecCommands) > 0 {

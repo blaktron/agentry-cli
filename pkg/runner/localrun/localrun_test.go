@@ -2,11 +2,13 @@ package localrun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
@@ -34,30 +37,44 @@ import (
 // had by the zero value, never verified — and the built-in's tree is the
 // embedded one on every run, whatever happened to the installed copy.
 func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
-	t.Run("the list is the Creator, the Drafter and the Voice Writer", func(t *testing.T) {
+	t.Run("the list is the Creator, the Drafter, the Voice Writer and the Examiner", func(t *testing.T) {
 		var refs []string
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.1.1,agentry/drafter@1.4.0,agentry/voice-writer@1.0.0,agentry/examiner@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.2.0,agentry/drafter@1.4.0,agentry/voice-writer@1.0.0,agentry/examiner@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
-	t.Run("the web tools are the Drafter's alone", func(t *testing.T) {
+	t.Run("the web tools are the Drafter's and the Creator's, registry_search the Drafter's alone", func(t *testing.T) {
+		// agentry-cli#523 (plan knowledge-and-drafter.md D6): the Knowledge
+		// Creator searches and reads the web too, never the registry.
 		for _, b := range Builtins() {
-			if b.web != (b.Ref() == Drafter().Ref()) {
+			wantWeb := b.Ref() == Drafter().Ref() || b.Ref() == KnowledgeCreator().Ref()
+			if b.web != wantWeb {
 				t.Fatalf("%s: web tools %v", b.Ref(), b.web)
 			}
+			if b.registry != (b.Ref() == Drafter().Ref()) {
+				t.Fatalf("%s: registry_search %v", b.Ref(), b.registry)
+			}
+			// The Creator reads documents no one scanned: its web_read
+			// opens only what its searches returned.
+			if b.searchedOnly != (b.Ref() == KnowledgeCreator().Ref()) {
+				t.Fatalf("%s: searched-only web_read %v", b.Ref(), b.searchedOnly)
+			}
 		}
-		if (Builtin{}).web {
+		if (Builtin{}).web || (Builtin{}).registry {
 			t.Fatal("the zero Builtin carries the web tools")
 		}
-		// The Drafter's repair turn: the same package, the grant taken away.
-		if r := Drafter().WithoutWebTools(); r.web || r.Ref() != Drafter().Ref() || !Drafter().web {
-			t.Fatalf("without web tools: %+v", r)
+		// The Drafter's repair turn, and a build that does not search: the
+		// same package, the grant taken away, registry_search with it.
+		for _, b := range []Builtin{Drafter(), KnowledgeCreator()} {
+			if r := b.WithoutWebTools(); r.web || r.registry || r.searchedOnly || r.Ref() != b.Ref() || !b.web {
+				t.Fatalf("%s without web tools: %+v", b.Ref(), r)
+			}
 		}
-		if KnowledgeCreator().WithoutWebTools() != KnowledgeCreator() {
-			t.Fatal("taking away a grant the Creator never had changed it")
+		if VoiceWriter().WithoutWebTools() != VoiceWriter() {
+			t.Fatal("taking away a grant the Voice Writer never had changed it")
 		}
 	})
 	t.Run("the review grant is the Examiner's alone", func(t *testing.T) {
@@ -107,7 +124,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if a.State != trust.StateBuiltin || a.Verified || a.Build != "agentry 9.9.9 (test)" || a.Consent != "" || meta.Source != "builtin" {
 			t.Fatalf("meta %+v", meta)
 		}
-		if meta.Ref != "agentry/knowledge-creator@1.1.1" || !strings.HasPrefix(dir, installdir.AgentDir(home, "agentry", "knowledge-creator")) {
+		if meta.Ref != "agentry/knowledge-creator@1.2.0" || !strings.HasPrefix(dir, installdir.AgentDir(home, "agentry", "knowledge-creator")) {
 			t.Fatalf("ref %s dir %s", meta.Ref, dir)
 		}
 		want, err := os.ReadFile(filepath.Join(dir, "workspace", "INSTRUCTION.md"))
@@ -407,7 +424,7 @@ func TestRunBuiltinRunsTheCreator(t *testing.T) {
 		Image:  decode.Image{Tag: "agentry-runner-exec:t", Packages: []string{"poppler-utils-25.04.0-r0"}},
 	}
 	env, err := Run{
-		Builtin: KnowledgeCreator(), Home: home, Policy: pol, PolicySHA: "sha", Build: "agentry 9.9.9 (test)",
+		Builtin: KnowledgeCreator().WithoutWebTools(), Home: home, Policy: pol, PolicySHA: "sha", Build: "agentry 9.9.9 (test)",
 		Task: strings.NewReader("Ingest into pack runbooks. Today is 2026-09-25."), OutDir: t.TempDir(),
 		Decoded: dec, Stderr: os.Stderr, RunID: "cafe0001",
 	}.Execute(context.Background(), f)
@@ -417,11 +434,62 @@ func TestRunBuiltinRunsTheCreator(t *testing.T) {
 	if env.Status != "ok" || env.Attestation.State != trust.StateBuiltin || env.Attestation.Build != "agentry 9.9.9 (test)" || env.Attestation.Verified {
 		t.Fatalf("envelope %s attestation %+v", env.Status, env.Attestation)
 	}
-	if env.Ref != "agentry/knowledge-creator@1.1.1" {
+	if env.Ref != "agentry/knowledge-creator@1.2.0" {
 		t.Fatalf("ref %s", env.Ref)
 	}
 	if got := env.CapabilitiesEnforced["decode"]; got != dec.Line() {
 		t.Fatalf("decode line %q, want %q", got, dec.Line())
+	}
+}
+
+// TestTheCreatorsWebRunsOnlyWithItsScanner (agentry-cli#523): the Knowledge
+// Creator carrying the web tools does not start without a scanner, so nothing
+// the web brings back can reach its model unread; with the person's Jev key
+// its rendered tools spec scans with it and grants web_search and web_read,
+// never registry_search; without the web it is compiled with no web tools.
+func TestTheCreatorsWebRunsOnlyWithItsScanner(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-key")
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	run := func(b Builtin, w *engine.WebRun, runID string) (*receipt.Envelope, string, error) {
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: `{"type":"agent_choice","message":{"content":"wrote 1 page"}}` + "\n" +
+				`{"type":"stream_stopped","usage":{"input_tokens":10,"output_tokens":3}}` + "\n"},
+		}}
+		env, err := Run{
+			Builtin: b, Home: home, Policy: pol, PolicySHA: "sha", Build: "agentry 9.9.9 (test)",
+			Task: strings.NewReader("Research the brief."), OutDir: t.TempDir(), Stderr: os.Stderr, RunID: runID,
+			Web: w, KeepRunDir: true,
+		}.Execute(context.Background(), f)
+		_, dir, _ := KnowledgeCreator().Materialize(home, "agentry 9.9.9 (test)")
+		return env, filepath.Join(dir, "runs", runID, "cfg", "gateway", "toolspec.json"), err
+	}
+	if _, _, err := run(KnowledgeCreator(), nil, "c0de0001"); err == nil || !strings.Contains(err.Error(), "names no scanner") {
+		t.Fatalf("the Creator with the web and no scanner: %v", err)
+	}
+	env, specPath, err := run(KnowledgeCreator(), &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: "not-a-real-jev-key"}, "c0de0002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ts toolsrv.Spec
+	if err := json.Unmarshal(b, &ts); err != nil {
+		t.Fatal(err)
+	}
+	if !ts.Web.Enabled || ts.Web.RegistrySearch || !ts.Web.SearchedOnly || ts.Web.Scan != toolsrv.WebScanJev || slices.Contains(ts.GrantedTools(), toolsrv.ToolRegistrySearch) {
+		t.Fatalf("the Creator's web: %+v %v", ts.Web, ts.GrantedTools())
+	}
+	if !strings.Contains(env.CapabilitiesEnforced["web"], "read by AI Review") || strings.Contains(env.CapabilitiesEnforced["web"], toolsrv.ToolRegistrySearch) {
+		t.Fatalf("web enforcement %q", env.CapabilitiesEnforced["web"])
+	}
+	env, _, err = run(KnowledgeCreator().WithoutWebTools(), nil, "c0de0003")
+	if err != nil || env.CapabilitiesEnforced["web"] != "" {
+		t.Fatalf("the Creator without the web: %v %v", err, env.CapabilitiesEnforced)
 	}
 }
 

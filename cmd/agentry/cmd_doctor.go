@@ -579,11 +579,15 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		for _, st := range statuses {
 			switch {
 			case st.Refuses() && !pol.MCPServers.AllowVulnerable:
-				rep.fail("mcpServers.vulnerabilities", "%s: known %s vulnerability (%s) — a run refuses it; pin a fixed version%s", st.Ref, st.MaxSeverity, strings.Join(vulnIDs(st), ", "), fixedNote(st))
+				rep.fail("mcpServers.vulnerabilities", "%s: %s — a run refuses it; pin a fixed version%s", st.Ref, st.Describe(st.Refusing()), fixedNote(st))
 			case st.Refuses():
-				rep.warn("mcpServers.vulnerabilities", "%s: known %s vulnerability (%s), allowed by policy mcpServers.allowVulnerable%s", st.Ref, st.MaxSeverity, strings.Join(vulnIDs(st), ", "), fixedNote(st))
+				rep.warn("mcpServers.vulnerabilities", "%s: %s, allowed by policy mcpServers.allowVulnerable%s", st.Ref, st.Describe(st.Refusing()), fixedNote(st))
 			case st.Status == "vulnerable":
-				rep.warn("mcpServers.vulnerabilities", "%s: %s advisories below the refusal bar (%s)", st.Ref, st.MaxSeverity, strings.Join(vulnIDs(st), ", "))
+				rep.warn("mcpServers.vulnerabilities", "%s: %s, below the refusal bar — a run proceeds", st.Ref, st.Describe(st.Advisories))
+			case st.Status == "error" && len(st.Advisories) > 0:
+				rep.warn("mcpServers.vulnerabilities", "%s: the registry's last lookup failed; it last knew %s, below the refusal bar — a run proceeds", st.Ref, st.Describe(st.Advisories))
+			case st.Status == "error":
+				rep.warn("mcpServers.vulnerabilities", "%s: the registry's last lookup failed and it knows no advisories for this version — a run proceeds", st.Ref)
 			case st.Status == "unknown":
 				rep.warn("mcpServers.vulnerabilities", "%s: the registry has not scanned this version (no manifest declared it yet)", st.Ref)
 			case st.Status == "unreachable":
@@ -661,14 +665,6 @@ func printDoctorReport(w io.Writer, rep *doctorReport) {
 	} else {
 		_, _ = fmt.Fprintln(w, "ready")
 	}
-}
-
-func vulnIDs(st mcpinstall.VulnStatus) []string {
-	ids := make([]string, 0, len(st.Advisories))
-	for _, a := range st.Advisories {
-		ids = append(ids, a.ID)
-	}
-	return ids
 }
 
 func fixedNote(st mcpinstall.VulnStatus) string {

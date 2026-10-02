@@ -9,8 +9,17 @@
 // drives it today; the desktop and the cloud build are its other callers.
 //
 // Locally the Creator runs against the model the runner policy names, for
-// no credits, and nothing it reads or writes is scanned: the pack records
-// "not scanned" (D19).
+// no credits, and neither the documents nor the pack are scanned: the pack
+// records "not scanned" (D19). What the web tools bring back is read by AI
+// Review before the model reads it.
+//
+// Since agentry-cli#523 (plan knowledge-and-drafter.md §7, D6, D15–D17) a
+// build takes documents, a brief, or both: the brief is staged as one more
+// text document (brief.md), so its claims are cited and kept like any
+// document's. And a build may search the web, with the built-ins' web
+// tools and every result read by AI Review first: Options.Web is that
+// run's configuration, and a build without it runs the Creator without
+// the tools.
 package build
 
 import (
@@ -49,6 +58,15 @@ type Options struct {
 	Name string
 	// Documents are the files and directories to ingest.
 	Documents []string
+	// Brief is what the pack should cover and for whom, in the person's
+	// words, at most MaxBriefBytes: kept as sources/brief.md (or
+	// brief-N.md when the pack holds one already) and read as a document.
+	// A build takes documents, a brief, or both.
+	Brief string
+	// Web, when set, grants the Creator web_search and web_read for this
+	// build, every result read by AI Review first (engine.WebRun); nil
+	// runs it without them.
+	Web *engine.WebRun
 
 	Home       string
 	Policy     *policy.Policy
@@ -89,6 +107,34 @@ type Result struct {
 	RunErr error
 }
 
+// MaxBriefBytes is the most a brief may hold (plan knowledge-and-drafter.md
+// D15): 8 KiB.
+const MaxBriefBytes = 8 << 10
+
+// The brief's document name, and the stem of the names a further brief
+// takes (brief-2.md, …), so that an earlier brief's citations still open
+// what they cited.
+const (
+	briefStem = "brief"
+	briefName = briefStem + ".md"
+)
+
+// CheckBrief refuses a brief past MaxBriefBytes, and a build given neither
+// documents nor a brief; the clients ask it before anything runs.
+func CheckBrief(documents []string, brief string) error {
+	if len(brief) > MaxBriefBytes {
+		return fmt.Errorf("the brief is %d bytes; a brief is at most %d (8 KiB)", len(brief), MaxBriefBytes)
+	}
+	if len(documents) == 0 && strings.TrimSpace(brief) == "" {
+		return ErrNothingToBuild
+	}
+	return nil
+}
+
+// ErrNothingToBuild is CheckBrief's answer for a build given neither
+// documents nor a brief.
+var ErrNothingToBuild = errors.New("a knowledge build needs documents, a brief, or both")
+
 // Build makes or extends the pack.
 func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	logw := o.Stderr
@@ -96,6 +142,10 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		logw = io.Discard
 	}
 	res := &Result{}
+	o.Brief = strings.TrimSpace(o.Brief)
+	if err := CheckBrief(o.Documents, o.Brief); err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
 	var current *knowledge.Pack
 	if _, err := os.Stat(filepath.Join(o.PackDir, knowledge.ManifestFile)); err == nil {
 		if current, err = knowledge.Load(o.PackDir); err != nil {
@@ -152,6 +202,12 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
+	brief := ""
+	if o.Brief != "" {
+		if brief, err = stageBrief(o.Brief, o.PackDir, current, given, docsDir); err != nil {
+			return nil, engine.Classify(engine.ExitCLI, err)
+		}
+	}
 
 	runnerTag := o.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	ctxDir := filepath.Join(o.Home, "image")
@@ -189,11 +245,17 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if current != nil {
 		attached = []engine.AttachedPack{engine.AttachPack(current)}
 	}
+	// The web tools for this build alone: a build that does not search the
+	// web runs the Creator without them, so its plan grants none.
+	creator := localrun.KnowledgeCreator()
+	if o.Web == nil {
+		creator = creator.WithoutWebTools()
+	}
 	env, runErr := localrun.Run{
-		Builtin: localrun.KnowledgeCreator(), Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
-		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(name, current, docs, o.Now)),
+		Builtin: creator, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
+		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(name, current, docs, brief, o.Web != nil, o.Now)),
 		Inputs: inputs, Knowledge: attached, Decoded: dec, OutDir: o.OutDir, Budgets: o.Budgets,
-		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage,
+		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web,
 	}.Execute(ctx, d)
 	res.Envelope = env
 
@@ -300,10 +362,40 @@ func stageDocuments(paths []string, dst string, limit int64) (map[string]string,
 			return nil, err
 		}
 	}
-	if len(out) == 0 {
-		return nil, errors.New("no document was given")
+	if len(out) == 0 && len(paths) > 0 {
+		return nil, fmt.Errorf("no document was found in %s", strings.Join(paths, ", "))
 	}
 	return out, nil
+}
+
+// stageBrief writes the brief into dst as a text document and adds it to
+// given, under brief.md, or brief-N.md when that name is a given document's
+// or a source the pack keeps already: an earlier brief stays what its
+// citations cite. It answers the name.
+func stageBrief(brief, packDir string, current *knowledge.Pack, given map[string]string, dst string) (string, error) {
+	used := map[string]bool{}
+	for g := range given {
+		used[strings.ToLower(g)] = true
+	}
+	name := briefName
+	for n := 2; ; n++ {
+		// A case-insensitive file system would make Brief.md and brief.md
+		// one file in the stage.
+		taken := used[strings.ToLower(name)]
+		if !taken && current != nil {
+			_, err := os.Lstat(filepath.Join(packDir, knowledge.SourcesDir, name))
+			taken = err == nil
+		}
+		if !taken {
+			break
+		}
+		name = fmt.Sprintf("%s-%d.md", briefStem, n)
+	}
+	if err := writeOut(filepath.Join(dst, name), []byte(brief+"\n")); err != nil {
+		return "", err
+	}
+	given[name] = "the brief"
+	return name, nil
 }
 
 func safeName(s string) string {
@@ -322,8 +414,9 @@ func safeName(s string) string {
 	return out
 }
 
-// task is the Creator's task: the pack, the date, the documents.
-func task(name string, current *knowledge.Pack, docs []decode.Document, now time.Time) string {
+// task is the Creator's task: the pack, the date, the documents, which of
+// them is the brief, and whether this build may search the web.
+func task(name string, current *knowledge.Pack, docs []decode.Document, brief string, web bool, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Knowledge pack: %s. ", name)
 	if current != nil {
@@ -334,6 +427,23 @@ func task(name string, current *knowledge.Pack, docs []decode.Document, now time
 	fmt.Fprintf(&b, "Today is %s.\n\nIngest these %d documents (documents.json names the file to read for each):\n", now.UTC().Format("2006-01-02"), len(docs))
 	for _, d := range docs {
 		fmt.Fprintf(&b, "- %s\n", d.Name)
+	}
+	if brief != "" {
+		fmt.Fprintf(&b, "\n%s is the brief: what the person wants this pack to cover, and for whom. Read it first and build the pack it asks for.", brief)
+		if len(docs) == 1 {
+			b.WriteString(" It is the only document: research what it asks for")
+			if web {
+				b.WriteString(" with web_search and web_read, and from your own knowledge where the web does not settle a point.")
+			} else {
+				b.WriteString(" from your own knowledge.")
+			}
+		}
+		b.WriteString("\n")
+	}
+	if web {
+		b.WriteString("\nThis build may search the web (web_search, then web_read on a result's address). Search only for what the documents and the pack as it stands do not already hold.\n")
+	} else {
+		b.WriteString("\nThis build has no web tools.\n")
 	}
 	return b.String()
 }

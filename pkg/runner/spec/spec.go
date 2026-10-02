@@ -217,11 +217,17 @@ type CapSummary struct {
 	ExecCommands []string `json:"execCommands,omitempty"`
 	// DataAccess is the declared semantic category list.
 	DataAccess []string `json:"dataAccess,omitempty"`
-	// WebTools is the built-in Drafter's grant of the web tools
-	// (web_search, web_read, registry_search; plan builder-rework.md §7.3).
-	// It is never the manifest's: the compiler sets it for a built-in
-	// package the CLI grants it to, and refuses it to everything else.
+	// WebTools is a built-in's grant of the web tools (web_search,
+	// web_read; plan builder-rework.md §7.3), the Drafter's and, since
+	// agentry-cli#523, the Knowledge Creator's. It is never the manifest's:
+	// the compiler sets it for a built-in package the CLI grants it to, and
+	// refuses it to everything else.
 	WebTools bool `json:"webTools,omitempty"`
+	// RegistrySearch adds registry_search to WebTools: the Drafter's alone.
+	RegistrySearch bool `json:"registrySearch,omitempty"`
+	// WebSearchedOnly holds web_read to the addresses a web_search of the
+	// run returned: the Knowledge Creator's (agentry-cli#523).
+	WebSearchedOnly bool `json:"webSearchedOnly,omitempty"`
 	// ReviewTools is a built-in's review grant (ai_review, and read_input
 	// answering only what AI Review passed; plan
 	// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503). Like

@@ -42,6 +42,40 @@ func TestVulnerabilityVerdict(t *testing.T) {
 	}
 }
 
+// With the gate's rating served (agentry-cli#501): a High the gate rates
+// medium runs, one it rates high refuses and names the rating and the
+// advisory, and the flag and the policy lift a high and a critical alike.
+func TestVulnerabilityVerdictOnTheGatesRating(t *testing.T) {
+	score := func(f float64) *float64 { return &f }
+	medium := mcpinstall.VulnStatus{Ref: "npm:@modelcontextprotocol/sdk@1.25.2", Status: "vulnerable", MaxSeverity: "high",
+		Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-71", Severity: "high", GateSeverity: "medium", CVSSScore: score(7.1)}}}
+	high := mcpinstall.VulnStatus{Ref: "npm:@modelcontextprotocol/sdk@1.25.1", Status: "vulnerable", MaxSeverity: "high",
+		Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-87", Severity: "high", GateSeverity: "high", CVSSScore: score(8.7), FixedIn: []string{"1.25.2"}}}}
+	critical := mcpinstall.VulnStatus{Ref: "npm:@bytebase/dbhub@0.20.0", Status: "vulnerable", MaxSeverity: "critical",
+		Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-cr", Severity: "critical", GateSeverity: "critical", CVSSScore: score(9.8)}}}
+
+	line, err := vulnerabilityVerdict([]mcpinstall.VulnStatus{medium}, "https://reg.example", false, false)
+	if err != nil || strings.Contains(line, "allowed by") {
+		t.Fatalf("a medium runs with no override: %q %v", line, err)
+	}
+	_, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{medium, high}, "https://reg.example", false, false)
+	if err == nil || !strings.Contains(err.Error(), "npm:@modelcontextprotocol/sdk@1.25.1 has an advisory the gate rates high (GHSA-87 [advisory high, CVSS 8.7]), fixed in 1.25.2") ||
+		strings.Contains(err.Error(), "sdk@1.25.2 has") {
+		t.Fatalf("high refusal: %v", err)
+	}
+	for _, st := range []mcpinstall.VulnStatus{high, critical} {
+		if _, err := vulnerabilityVerdict([]mcpinstall.VulnStatus{st}, "https://reg.example", false, false); err == nil {
+			t.Fatalf("%s must refuse", st.Ref)
+		}
+		if line, err := vulnerabilityVerdict([]mcpinstall.VulnStatus{st}, "https://reg.example", true, false); err != nil || !strings.HasSuffix(line, "; run allowed by --allow-vulnerable-mcp") {
+			t.Fatalf("%s flag: %q %v", st.Ref, line, err)
+		}
+		if line, err := vulnerabilityVerdict([]mcpinstall.VulnStatus{st}, "https://reg.example", false, true); err != nil || !strings.HasSuffix(line, "; run allowed by policy mcpServers.allowVulnerable") {
+			t.Fatalf("%s policy: %q %v", st.Ref, line, err)
+		}
+	}
+}
+
 // TestRunPlanReportsEveryRefusal (agentry-cli#126): --plan on a local
 // workspace (no attestation) whose manifest declares a server with a
 // known critical advisory reports both refusals, in the order a run meets

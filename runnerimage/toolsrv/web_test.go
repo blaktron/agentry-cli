@@ -849,8 +849,86 @@ func TestTheWebToolsAreGrantedOnlyWithWeb(t *testing.T) {
 	if got := spec.GrantedTools(); !slices.Contains(got, ToolWebRead) || slices.Contains(got, ToolWebSearch) || slices.Contains(got, ToolRegistrySearch) {
 		t.Fatalf("%v", got)
 	}
+	// The Knowledge Creator's spec (agentry-cli#523): the web tools with a
+	// registry for the scans, as a hosted build has, and no registry_search,
+	// which is compiled, the Drafter's alone.
 	spec.Web.Search, spec.Web.Registry = WebScanRegistry, "https://r.example"
+	if got := spec.GrantedTools(); !slices.Contains(got, ToolWebSearch) || slices.Contains(got, ToolRegistrySearch) {
+		t.Fatalf("%v", got)
+	}
+	spec.Web.RegistrySearch = true
 	if got := spec.GrantedTools(); !slices.Contains(got, ToolWebSearch) || !slices.Contains(got, ToolRegistrySearch) {
 		t.Fatalf("%v", got)
+	}
+	spec.Web.Registry = ""
+	if got := spec.GrantedTools(); slices.Contains(got, ToolRegistrySearch) {
+		t.Fatalf("registry_search with no registry to read: %v", got)
+	}
+}
+
+// fixedSearch answers every search with the same hits.
+type fixedSearch struct{ hits []webscan.Hit }
+
+func (fixedSearch) Name() string { return "fixed" }
+func (f fixedSearch) Search(context.Context, string, int) ([]webscan.Hit, error) {
+	return f.hits, nil
+}
+
+// TestASearchedOnlyRunReadsOnlyWhatItsSearchesReturned (agentry-cli#523):
+// the Knowledge Creator's model reads documents no one scanned, so its
+// web_read opens only an address a search of the run returned and AI Review
+// passed, exactly as given; any other address, one carrying a query of the
+// model's own above all, is refused before anything is fetched or scanned,
+// and the ledger keeps only its origin. A run without the rule reads any
+// public page.
+func TestASearchedOnlyRunReadsOnlyWhatItsSearchesReturned(t *testing.T) {
+	hit := atomic.Int32{}
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("the manual"))
+	}))
+	defer site.Close()
+	sc := &fakeScanner{verdict: passAll}
+	s, spec := webServer(t, sc, map[string]*httptest.Server{"site.test": site})
+	s.spec.Web.SearchedOnly, s.spec.Web.Search = true, "fixed"
+	s.webState.searcher = fixedSearch{hits: []webscan.Hit{
+		{URL: "http://site.test/docs/replication.html", Title: "Replication", Result: passAll},
+		{URL: "http://site.test/withheld", Title: "Held", Result: webscan.Result{Verdict: webscan.Withheld}},
+	}}
+	if !strings.Contains(newTestServer(t, spec).tools[ToolWebRead].description, "only an address one of your web_search results gave") {
+		t.Fatal("web_read's description does not say what it reads")
+	}
+	for _, target := range []string{"http://site.test/docs/replication.html", "http://site.test/?d=the+other+document"} {
+		text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": target}))
+		if !isErr || !strings.Contains(text, "reads only the addresses its web searches returned") {
+			t.Fatalf("%s before any search: %q", target, text)
+		}
+	}
+	if hit.Load() != 0 || len(sc.calls()) != 0 {
+		t.Fatal("a refused address was fetched or scanned")
+	}
+	if text, isErr := s.toolWebSearch(rawArgs(t, map[string]any{"query": "replication"})); isErr {
+		t.Fatal(text)
+	}
+	if text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": "http://site.test/docs/replication.html#slots"})); isErr || !strings.HasSuffix(text, "the manual") {
+		t.Fatalf("a searched address: %q", text)
+	}
+	for _, target := range []string{"http://site.test/docs/replication.html?d=secret", "http://site.test/withheld", "http://site.test/"} {
+		if text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": target})); !isErr {
+			t.Fatalf("%s was read: %q", target, text)
+		}
+	}
+	if hit.Load() != 1 {
+		t.Fatalf("%d fetches, want the searched page's one", hit.Load())
+	}
+	for _, e := range ledgerOf(t, spec) {
+		if strings.Contains(e.URL, "secret") || strings.Contains(e.URL, "other+document") {
+			t.Fatalf("the ledger keeps a refused address's query: %+v", e)
+		}
+	}
+	s.spec.Web.SearchedOnly = false
+	if text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": "http://site.test/anything"})); isErr {
+		t.Fatalf("without the rule: %q", text)
 	}
 }
