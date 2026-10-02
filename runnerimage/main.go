@@ -21,7 +21,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -31,6 +30,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
+	"github.com/blaktron/agentry-cli/runnerimage/probe"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -44,7 +44,7 @@ const usageText = `usage: agentry-runner <mode> [flags]
         leaves the run network)
   minimize <command> [<command>...]
         (docker build only) delete every executable except the named commands
-  probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60]
+  probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60] [--list-tools]
         wait until the MCP gateway answers an authed initialize with a 2xx
 `
 
@@ -189,11 +189,6 @@ func runProxy(args []string) error {
 	return p.ListenAndServe(*addr)
 }
 
-// probeInitBody is a spec-shaped MCP initialize request. A 2xx answer is
-// proof the gateway is up and accepted our Bearer token; the body may be
-// SSE-framed, so it is deliberately not parsed (§R6 health probe).
-const probeInitBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agentry-probe","version":"1"}}}`
-
 // runProbe retries the initialize POST every 2s until the deadline. It
 // exists because "the gateway container started" and "the gateway is
 // accepting authed MCP traffic" are different moments, and the agent
@@ -203,6 +198,7 @@ func runProbe(args []string) error {
 	rawURL := fs.String("url", "", "gateway MCP endpoint URL")
 	tokenEnv := fs.String("token-env", "MCP_GATEWAY_TOKEN", "env var holding the gateway Bearer token (empty sends no Authorization)")
 	timeout := fs.Int("timeout", 60, "seconds to keep retrying")
+	listTools := fs.Bool("list-tools", false, `once the gateway answers, print the tools it serves as one JSON line, {"tools":[…]} (a session's permit list, agentry-cli#578)`)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -218,9 +214,17 @@ func runProbe(args []string) error {
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 	var lastErr error
 	for {
-		lastErr = probeOnce(client, *rawURL, token)
+		lastErr = probe.Healthy(client, *rawURL, token)
 		if lastErr == nil {
-			return nil
+			if !*listTools {
+				return nil
+			}
+			// The listing has its own minute: the health deadline is spent.
+			names, err := probe.ListTools(client, *rawURL, token, time.Now().Add(time.Minute))
+			if err != nil {
+				return fmt.Errorf("list the gateway's tools: %w", err)
+			}
+			return json.NewEncoder(os.Stdout).Encode(probe.Listing{Tools: names})
 		}
 		if time.Now().After(deadline) {
 			break
@@ -228,28 +232,4 @@ func runProbe(args []string) error {
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("gateway not ready after %ds: %w", *timeout, lastErr)
-}
-
-func probeOnce(client *http.Client, url, token string) error {
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(probeInitBody))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	// Drain a little so the connection can be reused across retries; the
-	// content is uninteresting by design.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("gateway answered %s", resp.Status)
-	}
-	return nil
 }

@@ -186,10 +186,15 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	s.redact = rd.newRedactor(p, token, secrets)
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
-	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
+	var served []string
+	if err := startInfra(ctx, d, p, rd, td, runID, token, rep, &served); err != nil {
 		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 		return fail(withRefusals(err, rd))
 	}
+	// The driver also permits what the gateway serves beyond the run's own
+	// grant: the declared servers' tools (agentry-cli#578). Still before
+	// any harness starts.
+	s.granted = permitted(s.granted, served)
 	// Harness files after the infrastructure, as in Run: a host-run harness
 	// needs the published addresses (plan runner-m-r4-adapters §5).
 	rep = rd.replacer()
