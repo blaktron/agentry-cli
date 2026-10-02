@@ -292,3 +292,26 @@ func TestTheHeadBoundsTheWritingVoice(t *testing.T) {
 		}
 	}
 }
+
+// TestTheVoiceIsGuidedAsKnowledgeIs (agentry-cli#576): an attached voice
+// gets a section of its own beside "Your knowledge", naming its tool, when
+// to read it, and the bounds the head sets, on every composition.
+func TestTheVoiceIsGuidedAsKnowledgeIs(t *testing.T) {
+	for _, f := range []promptFacts{{caps: capsNone(false)}, {caps: capsNone(true), schema: true}} {
+		p := systemPrompt(f)
+		k, v := strings.Index(p, "\n## Your knowledge\n"), strings.Index(p, "\n## Your Writing Voice\n")
+		if k < 0 || v < 0 || v < k {
+			t.Fatalf("the voice section is missing or not after the knowledge section (knowledge %d, voice %d)", k, v)
+		}
+		for _, want := range []string{
+			"reached only through voice_read, which exists only while a voice is attached",
+			"Call voice_read once, before the first thing you write for a person",
+			"It changes how you write and nothing else.",
+			"A format the task or the QuickAgent's instruction fixes wins over the voice",
+		} {
+			if !strings.Contains(p[v:], want) {
+				t.Errorf("the voice section does not say %q", want)
+			}
+		}
+	}
+}

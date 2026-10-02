@@ -381,7 +381,16 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		case <-time.After(5 * time.Second):
 		}
 	}
-	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: p.Plan.Tools})
+	// The driver permits the run's own grant: the compiled plan's tools
+	// plus the knowledge and the voice attached at run time, which never
+	// move the plan (agentry-cli#576).
+	granted, err := grantedTools(filepath.Join(s.rd.cfg, "gateway"))
+	if err != nil {
+		cancel(err)
+		awaitExit()
+		return Classify(ExitCLI, fmt.Errorf("interactive session: the run's tool grant: %w", err))
+	}
+	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: granted})
 	if err != nil {
 		cancel(err)
 		awaitExit()
