@@ -144,7 +144,9 @@ type SessionOptions struct {
 	// GatewayTools are the tool names the run's gateway serves — the run's
 	// own grant: the plan's `tools`, bounded by policy at compile, plus the
 	// knowledge and voice tools a run-time attachment adds
-	// (agentry-cli#576). A harness permission request
+	// (agentry-cli#576), plus every tool the gateway lists to the session's
+	// probe, which is how a declared MCP server's tools are known
+	// (agentry-cli#578). A harness permission request
 	// for one of them is granted; anything else is denied (DR-15,
 	// agentry-cli#61: under ACP the client is the permission authority for
 	// every tool call, and a denial does not reach the model as a refused

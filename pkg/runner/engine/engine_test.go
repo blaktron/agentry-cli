@@ -11,8 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -26,6 +28,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/probe"
 )
 
 const engineManifest = `schemaVersion: "2"
@@ -110,7 +113,7 @@ func fixtureWith(t *testing.T, edit func(*policy.Policy)) (Params, *dockerx.Fake
 // calls, usage, and a final message.
 func happyFake(f *dockerx.Fake) {
 	f.Foreground = map[string]*dockerx.FakeForeground{
-		"-probe": {ExitCode: 0},
+		"-probe": {Handler: probeListing()},
 		"-agent": {Stdout: strings.Join([]string{
 			`{"type":"tool_call","tool":"fs_read"}`,
 			`{"type":"tool_call","tool":"write_report"}`,
@@ -119,6 +122,19 @@ func happyFake(f *dockerx.Fake) {
 		}, "\n") + "\n"},
 	}
 	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "gateway said hi\n"}
+}
+
+// probeListing plays the gateway probe: healthy, and with --list-tools
+// (a session's, agentry-cli#578) it reports tools as the gateway's
+// catalog beyond the run's own grant, the way the runner's probe prints it.
+func probeListing(tools ...string) func(context.Context, dockerx.RunSpec, io.Reader, io.Writer, io.Writer) (int, error) {
+	return func(_ context.Context, r dockerx.RunSpec, _ io.Reader, stdout, _ io.Writer) (int, error) {
+		if slices.Contains(r.Argv, "--list-tools") {
+			b, _ := json.Marshal(probe.Listing{Tools: append([]string{}, tools...)})
+			_, _ = stdout.Write(append(b, '\n'))
+		}
+		return 0, nil
+	}
 }
 
 func TestRunHappyPath(t *testing.T) {
