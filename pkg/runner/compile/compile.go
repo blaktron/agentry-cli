@@ -73,14 +73,24 @@ type Inputs struct {
 	// install step, not here: the compiler stays offline and
 	// deterministic over its inputs.
 	MCPServers []spec.MCPServerSpec
-	// Web grants the built-in Drafter's web tools (plan builder-rework.md
-	// §7.3, D6; agentry-cli#345). Only a built-in package may be granted
-	// them (Source "builtin", set by pkg/runner/localrun for the Drafter
-	// alone), and only one that declares no egress, exec, filesystem
-	// write, secret or MCP server: their container has no network
-	// allowlist of its own, so nothing else may run beside them. Anything
-	// else asking is refused by policy (exit 11).
+	// Web grants a built-in the web tools, web_search and web_read (plan
+	// builder-rework.md §7.3, D6; agentry-cli#345; the Knowledge Creator's
+	// since agentry-cli#523). Only a built-in package may be granted them
+	// (Source "builtin", set by pkg/runner/localrun for the Drafter and the
+	// Knowledge Creator alone), and only one that declares no egress, exec,
+	// filesystem write, secret or MCP server: their container has no
+	// network allowlist of its own, so nothing else may run beside them.
+	// Anything else asking is refused by policy (exit 11).
 	Web bool
+	// RegistrySearch adds registry_search to the web tools: the Drafter's
+	// alone (plan knowledge-and-drafter.md §7). It is compiled, never the
+	// run's, so a run that hands the tools a registry for its scans (a
+	// hosted build) does not get the tool with it. Only with Web.
+	RegistrySearch bool
+	// WebSearchedOnly holds web_read to the addresses a web_search of the
+	// run returned (toolsrv.Web.SearchedOnly): the Knowledge Creator's,
+	// whose model reads documents no one scanned. Only with Web.
+	WebSearchedOnly bool
 	// Review grants a built-in the review grant (plan
 	// desktop-review-key-and-run-cards.md §6.2; agentry-cli#503): ai_review
 	// and scanned reads of its inputs, with the person's own TypeSafe key
@@ -156,11 +166,14 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if (in.RegistrySearch || in.WebSearchedOnly) && !in.Web {
+		return nil, &PolicyRefusal{Reason: toolsrv.ToolRegistrySearch + " and the searched-only web_read are of the web tools, and are never granted without them"}
+	}
 	if in.Web {
 		if err := checkWebGrant(in, caps); err != nil {
 			return nil, err
 		}
-		caps.WebTools = true
+		caps.WebTools, caps.RegistrySearch, caps.WebSearchedOnly = true, in.RegistrySearch, in.WebSearchedOnly
 	}
 	if in.Review {
 		if err := checkReviewGrant(in, caps); err != nil {
@@ -675,7 +688,7 @@ func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
 // §7.3: "refused at compile for any release").
 func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 	if in.Source != "builtin" {
-		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-in Drafter's alone; a %s package is never granted them",
+		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's and the Knowledge Creator's; a %s package is never granted them",
 			toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, cmp.Or(in.Source, "release"))}
 	}
 	c := in.Manifest.Capabilities
@@ -739,7 +752,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		Exec: toolsrv.Exec{Commands: caps.ExecCommands},
 		// The run's half of Web (where it scans, searches, which registry,
 		// the ledger) is the engine's, stamped per run.
-		Web: toolsrv.Web{Enabled: caps.WebTools},
+		Web: toolsrv.Web{Enabled: caps.WebTools, RegistrySearch: caps.RegistrySearch, SearchedOnly: caps.WebSearchedOnly},
 		// The review grant: the run's ledger is the engine's, stamped per
 		// run.
 		Review: toolsrv.Review{Enabled: caps.ReviewTools},
@@ -1215,10 +1228,18 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 		e["network"] = "UNRESTRICTED tool-plane egress (manifest \"*\", permitted by operator policy allowWildcardEgress)"
 	}
 	if caps.WebTools {
-		e["network"] = "no declared egress and no fetch tool; the built-in Drafter's web tools alone reach out, from a tools container with no network allowlist of its own, each holding its own bounds (see web)"
-		e["web"] = "the built-in Drafter's web tools " + toolsrv.ToolWebSearch + " (only with a search to use), " + toolsrv.ToolWebRead + " and " + toolsrv.ToolRegistrySearch +
+		tools, read := toolsrv.ToolWebSearch+" (only with a search to use) and "+toolsrv.ToolWebRead, "every page and search result"
+		if caps.RegistrySearch {
+			tools = toolsrv.ToolWebSearch + " (only with a search to use), " + toolsrv.ToolWebRead + " and " + toolsrv.ToolRegistrySearch
+			read = "every page, search result and registry answer"
+		}
+		e["network"] = "no declared egress and no fetch tool; the built-in's web tools alone reach out, from a tools container with no network allowlist of its own, each holding its own bounds (see web)"
+		if caps.WebSearchedOnly {
+			tools += ", " + toolsrv.ToolWebRead + " opening only an address a " + toolsrv.ToolWebSearch + " of this run returned and AI Review passed"
+		}
+		e["web"] = "the built-in's web tools " + tools +
 			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +
-			"every page, search result and registry answer is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
+			read + " is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
 			"the keys (the job's credential, or the person's own Jev and search keys) are injected into the tools container only"
 	}
 	if caps.ReviewTools {

@@ -175,7 +175,7 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 		t.Fatalf("documents %v skipped %v", res.Documents, res.Skipped)
 	}
 	env := res.Envelope
-	if env.Attestation.State != "builtin" || env.Ref != "agentry/knowledge-creator@1.1.1" {
+	if env.Attestation.State != "builtin" || env.Ref != "agentry/knowledge-creator@1.2.0" {
 		t.Fatalf("attestation %+v ref %s", env.Attestation, env.Ref)
 	}
 	if !strings.Contains(env.CapabilitiesEnforced["decode"], "1 decoded, 1 read as text, 1 not decoded (blob.bin)") {
@@ -295,7 +295,132 @@ func TestBuildStoppedAtABudgetKeepsWhatItWrote(t *testing.T) {
 	}
 }
 
+// TestABuildFromABriefAlone (agentry-cli#523; plan knowledge-and-drafter.md
+// D15, D17): a build with no document and a brief makes a pack whose pages
+// cite the brief, the web and the model, and pass the lint; the brief is
+// kept as sources/brief.md, and a later brief beside it as brief-2.md.
+func TestABuildFromABriefAlone(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx.opts.Documents = nil
+	fx.opts.Brief = "  Cold-chain alarms in our depots, for night-shift operators.  "
+	body := "---\ntitle: Cold chain\ntype: topic\nsummary: Alarms\nsources: [doc:brief.md, web:https://example.org/cold, model]\nupdated: 2026-09-25\n---\n\n# Cold chain\n\n" +
+		"Operators work nights [src: doc:brief.md]. An alarm fires at 8 C [src: web:https://example.org/cold]. Ice melts [src: model].\n"
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{"wiki/topics/cold-chain.md": body})
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if res.Applied.Manifest.Pages != 1 || len(res.Applied.Dropped) != 0 {
+		t.Fatalf("applied %+v", res.Applied)
+	}
+	if got, _ := os.ReadFile(filepath.Join(fx.opts.PackDir, "sources", "brief.md")); string(got) != "Cold-chain alarms in our depots, for night-shift operators.\n" {
+		t.Fatalf("sources/brief.md = %q", got)
+	}
+	if strings.Join(res.Documents, ",") != "brief.md" {
+		t.Fatalf("documents %v", res.Documents)
+	}
+	if fs, err := knowledge.Lint(fx.opts.PackDir, "heron"); err != nil || len(fs) != 0 {
+		t.Fatalf("lint: %v %v", fs, err)
+	}
+	// Without the web the plan grants no web tool.
+	if _, ok := res.Envelope.CapabilitiesEnforced["web"]; ok {
+		t.Fatalf("a build without the web was granted it: %v", res.Envelope.CapabilitiesEnforced)
+	}
+
+	t.Run("a second brief, with a document named brief.md, takes the next name", func(t *testing.T) {
+		fx2 := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		fx2.opts.PackDir, fx2.opts.Name = fx.opts.PackDir, ""
+		writeFile(t, filepath.Join(fx2.docs, "brief.md"), "# A document of that name\n")
+		fx2.opts.Documents = []string{filepath.Join(fx2.docs, "brief.md")}
+		fx2.opts.Brief = "Add the day shift."
+		fx2.fake.Foreground["-agent"].Before = writes(fx2.opts.OutDir, map[string]string{"wiki/topics/day.md": page("Day shift", "brief-2.md")})
+		res, err := Build(context.Background(), fx2.fake, fx2.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The document keeps the name it was given, as any document added
+		// again does; the brief never takes a name already in use.
+		got, _ := os.ReadFile(filepath.Join(fx.opts.PackDir, "sources", "brief-2.md"))
+		if string(got) != "Add the day shift.\n" || res.Applied.Manifest.Pages != 2 {
+			t.Fatalf("brief-2.md = %q, manifest %+v", got, res.Applied.Manifest)
+		}
+	})
+}
+
+// TestTheTaskSaysWhatTheBuildHas: the Creator is told which document is the
+// brief, that a brief alone is researched, and whether it may search.
+func TestTheTaskSaysWhatTheBuildHas(t *testing.T) {
+	brief := []decode.Document{{Name: "brief.md"}}
+	got := task("heron", nil, brief, "brief.md", true, now)
+	for _, want := range []string{"brief.md is the brief", "It is the only document: research what it asks for with web_search and web_read",
+		"Search only for what the documents and the pack as it stands do not already hold"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("task lacks %q:\n%s", want, got)
+		}
+	}
+	got = task("heron", nil, append(brief, decode.Document{Name: "a.pdf"}), "brief.md", false, now)
+	if strings.Contains(got, "only document") || !strings.Contains(got, "This build has no web tools.") {
+		t.Errorf("task:\n%s", got)
+	}
+	if got = task("heron", nil, []decode.Document{{Name: "a.pdf"}}, "", false, now); strings.Contains(got, "brief") {
+		t.Errorf("a build with no brief is told of one:\n%s", got)
+	}
+}
+
+// TestABuildWithTheWebGrantsItsToolsAlone: a build given a web
+// configuration runs the Creator with web_search and web_read, AI Review
+// reading every result first, and never registry_search; the keys reach
+// the run's gateway secrets, not the plan.
+func TestABuildWithTheWebGrantsItsToolsAlone(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx.opts.Documents = nil
+	fx.opts.Brief = "Cold-chain alarms."
+	fx.opts.Web = &engine.WebRun{Scan: "jev", JevKey: "not-a-real-jev-key", Search: "brave", SearchKey: "not-a-real-brave-key"}
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{"wiki/topics/cold.md": page("Cold", "brief.md")})
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	web := res.Envelope.CapabilitiesEnforced["web"]
+	if !strings.Contains(web, "web_search") || !strings.Contains(web, "web_read") || strings.Contains(web, "registry_search") ||
+		!strings.Contains(web, "read by AI Review") {
+		t.Fatalf("web enforcement %q", web)
+	}
+	b, _ := json.Marshal(res.Envelope)
+	for _, k := range []string{"not-a-real-jev-key", "not-a-real-brave-key"} {
+		if strings.Contains(string(b), k) {
+			t.Fatal("a key in the envelope")
+		}
+	}
+}
+
 func TestBuildRefusals(t *testing.T) {
+	t.Run("neither documents nor a brief", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		fx.opts.Documents, fx.opts.Brief = nil, "   "
+		var ce *engine.ClassifiedError
+		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.As(err, &ce) || ce.Code != engine.ExitUsage || !strings.Contains(err.Error(), "documents, a brief, or both") {
+			t.Fatalf("err = %v", err)
+		}
+		if _, ok := fx.fake.FindRun("agentry-decode-"); ok {
+			t.Fatal("a refused build ran the decode step")
+		}
+	})
+	t.Run("a directory with no document in it, and no brief", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		fx.opts.Documents = []string{t.TempDir()}
+		if _, err := Build(context.Background(), fx.fake, fx.opts); err == nil || !strings.Contains(err.Error(), "no document was found in") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a brief past 8 KiB", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		fx.opts.Brief = strings.Repeat("b", MaxBriefBytes+1)
+		var ce *engine.ClassifiedError
+		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.As(err, &ce) || ce.Code != engine.ExitUsage || !strings.Contains(err.Error(), "at most 8192") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 	t.Run("a run that writes nothing is an error and makes no pack", func(t *testing.T) {
 		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
 		_, err := Build(context.Background(), fx.fake, fx.opts)

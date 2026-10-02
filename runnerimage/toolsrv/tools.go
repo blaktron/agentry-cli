@@ -129,8 +129,11 @@ func (s *server) buildTools() {
 			add(name, "Search the web. AI Review reads every result before you see it; a result it flagged, or could not scan, is shown as withheld with its origin only.",
 				webSearchSchema(), s.toolWebSearch)
 		case ToolWebRead:
-			add(name, "Read a public web page as text (GET only; at most 32 KiB of text). AI Review reads the page before you do; a page it flagged, or could not scan, is withheld and you get only its address and the reason.",
-				webReadSchema(), s.toolWebRead)
+			desc := "Read a public web page as text (GET only; at most 32 KiB of text). AI Review reads the page before you do; a page it flagged, or could not scan, is withheld and you get only its address and the reason."
+			if s.spec.Web.SearchedOnly {
+				desc += " It reads only an address one of your web_search results gave, exactly as given."
+			}
+			add(name, desc, webReadSchema(), s.toolWebRead)
 		case ToolRegistrySearch:
 			add(name, "Ask the Agentry registry: search its published QuickAgents (query), read one QuickAgent's manifest (ref), or read its vulnerability check of an exact MCP server version (ecosystem, package, version). AI Review reads each answer before you do.",
 				registrySearchSchema(), s.toolRegistrySearch)

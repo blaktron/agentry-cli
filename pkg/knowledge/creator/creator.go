@@ -6,7 +6,14 @@
 // data category: the runner decodes the documents before the run
 // (pkg/runner/decode), the agent reads their text through the inputs
 // channel and the pack as it stands through the knowledge tools, and
-// writes pages through write_report; pkg/knowledge applies them.
+// writes pages through write_report; pkg/knowledge applies them. Since
+// 1.2.0 (agentry-cli#523; plan knowledge-and-drafter.md D6, D15–D17) a
+// build may be given a brief instead of documents, and the application may
+// grant it web_search and web_read, which its manifest does not declare
+// (they ride on the built-in, pkg/runner/localrun): it researches what the
+// documents and the pack do not hold, every result read by AI Review
+// first, and cites web pages as [src: web:<url>] and its model's own
+// knowledge as [src: model].
 package creator
 
 import (
@@ -25,7 +32,7 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "knowledge-creator"
-	Version   = "1.1.1"
+	Version   = "1.2.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a knowledge build on this computer

@@ -156,8 +156,23 @@ func TestTheSystemPromptStatesNoGrantTheRunLacks(t *testing.T) {
 // web grant is told how AI Review reads what the tools bring back; no
 // other run hears of them.
 func TestTheWebToolsArePromptedOnlyWithTheGrant(t *testing.T) {
-	with := systemPrompt(promptFacts{caps: capsNone(true)})
+	withCaps := capsNone(true)
+	withCaps.RegistrySearch = true
+	with := systemPrompt(promptFacts{caps: withCaps})
 	without := systemPrompt(promptFacts{caps: capsNone(false)})
+	// The Knowledge Creator's grant (agentry-cli#523): web_search and
+	// web_read, never registry_search, and searched only for what its
+	// documents and the pack do not hold.
+	creator := systemPrompt(promptFacts{caps: capsNone(true)})
+	if !strings.Contains(creator, toolsrv.ToolWebSearch) || !strings.Contains(creator, toolsrv.ToolWebRead) ||
+		strings.Contains(creator, toolsrv.ToolRegistrySearch) || strings.Contains(creator, "registry answer") {
+		t.Error("a run with the web tools and no registry_search is told otherwise")
+	}
+	for _, p := range []string{with, creator} {
+		if !strings.Contains(p, "Search only for what your inputs and any attached knowledge do not already hold") {
+			t.Error("a web-granted run is not told to search only for what it does not hold")
+		}
+	}
 	for _, tool := range []string{toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch} {
 		if !strings.Contains(with, tool) {
 			t.Errorf("a web-granted run is not told about %s", tool)

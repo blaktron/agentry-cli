@@ -19,19 +19,31 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/build"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // knowledgeBuildOpts are create's and add's shared flags.
 type knowledgeBuildOpts struct {
-	files      []string
+	files []string
+	// brief and briefFile are the brief, what the pack should cover and for
+	// whom (agentry-cli#523): a build takes documents, a brief, or both.
+	brief, briefFile string
+	// web and noWeb are the Search the web choice (plan
+	// knowledge-and-drafter.md D16): on by default with no documents, off
+	// with them.
+	web, noWeb bool
+	// hosted is a sandbox host's build (agentry-enterprise#296): the web's
+	// scans and searches go through the registry with the job's credential.
+	hosted     bool
 	dir        string
 	out        string
 	policyPath string
@@ -81,8 +93,13 @@ func newKnowledgeCmd() *cobra.Command {
 			"stays on this computer. Before the Creator reads them, the documents are decoded on this machine, at most\n" +
 			"2,000 files and 30 minutes, and each document's decoded text is cut to 10 MiB.\n" +
 			"`create` and `add` run the built-in Knowledge Creator on this machine, against the model your runner\n" +
-			"policy names: it costs no credits, and nothing it reads or writes is scanned. A build has 60 minutes, or\n" +
-			"your policy's run timeout when that is longer (--timeout sets it for one build), and no token limit.\n\n" +
+			"policy names: it costs no credits, and neither its documents nor its pack are scanned. A build has 60 minutes, or\n" +
+			"your policy's run timeout when that is longer (--timeout sets it for one build), and no token limit.\n" +
+			"A build takes documents, a brief (--brief: what the pack should cover and for whom), or both. Specific\n" +
+			"documents make the best knowledge. Without them the Creator researches the web and its own knowledge,\n" +
+			"which can be wrong or out of date. --web lets it search (the default for a new pack with no documents),\n" +
+			"with AI Review reading every result first: that takes your own TypeSafe key and a search key, as\n" +
+			"`agentry draft` does. It reads only pages its searches returned.\n\n" +
 			"Packs are kept sealed on this computer, each under a key of its own that the registry you are signed in\n" +
 			"to wraps for your account (Agentry holds that key), so the same pack opens on another computer after you\n" +
 			"sign in there. Signed out, this computer's key wraps it instead, until your next sign-in. `upload` keeps a\n" +
@@ -95,7 +112,12 @@ func newKnowledgeCmd() *cobra.Command {
 
 func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f := cmd.Flags()
-	f.StringArrayVar(&o.files, "file", nil, "a document or a directory of documents to ingest (repeatable; required)")
+	f.StringArrayVar(&o.files, "file", nil, "a document or a directory of documents to ingest (repeatable; documents, a brief, or both)")
+	f.StringVar(&o.brief, "brief", "", "what the pack should cover and for whom, at most 8 KiB, kept in the pack as sources/brief.md")
+	f.StringVar(&o.briefFile, "brief-file", "", "read the brief from this file instead")
+	f.BoolVar(&o.web, "web", false, "let the Creator search the web, AI Review reading every result first (the default for a new pack with no --file; it can raise what a build costs)")
+	f.BoolVar(&o.noWeb, "no-web", false, "build without the web (the default with --file, and for add)")
+	f.BoolVar(&o.hosted, "hosted", false, "build as a sandbox host does for a build made in Agentry (with --output-format json): the web's scans and searches through the registry with the job's credential in $"+envJobToken)
 	f.StringVar(&o.out, "out", "", "output folder for the Creator run's reports and receipts (default ./agentry-out/agentry-knowledge-creator-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.IntVar(&o.timeout, "timeout", 0, "the Creator run's wall-clock budget in seconds (default: the policy's or 3600, whichever is longer)")
@@ -130,13 +152,15 @@ func knowledgeBuildRunE(o *knowledgeBuildOpts, work func(cmd *cobra.Command, arg
 func newKnowledgeCreateCmd() *cobra.Command {
 	var o knowledgeBuildOpts
 	cmd := &cobra.Command{
-		Use:   "create NAME --file PATH [--file PATH…]",
-		Short: "Make a knowledge pack from documents, with the built-in Knowledge Creator",
+		Use:   "create NAME [--file PATH…] [--brief TEXT]",
+		Short: "Make a knowledge pack from documents or a brief, with the built-in Knowledge Creator",
 		Long: "Make a knowledge pack named NAME (lowercase letters, digits, '.', '-', '_') from the documents given:\n" +
 			"Markdown, text, HTML, CSV, JSON, YAML and source files as they are; PDF, DOCX, ODT, EPUB, RTF, PPTX, XLSX\n" +
 			"and PNG, JPEG, TIFF or WebP images as the text decoded from them before the run. The documents themselves\n" +
-			"are kept in the pack beside the pages. The pack is kept sealed on this computer; --dir DIR makes it as a\n" +
-			"plain directory instead, in the clear, which `agentry knowledge import DIR` can seal later.",
+			"are kept in the pack beside the pages. With a brief and no documents the Creator researches what the brief\n" +
+			"asks for, on the web (--no-web to forbid it) and from its model's own knowledge, and cites each. The pack\n" +
+			"is kept sealed on this computer; --dir DIR makes it as a plain directory instead, in the clear, which\n" +
+			"`agentry knowledge import DIR` can seal later.",
 		Args: cobra.ExactArgs(1),
 		RunE: knowledgeBuildRunE(&o, func(cmd *cobra.Command, args []string) error {
 			if err := knowledge.ValidName(args[0]); err != nil {
@@ -160,10 +184,10 @@ func newKnowledgeCreateCmd() *cobra.Command {
 func newKnowledgeAddCmd() *cobra.Command {
 	var o knowledgeBuildOpts
 	cmd := &cobra.Command{
-		Use:   "add NAME|DIR --file PATH [--file PATH…]",
-		Short: "Add documents to a knowledge pack, with the built-in Knowledge Creator",
-		Long: "Extend the kept pack NAME (or the pack directory DIR) with the documents given: the Creator reads the pack\n" +
-			"as it stands and rewrites the pages the new documents touch. A build that stopped at a budget continues\n" +
+		Use:   "add NAME|DIR [--file PATH…] [--brief TEXT]",
+		Short: "Add documents or a brief to a knowledge pack, with the built-in Knowledge Creator",
+		Long: "Extend the kept pack NAME (or the pack directory DIR) with the documents or the brief given: the Creator\n" +
+			"reads the pack as it stands and rewrites the pages they touch. A build that stopped at a budget continues\n" +
 			"this way. A kept pack stays under the key it had.",
 		Args: cobra.ExactArgs(1),
 		RunE: knowledgeBuildRunE(&o, func(cmd *cobra.Command, args []string) error {
@@ -189,8 +213,13 @@ func newKnowledgeAddCmd() *cobra.Command {
 // it made and where its reports are. A result with RunErr set is a pack
 // the Creator stopped short of finishing, which holds what it wrote.
 func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOpts) (*build.Result, string, error) {
-	if len(o.files) == 0 {
-		return nil, "", engine.Classify(engine.ExitUsage, errors.New("name the documents to ingest with --file PATH (repeatable)"))
+	brief, err := o.readBrief()
+	if err != nil {
+		return nil, "", err
+	}
+	searchWeb, err := o.searchWeb(name != "")
+	if err != nil {
+		return nil, "", err
 	}
 	errOut := cmd.ErrOrStderr()
 	home, err := runnerHome()
@@ -210,8 +239,16 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 	// is not scanned, and the person hears it first.
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	_, _ = fmt.Fprintf(errOut, "The Knowledge Creator runs on this machine against the model your runner policy names (%s).\n"+
-		"It costs no credits, and nothing it reads or writes is scanned: the documents are not, and the pack it makes\n"+
-		"is recorded as \"not scanned\" until a registry scans it.\n", model)
+		"It costs no credits, and neither the documents nor the pack it makes are scanned: the pack is recorded\n"+
+		"as \"not scanned\" until a registry scans it.\n", model)
+	if len(o.files) == 0 {
+		_, _ = fmt.Fprintln(errOut, "Warning: no documents. Specific documents make the best knowledge. Without them the Creator researches\n"+
+			"the web and its own knowledge, which can be wrong or out of date.")
+	}
+	web, err := knowledgeWeb(pol, o, searchWeb, errOut)
+	if err != nil {
+		return nil, "", err
+	}
 
 	limit, err := packLimit(o.maxPackMB, o.files, errOut)
 	if err != nil {
@@ -235,7 +272,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 	budgets := o.over(localrun.KnowledgeCreator().LocalBudgets(pol.Budgets))
 
 	res, err := creatorBuild(cmd.Context(), knowledgeDocker(), build.Options{
-		PackDir: dir, Name: name, Documents: o.files,
+		PackDir: dir, Name: name, Documents: o.files, Brief: brief, Web: web,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Now: time.Now(), OutDir: outDir, Budgets: &budgets,
 		RunID: runID, Stderr: errOut, OnUsage: o.onUsage, MaxBytes: limit,
@@ -252,6 +289,93 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 		return nil, "", err
 	}
 	return res, outDir, nil
+}
+
+// readBrief is the build's brief, from --brief or --brief-file, checked
+// with the documents: a build takes documents, a brief, or both, and a
+// brief is at most 8 KiB (agentry-cli#523).
+func (o *knowledgeBuildOpts) readBrief() (string, error) {
+	brief := o.brief
+	if o.briefFile != "" {
+		if o.brief != "" {
+			return "", engine.Classify(engine.ExitUsage, errors.New("name the brief with --brief or --brief-file, not both"))
+		}
+		f, err := os.Open(o.briefFile)
+		if err != nil {
+			return "", engine.Classify(engine.ExitUsage, fmt.Errorf("--brief-file: %w", err))
+		}
+		defer func() { _ = f.Close() }()
+		b, err := io.ReadAll(io.LimitReader(f, build.MaxBriefBytes+1))
+		if err != nil {
+			return "", engine.Classify(engine.ExitUsage, fmt.Errorf("--brief-file: %w", err))
+		}
+		brief = string(b)
+	}
+	if err := build.CheckBrief(o.files, brief); err != nil {
+		if errors.Is(err, build.ErrNothingToBuild) {
+			err = fmt.Errorf("%w: name documents with --file PATH, or say what the pack should cover with --brief", err)
+		}
+		return "", engine.Classify(engine.ExitUsage, err)
+	}
+	return strings.TrimSpace(brief), nil
+}
+
+// searchWeb is the Search the web choice (plan knowledge-and-drafter.md
+// D16): --web or --no-web, else on for a new pack with no documents and off
+// otherwise. A pack being extended holds documents already, and the web's
+// searches would carry what the Creator read in them to the search provider,
+// which D16 keeps off unless asked.
+func (o *knowledgeBuildOpts) searchWeb(creating bool) (bool, error) {
+	switch {
+	case o.web && o.noWeb:
+		return false, engine.Classify(engine.ExitUsage, errors.New("choose whether the build searches the web with --web or --no-web, not both"))
+	case o.web, o.noWeb:
+		return o.web, nil
+	}
+	return creating && len(o.files) == 0, nil
+}
+
+// knowledgeWeb is a build's web configuration, or nil for a build without
+// the web, and says which (agentry-cli#523). A sandbox host's build scans
+// and searches through the registry with the job's credential, as a hosted
+// draft does. On this computer the web takes the person's own Jev key,
+// which every result is scanned with, and a search key, as a draft's does;
+// without either, or under a sandboxed runtime with no name servers for
+// the tools, the build runs without the web and says why, rather than
+// failing (D16).
+func knowledgeWeb(pol *policy.Policy, o *knowledgeBuildOpts, search bool, errOut io.Writer) (*engine.WebRun, error) {
+	if !search {
+		return nil, nil
+	}
+	if o.hosted {
+		w, err := hostedWeb("knowledge build that searches the web")
+		if err == nil {
+			_, _ = fmt.Fprintln(errOut, "The Creator may search the web: the registry searches, and AI Review reads every result first.")
+		}
+		return w, err
+	}
+	without := func(why string) (*engine.WebRun, error) {
+		_, _ = fmt.Fprintf(errOut, "The Creator builds without the web: %s.\n", why)
+		return nil, nil
+	}
+	if rt := pol.Docker.Runtime; rt != "" && len(pol.Docker.Resolvers) == 0 {
+		return without(fmt.Sprintf("under the %s runtime the web tools need the host's name servers in your runner policy's docker.resolvers", rt))
+	}
+	w, state, err := drafter.LocalWeb(pol, "")
+	switch {
+	case errors.Is(err, drafter.ErrNoJevKey):
+		return without(fmt.Sprintf("AI Review reads every result first, which takes your own TypeSafe Jev key, and none was found ($%s, or the keychain entry %s)",
+			pol.Judge.KeyEnv(), modelkey.Account(policy.JudgeKeyProvider)))
+	case err != nil:
+		return nil, engine.Classify(engine.ExitPolicy, err)
+	case state == drafter.SearchNoProvider:
+		return without("your runner policy's webSearch block names no search provider")
+	case state == drafter.SearchNoKey:
+		return without(fmt.Sprintf("no %s key in $%s", pol.WebSearch.ProviderName(), pol.WebSearch.KeyEnv()))
+	}
+	_, _ = fmt.Fprintf(errOut, "The Creator may search the web with %s and your key; AI Review reads every result first, with your Jev key.\n"+
+		"Searching can raise what a build costs. It searches only for what the documents and the pack do not hold.\n", pol.WebSearch.ProviderName())
+	return w, nil
 }
 
 // finishDirBuild reports a build into a plain pack directory.
@@ -343,8 +467,8 @@ func createKept(cmd *cobra.Command, name string, o *knowledgeBuildOpts) error {
 // addKept opens a kept pack into a 0700 directory inside the store, runs
 // the Creator over it, and seals the result back under the same key.
 func addKept(cmd *cobra.Command, name string, o *knowledgeBuildOpts) error {
-	if len(o.files) == 0 {
-		return engine.Classify(engine.ExitUsage, errors.New("name the documents to ingest with --file PATH (repeatable)"))
+	if _, err := o.readBrief(); err != nil {
+		return err
 	}
 	s, err := knowledgeStore(cmd)
 	if err != nil {

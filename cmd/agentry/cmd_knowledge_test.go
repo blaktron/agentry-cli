@@ -18,7 +18,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 func TestKnowledgeCommands(t *testing.T) {
@@ -42,7 +44,7 @@ func TestKnowledgeCommands(t *testing.T) {
 		if err == nil {
 			t.Fatal("the build went through a docker client that refuses")
 		}
-		warning := strings.Index(stderr, "nothing it reads or writes is scanned")
+		warning := strings.Index(stderr, "neither the documents nor the pack it makes are scanned")
 		if warning < 0 {
 			t.Fatalf("no warning in stderr:\n%s", stderr)
 		}
@@ -254,4 +256,149 @@ func runexecLastJSONObject(out string) ([]byte, bool) {
 		}
 	}
 	return nil, false
+}
+
+// TestKnowledgeBuildBriefAndWeb (agentry-cli#523; plan
+// knowledge-and-drafter.md D15, D16): a build takes documents, a brief, or
+// both; the web is on by default with no documents and off with them, and
+// a build that cannot have AI Review read every result runs without it and
+// says why; a hosted build searches through the registry with the job's
+// credential.
+func TestKnowledgeBuildBriefAndWeb(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	doc := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(doc, []byte("# notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pol := policy.Default()
+	pol.WebSearch = policy.WebSearchKey{Provider: "brave"}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	env := &receipt.Envelope{Agentry: receipt.EnvelopeVersion, Status: "ok", RunID: "r1", Ref: localrun.KnowledgeCreator().Ref(),
+		Attestation: receipt.Attestation{State: "builtin"}, Result: receipt.TextResult("done")}
+	create := func(args ...string) (build.Options, string, error) {
+		t.Helper()
+		got := creatorBuilds(t, env, nil)
+		base := []string{"knowledge", "create", "notes", "--dir", filepath.Join(t.TempDir(), "n"), "--policy", policyPath}
+		_, stderr, err := runCLI(t, nil, append(base, args...)...)
+		if len(*got) == 0 {
+			return build.Options{}, stderr, err
+		}
+		return (*got)[0], stderr, err
+	}
+
+	t.Run("neither documents nor a brief", func(t *testing.T) {
+		_, _, err := create()
+		wantClassified(t, err, engine.ExitUsage)
+		if !strings.Contains(err.Error(), "documents, a brief, or both") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a brief past 8 KiB, from a file", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "brief.txt")
+		_ = os.WriteFile(f, []byte(strings.Repeat("b", build.MaxBriefBytes+1)), 0o644)
+		_, _, err := create("--brief-file", f)
+		wantClassified(t, err, engine.ExitUsage)
+	})
+	t.Run("--brief and --brief-file together", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "brief.txt")
+		_ = os.WriteFile(f, []byte("x"), 0o644)
+		_, _, err := create("--brief", "y", "--brief-file", f)
+		wantClassified(t, err, engine.ExitUsage)
+	})
+	t.Run("--web and --no-web together", func(t *testing.T) {
+		_, _, err := create("--brief", "y", "--web", "--no-web")
+		wantClassified(t, err, engine.ExitUsage)
+	})
+
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	t.Setenv(policy.BraveSearchKeyEnv, "brave-person-search-key")
+	t.Run("a brief alone searches the web, warned", func(t *testing.T) {
+		o, stderr, err := create("--brief", "  Cold-chain alarms, for night operators. ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.Brief != "Cold-chain alarms, for night operators." || len(o.Documents) != 0 {
+			t.Fatalf("options %+v", o)
+		}
+		if o.Web == nil || o.Web.Scan != toolsrv.WebScanJev || o.Web.JevKey != testJev || o.Web.Search != "brave" ||
+			o.Web.SearchKey != "brave-person-search-key" || o.Web.Registry != "" {
+			t.Fatalf("web %+v", o.Web)
+		}
+		for _, want := range []string{"Warning: no documents. Specific documents make the best knowledge.", "which can be wrong or out of date",
+			"may search the web with Brave", "Searching can raise what a build costs"} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("stderr lacks %q:\n%s", want, stderr)
+			}
+		}
+		if strings.Contains(stderr, testJev) || strings.Contains(stderr, "brave-person-search-key") {
+			t.Fatal("a key on stderr")
+		}
+	})
+	t.Run("documents are built without the web unless it is asked for", func(t *testing.T) {
+		o, stderr, err := create("--file", doc)
+		if err != nil || o.Web != nil || strings.Contains(stderr, "Warning: no documents") {
+			t.Fatalf("%v web %+v\n%s", err, o.Web, stderr)
+		}
+		o, _, err = create("--file", doc, "--web", "--brief", "Also the day shift.")
+		if err != nil || o.Web == nil || o.Brief != "Also the day shift." {
+			t.Fatalf("%v %+v", err, o)
+		}
+		o, _, err = create("--brief", "x", "--no-web")
+		if err != nil || o.Web != nil {
+			t.Fatalf("%v web %+v", err, o.Web)
+		}
+	})
+	t.Run("an add with a brief alone is built without the web unless asked", func(t *testing.T) {
+		// The pack being extended holds documents, which searches would
+		// carry to the search provider (D16).
+		dir := filepath.Join(t.TempDir(), "p")
+		layDownTestPack(t, "notes", dir)
+		stop := errors.New("the test stops the build here")
+		add := func(args ...string) build.Options {
+			got := creatorBuilds(t, env, stop)
+			if _, stderr, err := runCLI(t, nil, append([]string{"knowledge", "add", dir, "--policy", policyPath}, args...)...); !errors.Is(err, stop) {
+				t.Fatalf("%v\n%s", err, stderr)
+			}
+			return (*got)[0]
+		}
+		if o := add("--brief", "Also the day shift."); o.Web != nil || o.Brief != "Also the day shift." {
+			t.Fatalf("%+v", o)
+		}
+		if o := add("--brief", "Also the day shift.", "--web"); o.Web == nil {
+			t.Fatal("--web was not honoured on add")
+		}
+	})
+	t.Run("without a search key it builds without the web, and says why", func(t *testing.T) {
+		t.Setenv(policy.BraveSearchKeyEnv, "")
+		o, stderr, err := create("--brief", "x")
+		if err != nil || o.Web != nil || !strings.Contains(stderr, "builds without the web: no Brave key in $BRAVE_API_KEY") {
+			t.Fatalf("%v web %+v\n%s", err, o.Web, stderr)
+		}
+	})
+	t.Run("without a Jev key it builds without the web, and says why", func(t *testing.T) {
+		t.Setenv(policy.DefaultJudgeKeyEnv, "")
+		o, stderr, err := create("--brief", "x")
+		if err != nil || o.Web != nil || !strings.Contains(stderr, "builds without the web: AI Review reads every result first") {
+			t.Fatalf("%v web %+v\n%s", err, o.Web, stderr)
+		}
+	})
+	t.Run("hosted: the registry's search and scan, with the job's credential", func(t *testing.T) {
+		t.Setenv(envJobToken, "")
+		_, _, err := create("--brief", "x", "--hosted")
+		wantClassified(t, err, engine.ExitPolicy)
+		t.Setenv(envJobToken, "agyj_the-job")
+		o, _, err := create("--brief", "x", "--hosted")
+		if err != nil || o.Web == nil || o.Web.Scan != toolsrv.WebScanRegistry || o.Web.Search != toolsrv.WebScanRegistry ||
+			o.Web.JobToken != "agyj_the-job" || o.Web.JevKey != "" || o.Web.SearchKey != "" || o.Web.Registry == "" {
+			t.Fatalf("%v web %+v", err, o.Web)
+		}
+		// A hosted build with documents and no --web needs no credential.
+		t.Setenv(envJobToken, "")
+		if o, _, err = create("--file", doc, "--hosted"); err != nil || o.Web != nil {
+			t.Fatalf("%v web %+v", err, o.Web)
+		}
+	})
 }

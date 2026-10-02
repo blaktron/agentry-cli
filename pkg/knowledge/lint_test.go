@@ -83,6 +83,14 @@ func TestLintFindings(t *testing.T) {
 			want: "wiki/topics/cite.md|citation|11|doc:missing.pdf"},
 		{name: "a citation key of another kind", files: map[string]string{"wiki/topics/key.md": page("Key", "s", "claim [src: url:https://x.test]\n")},
 			want: "wiki/topics/key.md|citation|11|doc:<path>"},
+		{name: "a web citation that is not an address", files: map[string]string{"wiki/topics/web.md": page("Web", "s", "claim [src: web:ftp://x.test/a]\n")},
+			want: "wiki/topics/web.md|citation|11|web:<an http or https address>"},
+		{name: "a web citation with no host", files: map[string]string{"wiki/topics/web2.md": page("Web two", "s", "claim [src: web:https:/nohost]\n")},
+			want: "wiki/topics/web2.md|citation|11|web:<an http or https address>"},
+		{name: "a web citation carrying a login", files: map[string]string{"wiki/topics/web3.md": page("Web three", "s", "claim [src: web:https://u:p@x.test/]\n")},
+			want: "wiki/topics/web3.md|citation|11|web:<an http or https address>"},
+		{name: "a model citation with something after it", files: map[string]string{"wiki/topics/mod.md": page("Mod", "s", "claim [src: models]\n")},
+			want: "wiki/topics/mod.md|citation|11|web:<url> or model"},
 		{name: "a file that is not a page", files: map[string]string{"wiki/topics/pic.png": "\x89PNG"},
 			want: "wiki/topics/pic.png|layout|0|only markdown"},
 	}
@@ -102,6 +110,18 @@ func TestLintFindings(t *testing.T) {
 			t.Fatalf("no finding %q among %v", tc.want, got)
 		})
 	}
+
+	t.Run("web and model citations are declared keys", func(t *testing.T) {
+		// agentry-cli#523 (plan knowledge-and-drafter.md D17): a page the
+		// Creator read on the web, and what its model knew, name no source.
+		root := goodPack(t)
+		write(t, root, map[string]string{"wiki/topics/web.md": page("Web", "s",
+			"A fact [src: web:https://docs.example.com/a?b=c#d].\nAnother [src: model].\nBoth [src: doc:guide.txt; web:http://x.test/; model].\n")})
+		regenerate(t, root, "aws-docs")
+		if fs := lintOf(t, root); len(fs) != 0 {
+			t.Fatalf("findings: %v", fs)
+		}
+	})
 
 	t.Run("links in code are not links", func(t *testing.T) {
 		root := goodPack(t)

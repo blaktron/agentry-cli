@@ -121,13 +121,21 @@ func LocalMeta(dir string) (*installdir.Meta, error) {
 // Builtin is only ever one of Builtins(): nothing else — a directory, a
 // release, a record on disk — can run with the attestation state builtin,
 // and nothing else can be granted the web tools, which ride on the Builtin
-// value itself (plan builder-rework.md D6, §7.3), as does the review grant
-// (plan desktop-review-key-and-run-cards.md §6.2; agentry-cli#503).
+// value itself (plan builder-rework.md D6, §7.3; the Knowledge Creator's
+// since agentry-cli#523), as does the review grant (plan
+// desktop-review-key-and-run-cards.md §6.2; agentry-cli#503).
 type Builtin struct {
 	namespace, name, version string
 	fsys                     fs.FS
-	// web grants the web tools: the Drafter's alone.
+	// web grants the web tools, web_search and web_read: the Drafter's and
+	// the Knowledge Creator's (plan knowledge-and-drafter.md D6).
 	web bool
+	// registry adds registry_search to them: the Drafter's alone.
+	registry bool
+	// searchedOnly holds web_read to the addresses the run's searches
+	// returned: the Knowledge Creator's, whose model reads documents no
+	// one scanned (agentry-cli#523).
+	searchedOnly bool
 	// review grants ai_review and scanned reads of the inputs, with the
 	// person's own TypeSafe key (compile.Inputs.Review): the Examiner's
 	// alone (agentry-cli#504).
@@ -137,16 +145,20 @@ type Builtin struct {
 	localTimeoutFloor int
 }
 
-// KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator).
+// KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
+// granted web_search and web_read since agentry-cli#523 (plan
+// knowledge-and-drafter.md D6): a build that does not search the web runs
+// it WithoutWebTools.
 func KnowledgeCreator() Builtin {
-	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS(),
+	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS(), web: true, searchedOnly: true,
 		localTimeoutFloor: creator.LocalTimeoutFloorSeconds}
 }
 
 // Drafter is the Drafter (pkg/drafter), the second built-in package (plan
-// builder-rework.md D6), and the one granted the web tools.
+// builder-rework.md D6), granted the web tools and registry_search, which
+// is its alone.
 func Drafter() Builtin {
-	return Builtin{namespace: drafter.Namespace, name: drafter.Name, version: drafter.Version, fsys: drafter.FS(), web: true,
+	return Builtin{namespace: drafter.Namespace, name: drafter.Name, version: drafter.Version, fsys: drafter.FS(), web: true, registry: true,
 		localTimeoutFloor: drafter.LocalTimeoutFloorSeconds}
 }
 
@@ -166,10 +178,11 @@ func Examiner() Builtin {
 }
 
 // WithoutWebTools is the same package with no web tools: the Drafter's
-// repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing. A
+// repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing,
+// and a knowledge build that does not search the web (agentry-cli#523). A
 // grant can only be taken away here, never given.
 func (b Builtin) WithoutWebTools() Builtin {
-	b.web = false
+	b.web, b.registry, b.searchedOnly = false, false, false
 	return b
 }
 
@@ -320,9 +333,13 @@ type PlanInputs struct {
 	// CompiledBy is the build identity of the client compiling: a plan
 	// another build compiled is recompiled.
 	CompiledBy string
-	// Web grants the web tools (compile.Inputs.Web): set from a Builtin
-	// that carries them, never from anything a caller passes in.
-	Web bool
+	// Web grants the web tools (compile.Inputs.Web), and RegistrySearch
+	// registry_search with them: set from a Builtin that carries them,
+	// never from anything a caller passes in.
+	Web, RegistrySearch bool
+	// WebSearchedOnly holds web_read to the run's search results
+	// (compile.Inputs.WebSearchedOnly), likewise.
+	WebSearchedOnly bool
 	// Review grants the review grant (compile.Inputs.Review), likewise.
 	Review bool
 	Log    io.Writer
@@ -388,6 +405,8 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.PolicySHA256 == in.PolicySHA &&
 			plan.Harness.Adapter == in.Adapter &&
 			plan.Capabilities.WebTools == in.Web &&
+			plan.Capabilities.RegistrySearch == in.RegistrySearch &&
+			plan.Capabilities.WebSearchedOnly == in.WebSearchedOnly &&
 			plan.Capabilities.ReviewTools == in.Review &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
 			switch {
@@ -416,20 +435,22 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	// first: a removal here could run into another process's compile of
 	// the same plan (agentry-cli#289).
 	plan, err := compile.Compile(compile.Inputs{
-		Manifest:     in.Manifest,
-		Mode:         in.Mode,
-		Digest:       in.Meta.Digest,
-		Source:       in.Meta.Source,
-		WorkspaceDir: in.WorkspaceDir,
-		Policy:       in.Policy,
-		PolicySHA:    in.PolicySHA,
-		AdapterName:  in.Adapter,
-		RunnerImage:  runnerImage,
-		CompiledBy:   in.CompiledBy,
-		MCPServers:   in.Servers,
-		Web:          in.Web,
-		Review:       in.Review,
-		IntegrityKey: key,
+		Manifest:        in.Manifest,
+		Mode:            in.Mode,
+		Digest:          in.Meta.Digest,
+		Source:          in.Meta.Source,
+		WorkspaceDir:    in.WorkspaceDir,
+		Policy:          in.Policy,
+		PolicySHA:       in.PolicySHA,
+		AdapterName:     in.Adapter,
+		RunnerImage:     runnerImage,
+		CompiledBy:      in.CompiledBy,
+		MCPServers:      in.Servers,
+		Web:             in.Web,
+		RegistrySearch:  in.RegistrySearch,
+		WebSearchedOnly: in.WebSearchedOnly,
+		Review:          in.Review,
+		IntegrityKey:    key,
 	}, planDir)
 	if err != nil {
 		var refusal *compile.PolicyRefusal
@@ -538,7 +559,8 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	plan, planDir, err := EnsurePlan(PlanInputs{
 		Home: r.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: r.Policy, PolicySHA: r.PolicySHA, Adapter: adapterName, Mode: manifest.ModeAutonomous,
-		CompiledBy: r.Build, Web: r.Builtin.web, Review: r.Builtin.review, Log: logw,
+		CompiledBy: r.Build, Web: r.Builtin.web, RegistrySearch: r.Builtin.registry,
+		WebSearchedOnly: r.Builtin.searchedOnly, Review: r.Builtin.review, Log: logw,
 	})
 	if err != nil {
 		return nil, err

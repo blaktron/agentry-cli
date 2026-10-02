@@ -255,7 +255,7 @@ func (s *Spec) GrantedTools() []string {
 			names = append(names, ToolWebSearch)
 		}
 		names = append(names, ToolWebRead)
-		if s.Web.Registry != "" {
+		if s.Web.RegistrySearch && s.Web.Registry != "" {
 			names = append(names, ToolRegistrySearch)
 		}
 	}
