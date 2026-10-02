@@ -103,8 +103,9 @@ which.
   keychain it makes and deletes, signs each binary under the hardened
   runtime with Apple's timestamp and the identifier `net.secureagentry.cli`,
   checks the identity and Team ID `release.env` names, notarizes a zip of
-  each and waits for `Accepted`, and asks Gatekeeper (`spctl`) for
-  `Notarized Developer ID`. A bare binary cannot be stapled, so macOS checks
+  each and waits for `Accepted`, and asks Gatekeeper for `Notarized Developer
+  ID` (`spctl --type open --context context:primary-signature`, and `codesign
+  --check-notarization`; `spctl --type execute` rejects every bare binary). A bare binary cannot be stapled, so macOS checks
   the ticket online when a browser-downloaded copy first runs; a binary
   fetched with `curl` is never checked. `BUILD-INFO` says
   `signed_darwin=developer-id TEAM=<id> notarized=true`, or nothing when the
