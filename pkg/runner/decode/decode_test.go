@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -32,13 +31,6 @@ func TestImageSpecBuildsOnTheFilesImageOffline(t *testing.T) {
 		"ENTRYPOINT [\"/usr/local/bin/agentry-runner\"]\n"
 	if got := s.Dockerfile(); got != want {
 		t.Fatalf("Dockerfile =\n%s\nwant\n%s", got, want)
-	}
-	// No step that reaches a network: the base is pulled before the
-	// build, the runner image is local, and nothing is installed.
-	for _, word := range []string{"apk", "apt", "curl", "wget", "pip", "npm", "http"} {
-		if strings.Contains(strings.ToLower(s.Dockerfile()), word) {
-			t.Errorf("the decode image's build mentions %q", word)
-		}
 	}
 }
 
@@ -82,9 +74,23 @@ func TestEnsurePullsTheFilesImageByDigestAndBuildsOnce(t *testing.T) {
 	}
 }
 
+// The files image already on this machine (another runner version built on
+// it) is not pulled again; only the new local layer is built.
+func TestEnsureDoesNotPullAFilesImageItHas(t *testing.T) {
+	s := ImageSpec("agentry-runner:new", testFiles)
+	f := &dockerx.Fake{ExistingImages: map[string]bool{testFiles: true}, ImageFiles: map[string]string{s.Tag + ":" + FilesPackagesFile: "pandoc-cli-3.6.4-r0\n"}}
+	if _, err := Ensure(context.Background(), f, "agentry-runner:new", ensurePolicy(), t.TempDir(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(callsOf(f, "Pull")) != 0 || len(callsOf(f, "Build")) != 1 {
+		t.Fatalf("pulls %v builds %v", callsOf(f, "Pull"), callsOf(f, "Build"))
+	}
+}
+
 func TestEnsureRetriesThePullAndSaysWhatFailed(t *testing.T) {
+	saved := pullBackoff
 	pullBackoff = 0
-	t.Cleanup(func() { pullBackoff = 5 * time.Second })
+	t.Cleanup(func() { pullBackoff = saved })
 	f := &dockerx.Fake{FailPull: map[string]error{testFiles: errors.New("connection reset by peer")}}
 	_, err := Ensure(context.Background(), f, "agentry-runner:abc", ensurePolicy(), t.TempDir(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "could not pull the files image "+testFiles) || !strings.Contains(err.Error(), "connection reset by peer") {

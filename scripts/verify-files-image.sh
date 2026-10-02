@@ -8,7 +8,9 @@
 # DefaultFilesImage from pkg/runner/policy/policy.go and runs
 # `cosign verify` against that workflow's keyless identity on main. CI runs
 # it on every pull request, so a pin to an unsigned or foreign digest cannot
-# merge. The sandbox hosts run the same verify when they pre-pull the image.
+# merge. The sandbox hosts are to run the same verify when they pre-pull the
+# image (agentry-web#946). It checks this CLI's default only: an operator's
+# images.files is pinned by digest, and its signature is the operator's.
 #
 # Needs cosign and the network (the registry and Sigstore). Exit 0 when the
 # pin verifies, 1 otherwise.

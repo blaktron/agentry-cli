@@ -57,9 +57,9 @@ const FilesPackagesFile = "/etc/agentry/files/packages"
 
 // Spec is the decode image this machine builds: the files image, pinned by
 // digest and pulled, with this CLI's runner binary copied in and the result
-// minimized to the decoders and the runner. The build has no network step
-// (the base is pulled first, the runner image is local), so it cannot fail
-// as a run-time `apk add` did (agentry-cli#559; plan file-handling.md §1.1).
+// minimized to the decoders and the runner. The build installs nothing
+// (the base is pulled first, by digest, and the runner image is local), so
+// it cannot fail as a run-time `apk add` did (agentry-cli#559; plan file-handling.md §1.1).
 type Spec struct {
 	// Tag is the local tag, which moves with the whole build.
 	Tag string
@@ -137,7 +137,7 @@ func Ensure(ctx context.Context, d dockerx.Client, runnerImage string, pol *poli
 		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(s.Dockerfile()), 0o600); err != nil {
 			return Image{}, fmt.Errorf("the decode image's context: %w", err)
 		}
-		_, _ = fmt.Fprintf(logw, "building %s (the files image %s with this CLI's runner, minimized; no network)\n", s.Tag, files)
+		_, _ = fmt.Fprintf(logw, "building %s (the files image %s with this CLI's runner, minimized; nothing is installed)\n", s.Tag, files)
 		if err := d.Build(ctx, dir, s.Tag, nil); err != nil {
 			return Image{}, fmt.Errorf("build the decode image %s on %s: %w", s.Tag, files, err)
 		}

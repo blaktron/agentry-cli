@@ -383,20 +383,17 @@ func (i Images) FilesImage() string {
 	return DefaultFilesImage
 }
 
-// PinnedByDigest says whether an image ref ends in @sha256:<64 lowercase
-// hex>, so a pull of it can only yield those bytes.
-func PinnedByDigest(ref string) bool {
-	_, digest, ok := strings.Cut(ref, "@sha256:")
-	if !ok || len(digest) != 64 || strings.Contains(digest, "@") {
-		return false
-	}
-	for _, c := range digest {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
+// pinnedRE is an image reference pinned by digest, anchored at both ends so
+// no line can ride before the digest into a Dockerfile FROM: a lowercase
+// name (registry, port and path), an optional tag, @sha256 and 64 lowercase
+// hex. One grammar for every digest-pinned image a build names (images.files
+// here; images.unsafe through unsafeexec.ValidBase).
+var pinnedRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$`)
+
+// PinnedByDigest says whether ref is an image reference pinned by digest,
+// so a pull of it can only yield those bytes and it is safe to write after
+// a FROM.
+func PinnedByDigest(ref string) bool { return pinnedRE.MatchString(ref) }
 
 // UnsafeImage is the Unsafe Mode base this policy names: images.unsafe,
 // else the CLI's pinned default. Resolved at use rather than written into

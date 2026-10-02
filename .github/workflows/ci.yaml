@@ -183,12 +183,6 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/gitconfig"
 
-  # Secret scanning (agentry-cli#165): gitleaks over the commits this event
-  # brings — a pull request's own range, or a push's before..after — with the
-  # repository's .gitleaks.toml, failing on any hit. The binary is the release
-  # tarball at the pinned version, checked against the pinned checksum before
-  # it runs (the runner image's copy is not relied on). --redact: a hit names
-  # the file, line and rule, never the value.
   # The pinned files image is the one agentry-dockerimages' files workflow
   # signed (agentry-cli#559): a run pulls it by digest only, so this holds
   # the pin itself to the signature, on every pull request. It needs the
@@ -204,6 +198,12 @@ jobs:
       - name: The pinned files image is signed by the files workflow on main
         run: ./scripts/verify-files-image.sh
 
+  # Secret scanning (agentry-cli#165): gitleaks over the commits this event
+  # brings — a pull request's own range, or a push's before..after — with the
+  # repository's .gitleaks.toml, failing on any hit. The binary is the release
+  # tarball at the pinned version, checked against the pinned checksum before
+  # it runs (the runner image's copy is not relied on). --redact: a hit names
+  # the file, line and rule, never the value.
   gitleaks:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
