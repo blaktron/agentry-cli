@@ -28,7 +28,8 @@
 #     agentry-desktop D-032) when the five signing variables are set
 #     (agentry-cli#197), and ships unsigned when none is;
 #   - the two darwin binaries are Developer ID-signed under the hardened
-#     runtime and notarized on the Mac runner (agentry-cli#198, DR-59) when
+#     runtime and notarized on the Mac runner (agentry-cli#198, DR-59), for a
+#     production release only (a dev prerelease skips Apple, agentry-cli#570), when
 #     the release environment's five APPLE_* secrets are set, and ship as
 #     built when none is;
 #   - SHA256SUMS is signed with the estate's update-signing key by the
@@ -237,7 +238,17 @@ jobs:
             h="HAS_$v"
             if [ "${!h}" = true ]; then set_=$((set_ + 1)); else unset_="$unset_ $v"; fi
           done
+          # A dev prerelease never waits on Apple's notary queue: the dev
+          # channel takes unsigned darwin binaries, as it did before
+          # agentry-cli#198, and only production's vX.Y.Z signs them
+          # (agentry-cli#570, DR-59's addendum). AGENTRY_REQUIRE_SIGNING
+          # holds production alone to the Apple step.
+          if [ "$AGENTRY_RELEASE_CHANNEL" = dev ]; then
+            set_=dev
+          fi
           case "$set_" in
+            dev) echo "darwin=none" >> "$GITHUB_OUTPUT"
+                 echo "::notice::A dev prerelease: the darwin binaries ship unsigned and are not notarized (an empty signed_darwin= in BUILD-INFO); only a production release signs them (agentry-cli#570)." ;;
             5) echo "darwin=sign" >> "$GITHUB_OUTPUT"; echo "macOS: Developer ID and notarization on the Mac runner" ;;
             0) [ "$REQUIRE_SIGNING" != true ] || { echo "::error::AGENTRY_REQUIRE_SIGNING is true and no Apple signing secret is set in the release environment (agentry-cli#198)"; exit 1; }
                echo "darwin=none" >> "$GITHUB_OUTPUT"
@@ -612,7 +623,11 @@ jobs:
             *) echo "::error::BUILD-INFO signed_windows='$win' is neither empty nor authenticode"; exit 1 ;;
           esac
           case "$mac" in
-            "") macl="not signed or notarised: no Apple signing credential is configured (agentry-cli#198)" ;;
+            "") if [ "$CHANNEL" = dev ]; then
+                  macl="not signed or notarised: a dev prerelease skips Apple's signing and notary queue, and only a production release signs them (agentry-cli#570)"
+                else
+                  macl="not signed or notarised: no Apple signing credential is configured (agentry-cli#198)"
+                fi ;;
             "developer-id TEAM="*" notarized=true") t=${mac#*TEAM=}; macl="Developer ID-signed under the hardened runtime and notarised by Apple (Team ID ${t%% *}). A bare binary cannot be stapled, so macOS checks the notarisation online the first time a browser-downloaded copy runs" ;;
             *) echo "::error::BUILD-INFO signed_darwin='$mac' is neither empty nor developer-id"; exit 1 ;;
           esac
