@@ -1,10 +1,13 @@
 # The Knowledge Creator
 
 The Knowledge Creator is the QuickAgent that builds **knowledge packs**. You
-give it documents, and it compiles them into a small wiki of short, cited
-markdown pages. A QuickAgent run can then search that wiki to answer
-questions. Adding documents to an existing pack runs it again, and it
-rewrites only the pages the new documents change.
+give it documents, a brief (what the pack should cover and for whom), or
+both, and it compiles them into a small wiki of short, cited markdown pages.
+A QuickAgent run can then search that wiki to answer questions. Adding
+documents to an existing pack runs it again, and it rewrites only the pages
+the new documents change. Specific documents make the best knowledge:
+without them it researches the web and its own knowledge, which can be
+wrong or out of date.
 
 ## This is the package that runs
 
@@ -33,10 +36,21 @@ one data category, `files`. When Agentry builds a pack:
 - **During the run**, when it extends an existing pack, it can read the pack
   as it stands with `knowledge_list`, `knowledge_search` and
   `knowledge_read`. It writes each page with `write_report`.
+- **When the build searches the web** (the default for a build with no
+  documents, a choice for one with them), the application grants it two
+  tools its manifest does not declare: `web_search` and `web_read`. AI Review
+  reads every search result and every page before the model does, and one it
+  flags, or cannot scan, is withheld. On your computer that takes your own
+  TypeSafe key and a search key; in Agentry the registry searches and scans.
+  It cites a page it read as `[src: web:<url>]` and keeps no copy of it, and
+  cites what its model knows as `[src: model]`. A brief is kept in the pack
+  as `sources/brief.md`.
 - **After the run**, the application checks every page and drops any that
   break the pack's rules, regenerates the index and appends the log. A pack
   built in Agentry is scanned before it is final.
 
-`INSTRUCTION.md` is the instruction the model follows. It covers how pages
-are named, how they cite the documents, and why the pack is written one
-document at a time, so a build stopped by its budget keeps what it wrote.
+`INSTRUCTION.md` is the instruction the model follows. It covers where its
+knowledge comes from (the documents, then the pack, then the web, then its
+own), how pages are named and cited, and why the pack is written one
+document or subject at a time, so a build stopped by its budget keeps what
+it wrote.

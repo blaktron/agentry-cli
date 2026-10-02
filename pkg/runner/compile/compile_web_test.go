@@ -36,6 +36,79 @@ func compileWeb(t *testing.T, yaml, source string, web bool) (*spec.Plan, string
 	return compileWebWith(t, yaml, source, web, nil)
 }
 
+// compileWebRegistry is compileWeb with registry_search asked for too, as
+// localrun asks for the Drafter.
+func compileWebRegistry(t *testing.T, web, registry bool) (*spec.Plan, error) {
+	t.Helper()
+	return compileWebGrant(t, web, registry, false)
+}
+
+// compileWebGrant is compileWebRegistry with the searched-only web_read too.
+func compileWebGrant(t *testing.T, web, registry, searchedOnly bool) (*spec.Plan, error) {
+	t.Helper()
+	m, err := manifest.Parse([]byte(webTextAgent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "AGENT.md"), []byte("Draft.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return Compile(Inputs{Manifest: m, Digest: "sha256:x", Source: "builtin", Web: web, RegistrySearch: registry, WebSearchedOnly: searchedOnly, WorkspaceDir: ws,
+		Policy: policy.Default(), PolicySHA: "sha", RunnerImage: "agentry-runner:test"}, filepath.Join(t.TempDir(), "plan"))
+}
+
+// TestRegistrySearchIsCompiledApart (agentry-cli#523): registry_search is
+// compiled on its own, the Drafter's alone, so the Knowledge Creator's web
+// tools are web_search and web_read; it is never granted without them, and
+// the plan's enforcement and System Prompt name it only when it is granted.
+func TestRegistrySearchIsCompiledApart(t *testing.T) {
+	_, err := compileWebRegistry(t, false, true)
+	var refusal *PolicyRefusal
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "never granted without them") {
+		t.Fatalf("registry_search without the web tools: %v", err)
+	}
+	creator, err := compileWebRegistry(t, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drafter, err := compileWebRegistry(t, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !creator.Capabilities.WebTools || creator.Capabilities.RegistrySearch || !drafter.Capabilities.RegistrySearch {
+		t.Fatalf("creator %+v drafter %+v", creator.Capabilities, drafter.Capabilities)
+	}
+	if strings.Contains(creator.Enforcement["web"], toolsrv.ToolRegistrySearch) || !strings.Contains(drafter.Enforcement["web"], toolsrv.ToolRegistrySearch) {
+		t.Fatalf("enforcement: creator %q drafter %q", creator.Enforcement["web"], drafter.Enforcement["web"])
+	}
+	if strings.Contains(creator.Enforcement["web"], "Drafter") {
+		t.Fatalf("the Creator's enforcement names the Drafter: %q", creator.Enforcement["web"])
+	}
+
+	// The searched-only web_read (the Creator's): never without the web
+	// tools, compiled into the tools spec, and said in the enforcement and
+	// the System Prompt.
+	if _, err := compileWebGrant(t, false, false, true); !errors.As(err, &refusal) {
+		t.Fatalf("the searched-only web_read without the web tools: %v", err)
+	}
+	only, err := compileWebGrant(t, true, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !only.Capabilities.WebSearchedOnly || drafter.Capabilities.WebSearchedOnly || creator.Capabilities.WebSearchedOnly {
+		t.Fatalf("searched-only: %+v", only.Capabilities)
+	}
+	if !strings.Contains(only.Enforcement["web"], "opening only an address a web_search of this run returned") ||
+		strings.Contains(drafter.Enforcement["web"], "opening only") {
+		t.Fatalf("enforcement %q", only.Enforcement["web"])
+	}
+	if !strings.Contains(systemPrompt(promptFacts{caps: only.Capabilities}), "web_read opens only an address one of your web_search results gave") ||
+		strings.Contains(systemPrompt(promptFacts{caps: drafter.Capabilities}), "web_read opens only") {
+		t.Fatal("the System Prompt does not say the searched-only rule, or says it to the Drafter")
+	}
+}
+
 // compileWebWith is compileWeb with the policy edited first.
 func compileWebWith(t *testing.T, yaml, source string, web bool, edit func(*policy.Policy)) (*spec.Plan, string, error) {
 	t.Helper()
@@ -67,7 +140,7 @@ func TestCompileRefusesTheWebToolsToARelease(t *testing.T) {
 	for _, source := range []string{"registry", "local", ""} {
 		_, _, err := compileWeb(t, webTextAgent, source, true)
 		var refusal *PolicyRefusal
-		if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "built-in Drafter's alone") {
+		if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "the built-ins' alone") {
 			t.Fatalf("source %q: %v", source, err)
 		}
 	}

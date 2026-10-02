@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +17,12 @@ import (
 // check that every citation resolves to a document under sources/, since a
 // pack keeps its sources so that its citations resolve (plan D8). The
 // Creator's apply step drops a page that fails, never the whole build.
+//
+// Two citation keys name no source and are declared instead (plan
+// knowledge-and-drafter.md D17; agentry-cli#523): web:<url>, a page the
+// Creator read on the web and compiled in its own words, whose text the
+// pack does not keep, and model, what the Creator's model wrote from its
+// own knowledge.
 
 // Rule names what a finding is about.
 type Rule string
@@ -174,10 +181,19 @@ func lintPage(rel, text string, present map[string]bool) []Finding {
 					continue
 				}
 				key := fields[0]
+				if key == citeModel {
+					continue
+				}
+				if u, isWeb := strings.CutPrefix(key, citeWeb); isWeb {
+					if !validWebCitation(u) {
+						out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleCitation, Message: "citation " + key + " is not web:<an http or https address>"})
+					}
+					continue
+				}
 				src, isDoc := strings.CutPrefix(key, citeSource)
 				switch {
 				case !isDoc:
-					out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleCitation, Message: "citation key " + key + " is not doc:<path> under sources/"})
+					out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleCitation, Message: "citation key " + key + " is not doc:<path> under sources/, web:<url> or model"})
 				case !validSourcePath(src):
 					out = append(out, Finding{Page: rel, Line: i + 1, Rule: RuleCitation, Message: "citation " + key + " is not a path under sources/"})
 				case !present[SourcesDir+"/"+src]:
@@ -189,8 +205,19 @@ func lintPage(rel, text string, present map[string]bool) []Finding {
 	return out
 }
 
-// citeSource is the citation key prefix for a source document.
-const citeSource = "doc:"
+// The citation keys: a source document, a web page, the model.
+const (
+	citeSource = "doc:"
+	citeWeb    = "web:"
+	citeModel  = "model"
+)
+
+// validWebCitation says whether a web: citation names an http or https
+// address with a host.
+func validWebCitation(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil
+}
 
 func validSourcePath(p string) bool {
 	return p != "" && !strings.HasPrefix(p, "/") && path.Clean(p) == p && p != ".." && !strings.HasPrefix(p, "../")

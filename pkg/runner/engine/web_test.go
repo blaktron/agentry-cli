@@ -54,6 +54,14 @@ const (
 // Drafter, and a run of it with a local draft's keys.
 func webFixture(t *testing.T) (Params, *dockerx.Fake) {
 	t.Helper()
+	return webFixtureFor(t, true)
+}
+
+// webFixtureFor is webFixture with registry_search granted or not: the
+// Knowledge Creator's web tools are the Drafter's without it
+// (agentry-cli#523).
+func webFixtureFor(t *testing.T, registrySearch bool) (Params, *dockerx.Fake) {
+	t.Helper()
 	m, err := manifest.Parse([]byte(webManifest))
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +78,7 @@ func webFixture(t *testing.T) (Params, *dockerx.Fake) {
 	pol.Images.Runner = "agentry-runner:test"
 	planDir := filepath.Join(installDir, "plan")
 	plan, err := compile.Compile(compile.Inputs{
-		Manifest: m, Digest: "sha256:d4af7", Source: "builtin", Web: true,
+		Manifest: m, Digest: "sha256:d4af7", Source: "builtin", Web: true, RegistrySearch: registrySearch, WebSearchedOnly: !registrySearch,
 		WorkspaceDir: ws, Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test",
 	}, planDir)
 	if err != nil {
@@ -202,6 +210,40 @@ func TestTheRunsWebHalfIsStamped(t *testing.T) {
 	}
 	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, toolsrv.ToolWriteReport}) {
 		t.Fatalf("granted %v", ts.GrantedTools())
+	}
+}
+
+// TestACreatorsWebHasNoRegistrySearch (agentry-cli#523): the Knowledge
+// Creator's plan carries web_search and web_read and never registry_search,
+// even when its run names a registry, as a hosted build's does for its scans.
+func TestACreatorsWebHasNoRegistrySearch(t *testing.T) {
+	p, f := webFixtureFor(t, false)
+	happyFake(f)
+	p.KeepRunDir = true
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatal(err)
+	}
+	gw := filepath.Join(p.RunRoot, "runs", p.RunID, "cfg", "gateway")
+	b, err := os.ReadFile(filepath.Join(gw, "toolspec.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ts toolsrv.Spec
+	if err := json.Unmarshal(b, &ts); err != nil {
+		t.Fatal(err)
+	}
+	if ts.Web.Registry == "" || ts.Web.RegistrySearch || !ts.Web.SearchedOnly {
+		t.Fatalf("web %+v", ts.Web)
+	}
+	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolWriteReport}) {
+		t.Fatalf("granted %v", ts.GrantedTools())
+	}
+	tools, err := os.ReadFile(filepath.Join(gw, "tools.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(tools), toolsrv.ToolRegistrySearch) {
+		t.Fatalf("tools.yaml grants %s:\n%s", toolsrv.ToolRegistrySearch, tools)
 	}
 }
 

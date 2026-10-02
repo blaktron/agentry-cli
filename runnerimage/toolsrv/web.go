@@ -51,6 +51,17 @@ import (
 // copy of this file, since one plan serves a local and a hosted draft alike.
 type Web struct {
 	Enabled bool `json:"enabled"`
+	// RegistrySearch is compiled too: registry_search, the Drafter's alone
+	// (agentry-cli#523), granted only when Enabled and with a Registry to
+	// read.
+	RegistrySearch bool `json:"registrySearch,omitempty"`
+	// SearchedOnly is compiled: web_read opens only an address a web_search
+	// of this run returned and AI Review passed (the Knowledge Creator's,
+	// agentry-cli#523). Its model reads documents no one scanned, so an
+	// instruction hidden in one must not be able to send another's text out
+	// in an address of its choosing; a search result's address is the
+	// search provider's, never the model's.
+	SearchedOnly bool `json:"searchedOnly,omitempty"`
 	// MaxPages, MaxSearches and MaxRegistryCalls bound one run's calls;
 	// zero takes the defaults.
 	MaxPages         int `json:"maxPages,omitempty"`
@@ -155,7 +166,48 @@ type webState struct {
 	pageClient *http.Client
 	regClient  *http.Client
 	ledger     *os.File
+	// found is every address a web_search of this run returned that AI
+	// Review passed, as web_read compares them (pageKey): what a
+	// SearchedOnly run may read.
+	found map[string]bool
 }
+
+// pageKey is an address as web_read and the searches' results are compared:
+// parsed, its fragment dropped.
+func pageKey(raw string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "", false
+	}
+	u.Fragment = ""
+	return u.String(), true
+}
+
+// remember records a passed search result's address for a SearchedOnly run.
+func (w *webState) remember(raw string) {
+	k, ok := pageKey(raw)
+	if !ok {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.found == nil {
+		w.found = map[string]bool{}
+	}
+	w.found[k] = true
+}
+
+// wasFound reports whether a search of this run returned the address.
+func (w *webState) wasFound(u *url.URL) bool {
+	k, ok := pageKey(u.String())
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return ok && w.found[k]
+}
+
+// failNotSearched is web_read's answer, in a SearchedOnly run, for an
+// address no search of the run returned.
+const failNotSearched = "this run reads only the addresses its web searches returned: search first, then read a result by its address as it was given"
 
 func (w Web) maxPages() int {
 	if w.MaxPages > 0 {
@@ -428,7 +480,7 @@ func (w *webState) take(counter *int, limit int) bool {
 
 // withheldText is what the model gets of a text that did not pass.
 func withheldText(what, address string, r webscan.Result) string {
-	return fmt.Sprintf("withheld: %s was not given to you, because %s.\nURL: %s\nList it among the draft's sources as withheld, and do not guess at what it said.",
+	return fmt.Sprintf("withheld: %s was not given to you, because %s.\nURL: %s\nDo not use it, and do not guess at what it said; where your sources are listed, list it as withheld.",
 		what, r.Reason(), address)
 }
 
@@ -457,9 +509,15 @@ func (s *server) toolWebRead(raw json.RawMessage) (string, bool) {
 		return "web_read: refused: " + err.Error(), true
 	}
 	w := s.web()
+	if s.spec.Web.SearchedOnly && !w.wasFound(u) {
+		// The address is the model's own, and is not sent anywhere: the
+		// ledger keeps its origin alone.
+		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.Scheme + "://" + u.Host, Refused: failNotSearched})
+		return "web_read: refused: " + failNotSearched, true
+	}
 	if !w.take(&w.pages, s.spec.Web.maxPages()) {
 		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.String(), Refused: "the run's page budget is spent"})
-		return fmt.Sprintf("web_read: this draft's %d pages are spent; finish with what you have", s.spec.Web.maxPages()), true
+		return fmt.Sprintf("web_read: this run's %d pages are spent; finish with what you have", s.spec.Web.maxPages()), true
 	}
 	text, final, err := s.fetchPage(u)
 	if err != nil {
@@ -657,11 +715,11 @@ func (s *server) toolWebSearch(raw json.RawMessage) (string, bool) {
 	}
 	w := s.web()
 	if w.searcher == nil {
-		return "web_search: no search is available to this draft", true
+		return "web_search: no search is available to this run", true
 	}
 	if !w.take(&w.searches, s.spec.Web.maxSearches()) {
 		s.record(LedgerEntry{Tool: ToolWebSearch, Refused: "the run's search budget is spent"})
-		return fmt.Sprintf("web_search: this draft's %d searches are spent; finish with what you have", s.spec.Web.maxSearches()), true
+		return fmt.Sprintf("web_search: this run's %d searches are spent; finish with what you have", s.spec.Web.maxSearches()), true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 	defer cancel()
@@ -681,6 +739,7 @@ func (s *server) toolWebSearch(raw json.RawMessage) (string, bool) {
 			continue
 		}
 		shown++
+		w.remember(h.URL)
 		fmt.Fprintf(&b, "- %s\n  %s\n  %s\n", h.Title, h.URL, h.Snippet)
 	}
 	head := fmt.Sprintf("%d result(s) for %q", shown, q)
@@ -739,12 +798,12 @@ func (s *server) toolRegistrySearch(raw json.RawMessage) (string, bool) {
 	}
 	w := s.web()
 	if s.spec.Web.Registry == "" {
-		return "registry_search: no registry is configured for this draft", true
+		return "registry_search: no registry is configured for this run", true
 	}
 	target := strings.TrimRight(s.spec.Web.Registry, "/") + path + "?" + q.Encode()
 	if !w.take(&w.registry, s.spec.Web.maxRegistryCalls()) {
 		s.record(LedgerEntry{Tool: ToolRegistrySearch, URL: path, Refused: "the run's registry budget is spent"})
-		return fmt.Sprintf("registry_search: this draft's %d registry calls are spent", s.spec.Web.maxRegistryCalls()), true
+		return fmt.Sprintf("registry_search: this run's %d registry calls are spent", s.spec.Web.maxRegistryCalls()), true
 	}
 	status, body, err := s.registryGet(target)
 	if err != nil {

@@ -457,6 +457,18 @@ func draftDescription(args []string, o draftOpts) (string, error) {
 	return "", errors.New(`describe what the QuickAgent should do: agentry draft "<description>"`)
 }
 
+// hostedWeb is the web configuration of a built-in a sandbox host runs (a
+// hosted draft, a hosted knowledge build): the registry scans and searches,
+// with the job's credential, and no key of the person's. what names the run
+// for the refusal when the credential is missing.
+func hostedWeb(what string) (*engine.WebRun, error) {
+	tok := strings.TrimSpace(os.Getenv(envJobToken))
+	if tok == "" {
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("a hosted %s runs with the job's credential in $%s, and it is not set", what, envJobToken))
+	}
+	return &engine.WebRun{Scan: toolsrv.WebScanRegistry, Search: toolsrv.WebScanRegistry, Registry: registryURL(), JobToken: tok}, nil
+}
+
 // draftWeb is the run's web configuration: the person's own keys, or, with
 // --hosted, the job's credential and the registry. It refuses a draft that
 // could not have AI Review read everything first (D22, D25), and says what
@@ -464,12 +476,11 @@ func draftDescription(args []string, o draftOpts) (string, error) {
 func draftWeb(pol *policy.Policy, o draftOpts, packs bool) (*engine.WebRun, string, error) {
 	reg := registryURL()
 	if o.hosted {
-		tok := strings.TrimSpace(os.Getenv(envJobToken))
-		if tok == "" {
-			return nil, "", engine.Classify(engine.ExitPolicy, fmt.Errorf("a hosted draft runs with the job's credential in $%s, and it is not set", envJobToken))
+		w, err := hostedWeb("draft")
+		if err != nil {
+			return nil, "", err
 		}
-		return &engine.WebRun{Scan: toolsrv.WebScanRegistry, Search: toolsrv.WebScanRegistry, Registry: reg, JobToken: tok},
-			"The registry searches the web.", nil
+		return w, "The registry searches the web.", nil
 	}
 	w, search, err := drafter.LocalWeb(pol, reg)
 	switch {
