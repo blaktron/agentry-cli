@@ -141,8 +141,10 @@ type Adapter interface {
 // SessionOptions is what the engine tells a driver about the run it will
 // drive.
 type SessionOptions struct {
-	// GatewayTools are the tool names the run's gateway serves — the plan's
-	// `tools`, bounded by policy at compile. A harness permission request
+	// GatewayTools are the tool names the run's gateway serves — the run's
+	// own grant: the plan's `tools`, bounded by policy at compile, plus the
+	// knowledge and voice tools a run-time attachment adds
+	// (agentry-cli#576). A harness permission request
 	// for one of them is granted; anything else is denied (DR-15,
 	// agentry-cli#61: under ACP the client is the permission authority for
 	// every tool call, and a denial does not reach the model as a refused
