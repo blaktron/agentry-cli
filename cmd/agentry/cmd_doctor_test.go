@@ -424,3 +424,34 @@ func TestDoctorWarnsOnAPlainHTTPModelEndpoint(t *testing.T) {
 		t.Errorf("plain http failed doctor:\n%s", out)
 	}
 }
+
+// doctor reports each declared server at the gate's rating (agentry-cli#501):
+// a High the gate rates medium is a warning a run proceeds past, one it
+// rates high fails, and a failed lookup whose last-known advisories are
+// below the bar is never reported as "no known advisories".
+func TestDoctorRatesDeclaredServersAsTheGate(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	fr.scans = map[string]string{
+		"@acme/medium": `{"status":"vulnerable","maxSeverity":"high","advisories":[{"id":"GHSA-71","severity":"high","gateSeverity":"medium","cvssScore":7.1,"summary":"s"}]}`,
+		"@acme/high":   `{"status":"vulnerable","maxSeverity":"high","advisories":[{"id":"GHSA-87","severity":"high","gateSeverity":"high","cvssScore":8.7,"summary":"s","fixedIn":["2.0.0"]}]}`,
+		"@acme/failed": `{"status":"error","maxSeverity":"high","lastError":"timeout","advisories":[{"id":"GHSA-72","severity":"high","gateSeverity":"medium","cvssScore":7.2,"summary":"s"}]}`,
+	}
+	dir := writeTree(t, skillFiles("servers", "capabilities:\n  mcpServers:\n"+
+		"    - npm: \"@acme/medium\"\n      version: 1.0.0\n"+
+		"    - npm: \"@acme/high\"\n      version: 1.0.0\n"+
+		"    - npm: \"@acme/failed\"\n      version: 1.0.0\n"))
+	out, _, _ := runCLI(t, nil, "doctor", "--local", dir, "--registry", fr.url(), "--policy", policyPath)
+	for _, want := range []string{
+		"npm:@acme/medium@1.0.0: an advisory the gate rates medium (GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium]), below the refusal bar — a run proceeds",
+		"npm:@acme/high@1.0.0: an advisory the gate rates high (GHSA-87 [advisory high, CVSS 8.7]) — a run refuses it; pin a fixed version (fixed in 2.0.0)",
+		"npm:@acme/failed@1.0.0: the registry's last lookup failed; it last knew an advisory the gate rates medium",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("report lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "@acme/failed@1.0.0: no known advisories") {
+		t.Fatalf("a failed lookup reported clean:\n%s", out)
+	}
+}

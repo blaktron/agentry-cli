@@ -419,8 +419,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if len(m.Capabilities.MCPServers) > 0 {
 		opts.progress.at(receipt.StageMCPServers)
 		// The registry's vulnerability verdict on each declared server
-		// (agentry#177, DR-16): refused on an advisory the gate rates high or
-		// critical (agentry-cli#501) unless the operator says otherwise; fail-open when the registry
+		// (agentry#177, DR-16): refused on an advisory the gate rates high
+		// or critical (agentry-cli#501) unless the operator says otherwise; fail-open when the registry
 		// cannot answer. The receipt records the outcome either way.
 		statuses := mcpinstall.CheckVulnerabilities(cmd.Context(), nil, registryURL(), m.Capabilities.MCPServers)
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "declared MCP servers, per the registry: %s\n", mcpinstall.Summary(statuses))

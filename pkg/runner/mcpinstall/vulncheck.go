@@ -51,13 +51,23 @@ type VulnAdvisory struct {
 }
 
 // Rating is the severity the runner weighs this advisory at: the gate's
-// rating where the registry serves one, else the advisory's own.
+// rating where the registry serves one the runner knows, else the
+// advisory's own. A Critical is critical whatever was served: the gate
+// never rates one lower, so a lower answer is a registry fault the runner
+// does not inherit.
 func (a VulnAdvisory) Rating() string {
-	if a.GateSeverity != "" {
+	switch {
+	case a.Severity == "critical":
+		return "critical"
+	case a.gateRated():
 		return a.GateSeverity
 	}
 	return a.Severity
 }
+
+// gateRated reports whether the registry served a gate rating the runner
+// knows; an unknown word is weighed as no rating at all.
+func (a VulnAdvisory) gateRated() bool { return severityRank[a.GateSeverity] > 0 }
 
 // Refuses reports whether this advisory refuses a run by default: one
 // rated high or critical.
@@ -67,18 +77,24 @@ func (a VulnAdvisory) Refuses() bool {
 }
 
 // Label names the advisory for a person: its id and, where the registry
-// serves the gate's rating, the advisory's own severity, its CVSS score
-// and the gate's rating, so a High the gate rates medium reads as both.
+// serves the gate's rating, the advisory's own severity and CVSS score,
+// and the gate's rating where it differs, so a High the gate rates medium
+// reads as both.
 func (a VulnAdvisory) Label() string {
-	if a.GateSeverity == "" {
+	if !a.gateRated() {
 		return a.ID
 	}
 	l := a.ID + " [advisory " + a.Severity
 	if a.CVSSScore != nil {
 		l += fmt.Sprintf(", CVSS %.1f", *a.CVSSScore)
 	}
-	return l + "; the gate rates it " + a.GateSeverity + "]"
+	if r := a.Rating(); r != a.Severity {
+		l += "; the gate rates it " + r
+	}
+	return l + "]"
 }
+
+var severityRank = map[string]int{"info": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
 
 // VulnStatus is the registry's answer for one declared server.
 type VulnStatus struct {
@@ -114,54 +130,37 @@ func (s VulnStatus) Refusing() []VulnAdvisory {
 // Refuses reports whether this status refuses a run by default.
 func (s VulnStatus) Refuses() bool { return len(s.Refusing()) > 0 }
 
-// GateRated reports whether the registry served the gate's rating for
+// gateRated reports whether the registry served the gate's rating for
 // this record's advisories.
-func (s VulnStatus) GateRated() bool {
+func (s VulnStatus) gateRated() bool {
 	for _, a := range s.Advisories {
-		if a.GateSeverity != "" {
+		if a.gateRated() {
 			return true
 		}
 	}
 	return false
 }
 
-// MaxRating is the worst rating among advisories (all of them when advs
-// is nil): the gate's where served, else the registry's maxSeverity.
-func (s VulnStatus) MaxRating(advs []VulnAdvisory) string {
-	if advs == nil {
-		advs = s.Advisories
-	}
-	if !s.GateRated() {
-		return s.MaxSeverity
-	}
-	worst := ""
-	for _, a := range advs {
-		if severityRank[a.Rating()] > severityRank[worst] {
-			worst = a.Rating()
-		}
-	}
-	return worst
-}
-
-var severityRank = map[string]int{"info": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
-
-// Describe is the clause a refusal, doctor or the receipt names advisories
+// Describe is the clause a refusal, doctor and the receipt name advisories
 // with: "a known critical vulnerability (GHSA-…)" from a registry that
-// does not rate, "an advisory the gate rates high (GHSA-… [advisory high,
-// CVSS 8.7; the gate rates it high])" from one that does.
+// serves no rating, "an advisory the gate rates high (GHSA-… [advisory
+// high, CVSS 8.7])" from one that does.
 func (s VulnStatus) Describe(advs []VulnAdvisory) string {
 	labels := make([]string, 0, len(advs))
 	for _, a := range advs {
 		labels = append(labels, a.Label())
 	}
-	rating := s.MaxRating(advs)
-	if !s.GateRated() {
-		return "a known " + rating + " vulnerability (" + strings.Join(labels, ", ") + ")"
+	worst := worstRating(advs)
+	list := " (" + strings.Join(labels, ", ") + ")"
+	switch {
+	case !s.gateRated() && len(advs) == 1:
+		return "a known " + worst + " vulnerability" + list
+	case !s.gateRated():
+		return "known vulnerabilities, the worst " + worst + list
+	case len(advs) == 1:
+		return "an advisory the gate rates " + worst + list
 	}
-	if len(advs) == 1 {
-		return "an advisory the gate rates " + rating + " (" + labels[0] + ")"
-	}
-	return "advisories the gate rates up to " + rating + " (" + strings.Join(labels, ", ") + ")"
+	return "advisories the gate rates up to " + worst + list
 }
 
 // FixedIn is the union of the fixed versions the refusing advisories name.
@@ -237,6 +236,16 @@ func CheckVulnerabilities(ctx context.Context, client *http.Client, registry str
 	return out
 }
 
+func worstRating(advs []VulnAdvisory) string {
+	worst := ""
+	for _, a := range advs {
+		if severityRank[a.Rating()] > severityRank[worst] {
+			worst = a.Rating()
+		}
+	}
+	return worst
+}
+
 // Summary is the one-line receipt/log form of a check.
 func Summary(statuses []VulnStatus) string {
 	if len(statuses) == 0 {
@@ -250,9 +259,9 @@ func Summary(statuses []VulnStatus) string {
 			for _, a := range s.Advisories {
 				labels = append(labels, a.Label())
 			}
-			rating := s.MaxRating(nil)
-			if s.GateRated() {
-				rating = "the gate's " + rating
+			rating := s.MaxSeverity
+			if s.gateRated() {
+				rating = "gate-rated " + worstRating(s.Advisories)
 			}
 			p += " (" + rating + ": " + strings.Join(labels, ", ") + ")"
 		}

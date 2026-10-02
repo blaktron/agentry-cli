@@ -584,6 +584,10 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 				rep.warn("mcpServers.vulnerabilities", "%s: %s, allowed by policy mcpServers.allowVulnerable%s", st.Ref, st.Describe(st.Refusing()), fixedNote(st))
 			case st.Status == "vulnerable":
 				rep.warn("mcpServers.vulnerabilities", "%s: %s, below the refusal bar — a run proceeds", st.Ref, st.Describe(st.Advisories))
+			case st.Status == "error" && len(st.Advisories) > 0:
+				rep.warn("mcpServers.vulnerabilities", "%s: the registry's last lookup failed; it last knew %s, below the refusal bar — a run proceeds", st.Ref, st.Describe(st.Advisories))
+			case st.Status == "error":
+				rep.warn("mcpServers.vulnerabilities", "%s: the registry's last lookup failed and it knows no advisories for this version — a run proceeds", st.Ref)
 			case st.Status == "unknown":
 				rep.warn("mcpServers.vulnerabilities", "%s: the registry has not scanned this version (no manifest declared it yet)", st.Ref)
 			case st.Status == "unreachable":

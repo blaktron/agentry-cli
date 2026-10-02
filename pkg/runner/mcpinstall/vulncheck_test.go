@@ -124,18 +124,44 @@ func TestVulnRefusalReadsTheGatesRating(t *testing.T) {
 	if f := sdk1251.FixedIn(); len(f) != 1 || f[0] != "1.25.2" {
 		t.Fatalf("fixed in names the refusing advisory only: %v", f)
 	}
-	if !critical.Refuses() || critical.MaxRating(nil) != "critical" {
+	if !critical.Refuses() || critical.Describe(critical.Refusing()) != "an advisory the gate rates critical (GHSA-cr [advisory critical, CVSS 9.8])" {
 		t.Fatalf("critical (last known on a failed lookup) refuses: %+v", critical)
 	}
-	if !unscored.Refuses() || unscored.Describe(unscored.Refusing()) != "an advisory the gate rates high (GHSA-ns [advisory high; the gate rates it high])" {
+	if !unscored.Refuses() || unscored.Describe(unscored.Refusing()) != "an advisory the gate rates high (GHSA-ns [advisory high])" {
 		t.Fatalf("unscored high: %q", unscored.Describe(unscored.Refusing()))
 	}
-	if !legacy.Refuses() || legacy.GateRated() || legacy.Describe(legacy.Refusing()) != "a known high vulnerability (GHSA-old)" {
+	if !legacy.Refuses() || legacy.gateRated() || legacy.Describe(legacy.Refusing()) != "a known high vulnerability (GHSA-old)" {
 		t.Fatalf("a registry without the rating keeps today's rule: %q", legacy.Describe(legacy.Refusing()))
 	}
-	if s := Summary([]VulnStatus{sdk1251, legacy}); !contains(s, "sdk@1.25.1 vulnerable (the gate's high: GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium], GHSA-87 [advisory high, CVSS 8.7; the gate rates it high])") ||
+	if s := Summary([]VulnStatus{sdk1251, legacy}); !contains(s, "sdk@1.25.1 vulnerable (gate-rated high: GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium], GHSA-87 [advisory high, CVSS 8.7])") ||
 		!contains(s, "npm:y@1 vulnerable (high: GHSA-old)") {
 		t.Fatalf("summary: %q", s)
+	}
+}
+
+// A rating the runner does not know is no rating: the advisory's own
+// severity is weighed, so a malformed answer never lets a high through. A
+// Critical is critical whatever the registry rates it, as the gate rates
+// every Critical.
+func TestVulnRatingFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		a    VulnAdvisory
+		want string
+	}{
+		{VulnAdvisory{Severity: "high", GateSeverity: "HIGH"}, "high"},
+		{VulnAdvisory{Severity: "high", GateSeverity: "severe"}, "high"},
+		{VulnAdvisory{Severity: "critical", GateSeverity: "low"}, "critical"},
+		{VulnAdvisory{Severity: "critical", GateSeverity: "Critical"}, "critical"},
+		{VulnAdvisory{Severity: "high", GateSeverity: "medium"}, "medium"},
+		{VulnAdvisory{Severity: "medium", GateSeverity: ""}, "medium"},
+	} {
+		if got := tc.a.Rating(); got != tc.want {
+			t.Errorf("%+v: rated %q, want %q", tc.a, got, tc.want)
+		}
+	}
+	two := VulnStatus{Status: "vulnerable", Advisories: []VulnAdvisory{{ID: "A", Severity: "high"}, {ID: "B", Severity: "critical"}}}
+	if got := two.Describe(two.Refusing()); got != "known vulnerabilities, the worst critical (A, B)" {
+		t.Fatalf("two unrated: %q", got)
 	}
 }
 

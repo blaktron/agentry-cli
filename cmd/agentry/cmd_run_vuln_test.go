@@ -59,7 +59,7 @@ func TestVulnerabilityVerdictOnTheGatesRating(t *testing.T) {
 		t.Fatalf("a medium runs with no override: %q %v", line, err)
 	}
 	_, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{medium, high}, "https://reg.example", false, false)
-	if err == nil || !strings.Contains(err.Error(), "npm:@modelcontextprotocol/sdk@1.25.1 has an advisory the gate rates high (GHSA-87 [advisory high, CVSS 8.7; the gate rates it high]), fixed in 1.25.2") ||
+	if err == nil || !strings.Contains(err.Error(), "npm:@modelcontextprotocol/sdk@1.25.1 has an advisory the gate rates high (GHSA-87 [advisory high, CVSS 8.7]), fixed in 1.25.2") ||
 		strings.Contains(err.Error(), "sdk@1.25.2 has") {
 		t.Fatalf("high refusal: %v", err)
 	}
