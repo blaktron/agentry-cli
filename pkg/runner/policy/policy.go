@@ -74,6 +74,14 @@ const (
 	// through alternatives links or that Contents left ambiguous
 	// (agentry-dockerimages#23; agentry-cli#516).
 	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.3@sha256:7c3da264fd0e8420f0367fa179e6b89110fa2f86bef8850f48d5f89ae21ab869"
+	// DefaultFilesImage is the files image, the decoders the decode step
+	// runs (agentry-notes plans/file-handling.md §4, D4;
+	// agentry-dockerimages#28): pandoc, pdftotext and tesseract on Alpine,
+	// amd64 and arm64, pinned by digest and pulled, never built at run time
+	// (agentry-cli#559). The digest is signed keyless by agentry-dockerimages'
+	// files workflow, and CI holds this pin to that signature
+	// (scripts/verify-files-image.sh); a run pulls by digest only.
+	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.02.1@sha256:0d35fb3a5239f4571ba0d36d6619250d030bef119ee40e8f765dc3b38428b140"
 	// Default trusted repositories for capabilities.mcpServers.
 	DefaultNPMRegistry  = "https://registry.npmjs.org"
 	DefaultPyPIRegistry = "https://pypi.org"
@@ -360,6 +368,34 @@ type Images struct {
 	// compile.Inputs.Unsafe uses Unsafe Mode, and no policy key or
 	// `agentry run` flag does (plan unsafe-mode.md D5).
 	Unsafe string `yaml:"unsafe,omitempty"`
+	// Files is the files image the decode step builds its image on,
+	// pinned by digest ("" = DefaultFilesImage; see FilesImage).
+	Files string `yaml:"files,omitempty"`
+}
+
+// FilesImage is the files image this policy names: images.files, else the
+// CLI's pinned default. Resolved at use, as UnsafeImage is, so a saved
+// policy file never holds back a re-pin.
+func (i Images) FilesImage() string {
+	if i.Files != "" {
+		return i.Files
+	}
+	return DefaultFilesImage
+}
+
+// PinnedByDigest says whether an image ref ends in @sha256:<64 lowercase
+// hex>, so a pull of it can only yield those bytes.
+func PinnedByDigest(ref string) bool {
+	_, digest, ok := strings.Cut(ref, "@sha256:")
+	if !ok || len(digest) != 64 || strings.Contains(digest, "@") {
+		return false
+	}
+	for _, c := range digest {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // UnsafeImage is the Unsafe Mode base this policy names: images.unsafe,
@@ -734,6 +770,9 @@ func (p *Policy) Validate() error {
 	if p.Images.Gateway == "" || p.Images.HarnessDockerAgent == "" || p.Images.GoBuilder == "" {
 		return errors.New("images.gateway, images.harnessDockerAgent, and images.goBuilder are all required")
 	}
+	if p.Images.Files != "" && !PinnedByDigest(p.Images.Files) {
+		return fmt.Errorf("images.files %q must be pinned by digest (<name>@sha256:<64 hex>): the files image is pulled by digest only", p.Images.Files)
+	}
 	if p.Model.Provider == "" || p.Model.Name == "" {
 		return errors.New("model.provider and model.name are required")
 	}
@@ -913,6 +952,11 @@ images:
   # image and turns nothing on: only the desktop's Unsafe Mode switch uses
   # it, for runs on that computer, and nothing in this file enables it.
   # unsafe: ghcr.io/blaktron/agentry-unsafe-kali:<tag>@sha256:<digest>
+  # The files image: the decoders a run's documents are turned into text
+  # with, before any agent starts. It is pulled by digest, so it must be
+  # pinned by one; unset, the CLI's pinned default is used, and it moves
+  # with the CLI.
+  # files: ghcr.io/blaktron/agentry-files:<tag>@sha256:<digest>
 
 model:
   # anthropic | openai | google, or custom for an OpenAI-compatible
