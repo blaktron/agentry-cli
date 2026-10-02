@@ -126,6 +126,40 @@ func TestEnsureUsesTheCLIsPinnedFilesImageByDefault(t *testing.T) {
 	}
 }
 
+// PullFiles is the pull Ensure makes, alone: what `agentry files ensure`
+// runs on a sandbox host before any run (agentry-cli#572).
+func TestPullFilesPullsThePinnedImageAndNothingElse(t *testing.T) {
+	f := &dockerx.Fake{}
+	ref, err := PullFiles(context.Background(), f, ensurePolicy(), io.Discard)
+	if err != nil || ref != testFiles {
+		t.Fatalf("ref %q, err %v", ref, err)
+	}
+	if got := callsOf(f, "Pull"); !slices.Equal(got, []string{testFiles}) {
+		t.Fatalf("pulls %v, want the files image by digest once", got)
+	}
+	if len(callsOf(f, "Build")) != 0 {
+		t.Fatalf("PullFiles built: %v", f.Calls)
+	}
+
+	// Here already: answered without a pull.
+	f2 := &dockerx.Fake{ExistingImages: map[string]bool{testFiles: true}}
+	if ref, err := PullFiles(context.Background(), f2, ensurePolicy(), io.Discard); err != nil || ref != testFiles || len(callsOf(f2, "Pull")) != 0 {
+		t.Fatalf("ref %q, err %v, pulls %v", ref, err, callsOf(f2, "Pull"))
+	}
+}
+
+func TestPullFilesRefusesAnImageNotPinnedByDigest(t *testing.T) {
+	pol := policy.Default()
+	pol.Images.Files = "ghcr.io/blaktron/agentry-files:latest"
+	f := &dockerx.Fake{}
+	if _, err := PullFiles(context.Background(), f, pol, io.Discard); err == nil || !strings.Contains(err.Error(), "not pinned by digest") {
+		t.Fatalf("err %v", err)
+	}
+	if len(f.Calls) != 0 {
+		t.Fatalf("docker was called: %v", f.Calls)
+	}
+}
+
 // playDecode is the container: it writes the report a real decode would,
 // and a text for each file it says it decoded.
 func playDecode(t *testing.T, files []runnerdecode.File) func(dockerx.RunSpec) {

@@ -178,7 +178,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `run` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `verify` ·
+`setup` · `doctor` · `files` · `run` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -192,7 +192,10 @@ site's, never the CLI's. With the root `--json`
 flag the reading and writing commands print one JSON document on stdout
 (`run` takes `--output-format json`), and `install --plan --json` /
 `run --plan --json` print the consent-free preview a client shows a person
-first. Server-side end-to-end coverage
+first. `files ensure` pulls the files image the runner policy names (the one
+the decode step turns a run's documents into text in), by digest, and prints
+its reference, so no run has to download it; a sandbox host runs it at each
+update. Server-side end-to-end coverage
 lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
 CLI against a live registry.
 
