@@ -1,10 +1,11 @@
-// Package probe is the runner's side of the gateway health probe that
-// lists tools: the probe's tool listing (agentry-cli#578). A session's driver grants a
-// harness's permission request only for a tool the run's gateway serves,
-// and a declared MCP server's tools are named by the server itself, at run
-// time, unless its manifest filters them: so the probe, already inside the
-// run network with the gateway's token, asks the gateway once what it
-// serves, and the engine permits exactly that. One-shot runs never ask.
+// Package probe is the runner image's gateway probe: the health check
+// every run makes before its agent starts (an authenticated MCP initialize
+// from inside the run network, §R6), and, for a session, the listing of
+// the tools the gateway serves (agentry-cli#578). A session's driver
+// grants a harness's permission request only for a tool the run's gateway
+// serves, and a declared MCP server names its tools itself, at run time,
+// unless its manifest filters them; so the probe, already in the network
+// with the gateway's token, asks the gateway once. One-shot runs never ask.
 //
 // Stdlib only: the package is embedded in the runner image's build context.
 package probe
@@ -18,11 +19,21 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // InitBody is a spec-shaped MCP initialize request. A 2xx answer is
 // proof the gateway is up and accepted the Bearer token (§R6 health probe).
 const InitBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agentry-probe","version":"1"}}}`
+
+// Listing is the one line `probe --list-tools` prints and the engine
+// reads: the names of the tools the gateway serves.
+type Listing struct {
+	Tools []string `json:"tools"`
+}
+
+// MaxToolName bounds a tool name the probe passes on and the engine takes.
+const MaxToolName = 256
 
 const (
 	// maxListPages bounds the cursor walk: a gateway that never stops
@@ -30,15 +41,20 @@ const (
 	maxListPages = 50
 	// maxListBody bounds one answer.
 	maxListBody = 4 << 20
-	// maxToolName bounds a name the probe passes on.
-	maxToolName = 256
 )
+
+// Healthy is one health check: the gateway accepted an authenticated
+// initialize. The answer is not read beyond its status.
+func Healthy(client *http.Client, url, token string) error {
+	_, _, err := mcpPost(client, url, token, "", InitBody)
+	return err
+}
 
 // ListTools completes the MCP handshake (initialize, then the
 // initialized notification, carrying the session the gateway assigned)
-// and walks tools/list to its last page. It returns the tool names in the
-// gateway's order, without duplicates.
-func ListTools(client *http.Client, url, token string) ([]string, error) {
+// and walks tools/list to its last page, giving up at deadline. It returns
+// the tool names in the gateway's order, without duplicates.
+func ListTools(client *http.Client, url, token string, deadline time.Time) ([]string, error) {
 	_, session, err := mcpPost(client, url, token, "", InitBody)
 	if err != nil {
 		return nil, fmt.Errorf("initialize: %w", err)
@@ -50,6 +66,9 @@ func ListTools(client *http.Client, url, token string) ([]string, error) {
 	seen := map[string]bool{}
 	cursor := ""
 	for page := 0; page < maxListPages; page++ {
+		if time.Now().After(deadline) {
+			return nil, errors.New("tools/list: the gateway did not finish listing in time")
+		}
 		params := map[string]any{}
 		if cursor != "" {
 			params["cursor"] = cursor
@@ -70,20 +89,22 @@ func ListTools(client *http.Client, url, token string) ([]string, error) {
 				NextCursor string `json:"nextCursor"`
 			} `json:"result"`
 			Error *struct {
-				Message string `json:"message"`
+				Code int `json:"code"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(raw, &res); err != nil {
 			return nil, fmt.Errorf("tools/list: %w", err)
 		}
 		if res.Error != nil {
-			return nil, fmt.Errorf("tools/list: %s", res.Error.Message)
+			// The message is a third party's words (a declared server's,
+			// through the gateway): only its code is passed on.
+			return nil, fmt.Errorf("tools/list: the gateway answered error %d", res.Error.Code)
 		}
 		if res.Result == nil {
 			return nil, errors.New("tools/list: no result")
 		}
 		for _, t := range res.Result.Tools {
-			if t.Name == "" || len(t.Name) > maxToolName || seen[t.Name] {
+			if t.Name == "" || len(t.Name) > MaxToolName || seen[t.Name] {
 				continue
 			}
 			seen[t.Name] = true

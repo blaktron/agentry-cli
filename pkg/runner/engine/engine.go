@@ -411,9 +411,9 @@ type agentOutcome struct {
 
 // startInfra creates the run network and starts proxy + gateway, then
 // health-probes the gateway from inside the network (§R6 execute order).
-// Every failure here is the §R8 gateway/environment class. Given served,
-// a session's, the probe also lists the tools the gateway serves into it
-// (agentry-cli#578).
+// Every failure here is the §R8 gateway/environment class. When served is
+// non-nil (a session's), the probe also lists the tools the gateway serves
+// and startInfra stores them there (agentry-cli#578).
 func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	td *teardown, runID, token string, rep *strings.Replacer, served *[]string,
 ) error {
@@ -643,7 +643,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	probeSpec.Runtime = p.Plan.Runtime()
 	probeSpec = readOnlyRoot(hardened(probeSpec, p.limits()), "/tmp")
 	listing := io.Discard
-	var listed boundedBuffer
+	var listed probeOutput
 	if served != nil {
 		probeSpec.Argv = append(probeSpec.Argv, "--list-tools")
 		listing = &listed

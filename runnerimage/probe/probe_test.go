@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeGateway plays the MCP gateway's streamable HTTP: it assigns a
@@ -97,7 +98,7 @@ func TestListToolsWalksTheCatalog(t *testing.T) {
 			{"create_entities", "read_graph", "write_report"},
 		}}
 		srv := httptest.NewServer(g)
-		got, err := ListTools(srv.Client(), srv.URL, "tok")
+		got, err := ListTools(srv.Client(), srv.URL, "tok", time.Now().Add(time.Minute))
 		srv.Close()
 		if err != nil {
 			t.Fatalf("sse=%v: %v", sse, err)
@@ -112,18 +113,19 @@ func TestListToolsWalksTheCatalog(t *testing.T) {
 	}
 }
 
-// TestListToolsFailsClosed: a refused token, a gateway error and an
-// endless cursor are errors, never an empty or partial list a session
+// TestListToolsFailsClosed: a refused token, a gateway error (passed on
+// by its code alone: its message is a third party's words), an endless
+// cursor and a missed deadline are errors, never an empty or partial list a session
 // would then permit.
 func TestListToolsFailsClosed(t *testing.T) {
 	g := &fakeGateway{pages: [][]string{{"fs_read"}}}
 	srv := httptest.NewServer(g)
 	defer srv.Close()
-	if _, err := ListTools(srv.Client(), srv.URL, "wrong"); err == nil {
+	if _, err := ListTools(srv.Client(), srv.URL, "wrong", time.Now().Add(time.Minute)); err == nil {
 		t.Error("a refused token listed tools")
 	}
 	g.failList = true
-	if _, err := ListTools(srv.Client(), srv.URL, "tok"); err == nil || !strings.Contains(err.Error(), "catalog unavailable") {
+	if _, err := ListTools(srv.Client(), srv.URL, "tok", time.Now().Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "error -32603") || strings.Contains(err.Error(), "catalog unavailable") {
 		t.Errorf("a tools/list error: %v", err)
 	}
 	g.failList = false
@@ -132,8 +134,12 @@ func TestListToolsFailsClosed(t *testing.T) {
 		endless[i] = []string{fmt.Sprintf("t%d", i)}
 	}
 	g.pages = endless
-	if _, err := ListTools(srv.Client(), srv.URL, "tok"); err == nil || !strings.Contains(err.Error(), "still paging") {
+	if _, err := ListTools(srv.Client(), srv.URL, "tok", time.Now().Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "still paging") {
 		t.Errorf("an endless cursor: %v", err)
+	}
+	g.pages = [][]string{{"fs_read"}}
+	if _, err := ListTools(srv.Client(), srv.URL, "tok", time.Now().Add(-time.Second)); err == nil || !strings.Contains(err.Error(), "in time") {
+		t.Errorf("a listing past its deadline: %v", err)
 	}
 }
 

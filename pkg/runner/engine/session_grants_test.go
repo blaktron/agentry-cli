@@ -143,14 +143,16 @@ func TestTheProbesListingIsReadStrictly(t *testing.T) {
 	if got, err := parseServedTools([]byte(`{"tools":["a","b"]}` + "\n")); err != nil || !slices.Equal(got, []string{"a", "b"}) {
 		t.Fatalf("a listing: %v, %v", got, err)
 	}
-	for _, bad := range []string{"", "gateway ok", `{"tools":null}`, `{"names":["a"]}`, `{"tools":[""]}`, `{"tools":["` + strings.Repeat("x", 257) + `"]}`} {
+	for _, bad := range []string{"", "gateway ok", `{"tools":["a"]}` + "\n" + `{"tools":["b"]}`, `{"tools":null}`, `{"names":["a"]}`, `{"tools":[""]}`, `{"tools":["` + strings.Repeat("x", 257) + `"]}`} {
 		if _, err := parseServedTools([]byte(bad)); err == nil {
 			t.Errorf("%q was read as a listing", bad)
 		}
 	}
-	var b boundedBuffer
+	var b probeOutput
 	_, _ = b.Write([]byte(`{"tools":[`))
-	_, _ = b.Write(make([]byte, maxProbeListing))
+	if n, err := b.Write(make([]byte, maxProbeListing)); n != maxProbeListing || err != nil {
+		t.Errorf("a write past the bound was not taken whole: %d, %v", n, err)
+	}
 	if b.Bytes() != nil {
 		t.Error("a listing past its bound was kept")
 	}

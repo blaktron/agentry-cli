@@ -341,7 +341,8 @@ func (c *codexAdapter) Session(_ context.Context, rw io.ReadWriteCloser, opts Se
 			}
 			// No tool name in the request means we cannot check the
 			// catalog, but the server is ours and the catalog is all it
-			// serves; a named tool must be in the run's grant.
+			// serves; a named tool must be one the gateway serves
+			// (SessionOptions.GatewayTools).
 			return tool == "" || allowed[tool]
 		},
 	}

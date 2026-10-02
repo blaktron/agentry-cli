@@ -28,6 +28,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/probe"
 )
 
 const engineManifest = `schemaVersion: "2"
@@ -129,7 +130,7 @@ func happyFake(f *dockerx.Fake) {
 func probeListing(tools ...string) func(context.Context, dockerx.RunSpec, io.Reader, io.Writer, io.Writer) (int, error) {
 	return func(_ context.Context, r dockerx.RunSpec, _ io.Reader, stdout, _ io.Writer) (int, error) {
 		if slices.Contains(r.Argv, "--list-tools") {
-			b, _ := json.Marshal(map[string][]string{"tools": append([]string{}, tools...)})
+			b, _ := json.Marshal(probe.Listing{Tools: append([]string{}, tools...)})
 			_, _ = stdout.Write(append(b, '\n'))
 		}
 		return 0, nil

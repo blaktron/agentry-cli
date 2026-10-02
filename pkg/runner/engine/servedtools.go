@@ -13,29 +13,33 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/blaktron/agentry-cli/runnerimage/probe"
 )
 
 // maxProbeListing bounds what the probe may print.
 const maxProbeListing = 1 << 20
 
-// boundedBuffer keeps the first maxProbeListing bytes written to it and
-// remembers that more came.
-type boundedBuffer struct {
+// probeOutput keeps the first maxProbeListing bytes the probe prints and
+// remembers that more came. It takes every write whole, as io.Writer
+// requires, and drops what is past the bound.
+type probeOutput struct {
 	buf      bytes.Buffer
 	overflow bool
 }
 
-func (b *boundedBuffer) Write(p []byte) (int, error) {
-	if room := maxProbeListing - b.buf.Len(); len(p) > room {
+func (b *probeOutput) Write(p []byte) (int, error) {
+	keep := p
+	if room := maxProbeListing - b.buf.Len(); len(keep) > room {
 		b.overflow = true
-		p = p[:max(room, 0)]
+		keep = keep[:max(room, 0)]
 	}
-	b.buf.Write(p)
+	b.buf.Write(keep)
 	return len(p), nil
 }
 
 // Bytes is what was kept, or nil when the listing ran past its bound.
-func (b *boundedBuffer) Bytes() []byte {
+func (b *probeOutput) Bytes() []byte {
 	if b.overflow {
 		return nil
 	}
@@ -51,20 +55,21 @@ func parseServedTools(out []byte) ([]string, error) {
 	if len(line) == 0 {
 		return nil, errors.New("the gateway probe printed no tool listing")
 	}
-	var doc struct {
-		Tools *[]string `json:"tools"`
-	}
+	var doc probe.Listing
 	dec := json.NewDecoder(bytes.NewReader(line))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&doc); err != nil || doc.Tools == nil {
 		return nil, fmt.Errorf("the gateway probe's tool listing is not {\"tools\":[…]}: %v", err)
 	}
-	for _, n := range *doc.Tools {
-		if n == "" || len(n) > 256 {
+	if dec.More() {
+		return nil, errors.New("the gateway probe printed more than its one tool listing")
+	}
+	for _, n := range doc.Tools {
+		if n == "" || len(n) > probe.MaxToolName {
 			return nil, fmt.Errorf("the gateway probe listed a tool name of %d bytes", len(n))
 		}
 	}
-	return *doc.Tools, nil
+	return doc.Tools, nil
 }
 
 // permitted is the run's own grant, then each tool the gateway serves that

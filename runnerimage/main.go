@@ -21,7 +21,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -190,11 +189,6 @@ func runProxy(args []string) error {
 	return p.ListenAndServe(*addr)
 }
 
-// probeInitBody is the probe's MCP initialize. A 2xx answer is proof the
-// gateway is up and accepted our Bearer token; the body may be SSE-framed,
-// so it is deliberately not parsed (§R6 health probe).
-const probeInitBody = probe.InitBody
-
 // runProbe retries the initialize POST every 2s until the deadline. It
 // exists because "the gateway container started" and "the gateway is
 // accepting authed MCP traffic" are different moments, and the agent
@@ -220,16 +214,17 @@ func runProbe(args []string) error {
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 	var lastErr error
 	for {
-		lastErr = probeOnce(client, *rawURL, token)
+		lastErr = probe.Healthy(client, *rawURL, token)
 		if lastErr == nil {
 			if !*listTools {
 				return nil
 			}
-			names, err := probe.ListTools(client, *rawURL, token)
+			// The listing has its own minute: the health deadline is spent.
+			names, err := probe.ListTools(client, *rawURL, token, time.Now().Add(time.Minute))
 			if err != nil {
 				return fmt.Errorf("list the gateway's tools: %w", err)
 			}
-			return json.NewEncoder(os.Stdout).Encode(map[string][]string{"tools": names})
+			return json.NewEncoder(os.Stdout).Encode(probe.Listing{Tools: names})
 		}
 		if time.Now().After(deadline) {
 			break
@@ -237,28 +232,4 @@ func runProbe(args []string) error {
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("gateway not ready after %ds: %w", *timeout, lastErr)
-}
-
-func probeOnce(client *http.Client, url, token string) error {
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(probeInitBody))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	// Drain a little so the connection can be reused across retries; the
-	// content is uninteresting by design.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("gateway answered %s", resp.Status)
-	}
-	return nil
 }
