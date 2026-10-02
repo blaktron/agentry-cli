@@ -209,7 +209,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	env, runErr := localrun.Run{
 		Builtin: localrun.VoiceWriter(), Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
 		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(o, docs, res.Cut)),
-		Inputs: inputs, Decoded: res.Decoded, TextInputs: true, OutDir: o.OutDir, Budgets: o.Budgets,
+		Inputs: inputs, Decoded: res.Decoded, OutDir: o.OutDir, Budgets: o.Budgets,
 		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage,
 	}.Execute(ctx, d)
 	res.Envelope = env

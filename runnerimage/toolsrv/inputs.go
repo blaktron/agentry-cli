@@ -15,13 +15,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -39,7 +38,10 @@ type InputsIndex struct {
 	Files  []InputEntry `json:"files"`
 }
 
-// InputEntry is one input.
+// InputEntry is one input. Its Type and outcome restate the decode
+// report's own (runnerimage/decode) as plain strings: this package is
+// stdlib-only and independent of its siblings, and the engine fills them
+// only from the decode's fixed vocabulary.
 type InputEntry struct {
 	// Path is the input's slash path under InputsDir.
 	Path string `json:"path"`
@@ -217,7 +219,7 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 			continue
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			at := strings.Index(strings.ToLower(line), needle)
+			at := indexFold(line, needle)
 			if at < 0 {
 				continue
 			}
@@ -285,30 +287,47 @@ func (s *server) searchTargets(clean string) ([]searchTarget, error) {
 // readPrefix reads at most limit bytes of a file, cut back to a rune
 // boundary when the file is longer.
 func readPrefix(abs string, limit int64) ([]byte, error) {
-	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
-	if err != nil {
-		return nil, err
+	data, more, err := readUpTo(abs, limit)
+	if more {
+		data = trimPartialRune(data)
 	}
-	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
-	if err != nil {
-		return nil, err
+	return data, err
+}
+
+// indexFold is the byte offset in s of the first match of needle, a
+// lower-cased query, without regard to case; -1 when there is none.
+// Lower-casing can change a rune's length, so the offset is found in s
+// itself, not in its lower-cased copy.
+func indexFold(s, needle string) int {
+	if !strings.Contains(strings.ToLower(s), needle) {
+		return -1
 	}
-	if int64(len(data)) > limit {
-		data = trimPartialRune(data[:limit])
+	for i := range s {
+		if hasPrefixFold(s[i:], needle) {
+			return i
+		}
 	}
-	return data, nil
+	return -1
+}
+
+// hasPrefixFold says whether s begins with needle, a lower-cased string,
+// without regard to case.
+func hasPrefixFold(s, needle string) bool {
+	for _, want := range needle {
+		got, size := utf8.DecodeRuneInString(s)
+		if size == 0 || unicode.ToLower(got) != want {
+			return false
+		}
+		s = s[size:]
+	}
+	return true
 }
 
 // excerpt is up to searchExcerptBytes of a line around the match at byte
-// at (in its lower-cased form), cut at rune boundaries, with an ellipsis
-// where it was cut.
+// at, cut at rune boundaries, with an ellipsis where it was cut.
 func excerpt(line string, at int) string {
 	line = strings.TrimRight(line, "\r")
-	if at > len(line) {
-		at = 0
-	}
-	start := max(0, at-searchExcerptBytes/3)
+	start := max(0, min(at, len(line))-searchExcerptBytes/3)
 	for start > 0 && !utf8.RuneStart(line[start]) {
 		start--
 	}
