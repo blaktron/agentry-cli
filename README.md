@@ -846,7 +846,13 @@ provider and stands up the gateway plane before any agent is involved.
 **MCP profiles** store a QuickAgent's keys and identities once per exact
 release — guided setup on first run, then keep or remove on completion
 (`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
-run external files read-only under `/inputs`. **`--knowledge NAME`** (a
+run external files read-only under `/inputs`. Before the agent starts the
+runner decodes them (a document, PDF or image into its text, in the files
+image, with no network; `agentry files ensure` pulls it ahead of time), and
+the run reads them through `list_inputs` (each file's type, size and
+whether it could be read), `read_input` (the text) and `search_inputs`; the
+receipt's `decode` line says what was read. A run with no files pulls
+nothing. **`--knowledge NAME`** (a
 pack kept on this computer) or **`--knowledge DIR`** attaches a knowledge
 pack — an LLM wiki of at most 10 MB with the documents it was compiled
 from — read-only at `/knowledge/<name>`, which the run searches with

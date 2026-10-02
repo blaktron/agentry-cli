@@ -266,6 +266,13 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	if code != 0 {
 		return nil, fmt.Errorf("the decode container failed (exit %d): %s", code, strings.TrimSpace(tail(errOut.String(), 400)))
 	}
+	return Check(img, in, out)
+}
+
+// Check reads the report a decode wrote to out and holds it to what was
+// staged under in (checkReport): Run's last step, and the one a caller
+// that decodes some other way must take before it reads a byte of out.
+func Check(img Image, in, out string) (*Result, error) {
 	rep, err := checkReport(in, out)
 	if err != nil {
 		return nil, err

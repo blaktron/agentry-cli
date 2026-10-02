@@ -491,7 +491,10 @@ type Run struct {
 	// Decoded is the decode step the caller ran on the inputs, for the
 	// receipt.
 	Decoded *decode.Result
-	OutDir  string
+	// TextInputs says the inputs are text the built-in's caller wrote
+	// itself (engine.Params.TextInputs), so the run does not decode them.
+	TextInputs bool
+	OutDir     string
 	// Budgets, when set, replace the plan's.
 	Budgets *spec.Budgets
 	// Adapter names the harness adapter; empty takes the default.
@@ -582,7 +585,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	}
 	return engine.Run(ctx, d, engine.Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: r.Home,
-		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: r.Knowledge, Decoded: r.Decoded,
+		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: r.Knowledge, Decoded: r.Decoded, TextInputs: r.TextInputs,
 		Adapter: ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
 		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,

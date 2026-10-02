@@ -122,6 +122,15 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if s.granted, err = grantedTools(filepath.Join(rd.cfg, "gateway")); err != nil {
 		return fail(Classify(ExitCLI, fmt.Errorf("the run's tool grant: %w", err)))
 	}
+	// The inputs are decoded before anything starts, and a file added
+	// later before it is announced (plan file-handling.md §5,
+	// agentry-cli#560).
+	if s.dec, err = decodeInputs(ctx, d, p, rd); err != nil {
+		return fail(err)
+	}
+	if line := s.dec.line(); line != "" {
+		env.CapabilitiesEnforced["decode"] = line
+	}
 	// The session store: a per-run named volume, labelled like every run
 	// object and removed with it (agentry-cli#90; DR-15 called the
 	// world-writable host directory it replaces "for now"). A fresh
@@ -219,9 +228,12 @@ type liveSession struct {
 	// granted is the run's own tool grant, read from its rendered tools
 	// spec after the run-time grants: what the driver permits.
 	granted []string
-	start   time.Time
-	runID   string
-	redact  *redactor
+	// dec decodes the inputs, a mid-run file before it is announced; nil
+	// when the caller decoded them or staged its own (every built-in).
+	dec    *inputsDecoder
+	start  time.Time
+	runID  string
+	redact *redactor
 
 	budgets spec.SessionBudgets
 
@@ -725,7 +737,16 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	if err != nil {
 		return fmt.Errorf("read input %s: %w", hostPath, err)
 	}
-	if err := os.WriteFile(target, data, 0o644); err != nil { //nolint:gosec // inputs are agent-readable by design
+	unread := ""
+	if s.dec != nil {
+		// Decoded, then staged, then announced: the agent never hears of
+		// a file whose text is not there yet.
+		e, err := s.dec.add(ctx, base, data)
+		if err != nil {
+			return fmt.Errorf("decode input %s: %w", hostPath, err)
+		}
+		unread = e.Unread
+	} else if err := os.WriteFile(target, data, 0o644); err != nil { //nolint:gosec // inputs are agent-readable by design
 		return fmt.Errorf("stage input %s: %w", hostPath, err)
 	}
 	sum := sha256.Sum256(data)
@@ -733,6 +754,9 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	digest := "sha256:" + hex.EncodeToString(sum[:])
 	s.emit(session.Event{Kind: session.KindInputAdded, Path: agentPath, Digest: digest, Text: base})
 	notice := fmt.Sprintf("A new input file is available at %s (%s); read it with read_input.", agentPath, digest)
+	if unread != "" {
+		notice = fmt.Sprintf("A new input file was added at %s (%s), but it could not be read: %s.", agentPath, digest, unread)
+	}
 	s.mu.Lock()
 	ending, busy := s.ending, s.inTurn
 	if busy && !ending {
@@ -813,6 +837,10 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
 	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
 	env.CapabilitiesEnforced["daemon"] = daemon
+	// Every decode the session made, the files added mid-run included.
+	if line := s.dec.line(); line != "" {
+		env.CapabilitiesEnforced["decode"] = line
+	}
 	_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "transcript.md"), []byte(transcript(env, log)), 0o644)
 
 	var outErr error

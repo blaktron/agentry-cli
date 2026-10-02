@@ -1,0 +1,223 @@
+// The decoded inputs (plan file-handling.md §5; agentry-cli#560): with the
+// decode step's index under InputsTextDir, list_inputs names each input's
+// type, size, outcome and text size, read_input serves the decoded text
+// (the original only when it is text), search_inputs searches that text,
+// and every read stays inside its own read-only root.
+
+package toolsrv
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// decodedSpec is an inputs channel with a decoded-inputs mount holding an
+// index of four inputs: a decoded .docx, a decoded .png, a text file, and
+// a binary one that could not be read.
+func decodedSpec(t *testing.T) *Spec {
+	t.Helper()
+	s := inputsSpec(t)
+	s.InputsTextDir = t.TempDir()
+	mustWrite(t, filepath.Join(s.InputsDir, "report.docx"), []byte("PK\x03\x04\x00\xff binary zip"))
+	mustWrite(t, filepath.Join(s.InputsDir, "scans", "page1.png"), []byte("\x89PNG\r\n\x1a\n\x00"))
+	mustWrite(t, filepath.Join(s.InputsDir, "notes.txt"), []byte("Remember the Quarterly Review.\nnothing else\n"))
+	mustWrite(t, filepath.Join(s.InputsDir, "blob.bin"), []byte{0, 1, 2, 0xff})
+	text := filepath.Join(s.InputsTextDir, InputsTextSubdir)
+	mustWrite(t, filepath.Join(text, "report.docx"), []byte("# Report\n\nThe quarterly review is on Friday.\n"))
+	mustWrite(t, filepath.Join(text, "scans", "page1.png"), []byte("INVOICE 4471\nTotal due: 120 EUR\n"))
+	writeIndex(t, s, []InputEntry{
+		{Path: "blob.bin", Type: "unknown", Bytes: 4, Unread: "not text, and no decoder reads this kind of file"},
+		{Path: "notes.txt", Type: "text", Bytes: 44, TextBytes: 44},
+		{Path: "report.docx", Type: "document", Bytes: 20, Decoded: true, DecodedBy: "pandoc", TextBytes: 44},
+		{Path: "scans/page1.png", Type: "image", Bytes: 9, Decoded: true, DecodedBy: "tesseract", TextBytes: 32},
+	})
+	return s
+}
+
+func writeIndex(t *testing.T, s *Spec, files []InputEntry) {
+	t.Helper()
+	b, err := json.Marshal(InputsIndex{Schema: InputsIndexSchema, Files: files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(s.InputsTextDir, InputsIndexFile), b)
+}
+
+func TestListInputsFromTheIndex(t *testing.T) {
+	s := newTestServer(t, decodedSpec(t))
+	got, isErr := s.toolListInputs(rawArgs(t, map[string]any{}))
+	want := "path\ttype\tbytes\toutcome\ttext bytes\n" +
+		"blob.bin\tunknown\t4\tunread: not text, and no decoder reads this kind of file\t-\n" +
+		"notes.txt\ttext\t44\tread\t44\n" +
+		"report.docx\tdocument\t20\tread\t44\n" +
+		"scans/page1.png\timage\t9\tread\t32"
+	if isErr || got != want {
+		t.Fatalf("list_inputs =\n%s\nwant\n%s", got, want)
+	}
+	if got, isErr := s.toolListInputs(rawArgs(t, map[string]any{"path": "scans"})); isErr || !strings.HasSuffix(got, "\nscans/page1.png\timage\t9\tread\t32") || strings.Contains(got, "report.docx") {
+		t.Fatalf("a directory's listing (%q, %v)", got, isErr)
+	}
+	if got, isErr := s.toolListInputs(rawArgs(t, map[string]any{"path": "nope"})); !isErr || !strings.Contains(got, "no input at") {
+		t.Fatalf("a missing path (%q, %v)", got, isErr)
+	}
+	if got, isErr := s.toolListInputs(rawArgs(t, map[string]any{"path": "../x"})); !isErr || !strings.Contains(got, "escapes the tool root") {
+		t.Fatalf("traversal (%q, %v)", got, isErr)
+	}
+}
+
+func TestReadInputServesTheDecodedText(t *testing.T) {
+	s := newTestServer(t, decodedSpec(t))
+	for path, want := range map[string]string{
+		"report.docx":     "# Report\n\nThe quarterly review is on Friday.\n",
+		"scans/page1.png": "INVOICE 4471\nTotal due: 120 EUR\n",
+		"notes.txt":       "Remember the Quarterly Review.\nnothing else\n",
+	} {
+		if got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": path})); isErr || got != want {
+			t.Errorf("read_input %s = (%q, %v), want %q", path, got, isErr, want)
+		}
+	}
+	got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": "report.docx", "offset": 10, "maxBytes": 7}))
+	if isErr || !strings.HasPrefix(got, "The qua") || !strings.Contains(got, "[truncated at 7 bytes of 45]") {
+		t.Fatalf("a page of the decoded text (%q, %v)", got, isErr)
+	}
+	got, isErr = s.toolReadInput(rawArgs(t, map[string]any{"path": "blob.bin"}))
+	if !isErr || got != "read_input: blob.bin could not be read: not text, and no decoder reads this kind of file" {
+		t.Fatalf("an unread input (%q, %v)", got, isErr)
+	}
+	if got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": "scans"})); !isErr || !strings.Contains(got, "is a directory") {
+		t.Fatalf("a directory (%q, %v)", got, isErr)
+	}
+}
+
+func TestSearchInputs(t *testing.T) {
+	s := newTestServer(t, decodedSpec(t))
+	got, isErr := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "quarterly review"}))
+	if isErr || got != "notes.txt:1: Remember the Quarterly Review.\nreport.docx:3: The quarterly review is on Friday." {
+		t.Fatalf("search (%q, %v)", got, isErr)
+	}
+	if got, _ := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "invoice"})); got != "scans/page1.png:1: INVOICE 4471" {
+		t.Fatalf("a scan's OCR text is searched: %q", got)
+	}
+	if got, _ := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "review", "path": "notes.txt"})); got != "notes.txt:1: Remember the Quarterly Review." {
+		t.Fatalf("held to path: %q", got)
+	}
+	if got, _ := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "review", "maxResults": 1})); !strings.HasSuffix(got, "[1 more matching lines not shown; narrow the query or pass path]") {
+		t.Fatalf("capped: %q", got)
+	}
+	if got, isErr := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "zebra"})); isErr || got != `no input text matches "zebra"` {
+		t.Fatalf("no match (%q, %v)", got, isErr)
+	}
+	// The binary original is never searched, nor its bytes matched.
+	if got, _ := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "binary zip"})); !strings.HasPrefix(got, "no input text matches") {
+		t.Fatalf("an original that was decoded was searched: %q", got)
+	}
+	for _, args := range []map[string]any{{"query": ""}, {"query": "  "}, {"query": strings.Repeat("x", 257)}, {"query": "a", "path": "../.."}} {
+		if got, isErr := s.toolSearchInputs(rawArgs(t, args)); !isErr || !strings.HasPrefix(got, "search_inputs: ") {
+			t.Errorf("%v: (%q, %v)", args, got, isErr)
+		}
+	}
+}
+
+func TestSearchInputsExcerptsALongLine(t *testing.T) {
+	s := inputsSpec(t)
+	line := strings.Repeat("é", 200) + " needle " + strings.Repeat("ü", 200)
+	mustWrite(t, filepath.Join(s.InputsDir, "long.txt"), []byte(line+"\n"))
+	got, isErr := newTestServer(t, s).toolSearchInputs(rawArgs(t, map[string]any{"query": "NEEDLE"}))
+	if isErr || !strings.HasPrefix(got, "long.txt:1: …") || !strings.HasSuffix(got, "…") || !strings.Contains(got, "needle") || len(got) > 200 {
+		t.Fatalf("excerpt (%q, %v)", got, isErr)
+	}
+	if !strings.Contains(got, "é") || strings.ContainsRune(got, '�') {
+		t.Fatalf("the excerpt split a rune: %q", got)
+	}
+}
+
+// Without an index (a built-in that decoded its own documents, or no
+// decode at all) the tools answer from /inputs as before, and
+// search_inputs reads only the inputs that are UTF-8 text.
+func TestTheInputsToolsWithoutAnIndex(t *testing.T) {
+	s := inputsSpec(t)
+	s.InputsTextDir = t.TempDir()
+	mustWrite(t, filepath.Join(s.InputsDir, "a.txt"), []byte("alpha beta\n"))
+	mustWrite(t, filepath.Join(s.InputsDir, "b.bin"), []byte("alpha\x00\xff"))
+	srv := newTestServer(t, s)
+	if got, _ := srv.toolListInputs(rawArgs(t, map[string]any{})); got != "a.txt\t11\nb.bin\t7" {
+		t.Fatalf("list_inputs %q", got)
+	}
+	if got, _ := srv.toolSearchInputs(rawArgs(t, map[string]any{"query": "alpha"})); got != "a.txt:1: alpha beta" {
+		t.Fatalf("search_inputs %q", got)
+	}
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "b.bin"})); !isErr || !strings.HasPrefix(got, "binary file") {
+		t.Fatalf("read_input %q", got)
+	}
+}
+
+// Containment: read_input and search_inputs reach only their two roots. A
+// link planted in the decoded tree, or an index that names a path outside
+// it, is refused, never followed.
+func TestTheDecodedInputsStayInTheirRoots(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows; the tools server runs in Linux")
+	}
+	s := decodedSpec(t)
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	mustWrite(t, outside, []byte("TOP SECRET quarterly\n"))
+	text := filepath.Join(s.InputsTextDir, InputsTextSubdir)
+	if err := os.Remove(filepath.Join(text, "report.docx")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(text, "report.docx")); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, s)
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "report.docx"})); !isErr || strings.Contains(got, "SECRET") {
+		t.Fatalf("a link in the decoded tree was followed: (%q, %v)", got, isErr)
+	}
+	if got, _ := srv.toolSearchInputs(rawArgs(t, map[string]any{"query": "secret"})); strings.Contains(got, "SECRET") {
+		t.Fatalf("search followed a link out of the decoded tree: %q", got)
+	}
+	writeIndex(t, s, []InputEntry{{Path: "../../etc/passwd", Type: "text", Decoded: true}})
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "../../etc/passwd"})); !isErr || !strings.Contains(got, "escapes") {
+		t.Fatalf("(%q, %v)", got, isErr)
+	}
+	if got, _ := srv.toolSearchInputs(rawArgs(t, map[string]any{"query": "root"})); strings.Contains(got, "root:") {
+		t.Fatalf("search read an index entry outside its root: %q", got)
+	}
+	// A broken index is a tool error, not a fallback to unchecked reads.
+	mustWrite(t, filepath.Join(s.InputsTextDir, InputsIndexFile), []byte(`{"schema":"inputs/v0","files":[]}`))
+	if got, isErr := srv.toolListInputs(rawArgs(t, map[string]any{})); !isErr || !strings.Contains(got, "schema") {
+		t.Fatalf("(%q, %v)", got, isErr)
+	}
+}
+
+// search_inputs exists with the decoded-inputs mount, and never under the
+// review grant, where a text reaches the model only through read_input's
+// scan.
+func TestSearchInputsIsGrantedBesideTheDecodedInputs(t *testing.T) {
+	s := baseSpec(t)
+	s.InputsDir, s.InputsTextDir = "/inputs", "/inputs-text"
+	if !slices.Contains(s.GrantedTools(), ToolSearchInputs) {
+		t.Fatalf("granted %v", s.GrantedTools())
+	}
+	s.Review.Enabled = true
+	if slices.Contains(s.GrantedTools(), ToolSearchInputs) {
+		t.Fatalf("search_inputs beside the review grant: %v", s.GrantedTools())
+	}
+	s.Review.Enabled, s.InputsTextDir = false, ""
+	if slices.Contains(s.GrantedTools(), ToolSearchInputs) {
+		t.Fatalf("search_inputs without the decoded inputs: %v", s.GrantedTools())
+	}
+	bad := baseSpec(t)
+	bad.InputsTextDir = "/inputs-text"
+	if err := validateSpec(bad); err == nil {
+		t.Fatal("a decoded-inputs mount without the inputs channel was accepted")
+	}
+	bad.InputsDir, bad.InputsTextDir = "/inputs", "inputs-text"
+	if err := validateSpec(bad); err == nil {
+		t.Fatal("a relative decoded-inputs mount was accepted")
+	}
+}

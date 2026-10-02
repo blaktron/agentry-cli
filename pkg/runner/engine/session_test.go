@@ -104,6 +104,8 @@ type fakeHarness struct {
 	// for each ("a" allow_once, "r" reject_once).
 	asks    []string
 	answers map[string]string
+	// onPrompt, when set, sees each prompt's text as it arrives.
+	onPrompt func(text string)
 }
 
 func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
@@ -147,6 +149,9 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 			text := ""
 			if len(m.Params.Prompt) > 0 {
 				text = m.Params.Prompt[0].Text
+			}
+			if h.onPrompt != nil {
+				h.onPrompt(text)
 			}
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "fs_list", "status": "pending"}}})
 			write(map[string]any{"jsonrpc": "2.0", "id": 76, "method": "session/request_permission", "params": map[string]any{"sessionId": "s1", "toolCall": map[string]any{"title": "write_report"}, "options": []any{map[string]any{"optionId": "a", "kind": "allow_once"}, map[string]any{"optionId": "r", "kind": "reject_once"}}}})
