@@ -117,6 +117,11 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(err)
 	}
 	s.rd = rd
+	// What the driver may permit is read now, before any harness starts:
+	// a host-run harness runs as the person and could rewrite the file.
+	if s.granted, err = grantedTools(filepath.Join(rd.cfg, "gateway")); err != nil {
+		return fail(Classify(ExitCLI, fmt.Errorf("the run's tool grant: %w", err)))
+	}
 	// The session store: a per-run named volume, labelled like every run
 	// object and removed with it (agentry-cli#90; DR-15 called the
 	// world-writable host directory it replaces "for now"). A fresh
@@ -206,14 +211,17 @@ var pumpEventHook func()
 
 // liveSession is the engine's session.Session.
 type liveSession struct {
-	d      dockerx.Client
-	p      Params
-	env    *receipt.Envelope
-	td     *teardown
-	rd     *runDirs
-	start  time.Time
-	runID  string
-	redact *redactor
+	d   dockerx.Client
+	p   Params
+	env *receipt.Envelope
+	td  *teardown
+	rd  *runDirs
+	// granted is the run's own tool grant, read from its rendered tools
+	// spec after the run-time grants: what the driver permits.
+	granted []string
+	start   time.Time
+	runID   string
+	redact  *redactor
 
 	budgets spec.SessionBudgets
 
@@ -381,7 +389,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		case <-time.After(5 * time.Second):
 		}
 	}
-	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: p.Plan.Tools})
+	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: s.granted})
 	if err != nil {
 		cancel(err)
 		awaitExit()

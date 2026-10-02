@@ -16,8 +16,8 @@ import (
 // container's attached stdio) shaped by the agentry-cli#33 spike. It
 // speaks exactly what the runner needs — initialize, session/new,
 // session/prompt — and answers every agent→client request itself: a
-// permission request is granted allow_once for a tool the plan's gateway
-// serves and denied for anything else (DR-15, agentry-cli#61; no human
+// permission request is granted allow_once for a tool the run's gateway
+// serves (SessionOptions.GatewayTools) and denied for anything else (DR-15, agentry-cli#61; no human
 // approves anything, plan §6.10 line 4), and any other request is refused
 // as unsupported, so the harness can never reach the host through the
 // client side of the protocol.

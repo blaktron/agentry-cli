@@ -34,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // runDirs are the per-run host locations.
@@ -347,6 +348,26 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
 	}
 	return nil
+}
+
+// grantedTools is the tools server's grant for this run: the GrantedTools
+// of the run's own rendered tools spec, after every run-time grant
+// (knowledge, the voice, web, review), the same list setAllowlist gives
+// the gateway. A session's driver permits exactly these, never the
+// compiled plan's Tools, which no run-time attachment moves
+// (agentry-cli#576).
+func grantedTools(gatewayDir string) ([]string, error) {
+	b, err := os.ReadFile(filepath.Join(gatewayDir, "toolspec.json")) //nolint:gosec // our own rendered config
+	if err != nil {
+		return nil, err
+	}
+	var ts toolsrv.Spec
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&ts); err != nil {
+		return nil, fmt.Errorf("the rendered tools spec does not decode as the tools server reads it: %w", err)
+	}
+	return ts.GrantedTools(), nil
 }
 
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
