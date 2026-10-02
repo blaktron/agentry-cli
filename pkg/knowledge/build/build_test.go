@@ -14,7 +14,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
-	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -94,7 +93,7 @@ func newFixture(t *testing.T, agent *dockerx.FakeForeground) *fixture {
 			"-agent":          agent,
 		},
 		ImageFiles: map[string]string{
-			decode.ImageSpec(runnerTag, "").Tag + ":" + gateway.ExecPackagesFile: "pandoc-cli-3.6.4-r0\npoppler-utils-25.04.0-r0\n",
+			decode.ImageSpec(runnerTag, policy.DefaultFilesImage).Tag + ":" + decode.FilesPackagesFile: "pandoc-cli-3.6.4-r0\npoppler-utils-25.04.0-r0\n",
 		},
 	}
 	docs := t.TempDir()
