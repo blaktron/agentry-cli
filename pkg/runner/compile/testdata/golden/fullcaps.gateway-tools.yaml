@@ -7,4 +7,5 @@ agentry-tools:
   - run_command
   - list_inputs
   - read_input
+  - search_inputs
   - write_report

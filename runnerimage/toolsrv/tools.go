@@ -108,11 +108,14 @@ func (s *server) buildTools() {
 		case ToolRunCommand:
 			add(name, s.runCommandDescription(), runCommandSchema(), s.toolRunCommand)
 		case ToolListInputs:
-			add(name, "List the read-only input files provided for this run: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for the inputs root; empty when no inputs were provided.",
+			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason) and the size of its text. A document, PDF or image was turned into text before the run. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided.",
 				listInputsSchema(), s.toolListInputs)
 		case ToolReadInput:
-			add(name, "Read one of the run's provided input files (read-only). Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+			add(name, "Read one of the run's provided input files (read-only) as text: a document, PDF or image as the text decoded from it before the run, a text file as it is. Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
 				readInputSchema(), s.toolReadInput)
+		case ToolSearchInputs:
+			add(name, "Search the text of the run's input files for a word or phrase, without regard to case. Returns each matching line as path:line: excerpt; read the file with read_input for more.",
+				searchInputsSchema(), s.toolSearchInputs)
 		case ToolAIReview:
 			add(name, aiReviewDescription, aiReviewSchema(), s.toolAIReview)
 		case ToolKnowledgeList:
@@ -933,6 +936,13 @@ func (s *server) toolListInputs(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return "list_inputs: " + err.Error(), true
 	}
+	idx, err := s.inputsIndex()
+	if err != nil {
+		return "list_inputs: " + err.Error(), true
+	}
+	if idx != nil {
+		return listIndexed(idx, path.Clean(rel))
+	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
 		return "list_inputs: " + err.Error(), true
@@ -980,6 +990,24 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	abs, err := resolveUnder(s.spec.InputsDir, a.Path)
 	if err != nil {
 		return "read_input: " + err.Error(), true
+	}
+	// With the decode step's index, an input is read as its text: the
+	// decoded text, or the original when it is text; one that could not
+	// be read says why. A path the index does not name (a directory) is
+	// answered from /inputs as before.
+	idx, err := s.inputsIndex()
+	if err != nil {
+		return "read_input: " + err.Error(), true
+	}
+	if idx != nil {
+		if e, ok := idx.lookup(path.Clean(a.Path)); ok {
+			if e.Unread != "" {
+				return fmt.Sprintf("read_input: %s could not be read: %s", e.Path, e.Unread), true
+			}
+			if abs, err = s.textOf(e); err != nil {
+				return "read_input: " + err.Error(), true
+			}
+		}
 	}
 	fi, err := os.Stat(abs)
 	if err != nil {

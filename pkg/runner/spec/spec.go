@@ -42,6 +42,12 @@ const (
 	// (RUNNER-PLAN-2 §P4) — operator-provided files, mounted :ro into the
 	// tools container, empty when the run got no --file.
 	PHInputs = "@@RUN_INPUTS@@"
+	// PHInputsText is the host path of the per-run read-only decoded
+	// inputs dir (plan file-handling.md §5, agentry-cli#560): the decode
+	// step's index and texts, mounted :ro into the tools container, empty
+	// when the run's inputs were not decoded. Always compiled in, like the
+	// inputs.
+	PHInputsText = "@@RUN_INPUTS_TEXT@@"
 	// PHKnowledge is the host path of the per-run read-only knowledge dir
 	// (plan knowledge.md §4.5): one subdirectory per attached pack,
 	// mounted :ro into the tools container, empty when the run got no
@@ -79,6 +85,9 @@ const (
 	OutMount = "/out"
 	// InputsMount is where tools see the run-inputs channel (P2 §P4).
 	InputsMount = "/inputs"
+	// InputsTextMount is where tools see the decoded inputs (plan
+	// file-handling.md §5).
+	InputsTextMount = "/inputs-text"
 	// KnowledgeMount is where tools see the attached knowledge packs, each
 	// at KnowledgeMount/<name> (plan knowledge.md §4.5).
 	KnowledgeMount = "/knowledge"

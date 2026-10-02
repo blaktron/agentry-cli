@@ -583,7 +583,12 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	return engine.Run(ctx, d, engine.Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: r.Home,
 		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: r.Knowledge, Decoded: r.Decoded,
-		Adapter: ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
+		// A built-in's inputs are staged by its own client: a package to
+		// review or revise, documents it decoded, a voice's texts. None is
+		// a person's file as given, so the run does not decode them again
+		// (agentry-cli#560).
+		TextInputs: true,
+		Adapter:    ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
 		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
 	})

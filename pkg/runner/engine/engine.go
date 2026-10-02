@@ -111,6 +111,11 @@ type Params struct {
 	// Decoded, when set, is the decode step the caller ran on the inputs
 	// before this run (pkg/runner/decode); the receipt names it.
 	Decoded *decode.Result
+	// TextInputs says the caller staged only files it made itself (every
+	// built-in: localrun.Run sets it): the engine does not decode them.
+	// Otherwise a run's inputs are decoded before the agent starts (plan
+	// file-handling.md §5, agentry-cli#560).
+	TextInputs bool
 	// Web is the built-in Drafter's web configuration and keys (web.go):
 	// required for a plan with the web tools, refused for any other.
 	Web *WebRun
@@ -248,6 +253,15 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
 		return fail(env, redact, err)
+	}
+	// The inputs are decoded before anything starts (plan
+	// file-handling.md §5, agentry-cli#560).
+	dec, err := decodeInputs(ctx, d, p, rd)
+	if err != nil {
+		return fail(env, redact, err)
+	}
+	if line := dec.line(); line != "" {
+		env.CapabilitiesEnforced["decode"] = line
 	}
 	secrets, err := secretValues(p)
 	if err != nil {

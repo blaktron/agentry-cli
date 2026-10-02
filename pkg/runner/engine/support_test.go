@@ -435,6 +435,7 @@ func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
 	rd := &runDirs{
 		workspace:  "/run/x/workspace",
 		inputs:     "/run/x/inputs",
+		inputsText: "/run/x/inputs-text",
 		knowledge:  "/run/x/knowledge",
 		cfg:        "/run/x/cfg",
 		serversDir: "/home/me/.agentry/servers",
@@ -447,6 +448,7 @@ func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
 	want := map[string]bool{
 		"/run/x/workspace":           true,
 		"/run/x/inputs":              true,
+		"/run/x/inputs-text":         true,
 		"/run/x/knowledge":           true,
 		"/run/x/cfg":                 true,
 		"/home/me/.agentry/servers":  true,

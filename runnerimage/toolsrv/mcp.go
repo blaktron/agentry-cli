@@ -168,6 +168,9 @@ func validateSpec(spec *Spec) error {
 	if spec.InputsDir != "" && !filepath.IsAbs(spec.InputsDir) {
 		return fmt.Errorf("inputsDir %q must be an absolute container path when set", spec.InputsDir)
 	}
+	if spec.InputsTextDir != "" && (!filepath.IsAbs(spec.InputsTextDir) || spec.InputsDir == "") {
+		return fmt.Errorf("inputsTextDir %q must be an absolute container path, and only beside the inputs channel", spec.InputsTextDir)
+	}
 	if spec.Web.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0) {
 		// The web tools' container has no network allowlist of its own
 		// (web.go): a fetch grant or a declared command beside them would

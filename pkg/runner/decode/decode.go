@@ -266,6 +266,13 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	if code != 0 {
 		return nil, fmt.Errorf("the decode container failed (exit %d): %s", code, strings.TrimSpace(tail(errOut.String(), 400)))
 	}
+	return Check(img, in, out)
+}
+
+// Check reads the report a decode wrote to out and holds it to what was
+// staged under in (checkReport): Run's last step, and the one a caller
+// that decodes some other way must take before it reads a byte of out.
+func Check(img Image, in, out string) (*Result, error) {
 	rep, err := checkReport(in, out)
 	if err != nil {
 		return nil, err
@@ -305,6 +312,13 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 		if !relPath(f.Path) || seen[f.Path] {
 			return rep, fmt.Errorf("%s names %q, which is not a document once", runnerdecode.ReportFile, f.Path)
 		}
+		// The family and the tool are words a run is shown (list_inputs,
+		// the session's notice), so they are held to the decode's own
+		// vocabulary: a decoder a document exploited could otherwise put
+		// text of its choosing in front of the model (agentry-cli#560).
+		if !knownFamilies[f.Family] || !knownTools[f.Tool] {
+			return rep, fmt.Errorf("%s: %q has the unknown family %q or tool %q", runnerdecode.ReportFile, f.Path, f.Family, f.Tool)
+		}
 		seen[f.Path] = true
 		fi, err := inRoot.Lstat(filepath.FromSlash(f.Path))
 		if err != nil {
@@ -339,7 +353,7 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 		if err != nil || e.IsDir() || seen[p] {
 			return err
 		}
-		rep.Files = append(rep.Files, runnerdecode.File{Path: p, Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable, Reason: "the decode's report does not name it"})
+		rep.Files = append(rep.Files, runnerdecode.File{Path: p, Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable, Reason: notInReport})
 		return nil
 	})
 	if err != nil {
@@ -347,6 +361,39 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 	}
 	sort.Slice(rep.Files, func(i, j int) bool { return rep.Files[i].Path < rep.Files[j].Path })
 	return rep, nil
+}
+
+// The decode's vocabulary: every family and tool a report may name.
+var (
+	knownFamilies = map[runnerdecode.Family]bool{
+		runnerdecode.FamilyText: true, runnerdecode.FamilyPDF: true, runnerdecode.FamilyDocument: true,
+		runnerdecode.FamilyPresentation: true, runnerdecode.FamilySpreadsheet: true,
+		runnerdecode.FamilyImage: true, runnerdecode.FamilyUnknown: true,
+	}
+	knownTools = map[string]bool{"": true, "pdftotext": true, "pandoc": true, "tesseract": true, "agentry-runner": true}
+)
+
+// notInReport is the reason the host gives a staged file the decode's
+// report left out: the host's own words, so passed on as they are.
+const notInReport = "the decode's report does not name it"
+
+// UnreadReason is why a file was not read, in fixed words chosen by its
+// outcome and tool. The report's own reason is never passed on: it can
+// carry a decoder's error output, which can quote the document, and a run
+// shows the reason to the model (list_inputs, read_input, a session's
+// notice; agentry-cli#560).
+func UnreadReason(f runnerdecode.File) string {
+	switch {
+	case f.Reason == notInReport:
+		return notInReport
+	case f.Outcome == runnerdecode.OutcomeRefused:
+		return "refused: not a regular file, or past the file cap"
+	case f.Tool != "":
+		return f.Tool + " could not read it"
+	case f.Family == runnerdecode.FamilyUnknown:
+		return "not text, and no decoder reads this kind of file"
+	}
+	return "it could not be decoded"
 }
 
 func relPath(p string) bool {
@@ -405,6 +452,13 @@ func (r *Result) count(outcome runnerdecode.Outcome) int {
 // Line is the receipt's decode line: the mechanism, the versions, and what
 // happened to the files.
 func (r *Result) Line() string {
+	return r.LineAs("the inputs were decoded before the run")
+}
+
+// LineAs is Line led by its own account of when the decode happened: a
+// session's files added mid-run were decoded before the agent was told of
+// them, not before the run (agentry-cli#560).
+func (r *Result) LineAs(when string) string {
 	pkgs := append([]string(nil), r.Image.Packages...)
 	sort.Strings(pkgs)
 	commands := make([]string, 0, len(Catalogue))
@@ -412,11 +466,16 @@ func (r *Result) Line() string {
 		commands = append(commands, t.Command)
 	}
 	sort.Strings(commands)
-	line := "the inputs were decoded before the run, in " + r.Image.Tag + " (built on " + r.Image.Files + ")" +
+	return when + ", in " + r.Image.Tag + " (built on " + r.Image.Files + ")" +
 		" with no network, every capability dropped and the inputs read-only," +
 		" by " + andList(commands) + " (" + strings.Join(pkgs, ", ") + ")" +
-		" and the runner's own PPTX and XLSX reader: " +
-		fmt.Sprintf("%d decoded, %d read as text", r.Decoded(), r.Text())
+		" and the runner's own PPTX and XLSX reader: " + r.Counts()
+}
+
+// Counts is what happened to the files: how many were decoded, read as
+// text, and not decoded, naming the first few of those.
+func (r *Result) Counts() string {
+	line := fmt.Sprintf("%d decoded, %d read as text", r.Decoded(), r.Text())
 	if bad := r.Undecodable(); len(bad) > 0 {
 		shown := bad
 		if len(shown) > 5 {

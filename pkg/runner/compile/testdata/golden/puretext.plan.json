@@ -11,7 +11,7 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "AGENT.md",
-    "sha256": "aaa85e130abb176e2acee1477af9374c14f44816520ea6e3aee44a3b1a6460cd",
+    "sha256": "0cad8b7e4f2094b9c97aded5789b671c537925aaeb4602bb27b21071eaa4f975",
     "bodySha256": "ea04f9c2aced19c2b7daccfaf1beb2b5fd5e4301a18ecd1a922bf738ffd87b9a"
   },
   "capabilities": {
@@ -22,6 +22,7 @@
   "tools": [
     "list_inputs",
     "read_input",
+    "search_inputs",
     "write_report"
   ],
   "enforcement": {
@@ -67,7 +68,7 @@
       },
       {
         "name": "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
-        "value": "@@RUN_WORKSPACE@@:@@RUN_OUT@@:@@RUN_CFG@@:@@RUN_INPUTS@@:@@RUN_KNOWLEDGE@@"
+        "value": "@@RUN_WORKSPACE@@:@@RUN_OUT@@:@@RUN_CFG@@:@@RUN_INPUTS@@:@@RUN_INPUTS_TEXT@@:@@RUN_KNOWLEDGE@@"
       },
       {
         "name": "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
@@ -162,11 +163,11 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "37ebd77adff3a985f5e6ed253feacb32624da1ba35d4126a24def9fabf8dc586",
+    "gateway/catalog.yaml": "302d165fc42fca1ae946f1de4819f93e3560e585d5e5369a964ee94febff2df3",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
-    "gateway/tools.yaml": "88a8dc133a5f0fbdac4dac0486123c3273a0436b6b86594cd73c7881e618304f",
-    "gateway/toolspec.json": "45d082620af715a3f8381197985fd1109dc07d72a01d1a6b2280e7174ca3e588",
-    "harness/agent.yaml": "cb60a71be2b60d168296fcca0e79706af3de57d9280e3189d740bc6bc13389f0"
+    "gateway/tools.yaml": "0798fb254b6297bd83a8b5a16ccfc544d034bd4be73c4389cf9095ee1740db18",
+    "gateway/toolspec.json": "9c3bb9b4735a0131dfe7d1f8129e114f0759441709785ad4edd4f80d593fdf1a",
+    "harness/agent.yaml": "8c984a8d9b5774c73e9db97eb7de1a774a09ea221f72bd7f67c0a5d6596750c8"
   }
 }

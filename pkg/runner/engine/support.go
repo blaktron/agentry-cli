@@ -42,6 +42,7 @@ type runDirs struct {
 	root        string // <RunRoot>/runs/<id>
 	workspace   string // root/workspace — the rw copy tools may mount
 	inputs      string // root/inputs — the :ro operator-inputs channel (P2 §P4)
+	inputsText  string // root/inputs-text — the :ro decoded inputs, the host's alone to write (file-handling.md §5)
 	knowledge   string // root/knowledge — the :ro knowledge packs, one directory each (knowledge.md §4.5)
 	session     string // the per-run volume an interactive session's harness store lives in (DR-15, agentry-cli#90)
 	cfg         string // root/cfg — rendered gateway+harness files
@@ -132,6 +133,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHCfg, hostPath(rd.cfg),
 		spec.PHSecrets, hostPath(rd.secretsPath),
 		spec.PHInputs, hostPath(rd.inputs),
+		spec.PHInputsText, hostPath(rd.inputsText),
 		spec.PHKnowledge, hostPath(rd.knowledge),
 		spec.PHSession, rd.session,
 		spec.PHServers, hostPath(rd.serversDir),
@@ -172,7 +174,10 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		root:      root,
 		workspace: filepath.Join(root, "workspace"),
 		inputs:    filepath.Join(root, "inputs"),
-		knowledge: filepath.Join(root, "knowledge"),
+		// The decoded inputs, written only by the host from the decode
+		// step's checked output (inputs.go).
+		inputsText: filepath.Join(root, "inputs-text"),
+		knowledge:  filepath.Join(root, "knowledge"),
 		// The session store is a per-run named volume, not a host
 		// directory (agentry-cli#90): the harness runs unprivileged, and a
 		// host directory it could write was a world-writable one.
@@ -198,10 +203,10 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			return nil, Classify(ExitCLI, fmt.Errorf("%s %s: %w", f.what, f.path, err))
 		}
 	}
-	// inputs/ and knowledge/ exist even when empty: the compiled catalog
-	// always mounts both :ro, and an absent bind source would fail the tools
-	// container.
-	for _, dir := range []string{rd.workspace, rd.inputs, rd.knowledge, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
+	// inputs/, inputs-text/ and knowledge/ exist even when empty: the
+	// compiled catalog always mounts them :ro, and an absent bind source
+	// would fail the tools container.
+	for _, dir := range []string{rd.workspace, rd.inputs, rd.inputsText, rd.knowledge, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
@@ -287,6 +292,10 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	return rd, nil
 }
 
+// intakeFile is the intake answers' name under /inputs and in the
+// receipts.
+const intakeFile = "intake.json"
+
 // stageIntake writes the agent-side intake document and stages file
 // answers next to the other inputs; the non-secret document is also a
 // receipt (plan §3.5).
@@ -302,19 +311,18 @@ func stageIntake(p Params, rd *runDirs) error {
 			return err
 		}
 	}
-	const name = "intake.json"
-	if _, err := os.Lstat(filepath.Join(rd.inputs, name)); err == nil {
-		return Classify(ExitCLI, fmt.Errorf("an input named %s is reserved for the intake answers", name))
+	if _, err := os.Lstat(filepath.Join(rd.inputs, intakeFile)); err == nil {
+		return Classify(ExitCLI, fmt.Errorf("an input named %s is reserved for the intake answers", intakeFile))
 	}
 	doc, err := json.MarshalIndent(p.Intake.Document(spec.InputsMount), "", "  ")
 	if err != nil {
 		return Classify(ExitCLI, fmt.Errorf("encode intake: %w", err))
 	}
 	doc = append(doc, '\n')
-	if err := os.WriteFile(filepath.Join(rd.inputs, name), doc, 0o644); err != nil { //nolint:gosec // agent-readable by design; carries no secret values
+	if err := os.WriteFile(filepath.Join(rd.inputs, intakeFile), doc, 0o644); err != nil { //nolint:gosec // agent-readable by design; carries no secret values
 		return Classify(ExitCLI, fmt.Errorf("stage intake: %w", err))
 	}
-	if err := os.WriteFile(filepath.Join(rd.receiptsDir, name), doc, 0o644); err != nil { //nolint:gosec // receipt
+	if err := os.WriteFile(filepath.Join(rd.receiptsDir, intakeFile), doc, 0o644); err != nil { //nolint:gosec // receipt
 		return Classify(ExitCLI, fmt.Errorf("intake receipt: %w", err))
 	}
 	return nil
@@ -708,6 +716,7 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 	return []relabelTarget{
 		{rd.workspace, true},
 		{rd.inputs, true},
+		{rd.inputsText, true},
 		{rd.knowledge, true},
 		{rd.cfg, true},
 		{rd.serversDir, true},
@@ -759,7 +768,7 @@ func mountsDockerSocket(mounts []spec.Mount) bool {
 func runScopedMount(source string) bool {
 	for _, ph := range []string{
 		spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs,
-		spec.PHKnowledge, spec.PHServers, spec.PHSession,
+		spec.PHInputsText, spec.PHKnowledge, spec.PHServers, spec.PHSession,
 	} {
 		if strings.Contains(source, ph) {
 			return true

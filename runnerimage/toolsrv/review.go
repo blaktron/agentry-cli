@@ -279,19 +279,29 @@ var errTooLarge = errors.New("too large")
 
 // readCapped reads a whole file of at most limit bytes.
 func readCapped(abs string, limit int64) ([]byte, error) {
-	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
+	data, more, err := readUpTo(abs, limit)
+	if err == nil && more {
 		return nil, errTooLarge
 	}
-	return data, nil
+	return data, err
+}
+
+// readUpTo reads at most limit bytes of a file and says whether there was
+// more.
+func readUpTo(abs string, limit int64) (data []byte, more bool, err error) {
+	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err = io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) > limit {
+		return data[:limit], true, nil
+	}
+	return data, false, nil
 }
 
 // ---- ai_review ----

@@ -13,6 +13,7 @@ registry:
     volumes:
       - '@@RUN_CFG@@/gateway/toolspec.json:/etc/agentry/toolspec.json:ro'
       - '@@RUN_INPUTS@@:/inputs:ro'
+      - '@@RUN_INPUTS_TEXT@@:/inputs-text:ro'
       - '@@RUN_KNOWLEDGE@@:/knowledge:ro'
       - '@@RUN_OUT@@:/out:rw'
     disableNetwork: true
