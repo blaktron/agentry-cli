@@ -183,6 +183,21 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/gitconfig"
 
+  # The pinned files image is the one agentry-dockerimages' files workflow
+  # signed (agentry-cli#559): a run pulls it by digest only, so this holds
+  # the pin itself to the signature, on every pull request. It needs the
+  # registry and Sigstore, so it is a job of its own.
+  files-image:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: The pinned files image is signed by the files workflow on main
+        run: ./scripts/verify-files-image.sh
+
   # Secret scanning (agentry-cli#165): gitleaks over the commits this event
   # brings — a pull request's own range, or a push's before..after — with the
   # repository's .gitleaks.toml, failing on any hit. The binary is the release

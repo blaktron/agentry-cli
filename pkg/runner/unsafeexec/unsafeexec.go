@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -44,14 +45,13 @@ const (
 // The grammars, the same the image's make-index.py applies: a plain
 // command name, a Debian package name (never ending in "-", which apt
 // reads as "remove"), an exact pip requirement, a relative path inside a
-// package, and an image reference pinned by digest, anchored at both ends
-// so no line can ride before the digest into a FROM.
+// package; an image reference pinned by digest is policy.PinnedByDigest's,
+// anchored at both ends so no line can ride before the digest into a FROM.
 var (
 	commandRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
 	packageRE = regexp.MustCompile(`^[a-z0-9][a-z0-9.+-]*[a-z0-9+]$`)
 	pipSpecRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*$`)
 	pathRE    = regexp.MustCompile(`^(?:[A-Za-z0-9._+-]+/)*[A-Za-z0-9._+-]+$`)
-	baseRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$`)
 )
 
 // RunnerCommand is the runner binary's name in the exec image, its
@@ -69,7 +69,7 @@ func ValidLinkPath(p string) bool {
 
 // ValidBase says whether an image reference is pinned by digest.
 func ValidBase(ref string) error {
-	if !baseRE.MatchString(ref) {
+	if !policy.PinnedByDigest(ref) {
 		return fmt.Errorf("the Unsafe Mode base %q is not an image reference pinned by digest (policy images.unsafe wants name:tag@sha256:…)", ref)
 	}
 	return nil
