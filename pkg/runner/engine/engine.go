@@ -288,7 +288,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
 	env.Stage = receipt.StageInfra
-	if err := startInfra(ctx, d, p, rd, td, runID, token, rep); err != nil {
+	if err := startInfra(ctx, d, p, rd, td, runID, token, rep, nil); err != nil {
 		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 		return fail(env, redact, withRefusals(err, rd))
 	}
@@ -411,9 +411,11 @@ type agentOutcome struct {
 
 // startInfra creates the run network and starts proxy + gateway, then
 // health-probes the gateway from inside the network (§R6 execute order).
-// Every failure here is the §R8 gateway/environment class.
+// Every failure here is the §R8 gateway/environment class. Given served,
+// a session's, the probe also lists the tools the gateway serves into it
+// (agentry-cli#578).
 func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
-	td *teardown, runID, token string, rep *strings.Replacer,
+	td *teardown, runID, token string, rep *strings.Replacer, served *[]string,
 ) error {
 	labels := runLabels(runID)
 	netName := networkName(runID)
@@ -640,13 +642,26 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 	probeSpec.Runtime = p.Plan.Runtime()
 	probeSpec = readOnlyRoot(hardened(probeSpec, p.limits()), "/tmp")
-	code, perr := d.RunForeground(ctx, probeSpec, nil, io.Discard, p.Stderr)
+	listing := io.Discard
+	var listed boundedBuffer
+	if served != nil {
+		probeSpec.Argv = append(probeSpec.Argv, "--list-tools")
+		listing = &listed
+	}
+	code, perr := d.RunForeground(ctx, probeSpec, nil, listing, p.Stderr)
 	if perr != nil || code != 0 {
 		diag := gatewayDiagnostics(ctx, d, gwName)
 		if perr == nil {
 			perr = fmt.Errorf("gateway health probe failed (exit %d)", code)
 		}
 		return Classify(ExitGateway, fmt.Errorf("%w%s", perr, diag))
+	}
+	if served != nil {
+		names, err := parseServedTools(listed.Bytes())
+		if err != nil {
+			return Classify(ExitGateway, fmt.Errorf("list the tools the gateway serves: %w", err))
+		}
+		*served = names
 	}
 	// A declared server the gateway could not start is logged and then
 	// carried past ("Can't start <name>"); the gateway serves whatever

@@ -31,6 +31,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
+	"github.com/blaktron/agentry-cli/runnerimage/probe"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -44,7 +45,7 @@ const usageText = `usage: agentry-runner <mode> [flags]
         leaves the run network)
   minimize <command> [<command>...]
         (docker build only) delete every executable except the named commands
-  probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60]
+  probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60] [--list-tools]
         wait until the MCP gateway answers an authed initialize with a 2xx
 `
 
@@ -189,10 +190,10 @@ func runProxy(args []string) error {
 	return p.ListenAndServe(*addr)
 }
 
-// probeInitBody is a spec-shaped MCP initialize request. A 2xx answer is
-// proof the gateway is up and accepted our Bearer token; the body may be
-// SSE-framed, so it is deliberately not parsed (§R6 health probe).
-const probeInitBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agentry-probe","version":"1"}}}`
+// probeInitBody is the probe's MCP initialize. A 2xx answer is proof the
+// gateway is up and accepted our Bearer token; the body may be SSE-framed,
+// so it is deliberately not parsed (§R6 health probe).
+const probeInitBody = probe.InitBody
 
 // runProbe retries the initialize POST every 2s until the deadline. It
 // exists because "the gateway container started" and "the gateway is
@@ -203,6 +204,7 @@ func runProbe(args []string) error {
 	rawURL := fs.String("url", "", "gateway MCP endpoint URL")
 	tokenEnv := fs.String("token-env", "MCP_GATEWAY_TOKEN", "env var holding the gateway Bearer token (empty sends no Authorization)")
 	timeout := fs.Int("timeout", 60, "seconds to keep retrying")
+	listTools := fs.Bool("list-tools", false, `once the gateway answers, print the tools it serves as one JSON line, {"tools":[…]} (a session's permit list, agentry-cli#578)`)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -220,7 +222,14 @@ func runProbe(args []string) error {
 	for {
 		lastErr = probeOnce(client, *rawURL, token)
 		if lastErr == nil {
-			return nil
+			if !*listTools {
+				return nil
+			}
+			names, err := probe.ListTools(client, *rawURL, token)
+			if err != nil {
+				return fmt.Errorf("list the gateway's tools: %w", err)
+			}
+			return json.NewEncoder(os.Stdout).Encode(map[string][]string{"tools": names})
 		}
 		if time.Now().After(deadline) {
 			break
