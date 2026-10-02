@@ -1,6 +1,6 @@
 // `agentry files ensure`: pull the files image this CLI pins, ahead of any
 // run (plan file-handling.md D4's addendum; agentry-cli#572). A sandbox host
-// runs it from the new runhost image at each update (agentry-web#946), so
+// runs it from the runhost image at each update (agentry-web#946), so
 // the first hosted run with inputs does not download the decoders inside a
 // paid run. It is the decode step's own pull, alone.
 package main
@@ -14,6 +14,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
@@ -35,7 +36,7 @@ func newFilesEnsureCmd() *cobra.Command {
 	var policyPath string
 	cmd := &cobra.Command{
 		Use:   "ensure",
-		Short: "Pull the files image this CLI pins, so no run has to",
+		Short: "Pull the files image the runner policy names, so no run has to",
 		Long: "Pulls the files image the runner policy names (images.files, else the one this CLI pins), by digest,\n" +
 			"unless it is already on this machine, and prints its reference. A reference not pinned by digest is\n" +
 			"refused. Nothing is built and no run starts. Without --policy, the policy file under the runner home is\n" +
@@ -60,18 +61,22 @@ func newFilesEnsureCmd() *cobra.Command {
 
 // filesPolicy is the policy a files command reads: the named file, which
 // must exist; else the runner home's, if there is one; else the defaults.
-// Unlike a run it never writes a default policy.
+// Unlike a run it never writes a default policy. A policy it cannot use
+// exits with the policy class, so a script tells it from a failed pull.
 func filesPolicy(flag string) (*policy.Policy, error) {
 	f, err := policy.Resolve(flag)
 	if err != nil {
-		return nil, err
+		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
 	pol, _, err := policy.Load(f.Path)
-	if flag == "" && errors.Is(err, fs.ErrNotExist) {
+	switch {
+	case err == nil:
+		return pol, nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, engine.Classify(engine.ExitPolicy, err)
+	case flag == "":
 		return policy.Default(), nil
+	default:
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the runner policy %s does not exist", f.Path))
 	}
-	if err != nil {
-		return nil, fmt.Errorf("the runner policy %s: %w", f.Path, err)
-	}
-	return pol, nil
 }

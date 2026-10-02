@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
@@ -88,7 +89,9 @@ func TestFilesEnsureFollowsThePolicysImageAndRefusesAnUnpinnedOne(t *testing.T) 
 	}
 	f2 := &dockerx.Fake{}
 	fakeFilesDocker(t, f2)
-	if _, _, err := runCLI(t, nil, "files", "ensure", "--policy", path); err == nil || !strings.Contains(err.Error(), "pinned by digest") {
+	_, _, err = runCLI(t, nil, "files", "ensure", "--policy", path)
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), "pinned by digest") {
 		t.Fatalf("err %v", err)
 	}
 	if len(f2.Calls) != 0 {
@@ -103,8 +106,10 @@ func TestFilesEnsureRefusesAMissingNamedPolicy(t *testing.T) {
 	t.Setenv(policy.HomeEnv, t.TempDir())
 	f := &dockerx.Fake{}
 	fakeFilesDocker(t, f)
-	if _, _, err := runCLI(t, nil, "files", "ensure", "--policy", filepath.Join(t.TempDir(), "nope.yaml")); err == nil {
-		t.Fatal("a missing --policy file was accepted")
+	_, _, err := runCLI(t, nil, "files", "ensure", "--policy", filepath.Join(t.TempDir(), "nope.yaml"))
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), "nope.yaml does not exist") {
+		t.Fatalf("err %v", err)
 	}
 	if len(f.Calls) != 0 {
 		t.Fatalf("docker was called: %v", f.Calls)
