@@ -117,9 +117,9 @@ var (
 // image the policy names, by digest, then builds the offline layer on it,
 // and reads back the versions the files image recorded.
 func Ensure(ctx context.Context, d dockerx.Client, runnerImage string, pol *policy.Policy, ctxDir string, logw io.Writer) (Image, error) {
-	files := pol.Images.FilesImage()
-	if !policy.PinnedByDigest(files) {
-		return Image{}, fmt.Errorf("the files image %q is not pinned by digest; images.files must be <name>@sha256:<digest>", files)
+	files, err := filesRef(pol)
+	if err != nil {
+		return Image{}, err
 	}
 	s := ImageSpec(runnerImage, files)
 	ok, err := d.ImageExists(ctx, s.Tag)
@@ -154,6 +154,28 @@ func Ensure(ctx context.Context, d dockerx.Client, runnerImage string, pol *poli
 	}
 	sort.Strings(pkgs)
 	return Image{Tag: s.Tag, Files: files, Packages: pkgs}, nil
+}
+
+// PullFiles pulls the files image the policy names, by digest, unless it is
+// here, and answers its reference: Ensure's pull alone, which a sandbox host
+// runs before any run (`agentry files ensure`, agentry-cli#572), so the
+// first run with inputs after an update does not download it.
+func PullFiles(ctx context.Context, d dockerx.Client, pol *policy.Policy, logw io.Writer) (string, error) {
+	files, err := filesRef(pol)
+	if err != nil {
+		return "", err
+	}
+	return files, pullFiles(ctx, d, files, logw)
+}
+
+// filesRef is the files image the policy names, refused unless it is pinned
+// by digest.
+func filesRef(pol *policy.Policy) (string, error) {
+	files := pol.Images.FilesImage()
+	if !policy.PinnedByDigest(files) {
+		return "", fmt.Errorf("the files image %q is not pinned by digest; images.files must be <name>@sha256:<digest>", files)
+	}
+	return files, nil
 }
 
 // pullFiles pulls the files image unless it is here, retrying a failed
