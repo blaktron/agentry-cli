@@ -14,11 +14,13 @@ package toolsrv
 // run may search (plan knowledge.md §4.5, agentry-cli#317); "4" the
 // built-in Drafter's web tools (plan builder-rework.md §7.3,
 // agentry-cli#345); "5" the review grant (plan
-// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503). The server
+// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503); "6" the
+// decoded inputs and search_inputs (plan file-handling.md §5,
+// agentry-cli#560). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "5"
+const SpecVersion = "6"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -48,6 +50,14 @@ type Spec struct {
 	// absence of any write tool keep the channel one-way. Empty means the
 	// channel is not configured and its tools are absent.
 	InputsDir string `json:"inputsDir,omitempty"`
+	// InputsTextDir is the container path of the read-only decoded-inputs
+	// mount (conventionally /inputs-text; plan file-handling.md §5,
+	// agentry-cli#560): the engine's decode step writes the index of every
+	// input there and the text decoded from each (inputs.go).
+	// search_inputs is granted with it beside the inputs channel, except
+	// under the review grant, where every text reaches the model only
+	// through read_input's scan.
+	InputsTextDir string `json:"inputsTextDir,omitempty"`
 	// KnowledgeDir is the container path of the read-only knowledge mount
 	// (conventionally /knowledge; plan knowledge.md §4.5), one directory
 	// per attached pack. Knowledge names those packs. Like the inputs, a
@@ -194,14 +204,17 @@ const (
 // these into the plan's tool-grant list and the gateway tools.yaml
 // allowlist; the server registers exactly the granted subset.
 const (
-	ToolFSRead      = "fs_read"
-	ToolFSList      = "fs_list"
-	ToolFSWrite     = "fs_write"
-	ToolFetch       = "fetch"
-	ToolRunCommand  = "run_command"
-	ToolListInputs  = "list_inputs"
-	ToolReadInput   = "read_input"
-	ToolWriteReport = "write_report"
+	ToolFSRead     = "fs_read"
+	ToolFSList     = "fs_list"
+	ToolFSWrite    = "fs_write"
+	ToolFetch      = "fetch"
+	ToolRunCommand = "run_command"
+	ToolListInputs = "list_inputs"
+	ToolReadInput  = "read_input"
+	// ToolSearchInputs searches the inputs' text (plan file-handling.md
+	// §5), granted with InputsTextDir.
+	ToolSearchInputs = "search_inputs"
+	ToolWriteReport  = "write_report"
 	// The knowledge tools (plan knowledge.md §4.5), granted only while a
 	// pack is attached.
 	ToolKnowledgeList   = "knowledge_list"
@@ -242,6 +255,8 @@ func (s *Spec) GrantedTools() []string {
 		names = append(names, ToolListInputs, ToolReadInput)
 		if s.Review.Enabled {
 			names = append(names, ToolAIReview)
+		} else if s.InputsTextDir != "" {
+			names = append(names, ToolSearchInputs)
 		}
 	}
 	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {

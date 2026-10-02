@@ -2,4 +2,5 @@
 agentry-tools:
   - list_inputs
   - read_input
+  - search_inputs
   - write_report

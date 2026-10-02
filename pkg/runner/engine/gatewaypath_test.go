@@ -54,6 +54,7 @@ func TestGatewaySeesWindowsPathsItCanCheck(t *testing.T) {
 		root:       run,
 		workspace:  run + `\workspace`,
 		inputs:     run + `\inputs`,
+		inputsText: run + `\inputs-text`,
 		knowledge:  run + `\knowledge`,
 		cfg:        t.TempDir(), // written here; the gateway sees its mount, not this path
 		outDir:     `C:\Users\blakt\Downloads\agentry-out\agentry-drafter-ae8a24dd`,

@@ -78,10 +78,7 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 			doc.Read, doc.DecodedBy = f.Output, f.Tool
 			err = r.CopyText(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
 		default:
-			doc.Unread = f.Reason
-			if doc.Unread == "" {
-				doc.Unread = string(f.Outcome)
-			}
+			doc.Unread = UnreadReason(f)
 		}
 		if err != nil {
 			return nil, nil, err

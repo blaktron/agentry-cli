@@ -735,6 +735,10 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// whether a given run provides files is a run-time fact, and the
 		// engine mounts an empty directory when none were.
 		InputsDir: spec.InputsMount,
+		// The decoded inputs beside them (plan file-handling.md §5): the
+		// engine decodes a run's inputs before the agent starts, and
+		// mounts an empty directory when there were none.
+		InputsTextDir: spec.InputsTextMount,
 		FSRead: toolsrv.Access{
 			Enabled: caps.FSReadMode != "none",
 			Paths:   caps.FSReadPaths,
@@ -987,7 +991,7 @@ func unsafeExecImageFor(commands []string, runnerImage string, data *unsafeexec.
 // its roots (agentry-cli#105). Left out otherwise so a plan without
 // servers keeps its pre-PLAN-3 bytes.
 func bindRoots(withServers bool) []string {
-	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs, spec.PHKnowledge}
+	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs, spec.PHInputsText, spec.PHKnowledge}
 	if withServers {
 		roots = append(roots, spec.PHServers)
 	}
@@ -1072,6 +1076,9 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// The run-inputs channel (P2 §P4): read-only by mount AND by tool
 	// surface; the output/receipts volume stays separate below.
 	vols = append(vols, spec.PHInputs+":"+spec.InputsMount+":ro")
+	// The decoded inputs (plan file-handling.md §5), read-only the same
+	// way: the decode step's index and texts, written by the host.
+	vols = append(vols, spec.PHInputsText+":"+spec.InputsTextMount+":ro")
 	// The knowledge channel (plan knowledge.md §4.5): one read-only mount
 	// whether or not packs are attached, so an attachment never moves the
 	// plan; the engine grants the tools only when it attaches one (DR-38).
