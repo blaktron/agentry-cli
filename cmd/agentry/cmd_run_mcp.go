@@ -79,11 +79,13 @@ func allSecretNames(m *manifest.Manifest) []string {
 }
 
 // vulnerabilityVerdict turns the registry's statuses into the run's
-// decision: the receipt line, and an error when a declared server carries a
-// known high or critical advisory and nothing overrides it. An override —
-// the flag or the policy — is named in the line so the receipt shows the
-// run was allowed on purpose; an unreachable registry is named too, so a
-// clean line never hides a check that did not happen.
+// decision: the receipt line, and an error when a declared server carries
+// an advisory the gate rates high or critical (the advisory's own severity
+// from a registry that does not serve the gate's rating; agentry-cli#501)
+// and nothing overrides it. An override — the flag or the policy — is
+// named in the line so the receipt shows the run was allowed on purpose;
+// an unreachable registry is named too, so a clean line never hides a
+// check that did not happen.
 func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, allowFlag, allowPolicy bool) (string, error) {
 	line := "checked against " + registry + ": " + mcpinstall.Summary(statuses)
 	var refusing []mcpinstall.VulnStatus
@@ -103,10 +105,7 @@ func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, all
 	}
 	parts := make([]string, 0, len(refusing))
 	for _, s := range refusing {
-		p := s.Ref + " has a known " + s.MaxSeverity + " vulnerability"
-		if ids := advisoryIDs(s); len(ids) > 0 {
-			p += " (" + strings.Join(ids, ", ") + ")"
-		}
+		p := s.Ref + " has " + s.Describe(s.Refusing())
 		if fixed := s.FixedIn(); len(fixed) > 0 {
 			p += ", fixed in " + strings.Join(fixed, ", ")
 		}
@@ -114,14 +113,4 @@ func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, all
 	}
 	return line, fmt.Errorf("declared MCP server refused by the registry's vulnerability scan: %s — pin a fixed version, or override with --allow-vulnerable-mcp or policy mcpServers.allowVulnerable",
 		strings.Join(parts, "; "))
-}
-
-func advisoryIDs(s mcpinstall.VulnStatus) []string {
-	var ids []string
-	for _, a := range s.Advisories {
-		if a.Severity == "high" || a.Severity == "critical" {
-			ids = append(ids, a.ID)
-		}
-	}
-	return ids
 }

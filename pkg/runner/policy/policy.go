@@ -289,8 +289,10 @@ type HarnessPolicy struct {
 // MCPServersPolicy is the operator's stance on declared servers the
 // registry knows to be vulnerable.
 type MCPServersPolicy struct {
-	// AllowVulnerable lets a run proceed when the registry reports a high
-	// or critical advisory for a declared server version. Off by default:
+	// AllowVulnerable lets a run proceed when the registry's gate rates an
+	// advisory for a declared server version high or critical (the
+	// advisory's own severity from a registry that serves no rating;
+	// agentry-cli#501). Off by default:
 	// such a run is refused (exit 11) unless --allow-vulnerable-mcp is
 	// given; either override is recorded in the receipt.
 	AllowVulnerable bool `yaml:"allowVulnerable,omitempty"`

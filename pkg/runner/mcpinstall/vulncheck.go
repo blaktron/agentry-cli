@@ -19,17 +19,65 @@ import (
 // version. The registry is the source of truth — it holds the scanned-server
 // registry the sweep refreshes — so the runner never consults a
 // vulnerability database itself. The check fails open on an unreachable
-// registry (a stale laptop must still run) and closed on a known high or
-// critical advisory (unless the operator overrides it), and either way the
-// receipt says which.
+// registry (a stale laptop must still run) and closed on an advisory the
+// registry's gate rates high or critical (unless the operator overrides
+// it), and either way the receipt says which.
+//
+// The rating is the gate's, not the advisory's word (agentry-cli#501,
+// amending DR-16): since ruleset 0.3.1 the registry rates a High advisory
+// medium below CVSS 8.5 and publishes the version, so the runner refusing
+// on the database's "high" would refuse what the gate let through. A
+// registry that does not serve the gate's rating (an older or a
+// self-hosted one) is weighed by the advisory's own severity, as before.
 
 // VulnAdvisory is one advisory the registry reports for a server version.
 type VulnAdvisory struct {
-	ID       string   `json:"id"`
-	Aliases  []string `json:"aliases,omitempty"`
-	Severity string   `json:"severity"`
-	Summary  string   `json:"summary"`
-	FixedIn  []string `json:"fixedIn,omitempty"`
+	ID      string   `json:"id"`
+	Aliases []string `json:"aliases,omitempty"`
+	// Severity is the advisory's own word (the database's, else the band
+	// of its CVSS score).
+	Severity string `json:"severity"`
+	// GateSeverity is the registry gate's rating of the finding this
+	// advisory makes (agentry#774): Critical is critical, High is high
+	// from a CVSS base score of 8.5 (or with no usable score) and medium
+	// below it, any other its own. Empty from a registry that does not
+	// serve it.
+	GateSeverity string `json:"gateSeverity,omitempty"`
+	// CVSSScore is the advisory's highest CVSS base score, when the
+	// registry serves one.
+	CVSSScore *float64 `json:"cvssScore,omitempty"`
+	Summary   string   `json:"summary"`
+	FixedIn   []string `json:"fixedIn,omitempty"`
+}
+
+// Rating is the severity the runner weighs this advisory at: the gate's
+// rating where the registry serves one, else the advisory's own.
+func (a VulnAdvisory) Rating() string {
+	if a.GateSeverity != "" {
+		return a.GateSeverity
+	}
+	return a.Severity
+}
+
+// Refuses reports whether this advisory refuses a run by default: one
+// rated high or critical.
+func (a VulnAdvisory) Refuses() bool {
+	r := a.Rating()
+	return r == "high" || r == "critical"
+}
+
+// Label names the advisory for a person: its id and, where the registry
+// serves the gate's rating, the advisory's own severity, its CVSS score
+// and the gate's rating, so a High the gate rates medium reads as both.
+func (a VulnAdvisory) Label() string {
+	if a.GateSeverity == "" {
+		return a.ID
+	}
+	l := a.ID + " [advisory " + a.Severity
+	if a.CVSSScore != nil {
+		l += fmt.Sprintf(", CVSS %.1f", *a.CVSSScore)
+	}
+	return l + "; the gate rates it " + a.GateSeverity + "]"
 }
 
 // VulnStatus is the registry's answer for one declared server.
@@ -47,28 +95,80 @@ type VulnStatus struct {
 	Err         string         `json:"error,omitempty"`
 }
 
-// Refuses reports whether this status refuses a run by default: a known
-// high or critical advisory.
-func (s VulnStatus) Refuses() bool {
+// Refusing is the advisories that refuse a run by default: those rated
+// high or critical, on a record that lists advisories ("vulnerable", or
+// "error" with the last known).
+func (s VulnStatus) Refusing() []VulnAdvisory {
 	if s.Status != "vulnerable" && s.Status != "error" {
-		return false
+		return nil
 	}
+	var out []VulnAdvisory
 	for _, a := range s.Advisories {
-		if a.Severity == "high" || a.Severity == "critical" {
+		if a.Refuses() {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// Refuses reports whether this status refuses a run by default.
+func (s VulnStatus) Refuses() bool { return len(s.Refusing()) > 0 }
+
+// GateRated reports whether the registry served the gate's rating for
+// this record's advisories.
+func (s VulnStatus) GateRated() bool {
+	for _, a := range s.Advisories {
+		if a.GateSeverity != "" {
 			return true
 		}
 	}
 	return false
 }
 
+// MaxRating is the worst rating among advisories (all of them when advs
+// is nil): the gate's where served, else the registry's maxSeverity.
+func (s VulnStatus) MaxRating(advs []VulnAdvisory) string {
+	if advs == nil {
+		advs = s.Advisories
+	}
+	if !s.GateRated() {
+		return s.MaxSeverity
+	}
+	worst := ""
+	for _, a := range advs {
+		if severityRank[a.Rating()] > severityRank[worst] {
+			worst = a.Rating()
+		}
+	}
+	return worst
+}
+
+var severityRank = map[string]int{"info": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
+
+// Describe is the clause a refusal, doctor or the receipt names advisories
+// with: "a known critical vulnerability (GHSA-…)" from a registry that
+// does not rate, "an advisory the gate rates high (GHSA-… [advisory high,
+// CVSS 8.7; the gate rates it high])" from one that does.
+func (s VulnStatus) Describe(advs []VulnAdvisory) string {
+	labels := make([]string, 0, len(advs))
+	for _, a := range advs {
+		labels = append(labels, a.Label())
+	}
+	rating := s.MaxRating(advs)
+	if !s.GateRated() {
+		return "a known " + rating + " vulnerability (" + strings.Join(labels, ", ") + ")"
+	}
+	if len(advs) == 1 {
+		return "an advisory the gate rates " + rating + " (" + labels[0] + ")"
+	}
+	return "advisories the gate rates up to " + rating + " (" + strings.Join(labels, ", ") + ")"
+}
+
 // FixedIn is the union of the fixed versions the refusing advisories name.
 func (s VulnStatus) FixedIn() []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, a := range s.Advisories {
-		if a.Severity != "high" && a.Severity != "critical" {
-			continue
-		}
+	for _, a := range s.Refusing() {
 		for _, f := range a.FixedIn {
 			if !seen[f] {
 				seen[f] = true
@@ -146,11 +246,15 @@ func Summary(statuses []VulnStatus) string {
 	for _, s := range statuses {
 		p := s.Ref + " " + s.Status
 		if s.Status == "vulnerable" || (s.Status == "error" && len(s.Advisories) > 0) {
-			ids := make([]string, 0, len(s.Advisories))
+			labels := make([]string, 0, len(s.Advisories))
 			for _, a := range s.Advisories {
-				ids = append(ids, a.ID)
+				labels = append(labels, a.Label())
 			}
-			p += " (" + s.MaxSeverity + ": " + strings.Join(ids, ", ") + ")"
+			rating := s.MaxRating(nil)
+			if s.GateRated() {
+				rating = "the gate's " + rating
+			}
+			p += " (" + rating + ": " + strings.Join(labels, ", ") + ")"
 		}
 		if s.Err != "" && s.Status == "unreachable" {
 			p += " (" + s.Err + ")"

@@ -467,3 +467,16 @@ func TestAShippedPacksTextIsItsOwnStages(t *testing.T) {
 		t.Fatalf("a hit past 1 MiB in a pack page %v, unread pack text %v, the file beside the pack %v: %+v", pastCap, unread, notes, p.Findings)
 	}
 }
+
+// TestServerFindingsRateAsTheGate: a declared server's advisory is the
+// finding S7 makes of it, at the gate's rating where the registry serves
+// one (agentry#774, agentry-cli#501), else at the advisory's own severity.
+func TestServerFindingsRateAsTheGate(t *testing.T) {
+	got := serverFindings([]mcpinstall.VulnStatus{
+		{Ref: "npm:@modelcontextprotocol/sdk@1.25.2", Status: "vulnerable", Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-71", Severity: "high", GateSeverity: "medium"}}},
+		{Ref: "npm:y@1", Status: "vulnerable", Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-old", Severity: "high"}}},
+	})
+	if len(got) != 2 || got[0].Severity != "medium" || got[1].Severity != "high" {
+		t.Fatalf("findings: %+v", got)
+	}
+}

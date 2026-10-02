@@ -188,7 +188,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	f.BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "run a release with no registry attestation (required for --local)")
 	f.BoolVar(&opts.allowUnscanned, "allow-unscanned", false, "run a release the registry admitted without a scan (no findings, no report, no attestation)")
-	f.BoolVar(&opts.allowVulnerableMCP, "allow-vulnerable-mcp", false, "run even when the registry reports a high/critical vulnerability for a declared MCP server (recorded in the receipt)")
+	f.BoolVar(&opts.allowVulnerableMCP, "allow-vulnerable-mcp", false, "run even when the registry's gate rates a declared MCP server's advisory high or critical (recorded in the receipt)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
 	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
@@ -419,8 +419,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if len(m.Capabilities.MCPServers) > 0 {
 		opts.progress.at(receipt.StageMCPServers)
 		// The registry's vulnerability verdict on each declared server
-		// (agentry#177, DR-16): refused on a known high/critical advisory
-		// unless the operator says otherwise; fail-open when the registry
+		// (agentry#177, DR-16): refused on an advisory the gate rates high or
+		// critical (agentry-cli#501) unless the operator says otherwise; fail-open when the registry
 		// cannot answer. The receipt records the outcome either way.
 		statuses := mcpinstall.CheckVulnerabilities(cmd.Context(), nil, registryURL(), m.Capabilities.MCPServers)
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "declared MCP servers, per the registry: %s\n", mcpinstall.Summary(statuses))

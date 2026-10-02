@@ -91,3 +91,64 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// The runner weighs the gate's rating where the registry serves it
+// (agentry-cli#501): a High below CVSS 8.5 is medium and runs, a High from
+// 8.5 and a Critical refuse. A registry that serves no rating is weighed
+// by the advisory's own severity, as before.
+func TestVulnRefusalReadsTheGatesRating(t *testing.T) {
+	score := func(f float64) *float64 { return &f }
+	sdk1252 := VulnStatus{Ref: "npm:@modelcontextprotocol/sdk@1.25.2", Status: "vulnerable", MaxSeverity: "high",
+		Advisories: []VulnAdvisory{{ID: "GHSA-71", Severity: "high", GateSeverity: "medium", CVSSScore: score(7.1), FixedIn: []string{"1.26.0"}}}}
+	sdk1251 := VulnStatus{Ref: "npm:@modelcontextprotocol/sdk@1.25.1", Status: "vulnerable", MaxSeverity: "high",
+		Advisories: []VulnAdvisory{
+			{ID: "GHSA-71", Severity: "high", GateSeverity: "medium", CVSSScore: score(7.1), FixedIn: []string{"1.26.0"}},
+			{ID: "GHSA-87", Severity: "high", GateSeverity: "high", CVSSScore: score(8.7), FixedIn: []string{"1.25.2"}},
+		}}
+	critical := VulnStatus{Ref: "npm:@bytebase/dbhub@0.20.0", Status: "error", MaxSeverity: "critical",
+		Advisories: []VulnAdvisory{{ID: "GHSA-cr", Severity: "critical", GateSeverity: "critical", CVSSScore: score(9.8)}}}
+	unscored := VulnStatus{Ref: "npm:x@1", Status: "vulnerable", MaxSeverity: "high",
+		Advisories: []VulnAdvisory{{ID: "GHSA-ns", Severity: "high", GateSeverity: "high"}}}
+	legacy := VulnStatus{Ref: "npm:y@1", Status: "vulnerable", MaxSeverity: "high",
+		Advisories: []VulnAdvisory{{ID: "GHSA-old", Severity: "high"}}}
+
+	if sdk1252.Refuses() {
+		t.Fatalf("a High the gate rates medium must run: %+v", sdk1252)
+	}
+	if got := sdk1252.Describe(sdk1252.Advisories); got != "an advisory the gate rates medium (GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium])" {
+		t.Fatalf("describe medium: %q", got)
+	}
+	if !sdk1251.Refuses() || len(sdk1251.Refusing()) != 1 || sdk1251.Refusing()[0].ID != "GHSA-87" {
+		t.Fatalf("the 8.7 refuses, the 7.1 does not: %+v", sdk1251.Refusing())
+	}
+	if f := sdk1251.FixedIn(); len(f) != 1 || f[0] != "1.25.2" {
+		t.Fatalf("fixed in names the refusing advisory only: %v", f)
+	}
+	if !critical.Refuses() || critical.MaxRating(nil) != "critical" {
+		t.Fatalf("critical (last known on a failed lookup) refuses: %+v", critical)
+	}
+	if !unscored.Refuses() || unscored.Describe(unscored.Refusing()) != "an advisory the gate rates high (GHSA-ns [advisory high; the gate rates it high])" {
+		t.Fatalf("unscored high: %q", unscored.Describe(unscored.Refusing()))
+	}
+	if !legacy.Refuses() || legacy.GateRated() || legacy.Describe(legacy.Refusing()) != "a known high vulnerability (GHSA-old)" {
+		t.Fatalf("a registry without the rating keeps today's rule: %q", legacy.Describe(legacy.Refusing()))
+	}
+	if s := Summary([]VulnStatus{sdk1251, legacy}); !contains(s, "sdk@1.25.1 vulnerable (the gate's high: GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium], GHSA-87 [advisory high, CVSS 8.7; the gate rates it high])") ||
+		!contains(s, "npm:y@1 vulnerable (high: GHSA-old)") {
+		t.Fatalf("summary: %q", s)
+	}
+}
+
+// The registry's JSON carries the rating and the score per advisory.
+func TestCheckVulnerabilitiesReadsGateSeverity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"vulnerable","maxSeverity":"high","lastCheckedAt":"2026-10-01T10:00:00Z",` +
+			`"advisories":[{"id":"GHSA-71","severity":"high","gateSeverity":"medium","cvssScore":7.1,"summary":"s"}]}`))
+	}))
+	defer srv.Close()
+	got := CheckVulnerabilities(context.Background(), nil, srv.URL, []manifest.MCPServer{{NPM: "@modelcontextprotocol/sdk", Version: "1.25.2"}})
+	a := got[0].Advisories[0]
+	if a.GateSeverity != "medium" || a.CVSSScore == nil || *a.CVSSScore != 7.1 || got[0].Refuses() {
+		t.Fatalf("parsed: %+v", got[0])
+	}
+}
