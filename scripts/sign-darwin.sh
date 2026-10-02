@@ -9,8 +9,12 @@
 # and the stable identifier net.secureagentry.cli; read the signature back
 # (the identity and the Team ID release.env names, the runtime flag, a
 # timestamp); submit a zip of it to Apple's notary service and wait for
-# "Accepted"; then ask Gatekeeper (`spctl --assess --type execute`) for
-# "Notarized Developer ID". A bare Mach-O cannot be stapled, so the ticket is
+# "Accepted"; then ask Gatekeeper for "Notarized Developer ID" the way it
+# judges a bare binary (`spctl --assess --type open --context
+# context:primary-signature`) and have codesign check Apple's ticket
+# (`--check-notarization -R=notarized`). `spctl --type execute` is for app
+# bundles and rejects every bare binary, notarized or not ("does not seem to
+# be an app"; the first dry run, agentry-cli#198). A bare Mach-O cannot be stapled, so the ticket is
 # Apple's online one, which is what Gatekeeper looks up for a quarantined
 # download.
 #
@@ -159,17 +163,21 @@ for id in $ids; do
 done
 rm -f "$W/notary.p8"
 
-# Gatekeeper's own verdict, from Apple's online ticket; it can take a moment
-# to be served after "Accepted".
+# Gatekeeper's verdict, from Apple's online ticket; it can take a moment to
+# be served after "Accepted". Both checks were proved against a notarized
+# binary and an unnotarized control on the Mac runner (2026-10-02): the
+# control is "rejected, source=Unnotarized Developer ID" and fails the
+# requirement.
 for f in "$@"; do
   ok=""
   for i in 1 2 3 4 5 6; do
-    out=$(spctl --assess --type execute --verbose=2 "$f" 2>&1 || true)
-    if grep -q ': accepted$' <<<"$out" && grep -qxF 'source=Notarized Developer ID' <<<"$out"; then ok=1; break; fi
+    out=$(spctl --assess --type open --context context:primary-signature --verbose=2 "$f" 2>&1 || true)
+    if grep -q ': accepted$' <<<"$out" && grep -qxF 'source=Notarized Developer ID' <<<"$out" \
+      && codesign --verify --strict --check-notarization -R="notarized" "$f" 2>/dev/null; then ok=1; break; fi
     sleep 20
   done
   echo "$out"
-  [ -n "$ok" ] || fail "Gatekeeper does not accept $(basename "$f") as Notarized Developer ID"
+  [ -n "$ok" ] || { codesign --verify --strict --check-notarization -R="notarized" -vvv "$f" >&2 || true; fail "Gatekeeper does not accept $(basename "$f") as Notarized Developer ID"; }
 done
 
 if [ -n "${SIGN_DARWIN_REPORT:-}" ]; then
