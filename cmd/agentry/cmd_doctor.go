@@ -294,9 +294,10 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		rep.ok("secretSource", "env")
 	}
 	// The exec catalog (agentry-cli#100): what a declared exec command
-	// resolves to on this machine, or the fact that nothing does.
+	// resolves to on this machine beyond the commands every machine
+	// provides (agentry-cli#595).
 	if len(pol.Exec.Packages) == 0 {
-		rep.warn("exec", "no packages catalogued — a QuickAgent declaring exec.commands is refused at plan time until exec.packages names each command's apk package")
+		rep.ok("exec", "the commands every machine provides (%s); no others catalogued, so a QuickAgent declaring another is refused at plan time until exec.packages names its apk package", strings.Join(policy.BaseExecCommands(), ", "))
 	} else {
 		var entries []string
 		for _, c := range slices.Sorted(maps.Keys(pol.Exec.Packages)) {

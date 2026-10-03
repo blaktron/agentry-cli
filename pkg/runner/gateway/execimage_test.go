@@ -124,3 +124,25 @@ func TestEnsureExecImageMirrorAndPins(t *testing.T) {
 		t.Fatalf("no git declared, yet gitconfig is set:\n%s", df)
 	}
 }
+
+// TestExecImageAsksApkOnlyForWhatItInstalls (agentry-cli#595): busybox is
+// the runner image's own, so an image of base commands alone fetches no
+// index; it still records busybox's version. A pinned busybox is installed
+// as written.
+func TestExecImageAsksApkOnlyForWhatItInstalls(t *testing.T) {
+	for _, tc := range []struct {
+		pkgs []string
+		want []string
+	}{
+		{[]string{"busybox"}, []string{"RUN mkdir -p /etc/agentry && apk list --installed busybox |"}},
+		{[]string{"busybox", "git"}, []string{"RUN apk add --no-cache git && mkdir", "apk list --installed busybox git |"}},
+		{[]string{"busybox=1.37.0-r30"}, []string{"RUN apk add --no-cache busybox=1.37.0-r30 && mkdir", "apk list --installed busybox |"}},
+	} {
+		df := execDockerfile("agentry-runner:v1", spec.ExecImageSpec{Commands: []string{"tar"}, Packages: tc.pkgs})
+		for _, want := range tc.want {
+			if !strings.Contains(df, want) {
+				t.Errorf("%v: dockerfile lacks %q:\n%s", tc.pkgs, want, df)
+			}
+		}
+	}
+}
