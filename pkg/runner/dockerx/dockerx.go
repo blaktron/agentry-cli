@@ -100,6 +100,10 @@ type RunSpec struct {
 	// Env is passed by NAME through the docker client's environment
 	// (`-e NAME` + cmd.Env), never as `-e NAME=value` argv — values (the
 	// gateway token, the model key) must not appear in process listings.
+	// The exception is a name the docker client reads itself (clientReads:
+	// HOME, PATH, USERPROFILE, DOCKER_*): set in the client's environment
+	// it would reconfigure the client, so it goes as `-e NAME=value` and
+	// must never carry a secret (agentry-cli#589).
 	Env map[string]string
 	// Mounts are bind mounts.
 	Mounts []Mount
@@ -657,6 +661,10 @@ func (r RunSpec) args(detach bool) []string {
 		args = append(args, "-p", pp.HostIP+":"+hp+":"+strconv.Itoa(pp.ContainerPort))
 	}
 	for _, k := range sortedKeys(r.Env) {
+		if clientReads(k) {
+			args = append(args, "-e", k+"="+r.Env[k])
+			continue
+		}
 		args = append(args, "-e", k) // value travels via process env
 	}
 	if r.DisableSELinuxLabel {
@@ -710,13 +718,34 @@ func (r RunSpec) args(detach bool) []string {
 	return append(args, r.Argv...)
 }
 
-// envPairs renders NAME=value pairs for the docker client's environment.
+// envPairs renders NAME=value pairs for the docker client's environment,
+// leaving out the names the client reads itself (args carries those).
 func (r RunSpec) envPairs() []string {
 	pairs := make([]string, 0, len(r.Env))
 	for _, k := range sortedKeys(r.Env) {
+		if clientReads(k) {
+			continue
+		}
 		pairs = append(pairs, k+"="+r.Env[k])
 	}
 	return pairs
+}
+
+// clientReads says whether the docker client takes name from its own
+// environment. HOME (USERPROFILE on Windows) locates ~/.docker/config.json
+// and with it the current context, so the gateway's HOME=/root, passed by
+// name, sent `docker run` to the default socket; on Docker Desktop for
+// macOS, which reaches its engine only through its context, there is none
+// and every run failed at the gateway (agentry-cli#589). PATH is where the
+// client finds its credential helpers, and DOCKER_* is its own namespace.
+// Windows' names are case-insensitive, so the match is too.
+func clientReads(name string) bool {
+	u := strings.ToUpper(name)
+	switch u {
+	case "HOME", "USERPROFILE", "PATH":
+		return true
+	}
+	return strings.HasPrefix(u, "DOCKER_")
 }
 
 func sortedKeys[V any](m map[string]V) []string {
