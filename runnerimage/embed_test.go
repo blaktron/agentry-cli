@@ -165,8 +165,14 @@ func TestEmbeddedSourcesStdlibOnly(t *testing.T) {
 		}
 		for _, imp := range f.Imports {
 			ip := strings.Trim(imp.Path.Value, `"`)
-			if strings.HasPrefix(ip, internalPrefix) {
-				continue // part of the context itself
+			if rest, ok := strings.CutPrefix(ip, internalPrefix); ok {
+				// Part of the context itself, so it must be embedded:
+				// a package missing from the go:embed line breaks the
+				// image build and nothing else (agentry-cli#596).
+				if matches, _ := fs.Glob(contextFS, rest+"/*.go"); len(matches) == 0 {
+					t.Errorf("%s imports %q, which the embedded context does not carry; add %s/*.go to the go:embed line", p, ip, rest)
+				}
+				continue
 			}
 			first := ip
 			if i := strings.Index(ip, "/"); i >= 0 {

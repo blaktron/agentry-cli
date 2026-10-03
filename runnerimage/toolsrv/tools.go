@@ -738,6 +738,11 @@ func (s *server) buildShims() error {
 	if err != nil {
 		return fmt.Errorf("create exec shim dir: %w", err)
 	}
+	// A command that runs as nobody (confinement.go) must still find its
+	// shim; the directory holds only links to the image's own programs.
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // traversable by the unprivileged command, written by no one
+		return fmt.Errorf("open the exec shim dir to the unprivileged user: %w", err)
+	}
 	s.shimDir = dir
 	for _, name := range s.spec.Exec.Commands {
 		if name == "" || strings.ContainsAny(name, `/\`) {
@@ -802,10 +807,11 @@ func (s *server) knowledgeListDescription() string {
 
 func (s *server) runCommandDescription() string {
 	const returns = " Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."
+	writes := " " + s.confine.describe()
 	if s.imagePath() != "" {
-		return "Run one declared command in the workspace. Only a declared command can be called; it runs with the image's own PATH after the declared commands, so it can start the programs the image holds." + returns
+		return "Run one declared command in the workspace. Only a declared command can be called; it runs with the image's own PATH after the declared commands, so it can start the programs the image holds." + writes + returns
 	}
-	return "Run one declared command in the workspace with a PATH restricted to the declared commands." + returns
+	return "Run one declared command in the workspace with a PATH restricted to the declared commands." + writes + returns
 }
 
 func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
@@ -834,13 +840,22 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	if !ok {
 		return fmt.Sprintf("run_command: command %q not present in image", a.Command), true
 	}
+	if s.confine.refused != "" {
+		return "run_command: " + s.confine.refused, true
+	}
 	limitSec := s.spec.Limits.execTimeoutSec()
 	if a.TimeoutSeconds > 0 && a.TimeoutSeconds < limitSec {
 		limitSec = a.TimeoutSeconds
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(limitSec)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, shim, a.Args...)
+	// The command is held to the places it may write (agentry-cli#596):
+	// through the confine trampoline, or as nobody (confinement.go).
+	name, argv := s.confine.argv(shim, a.Args)
+	cmd := exec.CommandContext(ctx, name, argv...)
+	if s.confine.asNobody {
+		runAs(cmd, unprivilegedID)
+	}
 	// The command runs in the workspace when the contract mounted one;
 	// exec and filesystem are independent grants, so a QuickAgent that
 	// declares exec and no filesystem access (it works on /inputs) gets a
@@ -859,7 +874,10 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	// Without a WaitDelay, a grandchild holding the output pipe keeps
 	// Run blocked past the kill; five seconds of grace, then move on.
 	cmd.WaitDelay = 5 * time.Second
-	err := cmd.Run()
+	failed, err := s.confine.run(cmd)
+	if failed != "" {
+		return "run_command: " + failed, true
+	}
 	// The output passes the same scrub as fetch's (agentry-cli#246): the
 	// child cannot read this process's environment (hideEnvironment), but a
 	// granted secret that reached it some other way must still not be

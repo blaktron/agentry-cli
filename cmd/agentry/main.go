@@ -109,6 +109,7 @@ func newRootCmd() *cobra.Command {
 		newInfoCmd(),
 		newYankCmd(),
 		newRunnerToolsCmd(),
+		newRunnerConfineCmd(),
 	)
 	return root
 }
