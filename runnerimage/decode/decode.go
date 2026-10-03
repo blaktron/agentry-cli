@@ -5,7 +5,7 @@
 // model ever runs a decoder. Each family of file has one fixed decoder
 // with a fixed argv — pdftotext for PDF, pandoc (in its sandbox mode) for
 // DOCX, ODT, EPUB and RTF, tesseract's OCR for images, and this package's
-// own reader for PPTX and XLSX, which pandoc cannot read — and nothing a
+// own spreadsheet and slide readers, plus Tika for the long tail. Nothing a
 // document contains reaches an argv but its own path. Text formats pass
 // as they are. The caller runs this in a container with no network and no
 // capabilities, the inputs mounted read-only.
@@ -77,7 +77,7 @@ type File struct {
 	Path   string `json:"path"`
 	Family Family `json:"family"`
 	// Tool is the decoder that ran: pdftotext, pandoc, tesseract, or
-	// agentry-runner for this package's own PPTX and XLSX reader.
+	// agentry-runner for this package's own readers, or tika.
 	Tool    string  `json:"tool,omitempty"`
 	Outcome Outcome `json:"outcome"`
 	// Output is the text's slash path relative to the output root.
@@ -93,10 +93,10 @@ type Report struct {
 	Files  []File `json:"files"`
 }
 
-// Tools are the absolute paths of the three external decoders; zero
+// Tools are the absolute paths of the detectors and external decoders; zero
 // values take the runner image's.
 type Tools struct {
-	PDFToText, Pandoc, Tesseract string
+	PDFToText, Pandoc, Tesseract, File, Tika string
 }
 
 func (t Tools) withDefaults() Tools {
@@ -108,6 +108,12 @@ func (t Tools) withDefaults() Tools {
 	}
 	if t.Tesseract == "" {
 		t.Tesseract = "/usr/bin/tesseract"
+	}
+	if t.File == "" {
+		t.File = "/usr/bin/file"
+	}
+	if t.Tika == "" {
+		t.Tika = "/usr/bin/java"
 	}
 	return t
 }
@@ -127,7 +133,7 @@ type Limits struct {
 	// MaxOutputBytes cuts a text past this size (default 10 MiB, a whole
 	// knowledge pack).
 	MaxOutputBytes int64
-	// MaxExpandedBytes refuses a PPTX or XLSX whose parts expand past this
+	// MaxExpandedBytes refuses an Office file whose parts expand past this
 	// (default 64 MiB), so a zip bomb costs a bounded read.
 	MaxExpandedBytes int64
 }
@@ -149,17 +155,6 @@ func (l Limits) withDefaults() Limits {
 		l.MaxExpandedBytes = 64 << 20
 	}
 	return l
-}
-
-// The families, and the extensions that name them. A file whose extension
-// is none of these is text when its bytes are UTF-8 with no NUL, else it
-// is unknown.
-var families = map[string]Family{
-	".pdf":  FamilyPDF,
-	".docx": FamilyDocument, ".odt": FamilyDocument, ".epub": FamilyDocument, ".rtf": FamilyDocument,
-	".pptx": FamilyPresentation,
-	".xlsx": FamilySpreadsheet,
-	".png":  FamilyImage, ".jpg": FamilyImage, ".jpeg": FamilyImage, ".tif": FamilyImage, ".tiff": FamilyImage, ".webp": FamilyImage,
 }
 
 // Decode decodes every regular file under in into out and writes the
@@ -214,14 +209,24 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 }
 
 func decodeOne(ctx context.Context, src, rel, out string, tools Tools, lim Limits) File {
-	f := File{Path: rel, Family: families[strings.ToLower(filepath.Ext(rel))]}
-	if f.Family == "" {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(lim.PerFileSeconds)*time.Second)
+	defer cancel()
+	kind, err := detect(ctx, src, tools)
+	f := File{Path: rel, Family: kind.family}
+	if err != nil {
+		f.Tool = "tika"
+		return undecodable(f, "content detection failed: "+err.Error())
+	}
+	if kind.text {
 		if isText(src) {
-			f.Family, f.Outcome = FamilyText, OutcomeText
+			f.Outcome = OutcomeText
 		} else {
-			f.Family, f.Outcome, f.Reason = FamilyUnknown, OutcomeUndecodable, "not text, and no decoder reads this kind of file"
+			return undecodable(f, "not UTF-8 text")
 		}
 		return f
+	}
+	if kind.tool == "" {
+		return undecodable(f, "not text, and no decoder reads this kind of file")
 	}
 	f.Output = rel + ".txt"
 	dst := filepath.Join(out, filepath.FromSlash(f.Output))
@@ -237,30 +242,38 @@ func decodeOne(ctx context.Context, src, rel, out string, tools Tools, lim Limit
 	}
 	defer func() { _ = os.RemoveAll(scratch) }()
 	text := filepath.Join(scratch, "out.txt")
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(lim.PerFileSeconds)*time.Second)
-	defer cancel()
-	switch f.Family {
-	case FamilyPDF:
+	f.Tool = kind.tool
+	switch kind.tool {
+	case "pdftotext":
 		f.Tool = "pdftotext"
 		err = runTool(ctx, tools.PDFToText, "-layout", "-enc", "UTF-8", "-q", src, text)
-	case FamilyDocument:
+	case "pandoc":
 		f.Tool = "pandoc"
-		err = runTool(ctx, tools.Pandoc, "--sandbox", "--to=plain", "--wrap=none", "--output="+text, src)
-	case FamilyImage:
+		err = runTool(ctx, tools.Pandoc, "--sandbox", "--from="+kind.format, "--to=gfm", "--wrap=none", "--output="+text, src)
+	case "tesseract":
 		f.Tool = "tesseract"
 		// tesseract writes <base>.txt.
 		err = runTool(ctx, tools.Tesseract, src, strings.TrimSuffix(text, ".txt"), "-l", "eng")
-	case FamilyPresentation, FamilySpreadsheet:
+	case "agentry-runner":
 		f.Tool = "agentry-runner"
 		var body string
-		if f.Family == FamilyPresentation {
+		switch kind.format {
+		case "pptx":
 			body, err = pptxText(src, lim.MaxExpandedBytes)
-		} else {
+		case "xlsx":
 			body, err = xlsxText(src, lim.MaxExpandedBytes)
+		case "ods":
+			body, err = odsText(src, lim.MaxExpandedBytes)
+		case "odp":
+			body, err = odpText(src, lim.MaxExpandedBytes)
+		case "csv":
+			body, err = csvText(src, lim.MaxExpandedBytes)
 		}
 		if err == nil {
 			err = os.WriteFile(text, []byte(body), 0o600)
 		}
+	case "tika":
+		err = tikaText(ctx, tools.Tika, src, text, lim.MaxOutputBytes)
 	}
 	if err != nil {
 		return undecodable(f, f.Tool+": "+err.Error())
@@ -329,8 +342,14 @@ type limitedWriter struct {
 func (l *limitedWriter) Write(p []byte) (int, error) {
 	if l.n > 0 {
 		k := min(len(p), l.n)
-		_, _ = l.w.Write(p[:k])
-		l.n -= k
+		written, err := l.w.Write(p[:k])
+		l.n -= written
+		if err != nil {
+			return written, err
+		}
+		if written != k {
+			return written, io.ErrShortWrite
+		}
 	}
 	return len(p), nil
 }
@@ -398,7 +417,10 @@ func ooxmlParts(src string, re *regexp.Regexp, extra []string, budget int64) (pa
 	for _, zf := range zr.File {
 		switch m := re.FindStringSubmatch(zf.Name); {
 		case m != nil:
-			n, _ := strconv.Atoi(m[1])
+			n := 1
+			if len(m) > 1 {
+				n, _ = strconv.Atoi(m[1])
+			}
 			b, err := read(zf)
 			if err != nil {
 				return nil, nil, err
@@ -433,7 +455,7 @@ func pptxText(src string, budget int64) (string, error) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "Slide %d\n", s.n)
+		fmt.Fprintf(&b, "## Slide %d\n", s.n)
 		dec := xml.NewDecoder(bytes.NewReader(s.data))
 		var line strings.Builder
 		inText := false
@@ -489,9 +511,12 @@ func xlsxText(src string, budget int64) (string, error) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "Sheet %d\n", s.n)
+		fmt.Fprintf(&b, "## Sheet %d\n", s.n)
 		if err := sheetRows(&b, s.data, shared); err != nil {
 			return "", fmt.Errorf("sheet %d: %w", s.n, err)
+		}
+		if b.Len() > maxTableBytes {
+			return b.String(), nil
 		}
 	}
 	return b.String(), nil
@@ -541,12 +566,15 @@ func sharedStrings(data []byte) ([]string, error) {
 func sheetRows(b *strings.Builder, data []byte, shared []string) error {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	var row []string
+	var rows [][]string
+	var cellColumn int
 	var cellType string
 	var val strings.Builder
 	inV, inT, inCell := false, false, false
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
+			b.WriteString(markdownTable(rows))
 			return nil
 		}
 		if err != nil {
@@ -560,9 +588,13 @@ func sheetRows(b *strings.Builder, data []byte, shared []string) error {
 			case "c":
 				inCell, cellType = true, ""
 				val.Reset()
+				cellColumn = len(row)
 				for _, a := range t.Attr {
 					if a.Name.Local == "t" {
 						cellType = a.Value
+					}
+					if a.Name.Local == "r" {
+						cellColumn = columnIndex(a.Value)
 					}
 				}
 			case "v":
@@ -577,10 +609,20 @@ func sheetRows(b *strings.Builder, data []byte, shared []string) error {
 			case "t":
 				inT = false
 			case "c":
-				row = append(row, cellText(cellType, val.String(), shared))
+				if cellColumn >= maxTableColumns {
+					return fmt.Errorf("more than 1,024 columns")
+				}
+				for len(row) <= cellColumn {
+					row = append(row, "")
+				}
+				row[cellColumn] = cellText(cellType, val.String(), shared)
 				inCell = false
 			case "row":
-				b.WriteString(strings.Join(row, "\t") + "\n")
+				rows = append(rows, append([]string(nil), row...))
+				if len(rows) > maxTableRows {
+					b.WriteString(markdownTable(rows))
+					return nil
+				}
 			}
 		case xml.CharData:
 			if inV || inT {
@@ -604,4 +646,18 @@ func cellText(typ, v string, shared []string) string {
 		return "FALSE"
 	}
 	return v
+}
+
+func columnIndex(ref string) int {
+	n := 0
+	for _, c := range ref {
+		if c < 'A' || c > 'Z' {
+			break
+		}
+		n = n*26 + int(c-'A') + 1
+		if n > maxTableColumns {
+			return maxTableColumns
+		}
+	}
+	return max(0, n-1)
 }
