@@ -127,8 +127,23 @@ fewer than 10 pages. Stop reading when you know enough to write the draft.
      `write_report` without one. Use `workspace` or `{paths: [...]}` only
      when the instructions truly work on the workspace.
    - `exec`: `none`. An agent reads a CSV, a log, a document or a diff
-     itself. Use `{commands: [...]}`, single command names, only for what
-     reading cannot do.
+     itself. Use `{commands: [...]}`, single command names, only for
+     what reading cannot do, and only these, which every run provides (a
+     run refuses any other): `base64`, `basename`, `bunzip2`, `bzcat`,
+     `cat`, `cksum`, `cmp`, `comm`, `cut`, `diff`, `dirname`, `du`,
+     `fold`, `grep`, `gunzip`, `head`, `hexdump`, `ls`, `md5sum`, `nl`,
+     `od`, `paste`, `realpath`, `rev`, `sha1sum`, `sha256sum`,
+     `sha512sum`, `sort`, `stat`, `strings`, `tac`, `tail`, `tar`, `tr`,
+     `tree`, `uniq`, `unxz`, `unzip`, `wc`, `xzcat`, `zcat`. No shell,
+     `awk`, `sed`, `find`, `curl` or `git`. The archive readers (`tar`,
+     `unzip`, `gunzip`, `bunzip2`, `unxz`, `zcat`, `bzcat`, `xzcat`)
+     only when the QuickAgent takes input files (`guide.files` names
+     them, or an intake question of type `file` asks for one): a command
+     can write only under `/tmp`, so the instructions unpack there (`tar -xzf
+     /inputs/src.tar.gz -C /tmp`, `unzip -d /tmp/src /inputs/src.zip`)
+     and read what they unpacked with the other declared commands (`ls`,
+     `cat`, `grep`), or read one member straight out (`tar -xzOf`,
+     `unzip -p`).
    - `secrets`: the environment variable names of keys the QuickAgent's
      own `fetch` uses (`[GITHUB_TOKEN]`). A key an MCP server needs goes in
      that server's `secrets`. One key per service at most.

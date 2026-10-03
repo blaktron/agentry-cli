@@ -146,7 +146,8 @@ type Policy struct {
 // which apk package provides each on this machine — the same stance as
 // mcpRegistries. A declared command the catalog does not carry is a
 // plan-time refusal, never a run-time "absent". Busybox applets the runner
-// image already has (sh, sed, sort, …) are catalogued as `busybox`.
+// image already has (sh, sed, sort, …) are catalogued as `busybox`, and
+// BaseExecCommands are catalogued on every machine without an entry.
 // DockerPolicy is the daemon-facing part of the policy.
 type DockerPolicy struct {
 	// Runtime names the daemon's OCI runtime (`docker run --runtime`) for
@@ -255,10 +256,45 @@ var (
 	apkPackageRE  = regexp.MustCompile(`^[A-Za-z0-9._+-]+(=[A-Za-z0-9._+~-]+)?$`)
 )
 
-// Package returns the catalogued apk package for a command, "" when the
-// catalog does not carry it.
+// baseExecCommands are the commands every machine provides to a
+// QuickAgent that declares them, whatever its catalog says
+// (agentry-cli#595, DR-64): busybox applets the runner image already
+// carries, so nothing is installed for them, and none of them runs another
+// program. They read and compare text, take checksums, and read archives.
+// A declared command writes only beneath the scratch /tmp and a granted
+// workspace (DR-63), so the archive readers unpack there and nowhere else.
+// Left out on purpose: sh, awk, sed, find, xargs and env, which run other
+// programs. The Drafter is held to this list (pkg/drafter).
+var baseExecCommands = []string{
+	// reading and comparing text
+	"cat", "head", "tail", "wc", "cut", "tr", "sort", "uniq", "grep", "comm", "diff", "cmp",
+	"nl", "fold", "rev", "tac", "paste", "od", "hexdump", "strings",
+	// files and paths
+	"ls", "tree", "stat", "du", "basename", "dirname", "realpath",
+	// checksums and encodings
+	"base64", "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum",
+	// archives: tar's .tar, .tar.gz, .tar.bz2 and .tar.xz; zip; one
+	// compressed file
+	"tar", "unzip", "gunzip", "bunzip2", "unxz", "zcat", "bzcat", "xzcat",
+}
+
+// BaseExecCommands returns the commands every machine provides, sorted.
+func BaseExecCommands() []string {
+	out := slices.Clone(baseExecCommands)
+	slices.Sort(out)
+	return out
+}
+
+// Package returns the apk package that provides a command: the catalog's
+// entry, else busybox for a base command, else "" (not provided).
 func (e ExecPolicy) Package(command string) string {
-	return e.Packages[command]
+	if p := e.Packages[command]; p != "" {
+		return p
+	}
+	if slices.Contains(baseExecCommands, command) {
+		return "busybox"
+	}
+	return ""
 }
 
 // HarnessPolicy configures one host-run harness adapter — an adapter that
@@ -1084,7 +1120,9 @@ mcpRegistries:
 #   # that declares exec.commands, as command name → apk package (optionally
 #   # =version). A declared command that is not catalogued is refused at plan
 #   # time. Busybox applets the runner image already has (sh, sed, sort, …)
-#   # are catalogued as busybox. The exec image build installs the packages
+#   # are catalogued as busybox; the text, checksum and archive applets every
+#   # machine provides (cat, grep, sha256sum, tar, unzip, …) need no entry.
+#   # The exec image build installs the packages
 #   # and records their resolved versions into the run's receipt.
 #   packages:
 #     git: git

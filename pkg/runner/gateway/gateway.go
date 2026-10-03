@@ -199,11 +199,22 @@ func execDockerfile(runnerImage string, img spec.ExecImageSpec) string {
 				shellQuote(m) + " \"$v\" " + shellQuote(m) + " \"$v\" > /etc/apk/repositories\n")
 		}
 		names := make([]string, 0, len(img.Packages))
+		var install []string
 		for _, p := range img.Packages {
 			names = append(names, strings.SplitN(p, "=", 2)[0])
+			// Unpinned busybox is the runner image's own (every base
+			// command's, agentry-cli#595): asking apk for it again would
+			// make the build fetch the indexes for nothing, and fail
+			// where they cannot be fetched.
+			if p != "busybox" {
+				install = append(install, p)
+			}
 		}
-		b.WriteString("RUN apk add --no-cache " + strings.Join(img.Packages, " ") +
-			" && mkdir -p " + path.Dir(ExecPackagesFile) +
+		b.WriteString("RUN ")
+		if len(install) > 0 {
+			b.WriteString("apk add --no-cache " + strings.Join(install, " ") + " && ")
+		}
+		b.WriteString("mkdir -p " + path.Dir(ExecPackagesFile) +
 			" && apk list --installed " + strings.Join(names, " ") + " | cut -d' ' -f1 > " + ExecPackagesFile + "\n")
 	}
 	if slices.Contains(img.Commands, "git") {

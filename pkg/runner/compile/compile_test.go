@@ -1103,3 +1103,43 @@ func TestPlainHTTPTargetsAreHTTPEndpointsOnTheAllowlist(t *testing.T) {
 		t.Fatalf("an all-https policy has plain targets: %v", got)
 	}
 }
+
+// TestCompileBaseExecCommands (agentry-cli#595, DR-64): a command every
+// machine provides compiles against a policy with no exec catalog at all —
+// a fresh install's, the desktop's — as busybox; one that is not still
+// refuses, and the refusal names what every machine does provide.
+func TestCompileBaseExecCommands(t *testing.T) {
+	compileCmds := func(cmds string, pol *policy.Policy) (*spec.Plan, error) {
+		m := parseManifest(t, "schemaVersion: \"2\"\nname: unpacker\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"u\"\n"+
+			"capabilities:\n  exec: { commands: ["+cmds+"] }\npublish:\n  include: [agent.yaml, AGENT.md]\n")
+		return Compile(Inputs{Manifest: m, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: workspaceFor(t, m, nil),
+			Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test"}, t.TempDir())
+	}
+	bare := testPolicy()
+	bare.Exec = policy.ExecPolicy{}
+
+	plan, err := compileCmds("tar, gunzip, grep, sha256sum", bare)
+	if err != nil {
+		t.Fatalf("base commands against an empty catalog: %v", err)
+	}
+	if got := strings.Join(plan.ExecImage.Packages, ","); got != "busybox" {
+		t.Fatalf("exec image packages = %q, want busybox alone", got)
+	}
+	if enf := plan.Enforcement["exec"]; !strings.Contains(enf, "tar ← apk busybox") {
+		t.Fatalf("enforcement does not name tar's package: %q", enf)
+	}
+
+	_, err = compileCmds("tar, curl", bare)
+	var refusal *PolicyRefusal
+	if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "command(s) curl that") || !strings.Contains(err.Error(), "every machine provides") {
+		t.Fatalf("an uncatalogued command beside a base one = %v, want a refusal naming curl alone and the base list", err)
+	}
+
+	// The operator's entry still wins for a base command.
+	own := testPolicy()
+	own.Exec.Packages = map[string]string{"tar": "tar"}
+	plan, err = compileCmds("tar", own)
+	if err != nil || strings.Join(plan.ExecImage.Packages, ",") != "tar" {
+		t.Fatalf("operator's tar entry = %v, %v; want apk tar", plan, err)
+	}
+}
