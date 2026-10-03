@@ -46,7 +46,7 @@ func TestDoctorMachineReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor failed: %v\n%s", err, out)
 	}
-	for _, want := range []string{"ok    policy", "ok    model", "ok    docker", "ok    image:runner", "ok    registry", "ready", "warn  exec", "no packages catalogued"} {
+	for _, want := range []string{"ok    policy", "ok    model", "ok    docker", "ok    image:runner", "ok    registry", "ready", "ok    exec", "the commands every machine provides"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}

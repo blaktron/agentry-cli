@@ -1,3 +1,3 @@
 # exec-git
 
-Acceptance fixture: declares `exec: [git]`, so a run needs `git` in the operator's exec catalog (`exec.packages: {git: git}`).
+Acceptance fixture: declares `exec: [git]`, so a run needs `git` in the operator's exec catalog (`exec.packages: {git: git}`); git is not one of the commands every machine provides.

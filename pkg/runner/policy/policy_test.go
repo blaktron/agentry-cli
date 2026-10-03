@@ -749,3 +749,30 @@ func TestTheFilesImageIsPinnedByDigest(t *testing.T) {
 		}
 	}
 }
+
+// TestBaseExecCommands (agentry-cli#595, DR-64): every machine provides the
+// base commands as busybox without a catalog entry, the operator's entry
+// still wins, and nothing on the list runs other programs.
+func TestBaseExecCommands(t *testing.T) {
+	var none ExecPolicy
+	for _, c := range []string{"tar", "unzip", "gunzip", "grep", "sha256sum", "cat"} {
+		if got := none.Package(c); got != "busybox" {
+			t.Errorf("Package(%q) with no catalog = %q, want busybox", c, got)
+		}
+	}
+	for _, c := range []string{"sh", "ash", "awk", "sed", "find", "xargs", "env", "curl", "wget", "git"} {
+		if got := none.Package(c); got != "" {
+			t.Errorf("Package(%q) with no catalog = %q, want not provided", c, got)
+		}
+		if slices.Contains(BaseExecCommands(), c) {
+			t.Errorf("%q is a base command", c)
+		}
+	}
+	own := ExecPolicy{Packages: map[string]string{"tar": "tar"}}
+	if got := own.Package("tar"); got != "tar" {
+		t.Errorf("operator's tar entry = %q, want tar", got)
+	}
+	if b := BaseExecCommands(); !slices.IsSorted(b) || len(slices.Compact(slices.Clone(b))) != len(b) {
+		t.Errorf("BaseExecCommands = %v, want sorted and each once", b)
+	}
+}

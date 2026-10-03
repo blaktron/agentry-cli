@@ -955,8 +955,8 @@ func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) 
 	}
 	if len(missing) > 0 {
 		return nil, &PolicyRefusal{Reason: fmt.Sprintf(
-			"manifest declares exec command(s) %s that this machine's policy does not catalogue: add each to exec.packages (command: apk package, or busybox for an applet the runner image already has)",
-			strings.Join(missing, ", "))}
+			"manifest declares exec command(s) %s that this machine's policy does not catalogue: add each to exec.packages (command: apk package, or busybox for an applet the runner image already has); every machine provides %s",
+			strings.Join(missing, ", "), strings.Join(policy.BaseExecCommands(), ", "))}
 	}
 	sort.Strings(pkgs)
 	return &spec.ExecImageSpec{
