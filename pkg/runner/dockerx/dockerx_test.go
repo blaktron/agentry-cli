@@ -353,6 +353,63 @@ func TestCLIRunDetachedEnvNeverInArgv(t *testing.T) {
 	}
 }
 
+// The docker client reads some of the names a container is given — HOME
+// above all, which locates ~/.docker/config.json and with it the current
+// context. Passed by name, the gateway's HOME=/root became the client's, and
+// on Docker Desktop for macOS, whose context is the only way to its socket,
+// every run failed at the gateway with /var/run/docker.sock not found
+// (agentry-cli#589). Those names go to the container in argv; the client
+// keeps the caller's.
+func TestCLIRunDetachedKeepsTheClientsOwnEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	envDump := filepath.Join(dir, "env.txt")
+	t.Setenv("AGENTRY_TEST_ENVDUMP", envDump)
+	t.Setenv("HOME", "/Users/person")
+	t.Setenv("DOCKER_CONTEXT", "desktop-linux")
+	c, record := stub(t, `printf '%s|%s|%s' "$HOME" "$DOCKER_CONTEXT" "$GATEWAY_TOKEN" > "$AGENTRY_TEST_ENVDUMP"; exit 0`)
+	err := c.RunDetached(context.Background(), RunSpec{
+		Name:  "agentry-x-gateway",
+		Image: "img:1",
+		Env: map[string]string{
+			"HOME":           "/root",
+			"DOCKER_CONTEXT": "default",
+			"GATEWAY_TOKEN":  "sekret-token-value",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(envDump) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/Users/person|desktop-linux|sekret-token-value"; string(got) != want {
+		t.Errorf("the docker client ran with HOME|DOCKER_CONTEXT|token = %q, want %q", got, want)
+	}
+	argv := recorded(t, record)[0]
+	for _, want := range []string{"-e DOCKER_CONTEXT=default", "-e HOME=/root", "-e GATEWAY_TOKEN"} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("argv missing %q: %q", want, argv)
+		}
+	}
+	if strings.Contains(argv, "sekret-token-value") {
+		t.Errorf("a secret's value reached argv: %q", argv)
+	}
+}
+
+func TestClientReadsName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"HOME": true, "PATH": true, "USERPROFILE": true, "Path": true,
+		"DOCKER_HOST": true, "DOCKER_CONFIG": true, "DOCKER_CONTEXT": true,
+		"GATEWAY_TOKEN": false, "ANTHROPIC_API_KEY": false, "HOMEDIR": false,
+		"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": false,
+	} {
+		if got := clientReads(name); got != want {
+			t.Errorf("clientReads(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestCLIRunForeground(t *testing.T) {
 	ctx := context.Background()
 	spec := RunSpec{Name: "agentry-x-agent", Image: "img:1"}
