@@ -80,9 +80,18 @@ func standInDecoders() (runnerdecode.Tools, error) {
 			}
 			return p
 		}
+		detector := `case "$*" in
+ *.docx*) echo application/vnd.openxmlformats-officedocument.wordprocessingml.document ;;
+ *.pdf*) echo application/pdf ;;
+ *.png*) echo image/png ;;
+ *.bin*) echo application/octet-stream ;;
+ *) echo text/plain ;;
+ esac`
 		standIns.tools = runnerdecode.Tools{
+			File:      script("file", detector),
+			Tika:      script("java", detector),
 			PDFToText: script("pdftotext", `echo "pdftotext read $(basename "$5")" > "$6"`),
-			Pandoc:    script("pandoc", `echo "pandoc read $(basename "$5")" > "${4#--output=}"`),
+			Pandoc:    script("pandoc", `echo "pandoc read $(basename "$6")" > "${5#--output=}"`),
 			Tesseract: script("tesseract", `echo "tesseract read $(basename "$1")" > "$2.txt"`),
 		}
 	})

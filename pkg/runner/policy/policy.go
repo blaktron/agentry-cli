@@ -81,7 +81,7 @@ const (
 	// (agentry-cli#559). The digest is signed keyless by agentry-dockerimages'
 	// files workflow, and CI holds this pin to that signature
 	// (scripts/verify-files-image.sh); a run pulls by digest only.
-	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.02.1@sha256:0d35fb3a5239f4571ba0d36d6619250d030bef119ee40e8f765dc3b38428b140"
+	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.03.2@sha256:ee6b4f66fa2f30444cf9ffbac4acb83e4829baa6915963bdc322d547463d5ddd"
 	// Default trusted repositories for capabilities.mcpServers.
 	DefaultNPMRegistry  = "https://registry.npmjs.org"
 	DefaultPyPIRegistry = "https://pypi.org"

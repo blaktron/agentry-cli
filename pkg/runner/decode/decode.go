@@ -2,7 +2,7 @@
 // D21; agentry-cli#318, and agentry-cli#321 for a hosted run's inputs): the
 // documents a run is given are turned into plain text before any agent
 // starts, by the runner image's own `decode` role in an image that holds
-// the three decoders and nothing else (the files image, pulled by digest,
+// the decoders and content detectors (the files image, pulled by digest,
 // with the runner binary added; agentry-cli#559), in a container with no network and
 // no capabilities, the documents mounted read-only. No model runs a
 // decoder, and nothing a document contains reaches a decoder's argv but its
@@ -49,6 +49,9 @@ var Catalogue = []Tool{
 	{Command: "pandoc"},
 	{Command: "pdftotext"},
 	{Command: "tesseract"},
+	{Command: "java"},
+	{Command: "file"},
+	{Command: "bsdtar"},
 }
 
 // FilesPackagesFile is where the files image records the version apk
@@ -370,7 +373,7 @@ var (
 		runnerdecode.FamilyPresentation: true, runnerdecode.FamilySpreadsheet: true,
 		runnerdecode.FamilyImage: true, runnerdecode.FamilyUnknown: true,
 	}
-	knownTools = map[string]bool{"": true, "pdftotext": true, "pandoc": true, "tesseract": true, "agentry-runner": true}
+	knownTools = map[string]bool{"": true, "pdftotext": true, "pandoc": true, "tesseract": true, "agentry-runner": true, "tika": true}
 )
 
 // notInReport is the reason the host gives a staged file the decode's
@@ -469,7 +472,7 @@ func (r *Result) LineAs(when string) string {
 	return when + ", in " + r.Image.Tag + " (built on " + r.Image.Files + ")" +
 		" with no network, every capability dropped and the inputs read-only," +
 		" by " + andList(commands) + " (" + strings.Join(pkgs, ", ") + ")" +
-		" and the runner's own PPTX and XLSX reader: " + r.Counts()
+		" and the runner's own spreadsheet and slide readers: " + r.Counts()
 }
 
 // Counts is what happened to the files: how many were decoded, read as

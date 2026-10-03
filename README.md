@@ -209,12 +209,14 @@ does the work: a package
 this binary embeds, run with the attestation state `builtin`, never a
 release anyone installs.
 
-1. The runner decodes the documents first, in an image holding only
-   `pdftotext`, `pandoc` and `tesseract`, with no network and every
-   capability dropped. PDF goes through `pdftotext`; DOCX, ODT, EPUB and
-   RTF through `pandoc`; PNG, JPEG, TIFF and WebP through `tesseract`'s OCR;
-   and PPTX and XLSX through the runner's own reader. Markdown, text, HTML,
-   CSV, JSON, YAML and source files pass as they are.
+1. The runner detects each document by content and decodes it before the
+   agent, in the signed, digest-pinned files image with no network and every
+   capability dropped. PDF uses `pdftotext`; DOCX, ODT, EPUB, RTF and HTML
+   use `pandoc` to GitHub Markdown; images use `tesseract`'s English OCR.
+   XLSX, ODS and CSV become capped Markdown tables; PPTX and ODP become a
+   section per slide. Legacy Office, Outlook mail and other formats use
+   Apache Tika. UTF-8 text and JSON pass as they are; a file no reader can
+   decode is listed as unread with its reason.
 2. The Creator compiles their text into cited pages, against the model your
    runner policy names. It runs no command itself.
 3. The build applies what it wrote. The documents and their decoded text are
