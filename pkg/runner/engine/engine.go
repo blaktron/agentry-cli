@@ -288,7 +288,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
 	env.Stage = receipt.StageInfra
-	if err := startInfra(ctx, d, p, rd, td, runID, token, rep, nil); err != nil {
+	err = startInfra(ctx, d, p, rd, td, runID, token, rep, nil)
+	if len(rd.modelHosts) > 0 {
+		env.CapabilitiesEnforced["llm-proxy.hosts"] = modelHostsLine(rd.modelHosts)
+	}
+	if err != nil {
 		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 		return fail(env, redact, withRefusals(err, rd))
 	}
@@ -453,6 +457,10 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Publish: proxyPublish,
 	}
 	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
+	// The model endpoints at the addresses this machine resolves for them
+	// (modelhosts.go, agentry-cli#592).
+	rd.modelHosts = modelHostPins(ctx, p.Plan.Proxy.Allow)
+	proxySpec.ExtraHosts = append(proxySpec.ExtraHosts, rd.modelHosts...)
 	// Under the run's runtime where the host's name servers are named
 	// (agentry-cli#337): it reads the run's own resolv.conf, and its egress
 	// leg is a network of the run's own joined at create, since a
