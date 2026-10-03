@@ -82,6 +82,9 @@ type server struct {
 	// shims maps a declared command to its shim symlink; a declared
 	// command absent from the image is absent here (tools.go).
 	shims map[string]string
+	// confine is how a declared command is held to the places it may
+	// write (confinement.go; agentry-cli#596); set when exec is granted.
+	confine confinement
 	// webState is the web tools' per-run state, built on first use
 	// (web.go); a test may set it first.
 	webOnce  sync.Once
@@ -102,6 +105,10 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 		logw:  logw,
 		tools: map[string]toolDef{},
 		shims: map[string]string{},
+	}
+	if len(spec.Exec.Commands) > 0 {
+		s.confine = newConfinement(spec)
+		_, _ = fmt.Fprintln(logw, "agentry-runner tools: run_command: "+s.confine.describe())
 	}
 	s.buildTools()
 	if err := s.buildShims(); err != nil {

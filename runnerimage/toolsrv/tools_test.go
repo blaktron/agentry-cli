@@ -684,8 +684,9 @@ func TestRunCommandScrubsGrantedSecrets(t *testing.T) {
 func TestRunCommandDescriptionFollowsThePath(t *testing.T) {
 	jailed := baseSpec(t)
 	jailed.Exec = Exec{Commands: []string{"echo"}}
-	if got, want := newTestServer(t, jailed).tools[ToolRunCommand].description,
-		"Run one declared command in the workspace with a PATH restricted to the declared commands. Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."; got != want {
+	js := newTestServer(t, jailed)
+	if got, want := js.tools[ToolRunCommand].description,
+		"Run one declared command in the workspace with a PATH restricted to the declared commands. "+js.confine.describe()+" Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."; got != want {
 		t.Errorf("default description = %q, want %q", got, want)
 	}
 
