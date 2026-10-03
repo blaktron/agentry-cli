@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
@@ -42,6 +43,9 @@ const usageText = `usage: agentry-runner <mode> [flags]
         run the CONNECT egress allowlist proxy (llm-proxy); --forward adds
         a plain TCP pipe (the host's door to the gateway, which never
         leaves the run network)
+  confine --write <dir> [--write <dir>...] -- <program> [<arg>...]
+        (the tools server's) run a declared command, able to write only
+        beneath the named directories
   minimize <command> [<command>...]
         (docker build only) delete every executable except the named commands
   probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60] [--list-tools]
@@ -67,6 +71,10 @@ func main() {
 		err = runProbe(os.Args[2:])
 	case "decode":
 		err = runDecode(os.Args[2:])
+	case confine.Role:
+		// agentry-cli#596: run_command's trampoline. It never returns,
+		// and the command never runs unconfined.
+		confine.Trampoline(os.Args[2:])
 	case "minimize":
 		// agentry-cli#9: `docker build` runs this once to strip every
 		// executable but the declared commands from the image.
