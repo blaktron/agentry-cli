@@ -2,9 +2,12 @@ package engine
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"slices"
 	"strings"
@@ -22,6 +25,9 @@ func TestMain(m *testing.M) {
 	if play := fakeHostHarness(os.Args[1:]); play != nil {
 		os.Exit(play(os.Stdin, os.Stdout))
 	}
+	// No test touches DNS: the model hosts resolve nowhere unless a test
+	// says otherwise (modelhosts_test.go).
+	lookupModelHost = func(context.Context, string) ([]net.IP, error) { return nil, errors.New("no DNS in tests") }
 	os.Exit(m.Run())
 }
 
