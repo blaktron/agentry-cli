@@ -65,6 +65,9 @@ type runDirs struct {
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
 	hostProxyURL   string
+	// modelHosts are the llm-proxy's pinned model endpoints ("name:ip",
+	// modelhosts.go), for the receipt.
+	modelHosts []string
 	// filter is the gateway's per-run docker socket (dockerfilter.go,
 	// agentry-cli#219), and filterLog its decision log; nil until the
 	// gateway is about to start.

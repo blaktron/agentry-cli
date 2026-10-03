@@ -187,9 +187,13 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 
 	var served []string
-	if err := startInfra(ctx, d, p, rd, td, runID, token, rep, &served); err != nil {
+	infraErr := startInfra(ctx, d, p, rd, td, runID, token, rep, &served)
+	if len(rd.modelHosts) > 0 {
+		env.CapabilitiesEnforced["llm-proxy.hosts"] = modelHostsLine(rd.modelHosts)
+	}
+	if infraErr != nil {
 		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
-		return fail(withRefusals(err, rd))
+		return fail(withRefusals(infraErr, rd))
 	}
 	// The driver also permits what the gateway serves beyond the run's own
 	// grant: the declared servers' tools (agentry-cli#578). Still before
