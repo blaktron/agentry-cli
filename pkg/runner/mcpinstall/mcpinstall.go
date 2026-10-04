@@ -78,6 +78,11 @@ type Resolved struct {
 	// host:port, stamped by EnsureInstalled; the proxy's own decisions are
 	// in <id>.install-proxy.log beside this record (agentry-cli#92).
 	InstallEgress []string `json:"installEgress,omitempty"`
+	// DeclaredRuntime is the language range the release declares for
+	// itself, as the registry's metadata gives it: npm's engines.node,
+	// PyPI's requires_python; "" when it declares none (RuntimeMismatch,
+	// agentry-cli#609).
+	DeclaredRuntime string `json:"declaredRuntime,omitempty"`
 }
 
 // ServerName is the gateway catalog name for a resolved server.
@@ -143,7 +148,7 @@ func ResolveAll(ctx context.Context, client *http.Client, regs policy.MCPRegistr
 			pkg = srv.PyPI
 		}
 		if err := builderArgs(pkg, srv.Version); err != nil {
-			return nil, fmt.Errorf("resolve %s@%s: %w", srv.SourceID(), srv.Version, err)
+			return nil, fmt.Errorf("resolve %s@%s: %w", srv.SourceID(), srv.Version, &PinError{err})
 		}
 		var r Resolved
 		var err error
@@ -160,6 +165,16 @@ func ResolveAll(ctx context.Context, client *http.Client, regs policy.MCPRegistr
 	return out, nil
 }
 
+// PinError is a resolution that failed because of the pin itself, not
+// the network or the registry's health: the release is not there, has no
+// launchable entry or nothing to download, or its name or version is not
+// one the builder passes on. A Drafter's rule refuses a draft for one;
+// any other resolution error is the computer's (agentry-cli#609).
+type PinError struct{ Err error }
+
+func (e *PinError) Error() string { return e.Err.Error() }
+func (e *PinError) Unwrap() error { return e.Err }
+
 func getJSON(ctx context.Context, client *http.Client, u string, into any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -172,7 +187,7 @@ func getJSON(ctx context.Context, client *http.Client, u string, into any) error
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return errors.New("not found in the configured registry")
+		return &PinError{errors.New("not found in the configured registry")}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("registry answered %d", resp.StatusCode)
@@ -186,9 +201,10 @@ func getJSON(ctx context.Context, client *http.Client, u string, into any) error
 
 func resolveNPM(ctx context.Context, client *http.Client, registry, pkg, version string) (Resolved, error) {
 	var meta struct {
-		Name string          `json:"name"`
-		Bin  json.RawMessage `json:"bin"`
-		Dist struct {
+		Name    string          `json:"name"`
+		Bin     json.RawMessage `json:"bin"`
+		Engines json.RawMessage `json:"engines"`
+		Dist    struct {
 			Tarball   string `json:"tarball"`
 			Integrity string `json:"integrity"`
 			Shasum    string `json:"shasum"`
@@ -209,8 +225,22 @@ func resolveNPM(ctx context.Context, client *http.Client, registry, pkg, version
 	return Resolved{
 		Source: "npm", Package: pkg, Version: version,
 		ID: sanitizeID("npm", pkg), BinName: bin, Integrity: integrity,
-		FetchHosts: fetchHosts(registry, meta.Dist.Tarball),
+		FetchHosts:      fetchHosts(registry, meta.Dist.Tarball),
+		DeclaredRuntime: npmEnginesNode(meta.Engines),
 	}, nil
+}
+
+// npmEnginesNode is a packument version's engines.node, or "" when it has
+// none. Some old packages publish engines as an array of strings, which npm
+// ignores; so does this.
+func npmEnginesNode(raw json.RawMessage) string {
+	var e struct {
+		Node string `json:"node"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return ""
+	}
+	return strings.TrimSpace(e.Node)
 }
 
 // npmBinName picks the launchable bin: a string bin means "named after the
@@ -222,7 +252,7 @@ func npmBinName(pkg string, raw json.RawMessage) (string, error) {
 		base = base[i+1:]
 	}
 	if len(raw) == 0 {
-		return "", errors.New("package declares no bin — not launchable as an MCP stdio server")
+		return "", &PinError{errors.New("package declares no bin — not launchable as an MCP stdio server")}
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
@@ -230,7 +260,7 @@ func npmBinName(pkg string, raw json.RawMessage) (string, error) {
 	}
 	var m map[string]string
 	if err := json.Unmarshal(raw, &m); err != nil || len(m) == 0 {
-		return "", errors.New("package bin field is neither a path nor a name map")
+		return "", &PinError{errors.New("package bin field is neither a path nor a name map")}
 	}
 	if _, ok := m[base]; ok {
 		return base, nil
@@ -245,6 +275,9 @@ func npmBinName(pkg string, raw json.RawMessage) (string, error) {
 
 func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, version string) (Resolved, error) {
 	var meta struct {
+		Info struct {
+			RequiresPython *string `json:"requires_python"`
+		} `json:"info"`
 		URLs []struct {
 			PackageType string `json:"packagetype"`
 			Filename    string `json:"filename"`
@@ -288,7 +321,7 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 		}
 	}
 	if len(meta.URLs) == 0 {
-		return Resolved{}, errors.New("release has no downloadable artifacts")
+		return Resolved{}, &PinError{errors.New("release has no downloadable artifacts")}
 	}
 	urls := make([]string, 0, len(meta.URLs))
 	for _, art := range meta.URLs {
@@ -300,11 +333,19 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 		// Provisional (DR-11): the JSON API does not expose entry points,
 		// so start from the normalized project name; the builder reads
 		// the real console script from the installed dist (below).
-		BinName:    normalizePyPIName(pkg),
-		Integrity:  integrity,
-		Artifacts:  artifacts,
-		FetchHosts: fetchHosts(registry, urls...),
+		BinName:         normalizePyPIName(pkg),
+		Integrity:       integrity,
+		Artifacts:       artifacts,
+		FetchHosts:      fetchHosts(registry, urls...),
+		DeclaredRuntime: requiresPython(meta.Info.RequiresPython),
 	}, nil
+}
+
+func requiresPython(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(*s)
 }
 
 // StoreDir is the signature's server store under its profile directory.
