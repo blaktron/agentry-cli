@@ -4,8 +4,8 @@ The Voice Writer is the QuickAgent that writes a person's **Writing Voice**.
 You give it samples of your own writing, and it writes `VOICE.md`: the
 instructions an LLM follows to write the way you do. With a voice attached,
 a QuickAgent run writes its answers, reports and messages in it. Run it
-again with more samples and a brief to improve the voice, or with a note to
-edit it.
+again with more samples and a brief to improve the voice, or with a note
+(and, if you like, more samples) to edit it.
 
 ## This is the package that runs
 

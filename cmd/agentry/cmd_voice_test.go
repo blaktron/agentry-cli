@@ -131,6 +131,33 @@ func TestVoiceWriteLeavesTheStoreAlone(t *testing.T) {
 	}
 }
 
+// An AI Edit takes samples beside its note, as a sandbox host drives it
+// (plan voice-page-redesign.md D3, agentry-cli#605).
+func TestAnEditTakesSamplesBesideItsNote(t *testing.T) {
+	isolateEnv(t)
+	newInstall(t)
+	signOut(t)
+	sample := filepath.Join(t.TempDir(), "post.md")
+	if err := os.WriteFile(sample, []byte("Short.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(t.TempDir(), "current.md")
+	if err := os.WriteFile(current, []byte(firstVoice), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := fakeVoiceBuild(t, secondVoice)
+	dst := filepath.Join(t.TempDir(), "VOICE.md")
+	if _, _, err := runCLI(t, strings.NewReader(""), "voice", "edit", "--note", "more like this", "--file", sample, "--current", current, "--write", dst, "--max-text-bytes", "1000000"); err != nil {
+		t.Fatalf("edit --file: %v", err)
+	}
+	if got.Job != build.Edit || got.Brief != "more like this" || len(got.Samples) != 1 || string(got.Current) != firstVoice || got.MaxTextBytes != 1000000 {
+		t.Fatalf("edit ran with %+v", got)
+	}
+	if _, _, err := runCLI(t, strings.NewReader(""), "voice", "edit", "--note", "x", "--brief", "y", "--current", current, "--write", dst); err == nil {
+		t.Fatal("edit took a --brief beside its note")
+	}
+}
+
 func TestARunAttachesTheVoiceByItsFlag(t *testing.T) {
 	isolateEnv(t)
 	newInstall(t)

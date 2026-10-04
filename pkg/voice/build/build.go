@@ -47,7 +47,9 @@ const (
 	// Improve writes the voice again from the current one, more samples
 	// and a brief.
 	Improve Job = "improve"
-	// Edit writes the voice again from the current one and a note.
+	// Edit writes the voice again from the current one and a note, with
+	// more samples when the person gives some (plan
+	// voice-page-redesign.md D3, agentry-cli#605).
 	Edit Job = "edit"
 )
 
@@ -73,7 +75,7 @@ const MaxBriefBytes = 4 << 10
 type Options struct {
 	Job Job
 	// Samples are the files and directories of the person's writing:
-	// required for Create and Improve, refused for Edit.
+	// required for Create and Improve, optional for Edit.
 	Samples []string
 	// Brief is how the person wants to sound (Create, Improve), or the
 	// change to make (Edit, where it is required).
@@ -107,7 +109,8 @@ type Result struct {
 	Text []byte
 	// Envelope is the run's receipt; nil when the run never began.
 	Envelope *receipt.Envelope
-	// Decoded is the decode step over the samples; nil for Edit.
+	// Decoded is the decode step over the samples; nil when there were
+	// none (an Edit by its note alone).
 	Decoded *decode.Result
 	// Samples are the samples it was given, by name; Skipped those no
 	// decoder could read; Cut those cut short or left out by MaxTextBytes.
@@ -247,9 +250,6 @@ func (o Options) check() error {
 			return errors.New("there is no voice to improve; create one")
 		}
 	case Edit:
-		if len(o.Samples) > 0 {
-			return errors.New("an edit takes a note, not samples; improve the voice to give it more writing")
-		}
 		if o.Current == nil {
 			return errors.New("there is no voice to edit; create one")
 		}
@@ -282,7 +282,11 @@ func task(o Options, docs []decode.Document, cut []string) string {
 	case Improve:
 		b.WriteString("Job: Improve. Read the current voice at current/VOICE.md, then the samples, and write VOICE.md again, better.\n")
 	case Edit:
-		b.WriteString("Job: Edit. Read the current voice at current/VOICE.md and write VOICE.md again with the change the note asks for. There are no samples.\n")
+		if len(docs) > 0 {
+			b.WriteString("Job: Edit. Read the current voice at current/VOICE.md, then the samples, and write VOICE.md again with the change the note asks for, using the samples where they help.\n")
+		} else {
+			b.WriteString("Job: Edit. Read the current voice at current/VOICE.md and write VOICE.md again with the change the note asks for. There are no samples.\n")
+		}
 	}
 	if len(docs) > 0 {
 		fmt.Fprintf(&b, "\nRead these %d samples (documents.json names the file to read for each):\n", len(docs))

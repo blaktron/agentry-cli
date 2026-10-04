@@ -28,3 +28,5 @@ agentry/drafter@1.4.0 sha256:f39780659e93b4134ca28cd5f33acef2eb220a135dbc2ef64d6
 agentry/knowledge-creator@1.2.0 sha256:f077d6f67ac018c9ab130fbfe2415ac1daa84b0b63adad217bc50560893cd4c1
 # 1.5.0: exec only from the commands every run provides; archive readers only with input files (agentry-cli#595).
 agentry/drafter@1.5.0 sha256:c00b15e9e9bd1ff008e12e75caf573c1d9383950040c01ae3cf583a16097f83c
+# 1.1.0: an Edit takes more samples beside its note (plan voice-page-redesign.md D3, agentry-cli#605).
+agentry/voice-writer@1.1.0 sha256:9b301ba0657d39c1bac4103796604f607eff21ea1326d4b4d640f39911d7bcd6
