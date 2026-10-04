@@ -33,6 +33,9 @@ type Document struct {
 	// Unread says why a document could not be read, in the decode's words:
 	// the answer for an undecodable file, the same for every caller.
 	Unread string `json:"unread,omitempty"`
+	// Unpacked says it is an archive whose members are documents of their
+	// own, named <archive>/<member>: "whole", or why only in part.
+	Unpacked string `json:"unpacked,omitempty"`
 }
 
 // Stage lays out what a run reads from this decode, in dst (a directory the
@@ -51,13 +54,20 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 		return nil
 	}
 	for _, f := range r.Report.Files {
-		switch f.Outcome {
-		case runnerdecode.OutcomeDecoded:
+		switch {
+		case f.In != "" && (f.Outcome == runnerdecode.OutcomeDecoded || f.Outcome == runnerdecode.OutcomeText):
+			// A member is read only as the text copied out for it.
 			if err := claim(f.Output, f.Path); err != nil {
 				return nil, nil, err
 			}
-			fallthrough
-		case runnerdecode.OutcomeText:
+		case f.Outcome == runnerdecode.OutcomeDecoded:
+			if err := claim(f.Output, f.Path); err != nil {
+				return nil, nil, err
+			}
+			if err := claim(f.Path, f.Path); err != nil {
+				return nil, nil, err
+			}
+		case f.Outcome == runnerdecode.OutcomeText:
 			if err := claim(f.Path, f.Path); err != nil {
 				return nil, nil, err
 			}
@@ -70,11 +80,19 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 			doc.GivenAs = g
 		}
 		var err error
-		switch f.Outcome {
-		case runnerdecode.OutcomeText:
+		switch {
+		case f.Outcome == runnerdecode.OutcomeText && f.In != "":
+			doc.Read = f.Output
+			err = r.CopyText(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
+		case f.Outcome == runnerdecode.OutcomeText:
 			doc.Read = f.Path
 			err = r.CopyOriginal(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
-		case runnerdecode.OutcomeDecoded:
+		case f.Outcome == runnerdecode.OutcomeUnpacked:
+			doc.Unpacked = "whole"
+			if why := UnpackedInPart(f); why != "" {
+				doc.Unpacked = "in part: " + why
+			}
+		case f.Outcome == runnerdecode.OutcomeDecoded:
 			doc.Read, doc.DecodedBy = f.Output, f.Tool
 			err = r.CopyText(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
 		default:
@@ -123,10 +141,11 @@ func (r *Result) CopyOriginal(path, dst string) error {
 // MaxDocumentBytes bounds one document a decode reads back.
 const MaxDocumentBytes = 256 << 20
 
-// CopyText copies the text decoded from the document at path to dst.
+// CopyText copies the text decoded from the document at path to dst, or,
+// for an archive member read as text, the text copied out for it.
 func (r *Result) CopyText(path, dst string) error {
 	for _, f := range r.Report.Files {
-		if f.Path == path && f.Outcome == runnerdecode.OutcomeDecoded {
+		if f.Path == path && (f.Outcome == runnerdecode.OutcomeDecoded || (f.Outcome == runnerdecode.OutcomeText && f.In != "")) {
 			return copyOut(r.Out, f.Output, dst, MaxTextBytes)
 		}
 	}

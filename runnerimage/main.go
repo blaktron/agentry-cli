@@ -100,13 +100,14 @@ func runDecode(args []string) error {
 	fs := flag.NewFlagSet("decode", flag.ContinueOnError)
 	in := fs.String("in", "", "the directory of documents to decode (read-only)")
 	out := fs.String("out", "", "the directory the texts and decode.json are written to")
+	unpack := fs.String("unpack", "", "the directory archives are unpacked in (default the scratch directory)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *in == "" || *out == "" {
 		return errors.New("decode: --in and --out are required")
 	}
-	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{})
+	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack})
 	if err != nil {
 		return err
 	}

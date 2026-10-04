@@ -5,8 +5,9 @@
 // model ever runs a decoder. Each family of file has one fixed decoder
 // with a fixed argv — pdftotext for PDF, pandoc (in its sandbox mode) for
 // DOCX, ODT, EPUB and RTF, tesseract's OCR for images, and this package's
-// own spreadsheet and slide readers, plus Tika for the long tail. Nothing a
-// document contains reaches an argv but its own path. Text formats pass
+// own spreadsheet and slide readers, plus Tika for the long tail. An
+// archive's members are unpacked and decoded in turn (archive.go). Nothing
+// a document contains reaches an argv but its own path. Text formats pass
 // as they are. The caller runs this in a container with no network and no
 // capabilities, the inputs mounted read-only.
 //
@@ -53,8 +54,13 @@ const (
 	OutcomeText Outcome = "text"
 	// OutcomeUndecodable: no decoder applies, or the decoder failed.
 	OutcomeUndecodable Outcome = "undecodable"
-	// OutcomeRefused: not a regular file, or past the file cap.
+	// OutcomeRefused: not a regular file, or past the file cap; for an
+	// archive or a member, Why says which.
 	OutcomeRefused Outcome = "refused"
+	// OutcomeUnpacked: an archive whose members follow it in the report,
+	// each named <archive>/<member>; Why, when set, says why only part of
+	// it was unpacked.
+	OutcomeUnpacked Outcome = "unpacked"
 )
 
 // Family is the kind of document a file is, which picks its decoder.
@@ -68,6 +74,7 @@ const (
 	FamilyPresentation Family = "presentation"
 	FamilySpreadsheet  Family = "spreadsheet"
 	FamilyImage        Family = "image"
+	FamilyArchive      Family = "archive"
 	FamilyUnknown      Family = "unknown"
 )
 
@@ -77,14 +84,25 @@ type File struct {
 	Path   string `json:"path"`
 	Family Family `json:"family"`
 	// Tool is the decoder that ran: pdftotext, pandoc, tesseract, or
-	// agentry-runner for this package's own readers, or tika.
+	// agentry-runner for this package's own readers, or tika; for an
+	// archive, what read it: agentry-runner, bsdcat or bsdtar.
 	Tool    string  `json:"tool,omitempty"`
 	Outcome Outcome `json:"outcome"`
-	// Output is the text's slash path relative to the output root.
+	// Output is the text's slash path relative to the output root. A
+	// member's text is written there whether it was decoded or is text
+	// already, since the member itself stays in the decode container.
 	Output string `json:"output,omitempty"`
 	// Bytes is the size of the text written.
 	Bytes  int64  `json:"bytes,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// In is the archive a member was unpacked from, empty for a file as
+	// staged.
+	In string `json:"in,omitempty"`
+	// Size is a member's unpacked size.
+	Size int64 `json:"size,omitempty"`
+	// Why is why an archive or a member was not read in full, in the
+	// closed vocabulary of archive.go.
+	Why Why `json:"why,omitempty"`
 }
 
 // Report is what one Decode did, file by file, in path order.
@@ -96,7 +114,7 @@ type Report struct {
 // Tools are the absolute paths of the detectors and external decoders; zero
 // values take the runner image's.
 type Tools struct {
-	PDFToText, Pandoc, Tesseract, File, Tika string
+	PDFToText, Pandoc, Tesseract, File, Tika, Bsdtar, Bsdcat string
 }
 
 func (t Tools) withDefaults() Tools {
@@ -115,8 +133,17 @@ func (t Tools) withDefaults() Tools {
 	if t.Tika == "" {
 		t.Tika = "/usr/bin/java"
 	}
+	if t.Bsdtar == "" {
+		t.Bsdtar = "/usr/bin/bsdtar"
+	}
+	if t.Bsdcat == "" {
+		t.Bsdcat = "/usr/bin/bsdcat"
+	}
 	return t
 }
+
+// DefaultMaxDepth is how deep archives nest and are still unpacked (D5).
+const DefaultMaxDepth = 3
 
 // Limits bound a decode; zero values take the defaults.
 type Limits struct {
@@ -136,6 +163,16 @@ type Limits struct {
 	// MaxExpandedBytes refuses an Office file whose parts expand past this
 	// (default 64 MiB), so a zip bomb costs a bounded read.
 	MaxExpandedBytes int64
+	// UnpackDir is where archives are unpacked (default ScratchDir: in the
+	// decode container, a tmpfs of its own the size of MaxUnpackedBytes).
+	UnpackDir string
+	// MaxUnpackedBytes is what every archive in the decode may unpack in
+	// all, counted as each member streams (default 512 MiB; D5).
+	MaxUnpackedBytes int64
+	// MaxDepth is how deep archives nest and are still unpacked (default
+	// 3; D5): an archive inside an archive inside an archive is read, one
+	// more level is not.
+	MaxDepth int
 }
 
 func (l Limits) withDefaults() Limits {
@@ -154,12 +191,22 @@ func (l Limits) withDefaults() Limits {
 	if l.MaxExpandedBytes <= 0 {
 		l.MaxExpandedBytes = 64 << 20
 	}
+	if l.UnpackDir == "" {
+		l.UnpackDir = l.ScratchDir
+	}
+	if l.MaxUnpackedBytes <= 0 {
+		l.MaxUnpackedBytes = 512 << 20
+	}
+	if l.MaxDepth <= 0 {
+		l.MaxDepth = DefaultMaxDepth
+	}
 	return l
 }
 
 // Decode decodes every regular file under in into out and writes the
 // report to out/decode.json. A file's failure is its outcome; the error is
-// for the roots alone.
+// for the roots alone. The file cap counts an archive's members with the
+// files as staged (D5).
 func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Report, error) {
 	tools, lim = tools.withDefaults(), lim.withDefaults()
 	rep := Report{Schema: Schema, Files: []File{}}
@@ -170,12 +217,17 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 	if !fi.IsDir() {
 		return rep, fmt.Errorf("decode: the input root %s is not a directory", in)
 	}
-	seen := 0
-	err = filepath.WalkDir(in, func(p string, d fs.DirEntry, err error) error {
+	unpack, err := os.MkdirTemp(lim.UnpackDir, "unpack-")
+	if err != nil {
+		return rep, fmt.Errorf("decode: the unpack directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(unpack) }()
+	d := &decoder{tools: tools, lim: lim, out: out, unpack: unpack, budget: lim.MaxUnpackedBytes}
+	err = filepath.WalkDir(in, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		if e.IsDir() {
 			return nil
 		}
 		rel, err := filepath.Rel(in, p)
@@ -183,20 +235,22 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if !d.Type().IsRegular() {
-			rep.Files = append(rep.Files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: "not a regular file; a link is never followed"})
+		if !e.Type().IsRegular() {
+			d.files = append(d.files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: "not a regular file; a link is never followed"})
 			return nil
 		}
-		if seen++; seen > lim.MaxFiles {
-			rep.Files = append(rep.Files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: fmt.Sprintf("past the %d-file cap", lim.MaxFiles)})
+		if d.seen >= lim.MaxFiles {
+			d.files = append(d.files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: fmt.Sprintf("past the %d-file cap", lim.MaxFiles)})
 			return nil
 		}
-		rep.Files = append(rep.Files, decodeOne(ctx, p, rel, out, tools, lim))
+		d.seen++
+		d.file(ctx, p, rel, "", 0, 0)
 		return nil
 	})
 	if err != nil {
 		return rep, fmt.Errorf("decode: walk %s: %w", in, err)
 	}
+	rep.Files = d.files
 	sort.Slice(rep.Files, func(i, j int) bool { return rep.Files[i].Path < rep.Files[j].Path })
 	raw, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
@@ -208,20 +262,112 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 	return rep, nil
 }
 
-func decodeOne(ctx context.Context, src, rel, out string, tools Tools, lim Limits) File {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(lim.PerFileSeconds)*time.Second)
-	defer cancel()
-	kind, err := detect(ctx, src, tools)
+// decoder is one Decode: its caps, shared by the files as staged and every
+// member of every archive among them.
+type decoder struct {
+	tools  Tools
+	lim    Limits
+	out    string
+	unpack string
+	// seen counts the files and members taken against MaxFiles; budget
+	// is what archives may still unpack; seq names each archive's unpack
+	// directory.
+	seen   int
+	budget int64
+	seq    int
+	files  []File
+}
+
+// file decodes one file, as staged or unpacked: an archive is unpacked and
+// its members decoded in turn; anything else is decoded into out. in is
+// the archive a member came from and depth how many archives enclose it.
+func (d *decoder) file(ctx context.Context, src, rel, in string, depth int, size int64) {
+	fctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
+	kind, err := detect(fctx, src, d.tools)
+	if err == nil && kind.archive != notArchive {
+		cancel()
+		d.archive(ctx, src, rel, in, depth, size, kind)
+		return
+	}
+	f := decodeKind(fctx, kind, err, src, rel, d.out, d.tools, d.lim, in != "")
+	cancel()
+	f.In = in
+	if in != "" {
+		f.Size = size
+	}
+	d.files = append(d.files, f)
+}
+
+// archive unpacks one archive into a directory of its own, records it and
+// every member, then decodes each member that was unpacked. Unpacking
+// shares the per-file timeout; each member then has its own.
+func (d *decoder) archive(ctx context.Context, src, rel, in string, depth int, size int64, kind contentKind) {
+	a := File{Path: rel, Family: FamilyArchive, Tool: kind.tool, In: in}
+	if in != "" {
+		a.Size = size
+	}
+	if depth >= d.lim.MaxDepth {
+		a.Outcome, a.Why = OutcomeUndecodable, WhyTooDeep
+		d.files = append(d.files, a)
+		return
+	}
+	dir := filepath.Join(d.unpack, strconv.Itoa(d.seq))
+	d.seq++
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		d.files = append(d.files, undecodable(a, err.Error()))
+		return
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	uctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
+	members, why, opened := d.unpackInto(uctx, src, dir, rel, kind)
+	cancel()
+	switch {
+	case why == WhyUnsafePath:
+		a.Outcome = OutcomeRefused
+	case !opened:
+		a.Outcome = OutcomeUndecodable
+	default:
+		a.Outcome = OutcomeUnpacked
+	}
+	a.Why = why
+	d.files = append(d.files, a)
+	for _, m := range members {
+		mrel := rel + "/" + m.name
+		if m.why != "" {
+			outcome := OutcomeRefused
+			if m.why == WhyEncrypted || m.why == WhyMethod || m.why == WhyDamaged {
+				outcome = OutcomeUndecodable
+			}
+			d.files = append(d.files, File{Path: mrel, Family: FamilyUnknown, Outcome: outcome, In: rel, Why: m.why})
+			continue
+		}
+		d.file(ctx, filepath.Join(dir, filepath.FromSlash(m.name)), mrel, rel, depth+1, m.size)
+	}
+}
+
+// decodeKind decodes one file of a detected kind into out. A member's text
+// is copied out too, cut to size, since the member is not staged.
+func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out string, tools Tools, lim Limits, member bool) File {
 	f := File{Path: rel, Family: kind.family}
 	if err != nil {
 		f.Tool = "tika"
 		return undecodable(f, "content detection failed: "+err.Error())
 	}
 	if kind.text {
-		if isText(src) {
-			f.Outcome = OutcomeText
-		} else {
+		if !isText(src) {
 			return undecodable(f, "not UTF-8 text")
+		}
+		f.Outcome = OutcomeText
+		if !member {
+			return f
+		}
+		f.Output = rel + ".txt"
+		dst := filepath.Join(out, filepath.FromSlash(f.Output))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return undecodable(f, err.Error())
+		}
+		if f = finish(f, src, dst, lim.MaxOutputBytes); f.Outcome == OutcomeDecoded {
+			f.Outcome = OutcomeText
 		}
 		return f
 	}
@@ -245,17 +391,13 @@ func decodeOne(ctx context.Context, src, rel, out string, tools Tools, lim Limit
 	f.Tool = kind.tool
 	switch kind.tool {
 	case "pdftotext":
-		f.Tool = "pdftotext"
 		err = runTool(ctx, tools.PDFToText, "-layout", "-enc", "UTF-8", "-q", src, text)
 	case "pandoc":
-		f.Tool = "pandoc"
 		err = runTool(ctx, tools.Pandoc, "--sandbox", "--from="+kind.format, "--to=gfm", "--wrap=none", "--output="+text, src)
 	case "tesseract":
-		f.Tool = "tesseract"
 		// tesseract writes <base>.txt.
 		err = runTool(ctx, tools.Tesseract, src, strings.TrimSuffix(text, ".txt"), "-l", "eng")
 	case "agentry-runner":
-		f.Tool = "agentry-runner"
 		var body string
 		switch kind.format {
 		case "pptx":
