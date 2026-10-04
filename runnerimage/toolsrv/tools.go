@@ -1022,6 +1022,9 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 			if e.Unread != "" {
 				return fmt.Sprintf("read_input: %s could not be read: %s", e.Path, e.Unread), true
 			}
+			if e.Unpacked {
+				return fmt.Sprintf("read_input: %s is an archive; list_inputs with path %q lists what was unpacked from it, each read by its own path", e.Path, e.Path), true
+			}
 			if abs, err = s.textOf(e); err != nil {
 				return "read_input: " + err.Error(), true
 			}

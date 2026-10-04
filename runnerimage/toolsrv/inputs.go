@@ -59,14 +59,33 @@ type InputEntry struct {
 	DecodedBy string `json:"decodedBy,omitempty"`
 	// TextBytes is the size of the text read_input serves for it.
 	TextBytes int64 `json:"textBytes,omitempty"`
+	// InArchive is the archive it was unpacked from (plan file-handling.md
+	// §6; agentry-cli#562): its Path is <archive>/<member>, it is not
+	// under InputsDir, and its text, decoded or read as it is, is at
+	// InputsTextSubdir/<Path>.
+	InArchive string `json:"inArchive,omitempty"`
+	// Unpacked says it is an archive whose members are entries of their
+	// own; Partial, when set, is why only part of it was unpacked.
+	Unpacked bool   `json:"unpacked,omitempty"`
+	Partial  string `json:"partial,omitempty"`
 }
 
 // Outcome is the entry's outcome as list_inputs says it.
 func (e InputEntry) Outcome() string {
-	if e.Unread != "" {
+	switch {
+	case e.Unread != "":
 		return "unread: " + e.Unread
+	case e.Unpacked && e.Partial != "":
+		return "unpacked in part: " + e.Partial
+	case e.Unpacked:
+		return "unpacked"
 	}
 	return "read"
+}
+
+// hasText says whether read_input and search_inputs serve a text for it.
+func (e InputEntry) hasText() bool {
+	return e.Unread == "" && !e.Unpacked
 }
 
 // The bounds on what the decoded-inputs tools read.
@@ -110,7 +129,7 @@ func (s *server) inputsIndex() (*InputsIndex, error) {
 // textOf is where the text read_input serves for an entry lives, resolved
 // under its own root: the decoded text, or the original when it is text.
 func (s *server) textOf(e InputEntry) (string, error) {
-	if e.Decoded {
+	if e.Decoded || e.InArchive != "" {
 		return resolveUnder(filepath.Join(s.spec.InputsTextDir, InputsTextSubdir), e.Path)
 	}
 	return resolveUnder(s.spec.InputsDir, e.Path)
@@ -154,7 +173,7 @@ func listIndexed(idx *InputsIndex, clean string) (string, bool) {
 	b.WriteString("path\ttype\tbytes\toutcome\ttext bytes")
 	for _, e := range entries {
 		text := "-"
-		if e.Unread == "" {
+		if e.hasText() {
 			text = strconv.FormatInt(e.TextBytes, 10)
 		}
 		fmt.Fprintf(&b, "\n%s\t%s\t%d\t%s\t%s", e.Path, e.Type, e.Bytes, e.Outcome(), text)
@@ -249,7 +268,7 @@ func (s *server) searchTargets(clean string) ([]searchTarget, error) {
 	var out []searchTarget
 	if idx != nil {
 		for _, e := range idx.under(clean) {
-			if e.Unread != "" {
+			if !e.hasText() {
 				continue
 			}
 			abs, err := s.textOf(e)

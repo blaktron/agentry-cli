@@ -216,7 +216,9 @@ release anyone installs.
    XLSX, ODS and CSV become capped Markdown tables; PPTX and ODP become a
    section per slide. Legacy Office, Outlook mail and other formats use
    Apache Tika. UTF-8 text and JSON pass as they are; a file no reader can
-   decode is listed as unread with its reason.
+   decode is listed as unread with its reason. An archive is listed as
+   unread too: a pack keeps each document as given, and a build does not
+   take what an archive holds yet (agentry-cli#619).
 2. The Creator compiles their text into cited pages, against the model your
    runner policy names. It runs no command itself.
 3. The build applies what it wrote. The documents and their decoded text are
@@ -850,11 +852,18 @@ provider and stands up the gateway plane before any agent is involved.
 release — guided setup on first run, then keep or remove on completion
 (`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
 run external files read-only under `/inputs`. Before the agent starts the
-runner decodes them (a document, PDF or image into its text, in the files
-image, with no network; `agentry files ensure` pulls it ahead of time), and
+runner decodes them (a document, PDF or image into its text, and an
+archive into its files, each decoded in turn, in the files image, with no
+network; `agentry files ensure` pulls it ahead of time), and
 the run reads them through `list_inputs` (each file's type, size and
 whether it could be read), `read_input` (the text) and `search_inputs`; the
-receipt's `decode` line says what was read. A run with no files pulls
+receipt's `decode` line says what was read. A zip, tar, 7z or rar (or a
+gzip, bzip2, xz or zstd stream) is unpacked and each file in it is listed
+and read by its path inside it, `archive.zip/folder/file.docx`: at most
+three archives deep, 2,000 files and 512 MiB unpacked in all. Links,
+devices and encrypted members are listed as unread, and an archive with a
+member whose path is absolute, climbs out with `..` or is not a plain name
+is not unpacked at all. A run with no files pulls
 nothing. **`--knowledge NAME`** (a
 pack kept on this computer) or **`--knowledge DIR`** attaches a knowledge
 pack — an LLM wiki of at most 10 MB with the documents it was compiled

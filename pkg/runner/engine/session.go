@@ -746,7 +746,7 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	if err != nil {
 		return fmt.Errorf("read input %s: %w", hostPath, err)
 	}
-	unread := ""
+	unread, unpacked := "", false
 	if s.dec != nil {
 		// Decoded, then staged, then announced: the agent never hears of
 		// a file whose text is not there yet.
@@ -754,7 +754,7 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 		if err != nil {
 			return fmt.Errorf("decode input %s: %w", hostPath, err)
 		}
-		unread = e.Unread
+		unread, unpacked = e.Unread, e.Unpacked
 	} else if err := os.WriteFile(target, data, 0o644); err != nil { //nolint:gosec // inputs are agent-readable by design
 		return fmt.Errorf("stage input %s: %w", hostPath, err)
 	}
@@ -763,8 +763,11 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	digest := "sha256:" + hex.EncodeToString(sum[:])
 	s.emit(session.Event{Kind: session.KindInputAdded, Path: agentPath, Digest: digest, Text: base})
 	notice := fmt.Sprintf("A new input file is available at %s (%s); read it with read_input.", agentPath, digest)
-	if unread != "" {
+	switch {
+	case unread != "":
 		notice = fmt.Sprintf("A new input file was added at %s (%s), but it could not be read: %s.", agentPath, digest, unread)
+	case unpacked:
+		notice = fmt.Sprintf("A new archive is available at %s (%s) and was unpacked; list_inputs with path %q lists its files, and read_input reads each by its path.", agentPath, digest, base)
 	}
 	s.mu.Lock()
 	ending, busy := s.ending, s.inTurn

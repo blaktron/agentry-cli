@@ -35,12 +35,19 @@ type Document struct {
 	Unread string `json:"unread,omitempty"`
 }
 
+// archiveNotRead is why a built-in's build lists an archive as unread: it
+// keeps each document as given, and an archive's members never leave the
+// decode container (agentry-cli#619).
+const archiveNotRead = "an archive: this build reads files as given, not what an archive holds"
+
 // Stage lays out what a run reads from this decode, in dst (a directory the
 // caller made): each readable document's text at its Read path, and
 // documents.json naming every document — those that could not be read too,
 // with why. It returns the documents and the paths to stage under /inputs.
 // Two documents that would be read as one file are refused rather than one
-// hiding the other.
+// hiding the other. Stage is the built-ins' layout (the Knowledge Creator,
+// the Voice Writer), which keep each document as given: an archive is
+// listed as unread and its members are left out (agentry-cli#619).
 func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []string, error) {
 	claimed := map[string]string{}
 	claim := func(name, by string) error {
@@ -51,6 +58,9 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 		return nil
 	}
 	for _, f := range r.Report.Files {
+		if f.In != "" {
+			continue
+		}
 		switch f.Outcome {
 		case runnerdecode.OutcomeDecoded:
 			if err := claim(f.Output, f.Path); err != nil {
@@ -65,6 +75,9 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 	}
 	docs := make([]Document, 0, len(r.Report.Files))
 	for _, f := range r.Report.Files {
+		if f.In != "" {
+			continue
+		}
 		doc := Document{Name: f.Path, Family: f.Family}
 		if g := givenAs[f.Path]; g != "" && g != f.Path {
 			doc.GivenAs = g
@@ -74,6 +87,8 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 		case runnerdecode.OutcomeText:
 			doc.Read = f.Path
 			err = r.CopyOriginal(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
+		case runnerdecode.OutcomeUnpacked:
+			doc.Unread = archiveNotRead
 		case runnerdecode.OutcomeDecoded:
 			doc.Read, doc.DecodedBy = f.Output, f.Tool
 			err = r.CopyText(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
@@ -104,11 +119,23 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 	return docs, inputs, nil
 }
 
+// Skipped names the documents Stage listed as unread: the built-ins'
+// account of what a build did not read.
+func Skipped(docs []Document) []string {
+	var out []string
+	for _, d := range docs {
+		if d.Unread != "" {
+			out = append(out, d.Name)
+		}
+	}
+	return out
+}
+
 // Readable are the documents that were read as text or decoded into it.
 func (r *Result) Readable() []runnerdecode.File {
 	var out []runnerdecode.File
 	for _, f := range r.Report.Files {
-		if f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeDecoded {
+		if f.In == "" && (f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeDecoded) {
 			out = append(out, f)
 		}
 	}
@@ -123,10 +150,11 @@ func (r *Result) CopyOriginal(path, dst string) error {
 // MaxDocumentBytes bounds one document a decode reads back.
 const MaxDocumentBytes = 256 << 20
 
-// CopyText copies the text decoded from the document at path to dst.
+// CopyText copies the text decoded from the document at path to dst, or,
+// for an archive member read as text, the text copied out for it.
 func (r *Result) CopyText(path, dst string) error {
 	for _, f := range r.Report.Files {
-		if f.Path == path && f.Outcome == runnerdecode.OutcomeDecoded {
+		if f.Path == path && f.HasText() {
 			return copyOut(r.Out, f.Output, dst, MaxTextBytes)
 		}
 	}

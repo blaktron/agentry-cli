@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -85,6 +87,7 @@ func standInDecoders() (runnerdecode.Tools, error) {
  *.pdf*) echo application/pdf ;;
  *.png*) echo image/png ;;
  *.bin*) echo application/octet-stream ;;
+ *.zip) echo application/zip ;;
  *) echo text/plain ;;
  esac`
 		standIns.tools = runnerdecode.Tools{
@@ -496,4 +499,98 @@ func TestAnIntakeOnlySessionKeepsItsAnswersListed(t *testing.T) {
 	if line := x.line(); !strings.HasPrefix(line, "the files added during the session were each decoded before the agent was told of them, in ") {
 		t.Fatalf("decode line %q", line)
 	}
+}
+
+func zipInput(t *testing.T, dir, name string, members map[string]string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for n, body := range members {
+		w, err := zw.Create(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return writeInput(t, dir, name, buf.String())
+}
+
+// TestAnArchivesMembersAreStagedAsInputs pins plan file-handling.md §6
+// (agentry-cli#562): a run given a .zip lists the archive as unpacked and
+// each member under <archive>/<member>, with its text staged under
+// inputs-text/text/<archive>/<member> whether it was decoded or is text,
+// and the original archive alone under /inputs.
+func TestAnArchivesMembersAreStagedAsInputs(t *testing.T) {
+	resetDecodeCalls()
+	p, f := fixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	p.InputPaths = []string{zipInput(t, t.TempDir(), "bundle.zip", map[string]string{"contract.docx": "PK not really", "notes/todo.md": "- renew\n"})}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
+	got := map[string]toolsrv.InputEntry{}
+	for _, e := range readIndex(t, runDir).Files {
+		got[e.Path] = e
+	}
+	if e := got["bundle.zip"]; len(got) != 3 || !e.Unpacked || e.Type != "archive" || e.Outcome() != "unpacked" || e.Bytes == 0 {
+		t.Fatalf("index %+v", got)
+	}
+	if e := got["bundle.zip/contract.docx"]; !e.Decoded || e.DecodedBy != "pandoc" || e.InArchive != "bundle.zip" || e.Bytes != int64(len("PK not really")) {
+		t.Errorf("decoded member %+v", e)
+	}
+	if e := got["bundle.zip/notes/todo.md"]; e.Decoded || e.InArchive != "bundle.zip" || e.TextBytes != int64(len("- renew\n")) {
+		t.Errorf("text member %+v", e)
+	}
+	for rel, want := range map[string]string{"bundle.zip/contract.docx": "pandoc read contract.docx\n", "bundle.zip/notes/todo.md": "- renew\n"} {
+		if b, err := os.ReadFile(filepath.Join(runDir, "inputs-text", "text", filepath.FromSlash(rel))); err != nil || string(b) != want {
+			t.Errorf("%s: staged text %q (%v)", rel, b, err)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(runDir, "inputs")); len(entries) != 1 || entries[0].Name() != "bundle.zip" {
+		t.Errorf("/inputs holds %v, want the archive alone", entries)
+	}
+	if line := env.CapabilitiesEnforced["decode"]; !strings.Contains(line, "1 decoded, 1 read as text, 1 archive unpacked") {
+		t.Fatalf("decode line %q", line)
+	}
+}
+
+// A session's added archive is unpacked and decoded before it is
+// announced, and the notice says where its files are listed.
+func TestASessionsAddedArchiveIsUnpackedBeforeItIsAnnounced(t *testing.T) {
+	resetDecodeCalls()
+	s, h, p, _ := startFixture(t)
+	_, done := collect(s)
+	var mu sync.Mutex
+	var notice string
+	h.onPrompt = func(text string) {
+		if strings.Contains(text, "pack.zip") {
+			mu.Lock()
+			notice = text
+			mu.Unlock()
+		}
+	}
+	if err := s.AddInput(context.Background(), zipInput(t, t.TempDir(), "pack.zip", map[string]string{"a.md": "alpha\n"})); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if !strings.Contains(notice, "was unpacked; list_inputs with path \"pack.zip\"") {
+		t.Errorf("notice %q", notice)
+	}
+	mu.Unlock()
+	idx := readIndex(t, filepath.Join(p.RunRoot, "runs", p.RunID))
+	if len(idx.Files) != 2 || idx.Files[0].Path != "pack.zip" || idx.Files[1].Path != "pack.zip/a.md" {
+		t.Fatalf("index %+v", idx.Files)
+	}
+	if _, err := s.End(context.Background(), false); err != nil && !errors.Is(err, session.ErrEnded) {
+		t.Fatal(err)
+	}
+	<-done
 }

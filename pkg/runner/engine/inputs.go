@@ -147,14 +147,19 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 	textRoot := filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir)
 	entries := make([]toolsrv.InputEntry, 0, len(res.Report.Files))
 	for _, f := range res.Report.Files {
-		e := toolsrv.InputEntry{Path: f.Path, Type: string(f.Family)}
-		// res.In is a directory this run staged, never the decode's
-		// output, so its sizes are the inputs' own.
-		if fi, err := os.Lstat(filepath.Join(res.In, filepath.FromSlash(f.Path))); err == nil {
+		e := toolsrv.InputEntry{Path: f.Path, Type: string(f.Family), InArchive: f.In}
+		if f.In != "" {
+			// A member is not staged: its size is the one it unpacked to.
+			e.Bytes = f.Size
+		} else if fi, err := os.Lstat(filepath.Join(res.In, filepath.FromSlash(f.Path))); err == nil {
+			// res.In is a directory this run staged, never the decode's
+			// output, so its sizes are the inputs' own.
 			e.Bytes = fi.Size()
 		}
-		switch f.Outcome {
-		case runnerdecode.OutcomeDecoded:
+		switch {
+		case f.HasText():
+			// A member's text is served from inputs-text whether it was
+			// decoded or read as it is: the member is not under /inputs.
 			dst := filepath.Join(textRoot, filepath.FromSlash(f.Path))
 			if err := res.CopyText(f.Path, dst); err != nil {
 				return nil, Classify(ExitGateway, fmt.Errorf("the text decoded from %s: %w", f.Path, err))
@@ -163,9 +168,14 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 			if err != nil {
 				return nil, Classify(ExitCLI, fmt.Errorf("the text decoded from %s: %w", f.Path, err))
 			}
-			e.Decoded, e.DecodedBy, e.TextBytes = true, f.Tool, fi.Size()
-		case runnerdecode.OutcomeText:
+			e.TextBytes = fi.Size()
+			if f.Outcome == runnerdecode.OutcomeDecoded {
+				e.Decoded, e.DecodedBy = true, f.Tool
+			}
+		case f.Outcome == runnerdecode.OutcomeText:
 			e.TextBytes = e.Bytes
+		case f.Outcome == runnerdecode.OutcomeUnpacked:
+			e.Unpacked, e.Partial = true, decode.UnpackedInPart(f)
 		default:
 			e.Unread = decode.UnreadReason(f)
 		}
@@ -215,8 +225,14 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	if err != nil {
 		return toolsrv.InputEntry{}, err
 	}
-	if len(entries) != 1 || entries[0].Path != base {
-		return toolsrv.InputEntry{}, fmt.Errorf("the decode did not report %s alone", base)
+	// An archive brings its members, each under its path.
+	for _, e := range entries {
+		if e.Path != base && !strings.HasPrefix(e.Path, base+"/") {
+			return toolsrv.InputEntry{}, fmt.Errorf("the decode reported %s, which is not %s", e.Path, base)
+		}
+	}
+	if len(entries) == 0 || entries[0].Path != base {
+		return toolsrv.InputEntry{}, fmt.Errorf("the decode did not report %s", base)
 	}
 	if err := os.WriteFile(filepath.Join(x.rd.inputs, base), data, 0o644); err != nil { //nolint:gosec // inputs are agent-readable by design
 		return toolsrv.InputEntry{}, fmt.Errorf("stage input %s: %w", base, err)
