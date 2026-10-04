@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/validate"
@@ -81,9 +82,15 @@ type PostStep struct {
 	// see the draft whole. Nil reports none.
 	OnUsage func(receipt.Usage)
 	// Servers resolves a declared MCP server's pin for the rule on its
-	// runtime (checkServers); nil resolves against the default npm and
-	// PyPI registries.
-	Servers ServerResolver
+	// runtime (checkServers); nil resolves against Registries, the
+	// registries the person's runs install from (the runner policy's
+	// mcpRegistries), or the default npm and PyPI registries when none are
+	// given.
+	Servers    ServerResolver
+	Registries policy.MCPRegistries
+
+	// serverChecks keeps each pin's resolution for this post-step's run.
+	serverChecks map[string]serverCheck
 }
 
 // RepairTurn is what the post-step gives the repair turn's run: the task
@@ -117,6 +124,7 @@ func CheckerFor(w *engine.WebRun) (Checker, error) {
 // back finished, validated and checked, with the envelope of both turns; an
 // error is an answer that was not a draft (Finish).
 func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) (*Draft, *receipt.Envelope, error) {
+	p.serverChecks = map[string]serverCheck{}
 	var d *Draft
 	var ce *engine.ClassifiedError
 	if runErr != nil && env != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && ctx.Err() == nil {

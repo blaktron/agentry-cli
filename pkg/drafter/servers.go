@@ -3,6 +3,7 @@ package drafter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,46 +15,88 @@ import (
 )
 
 // ServerResolver resolves one declared MCP server's pin to its registry
-// metadata (mcpinstall.Resolved, whose Runtime is the release's own
+// metadata (mcpinstall.Resolved, whose DeclaredRuntime is the release's own
 // engines.node or requires_python).
 type ServerResolver func(context.Context, manifest.MCPServer) (mcpinstall.Resolved, error)
 
-// defaultServerResolver resolves against the default npm and PyPI
-// registries, the ones a run installs from unless its operator names
-// others. A test replaces it, so no unit test reaches a registry.
-var defaultServerResolver ServerResolver = func(ctx context.Context, srv manifest.MCPServer) (mcpinstall.Resolved, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	res, err := mcpinstall.ResolveAll(ctx, &http.Client{Timeout: 15 * time.Second}, policy.Default().MCPRegistries, []manifest.MCPServer{srv})
-	if err != nil {
-		return mcpinstall.Resolved{}, err
+// registryResolver resolves against the registries a run would install
+// from. A test replaces it, so no unit test reaches a package registry.
+var registryResolver = func(regs policy.MCPRegistries) ServerResolver {
+	client := &http.Client{Timeout: 15 * time.Second}
+	return func(ctx context.Context, srv manifest.MCPServer) (mcpinstall.Resolved, error) {
+		res, err := mcpinstall.ResolveAll(ctx, client, regs, []manifest.MCPServer{srv})
+		if err != nil {
+			return mcpinstall.Resolved{}, err
+		}
+		return res[0], nil
 	}
-	return res[0], nil
+}
+
+// serverCheck is one pin's resolution, kept for the post-step's run so a
+// repair turn that keeps a pin does not fetch it again.
+type serverCheck struct {
+	r   mcpinstall.Resolved
+	err error
 }
 
 // checkServers is the Drafter's rule on declared MCP servers
-// (agentry-cli#609): each pinned release's own runtime range must admit
-// the runtime a run gives it (policy.DefaultNodeVersion for npm,
-// policy.DefaultPythonVersion for PyPI). A release it excludes installs
-// and then fails every tool call (the OSV server 0.1.15 on Node 22,
-// agentry-cli#608), or is refused at install. A pin whose metadata cannot
-// be read is this computer's reason, not the draft's: it is noted, never
-// refused.
+// (agentry-cli#609): each pinned release must be one the run's registry
+// publishes, and its own runtime range must admit the runtime a run gives
+// it (policy.DefaultNodeVersion for npm, policy.DefaultPythonVersion for
+// PyPI). A release it excludes installs and then fails every tool call
+// (the OSV server 0.1.15 on Node 22, agentry-cli#608), or is refused at
+// install. A registry that does not answer is this computer's reason, not
+// the draft's: the pin is noted, never refused, and after the first such
+// failure the rest are noted without waiting on it again. Only the first
+// manifest.MaxMCPServers are read; validate refuses more.
 func (p PostStep) checkServers(ctx context.Context, d *Draft) {
 	d.serverProblems, d.serversUnchecked = nil, nil
+	servers := declaredServers(d.Manifest)
+	if len(servers) > manifest.MaxMCPServers {
+		servers = servers[:manifest.MaxMCPServers]
+	}
+	if len(servers) == 0 {
+		return
+	}
 	resolve := p.Servers
 	if resolve == nil {
-		resolve = defaultServerResolver
-	}
-	for i, srv := range declaredServers(d.Manifest) {
-		r, err := resolve(ctx, srv)
-		if err != nil {
-			d.serversUnchecked = append(d.serversUnchecked, fmt.Sprintf("%s@%s", srv.SourceID(), srv.Version))
-			continue
+		regs := p.Registries
+		if regs.NPM == "" && regs.PyPI == "" {
+			regs = policy.Default().MCPRegistries
 		}
-		if why := mcpinstall.RuntimeMismatch(r, policy.DefaultNodeVersion, policy.DefaultPythonVersion); why != "" {
-			d.serverProblems = append(d.serverProblems, fmt.Sprintf("capabilities.mcpServers[%d]: %s@%s: %s, so its runs would fail; pin a version whose range admits the run's runtime (the package registry lists each version's), or another server",
-				i, srv.SourceID(), srv.Version, why))
+		resolve = registryResolver(regs)
+	}
+	if p.Log != nil {
+		_, _ = fmt.Fprintf(p.Log, "Checking that the draft's %d MCP server(s) run on Node %s and Python %s, from their package registry.\n",
+			len(servers), policy.DefaultNodeVersion, policy.DefaultPythonVersion)
+	}
+	down := false
+	for i, srv := range servers {
+		pin := fmt.Sprintf("%s@%s", srv.SourceID(), srv.Version)
+		c, seen := p.serverChecks[pin]
+		if !seen {
+			if down || ctx.Err() != nil {
+				d.serversUnchecked = append(d.serversUnchecked, pin)
+				continue
+			}
+			c.r, c.err = resolve(ctx, srv)
+			if p.serverChecks != nil {
+				p.serverChecks[pin] = c
+			}
+		}
+		var pe *mcpinstall.PinError
+		switch {
+		case errors.As(c.err, &pe):
+			d.serverProblems = append(d.serverProblems, fmt.Sprintf("capabilities.mcpServers[%d]: %s: %s, so a run could not install it; pin a version its registry publishes, or another server",
+				i, pin, pe.Error()))
+		case c.err != nil:
+			down = true
+			d.serversUnchecked = append(d.serversUnchecked, pin)
+		default:
+			if why := mcpinstall.RuntimeMismatch(c.r, policy.DefaultNodeVersion, policy.DefaultPythonVersion); why != "" {
+				d.serverProblems = append(d.serverProblems, fmt.Sprintf("capabilities.mcpServers[%d]: %s: %s, so its runs would fail; pin a version whose range admits the run's runtime (the package registry lists each version's), or another server",
+					i, pin, why))
+			}
 		}
 	}
 }
@@ -90,7 +133,7 @@ func (d *Draft) noteServerProblems() {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "## MCP servers not checked\n\nWhether these run on the runner's Node %s and Python %s could not be checked, because their registry did not answer: %s.\n",
+		fmt.Fprintf(&b, "## MCP servers not checked\n\nWhether these run on the runner's Node %s and Python %s was not checked, because their package registry could not be read from this computer: %s.\n",
 			policy.DefaultNodeVersion, policy.DefaultPythonVersion, strings.Join(d.serversUnchecked, ", "))
 	}
 	d.composeNotes(b.String())

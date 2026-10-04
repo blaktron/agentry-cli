@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,8 +20,10 @@ import (
 // No unit test reaches a package registry: a PostStep without Servers
 // resolves every declared server as one that declares no runtime range.
 func TestMain(m *testing.M) {
-	defaultServerResolver = func(_ context.Context, srv manifest.MCPServer) (mcpinstall.Resolved, error) {
-		return mcpinstall.Resolved{Source: sourceOf(srv), Version: srv.Version}, nil
+	registryResolver = func(policy.MCPRegistries) ServerResolver {
+		return func(_ context.Context, srv manifest.MCPServer) (mcpinstall.Resolved, error) {
+			return mcpinstall.Resolved{Source: sourceOf(srv), Version: srv.Version}, nil
+		}
 	}
 	os.Exit(m.Run())
 }
@@ -46,7 +49,7 @@ func fakeServers(ranges map[string]string) ServerResolver {
 		if !ok {
 			return mcpinstall.Resolved{}, errors.New("registry did not answer")
 		}
-		return mcpinstall.Resolved{Source: sourceOf(srv), Version: srv.Version, Runtime: rng}, nil
+		return mcpinstall.Resolved{Source: sourceOf(srv), Version: srv.Version, DeclaredRuntime: rng}, nil
 	}
 }
 
@@ -134,5 +137,66 @@ func TestTheInstructionNamesTheRuntimeVersions(t *testing.T) {
 	want := "npm servers run\n     on Node " + policy.DefaultNodeVersion + " and PyPI servers on Python " + policy.DefaultPythonVersion + "."
 	if !strings.Contains(string(b), want) {
 		t.Fatalf("AGENT.md does not say %q", want)
+	}
+}
+
+// A pin its registry does not publish is the draft's fault and a rules
+// line; a registry that does not answer is not, and after its first
+// failure the other pins are noted without asking it again.
+func TestCheckServersTellsAPinFaultFromANetworkFault(t *testing.T) {
+	two := func(a, b string) json.RawMessage {
+		return json.RawMessage(`{"capabilities": {"mcpServers": [{"npm": "a-mcp", "version": "` + a + `"}, {"npm": "b-mcp", "version": "` + b + `"}]}}`)
+	}
+	calls := 0
+	p := PostStep{serverChecks: map[string]serverCheck{}, Servers: func(_ context.Context, srv manifest.MCPServer) (mcpinstall.Resolved, error) {
+		calls++
+		switch srv.Version {
+		case "9.9.9":
+			return mcpinstall.Resolved{}, fmt.Errorf("resolve: %w", &mcpinstall.PinError{Err: errors.New("not found in the configured registry")})
+		case "down":
+			return mcpinstall.Resolved{}, errors.New("dial tcp: i/o timeout")
+		}
+		return mcpinstall.Resolved{Source: "npm", DeclaredRuntime: ">=20"}, nil
+	}}
+	d := &Draft{Manifest: two("9.9.9", "1.0.0")}
+	p.checkServers(context.Background(), d)
+	if len(d.serverProblems) != 1 || !strings.Contains(d.serverProblems[0], "npm:a-mcp@9.9.9: not found in the configured registry, so a run could not install it") || len(d.serversUnchecked) != 0 {
+		t.Fatalf("pin fault: problems %q, unchecked %q", d.serverProblems, d.serversUnchecked)
+	}
+	calls = 0
+	d = &Draft{Manifest: two("down", "2.0.0")}
+	p.checkServers(context.Background(), d)
+	if calls != 1 || len(d.serverProblems) != 0 || strings.Join(d.serversUnchecked, ",") != "npm:a-mcp@down,npm:b-mcp@2.0.0" {
+		t.Fatalf("network fault: %d calls, problems %q, unchecked %q", calls, d.serverProblems, d.serversUnchecked)
+	}
+	// A pin already resolved in this post-step is not fetched again.
+	calls = 0
+	p.checkServers(context.Background(), &Draft{Manifest: two("9.9.9", "1.0.0")})
+	if calls != 0 {
+		t.Fatalf("a repair keeping its pins fetched them again (%d calls)", calls)
+	}
+}
+
+// Without its own resolver the post-step reads the registries the person's
+// runs install from.
+func TestCheckServersReadsTheRunsRegistries(t *testing.T) {
+	saved := registryResolver
+	t.Cleanup(func() { registryResolver = saved })
+	var got policy.MCPRegistries
+	registryResolver = func(regs policy.MCPRegistries) ServerResolver {
+		got = regs
+		return func(context.Context, manifest.MCPServer) (mcpinstall.Resolved, error) {
+			return mcpinstall.Resolved{}, nil
+		}
+	}
+	m := json.RawMessage(`{"capabilities": {"mcpServers": [{"npm": "a-mcp", "version": "1.0.0"}]}}`)
+	mirror := policy.MCPRegistries{NPM: "https://npm.mirror.example", PyPI: "https://pypi.mirror.example"}
+	PostStep{Registries: mirror}.checkServers(context.Background(), &Draft{Manifest: m})
+	if got != mirror {
+		t.Fatalf("resolved against %+v, want the run's %+v", got, mirror)
+	}
+	PostStep{}.checkServers(context.Background(), &Draft{Manifest: m})
+	if got != policy.Default().MCPRegistries {
+		t.Fatalf("with none given, resolved against %+v, want the defaults", got)
 	}
 }

@@ -87,8 +87,8 @@ func TestResolveAll(t *testing.T) {
 		t.Fatalf("npm resolution = %+v", res[0])
 	}
 	// The release's own runtime range is recorded (agentry-cli#609).
-	if res[0].Runtime != ">=20" || res[1].Runtime != ">=3.10" {
-		t.Fatalf("runtime ranges = %q, %q", res[0].Runtime, res[1].Runtime)
+	if res[0].DeclaredRuntime != ">=20" || res[1].DeclaredRuntime != ">=3.10" {
+		t.Fatalf("declared runtimes = %q, %q", res[0].DeclaredRuntime, res[1].DeclaredRuntime)
 	}
 	if res[0].ID != "npm-scope-server-x" {
 		t.Fatalf("npm id = %q", res[0].ID)

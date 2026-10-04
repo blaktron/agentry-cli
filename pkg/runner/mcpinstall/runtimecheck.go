@@ -2,6 +2,7 @@ package mcpinstall
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -9,36 +10,58 @@ import (
 )
 
 // RuntimeMismatch says why a resolved server's own declared runtime range
-// (Resolved.Runtime: npm's engines.node, PyPI's requires_python) excludes
-// the runtime it would run on, node or python being that runtime's version
-// (policy.DefaultNodeVersion, policy.DefaultPythonVersion), or "" when the
-// range admits it or the release declares none (agentry-cli#609). A range
-// that cannot be read admits nothing, as npm's engine-strict and pip both
-// treat one. It reads the registry's metadata, not the artifact: the npm
-// builder's check at install reads the tarball itself (agentry-cli#608).
+// (Resolved.DeclaredRuntime: npm's engines.node, PyPI's requires_python)
+// excludes the runtime it would run on, node or python being that
+// runtime's version (policy.DefaultNodeVersion, policy.DefaultPythonVersion),
+// or "" when the range admits it or the release declares none
+// (agentry-cli#609). An npm range that cannot be read admits nothing, as
+// npm's engine-strict treats one; a requires_python that cannot be read
+// admits everything, as pip ignores one ("Ignoring invalid
+// Requires-Python"). The reason quotes the declared range only when it is
+// a plain range (plainRange): the text is the package author's, and the
+// reason reaches the Drafter's model. It reads the registry's metadata,
+// not the artifact: the npm builder's check at install reads the tarball
+// itself (agentry-cli#608).
 func RuntimeMismatch(r Resolved, node, python string) string {
-	if r.Runtime == "" {
+	if r.DeclaredRuntime == "" {
 		return ""
 	}
 	switch r.Source {
 	case "npm":
-		ok, valid := npmRangeAdmits(r.Runtime, node)
+		ok, valid := npmRangeAdmits(r.DeclaredRuntime, node)
 		switch {
 		case !valid:
-			return fmt.Sprintf("its engines.node %q is not a range npm can read, so no Node satisfies it", r.Runtime)
+			return "its engines.node is not a range npm can read, so no Node satisfies it"
 		case !ok:
-			return fmt.Sprintf("it needs Node %s (its engines.node), and runs use Node %s", r.Runtime, node)
+			return fmt.Sprintf("it needs Node %s (its engines.node), and runs use Node %s", quoteRange(r.DeclaredRuntime), node)
 		}
 	case "pypi":
-		ok, valid := pep440Admits(r.Runtime, python)
-		switch {
-		case !valid:
-			return fmt.Sprintf("its requires_python %q is not a specifier pip can read, so no Python satisfies it", r.Runtime)
-		case !ok:
-			return fmt.Sprintf("it needs Python %s (its requires_python), and runs use Python %s", r.Runtime, python)
+		if ok, valid := pep440Admits(r.DeclaredRuntime, python); valid && !ok {
+			return fmt.Sprintf("it needs Python %s (its requires_python), and runs use Python %s", quoteRange(r.DeclaredRuntime), python)
 		}
 	}
 	return ""
+}
+
+// rangeToken is one word of a version range in either grammar: "||", a
+// hyphen-range's "-", or an optional operator before a version whose parts
+// are numbers, x or *, with an optional pre-release tag and a trailing
+// comma.
+var rangeToken = regexp.MustCompile(`^(\|\||-|(?:[<>=!~^]{0,3})v?[0-9xX*]+(?:\.[0-9xX*]+)*(?:-[0-9A-Za-z.]+)?,?)$`)
+
+// quoteRange is the declared range when every word of it is a range token,
+// and a description otherwise: never the package author's free text.
+func quoteRange(rng string) string {
+	words := strings.Fields(rng)
+	if len(rng) > 64 || len(words) == 0 {
+		return "a range its author declared"
+	}
+	for _, w := range words {
+		if !rangeToken.MatchString(w) {
+			return "a range its author declared"
+		}
+	}
+	return rng
 }
 
 // npmRangeAdmits evaluates an npm semver range. Masterminds' grammar is
