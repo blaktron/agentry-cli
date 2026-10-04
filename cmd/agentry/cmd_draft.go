@@ -284,7 +284,9 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	} else {
 		_, _ = fmt.Fprintf(errOut, "AI Review passed the description. The Drafter runs on this computer against the model your runner policy\n"+
 			"names (%s), for no credits. %s Every result, like the description, goes to AI Review (TypeSafe's Jev)\n"+
-			"with your key before the model reads it, and this computer reads each page from its site. It submits nothing.\n", model, searchNote)
+			"with your key before the model reads it, and this computer reads each page from its site. Then it reads\n"+
+			"each MCP server the draft declares from its package registry, to check it runs on the runner's Node or Python.\n"+
+			"It submits nothing.\n", model, searchNote)
 	}
 
 	// A pack not scanned is scanned now, after the description and before
@@ -316,7 +318,8 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		Repair: func(_ context.Context, t drafter.RepairTurn) (*receipt.Envelope, error) {
 			return draftRun(cmd, localrun.RepairRun(first, t))
 		},
-		Rules: loadRulesBundle,
+		Rules:      loadRulesBundle,
+		Registries: pol.MCPRegistries,
 	}
 	d, env, err := post.Run(cmd.Context(), env, runErr)
 	if runErr != nil && err != nil {

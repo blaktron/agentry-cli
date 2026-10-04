@@ -66,6 +66,11 @@ type Draft struct {
 	repaired    bool
 	// lastMessage is an unparsed answer's last message (Unparsed).
 	lastMessage string
+	// serverProblems are the declared MCP servers whose own runtime range
+	// excludes the run's, one rules line each; serversUnchecked the ones
+	// whose metadata could not be read (checkServers).
+	serverProblems   []string
+	serversUnchecked []string
 }
 
 // Match is a published QuickAgent that does the task, or most of it.

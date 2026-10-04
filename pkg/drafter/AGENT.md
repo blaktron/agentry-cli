@@ -80,6 +80,14 @@ fewer than 10 pages. Stop reading when you know enough to write the draft.
      `https://registry.npmjs.org/<package>/latest` or
      `https://pypi.org/pypi/<package>/json`), never a range and never
      `latest`;
+   - that version runs where the QuickAgent's runs put it: npm servers run
+     on Node 24.21.0 and PyPI servers on Python 3.12.14. Read the version's
+     `engines.node` (npm) or `info.requires_python` (PyPI) in the same
+     metadata; when it excludes that Node or Python, take the newest version
+     whose range admits it (`https://registry.npmjs.org/<package>` lists
+     every version with its `engines`), or another server. A version that
+     excludes it installs and then fails every call, or is refused at
+     install;
    - read the registry's check of that version with `registry_search`
      (`ecosystem`, `package`, `version`);
    - prefer a server that needs no key, and one whose hosts you can name.

@@ -68,6 +68,13 @@ const (
 	// every tool call on 22.
 	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:24-alpine"
 	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-alpine:3.12-alpine"
+	// The Node and Python the two default runtimes run, as `node --version`
+	// and `python3 --version` print them in the digests images.tsv pins
+	// (agentry-cli#609): the versions a declared server's own engines.node
+	// or requires_python must admit for its runs to work, which the Drafter
+	// is told and its post-step holds. A test holds each to its image's tag.
+	DefaultNodeVersion   = "24.21.0"
+	DefaultPythonVersion = "3.12.14"
 	// DefaultUnsafeImage is the Unsafe Mode base (agentry-notes
 	// plans/unsafe-mode.md §4.1; agentry-dockerimages#15): Kali with a
 	// command index and an extras list, pinned by digest, amd64 and arm64.
