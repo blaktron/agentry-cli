@@ -453,7 +453,8 @@ func task(name string, current *knowledge.Pack, docs []decode.Document, brief st
 // removals and the note its own changes.json asked for, and every document
 // it read with its decoded text under sources/. Everything under reports/
 // was written by the run, so it is read through an os.Root, regular files
-// only, within the pack's cap. It returns how many pages the run wrote.
+// only, within the pack's cap. It returns how many of the pages the run
+// wrote it kept: a page it also deleted is not counted.
 func collect(reports string, dec *decode.Result, docs []decode.Document, applyDir string, runErr error) (int, error) {
 	ch := knowledge.Changes{Schema: knowledge.ChangesSchema}
 	pages := 0
@@ -470,12 +471,30 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		if err := plainpath.Dir(root, knowledge.WikiDir); err != nil {
 			return 0, fmt.Errorf("the Creator's reports: %w", err)
 		}
+		// The model removes pages and nothing else: sources/ is the
+		// build's, and holds the documents as given. A page it wrote and
+		// then deleted in the same run is deleted, not written, and a
+		// delete it named twice is one (agentry-cli#575): the apply step
+		// refuses a list that names a path twice.
+		deleted := map[string]bool{}
+		if own, ok := ownChanges(root); ok {
+			for _, rel := range own.Delete {
+				if strings.HasPrefix(rel, knowledge.WikiDir+"/") && !deleted[rel] {
+					deleted[rel] = true
+					ch.Delete = append(ch.Delete, rel)
+				}
+			}
+			ch.Summary = own.Summary
+		}
 		err = fs.WalkDir(root.FS(), knowledge.WikiDir, func(rel string, e fs.DirEntry, err error) error {
 			if err != nil || e.IsDir() || !e.Type().IsRegular() || !strings.HasSuffix(rel, ".md") {
 				return err
 			}
 			if b := path.Base(rel); b == knowledge.IndexFile || rel == knowledge.WikiDir+"/"+knowledge.LogFile {
 				return nil // the apply step writes these
+			}
+			if deleted[rel] {
+				return nil // the Creator deleted it after writing it
 			}
 			fi, err := plainpath.File(root, rel)
 			if err != nil {
@@ -497,16 +516,6 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		})
 		if err != nil {
 			return 0, err
-		}
-		if own, ok := ownChanges(root); ok {
-			// The model removes pages and nothing else: sources/ is the
-			// build's, and holds the documents as given.
-			for _, rel := range own.Delete {
-				if strings.HasPrefix(rel, knowledge.WikiDir+"/") {
-					ch.Delete = append(ch.Delete, rel)
-				}
-			}
-			ch.Summary = own.Summary
 		}
 	}
 	if runErr != nil {
