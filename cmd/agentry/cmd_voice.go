@@ -123,14 +123,18 @@ func newVoiceImproveCmd() *cobra.Command {
 func newVoiceEditCmd() *cobra.Command {
 	var o voiceOpts
 	cmd := &cobra.Command{
-		Use:   "edit --note TEXT",
+		Use:   "edit --note TEXT [--file PATH…]",
 		Short: "Change your Writing Voice by a note, with the built-in Voice Writer (an AI Edit)",
 		Long: "Run the Voice Writer over your voice as it stands with a note saying what should change (\"fewer\n" +
-			"exclamation marks\", \"more formal in reports\"). To write the change yourself, use `agentry voice set`.",
+			"exclamation marks\", \"more formal in reports\"), and optionally more samples of your writing that\n" +
+			"show the change. To write the change yourself, use `agentry voice set`.",
 		Args: cobra.NoArgs,
 		RunE: voiceRunE(&o, func(cmd *cobra.Command, _ []string) error { return runVoiceBuild(cmd, build.Edit, &o) }),
 	}
-	cmd.Flags().StringVar(&o.brief, "note", "", "what should change (required)")
+	f := cmd.Flags()
+	f.StringVar(&o.brief, "note", "", "what should change (required)")
+	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; optional)")
+	f.Int64Var(&o.maxTextBytes, "max-text-bytes", 0, "cap the samples' decoded text the Voice Writer reads, in bytes (0 = no cap)")
 	voiceCurrentFlag(cmd, &o)
 	voiceRunFlags(cmd, &o)
 	return cmd

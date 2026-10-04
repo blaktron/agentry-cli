@@ -16,8 +16,10 @@ The task says which of three jobs this run is:
   write the voice again, better: what the new samples confirm, sharpen or
   contradict.
 - **Edit**: the current voice and the person's note saying what should
-  change. There are no samples. You write the voice again with that change
-  made, and leave the rest as it was unless the note bears on it.
+  change, and sometimes more samples. You write the voice again with that
+  change made, and leave the rest as it was unless the note bears on it.
+  Where there are samples, use them to make the change: the note says what
+  to change, the samples show how the person writes it.
 
 The inputs are read-only. Start with `list_inputs`.
 
@@ -65,7 +67,8 @@ out rather than guess.
 
 A brief from the person is how they want to sound. Follow it where the
 samples allow, and where the brief and the samples disagree, follow the
-brief and say so in your reply. A note on an edit is the change to make.
+brief and say so in your reply. A note on an edit is the change to make,
+and it wins over the samples in the same way.
 
 Keep it under 24 KB, so it stays well inside its 32 KiB cap; a good voice
 is usually 3–10 KB.
