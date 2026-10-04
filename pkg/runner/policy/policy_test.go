@@ -776,3 +776,35 @@ func TestBaseExecCommands(t *testing.T) {
 		t.Errorf("BaseExecCommands = %v, want sorted and each once", b)
 	}
 }
+
+// A policy file written by an earlier CLI names that day's default
+// nodeRuntime explicitly; it loads as today's default, while any other
+// value is the operator's and is kept (agentry-cli#608).
+func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
+	for _, c := range []struct{ written, want string }{
+		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine", DefaultNodeRuntime},
+		{"node:22-alpine", DefaultNodeRuntime},
+		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85",
+			"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85"},
+		{"registry.example/node:22", "registry.example/node:22"},
+	} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := strings.Replace(defaultFileText, "nodeRuntime: "+DefaultNodeRuntime, "nodeRuntime: "+c.written, 1)
+		if text == defaultFileText {
+			t.Fatal("the generated text no longer names the default nodeRuntime")
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Images.NodeRuntime != c.want {
+			t.Errorf("nodeRuntime %q loads as %q, want %q", c.written, p.Images.NodeRuntime, c.want)
+		}
+	}
+	if slices.Contains(formerDefaultNodeRuntimes, DefaultNodeRuntime) {
+		t.Fatal("the current default is listed as a former one")
+	}
+}
