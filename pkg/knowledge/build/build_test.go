@@ -294,6 +294,57 @@ func TestBuildStoppedAtABudgetKeepsWhatItWrote(t *testing.T) {
 	}
 }
 
+// A page the Creator writes and then lists under its changes.json's delete,
+// leaving the file in its reports, is deleted: the build does not name it
+// twice and fail as a whole (agentry-cli#575). A delete the Creator lists
+// twice is one delete.
+func TestAPageWrittenAndDeletedInOneRunIsDeleted(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
+		"wiki/topics/power-loss.md":   page("Power loss", "incident-report.pdf"),
+		"wiki/topics/cold-storage.md": page("Cold storage", "incident-report.pdf"),
+		"wiki/procedures/night.md":    page("Night shift", "runbook.md"),
+		"changes.json":                `{"schema":"knowledge/changes/v1","delete":["wiki/topics/cold-storage.md","wiki/topics/cold-storage.md"],"summary":"a stray duplicate slug"}`,
+	})
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if res.Applied.Manifest.Pages != 2 {
+		t.Fatalf("manifest %+v", res.Applied.Manifest)
+	}
+	if _, err := os.Stat(filepath.Join(fx.opts.PackDir, "wiki", "topics", "cold-storage.md")); err == nil {
+		t.Fatal("the page the Creator deleted is in the pack")
+	}
+	for _, rel := range []string{"wiki/topics/power-loss.md", "wiki/procedures/night.md"} {
+		if _, err := os.Stat(filepath.Join(fx.opts.PackDir, filepath.FromSlash(rel))); err != nil {
+			t.Errorf("%s is not in the pack: %v", rel, err)
+		}
+	}
+
+	t.Run("a page the pack holds, rewritten and deleted, is deleted", func(t *testing.T) {
+		fx2 := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		fx2.opts.PackDir, fx2.opts.Name = fx.opts.PackDir, ""
+		writeFile(t, filepath.Join(fx2.docs, "memo.md"), "# Memo\n")
+		fx2.opts.Documents = []string{filepath.Join(fx2.docs, "memo.md")}
+		fx2.fake.Foreground["-agent"].Before = writes(fx2.opts.OutDir, map[string]string{
+			"wiki/procedures/night.md": page("Night shift", "memo.md"),
+			"wiki/topics/memo.md":      page("Memo", "memo.md"),
+			"changes.json":             `{"schema":"knowledge/changes/v1","delete":["wiki/procedures/night.md"]}`,
+		})
+		res, err := Build(context.Background(), fx2.fake, fx2.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(res.Applied.Deleted, ",") != "wiki/procedures/night.md" || res.Applied.Manifest.Pages != 2 {
+			t.Fatalf("deleted %v, manifest %+v", res.Applied.Deleted, res.Applied.Manifest)
+		}
+		if _, err := os.Stat(filepath.Join(fx.opts.PackDir, "wiki", "procedures", "night.md")); err == nil {
+			t.Fatal("the page the Creator deleted is still in the pack")
+		}
+	})
+}
+
 // TestABuildFromABriefAlone (agentry-cli#523; plan knowledge-and-drafter.md
 // D15, D17): a build with no document and a brief makes a pack whose pages
 // cite the brief, the web and the model, and pass the lint; the brief is
