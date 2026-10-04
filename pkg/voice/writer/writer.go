@@ -25,7 +25,7 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "voice-writer"
-	Version   = "1.0.0"
+	Version   = "1.1.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a Voice Writer run on this

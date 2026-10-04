@@ -143,7 +143,7 @@ func TestCreateWritesAVoiceFromSamples(t *testing.T) {
 		t.Fatalf("samples %v skipped %v", res.Samples, res.Skipped)
 	}
 	env := res.Envelope
-	if env.Attestation.State != "builtin" || env.Ref != "agentry/voice-writer@1.0.0" {
+	if env.Attestation.State != "builtin" || env.Ref != "agentry/voice-writer@1.1.0" {
 		t.Fatalf("attestation %+v ref %s", env.Attestation, env.Ref)
 	}
 	for _, line := range []string{"voice", "knowledge"} {
@@ -211,6 +211,69 @@ func TestImproveAndEditReadTheCurrentVoice(t *testing.T) {
 	})
 }
 
+// An AI Edit takes samples beside its note (plan voice-page-redesign.md
+// D3, agentry-cli#605): they are decoded as Create's are, and the task
+// keeps the note as the change to make, not as a brief.
+func TestAnEditWithSamplesDecodesThemAndKeepsTheNoteAsTheChange(t *testing.T) {
+	const current = "# Your voice\n\nWrite plainly.\n"
+	fx := newFixture(t, Edit, written)
+	fx.opts.Current, fx.opts.Brief = []byte(current), "Sound more like these newer posts."
+	fx.opts.Samples = []string{filepath.Join(fx.samples, "post.md"), filepath.Join(fx.samples, "blob.bin")}
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if fx.current != current || string(res.Text) != written {
+		t.Fatalf("current %q text %q", fx.current, res.Text)
+	}
+	if _, ok := fx.fake.FindRun("agentry-decode-"); !ok {
+		t.Fatal("an edit with samples ran no decode container")
+	}
+	if res.Decoded == nil || strings.Join(res.Samples, ",") != "post.md" || strings.Join(res.Skipped, ",") != "blob.bin" {
+		t.Fatalf("decoded %v samples %v skipped %v", res.Decoded != nil, res.Samples, res.Skipped)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(fx.opts.Home, "work")); len(entries) != 0 {
+		t.Errorf("the build left its work, the samples in the clear, behind: %v", entries)
+	}
+	task, err := os.ReadFile(filepath.Join(fx.opts.OutDir, "receipts", "task.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Job: Edit", "- post.md", "The person's note (the change to make", "Sound more like these newer posts."} {
+		if !strings.Contains(string(task), want) {
+			t.Errorf("the task does not say %q:\n%s", want, task)
+		}
+	}
+	for _, never := range []string{"There are no samples", "The person's brief"} {
+		if strings.Contains(string(task), never) {
+			t.Errorf("an edit with samples says %q:\n%s", never, task)
+		}
+	}
+}
+
+// An Edit's samples are held to the decoded-text cap as Create's are: a
+// hosted Edit's 1 MB (D9) cuts them in order, and the task says which.
+func TestAnEditsSamplesAreCutAtTheTextCap(t *testing.T) {
+	fx := newFixture(t, Edit, written)
+	fx.opts.Current, fx.opts.Brief = []byte("# Your voice\n\nWrite plainly.\n"), "Shorter."
+	fx.opts.Samples = []string{filepath.Join(fx.samples, "post.md")}
+	fx.opts.MaxTextBytes = 10
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Join(res.Cut, ",") != "post.md" {
+		t.Fatalf("cut %v", res.Cut)
+	}
+	task, err := os.ReadFile(filepath.Join(fx.opts.OutDir, "receipts", "task.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(task), "capped at 10 bytes") {
+		t.Fatalf("the task does not say the samples were capped:\n%s", task)
+	}
+}
+
 func TestAVoiceThatBreaksTheFormatIsNotReturned(t *testing.T) {
 	for name, md := range map[string]string{
 		"none written": "",
@@ -256,7 +319,6 @@ func TestTheJobsTakeWhatTheyNeed(t *testing.T) {
 		{"create over a voice", Options{Job: Create, Samples: []string{"a"}, Current: cur}, "no current voice"},
 		{"improve without a voice", Options{Job: Improve, Samples: []string{"a"}}, "no voice to improve"},
 		{"improve without samples", Options{Job: Improve, Current: cur}, "more samples"},
-		{"edit with samples", Options{Job: Edit, Samples: []string{"a"}, Current: cur, Brief: "x"}, "a note, not samples"},
 		{"edit without a note", Options{Job: Edit, Current: cur}, "--note"},
 		{"edit without a voice", Options{Job: Edit, Brief: "x"}, "no voice to edit"},
 		{"a brief past its cap", Options{Job: Edit, Current: cur, Brief: strings.Repeat("x", MaxBriefBytes+1)}, "at most"},
