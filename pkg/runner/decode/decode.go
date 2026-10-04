@@ -52,6 +52,7 @@ var Catalogue = []Tool{
 	{Command: "java"},
 	{Command: "file"},
 	{Command: "bsdtar"},
+	{Command: "bsdcat"},
 }
 
 // FilesPackagesFile is where the files image records the version apk
@@ -242,8 +243,12 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	r := dockerx.RunSpec{
 		Name:    name,
 		Image:   img.Tag,
-		Argv:    []string{"decode", "--in", "/in", "--out", "/out"},
+		Argv:    []string{"decode", "--in", "/in", "--out", "/out", "--unpack", "/unpack"},
 		Network: "none",
+		// Resolvable from /etc/hosts with no network: Tika looks its host
+		// up at start, and an unresolvable name cost every call a DNS
+		// timeout (agentry-cli#618).
+		Hostname: "localhost",
 		Mounts: []dockerx.Mount{
 			{Source: in, Target: "/in", ReadOnly: true, Relabel: true},
 			{Source: out, Target: "/out", Relabel: true},
@@ -256,8 +261,12 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	// The decoders' scratch is a bounded tmpfs, so a document that expands
 	// without end fills that, not the host (runnerimage/decode writes only
-	// a capped copy to /out).
-	r.ReadOnly, r.Tmpfs = true, []string{"/tmp:size=512m,mode=1777"}
+	// a capped copy to /out). Archives unpack into a tmpfs of their own,
+	// the size of the unpacked-bytes budget (D5), so the decoders keep
+	// their scratch. Both count against the container's memory limit
+	// beside Tika's heap; under a limit too low for all three the
+	// container is killed and the decode fails, refusing the run.
+	r.ReadOnly, r.Tmpfs = true, []string{"/tmp:size=512m,mode=1777", "/unpack:size=512m,mode=1777"}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 	defer func() { _ = d.RemoveForce(context.WithoutCancel(ctx), name) }()
@@ -311,43 +320,33 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 		return rep, fmt.Errorf("%s: schema %q is not %q", runnerdecode.ReportFile, rep.Schema, runnerdecode.Schema)
 	}
 	seen := map[string]bool{}
+	byPath := map[string]runnerdecode.File{}
 	for _, f := range rep.Files {
-		if !relPath(f.Path) || seen[f.Path] {
+		if !relPath(f.Path) || byPath[f.Path].Path != "" {
 			return rep, fmt.Errorf("%s names %q, which is not a document once", runnerdecode.ReportFile, f.Path)
 		}
-		// The family and the tool are words a run is shown (list_inputs,
-		// the session's notice), so they are held to the decode's own
-		// vocabulary: a decoder a document exploited could otherwise put
-		// text of its choosing in front of the model (agentry-cli#560).
-		if !knownFamilies[f.Family] || !knownTools[f.Tool] {
-			return rep, fmt.Errorf("%s: %q has the unknown family %q or tool %q", runnerdecode.ReportFile, f.Path, f.Family, f.Tool)
+		// The family, the tool and the reason are words a run is shown
+		// (list_inputs, the session's notice), so they are held to the
+		// decode's own vocabulary: a decoder a document exploited could
+		// otherwise put text of its choosing in front of the model
+		// (agentry-cli#560).
+		if !knownFamilies[f.Family] || !knownTools[f.Tool] || !knownWhy[f.Why] {
+			return rep, fmt.Errorf("%s: %q has the unknown family %q, tool %q or reason %q", runnerdecode.ReportFile, f.Path, f.Family, f.Tool, f.Why)
 		}
-		seen[f.Path] = true
-		fi, err := inRoot.Lstat(filepath.FromSlash(f.Path))
-		if err != nil {
-			return rep, fmt.Errorf("%s names %q, which was not staged: %w", runnerdecode.ReportFile, f.Path, err)
-		}
-		switch f.Outcome {
-		case runnerdecode.OutcomeRefused:
-		case runnerdecode.OutcomeText, runnerdecode.OutcomeUndecodable, runnerdecode.OutcomeDecoded:
-			if !fi.Mode().IsRegular() {
-				return rep, fmt.Errorf("%s: %q is not a regular file", runnerdecode.ReportFile, f.Path)
+		byPath[f.Path] = f
+	}
+	members := 0
+	for _, f := range rep.Files {
+		if f.In != "" {
+			if members++; members > runnerdecode.DefaultMaxFiles {
+				return rep, fmt.Errorf("%s names more than %d archive members, past the decode's cap", runnerdecode.ReportFile, runnerdecode.DefaultMaxFiles)
 			}
-		default:
-			return rep, fmt.Errorf("%s: %q has the unknown outcome %q", runnerdecode.ReportFile, f.Path, f.Outcome)
 		}
-		if f.Outcome != runnerdecode.OutcomeDecoded {
-			if f.Output != "" {
-				return rep, fmt.Errorf("%s: %q was not decoded but names an output", runnerdecode.ReportFile, f.Path)
-			}
-			continue
+		if err := checkFile(f, byPath, inRoot, outRoot); err != nil {
+			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
-		if f.Output != f.Path+".txt" {
-			return rep, fmt.Errorf("%s names an output outside the output root: %q is not %q", runnerdecode.ReportFile, f.Output, f.Path+".txt")
-		}
-		ti, err := plainpath.File(outRoot, f.Output)
-		if err != nil || ti.Size() > MaxTextBytes {
-			return rep, fmt.Errorf("%s: the text of %q is not a regular file within %d bytes", runnerdecode.ReportFile, f.Path, MaxTextBytes)
+		if f.In == "" {
+			seen[f.Path] = true
 		}
 	}
 	// A staged document the report leaves out is not decoded, and says so,
@@ -366,14 +365,101 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 	return rep, nil
 }
 
-// The decode's vocabulary: every family and tool a report may name.
+// checkFile holds one report entry to what was staged: a file as staged
+// is there, a regular file; a member names an archive the report says was
+// unpacked, under that archive's path, no deeper than archives nest
+// (plan file-handling.md §6, D5); and any text is at exactly <path>.txt,
+// a regular file within the cap.
+func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot, outRoot *os.Root) error {
+	if f.In == "" {
+		fi, err := inRoot.Lstat(filepath.FromSlash(f.Path))
+		if err != nil {
+			return fmt.Errorf("it names %q, which was not staged: %w", f.Path, err)
+		}
+		if f.Outcome != runnerdecode.OutcomeRefused && !fi.Mode().IsRegular() {
+			return fmt.Errorf("%q is not a regular file", f.Path)
+		}
+	} else if parent, ok := byPath[f.In]; !ok || parent.Outcome != runnerdecode.OutcomeUnpacked || !strings.HasPrefix(f.Path, f.In+"/") {
+		return fmt.Errorf("%q names %q as its archive, which is not an archive the decode unpacked it from", f.Path, f.In)
+	} else if !runnerdecode.PlainMemberPath(strings.TrimPrefix(f.Path, f.In+"/")) {
+		// A member's path is shown to the model, and the container that
+		// wrote it read the archive: it is held to the names the decode
+		// itself accepts.
+		return fmt.Errorf("%q is not a plain member path", f.Path)
+	}
+	switch f.Outcome {
+	case runnerdecode.OutcomeRefused, runnerdecode.OutcomeUndecodable, runnerdecode.OutcomeText, runnerdecode.OutcomeDecoded:
+		if f.Family == runnerdecode.FamilyArchive && (f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeDecoded) {
+			return fmt.Errorf("%q is an archive with the outcome %q", f.Path, f.Outcome)
+		}
+	case runnerdecode.OutcomeUnpacked:
+		if f.Family != runnerdecode.FamilyArchive {
+			return fmt.Errorf("%q was unpacked but is not an archive", f.Path)
+		}
+		if depth := archiveDepth(f, byPath); depth >= runnerdecode.MaxDepth {
+			return fmt.Errorf("%q was unpacked inside %d archives, past the %d the decode unpacks", f.Path, depth, runnerdecode.MaxDepth)
+		}
+	default:
+		return fmt.Errorf("%q has the unknown outcome %q", f.Path, f.Outcome)
+	}
+	if !f.HasText() {
+		if f.Output != "" {
+			return fmt.Errorf("%q has no text but names an output", f.Path)
+		}
+		return nil
+	}
+	if f.Output != f.Path+".txt" {
+		return fmt.Errorf("it names an output outside the output root: %q is not %q", f.Output, f.Path+".txt")
+	}
+	ti, err := plainpath.File(outRoot, f.Output)
+	if err != nil || ti.Size() > MaxTextBytes {
+		return fmt.Errorf("the text of %q is not a regular file within %d bytes", f.Path, MaxTextBytes)
+	}
+	return nil
+}
+
+// archiveDepth is how many archives enclose f. Each In is a strict prefix
+// of its member's path, so the chain ends.
+func archiveDepth(f runnerdecode.File, byPath map[string]runnerdecode.File) int {
+	n := 0
+	for f.In != "" {
+		n++
+		f = byPath[f.In]
+	}
+	return n
+}
+
+// The decode's vocabulary: every family, tool and reason a report may
+// name.
 var (
 	knownFamilies = map[runnerdecode.Family]bool{
 		runnerdecode.FamilyText: true, runnerdecode.FamilyPDF: true, runnerdecode.FamilyDocument: true,
 		runnerdecode.FamilyPresentation: true, runnerdecode.FamilySpreadsheet: true,
-		runnerdecode.FamilyImage: true, runnerdecode.FamilyUnknown: true,
+		runnerdecode.FamilyImage: true, runnerdecode.FamilyArchive: true, runnerdecode.FamilyUnknown: true,
 	}
-	knownTools = map[string]bool{"": true, "pdftotext": true, "pandoc": true, "tesseract": true, "agentry-runner": true, "tika": true}
+	knownTools = map[string]bool{"": true, "pdftotext": true, "pandoc": true, "tesseract": true, "agentry-runner": true, "tika": true, "bsdtar": true, "bsdcat": true}
+	// whyWords are the fixed words for each reason an archive or a member
+	// was not read in full.
+	whyWords = map[runnerdecode.Why]string{
+		runnerdecode.WhyEncrypted:  "encrypted",
+		runnerdecode.WhyDamaged:    "damaged, or not the archive it appears to be",
+		runnerdecode.WhyUnreadable: "bsdtar could not read it: it is encrypted or damaged",
+		runnerdecode.WhyTooDeep:    fmt.Sprintf("an archive nested more than %d deep is not unpacked", runnerdecode.MaxDepth),
+		runnerdecode.WhyTooMany:    "unpacking stopped at the file cap",
+		runnerdecode.WhyTooLarge:   "unpacking stopped at the cap on unpacked bytes",
+		runnerdecode.WhyUnsafePath: "a member's path is absolute, climbs out with .., or is not a plain name, so nothing in it was unpacked",
+		runnerdecode.WhyLink:       "a link in an archive is never unpacked",
+		runnerdecode.WhySpecial:    "a device or FIFO in an archive is never unpacked",
+		runnerdecode.WhyConflict:   "the archive names this path twice, or as both a file and a folder",
+		runnerdecode.WhyMethod:     "compressed by a method the runner does not read",
+	}
+	knownWhy = func() map[runnerdecode.Why]bool {
+		m := map[runnerdecode.Why]bool{"": true}
+		for w := range whyWords {
+			m[w] = true
+		}
+		return m
+	}()
 )
 
 // notInReport is the reason the host gives a staged file the decode's
@@ -389,6 +475,8 @@ func UnreadReason(f runnerdecode.File) string {
 	switch {
 	case f.Reason == notInReport:
 		return notInReport
+	case f.Why != "":
+		return whyWords[f.Why]
 	case f.Outcome == runnerdecode.OutcomeRefused:
 		return "refused: not a regular file, or past the file cap"
 	case f.Tool != "":
@@ -397,6 +485,15 @@ func UnreadReason(f runnerdecode.File) string {
 		return "not text, and no decoder reads this kind of file"
 	}
 	return "it could not be decoded"
+}
+
+// UnpackedInPart is why an archive that was unpacked was unpacked only in
+// part, in the decode's fixed words, or "" when it was unpacked whole.
+func UnpackedInPart(f runnerdecode.File) string {
+	if f.Outcome != runnerdecode.OutcomeUnpacked || f.Why == "" {
+		return ""
+	}
+	return whyWords[f.Why]
 }
 
 func relPath(p string) bool {
@@ -472,13 +569,25 @@ func (r *Result) LineAs(when string) string {
 	return when + ", in " + r.Image.Tag + " (built on " + r.Image.Files + ")" +
 		" with no network, every capability dropped and the inputs read-only," +
 		" by " + andList(commands) + " (" + strings.Join(pkgs, ", ") + ")" +
-		" and the runner's own spreadsheet and slide readers: " + r.Counts()
+		" and the runner's own spreadsheet, slide, zip and tar readers: " + r.Counts()
 }
 
 // Counts is what happened to the files: how many were decoded, read as
 // text, and not decoded, naming the first few of those.
 func (r *Result) Counts() string {
 	line := fmt.Sprintf("%d decoded, %d read as text", r.Decoded(), r.Text())
+	if n := r.count(runnerdecode.OutcomeUnpacked); n > 0 {
+		line += fmt.Sprintf(", %d %s unpacked", n, plural(n, "archive", "archives"))
+		partial := 0
+		for _, f := range r.Report.Files {
+			if UnpackedInPart(f) != "" {
+				partial++
+			}
+		}
+		if partial > 0 {
+			line += fmt.Sprintf(" (%d in part)", partial)
+		}
+	}
 	if bad := r.Undecodable(); len(bad) > 0 {
 		shown := bad
 		if len(shown) > 5 {
@@ -491,6 +600,13 @@ func (r *Result) Counts() string {
 		line += ")"
 	}
 	return line
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // andList is "a", "a and b", "a, b and c".

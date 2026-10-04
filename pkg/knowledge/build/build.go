@@ -228,7 +228,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
-	res.Skipped = dec.Undecodable()
+	res.Skipped = decode.Skipped(docs)
 	var readable []decode.Document
 	for _, doc := range docs {
 		if doc.Read != "" {

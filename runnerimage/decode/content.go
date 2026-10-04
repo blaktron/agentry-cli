@@ -14,6 +14,7 @@ type contentKind struct {
 	family       Family
 	tool, format string
 	text         bool
+	archive      archiveFormat
 }
 
 // Only the input path varies. Neither a detected type nor a document's
@@ -40,7 +41,14 @@ var contentKinds = map[string]contentKind{
 }
 
 func detectedKind(mime string) contentKind {
+	// Tika qualifies some types ("application/x-rar-compressed;
+	// version=5"); the type alone picks the reader.
+	mime, _, _ = strings.Cut(mime, ";")
+	mime = strings.TrimSpace(mime)
 	if k, ok := contentKinds[mime]; ok {
+		return k
+	}
+	if k, ok := archiveKinds[mime]; ok {
 		return k
 	}
 	if strings.HasPrefix(mime, "image/") {
@@ -49,8 +57,7 @@ func detectedKind(mime string) contentKind {
 	switch mime {
 	case "text/plain", "text/markdown", "application/json", "application/x-ndjson", "application/x-empty", "inode/x-empty":
 		return contentKind{family: FamilyText, text: true}
-	// Archive contents wait for M4's member, depth and expansion checks.
-	case "application/octet-stream", "application/zip", "application/x-tar", "application/gzip", "application/x-gzip", "application/x-bzip2", "application/x-xz", "application/x-7z-compressed", "application/x-rar-compressed", "application/vnd.rar":
+	case "application/octet-stream":
 		return contentKind{family: FamilyUnknown}
 	}
 	if strings.HasPrefix(mime, "text/") {
@@ -67,6 +74,11 @@ func detect(ctx context.Context, src string, tools Tools) (contentKind, error) {
 		}
 		if strings.HasPrefix(mime, "image/") {
 			return detectedKind(mime), nil
+		}
+		// libmagic names every archive but a zip reliably; a zip may be
+		// an Office file, which only Tika tells apart.
+		if k, ok := archiveKinds[mime]; ok && mime != "application/zip" {
+			return k, nil
 		}
 	}
 	// libmagic cannot reliably distinguish generic ZIP/compound containers

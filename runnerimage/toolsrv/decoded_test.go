@@ -267,3 +267,62 @@ func TestSearchInputsFindsAMatchAfterRunesThatChangeLengthWhenLowered(t *testing
 		t.Fatalf("indexFold %d", indexFold("xİy NEEDLE", "needle"))
 	}
 }
+
+// An archive's members (plan file-handling.md §6; agentry-cli#562) are
+// entries of their own, named <archive>/<member>: list_inputs lists them
+// under the archive, read_input reads one by its member path from
+// inputs-text (decoded or read as it is, since the member is not under
+// /inputs), search_inputs searches them, and the archive itself says it
+// was unpacked rather than offering its bytes.
+func TestAnArchivesMembersAreInputsOfTheirOwn(t *testing.T) {
+	s := inputsSpec(t)
+	s.InputsTextDir = t.TempDir()
+	mustWrite(t, filepath.Join(s.InputsDir, "bundle.zip"), []byte("PK\x03\x04\x00\xff a zip"))
+	text := filepath.Join(s.InputsTextDir, InputsTextSubdir)
+	mustWrite(t, filepath.Join(text, "bundle.zip", "contract.docx"), []byte("# Contract\n\nThe term is two years.\n"))
+	mustWrite(t, filepath.Join(text, "bundle.zip", "notes", "todo.md"), []byte("- renew the term\n"))
+	writeIndex(t, s, []InputEntry{
+		{Path: "bundle.zip", Type: "archive", Bytes: 13, Unpacked: true, Partial: "unpacking stopped at the file cap"},
+		{Path: "bundle.zip/contract.docx", Type: "document", Bytes: 900, Decoded: true, DecodedBy: "pandoc", TextBytes: 36, InArchive: "bundle.zip"},
+		{Path: "bundle.zip/link", Type: "unknown", Unread: "a link in an archive is never unpacked", InArchive: "bundle.zip"},
+		{Path: "bundle.zip/notes/todo.md", Type: "text", Bytes: 17, TextBytes: 17, InArchive: "bundle.zip"},
+	})
+	srv := newTestServer(t, s)
+	want := "path\ttype\tbytes\toutcome\ttext bytes\n" +
+		"bundle.zip\tarchive\t13\tunpacked in part: unpacking stopped at the file cap\t-\n" +
+		"bundle.zip/contract.docx\tdocument\t900\tread\t36\n" +
+		"bundle.zip/link\tunknown\t0\tunread: a link in an archive is never unpacked\t-\n" +
+		"bundle.zip/notes/todo.md\ttext\t17\tread\t17"
+	for _, path := range []string{"", "bundle.zip"} {
+		if got, isErr := srv.toolListInputs(rawArgs(t, map[string]any{"path": path})); isErr || got != want {
+			t.Fatalf("list_inputs %q =\n%s\nwant\n%s", path, got, want)
+		}
+	}
+	if got, isErr := srv.toolListInputs(rawArgs(t, map[string]any{"path": "bundle.zip/notes"})); isErr || !strings.HasSuffix(got, "\nbundle.zip/notes/todo.md\ttext\t17\tread\t17") || strings.Contains(got, "contract") {
+		t.Fatalf("a folder in an archive (%q, %v)", got, isErr)
+	}
+	for path, want := range map[string]string{
+		"bundle.zip/contract.docx": "# Contract\n\nThe term is two years.\n",
+		"bundle.zip/notes/todo.md": "- renew the term\n",
+	} {
+		if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": path})); isErr || got != want {
+			t.Errorf("read_input %s = (%q, %v), want %q", path, got, isErr, want)
+		}
+	}
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "bundle.zip"})); !isErr || !strings.Contains(got, "is an archive; list_inputs") {
+		t.Fatalf("the archive itself (%q, %v)", got, isErr)
+	}
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "bundle.zip/link"})); !isErr || !strings.Contains(got, "never unpacked") {
+		t.Fatalf("a refused member (%q, %v)", got, isErr)
+	}
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "bundle.zip/../../x"})); !isErr || !strings.Contains(got, "escapes the tool root") {
+		t.Fatalf("traversal through a member path (%q, %v)", got, isErr)
+	}
+	got, isErr := srv.toolSearchInputs(rawArgs(t, map[string]any{"query": "term"}))
+	if isErr || got != "bundle.zip/contract.docx:3: The term is two years.\nbundle.zip/notes/todo.md:1: - renew the term" {
+		t.Fatalf("search (%q, %v)", got, isErr)
+	}
+	if got, _ := srv.toolSearchInputs(rawArgs(t, map[string]any{"query": "a zip"})); !strings.HasPrefix(got, "no input text matches") {
+		t.Fatalf("the archive's own bytes were searched: %q", got)
+	}
+}
