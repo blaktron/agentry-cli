@@ -33,34 +33,12 @@ import (
 // before anything is installed, and passes a value with shell syntax to npm
 // as a literal. Skipped where the host has no node and npm.
 func TestNpmBuilderRunsUnderNode(t *testing.T) {
-	if testing.Short() {
-		t.Skip("runs npm")
-	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("no node on this host")
-	}
-	if _, err := exec.LookPath("npm"); err != nil {
-		t.Skip("no npm on this host")
-	}
+	node := hostNode(t)
 	tgz := demoTarball(t)
 	s512 := sha512.Sum512(tgz)
 	sri := "sha512-" + base64.StdEncoding.EncodeToString(s512[:])
 	s1 := sha1.Sum(tgz) //nolint:gosec // see import
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /demo-mcp", func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"name": "demo-mcp", "dist-tags": map[string]string{"latest": "1.0.0"},
-			"versions": map[string]any{"1.0.0": map[string]any{
-				"name": "demo-mcp", "version": "1.0.0", "bin": map[string]string{"demo-mcp": "cli.js"},
-				"dist": map[string]string{"tarball": "http://" + req.Host + "/demo-mcp/-/demo-mcp-1.0.0.tgz", "integrity": sri, "shasum": hex.EncodeToString(s1[:])},
-			}},
-		})
-	})
-	mux.HandleFunc("GET /demo-mcp/-/demo-mcp-1.0.0.tgz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tgz) })
-	reg := httptest.NewServer(mux)
-	t.Cleanup(reg.Close)
+	reg := fakeNPMRegistry(t, map[string][]byte{"demo-mcp": tgz})
 
 	var buildIn func(t *testing.T, prefix, pkg, integrity string) (string, int, string)
 	build := func(t *testing.T, pkg, integrity string) (string, int, string) {
@@ -69,27 +47,8 @@ func TestNpmBuilderRunsUnderNode(t *testing.T) {
 	}
 	buildIn = func(t *testing.T, prefix, pkg, integrity string) (string, int, string) {
 		t.Helper()
-		home := t.TempDir()
-		r := Resolved{Package: pkg, Version: "1.0.0", Integrity: integrity}
-		argv := npmArgv(&r, policy.MCPRegistries{NPM: reg.URL})
-		// argv: env HOME=… npm_config_cache=… node -e <script> PREFIX PKG VER REG INTEGRITY
-		if argv[3] != "node" || argv[4] != "-e" {
-			t.Fatalf("argv shape changed: %q", argv[:5])
-		}
-		argv[6] = prefix // the in-container prefix, here a host directory
-		cmd := exec.Command(node, argv[4:]...)
-		cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+filepath.Join(home, "cache"), "npm_config_update_notifier=false")
-		out, err := cmd.CombinedOutput()
-		var exit *exec.ExitError
-		switch {
-		case err == nil:
-			return prefix, 0, string(out)
-		case errors.As(err, &exit):
-			return prefix, exit.ExitCode(), string(out)
-		default:
-			t.Fatalf("run builder: %v", err)
-			return "", 0, ""
-		}
+		code, out := runNpmBuilder(t, node, reg, prefix, pkg, integrity)
+		return prefix, code, out
 	}
 	installed := func(prefix string) bool {
 		_, err := os.Stat(filepath.Join(prefix, "node_modules", ".bin", "demo-mcp"))
@@ -167,6 +126,172 @@ func TestNpmBuilderRunsUnderNode(t *testing.T) {
 	})
 }
 
+// TestNpmBuilderChecksEngines runs npm_builder.js under the host's node, as
+// TestNpmBuilderRunsUnderNode does, against packages whose engines.node the
+// host's Node does or does not satisfy (agentry-cli#608): a mismatch exits
+// 5, naming the range, the runtime's Node and the policy key, before
+// anything is installed; a satisfied range, or none, installs.
+func TestNpmBuilderChecksEngines(t *testing.T) {
+	node := hostNode(t)
+	pkgJSON := func(name, engines string) string {
+		j := `{"name":"` + name + `","version":"1.0.0","bin":{"` + name + `":"cli.js"}`
+		if engines != "" {
+			j += `,"engines":{"node":"` + engines + `"}`
+		}
+		return j + "}"
+	}
+	long := strings.Repeat("d", 160) // past ustar's name and prefix fields
+	tarballs := map[string][]byte{
+		// Not "package/": npm takes whatever single directory a tarball has.
+		"future-mcp": packTarball(t, "future-mcp", pkgJSON("future-mcp", ">=99.0.0")),
+		"now-mcp":    packTarball(t, "package", pkgJSON("now-mcp", ">=18.0.0 <99 || ^99.1")),
+		"plain-mcp":  packTarball(t, "package", pkgJSON("plain-mcp", "")),
+		"bad-mcp":    packTarball(t, "package", pkgJSON("bad-mcp", "not a range")),
+		// Two top-level directories: npm strips the first component, so the
+		// last package.json written is the one it installs.
+		"twice-mcp": packEntries(t, tar.FormatUSTAR,
+			[2]string{"package/package.json", pkgJSON("twice-mcp", "")},
+			[2]string{"package/cli.js", "console.log('demo')\n"},
+			[2]string{"other/package.json", pkgJSON("twice-mcp", ">=99.0.0")}),
+		// Names past 100 bytes, as a pax path record and as a GNU long name.
+		"pax-mcp": packEntries(t, tar.FormatPAX,
+			[2]string{long + "/cli.js", "console.log('demo')\n"},
+			[2]string{long + "/package.json", pkgJSON("pax-mcp", ">=99.0.0")}),
+		"gnu-mcp": packEntries(t, tar.FormatGNU,
+			[2]string{long + "/cli.js", "console.log('demo')\n"},
+			[2]string{long + "/package.json", pkgJSON("gnu-mcp", ">=99.0.0")}),
+	}
+	reg := fakeNPMRegistry(t, tarballs)
+	build := func(t *testing.T, pkg string) (string, int, string) {
+		t.Helper()
+		sum := sha512.Sum512(tarballs[pkg])
+		prefix := t.TempDir()
+		code, out := runNpmBuilder(t, node, reg, prefix, pkg, "sha512-"+base64.StdEncoding.EncodeToString(sum[:]))
+		return prefix, code, out
+	}
+	installed := func(prefix, pkg string) bool {
+		_, err := os.Stat(filepath.Join(prefix, "node_modules", pkg, "package.json"))
+		return err == nil
+	}
+
+	t.Run("a Node the package excludes refuses before anything is installed", func(t *testing.T) {
+		prefix, code, out := build(t, "future-mcp")
+		if code != npmEnginesRefused || installed(prefix, "future-mcp") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		for _, want := range []string{"future-mcp@1.0.0 requires Node >=99.0.0", "runs Node v", "images.nodeRuntime"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the refusal does not say %q:\n%s", want, out)
+			}
+		}
+	})
+	t.Run("an unparseable range refuses, as npm's engine-strict would, and says so", func(t *testing.T) {
+		prefix, code, out := build(t, "bad-mcp")
+		if code != npmEnginesRefused || installed(prefix, "bad-mcp") || !strings.Contains(out, "not a range npm can read") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+	})
+	t.Run("the last package.json, the one npm installs, decides", func(t *testing.T) {
+		if prefix, code, out := build(t, "twice-mcp"); code != npmEnginesRefused || installed(prefix, "twice-mcp") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+	})
+	for _, pkg := range []string{"pax-mcp", "gnu-mcp"} {
+		t.Run("a long name is read from its "+pkg[:3]+" record", func(t *testing.T) {
+			if prefix, code, out := build(t, pkg); code != npmEnginesRefused || installed(prefix, pkg) {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+		})
+	}
+	for _, pkg := range []string{"now-mcp", "plain-mcp"} {
+		t.Run(pkg+": a range the runtime satisfies, or none, installs", func(t *testing.T) {
+			if prefix, code, out := build(t, pkg); code != 0 || !installed(prefix, pkg) {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+		})
+	}
+}
+
+// hostNode is the host's node for the builder tests, which skip where the
+// host has no node and npm.
+func hostNode(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("runs npm")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node on this host")
+	}
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("no npm on this host")
+	}
+	return node
+}
+
+// fakeNPMRegistry serves each tarball as version 1.0.0 of the package it is
+// keyed by, with the SRI sha512 and legacy shasum npm's packuments carry.
+func fakeNPMRegistry(t *testing.T, tarballs map[string][]byte) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{name}", func(w http.ResponseWriter, req *http.Request) {
+		name := req.PathValue("name")
+		tgz, ok := tarballs[name]
+		if !ok {
+			http.NotFound(w, req)
+			return
+		}
+		s512 := sha512.Sum512(tgz)
+		s1 := sha1.Sum(tgz) //nolint:gosec // see import
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"name": name, "dist-tags": map[string]string{"latest": "1.0.0"},
+			"versions": map[string]any{"1.0.0": map[string]any{
+				"name": name, "version": "1.0.0", "bin": map[string]string{name: "cli.js"},
+				"dist": map[string]string{
+					"tarball":   "http://" + req.Host + "/" + name + "/-/" + name + "-1.0.0.tgz",
+					"integrity": "sha512-" + base64.StdEncoding.EncodeToString(s512[:]),
+					"shasum":    hex.EncodeToString(s1[:]),
+				},
+			}},
+		})
+	})
+	mux.HandleFunc("GET /{name}/-/{file}", func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write(tarballs[req.PathValue("name")])
+	})
+	reg := httptest.NewServer(mux)
+	t.Cleanup(reg.Close)
+	return reg.URL
+}
+
+// runNpmBuilder runs npm_builder.js the way the runtime image does, with
+// the host's node, prefix standing in for the in-container one, and
+// returns its exit code and output.
+func runNpmBuilder(t *testing.T, node, registry, prefix, pkg, integrity string) (int, string) {
+	t.Helper()
+	home := t.TempDir()
+	r := Resolved{Package: pkg, Version: "1.0.0", Integrity: integrity}
+	argv := npmArgv(&r, policy.MCPRegistries{NPM: registry})
+	// argv: env HOME=… npm_config_cache=… node -e <script> PREFIX PKG VER REG INTEGRITY
+	if argv[3] != "node" || argv[4] != "-e" {
+		t.Fatalf("argv shape changed: %q", argv[:5])
+	}
+	argv[6] = prefix // the in-container prefix, here a host directory
+	cmd := exec.Command(node, argv[4:]...)
+	cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+filepath.Join(home, "cache"), "npm_config_update_notifier=false")
+	out, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, string(out)
+	case errors.As(err, &exit):
+		return exit.ExitCode(), string(out)
+	default:
+		t.Fatalf("run builder: %v", err)
+		return 0, ""
+	}
+}
+
 // The builder's download directory and the Go constant are one name.
 func TestNpmBuilderDownloadDirMatches(t *testing.T) {
 	m := regexp.MustCompile(`const DOWNLOAD_DIR = "([^"]+)";`).FindStringSubmatch(npmBuilder)
@@ -179,14 +304,26 @@ func TestNpmBuilderDownloadDirMatches(t *testing.T) {
 // everything under package/.
 func demoTarball(t *testing.T) []byte {
 	t.Helper()
+	return packTarball(t, "package", `{"name":"demo-mcp","version":"1.0.0","bin":{"demo-mcp":"cli.js"}}`)
+}
+
+// packTarball builds a one-package tarball under the top-level directory
+// dir, with the given package.json and a cli.js.
+func packTarball(t *testing.T, dir, packageJSON string) []byte {
+	t.Helper()
+	return packEntries(t, tar.FormatUSTAR,
+		[2]string{dir + "/package.json", packageJSON},
+		[2]string{dir + "/cli.js", "#!/usr/bin/env node\nconsole.log('demo')\n"})
+}
+
+// packEntries gzips a tar of the given files, in order, in one format.
+func packEntries(t *testing.T, format tar.Format, files ...[2]string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	for _, f := range [][2]string{
-		{"package/package.json", `{"name":"demo-mcp","version":"1.0.0","bin":{"demo-mcp":"cli.js"}}`},
-		{"package/cli.js", "#!/usr/bin/env node\nconsole.log('demo')\n"},
-	} {
-		if err := tw.WriteHeader(&tar.Header{Name: f[0], Mode: 0o644, Size: int64(len(f[1])), Typeflag: tar.TypeReg}); err != nil {
+	for _, f := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: f[0], Mode: 0o644, Size: int64(len(f[1])), Typeflag: tar.TypeReg, Format: format}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tw.Write([]byte(f[1])); err != nil {

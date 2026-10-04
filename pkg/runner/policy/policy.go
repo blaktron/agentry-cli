@@ -63,8 +63,10 @@ const (
 	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.128.0"
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
 	// Runtime images that install and run declared npm/PyPI MCP servers
-	// (RUNNER-PLAN-3 §P2).
-	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:22-alpine"
+	// (RUNNER-PLAN-3 §P2). Node is 24 since agentry-cli#608: servers whose
+	// engines.node needs 24 (the OSV advisory server since 0.1.8) fail
+	// every tool call on 22.
+	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:24-alpine"
 	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-alpine:3.12-alpine"
 	// DefaultUnsafeImage is the Unsafe Mode base (agentry-notes
 	// plans/unsafe-mode.md §4.1; agentry-dockerimages#15): Kali with a
@@ -753,7 +755,12 @@ func Load(path string) (*Policy, string, error) {
 	// defaults rather than failing validation — additions must not brick
 	// existing machines (the file's sha still changes only when the
 	// OPERATOR edits it, so plan invalidation semantics are unchanged).
-	if p.Images.NodeRuntime == "" {
+	// A nodeRuntime that is a former generated default resolves to today's
+	// (formerDefaultNodeRuntimes, DR-66): the file's sha stays the same
+	// while the image it means moves with the CLI, as an absent key's
+	// always has. Plans still recompile, because a new CLI build changes
+	// the plan's compiledBy.
+	if p.Images.NodeRuntime == "" || slices.Contains(formerDefaultNodeRuntimes, p.Images.NodeRuntime) {
 		p.Images.NodeRuntime = DefaultNodeRuntime
 	}
 	if p.Images.PythonRuntime == "" {
@@ -952,6 +959,18 @@ func (p *Policy) RunnerImageTag(version string) string {
 	return "agentry-runner:" + v
 }
 
+// formerDefaultNodeRuntimes are the values earlier CLIs wrote into every
+// generated policy file as nodeRuntime: Docker Hub's node:22-alpine until
+// DR-32 moved the defaults to our registry, then our 22-alpine mirror until
+// agentry-cli#608 moved them to Node 24. A file still naming one carries the
+// default of the day it was written, not an operator's choice, so it loads as
+// the current default, or the move would reach no machine set up before it.
+// Any other value is the operator's and is kept.
+var formerDefaultNodeRuntimes = []string{
+	"node:22-alpine",
+	"ghcr.io/blaktron/agentry-node-alpine:22-alpine",
+}
+
 // defaultFileText is the generated first-use policy. It must parse to
 // exactly Default() (a unit test holds it to that) and carry the warnings
 // an operator needs at the moment they edit it.
@@ -977,7 +996,7 @@ images:
   harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
-  nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:22-alpine
+  nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:24-alpine
   pythonRuntime: ghcr.io/blaktron/agentry-python-alpine:3.12-alpine
   # The base of the desktop's Unsafe Mode exec images: Kali Linux with a
   # command index and an extras list, pinned by digest. Unset, the CLI's

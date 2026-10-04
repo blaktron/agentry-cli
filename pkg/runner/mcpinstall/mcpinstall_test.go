@@ -649,3 +649,32 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 		t.Fatalf("an unset runtime reached the installer: %q, hosts %v", inst.Runtime, inst.ExtraHosts)
 	}
 }
+
+// A builder that refuses the package's engines.node (npm_builder.js exit 5)
+// fails the install with a sentence that names the runtime image and the
+// policy key, and records no resolution, so the next try installs afresh
+// (agentry-cli#608).
+func TestEnsureInstalledNamesAnEnginesRefusal(t *testing.T) {
+	regs := fakeRegistries(t)
+	res, err := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{decl("@scope/server-x", "", "1.2.3")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := t.TempDir()
+	fake := withRunner(&dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+		"agentry-mcpinstall-": {ExitCode: npmEnginesRefused},
+	}})
+	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
+	err = EnsureInstalled(t.Context(), fake, res, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard)
+	if err == nil {
+		t.Fatal("an engines refusal installed")
+	}
+	for _, want := range []string{"@scope/server-x@1.2.3", "node:test", "images.nodeRuntime"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(store, "npm-scope-server-x.json")); !os.IsNotExist(err) {
+		t.Fatalf("a refused install recorded a resolution (%v)", err)
+	}
+}
