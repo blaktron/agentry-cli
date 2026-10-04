@@ -472,8 +472,12 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		if err != nil {
 			return fmt.Errorf("install %s: %w", r.ID, err)
 		}
-		if code == npmEnginesRefused && r.Source == "npm" {
-			return fmt.Errorf("install %s: %s@%s does not support the Node of the runtime image %s (the builder's line above names the range it needs); pin a version of the server that does, or set the runner policy's images.nodeRuntime",
+		if r.Source == "npm" && code == npmEnginesRefused {
+			return fmt.Errorf("install %s: %s@%s declares an engines.node range that the Node in the runtime image %s does not satisfy (the builder's line above gives the range); nothing was installed. Pin a version of the server whose range it satisfies, or set the runner policy's images.nodeRuntime to an image with a Node it supports",
+				r.ID, r.Package, r.Version, image)
+		}
+		if r.Source == "npm" && code == npmEnginesUnchecked {
+			return fmt.Errorf("install %s: the Node version %s@%s needs could not be checked in the runtime image %s (the builder's line above says why); nothing was installed",
 				r.ID, r.Package, r.Version, image)
 		}
 		if code != 0 {
@@ -661,9 +665,14 @@ func pipArgv(r *Resolved, regs policy.MCPRegistries) []string {
 		r.prefix(), r.Package, r.Version, strings.TrimRight(regs.PyPI, "/") + "/simple", onlyBinary}
 }
 
-// npmEnginesRefused is npm_builder.js's exit when the pinned package's
-// engines.node excludes the runtime image's Node (agentry-cli#608).
-const npmEnginesRefused = 5
+// npm_builder.js's exits for the engines check (agentry-cli#608): the
+// pinned package's engines.node excludes the runtime image's Node (or is
+// no range at all), or the check could not run (an unreadable tarball, or
+// an image whose npm carries no semver).
+const (
+	npmEnginesRefused   = 5
+	npmEnginesUnchecked = 6
+)
 
 // npmBuilder is the npm builder's program (npm_builder.js), run as
 // `node -e` with every value a separate argument, like the PyPI builder.

@@ -755,6 +755,11 @@ func Load(path string) (*Policy, string, error) {
 	// defaults rather than failing validation — additions must not brick
 	// existing machines (the file's sha still changes only when the
 	// OPERATOR edits it, so plan invalidation semantics are unchanged).
+	// A nodeRuntime that is a former generated default resolves to today's
+	// (formerDefaultNodeRuntimes, DR-66): the file's sha stays the same
+	// while the image it means moves with the CLI, as an absent key's
+	// always has. Plans still recompile, because a new CLI build changes
+	// the plan's compiledBy.
 	if p.Images.NodeRuntime == "" || slices.Contains(formerDefaultNodeRuntimes, p.Images.NodeRuntime) {
 		p.Images.NodeRuntime = DefaultNodeRuntime
 	}

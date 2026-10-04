@@ -74,38 +74,55 @@ function expected(integrity) {
 }
 
 // packageJSON is the text of the tarball's top-level package.json, or null
-// when it has none. npm packs one top-level directory (usually "package/")
-// whatever its name, so the first "<dir>/package.json" regular file is the
-// one npm reads. The tarball is the verified file: no second fetch.
+// when it has none. npm unpacks a tarball with its top-level directory
+// stripped, whatever that directory is called ("package/" by convention),
+// so every "<dir>/package.json" lands on one path and the last one written
+// is what npm installs: that is the one returned. Names come from the
+// ustar prefix, a GNU long name or a pax path record, as npm's tar reads
+// them. A header this reader cannot size throws, and the check reports it
+// rather than passing the package. The tarball is the verified file: no
+// second fetch, and nothing is written to disk.
 function packageJSON(file) {
   const buf = zlib.gunzipSync(fs.readFileSync(file));
-  const field = (h, from, to) => h.subarray(from, to).toString("utf8").replace(/\0[\s\S]*$/, "");
-  let longName = null;
+  const cstr = (b) => b.toString("utf8").replace(/\0[\s\S]*$/, "");
+  let next = null; // the next entry's name, from an "L" or "x" record
+  let found = null;
   for (let off = 0; off + 512 <= buf.length;) {
     const h = buf.subarray(off, off + 512);
     if (h.every((b) => b === 0)) {
       break;
     }
-    let name = field(h, 0, 100);
-    const prefix = field(h, 345, 500);
-    if (prefix) {
-      name = prefix + "/" + name;
+    const sizeField = cstr(h.subarray(124, 136)).trim();
+    if (h[124] & 0x80 || !/^[0-7]*$/.test(sizeField)) {
+      throw new Error(`a tar header at byte ${off} has a size this check cannot read`);
     }
-    if (longName !== null) {
-      name = longName;
-      longName = null;
+    const size = parseInt(sizeField || "0", 8);
+    let name = cstr(h.subarray(0, 100));
+    if (h.subarray(257, 263).toString("latin1") === "ustar\0") {
+      const prefix = cstr(h.subarray(345, 500));
+      if (prefix) {
+        name = prefix + "/" + name;
+      }
     }
-    const size = parseInt(field(h, 124, 136).trim() || "0", 8);
+    if (next !== null) {
+      name = next;
+      next = null;
+    }
     const type = h[156];
     const body = buf.subarray(off + 512, off + 512 + size);
     if (type === 0x4c) { // "L": a GNU long name for the next entry
-      longName = body.toString("utf8").replace(/\0[\s\S]*$/, "");
-    } else if ((type === 0x30 || type === 0) && /^[^/]+\/package\.json$/.test(name)) {
-      return body.toString("utf8");
+      next = cstr(body);
+    } else if (type === 0x78) { // "x": pax records for the next entry
+      const m = /(?:^|\n)\d+ path=([^\n]*)\n/.exec(body.toString("utf8"));
+      if (m) {
+        next = m[1];
+      }
+    } else if ((type === 0x30 || type === 0) && /^(?:\.\/)?[^/]+\/package\.json$/.test(name)) {
+      found = body.toString("utf8");
     }
     off += 512 + Math.ceil(size / 512) * 512;
   }
-  return null;
+  return found;
 }
 
 // npmSemver is the semver module npm itself checks engines with, found
@@ -145,6 +162,10 @@ function checkEngines(file, spec) {
   if (!semver) {
     console.log(`mcp install: cannot check ${spec}'s engines.node ("${range}"): this image's npm carries no semver module`);
     process.exit(6);
+  }
+  if (semver.validRange(range) === null) {
+    console.log(`mcp install: ${spec} gives engines.node "${range}", which is not a range npm can read, so no Node satisfies it (npm's engine-strict refuses it the same way); pin a version of the server that names a valid range`);
+    process.exit(5);
   }
   if (!semver.satisfies(process.version, range, { includePrerelease: true })) {
     console.log(`mcp install: ${spec} requires Node ${range} (its engines.node), and this runtime image runs Node ${process.version}; it would install and then fail its tool calls. Pin a version of the server that supports Node ${process.version}, or set the runner policy's images.nodeRuntime to an image whose Node it supports`);
