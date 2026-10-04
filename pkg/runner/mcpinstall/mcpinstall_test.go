@@ -22,7 +22,7 @@ func fakeRegistries(t *testing.T) policy.MCPRegistries {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /@scope%2Fserver-x/1.2.3", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"name":"@scope/server-x","bin":{"server-x":"dist/cli.js"},"dist":{"tarball":"t","integrity":"sha512-AAA"}}`))
+		_, _ = w.Write([]byte(`{"name":"@scope/server-x","bin":{"server-x":"dist/cli.js"},"engines":{"node":">=20"},"dist":{"tarball":"t","integrity":"sha512-AAA"}}`))
 	})
 	mux.HandleFunc("GET /no-bin/1.0.0", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"name":"no-bin","dist":{"tarball":"t","integrity":"sha512-BBB"}}`))
@@ -30,7 +30,7 @@ func fakeRegistries(t *testing.T) policy.MCPRegistries {
 	mux.HandleFunc("GET /pypi/mcp-server-fetch/0.6.2/json", func(w http.ResponseWriter, _ *http.Request) {
 		// A platform wheel listed first, then the pure-Python one, then the
 		// sdist: the pin must prefer none-any and record all three.
-		_, _ = w.Write([]byte(`{"urls":[
+		_, _ = w.Write([]byte(`{"info":{"requires_python":">=3.10"},"urls":[
 		  {"packagetype":"bdist_wheel","filename":"mcp_server_fetch-0.6.2-cp312-manylinux_x86_64.whl","digests":{"sha256":"beef"}},
 		  {"packagetype":"bdist_wheel","filename":"mcp_server_fetch-0.6.2-py3-none-any.whl","digests":{"sha256":"cafe"}},
 		  {"packagetype":"sdist","filename":"mcp_server_fetch-0.6.2.tar.gz","digests":{"sha256":"f00d"}}]}`))
@@ -85,6 +85,10 @@ func TestResolveAll(t *testing.T) {
 	}
 	if res[0].BinName != "server-x" || res[0].Integrity != "sha512-AAA" {
 		t.Fatalf("npm resolution = %+v", res[0])
+	}
+	// The release's own runtime range is recorded (agentry-cli#609).
+	if res[0].Runtime != ">=20" || res[1].Runtime != ">=3.10" {
+		t.Fatalf("runtime ranges = %q, %q", res[0].Runtime, res[1].Runtime)
 	}
 	if res[0].ID != "npm-scope-server-x" {
 		t.Fatalf("npm id = %q", res[0].ID)

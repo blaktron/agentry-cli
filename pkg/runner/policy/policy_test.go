@@ -808,3 +808,17 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 		t.Fatal("the current default is listed as a former one")
 	}
 }
+
+// The runtimes' language versions name the line their images' tags do, so
+// a moved image cannot leave the Drafter checking against the old one
+// (agentry-cli#609).
+func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {
+	for _, c := range []struct{ image, version, line string }{
+		{DefaultNodeRuntime, DefaultNodeVersion, strings.SplitN(DefaultNodeVersion, ".", 2)[0]},
+		{DefaultPythonRuntime, DefaultPythonVersion, strings.Join(strings.SplitN(DefaultPythonVersion, ".", 3)[:2], ".")},
+	} {
+		if !strings.HasSuffix(c.image, ":"+c.line+"-alpine") {
+			t.Errorf("%s does not run %s (line %s)", c.image, c.version, c.line)
+		}
+	}
+}

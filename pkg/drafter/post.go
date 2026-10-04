@@ -80,6 +80,10 @@ type PostStep struct {
 	// turn's lines count on from the first turn's total, so a host's caps
 	// see the draft whole. Nil reports none.
 	OnUsage func(receipt.Usage)
+	// Servers resolves a declared MCP server's pin for the rule on its
+	// runtime (checkServers); nil resolves against the default npm and
+	// PyPI registries.
+	Servers ServerResolver
 }
 
 // RepairTurn is what the post-step gives the repair turn's run: the task
@@ -138,9 +142,11 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 		d.readKnowledge(p.Knowledge)
 		d.revise(p.Revision)
 		p.validate(d)
+		p.checkServers(ctx, d)
 	}
 	d, env = p.repairAndCheck(ctx, d, env, repairSpent)
 	d.noteExecProblems()
+	d.noteServerProblems()
 	return d, env, nil
 }
 
@@ -259,6 +265,7 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 	}
 	rd.revise(p.Revision)
 	p.validate(rd)
+	p.checkServers(ctx, rd)
 	return rd, &total
 }
 
@@ -352,7 +359,8 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 // keepFirst says a repair's second answer broke a rule its first passed:
 // validate's, which the registry enforces, or else the Drafter's cap on
 // the instructions, which keeps them within what AI Review's check reads,
-// or its rule on exec, which keeps them to what a run provides.
+// or its rule on exec, which keeps them to what a run provides, or its
+// rule on declared servers' runtimes (checkServers).
 // A second answer that mends what the first broke is kept whatever else it
 // does.
 func keepFirst(first, second *Draft) bool {
@@ -362,7 +370,10 @@ func keepFirst(first, second *Draft) bool {
 	if first.withinCap() && !second.withinCap() {
 		return true
 	}
-	return len(execProblems(first.Manifest)) == 0 && len(execProblems(second.Manifest)) > 0
+	if len(execProblems(first.Manifest)) == 0 && len(execProblems(second.Manifest)) > 0 {
+		return true
+	}
+	return len(first.serverProblems) == 0 && len(second.serverProblems) > 0
 }
 
 // withinCap says the draft's instructions are within the Drafter's cap.
@@ -370,8 +381,8 @@ func (d *Draft) withinCap() bool { return len(d.Instructions) <= MaxInstructionB
 
 // rulesReport is what the rules said of a draft, one line each, in their
 // own words: validate's report on its package, and the Drafter's cap on its
-// instructions and its rule on exec (execProblems), which validate does
-// not hold. refused is false for a draft
+// instructions, its rule on exec (execProblems) and its rule on declared
+// servers' runtimes (checkServers), which validate does not hold. refused is false for a draft
 // both pass, or one whose check could not run for a reason of this
 // computer's rather than the draft's.
 func rulesReport(d *Draft) (lines []string, refused bool) {
@@ -382,6 +393,10 @@ func rulesReport(d *Draft) (lines []string, refused bool) {
 	}
 	if probs := execProblems(d.Manifest); len(probs) > 0 {
 		lines = append(lines, probs...)
+		refused = true
+	}
+	if len(d.serverProblems) > 0 {
+		lines = append(lines, d.serverProblems...)
 		refused = true
 	}
 	return lines, refused

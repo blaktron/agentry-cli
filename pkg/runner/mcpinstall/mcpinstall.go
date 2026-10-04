@@ -78,6 +78,11 @@ type Resolved struct {
 	// host:port, stamped by EnsureInstalled; the proxy's own decisions are
 	// in <id>.install-proxy.log beside this record (agentry-cli#92).
 	InstallEgress []string `json:"installEgress,omitempty"`
+	// Runtime is the runtime range the release declares for itself, as the
+	// registry's metadata gives it: npm's engines.node, PyPI's
+	// requires_python; "" when it declares none (RuntimeMismatch,
+	// agentry-cli#609).
+	Runtime string `json:"runtime,omitempty"`
 }
 
 // ServerName is the gateway catalog name for a resolved server.
@@ -186,9 +191,10 @@ func getJSON(ctx context.Context, client *http.Client, u string, into any) error
 
 func resolveNPM(ctx context.Context, client *http.Client, registry, pkg, version string) (Resolved, error) {
 	var meta struct {
-		Name string          `json:"name"`
-		Bin  json.RawMessage `json:"bin"`
-		Dist struct {
+		Name    string          `json:"name"`
+		Bin     json.RawMessage `json:"bin"`
+		Engines json.RawMessage `json:"engines"`
+		Dist    struct {
 			Tarball   string `json:"tarball"`
 			Integrity string `json:"integrity"`
 			Shasum    string `json:"shasum"`
@@ -210,7 +216,21 @@ func resolveNPM(ctx context.Context, client *http.Client, registry, pkg, version
 		Source: "npm", Package: pkg, Version: version,
 		ID: sanitizeID("npm", pkg), BinName: bin, Integrity: integrity,
 		FetchHosts: fetchHosts(registry, meta.Dist.Tarball),
+		Runtime:    npmEnginesNode(meta.Engines),
 	}, nil
+}
+
+// npmEnginesNode is a packument version's engines.node, or "" when it has
+// none. Some old packages publish engines as an array of strings, which npm
+// ignores; so does this.
+func npmEnginesNode(raw json.RawMessage) string {
+	var e struct {
+		Node string `json:"node"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return ""
+	}
+	return strings.TrimSpace(e.Node)
 }
 
 // npmBinName picks the launchable bin: a string bin means "named after the
@@ -245,6 +265,9 @@ func npmBinName(pkg string, raw json.RawMessage) (string, error) {
 
 func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, version string) (Resolved, error) {
 	var meta struct {
+		Info struct {
+			RequiresPython *string `json:"requires_python"`
+		} `json:"info"`
 		URLs []struct {
 			PackageType string `json:"packagetype"`
 			Filename    string `json:"filename"`
@@ -304,7 +327,15 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 		Integrity:  integrity,
 		Artifacts:  artifacts,
 		FetchHosts: fetchHosts(registry, urls...),
+		Runtime:    requiresPython(meta.Info.RequiresPython),
 	}, nil
+}
+
+func requiresPython(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(*s)
 }
 
 // StoreDir is the signature's server store under its profile directory.
