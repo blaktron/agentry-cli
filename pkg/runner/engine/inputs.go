@@ -157,7 +157,7 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 			e.Bytes = fi.Size()
 		}
 		switch {
-		case f.Outcome == runnerdecode.OutcomeDecoded, f.Outcome == runnerdecode.OutcomeText && f.In != "":
+		case f.HasText():
 			// A member's text is served from inputs-text whether it was
 			// decoded or read as it is: the member is not under /inputs.
 			dst := filepath.Join(textRoot, filepath.FromSlash(f.Path))

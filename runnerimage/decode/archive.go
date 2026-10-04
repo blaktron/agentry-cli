@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 )
 
@@ -53,7 +54,9 @@ const (
 	// WhyTooLarge: unpacking stopped at the unpacked-bytes budget.
 	WhyTooLarge Why = "too-large"
 	// WhyUnsafePath: a member's name is absolute, climbs out with "..", or
-	// is not a plain name, so nothing in the archive is unpacked.
+	// is not a plain name (a backslash, a control or reordering mark,
+	// invalid UTF-8, past the length bounds), so nothing in the archive is
+	// unpacked.
 	WhyUnsafePath Why = "unsafe-path"
 	// WhyLink: a symbolic or hard link is never unpacked.
 	WhyLink Why = "link"
@@ -109,6 +112,15 @@ const (
 	maxNamePart   = 255
 )
 
+// PlainMemberPath says whether a member's path, as a report names it
+// below its archive, is one the decode could have written: already clean
+// and within memberName's rules. The host holds a report to it, since the
+// container that wrote the report read the archive.
+func PlainMemberPath(p string) bool {
+	name, ok := memberName(p)
+	return ok && name == p && name != "."
+}
+
 // memberName is the member's name as the run will see it, cleaned, or
 // false when it is not a plain relative name: absolute, with a ".."
 // part, a backslash, a control character, invalid UTF-8 or past the
@@ -118,7 +130,10 @@ func memberName(raw string) (string, bool) {
 		return "", false
 	}
 	for _, r := range raw {
-		if r < 0x20 || r == 0x7f {
+		// C0 and C1 controls, and the marks that reorder or hide text,
+		// which would let a name forge a row of list_inputs or read as
+		// another.
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || (r >= 0x200b && r <= 0x200f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) || r == 0xfeff {
 			return "", false
 		}
 	}
@@ -238,8 +253,10 @@ func (u *unpacker) file(name string, r io.Reader) bool {
 	return true
 }
 
+// isNoSpace says the unpack tmpfs is full: the kernel's own bound on what
+// the budget counts.
 func isNoSpace(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no space left")
+	return errors.Is(err, syscall.ENOSPC)
 }
 
 // unpackInto reads the archive at src into dir. It answers what it unpacked,
@@ -278,6 +295,13 @@ func (d *decoder) unpackInto(ctx context.Context, src, dir, rel string, kind con
 	return u.members, why, true
 }
 
+// The zip format's general-purpose flag for an encrypted member, and its
+// method number for bzip2, which the standard library reads.
+const (
+	zipFlagEncrypted = 0x1
+	zipMethodBzip2   = 12
+)
+
 // zip reads a zip with the standard library: every name is checked before
 // anything is written, and each member's encryption flag and method are
 // seen before its data is read.
@@ -287,7 +311,7 @@ func (u *unpacker) zip(src string) Why {
 		return WhyDamaged
 	}
 	defer func() { _ = zr.Close() }()
-	zr.RegisterDecompressor(12, func(r io.Reader) io.ReadCloser { return io.NopCloser(bzip2.NewReader(r)) })
+	zr.RegisterDecompressor(zipMethodBzip2, func(r io.Reader) io.ReadCloser { return io.NopCloser(bzip2.NewReader(r)) })
 	names := make([]string, len(zr.File))
 	for i, zf := range zr.File {
 		name, ok := memberName(zf.Name)
@@ -306,9 +330,9 @@ func (u *unpacker) zip(src string) Why {
 			ok = u.add(name, WhyLink)
 		case !mode.IsRegular():
 			ok = u.add(name, WhySpecial)
-		case zf.Flags&0x1 != 0:
+		case zf.Flags&zipFlagEncrypted != 0:
 			ok = u.add(name, WhyEncrypted)
-		case zf.Method != zip.Store && zf.Method != zip.Deflate && zf.Method != 12:
+		case zf.Method != zip.Store && zf.Method != zip.Deflate && zf.Method != zipMethodBzip2:
 			ok = u.add(name, WhyMethod)
 		default:
 			rc, err := zf.Open()
@@ -415,11 +439,19 @@ func loneName(rel string) string {
 // read like any other. bsdtar's words go no further than telling an
 // encrypted archive from one it could not read.
 func (u *unpacker) libarchive(ctx context.Context, src string) Why {
-	cmd := decoderCommand(ctx, u.d.tools.Bsdtar, "-c", "-f", "-", "--format", "pax", "@"+src)
+	// -P keeps each name as the archive gives it: without it bsdtar
+	// strips a leading "/", and the name check would never see what the
+	// archive tried.
+	cmd := decoderCommand(ctx, u.d.tools.Bsdtar, "-c", "-f", "-", "--format", "pax", "-P", "@"+src)
 	return u.fromProcess(cmd, WhyUnreadable, func(r *bufio.Reader) Why {
 		return u.tar(tar.NewReader(r), WhyUnreadable)
 	})
 }
+
+// trailingBytes is what may follow a tar stream's end: bsdtar pads its
+// output to a 10,240-byte block, and a compressed tar may carry a little
+// more.
+const trailingBytes = 1 << 20
 
 // fromProcess runs a decompressor and reads its output with read. A
 // process that fails answers onError, or WhyEncrypted when it says the
@@ -437,7 +469,14 @@ func (u *unpacker) fromProcess(cmd *exec.Cmd, onError Why, read func(*bufio.Read
 	why := read(bufio.NewReaderSize(out, 64<<10))
 	stopped := why == WhyUnsafePath || u.stop != ""
 	// Whatever ended the read early, the rest of the stream is not read:
-	// a bomb behind a bad header is not decompressed to the end.
+	// a bomb behind a bad header is not decompressed to the end. After a
+	// tar's end only its padding should follow; more than trailingBytes
+	// is not decompressed to the end either, and the archive is damaged.
+	if why == "" && !stopped {
+		if n, _ := io.Copy(io.Discard, io.LimitReader(out, trailingBytes+1)); n > trailingBytes {
+			why = WhyDamaged
+		}
+	}
 	if why != "" || stopped {
 		_ = cmd.Process.Kill()
 	}

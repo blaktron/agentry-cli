@@ -115,6 +115,7 @@ func TestDecodeArchivesForReal(t *testing.T) {
 		"sealed.zip":                     unpacked("agentry-runner"),
 		"sealed.zip/secret.md":           {runnerdecode.OutcomeUndecodable, "", runnerdecode.WhyEncrypted, ""},
 		"slip.zip":                       {runnerdecode.OutcomeRefused, "agentry-runner", runnerdecode.WhyUnsafePath, ""},
+		"slip.7z":                        {runnerdecode.OutcomeRefused, "bsdtar", runnerdecode.WhyUnsafePath, ""},
 		"links.zip":                      unpacked("agentry-runner"),
 		"links.zip/passwd":               {runnerdecode.OutcomeRefused, "", runnerdecode.WhyLink, ""},
 		"links.zip/ok.md":                text,

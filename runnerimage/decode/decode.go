@@ -105,6 +105,13 @@ type File struct {
 	Why Why `json:"why,omitempty"`
 }
 
+// HasText says the decode wrote a text for it at Output: a file it
+// decoded, or a member read as text, whose text is copied out since the
+// member itself stays in the decode container.
+func (f File) HasText() bool {
+	return f.Outcome == OutcomeDecoded || (f.Outcome == OutcomeText && f.In != "")
+}
+
 // Report is what one Decode did, file by file, in path order.
 type Report struct {
 	Schema string `json:"schema"`
@@ -142,8 +149,13 @@ func (t Tools) withDefaults() Tools {
 	return t
 }
 
-// DefaultMaxDepth is how deep archives nest and are still unpacked (D5).
-const DefaultMaxDepth = 3
+// The decode's fixed bounds on archives (D5), which the host holds a
+// report to: how deep archives nest and are still unpacked, and how many
+// files and members a decode takes in all.
+const (
+	MaxDepth        = 3
+	DefaultMaxFiles = 2000
+)
 
 // Limits bound a decode; zero values take the defaults.
 type Limits struct {
@@ -169,15 +181,11 @@ type Limits struct {
 	// MaxUnpackedBytes is what every archive in the decode may unpack in
 	// all, counted as each member streams (default 512 MiB; D5).
 	MaxUnpackedBytes int64
-	// MaxDepth is how deep archives nest and are still unpacked (default
-	// 3; D5): an archive inside an archive inside an archive is read, one
-	// more level is not.
-	MaxDepth int
 }
 
 func (l Limits) withDefaults() Limits {
 	if l.MaxFiles <= 0 {
-		l.MaxFiles = 2000
+		l.MaxFiles = DefaultMaxFiles
 	}
 	if l.ScratchDir == "" {
 		l.ScratchDir = os.TempDir()
@@ -196,9 +204,6 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.MaxUnpackedBytes <= 0 {
 		l.MaxUnpackedBytes = 512 << 20
-	}
-	if l.MaxDepth <= 0 {
-		l.MaxDepth = DefaultMaxDepth
 	}
 	return l
 }
@@ -306,7 +311,7 @@ func (d *decoder) archive(ctx context.Context, src, rel, in string, depth int, s
 	if in != "" {
 		a.Size = size
 	}
-	if depth >= d.lim.MaxDepth {
+	if depth >= MaxDepth {
 		a.Outcome, a.Why = OutcomeUndecodable, WhyTooDeep
 		d.files = append(d.files, a)
 		return

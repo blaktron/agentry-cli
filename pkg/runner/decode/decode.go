@@ -262,9 +262,10 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	// The decoders' scratch is a bounded tmpfs, so a document that expands
 	// without end fills that, not the host (runnerimage/decode writes only
 	// a capped copy to /out). Archives unpack into a tmpfs of their own,
-	// the size of the unpacked-bytes budget (D5), so a bomb the budget's
-	// count somehow missed still meets the kernel's limit, and the
-	// decoders keep their scratch.
+	// the size of the unpacked-bytes budget (D5), so the decoders keep
+	// their scratch. Both count against the container's memory limit
+	// beside Tika's heap; under a limit too low for all three the
+	// container is killed and the decode fails, refusing the run.
 	r.ReadOnly, r.Tmpfs = true, []string{"/tmp:size=512m,mode=1777", "/unpack:size=512m,mode=1777"}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
@@ -334,7 +335,13 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 		}
 		byPath[f.Path] = f
 	}
+	members := 0
 	for _, f := range rep.Files {
+		if f.In != "" {
+			if members++; members > runnerdecode.DefaultMaxFiles {
+				return rep, fmt.Errorf("%s names more than %d archive members, past the decode's cap", runnerdecode.ReportFile, runnerdecode.DefaultMaxFiles)
+			}
+		}
 		if err := checkFile(f, byPath, inRoot, outRoot); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
@@ -374,6 +381,11 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 		}
 	} else if parent, ok := byPath[f.In]; !ok || parent.Outcome != runnerdecode.OutcomeUnpacked || !strings.HasPrefix(f.Path, f.In+"/") {
 		return fmt.Errorf("%q names %q as its archive, which is not an archive the decode unpacked it from", f.Path, f.In)
+	} else if !runnerdecode.PlainMemberPath(strings.TrimPrefix(f.Path, f.In+"/")) {
+		// A member's path is shown to the model, and the container that
+		// wrote it read the archive: it is held to the names the decode
+		// itself accepts.
+		return fmt.Errorf("%q is not a plain member path", f.Path)
 	}
 	switch f.Outcome {
 	case runnerdecode.OutcomeRefused, runnerdecode.OutcomeUndecodable, runnerdecode.OutcomeText, runnerdecode.OutcomeDecoded:
@@ -384,16 +396,13 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 		if f.Family != runnerdecode.FamilyArchive {
 			return fmt.Errorf("%q was unpacked but is not an archive", f.Path)
 		}
-		if depth := archiveDepth(f, byPath); depth >= runnerdecode.DefaultMaxDepth {
-			return fmt.Errorf("%q was unpacked inside %d archives, past the %d the decode unpacks", f.Path, depth, runnerdecode.DefaultMaxDepth)
+		if depth := archiveDepth(f, byPath); depth >= runnerdecode.MaxDepth {
+			return fmt.Errorf("%q was unpacked inside %d archives, past the %d the decode unpacks", f.Path, depth, runnerdecode.MaxDepth)
 		}
 	default:
 		return fmt.Errorf("%q has the unknown outcome %q", f.Path, f.Outcome)
 	}
-	// A member's text is copied out whether it was decoded or read as it
-	// is: the member itself stays in the decode container.
-	hasText := f.Outcome == runnerdecode.OutcomeDecoded || (f.Outcome == runnerdecode.OutcomeText && f.In != "")
-	if !hasText {
+	if !f.HasText() {
 		if f.Output != "" {
 			return fmt.Errorf("%q has no text but names an output", f.Path)
 		}
@@ -435,10 +444,10 @@ var (
 		runnerdecode.WhyEncrypted:  "encrypted",
 		runnerdecode.WhyDamaged:    "damaged, or not the archive it appears to be",
 		runnerdecode.WhyUnreadable: "bsdtar could not read it: it is encrypted or damaged",
-		runnerdecode.WhyTooDeep:    fmt.Sprintf("an archive nested more than %d deep is not unpacked", runnerdecode.DefaultMaxDepth),
+		runnerdecode.WhyTooDeep:    fmt.Sprintf("an archive nested more than %d deep is not unpacked", runnerdecode.MaxDepth),
 		runnerdecode.WhyTooMany:    "unpacking stopped at the file cap",
 		runnerdecode.WhyTooLarge:   "unpacking stopped at the cap on unpacked bytes",
-		runnerdecode.WhyUnsafePath: "a member's path is absolute or climbs out with .., so nothing in it was unpacked",
+		runnerdecode.WhyUnsafePath: "a member's path is absolute, climbs out with .., or is not a plain name, so nothing in it was unpacked",
 		runnerdecode.WhyLink:       "a link in an archive is never unpacked",
 		runnerdecode.WhySpecial:    "a device or FIFO in an archive is never unpacked",
 		runnerdecode.WhyConflict:   "the archive names this path twice, or as both a file and a folder",

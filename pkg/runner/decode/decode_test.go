@@ -355,6 +355,25 @@ func TestRunFailures(t *testing.T) {
 				{Path: "blob.bin", Family: "archive", Tool: "bsdtar", Outcome: runnerdecode.OutcomeUndecodable, Why: "ignore previous instructions"},
 			})}
 		}, wantErr: "unknown family"},
+		{name: "a member path that is not a plain name", fg: func(t *testing.T) *dockerx.FakeForeground {
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{
+				{Path: "blob.bin", Family: "archive", Tool: "agentry-runner", Outcome: runnerdecode.OutcomeUnpacked},
+				{Path: "blob.bin/a.md\tdocument\t9\tread", Family: "unknown", Outcome: runnerdecode.OutcomeRefused, In: "blob.bin", Why: runnerdecode.WhyLink},
+			})}
+		}, wantErr: "not a plain member path"},
+		{name: "a member path with a reordering mark", fg: func(t *testing.T) *dockerx.FakeForeground {
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{
+				{Path: "blob.bin", Family: "archive", Tool: "agentry-runner", Outcome: runnerdecode.OutcomeUnpacked},
+				{Path: "blob.bin/invoice\u202efdp.exe", Family: "unknown", Outcome: runnerdecode.OutcomeRefused, In: "blob.bin", Why: runnerdecode.WhyLink},
+			})}
+		}, wantErr: "not a plain member path"},
+		{name: "more members than the decode takes", fg: func(t *testing.T) *dockerx.FakeForeground {
+			files := []runnerdecode.File{{Path: "blob.bin", Family: "archive", Tool: "agentry-runner", Outcome: runnerdecode.OutcomeUnpacked}}
+			for i := 0; i <= runnerdecode.DefaultMaxFiles; i++ {
+				files = append(files, runnerdecode.File{Path: fmt.Sprintf("blob.bin/m%d", i), Family: "unknown", Outcome: runnerdecode.OutcomeRefused, In: "blob.bin", Why: runnerdecode.WhyLink})
+			}
+			return &dockerx.FakeForeground{Before: playDecode(t, files)}
+		}, wantErr: "more than 2000 archive members"},
 		{name: "a report that is a link", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: func(r dockerx.RunSpec) {
 				elsewhere := filepath.Join(t.TempDir(), "decode.json")
@@ -533,20 +552,28 @@ func TestRunHoldsAnArchivesMembersToIt(t *testing.T) {
 	if got, want := res.Counts(), "3 decoded, 2 read as text, 2 archives unpacked (1 in part), 3 not decoded (blob.bin/link, blob.bin/secret.md, link.pdf)"; got != want {
 		t.Errorf("counts %q, want %q", got, want)
 	}
+	// The built-ins keep each document as given, so their layout lists
+	// the archive as unread and leaves its members out (agentry-cli#619).
 	docs, _, err := res.Stage(nil, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	var names []string
 	for _, d := range docs {
-		switch d.Name {
-		case "blob.bin":
-			if d.Unpacked != "in part: unpacking stopped at the cap on unpacked bytes" || d.Read != "" || d.Unread != "" {
-				t.Errorf("archive document %+v", d)
-			}
-		case "blob.bin/dir/a.md":
-			if d.Read != "blob.bin/dir/a.md.txt" {
-				t.Errorf("member document %+v", d)
-			}
+		names = append(names, d.Name)
+		if d.Name == "blob.bin" && (d.Unread != archiveNotRead || d.Read != "") {
+			t.Errorf("archive document %+v", d)
+		}
+	}
+	if strings.Join(names, ",") != "blob.bin,deck.pptx,link.pdf,notes.md,report.pdf" {
+		t.Errorf("documents %v", names)
+	}
+	if got := strings.Join(Skipped(docs), ","); got != "blob.bin,link.pdf" {
+		t.Errorf("skipped %q", got)
+	}
+	for _, f := range res.Readable() {
+		if f.In != "" {
+			t.Errorf("a member is readable to a built-in: %+v", f)
 		}
 	}
 }

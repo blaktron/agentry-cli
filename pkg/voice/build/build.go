@@ -181,7 +181,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		if err != nil {
 			return nil, engine.Classify(engine.ExitUsage, err)
 		}
-		res.Skipped = dec.Undecodable()
+		res.Skipped = decode.Skipped(all)
 		for _, doc := range all {
 			if doc.Read != "" {
 				docs = append(docs, doc)

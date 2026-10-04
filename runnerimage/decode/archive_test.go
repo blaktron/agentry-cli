@@ -41,10 +41,10 @@ func archiveTools(t *testing.T) Tools {
 	tools.File = script("file", `[ "$1 $2 $3" = "--brief --mime-type --" ] || exit 9; `+detector)
 	tools.Tika = script("java", `[ "$1 $2 $3 $4 $5" = "-Xmx512m -Djava.io.tmpdir=/tmp -jar /opt/tika/tika-app.jar --detect" ] || exit 9; `+detector)
 	tools.Bsdcat = script("bsdcat", `[ "$#" = 1 ] || exit 9; gzip -dc "$1"`)
-	tools.Bsdtar = script("bsdtar", `[ "$1 $2 $3 $4 $5" = "-c -f - --format pax" ] && [ "$#" = 6 ] || exit 9
-case "$6" in
+	tools.Bsdtar = script("bsdtar", `[ "$1 $2 $3 $4 $5 $6" = "-c -f - --format pax -P" ] && [ "$#" = 7 ] || exit 9
+case "$7" in
  *enc*) echo "bsdtar: Error reading archive: Encryption is not supported" >&2; exit 1 ;;
- @*) cat "${6#@}" ;;
+ @*) cat "${7#@}" ;;
  *) exit 9 ;;
 esac`)
 	return tools
@@ -230,6 +230,9 @@ func TestHostileArchives(t *testing.T) {
 			"abs.tar":   tarOf(t, reg("ok.md", "fine\n"), reg("/etc/evil.md", "x")),
 			"slash.zip": zipOf(t, zipEntry{name: "dir\\evil.md", body: "x"}),
 			"ctrl.tar":  tarOf(t, reg("bad\nname.md", "x")),
+			"c1.tar":    tarOf(t, reg("bad\u0085name.md", "x")),
+			"bidi.zip":  zipOf(t, zipEntry{name: "invoice\u202efdp.exe", body: "x"}),
+			"long.zip":  zipOf(t, zipEntry{name: strings.Repeat("a", 256) + ".md", body: "x"}),
 			"slip.7z":   tarOf(t, reg("ok.md", "fine\n"), reg("../evil.md", "x")),
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -300,6 +303,38 @@ func TestHostileArchives(t *testing.T) {
 			"b-docs.zip": zipOf(t, zipEntry{name: "b.md", body: "after the bomb\n"}),
 		})
 		if got["a-bomb.zip"].Why != WhyTooLarge || got["b-docs.zip"].Why != "" || got["b-docs.zip/b.md"].Outcome != OutcomeText {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("a 42.zip-style fan-out is stopped by the depth, the budget and the cap", func(t *testing.T) {
+		leaf := zipOf(t, zipEntry{name: "zeros.bin", body: strings.Repeat("\x00", 300<<10)})
+		fan := func(inner []byte, name string) []byte {
+			var entries []zipEntry
+			for _, n := range []string{"a", "b", "c", "d"} {
+				entries = append(entries, zipEntry{name: n + "-" + name, body: string(inner)})
+			}
+			return zipOf(t, entries...)
+		}
+		l1 := fan(fan(fan(leaf, "leaf.zip"), "l3.zip"), "l2.zip")
+		rep, got, _ := decodeArchives(t, Limits{MaxUnpackedBytes: 4 << 20, MaxFiles: 50}, map[string][]byte{"42.zip": l1})
+		var unpackedBytes int64
+		for _, f := range rep.Files {
+			unpackedBytes += f.Size
+			if strings.Count(f.Path, ".zip/") > MaxDepth {
+				t.Errorf("unpacked past the depth: %s", f.Path)
+			}
+		}
+		if unpackedBytes > 4<<20 || len(rep.Files) > 51 {
+			t.Fatalf("%d bytes and %d entries unpacked", unpackedBytes, len(rep.Files))
+		}
+		if got["42.zip"].Outcome != OutcomeUnpacked {
+			t.Fatalf("%+v", got["42.zip"])
+		}
+	})
+	t.Run("more than padding after a tar's end is not decompressed, and says so", func(t *testing.T) {
+		stream := append(tarOf(t, reg("a.md", "alpha\n")), []byte(strings.Repeat("x", 2<<20))...)
+		_, got, _ := decodeArchives(t, Limits{}, map[string][]byte{"trailing.tar.gz": gz(t, stream)})
+		if f := got["trailing.tar.gz"]; f.Outcome != OutcomeUnpacked || f.Why != WhyDamaged || got["trailing.tar.gz/a.md"].Outcome != OutcomeText {
 			t.Fatalf("%+v", got)
 		}
 	})
