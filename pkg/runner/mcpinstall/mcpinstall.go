@@ -472,6 +472,10 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		if err != nil {
 			return fmt.Errorf("install %s: %w", r.ID, err)
 		}
+		if code == npmEnginesRefused && r.Source == "npm" {
+			return fmt.Errorf("install %s: %s@%s does not support the Node of the runtime image %s (the builder's line above names the range it needs); pin a version of the server that does, or set the runner policy's images.nodeRuntime",
+				r.ID, r.Package, r.Version, image)
+		}
 		if code != 0 {
 			return fmt.Errorf("install %s: builder exited %d (the install proxy's decisions are in %s)", r.ID, code,
 				filepath.Join(storeDir, r.ID+installProxyLogSuffix))
@@ -656,6 +660,10 @@ func pipArgv(r *Resolved, regs policy.MCPRegistries) []string {
 	return []string{"python", "-c", pypiBuilder,
 		r.prefix(), r.Package, r.Version, strings.TrimRight(regs.PyPI, "/") + "/simple", onlyBinary}
 }
+
+// npmEnginesRefused is npm_builder.js's exit when the pinned package's
+// engines.node excludes the runtime image's Node (agentry-cli#608).
+const npmEnginesRefused = 5
 
 // npmBuilder is the npm builder's program (npm_builder.js), run as
 // `node -e` with every value a separate argument, like the PyPI builder.

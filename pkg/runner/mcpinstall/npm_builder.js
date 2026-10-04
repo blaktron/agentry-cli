@@ -13,14 +13,23 @@
 // against the registry's own metadata: nothing Agentry publishes pins it yet
 // (agentry#471, agentry-cli#92).
 //
+// Since agentry-cli#608 the verified tarball's own `engines.node` is
+// checked against this runtime's Node before the install: npm only warns
+// (EBADENGINE), and a server built for a newer Node installs, starts and
+// then fails every tool call (`Promise.try is not a function` on Node 22).
+//
 // Exit 3: nothing to verify against (no recorded integrity, or not exactly
-// one tarball); exit 4: the tarball does not match; otherwise npm's own code.
+// one tarball); exit 4: the tarball does not match; exit 5: its
+// `engines.node` excludes this runtime's Node; exit 6: the check could not
+// run (no npm semver in the image, or an unreadable package.json);
+// otherwise npm's own code.
 "use strict";
 
 const { spawnSync } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 // Kept in step with npmDownloadDir in mcpinstall.go (a test holds them
 // together).
@@ -64,6 +73,85 @@ function expected(integrity) {
   return null;
 }
 
+// packageJSON is the text of the tarball's top-level package.json, or null
+// when it has none. npm packs one top-level directory (usually "package/")
+// whatever its name, so the first "<dir>/package.json" regular file is the
+// one npm reads. The tarball is the verified file: no second fetch.
+function packageJSON(file) {
+  const buf = zlib.gunzipSync(fs.readFileSync(file));
+  const field = (h, from, to) => h.subarray(from, to).toString("utf8").replace(/\0[\s\S]*$/, "");
+  let longName = null;
+  for (let off = 0; off + 512 <= buf.length;) {
+    const h = buf.subarray(off, off + 512);
+    if (h.every((b) => b === 0)) {
+      break;
+    }
+    let name = field(h, 0, 100);
+    const prefix = field(h, 345, 500);
+    if (prefix) {
+      name = prefix + "/" + name;
+    }
+    if (longName !== null) {
+      name = longName;
+      longName = null;
+    }
+    const size = parseInt(field(h, 124, 136).trim() || "0", 8);
+    const type = h[156];
+    const body = buf.subarray(off + 512, off + 512 + size);
+    if (type === 0x4c) { // "L": a GNU long name for the next entry
+      longName = body.toString("utf8").replace(/\0[\s\S]*$/, "");
+    } else if ((type === 0x30 || type === 0) && /^[^/]+\/package\.json$/.test(name)) {
+      return body.toString("utf8");
+    }
+    off += 512 + Math.ceil(size / 512) * 512;
+  }
+  return null;
+}
+
+// npmSemver is the semver module npm itself checks engines with, found
+// beside this image's npm (".../node_modules/npm/bin/npm-cli.js").
+function npmSemver() {
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+    const bin = path.join(dir, "npm");
+    if (!fs.existsSync(bin)) {
+      continue;
+    }
+    try {
+      return require(path.join(path.dirname(path.dirname(fs.realpathSync(bin))), "node_modules", "semver"));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// checkEngines refuses, before anything is installed, a package whose
+// engines.node this runtime's Node does not satisfy, the way npm's own
+// engine-strict would for this one package (prereleases included, as npm
+// does). A package that names no engines.node passes.
+function checkEngines(file, spec) {
+  let range;
+  try {
+    const text = packageJSON(file);
+    range = text === null ? undefined : (JSON.parse(text).engines || {}).node;
+  } catch (e) {
+    console.log(`mcp install: cannot read the package.json of ${spec} to check its engines: ${e.message}`);
+    process.exit(6);
+  }
+  if (typeof range !== "string" || range.trim() === "") {
+    return;
+  }
+  const semver = npmSemver();
+  if (!semver) {
+    console.log(`mcp install: cannot check ${spec}'s engines.node ("${range}"): this image's npm carries no semver module`);
+    process.exit(6);
+  }
+  if (!semver.satisfies(process.version, range, { includePrerelease: true })) {
+    console.log(`mcp install: ${spec} requires Node ${range} (its engines.node), and this runtime image runs Node ${process.version}; it would install and then fail its tool calls. Pin a version of the server that supports Node ${process.version}, or set the runner policy's images.nodeRuntime to an image whose Node it supports`);
+    process.exit(5);
+  }
+}
+
 function main() {
   const [prefix, pkg, version, registry, integrity] = process.argv.slice(1);
   const spec = `${pkg}@${version}`;
@@ -93,6 +181,8 @@ function main() {
     console.log(`mcp install: ${tarballs[0]} does not match the integrity the registry advertised for ${spec}`);
     process.exit(4);
   }
+
+  checkEngines(file, spec);
 
   run(["npm", "install", "--prefix", prefix, file, "--registry", registry,
     "--no-audit", "--no-fund", "--ignore-scripts", "--loglevel", "error"]);
