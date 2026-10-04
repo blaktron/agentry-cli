@@ -67,8 +67,9 @@ out rather than guess.
 
 A brief from the person is how they want to sound. Follow it where the
 samples allow, and where the brief and the samples disagree, follow the
-brief and say so in your reply. A note on an edit is the change to make,
-and it wins over the samples in the same way.
+brief and say so in your reply. A note on an edit is the change to make:
+where it and the samples disagree, follow the note and say so in your
+reply.
 
 Keep it under 24 KB, so it stays well inside its 32 KiB cap; a good voice
 is usually 3–10 KB.

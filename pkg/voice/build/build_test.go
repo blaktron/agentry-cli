@@ -251,6 +251,29 @@ func TestAnEditWithSamplesDecodesThemAndKeepsTheNoteAsTheChange(t *testing.T) {
 	}
 }
 
+// An Edit's samples are held to the decoded-text cap as Create's are: a
+// hosted Edit's 1 MB (D9) cuts them in order, and the task says which.
+func TestAnEditsSamplesAreCutAtTheTextCap(t *testing.T) {
+	fx := newFixture(t, Edit, written)
+	fx.opts.Current, fx.opts.Brief = []byte("# Your voice\n\nWrite plainly.\n"), "Shorter."
+	fx.opts.Samples = []string{filepath.Join(fx.samples, "post.md")}
+	fx.opts.MaxTextBytes = 10
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Join(res.Cut, ",") != "post.md" {
+		t.Fatalf("cut %v", res.Cut)
+	}
+	task, err := os.ReadFile(filepath.Join(fx.opts.OutDir, "receipts", "task.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(task), "capped at 10 bytes") {
+		t.Fatalf("the task does not say the samples were capped:\n%s", task)
+	}
+}
+
 func TestAVoiceThatBreaksTheFormatIsNotReturned(t *testing.T) {
 	for name, md := range map[string]string{
 		"none written": "",

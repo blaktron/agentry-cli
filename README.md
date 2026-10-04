@@ -314,9 +314,9 @@ the voice it writes on this computer; `improve --file PATH…` runs it again
 over the voice and more samples, `edit --note TEXT [--file PATH…]` changes
 the voice by a note (an AI Edit), with more samples that show the change if
 you give them, and `set FILE|-` keeps your own text. `--brief TEXT` says how
-you want to sound (create and improve); an edit's note is the change to make. Like a knowledge build, it runs against the
-model your runner policy names, costs no credits, and nothing it reads or
-writes is reviewed.
+you want to sound (create and improve); an edit's note is the change to
+make. Like a knowledge build, it runs against the model your runner policy
+names, costs no credits, and nothing it reads or writes is reviewed.
 
 The voice is kept at `<runner home>/voice/`, sealed the way a kept pack is
 (`voice.sealed`, `key.json`, and `voice.json`, its record in the clear: the

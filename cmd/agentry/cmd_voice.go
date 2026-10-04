@@ -79,9 +79,15 @@ func voiceRunFlags(cmd *cobra.Command, o *voiceOpts) {
 }
 
 func voiceSampleFlags(cmd *cobra.Command, o *voiceOpts) {
+	voiceSamplesFlags(cmd, o, "required")
+	cmd.Flags().StringVar(&o.brief, "brief", "", "how you want to sound, in a sentence or two (optional)")
+}
+
+// voiceSamplesFlags declares the samples and their cap: required for
+// Create and Improve, optional for an Edit (agentry-cli#605).
+func voiceSamplesFlags(cmd *cobra.Command, o *voiceOpts, need string) {
 	f := cmd.Flags()
-	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; required)")
-	f.StringVar(&o.brief, "brief", "", "how you want to sound, in a sentence or two (optional)")
+	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; "+need+")")
 	f.Int64Var(&o.maxTextBytes, "max-text-bytes", 0, "cap the samples' decoded text the Voice Writer reads, in bytes (0 = no cap)")
 }
 
@@ -131,10 +137,8 @@ func newVoiceEditCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: voiceRunE(&o, func(cmd *cobra.Command, _ []string) error { return runVoiceBuild(cmd, build.Edit, &o) }),
 	}
-	f := cmd.Flags()
-	f.StringVar(&o.brief, "note", "", "what should change (required)")
-	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; optional)")
-	f.Int64Var(&o.maxTextBytes, "max-text-bytes", 0, "cap the samples' decoded text the Voice Writer reads, in bytes (0 = no cap)")
+	cmd.Flags().StringVar(&o.brief, "note", "", "what should change (required)")
+	voiceSamplesFlags(cmd, &o, "optional")
 	voiceCurrentFlag(cmd, &o)
 	voiceRunFlags(cmd, &o)
 	return cmd
