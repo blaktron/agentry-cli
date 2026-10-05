@@ -227,7 +227,12 @@ func TestFinish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *d.Drafter != (Made{Ref: "agentry/drafter@1.1.1", Build: "agentry 0.6.4", Model: "openai/qwen", RunID: "run-7"}) {
+	if g := d.Drafter.Guide; g == nil || *g != *guideRead() {
+		t.Fatalf("drafter guide %+v", g)
+	}
+	got := *d.Drafter
+	got.Guide = nil
+	if got != (Made{Ref: "agentry/drafter@1.1.1", Build: "agentry 0.6.4", Model: "openai/qwen", RunID: "run-7"}) {
 		t.Fatalf("drafter %+v", d.Drafter)
 	}
 	a := d.AIReview

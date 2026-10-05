@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: drafter
 namespace: agentry
-version: 1.7.0
+version: 1.8.0
 summary: "Drafts a QuickAgent from a description, searching the registry and the web; AI Review reads every result first."
 license: MIT
 authors:
@@ -16,5 +16,8 @@ capabilities:
     read: none
     write: none
   exec: none
+knowledge:
+  ships:
+    - name: drafting-guide
 publish:
-  include: [agent.yaml, AGENT.md, output.schema.json, README.md, LICENSE]
+  include: [agent.yaml, AGENT.md, output.schema.json, README.md, LICENSE, "knowledge/**"]

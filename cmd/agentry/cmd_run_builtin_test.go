@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,17 +63,25 @@ func TestARegistryInstallOfABuiltinIsAnOrdinaryRelease(t *testing.T) {
 	if err := b.Stage(stage); err != nil {
 		t.Fatal(err)
 	}
+	// Every file of the tree, the Drafter's shipped pack under knowledge/
+	// among them (agentry-cli#657).
 	files := map[string]string{}
-	entries, err := os.ReadDir(stage)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		raw, err := os.ReadFile(filepath.Join(stage, e.Name()))
-		if err != nil {
-			t.Fatal(err)
+	if err := filepath.WalkDir(stage, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
-		files[e.Name()] = string(raw)
+		raw, err := os.ReadFile(p) //nolint:gosec // the test's own stage
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(stage, p)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = string(raw)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	fr := newFakeRegistry(t)
 	fv := fr.addAgent(b.Namespace(), b.Name(), "autonomous", "drafts").addVersion(t, b.Version(), files)

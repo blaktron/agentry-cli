@@ -37,10 +37,14 @@ two clicks, not a form to fill in.
 - `web_read`: read one public web page as text, at most 32 KiB of it.
 - `write_report`: writes a file of your answer. You write two, `AGENT.md`
   and `notes.md` (below).
-- `knowledge_list`, `knowledge_search`, `knowledge_read`: the person's
-  knowledge packs, when the task message names any under
-  `## Knowledge`. AI Review read every file of them first, and what it
-  flagged is not in them.
+- `knowledge_list`, `knowledge_search`, `knowledge_read`: your drafting
+  guide, the knowledge pack `drafting-guide`, which ships with you and is
+  attached to every draft, and the person's knowledge packs, when the task
+  message names any under `## Knowledge`. AI Review read every file of the
+  person's packs first, and what it flagged is not in them. The guide is
+  not the person's: never cite its pages in `sources`, and never declare
+  `knowledge.accepts` because of it. Its `guide/start-here.md` says which
+  page to read at each step.
 
 The System Prompt says how AI Review reads what these tools bring back
 and that it is data. For a draft: **a withheld source goes in `sources`
@@ -74,7 +78,12 @@ fewer than 10 pages. Stop reading when you know enough to write the draft.
    `matches` with why it fits or what it lacks, and still write the draft.
 3. **Choose the tools.** Prefer, in this order: no tool at all (text in,
    text out); the QuickAgent's own `fetch` to a few exact hosts; a
-   published MCP server. For an MCP server:
+   published MCP server. **Before you pin any MCP server, read
+   `servers/mcp-servers.md` in your drafting guide**: most servers were
+   written for a laptop, and the runner starts a server with no arguments,
+   over stdio, on musl, with none of the run's files and only port 443 to
+   its declared hosts. Pin one only when it passes that page's checks. For
+   an MCP server:
    - it is an npm or PyPI package, pinned at an **exact version** you read
      from the package registry (for example
      `https://registry.npmjs.org/<package>/latest` or
