@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/plainpath"
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
@@ -53,6 +54,7 @@ var Catalogue = []Tool{
 	{Command: "file"},
 	{Command: "bsdtar"},
 	{Command: "bsdcat"},
+	{Command: "clamscan"},
 }
 
 // FilesPackagesFile is where the files image records the version apk
@@ -107,6 +109,9 @@ type Image struct {
 	Tag      string
 	Files    string
 	Packages []string
+	// Signatures is the ClamAV bundle Run mounts for the malware check
+	// (clamdb.Ensure); none, every file is reported unchecked.
+	Signatures clamdb.DB
 }
 
 // pullAttempts and pullBackoff bound the files image's pull: a registry
@@ -240,19 +245,27 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 		return nil, err
 	}
 	name := "agentry-decode-" + hex.EncodeToString(suffix)
+	argv := []string{"decode", "--in", "/in", "--out", "/out", "--unpack", "/unpack"}
+	mounts := []dockerx.Mount{
+		{Source: in, Target: "/in", ReadOnly: true, Relabel: true},
+		{Source: out, Target: "/out", Relabel: true},
+	}
+	// The signatures are the runner home's own bundle, read-only, shared
+	// by every decode on the machine (Relabel is docker's shared :z).
+	if img.Signatures.Held() {
+		argv = append(argv, "--clamav", clamMount)
+		mounts = append(mounts, dockerx.Mount{Source: img.Signatures.Dir, Target: clamMount, ReadOnly: true, Relabel: true})
+	}
 	r := dockerx.RunSpec{
 		Name:    name,
 		Image:   img.Tag,
-		Argv:    []string{"decode", "--in", "/in", "--out", "/out", "--unpack", "/unpack"},
+		Argv:    argv,
 		Network: "none",
 		// Resolvable from /etc/hosts with no network: Tika looks its host
 		// up at start, and an unresolvable name cost every call a DNS
 		// timeout (agentry-cli#618).
 		Hostname: "localhost",
-		Mounts: []dockerx.Mount{
-			{Source: in, Target: "/in", ReadOnly: true, Relabel: true},
-			{Source: out, Target: "/out", Relabel: true},
-		},
+		Mounts:   mounts,
 		// The texts belong to the person who ran the command, and a
 		// decoder runs with no more than they have.
 		User:       invokingUser(),
@@ -281,11 +294,14 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	return Check(img, in, out)
 }
 
+// clamMount is where the decode container reads the signatures.
+const clamMount = "/clamav"
+
 // Check reads the report a decode wrote to out and holds it to what was
 // staged under in (checkReport): Run's last step, and the one a caller
 // that decodes some other way must take before it reads a byte of out.
 func Check(img Image, in, out string) (*Result, error) {
-	rep, err := checkReport(in, out)
+	rep, err := checkReport(in, out, img.Signatures.Held())
 	if err != nil {
 		return nil, err
 	}
@@ -296,8 +312,9 @@ func Check(img Image, in, out string) (*Result, error) {
 // was staged. Everything under out was written by a process that read a
 // hostile document, so it is read through an os.Root, regular files only,
 // under a cap; and every entry must name a document that was staged, with
-// its text, when there is one, at exactly <path>.txt.
-func checkReport(in, out string) (runnerdecode.Report, error) {
+// its text, when there is one, at exactly <path>.txt. checked says the
+// decode was given signatures: without them no file may claim to be checked.
+func checkReport(in, out string, checked bool) (runnerdecode.Report, error) {
 	var rep runnerdecode.Report
 	inRoot, err := os.OpenRoot(in)
 	if err != nil {
@@ -332,6 +349,9 @@ func checkReport(in, out string) (runnerdecode.Report, error) {
 		// (agentry-cli#560).
 		if !knownFamilies[f.Family] || !knownTools[f.Tool] || !knownWhy[f.Why] {
 			return rep, fmt.Errorf("%s: %q has the unknown family %q, tool %q or reason %q", runnerdecode.ReportFile, f.Path, f.Family, f.Tool, f.Why)
+		}
+		if err := checkCheck(f, checked); err != nil {
+			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		byPath[f.Path] = f
 	}
@@ -418,6 +438,44 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 	return nil
 }
 
+// checkCheck holds one entry's malware check to the closed vocabulary
+// (plan file-handling.md §7): a known check and reason, a signature only
+// on a finding and within ClamAV's grammar (it is shown to the person and,
+// for a session's file, can reach the model), nothing checked when no
+// signatures were given, every file read for the run checked one way or
+// another, and a file found never read.
+func checkCheck(f runnerdecode.File, checked bool) error {
+	switch f.Check {
+	case "":
+		if f.HasText() || f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeUnpacked {
+			return fmt.Errorf("%q was read but the malware check says nothing of it", f.Path)
+		}
+	case runnerdecode.CheckClean, runnerdecode.CheckFound:
+		if !checked {
+			return fmt.Errorf("%q says ClamAV checked it, but the decode was given no signatures", f.Path)
+		}
+	case runnerdecode.CheckUnchecked:
+	default:
+		return fmt.Errorf("%q has the unknown check %q", f.Path, f.Check)
+	}
+	if (f.Check == runnerdecode.CheckUnchecked) != (f.Unchecked != "") || (f.Unchecked != "" && !knownUnchecked[f.Unchecked]) {
+		return fmt.Errorf("%q has the check %q with the reason %q", f.Path, f.Check, f.Unchecked)
+	}
+	if !checked && f.Check == runnerdecode.CheckUnchecked && f.Unchecked != runnerdecode.UncheckedNoSignatures {
+		return fmt.Errorf("%q says ClamAV failed on it, but the decode was given no signatures", f.Path)
+	}
+	if f.Signature != "" && (f.Check != runnerdecode.CheckFound || !runnerdecode.ValidSignature(f.Signature)) {
+		return fmt.Errorf("%q names the signature %q", f.Path, f.Signature)
+	}
+	if (f.Why == runnerdecode.WhyFound) != (f.Check == runnerdecode.CheckFound && f.Family != runnerdecode.FamilyArchive) {
+		return fmt.Errorf("%q has the check %q and the reason %q", f.Path, f.Check, f.Why)
+	}
+	if f.Why == runnerdecode.WhyFound && (f.Outcome != runnerdecode.OutcomeRefused || f.Output != "") {
+		return fmt.Errorf("%q was found by ClamAV but read", f.Path)
+	}
+	return nil
+}
+
 // archiveDepth is how many archives enclose f. Each In is a strict prefix
 // of its member's path, so the chain ends.
 func archiveDepth(f runnerdecode.File, byPath map[string]runnerdecode.File) int {
@@ -452,6 +510,10 @@ var (
 		runnerdecode.WhySpecial:    "a device or FIFO in an archive is never unpacked",
 		runnerdecode.WhyConflict:   "the archive names this path twice, or as both a file and a folder",
 		runnerdecode.WhyMethod:     "compressed by a method the runner does not read",
+		runnerdecode.WhyFound:      "ClamAV found malware in it, so it was not read",
+	}
+	knownUnchecked = map[runnerdecode.Unchecked]bool{
+		runnerdecode.UncheckedNoSignatures: true, runnerdecode.UncheckedTooLarge: true, runnerdecode.UncheckedFailed: true,
 	}
 	knownWhy = func() map[runnerdecode.Why]bool {
 		m := map[runnerdecode.Why]bool{"": true}
@@ -569,7 +631,91 @@ func (r *Result) LineAs(when string) string {
 	return when + ", in " + r.Image.Tag + " (built on " + r.Image.Files + ")" +
 		" with no network, every capability dropped and the inputs read-only," +
 		" by " + andList(commands) + " (" + strings.Join(pkgs, ", ") + ")" +
-		" and the runner's own spreadsheet, slide, zip and tar readers: " + r.Counts()
+		" and the runner's own spreadsheet, slide, zip and tar readers: " + r.Counts() +
+		"; " + r.Checks()
+}
+
+// Found is every file ClamAV found a signature in: the run is refused
+// before the agent starts (plan file-handling.md D9).
+func (r *Result) Found() []runnerdecode.File {
+	var out []runnerdecode.File
+	for _, f := range r.Report.Files {
+		if f.Check == runnerdecode.CheckFound {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// refusalNames is how many files a refusal names before "and N more"; the
+// receipt's counts carry the rest.
+const refusalNames = 5
+
+// Refusal is the sentence a refused run, or a session's refused file,
+// gives: each file found and its signature, in the decode's own words.
+func (r *Result) Refusal() string {
+	found := r.Found()
+	parts := make([]string, 0, len(found))
+	for i, f := range found {
+		if i == refusalNames {
+			parts = append(parts, fmt.Sprintf("and %d more", len(found)-refusalNames))
+			break
+		}
+		sig := f.Signature
+		if sig == "" {
+			sig = "a signature"
+		}
+		parts = append(parts, f.Path+" ("+sig+")")
+	}
+	return "ClamAV found malware in " + strings.Join(parts, ", ")
+}
+
+// Checks is the malware check's clause of the receipt: the signatures'
+// date and bundle, what was clean, found and not checked, and whether the
+// signatures were stale or could not be refreshed (plan §3 invariant 7).
+func (r *Result) Checks() string {
+	s := r.Image.Signatures
+	clean, found := 0, 0
+	unchecked := map[runnerdecode.Unchecked]int{}
+	for _, f := range r.Report.Files {
+		switch f.Check {
+		case runnerdecode.CheckClean:
+			clean++
+		case runnerdecode.CheckFound:
+			found++
+		case runnerdecode.CheckUnchecked:
+			unchecked[f.Unchecked]++
+		}
+	}
+	if !s.Held() {
+		problem := s.Problem
+		if problem == "" {
+			problem = clamdb.ProblemNone
+		}
+		return "no file was checked for malware: " + problem
+	}
+	line := fmt.Sprintf("each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against %s: %d clean", s.Describe(), clean)
+	if found > 0 {
+		line += fmt.Sprintf(", %d found", found)
+	}
+	for _, u := range []runnerdecode.Unchecked{runnerdecode.UncheckedTooLarge, runnerdecode.UncheckedFailed} {
+		if n := unchecked[u]; n > 0 {
+			line += fmt.Sprintf(", %d not checked (%s)", n, uncheckedWords[u])
+		}
+	}
+	if s.Stale {
+		line += fmt.Sprintf("; the signatures are stale, more than %d days old", int(clamdb.StaleAfter.Hours()/24))
+	}
+	if s.Problem != "" {
+		line += "; " + s.Problem
+	}
+	return line
+}
+
+// uncheckedWords are the receipt's words for why a file was not checked.
+var uncheckedWords = map[runnerdecode.Unchecked]string{
+	runnerdecode.UncheckedTooLarge: "past ClamAV's limits",
+	runnerdecode.UncheckedFailed:   "ClamAV could not read it",
 }
 
 // Counts is what happened to the files: how many were decoded, read as

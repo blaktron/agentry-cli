@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -32,6 +34,13 @@ func writeFile(t *testing.T, p, body string) {
 	}
 }
 
+// The signatures a build is given: a stand-in bundle, never the registry.
+func init() {
+	ensureSignatures = func(_ context.Context, home, _ string, _ io.Writer) clamdb.DB {
+		return clamdb.DB{Dir: filepath.Join(home, "clamav", "db", "84cbc016d58b4b70"), Ref: policy.DefaultClamAVSignatures, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c", Daily: clamdb.Version{Number: 28143}}
+	}
+}
+
 func mountOf(r dockerx.RunSpec, target string) string {
 	for _, m := range r.Mounts {
 		if m.Target == target {
@@ -42,10 +51,24 @@ func mountOf(r dockerx.RunSpec, target string) string {
 }
 
 // playDecode is the decode container: every .pdf becomes its text, every
-// .md passes as text, anything else is undecodable.
+// .md passes as text, a .com is malware ClamAV finds, anything else is
+// undecodable. Each file is clean when the signatures are mounted, and
+// unchecked for want of them otherwise.
 func playDecode(t *testing.T) func(dockerx.RunSpec) {
 	return func(r dockerx.RunSpec) {
 		in, out := mountOf(r, "/in"), mountOf(r, "/out")
+		check := func(f runnerdecode.File) runnerdecode.File {
+			switch {
+			case filepath.Ext(f.Path) == ".com":
+				f.Family, f.Tool, f.Outcome, f.Output, f.Bytes, f.Reason = "unknown", "", runnerdecode.OutcomeRefused, "", 0, ""
+				f.Why, f.Check, f.Signature = runnerdecode.WhyFound, runnerdecode.CheckFound, "Eicar-Test-Signature"
+			case mountOf(r, "/clamav") != "":
+				f.Check = runnerdecode.CheckClean
+			default:
+				f.Check, f.Unchecked = runnerdecode.CheckUnchecked, runnerdecode.UncheckedNoSignatures
+			}
+			return f
+		}
 		rep := runnerdecode.Report{Schema: runnerdecode.Schema, Files: []runnerdecode.File{}}
 		_ = filepath.WalkDir(in, func(p string, e os.DirEntry, err error) error {
 			if err != nil || e.IsDir() {
@@ -64,6 +87,9 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 			}
 			return nil
 		})
+		for i := range rep.Files {
+			rep.Files[i] = check(rep.Files[i])
+		}
 		b, _ := json.Marshal(rep)
 		writeFile(t, filepath.Join(out, runnerdecode.ReportFile), string(b))
 	}
@@ -163,6 +189,10 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 		t.Fatal("no decode container ran")
 	}
 	for _, m := range dec.Mounts {
+		// The signatures are the runner home's own bundle, read-only.
+		if m.Target == "/clamav" && m.ReadOnly && strings.HasPrefix(m.Source, filepath.Join(fx.opts.Home, "clamav")+string(filepath.Separator)) {
+			continue
+		}
 		if !strings.HasPrefix(m.Source, filepath.Join(fx.opts.Home, "work")+string(filepath.Separator)) {
 			t.Errorf("the decode container binds %s, outside the runner home's work directory", m.Source)
 		}
@@ -598,5 +628,21 @@ func TestBuildNamesAWorkDirectoryItCouldNotDelete(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "could not delete") || !strings.Contains(stderr.String(), filepath.Join(fx.opts.Home, "work")) {
 		t.Errorf("stderr does not name the work directory:\n%s", stderr.String())
+	}
+}
+
+// A document ClamAV finds refuses the build before the Creator starts,
+// with the policy class, naming it (plan file-handling.md §7, D9).
+func TestADocumentClamAVFindsRefusesTheBuild(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	writeFile(t, filepath.Join(fx.docs, "eicar.com"), "X5O EICAR")
+	fx.opts.Documents = append(fx.opts.Documents, filepath.Join(fx.docs, "eicar.com"))
+	_, err := Build(context.Background(), fx.fake, fx.opts)
+	var ce *engine.ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), "ClamAV found malware in eicar.com (Eicar-Test-Signature)") {
+		t.Fatalf("err %v", err)
+	}
+	if _, ok := fx.fake.FindRun("-agent"); ok {
+		t.Fatal("the Creator ran on a document ClamAV found")
 	}
 }
