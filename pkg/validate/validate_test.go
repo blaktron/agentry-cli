@@ -175,3 +175,44 @@ func TestPrintManifestIssuesOrdersErrorsFirst(t *testing.T) {
 		t.Errorf("rule id missing from output:\n%s", out)
 	}
 }
+
+// TestWorkspaceOKLineNamesTheRulesThatRan (agentry-cli#638): a clean
+// manifest's line names the rules pkg/manifest reports, read from its own
+// list, so it cannot say V1-V9 while V10 and V11 run.
+func TestWorkspaceOKLineNamesTheRulesThatRan(t *testing.T) {
+	var out bytes.Buffer
+	if _, err := Workspace(workspace(t), Options{Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := strings.Cut(out.String(), "\n")
+	if want := "manifest: OK (rules " + ManifestRules() + ", public-publish context)"; first != want {
+		t.Fatalf("first line %q, want %q", first, want)
+	}
+	rs := manifest.Rules()
+	if len(rs) == 0 {
+		t.Fatal("pkg/manifest lists no rules")
+	}
+	// The span starts at the first listed rule and ends at the last one.
+	if span := ManifestRules(); !strings.HasPrefix(span, rs[0].ID) || !strings.HasSuffix(span, rs[len(rs)-1].ID) {
+		t.Fatalf("span %q does not run from %s to %s", span, rs[0].ID, rs[len(rs)-1].ID)
+	}
+}
+
+func TestRuleSpan(t *testing.T) {
+	for _, c := range []struct {
+		ids  []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{"V1"}, "V1"},
+		{[]string{"V1", "V2"}, "V1-V2"},
+		{[]string{"V1", "V2", "V3", "V4", "V5", "V7", "V8", "V9", "V10", "V11"}, "V1-V5, V7-V11"},
+		{[]string{"V1", "V3", "V5"}, "V1, V3, V5"},
+		{[]string{"V1", "V2", "S3", "S4"}, "V1-V2, S3-S4"},
+		{[]string{"V1", "X", "V2"}, "V1, X, V2"},
+	} {
+		if got := ruleSpan(c.ids); got != c.want {
+			t.Errorf("ruleSpan(%q) = %q, want %q", c.ids, got, c.want)
+		}
+	}
+}
