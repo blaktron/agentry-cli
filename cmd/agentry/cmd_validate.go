@@ -23,10 +23,10 @@ func newValidateCmd() *cobra.Command {
 	var strict, rulesUpdate bool
 	cmd := &cobra.Command{
 		Use:   "validate [dir]",
-		Short: "Validate a workspace offline (manifest rules V1-V10 + S1/S3/S4 scan)",
+		Short: "Validate a workspace offline (manifest rules " + validate.ManifestRules() + " + S1/S3/S4 scan)",
 		Long: "Validate a workspace offline with the same code the registry runs at submit\n" +
 			"time (D-12 local/remote parity), over the files publish.include would ship:\n\n" +
-			"  manifest  rules V1-V9, in a public-publish context so V7 runs\n" +
+			"  manifest  rules " + validate.ManifestRules() + ", in a public-publish context so V7 runs\n" +
 			"  S1        content-sniffed executables and nested archives (critical),\n" +
 			"            non-UTF-8 text (low) — the checks that used to reject a\n" +
 			"            workspace at submit after it passed locally\n" +

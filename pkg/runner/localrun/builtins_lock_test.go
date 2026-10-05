@@ -63,7 +63,7 @@ func TestTheBuiltinsLockHoldsEveryBuiltin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// The registry's own rules for a public publish (V1-V9, V7's
+		// The registry's own rules for a public publish (every manifest rule, V7's
 		// LICENSE and README included), as `agentry validate` runs them: a
 		// built-in the registry would refuse fails here, not at release.
 		walked, err := pkgarchive.WalkWorkspace(dir)
