@@ -139,6 +139,7 @@ func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
 	if err != nil {
 		return err
 	}
+	s.startCalls()
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 	for sc.Scan() {
@@ -191,6 +192,9 @@ func validateSpec(spec *Spec) error {
 		return errors.New("the review grant is never granted beside fetch, exec or the web tools, nor without the inputs channel")
 	}
 	if err := validateKnowledge(spec); err != nil {
+		return err
+	}
+	if err := validateCalls(spec); err != nil {
 		return err
 	}
 	return validateVoice(spec)
@@ -294,10 +298,12 @@ func (s *server) handleToolsCall(req rpcRequest) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logf("tool %s panicked: %v", p.Name, r)
+			s.recordCall(p.Name, false)
 			s.writeError(req.ID, codeInternal, fmt.Sprintf("tool %s failed internally", p.Name))
 		}
 	}()
 	text, isErr := d.call(p.Arguments)
+	s.recordCall(p.Name, !isErr)
 	s.writeResult(req.ID, map[string]any{
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": isErr,

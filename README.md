@@ -854,7 +854,10 @@ manifest + operator policy into a deterministic run plan → execute:
 Exit codes: `0` ok · `1` cli (an interrupted run, an unknown adapter, an
 intake error) · `2` usage · `10` verify · `11` policy/secret ·
 `12` compile · `13` gateway/docker · `14` agent · `15` timeout ·
-`16` budget · `17` output schema; `review` adds `20` held for review ·
+`16` budget · `17` output schema · `18` blocked (the agent ended the run
+with `end_blocked`, saying why, or every one of its input reads or reports
+failed, or the runner's tools could not write the output folder: the
+envelope's `reason` is `agent-blocked` or `runner-blocked`); `review` adds `20` held for review ·
 `21` rejected · `22` refused at Submit · `23` not determined. Task input: `--input FILE`, else piped
 stdin; with no task (or an empty one) the agent is sent its own instruction
 and runs that. Runs compose: `agentry run a ... | agentry run b ...`.

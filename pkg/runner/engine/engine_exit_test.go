@@ -13,7 +13,7 @@ func TestExitClassNamesMatchCodes(t *testing.T) {
 	want := map[int]string{
 		ExitOK: "ok", ExitCLI: "cli", ExitUsage: "usage", ExitVerify: "verify", ExitPolicy: "policy",
 		ExitCompile: "compile", ExitGateway: "gateway", ExitHarness: "harness", ExitTimeout: "timeout",
-		ExitBudget: "budget", ExitOutputSchema: "outputSchema",
+		ExitBudget: "budget", ExitOutputSchema: "outputSchema", ExitBlocked: "blocked",
 	}
 	for code, name := range want {
 		if got := receipt.ExitClassName(code); got != name {

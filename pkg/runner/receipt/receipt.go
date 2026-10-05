@@ -27,8 +27,8 @@ type Envelope struct {
 	Status   string `json:"status"`
 	ExitCode int    `json:"exitCode"`
 	// ExitClass names ExitCode (ok, usage, verify, policy, compile, gateway,
-	// harness, timeout, budget, outputSchema, cli): a client acts on the
-	// name, never on the number (agentry-cli#102). Set by Marshal.
+	// harness, timeout, budget, outputSchema, blocked, cli): a client acts
+	// on the name, never on the number (agentry-cli#102). Set by Marshal.
 	ExitClass string `json:"exitClass"`
 	Error     string `json:"error,omitempty"`
 	// Stage names the step a failed run stopped in, one word from a fixed
@@ -305,6 +305,8 @@ func ExitClassName(code int) string {
 		return "budget"
 	case 17:
 		return "outputSchema"
+	case 18:
+		return "blocked"
 	}
 	return fmt.Sprintf("exit-%d", code)
 }

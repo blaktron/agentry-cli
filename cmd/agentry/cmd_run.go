@@ -601,6 +601,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
 		return runErr
 	}
+	// A one-shot run of a release ends blocked, not ok, when its agent
+	// could not do the task (agentry-cli#629).
+	params.EndBlocked = true
 	env, runErr := engine.Run(cmd.Context(), docker, params)
 	if env != nil {
 		printEnvelope(cmd, env, opts.outputFormat)

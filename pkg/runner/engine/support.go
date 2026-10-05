@@ -370,6 +370,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	if err := grantReview(dir, p.Review); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the review grant: %w", err))
 	}
+	if err := grantCalls(dir, p.EndBlocked); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the calls ledger: %w", err))
+	}
 	if err := writeResolvConf(dir, p.Plan); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
 	}
@@ -378,7 +381,7 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 
 // grantedTools is the tools server's grant for this run: the GrantedTools
 // of the run's own rendered tools spec, after every run-time grant
-// (knowledge, the voice, web, review), the same list setAllowlist gives
+// (knowledge, the voice, web, review, the calls ledger), the same list setAllowlist gives
 // the gateway. A session's driver permits exactly these, never the
 // compiled plan's Tools, which no run-time attachment moves
 // (agentry-cli#576).

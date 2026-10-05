@@ -51,6 +51,10 @@ const (
 	ExitTimeout      = 15
 	ExitBudget       = 16
 	ExitOutputSchema = 17
+	// ExitBlocked: the agent could not do the task with what the run had,
+	// by its own end_blocked or by the runner's evidence (blocked.go;
+	// agentry-cli#629). A release's one-shot run alone.
+	ExitBlocked = 18
 )
 
 // ClassifiedError pairs an error with its §R8 exit class so main can exit
@@ -116,6 +120,12 @@ type Params struct {
 	// Otherwise a run's inputs are decoded before the agent starts (plan
 	// file-handling.md §5, agentry-cli#560).
 	TextInputs bool
+	// EndBlocked grants end_blocked and the calls ledger (blocked.go): the
+	// run ends blocked, not ok, when its agent says it could not do the task
+	// or the ledger shows the runner's tools failed it. A release's one-shot
+	// run sets it; a built-in, which has outcomes of its own, does not, and
+	// a session refuses it.
+	EndBlocked bool
 	// Web is the built-in Drafter's web configuration and keys (web.go):
 	// required for a plan with the web tools, refused for any other.
 	Web *WebRun
@@ -363,6 +373,12 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 			return fail(env, redact, Classify(ExitCLI, errors.New("interrupted")))
 		}
 		return fail(env, redact, outcome.err)
+	}
+	if p.EndBlocked {
+		if berr := blockedOf(rd.receiptsDir); berr != nil {
+			env.Result = receipt.TextResult(outcome.lastText)
+			return fail(env, redact, berr)
+		}
 	}
 
 	env.Stage = receipt.StageOutput

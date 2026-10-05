@@ -143,6 +143,8 @@ func (s *server) buildTools() {
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
 				writeReportSchema(), s.toolWriteReport)
+		case ToolEndBlocked:
+			add(name, endBlockedDescription, endBlockedSchema(), s.toolEndBlocked)
 		}
 	}
 }
