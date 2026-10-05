@@ -682,3 +682,56 @@ func TestEnsureInstalledNamesAnEnginesRefusal(t *testing.T) {
 		t.Fatalf("a refused install recorded a resolution (%v)", err)
 	}
 }
+
+// Under a sandboxed runtime the install proxy reads a resolv.conf of the
+// install's own (agentry-cli#337), bound from a path the docker daemon
+// must find on its own filesystem. A sandbox host's runhost runs the CLI
+// in a container that shares only its runner home with the host, so the
+// file is written under the server store, never the process's temporary
+// directory: from there the daemon found no file, made a directory in its
+// place, and runsc could not start the proxy (agentry-cli#627). The file
+// is there while the build runs and gone when it ends.
+func TestEnsureInstalledBindsTheSandboxedProxysResolvConfFromTheStore(t *testing.T) {
+	store := t.TempDir()
+	res := []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-A"}}
+	docker := policy.DockerPolicy{Runtime: "runsc", Resolvers: []string{"192.0.2.53"}}
+	var source string
+	var during []byte
+	var readErr error
+	fake := withRunner(&dockerx.Fake{})
+	fake.OnForeground = func(r dockerx.RunSpec) {
+		proxy, ok := fake.FindRun(installProxyName("npm-server-x"))
+		if !ok {
+			return
+		}
+		for _, m := range proxy.Mounts {
+			if m.Target == policy.ResolvConfTarget {
+				source = m.Source
+				during, readErr = os.ReadFile(m.Source)
+			}
+		}
+	}
+	if err := EnsureInstalled(t.Context(), fake, res, store, policy.MCPRegistries{NPM: "https://registry.npmjs.org", PyPI: "https://pypi.org"},
+		policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, docker, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	proxy, ok := fake.FindRun(installProxyName("npm-server-x"))
+	if !ok || proxy.Runtime != "runsc" {
+		t.Fatalf("install proxy ran = %v under %q, want runsc", ok, proxy.Runtime)
+	}
+	if source == "" {
+		t.Fatal("the sandboxed install proxy binds no resolv.conf")
+	}
+	if rel, err := filepath.Rel(store, source); err != nil || strings.HasPrefix(rel, "..") {
+		t.Errorf("resolv.conf bound from %q, outside the server store %q", source, store)
+	}
+	if readErr != nil || !strings.Contains(string(during), "nameserver 192.0.2.53") {
+		t.Errorf("resolv.conf while the build runs = %q, %v; want the policy's resolvers", during, readErr)
+	}
+	if _, err := os.Stat(filepath.Dir(source)); !os.IsNotExist(err) {
+		t.Errorf("resolv.conf directory left behind after the install: %v", err)
+	}
+	if _, err := LoadMeta(store, "npm-server-x"); err != nil {
+		t.Errorf("the install's record: %v", err)
+	}
+}

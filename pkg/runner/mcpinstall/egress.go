@@ -148,7 +148,7 @@ func (e *installEgress) env() map[string]string {
 // must already be built (the install step builds it before any server is
 // installed); a missing one is refused rather than left to docker, which
 // would try to pull a name that is only ever built locally.
-func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow []string,
+func startInstallProxy(ctx context.Context, d dockerx.Client, id, storeDir string, allow []string,
 	images policy.Images, docker policy.DockerPolicy, logw io.Writer,
 ) (*installEgress, error) {
 	image := proxyImage(images)
@@ -181,7 +181,7 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow [
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	spec.ReadOnly, spec.Tmpfs = true, []string{"/tmp"}
 	if docker.SandboxesProxies() {
-		if err := e.sandboxProxy(ctx, id, labels, docker, &spec); err != nil {
+		if err := e.sandboxProxy(ctx, id, storeDir, labels, docker, &spec); err != nil {
 			e.stop(ctx, "")
 			return nil, err
 		}
@@ -203,7 +203,13 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id string, allow [
 // sandboxProxy puts the proxy under the policy's runtime (agentry-cli#337):
 // its egress network, made here and joined at create, and a resolv.conf of
 // the install's own naming the host's name servers, bound over docker's.
-func (e *installEgress) sandboxProxy(ctx context.Context, id string, labels map[string]string,
+// The file is written under the server store, which the docker daemon
+// finds at the same path: a sandbox host's runhost runs this CLI in a
+// container that shares only its runner home with the host, so a file in
+// the process's temporary directory was missing on the daemon's side,
+// which bound a directory it made in its place and left runsc unable to
+// start the proxy (agentry-cli#627).
+func (e *installEgress) sandboxProxy(ctx context.Context, id, storeDir string, labels map[string]string,
 	docker policy.DockerPolicy, spec *dockerx.RunSpec,
 ) error {
 	_ = e.d.NetworkRemove(ctx, installEgressName(id))
@@ -211,7 +217,10 @@ func (e *installEgress) sandboxProxy(ctx context.Context, id string, labels map[
 		return fmt.Errorf("create the install proxy's egress network: %w", err)
 	}
 	e.out = installEgressName(id)
-	dir, err := os.MkdirTemp("", "agentry-mcpinstall-dns-")
+	if err := os.MkdirAll(storeDir, 0o700); err != nil {
+		return fmt.Errorf("make the server store for the install proxy's resolv.conf: %w", err)
+	}
+	dir, err := os.MkdirTemp(storeDir, "."+id+".dns-")
 	if err != nil {
 		return fmt.Errorf("make the install proxy's resolv.conf directory: %w", err)
 	}
