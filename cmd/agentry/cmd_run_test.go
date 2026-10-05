@@ -13,6 +13,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -380,13 +381,18 @@ func TestRunFailingBeforeTheEngineNamesItsStage(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
 	for _, c := range []struct {
-		name  string
-		args  []string
-		code  int
-		stage string
+		name   string
+		args   []string
+		code   int
+		stage  string
+		reason *receipt.Reason
 	}{
-		{"an unsigned local release", []string{"--local", repoPath(t, "testdata/runner/pure-text")}, engine.ExitVerify, receipt.StageVerify},
-		{"an undeclared adapter", []string{"--local", repoPath(t, "testdata/runner/pure-text"), "--allow-unsigned", "--adapter", "nonesuch"}, engine.ExitCLI, receipt.StageCompile},
+		{"an unsigned local release", []string{"--local", repoPath(t, "testdata/runner/pure-text")}, engine.ExitVerify, receipt.StageVerify, nil},
+		{"an undeclared adapter", []string{"--local", repoPath(t, "testdata/runner/pure-text"), "--allow-unsigned", "--adapter", "nonesuch"}, engine.ExitCLI, receipt.StageCompile, nil},
+		// The reason says why in fixed words, naming the declared command
+		// this machine does not provide (agentry-cli#628).
+		{"a command the policy does not provide", []string{"--local", repoPath(t, "testdata/runner/exec-git"), "--allow-unsigned"}, engine.ExitPolicy, receipt.StageCompile,
+			&receipt.Reason{Code: receipt.ReasonExecNotProvided, Names: []string{"git"}}},
 	} {
 		args := append([]string{"run"}, c.args...)
 		args = append(args, "--policy", policyPath, "--yes", "--output-format", "json")
@@ -398,6 +404,9 @@ func TestRunFailingBeforeTheEngineNamesItsStage(t *testing.T) {
 		}
 		if env.Status != "error" || env.ExitCode != c.code || env.ExitClass != receipt.ExitClassName(c.code) || env.Stage != c.stage || env.Error == "" {
 			t.Errorf("%s: envelope status %q code %d class %q stage %q error %q", c.name, env.Status, env.ExitCode, env.ExitClass, env.Stage, env.Error)
+		}
+		if !reflect.DeepEqual(env.Reason, c.reason) {
+			t.Errorf("%s: reason %+v, want %+v", c.name, env.Reason, c.reason)
 		}
 		// Past verification the release is named with what verified it,
 		// so a later failure does not read as an unverified release.

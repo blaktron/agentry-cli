@@ -308,14 +308,14 @@ func stageIntake(p Params, rd *runDirs) error {
 	}
 	for _, path := range p.Intake.FilePaths() {
 		if _, err := os.Lstat(filepath.Join(rd.inputs, filepath.Base(path))); err == nil {
-			return Classify(ExitCLI, fmt.Errorf("intake file %s collides with an input of the same basename under %s", path, spec.InputsMount))
+			return Classify(ExitCLI, inputRefused(receipt.InputNameClash, fmt.Errorf("intake file %s collides with an input of the same basename under %s", path, spec.InputsMount)))
 		}
 		if err := stageInputs([]string{path}, rd.inputs); err != nil {
 			return err
 		}
 	}
 	if _, err := os.Lstat(filepath.Join(rd.inputs, intakeFile)); err == nil {
-		return Classify(ExitCLI, fmt.Errorf("an input named %s is reserved for the intake answers", intakeFile))
+		return Classify(ExitCLI, inputRefused(receipt.InputNameClash, fmt.Errorf("an input named %s is reserved for the intake answers", intakeFile)))
 	}
 	doc, err := json.MarshalIndent(p.Intake.Document(spec.InputsMount), "", "  ")
 	if err != nil {
@@ -456,27 +456,27 @@ func stageInputs(paths []string, dest string) error {
 	for _, src := range paths {
 		abs, err := filepath.Abs(src)
 		if err != nil {
-			return Classify(ExitCLI, fmt.Errorf("resolve input %s: %w", src, err))
+			return Classify(ExitCLI, inputRefused(receipt.InputUnreadable, fmt.Errorf("resolve input %s: %w", src, err)))
 		}
 		fi, err := os.Stat(abs)
 		if err != nil {
-			return Classify(ExitCLI, fmt.Errorf("input file: %w", err))
+			return Classify(ExitCLI, inputRefused(receipt.InputUnreadable, fmt.Errorf("input file: %w", err)))
 		}
 		base := filepath.Base(abs)
 		if seen[base] {
-			return Classify(ExitCLI, fmt.Errorf("two inputs share the basename %q — rename one (inputs are basename-rooted under %s)", base, spec.InputsMount))
+			return Classify(ExitCLI, inputRefused(receipt.InputNameClash, fmt.Errorf("two inputs share the basename %q — rename one (inputs are basename-rooted under %s)", base, spec.InputsMount)))
 		}
 		seen[base] = true
 		target := filepath.Join(dest, base)
 		if fi.IsDir() {
 			if err := copyTree(abs, target); err != nil {
-				return Classify(ExitCLI, fmt.Errorf("stage input dir %s: %w", src, err))
+				return Classify(ExitCLI, inputRefused(receipt.InputUnreadable, fmt.Errorf("stage input dir %s: %w", src, err)))
 			}
 			continue
 		}
 		data, err := os.ReadFile(abs) //nolint:gosec // operator-named input file
 		if err != nil {
-			return Classify(ExitCLI, fmt.Errorf("stage input %s: %w", src, err))
+			return Classify(ExitCLI, inputRefused(receipt.InputUnreadable, fmt.Errorf("stage input %s: %w", src, err)))
 		}
 		if err := os.WriteFile(target, data, 0o644); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("stage input %s: %w", src, err))
@@ -560,8 +560,8 @@ func secretValues(p Params) (map[string]string, error) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		return nil, Classify(ExitPolicy, fmt.Errorf("declared secret(s) not resolvable from the MCP profile or the %s source: %s (run with --reconfigure-profile to set them)",
-			p.Policy.SecretSource.Mode, strings.Join(missing, ", ")))
+		return nil, Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("declared secret(s) not resolvable from the MCP profile or the %s source: %s (run with --reconfigure-profile to set them)",
+			p.Policy.SecretSource.Mode, strings.Join(missing, ", ")), receipt.ReasonSecretMissing, "", missing...))
 	}
 	return values, nil
 }

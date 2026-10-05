@@ -39,6 +39,11 @@ type Envelope struct {
 	// servers are checked is class policy in stage mcp-servers. Empty on
 	// success.
 	Stage string `json:"stage,omitempty"`
+	// Reason says why, in fixed words, when the step that stopped the run
+	// decided it (agentry-cli#628): a code from a closed list and the
+	// release's own declared names it concerns, never text (Reason).
+	// Absent on success and on a failure no step named.
+	Reason *Reason `json:"reason,omitempty"`
 	// RunID names the run (container labels, run dirs).
 	RunID string `json:"runId"`
 	// Ref and Digest identify the exact release that ran.

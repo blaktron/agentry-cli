@@ -1,11 +1,13 @@
 package mcpinstall
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // fakeRegistries serves just enough npm + PyPI metadata for resolution.
@@ -698,5 +701,73 @@ func TestEnsureInstalledNamesAnEnginesRefusal(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(store, "npm-scope-server-x.json")); !os.IsNotExist(err) {
 		t.Fatalf("a refused install recorded a resolution (%v)", err)
+	}
+}
+
+// Each install step that fails names the declared server and itself in
+// the run's reason, never text (agentry-cli#628).
+func TestEnsureInstalledNamesTheStepThatFailed(t *testing.T) {
+	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
+	regs := httpsRegs(policy.MCPRegistries{NPM: "https://unused.invalid", PyPI: "https://unused.invalid"})
+	server := func() []Resolved {
+		return []Resolved{{Source: "npm", Package: "@scope/server-x", Version: "1.0.0", ID: "npm-scope-server-x", BinName: "server-x"}}
+	}
+	cases := []struct {
+		name   string
+		script func(f *dockerx.Fake)
+		code   receipt.ReasonCode
+		step   string
+	}{
+		{"image", func(f *dockerx.Fake) { f.FailPull = map[string]error{"node:test": errors.New("no route")} },
+			receipt.ReasonMCPInstallFailed, receipt.InstallImage},
+		{"install proxy", func(f *dockerx.Fake) {
+			f.FailDetached = map[string]error{"agentry-mcpproxy-": errors.New("runsc: cannot start")}
+		}, receipt.ReasonMCPInstallFailed, receipt.InstallProxy},
+		{"builder", func(f *dockerx.Fake) {
+			f.Foreground = map[string]*dockerx.FakeForeground{"agentry-mcpinstall-": {ExitCode: 1}}
+		}, receipt.ReasonMCPInstallFailed, receipt.InstallBuilder},
+		{"runtime excluded", func(f *dockerx.Fake) {
+			f.Foreground = map[string]*dockerx.FakeForeground{"agentry-mcpinstall-": {ExitCode: npmEnginesRefused}}
+		}, receipt.ReasonMCPRuntimeExcluded, ""},
+		{"runtime unchecked", func(f *dockerx.Fake) {
+			f.Foreground = map[string]*dockerx.FakeForeground{"agentry-mcpinstall-": {ExitCode: npmEnginesUnchecked}}
+		}, receipt.ReasonMCPInstallFailed, receipt.InstallRuntimeCheck},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := withRunner(&dockerx.Fake{})
+			c.script(fake)
+			err := EnsureInstalled(t.Context(), fake, server(), t.TempDir(), regs, images, policy.DockerPolicy{}, io.Discard)
+			want := &receipt.Reason{Code: c.code, Detail: c.step, Names: []string{"npm:@scope/server-x"}}
+			if got := receipt.ReasonOf(err); !reflect.DeepEqual(got, want) {
+				t.Fatalf("reason = %+v, want %+v (err %v)", got, want, err)
+			}
+		})
+	}
+
+	t.Run("pin changed", func(t *testing.T) {
+		store, fake := t.TempDir(), withRunner(&dockerx.Fake{})
+		first := server()
+		first[0].Integrity = "sha512-OLD"
+		if err := EnsureInstalled(t.Context(), fake, first, store, regs, images, policy.DockerPolicy{}, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		drifted := server()
+		drifted[0].Integrity = "sha512-NEW"
+		err := EnsureInstalled(t.Context(), fake, drifted, store, regs, images, policy.DockerPolicy{}, io.Discard)
+		want := &receipt.Reason{Code: receipt.ReasonMCPInstallFailed, Detail: receipt.InstallPinChanged, Names: []string{"npm:@scope/server-x"}}
+		if got := receipt.ReasonOf(err); !reflect.DeepEqual(got, want) {
+			t.Fatalf("reason = %+v, want %+v (err %v)", got, want, err)
+		}
+	})
+}
+
+// A pin the registry does not have names the declared server.
+func TestResolveAllNamesTheServerItCouldNotResolve(t *testing.T) {
+	regs := fakeRegistries(t)
+	_, err := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{decl("@scope/no-such-server", "", "9.9.9")})
+	want := &receipt.Reason{Code: receipt.ReasonMCPNotResolved, Names: []string{"npm:@scope/no-such-server"}}
+	if got := receipt.ReasonOf(err); err == nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("reason = %+v, want %+v (err %v)", got, want, err)
 	}
 }

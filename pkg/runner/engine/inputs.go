@@ -16,6 +16,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
@@ -88,7 +89,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 		return nil, err
 	}
 	if len(res.Found()) > 0 {
-		return nil, Classify(ExitPolicy, fmt.Errorf("the run was refused before the agent started: %s", res.Refusal()))
+		return nil, Classify(ExitPolicy, inputRefused(receipt.InputMalware, fmt.Errorf("the run was refused before the agent started: %s", res.Refusal())))
 	}
 	entries, err := x.stageTexts(res)
 	if err != nil {
@@ -96,6 +97,12 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	}
 	x.before = merged(x.before, res)
 	return x, x.commit(entries)
+}
+
+// inputRefused names why an input was refused, in the run's reason; never
+// which input, since its name is the person's (agentry-cli#628).
+func inputRefused(why string, err error) error {
+	return receipt.WithReason(err, receipt.ReasonInputRefused, why)
 }
 
 // hasGivenInputs says whether the person gave the run anything: the
@@ -138,7 +145,7 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 	if x.img == nil {
 		img, err := ensureDecode(ctx, x.d, x.p.Plan.Proxy.Image, x.p.Policy, filepath.Join(x.rd.root, "image"), x.p.Stderr)
 		if err != nil {
-			return nil, Classify(ExitGateway, fmt.Errorf("the inputs could not be decoded: %w", err))
+			return nil, Classify(ExitGateway, receipt.WithReason(fmt.Errorf("the inputs could not be decoded: %w", err), receipt.ReasonInputsNotDecoded, receipt.DecodeImage))
 		}
 		// With no home to keep it in there is no bundle, and the receipt
 		// says no file was checked (clamdb.Ensure answers ProblemNone).
@@ -156,7 +163,7 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 	}
 	res, err := runDecode(ctx, x.d, *x.img, in, out, x.p.limits(), x.p.Stderr)
 	if err != nil {
-		return nil, Classify(ExitGateway, fmt.Errorf("the inputs could not be decoded: %w", err))
+		return nil, Classify(ExitGateway, receipt.WithReason(fmt.Errorf("the inputs could not be decoded: %w", err), receipt.ReasonInputsNotDecoded, receipt.DecodeRun))
 	}
 	return res, nil
 }

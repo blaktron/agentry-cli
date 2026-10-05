@@ -20,6 +20,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -1133,6 +1134,11 @@ func TestCompileBaseExecCommands(t *testing.T) {
 	var refusal *PolicyRefusal
 	if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "command(s) curl that") || !strings.Contains(err.Error(), "every machine provides") {
 		t.Fatalf("an uncatalogued command beside a base one = %v, want a refusal naming curl alone and the base list", err)
+	}
+	// The refusal's reason names the command in fixed words, for a driver
+	// that keeps no text (agentry-cli#628).
+	if got, want := receipt.ReasonOf(err), (&receipt.Reason{Code: receipt.ReasonExecNotProvided, Names: []string{"curl"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reason = %+v, want %+v", got, want)
 	}
 
 	// The operator's entry still wins for a base command.

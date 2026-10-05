@@ -386,6 +386,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 // tail rides along in it — writes it to the output folder (a failed run
 // still leaves its record, RQ3), and returns.
 func fail(env *receipt.Envelope, r *redactor, err error) (*receipt.Envelope, error) {
+	// The reason is read before the redactor, which rebuilds a masked
+	// error without the chain; it holds no value to mask (receipt.Reason).
+	env.Reason = receipt.ReasonOf(err)
 	err = r.Err(err)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) {
@@ -723,7 +726,8 @@ func checkDeclaredServersStarted(logs string, servers []spec.MCPServerSpec) erro
 		for _, line := range lines {
 			t := strings.TrimSpace(line)
 			if strings.HasPrefix(t, "> Can't start "+srv.Name+":") || strings.HasPrefix(t, "> Can't list tools "+srv.Name+":") {
-				return fmt.Errorf("declared MCP server %s@%s did not start; the gateway said: %s%s", srv.Package, srv.Version, t, serverOutputTail(lines, srv.Name))
+				return receipt.WithReason(fmt.Errorf("declared MCP server %s@%s did not start; the gateway said: %s%s", srv.Package, srv.Version, t, serverOutputTail(lines, srv.Name)),
+					receipt.ReasonMCPStartFailed, "", srv.SourceID())
 			}
 		}
 	}

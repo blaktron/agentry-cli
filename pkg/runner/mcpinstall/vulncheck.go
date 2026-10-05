@@ -100,6 +100,9 @@ var severityRank = map[string]int{"info": 1, "low": 2, "medium": 3, "high": 4, "
 type VulnStatus struct {
 	// Ref is "npm:pkg@1.2.3" / "pypi:pkg@1.2.3".
 	Ref string `json:"ref"`
+	// Server is the declared server's id without its version
+	// ("npm:pkg"), the name a refusal's reason gives (agentry-cli#628).
+	Server string `json:"-"`
 	// Status is the registry's word — "safe" (no known advisories at
 	// CheckedAt), "vulnerable", "error" (its last lookup failed; Advisories
 	// are the last known) — or the runner's: "unknown" (the registry has
@@ -191,7 +194,7 @@ func CheckVulnerabilities(ctx context.Context, client *http.Client, registry str
 	base := strings.TrimRight(registry, "/")
 	out := make([]VulnStatus, 0, len(servers))
 	for _, srv := range servers {
-		st := VulnStatus{Ref: srv.SourceID() + "@" + srv.Version}
+		st := VulnStatus{Ref: srv.SourceID() + "@" + srv.Version, Server: srv.SourceID()}
 		eco, pkg := "npm", srv.NPM
 		if srv.NPM == "" {
 			eco, pkg = "pypi", srv.PyPI
