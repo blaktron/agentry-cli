@@ -12,7 +12,7 @@ import (
 )
 
 // TestInitScaffoldsValidate: for each mode set, init a workspace and run the
-// REAL validate command over it, expecting a full PASS (manifest V1-V10, S1
+// REAL validate command over it, expecting a full PASS (every manifest rule, S1
 // inventory, S3/S4 scan with the embedded bundle). The scaffold is schema
 // v2: modes in the manifest, AGENT.md as the instruction file, and an
 // interactive block only when interactive is chosen.

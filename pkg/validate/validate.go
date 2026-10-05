@@ -1,6 +1,6 @@
 // Package validate is `agentry validate`'s workspace check (§11, D-12):
-// offline parity with the server's submit validation — manifest rules
-// V1–V10 via pkg/manifest, the S1 inventory subset (localscan.go), and the
+// offline parity with the server's submit validation — every manifest rule
+// pkg/manifest reports (ManifestRules), the S1 inventory subset (localscan.go), and the
 // S3/S4 scan via pkg/rules, run over the files publish would actually ship.
 // It left the command's main package so that the Drafter's post-step
 // (pkg/drafter) checks a draft with the same code in every client
@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/archive"
@@ -179,7 +180,7 @@ func Workspace(dir string, o Options) (Report, error) {
 		report.Issues = append(report.Issues, vi)
 	}
 	if len(issues) == 0 {
-		_, _ = fmt.Fprintln(out, "manifest: OK (rules V1-V9, public-publish context)")
+		_, _ = fmt.Fprintf(out, "manifest: OK (rules %s, public-publish context)\n", ManifestRules())
 	} else {
 		_, _ = fmt.Fprintf(out, "manifest: %d error(s), %d warning(s)\n", errCount, warnCount)
 		printManifestIssues(out, issues)
@@ -237,6 +238,52 @@ func Workspace(dir string, o Options) (Report, error) {
 	report.Passed = !failed
 	report.Counts.Errors, report.Counts.Warnings, report.Counts.InventoryFailing, report.Counts.Findings = errCount, warnCount, s1Failing, len(findings)
 	return report, nil
+}
+
+// ManifestRules names the manifest rules a validation runs, in the form
+// the report and the command's help print them ("V1-V5, V7-V11"). It is
+// read from pkg/manifest's own rule list, so a rule the core adds is named
+// here without a change in this repository (agentry-cli#638).
+func ManifestRules() string {
+	rs := manifest.Rules()
+	ids := make([]string, len(rs))
+	for i, r := range rs {
+		ids[i] = r.ID
+	}
+	return ruleSpan(ids)
+}
+
+// ruleSpan joins rule ids, collapsing a run of consecutive numbers under
+// one prefix into a range: V1 V2 V3 V5 is "V1-V3, V5". An id without a
+// trailing number stands alone.
+func ruleSpan(ids []string) string {
+	split := func(id string) (string, int, bool) {
+		i := len(id)
+		for i > 0 && id[i-1] >= '0' && id[i-1] <= '9' {
+			i--
+		}
+		n, err := strconv.Atoi(id[i:])
+		return id[:i], n, err == nil
+	}
+	var parts []string
+	for i := 0; i < len(ids); {
+		prefix, n, ok := split(ids[i])
+		j := i + 1
+		for ok && j < len(ids) {
+			p, m, ok2 := split(ids[j])
+			if !ok2 || p != prefix || m != n+(j-i) {
+				break
+			}
+			j++
+		}
+		if j-i > 1 {
+			parts = append(parts, ids[i]+"-"+ids[j-1])
+		} else {
+			parts = append(parts, ids[i])
+		}
+		i = j
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ReadManifest loads and parses dir/agent.yaml.

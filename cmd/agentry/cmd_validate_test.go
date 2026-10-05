@@ -7,6 +7,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/validate"
 )
 
 func TestValidateMissingOrBrokenManifest(t *testing.T) {
@@ -138,4 +140,14 @@ func publishableSkillFiles(name, capsYAML string) map[string]string {
 	files["LICENSE"] = "Apache-2.0 text placeholder\n"
 	files["agent.yaml"] = strings.Replace(files["agent.yaml"], "include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, README.md, LICENSE]", 1)
 	return files
+}
+
+// TestValidateHelpNamesTheRulesThatRun (agentry-cli#638): the help text
+// names the same rules the check runs, not a range typed in by hand.
+func TestValidateHelpNamesTheRulesThatRun(t *testing.T) {
+	cmd := newValidateCmd()
+	span := "rules " + validate.ManifestRules()
+	if !strings.Contains(cmd.Short, span+" ") || !strings.Contains(cmd.Long, span+",") {
+		t.Fatalf("help does not name %q:\n%s\n%s", span, cmd.Short, cmd.Long)
+	}
 }
