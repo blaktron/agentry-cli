@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -81,6 +82,7 @@ func TestTheLedgerRecordsEachCallsOutcome(t *testing.T) {
 		t.Fatalf("end_blocked: %v", r)
 	}
 	got := readCalls(t, spec.Calls.Ledger)
+	// A name that is not there is the agent's mistake, never a fault.
 	if len(got) != 5 || !got[0].Start ||
 		got[1] != (CallEntry{Tool: ToolReadInput, OK: true}) ||
 		got[2] != (CallEntry{Tool: ToolReadInput}) ||
@@ -122,5 +124,48 @@ func TestEndBlockedWithoutALedgerSaysSo(t *testing.T) {
 	text, isErr := s.toolEndBlocked(rawArgs(t, map[string]any{"reason": "no inputs"}))
 	if !isErr || !strings.Contains(text, "say in your answer") {
 		t.Fatalf("%v %q", isErr, text)
+	}
+}
+
+// A fault is the run's machinery failing, which no argument brings about:
+// a channel the tools may not open, an I/O error, a read-only or full disk.
+func TestAFaultIsTheRunsMachinery(t *testing.T) {
+	s := newTestServer(t, callsSpec(t))
+	for _, tc := range []struct {
+		err   error
+		fault bool
+	}{
+		{&os.PathError{Op: "open", Path: "/inputs-text/inputs.json", Err: syscall.EACCES}, true},
+		{&os.PathError{Op: "write", Path: "/out/reports/r.md", Err: syscall.ENOSPC}, true},
+		{&os.PathError{Op: "open", Path: "/out/reports/r.md", Err: syscall.EROFS}, true},
+		{&os.PathError{Op: "read", Path: "/inputs/a", Err: syscall.EIO}, true},
+		{&os.PathError{Op: "stat", Path: "/inputs/nope", Err: syscall.ENOENT}, false},
+		{&os.PathError{Op: "mkdir", Path: "/out/reports/a", Err: syscall.ENOTDIR}, false},
+	} {
+		s.callFault = false
+		if text, isErr := s.failed("read_input", tc.err); !isErr || !strings.HasPrefix(text, "read_input: ") || s.callFault != tc.fault {
+			t.Errorf("%v: fault %v, want %v (%q)", tc.err, s.callFault, tc.fault, text)
+		}
+	}
+}
+
+// Through the server: an input the tools may not read is a fault in the
+// ledger; one that is not there is not.
+func TestAnUnreadableChannelIsRecordedAsAFault(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	spec := callsSpec(t)
+	locked := filepath.Join(spec.InputsDir, "locked.txt")
+	if err := os.WriteFile(locked, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	runServe(t, spec,
+		callLine(1, ToolReadInput, map[string]any{"path": "locked.txt"}),
+		callLine(2, ToolReadInput, map[string]any{"path": "missing.txt"}),
+	)
+	got := readCalls(t, spec.Calls.Ledger)
+	if len(got) != 3 || got[1] != (CallEntry{Tool: ToolReadInput, Fault: true}) || got[2] != (CallEntry{Tool: ToolReadInput}) {
+		t.Fatalf("ledger %+v", got)
 	}
 }

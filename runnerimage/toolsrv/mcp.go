@@ -93,6 +93,9 @@ type server struct {
 	// (review.go); a test may set it first.
 	reviewOnce  sync.Once
 	reviewState *reviewState
+	// callFault says the call being handled failed on the run's own
+	// machinery (calls.go): set by failed, read and cleared by recordCall.
+	callFault bool
 }
 
 func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
@@ -302,6 +305,7 @@ func (s *server) handleToolsCall(req rpcRequest) {
 			s.writeError(req.ID, codeInternal, fmt.Sprintf("tool %s failed internally", p.Name))
 		}
 	}()
+	s.callFault = false
 	text, isErr := d.call(p.Arguments)
 	s.recordCall(p.Name, !isErr)
 	s.writeResult(req.ID, map[string]any{

@@ -351,6 +351,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if logs, lerr := d.Logs(keep, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(redact.String(logs)), 0o644)
 	}
+	// The calls ledger holds the agent's own end_blocked sentence: masked
+	// like every receipt the run could have written into.
+	if rd.callsLedger != "" {
+		rd.redact.File(rd.callsLedger)
+	}
 	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.
@@ -375,7 +380,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		return fail(env, redact, outcome.err)
 	}
 	if p.EndBlocked {
-		if berr := blockedOf(rd.receiptsDir); berr != nil {
+		if berr := blockedOf(rd.callsLedger); berr != nil {
 			env.Result = receipt.TextResult(outcome.lastText)
 			return fail(env, redact, berr)
 		}

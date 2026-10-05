@@ -29,10 +29,7 @@ const CallsLedgerFile = "calls.ndjson"
 // grantCalls stamps the calls ledger into the run's rendered tools spec,
 // which grants end_blocked, and rebuilds the tools server's allowlist line
 // from it, as grantWeb does.
-func grantCalls(gatewayDir string, on bool) error {
-	if !on {
-		return nil
-	}
+func grantCalls(gatewayDir string) error {
 	specPath := filepath.Join(gatewayDir, "toolspec.json")
 	b, err := os.ReadFile(specPath) //nolint:gosec // our own rendered config
 	if err != nil {
@@ -55,31 +52,28 @@ func grantCalls(gatewayDir string, on bool) error {
 	return setAllowlist(filepath.Join(gatewayDir, "tools.yaml"), ts.GrantedTools())
 }
 
-// ReadCallsLedger reads a run's calls ledger (receipts/calls.ndjson): its
-// entries, how many lines did not decode, and whether it exists.
-func ReadCallsLedger(file string) (entries []toolsrv.CallEntry, bad int, found bool, err error) {
+// ReadCallsLedger reads a run's calls ledger (receipts/calls.ndjson). A
+// missing ledger is none; a line that does not decode is skipped, as no
+// evidence either way.
+func ReadCallsLedger(file string) ([]toolsrv.CallEntry, error) {
 	f, err := os.Open(file) //nolint:gosec // a run's own receipt
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, 0, false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, 0, false, err
+		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	var out []toolsrv.CallEntry
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
-		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
-			continue
-		}
 		var e toolsrv.CallEntry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
-			bad++
-			continue
+		if json.Unmarshal(sc.Bytes(), &e) == nil {
+			out = append(out, e)
 		}
-		entries = append(entries, e)
 	}
-	return entries, bad, true, sc.Err()
+	return out, sc.Err()
 }
 
 // inputTools are the calls that read the run's inputs.
@@ -89,55 +83,68 @@ var inputTools = map[string]bool{
 	toolsrv.ToolSearchInputs: true,
 }
 
+// callTally is what blockedOf counts of one kind of call.
+type callTally struct{ calls, ok, faults int }
+
+func (t *callTally) add(e toolsrv.CallEntry) {
+	t.calls++
+	if e.OK {
+		t.ok++
+	} else if e.Fault {
+		t.faults++
+	}
+}
+
+// failedOnTheRun says every call failed and the run's machinery failed at
+// least one: a channel the tools could not open or write. The agent's own
+// mistakes (a name that is not there, a report too large) are not the
+// runner's evidence, or asking for a missing file would earn a run that
+// D5 refunds.
+func (t callTally) failedOnTheRun() bool { return t.calls > 0 && t.ok == 0 && t.faults > 0 }
+
 // blockedOf reads the calls ledger of a run whose agent ended without a
 // failure of its own, and answers the blocked class when the run did not
 // do its task; nil otherwise. The runner's evidence comes first, since a
 // tool that failed the agent is why an agent says it is blocked:
-//   - no ledger, or none the tools started: they could not write the run's
-//     output folder, so no input read or report could have reached it;
-//   - the agent called the input tools, and every call failed;
-//   - the agent called write_report, and every call failed;
+//   - no start line: the tools could not write the ledger the engine made
+//     for them, so no input read or report could have reached the run;
+//   - every input call failed, and on the run's machinery;
+//   - every write_report failed, and on the run's machinery;
 //   - and then the agent's own end_blocked, with its sentence.
-func blockedOf(receiptsDir string) error {
-	entries, _, found, err := ReadCallsLedger(filepath.Join(receiptsDir, CallsLedgerFile))
+func blockedOf(ledger string) error {
+	entries, err := ReadCallsLedger(ledger)
 	if err != nil {
 		return nil // a ledger the engine cannot read is no evidence either way
 	}
 	started := false
-	var inputCalls, inputOK, reportCalls, reportOK int
-	agent := ""
+	var inputs, reports callTally
+	agentSaid := ""
 	for _, e := range entries {
 		switch {
 		case e.Start:
 			started = true
 		case e.Tool == toolsrv.ToolEndBlocked:
-			if agent == "" {
-				agent = e.Blocked
+			if agentSaid == "" {
+				agentSaid = e.Blocked
 			}
 		case inputTools[e.Tool]:
-			inputCalls++
-			if e.OK {
-				inputOK++
-			}
+			inputs.add(e)
 		case e.Tool == toolsrv.ToolWriteReport:
-			reportCalls++
-			if e.OK {
-				reportOK++
-			}
+			reports.add(e)
 		}
 	}
-	runner := func(detail, why string) error {
+	runnerBlocked := func(detail, why string) error {
 		return Classify(ExitBlocked, receipt.WithReason(errors.New("blocked: "+why), receipt.ReasonRunnerBlocked, detail))
 	}
 	switch {
-	case !found || !started:
-		return runner(receipt.BlockedToolsUnrecorded, "the runner's tools could not write the run's output folder, so no input could be read and no report written")
-	case inputCalls > 0 && inputOK == 0:
-		return runner(receipt.BlockedInputsUnread, fmt.Sprintf("every one of the agent's %d call(s) to read the inputs failed", inputCalls))
-	case reportCalls > 0 && reportOK == 0:
-		return runner(receipt.BlockedReportUnwritten, fmt.Sprintf("every one of the agent's %d call(s) to write_report failed", reportCalls))
-	case agent != "":
-		return Classify(ExitBlocked, receipt.WithReason(errors.New("blocked: the agent could not do the task: "+agent), receipt.ReasonAgentBlocked, ""))
+	case !started:
+		return runnerBlocked(receipt.BlockedToolsUnrecorded, "the runner's tools could not write the run's output folder, so no input could be read and no report written")
+	case inputs.failedOnTheRun():
+		return runnerBlocked(receipt.BlockedInputsUnread, fmt.Sprintf("every one of the agent's %d call(s) to read the inputs failed, the run's own channel among them", inputs.calls))
+	case reports.failedOnTheRun():
+		return runnerBlocked(receipt.BlockedReportUnwritten, fmt.Sprintf("every one of the agent's %d call(s) to write_report failed, the run's own output folder among them", reports.calls))
+	case agentSaid != "":
+		return Classify(ExitBlocked, receipt.WithReason(errors.New("blocked: the agent could not do the task: "+agentSaid), receipt.ReasonAgentBlocked, ""))
 	}
 	return nil
 }

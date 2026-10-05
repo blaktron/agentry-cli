@@ -75,6 +75,10 @@ func TestAnAgentsEndBlockedEndsTheRunBlocked(t *testing.T) {
 		strings.Contains(env.Error, "sekret-value-1234") || strings.Contains(env.Error, "second word") {
 		t.Fatalf("error %q", env.Error)
 	}
+	// The ledger keeps the sentence masked, as every receipt is.
+	if l, _ := os.ReadFile(filepath.Join(p.OutDir, "receipts", CallsLedgerFile)); !strings.Contains(string(l), "archive is encrypted") || strings.Contains(string(l), "sekret-value-1234") {
+		t.Fatalf("ledger:\n%s", l)
+	}
 	gw := filepath.Join(p.RunRoot, "runs", p.RunID, "cfg", "gateway")
 	b, rerr := os.ReadFile(filepath.Join(gw, "toolspec.json"))
 	if rerr != nil {
@@ -101,13 +105,13 @@ func TestTheRunnersEvidenceEndsTheRunBlocked(t *testing.T) {
 		ledger []string
 		detail string
 	}{
-		{"no ledger", nil, receipt.BlockedToolsUnrecorded},
+		{"the tools wrote nothing", nil, receipt.BlockedToolsUnrecorded},
 		{"no start line", []string{`{"tool":"read_input","ok":true}`}, receipt.BlockedToolsUnrecorded},
 		{"every input call failed", []string{startLine,
-			`{"tool":"list_inputs"}`, `{"tool":"read_input"}`, `{"tool":"search_inputs"}`, `{"tool":"write_report","ok":true}`,
+			`{"tool":"list_inputs","fault":true}`, `{"tool":"read_input"}`, `{"tool":"search_inputs","fault":true}`, `{"tool":"write_report","ok":true}`,
 			`{"tool":"end_blocked","ok":true,"blocked":"nothing to read"}`}, receipt.BlockedInputsUnread},
 		{"every report failed", []string{startLine,
-			`{"tool":"read_input","ok":true}`, `{"tool":"write_report"}`, `{"tool":"write_report"}`}, receipt.BlockedReportUnwritten},
+			`{"tool":"read_input","ok":true}`, `{"tool":"write_report"}`, `{"tool":"write_report","fault":true}`}, receipt.BlockedReportUnwritten},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env, _, err := blockedRun(t, tc.ledger)
@@ -120,12 +124,16 @@ func TestTheRunnersEvidenceEndsTheRunBlocked(t *testing.T) {
 }
 
 // A run whose tools answered is ok: one failed call among good ones, a run
-// that never touched the inputs or the reports, and an unreadable line.
+// that never touched the inputs or the reports, an unreadable line, and
+// calls that failed only on what the agent asked (a name that is not
+// there, a report too large): those are the agent's, not the runner's, and
+// asking for a missing file earns no refunded run (D5).
 func TestARunWhoseToolsAnsweredIsOK(t *testing.T) {
 	for _, ledger := range [][]string{
 		{startLine},
-		{startLine, `{"tool":"read_input"}`, `{"tool":"read_input","ok":true}`, `{"tool":"write_report"}`, `{"tool":"write_report","ok":true}`},
+		{startLine, `{"tool":"read_input","fault":true}`, `{"tool":"read_input","ok":true}`, `{"tool":"write_report","fault":true}`, `{"tool":"write_report","ok":true}`},
 		{startLine, `{"tool":"fetch"}`, `{"tool":`},
+		{startLine, `{"tool":"read_input"}`, `{"tool":"read_input"}`, `{"tool":"write_report"}`},
 	} {
 		env, _, err := blockedRun(t, ledger)
 		if err != nil || env.ExitCode != ExitOK || env.Reason != nil {
@@ -156,7 +164,7 @@ func TestASessionRefusesEndBlocked(t *testing.T) {
 	p.EndBlocked = true
 	_, err := StartSession(context.Background(), f, p)
 	var ce *ClassifiedError
-	if !errors.As(err, &ce) || ce.Code != ExitUsage || !strings.Contains(err.Error(), "end_blocked") {
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "end_blocked") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -171,5 +179,51 @@ func TestAHarnessFailureIsNotBlocked(t *testing.T) {
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitHarness {
 		t.Fatalf("%v", err)
+	}
+}
+
+// The agent's own mistakes with end_blocked after them: the agent's word,
+// settled, never the runner's evidence.
+func TestTheAgentsMistakesAreItsOwn(t *testing.T) {
+	env, _, err := blockedRun(t, []string{startLine, `{"tool":"read_input"}`,
+		`{"tool":"end_blocked","ok":true,"blocked":"the file the task names is not among the inputs"}`})
+	isBlocked(t, env, err, receipt.ReasonAgentBlocked, "")
+}
+
+// A ledger an earlier run left in a reused output folder (or a link put
+// there) never stands for this run: the engine makes a new, empty file.
+func TestAnEarlierRunsLedgerIsNotThisOnes(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p.EndBlocked = true
+	receipts := filepath.Join(p.OutDir, "receipts")
+	if err := os.MkdirAll(receipts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := startLine + "\n" + `{"tool":"end_blocked","ok":true,"blocked":"an earlier run's word"}` + "\n"
+	if err := os.WriteFile(filepath.Join(receipts, CallsLedgerFile), []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.OnForeground = func(r dockerx.RunSpec) {
+		if strings.HasSuffix(r.Name, "-agent") {
+			b, _ := os.ReadFile(filepath.Join(receipts, CallsLedgerFile))
+			if len(b) != 0 {
+				t.Errorf("the run's ledger starts with %q", b)
+			}
+			_ = os.WriteFile(filepath.Join(receipts, CallsLedgerFile), []byte(startLine+"\n"), 0o644)
+		}
+	}
+	env, err := Run(context.Background(), f, p)
+	if err != nil || env.ExitCode != ExitOK {
+		t.Fatalf("%v %+v", err, env)
+	}
+}
+
+// On an SELinux daemon the tools container can append only to a receipt the
+// engine labelled for it: the calls ledger is one (agentry-cli#617's lesson).
+func TestTheCallsLedgerIsLabelledForTheTools(t *testing.T) {
+	rd := &runDirs{callsLedger: "/out/receipts/" + CallsLedgerFile}
+	if !slices.Contains(relabelTargetsFor(rd), relabelTarget{rd.callsLedger, false}) {
+		t.Fatalf("%v", relabelTargetsFor(rd))
 	}
 }

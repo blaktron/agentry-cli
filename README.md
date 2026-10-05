@@ -819,7 +819,9 @@ manifest + operator policy into a deterministic run plan → execute:
   container class and says why any is on the daemon's default.
 - **Everything the run produces** lands in the output folder: the
   QuickAgent's report files, `result.json` (the machine-readable envelope),
-  and `receipts/` (event stream, gateway log, the exact run plan).
+  and `receipts/` (event stream, gateway log, the exact run plan; for a
+  one-shot run, `calls.ndjson`: each runner tool call's outcome, never its
+  arguments, and the agent's `end_blocked` sentence, masked like the rest).
   The runner tears down containers, networks, and secret files on every
   exit path. Each teardown step is best effort: a docker call that fails
   is not retried and never replaces the run's own error, so something can
@@ -855,10 +857,11 @@ Exit codes: `0` ok · `1` cli (an interrupted run, an unknown adapter, an
 intake error) · `2` usage · `10` verify · `11` policy/secret ·
 `12` compile · `13` gateway/docker · `14` agent · `15` timeout ·
 `16` budget · `17` output schema · `18` blocked (the agent ended the run
-with `end_blocked`, saying why, or every one of its input reads or reports
-failed, or the runner's tools could not write the output folder: the
-envelope's `reason` is `agent-blocked` or `runner-blocked`); `review` adds `20` held for review ·
-`21` rejected · `22` refused at Submit · `23` not determined. Task input: `--input FILE`, else piped
+with `end_blocked`, saying why: `reason` `agent-blocked`; or the runner's
+tools failed it, every input read or every report failing on the run's own
+folders, or the tools unable to write the output folder at all:
+`runner-blocked`); `review` adds `20` held for review · `21` rejected ·
+`22` refused at Submit · `23` not determined. Task input: `--input FILE`, else piped
 stdin; with no task (or an empty one) the agent is sent its own instruction
 and runs that. Runs compose: `agentry run a ... | agentry run b ...`.
 

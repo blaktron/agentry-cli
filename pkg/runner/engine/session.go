@@ -111,7 +111,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	// Nor end_blocked: a session's person sees the agent stop, and ends it.
 	if p.EndBlocked {
-		return fail(Classify(ExitUsage, errors.New("end_blocked is a one-shot run's; a session does not take it")))
+		return fail(Classify(ExitPolicy, errors.New("end_blocked does not run in an interactive session")))
 	}
 	if err := checkVoice(p); err != nil {
 		return fail(err)
