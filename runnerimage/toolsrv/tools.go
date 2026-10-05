@@ -143,6 +143,8 @@ func (s *server) buildTools() {
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
 				writeReportSchema(), s.toolWriteReport)
+		case ToolEndBlocked:
+			add(name, endBlockedDescription, endBlockedSchema(), s.toolEndBlocked)
 		}
 	}
 }
@@ -941,7 +943,7 @@ func (s *server) toolListInputs(raw json.RawMessage) (string, bool) {
 		Path string `json:"path"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
-		return "list_inputs: " + err.Error(), true
+		return s.failed("list_inputs", err)
 	}
 	if s.spec.InputsDir == "" {
 		return "list_inputs: no inputs channel configured", true
@@ -952,18 +954,18 @@ func (s *server) toolListInputs(raw json.RawMessage) (string, bool) {
 	}
 	abs, err := resolveUnder(s.spec.InputsDir, path.Clean(rel))
 	if err != nil {
-		return "list_inputs: " + err.Error(), true
+		return s.failed("list_inputs", err)
 	}
 	idx, err := s.inputsIndex()
 	if err != nil {
-		return "list_inputs: " + err.Error(), true
+		return s.failed("list_inputs", err)
 	}
 	if idx != nil {
 		return listIndexed(idx, path.Clean(rel))
 	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
-		return "list_inputs: " + err.Error(), true
+		return s.failed("list_inputs", err)
 	}
 	if len(entries) == 0 {
 		return "(no input files provided for this run)", false
@@ -994,7 +996,7 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 		MaxBytes int64  `json:"maxBytes"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
-		return "read_input: " + err.Error(), true
+		return s.failed("read_input", err)
 	}
 	if a.Path == "" {
 		return "read_input: path is required", true
@@ -1007,7 +1009,7 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	}
 	abs, err := resolveUnder(s.spec.InputsDir, a.Path)
 	if err != nil {
-		return "read_input: " + err.Error(), true
+		return s.failed("read_input", err)
 	}
 	// With the decode step's index, an input is read as its text: the
 	// decoded text, or the original when it is text; one that could not
@@ -1015,7 +1017,7 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	// answered from /inputs as before.
 	idx, err := s.inputsIndex()
 	if err != nil {
-		return "read_input: " + err.Error(), true
+		return s.failed("read_input", err)
 	}
 	if idx != nil {
 		if e, ok := idx.lookup(path.Clean(a.Path)); ok {
@@ -1026,13 +1028,13 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 				return fmt.Sprintf("read_input: %s is an archive; list_inputs with path %q lists what was unpacked from it, each read by its own path", e.Path, e.Path), true
 			}
 			if abs, err = s.textOf(e); err != nil {
-				return "read_input: " + err.Error(), true
+				return s.failed("read_input", err)
 			}
 		}
 	}
 	fi, err := os.Stat(abs)
 	if err != nil {
-		return "read_input: " + err.Error(), true
+		return s.failed("read_input", err)
 	}
 	if fi.IsDir() {
 		return fmt.Sprintf("read_input: %q is a directory (use list_inputs)", path.Clean(a.Path)), true
@@ -1040,7 +1042,7 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	if !s.spec.Review.Enabled {
 		text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
 		if err != nil {
-			return "read_input: " + err.Error(), true
+			return s.failed("read_input", err)
 		}
 		return text, isErr
 	}
@@ -1052,7 +1054,7 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	}
 	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
 	if err != nil {
-		return "read_input: " + err.Error(), true
+		return s.failed("read_input", err)
 	}
 	return s.scrubSecrets(text), isErr
 }
@@ -1110,7 +1112,7 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 		Append  bool   `json:"append"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
-		return "write_report: " + err.Error(), true
+		return s.failed("write_report", err)
 	}
 	if a.Path == "" {
 		return "write_report: path is required", true
@@ -1122,34 +1124,34 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	// that writes no report leaves no empty reports/ dir behind.
 	root := filepath.Join(s.spec.OutDir, "reports")
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		return "write_report: " + err.Error(), true
+		return s.failed("write_report", err)
 	}
 	s.own(root)
 	abs, err := resolveUnder(root, a.Path)
 	if err != nil {
-		return "write_report: " + err.Error(), true
+		return s.failed("write_report", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return "write_report: " + err.Error(), true
+		return s.failed("write_report", err)
 	}
 	s.ownBetween(root, filepath.Dir(abs))
 	defer s.own(abs)
 	if a.Append {
 		f, err := os.OpenFile(abs, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
-			return "write_report: " + err.Error(), true
+			return s.failed("write_report", err)
 		}
 		_, werr := f.Write([]byte(a.Content))
 		cerr := f.Close()
 		if werr != nil {
-			return "write_report: " + werr.Error(), true
+			return s.failed("write_report", werr)
 		}
 		if cerr != nil {
-			return "write_report: " + cerr.Error(), true
+			return s.failed("write_report", cerr)
 		}
 	} else {
 		if err := os.WriteFile(abs, []byte(a.Content), 0o644); err != nil {
-			return "write_report: " + err.Error(), true
+			return s.failed("write_report", err)
 		}
 	}
 	return fmt.Sprintf("report written: reports/%s (%d bytes)", path.Clean(a.Path), len(a.Content)), false

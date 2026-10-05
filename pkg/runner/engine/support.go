@@ -59,6 +59,10 @@ type runDirs struct {
 	// reviewLedger is receipts/review.ndjson for a run with the review
 	// grant, made as webLedger is.
 	reviewLedger string
+	// callsLedger is receipts/calls.ndjson for a run with end_blocked
+	// (blocked.go), made as webLedger is: a ledger an earlier run left in
+	// a reused output folder never stands for this one's.
+	callsLedger string
 	// web says the run has the web tools, and runID names it, for the
 	// receipt's daemon line.
 	web   bool
@@ -266,6 +270,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		}
 		_ = f.Close()
 	}
+	if p.EndBlocked {
+		rd.callsLedger = filepath.Join(rd.receiptsDir, CallsLedgerFile)
+		_ = os.Remove(rd.callsLedger)
+		f, err := os.OpenFile(rd.callsLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the calls ledger: %w", err))
+		}
+		_ = f.Close()
+	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
 	}
@@ -370,6 +383,11 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	if err := grantReview(dir, p.Review); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the review grant: %w", err))
 	}
+	if p.EndBlocked {
+		if err := grantCalls(dir); err != nil {
+			return Classify(ExitCLI, fmt.Errorf("configure the calls ledger: %w", err))
+		}
+	}
 	if err := writeResolvConf(dir, p.Plan); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
 	}
@@ -378,7 +396,7 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 
 // grantedTools is the tools server's grant for this run: the GrantedTools
 // of the run's own rendered tools spec, after every run-time grant
-// (knowledge, the voice, web, review), the same list setAllowlist gives
+// (knowledge, the voice, web, review, the calls ledger), the same list setAllowlist gives
 // the gateway. A session's driver permits exactly these, never the
 // compiled plan's Tools, which no run-time attachment moves
 // (agentry-cli#576).
@@ -786,10 +804,14 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 	}
 }
 
-// relabelTargetsFor adds, for a run with the web tools, the web ledger: the
-// one file of the receipts the tools server appends to (web.go).
+// relabelTargetsFor adds the ledgers a run has, the only files of the
+// receipts the tools server appends to: the web tools' (web.go), the
+// review's (review.go) and the calls ledger (blocked.go).
 func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	t := relabelTargets(rd)
+	if rd.callsLedger != "" {
+		t = append(t, relabelTarget{rd.callsLedger, false})
+	}
 	if rd.webLedger != "" {
 		t = append(t, relabelTarget{rd.webLedger, false})
 	}

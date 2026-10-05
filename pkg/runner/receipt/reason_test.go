@@ -105,11 +105,32 @@ func TestEnvelopeCarriesTheReason(t *testing.T) {
 
 func TestReasonCodesAreTheClosedList(t *testing.T) {
 	want := []ReasonCode{
-		ReasonExecNotProvided, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
+		ReasonAgentBlocked, ReasonExecNotProvided, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
 		ReasonMCPNotResolved, ReasonMCPRuntimeExcluded, ReasonMCPStartFailed, ReasonMCPVulnerable,
-		ReasonSecretMissing,
+		ReasonRunnerBlocked, ReasonSecretMissing,
 	}
 	if got := ReasonCodes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ReasonCodes() = %v, want %v", got, want)
+	}
+}
+
+// A blocked run's reasons (agentry-cli#629): the agent's carries no names
+// and no detail, whatever was attached to it, since its sentence is the
+// model's; the runner's keeps only its evidence's word.
+func TestBlockedReasonsKeepNoText(t *testing.T) {
+	r := (&Reason{Code: ReasonAgentBlocked, Detail: "the archive is encrypted", Names: []string{"tar"}}).Clean()
+	if r == nil || r.Detail != "" || len(r.Names) != 0 {
+		t.Fatalf("agent-blocked kept %+v", r)
+	}
+	for _, d := range []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten} {
+		if r := (&Reason{Code: ReasonRunnerBlocked, Detail: d}).Clean(); r == nil || r.Detail != d {
+			t.Fatalf("runner-blocked %q kept %+v", d, r)
+		}
+	}
+	if r := (&Reason{Code: ReasonRunnerBlocked, Detail: "every input was a secret"}).Clean(); r == nil || r.Detail != "" {
+		t.Fatalf("runner-blocked kept a free detail: %+v", r)
+	}
+	if ExitClassName(18) != "blocked" {
+		t.Fatalf("18 is %q", ExitClassName(18))
 	}
 }

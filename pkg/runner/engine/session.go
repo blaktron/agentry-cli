@@ -109,6 +109,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if p.Plan.Capabilities.ReviewTools || p.Review != nil {
 		return fail(Classify(ExitPolicy, errors.New("the review grant does not run in an interactive session")))
 	}
+	// Nor end_blocked: a session's person sees the agent stop, and ends it.
+	if p.EndBlocked {
+		return fail(Classify(ExitPolicy, errors.New("end_blocked does not run in an interactive session")))
+	}
 	if err := checkVoice(p); err != nil {
 		return fail(err)
 	}
