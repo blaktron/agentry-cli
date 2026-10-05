@@ -602,19 +602,37 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 	// (agentry-cli#337): on an egress network of the install's own, joined
 	// at create, reading a resolv.conf of its own; nothing is connected
 	// after it starts, and both networks and the file go with the install.
+	// The file is bound from under the server store, a path the docker
+	// daemon finds as the CLI does: a sandbox host's runhost runs the CLI
+	// in a container sharing only its runner home with the host, and a
+	// file in the process's temporary directory was missing on the
+	// daemon's side (agentry-cli#627). One a killed install left behind is
+	// swept when the next starts.
 	fake3 := &dockerx.Fake{}
 	withRunner(fake3)
+	store3 := t.TempDir()
+	stale := filepath.Join(store3, "."+res[0].ID+".dns-killed")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var conf string
+	var relabel bool
 	fake3.OnDetached = func(r dockerx.RunSpec) {
 		for _, m := range r.Mounts {
 			if m.Target == "/etc/resolv.conf" && m.ReadOnly {
 				b, _ := os.ReadFile(m.Source)
-				conf = m.Source + "\n" + string(b)
+				conf, relabel = m.Source+"\n"+string(b), m.Relabel
 			}
 		}
 	}
-	if err := EnsureInstalled(t.Context(), fake3, res, t.TempDir(), httpsRegs(regs), images, policy.DockerPolicy{Runtime: "runsc", Resolvers: []string{"192.0.2.53"}}, io.Discard); err != nil {
+	if err := EnsureInstalled(t.Context(), fake3, res, store3, httpsRegs(regs), images, policy.DockerPolicy{Runtime: "runsc", Resolvers: []string{"192.0.2.53"}}, io.Discard); err != nil {
 		t.Fatal(err)
+	}
+	if path, _, _ := strings.Cut(conf, "\n"); !strings.HasPrefix(path, store3+string(filepath.Separator)) || !relabel {
+		t.Errorf("the install proxy's resolv.conf is bound from %q (relabel %v), want a file this install made under the server store %q", path, relabel, store3)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("a killed install's resolv.conf directory was not swept: %v", err)
 	}
 	proxy, _ := fake3.FindRun("agentry-mcpproxy-")
 	if proxy.Runtime != "runsc" || len(proxy.ExtraNetworks) != 1 || !strings.HasSuffix(proxy.ExtraNetworks[0], "-out") {
@@ -680,58 +698,5 @@ func TestEnsureInstalledNamesAnEnginesRefusal(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(store, "npm-scope-server-x.json")); !os.IsNotExist(err) {
 		t.Fatalf("a refused install recorded a resolution (%v)", err)
-	}
-}
-
-// Under a sandboxed runtime the install proxy reads a resolv.conf of the
-// install's own (agentry-cli#337), bound from a path the docker daemon
-// must find on its own filesystem. A sandbox host's runhost runs the CLI
-// in a container that shares only its runner home with the host, so the
-// file is written under the server store, never the process's temporary
-// directory: from there the daemon found no file, made a directory in its
-// place, and runsc could not start the proxy (agentry-cli#627). The file
-// is there while the build runs and gone when it ends.
-func TestEnsureInstalledBindsTheSandboxedProxysResolvConfFromTheStore(t *testing.T) {
-	store := t.TempDir()
-	res := []Resolved{{Source: "npm", Package: "server-x", Version: "1.0.0", ID: "npm-server-x", BinName: "server-x", Integrity: "sha512-A"}}
-	docker := policy.DockerPolicy{Runtime: "runsc", Resolvers: []string{"192.0.2.53"}}
-	var source string
-	var during []byte
-	var readErr error
-	fake := withRunner(&dockerx.Fake{})
-	fake.OnForeground = func(r dockerx.RunSpec) {
-		proxy, ok := fake.FindRun(installProxyName("npm-server-x"))
-		if !ok {
-			return
-		}
-		for _, m := range proxy.Mounts {
-			if m.Target == policy.ResolvConfTarget {
-				source = m.Source
-				during, readErr = os.ReadFile(m.Source)
-			}
-		}
-	}
-	if err := EnsureInstalled(t.Context(), fake, res, store, policy.MCPRegistries{NPM: "https://registry.npmjs.org", PyPI: "https://pypi.org"},
-		policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}, docker, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	proxy, ok := fake.FindRun(installProxyName("npm-server-x"))
-	if !ok || proxy.Runtime != "runsc" {
-		t.Fatalf("install proxy ran = %v under %q, want runsc", ok, proxy.Runtime)
-	}
-	if source == "" {
-		t.Fatal("the sandboxed install proxy binds no resolv.conf")
-	}
-	if rel, err := filepath.Rel(store, source); err != nil || strings.HasPrefix(rel, "..") {
-		t.Errorf("resolv.conf bound from %q, outside the server store %q", source, store)
-	}
-	if readErr != nil || !strings.Contains(string(during), "nameserver 192.0.2.53") {
-		t.Errorf("resolv.conf while the build runs = %q, %v; want the policy's resolvers", during, readErr)
-	}
-	if _, err := os.Stat(filepath.Dir(source)); !os.IsNotExist(err) {
-		t.Errorf("resolv.conf directory left behind after the install: %v", err)
-	}
-	if _, err := LoadMeta(store, "npm-server-x"); err != nil {
-		t.Errorf("the install's record: %v", err)
 	}
 }

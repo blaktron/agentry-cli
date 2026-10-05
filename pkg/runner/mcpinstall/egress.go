@@ -217,8 +217,12 @@ func (e *installEgress) sandboxProxy(ctx context.Context, id, storeDir string, l
 		return fmt.Errorf("create the install proxy's egress network: %w", err)
 	}
 	e.out = installEgressName(id)
-	if err := os.MkdirAll(storeDir, 0o700); err != nil {
-		return fmt.Errorf("make the server store for the install proxy's resolv.conf: %w", err)
+	// A CLI killed mid-install leaves its directory behind, like the
+	// proxy and the networks; the store is later mounted into the run's
+	// server containers, so it is swept here.
+	stale, _ := filepath.Glob(filepath.Join(storeDir, "."+id+".dns-*"))
+	for _, d := range stale {
+		_ = os.RemoveAll(d)
 	}
 	dir, err := os.MkdirTemp(storeDir, "."+id+".dns-")
 	if err != nil {
