@@ -207,3 +207,136 @@ func TestValidSignature(t *testing.T) {
 		}
 	}
 }
+
+// A repository's .git internals are listed and checked by ClamAV, but no
+// detector or decoder is ever started on them, whether staged or unpacked
+// from an archive (agentry-cli#642): a loose-object clone cost two Tika
+// starts per object. A finding inside .git still refuses the file, and a
+// file merely named .git, or a folder like .github, is decoded as before.
+func TestARepositorysInternalsAreCheckedButNeverDetected(t *testing.T) {
+	tools, logDir := clamTools(t)
+	detected := filepath.Join(logDir, "detected")
+	wrap := func(tool string) string {
+		p := filepath.Join(t.TempDir(), filepath.Base(tool))
+		body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + detected + "\nexec " + tool + " \"$@\"\n"
+		if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	tools.File, tools.Tika = wrap(tools.File), wrap(tools.Tika)
+	in, out := t.TempDir(), t.TempDir()
+	for name, data := range map[string][]byte{
+		"repo/.git/objects/ab/cdef0123":  {0x78, 0x01, 0x4b, 0xca},
+		"repo/.git/HEAD":                 []byte("ref: refs/heads/main\n"),
+		"repo/.git/hooks/report.pdf":     []byte("%PDF not decoded here"),
+		"repo/.git/objects/pack/p.zip":   zipOf(t, zipEntry{name: "a.md", body: "never unpacked\n"}),
+		"repo/.git/objects/12/eicar":     []byte("X5O EICAR test"),
+		"repo/README.md":                 []byte("# Repo\n"),
+		"repo/.github/workflows/ci.yaml": []byte("on: push\n"),
+		"repo/vendor/lib/.git":           []byte("gitdir: ../../.git/modules/lib\n"),
+		"bundle.zip": zipOf(t,
+			zipEntry{name: "proj/.git/config", body: "[core]\n"},
+			zipEntry{name: "proj/report.pdf", body: "%PDF clean member"},
+		),
+	} {
+		write(t, in, name, data)
+	}
+	rep, err := Decode(context.Background(), in, out, tools, Limits{ClamDB: "/clamav"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]File{}
+	for _, f := range rep.Files {
+		got[f.Path] = f
+	}
+	for path, want := range map[string]File{
+		"repo/.git/objects/ab/cdef0123":  {Outcome: OutcomeUndecodable, Why: WhyRepository, Check: CheckClean},
+		"repo/.git/HEAD":                 {Outcome: OutcomeUndecodable, Why: WhyRepository, Check: CheckClean},
+		"repo/.git/hooks/report.pdf":     {Outcome: OutcomeUndecodable, Why: WhyRepository, Check: CheckClean},
+		"repo/.git/objects/pack/p.zip":   {Outcome: OutcomeUndecodable, Why: WhyRepository, Check: CheckClean},
+		"repo/.git/objects/12/eicar":     {Outcome: OutcomeRefused, Why: WhyFound, Check: CheckFound, Signature: "Eicar-Test-Signature"},
+		"repo/README.md":                 {Outcome: OutcomeText, Check: CheckClean},
+		"repo/.github/workflows/ci.yaml": {Outcome: OutcomeText, Check: CheckClean},
+		"repo/vendor/lib/.git":           {Outcome: OutcomeText, Check: CheckClean},
+		"bundle.zip":                     {Outcome: OutcomeUnpacked, Check: CheckClean},
+		"bundle.zip/proj/.git/config":    {Outcome: OutcomeUndecodable, Why: WhyRepository, Check: CheckClean},
+		"bundle.zip/proj/report.pdf":     {Outcome: OutcomeDecoded, Check: CheckClean},
+	} {
+		f, ok := got[path]
+		if !ok {
+			t.Errorf("%s is not in the report", path)
+			continue
+		}
+		if f.Outcome != want.Outcome || f.Why != want.Why || f.Check != want.Check || f.Signature != want.Signature {
+			t.Errorf("%s = outcome %q why %q check %q signature %q; want %q %q %q %q", path, f.Outcome, f.Why, f.Check, f.Signature, want.Outcome, want.Why, want.Check, want.Signature)
+		}
+		if InRepository(path) && (f.Output != "" || f.Tool != "" || f.Family != FamilyUnknown) {
+			t.Errorf("%s was read: %+v", path, f)
+		}
+	}
+	if len(got) != 11 {
+		t.Errorf("%d entries, want 11 (nothing under .git unpacked): %+v", len(got), got)
+	}
+	if f := got["bundle.zip/proj/.git/config"]; f.In != "bundle.zip" || f.Size != int64(len("[core]\n")) {
+		t.Errorf("a member inside .git lost its archive or size: %+v", f)
+	}
+	calls, err := os.ReadFile(detected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(calls), "/.git/") {
+		t.Errorf("a detector was started on a repository's internals:\n%s", calls)
+	}
+	list, err := os.ReadFile(filepath.Join(logDir, "list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(list), "/.git/"); n != 6 {
+		t.Errorf("clamscan's list names %d files under .git, want all 6:\n%s", n, list)
+	}
+}
+
+// The files inside .git count against the file cap like any other: they
+// are listed and checked, so they are not free.
+func TestARepositorysInternalsCountAgainstTheFileCap(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	for _, name := range []string{".git/HEAD", ".git/config", ".git/index", "notes.md"} {
+		write(t, in, name, []byte("x\n"))
+	}
+	rep, err := Decode(context.Background(), in, out, tools, Limits{MaxFiles: 2, ClamDB: "/clamav"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, refused := 0, 0
+	for _, f := range rep.Files {
+		switch {
+		case f.Why == WhyRepository:
+			kept++
+		case f.Outcome == OutcomeRefused && strings.Contains(f.Reason, "file cap"):
+			refused++
+		}
+	}
+	if kept != 2 || refused != 2 {
+		t.Errorf("kept %d, refused at the cap %d; want 2 and 2: %+v", kept, refused, rep.Files)
+	}
+}
+
+func TestInRepository(t *testing.T) {
+	for rel, want := range map[string]bool{
+		".git/HEAD":                 true,
+		"a/.git/objects/ab/cd":      true,
+		"x.zip/p/.git/config":       true,
+		".git":                      false,
+		"vendor/lib/.git":           false,
+		".github/workflows/ci.yaml": false,
+		"a.git/HEAD":                false,
+		"docs/.gitignore":           false,
+		"README.md":                 false,
+	} {
+		if got := InRepository(rel); got != want {
+			t.Errorf("InRepository(%q) = %v, want %v", rel, got, want)
+		}
+	}
+}
