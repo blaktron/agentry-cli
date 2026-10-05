@@ -9,6 +9,8 @@
 // archive's members are unpacked and decoded in turn (archive.go). Before
 // any decoder reads a file, every file and member is checked by ClamAV in
 // one clamscan run, and a file it finds is never decoded (clamav.go).
+// A git repository's internals, everything under a .git directory, are
+// listed and checked but never detected or decoded (InRepository).
 // Nothing a document contains reaches an argv but its own path. Text
 // formats pass as they are. The caller runs this in a container with no
 // network and no capabilities, the inputs mounted read-only.
@@ -103,7 +105,7 @@ type File struct {
 	// Size is a member's unpacked size.
 	Size int64 `json:"size,omitempty"`
 	// Why is why an archive or a member was not read in full, in the
-	// closed vocabulary of archive.go, or WhyFound.
+	// closed vocabulary of archive.go, or WhyFound, or WhyRepository.
 	Why Why `json:"why,omitempty"`
 	// Check is what the malware check made of it (clamav.go); empty for a
 	// file never written to be read (a link, a refused member, past the
@@ -290,6 +292,28 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 	return rep, nil
 }
 
+// WhyRepository: the file is inside a git repository's .git directory,
+// whose internals are never decoded (InRepository).
+const WhyRepository Why = "repository"
+
+// InRepository says whether a report path names a file inside a .git
+// directory: some segment before the last is ".git". Its internals (loose
+// objects, packs, the index, refs, hooks) are kept as they are: listed,
+// checked by ClamAV, never detected, decoded or unpacked. A run that wants
+// a repository's history reads it with git; a decode of zlib objects only
+// cost a detector start or two per object (agentry-cli#642). A file named
+// .git (a worktree's or submodule's pointer) is decoded like any other.
+// The host holds a report to the same rule.
+func InRepository(rel string) bool {
+	segs := strings.Split(rel, "/")
+	for _, s := range segs[:len(segs)-1] {
+		if s == ".git" {
+			return true
+		}
+	}
+	return false
+}
+
 // decoder is one Decode: its caps, shared by the files as staged and every
 // member of every archive among them.
 type decoder struct {
@@ -319,14 +343,28 @@ type pendingDecode struct {
 	size      int64
 	kind      contentKind
 	detectErr error
+	// repository: inside a .git directory, so never detected or decoded.
+	repository bool
 }
 
 // file takes one file, as staged or unpacked: an archive is unpacked and
 // its members taken in turn; anything else waits for the check, then is
 // decoded into out (decodePending). Either way the file is a target of the
 // check. in is the archive a member came from and depth how many archives
-// enclose it.
+// enclose it. A file inside a .git directory is not detected: it waits for
+// the check only.
 func (d *decoder) file(ctx context.Context, src, rel, in string, depth int, size int64) {
+	if InRepository(rel) {
+		f := File{Path: rel, Family: FamilyUnknown, In: in}
+		if in != "" {
+			f.Size = size
+		}
+		d.files = append(d.files, f)
+		idx := len(d.files) - 1
+		d.targets = append(d.targets, scanTarget{idx: idx, src: src})
+		d.pending = append(d.pending, pendingDecode{idx: idx, src: src, rel: rel, in: in, size: size, repository: true})
+		return
+	}
 	fctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
 	kind, err := detect(fctx, src, d.tools)
 	cancel()
@@ -350,6 +388,11 @@ func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
 	checked := d.files[p.idx]
 	if checked.Check == CheckFound {
 		checked.Outcome, checked.Why = OutcomeRefused, WhyFound
+		d.files[p.idx] = checked
+		return
+	}
+	if p.repository {
+		checked.Outcome, checked.Why, checked.Reason = OutcomeUndecodable, WhyRepository, "inside a .git directory, which is never decoded"
 		d.files[p.idx] = checked
 		return
 	}

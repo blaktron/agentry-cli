@@ -353,6 +353,11 @@ func checkReport(in, out string, checked bool) (runnerdecode.Report, error) {
 		if err := checkCheck(f, checked); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
+		// Only a file inside a .git directory is kept as it is, and it is
+		// read no other way (agentry-cli#642).
+		if f.Why == runnerdecode.WhyRepository && (!runnerdecode.InRepository(f.Path) || f.Outcome != runnerdecode.OutcomeUndecodable) {
+			return rep, fmt.Errorf("%s: %q is kept as part of a repository with the outcome %q", runnerdecode.ReportFile, f.Path, f.Outcome)
+		}
 		byPath[f.Path] = f
 	}
 	members := 0
@@ -511,6 +516,7 @@ var (
 		runnerdecode.WhyConflict:   "the archive names this path twice, or as both a file and a folder",
 		runnerdecode.WhyMethod:     "compressed by a method the runner does not read",
 		runnerdecode.WhyFound:      "ClamAV found malware in it, so it was not read",
+		runnerdecode.WhyRepository: "it is inside a .git folder, a git repository's internals, which are kept as they are and never decoded",
 	}
 	knownUnchecked = map[runnerdecode.Unchecked]bool{
 		runnerdecode.UncheckedNoSignatures: true, runnerdecode.UncheckedTooLarge: true, runnerdecode.UncheckedFailed: true,
@@ -719,7 +725,9 @@ var uncheckedWords = map[runnerdecode.Unchecked]string{
 }
 
 // Counts is what happened to the files: how many were decoded, read as
-// text, and not decoded, naming the first few of those.
+// text, and not decoded, naming the first few of those. The files inside
+// a .git directory are counted apart, unnamed: a clone holds hundreds, and
+// they would crowd out the documents that could not be read.
 func (r *Result) Counts() string {
 	line := fmt.Sprintf("%d decoded, %d read as text", r.Decoded(), r.Text())
 	if n := r.count(runnerdecode.OutcomeUnpacked); n > 0 {
@@ -734,7 +742,22 @@ func (r *Result) Counts() string {
 			line += fmt.Sprintf(" (%d in part)", partial)
 		}
 	}
-	if bad := r.Undecodable(); len(bad) > 0 {
+	repository := 0
+	for _, f := range r.Report.Files {
+		if f.Why == runnerdecode.WhyRepository {
+			repository++
+		}
+	}
+	if repository > 0 {
+		line += fmt.Sprintf(", %d %s inside .git kept as %s", repository, plural(repository, "file", "files"), plural(repository, "it is", "they are"))
+	}
+	var bad []string
+	for _, f := range r.Report.Files {
+		if (f.Outcome == runnerdecode.OutcomeUndecodable || f.Outcome == runnerdecode.OutcomeRefused) && f.Why != runnerdecode.WhyRepository {
+			bad = append(bad, f.Path)
+		}
+	}
+	if len(bad) > 0 {
 		shown := bad
 		if len(shown) > 5 {
 			shown = shown[:5]

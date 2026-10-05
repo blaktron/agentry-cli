@@ -710,3 +710,66 @@ func TestRunHoldsAnArchivesMembersToIt(t *testing.T) {
 		}
 	}
 }
+
+// A repository's .git internals are listed with the decode's own words,
+// counted apart in the receipt, and the reason is taken only where the
+// rule puts it (agentry-cli#642).
+func TestARepositorysInternalsAreKeptAsTheyAre(t *testing.T) {
+	in := t.TempDir()
+	for _, n := range []string{"repo/README.md", "repo/.git/HEAD", "repo/.git/objects/ab/cdef", "repo/.git/objects/cd/0123", "notes.pdf"} {
+		p := filepath.Join(in, filepath.FromSlash(n))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("staged "+n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kept := func(p string) runnerdecode.File {
+		return runnerdecode.File{Path: p, Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable, Why: runnerdecode.WhyRepository}
+	}
+	files := []runnerdecode.File{
+		{Path: "notes.pdf", Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeUndecodable},
+		kept("repo/.git/HEAD"), kept("repo/.git/objects/ab/cdef"), kept("repo/.git/objects/cd/0123"),
+		{Path: "repo/README.md", Family: "text", Outcome: runnerdecode.OutcomeText},
+	}
+	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, files)}}}
+	res, err := Run(context.Background(), f, sampleImage, in, t.TempDir(), policy.Limits{}.WithDefaults(), os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := res.Counts(), "0 decoded, 1 read as text, 3 files inside .git kept as they are, 1 not decoded (notes.pdf)"; got != want {
+		t.Errorf("counts %q, want %q", got, want)
+	}
+	if got := UnreadReason(kept("repo/.git/HEAD")); !strings.Contains(got, "inside a .git folder") {
+		t.Errorf("reason %q", got)
+	}
+	// The built-ins still list them as skipped.
+	if got := len(res.Undecodable()); got != 4 {
+		t.Errorf("undecodable %d, want 4", got)
+	}
+
+	for name, file := range map[string]runnerdecode.File{
+		"outside .git":      kept("repo/README.md"),
+		"a file named .git": kept("repo/.git"),
+		"read as text":      {Path: "repo/.git/HEAD", Family: "text", Outcome: runnerdecode.OutcomeText, Why: runnerdecode.WhyRepository},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in, out := t.TempDir(), t.TempDir()
+			p := filepath.Join(in, filepath.FromSlash(file.Path))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(runnerdecode.Report{Schema: runnerdecode.Schema, Files: withChecks([]runnerdecode.File{file}, false)})
+			if err := os.WriteFile(filepath.Join(out, runnerdecode.ReportFile), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Check(sampleImage, in, out); err == nil || !strings.Contains(err.Error(), "kept as part of a repository") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
