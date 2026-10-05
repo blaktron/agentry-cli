@@ -16,6 +16,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // serverResolutions is ensureServerResolutions, a seam for tests: the
@@ -104,13 +105,15 @@ func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, all
 		return line + "; run allowed by policy mcpServers.allowVulnerable", nil
 	}
 	parts := make([]string, 0, len(refusing))
+	names := make([]string, 0, len(refusing))
 	for _, s := range refusing {
+		names = append(names, s.Server)
 		p := s.Ref + " has " + s.Describe(s.Refusing())
 		if fixed := s.FixedIn(); len(fixed) > 0 {
 			p += ", fixed in " + strings.Join(fixed, ", ")
 		}
 		parts = append(parts, p)
 	}
-	return line, fmt.Errorf("declared MCP server refused by the registry's vulnerability scan: %s — pin a fixed version, or override with --allow-vulnerable-mcp or policy mcpServers.allowVulnerable",
-		strings.Join(parts, "; "))
+	return line, receipt.WithReason(fmt.Errorf("declared MCP server refused by the registry's vulnerability scan: %s — pin a fixed version, or override with --allow-vulnerable-mcp or policy mcpServers.allowVulnerable",
+		strings.Join(parts, "; ")), receipt.ReasonMCPVulnerable, "", names...)
 }

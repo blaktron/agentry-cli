@@ -511,6 +511,10 @@ type MCPServerSpec struct {
 	Env map[string]string `json:"env,omitempty"`
 }
 
+// SourceID is the declared server's ecosystem-qualified id, as the
+// manifest's MCPServer.SourceID gives it ("npm:@scope/x").
+func (s MCPServerSpec) SourceID() string { return s.Source + ":" + s.Package }
+
 // OutputSpec is the optional structured-output convention (§R2).
 type OutputSpec struct {
 	// SchemaFile is the archive-relative schema path ("" = none).

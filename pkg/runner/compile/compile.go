@@ -35,6 +35,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -954,9 +955,10 @@ func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) 
 		}
 	}
 	if len(missing) > 0 {
-		return nil, &PolicyRefusal{Reason: fmt.Sprintf(
+		return nil, receipt.WithReason(&PolicyRefusal{Reason: fmt.Sprintf(
 			"manifest declares exec command(s) %s that this machine's policy does not catalogue: add each to exec.packages (command: apk package, or busybox for an applet the runner image already has); every machine provides %s",
-			strings.Join(missing, ", "), strings.Join(policy.BaseExecCommands(), ", "))}
+			strings.Join(missing, ", "), strings.Join(policy.BaseExecCommands(), ", "))},
+			receipt.ReasonExecNotProvided, "", missing...)
 	}
 	sort.Strings(pkgs)
 	return &spec.ExecImageSpec{
