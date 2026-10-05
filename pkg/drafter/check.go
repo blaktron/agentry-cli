@@ -460,17 +460,9 @@ func (f CheckFinding) severity() string {
 // any other is shown on the report of a version that publishes.
 func atPublish(severity string) string {
 	if severity == SeverityHigh {
-		return "at publish a high finding sends the version to a person for review, not to refusal."
+		return "At publish a high finding sends the version to a person for review, not to refusal."
 	}
-	return "at publish a finding of this severity is shown on the report of a version that publishes."
-}
-
-// upper is s with its first letter upper case.
-func upper(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	return "At publish a finding of this severity is shown on the report of a version that publishes."
 }
 
 func checkNote(c *Check) string {
@@ -492,12 +484,12 @@ func checkNote(c *Check) string {
 			sev := f.severity()
 			if f.ID == RubricIDUndeclared {
 				lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, reads %s as needing a capability the manifest does not declare (C3, %s). "+
-					"Check that the manifest declares every host, program, file access and secret the instructions use; %s",
+					"Check that the manifest declares every host, program, file access and secret the instructions use. %s",
 					f.Path, sev, atPublish(sev)))
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, flagged %s: %s (%s, %s) %s",
-				f.Path, rubricMeaning[f.ID], f.ID, sev, upper(atPublish(sev))))
+				f.Path, rubricMeaning[f.ID], f.ID, sev, atPublish(sev)))
 		}
 		if c.Rubric.Verdict == CheckNotScanned {
 			lines = append(lines, "The release rubric could not be asked ("+c.Rubric.Failure+"); the pipeline reads the whole package at publish.")

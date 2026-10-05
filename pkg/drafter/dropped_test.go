@@ -13,6 +13,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/draftcheck"
+	corejudge "github.com/blaktron/agentry/pkg/judge"
 )
 
 // scanDraft is a vulnerability scanner's manifest, as the operator's drafts
@@ -62,6 +63,16 @@ func TestARepairNeverDropsWhatTheReportDoesNotName(t *testing.T) {
 			RepairReport{Rules: []string{"V5 capabilities.exec: exec requires a commands list"}}, nil},
 		{"a command the exec rule named", scanDraft(scanHosts, `{"commands": ["grep"]}`, scanSecrets, scanServers),
 			RepairReport{Rules: []string{"capabilities.exec: tar: reads archives, but the QuickAgent takes no input files; leave it out"}}, nil},
+		{"every command, when the exec rule named one", scanDraft(scanHosts, `"none"`, scanSecrets, scanServers),
+			RepairReport{Rules: []string{"capabilities.exec: tar: reads archives, but the QuickAgent takes no input files; leave it out"}}, []string{"the command grep"}},
+		{"a command a line names only as a word of prose", scanDraft(scanHosts, `{"commands": ["tar"]}`, scanSecrets, scanServers),
+			RepairReport{Rules: []string{"S4 AGENT.md: grep the logs for keys"}}, []string{"the command grep"}},
+		{"a host, after a line that says only the word capabilities", scanDraft(`["api.github.com"]`, scanExec, scanSecrets, scanServers),
+			RepairReport{Rules: []string{"the draft: its capabilities do not parse"}}, []string{"the egress host nvd.nist.gov"}},
+		{"a server named by a path inside it", scanDraft(scanHosts, scanExec, scanSecrets, `[]`),
+			RepairReport{Rules: []string{"V5 capabilities.mcpServers[0].version: must be an exact version"}}, nil},
+		{"the servers, after a line on their list naming none", scanDraft(scanHosts, scanExec, scanSecrets, `[]`),
+			RepairReport{Rules: []string{"V5 capabilities.mcpServers: at most 8 MCP servers may be declared (got 9)"}}, nil},
 		{"a host the report named at the end of a sentence", scanDraft(`["api.github.com"]`, scanExec, scanSecrets, scanServers),
 			RepairReport{Rules: []string{"V5 egress: wildcard-like host nvd.nist.gov."}}, nil},
 		{"a host named only inside a longer one", scanDraft(`["api.github.com"]`, scanExec, scanSecrets, scanServers),
@@ -130,8 +141,8 @@ type rubricChecker struct{ postChecker }
 func (c *rubricChecker) Check(ctx context.Context, p draftcheck.Package) (*Check, error) {
 	ch, err := c.postChecker.Check(ctx, p)
 	ch.Rubric = &CheckRubric{Verdict: CheckFlagged, RubricHash: "sha256:r", Findings: []CheckFinding{
-		{ID: "C1_injection", Score: 2, Path: "AGENT.md", Severity: SeverityHigh},
-		{ID: "C6_destructive_actions", Score: 3, Path: "AGENT.md", Severity: SeverityHigh}}}
+		{ID: corejudge.RubricIDInjection, Score: 2, Path: "AGENT.md", Severity: SeverityHigh},
+		{ID: corejudge.RubricIDDestructive, Score: 3, Path: "AGENT.md", Severity: SeverityHigh}}}
 	return ch, err
 }
 
@@ -173,7 +184,7 @@ type offTaskChecker struct{ postChecker }
 
 func (c *offTaskChecker) Check(ctx context.Context, p draftcheck.Package) (*Check, error) {
 	ch, err := c.postChecker.Check(ctx, p)
-	ch.Draft = &CheckDraft{Verdict: CheckFlagged, Score: 3, Scores: map[string]int{"off_task": 3}, Flagged: []string{"off_task"}, QuestionSet: "sha256:d"}
+	ch.Draft = &CheckDraft{Verdict: CheckFlagged, Score: 3, Scores: map[string]int{corejudge.DraftIDOffTask: 3}, Flagged: []string{corejudge.DraftIDOffTask}, QuestionSet: "sha256:d"}
 	return ch, err
 }
 

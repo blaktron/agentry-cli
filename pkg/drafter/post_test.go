@@ -275,7 +275,7 @@ func TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		first, second *Draft
-		keepFirst     bool
+		brokeARule    bool
 	}{
 		{"a flag's repair that goes past the cap", draft(true, false), draft(true, true), true},
 		{"a repair that breaks validate to come within the cap", draft(true, true), draft(false, false), true},
@@ -284,8 +284,8 @@ func TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed(t *testing.T) {
 		{"a repair that breaks both", draft(true, false), draft(false, true), true},
 		{"a repair that changes neither", draft(true, false), draft(true, false), false},
 	} {
-		if got := brokeARule(tc.first, tc.second); got != tc.keepFirst {
-			t.Errorf("%s: keepFirst %v", tc.name, got)
+		if got := brokeARule(tc.first, tc.second); got != tc.brokeARule {
+			t.Errorf("%s: brokeARule %v", tc.name, got)
 		}
 	}
 }

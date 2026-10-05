@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -103,18 +104,30 @@ func declaredCapabilities(raw json.RawMessage) []declared {
 // of what the first did, and the report that sent the first to its repair
 // turn does not name, one line each ("the MCP server osv-mcp"): what the
 // task needs, which the turn was told never to remove (repairFraming).
-// A capability is named when a line of the report says its value, or a
-// path it was declared at, or a path that holds it (a line on
-// "capabilities.exec" names every command).
+// A capability is named when a line of the report says its value (a
+// command only in a line on capabilities.exec, since a command's name is
+// often a common word), or a path it was declared at or inside it
+// ("capabilities.mcpServers[0].version"), or the list that holds it when
+// the line names no single item of that list ("capabilities.mcpServers:
+// at most 8"). So a line on one command, "capabilities.exec: tar: …", names
+// tar and leaves the others to keep.
 func droppedUnnamed(first, second *Draft, r RepairReport) []string {
 	kept := map[string]bool{}
 	for _, c := range declaredCapabilities(second.Manifest) {
 		kept[c.kind+"\x00"+c.value] = true
 	}
 	report := append(append([]string{}, r.Rules...), r.Flagged...)
+	all := declaredCapabilities(first.Manifest)
+	// A server the report named takes its own hosts and secrets with it.
+	var namedServers []string
+	for _, c := range all {
+		if c.kind == kindServer && named(report, c, all) {
+			namedServers = append(namedServers, c.paths...)
+		}
+	}
 	var out []string
-	for _, c := range declaredCapabilities(first.Manifest) {
-		if kept[c.kind+"\x00"+c.value] || named(report, c) {
+	for _, c := range all {
+		if kept[c.kind+"\x00"+c.value] || named(report, c, all) || within(c.paths, namedServers) {
 			continue
 		}
 		out = append(out, c.kind+" "+c.value)
@@ -122,25 +135,66 @@ func droppedUnnamed(first, second *Draft, r RepairReport) []string {
 	return out
 }
 
+// within says every path is inside one of the servers'.
+func within(paths, servers []string) bool {
+	for _, at := range paths {
+		if !slices.ContainsFunc(servers, func(srv string) bool { return strings.HasPrefix(at, srv+".") }) {
+			return false
+		}
+	}
+	return len(servers) > 0
+}
+
 // reportPath is a manifest path as validate and the post-step's own rules
 // write one in a report line.
-var reportPath = regexp.MustCompile(`capabilities(?:\.[A-Za-z]+(?:\[\d+\])*)*`)
+var reportPath = regexp.MustCompile(`capabilities(?:\.[A-Za-z]+(?:\[\d+\])*)+`)
 
-// named says a line of the report names the capability c.
-func named(report []string, c declared) bool {
+// named says a line of the report names the capability c, of all the
+// capabilities the first answer declared.
+func named(report []string, c declared, all []declared) bool {
 	for _, line := range report {
-		if saysValue(line, c.value) {
+		if says(line, c) {
 			return true
 		}
 		for _, p := range reportPath.FindAllString(line, -1) {
 			for _, at := range c.paths {
-				if at == p || strings.HasPrefix(at, p+".") || strings.HasPrefix(at, p+"[") {
+				if at == p || strings.HasPrefix(p, at+".") || strings.HasPrefix(p, at+"[") {
+					return true
+				}
+				if holds(p, at) && !namesAnItemOf(line, p, all) {
 					return true
 				}
 			}
 		}
 	}
 	return false
+}
+
+// holds says the manifest path list is a list that holds the item at.
+func holds(list, at string) bool {
+	return strings.HasPrefix(at, list+".") || strings.HasPrefix(at, list+"[")
+}
+
+// namesAnItemOf says line names one of the items the list at path list
+// holds, by its value or its own path.
+func namesAnItemOf(line, list string, all []declared) bool {
+	for _, c := range all {
+		for _, at := range c.paths {
+			if holds(list, at) && (says(line, c) || strings.Contains(line, at)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// says says line names c by its value; a command only in a line on
+// capabilities.exec.
+func says(line string, c declared) bool {
+	if c.kind == kindCommand && !strings.Contains(line, "capabilities.exec") {
+		return false
+	}
+	return saysValue(line, c.value)
 }
 
 // saysValue says line holds value as a word of its own: not inside a

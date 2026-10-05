@@ -141,8 +141,8 @@ func TestRecordCheck(t *testing.T) {
 	d.RecordCheck(flagged, 2, nil)
 	for _, want := range []string{"REPAIR-NOTE", "(off_task)",
 		"The release rubric's findings below are advisory: the Drafter was not asked to change the draft for them",
-		"reads AGENT.md as needing a capability the manifest does not declare (C3, high). Check that the manifest declares every host, program, file access and secret the instructions use; " +
-			"at publish a high finding sends the version to a person for review, not to refusal.",
+		"reads AGENT.md as needing a capability the manifest does not declare (C3, high). Check that the manifest declares every host, program, file access and secret the instructions use. " +
+			"At publish a high finding sends the version to a person for review, not to refusal.",
 		"flagged AGENT.md: the text reads as taking destructive actions the task does not need. (C6_destructive_actions, medium) " +
 			"At publish a finding of this severity is shown on the report of a version that publishes.",
 		"flagged agent.yaml: the text reads as sending data somewhere the task does not need. (C2_exfiltration, high) At publish a high finding sends the version to a person",

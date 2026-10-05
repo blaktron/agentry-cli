@@ -125,6 +125,6 @@ func TestADraftDeclaringAnUnprovidedCommandGetsTheRepairTurn(t *testing.T) {
 	clean := &Draft{Validation: json.RawMessage(`{"passed":true}`), Instructions: "# X\n", Manifest: execManifest(`{"commands": ["grep"]}`, false)}
 	broken := &Draft{Validation: json.RawMessage(`{"passed":true}`), Instructions: "# X\n", Manifest: execManifest(`{"commands": ["curl"]}`, false)}
 	if !brokeARule(clean, broken) || brokeARule(broken, clean) {
-		t.Fatal("keepFirst does not keep a first answer the exec rule passed over a second it refuses, or keeps a refused one over its mend")
+		t.Fatal("brokeARule does not keep a first answer the exec rule passed over a second it refuses, or keeps a refused one over its mend")
 	}
 }
