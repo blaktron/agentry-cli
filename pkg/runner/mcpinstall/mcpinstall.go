@@ -454,7 +454,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			}
 		}
 
-		egress, err := startInstallProxy(ctx, d, r.ID, allow, images, docker, logw)
+		egress, err := startInstallProxy(ctx, d, r.ID, storeDir, allow, images, docker, logw)
 		if err != nil {
 			return fmt.Errorf("install %s: %w", r.ID, err)
 		}
