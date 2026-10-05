@@ -36,7 +36,7 @@ func writeFile(t *testing.T, p, body string) {
 // The signatures a build is given: a stand-in bundle, never the registry.
 func init() {
 	ensureSignatures = func(_ context.Context, home, _ string, _ io.Writer) clamdb.DB {
-		return clamdb.DB{Dir: filepath.Join(home, "clamav", "db", "84cbc016d58b4b70"), Ref: clamdb.DefaultRef, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c", Daily: clamdb.Version{Number: 28143}}
+		return clamdb.DB{Dir: filepath.Join(home, "clamav", "db", "84cbc016d58b4b70"), Ref: policy.DefaultClamAVSignatures, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c", Daily: clamdb.Version{Number: 28143}}
 	}
 }
 

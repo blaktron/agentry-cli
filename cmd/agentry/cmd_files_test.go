@@ -51,7 +51,7 @@ func TestFilesEnsureRefreshesTheSignatures(t *testing.T) {
 	if gotHome != home || gotRef != policy.DefaultClamAVSignatures {
 		t.Fatalf("refreshed %q in %q", gotRef, gotHome)
 	}
-	if !strings.Contains(stderr, "clamav: signatures of 2026-10-04 06:25 UTC (daily 28143, main 63), "+policy.DefaultClamAVSignatures+"@sha256:84cbc016") {
+	if !strings.Contains(stderr, "clamav: holding the signatures of 2026-10-04 06:25 UTC (daily 28143, main 63; "+policy.DefaultClamAVSignatures+"@sha256:84cbc016)") {
 		t.Fatalf("stderr %q", stderr)
 	}
 

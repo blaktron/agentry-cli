@@ -23,16 +23,19 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// DefaultRef is the bundle this CLI refreshes from: a moving tag the
-// clamav-db workflow moves only to a digest it has signed and verified.
-const DefaultRef = "ghcr.io/blaktron/agentry-clamav-db:latest"
-
-// The plan's two ages (D15).
+// The plan's two ages (D15), and how often a refresh that failed is tried
+// again while a bundle is held.
 const (
 	// RefreshAfter: the registry is asked again once a day has passed.
 	RefreshAfter = 24 * time.Hour
+	// RetryAfter: a refresh that failed (the registry down, a bundle
+	// refused) is not tried again for an hour, so every run does not pay
+	// for the same failure.
+	RetryAfter = time.Hour
 	// StaleAfter: signatures older than this are named stale in the receipt.
 	StaleAfter = 7 * 24 * time.Hour
 )
@@ -43,7 +46,8 @@ var databases = []string{"main.cvd", "daily.cvd", "bytecode.cvd"}
 // DB is the bundle a decode mounts: where it is and what it is.
 type DB struct {
 	// Dir holds the three CVDs; empty when this machine has none.
-	Dir    string
+	Dir string
+	// Ref is the tag it was refreshed from, Digest the signed manifest's.
 	Ref    string
 	Digest string
 	// Daily dates the signatures: daily.cvd changes every day, main.cvd a
@@ -59,6 +63,20 @@ type DB struct {
 	Problem string
 }
 
+// Held says whether this machine has a bundle to mount.
+func (db DB) Held() bool { return db.Dir != "" }
+
+// Describe names the bundle for a person: the signatures' date, the two
+// versions and where they came from.
+func (db DB) Describe() string {
+	digest := strings.TrimPrefix(db.Digest, "sha256:")
+	if len(digest) > 12 {
+		digest = digest[:12]
+	}
+	return fmt.Sprintf("the signatures of %s (daily %d, main %d; %s@sha256:%s)",
+		db.Daily.Built.UTC().Format("2006-01-02 15:04 UTC"), db.Daily.Number, db.Main.Number, db.Ref, digest)
+}
+
 // The words Problem holds, the host's own, for the receipt.
 const (
 	ProblemNone    = "no ClamAV signatures could be fetched"
@@ -71,8 +89,10 @@ type state struct {
 	Digest  string    `json:"digest"`
 	Dir     string    `json:"dir"`
 	Checked time.Time `json:"checked"`
-	Daily   Version   `json:"daily"`
-	Main    Version   `json:"main"`
+	// Attempted is when a refresh last failed, for RetryAfter.
+	Attempted time.Time `json:"attempted,omitempty"`
+	Daily     Version   `json:"daily"`
+	Main      Version   `json:"main"`
 	// Layers is each database's digest, so a refresh downloads only what
 	// changed.
 	Layers map[string]string `json:"layers"`
@@ -85,8 +105,8 @@ const stateFile = "current.json"
 var (
 	now    = time.Now
 	scheme = "https"
-	// refreshTimeout bounds one refresh, the TUF fetch included.
-	refreshTimeout = 10 * time.Minute
+	// refreshTimeout bounds one refresh: a paid hosted run waits on it.
+	refreshTimeout = 5 * time.Minute
 )
 
 // Ensure answers the bundle for a decode, refreshing it first when the
@@ -95,7 +115,7 @@ var (
 // Problem, and the copy this machine has is answered.
 func Ensure(ctx context.Context, home, ref string, logw io.Writer) DB {
 	if ref == "" {
-		ref = DefaultRef
+		ref = policy.DefaultClamAVSignatures
 	}
 	if home == "" {
 		return DB{Ref: ref, Problem: ProblemNone}
@@ -103,16 +123,24 @@ func Ensure(ctx context.Context, home, ref string, logw io.Writer) DB {
 	dir := filepath.Join(home, "clamav")
 	cur := loadState(dir)
 	problem := ""
-	if cur == nil || cur.Ref != ref || now().Sub(cur.Checked) >= RefreshAfter {
+	due := cur == nil || cur.Ref != ref || (now().Sub(cur.Checked) >= RefreshAfter && now().Sub(cur.Attempted) >= RetryAfter)
+	if due {
 		rctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 		next, err := refresh(rctx, dir, ref, cur, logw)
 		cancel()
-		if err != nil {
+		switch {
+		case err == nil:
+			cur = next
+		default:
 			_, _ = fmt.Fprintf(logw, "clamav: could not refresh the signatures from %s: %v\n", ref, err)
 			problem = ProblemRefresh
-		} else {
-			cur = next
+			if cur != nil {
+				cur.Attempted = now().UTC()
+				_ = saveState(dir, cur)
+			}
 		}
+	} else if cur.Ref == ref && !cur.Attempted.IsZero() && cur.Attempted.After(cur.Checked) {
+		problem = ProblemRefresh
 	}
 	if cur == nil {
 		return DB{Ref: ref, Problem: ProblemNone}
@@ -133,13 +161,8 @@ func loadState(dir string) *state {
 		return nil
 	}
 	var st state
-	if json.Unmarshal(b, &st) != nil || !digestRE.MatchString(st.Digest) || st.Dir != bundleDirName(st.Digest) {
+	if json.Unmarshal(b, &st) != nil || !digestRE.MatchString(st.Digest) || st.Dir != bundleDirName(st.Digest) || whole(filepath.Join(dir, "db", st.Dir)) != nil {
 		return nil
-	}
-	for _, name := range databases {
-		if fi, err := os.Lstat(filepath.Join(dir, "db", st.Dir, name)); err != nil || !fi.Mode().IsRegular() {
-			return nil
-		}
 	}
 	return &st
 }
@@ -168,7 +191,7 @@ func refresh(ctx context.Context, dir, ref string, cur *state, logw io.Writer) (
 	if err != nil {
 		return nil, fmt.Errorf("%s@%s: %w", ref, digest, err)
 	}
-	if err := verified(ctx, reg, dir, digest); err != nil {
+	if err := verifyAttached(ctx, reg, dir, digest); err != nil {
 		return nil, fmt.Errorf("%s@%s: %w", ref, digest, err)
 	}
 	dbDir := filepath.Join(dir, "db")
@@ -225,7 +248,7 @@ func refresh(ctx context.Context, dir, ref string, cur *state, logw io.Writer) (
 	if err := os.Rename(tmp, final); err != nil {
 		// Another process made it current first; a bundle directory is
 		// renamed into place only whole, so it is this same bundle.
-		if loadOK(final) != nil {
+		if whole(final) != nil {
 			return nil, err
 		}
 	}
@@ -272,18 +295,18 @@ func bundleLayers(body []byte) (map[string]descriptor, error) {
 	return out, nil
 }
 
-// verified fetches the signatures attached to the digest and answers nil
-// once one verifies as the clamav-db workflow's over it. Cosign attaches
+// verifyAttached fetches the signatures attached to the digest and answers
+// nil once one verifies as the clamav-db workflow's over it. Cosign attaches
 // a signature as a referrer; GHCR has no referrers API, so the referrers
 // are read from the tag schema (sha256-<hex>) when the API does not answer.
-func verified(ctx context.Context, reg *registry, dir, digest string) error {
+func verifyAttached(ctx context.Context, reg *registry, dir, digest string) error {
 	idx, _, err := reg.get(ctx, "/referrers/"+digest, ociIndex, maxMetaBytes)
 	var doc manifestDoc
 	if err != nil || json.Unmarshal(idx, &doc) != nil || len(doc.Manifests) == 0 {
 		body, _, terr := reg.manifest(ctx, "sha256-"+strings.TrimPrefix(digest, "sha256:"), ociIndex)
 		if terr != nil {
 			if errors.Is(terr, errNotFound) {
-				return errors.New("it carries no signature")
+				return errUnsigned
 			}
 			return fmt.Errorf("its signatures: %w", terr)
 		}
@@ -295,7 +318,7 @@ func verified(ctx context.Context, reg *registry, dir, digest string) error {
 	if err != nil {
 		return fmt.Errorf("the Sigstore trust root: %w", err)
 	}
-	last := errors.New("it carries no signature")
+	last := errUnsigned
 	tried := 0
 	// The index's own artifact type is not to be relied on (GHCR's tag
 	// schema lists cosign's bundle under the empty config's type), so each
@@ -304,7 +327,7 @@ func verified(ctx context.Context, reg *registry, dir, digest string) error {
 		if !digestRE.MatchString(d.Digest) {
 			continue
 		}
-		if tried++; tried > 8 {
+		if tried++; tried > maxReferrers {
 			break
 		}
 		raw, err := signatureBundle(ctx, reg, d.Digest)
@@ -318,6 +341,12 @@ func verified(ctx context.Context, reg *registry, dir, digest string) error {
 	}
 	return last
 }
+
+// errUnsigned is a bundle with no signature attached; maxReferrers bounds
+// how many attached referrers are tried, a re-signed bundle having several.
+var errUnsigned = errors.New("it carries no signature")
+
+const maxReferrers = 8
 
 // signatureBundle fetches one signature manifest and its one layer, the
 // sigstore bundle.
@@ -336,8 +365,8 @@ func signatureBundle(ctx context.Context, reg *registry, digest string) ([]byte,
 	return reg.blob(ctx, m.Layers[0].Digest, maxMetaBytes)
 }
 
-// loadOK checks a bundle directory holds the three databases.
-func loadOK(dir string) error {
+// whole checks a bundle directory holds the three databases.
+func whole(dir string) error {
 	for _, name := range databases {
 		if fi, err := os.Lstat(filepath.Join(dir, name)); err != nil || !fi.Mode().IsRegular() {
 			return fmt.Errorf("%s is not whole", dir)

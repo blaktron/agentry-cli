@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
 )
 
 // The identity the bundle must be signed by: agentry-dockerimages'
@@ -25,10 +28,17 @@ const (
 // the transparency log's and the timestamp authorities' keys), fetched and
 // verified through its TUF repository from the TUF root sigstore-go embeds,
 // and cached under dir. A variable so tests use a recorded root.
+// Its fetcher has a client of its own with a timeout: go-tuf's takes no
+// context, and a stalled CDN would otherwise hold the run.
 var trustedRoot = func(ctx context.Context, dir string) (root.TrustedMaterial, error) {
-	opts := tuf.DefaultOptions().WithCachePath(dir).WithCacheValidity(1).WithContext(ctx)
+	f := fetcher.NewDefaultFetcher()
+	f.SetHTTPClient(&http.Client{Timeout: tufTimeout})
+	opts := tuf.DefaultOptions().WithCachePath(dir).WithCacheValidity(1).WithContext(ctx).WithFetcher(f)
 	return root.FetchTrustedRootWithOptions(opts)
 }
+
+// tufTimeout bounds each of the TUF repository's small files.
+const tufTimeout = time.Minute
 
 // verifySig is verifySignature, a variable so the refresh's tests run
 // without Sigstore; verifySignature's own tests use recorded signatures.

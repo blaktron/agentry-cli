@@ -13,7 +13,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // The media types the bundle is held to (agentry-dockerimages clamav-db.yaml).
@@ -40,19 +41,12 @@ type registry struct {
 	token string
 }
 
-// refRE is <host>/<repository>:<tag>, the only form the bundle is named by:
-// a tag that moves, since the bundle is daily.
-var refRE = regexp.MustCompile(`^([a-z0-9.-]+(?::[0-9]+)?)/([a-z0-9]+(?:[._/-][a-z0-9]+)*):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})$`)
-
-// ValidRef says whether ref names a repository and a tag.
-func ValidRef(ref string) bool { return refRE.MatchString(ref) }
-
 func newRegistry(ref string, client *http.Client, scheme string) (*registry, string, error) {
-	m := refRE.FindStringSubmatch(ref)
-	if m == nil {
-		return nil, "", fmt.Errorf("the ClamAV signature bundle %q is not <host>/<repository>:<tag>", ref)
+	host, repo, tag, ok := policy.SplitTagRef(ref)
+	if !ok {
+		return nil, "", fmt.Errorf("the ClamAV signature bundle %q is not <registry>/<repository>:<tag>", ref)
 	}
-	return &registry{client: client, base: scheme + "://" + m[1] + "/v2/" + m[2], host: m[1], repo: m[2]}, m[3], nil
+	return &registry{client: client, base: scheme + "://" + host + "/v2/" + repo, host: host, repo: repo}, tag, nil
 }
 
 // manifest fetches a manifest by tag or digest and answers its bytes and
@@ -257,6 +251,6 @@ type manifestDoc struct {
 
 var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-// httpClient is the client a refresh uses: bounded, so a stalled registry
-// fails the refresh rather than the run.
-var httpClient = &http.Client{Timeout: 10 * time.Minute}
+// httpClient is the client a refresh uses, bounded like the refresh, so a
+// stalled registry fails the refresh rather than holding the run.
+var httpClient = &http.Client{Timeout: refreshTimeout}

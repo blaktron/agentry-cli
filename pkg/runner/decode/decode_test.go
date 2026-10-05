@@ -286,7 +286,7 @@ func TestRunDecodesInAContainerWithNothing(t *testing.T) {
 
 // sampleSignatures is a bundle as clamdb.Ensure answers it.
 var sampleSignatures = clamdb.DB{
-	Dir: "/home/u/.agentry/runner/clamav/db/84cbc016d58b4b70", Ref: clamdb.DefaultRef,
+	Dir: "/home/u/.agentry/runner/clamav/db/84cbc016d58b4b70", Ref: policy.DefaultClamAVSignatures,
 	Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c",
 	Daily:  clamdb.Version{Number: 28143, Built: time.Date(2026, 10, 4, 6, 25, 0, 0, time.UTC)},
 	Main:   clamdb.Version{Number: 63, Built: time.Date(2025, 12, 16, 23, 18, 0, 0, time.UTC)},
@@ -312,7 +312,7 @@ func TestRunMountsTheSignaturesAndTheReceiptNamesThem(t *testing.T) {
 	if !slices.Equal(r.Mounts, wantMounts) {
 		t.Fatalf("mounts %+v", r.Mounts)
 	}
-	want := "each file and archive member was checked by ClamAV (clamscan, PUA off) before any decoder read it, against the signatures of 2026-10-04 06:25 UTC (daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b): 4 clean"
+	want := "each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against the signatures of 2026-10-04 06:25 UTC (daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b): 4 clean"
 	if got := res.Checks(); got != want {
 		t.Fatalf("checks =\n%s\nwant\n%s", got, want)
 	}

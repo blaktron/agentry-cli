@@ -860,7 +860,7 @@ network; `agentry files ensure` pulls it ahead of time), and
 the run reads them through `list_inputs` (each file's type, size and
 whether it could be read), `read_input` (the text) and `search_inputs`; the
 receipt's `decode` line says what was read. **Every file, and every file in
-an archive, is checked by ClamAV before any decoder reads it**, in the same
+an archive, is checked by ClamAV before its text is extracted**, in the same
 container, against a signature bundle the CLI refreshes once a day from
 `ghcr.io/blaktron/agentry-clamav-db` (about 110 MB the first time, the day's
 changes after) and verifies against the signature of the workflow that

@@ -43,7 +43,7 @@ var testDecodeImage = decode.Image{Tag: "agentry-decode:test", Files: "ghcr.io/b
 // makes it answer none, as with no network on a first run.
 var (
 	testSignatures = clamdb.DB{
-		Dir: "/stand-in/clamav", Ref: clamdb.DefaultRef, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c",
+		Dir: "/stand-in/clamav", Ref: policy.DefaultClamAVSignatures, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c",
 		Daily: clamdb.Version{Number: 28143}, Main: clamdb.Version{Number: 63},
 	}
 	signaturesOff bool
@@ -64,7 +64,7 @@ func init() {
 		decodeCalls.Lock()
 		defer decodeCalls.Unlock()
 		if signaturesOff {
-			return clamdb.DB{Ref: clamdb.DefaultRef, Problem: clamdb.ProblemNone}
+			return clamdb.DB{Ref: policy.DefaultClamAVSignatures, Problem: clamdb.ProblemNone}
 		}
 		return testSignatures
 	}
@@ -485,7 +485,7 @@ func TestASessionsReceiptSaysWhenEachFileWasDecoded(t *testing.T) {
 	}
 	<-done
 	line := env.CapabilitiesEnforced["decode"]
-	if !strings.HasPrefix(line, "the inputs were decoded before the run") || !strings.Contains(line, "; the files added during the session were each decoded before the agent was told of them: 1 decoded, 0 read as text; each file and archive member was checked by ClamAV") || !strings.HasSuffix(line, ": 1 clean") || !strings.Contains(line, ": 0 decoded, 1 read as text;") {
+	if !strings.HasPrefix(line, "the inputs were decoded before the run") || !strings.Contains(line, "; the files added during the session were each decoded before the agent was told of them: 1 decoded, 0 read as text; each file read and each archive unpacked was checked by ClamAV") || !strings.HasSuffix(line, ": 1 clean") || !strings.Contains(line, ": 0 decoded, 1 read as text;") {
 		t.Fatalf("decode line %q", line)
 	}
 }
@@ -678,7 +678,7 @@ func TestAClearRunsReceiptNamesTheSignatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if line := env.CapabilitiesEnforced["decode"]; !strings.Contains(line, "; each file and archive member was checked by ClamAV (clamscan, PUA off) before any decoder read it, against the signatures of") || !strings.HasSuffix(line, "(daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b): 1 clean") {
+	if line := env.CapabilitiesEnforced["decode"]; !strings.Contains(line, "; each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against the signatures of") || !strings.HasSuffix(line, "(daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b): 1 clean") {
 		t.Fatalf("decode line %q", line)
 	}
 }
@@ -738,8 +738,12 @@ func TestASessionsFileClamAVFindsIsRefusedAlone(t *testing.T) {
 		}
 	}
 	mu.Unlock()
-	if _, err := s.End(context.Background(), false); err != nil && !errors.Is(err, session.ErrEnded) {
+	env, err := s.End(context.Background(), false)
+	if err != nil && !errors.Is(err, session.ErrEnded) {
 		t.Fatal(err)
 	}
 	<-done
+	if line := env.CapabilitiesEnforced["decode"]; !strings.HasSuffix(line, "; files added during the session and refused before the agent was told of them: ClamAV found malware in eicar.com (Eicar-Test-Signature)") {
+		t.Fatalf("the refused file is not in the receipt: %q", line)
+	}
 }

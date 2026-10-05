@@ -440,8 +440,18 @@ func (i Images) ClamAVSignaturesRef() string {
 }
 
 // tagRefRE is <registry>/<repository>:<tag>, the shape a signature bundle is
-// named by (pkg/runner/clamdb holds the same).
+// named by: a tag that moves, since the bundle is daily.
 var tagRefRE = regexp.MustCompile(`^([a-z0-9.-]+(?::[0-9]+)?)/([a-z0-9]+(?:[._/-][a-z0-9]+)*):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})$`)
+
+// SplitTagRef splits <registry>/<repository>:<tag>, the one shape
+// images.clamavSignatures takes, answering ok false for any other.
+func SplitTagRef(ref string) (registry, repository, tag string, ok bool) {
+	m := tagRefRE.FindStringSubmatch(ref)
+	if m == nil {
+		return "", "", "", false
+	}
+	return m[1], m[2], m[3], true
+}
 
 // FilesImage is the files image this policy names: images.files, else the
 // CLI's pinned default. Resolved at use, as UnsafeImage is, so a saved

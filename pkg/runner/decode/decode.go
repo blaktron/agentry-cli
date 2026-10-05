@@ -252,9 +252,9 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	}
 	// The signatures are the runner home's own bundle, read-only, shared
 	// by every decode on the machine (Relabel is docker's shared :z).
-	if dir := img.Signatures.Dir; dir != "" {
+	if img.Signatures.Held() {
 		argv = append(argv, "--clamav", clamMount)
-		mounts = append(mounts, dockerx.Mount{Source: dir, Target: clamMount, ReadOnly: true, Relabel: true})
+		mounts = append(mounts, dockerx.Mount{Source: img.Signatures.Dir, Target: clamMount, ReadOnly: true, Relabel: true})
 	}
 	r := dockerx.RunSpec{
 		Name:    name,
@@ -301,7 +301,7 @@ const clamMount = "/clamav"
 // staged under in (checkReport): Run's last step, and the one a caller
 // that decodes some other way must take before it reads a byte of out.
 func Check(img Image, in, out string) (*Result, error) {
-	rep, err := checkReport(in, out, img.Signatures.Dir != "")
+	rep, err := checkReport(in, out, img.Signatures.Held())
 	if err != nil {
 		return nil, err
 	}
@@ -647,14 +647,18 @@ func (r *Result) Found() []runnerdecode.File {
 	return out
 }
 
+// refusalNames is how many files a refusal names before "and N more"; the
+// receipt's counts carry the rest.
+const refusalNames = 5
+
 // Refusal is the sentence a refused run, or a session's refused file,
 // gives: each file found and its signature, in the decode's own words.
 func (r *Result) Refusal() string {
 	found := r.Found()
 	parts := make([]string, 0, len(found))
 	for i, f := range found {
-		if i == 5 {
-			parts = append(parts, fmt.Sprintf("and %d more", len(found)-5))
+		if i == refusalNames {
+			parts = append(parts, fmt.Sprintf("and %d more", len(found)-refusalNames))
 			break
 		}
 		sig := f.Signature
@@ -683,19 +687,14 @@ func (r *Result) Checks() string {
 			unchecked[f.Unchecked]++
 		}
 	}
-	if s.Dir == "" {
+	if !s.Held() {
 		problem := s.Problem
 		if problem == "" {
 			problem = clamdb.ProblemNone
 		}
 		return "no file was checked for malware: " + problem
 	}
-	digest := strings.TrimPrefix(s.Digest, "sha256:")
-	if len(digest) > 12 {
-		digest = digest[:12]
-	}
-	line := fmt.Sprintf("each file and archive member was checked by ClamAV (clamscan, PUA off) before any decoder read it, against the signatures of %s (daily %d, main %d; %s@sha256:%s): %d clean",
-		s.Daily.Built.UTC().Format("2006-01-02 15:04 UTC"), s.Daily.Number, s.Main.Number, s.Ref, digest, clean)
+	line := fmt.Sprintf("each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against %s: %d clean", s.Describe(), clean)
 	if found > 0 {
 		line += fmt.Sprintf(", %d found", found)
 	}

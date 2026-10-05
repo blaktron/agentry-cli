@@ -253,16 +253,16 @@ func TestEnsureFetchesVerifiesAndRefreshesDaily(t *testing.T) {
 
 func TestEnsureRefusesWhatItCannotTrust(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		publish func(r *fakeRegistry, t *testing.T)
+		name, why string
+		publish   func(r *fakeRegistry, t *testing.T)
 	}{
-		{"unsigned", func(r *fakeRegistry, t *testing.T) { r.publish(dbs(t, 28144, 63, "06 Oct 2026 06-25 +0000"), true) }},
-		{"no signature at all", func(r *fakeRegistry, t *testing.T) {
+		{"unsigned", "not signed", func(r *fakeRegistry, t *testing.T) { r.publish(dbs(t, 28144, 63, "06 Oct 2026 06-25 +0000"), true) }},
+		{"no signature at all", "carries no signature", func(r *fakeRegistry, t *testing.T) {
 			d := r.publish(dbs(t, 28144, 63, "06 Oct 2026 06-25 +0000"), false)
 			delete(r.manifests, "sha256-"+strings.TrimPrefix(d, "sha256:"))
 		}},
-		{"older than the one held", func(r *fakeRegistry, t *testing.T) { r.publish(dbs(t, 28100, 63, "01 Oct 2026 06-25 +0000"), false) }},
-		{"a tampered layer", func(r *fakeRegistry, t *testing.T) {
+		{"older than the one held", "older than the daily 28143", func(r *fakeRegistry, t *testing.T) { r.publish(dbs(t, 28100, 63, "01 Oct 2026 06-25 +0000"), false) }},
+		{"a tampered layer", "does not hash to its digest", func(r *fakeRegistry, t *testing.T) {
 			r.publish(dbs(t, 28144, 63, "06 Oct 2026 06-25 +0000"), false)
 			for d, b := range r.blobs {
 				if bytes.Contains(b, []byte("daily signatures 28144")) {
@@ -270,7 +270,7 @@ func TestEnsureRefusesWhatItCannotTrust(t *testing.T) {
 				}
 			}
 		}},
-		{"a fourth layer", func(r *fakeRegistry, t *testing.T) {
+		{"a fourth layer", "4 layers", func(r *fakeRegistry, t *testing.T) {
 			m := manifestDoc{MediaType: ociManifest, ArtifactType: bundleType}
 			for i, name := range []string{"main.cvd", "daily.cvd", "bytecode.cvd", "extra.cvd"} {
 				d := r.blob(cvd(t, "06 Oct 2026 06-25 +0000", 28144+i, name))
@@ -279,7 +279,7 @@ func TestEnsureRefusesWhatItCannotTrust(t *testing.T) {
 			}
 			r.publishManifest(m, false)
 		}},
-		{"another artifact", func(r *fakeRegistry, t *testing.T) {
+		{"another artifact", "not a ClamAV signature bundle", func(r *fakeRegistry, t *testing.T) {
 			m := manifestDoc{MediaType: ociManifest, ArtifactType: "application/vnd.example.other"}
 			for _, name := range databases {
 				d := r.blob(cvd(t, "06 Oct 2026 06-25 +0000", 28144, name))
@@ -288,11 +288,23 @@ func TestEnsureRefusesWhatItCannotTrust(t *testing.T) {
 			}
 			r.publishManifest(m, false)
 		}},
-		{"a layer named outside the three", func(r *fakeRegistry, t *testing.T) {
+		{"a layer named outside the three", "not one of main.cvd", func(r *fakeRegistry, t *testing.T) {
 			m := manifestDoc{MediaType: ociManifest, ArtifactType: bundleType}
 			for _, name := range []string{"main.cvd", "daily.cvd", "../evil.cvd"} {
 				d := r.blob(cvd(t, "06 Oct 2026 06-25 +0000", 28144, name))
 				d.MediaType, d.Annotations = cvdType, map[string]string{titleKey: name}
+				m.Layers = append(m.Layers, d)
+			}
+			r.publishManifest(m, false)
+		}},
+		{"a layer's size misstated", "not the 9999", func(r *fakeRegistry, t *testing.T) {
+			m := manifestDoc{MediaType: ociManifest, ArtifactType: bundleType}
+			for _, name := range databases {
+				d := r.blob(cvd(t, "06 Oct 2026 06-25 +0000", 28144, name))
+				d.MediaType, d.Annotations = cvdType, map[string]string{titleKey: name}
+				if name == "daily.cvd" {
+					d.Size = 9999
+				}
 				m.Layers = append(m.Layers, d)
 			}
 			r.publishManifest(m, false)
@@ -312,8 +324,8 @@ func TestEnsureRefusesWhatItCannotTrust(t *testing.T) {
 			if db.Digest != held || db.Problem != ProblemRefresh || db.Dir == "" {
 				t.Errorf("Ensure took a bundle it cannot trust: %+v", db)
 			}
-			if !strings.Contains(log.String(), "could not refresh") {
-				t.Errorf("the refusal was not logged: %q", log.String())
+			if !strings.Contains(log.String(), "could not refresh") || !strings.Contains(log.String(), tc.why) {
+				t.Errorf("the refusal was not logged with %q: %q", tc.why, log.String())
 			}
 			entries, _ := os.ReadDir(filepath.Join(home, "clamav", "db"))
 			if len(entries) != 1 {
@@ -368,22 +380,48 @@ func TestParseCVDHeader(t *testing.T) {
 	}
 }
 
-func TestValidRef(t *testing.T) {
+func TestTheBundleIsNamedByARegistryRepositoryAndTag(t *testing.T) {
 	for ref, want := range map[string]bool{
-		DefaultRef: true,
+		policy.DefaultClamAVSignatures:                                         true,
 		"localhost:5000/blaktron/agentry-clamav-db:latest":                     true,
 		"ghcr.io/blaktron/agentry-clamav-db":                                   false,
 		"ghcr.io/blaktron/agentry-clamav-db@sha256:" + strings.Repeat("a", 64): false,
 		"https://ghcr.io/x:latest":                                             false,
 	} {
-		if got := ValidRef(ref); got != want {
-			t.Errorf("ValidRef(%q) = %v, want %v", ref, got, want)
+		if _, _, _, got := policy.SplitTagRef(ref); got != want {
+			t.Errorf("SplitTagRef(%q) ok = %v, want %v", ref, got, want)
 		}
 	}
 }
 
-func TestTheDefaultIsThePolicysDefault(t *testing.T) {
-	if DefaultRef != policy.DefaultClamAVSignatures || !ValidRef(policy.DefaultClamAVSignatures) {
-		t.Errorf("clamdb.DefaultRef %q and policy.DefaultClamAVSignatures %q differ", DefaultRef, policy.DefaultClamAVSignatures)
+// A refresh that fails is not tried again for an hour while a bundle is
+// held, and the receipt keeps saying it failed until one succeeds.
+func TestAFailedRefreshWaitsAnHour(t *testing.T) {
+	r, clock := setup(t)
+	home := t.TempDir()
+	r.publish(dbs(t, 28143, 63, "05 Oct 2026 06-25 +0000"), false)
+	Ensure(context.Background(), home, r.ref(), io.Discard)
+	*clock = clock.Add(25 * time.Hour)
+	r.publish(dbs(t, 28144, 63, "06 Oct 2026 06-25 +0000"), true) // unsigned
+	if db := Ensure(context.Background(), home, r.ref(), io.Discard); db.Problem != ProblemRefresh {
+		t.Fatalf("the refused refresh = %+v", db)
+	}
+	r.reset()
+	*clock = clock.Add(30 * time.Minute)
+	if db := Ensure(context.Background(), home, r.ref(), io.Discard); db.Problem != ProblemRefresh || r.count("") != 0 {
+		t.Errorf("half an hour on: %+v, %d requests; want the failure said and no request", db, r.count(""))
+	}
+	*clock = clock.Add(31 * time.Minute)
+	r.publish(dbs(t, 28144, 63, "06 Oct 2026 06-25 +0000"), false)
+	if db := Ensure(context.Background(), home, r.ref(), io.Discard); db.Problem != "" || db.Daily.Number != 28144 {
+		t.Errorf("an hour on, signed: %+v", db)
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	db := DB{Ref: policy.DefaultClamAVSignatures, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c",
+		Daily: Version{Number: 28143, Built: time.Date(2026, 10, 4, 6, 25, 0, 0, time.UTC)}, Main: Version{Number: 63}}
+	if got, want := db.Describe(), "the signatures of 2026-10-04 06:25 UTC (daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b)"; got != want {
+		t.Errorf("Describe = %q, want %q", got, want)
 	}
 }

@@ -47,7 +47,9 @@ type inputsDecoder struct {
 	// before is what was decoded before the agent started, added what a
 	// session added after: the receipt says when each was decoded.
 	before, added decode.Result
-	index         toolsrv.InputsIndex
+	// refused is each refusal of a session's added file, for the receipt.
+	refused []string
+	index   toolsrv.InputsIndex
 }
 
 // ensureDecode, ensureSignatures and runDecode are the decode step's
@@ -138,6 +140,8 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 		if err != nil {
 			return nil, Classify(ExitGateway, fmt.Errorf("the inputs could not be decoded: %w", err))
 		}
+		// With no home to keep it in there is no bundle, and the receipt
+		// says no file was checked (clamdb.Ensure answers ProblemNone).
 		home := x.p.RunnerHome
 		if home == "" {
 			home, _ = policy.Home()
@@ -241,6 +245,7 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	// A finding refuses this file alone: nothing of it is staged, the
 	// agent is not told of it, and the session goes on (D9).
 	if len(res.Found()) > 0 {
+		x.refused = append(x.refused, res.Refusal())
 		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", res.Refusal())
 	}
 	entries, err := x.stageTexts(res)
@@ -283,13 +288,23 @@ func (x *inputsDecoder) line() string {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	const addedWhen = "the files added during the session were each decoded before the agent was told of them"
+	var line string
 	switch {
 	case len(x.before.Report.Files) == 0 && len(x.added.Report.Files) == 0:
-		return ""
 	case len(x.added.Report.Files) == 0:
-		return x.before.Line()
+		line = x.before.Line()
 	case len(x.before.Report.Files) == 0:
-		return x.added.LineAs(addedWhen)
+		line = x.added.LineAs(addedWhen)
+	default:
+		line = strings.Join([]string{x.before.Line(), addedWhen + ": " + x.added.Counts(), x.added.Checks()}, "; ")
 	}
-	return strings.Join([]string{x.before.Line(), addedWhen + ": " + x.added.Counts(), x.added.Checks()}, "; ")
+	// A file refused during the session is named, never dropped in
+	// silence (D9).
+	if len(x.refused) > 0 {
+		if line != "" {
+			line += "; "
+		}
+		line += "files added during the session and refused before the agent was told of them: " + strings.Join(x.refused, "; ")
+	}
+	return line
 }

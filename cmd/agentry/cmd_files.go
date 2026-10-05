@@ -67,16 +67,17 @@ func newFilesEnsureCmd() *cobra.Command {
 			if err != nil {
 				return engine.Classify(engine.ExitPolicy, err)
 			}
-			db := filesSignatures(cmd.Context(), home, pol.Images.ClamAVSignaturesRef(), cmd.ErrOrStderr())
 			stderr := cmd.ErrOrStderr()
-			if db.Dir == "" {
+			db := filesSignatures(cmd.Context(), home, pol.Images.ClamAVSignaturesRef(), stderr)
+			if !db.Held() {
 				_, err = fmt.Fprintf(stderr, "clamav: %s from %s; runs check no file until a refresh succeeds\n", db.Problem, db.Ref)
 				return err
 			}
-			if _, err := fmt.Fprintf(stderr, "clamav: signatures of %s (daily %d, main %d), %s@%s\n", db.Daily.Built.UTC().Format("2006-01-02 15:04 UTC"), db.Daily.Number, db.Main.Number, db.Ref, db.Digest); err != nil || db.Problem == "" {
-				return err
+			line := "clamav: holding " + db.Describe()
+			if db.Problem != "" {
+				line += "; " + db.Problem + ", and runs use these until one succeeds"
 			}
-			_, err = fmt.Fprintf(stderr, "clamav: %s; runs use these until one succeeds\n", db.Problem)
+			_, err = fmt.Fprintln(stderr, line)
 			return err
 		},
 	}
