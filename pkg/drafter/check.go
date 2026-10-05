@@ -40,10 +40,12 @@ const (
 )
 
 // RubricIDUndeclared is the release rubric's C3: a capability the
-// instructions use that the manifest does not declare. It is recorded and
-// never sent to the repair turn. Until blaktron/agentry#731 the rubric read
-// an instruction that reads its own inputs and writes its report that way,
-// which editing the draft could not clear.
+// instructions use that the manifest does not declare. Like every rubric
+// finding on a draft it is recorded and never sent to the repair turn
+// (Repairable); its note asks the person to check the manifest. Until
+// blaktron/agentry#731 the rubric read an instruction that reads its own
+// inputs and writes its report that way, which editing the draft could not
+// clear.
 const RubricIDUndeclared = corejudge.RubricIDUndeclaredCapability
 
 // Check is draft.json's record of the check, under aiReview.check: the
@@ -76,12 +78,23 @@ type CheckRubric struct {
 	Failure    string         `json:"failure,omitempty"`
 }
 
-// CheckFinding is one rubric question at 2 or more.
+// CheckFinding is one rubric question at 2 or more, with the severity S5
+// would record for it at publish, as the core serves it (agentry-cli#569):
+// high sends the version to a person, medium (and low) is shown on the
+// report of a version that publishes.
 type CheckFinding struct {
-	ID    string `json:"id"`
-	Score int    `json:"score"`
-	Path  string `json:"path"`
+	ID       string `json:"id"`
+	Score    int    `json:"score"`
+	Path     string `json:"path"`
+	Severity string `json:"severity"`
 }
+
+// The severities a finding can carry.
+const (
+	SeverityHigh   = "high"
+	SeverityMedium = "medium"
+	SeverityLow    = "low"
+)
 
 // CheckDraft is the draft question set's half.
 type CheckDraft struct {
@@ -119,27 +132,20 @@ func (c *Check) Verdict() string {
 	return CheckPass
 }
 
-// Repairable is what of a check the repair turn can act on, one line each
-// in the CLI's own words (nothing of the judge's but ids, scores and the
-// package's own paths): the draft question's flag, and each rubric finding
-// but C3, which the draft cannot clear. Empty when there is nothing to
-// repair.
+// Repairable is what of a check the repair turn acts on, in the CLI's own
+// words: the draft question's flag (off_task), and nothing else
+// (agentry-cli#633; plan quickagents-that-run.md D6). The release rubric's
+// findings on a draft are advisory: they are recorded and named in the
+// notes, and S5 reads the submitted version again. Sending them to the
+// repair turn taught the model to clear a security QuickAgent's flags by
+// deleting the servers, hosts and background its task needs. Empty when
+// there is nothing to repair.
 func (c *Check) Repairable() []string {
-	if c == nil || c.Rubric == nil || c.Draft == nil {
+	if c == nil || c.Draft == nil || !slices.Contains(c.Draft.Flagged, corejudge.DraftIDOffTask) {
 		return nil
 	}
-	var out []string
-	if slices.Contains(c.Draft.Flagged, corejudge.DraftIDOffTask) {
-		out = append(out, fmt.Sprintf("AI Review off_task, score %d: an agent that follows the instructions would not do the task the description asks for "+
-			"(it does a different task, leaves out a part the description asks for, or returns a different kind of result).", c.Draft.Scores[corejudge.DraftIDOffTask]))
-	}
-	for _, f := range c.Rubric.Findings {
-		if f.ID == RubricIDUndeclared {
-			continue
-		}
-		out = append(out, fmt.Sprintf("AI Review release rubric %s, score %d, in %s: %s", f.ID, f.Score, f.Path, rubricMeaning[f.ID]))
-	}
-	return out
+	return []string{fmt.Sprintf("AI Review off_task, score %d: an agent that follows the instructions would not do the task the description asks for "+
+		"(it does a different task, leaves out a part the description asks for, or returns a different kind of result).", c.Draft.Scores[corejudge.DraftIDOffTask])}
 }
 
 // rubricMeaning is what each release rubric question asks, in the CLI's
@@ -254,7 +260,7 @@ func (l localChecker) Check(ctx context.Context, p draftcheck.Package) (*Check, 
 		out.Rubric.Scores = res.Rubric.Scores
 	}
 	for _, f := range res.Rubric.Findings {
-		out.Rubric.Findings = append(out.Rubric.Findings, CheckFinding{ID: f.ID, Score: f.Score, Path: f.Path})
+		out.Rubric.Findings = append(out.Rubric.Findings, CheckFinding{ID: f.ID, Score: f.Score, Path: f.Path, Severity: f.Severity})
 	}
 	if res.Draft.Verdict != corejudge.VerdictNotScanned {
 		out.Draft.Scores = res.Draft.Scores
@@ -359,6 +365,9 @@ func (c *Check) validAnswer(p draftcheck.Package) bool {
 		return f == "" || f == corejudge.FailureTimeout || f == corejudge.FailureJudgeError || f == corejudge.FailureTooLarge
 	}
 	score := func(n int) bool { return n >= 0 && n <= 3 }
+	// The route serves medium or high (ruleset 0.3.0); low is admitted for
+	// the rating plan quickagents-that-run.md M8 adds.
+	severity := func(s string) bool { return s == SeverityHigh || s == SeverityMedium || s == SeverityLow }
 	short := func(s string) bool {
 		return len(s) <= 200 && utf8.ValidString(s) && !strings.ContainsFunc(s, isControl)
 	}
@@ -383,7 +392,7 @@ func (c *Check) validAnswer(p draftcheck.Package) bool {
 		return false
 	}
 	for _, f := range r.Findings {
-		if _, ok := rubricMeaning[f.ID]; !ok || !score(f.Score) || (f.Path != "" && !paths[f.Path]) {
+		if _, ok := rubricMeaning[f.ID]; !ok || !score(f.Score) || (f.Path != "" && !paths[f.Path]) || !severity(f.Severity) {
 			return false
 		}
 	}
@@ -436,6 +445,34 @@ func (d *Draft) RecordCheck(c *Check, checks int, unanswered error) {
 	}
 }
 
+// severity is the finding's as the core served it, or, for a record that
+// carries none (a draft.json written before agentry-cli#569), the core's
+// own rule for its id and score.
+func (f CheckFinding) severity() string {
+	if f.Severity != "" {
+		return f.Severity
+	}
+	return corejudge.RubricSeverity(f.ID, f.Score)
+}
+
+// atPublish is what a rubric finding of a severity does at publish
+// (ruleset 0.3.0, agentry#773): a high one sends the version to a person,
+// any other is shown on the report of a version that publishes.
+func atPublish(severity string) string {
+	if severity == SeverityHigh {
+		return "at publish a high finding sends the version to a person for review, not to refusal."
+	}
+	return "at publish a finding of this severity is shown on the report of a version that publishes."
+}
+
+// upper is s with its first letter upper case.
+func upper(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func checkNote(c *Check) string {
 	var lines []string
 	switch {
@@ -447,14 +484,20 @@ func checkNote(c *Check) string {
 		if slices.Contains(c.Draft.Flagged, corejudge.DraftIDOffTask) {
 			lines = append(lines, "AI Review reads the instructions as not doing the task you described (off_task). Compare them with your description before you submit.")
 		}
+		if len(c.Rubric.Findings) > 0 {
+			lines = append(lines, "The release rubric's findings below are advisory: the Drafter was not asked to change the draft for them, "+
+				"and the pipeline reads the version you submit again.")
+		}
 		for _, f := range c.Rubric.Findings {
+			sev := f.severity()
 			if f.ID == RubricIDUndeclared {
-				lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, reads %s as needing a capability the manifest does not declare (C3). "+
-					"Check that the manifest declares every host, program, file access and secret the instructions use; at publish it sends the version to review, not to refusal.", f.Path))
+				lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, reads %s as needing a capability the manifest does not declare (C3, %s). "+
+					"Check that the manifest declares every host, program, file access and secret the instructions use; %s",
+					f.Path, sev, atPublish(sev)))
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, flagged %s: %s At publish the pipeline records it as a finding and sends the version to review.",
-				f.Path, rubricMeaning[f.ID]))
+			lines = append(lines, fmt.Sprintf("The release rubric, asked as it will be at publish, flagged %s: %s (%s, %s) %s",
+				f.Path, rubricMeaning[f.ID], f.ID, sev, upper(atPublish(sev))))
 		}
 		if c.Rubric.Verdict == CheckNotScanned {
 			lines = append(lines, "The release rubric could not be asked ("+c.Rubric.Failure+"); the pipeline reads the whole package at publish.")

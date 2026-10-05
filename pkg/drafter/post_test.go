@@ -284,7 +284,7 @@ func TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed(t *testing.T) {
 		{"a repair that breaks both", draft(true, false), draft(false, true), true},
 		{"a repair that changes neither", draft(true, false), draft(true, false), false},
 	} {
-		if got := keepFirst(tc.first, tc.second); got != tc.keepFirst {
+		if got := brokeARule(tc.first, tc.second); got != tc.keepFirst {
 			t.Errorf("%s: keepFirst %v", tc.name, got)
 		}
 	}

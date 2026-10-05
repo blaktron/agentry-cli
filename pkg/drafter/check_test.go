@@ -95,7 +95,7 @@ func TestCheckPackageSendsWhatS5Reads(t *testing.T) {
 // checkAnswer is the registry route's answer: the rubric flagged on C3 in
 // AGENT.md, the draft set passed.
 const checkAnswer = `{"rubric":{"verdict":"flagged","scores":{"C1_injection":0,"C2_exfiltration":0,"C3_undeclared_capability":3,` +
-	`"C4_user_deception":0,"C5_obfuscation":0,"C6_destructive_actions":0},"findings":[{"id":"C3_undeclared_capability","score":3,"path":"AGENT.md"}],` +
+	`"C4_user_deception":0,"C5_obfuscation":0,"C6_destructive_actions":0},"findings":[{"id":"C3_undeclared_capability","score":3,"path":"AGENT.md","severity":"high"}],` +
 	`"rubricHash":"sha256:6e87"},"draft":{"verdict":"pass","score":0,"scores":{"off_task":0},"flagged":[],"questionSet":"sha256:7940"},` +
 	`"model":"jev-1.13.0","usage":{"requests":10,"inputTokens":11660}}`
 
@@ -146,7 +146,7 @@ func TestTheRegistryCheckAsksOnceWithTheJobCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Verdict() != CheckFlagged || c.Rubric.Findings[0].ID != RubricIDUndeclared || c.Rubric.Findings[0].Path != "AGENT.md" ||
-		c.Draft.Verdict != CheckPass || c.Model != "jev-1.13.0" || c.Requests != 10 || c.InputTokens != 11660 {
+		c.Draft.Verdict != CheckPass || c.Rubric.Findings[0].Severity != SeverityHigh || c.Model != "jev-1.13.0" || c.Requests != 10 || c.InputTokens != 11660 {
 		t.Fatalf("the check: %+v %+v %+v", c, c.Rubric, c.Draft)
 	}
 	if r := c.Repairable(); len(r) != 0 {
@@ -174,6 +174,8 @@ func TestTheRegistryCheckAsksOnceWithTheJobCredential(t *testing.T) {
 		"an unknown verdict":        strings.Replace(checkAnswer, `"verdict":"pass"`, `"verdict":"safe"`, 1),
 		"a control character":       strings.Replace(checkAnswer, `"jev-1.13.0"`, `"jev\u001b[2J"`, 1),
 		"an unknown draft question": strings.Replace(checkAnswer, `"flagged":[]`, `"flagged":["be_nice"]`, 1),
+		"an unknown severity":       strings.Replace(checkAnswer, `"severity":"high"`, `"severity":"none"`, 1),
+		"no severity":               strings.Replace(checkAnswer, `,"severity":"high"`, ``, 1),
 		"not JSON":                  "<html>",
 	} {
 		if c, err := ask(answer(http.StatusOK, body)); err == nil {
@@ -201,8 +203,9 @@ func (fakeJev) Model() string { return "jev-test" }
 
 // TestTheLocalCheckAsksAsTheRegistryDoes: a draft on this computer asks the
 // core's own pkg/draftcheck with the person's key, and records the same
-// shape the registry answers; what a repair turn can act on is the draft
-// question's flag and each rubric finding but C3.
+// shape the registry answers, the core's severity with each finding; what a
+// repair turn acts on is the draft question's flag alone, never a rubric
+// finding (agentry-cli#633).
 func TestTheLocalCheckAsksAsTheRegistryDoes(t *testing.T) {
 	p, err := CheckPackage("Turn meeting notes into action items.", checkPackageDir(t))
 	if err != nil {
@@ -222,13 +225,17 @@ func TestTheLocalCheckAsksAsTheRegistryDoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := c.Repairable()
-	if c.Verdict() != CheckFlagged || !slices.Equal(c.Draft.Flagged, []string{corejudge.DraftIDOffTask}) || len(c.Rubric.Findings) != 2 || len(r) != 2 ||
-		!strings.HasPrefix(r[0], "AI Review off_task, score 3:") || !strings.HasPrefix(r[1], "AI Review release rubric C1_injection, score 3, in ") {
+	if c.Verdict() != CheckFlagged || !slices.Equal(c.Draft.Flagged, []string{corejudge.DraftIDOffTask}) || len(c.Rubric.Findings) != 2 || len(r) != 1 ||
+		!strings.HasPrefix(r[0], "AI Review off_task, score 3:") || c.Rubric.Findings[0].Severity != SeverityHigh {
 		t.Fatalf("a flagged check: %+v, repairable %q", c.Rubric.Findings, r)
 	}
-	for _, line := range r {
-		if strings.Contains(line, RubricIDUndeclared) {
-			t.Fatalf("C3 is offered to the repair turn: %q", line)
-		}
+
+	// The rubric's findings alone send nothing to the repair turn.
+	c, err = LocalChecker(fakeJev{map[string]float64{corejudge.RubricIDDestructive: 0.9, corejudge.RubricIDExfiltration: 0.9, corejudge.RubricIDInjection: 0.9}}).Check(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Verdict() != CheckFlagged || len(c.Rubric.Findings) != 3 || len(c.Repairable()) != 0 {
+		t.Fatalf("rubric findings are repairable: %+v, %q", c.Rubric.Findings, c.Repairable())
 	}
 }

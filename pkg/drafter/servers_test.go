@@ -122,7 +122,7 @@ func TestAServerThatCannotBeCheckedIsNotedNotRefused(t *testing.T) {
 func TestKeepFirstHoldsTheServerRule(t *testing.T) {
 	clean := &Draft{Validation: json.RawMessage(`{"passed":true}`), Instructions: "# X\n"}
 	broken := &Draft{Validation: json.RawMessage(`{"passed":true}`), Instructions: "# X\n", serverProblems: []string{"capabilities.mcpServers[0]: …"}}
-	if !keepFirst(clean, broken) || keepFirst(broken, clean) {
+	if !brokeARule(clean, broken) || brokeARule(broken, clean) {
 		t.Fatal("keepFirst does not hold the server rule")
 	}
 }
