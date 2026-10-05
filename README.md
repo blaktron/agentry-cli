@@ -542,23 +542,28 @@ Before a draft is written, the CLI checks it in four steps:
    `POST /api/v1/model-input/check` with the job's credential, which the
    registry admits at most twice a draft and which the CLI never retries.
    The verdicts go into `draft.json` under `aiReview.check`, and the notes
-   say what a flag means under "AI Review's check". The rubric's C3 (a
-   capability used but not declared) is recorded and never sent to the
-   repair turn, and at publish it sends the version to review, not to
-   refusal. A description over 8 KiB
+   say what a flag means under "AI Review's check". The release rubric's
+   findings on a draft are advisory (agentry-cli#633): each is recorded
+   with the severity stage S5 would give it, and named in the notes with
+   what it does at publish (a high finding sends the version to a person,
+   a medium one is shown on the report of a version that publishes), and
+   none is sent to the repair turn. A description over 8 KiB
    is not checked, and neither is a draft that could not be rendered. A
    pass does not mean the draft does all of the task, and the pipeline
    scans the whole version at publish whatever the check said.
 4. **One repair turn.** If the rules still refuse it, its instruction is
-   past 32 KiB, or the check flagged
-   something the draft can fix (`off_task`, or a rubric finding other than
-   C3), the Drafter runs once more, without its web tools. Its task is the
+   past 32 KiB, or the check reads it as not doing the task (`off_task`),
+   the Drafter runs once more, without its web tools. Its task is the
    rules' report, what the check flagged, and its own manifest and
    instructions, and nothing else: no notes, no page. With a flag it is also
    given the task the first turn was given, which AI Review passed before
    that turn started. The second answer is checked again, so a draft asks
-   at most two checks; a second answer that breaks rules the first passed
-   is not kept. A last message that was not a draft at all (not one JSON object,
+   at most two checks. The turn is told to change only what the report
+   names, and a second answer is not kept when it breaks rules the first
+   passed, or when it no longer declares an MCP server, an egress host, a
+   command or a secret of the first's that the report did not name, even
+   if it mends what the first broke: a repair never clears a report by
+   stripping what the task needs. A last message that was not a draft at all (not one JSON object,
    exit 17) gets the same turn, given the error and that message back. It returns the manifest again, and the instruction file too if
    the report names it. The second answer is corrected and checked like the
    first, and kept whether or not it passes; its notes say "Repaired once"

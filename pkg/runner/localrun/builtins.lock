@@ -32,3 +32,5 @@ agentry/drafter@1.5.0 sha256:c00b15e9e9bd1ff008e12e75caf573c1d9383950040c01ae3cf
 agentry/voice-writer@1.1.0 sha256:9b301ba0657d39c1bac4103796604f607eff21ea1326d4b4d640f39911d7bcd6
 # 1.6.0: a declared MCP server's version must run on the runtime's Node or Python (engines.node, requires_python; agentry-cli#609).
 agentry/drafter@1.6.0 sha256:48633e2daa5d9a6f9d10915f5e5243e64eb67e3e46701f77cab3188227e7a086
+# 1.7.0: a repair turn changes only what the report names and never drops a declared capability; rubric findings are advisory (agentry-cli#633, agentry-cli#548).
+agentry/drafter@1.7.0 sha256:5515a87005cda967c85c4603786ff48ad28aeb5e85e1ac3e4f65ffadbca3089f

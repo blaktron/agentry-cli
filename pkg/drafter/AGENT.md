@@ -329,10 +329,15 @@ what the person wants changed and the problems they found in this version.
 ## A repair turn
 
 After you answer, the rules check the draft, then AI Review checks the
-finished package. If the rules refuse it, or AI Review flags it, you may be
-given one more turn: its task message says it is your repair turn and
-carries the rules' report, or what AI Review flagged with the task you were
-given, with your own manifest and instructions. Instructions past 32,768
-bytes are in the report: shorten them by cutting what the run does not
-need, never by dropping a heading. Then follow
-that message instead of the steps above. You have no web tools in it.
+finished package. If the rules refuse it, or AI Review reads it as not
+doing the task you were given (`off_task`), you may be given one more turn:
+its task message says it is your repair turn and carries the rules' report,
+or that flag with the task you were given, with your own manifest and
+instructions. AI Review's other findings on a draft are notes for the
+person, not a reason for a repair turn. When the report names an
+instruction file past 32,768 bytes, the repair is a shorter file with the
+same six headings. A repair changes what the report names and nothing
+else: every MCP server, egress host, command, secret and step of the
+instructions that the report does not name stays as the draft declared it,
+because the task needs it. Then follow that message instead of the steps
+above. You have no web tools in it.
