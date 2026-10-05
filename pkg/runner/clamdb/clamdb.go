@@ -128,10 +128,9 @@ func Ensure(ctx context.Context, home, ref string, logw io.Writer) DB {
 		rctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 		next, err := refresh(rctx, dir, ref, cur, logw)
 		cancel()
-		switch {
-		case err == nil:
+		if err == nil {
 			cur = next
-		default:
+		} else {
 			_, _ = fmt.Fprintf(logw, "clamav: could not refresh the signatures from %s: %v\n", ref, err)
 			problem = ProblemRefresh
 			if cur != nil {
