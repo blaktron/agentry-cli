@@ -255,7 +255,7 @@ func TestTeardownLeakSweep(t *testing.T) {
 	f.Leftover = []string{"agentry-cafe0000-zombie"}
 	// A run container, not a relay: where the filter does not run, the run
 	// first checks the shared relay network, and it is empty.
-	f.ByLabel = map[string][]string{relayLabel: nil}
+	f.ByLabel = map[string][]string{RelayLabel: nil}
 	if _, err := Run(context.Background(), f, p); err != nil {
 		t.Fatal(err)
 	}

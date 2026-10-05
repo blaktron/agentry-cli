@@ -774,6 +774,20 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 // /root in the container env so the directory is the same on every host.
 const GatewayConfigDir = "/root/.docker/mcp/catalogs"
 
+// GatewayGuardFlags are the guards every gateway a run starts is given,
+// after its transport and files: --block-network, without which allowHosts
+// is advisory (§R11 invariant 1), then the guards the gateway defaults on,
+// passed explicitly so a run never inherits one it depends on from a
+// version's default. --block-secrets is default true in the pinned gateway
+// and passed anyway: the refusal of a secret-looking tool result is in the
+// enforcement table the receipts answer to (agentry#297), and a version
+// whose default flipped would drop the guard while the receipt still
+// claimed it. The MCP server survey starts its gateway with them too
+// (scripts/mcp-server-survey, agentry-cli#658).
+func GatewayGuardFlags() []string {
+	return []string{"--block-network", "--verify-signatures", "--log-calls", "--block-secrets"}
+}
+
 // gatewaySpec builds the gateway container launch (§R4). The flag set is
 // compiled, and --block-network is unconditional: without it allowHosts is
 // advisory, which is the sharpest foot-gun the research flagged (§R11
@@ -787,7 +801,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore
 	}
 	return spec.GatewaySpec{
 		Image: image,
-		Args: []string{
+		Args: append([]string{
 			"--transport", "streaming",
 			"--port", fmt.Sprintf("%d", spec.GatewayPort),
 			"--servers", strings.Join(servers, ","),
@@ -796,17 +810,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore
 			"--config", GatewayConfigDir + "/config.yaml",
 			"--tools-config", GatewayConfigDir + "/tools.yaml",
 			"--secrets", GatewayConfigDir + "/secrets.env",
-			"--block-network",
-			"--verify-signatures",
-			"--log-calls",
-			// Default true in the pinned gateway, passed anyway for the
-			// same reason --verify-signatures and --log-calls are: a run
-			// depends on it — the refusal of a secret-looking tool result
-			// is in the enforcement table the receipts answer to
-			// (agentry#297) — and a version whose default flipped would
-			// drop the guard while the receipt still claimed it.
-			"--block-secrets",
-		},
+		}, GatewayGuardFlags()...),
 		Env: []spec.EnvVar{
 			{Name: spec.GatewayAuthTokenEnv, FromRunToken: true},
 			// Pins the catalogs directory (see GatewayConfigDir); the

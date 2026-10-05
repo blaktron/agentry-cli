@@ -51,7 +51,13 @@ The Drafter ships a knowledge pack of its own, `drafting-guide`, under
 It covers how a QuickAgent run works and what a declared MCP server meets
 in the runner: musl runtimes, no install scripts, no launch arguments,
 stdio only, none of the run's files, and only port 443 to its declared
-hosts. It also has a checklist for a server before it is pinned. The runner
+hosts. It also has a checklist for a server before it is pinned, and two
+lists of servers: *Runs here*, the servers a survey saw install, start and
+list their tools in the runner, and *Does not run here*, the ones it saw
+fail, each with the reason, the runtime and the date. The lists are one
+thing for the Drafter to look at, not a judgement of any server's safety or
+quality (`knowledge/drafting-guide/sources/servers.yaml`; the survey is
+`scripts/mcp-server-survey` in the CLI's repository). The runner
 attaches it to every run of the Drafter, through the same knowledge tools,
 the repair turn included. It is part of this release, so the registry
 scans it with the published release. It is not one of your packs and does

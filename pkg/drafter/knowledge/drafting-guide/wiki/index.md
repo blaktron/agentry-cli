@@ -6,7 +6,7 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 
 # drafting-guide
 
-3 pages.
+5 pages.
 
 ## Guide
 
@@ -18,4 +18,6 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 
 ## Servers
 
+- [Does not run here](servers/does-not-run-here.md) — Declared MCP servers seen to fail in the runner, and packages whose presence as a direct dependency means a server cannot run, each with the reason, the runtime and the date. Generated from servers.yaml; do not edit by hand.
 - [Declared MCP servers](servers/mcp-servers.md) — What a declared MCP server meets in the runner (how it is installed, started and reached, and what it can reach), what that rules out, and how to check a server before you pin it. Read it before you pin any server.
+- [Runs here](servers/runs-here.md) — Declared MCP servers seen to install, start and list their tools in the runner, each with the versions, the runtime, the date and what a QuickAgent must declare for it. Generated from servers.yaml; do not edit by hand.
