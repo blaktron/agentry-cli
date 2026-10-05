@@ -218,7 +218,8 @@ release anyone installs.
 1. The runner checks each document with ClamAV, then detects it by content
    and decodes it before the agent, in the signed, digest-pinned files image
    with no network and every capability dropped. A document ClamAV finds
-   refuses the build, naming it. PDF uses `pdftotext`; DOCX, ODT, EPUB, RTF and HTML
+   refuses the build, naming it, and so does a risky one Hybrid Analysis
+   calls malicious (looked up by its SHA-256 alone, as for a run). PDF uses `pdftotext`; DOCX, ODT, EPUB, RTF and HTML
    use `pandoc` to GitHub Markdown; images use `tesseract`'s English OCR.
    XLSX, ODS and CSV become capped Markdown tables; PPTX and ODP become a
    section per slide. Legacy Office, Outlook mail and other formats use
@@ -876,7 +877,25 @@ goes on. The `decode` line names the signatures' date and what was clean,
 found or not checked (a file past 256 MB, or what an archive holds past
 that, is not checked, and says so). With no signatures yet (a first run
 with no network) the run goes on and the receipt says nothing was checked;
-signatures more than 7 days old are named stale. A zip, tar, 7z or rar (or a
+signatures more than 7 days old are named stale. **The risky files among
+them are also looked up on Hybrid Analysis (CrowdStrike) by their SHA-256
+alone, never uploaded**: executables and libraries, installers, `.jar` and
+`.apk`, scripts (`.js`, `.vbs`, `.ps1`, `.bat`, `.cmd`, `.hta`, `.wsf`),
+shortcuts and disk images, legacy and macro Office, RTF, PDF and CHM, by
+the type detected in the files image and by name, archive members
+included. The CLI process asks, never a container. A malicious verdict
+refuses the run before the agent starts, with exit 11, naming the file and
+its threat score (a session's added file alone); a suspicious one is noted
+in the `decode` line, which names each outcome: clean, noted, refused, or
+not checked with the reason (`no key`, `quota` after a minute of rate
+limits, `unavailable`, `the key was refused`), and the run goes on. The key
+is the runner policy's `hybridAnalysis` (the variable `$HYBRID_API_KEY` by
+default, or `hybridAnalysis.apiKeyEnv`; with `apiKeySource: keyring`, the
+keychain entry `provider:hybrid-analysis`, which the desktop's Providers
+settings are to write, agentry-desktop#530); with none, nothing is asked
+and the line says `not checked: no key`. A sandbox host hands its CLI
+Agentry's key in `$HYBRID_API_KEY` (agentry-enterprise#332), so a hosted
+run looks up once its host carries a CLI with this check. A zip, tar, 7z or rar (or a
 gzip, bzip2, xz or zstd stream) is unpacked and each file in it is listed
 and read by its path inside it, `archive.zip/folder/file.docx`: at most
 three archives deep, 2,000 files and 512 MiB unpacked in all. Links,

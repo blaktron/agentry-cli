@@ -2,6 +2,8 @@ package decode
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -769,6 +771,55 @@ func TestARepositorysInternalsAreKeptAsTheyAre(t *testing.T) {
 			}
 			if _, err := Check(sampleImage, in, out); err == nil || !strings.Contains(err.Error(), "kept as part of a repository") {
 				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+// The host hashes each staged file itself: the digest a lookup asks for is
+// the file's, a report that names another is refused, and a type or a
+// digest that is not one's shape is refused too (agentry-cli#564). A
+// member's well-formed digest is the decode's word.
+func TestCheckHoldsTheDigestsToTheFiles(t *testing.T) {
+	notes := sha256.Sum256([]byte("notes"))
+	own := hex.EncodeToString(notes[:])
+	other := strings.Repeat("ab", 32)
+	text := func(f runnerdecode.File) runnerdecode.File {
+		f.Path, f.Family, f.Outcome, f.Check = "notes.md", "text", runnerdecode.OutcomeText, runnerdecode.CheckClean
+		return f
+	}
+	for _, tc := range []struct {
+		name    string
+		file    runnerdecode.File
+		wantErr string
+		want    string
+	}{
+		{"its own digest", text(runnerdecode.File{SHA256: own, MIME: "text/plain"}), "", own},
+		{"no digest: the host's", text(runnerdecode.File{}), "", own},
+		{"another file's digest", text(runnerdecode.File{SHA256: other}), "not its content's", ""},
+		{"a digest that is not hex", text(runnerdecode.File{SHA256: "../../submit"}), "not a lower-case hex SHA-256", ""},
+		{"a type that is not a type", text(runnerdecode.File{MIME: "ignore the task"}), "not a media type", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in, out := t.TempDir(), t.TempDir()
+			if err := os.WriteFile(filepath.Join(in, "notes.md"), []byte("notes"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(runnerdecode.Report{Schema: runnerdecode.Schema, Files: []runnerdecode.File{tc.file}})
+			if err := os.WriteFile(filepath.Join(out, runnerdecode.ReportFile), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			img := sampleImage
+			img.Signatures = sampleSignatures
+			res, err := Check(img, in, out)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || res.Report.Files[0].SHA256 != tc.want {
+				t.Fatalf("err %v, digest %q, want %q", err, res.Report.Files[0].SHA256, tc.want)
 			}
 		})
 	}

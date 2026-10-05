@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -219,6 +221,26 @@ func TestArchiveMembersAreDecodedLikeFiles(t *testing.T) {
 	}
 	if f := got["bundle.zip/dir/readme.md"]; f.Size != int64(len("# Read me\n")) {
 		t.Errorf("a member's size: %+v", f)
+	}
+	// Every file read, archives and members included, carries its content's
+	// SHA-256 and the type it was detected as, for the host's Hybrid
+	// Analysis lookup (agentry-cli#564).
+	for path, body := range map[string]string{
+		"bundle.zip/dir/readme.md":           "# Read me\n",
+		"bundle.zip/report.pdf":              "%PDF not really",
+		"bundle.zip/inner.tar":               string(inner),
+		"bundle.zip/inner.tar/notes/todo.md": "- ship M4\n",
+	} {
+		sum := sha256.Sum256([]byte(body))
+		if f := got[path]; f.SHA256 != hex.EncodeToString(sum[:]) {
+			t.Errorf("%s: sha256 %q", path, f.SHA256)
+		}
+	}
+	if f := got["bundle.zip/report.pdf"]; f.MIME != "application/pdf" {
+		t.Errorf("a member's detected type: %q", f.MIME)
+	}
+	if f := got["bundle.zip"]; len(f.SHA256) != 64 || f.MIME == "" {
+		t.Errorf("an archive as staged: sha256 %q, type %q", f.SHA256, f.MIME)
 	}
 }
 

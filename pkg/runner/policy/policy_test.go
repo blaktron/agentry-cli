@@ -822,3 +822,24 @@ func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {
 		}
 	}
 }
+
+// TestHybridAnalysisKey (agentry-cli#564): the block names a variable,
+// HYBRID_API_KEY by default, the one a sandbox host hands the platform's
+// key in, and a source of env or keyring; anything else is refused, as
+// for judge.
+func TestHybridAnalysisKey(t *testing.T) {
+	p := Default()
+	if got := p.HybridAnalysis.KeyEnv(); got != "HYBRID_API_KEY" {
+		t.Fatalf("default variable %q", got)
+	}
+	p.HybridAnalysis = HybridAnalysisKey{APIKeyEnv: "MY_HA_KEY", APIKeySource: "keyring"}
+	if err := p.Validate(); err != nil || p.HybridAnalysis.KeyEnv() != "MY_HA_KEY" {
+		t.Fatalf("a named variable and the keyring: %v", err)
+	}
+	for _, bad := range []HybridAnalysisKey{{APIKeyEnv: "not a name"}, {APIKeySource: "file"}} {
+		p.HybridAnalysis = bad
+		if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "hybridAnalysis.") {
+			t.Errorf("%+v: %v", bad, err)
+		}
+	}
+}
