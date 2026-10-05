@@ -83,14 +83,21 @@ const (
 	// through alternatives links or that Contents left ambiguous
 	// (agentry-dockerimages#23; agentry-cli#516).
 	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.3@sha256:7c3da264fd0e8420f0367fa179e6b89110fa2f86bef8850f48d5f89ae21ab869"
-	// DefaultFilesImage is the files image, the decoders the decode step
-	// runs (agentry-notes plans/file-handling.md §4, D4;
-	// agentry-dockerimages#28): pandoc, pdftotext and tesseract on Alpine,
-	// amd64 and arm64, pinned by digest and pulled, never built at run time
-	// (agentry-cli#559). The digest is signed keyless by agentry-dockerimages'
-	// files workflow, and CI holds this pin to that signature
-	// (scripts/verify-files-image.sh); a run pulls by digest only.
-	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.03.2@sha256:ee6b4f66fa2f30444cf9ffbac4acb83e4829baa6915963bdc322d547463d5ddd"
+	// DefaultFilesImage is the files image, the decoders and the malware
+	// check the decode step runs (agentry-notes plans/file-handling.md §4,
+	// §7, D4; agentry-dockerimages#28, #30): pandoc, pdftotext, tesseract,
+	// Tika, libarchive and clamscan on Alpine, amd64 and arm64, pinned by
+	// digest and pulled, never built at run time (agentry-cli#559). The
+	// digest is signed keyless by agentry-dockerimages' files workflow, and
+	// CI holds this pin to that signature (scripts/verify-files-image.sh); a
+	// run pulls by digest only.
+	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.04.3@sha256:f8da034b365cd86c1498b041e87ee06faeb4264dfc6e25bd9c0d3013cf58a306"
+	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
+	// checks every input against (plan file-handling.md §7, D15;
+	// agentry-cli#563): a tag agentry-dockerimages' clamav-db workflow moves
+	// daily, only ever to a digest it has signed. It is not pinned, by
+	// design; the CLI verifies that signature at each refresh (pkg/runner/clamdb).
+	DefaultClamAVSignatures = "ghcr.io/blaktron/agentry-clamav-db:latest"
 	// Default trusted repositories for capabilities.mcpServers.
 	DefaultNPMRegistry  = "https://registry.npmjs.org"
 	DefaultPyPIRegistry = "https://pypi.org"
@@ -416,6 +423,34 @@ type Images struct {
 	// Files is the files image the decode step builds its image on,
 	// pinned by digest ("" = DefaultFilesImage; see FilesImage).
 	Files string `yaml:"files,omitempty"`
+	// ClamAVSignatures is the signature bundle the decode step refreshes,
+	// <registry>/<repository>:<tag> ("" = DefaultClamAVSignatures; see
+	// ClamAVSignaturesRef). A mirror must carry the clamav-db workflow's
+	// signature, which is checked whatever the repository.
+	ClamAVSignatures string `yaml:"clamavSignatures,omitempty"`
+}
+
+// ClamAVSignaturesRef is the signature bundle this policy names:
+// images.clamavSignatures, else the CLI's default.
+func (i Images) ClamAVSignaturesRef() string {
+	if i.ClamAVSignatures != "" {
+		return i.ClamAVSignatures
+	}
+	return DefaultClamAVSignatures
+}
+
+// tagRefRE is <registry>/<repository>:<tag>, the shape a signature bundle is
+// named by: a tag that moves, since the bundle is daily.
+var tagRefRE = regexp.MustCompile(`^([a-z0-9.-]+(?::[0-9]+)?)/([a-z0-9]+(?:[._/-][a-z0-9]+)*):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})$`)
+
+// SplitTagRef splits <registry>/<repository>:<tag>, the one shape
+// images.clamavSignatures takes, answering ok false for any other.
+func SplitTagRef(ref string) (registry, repository, tag string, ok bool) {
+	m := tagRefRE.FindStringSubmatch(ref)
+	if m == nil {
+		return "", "", "", false
+	}
+	return m[1], m[2], m[3], true
 }
 
 // FilesImage is the files image this policy names: images.files, else the
@@ -820,6 +855,9 @@ func (p *Policy) Validate() error {
 	if p.Images.Files != "" && !PinnedByDigest(p.Images.Files) {
 		return fmt.Errorf("images.files %q must be pinned by digest (<name>@sha256:<64 hex>): the files image is pulled by digest only", p.Images.Files)
 	}
+	if c := p.Images.ClamAVSignatures; c != "" && !tagRefRE.MatchString(c) {
+		return fmt.Errorf("images.clamavSignatures %q must be <registry>/<repository>:<tag>: the bundle moves daily and its signature is what is checked", c)
+	}
 	if p.Model.Provider == "" || p.Model.Name == "" {
 		return errors.New("model.provider and model.name are required")
 	}
@@ -1016,6 +1054,11 @@ images:
   # pinned by one; unset, the CLI's pinned default is used, and it moves
   # with the CLI.
   # files: ghcr.io/blaktron/agentry-files:<tag>@sha256:<digest>
+  # The ClamAV signatures every input is checked against before it is
+  # decoded: a bundle refreshed daily, verified against the signature of
+  # agentry-dockerimages' clamav-db workflow, whatever registry serves it.
+  # Unset, the CLI's default is used.
+  # clamavSignatures: ghcr.io/blaktron/agentry-clamav-db:latest
 
 model:
   # anthropic | openai | google, or custom for an OpenAI-compatible

@@ -12,8 +12,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
@@ -28,7 +30,11 @@ import (
 // wrote reaches the tools container unchecked. The words the index shows
 // the model come from the decode's fixed vocabulary, never from the
 // report's free text (decode.UnreadReason). A run with no inputs pulls
-// nothing and has no decode line.
+// nothing and has no decode line. Every file is checked by ClamAV before
+// any decoder reads it (plan file-handling.md §7; agentry-cli#563): a
+// finding refuses the run before the agent starts, with the policy class,
+// so a hosted run settles nothing (D9), and refuses a session's added file
+// alone.
 type inputsDecoder struct {
 	d  dockerx.Client
 	p  Params
@@ -41,14 +47,18 @@ type inputsDecoder struct {
 	// before is what was decoded before the agent started, added what a
 	// session added after: the receipt says when each was decoded.
 	before, added decode.Result
-	index         toolsrv.InputsIndex
+	// refused is each refusal of a session's added file, for the receipt.
+	refused []string
+	index   toolsrv.InputsIndex
 }
 
-// ensureDecode and runDecode are the decode step's two calls, variables
-// so the engine's tests can decode without a daemon.
+// ensureDecode, ensureSignatures and runDecode are the decode step's
+// calls, variables so the engine's tests can decode without a daemon or a
+// registry.
 var (
-	ensureDecode = decode.Ensure
-	runDecode    = decode.Run
+	ensureDecode     = decode.Ensure
+	ensureSignatures = clamdb.Ensure
+	runDecode        = decode.Run
 )
 
 // decodeInputs decodes what the run staged under /inputs. It answers nil
@@ -76,6 +86,9 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	res, err := x.decode(ctx, rd.inputs)
 	if err != nil {
 		return nil, err
+	}
+	if len(res.Found()) > 0 {
+		return nil, Classify(ExitPolicy, fmt.Errorf("the run was refused before the agent started: %s", res.Refusal()))
 	}
 	entries, err := x.stageTexts(res)
 	if err != nil {
@@ -114,9 +127,10 @@ func (x *inputsDecoder) indexIntake() error {
 }
 
 // decode runs the decode container over in, a directory this run made,
-// into a fresh output directory under the run root. The decode image is
-// ensured on first use: the files image is pulled only for a run that has
-// something to decode. The caller holds x.mu.
+// into a fresh output directory under the run root. The decode image and
+// the signatures are ensured on first use: the files image is pulled, and
+// the signature bundle refreshed, only for a run that has something to
+// decode. The caller holds x.mu.
 func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, error) {
 	if x.p.Policy == nil {
 		return nil, Classify(ExitCLI, errors.New("the inputs cannot be decoded: no policy names the files image"))
@@ -126,6 +140,13 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 		if err != nil {
 			return nil, Classify(ExitGateway, fmt.Errorf("the inputs could not be decoded: %w", err))
 		}
+		// With no home to keep it in there is no bundle, and the receipt
+		// says no file was checked (clamdb.Ensure answers ProblemNone).
+		home := x.p.RunnerHome
+		if home == "" {
+			home, _ = policy.Home()
+		}
+		img.Signatures = ensureSignatures(ctx, home, x.p.Policy.Images.ClamAVSignaturesRef(), x.p.Stderr)
 		x.img = &img
 	}
 	out := filepath.Join(x.rd.root, "decode", strconv.Itoa(x.seq))
@@ -221,6 +242,12 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	if err != nil {
 		return toolsrv.InputEntry{}, err
 	}
+	// A finding refuses this file alone: nothing of it is staged, the
+	// agent is not told of it, and the session goes on (D9).
+	if len(res.Found()) > 0 {
+		x.refused = append(x.refused, res.Refusal())
+		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", res.Refusal())
+	}
 	entries, err := x.stageTexts(res)
 	if err != nil {
 		return toolsrv.InputEntry{}, err
@@ -261,13 +288,23 @@ func (x *inputsDecoder) line() string {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	const addedWhen = "the files added during the session were each decoded before the agent was told of them"
+	var line string
 	switch {
 	case len(x.before.Report.Files) == 0 && len(x.added.Report.Files) == 0:
-		return ""
 	case len(x.added.Report.Files) == 0:
-		return x.before.Line()
+		line = x.before.Line()
 	case len(x.before.Report.Files) == 0:
-		return x.added.LineAs(addedWhen)
+		line = x.added.LineAs(addedWhen)
+	default:
+		line = strings.Join([]string{x.before.Line(), addedWhen + ": " + x.added.Counts(), x.added.Checks()}, "; ")
 	}
-	return strings.Join([]string{x.before.Line(), addedWhen + ": " + x.added.Counts()}, "; ")
+	// A file refused during the session is named, never dropped in
+	// silence (D9).
+	if len(x.refused) > 0 {
+		if line != "" {
+			line += "; "
+		}
+		line += "files added during the session and refused before the agent was told of them: " + strings.Join(x.refused, "; ")
+	}
+	return line
 }

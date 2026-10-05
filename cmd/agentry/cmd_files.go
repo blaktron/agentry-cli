@@ -1,8 +1,9 @@
-// `agentry files ensure`: pull the files image this CLI pins, ahead of any
-// run (plan file-handling.md D4's addendum; agentry-cli#572). A sandbox host
-// runs it from the runhost image at each update (agentry-web#946), so
-// the first hosted run with inputs does not download the decoders inside a
-// paid run. It is the decode step's own pull, alone.
+// `agentry files ensure`: pull the files image this CLI pins, and refresh
+// the ClamAV signatures, ahead of any run (plan file-handling.md D4's
+// addendum, §7; agentry-cli#572, #563). A sandbox host runs it from the
+// runhost image at each update (agentry-web#946), so the first hosted run
+// with inputs downloads neither the decoders nor the signatures inside a
+// paid run. It is the decode step's own pull and refresh, alone.
 package main
 
 import (
@@ -12,14 +13,19 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// filesDocker is the docker client the files commands use (tests replace it).
-var filesDocker = func() dockerx.Client { return dockerx.New() }
+// filesDocker is the docker client the files commands use, and
+// filesSignatures the signatures' refresh (tests replace both).
+var (
+	filesDocker     = func() dockerx.Client { return dockerx.New() }
+	filesSignatures = clamdb.Ensure
+)
 
 func newFilesCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -36,11 +42,14 @@ func newFilesEnsureCmd() *cobra.Command {
 	var policyPath string
 	cmd := &cobra.Command{
 		Use:   "ensure",
-		Short: "Pull the files image the runner policy names, so no run has to",
+		Short: "Pull the files image and refresh the ClamAV signatures, so no run has to",
 		Long: "Pulls the files image the runner policy names (images.files, else the one this CLI pins), by digest,\n" +
 			"unless it is already on this machine, and prints its reference. A reference not pinned by digest is\n" +
-			"refused. Nothing is built and no run starts. Without --policy, the policy file under the runner home is\n" +
-			"read if there is one, and this CLI's defaults otherwise; nothing is written.",
+			"refused. It then refreshes the ClamAV signatures every input is checked against (images.clamavSignatures,\n" +
+			"else this CLI's default) under the runner home when they were last fetched over a day ago, verifying\n" +
+			"their signature, and says on stderr which it holds; a refresh that fails is said, not an error, since a\n" +
+			"run uses the signatures it has. Nothing is built and no run starts. Without --policy, the policy file\n" +
+			"under the runner home is read if there is one, and this CLI's defaults otherwise; nothing is written.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			pol, err := filesPolicy(policyPath)
@@ -51,7 +60,24 @@ func newFilesEnsureCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), ref)
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), ref); err != nil {
+				return err
+			}
+			home, err := policy.Home()
+			if err != nil {
+				return engine.Classify(engine.ExitPolicy, err)
+			}
+			stderr := cmd.ErrOrStderr()
+			db := filesSignatures(cmd.Context(), home, pol.Images.ClamAVSignaturesRef(), stderr)
+			if !db.Held() {
+				_, err = fmt.Fprintf(stderr, "clamav: %s from %s; runs check no file until a refresh succeeds\n", db.Problem, db.Ref)
+				return err
+			}
+			line := "clamav: holding " + db.Describe()
+			if db.Problem != "" {
+				line += "; " + db.Problem + ", and runs use these until one succeeds"
+			}
+			_, err = fmt.Fprintln(stderr, line)
 			return err
 		},
 	}

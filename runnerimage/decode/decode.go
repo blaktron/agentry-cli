@@ -6,10 +6,12 @@
 // with a fixed argv — pdftotext for PDF, pandoc (in its sandbox mode) for
 // DOCX, ODT, EPUB and RTF, tesseract's OCR for images, and this package's
 // own spreadsheet and slide readers, plus Tika for the long tail. An
-// archive's members are unpacked and decoded in turn (archive.go). Nothing
-// a document contains reaches an argv but its own path. Text formats pass
-// as they are. The caller runs this in a container with no network and no
-// capabilities, the inputs mounted read-only.
+// archive's members are unpacked and decoded in turn (archive.go). Before
+// any decoder reads a file, every file and member is checked by ClamAV in
+// one clamscan run, and a file it finds is never decoded (clamav.go).
+// Nothing a document contains reaches an argv but its own path. Text
+// formats pass as they are. The caller runs this in a container with no
+// network and no capabilities, the inputs mounted read-only.
 //
 // This package is part of the embedded runner-image build context and so
 // imports nothing outside the standard library.
@@ -101,8 +103,15 @@ type File struct {
 	// Size is a member's unpacked size.
 	Size int64 `json:"size,omitempty"`
 	// Why is why an archive or a member was not read in full, in the
-	// closed vocabulary of archive.go.
+	// closed vocabulary of archive.go, or WhyFound.
 	Why Why `json:"why,omitempty"`
+	// Check is what the malware check made of it (clamav.go); empty for a
+	// file never written to be read (a link, a refused member, past the
+	// cap). Signature names what was found; Unchecked says why it was not
+	// checked.
+	Check     Check     `json:"check,omitempty"`
+	Signature string    `json:"signature,omitempty"`
+	Unchecked Unchecked `json:"unchecked,omitempty"`
 }
 
 // HasText says the decode wrote a text for it at Output: a file it
@@ -121,7 +130,7 @@ type Report struct {
 // Tools are the absolute paths of the detectors and external decoders; zero
 // values take the runner image's.
 type Tools struct {
-	PDFToText, Pandoc, Tesseract, File, Tika, Bsdtar, Bsdcat string
+	PDFToText, Pandoc, Tesseract, File, Tika, Bsdtar, Bsdcat, Clamscan string
 }
 
 func (t Tools) withDefaults() Tools {
@@ -145,6 +154,9 @@ func (t Tools) withDefaults() Tools {
 	}
 	if t.Bsdcat == "" {
 		t.Bsdcat = "/usr/bin/bsdcat"
+	}
+	if t.Clamscan == "" {
+		t.Clamscan = "/usr/bin/clamscan"
 	}
 	return t
 }
@@ -181,6 +193,10 @@ type Limits struct {
 	// MaxUnpackedBytes is what every archive in the decode may unpack in
 	// all, counted as each member streams (default 512 MiB; D5).
 	MaxUnpackedBytes int64
+	// ClamDB is the directory of ClamAV signatures the malware check reads
+	// (the host's bundle, mounted read-only); empty, nothing is checked and
+	// every file says so.
+	ClamDB string
 }
 
 func (l Limits) withDefaults() Limits {
@@ -211,7 +227,10 @@ func (l Limits) withDefaults() Limits {
 // Decode decodes every regular file under in into out and writes the
 // report to out/decode.json. A file's failure is its outcome; the error is
 // for the roots alone. The file cap counts an archive's members with the
-// files as staged (D5).
+// files as staged (D5). It goes in three passes: every file is detected and
+// every archive unpacked, the members kept until the end; then everything
+// is checked by ClamAV at once; then each file the check did not find is
+// decoded.
 func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Report, error) {
 	tools, lim = tools.withDefaults(), lim.withDefaults()
 	rep := Report{Schema: Schema, Files: []File{}}
@@ -255,6 +274,10 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 	if err != nil {
 		return rep, fmt.Errorf("decode: walk %s: %w", in, err)
 	}
+	d.scan(ctx)
+	for _, p := range d.pending {
+		d.decodePending(ctx, p)
+	}
 	rep.Files = d.files
 	sort.Slice(rep.Files, func(i, j int) bool { return rep.Files[i].Path < rep.Files[j].Path })
 	raw, err := json.MarshalIndent(rep, "", "  ")
@@ -281,48 +304,92 @@ type decoder struct {
 	budget int64
 	seq    int
 	files  []File
+	// targets are the files the malware check reads; pending the files
+	// left to decode once it has, each holding its place in files.
+	targets []scanTarget
+	pending []pendingDecode
 }
 
-// file decodes one file, as staged or unpacked: an archive is unpacked and
-// its members decoded in turn; anything else is decoded into out. in is
-// the archive a member came from and depth how many archives enclose it.
+// pendingDecode is a file detected and waiting for the check before it is
+// decoded: its place in the report and what detection made of it.
+type pendingDecode struct {
+	idx       int
+	src, rel  string
+	in        string
+	size      int64
+	kind      contentKind
+	detectErr error
+}
+
+// file takes one file, as staged or unpacked: an archive is unpacked and
+// its members taken in turn; anything else waits for the check, then is
+// decoded into out (decodePending). Either way the file is a target of the
+// check. in is the archive a member came from and depth how many archives
+// enclose it.
 func (d *decoder) file(ctx context.Context, src, rel, in string, depth int, size int64) {
 	fctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
 	kind, err := detect(fctx, src, d.tools)
+	cancel()
 	if err == nil && kind.archive != notArchive {
-		cancel()
 		d.archive(ctx, src, rel, in, depth, size, kind)
 		return
 	}
-	f := decodeKind(fctx, kind, err, src, rel, d.out, d.tools, d.lim, in != "")
-	cancel()
-	f.In = in
+	f := File{Path: rel, Family: kind.family, In: in}
 	if in != "" {
 		f.Size = size
 	}
 	d.files = append(d.files, f)
+	idx := len(d.files) - 1
+	d.targets = append(d.targets, scanTarget{idx: idx, src: src})
+	d.pending = append(d.pending, pendingDecode{idx: idx, src: src, rel: rel, in: in, size: size, kind: kind, detectErr: err})
+}
+
+// decodePending decodes one file the check did not find, with a timeout of
+// its own; a file it found keeps its place, refused and never read.
+func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
+	checked := d.files[p.idx]
+	if checked.Check == CheckFound {
+		checked.Outcome, checked.Why = OutcomeRefused, WhyFound
+		d.files[p.idx] = checked
+		return
+	}
+	fctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
+	f := decodeKind(fctx, p.kind, p.detectErr, p.src, p.rel, d.out, d.tools, d.lim, p.in != "")
+	cancel()
+	f.In = p.in
+	if p.in != "" {
+		f.Size = p.size
+	}
+	f.Check, f.Signature, f.Unchecked = checked.Check, checked.Signature, checked.Unchecked
+	d.files[p.idx] = f
 }
 
 // archive unpacks one archive into a directory of its own, records it and
-// every member, then decodes each member that was unpacked. Unpacking
-// shares the per-file timeout; each member then has its own.
+// every member, then takes each member that was unpacked. Unpacking shares
+// the per-file timeout. The members stay on disk until the decode ends, so
+// the check and the decoders read them after every archive is unpacked;
+// the unpacked-bytes budget bounds them all together. The archive itself
+// is a target of the check, whether or not it was unpacked.
 func (d *decoder) archive(ctx context.Context, src, rel, in string, depth int, size int64, kind contentKind) {
 	a := File{Path: rel, Family: FamilyArchive, Tool: kind.tool, In: in}
 	if in != "" {
 		a.Size = size
 	}
+	record := func(a File) {
+		d.files = append(d.files, a)
+		d.targets = append(d.targets, scanTarget{idx: len(d.files) - 1, src: src})
+	}
 	if depth >= MaxDepth {
 		a.Outcome, a.Why = OutcomeUndecodable, WhyTooDeep
-		d.files = append(d.files, a)
+		record(a)
 		return
 	}
 	dir := filepath.Join(d.unpack, strconv.Itoa(d.seq))
 	d.seq++
 	if err := os.Mkdir(dir, 0o700); err != nil {
-		d.files = append(d.files, undecodable(a, err.Error()))
+		record(undecodable(a, err.Error()))
 		return
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
 	uctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
 	members, why, opened := d.unpackInto(uctx, src, dir, rel, kind)
 	cancel()
@@ -335,7 +402,7 @@ func (d *decoder) archive(ctx context.Context, src, rel, in string, depth int, s
 		a.Outcome = OutcomeUnpacked
 	}
 	a.Why = why
-	d.files = append(d.files, a)
+	record(a)
 	for _, m := range members {
 		mrel := rel + "/" + m.name
 		if m.why != "" {
