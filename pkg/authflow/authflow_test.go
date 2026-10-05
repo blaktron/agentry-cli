@@ -3,11 +3,14 @@ package authflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -20,6 +23,89 @@ func get(t *testing.T, url string) *http.Response {
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
+}
+
+func TestDeclineRequiresTheFlowsNonce(t *testing.T) {
+	f, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for _, state := range []string{"WRONG", f.State} {
+		resp := get(t, fmt.Sprintf("http://127.0.0.1:%d/callback?state=%s&error=access_denied", f.Port, state))
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("decline status = %d", resp.StatusCode)
+		}
+		if state == "WRONG" {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			_, err := f.Wait(ctx)
+			cancel()
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("wrong nonce ended sign-in: %v", err)
+			}
+		}
+	}
+	if token, err := f.Wait(context.Background()); token != "" || !errors.Is(err, ErrDeclined) {
+		t.Fatalf("decline = %q, %v", token, err)
+	}
+}
+
+func TestExchangeDoesNotSendCodeToAnotherRegistry(t *testing.T) {
+	var reached atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"token":"agy_other-registry"}`))
+	}))
+	defer other.Close()
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
+	}))
+	defer registry.Close()
+	f, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	_ = f.AuthorizeURL(registry.URL)
+	resp := get(t, fmt.Sprintf("http://127.0.0.1:%d/callback?state=%s&code=agd_one-time", f.Port, f.State))
+	if resp.StatusCode != http.StatusBadGateway || reached.Load() != 0 {
+		t.Fatalf("exchange followed a redirect: status %d, other registry reached %d", resp.StatusCode, reached.Load())
+	}
+}
+
+func TestCloseCancelsAnActiveExchange(t *testing.T) {
+	started, cancelled := make(chan struct{}), make(chan struct{})
+	registry := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		<-r.Context().Done()
+		close(cancelled)
+	}))
+	defer registry.Close()
+	f, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	_ = f.AuthorizeURL(registry.URL)
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/callback?state=%s&code=agd_one-time", f.Port, f.State)) //nolint:gosec // test loopback listener
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("exchange did not start")
+	}
+	f.Close()
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("closed sign-in left its exchange active")
+	}
 }
 
 func TestHappyPathDeliversToken(t *testing.T) {

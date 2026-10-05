@@ -41,6 +41,8 @@ const keyringService = modelkey.Service
 const (
 	tokenRefKeyring = "keyring"
 	tokenRefFile    = "file"
+	// A local sign-out suppresses the legacy host-keyed keyring fallback.
+	tokenRefNone = "none"
 )
 
 // registryEntry is one configured registry.
@@ -163,8 +165,13 @@ func credentialFor(regURL string) string {
 		return t
 	}
 	if cfg, err := loadCLIConfig(); err == nil {
-		if e := cfg.findRegistry(regURL); e != nil && e.TokenRef == tokenRefFile && e.Token != "" {
-			return e.Token
+		if e := cfg.findRegistry(regURL); e != nil {
+			if e.TokenRef == tokenRefNone {
+				return ""
+			}
+			if e.TokenRef == tokenRefFile && e.Token != "" {
+				return e.Token
+			}
 		}
 	}
 	if keyringDisabled() {
@@ -192,4 +199,15 @@ func keyringSet(host, token string) error {
 		return fmt.Errorf("keyring store: %w", err)
 	}
 	return nil
+}
+
+func keyringDelete(host string) error {
+	if keyringDisabled() {
+		return fmt.Errorf("keyring disabled via %s", envNoKeyring)
+	}
+	err := keyring.Delete(keyringService, host)
+	if err == keyring.ErrNotFound {
+		return nil
+	}
+	return err
 }
