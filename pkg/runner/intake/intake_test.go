@@ -170,3 +170,21 @@ func TestCollectAnswersASecretFromTheSource(t *testing.T) {
 		t.Fatalf("with a terminal: answers = %+v, err = %v", a, err)
 	}
 }
+
+// TestABlankSecretQuestionThatIsNotRequiredIsNoAnswer pins what DR-70
+// builds on rather than anything it changed: a secret question that is not
+// required, left blank with no terminal and no source holding it, is no
+// answer and no error. The refusal such a run used to meet came from the
+// engine, and with the secret optional the engine now starts the run
+// without it (its TestAMissingOptionalSecretStartsTheRun).
+func TestABlankSecretQuestionThatIsNotRequiredIsNoAnswer(t *testing.T) {
+	qs := []manifest.IntakeQuestion{{ID: "github_token", Prompt: "A GitHub token, for private repositories", Type: manifest.IntakeSecret}}
+	none := func(string) bool { return false }
+	a, err := CollectWithSource(nil, qs, nil, []string{"GITHUB_TOKEN"}, none)
+	if err != nil {
+		t.Fatalf("a blank optional secret question refused: %v", err)
+	}
+	if len(a.Secrets) != 0 || a.FromSource["github_token"] {
+		t.Fatalf("answers = %+v; want none", a)
+	}
+}

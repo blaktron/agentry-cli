@@ -31,8 +31,15 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		"filesystem.write: " + renderFSAccess(c.Filesystem.Write),
 		"exec: " + renderExec(c.Exec),
 		"secrets: " + renderList(c.Secrets),
-		"dataAccess: " + renderDataAccess(c.DataAccess),
 	}
+	// Which declared secrets a run may go without (DR-70). Every declared
+	// secret stays on its own line, optional or not: the consent names
+	// them all, which is what lets a flip between optional and required
+	// ask nothing again (DEV-212, plan optional-secrets.md D6).
+	if len(c.OptionalSecrets) > 0 {
+		lines = append(lines, "optionalSecrets: "+renderList(c.OptionalSecrets))
+	}
+	lines = append(lines, "dataAccess: "+renderDataAccess(c.DataAccess))
 	// Declared MCP servers (RUNNER-PLAN-3): one line each — the consent
 	// gate and guided setup must show exactly what will be installed.
 	for _, srv := range c.MCPServers {

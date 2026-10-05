@@ -270,6 +270,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := writeSecretsFile(p, rd.secretsPath); err != nil {
 		return fail(env, redact, err)
 	}
+	// The optional secrets it goes without, before any replacer is built:
+	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
+	// receipt (DR-70).
+	rd.secretsAbsent = absentSecrets(p.Plan, secrets)
+	env.CapabilitiesEnforced = withAbsentNote(env.CapabilitiesEnforced, rd.secretsAbsent)
 	task, err := readTask(p.Task, rd.receiptsDir)
 	if err != nil {
 		return fail(env, redact, err)
