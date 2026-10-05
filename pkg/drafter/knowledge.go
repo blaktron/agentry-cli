@@ -125,10 +125,22 @@ var ErrKnowledgeTooLarge = errors.New("a draft reads at most " + knowledge.Forma
 // scanner to scan it.
 var ErrKnowledgeUnscanned = errors.New("the pack is not scanned, and AI Review must scan it before the Drafter reads it")
 
+// ErrKnowledgeNameTaken is a person's pack named as the pack the Drafter
+// ships (GuideName): both would be mounted at the same place.
+var ErrKnowledgeNameTaken = errors.New("the Drafter ships a knowledge pack of that name")
+
 // CheckKnowledgeSize holds a draft's packs to MaxKnowledgePacks and
-// MaxKnowledgeBytes, counted by each pack's files and its manifest: what a
-// client checks before it scans anything.
+// MaxKnowledgeBytes, counted by each pack's files and its manifest, and
+// refuses one named as the pack the Drafter ships (GuideName), which is
+// not one of the person's and counts against neither cap: what a client
+// checks before it scans anything. The runner refuses the same name again
+// when it mounts the packs (agentry-cli#657).
 func CheckKnowledgeSize(packs []*knowledge.Pack) error {
+	for _, p := range packs {
+		if p.Manifest.Name == GuideName {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("the knowledge pack %s: %w (its drafting guide); give your pack another name", GuideName, ErrKnowledgeNameTaken))
+		}
+	}
 	if len(packs) > MaxKnowledgePacks {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("%d knowledge packs: a draft reads at most %d: %w", len(packs), MaxKnowledgePacks, ErrKnowledgeTooLarge))
 	}

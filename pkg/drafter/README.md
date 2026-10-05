@@ -44,6 +44,22 @@ Nothing of a pack reaches its model unscanned: a pack Agentry scanned is read
 as that scan left it, and any other pack is scanned by AI Review before the
 draft starts. What a scan flagged is withheld, and the notes name it.
 
+## Its drafting guide
+
+The Drafter ships a knowledge pack of its own, `drafting-guide`, under
+`knowledge/drafting-guide/` in this release, declared in `knowledge.ships`.
+It covers how a QuickAgent run works and what a declared MCP server meets
+in the runner: musl runtimes, no install scripts, no launch arguments,
+stdio only, none of the run's files, and only port 443 to its declared
+hosts. It also has a checklist for a server before it is pinned. The runner
+attaches it to every run of the Drafter, through the same knowledge tools,
+the repair turn included. It is part of this release, so the registry
+scans it with the published release. It is not one of your packs and does
+not count against a draft's limit of packs, but a pack of yours with the
+same name is refused. An
+install of this release from the registry is an ordinary QuickAgent and
+carries the pack like any release that ships one.
+
 ## What it returns
 
 `AGENT.md` and `notes.md`, written with `write_report`, and a final answer

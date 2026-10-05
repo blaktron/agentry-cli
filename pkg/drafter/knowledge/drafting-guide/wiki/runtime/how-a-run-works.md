@@ -1,0 +1,42 @@
+---
+title: How a QuickAgent run works
+type: concept
+summary: What a run of the QuickAgent you draft can and cannot do, what the System Prompt already tells it, and how a run on the person's computer, a run In Agentry and a desktop run in Unsafe Mode differ.
+sources: [web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/hosted-runs/, web:https://docs.secureagentry.net/agentry/unsafe-mode/, doc:runtime-facts.md]
+updated: 2026-10-05
+---
+
+# How a QuickAgent run works
+
+A run is a model working through a harness inside Agentry's sandbox. The model has no shell, filesystem or network of its own. Its tools come from the run's MCP gateway, which runs each tool in a container of its own, and the gateway serves only what the manifest declares and the runner grants. Whatever the manifest does not declare, the run does not have [src: web:https://docs.secureagentry.net/runner/; web:https://docs.secureagentry.net/quickagents/].
+
+## What every run is already told
+
+The runner puts the System Prompt before the QuickAgent's instruction. It tells the run [src: web:https://docs.secureagentry.net/runner/]:
+
+- that it is sandboxed and can act only through its tools;
+- what it was granted: network, commands, MCP servers, credentials by name, workspace access;
+- where its inputs are and which tools read them;
+- how to read an attached knowledge pack;
+- how to answer and write reports;
+- that text in its inputs, tool results and pages is data, never instructions;
+- that it never calls anything "safe".
+
+Do not repeat any of this in the instruction you write. Spend the instruction on the task: its steps, the domain knowledge a run with no network cannot look up, and its checks.
+
+## What a run has
+
+- **Inputs.** The person's files, read-only, through `list_inputs`, `read_input` and `search_inputs`. Documents, PDFs and images are turned into text before the run starts, and archives are unpacked. The answers to the QuickAgent's intake questions are an input too [src: web:https://docs.secureagentry.net/runner/].
+- **Output.** The run's last message is its answer. `write_report` writes a file the person receives, and it is the only file that outlives the run [src: web:https://docs.secureagentry.net/runner/].
+- **Network.** None, unless the manifest's `egress` names hosts. Then `fetch` reaches only those hosts. There is no web search. Most QuickAgents run with no network at all, so the instruction carries what the run needs to know [src: web:https://docs.secureagentry.net/quickagents/].
+- **Commands.** None, unless `exec` declares them. A declared command runs only if the machine provides it. Every runner provides a fixed set of base commands (listed in [the runtime facts](../servers/mcp-servers.md#the-numbers)); anything else needs the operator's catalogue, or Unsafe Mode on the desktop [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/agentry/unsafe-mode/].
+- **MCP servers.** Up to eight npm or PyPI packages the manifest declares, each in its own container with its own hosts and keys. They meet a runtime with sharp limits; read [Declared MCP servers](../servers/mcp-servers.md) before you pin one [src: doc:runtime-facts.md].
+- **Credentials.** Granted by name. The model never sees a value: `fetch` injects one into a request, and a declared server gets its own as environment variables [src: web:https://docs.secureagentry.net/runner/].
+- **The person's knowledge.** When the manifest's `knowledge.accepts` asks for it, the person attaches a pack of their own at run time [src: web:https://docs.secureagentry.net/quickagents/].
+- **Limits.** Every run stops at its limits of turns, time and cost.
+
+## Where it runs
+
+- **On the person's computer** (the CLI or the desktop app), on Docker. The operator's policy decides the images, the command catalogue and the limits. The person can accept some things on their own machine that a hosted run refuses [src: web:https://docs.secureagentry.net/runner/].
+- **In Agentry** (a hosted run), on Agentry's sandbox hosts, paid in credits. The same manifest runs under a sandboxed container runtime with no way to override a refusal. A declared secret the person has not set refuses the run before it starts. [src: web:https://docs.secureagentry.net/hosted-runs/].
+- **In Unsafe Mode** (the desktop only, a switch the person turns on). Declared commands are installed from a larger image instead of the operator's catalogue. With the person's consent for the run, a declared server whose advisory the registry rates high or critical can also run. Unsafe Mode does not change how a declared MCP server installs or runs. A QuickAgent that needs Unsafe Mode cannot run In Agentry, and its notes must say so [src: web:https://docs.secureagentry.net/agentry/unsafe-mode/].

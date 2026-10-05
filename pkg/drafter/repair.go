@@ -210,7 +210,7 @@ const maxLastMessage = 32 << 10
 func Unparsed(env *receipt.Envelope, outDir string, desc webscan.Result, ref, build string, why error) *Draft {
 	d := &Draft{Matches: []Match{}, Sources: []Source{}, OpenQuestions: []string{},
 		ManifestError: "the Drafter's last message was not a draft: " + why.Error()}
-	d.Drafter = &Made{Ref: ref, Build: build, Model: env.Harness.Model, RunID: env.RunID}
+	d.Drafter = made(env, ref, build)
 	d.AIReview = reviewOf(env.Web, desc, filepath.Join(outDir, "receipts", engine.WebLedgerFile))
 	_ = FromReports(d, filepath.Join(outDir, "reports"))
 	var last string

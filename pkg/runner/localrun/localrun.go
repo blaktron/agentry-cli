@@ -178,9 +178,9 @@ func Examiner() Builtin {
 }
 
 // WithoutWebTools is the same package with no web tools: the Drafter's
-// repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing,
-// and a knowledge build that does not search the web (agentry-cli#523). A
-// grant can only be taken away here, never given.
+// repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing
+// from the web, and a knowledge build that does not search the web
+// (agentry-cli#523). A grant can only be taken away here, never given.
 func (b Builtin) WithoutWebTools() Builtin {
 	b.web, b.registry, b.searchedOnly = false, false, false
 	return b
@@ -511,14 +511,55 @@ type Run struct {
 // RepairRun is the Drafter's one repair turn after first (plan
 // builder-simplify.md §5.2 step 3; drafter.PostStep): the same package
 // without its web tools and with no web configuration, so it holds no key
-// and has nothing to read, given the turn's task, folder, budgets, run id
-// and usage reporter. Both clients run the turn this way.
+// and reads nothing from the web, given the turn's task, folder, budgets,
+// run id and usage reporter. It is given none of the person's packs; the
+// pack the Drafter ships reaches it as it reaches every run of the package
+// (withShippedPacks; agentry-cli#657). Both clients run the turn this way.
 func RepairRun(first Run, t drafter.RepairTurn) Run {
 	budgets := t.Budgets
 	return Run{
 		Builtin: first.Builtin.WithoutWebTools(), Home: first.Home, Policy: first.Policy, PolicySHA: first.PolicySHA,
 		PolicyFile: first.PolicyFile, Build: first.Build, Task: strings.NewReader(t.Task), OutDir: t.OutDir, Budgets: &budgets,
 		Adapter: first.Adapter, RunID: t.RunID, Stderr: first.Stderr, OnUsage: t.OnUsage,
+	}
+}
+
+// withShippedPacks is the run's knowledge: the packs the built-in ships in
+// its own embedded tree, loaded from the copy Materialize just held to the
+// tree's digest, before the caller's (agentry-cli#657; plan
+// drafter-knowledge.md D1, D12). Because it is read here, from the
+// package's own manifest, every run of the package carries them, the
+// Drafter's repair turn (RepairRun) included, whatever the caller passed.
+// The caller's packs stay the caller's: a shipped pack does not count
+// against a draft's caps, and one of the caller's that takes a shipped
+// pack's name is refused.
+func (r Run) withShippedPacks(workspace string, m *manifest.Manifest, meta *installdir.Meta) ([]engine.AttachedPack, error) {
+	shipped, err := engine.ShippedPacks(workspace, m, "built-in package tree "+meta.Digest)
+	if err != nil {
+		return nil, err
+	}
+	packs, err := engine.WithShipped(shipped, r.Knowledge)
+	if name, taken := engine.IsPackNameTaken(err); taken {
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("the knowledge pack %s: %s ships a knowledge pack of that name, mounted at %s/%s; attach a pack with another name", name, r.Builtin.Ref(), spec.KnowledgeMount, name))
+	}
+	return packs, err
+}
+
+// builtinCopyCheck holds the run's copy of a built-in's workspace to the
+// tree digest Materialize computed from the embedded bytes, before anything
+// reads it: the copy the engine stages a shipped pack and the instruction
+// from is then the embedded tree, as the receipt says, and not whatever the
+// runner home held between Materialize and the run (agentry-cli#657).
+func builtinCopyCheck(digest string) func(string) error {
+	return func(copyDir string) error {
+		got, err := TreeDigest(copyDir)
+		if err != nil {
+			return err
+		}
+		if got != digest {
+			return fmt.Errorf("the run's copy of the built-in package is %s, not its embedded tree %s", got, digest)
+		}
+		return nil
 	}
 }
 
@@ -551,6 +592,10 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		}
 		return nil, engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid:\n  %s", meta.Ref, strings.Join(msgs, "\n  ")))
 	}
+	knowledgePacks, err := r.withShippedPacks(workspace, m, meta)
+	if err != nil {
+		return nil, err
+	}
 	adapterName := cmp.Or(r.Adapter, adapter.DefaultName)
 	ad, err := adapter.Get(adapterName)
 	if err != nil {
@@ -582,7 +627,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	}
 	return engine.Run(ctx, d, engine.Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: r.Home,
-		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: r.Knowledge, Decoded: r.Decoded,
+		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: knowledgePacks, Decoded: r.Decoded,
 		// A built-in's inputs are staged by its own client: a package to
 		// review or revise, documents it decoded, a voice's texts. None is
 		// a person's file as given, so the run does not decode them again
@@ -590,6 +635,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		TextInputs: true,
 		Adapter:    ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
-		RunID: r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
+		CheckWorkspace: builtinCopyCheck(meta.Digest),
+		RunID:          r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
 	})
 }

@@ -126,7 +126,7 @@ func Finish(env *receipt.Envelope, outDir string, desc webscan.Result, ref, buil
 	if err != nil {
 		return nil, engine.Classify(engine.ExitOutputSchema, err)
 	}
-	d.Drafter = &Made{Ref: ref, Build: build, Model: env.Harness.Model, RunID: env.RunID}
+	d.Drafter = made(env, ref, build)
 	d.AIReview = reviewOf(env.Web, desc, filepath.Join(outDir, "receipts", engine.WebLedgerFile))
 	// The reports first: a report is read only into an empty field, so the
 	// withheld list, added after, never takes the notes' place.
