@@ -49,6 +49,11 @@ const instructionHeading = "\n----\n\n# The QuickAgent's instruction\n\n"
 type promptFacts struct {
 	caps    spec.CapSummary
 	secrets []string
+	// optional are the declared secrets, the release's own or a declared
+	// server's, that a run may go without (capabilities.optionalSecrets,
+	// DR-70); which ones this run went without is filled in at run time
+	// (spec.PHSecretsAbsent).
+	optional []string
 	// servers are the MCP servers the run has besides the runner's own
 	// tools: the QuickAgent's declared servers and the operator's
 	// dataAccess servers.
@@ -137,10 +142,14 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		if c.Fetches() {
 			b.WriteString(" fetch injects one into a request through its auth parameter.")
 		}
-		b.WriteString(" Never ask for, print or guess a credential.\n")
+		b.WriteString(" Never ask for, print or guess a credential.")
 	} else {
-		b.WriteString("- **Credentials.** None are granted to this run. Never ask for, print or guess one.\n")
+		b.WriteString("- **Credentials.** None are granted to this run. Never ask for, print or guess one.")
 	}
+	if len(f.optional) > 0 {
+		fmt.Fprintf(b, " Some declared secrets are optional, and a run may go without them: %s. Not given to this run: %s. Do the task without a secret this run was not given: the runner's own tools answer that it is not set, and an MCP server that needs it may refuse or work without it.", strings.Join(f.optional, ", "), spec.PHSecretsAbsent)
+	}
+	b.WriteString("\n")
 }
 
 func writeInputs(b *strings.Builder, f promptFacts) {

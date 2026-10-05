@@ -636,15 +636,35 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 	if prof != nil {
 		overrides = prof.Secrets
 	}
-	missing := []string{}
+	// An optional secret that would not resolve is a note, not a failure:
+	// the run starts without it (DR-70). Only a required one refuses.
+	missing, absent := []string{}, []string{}
 	for _, name := range secrets {
-		if !engine.SecretResolvable(name, overrides, pol.SecretSource) {
+		switch {
+		case engine.SecretResolvable(name, overrides, pol.SecretSource):
+		case m.Capabilities.IsOptionalSecret(name):
+			absent = append(absent, name)
+		default:
 			missing = append(missing, name)
 		}
 	}
+	note := ""
+	if len(absent) > 0 {
+		note = fmt.Sprintf("; optional and not set, so a run goes without them: %s", strings.Join(absent, ", "))
+	}
 	if len(missing) > 0 {
-		rep.fail("secrets", "%d of %d declared secret(s) would not resolve (run refuses with exit %d): %s — set them in the %s source or `agentry run --reconfigure-profile`",
-			len(missing), len(secrets), engine.ExitPolicy, strings.Join(missing, ", "), pol.SecretSource.Mode)
+		rep.fail("secrets", "%d of %d declared secret(s) would not resolve (run refuses with exit %d): %s — set them in the %s source or `agentry run --reconfigure-profile`%s",
+			len(missing), len(secrets), engine.ExitPolicy, strings.Join(missing, ", "), pol.SecretSource.Mode, note)
+		return
+	}
+	if len(absent) > 0 {
+		required := 0
+		for _, name := range secrets {
+			if !m.Capabilities.IsOptionalSecret(name) {
+				required++
+			}
+		}
+		rep.ok("secrets", "all %d required secret(s) resolve%s", required, note)
 		return
 	}
 	rep.ok("secrets", "all %d declared secret(s) resolve", len(secrets))
