@@ -202,7 +202,7 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 		MaxResults int    `json:"maxResults"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
-		return "search_inputs: " + err.Error(), true
+		return s.failed("search_inputs", err)
 	}
 	query := strings.TrimSpace(a.Query)
 	switch {
@@ -222,12 +222,12 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 	if a.Path != "" {
 		clean = path.Clean(a.Path)
 		if _, err := resolveUnder(s.spec.InputsDir, clean); err != nil {
-			return "search_inputs: " + err.Error(), true
+			return s.failed("search_inputs", err)
 		}
 	}
 	targets, err := s.searchTargets(clean)
 	if err != nil {
-		return "search_inputs: " + err.Error(), true
+		return s.failed("search_inputs", err)
 	}
 	needle := strings.ToLower(query)
 	var hits []string

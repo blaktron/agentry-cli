@@ -58,6 +58,15 @@ const (
 	// ReasonInputsNotDecoded: the decode step could not run (prepare), a
 	// fault of this machine and not of the inputs. Detail: which part.
 	ReasonInputsNotDecoded ReasonCode = "inputs-not-decoded"
+	// ReasonAgentBlocked: the agent ended the run as blocked with the
+	// runner's end_blocked tool (agent; agentry-cli#629): the task could
+	// not be done with what the run had. Its own sentence is in the error
+	// and the receipts, never here: the model wrote it.
+	ReasonAgentBlocked ReasonCode = "agent-blocked"
+	// ReasonRunnerBlocked: the runner ended the run as blocked on its own
+	// evidence (agent; agentry-cli#629): the runner's tools failed the
+	// agent. Detail: what the evidence was.
+	ReasonRunnerBlocked ReasonCode = "runner-blocked"
 )
 
 // The details of ReasonMCPInstallFailed: the install's step that failed.
@@ -101,6 +110,22 @@ const (
 	DecodeRun = "run"
 )
 
+// The details of ReasonRunnerBlocked: the runner's evidence, each a fault
+// of the run's machinery rather than of the agent (plan
+// quickagents-that-run.md D5: such a run is refunded hosted).
+const (
+	// BlockedToolsUnrecorded: the runner's tools could not write the run's
+	// output folder at all, not even their own ledger, so neither an input
+	// read nor a report could have reached the run.
+	BlockedToolsUnrecorded = "tools-unrecorded"
+	// BlockedInputsUnread: the agent called the input tools and every
+	// call failed.
+	BlockedInputsUnread = "inputs-unread"
+	// BlockedReportUnwritten: the agent called write_report and every
+	// call failed.
+	BlockedReportUnwritten = "report-unwritten"
+)
+
 // MaxReasonNames is how many names a reason keeps; the error's text, where
 // it is kept, names the rest. Exported, with ReasonCodes, for a driver that
 // holds a reason to the same list (agentry-enterprise's hostapi.ReceiptOf).
@@ -133,6 +158,8 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonSecretMissing:    {names: namesSecret},
 	ReasonInputRefused:     {details: []string{InputMalware, InputNameClash, InputUnreadable}},
 	ReasonInputsNotDecoded: {details: []string{DecodeImage, DecodeRun}},
+	ReasonAgentBlocked:     {},
+	ReasonRunnerBlocked:    {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},
 }
 
 // ReasonCodes returns the closed list of codes, sorted.

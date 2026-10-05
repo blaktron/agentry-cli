@@ -16,11 +16,12 @@ package toolsrv
 // agentry-cli#345); "5" the review grant (plan
 // desktop-review-key-and-run-cards.md §6.2, agentry-cli#503); "6" the
 // decoded inputs and search_inputs (plan file-handling.md §5,
-// agentry-cli#560). The server
+// agentry-cli#560); "7" the calls ledger and end_blocked (plan
+// quickagents-that-run.md M9, agentry-cli#629). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "6"
+const SpecVersion = "7"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -90,6 +91,9 @@ type Spec struct {
 	// answering only what AI Review passed. The compiler sets Enabled for a
 	// built-in granted it; the engine stamps the ledger.
 	Review Review `json:"review,omitzero"`
+	// Calls is the calls ledger (calls.go): stamped by the engine into a
+	// release's one-shot run alone, with end_blocked granted beside it.
+	Calls Calls `json:"calls,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
 	// Owner, when set, is the host user who ran the command: every file
@@ -275,5 +279,8 @@ func (s *Spec) GrantedTools() []string {
 		}
 	}
 	names = append(names, ToolWriteReport)
+	if s.Calls.Ledger != "" {
+		names = append(names, ToolEndBlocked)
+	}
 	return names
 }
