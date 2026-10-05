@@ -35,8 +35,8 @@ const (
 // AI Review's record and its mechanical slips corrected (Finish), rendered
 // into OutDir/package and checked by `agentry validate`'s own code
 // (pkg/validate), AI Review's check of the finished package, one repair
-// turn for a draft the rules refuse or the check flagged for something it
-// can fix, and the second answer checked again. `agentry draft` and the
+// turn for a draft the rules refuse or the check flagged as not doing the
+// task, and the second answer checked again. `agentry draft` and the
 // desktop's draft on this computer run it alike, so a draft's validation,
 // its repair turn's input and its check are one implementation.
 type PostStep struct {
@@ -212,8 +212,8 @@ func (p PostStep) renderAndValidate(d *Draft) (string, json.RawMessage) {
 // repair turn narrates count from the first turn's total, so a sandbox
 // host meters the draft as a whole.
 //
-// r says what sent the draft to it: the rules' report, what AI Review's
-// check flagged that the draft can fix, or both; with a flag the turn is
+// r says what sent the draft to it: the rules' report, AI Review's check
+// flagging it off_task, or both; with a flag the turn is
 // also given the first turn's task, which AI Review passed before that
 // turn started.
 func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r RepairReport) (*Draft, *receipt.Envelope) {
@@ -282,14 +282,15 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 // rendered package (the release rubric as S5 will ask it at publish, and
 // the draft question set against the person's description), and the
 // verdicts go into draft.json under aiReview.check. A draft the rules
-// refuse, or one the check flagged for something it can fix
-// (Check.Repairable: off_task, or a rubric finding but C3, which is
-// recorded and never repaired), is given its one
-// repair turn with the rules' report and what the check flagged, and the
-// second answer is checked again. So a draft asks at most two checks, the
+// refuse, or one the check flagged as not doing the task
+// (Check.Repairable: off_task alone; the release rubric's findings are
+// recorded as advisory and never repaired, quickagents-that-run.md D6), is
+// given its one repair turn with the rules' report and what the check
+// flagged, and the second answer is checked again. So a draft asks at most two checks, the
 // runs extension's cap for a hosted one (agentry-enterprise#265), and none
 // is ever retried: the registry counts a check as it admits it. A second
-// answer that breaks rules the first passed is not kept. A draft that
+// answer that breaks rules the first passed, or drops a declared
+// capability the report did not name, is not kept (keepFirst). A draft that
 // could not be rendered is not checked; repairSpent is a draft whose turn
 // was spent before (an answer that was not a draft).
 func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Envelope, repairSpent bool) (*Draft, *receipt.Envelope) {
@@ -351,10 +352,14 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 	if !rd.IsRepaired() || d.IsRepaired() {
 		return record(d, c, err)
 	}
-	if keepFirst(d, rd) {
-		// The second answer broke a rule the first passed, so the first
-		// is kept, and its package put back.
-		d.NoteSecondAnswerRefused(r)
+	if broke, dropped := keepFirst(d, rd, r); broke || len(dropped) > 0 {
+		// The second answer dropped what the task needs, or broke a rule
+		// the first passed, so the first is kept, and its package put back.
+		if len(dropped) > 0 {
+			d.NoteSecondAnswerDropped(r, dropped)
+		} else {
+			d.NoteSecondAnswerRefused(r)
+		}
 		if os.RemoveAll(p.pkg()) == nil {
 			p.validate(d)
 		}
@@ -364,14 +369,27 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 	return record(rd, c, err)
 }
 
-// keepFirst says a repair's second answer broke a rule its first passed:
-// validate's, which the registry enforces, or else the Drafter's cap on
-// the instructions, which keeps them within what AI Review's check reads,
-// or its rule on exec, which keeps them to what a run provides, or its
-// rule on declared servers' runtimes (checkServers).
-// A second answer that mends what the first broke is kept whatever else it
-// does.
-func keepFirst(first, second *Draft) bool {
+// keepFirst says a repair's first answer is kept over its second, r being
+// what sent the first to the repair turn. First, dropped is what the second
+// no longer declares of the first's MCP servers, egress hosts, commands and
+// secrets and r does not name (droppedUnnamed): the task needs them, and a
+// repair never clears a report by stripping them (agentry-cli#633), even
+// when the second answer passes rules the first broke. Otherwise broke says
+// the second broke a rule its first passed: validate's, which the registry
+// enforces, or else the Drafter's cap on the instructions, which keeps them
+// within what AI Review's check reads, or its rule on exec, which keeps them
+// to what a run provides, or its rule on declared servers' runtimes
+// (checkServers). A second answer that keeps what the first declared and
+// mends what it broke is kept whatever else it does.
+func keepFirst(first, second *Draft, r RepairReport) (broke bool, dropped []string) {
+	if dropped = droppedUnnamed(first, second, r); len(dropped) > 0 {
+		return false, dropped
+	}
+	return brokeARule(first, second), nil
+}
+
+// brokeARule is keepFirst's rule half.
+func brokeARule(first, second *Draft) bool {
 	if first.Passed() != second.Passed() {
 		return first.Passed()
 	}

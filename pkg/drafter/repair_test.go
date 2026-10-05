@@ -118,9 +118,10 @@ func TestARepairAfterTheCheckIsGivenWhatItFlaggedAndTheTask(t *testing.T) {
 }
 
 // TestRecordCheck: the check goes into aiReview.check with how many were
-// asked; a pass adds nothing to the notes, a flag says what it flagged and
-// what it means at publish, a check with no answer says why; and the notes keep
-// every section the post-step added, the repair's among them.
+// asked; a pass adds nothing to the notes, a flag says what it flagged, that
+// the rubric's findings are advisory, and what each does at publish by its
+// severity (agentry-cli#569), a check with no answer says why; and the notes
+// keep every section the post-step added, the repair's among them.
 func TestRecordCheck(t *testing.T) {
 	pass := &Check{Rubric: &CheckRubric{Verdict: CheckPass, Findings: []CheckFinding{}}, Draft: &CheckDraft{Verdict: CheckPass, Flagged: []string{}}}
 	d := refusedDraft()
@@ -131,11 +132,26 @@ func TestRecordCheck(t *testing.T) {
 
 	d = refusedDraft()
 	d.composeNotes("## Repaired once\n\nREPAIR-NOTE\n")
-	flagged := &Check{Rubric: &CheckRubric{Verdict: CheckFlagged, Findings: []CheckFinding{{ID: RubricIDUndeclared, Score: 3, Path: "AGENT.md"}}},
+	flagged := &Check{Rubric: &CheckRubric{Verdict: CheckFlagged, Findings: []CheckFinding{
+		{ID: RubricIDUndeclared, Score: 3, Path: "AGENT.md", Severity: SeverityHigh},
+		{ID: "C6_destructive_actions", Score: 2, Path: "AGENT.md", Severity: SeverityMedium},
+		// A record with no severity (before agentry-cli#569) reads the core's rule.
+		{ID: "C2_exfiltration", Score: 3, Path: "agent.yaml"}}},
 		Draft: &CheckDraft{Verdict: CheckFlagged, Score: 3, Flagged: []string{"off_task"}}}
 	d.RecordCheck(flagged, 2, nil)
-	if d.AIReview.Check.Checks != 2 || !strings.Contains(d.Notes, "REPAIR-NOTE") || !strings.Contains(d.Notes, "(off_task)") ||
-		!strings.Contains(d.Notes, "reads AGENT.md as needing a capability the manifest does not declare (C3)") ||
+	for _, want := range []string{"REPAIR-NOTE", "(off_task)",
+		"The release rubric's findings below are advisory: the Drafter was not asked to change the draft for them",
+		"reads AGENT.md as needing a capability the manifest does not declare (C3, high). Check that the manifest declares every host, program, file access and secret the instructions use. " +
+			"At publish a high finding sends the version to a person for review, not to refusal.",
+		"flagged AGENT.md: the text reads as taking destructive actions the task does not need. (C6_destructive_actions, medium) " +
+			"At publish a finding of this severity is shown on the report of a version that publishes.",
+		"flagged agent.yaml: the text reads as sending data somewhere the task does not need. (C2_exfiltration, high) At publish a high finding sends the version to a person",
+	} {
+		if !strings.Contains(d.Notes, want) {
+			t.Errorf("a flag's notes lack %q", want)
+		}
+	}
+	if d.AIReview.Check.Checks != 2 || strings.Contains(d.Notes, "sends the version to review.") ||
 		strings.Index(d.Notes, "REPAIR-NOTE") > strings.Index(d.Notes, "## AI Review's check") {
 		t.Fatalf("a flag's notes:\n%s", d.Notes)
 	}
@@ -250,7 +266,7 @@ func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
 		fmt.Sprintf("at most %d short Markdown bullets", MaxNoteBullets),
 		fmt.Sprintf("`openQuestions`: at most %d (above)", MaxOpenQuestions),
 		fmt.Sprintf("**at most %s bytes**", thousands(MaxInstructionBytes)),
-		fmt.Sprintf("Instructions past %s bytes are in the report", thousands(MaxInstructionBytes)),
+		fmt.Sprintf("When the report names an instruction file past %s bytes", thousands(MaxInstructionBytes)),
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the instruction does not state %q", want)

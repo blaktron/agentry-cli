@@ -24,9 +24,9 @@ const (
 )
 
 // RepairReport is what sends a draft to its one repair turn (plan
-// builder-simplify.md §5.2 steps 3 and 4): the rules' report on it, what AI
-// Review's check of the finished draft flagged that the draft can fix
-// (Check.Repairable), or both. A draft has one repair turn whatever sent
+// builder-simplify.md §5.2 steps 3 and 4, as quickagents-that-run.md D6
+// narrowed it): the rules' report on it, AI Review's check flagging it as
+// not doing the task (Check.Repairable, off_task alone), or both. A draft has one repair turn whatever sent
 // it. Task is the task the Drafter's first turn was given, which a turn
 // with a flag is also given.
 type RepairReport struct {
@@ -107,6 +107,8 @@ func RepairAnnouncement(r RepairReport) string {
 const repairFraming = "You have no web tools this turn and nothing new to read: " +
 	"fix the draft from what is here.\n\n" +
 	"- Change what the report names, and only what a fix to it needs. Keep every choice it does not name.\n" +
+	"- Never remove a declared MCP server, egress host, command or secret, or a step of the instructions, that the report does not name: " +
+	"the task needs them, and an answer that drops one is not kept. A report about the wording of the instructions is fixed by rewording it.\n" +
 	"- Your last message is the whole manifest again, corrected: `{\"manifest\": {…}, \"matches\": [], \"sources\": [], \"openQuestions\": []}`. " +
 	"The lists you returned before are kept, so leave them empty.\n" +
 	"- If the report names the instruction file (AGENT.md, the instructions, or a rule S1, S3 or S4), write the whole file again with `write_report`, " +
@@ -283,6 +285,26 @@ func (d *Draft) NoteNotRepaired(r RepairReport, why string) {
 func (d *Draft) NoteSecondAnswerRefused(r RepairReport) {
 	d.composeNotes("## Not repaired\n\n" + repairWordsOf[r.by()].refused + " for one more turn. " +
 		"Its second answer broke rules this one passes, so this is its first answer, with what the check said of it.\n")
+}
+
+// maxDroppedNoted is the most of what a second answer dropped that its
+// note names.
+const maxDroppedNoted = 10
+
+// NoteSecondAnswerDropped says in the notes that the first answer is kept,
+// because the second left out declared capabilities the report did not
+// name (keepFirst), r being what sent the first to its repair turn. A repair
+// does not clear a report by stripping what the task needs
+// (agentry-cli#633).
+func (d *Draft) NoteSecondAnswerDropped(r RepairReport, dropped []string) {
+	var b strings.Builder
+	b.WriteString("## Not repaired\n\n" + repairWordsOf[r.by()].refused + " for one more turn. " +
+		"Its second answer left out what this one declares and the report did not name, which the task needs, " +
+		"so this is its first answer, with what was said of it. It left out:\n\n")
+	for _, line := range reportLines(dropped, maxDroppedNoted, maxNoteLine) {
+		b.WriteString("- " + line + "\n")
+	}
+	d.composeNotes(b.String())
 }
 
 // Corrections is what the post-step corrected in the draft's manifest

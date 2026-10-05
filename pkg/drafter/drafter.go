@@ -32,7 +32,7 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "drafter"
-	Version   = "1.6.0"
+	Version   = "1.7.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a draft made on this computer is

@@ -117,13 +117,13 @@ func TestAServerThatCannotBeCheckedIsNotedNotRefused(t *testing.T) {
 	}
 }
 
-// keepFirst keeps a first answer the server rule passed over a second it
+// brokeARule keeps a first answer the server rule passed over a second it
 // refuses, and a second that mends the first.
 func TestKeepFirstHoldsTheServerRule(t *testing.T) {
 	clean := &Draft{Validation: json.RawMessage(`{"passed":true}`), Instructions: "# X\n"}
 	broken := &Draft{Validation: json.RawMessage(`{"passed":true}`), Instructions: "# X\n", serverProblems: []string{"capabilities.mcpServers[0]: …"}}
-	if !keepFirst(clean, broken) || keepFirst(broken, clean) {
-		t.Fatal("keepFirst does not hold the server rule")
+	if !brokeARule(clean, broken) || brokeARule(broken, clean) {
+		t.Fatal("brokeARule does not hold the server rule")
 	}
 }
 

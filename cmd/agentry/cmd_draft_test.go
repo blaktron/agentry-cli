@@ -961,8 +961,8 @@ func repairedGood(t *testing.T) string {
 // TestTheFinishedDraftIsChecked: a draft the rules pass is checked once,
 // with the person's description and exactly the rendered package's text
 // files, and the verdicts go into draft.json under aiReview.check, the
-// envelope's draft.check and the notes; a flag the draft cannot clear (C3)
-// does not spend the repair turn.
+// envelope's draft.check and the notes; a release-rubric finding (C3 here)
+// is advisory and does not spend the repair turn (agentry-cli#633).
 func TestTheFinishedDraftIsChecked(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -989,7 +989,7 @@ func TestTheFinishedDraftIsChecked(t *testing.T) {
 	d, _ := readDraft(t, out)
 	c := d.AIReview.Check
 	if c == nil || c.Checks != 1 || c.Verdict() != drafter.CheckFlagged || c.Rubric.Findings[0].ID != drafter.RubricIDUndeclared || strings.Contains(d.Notes, "## Repaired once") ||
-		!strings.Contains(d.Notes, "## AI Review's check") || !strings.Contains(d.Notes, "(C3)") {
+		!strings.Contains(d.Notes, "## AI Review's check") || !strings.Contains(d.Notes, "(C3, high)") || !strings.Contains(d.Notes, "advisory") {
 		t.Fatalf("the draft's check %+v, notes:\n%s", c, d.Notes)
 	}
 	var env struct {
