@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -44,6 +45,12 @@ func TestDecodeArchivesForReal(t *testing.T) {
 	img, err := Ensure(ctx, d, tag, pol, filepath.Join(home, "image"), os.Stderr)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The real signatures too, so clamscan reads every hostile archive and
+	// member, the bomb's included, beside the decoders (agentry-cli#563).
+	img.Signatures = clamdb.Ensure(ctx, home, pol.Images.ClamAVSignaturesRef(), os.Stderr)
+	if img.Signatures.Dir == "" {
+		t.Fatalf("no signatures: %+v", img.Signatures)
 	}
 	corpus := func(name string) []byte {
 		b, err := os.ReadFile(filepath.Join("..", "..", "knowledge", "creator", "testdata", "corpus", name))
@@ -160,6 +167,16 @@ func TestDecodeArchivesForReal(t *testing.T) {
 	}
 	for path, f := range got {
 		t.Errorf("unexpected %s: %+v", path, f)
+	}
+	// Nothing here is malware, and clamscan answered for every file it was
+	// given: clean, or past its limits (the bomb's leftovers).
+	for _, f := range res.Report.Files {
+		switch {
+		case f.Check == runnerdecode.CheckFound:
+			t.Errorf("%s: ClamAV found %q", f.Path, f.Signature)
+		case f.Check == runnerdecode.CheckUnchecked && f.Unchecked != runnerdecode.UncheckedTooLarge:
+			t.Errorf("%s: unchecked (%s)", f.Path, f.Unchecked)
+		}
 	}
 	_ = filepath.WalkDir(filepath.Dir(out), func(p string, e fs.DirEntry, err error) error {
 		if err == nil && (strings.Contains(e.Name(), "evil") || strings.Contains(e.Name(), "zeros")) {

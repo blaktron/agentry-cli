@@ -39,6 +39,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/plainpath"
 	"github.com/blaktron/agentry-cli/pkg/removal"
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -49,6 +50,10 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
+
+// ensureSignatures is clamdb.Ensure, a variable so the tests use a
+// stand-in bundle rather than the registry.
+var ensureSignatures = clamdb.Ensure
 
 // Options configure one build.
 type Options struct {
@@ -218,9 +223,15 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
+	// Every document is checked by ClamAV before it is decoded, and a
+	// finding refuses the build (plan file-handling.md §7, D9).
+	img.Signatures = ensureSignatures(ctx, o.Home, o.Policy.Images.ClamAVSignaturesRef(), logw)
 	dec, err := decode.Run(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), logw)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
+	}
+	if len(dec.Found()) > 0 {
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the build was refused before the agent started: %s", dec.Refusal()))
 	}
 	res.Decoded = dec
 

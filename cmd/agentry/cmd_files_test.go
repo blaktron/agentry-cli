@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -14,9 +18,53 @@ import (
 
 func fakeFilesDocker(t *testing.T, f *dockerx.Fake) {
 	t.Helper()
-	prev := filesDocker
-	t.Cleanup(func() { filesDocker = prev })
+	prev, prevSig := filesDocker, filesSignatures
+	t.Cleanup(func() { filesDocker, filesSignatures = prev, prevSig })
 	filesDocker = func() dockerx.Client { return f }
+	filesSignatures = func(_ context.Context, home, ref string, _ io.Writer) clamdb.DB {
+		return clamdb.DB{Dir: filepath.Join(home, "clamav", "db", "84cbc016d58b4b70"), Ref: ref, Digest: "sha256:84cbc016",
+			Daily: clamdb.Version{Number: 28143, Built: time.Date(2026, 10, 4, 6, 25, 0, 0, time.UTC)}, Main: clamdb.Version{Number: 63}}
+	}
+}
+
+// files ensure also refreshes the ClamAV signatures under the runner home
+// and says which it holds; a refresh that fails is said and is not an
+// error, since a run goes on with the signatures it has (agentry-cli#563).
+func TestFilesEnsureRefreshesTheSignatures(t *testing.T) {
+	isolateEnv(t)
+	home := t.TempDir()
+	t.Setenv(policy.HomeEnv, home)
+	fakeFilesDocker(t, &dockerx.Fake{})
+	var gotHome, gotRef string
+	inner := filesSignatures
+	filesSignatures = func(ctx context.Context, h, ref string, w io.Writer) clamdb.DB {
+		gotHome, gotRef = h, ref
+		return inner(ctx, h, ref, w)
+	}
+	out, stderr, err := runCLI(t, nil, "files", "ensure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != policy.DefaultFilesImage {
+		t.Fatalf("stdout %q: it must stay the files image's reference alone", out)
+	}
+	if gotHome != home || gotRef != policy.DefaultClamAVSignatures {
+		t.Fatalf("refreshed %q in %q", gotRef, gotHome)
+	}
+	if !strings.Contains(stderr, "clamav: signatures of 2026-10-04 06:25 UTC (daily 28143, main 63), "+policy.DefaultClamAVSignatures+"@sha256:84cbc016") {
+		t.Fatalf("stderr %q", stderr)
+	}
+
+	filesSignatures = func(_ context.Context, _, ref string, _ io.Writer) clamdb.DB {
+		return clamdb.DB{Ref: ref, Problem: clamdb.ProblemNone}
+	}
+	_, stderr, err = runCLI(t, nil, "files", "ensure")
+	if err != nil {
+		t.Fatalf("a failed refresh failed the command: %v", err)
+	}
+	if !strings.Contains(stderr, "clamav: no ClamAV signatures could be fetched from "+policy.DefaultClamAVSignatures+"; runs check no file until a refresh succeeds") {
+		t.Fatalf("stderr %q", stderr)
+	}
 }
 
 func pullsOf(f *dockerx.Fake) []string {

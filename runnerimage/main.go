@@ -94,20 +94,23 @@ func main() {
 }
 
 // runDecode turns the documents under --in into text under --out, with the
-// report beside them (plan knowledge.md §4.2). The caller runs it in the
-// decode image: no network, no capabilities, --in read-only.
+// report beside them (plan knowledge.md §4.2), after checking each with
+// ClamAV against the signatures under --clamav (plan file-handling.md §7).
+// The caller runs it in the decode image: no network, no capabilities, --in
+// and --clamav read-only.
 func runDecode(args []string) error {
 	fs := flag.NewFlagSet("decode", flag.ContinueOnError)
 	in := fs.String("in", "", "the directory of documents to decode (read-only)")
 	out := fs.String("out", "", "the directory the texts and decode.json are written to")
 	unpack := fs.String("unpack", "", "the directory archives are unpacked in (default the scratch directory)")
+	clamav := fs.String("clamav", "", "the directory of ClamAV signatures every file is checked against before it is decoded (read-only; none, nothing is checked)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *in == "" || *out == "" {
 		return errors.New("decode: --in and --out are required")
 	}
-	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack})
+	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack, ClamDB: *clamav})
 	if err != nil {
 		return err
 	}

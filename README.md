@@ -194,7 +194,8 @@ flag the reading and writing commands print one JSON document on stdout
 `run --plan --json` print the consent-free preview a client shows a person
 first. `files ensure` pulls the files image the runner policy names (the one
 the decode step turns a run's documents into text in), by digest, and prints
-its reference, so no run has to download it; a sandbox host runs it at each
+its reference, then refreshes the ClamAV signatures every input is checked
+against, so no run has to download either; a sandbox host runs it at each
 update. Server-side end-to-end coverage
 lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
 CLI against a live registry.
@@ -209,9 +210,10 @@ does the work: a package
 this binary embeds, run with the attestation state `builtin`, never a
 release anyone installs.
 
-1. The runner detects each document by content and decodes it before the
-   agent, in the signed, digest-pinned files image with no network and every
-   capability dropped. PDF uses `pdftotext`; DOCX, ODT, EPUB, RTF and HTML
+1. The runner checks each document with ClamAV, then detects it by content
+   and decodes it before the agent, in the signed, digest-pinned files image
+   with no network and every capability dropped. A document ClamAV finds
+   refuses the build, naming it. PDF uses `pdftotext`; DOCX, ODT, EPUB, RTF and HTML
    use `pandoc` to GitHub Markdown; images use `tesseract`'s English OCR.
    XLSX, ODS and CSV become capped Markdown tables; PPTX and ODP become a
    section per slide. Legacy Office, Outlook mail and other formats use
@@ -857,7 +859,19 @@ archive into its files, each decoded in turn, in the files image, with no
 network; `agentry files ensure` pulls it ahead of time), and
 the run reads them through `list_inputs` (each file's type, size and
 whether it could be read), `read_input` (the text) and `search_inputs`; the
-receipt's `decode` line says what was read. A zip, tar, 7z or rar (or a
+receipt's `decode` line says what was read. **Every file, and every file in
+an archive, is checked by ClamAV before any decoder reads it**, in the same
+container, against a signature bundle the CLI refreshes once a day from
+`ghcr.io/blaktron/agentry-clamav-db` (about 110 MB the first time, the day's
+changes after) and verifies against the signature of the workflow that
+publishes it, before using it. A file ClamAV finds refuses the run before
+the agent starts, with exit 11, naming the file and what was found; in a
+session, a file you add that ClamAV finds is refused alone and the session
+goes on. The `decode` line names the signatures' date and what was clean,
+found or not checked (a file past 256 MB, or what an archive holds past
+that, is not checked, and says so). With no signatures yet (a first run
+with no network) the run goes on and the receipt says nothing was checked;
+signatures more than 7 days old are named stale. A zip, tar, 7z or rar (or a
 gzip, bzip2, xz or zstd stream) is unpacked and each file in it is listed
 and read by its path inside it, `archive.zip/folder/file.docx`: at most
 three archives deep, 2,000 files and 512 MiB unpacked in all. Links,

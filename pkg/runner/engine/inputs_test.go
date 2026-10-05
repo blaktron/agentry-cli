@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -26,7 +27,9 @@ import (
 // with shell stand-ins for pandoc and tesseract (each writes "<tool> read
 // <name>"), then the host's real check of what it wrote (decode.Check), so
 // everything the engine stages comes through the same containment as on a
-// daemon. decodeCalls counts the ensures and the decodes.
+// daemon. decodeCalls counts the ensures and the decodes. The signatures
+// are testSignatures unless a test clears them, and a stand-in clamscan
+// finds any file holding the word EICAR.
 var decodeCalls struct {
 	sync.Mutex
 	ensures, runs int
@@ -35,6 +38,16 @@ var decodeCalls struct {
 }
 
 var testDecodeImage = decode.Image{Tag: "agentry-decode:test", Files: "ghcr.io/blaktron/agentry-files:test@sha256:0d35", Packages: []string{"pandoc-cli-3.6.4-r0", "tesseract-ocr-5.5.0-r2"}}
+
+// testSignatures is the bundle ensureSignatures answers; signaturesOff
+// makes it answer none, as with no network on a first run.
+var (
+	testSignatures = clamdb.DB{
+		Dir: "/stand-in/clamav", Ref: clamdb.DefaultRef, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c",
+		Daily: clamdb.Version{Number: 28143}, Main: clamdb.Version{Number: 63},
+	}
+	signaturesOff bool
+)
 
 func init() {
 	ensureDecode = func(context.Context, dockerx.Client, string, *policy.Policy, string, io.Writer) (decode.Image, error) {
@@ -47,6 +60,14 @@ func init() {
 		}
 		return testDecodeImage, nil
 	}
+	ensureSignatures = func(context.Context, string, string, io.Writer) clamdb.DB {
+		decodeCalls.Lock()
+		defer decodeCalls.Unlock()
+		if signaturesOff {
+			return clamdb.DB{Ref: clamdb.DefaultRef, Problem: clamdb.ProblemNone}
+		}
+		return testSignatures
+	}
 	runDecode = func(ctx context.Context, _ dockerx.Client, img decode.Image, in, out string, _ policy.Limits, _ io.Writer) (*decode.Result, error) {
 		decodeCalls.Lock()
 		decodeCalls.runs++
@@ -55,7 +76,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := runnerdecode.Decode(ctx, in, out, tools, runnerdecode.Limits{}); err != nil {
+		if _, err := runnerdecode.Decode(ctx, in, out, tools, runnerdecode.Limits{ClamDB: img.Signatures.Dir}); err != nil {
 			return nil, err
 		}
 		return decode.Check(img, in, out)
@@ -96,6 +117,9 @@ func standInDecoders() (runnerdecode.Tools, error) {
 			PDFToText: script("pdftotext", `echo "pdftotext read $(basename "$5")" > "$6"`),
 			Pandoc:    script("pandoc", `echo "pandoc read $(basename "$6")" > "${5#--output=}"`),
 			Tesseract: script("tesseract", `echo "tesseract read $(basename "$1")" > "$2.txt"`),
+			Clamscan: script("clamscan", `list="${9#--file-list=}"; found=0
+while IFS= read -r p; do if grep -q EICAR "$p"; then echo "$p: Eicar-Test-Signature FOUND"; found=1; else echo "$p: OK"; fi; done < "$list"
+exit $found`),
 		}
 	})
 	return standIns.tools, standIns.err
@@ -103,7 +127,7 @@ func standInDecoders() (runnerdecode.Tools, error) {
 
 func resetDecodeCalls() {
 	decodeCalls.Lock()
-	decodeCalls.ensures, decodeCalls.runs, decodeCalls.fail = 0, 0, nil
+	decodeCalls.ensures, decodeCalls.runs, decodeCalls.fail, signaturesOff = 0, 0, nil, false
 	decodeCalls.Unlock()
 }
 
@@ -461,7 +485,7 @@ func TestASessionsReceiptSaysWhenEachFileWasDecoded(t *testing.T) {
 	}
 	<-done
 	line := env.CapabilitiesEnforced["decode"]
-	if !strings.HasPrefix(line, "the inputs were decoded before the run") || !strings.HasSuffix(line, "; the files added during the session were each decoded before the agent was told of them: 1 decoded, 0 read as text") || !strings.Contains(line, ": 0 decoded, 1 read as text;") {
+	if !strings.HasPrefix(line, "the inputs were decoded before the run") || !strings.Contains(line, "; the files added during the session were each decoded before the agent was told of them: 1 decoded, 0 read as text; each file and archive member was checked by ClamAV") || !strings.HasSuffix(line, ": 1 clean") || !strings.Contains(line, ": 0 decoded, 1 read as text;") {
 		t.Fatalf("decode line %q", line)
 	}
 }
@@ -589,6 +613,131 @@ func TestASessionsAddedArchiveIsUnpackedBeforeItIsAnnounced(t *testing.T) {
 	if len(idx.Files) != 2 || idx.Files[0].Path != "pack.zip" || idx.Files[1].Path != "pack.zip/a.md" {
 		t.Fatalf("index %+v", idx.Files)
 	}
+	if _, err := s.End(context.Background(), false); err != nil && !errors.Is(err, session.ErrEnded) {
+		t.Fatal(err)
+	}
+	<-done
+}
+
+// The malware check (plan file-handling.md §7, D9; agentry-cli#563): a file
+// ClamAV finds, as given or inside an archive, refuses the run before any
+// container of it starts, with the policy class (which a hosted run
+// settles at nothing), naming the file and the signature, and nothing of
+// the inputs is staged for the run.
+func TestAFileClamAVFindsRefusesTheRun(t *testing.T) {
+	for name, input := range map[string]struct {
+		file, body, want string
+	}{
+		"as given":      {"eicar.com", "X5O EICAR", "eicar.com (Eicar-Test-Signature)"},
+		"in an archive": {"bundle.zip", "", "bundle.zip/docs/eicar.txt (Eicar-Test-Signature)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetDecodeCalls()
+			p, f := fixture(t)
+			happyFake(f)
+			p.KeepRunDir = true
+			src := t.TempDir()
+			body := input.body
+			if input.file == "bundle.zip" {
+				var buf bytes.Buffer
+				zw := zip.NewWriter(&buf)
+				w, _ := zw.Create("docs/eicar.txt")
+				_, _ = w.Write([]byte("X5O EICAR"))
+				_ = zw.Close()
+				body = buf.String()
+			}
+			p.InputPaths = []string{writeInput(t, src, input.file, body), writeInput(t, src, "notes.txt", "clean notes\n")}
+			env, err := Run(context.Background(), f, p)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitPolicy {
+				t.Fatalf("err %v, want the policy class", err)
+			}
+			if !strings.Contains(err.Error(), "refused before the agent started: ClamAV found malware in") || !strings.Contains(err.Error(), input.want) {
+				t.Fatalf("err %q does not name %s", err, input.want)
+			}
+			if env == nil || env.Status != "error" || env.ExitClass != "policy" {
+				t.Fatalf("envelope %+v", env)
+			}
+			if _, ok := f.FindRun("-agent"); ok {
+				t.Fatal("the agent ran on a run ClamAV refused")
+			}
+			runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
+			if _, err := os.Stat(filepath.Join(runDir, "inputs-text", toolsrv.InputsIndexFile)); !os.IsNotExist(err) {
+				t.Fatalf("a refused run's inputs were indexed for it: %v", err)
+			}
+		})
+	}
+}
+
+func TestAClearRunsReceiptNamesTheSignatures(t *testing.T) {
+	resetDecodeCalls()
+	p, f := fixture(t)
+	happyFake(f)
+	p.InputPaths = []string{writeInput(t, t.TempDir(), "notes.txt", "clean notes\n")}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := env.CapabilitiesEnforced["decode"]; !strings.Contains(line, "; each file and archive member was checked by ClamAV (clamscan, PUA off) before any decoder read it, against the signatures of") || !strings.HasSuffix(line, "(daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b): 1 clean") {
+		t.Fatalf("decode line %q", line)
+	}
+}
+
+// With no signatures (a first run with no network), the run goes on and
+// its receipt says nothing was checked, and why (D15, invariant 7).
+func TestARunWithNoSignaturesGoesOnAndSaysSo(t *testing.T) {
+	resetDecodeCalls()
+	decodeCalls.Lock()
+	signaturesOff = true
+	decodeCalls.Unlock()
+	p, f := fixture(t)
+	happyFake(f)
+	p.InputPaths = []string{writeInput(t, t.TempDir(), "eicar.com", "X5O EICAR")}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := env.CapabilitiesEnforced["decode"]; !strings.HasSuffix(line, "; no file was checked for malware: no ClamAV signatures could be fetched") {
+		t.Fatalf("decode line %q", line)
+	}
+}
+
+// A session's added file that ClamAV finds is refused alone: the person is
+// told why, nothing of it is staged, the agent is never told of it, and the
+// session takes the next file.
+func TestASessionsFileClamAVFindsIsRefusedAlone(t *testing.T) {
+	resetDecodeCalls()
+	s, h, p, _ := startFixture(t)
+	_, done := collect(s)
+	runDir := filepath.Join(p.RunRoot, "runs", p.RunID)
+	var mu sync.Mutex
+	var told []string
+	h.onPrompt = func(text string) {
+		mu.Lock()
+		told = append(told, text)
+		mu.Unlock()
+	}
+	err := s.AddInput(context.Background(), writeInput(t, t.TempDir(), "eicar.com", "X5O EICAR"))
+	if err == nil || !strings.Contains(err.Error(), "refused: ClamAV found malware in eicar.com (Eicar-Test-Signature); it was not added, and the session goes on without it") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "inputs", "eicar.com")); !os.IsNotExist(err) {
+		t.Fatalf("the refused file was staged: %v", err)
+	}
+	if err := s.AddInput(context.Background(), writeInput(t, t.TempDir(), "contract.docx", "PK\x03\x04")); err != nil {
+		t.Fatalf("the session did not go on: %v", err)
+	}
+	idx := readIndex(t, runDir)
+	if len(idx.Files) != 1 || idx.Files[0].Path != "contract.docx" {
+		t.Fatalf("index %+v", idx.Files)
+	}
+	mu.Lock()
+	for _, text := range told {
+		if strings.Contains(text, "eicar") {
+			t.Errorf("the agent was told of the refused file: %q", text)
+		}
+	}
+	mu.Unlock()
 	if _, err := s.End(context.Background(), false); err != nil && !errors.Is(err, session.ErrEnded) {
 		t.Fatal(err)
 	}
