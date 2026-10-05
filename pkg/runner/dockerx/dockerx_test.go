@@ -210,12 +210,21 @@ func TestAsExitError(t *testing.T) {
 
 func TestCLIAvailable(t *testing.T) {
 	t.Run("ok", func(t *testing.T) {
-		c, record := stub(t, `[ "$1" = info ] && exit 0; exit 1`)
+		c, record := stub(t, `[ "$1" = version ] && echo 29.8.1 && exit 0; exit 1`)
 		if err := c.Available(context.Background()); err != nil {
 			t.Fatalf("Available: %v", err)
 		}
-		if got := recorded(t, record)[0]; got != "info --format {{.ServerVersion}}" {
+		// version, never info: info runs every CLI plugin before it asks
+		// the daemon (agentry-cli#622).
+		if got := recorded(t, record); len(got) != 1 || got[0] != "version --format {{.Server.Version}}" {
 			t.Errorf("argv = %q", got)
+		}
+	})
+	t.Run("no server version", func(t *testing.T) {
+		c, _ := stub(t, `echo; exit 0`)
+		err := c.Available(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "daemon not reachable") {
+			t.Fatalf("err = %v, want an empty server version taken as no daemon", err)
 		}
 	})
 	t.Run("binary missing", func(t *testing.T) {

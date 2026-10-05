@@ -239,13 +239,25 @@ func (c *CLI) run(ctx context.Context, args ...string) (string, error) {
 	return out.String(), nil
 }
 
-// Available implements Client.
+// Available implements Client. It asks the daemon for its version with
+// `docker version`, not `docker info`: info also fills in its client
+// section, which runs every CLI plugin for its metadata before the daemon
+// is asked. A current Docker Desktop ships about thirty, and on Windows
+// that took 2–6 s against about 0.1 s for version, answered or not. That
+// cost came out of the time a caller allows for an idle engine to wake
+// (agentry-cli#622). Both commands exit non-zero with the daemon's error
+// on stderr when nothing answers; a server version that comes back empty
+// is treated the same way.
 func (c *CLI) Available(ctx context.Context) error {
 	if _, err := exec.LookPath(c.Bin); err != nil {
 		return fmt.Errorf("docker CLI not found (%s): the runner needs a docker engine — install docker or set AGENTRY_DOCKER", c.Bin)
 	}
-	if _, err := c.run(ctx, "info", "--format", "{{.ServerVersion}}"); err != nil {
+	out, err := c.run(ctx, "version", "--format", "{{.Server.Version}}")
+	if err != nil {
 		return fmt.Errorf("docker daemon not reachable: %w", err)
+	}
+	if strings.TrimSpace(out) == "" {
+		return errors.New("docker daemon not reachable: docker version named no server")
 	}
 	return nil
 }
