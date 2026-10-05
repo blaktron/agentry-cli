@@ -190,7 +190,12 @@ for is refused with the registry's `402 credits-exhausted` sentence, the
 account it is about, and the ordinary failure exit — the upgrade is the
 site's, never the CLI's. With the root `--json`
 flag the reading and writing commands print one JSON document on stdout
-(`run` takes `--output-format json`), and `install --plan --json` /
+(`run` takes `--output-format json`; a run that fails says where in its
+envelope's `stage` and, when the step that stopped it decided why, in its
+`reason`: a code from a closed list, such as `exec-not-provided` or
+`mcp-install-failed`, with the release's own declared names it concerns
+and a detail word, never text or a path, so a host that keeps nothing else
+can still say why; agentry-cli#628, `receipt.ReasonCodes`), and `install --plan --json` /
 `run --plan --json` print the consent-free preview a client shows a person
 first. `files ensure` pulls the files image the runner policy names (the one
 the decode step turns a run's documents into text in), by digest, and prints

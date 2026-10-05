@@ -32,6 +32,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -84,6 +85,10 @@ type Resolved struct {
 	// agentry-cli#609).
 	DeclaredRuntime string `json:"declaredRuntime,omitempty"`
 }
+
+// SourceID is the declared server's ecosystem-qualified id, as the
+// manifest's MCPServer.SourceID gives it ("npm:@scope/x").
+func (r Resolved) SourceID() string { return r.Source + ":" + r.Package }
 
 // ServerName is the gateway catalog name for a resolved server.
 func (r Resolved) ServerName() string { return "mcp-" + r.ID }
@@ -148,7 +153,7 @@ func ResolveAll(ctx context.Context, client *http.Client, regs policy.MCPRegistr
 			pkg = srv.PyPI
 		}
 		if err := builderArgs(pkg, srv.Version); err != nil {
-			return nil, fmt.Errorf("resolve %s@%s: %w", srv.SourceID(), srv.Version, &PinError{err})
+			return nil, notResolved(srv, fmt.Errorf("resolve %s@%s: %w", srv.SourceID(), srv.Version, &PinError{err}))
 		}
 		var r Resolved
 		var err error
@@ -158,11 +163,23 @@ func ResolveAll(ctx context.Context, client *http.Client, regs policy.MCPRegistr
 			r, err = resolvePyPI(ctx, client, regs.PyPI, srv.PyPI, srv.Version)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s@%s: %w", srv.SourceID(), srv.Version, err)
+			return nil, notResolved(srv, fmt.Errorf("resolve %s@%s: %w", srv.SourceID(), srv.Version, err))
 		}
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// notResolved names the declared server a resolution failed for, in the
+// run's reason (agentry-cli#628).
+func notResolved(srv manifest.MCPServer, err error) error {
+	return receipt.WithReason(err, receipt.ReasonMCPNotResolved, "", srv.SourceID())
+}
+
+// installFailed names the declared server and the install's step that
+// failed, in the run's reason (agentry-cli#628).
+func installFailed(r *Resolved, step string, err error) error {
+	return receipt.WithReason(err, receipt.ReasonMCPInstallFailed, step, r.SourceID())
 }
 
 // PinError is a resolution that failed because of the pin itself, not
@@ -383,16 +400,16 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		r := &resolved[i]
 		prior, err := LoadMeta(storeDir, r.ID)
 		if err != nil {
-			return err
+			return installFailed(r, receipt.InstallRecord, err)
 		}
 		if prior != nil {
 			if prior.Package != r.Package || prior.Version != r.Version ||
 				(prior.Integrity != "" && r.Integrity != "" && prior.Integrity != r.Integrity) {
-				return fmt.Errorf("server store for %s holds %s@%s (%s) but the registry now resolves %s@%s (%s) — the recorded pin is the trust decision; remove the profile to accept the change",
-					r.ID, prior.Package, prior.Version, prior.Integrity, r.Package, r.Version, r.Integrity)
+				return installFailed(r, receipt.InstallPinChanged, fmt.Errorf("server store for %s holds %s@%s (%s) but the registry now resolves %s@%s (%s) — the recorded pin is the trust decision; remove the profile to accept the change",
+					r.ID, prior.Package, prior.Version, prior.Integrity, r.Package, r.Version, r.Integrity))
 			}
 			if err := checkStore(storeDir, prior, logw); err != nil {
-				return err
+				return installFailed(r, receipt.InstallStoreChanged, err)
 			}
 			if prior.BinName != "" {
 				// The store knows which console script the install
@@ -404,16 +421,16 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			continue
 		}
 		if err := builderArgs(r.Package, r.Version); err != nil {
-			return fmt.Errorf("install %s: %w", r.ID, err)
+			return installFailed(r, receipt.InstallBuilder, fmt.Errorf("install %s: %w", r.ID, err))
 		}
 		allow, err := installAllowlist(r, regs)
 		if err != nil {
-			return fmt.Errorf("install %s: %w", r.ID, err)
+			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
 		}
 
 		hostDir := filepath.Join(storeDir, r.ID)
 		if err := os.MkdirAll(hostDir, 0o700); err != nil {
-			return fmt.Errorf("create server store: %w", err)
+			return installFailed(r, receipt.InstallRecord, fmt.Errorf("create server store: %w", err))
 		}
 		_, _ = fmt.Fprintf(logw, "installing mcp server %s@%s (%s) into the signature store\n", r.Package, r.Version, r.Source)
 
@@ -438,7 +455,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// the package's own build code in the builder — refused unless
 			// policy pypiAllowSourceDists says so.
 			if err := writeArtifactSums(hostDir, r.Artifacts); err != nil {
-				return err
+				return installFailed(r, receipt.InstallRecord, err)
 			}
 			argv = pipArgv(r, regs)
 		default:
@@ -446,22 +463,22 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		}
 
 		if ok, err := d.ImageExists(ctx, image); err != nil {
-			return err
+			return installFailed(r, receipt.InstallImage, err)
 		} else if !ok {
 			_, _ = fmt.Fprintf(logw, "pulling %s (first MCP server install)\n", image)
 			if err := d.Pull(ctx, image); err != nil {
-				return fmt.Errorf("pull %s: %w", image, err)
+				return installFailed(r, receipt.InstallImage, fmt.Errorf("pull %s: %w", image, err))
 			}
 		}
 
 		egress, err := startInstallProxy(ctx, d, r.ID, storeDir, allow, images, docker, logw)
 		if err != nil {
-			return fmt.Errorf("install %s: %w", r.ID, err)
+			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
 		}
 		hosts, err := egress.hosts(ctx, docker.Runtime)
 		if err != nil {
 			egress.stop(ctx, "")
-			return fmt.Errorf("install %s: %w", r.ID, err)
+			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
 		}
 		code, err := d.RunForeground(ctx, dockerx.RunSpec{
 			Name:  "agentry-mcpinstall-" + r.ID,
@@ -511,39 +528,40 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		// install reached; kept beside the record, failed install or not.
 		egress.stop(ctx, filepath.Join(storeDir, r.ID+installProxyLogSuffix))
 		if err != nil {
-			return fmt.Errorf("install %s: %w", r.ID, err)
+			return installFailed(r, receipt.InstallBuilder, fmt.Errorf("install %s: %w", r.ID, err))
 		}
 		if r.Source == "npm" && code == npmEnginesRefused {
-			return fmt.Errorf("install %s: %s@%s declares an engines.node range that the Node in the runtime image %s does not satisfy (the builder's line above gives the range); nothing was installed. Pin a version of the server whose range it satisfies, or set the runner policy's images.nodeRuntime to an image with a Node it supports",
-				r.ID, r.Package, r.Version, image)
+			// A verdict on the server's own range, not a failed step.
+			return receipt.WithReason(fmt.Errorf("install %s: %s@%s declares an engines.node range that the Node in the runtime image %s does not satisfy (the builder's line above gives the range); nothing was installed. Pin a version of the server whose range it satisfies, or set the runner policy's images.nodeRuntime to an image with a Node it supports",
+				r.ID, r.Package, r.Version, image), receipt.ReasonMCPRuntimeExcluded, "", r.SourceID())
 		}
 		if r.Source == "npm" && code == npmEnginesUnchecked {
-			return fmt.Errorf("install %s: the Node version %s@%s needs could not be checked in the runtime image %s (the builder's line above says why); nothing was installed",
-				r.ID, r.Package, r.Version, image)
+			return installFailed(r, receipt.InstallRuntimeCheck, fmt.Errorf("install %s: the Node version %s@%s needs could not be checked in the runtime image %s (the builder's line above says why); nothing was installed",
+				r.ID, r.Package, r.Version, image))
 		}
 		if code != 0 {
-			return fmt.Errorf("install %s: builder exited %d (the install proxy's decisions are in %s)", r.ID, code,
-				filepath.Join(storeDir, r.ID+installProxyLogSuffix))
+			return installFailed(r, receipt.InstallBuilder, fmt.Errorf("install %s: builder exited %d (the install proxy's decisions are in %s)", r.ID, code,
+				filepath.Join(storeDir, r.ID+installProxyLogSuffix)))
 		}
 		r.InstallEgress = allow
 		if r.Source == "pypi" {
 			if err := adoptConsoleScript(hostDir, r, logw); err != nil {
-				return err
+				return installFailed(r, receipt.InstallBuilder, err)
 			}
 		}
 
 		digest, err := storeDigest(hostDir)
 		if err != nil {
-			return fmt.Errorf("install %s: hash the server store: %w", r.ID, err)
+			return installFailed(r, receipt.InstallRecord, fmt.Errorf("install %s: hash the server store: %w", r.ID, err))
 		}
 		r.StoreDigest = digest
 		r.InstalledAt = time.Now().UTC().Format(time.RFC3339)
 		b, err := json.MarshalIndent(r, "", "  ")
 		if err != nil {
-			return err
+			return installFailed(r, receipt.InstallRecord, err)
 		}
 		if err := os.WriteFile(metaPath(storeDir, r.ID), append(b, '\n'), 0o600); err != nil {
-			return fmt.Errorf("record server resolution: %w", err)
+			return installFailed(r, receipt.InstallRecord, fmt.Errorf("record server resolution: %w", err))
 		}
 	}
 	return nil
