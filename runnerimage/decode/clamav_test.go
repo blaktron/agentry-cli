@@ -297,6 +297,32 @@ func TestARepositorysInternalsAreCheckedButNeverDetected(t *testing.T) {
 	}
 }
 
+// The files inside .git count against the file cap like any other: they
+// are listed and checked, so they are not free.
+func TestARepositorysInternalsCountAgainstTheFileCap(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	for _, name := range []string{".git/HEAD", ".git/config", ".git/index", "notes.md"} {
+		write(t, in, name, []byte("x\n"))
+	}
+	rep, err := Decode(context.Background(), in, out, tools, Limits{MaxFiles: 2, ClamDB: "/clamav"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, refused := 0, 0
+	for _, f := range rep.Files {
+		switch {
+		case f.Why == WhyRepository:
+			kept++
+		case f.Outcome == OutcomeRefused && strings.Contains(f.Reason, "file cap"):
+			refused++
+		}
+	}
+	if kept != 2 || refused != 2 {
+		t.Errorf("kept %d, refused at the cap %d; want 2 and 2: %+v", kept, refused, rep.Files)
+	}
+}
+
 func TestInRepository(t *testing.T) {
 	for rel, want := range map[string]bool{
 		".git/HEAD":                 true,

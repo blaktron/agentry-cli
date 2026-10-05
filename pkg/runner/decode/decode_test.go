@@ -374,6 +374,7 @@ func TestCheckHoldsTheMalwareCheckToItsVocabulary(t *testing.T) {
 		{"found but read", true, read(runnerdecode.File{Check: runnerdecode.CheckFound, Signature: "Eicar-Test-Signature"}), "and the reason"},
 		{"found, refused, with no reason", true, runnerdecode.File{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeRefused, Check: runnerdecode.CheckFound}, "and the reason"},
 		{"the found reason on a clean file", true, runnerdecode.File{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeRefused, Why: runnerdecode.WhyFound, Check: runnerdecode.CheckClean}, "and the reason"},
+		{"found, but kept as part of a repository", true, runnerdecode.File{Path: "notes.md", Family: "unknown", Outcome: runnerdecode.OutcomeUndecodable, Why: runnerdecode.WhyRepository, Check: runnerdecode.CheckFound, Signature: "Eicar-Test-Signature"}, "and the reason"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in, out := t.TempDir(), t.TempDir()
@@ -715,16 +716,21 @@ func TestRunHoldsAnArchivesMembersToIt(t *testing.T) {
 // counted apart in the receipt, and the reason is taken only where the
 // rule puts it (agentry-cli#642).
 func TestARepositorysInternalsAreKeptAsTheyAre(t *testing.T) {
-	in := t.TempDir()
-	for _, n := range []string{"repo/README.md", "repo/.git/HEAD", "repo/.git/objects/ab/cdef", "repo/.git/objects/cd/0123", "notes.pdf"} {
-		p := filepath.Join(in, filepath.FromSlash(n))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
+	stage := func(t *testing.T, names ...string) string {
+		t.Helper()
+		in := t.TempDir()
+		for _, n := range names {
+			p := filepath.Join(in, filepath.FromSlash(n))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("staged "+n), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if err := os.WriteFile(p, []byte("staged "+n), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		return in
 	}
+	in := stage(t, "repo/README.md", "repo/.git/HEAD", "repo/.git/objects/ab/cdef", "repo/.git/objects/cd/0123", "notes.pdf")
 	kept := func(p string) runnerdecode.File {
 		return runnerdecode.File{Path: p, Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable, Why: runnerdecode.WhyRepository}
 	}
@@ -753,16 +759,10 @@ func TestARepositorysInternalsAreKeptAsTheyAre(t *testing.T) {
 		"outside .git":      kept("repo/README.md"),
 		"a file named .git": kept("repo/.git"),
 		"read as text":      {Path: "repo/.git/HEAD", Family: "text", Outcome: runnerdecode.OutcomeText, Why: runnerdecode.WhyRepository},
+		"naming a decoder":  {Path: "repo/.git/HEAD", Family: "document", Tool: "tika", Outcome: runnerdecode.OutcomeUndecodable, Why: runnerdecode.WhyRepository},
 	} {
 		t.Run(name, func(t *testing.T) {
-			in, out := t.TempDir(), t.TempDir()
-			p := filepath.Join(in, filepath.FromSlash(file.Path))
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			in, out := stage(t, file.Path), t.TempDir()
 			b, _ := json.Marshal(runnerdecode.Report{Schema: runnerdecode.Schema, Files: withChecks([]runnerdecode.File{file}, false)})
 			if err := os.WriteFile(filepath.Join(out, runnerdecode.ReportFile), b, 0o644); err != nil {
 				t.Fatal(err)

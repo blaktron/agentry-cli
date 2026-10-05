@@ -354,23 +354,16 @@ type pendingDecode struct {
 // enclose it. A file inside a .git directory is not detected: it waits for
 // the check only.
 func (d *decoder) file(ctx context.Context, src, rel, in string, depth int, size int64) {
-	if InRepository(rel) {
-		f := File{Path: rel, Family: FamilyUnknown, In: in}
-		if in != "" {
-			f.Size = size
+	repository := InRepository(rel)
+	kind, err := contentKind{family: FamilyUnknown}, error(nil)
+	if !repository {
+		fctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
+		kind, err = detect(fctx, src, d.tools)
+		cancel()
+		if err == nil && kind.archive != notArchive {
+			d.archive(ctx, src, rel, in, depth, size, kind)
+			return
 		}
-		d.files = append(d.files, f)
-		idx := len(d.files) - 1
-		d.targets = append(d.targets, scanTarget{idx: idx, src: src})
-		d.pending = append(d.pending, pendingDecode{idx: idx, src: src, rel: rel, in: in, size: size, repository: true})
-		return
-	}
-	fctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
-	kind, err := detect(fctx, src, d.tools)
-	cancel()
-	if err == nil && kind.archive != notArchive {
-		d.archive(ctx, src, rel, in, depth, size, kind)
-		return
 	}
 	f := File{Path: rel, Family: kind.family, In: in}
 	if in != "" {
@@ -379,7 +372,7 @@ func (d *decoder) file(ctx context.Context, src, rel, in string, depth int, size
 	d.files = append(d.files, f)
 	idx := len(d.files) - 1
 	d.targets = append(d.targets, scanTarget{idx: idx, src: src})
-	d.pending = append(d.pending, pendingDecode{idx: idx, src: src, rel: rel, in: in, size: size, kind: kind, detectErr: err})
+	d.pending = append(d.pending, pendingDecode{idx: idx, src: src, rel: rel, in: in, size: size, kind: kind, detectErr: err, repository: repository})
 }
 
 // decodePending decodes one file the check did not find, with a timeout of
@@ -392,7 +385,7 @@ func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
 		return
 	}
 	if p.repository {
-		checked.Outcome, checked.Why, checked.Reason = OutcomeUndecodable, WhyRepository, "inside a .git directory, which is never decoded"
+		checked.Outcome, checked.Why = OutcomeUndecodable, WhyRepository
 		d.files[p.idx] = checked
 		return
 	}

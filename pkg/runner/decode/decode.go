@@ -353,10 +353,8 @@ func checkReport(in, out string, checked bool) (runnerdecode.Report, error) {
 		if err := checkCheck(f, checked); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
-		// Only a file inside a .git directory is kept as it is, and it is
-		// read no other way (agentry-cli#642).
-		if f.Why == runnerdecode.WhyRepository && (!runnerdecode.InRepository(f.Path) || f.Outcome != runnerdecode.OutcomeUndecodable) {
-			return rep, fmt.Errorf("%s: %q is kept as part of a repository with the outcome %q", runnerdecode.ReportFile, f.Path, f.Outcome)
+		if err := checkRepository(f); err != nil {
+			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		byPath[f.Path] = f
 	}
@@ -481,6 +479,22 @@ func checkCheck(f runnerdecode.File, checked bool) error {
 	return nil
 }
 
+// checkRepository holds the repository reason to its rule: only a file
+// inside a .git directory is kept as it is, and such a file is read no
+// other way, by no tool (agentry-cli#642).
+func checkRepository(f runnerdecode.File) error {
+	if f.Why != runnerdecode.WhyRepository {
+		return nil
+	}
+	if !runnerdecode.InRepository(f.Path) {
+		return fmt.Errorf("%q is kept as part of a repository but is not inside a .git folder", f.Path)
+	}
+	if f.Outcome != runnerdecode.OutcomeUndecodable || f.Family != runnerdecode.FamilyUnknown || f.Tool != "" {
+		return fmt.Errorf("%q is kept as part of a repository but has the outcome %q, family %q and tool %q", f.Path, f.Outcome, f.Family, f.Tool)
+	}
+	return nil
+}
+
 // archiveDepth is how many archives enclose f. Each In is a strict prefix
 // of its member's path, so the chain ends.
 func archiveDepth(f runnerdecode.File, byPath map[string]runnerdecode.File) int {
@@ -596,11 +610,16 @@ func (r *Result) Decoded() int { return r.count(runnerdecode.OutcomeDecoded) }
 func (r *Result) Text() int { return r.count(runnerdecode.OutcomeText) }
 
 // Undecodable names the files neither decoded nor read as text: those no
-// decoder reads, those a decoder failed on, and those refused.
-func (r *Result) Undecodable() []string {
+// decoder reads, those a decoder failed on, those refused, and those
+// inside a .git directory.
+func (r *Result) Undecodable() []string { return r.undecodable(true) }
+
+// undecodable is Undecodable, with or without the files inside a .git
+// directory.
+func (r *Result) undecodable(repository bool) []string {
 	var out []string
 	for _, f := range r.Report.Files {
-		if f.Outcome == runnerdecode.OutcomeUndecodable || f.Outcome == runnerdecode.OutcomeRefused {
+		if (f.Outcome == runnerdecode.OutcomeUndecodable || f.Outcome == runnerdecode.OutcomeRefused) && (repository || f.Why != runnerdecode.WhyRepository) {
 			out = append(out, f.Path)
 		}
 	}
@@ -742,22 +761,10 @@ func (r *Result) Counts() string {
 			line += fmt.Sprintf(" (%d in part)", partial)
 		}
 	}
-	repository := 0
-	for _, f := range r.Report.Files {
-		if f.Why == runnerdecode.WhyRepository {
-			repository++
-		}
+	if n := len(r.Undecodable()) - len(r.undecodable(false)); n > 0 {
+		line += fmt.Sprintf(", %d %s inside .git kept as %s", n, plural(n, "file", "files"), plural(n, "it is", "they are"))
 	}
-	if repository > 0 {
-		line += fmt.Sprintf(", %d %s inside .git kept as %s", repository, plural(repository, "file", "files"), plural(repository, "it is", "they are"))
-	}
-	var bad []string
-	for _, f := range r.Report.Files {
-		if (f.Outcome == runnerdecode.OutcomeUndecodable || f.Outcome == runnerdecode.OutcomeRefused) && f.Why != runnerdecode.WhyRepository {
-			bad = append(bad, f.Path)
-		}
-	}
-	if len(bad) > 0 {
+	if bad := r.undecodable(false); len(bad) > 0 {
 		shown := bad
 		if len(shown) > 5 {
 			shown = shown[:5]
