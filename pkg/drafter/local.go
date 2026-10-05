@@ -3,7 +3,6 @@ package drafter
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -105,24 +104,11 @@ func SearchKey(pol *policy.Policy) (string, SearchState, error) {
 // entry provider:<provider>. "" is no key; an error is a keychain the
 // policy names that could not be read (exit 11).
 func personalKey(env, source, provider string) (string, error) {
-	if v := strings.TrimSpace(os.Getenv(env)); v != "" {
-		return v, nil
-	}
-	if source != modelkey.SourceKeyring {
-		return "", nil
-	}
-	present, err := modelkey.Present(provider)
+	v, err := modelkey.Personal(env, source, provider)
 	if err != nil {
 		return "", engine.Classify(engine.ExitPolicy, err)
 	}
-	if !present {
-		return "", nil
-	}
-	v, err := modelkey.Lookup(provider)
-	if err != nil {
-		return "", engine.Classify(engine.ExitPolicy, err)
-	}
-	return strings.TrimSpace(v), nil
+	return v, nil
 }
 
 // Finish is the post-step's first half (plan §7.5): the Drafter's answer in

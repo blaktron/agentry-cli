@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -36,6 +39,8 @@ func writeFile(t *testing.T, p, body string) {
 
 // The signatures a build is given: a stand-in bundle, never the registry.
 func init() {
+	// No lookup leaves the machine, whatever the shell holds.
+	hybridClient = func(*policy.Policy) (*hybrid.Client, error) { return &hybrid.Client{}, nil }
 	ensureSignatures = func(_ context.Context, home, _ string, _ io.Writer) clamdb.DB {
 		return clamdb.DB{Dir: filepath.Join(home, "clamav", "db", "84cbc016d58b4b70"), Ref: policy.DefaultClamAVSignatures, Digest: "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c", Daily: clamdb.Version{Number: 28143}}
 	}
@@ -644,5 +649,37 @@ func TestADocumentClamAVFindsRefusesTheBuild(t *testing.T) {
 	}
 	if _, ok := fx.fake.FindRun("-agent"); ok {
 		t.Fatal("the Creator ran on a document ClamAV found")
+	}
+}
+
+// maliciousHA stands for Hybrid Analysis with every hash malicious, for
+// this test alone.
+func maliciousHA(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"verdict":"malicious","threat_score":100}`)
+	}))
+	t.Cleanup(srv.Close)
+	saved := hybridClient
+	t.Cleanup(func() { hybridClient = saved })
+	hybridClient = func(*policy.Policy) (*hybrid.Client, error) {
+		return &hybrid.Client{Key: "ha-test-key", Base: srv.URL, HTTP: srv.Client()}, nil
+	}
+}
+
+// A risky document Hybrid Analysis calls malicious refuses the build with
+// the policy class, before the Creator starts (agentry-cli#564).
+func TestADocumentHybridAnalysisCallsMaliciousRefusesTheBuild(t *testing.T) {
+	maliciousHA(t)
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	writeFile(t, filepath.Join(fx.docs, "macro.docm"), "PK not really")
+	fx.opts.Documents = append(fx.opts.Documents, filepath.Join(fx.docs, "macro.docm"))
+	_, err := Build(context.Background(), fx.fake, fx.opts)
+	var ce *engine.ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), "Hybrid Analysis's verdict on macro.docm is malicious (threat score 100)") {
+		t.Fatalf("err %v", err)
+	}
+	if _, ok := fx.fake.FindRun("-agent"); ok {
+		t.Fatal("the Creator ran on a document Hybrid Analysis called malicious")
 	}
 }

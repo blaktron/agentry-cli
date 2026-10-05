@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +19,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
@@ -50,6 +53,8 @@ var (
 )
 
 func init() {
+	// No test reaches the real service, whatever the shell holds.
+	hybridClient = func(*policy.Policy) (*hybrid.Client, error) { return &hybrid.Client{}, nil }
 	ensureDecode = func(context.Context, dockerx.Client, string, *policy.Policy, string, io.Writer) (decode.Image, error) {
 		decodeCalls.Lock()
 		defer decodeCalls.Unlock()
@@ -485,7 +490,7 @@ func TestASessionsReceiptSaysWhenEachFileWasDecoded(t *testing.T) {
 	}
 	<-done
 	line := env.CapabilitiesEnforced["decode"]
-	if !strings.HasPrefix(line, "the inputs were decoded before the run") || !strings.Contains(line, "; the files added during the session were each decoded before the agent was told of them: 1 decoded, 0 read as text; each file read and each archive unpacked was checked by ClamAV") || !strings.HasSuffix(line, ": 1 clean") || !strings.Contains(line, ": 0 decoded, 1 read as text;") {
+	if !strings.HasPrefix(line, "the inputs were decoded before the run") || !strings.Contains(line, "; the files added during the session were each decoded before the agent was told of them: 1 decoded, 0 read as text; each file read and each archive unpacked was checked by ClamAV") || !strings.HasSuffix(line, ": 1 clean; no file was asked about on Hybrid Analysis") || !strings.Contains(line, ": 0 decoded, 1 read as text;") {
 		t.Fatalf("decode line %q", line)
 	}
 }
@@ -678,7 +683,7 @@ func TestAClearRunsReceiptNamesTheSignatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if line := env.CapabilitiesEnforced["decode"]; !strings.Contains(line, "; each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against the signatures of") || !strings.HasSuffix(line, "(daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b): 1 clean") {
+	if line := env.CapabilitiesEnforced["decode"]; !strings.Contains(line, "; each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against the signatures of") || !strings.HasSuffix(line, "(daily 28143, main 63; ghcr.io/blaktron/agentry-clamav-db:latest@sha256:84cbc016d58b): 1 clean; no file was asked about on Hybrid Analysis") {
 		t.Fatalf("decode line %q", line)
 	}
 }
@@ -697,7 +702,7 @@ func TestARunWithNoSignaturesGoesOnAndSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if line := env.CapabilitiesEnforced["decode"]; !strings.HasSuffix(line, "; no file was checked for malware: no ClamAV signatures could be fetched") {
+	if line := env.CapabilitiesEnforced["decode"]; !strings.HasSuffix(line, "; no file was checked for malware: no ClamAV signatures could be fetched; Hybrid Analysis (CrowdStrike), asked by SHA-256 alone and never sent a file, on the files of a type it is asked about: 1 not checked: no key") {
 		t.Fatalf("decode line %q", line)
 	}
 }
@@ -745,5 +750,171 @@ func TestASessionsFileClamAVFindsIsRefusedAlone(t *testing.T) {
 	<-done
 	if line := env.CapabilitiesEnforced["decode"]; !strings.HasSuffix(line, "; files added during the session and refused before the agent was told of them: ClamAV found malware in eicar.com (Eicar-Test-Signature)") {
 		t.Fatalf("the refused file is not in the receipt: %q", line)
+	}
+}
+
+// fakeHybrid stands for Hybrid Analysis: every hash it is asked about has
+// the verdict given. It records the requests' headers, so a test can see
+// what left the machine.
+func fakeHybrid(t *testing.T, key, verdict string) *[]http.Header {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Clone())
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"verdict":"`+verdict+`","threat_score":100}`)
+	}))
+	t.Cleanup(srv.Close)
+	saved := hybridClient
+	t.Cleanup(func() { hybridClient = saved })
+	hybridClient = func(*policy.Policy) (*hybrid.Client, error) {
+		return &hybrid.Client{Key: key, Base: srv.URL, HTTP: srv.Client()}, nil
+	}
+	return &seen
+}
+
+// A risky input Hybrid Analysis calls malicious refuses the run before the
+// agent starts, with the policy class, naming the file and its verdict
+// (plan file-handling.md D9, D14; agentry-cli#564).
+func TestAnInputHybridAnalysisCallsMaliciousRefusesTheRun(t *testing.T) {
+	resetDecodeCalls()
+	seen := fakeHybrid(t, "ha-test-key", "malicious")
+	p, f := fixture(t)
+	happyFake(f)
+	src := t.TempDir()
+	p.InputPaths = []string{writeInput(t, src, "tool.exe", "MZ not really"), writeInput(t, src, "notes.txt", "clean notes\n")}
+	env, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy {
+		t.Fatalf("err %v, want the policy class", err)
+	}
+	if !strings.Contains(err.Error(), "refused before the agent started: Hybrid Analysis's verdict on tool.exe is malicious (threat score 100)") {
+		t.Fatalf("err %q", err)
+	}
+	if env == nil || env.ExitClass != "policy" {
+		t.Fatalf("envelope %+v", env)
+	}
+	if _, ok := f.FindRun("-agent"); ok {
+		t.Fatal("the agent ran on a run Hybrid Analysis refused")
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("%d lookups for one risky file", len(*seen))
+	}
+}
+
+// The key is used by this process alone (plan §3 invariant 6): it never
+// reaches a container's spec, the envelope or the receipt, or stderr, and
+// a suspicious verdict is noted in the receipt while the run goes on.
+func TestTheHybridAnalysisKeyStaysInTheCLI(t *testing.T) {
+	resetDecodeCalls()
+	const key = "ha-key-that-must-not-leak-0123456789"
+	fakeHybrid(t, key, "suspicious")
+	p, f := fixture(t)
+	happyFake(f)
+	var stderr bytes.Buffer
+	p.Stderr = &stderr
+	p.InputPaths = []string{writeInput(t, t.TempDir(), "paper.pdf", "%PDF not really")}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := env.CapabilitiesEnforced["decode"]
+	if !strings.HasSuffix(line, "asked by SHA-256 alone and never sent a file, on the files of a type it is asked about: 0 clean, 1 noted (paper.pdf: suspicious, threat score 100)") {
+		t.Fatalf("decode line %q", line)
+	}
+	envJSON, _ := json.Marshal(env)
+	calls, _ := json.Marshal(f.Calls)
+	for where, text := range map[string]string{"the envelope": string(envJSON), "a container's spec": string(calls), "stderr": stderr.String()} {
+		if strings.Contains(text, key) {
+			t.Errorf("the key reached %s", where)
+		}
+	}
+}
+
+// With no key the run goes on, nothing is asked, and the receipt says the
+// risky file was not checked, no key (D8).
+func TestARunWithNoHybridAnalysisKeySaysSo(t *testing.T) {
+	resetDecodeCalls()
+	p, f := fixture(t)
+	happyFake(f)
+	p.InputPaths = []string{writeInput(t, t.TempDir(), "paper.pdf", "%PDF not really")}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line := env.CapabilitiesEnforced["decode"]; !strings.HasSuffix(line, "; Hybrid Analysis (CrowdStrike), asked by SHA-256 alone and never sent a file, on the files of a type it is asked about: 1 not checked: no key") {
+		t.Fatalf("decode line %q", line)
+	}
+}
+
+// A session's added file Hybrid Analysis calls malicious is refused alone,
+// as ClamAV's finding is.
+func TestASessionsFileHybridAnalysisCallsMaliciousIsRefusedAlone(t *testing.T) {
+	resetDecodeCalls()
+	fakeHybrid(t, "ha-test-key", "malicious")
+	s, _, p, _ := startFixture(t)
+	_, done := collect(s)
+	runDir := filepath.Join(p.RunRoot, "runs", p.RunID)
+	err := s.AddInput(context.Background(), writeInput(t, t.TempDir(), "macro.docm", "PK not really"))
+	if err == nil || !strings.Contains(err.Error(), "refused: Hybrid Analysis's verdict on macro.docm is malicious (threat score 100); it was not added") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "inputs", "macro.docm")); !os.IsNotExist(err) {
+		t.Fatalf("the refused file was staged: %v", err)
+	}
+	if _, err := s.End(context.Background(), false); err != nil && !errors.Is(err, session.ErrEnded) {
+		t.Fatal(err)
+	}
+	<-done
+}
+
+// The key as a sandbox host hands it, in $HYBRID_API_KEY, read through the
+// policy as a run reads it: it reaches the lookup and nothing else — no
+// container's spec, the envelope, the receipt or stderr (invariant 6).
+func TestTheKeyFromTheEnvironmentStaysInTheCLI(t *testing.T) {
+	resetDecodeCalls()
+	const key = "ha-env-key-that-must-not-leak-987654321"
+	t.Setenv("HYBRID_API_KEY", key)
+	var mu sync.Mutex
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Header.Get("api-key"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	saved := hybridClient
+	t.Cleanup(func() { hybridClient = saved })
+	hybridClient = func(pol *policy.Policy) (*hybrid.Client, error) {
+		c, err := hybrid.FromPolicy(pol)
+		if c != nil {
+			c.Base, c.HTTP = srv.URL, srv.Client()
+		}
+		return c, err
+	}
+	p, f := fixture(t)
+	happyFake(f)
+	var stderr bytes.Buffer
+	p.Stderr = &stderr
+	p.InputPaths = []string{writeInput(t, t.TempDir(), "paper.pdf", "%PDF not really")}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != key {
+		t.Fatalf("the lookup was asked %d times, with the key %v", len(got), len(got) == 1 && got[0] == key)
+	}
+	envJSON, _ := json.Marshal(env)
+	calls, _ := json.Marshal(f.Calls)
+	for where, text := range map[string]string{"the envelope": string(envJSON), "a container's spec": string(calls), "stderr": stderr.String()} {
+		if strings.Contains(text, key) {
+			t.Errorf("the key reached %s", where)
+		}
+	}
+	if !strings.HasSuffix(env.CapabilitiesEnforced["decode"], "on the files of a type it is asked about: 1 clean") {
+		t.Fatalf("decode line %q", env.CapabilitiesEnforced["decode"])
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -15,6 +16,10 @@ type contentKind struct {
 	tool, format string
 	text         bool
 	archive      archiveFormat
+	// mime is the type the file was detected as, without parameters: the
+	// report carries it so the host can tell a risky type to look up
+	// (agentry-cli#564). It never selects a command line.
+	mime string
 }
 
 // Only the input path varies. Neither a detected type nor a document's
@@ -70,15 +75,15 @@ func detect(ctx context.Context, src string, tools Tools) (contentKind, error) {
 	mime, err := toolOutput(ctx, tools.File, "--brief", "--mime-type", "--", src)
 	if err == nil {
 		if k, ok := contentKinds[mime]; ok {
-			return k, nil
+			return withMIME(k, mime), nil
 		}
 		if strings.HasPrefix(mime, "image/") {
-			return detectedKind(mime), nil
+			return withMIME(detectedKind(mime), mime), nil
 		}
 		// libmagic names every archive but a zip reliably; a zip may be
 		// an Office file, which only Tika tells apart.
 		if k, ok := archiveKinds[mime]; ok && mime != "application/zip" {
-			return k, nil
+			return withMIME(k, mime), nil
 		}
 	}
 	// libmagic cannot reliably distinguish generic ZIP/compound containers
@@ -87,8 +92,27 @@ func detect(ctx context.Context, src string, tools Tools) (contentKind, error) {
 	if err != nil {
 		return contentKind{family: FamilyUnknown}, err
 	}
-	return detectedKind(mime), nil
+	return withMIME(detectedKind(mime), mime), nil
 }
+
+// withMIME records the detected type on its kind, without parameters, and
+// only when it has the shape of a media type: a detector's output is not
+// carried otherwise.
+func withMIME(k contentKind, mime string) contentKind {
+	mime, _, _ = strings.Cut(mime, ";")
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if ValidMIME(mime) {
+		k.mime = mime
+	}
+	return k
+}
+
+// mimeRE is a media type's shape: type/subtype in RFC 6838's characters.
+var mimeRE = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$`)
+
+// ValidMIME says whether s is a bare media type, as the report may carry
+// it; the host holds the report to the same rule.
+func ValidMIME(s string) bool { return mimeRE.MatchString(s) }
 
 func tikaArgs(mode, src string) []string {
 	return []string{"-Xmx512m", "-Djava.io.tmpdir=/tmp", "-jar", "/opt/tika/tika-app.jar", mode, src}

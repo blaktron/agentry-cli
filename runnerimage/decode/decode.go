@@ -23,6 +23,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -114,6 +116,13 @@ type File struct {
 	Check     Check     `json:"check,omitempty"`
 	Signature string    `json:"signature,omitempty"`
 	Unchecked Unchecked `json:"unchecked,omitempty"`
+	// MIME is the type the file was detected as, and SHA256 its content's
+	// digest, lower-case hex: for every file read, archives and members
+	// included, so the host can look the risky ones up on Hybrid Analysis
+	// by hash (agentry-cli#564). The host checks a staged file's digest
+	// against the file; only a member's is the decode's word alone.
+	MIME   string `json:"mime,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // HasText says the decode wrote a text for it at Output: a file it
@@ -365,7 +374,7 @@ func (d *decoder) file(ctx context.Context, src, rel, in string, depth int, size
 			return
 		}
 	}
-	f := File{Path: rel, Family: kind.family, In: in}
+	f := File{Path: rel, Family: kind.family, In: in, MIME: kind.mime, SHA256: sha256File(src)}
 	if in != "" {
 		f.Size = size
 	}
@@ -397,6 +406,7 @@ func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
 		f.Size = p.size
 	}
 	f.Check, f.Signature, f.Unchecked = checked.Check, checked.Signature, checked.Unchecked
+	f.MIME, f.SHA256 = checked.MIME, checked.SHA256
 	d.files[p.idx] = f
 }
 
@@ -407,7 +417,7 @@ func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
 // the unpacked-bytes budget bounds them all together. The archive itself
 // is a target of the check, whether or not it was unpacked.
 func (d *decoder) archive(ctx context.Context, src, rel, in string, depth int, size int64, kind contentKind) {
-	a := File{Path: rel, Family: FamilyArchive, Tool: kind.tool, In: in}
+	a := File{Path: rel, Family: FamilyArchive, Tool: kind.tool, In: in, MIME: kind.mime, SHA256: sha256File(src)}
 	if in != "" {
 		a.Size = size
 	}
@@ -910,4 +920,26 @@ func columnIndex(ref string) int {
 		}
 	}
 	return max(0, n-1)
+}
+
+// sha256File is the lower-case hex SHA-256 of the file at src, read
+// through a link never; "" when it cannot be read, and then the host does
+// not look it up.
+func sha256File(src string) string {
+	if fi, err := os.Lstat(src); err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	f, err := os.Open(src) //nolint:gosec // a staged input or an unpacked member, read to be hashed
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

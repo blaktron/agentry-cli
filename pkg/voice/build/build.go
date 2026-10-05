@@ -31,6 +31,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -42,6 +43,10 @@ import (
 // ensureSignatures is clamdb.Ensure, a variable so the tests use a
 // stand-in bundle rather than the registry.
 var ensureSignatures = clamdb.Ensure
+
+// hybridClient is hybrid.FromPolicy, a variable so the tests look up
+// against a fake service.
+var hybridClient = hybrid.FromPolicy
 
 // Job is which of the Voice Writer's three jobs a build is (§6).
 type Job string
@@ -184,7 +189,14 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		if err != nil {
 			return nil, engine.Classify(engine.ExitGateway, err)
 		}
-		if len(dec.Found()) > 0 {
+		// The risky samples are looked up on Hybrid Analysis by hash, and a
+		// malicious verdict refuses the build too (plan §7, agentry-cli#564).
+		lookup, err := hybridClient(o.Policy)
+		if err != nil {
+			return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the Hybrid Analysis key: %w", err))
+		}
+		dec.LookUp(ctx, lookup)
+		if dec.Refused() {
 			return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the build was refused before the agent started: %s", dec.Refusal()))
 		}
 		res.Decoded = dec
