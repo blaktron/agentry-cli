@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -93,6 +95,41 @@ type Made struct {
 	Build string `json:"build,omitempty"`
 	Model string `json:"model,omitempty"`
 	RunID string `json:"runId,omitempty"`
+	// Guide is the pack the Drafter ships and every run of it read
+	// (GuideName; agentry-cli#657), recorded apart from the person's
+	// packs in Knowledge. It is part of the Drafter's release, so it has
+	// no scan record of its own.
+	Guide *GuideRead `json:"guide,omitempty"`
+}
+
+// GuideRead is the record of the drafting guide a draft had: its name and
+// the digest, pages and bytes its manifest.json gives.
+type GuideRead struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+	Pages  int    `json:"pages"`
+	Bytes  int64  `json:"bytes"`
+}
+
+// made is the record of what made a draft: this package at ref, the
+// client's build, the run's model and id, and the guide it ships.
+func made(env *receipt.Envelope, ref, build string) *Made {
+	return &Made{Ref: ref, Build: build, Model: env.Harness.Model, RunID: env.RunID, Guide: guideRead()}
+}
+
+// guideRead reads the embedded guide's manifest.json; nil only if the
+// binary carries none, which TestTheDraftingGuideLoadsFromTheEmbeddedTree
+// rules out.
+func guideRead() *GuideRead {
+	raw, err := fs.ReadFile(files, manifest.KnowledgeDir+"/"+GuideName+"/"+knowledge.ManifestFile)
+	if err != nil {
+		return nil
+	}
+	var m knowledge.Manifest
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	return &GuideRead{Name: m.Name, Digest: m.SHA256, Pages: m.Pages, Bytes: m.Bytes}
 }
 
 // AIReview is the draft's record of AI Review: the description's verdict,

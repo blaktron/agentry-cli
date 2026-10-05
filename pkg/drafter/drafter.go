@@ -20,19 +20,29 @@ import (
 	"io/fs"
 )
 
-//go:embed agent.yaml AGENT.md output.schema.json README.md LICENSE
+//go:embed agent.yaml AGENT.md output.schema.json README.md LICENSE knowledge
 var files embed.FS
 
 // FS is the package's tree: agent.yaml, AGENT.md, output.schema.json,
 // README.md and LICENSE at its root (a public release carries the last two,
-// V7).
+// V7), and under knowledge/ the pack it ships (GuideName).
 func FS() fs.FS { return files }
+
+// GuideName is the knowledge pack the Drafter ships in its own release, its
+// drafting guide (plan drafter-knowledge.md D1; agentry-cli#657): how a run
+// works, what a declared MCP server meets in the runner, and the guide to
+// the rest of a draft. The runner gives it to every run of the package,
+// the repair turn included (localrun's withShippedPacks), apart from the
+// person's packs, so it counts against none of a draft's caps; a person's
+// pack of this name is refused (CheckKnowledgeSize). Its manifest.json,
+// index and runtime facts are generated (TestTheDraftingGuideIsCurrent).
+const GuideName = "drafting-guide"
 
 // The package's identity, as its manifest declares it.
 const (
 	Namespace = "agentry"
 	Name      = "drafter"
-	Version   = "1.7.0"
+	Version   = "1.8.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a draft made on this computer is
