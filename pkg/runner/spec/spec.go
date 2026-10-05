@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -38,6 +39,12 @@ const (
 	PHSecrets = "@@RUN_SECRETS@@"
 	// PHRunID is the run identifier (container names, labels).
 	PHRunID = "@@RUN_ID@@"
+	// PHSecretsAbsent is the list of optional secrets this run was not
+	// given, by name ("none" when it was given them all), for the System
+	// Prompt (DR-70): only the run knows which it holds, and the plan stays
+	// the same bytes whichever they are. Unlike the others it stands for
+	// text, never a path, an id or an address.
+	PHSecretsAbsent = "@@RUN_SECRETS_ABSENT@@"
 	// PHInputs is the host path of the per-run read-only inputs dir
 	// (RUNNER-PLAN-2 §P4) — operator-provided files, mounted :ro into the
 	// tools container, empty when the run got no --file.
@@ -180,6 +187,12 @@ type Plan struct {
 	// Secrets lists the manifest secret env names (values are resolved at
 	// run time and never stored, §R4).
 	Secrets []string `json:"secrets,omitempty"`
+	// OptionalSecrets are the declared secrets, the release's own or a
+	// declared server's, that its manifest marks optional
+	// (capabilities.optionalSecrets, DEV-212, DR-70): a run starts without
+	// one it has no value for and the gateway sets it empty. Absent when the
+	// manifest marks none, so such a plan is the same bytes as before.
+	OptionalSecrets []string `json:"optionalSecrets,omitempty"`
 	// MCPServers are the declared, resolved MCP servers this plan loads
 	// alongside the tools server (RUNNER-PLAN-3). Empty for agents that
 	// declare none — such plans are byte-identical to pre-PLAN-3 output.
@@ -264,6 +277,12 @@ type GatewaySpec struct {
 	Mounts []Mount `json:"mounts"`
 	// Servers is the enabled-server list (also in registry.yaml).
 	Servers []string `json:"servers"`
+}
+
+// IsOptionalSecret reports whether the plan's manifest marks the declared
+// secret name optional (DR-70): a run starts without it.
+func (p *Plan) IsOptionalSecret(name string) bool {
+	return slices.Contains(p.OptionalSecrets, name)
 }
 
 // HarnessSpec names the adapter and carries the agent container spec.

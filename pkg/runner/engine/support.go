@@ -15,10 +15,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -65,6 +67,9 @@ type runDirs struct {
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
 	hostProxyURL   string
+	// secretsAbsent are the optional secrets the run goes without, for the
+	// System Prompt's spec.PHSecretsAbsent; set once its secrets resolve.
+	secretsAbsent []string
 	// modelHosts are the llm-proxy's pinned model endpoints ("name:ip",
 	// modelhosts.go), for the receipt.
 	modelHosts []string
@@ -129,6 +134,15 @@ func (rd *runDirs) gatewayEnv(plan *spec.Plan, token string) (map[string]string,
 // test on any host can take the Windows path.
 var gatewayOS = runtime.GOOS
 
+// absentForPrompt is spec.PHSecretsAbsent's value: "none" until the run's
+// secrets are resolved and when it went without none of them.
+func (rd *runDirs) absentForPrompt() string {
+	if len(rd.secretsAbsent) == 0 {
+		return "none"
+	}
+	return strings.Join(rd.secretsAbsent, ", ")
+}
+
 func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer {
 	return strings.NewReplacer(
 		spec.PHWorkspace, hostPath(rd.workspace),
@@ -143,6 +157,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHHostGatewayURL, rd.hostGatewayURL,
 		spec.PHHostProxyURL, rd.hostProxyURL,
 		spec.PHRunID, filepath.Base(rd.root),
+		spec.PHSecretsAbsent, rd.absentForPrompt(),
 	)
 }
 
@@ -486,10 +501,15 @@ func stageInputs(paths []string, dest string) error {
 }
 
 // writeSecretsFile resolves every declared secret and writes the gateway
-// secrets file. Missing ⇒ refuse before any container starts, naming the
-// variable (§R4 secrets row, exit 11) — a silently-degraded agent is the
-// failure mode this exists to prevent. Resolution order: the caller's
-// overrides (the MCP profile, P2 §P2) first, then the policy source.
+// secrets file. A missing required secret ⇒ refuse before any container
+// starts, naming the variable (§R4 secrets row, exit 11) — a
+// silently-degraded agent is the failure mode this exists to prevent. A
+// missing optional one (the manifest's optionalSecrets, DR-70) is written
+// empty instead: the author said the run can do without it, the System
+// Prompt and the receipt say it went without, and the gateway sets the
+// variable empty rather than to a placeholder of its own (as webSecrets).
+// Resolution order: the caller's overrides (the MCP profile, P2 §P2)
+// first, then the policy source.
 func writeSecretsFile(p Params, path string) error {
 	values, err := secretValues(p)
 	if err != nil {
@@ -525,26 +545,22 @@ func secretValues(p Params) (map[string]string, error) {
 			v, ok = lookupSecret(name, p.Policy.SecretSource)
 		}
 		if !ok || v == "" {
+			if p.Plan.IsOptionalSecret(name) {
+				return "", true // written empty: the run goes without it (DR-70)
+			}
 			missingSet[name] = true
 			return "", false
 		}
 		return v, true
 	}
-	for _, name := range p.Plan.Secrets {
+	// Declared MCP servers' secrets (RUNNER-PLAN-3) take the same
+	// resolution order, keyed per server so each value is scoped to its own
+	// server and reaches nothing else.
+	eachPlanSecret(p.Plan, func(name, key string) {
 		if v, ok := resolve(name); ok {
-			values[compile.SecretKey(name)] = v
+			values[key] = v
 		}
-	}
-	// Declared MCP servers' secrets (RUNNER-PLAN-3): same resolution
-	// order, keyed per server so each value is scoped to its own server
-	// and reaches nothing else.
-	for _, srv := range p.Plan.MCPServers {
-		for _, name := range srv.Secrets {
-			if v, ok := resolve(name); ok {
-				values[compile.ServerSecretKey(srv.Name, name)] = v
-			}
-		}
-	}
+	})
 	// The web tools' keys (web.go), for the tools container alone; each
 	// is written even when empty.
 	for k, v := range webSecrets(p) {
@@ -564,6 +580,48 @@ func secretValues(p Params) (map[string]string, error) {
 			p.Policy.SecretSource.Mode, strings.Join(missing, ", ")), receipt.ReasonSecretMissing, "", missing...))
 	}
 	return values, nil
+}
+
+// eachPlanSecret calls fn with every secret the plan declares and the key
+// the gateway's secrets file holds it under: the release's own, then each
+// declared server's, scoped to that server.
+func eachPlanSecret(plan *spec.Plan, fn func(name, key string)) {
+	for _, name := range plan.Secrets {
+		fn(name, compile.SecretKey(name))
+	}
+	for _, srv := range plan.MCPServers {
+		for _, name := range srv.Secrets {
+			fn(name, compile.ServerSecretKey(srv.Name, name))
+		}
+	}
+}
+
+// absentSecrets names the optional secrets a run goes without: declared
+// optional, and resolved to nothing (secretValues wrote them empty). One
+// name once, whether the release's own or a declared server's.
+func absentSecrets(plan *spec.Plan, values map[string]string) []string {
+	absent := map[string]bool{}
+	eachPlanSecret(plan, func(name, key string) {
+		if plan.IsOptionalSecret(name) && values[key] == "" {
+			absent[name] = true
+		}
+	})
+	return slices.Sorted(maps.Keys(absent))
+}
+
+// withAbsentNote names, in the receipt's enforced capabilities, the
+// optional secrets a run went without (secrets.absent). Names only; there
+// is no value to name.
+func withAbsentNote(enforced map[string]string, absent []string) map[string]string {
+	if len(absent) == 0 {
+		return enforced
+	}
+	out := maps.Clone(enforced)
+	if out == nil {
+		out = map[string]string{}
+	}
+	out["secrets.absent"] = "optional secrets this run went without, written empty into the gateway's secrets file for the containers that declare them: " + strings.Join(absent, ", ")
+	return out
 }
 
 // SecretResolvable reports whether name would resolve at run time: from

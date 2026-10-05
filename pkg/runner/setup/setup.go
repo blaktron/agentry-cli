@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -345,6 +346,9 @@ type GuidedProfileOpts struct {
 	CapabilityLines []string
 	// Secrets are the manifest-declared env names to collect.
 	Secrets []string
+	// Optional are the ones a run may go without (the manifest's
+	// optionalSecrets, DR-70): asked the same way, and said so.
+	Optional []string
 	// DefaultKeep seeds the keep question (policy default or flag).
 	DefaultKeep bool
 	// KeepDecided suppresses the keep question (the flag already chose).
@@ -383,7 +387,11 @@ func GuidedProfile(p Prompter, opts GuidedProfileOpts) (*profile.Profile, error)
 				p.Say(name + ": " + termtext.Safe(h))
 			}
 		}
-		v, err := p.AskSecret(fmt.Sprintf("Value for %s (empty = resolve from the environment at run time)", name))
+		q := fmt.Sprintf("Value for %s (empty = resolve from the environment at run time)", name)
+		if slices.Contains(opts.Optional, name) {
+			q = fmt.Sprintf("Value for %s, optional (empty = resolve from the environment at run time, or the run goes without it)", name)
+		}
+		v, err := p.AskSecret(q)
 		if err != nil {
 			return nil, err
 		}

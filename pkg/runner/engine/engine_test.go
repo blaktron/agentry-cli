@@ -61,9 +61,19 @@ func fixture(t *testing.T) (Params, *dockerx.Fake) {
 // the way an operator's policy file shapes a plan.
 func fixtureWith(t *testing.T, edit func(*policy.Policy)) (Params, *dockerx.Fake) {
 	t.Helper()
+	return fixtureEdited(t, edit, nil)
+}
+
+// fixtureEdited is fixtureWith with the manifest edited before the compile
+// too — the way an author's agent.yaml shapes a plan.
+func fixtureEdited(t *testing.T, edit func(*policy.Policy), editManifest func(*manifest.Manifest)) (Params, *dockerx.Fake) {
+	t.Helper()
 	m, err := manifest.Parse([]byte(engineManifest))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if editManifest != nil {
+		editManifest(m)
 	}
 	installDir := t.TempDir()
 	ws := filepath.Join(installDir, "workspace")
@@ -805,46 +815,55 @@ func TestReceiptsRedactSecretsFromLogs(t *testing.T) {
 	t.Run("receipts of a completed run", func(t *testing.T) {
 		p, f := fixture(t)
 		happyFake(f)
-		f.Foreground["-agent"].Stdout = strings.Replace(f.Foreground["-agent"].Stdout, "final answer", "the key is "+apiKey+" and the token "+secret, 1)
-		f.Foreground["-agent"].Stderr = "harness boot\nDEBUG env ENGINE_TEST_TOKEN=" + secret + "\nANTHROPIC_API_KEY=" + apiKey + "\n"
-		f.LogsByName = map[string]string{
-			"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools\n- agentry-tools: fetch: Authorization: Bearer " + secret + "\n",
-			"agentry-cafe0000-proxy":   "allow api.example:443\n",
-		}
-		env, err := Run(context.Background(), f, p)
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
-		if got, want := string(env.Result), `"the key is [redacted] and the token [redacted]"`; got != want {
-			t.Errorf("result = %s, want %s", got, want)
-		}
-		read := func(name string) string {
-			b, err := os.ReadFile(filepath.Join(env.Receipts.Dir, name))
-			if err != nil {
-				t.Fatalf("%s: %v", name, err)
-			}
-			return string(b)
-		}
-		if got := read("gateway.log"); strings.Contains(got, secret) || !strings.Contains(got, "Bearer [redacted]") {
-			t.Errorf("gateway.log = %q", got)
-		}
-		if got := read("agent-stderr.log"); got != "harness boot\nDEBUG env ENGINE_TEST_TOKEN=[redacted]\nANTHROPIC_API_KEY=[redacted]\n" {
-			t.Errorf("agent-stderr.log = %q", got)
-		}
-		// The event stream is the run's primary receipt: masked line by
-		// line as it arrives, the harness's JSON still parseable.
-		if got := read("events.ndjson"); strings.Contains(got, secret) || strings.Contains(got, apiKey) || !strings.Contains(got, `"content":"the key is [redacted] and the token [redacted]"`) {
-			t.Errorf("events.ndjson = %q", got)
-		}
-		// Nothing to mask: byte-identical to what the container produced.
-		if got := read("proxy.log"); got != "allow api.example:443\n" {
-			t.Errorf("proxy.log = %q", got)
-		}
-		b, err := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
-		if err != nil || strings.Contains(string(b), secret) || strings.Contains(string(b), apiKey) {
-			t.Errorf("result.json leaks: %v %s", err, b)
-		}
+		assertReceiptsRedact(t, p, f)
 	})
+}
+
+// assertReceiptsRedact runs a completed run whose harness, gateway and
+// result carry ENGINE_TEST_TOKEN's value and the model key, and holds
+// every receipt to the masked form.
+func assertReceiptsRedact(t *testing.T, p Params, f *dockerx.Fake) {
+	t.Helper()
+	const secret, apiKey = "sekret-value-1234", "sk-test-key"
+	f.Foreground["-agent"].Stdout = strings.Replace(f.Foreground["-agent"].Stdout, "final answer", "the key is "+apiKey+" and the token "+secret, 1)
+	f.Foreground["-agent"].Stderr = "harness boot\nDEBUG env ENGINE_TEST_TOKEN=" + secret + "\nANTHROPIC_API_KEY=" + apiKey + "\n"
+	f.LogsByName = map[string]string{
+		"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools\n- agentry-tools: fetch: Authorization: Bearer " + secret + "\n",
+		"agentry-cafe0000-proxy":   "allow api.example:443\n",
+	}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := string(env.Result), `"the key is [redacted] and the token [redacted]"`; got != want {
+		t.Errorf("result = %s, want %s", got, want)
+	}
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(env.Receipts.Dir, name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return string(b)
+	}
+	if got := read("gateway.log"); strings.Contains(got, secret) || !strings.Contains(got, "Bearer [redacted]") {
+		t.Errorf("gateway.log = %q", got)
+	}
+	if got := read("agent-stderr.log"); got != "harness boot\nDEBUG env ENGINE_TEST_TOKEN=[redacted]\nANTHROPIC_API_KEY=[redacted]\n" {
+		t.Errorf("agent-stderr.log = %q", got)
+	}
+	// The event stream is the run's primary receipt: masked line by
+	// line as it arrives, the harness's JSON still parseable.
+	if got := read("events.ndjson"); strings.Contains(got, secret) || strings.Contains(got, apiKey) || !strings.Contains(got, `"content":"the key is [redacted] and the token [redacted]"`) {
+		t.Errorf("events.ndjson = %q", got)
+	}
+	// Nothing to mask: byte-identical to what the container produced.
+	if got := read("proxy.log"); got != "allow api.example:443\n" {
+		t.Errorf("proxy.log = %q", got)
+	}
+	b, err := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
+	if err != nil || strings.Contains(string(b), secret) || strings.Contains(string(b), apiKey) {
+		t.Errorf("result.json leaks: %v %s", err, b)
+	}
 }
 
 // A policy runtime reaches every container class that holds under it

@@ -230,11 +230,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	// The System Prompt, then the package's instruction (agentry-cli#520).
 	declared := mcpServerNames(extraServers, in.MCPServers)
 	instruction := renderInstruction(promptFacts{
-		caps:    caps,
-		secrets: sortedCopy(m.Capabilities.Secrets),
-		servers: declared,
-		schema:  len(schemaJSON) > 0,
-		intake:  len(m.Intake) > 0,
+		caps:     caps,
+		secrets:  sortedCopy(m.Capabilities.Secrets),
+		optional: sortedCopy(m.Capabilities.OptionalSecrets),
+		servers:  declared,
+		schema:   len(schemaJSON) > 0,
+		intake:   len(m.Intake) > 0,
 	}, body)
 
 	files := map[string][]byte{}
@@ -304,7 +305,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Capabilities: caps,
 		Tools:        tspec.GrantedTools(),
 		MCPServers:   in.MCPServers,
-		Enforcement:  enforcement(caps, m.Capabilities.Secrets, extraServers, in.Policy, in.MCPServers),
+		Enforcement:  enforcement(caps, m.Capabilities.Secrets, m.Capabilities.OptionalSecrets, extraServers, in.Policy, in.MCPServers),
 		ExecImage:    execImage,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, len(in.MCPServers) > 0),
 		Harness: spec.HarnessSpec{
@@ -320,7 +321,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			Allow:     append([]string(nil), in.Policy.Model.ProxyAllow...),
 			PlainHTTP: plainHTTPTargets(in.Policy),
 		},
-		Secrets: sortedCopy(m.Capabilities.Secrets),
+		Secrets:         sortedCopy(m.Capabilities.Secrets),
+		OptionalSecrets: sortedCopy(m.Capabilities.OptionalSecrets),
 		Budgets: spec.Budgets{
 			TimeoutSeconds: in.Policy.Budgets.TimeoutSeconds,
 			MaxTurns:       in.Policy.Budgets.MaxTurns,
@@ -1226,7 +1228,7 @@ func dataAccessServers(categories []string, pol *policy.Policy) ([]string, map[s
 
 // enforcement writes the §R8 capabilities_enforced disclosure — each
 // mechanism named precisely, per the honest-posture rule.
-func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, pol *policy.Policy, mcpServers []spec.MCPServerSpec) map[string]string {
+func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers []string, pol *policy.Policy, mcpServers []spec.MCPServerSpec) map[string]string {
 	e := map[string]string{}
 	switch caps.EgressMode {
 	case "none":
@@ -1288,6 +1290,14 @@ func enforcement(caps spec.CapSummary, secrets []string, extraServers []string, 
 		if len(serverSecrets) > 0 {
 			e["secrets"] += "; " + serverPart
 		}
+	}
+	// An optional secret (capabilities.optionalSecrets, DR-70) is the one
+	// exception to "missing ⇒ refuse": a run starts without it, the runner
+	// writing it empty into the secrets file, which the tools server reads
+	// as not set. The names a run went without are the receipt's
+	// secrets.absent.
+	if len(optional) > 0 {
+		e["secrets"] += "; except the optional ones, which a run starts without, written empty into the secrets file when unresolved: " + strings.Join(sortedCopy(optional), ", ")
 	}
 	// "Injected only into" is where a value is put, not every place it is:
 	// the gateway reads the whole --secrets file to inject them, so its own

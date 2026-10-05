@@ -686,3 +686,38 @@ func TestGuidedProfileQuotesAMultiLineHelp(t *testing.T) {
 		t.Fatalf("the contract line moved: %q", p.said)
 	}
 }
+
+// askRecorder is scriptPrompter that keeps each secret question it is asked.
+type askRecorder struct {
+	scriptPrompter
+	asked []string
+}
+
+func (a *askRecorder) AskSecret(q string) (string, error) {
+	a.asked = append(a.asked, q)
+	return a.next(), nil
+}
+
+// TestGuidedProfileSaysWhichSecretsAreOptional (DR-70): an optional secret
+// is asked like the others, said to be optional, and its empty answer is
+// recorded as absent, so the run goes without it.
+func TestGuidedProfileSaysWhichSecretsAreOptional(t *testing.T) {
+	p := &askRecorder{scriptPrompter: scriptPrompter{answers: []string{"", "required-value"}, confirm: true}}
+	prof, err := GuidedProfile(p, GuidedProfileOpts{
+		Ref: "demo/x@1.0.0", Digest: "sha256:abcdef",
+		Secrets:  []string{"OPTIONAL_PAT", "REQUIRED_PAT"},
+		Optional: []string{"OPTIONAL_PAT"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.asked) != 2 || !strings.Contains(p.asked[0], "OPTIONAL_PAT, optional") || !strings.Contains(p.asked[0], "the run goes without it") {
+		t.Fatalf("questions = %q", p.asked)
+	}
+	if strings.Contains(p.asked[1], "optional") {
+		t.Fatalf("a required secret is asked as optional: %q", p.asked[1])
+	}
+	if _, held := prof.Secrets["OPTIONAL_PAT"]; held || prof.Secrets["REQUIRED_PAT"] != "required-value" {
+		t.Fatalf("profile secrets = %v", prof.Secrets)
+	}
+}

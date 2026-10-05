@@ -1700,7 +1700,8 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 		}
 		// Non-interactive first run: v1 semantics — secrets resolve from
 		// the policy source; no profile is created and nothing degrades
-		// silently (a missing secret still refuses with exit 11).
+		// silently (a missing required secret still refuses with exit 11;
+		// an optional one the run goes without is named, DR-70).
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"note: no MCP profile for %s and no terminal for guided setup — secrets resolve from the %s source\n",
 			meta.Ref, pol.SecretSource.Mode)
@@ -1720,6 +1721,7 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 		Digest:          meta.Digest,
 		CapabilityLines: capabilityLines(m.Contract()),
 		Secrets:         secrets,
+		Optional:        m.Capabilities.OptionalSecrets,
 		DefaultKeep:     keep,
 		KeepDecided:     keepDecided,
 		Help:            help,

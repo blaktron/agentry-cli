@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -75,14 +74,7 @@ func withRedactionNote(enforced map[string]string, p Params, secrets map[string]
 			short[name] = true
 		}
 	}
-	for _, name := range p.Plan.Secrets {
-		check(name, compile.SecretKey(name))
-	}
-	for _, srv := range p.Plan.MCPServers {
-		for _, name := range srv.Secrets {
-			check(name, compile.ServerSecretKey(srv.Name, name))
-		}
-	}
+	eachPlanSecret(p.Plan, check)
 	if len(short) == 0 {
 		return enforced
 	}
