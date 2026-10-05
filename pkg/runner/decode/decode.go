@@ -31,6 +31,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/plainpath"
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
@@ -221,7 +222,61 @@ type Result struct {
 	// In holds the documents as given, each at its File.Path; Out the
 	// texts, each at its File.Output.
 	In, Out string
+	// Lookups is each risky file's Hybrid Analysis lookup by path
+	// (LookUp; agentry-cli#564); nil until LookUp ran, and then the
+	// receipt says nothing of a lookup.
+	Lookups map[string]hybrid.Result
 }
+
+// LookUp asks Hybrid Analysis about each file of a risky type (D11),
+// archive members included, by its SHA-256 alone, from this process and
+// never a container (plan file-handling.md §7, invariants 2 and 5). A file
+// ClamAV found is refused already and is not asked about, nor is a file
+// inside a .git directory; a risky file with no digest is not checked. c
+// nil or with no key asks nothing, and each risky file is not checked, no
+// key (D8).
+func (r *Result) LookUp(ctx context.Context, c *hybrid.Client) {
+	r.Lookups = map[string]hybrid.Result{}
+	byHash := map[string][]string{}
+	var hashes []string
+	for _, f := range r.Report.Files {
+		if f.Check == runnerdecode.CheckFound || f.Why == runnerdecode.WhyRepository || !hybrid.Risky(f.MIME, f.Path) {
+			continue
+		}
+		if f.SHA256 == "" {
+			r.Lookups[f.Path] = hybrid.Result{Outcome: hybrid.NotChecked, Reason: hybrid.ReasonNoDigest}
+			continue
+		}
+		if byHash[f.SHA256] == nil {
+			hashes = append(hashes, f.SHA256)
+		}
+		byHash[f.SHA256] = append(byHash[f.SHA256], f.Path)
+	}
+	if len(hashes) == 0 {
+		return
+	}
+	for h, res := range c.Look(ctx, hashes) {
+		for _, p := range byHash[h] {
+			r.Lookups[p] = res
+		}
+	}
+}
+
+// Malicious is every file Hybrid Analysis gave a malicious verdict: the
+// run is refused before the agent starts (D9, D14).
+func (r *Result) Malicious() []runnerdecode.File {
+	var out []runnerdecode.File
+	for _, f := range r.Report.Files {
+		if r.Lookups[f.Path].Outcome == hybrid.Refused {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// Refused says whether a check refuses what was decoded: ClamAV found
+// something, or Hybrid Analysis's verdict on a file is malicious.
+func (r *Result) Refused() bool { return len(r.Found()) > 0 || len(r.Malicious()) > 0 }
 
 // The bounds on what the host reads back from the decode container.
 const (
@@ -359,13 +414,16 @@ func checkReport(in, out string, checked bool) (runnerdecode.Report, error) {
 		byPath[f.Path] = f
 	}
 	members := 0
-	for _, f := range rep.Files {
+	for i, f := range rep.Files {
 		if f.In != "" {
 			if members++; members > runnerdecode.DefaultMaxFiles {
 				return rep, fmt.Errorf("%s names more than %d archive members, past the decode's cap", runnerdecode.ReportFile, runnerdecode.DefaultMaxFiles)
 			}
 		}
 		if err := checkFile(f, byPath, inRoot, outRoot); err != nil {
+			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
+		}
+		if err := checkIdentity(&rep.Files[i], inRoot); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if f.In == "" {
@@ -439,6 +497,54 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 		return fmt.Errorf("the text of %q is not a regular file within %d bytes", f.Path, MaxTextBytes)
 	}
 	return nil
+}
+
+// checkIdentity holds an entry's detected type and digest to their shapes,
+// and a file as staged to its own content: the host hashes it itself, so
+// the digest a Hybrid Analysis lookup asks for is the file's, and a report
+// that names another is refused. A member's digest is the decode's word
+// alone, since the member never leaves the container (agentry-cli#564).
+func checkIdentity(f *runnerdecode.File, inRoot *os.Root) error {
+	if f.MIME != "" && !runnerdecode.ValidMIME(f.MIME) {
+		return fmt.Errorf("%q has a detected type that is not a media type: %q", f.Path, f.MIME)
+	}
+	if f.SHA256 != "" && !hybrid.ValidSHA256(f.SHA256) {
+		return fmt.Errorf("%q has a digest that is not a lower-case hex SHA-256: %q", f.Path, f.SHA256)
+	}
+	if f.In != "" {
+		return nil
+	}
+	fi, err := inRoot.Lstat(filepath.FromSlash(f.Path))
+	if err != nil || !fi.Mode().IsRegular() {
+		if f.SHA256 != "" {
+			return fmt.Errorf("%q names a digest but is not a regular file", f.Path)
+		}
+		return nil
+	}
+	sum, err := hashIn(inRoot, f.Path)
+	if err != nil {
+		return fmt.Errorf("hash %q: %w", f.Path, err)
+	}
+	if f.SHA256 != "" && f.SHA256 != sum {
+		return fmt.Errorf("%q names a digest that is not its content's", f.Path)
+	}
+	f.SHA256 = sum
+	return nil
+}
+
+// hashIn is the lower-case hex SHA-256 of a staged file, read through the
+// input root.
+func hashIn(root *os.Root, rel string) (string, error) {
+	r, err := root.Open(filepath.FromSlash(rel))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = r.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // checkCheck holds one entry's malware check to the closed vocabulary
@@ -677,22 +783,39 @@ func (r *Result) Found() []runnerdecode.File {
 const refusalNames = 5
 
 // Refusal is the sentence a refused run, or a session's refused file,
-// gives: each file found and its signature, in the decode's own words.
+// gives: each file ClamAV found and its signature, in the decode's own
+// words, and each file Hybrid Analysis gave a malicious verdict, with its
+// threat score.
 func (r *Result) Refusal() string {
-	found := r.Found()
-	parts := make([]string, 0, len(found))
-	for i, f := range found {
+	var sentences []string
+	if found := r.Found(); len(found) > 0 {
+		parts := make([]string, 0, len(found))
+		for i, f := range found {
+			if i == refusalNames {
+				parts = append(parts, fmt.Sprintf("and %d more", len(found)-refusalNames))
+				break
+			}
+			sig := f.Signature
+			if sig == "" {
+				sig = "a signature"
+			}
+			parts = append(parts, f.Path+" ("+sig+")")
+		}
+		sentences = append(sentences, "ClamAV found malware in "+strings.Join(parts, ", "))
+	}
+	for i, f := range r.Malicious() {
 		if i == refusalNames {
-			parts = append(parts, fmt.Sprintf("and %d more", len(found)-refusalNames))
+			sentences = append(sentences, fmt.Sprintf("and %d more with a malicious verdict", len(r.Malicious())-refusalNames))
 			break
 		}
-		sig := f.Signature
-		if sig == "" {
-			sig = "a signature"
+		l := r.Lookups[f.Path]
+		verdict := l.VerdictWord()
+		if l.ThreatScore > 0 {
+			verdict += fmt.Sprintf(" (threat score %d)", l.ThreatScore)
 		}
-		parts = append(parts, f.Path+" ("+sig+")")
+		sentences = append(sentences, "Hybrid Analysis's verdict on "+f.Path+" is "+verdict)
 	}
-	return "ClamAV found malware in " + strings.Join(parts, ", ")
+	return strings.Join(sentences, "; ")
 }
 
 // Checks is the malware check's clause of the receipt: the signatures'
@@ -717,7 +840,11 @@ func (r *Result) Checks() string {
 		if problem == "" {
 			problem = clamdb.ProblemNone
 		}
-		return "no file was checked for malware: " + problem
+		line := "no file was checked for malware: " + problem
+		if h := r.lookupClause(); h != "" {
+			line += "; " + h
+		}
+		return line
 	}
 	line := fmt.Sprintf("each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against %s: %d clean", s.Describe(), clean)
 	if found > 0 {
@@ -734,7 +861,66 @@ func (r *Result) Checks() string {
 	if s.Problem != "" {
 		line += "; " + s.Problem
 	}
+	if h := r.lookupClause(); h != "" {
+		line += "; " + h
+	}
 	return line
+}
+
+// lookupClause is the Hybrid Analysis clause of the receipt: how many
+// risky files were clean, noted, refused and not checked, naming those
+// noted and refused with the verdict and threat score, and why the rest
+// were not checked (plan §3 invariant 7). Empty when no lookup ran.
+func (r *Result) lookupClause() string {
+	if r.Lookups == nil {
+		return ""
+	}
+	if len(r.Lookups) == 0 {
+		return "no file was asked about on Hybrid Analysis"
+	}
+	clean := 0
+	var noted, refused []string
+	notChecked := map[hybrid.Reason]int{}
+	var reasons []hybrid.Reason
+	for _, f := range r.Report.Files {
+		res, ok := r.Lookups[f.Path]
+		if !ok {
+			continue
+		}
+		switch res.Outcome {
+		case hybrid.Clean:
+			clean++
+		case hybrid.Noted:
+			noted = append(noted, f.Path+": "+res.Verdict())
+		case hybrid.Refused:
+			refused = append(refused, f.Path+": "+res.Verdict())
+		default:
+			if notChecked[res.Reason] == 0 {
+				reasons = append(reasons, res.Reason)
+			}
+			notChecked[res.Reason]++
+		}
+	}
+	var parts []string
+	if clean+len(noted)+len(refused) > 0 {
+		parts = append(parts, fmt.Sprintf("%d clean", clean))
+	}
+	named := func(n []string) string {
+		if len(n) > refusalNames {
+			return strings.Join(n[:refusalNames], "; ") + fmt.Sprintf("; and %d more", len(n)-refusalNames)
+		}
+		return strings.Join(n, "; ")
+	}
+	if len(noted) > 0 {
+		parts = append(parts, fmt.Sprintf("%d noted (%s)", len(noted), named(noted)))
+	}
+	if len(refused) > 0 {
+		parts = append(parts, fmt.Sprintf("%d refused (%s)", len(refused), named(refused)))
+	}
+	for _, why := range reasons {
+		parts = append(parts, fmt.Sprintf("%d not checked: %s", notChecked[why], why))
+	}
+	return "Hybrid Analysis (CrowdStrike), asked by SHA-256 alone and never sent a file, on the files of a type it is asked about: " + strings.Join(parts, ", ")
 }
 
 // uncheckedWords are the receipt's words for why a file was not checked.

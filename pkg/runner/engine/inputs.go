@@ -15,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
@@ -43,6 +44,9 @@ type inputsDecoder struct {
 
 	mu  sync.Mutex
 	img *decode.Image
+	// lookup asks Hybrid Analysis about the risky inputs by hash (plan
+	// file-handling.md §7, agentry-cli#564), with the policy's key or none.
+	lookup *hybrid.Client
 	// seq numbers the decode directories under the run root.
 	seq int
 	// before is what was decoded before the agent started, added what a
@@ -60,6 +64,7 @@ var (
 	ensureDecode     = decode.Ensure
 	ensureSignatures = clamdb.Ensure
 	runDecode        = decode.Run
+	hybridClient     = hybrid.FromPolicy
 )
 
 // decodeInputs decodes what the run staged under /inputs. It answers nil
@@ -88,7 +93,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	if err != nil {
 		return nil, err
 	}
-	if len(res.Found()) > 0 {
+	if res.Refused() {
 		return nil, Classify(ExitPolicy, inputRefused(receipt.InputMalware, fmt.Errorf("the run was refused before the agent started: %s", res.Refusal())))
 	}
 	entries, err := x.stageTexts(res)
@@ -154,7 +159,14 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 			home, _ = policy.Home()
 		}
 		img.Signatures = ensureSignatures(ctx, home, x.p.Policy.Images.ClamAVSignaturesRef(), x.p.Stderr)
-		x.img = &img
+		// The Hybrid Analysis key, the person's or a sandbox host's: none
+		// asks nothing, and the receipt says so (D8); a keychain the
+		// policy names that cannot be read stops the run, as for judge.
+		lookup, err := hybridClient(x.p.Policy)
+		if err != nil {
+			return nil, Classify(ExitPolicy, fmt.Errorf("the Hybrid Analysis key: %w", err))
+		}
+		x.img, x.lookup = &img, lookup
 	}
 	out := filepath.Join(x.rd.root, "decode", strconv.Itoa(x.seq))
 	x.seq++
@@ -165,6 +177,7 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 	if err != nil {
 		return nil, Classify(ExitGateway, receipt.WithReason(fmt.Errorf("the inputs could not be decoded: %w", err), receipt.ReasonInputsNotDecoded, receipt.DecodeRun))
 	}
+	res.LookUp(ctx, x.lookup)
 	return res, nil
 }
 
@@ -251,7 +264,7 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	}
 	// A finding refuses this file alone: nothing of it is staged, the
 	// agent is not told of it, and the session goes on (D9).
-	if len(res.Found()) > 0 {
+	if res.Refused() {
 		x.refused = append(x.refused, res.Refusal())
 		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", res.Refusal())
 	}
@@ -282,6 +295,14 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 func merged(into decode.Result, res *decode.Result) decode.Result {
 	into.Image = res.Image
 	into.Report.Files = append(into.Report.Files, res.Report.Files...)
+	if res.Lookups != nil {
+		if into.Lookups == nil {
+			into.Lookups = map[string]hybrid.Result{}
+		}
+		for p, l := range res.Lookups {
+			into.Lookups[p] = l
+		}
+	}
 	return into
 }
 

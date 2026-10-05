@@ -198,3 +198,23 @@ func Confirm(provider string) (bool, error) {
 func lookForErr(provider string, err error) error {
 	return fmt.Errorf("look for %s in the OS keychain: %w", Account(provider), err)
 }
+
+// Personal reads one of the person's own provider keys (AI Review's, a
+// search provider's, Hybrid Analysis's) as the runner policy says to: the
+// variable env names, else, with source keyring, the OS keychain entry
+// provider:<provider>. "" is no key; an error is a keychain the policy
+// names that could not be read.
+func Personal(env, source, provider string) (string, error) {
+	if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+		return v, nil
+	}
+	if source != SourceKeyring {
+		return "", nil
+	}
+	present, err := Present(provider)
+	if err != nil || !present {
+		return "", err
+	}
+	v, err := Lookup(provider)
+	return strings.TrimSpace(v), err
+}

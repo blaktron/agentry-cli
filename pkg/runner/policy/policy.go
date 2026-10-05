@@ -155,6 +155,12 @@ type Policy struct {
 	// comes from, for a local draft's web_search. Unset, a local draft
 	// has no web search (its web_read and registry_search still work).
 	WebSearch WebSearchKey `yaml:"webSearch,omitempty"`
+	// HybridAnalysis names where the Hybrid Analysis key comes from, with
+	// which the risky types among a run's inputs are looked up by SHA-256
+	// (plan file-handling.md §7, D7, D17; agentry-cli#564). Unset takes
+	// $HYBRID_API_KEY from the environment, as a sandbox host hands the
+	// platform's; no key, no lookup, and the receipt says so (D8).
+	HybridAnalysis HybridAnalysisKey `yaml:"hybridAnalysis,omitempty"`
 }
 
 // ExecPolicy is the exec catalog (agentry-cli#100). The manifest keeps
@@ -533,6 +539,23 @@ type JudgeKey struct {
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
 }
 
+// HybridAnalysisKey is where the Hybrid Analysis key comes from, as
+// JudgeKey: the variable, else, with apiKeySource keyring, the OS keychain
+// entry provider:hybrid-analysis (which the desktop writes).
+type HybridAnalysisKey struct {
+	// APIKeyEnv names the variable; empty is DefaultHybridKeyEnv.
+	APIKeyEnv    string `yaml:"apiKeyEnv,omitempty"`
+	APIKeySource string `yaml:"apiKeySource,omitempty"`
+}
+
+// KeyEnv is the variable the Hybrid Analysis key is read from.
+func (h HybridAnalysisKey) KeyEnv() string {
+	if h.APIKeyEnv != "" {
+		return h.APIKeyEnv
+	}
+	return DefaultHybridKeyEnv
+}
+
 // WebSearchKey is the person's own search provider, and where its key
 // comes from, as JudgeKey (keychain entry provider:<provider>).
 type WebSearchKey struct {
@@ -556,6 +579,11 @@ const (
 	ExaSearchKeyEnv        = "EXA_API_KEY"
 	PerplexitySearchKeyEnv = "PERPLEXITY_API_KEY"
 	JudgeKeyProvider       = "typesafe"
+	// DefaultHybridKeyEnv is the Hybrid Analysis key's variable, the one a
+	// sandbox host hands the CLI the platform's key in
+	// (agentry-enterprise#332); HybridKeyProvider its keychain entry's.
+	DefaultHybridKeyEnv = "HYBRID_API_KEY"
+	HybridKeyProvider   = "hybrid-analysis"
 )
 
 // webSearchProviders is each search provider a person may name: a name the
@@ -935,6 +963,7 @@ func (p *Policy) Validate() error {
 	}
 	for name, k := range map[string]struct{ env, src string }{
 		"judge": {p.Judge.APIKeyEnv, p.Judge.APIKeySource}, "webSearch": {p.WebSearch.APIKeyEnv, p.WebSearch.APIKeySource},
+		"hybridAnalysis": {p.HybridAnalysis.APIKeyEnv, p.HybridAnalysis.APIKeySource},
 	} {
 		if k.env != "" && !envVarRE.MatchString(k.env) {
 			return fmt.Errorf("%s.apiKeyEnv %q must be an environment variable name", name, k.env)
@@ -1170,6 +1199,17 @@ mcpRegistries:
 #   # the variable (default TYPESAFE_API_KEY), else, with apiKeySource
 #   # keyring, the OS keychain entry provider:typesafe.
 #   apiKeyEnv: TYPESAFE_API_KEY
+#   apiKeySource: env
+
+# hybridAnalysis:
+#   # A Hybrid Analysis (CrowdStrike) key, with which the risky files among
+#   # a run's inputs (executables, scripts, PDF, RTF, legacy and macro
+#   # Office, disk images, CHM, archive members included) are looked up by
+#   # their SHA-256 alone, never uploaded: a malicious verdict refuses the
+#   # run, a suspicious one is noted in the receipt. No key, no lookup. The
+#   # key as for judge: the variable (default HYBRID_API_KEY), else, with
+#   # apiKeySource keyring, the OS keychain entry provider:hybrid-analysis.
+#   apiKeyEnv: HYBRID_API_KEY
 #   apiKeySource: env
 
 # webSearch:
