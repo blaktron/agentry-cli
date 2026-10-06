@@ -177,7 +177,7 @@ works the same whether or not a site fronts the server.
 
 ## Commands
 
-`init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
+`init` · `validate` · `login` · `logout` · `whoami` · `publish` · `install` · `list` ·
 `setup` · `doctor` · `files` · `run` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
@@ -204,6 +204,54 @@ against, so no run has to download either; a sandbox host runs it at each
 update. Server-side end-to-end coverage
 lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
 CLI against a live registry.
+
+### Machine sign-in and local sign-out
+
+`agentry login --json --registry https://registry.example` starts browser
+sign-in even with no terminal. Stdout is **NDJSON**, not a single document:
+one `format: 1`, `status: pending` event carrying `registry`, `authorizeUrl`
+and `expiresInSeconds`, then one final event. Keep the CLI process alive and
+parse each line. The authorization URL carries this flow's state nonce;
+neither the callback code nor token is returned. The browser must reach
+this process's `127.0.0.1` listener. `AGENTRY_NO_BROWSER=1` lets the host open
+the returned URL itself. This is a local browser flow, not a device-code grant.
+
+Final statuses are `signed_in`, `declined`, `cancelled`, `timed_out` and
+`failed`. Success carries the verified `handle`, token `storage` (`keyring`
+or `file`), and `signingKeys` (`pinned`, `unchanged`, `unsigned`, `rotation`,
+`mismatch` or `unavailable`). Rotation/mismatch never silently re-pin.
+Other outcomes carry a fixed `reason` and exit nonzero. Raw registry,
+transport and storage errors are withheld because they can echo secrets.
+Normal terminal login, PAT paste, signing-key pinning and Knowledge rewrap
+remain available. JSON login refuses `--paste` and an active `AGENTRY_TOKEN`
+override; unset that override outside the host's chat first, so a later
+`whoami --json` inspects the account that was just signed in.
+
+Send one JSON line on stdin: `{"action":"cancel"}` for cancellation or
+`{"action":"decline"}` when the person declines in the host. SIGINT/SIGTERM
+also cancel; EOF alone does not. Unknown/oversized input is `failed` with
+`invalid_control`, without echoing it. `--timeout` sets a positive duration
+up to five minutes for JSON sign-in. A nonce-bound `access_denied` callback
+also reports decline. The current registry browser Cancel link simply leaves
+the authorization page; it does not send that callback. A host must send
+its decline/cancel control or signal the process, otherwise it waits for expiry.
+
+`agentry logout --json --registry https://registry.example` removes that
+URL's local login and returns `format: 1`, `status: signed_out`. It does not
+revoke the PAT at the registry or remove trust pins, default registry,
+installed packages, model keys, consent records or other registry identities.
+A credential tombstone prevents the old host-keyed keyring fallback from
+silently signing that URL back in. Sign-out refuses `shared_keyring_identity`
+when a recorded keyring entry shares its host with another recorded keyring
+identity; it changes neither entry. This existing host-keyed aliasing needs
+the migration tracked in agentry-cli#267.
+
+An environment token cannot be unset by a child process: when present,
+logout reports `environmentCredential: true` and removes local storage only.
+Unset the override separately; it continues to authenticate CLI commands.
+Sign-out is idempotent. Machine auth accepts HTTPS registry URLs and loopback
+HTTP for local registries, without embedded credentials, query or fragment.
+`whoami --json` remains the account inspection operation.
 
 ### Knowledge packs: `knowledge create` and `knowledge add`
 

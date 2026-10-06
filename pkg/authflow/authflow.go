@@ -43,6 +43,12 @@ import (
 // Timeout bounds how long a sign-in may sit waiting on the browser.
 const Timeout = 5 * time.Minute
 
+// Typed outcomes let machine clients distinguish a refusal from expiry.
+var (
+	ErrDeclined = errors.New("browser sign-in declined")
+	ErrTimeout  = errors.New("browser sign-in timed out — start it again from Settings")
+)
+
 // donePage is what the browser shows once the token has been handed over.
 const donePage = `<!doctype html><meta charset="utf-8"><title>Signed in</title>
 <body style="font-family:system-ui;background:#141210;color:#e7e5e4;display:grid;place-items:center;height:100vh;margin:0">
@@ -61,9 +67,10 @@ type Flow struct {
 	// HTTP performs the exchange; tests substitute it.
 	HTTP *http.Client
 
-	srv  *http.Server
-	ch   chan outcome
-	once sync.Once
+	srv    *http.Server
+	cancel context.CancelFunc
+	ch     chan outcome
+	once   sync.Once
 }
 
 type outcome struct {
@@ -86,11 +93,13 @@ func Start() (*Flow, error) {
 		Port:  ln.Addr().(*net.TCPAddr).Port,
 		State: base64.RawURLEncoding.EncodeToString(stateBytes),
 		ch:    make(chan outcome, 1),
-		HTTP:  &http.Client{Timeout: 15 * time.Second},
+		HTTP:  &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", f.handleCallback)
-	f.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	f.cancel = cancel
+	f.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() { _ = f.srv.Serve(ln) }()
 	return f, nil
 }
@@ -113,6 +122,12 @@ func (f *Flow) handleCallback(w http.ResponseWriter, r *http.Request) {
 		// reach the loopback port, so a request without the nonce must not
 		// be able to end a sign-in it cannot complete (agentry-cli#164).
 		http.Error(w, "state mismatch — this is not the sign-in the app started", http.StatusForbidden)
+		return
+	}
+	if r.URL.Query().Get("error") == "access_denied" {
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "Sign-in declined", http.StatusForbidden)
+		f.deliver(outcome{err: ErrDeclined})
 		return
 	}
 	if code := r.URL.Query().Get("code"); code != "" {
@@ -183,7 +198,7 @@ func (f *Flow) Wait(ctx context.Context) (string, error) {
 	case o := <-f.ch:
 		return o.token, o.err
 	case <-t.C:
-		return "", errors.New("browser sign-in timed out — start it again from Settings")
+		return "", ErrTimeout
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -191,7 +206,10 @@ func (f *Flow) Wait(ctx context.Context) (string, error) {
 
 // Close tears the listener down. Safe after Wait, and on every exit path.
 func (f *Flow) Close() {
+	// Shutdown alone leaves an active code exchange running after cancellation.
+	f.cancel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = f.srv.Shutdown(ctx)
+	_ = f.srv.Close()
 }

@@ -45,7 +45,11 @@ var httpClient = &http.Client{Timeout: httpTimeout}
 // newAPIClient builds a generated client rooted at {registry}/api/v1,
 // attaching "Authorization: Bearer <token>" when a token is known.
 func newAPIClient(regURL, token string) (*apiclient.ClientWithResponses, error) {
-	opts := []apiclient.ClientOption{apiclient.WithHTTPClient(httpClient)}
+	return newAPIClientWithHTTP(regURL, token, httpClient)
+}
+
+func newAPIClientWithHTTP(regURL, token string, hc *http.Client) (*apiclient.ClientWithResponses, error) {
+	opts := []apiclient.ClientOption{apiclient.WithHTTPClient(hc)}
 	if token != "" {
 		opts = append(opts, apiclient.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
 			req.Header.Set("Authorization", "Bearer "+token)

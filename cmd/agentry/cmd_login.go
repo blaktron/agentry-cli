@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -67,11 +68,19 @@ func newLoginCmd() *cobra.Command {
 	}
 	cmd.Flags().Bool("browser", false, "sign in through the browser even when stdin is not a terminal")
 	cmd.Flags().Bool("paste", false, "paste a personal access token on stdin instead of signing in through the browser")
+	cmd.Flags().Duration("timeout", authflow.Timeout, "browser sign-in deadline (positive, at most 5 minutes; JSON mode only)")
+	cmd.Long += "\n\nWith --json, sign-in always uses the browser and writes a pending NDJSON\n" +
+		"event followed by a typed final result. No token is accepted on stdin.\n" +
+		"The host may send {\"action\":\"cancel\"} or {\"action\":\"decline\"} on stdin;\n" +
+		"SIGINT/SIGTERM also cancel. AGENTRY_TOKEN must be unset for this flow."
 	return cmd
 }
 
 // runLogin executes the login flow.
 func runLogin(cmd *cobra.Command, _ []string) error {
+	if flags.jsonOut {
+		return runMachineLogin(cmd)
+	}
 	reg := registryURL()
 	forceBrowser, _ := cmd.Flags().GetBool("browser")
 	forcePaste, _ := cmd.Flags().GetBool("paste")
@@ -100,22 +109,44 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	client, err := newAPIClientChecked(cmd, reg, token)
+	_, err := completeLogin(cmd, reg, token)
+	return err
+}
+
+// completeLogin keeps browser and terminal clients on the same verification,
+// storage, signing-key pinning and Knowledge rewrap path.
+func completeLogin(cmd *cobra.Command, reg, token string) (authEvent, error) {
+	result := authEvent{Format: 1, Status: "signed_in", Registry: reg}
+	// A sign-in credential belongs to the selected registry. Never follow
+	// a redirect while verifying it; /meta is public and needs no token.
+	hc := *httpClient
+	hc.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	client, err := newAPIClientWithHTTP(reg, token, &hc)
 	if err != nil {
-		return err
+		return result, err
+	}
+	if err := minVersionGate(cmd.Context(), cmd.ErrOrStderr(), reg, ""); err != nil {
+		return result, err
 	}
 	resp, err := client.GetCurrentUserWithResponse(cmd.Context())
 	if err != nil {
-		return fmt.Errorf("verify token against %s: %w", reg, err)
+		return result, fmt.Errorf("verify token against %s: %w", reg, err)
 	}
 	if resp.JSON200 == nil {
-		return apiProblem("verify token", resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
+		return result, apiProblem("verify token", resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
 	}
 	handle := resp.JSON200.Handle
+	if err := cmd.Context().Err(); err != nil {
+		return result, err
+	}
+	cfg, err := loadCLIConfig()
+	if err != nil {
+		return result, err
+	}
 
 	host, err := registryHost(reg)
 	if err != nil {
-		return err
+		return result, err
 	}
 	entry := registryEntry{URL: reg, TokenRef: tokenRefKeyring}
 	storage := "OS keychain"
@@ -126,33 +157,37 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 		storage = "config file"
 	}
 
-	cfg, err := loadCLIConfig()
-	if err != nil {
-		return err
-	}
 	cfg.upsertRegistry(entry)
 	if cfg.DefaultRegistry == "" {
 		cfg.DefaultRegistry = reg
 	}
 	if err := saveCLIConfig(cfg); err != nil {
-		return err
+		return result, err
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "logged in to %s as %s (token stored in %s)\n", reg, handle, storage)
+	if !flags.jsonOut {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "logged in to %s as %s (token stored in %s)\n", reg, handle, storage)
+	}
 
 	// §11: "pins signing keys (TOFU)". Never fatal — an unsigned self-host
 	// registry is a legitimate configuration, and a key-fetch hiccup must not
 	// undo a login whose credential is already stored and verified.
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", trust.PinAtLogin(cmd.Context(), httpClient, reg))
+	pins := trust.PinAtLoginResult(cmd.Context(), httpClient, reg)
+	if !flags.jsonOut {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", pins.Note)
+	}
 	rewrapAfterLogin(cmd, reg)
-	return nil
+	result.Handle = strings.ReplaceAll(handle, token, "[redacted]")
+	result.Storage = entry.TokenRef
+	result.SigningKeys = pins.Status
+	return result, nil
 }
 
 // loginViaBrowser runs the loopback flow: a one-shot listener, the
 // registry's authorize page in the browser, a code back, the token on
 // exchange. The URL is always printed so a machine without a browser
-// association (or with the browser on another host of a tailnet) can be
-// completed by hand; AGENTRY_NO_BROWSER=1 skips the open attempt.
+// association can be completed by hand. That browser must reach this
+// process's loopback listener; AGENTRY_NO_BROWSER=1 skips the open attempt.
 func loginViaBrowser(cmd *cobra.Command, reg string) (string, error) {
 	flow, err := authflow.Start()
 	if err != nil {
