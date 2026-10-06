@@ -181,14 +181,16 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 	return res, nil
 }
 
-// stageTexts copies each decoded text into inputs-text/text/<path> and
-// answers every file's index entry, for commit to publish. The caller
-// holds x.mu.
+// stageTexts copies each decoded text into inputs-text/text/<path>, and
+// each Markdown view of HTML into inputs-text/converted/<path>
+// (agentry-cli#631), and answers every file's index entry, for commit to
+// publish. The caller holds x.mu.
 func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, error) {
 	textRoot := filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir)
+	convertedRoot := filepath.Join(x.rd.inputsText, toolsrv.InputsConvertedSubdir)
 	entries := make([]toolsrv.InputEntry, 0, len(res.Report.Files))
 	for _, f := range res.Report.Files {
-		e := toolsrv.InputEntry{Path: f.Path, Type: string(f.Family), InArchive: f.In}
+		e := toolsrv.InputEntry{Path: f.Path, Type: string(f.Family), InArchive: f.In, MIME: f.MIME}
 		if f.In != "" {
 			// A member is not staged: its size is the one it unpacked to.
 			e.Bytes = f.Size
@@ -219,6 +221,17 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 			e.Unpacked, e.Partial = true, decode.UnpackedInPart(f)
 		default:
 			e.Unread = decode.UnreadReason(f)
+		}
+		if f.Markdown != "" && e.Unread == "" {
+			dst := filepath.Join(convertedRoot, filepath.FromSlash(f.Path))
+			if err := res.CopyMarkdown(f.Path, dst); err != nil {
+				return nil, Classify(ExitGateway, fmt.Errorf("the Markdown converted from %s: %w", f.Path, err))
+			}
+			fi, err := os.Stat(dst)
+			if err != nil {
+				return nil, Classify(ExitCLI, fmt.Errorf("the Markdown converted from %s: %w", f.Path, err))
+			}
+			e.Converted, e.ConvertedBy, e.ConvertedBytes = true, f.Tool, fi.Size()
 		}
 		entries = append(entries, e)
 	}

@@ -4,9 +4,13 @@ package toolsrv
 // engine's decode step runs before any agent starts and writes, under the
 // read-only InputsTextDir, an index of every input (InputsIndexFile) and
 // the text decoded from each input that is not text already
-// (InputsTextSubdir/<path>). list_inputs answers from the index,
-// read_input serves the decoded text (the original only when it is text),
-// and search_inputs searches that text. Without an index (a built-in
+// (InputsTextSubdir/<path>), and HTML's Markdown (InputsConvertedSubdir/
+// <path>). list_inputs answers from the index, with the views each input
+// has. read_input and search_inputs read either view (agentry-cli#631;
+// plan quickagents-that-run.md D2, D3): the text, which is the decoded
+// text of a document, HTML's Markdown, or the file itself; or the original,
+// the file as uploaded, a binary one as a base64 page. A document is read
+// as its text by default, anything else as its original. Without an index (a built-in
 // whose caller decoded its documents itself, or a run with no inputs)
 // list_inputs and read_input answer from /inputs as they always have, and
 // search_inputs searches the inputs that are UTF-8 text.
@@ -29,6 +33,15 @@ const (
 	InputsIndexFile   = "inputs.json"
 	InputsIndexSchema = "inputs/v1"
 	InputsTextSubdir  = "text"
+	// InputsConvertedSubdir holds the Markdown view of a file read as
+	// text: HTML converted by pandoc (agentry-cli#631).
+	InputsConvertedSubdir = "converted"
+)
+
+// The two views of an input (agentry-cli#631).
+const (
+	ViewText     = "text"
+	ViewOriginal = "original"
 )
 
 // InputsIndex is every input of the run and what the decode step made of
@@ -68,6 +81,72 @@ type InputEntry struct {
 	// own; Partial, when set, is why only part of it was unpacked.
 	Unpacked bool   `json:"unpacked,omitempty"`
 	Partial  string `json:"partial,omitempty"`
+	// MIME is the type the decode step detected it as, from its fixed
+	// vocabulary's shape; a binary original's page names it.
+	MIME string `json:"mime,omitempty"`
+	// Converted says a file read as text also has a Markdown text view at
+	// InputsConvertedSubdir/<Path>, written by ConvertedBy (pandoc, for
+	// HTML), ConvertedBytes long.
+	Converted      bool   `json:"converted,omitempty"`
+	ConvertedBy    string `json:"convertedBy,omitempty"`
+	ConvertedBytes int64  `json:"convertedBytes,omitempty"`
+}
+
+// hasOriginal says whether the file as uploaded can be read: an input as
+// staged is under InputsDir, and a member read as text was copied out
+// unchanged; a member decoded from a document stayed in the decode
+// container.
+func (e InputEntry) hasOriginal() bool {
+	return e.hasText() && (e.InArchive == "" || !e.Decoded)
+}
+
+// defaultView is the view read_input and search_inputs read when none is
+// asked for: a document's text, and anything else as uploaded, HTML
+// included (D2).
+func (e InputEntry) defaultView() string {
+	if e.Decoded {
+		return ViewText
+	}
+	return ViewOriginal
+}
+
+// views is list_inputs' word for the views an input has, the default first.
+func (e InputEntry) views() string {
+	switch {
+	case !e.hasText():
+		return "-"
+	case e.Decoded && e.hasOriginal():
+		return "text (default), original"
+	case e.Decoded:
+		return "text"
+	case e.Converted:
+		return "original (default), text (Markdown)"
+	}
+	return "original (default; the text is the same)"
+}
+
+// viewOf is where one view of an entry lives, resolved under its own root,
+// or why the entry has no such view.
+func (s *server) viewOf(e InputEntry, view string) (string, error) {
+	if view == "" {
+		view = e.defaultView()
+	}
+	switch view {
+	case ViewText:
+		if e.Converted {
+			return resolveUnder(filepath.Join(s.spec.InputsTextDir, InputsConvertedSubdir), e.Path)
+		}
+		return s.textOf(e)
+	case ViewOriginal:
+		if !e.hasOriginal() {
+			return "", fmt.Errorf("%s has no original view: it was decoded from a document inside %s, which stayed in the decode step; read its text", e.Path, e.InArchive)
+		}
+		if e.InArchive != "" {
+			return s.textOf(e)
+		}
+		return resolveUnder(s.spec.InputsDir, e.Path)
+	}
+	return "", fmt.Errorf("view must be %q or %q, not %q", ViewText, ViewOriginal, view)
 }
 
 // Outcome is the entry's outcome as list_inputs says it.
@@ -170,13 +249,16 @@ func listIndexed(idx *InputsIndex, clean string) (string, bool) {
 		return fmt.Sprintf("list_inputs: no input at %q", clean), true
 	}
 	var b strings.Builder
-	b.WriteString("path\ttype\tbytes\toutcome\ttext bytes")
+	b.WriteString("path\ttype\tbytes\toutcome\ttext bytes\tviews")
 	for _, e := range entries {
 		text := "-"
 		if e.hasText() {
 			text = strconv.FormatInt(e.TextBytes, 10)
+			if e.Converted {
+				text = strconv.FormatInt(e.ConvertedBytes, 10)
+			}
 		}
-		fmt.Fprintf(&b, "\n%s\t%s\t%d\t%s\t%s", e.Path, e.Type, e.Bytes, e.Outcome(), text)
+		fmt.Fprintf(&b, "\n%s\t%s\t%d\t%s\t%s\t%s", e.Path, e.Type, e.Bytes, e.Outcome(), text, e.views())
 	}
 	return b.String(), false
 }
@@ -186,6 +268,7 @@ func searchInputsSchema() map[string]any {
 		"query":      strProp("the word or phrase to find, matched without regard to case"),
 		"path":       strProp("inputs-relative file or directory to search; empty or \".\" searches every input"),
 		"maxResults": intProp(fmt.Sprintf("most matching lines to return (default %d, at most %d)", defaultSearchHits, maxSearchHits)),
+		"view":       viewProp(),
 	}, "query")
 }
 
@@ -200,6 +283,7 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 		Query      string `json:"query"`
 		Path       string `json:"path"`
 		MaxResults int    `json:"maxResults"`
+		View       string `json:"view"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return s.failed("search_inputs", err)
@@ -212,6 +296,8 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 		return fmt.Sprintf("search_inputs: query is longer than %d bytes", maxSearchQuery), true
 	case s.spec.InputsDir == "":
 		return "search_inputs: no inputs channel configured", true
+	case a.View != "" && a.View != ViewText && a.View != ViewOriginal:
+		return fmt.Sprintf("search_inputs: view must be %q or %q, not %q", ViewText, ViewOriginal, a.View), true
 	}
 	limit := a.MaxResults
 	if limit <= 0 {
@@ -225,7 +311,7 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 			return s.failed("search_inputs", err)
 		}
 	}
-	targets, err := s.searchTargets(clean)
+	targets, err := s.searchTargets(clean, a.View)
 	if err != nil {
 		return s.failed("search_inputs", err)
 	}
@@ -257,10 +343,11 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 	return out, false
 }
 
-// searchTargets is the texts under a cleaned path: from the index when
-// there is one, else every regular file under /inputs (a link is never
-// followed).
-func (s *server) searchTargets(clean string) ([]searchTarget, error) {
+// searchTargets is the texts under a cleaned path, in the view asked for
+// (each input's default when none is): from the index when there is one,
+// an input without that view left out, else every regular file under
+// /inputs (a link is never followed), which is both views at once.
+func (s *server) searchTargets(clean, view string) ([]searchTarget, error) {
 	idx, err := s.inputsIndex()
 	if err != nil {
 		return nil, err
@@ -271,7 +358,7 @@ func (s *server) searchTargets(clean string) ([]searchTarget, error) {
 			if !e.hasText() {
 				continue
 			}
-			abs, err := s.textOf(e)
+			abs, err := s.viewOf(e, view)
 			if err != nil {
 				continue
 			}

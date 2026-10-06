@@ -16,6 +16,7 @@ package toolsrv
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,13 +109,13 @@ func (s *server) buildTools() {
 		case ToolRunCommand:
 			add(name, s.runCommandDescription(), runCommandSchema(), s.toolRunCommand)
 		case ToolListInputs:
-			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason) and the size of its text. A document, PDF or image was turned into text before the run. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided.",
+			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided.",
 				listInputsSchema(), s.toolListInputs)
 		case ToolReadInput:
-			add(name, "Read one of the run's provided input files (read-only) as text: a document, PDF or image as the text decoded from it before the run, a text file as it is. Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+			add(name, "Read one of the run's provided input files (read-only). By default a document, PDF or image is read as the text decoded from it before the run, and any other file as it was uploaded. view \"original\" reads a document as uploaded too (a binary file as a page of base64, with its size and type); view \"text\" reads HTML as Markdown. Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
 				readInputSchema(), s.toolReadInput)
 		case ToolSearchInputs:
-			add(name, "Search the text of the run's input files for a word or phrase, without regard to case. Returns each matching line as path:line: excerpt; read the file with read_input for more.",
+			add(name, "Search the run's input files for a word or phrase, without regard to case, each in its default view unless view says which (a document's text, other files as uploaded). Returns each matching line as path:line: excerpt; read the file with read_input for more.",
 				searchInputsSchema(), s.toolSearchInputs)
 		case ToolAIReview:
 			add(name, aiReviewDescription, aiReviewSchema(), s.toolAIReview)
@@ -168,6 +169,12 @@ func intProp(desc string) map[string]any {
 	return map[string]any{"type": "integer", "description": desc}
 }
 
+// viewProp is the input tools' choice of view (agentry-cli#631).
+func viewProp() map[string]any {
+	return map[string]any{"type": "string", "enum": []string{ViewText, ViewOriginal},
+		"description": "which view of the file: \"text\" (a document's decoded text, HTML as Markdown) or \"original\" (the file as uploaded, a binary one as base64); default: a document's text, anything else as uploaded. list_inputs says which views each file has"}
+}
+
 func boolProp(desc string) map[string]any {
 	return map[string]any{"type": "boolean", "description": desc}
 }
@@ -177,6 +184,7 @@ func fsReadSchema() map[string]any {
 		"path":     strProp("workspace-relative slash path of the file"),
 		"offset":   intProp("byte offset to start reading from (default 0)"),
 		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
+		"view":     viewProp(),
 	}, "path")
 }
 
@@ -999,9 +1007,13 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 		Path     string `json:"path"`
 		Offset   int64  `json:"offset"`
 		MaxBytes int64  `json:"maxBytes"`
+		View     string `json:"view"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return s.failed("read_input", err)
+	}
+	if a.View != "" && a.View != ViewText && a.View != ViewOriginal {
+		return fmt.Sprintf("read_input: view must be %q or %q, not %q", ViewText, ViewOriginal, a.View), true
 	}
 	if a.Path == "" {
 		return "read_input: path is required", true
@@ -1016,14 +1028,16 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return s.failed("read_input", err)
 	}
-	// With the decode step's index, an input is read as its text: the
-	// decoded text, or the original when it is text; one that could not
-	// be read says why. A path the index does not name (a directory) is
-	// answered from /inputs as before.
+	// With the decode step's index, an input is read in the view asked
+	// for, or its default; one that could not be read says why. A path
+	// the index does not name (a directory) is answered from /inputs as
+	// before, as is every input without an index, where the file is both
+	// its views.
 	idx, err := s.inputsIndex()
 	if err != nil {
 		return s.failed("read_input", err)
 	}
+	view, mime := a.View, ""
 	if idx != nil {
 		if e, ok := idx.lookup(path.Clean(a.Path)); ok {
 			if e.Unread != "" {
@@ -1032,7 +1046,11 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 			if e.Unpacked {
 				return fmt.Sprintf("read_input: %s is an archive; list_inputs with path %q lists what was unpacked from it, each read by its own path", e.Path, e.Path), true
 			}
-			if abs, err = s.textOf(e); err != nil {
+			if view == "" {
+				view = e.defaultView()
+			}
+			mime = e.MIME
+			if abs, err = s.viewOf(e, view); err != nil {
 				return s.failed("read_input", err)
 			}
 		}
@@ -1045,6 +1063,15 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 		return fmt.Sprintf("read_input: %q is a directory (use list_inputs)", path.Clean(a.Path)), true
 	}
 	if !s.spec.Review.Enabled {
+		if view == ViewOriginal && isBinary(abs) {
+			// A binary original is answered, not refused (D3), every page
+			// of it: the file decides, not a page that happens to decode.
+			text, err := readBase64Page(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), mime)
+			if err != nil {
+				return s.failed("read_input", err)
+			}
+			return text, false
+		}
 		text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
 		if err != nil {
 			return s.failed("read_input", err)
@@ -1053,8 +1080,10 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	}
 	// Under the review grant a file reaches the model only after AI Review
 	// passed it (review.go): the model gets a withheld file's path and the
-	// reason instead, which is an answer, not a tool failure.
-	if instead, isErr, ok := s.reviewedInput(path.Clean(a.Path), abs, fi); !ok {
+	// reason instead, which is an answer, not a tool failure. Each view is
+	// reviewed as its own text, and a binary original stays refused, since
+	// no review can read it.
+	if instead, isErr, ok := s.reviewedInput(path.Clean(a.Path), view, abs, fi); !ok {
 		return s.scrubSecrets(instead), isErr
 	}
 	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
@@ -1106,6 +1135,62 @@ func readPaged(abs string, offset, maxBytes, serverCap int64) (string, bool, err
 		text += fmt.Sprintf("\n[truncated at %d bytes of %d]", len(data), total)
 	}
 	return text, false, nil
+}
+
+// isBinary says whether a file is not text, as the decode step tells it:
+// its first 64 KiB hold a NUL or are not UTF-8 (a rune cut at the end
+// aside). A file that cannot be read is not called binary; the read that
+// follows says why.
+func isBinary(abs string) bool {
+	data, more, err := readUpTo(abs, 64<<10)
+	if err != nil {
+		return false
+	}
+	if more {
+		data = trimPartialRune(data)
+	}
+	return bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)
+}
+
+// readBase64Page answers one page of a binary original (agentry-cli#631):
+// its size, its detected type and the page's bytes as base64, sized so the
+// encoding stays within the server cap (or the caller's tighter maxBytes,
+// counted in raw bytes).
+func readBase64Page(abs string, offset, maxBytes, serverCap int64, mime string) (string, error) {
+	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	total := fi.Size()
+	if offset >= total {
+		return fmt.Sprintf("binary file; %d bytes; offset %d is past its end", total, offset), nil
+	}
+	limit := serverCap / 4 * 3
+	if maxBytes > 0 && maxBytes < limit {
+		limit = maxBytes
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit))
+	if err != nil {
+		return "", err
+	}
+	if mime == "" {
+		mime = "a type not detected"
+	}
+	end := offset + int64(len(data))
+	next := ""
+	if end < total {
+		next = fmt.Sprintf("; pass offset %d for the next page", end)
+	}
+	return fmt.Sprintf("binary file; %d bytes, detected as %s; bytes %d to %d as base64%s:\n%s",
+		total, mime, offset, end, next, base64.StdEncoding.EncodeToString(data)), nil
 }
 
 // ---- write_report ----

@@ -161,6 +161,17 @@ func (r *Result) CopyText(path, dst string) error {
 	return fmt.Errorf("%s was not decoded", path)
 }
 
+// CopyMarkdown copies the Markdown view of the file read as text at path
+// (HTML, converted by pandoc; agentry-cli#631) to dst.
+func (r *Result) CopyMarkdown(path, dst string) error {
+	for _, f := range r.Report.Files {
+		if f.Path == path && f.Markdown != "" {
+			return copyOut(r.Out, f.Markdown, dst, MaxTextBytes)
+		}
+	}
+	return fmt.Errorf("%s has no Markdown view", path)
+}
+
 // copyOut copies a regular file under root to dst, through an os.Root:
 // never through a link, never out of root, never past limit.
 func copyOut(root, rel, dst string, limit int64) error {

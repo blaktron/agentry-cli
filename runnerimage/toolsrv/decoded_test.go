@@ -7,11 +7,13 @@
 package toolsrv
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -53,15 +55,15 @@ func writeIndex(t *testing.T, s *Spec, files []InputEntry) {
 func TestListInputsFromTheIndex(t *testing.T) {
 	s := newTestServer(t, decodedSpec(t))
 	got, isErr := s.toolListInputs(rawArgs(t, map[string]any{}))
-	want := "path\ttype\tbytes\toutcome\ttext bytes\n" +
-		"blob.bin\tunknown\t4\tunread: not text, and no decoder reads this kind of file\t-\n" +
-		"notes.txt\ttext\t44\tread\t44\n" +
-		"report.docx\tdocument\t20\tread\t44\n" +
-		"scans/page1.png\timage\t9\tread\t32"
+	want := "path\ttype\tbytes\toutcome\ttext bytes\tviews\n" +
+		"blob.bin\tunknown\t4\tunread: not text, and no decoder reads this kind of file\t-\t-\n" +
+		"notes.txt\ttext\t44\tread\t44\toriginal (default; the text is the same)\n" +
+		"report.docx\tdocument\t20\tread\t44\ttext (default), original\n" +
+		"scans/page1.png\timage\t9\tread\t32\ttext (default), original"
 	if isErr || got != want {
 		t.Fatalf("list_inputs =\n%s\nwant\n%s", got, want)
 	}
-	if got, isErr := s.toolListInputs(rawArgs(t, map[string]any{"path": "scans"})); isErr || !strings.HasSuffix(got, "\nscans/page1.png\timage\t9\tread\t32") || strings.Contains(got, "report.docx") {
+	if got, isErr := s.toolListInputs(rawArgs(t, map[string]any{"path": "scans"})); isErr || !strings.HasSuffix(got, "\nscans/page1.png\timage\t9\tread\t32\ttext (default), original") || strings.Contains(got, "report.docx") {
 		t.Fatalf("a directory's listing (%q, %v)", got, isErr)
 	}
 	if got, isErr := s.toolListInputs(rawArgs(t, map[string]any{"path": "nope"})); !isErr || !strings.Contains(got, "no input at") {
@@ -93,6 +95,137 @@ func TestReadInputServesTheDecodedText(t *testing.T) {
 	}
 	if got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": "scans"})); !isErr || !strings.Contains(got, "is a directory") {
 		t.Fatalf("a directory (%q, %v)", got, isErr)
+	}
+}
+
+// viewsSpec adds to decodedSpec an HTML page with a Markdown view, as the
+// decode step writes it for HTML (agentry-cli#631; plan
+// quickagents-that-run.md D2), and gives the .docx its detected type.
+func viewsSpec(t *testing.T) *Spec {
+	t.Helper()
+	s := decodedSpec(t)
+	mustWrite(t, filepath.Join(s.InputsDir, "site", "index.html"), []byte(pageHTML))
+	mustWrite(t, filepath.Join(s.InputsTextDir, InputsConvertedSubdir, "site", "index.html"), []byte(pageMarkdown))
+	writeIndex(t, s, []InputEntry{
+		{Path: "blob.bin", Type: "unknown", Bytes: 4, Unread: "not text, and no decoder reads this kind of file"},
+		{Path: "notes.txt", Type: "text", Bytes: 44, TextBytes: 44, MIME: "text/plain"},
+		{Path: "report.docx", Type: "document", Bytes: 20, Decoded: true, DecodedBy: "pandoc", TextBytes: 44,
+			MIME: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+		{Path: "scans/page1.png", Type: "image", Bytes: 9, Decoded: true, DecodedBy: "tesseract", TextBytes: 32},
+		{Path: "site/index.html", Type: "text", Bytes: int64(len(pageHTML)), TextBytes: int64(len(pageHTML)), MIME: "text/html",
+			Converted: true, ConvertedBy: "pandoc", ConvertedBytes: int64(len(pageMarkdown))},
+	})
+	return s
+}
+
+const (
+	pageHTML     = "<!doctype html>\n<h1>Search</h1>\n<div id=\"out\"></div>\n<script>out.innerHTML = location.hash</script>\n"
+	pageMarkdown = "# Search\n\n<div id=\"out\">\n\n</div>\n"
+)
+
+// TestReadInputViews: every input is read in the view asked for, or its
+// default: a document's text, anything else as uploaded, HTML included
+// (D2); a binary original is answered as a page of base64 with its size and
+// type, never refused (D3); a view an input lacks says why (agentry-cli#631).
+func TestReadInputViews(t *testing.T) {
+	s := newTestServer(t, viewsSpec(t))
+	read := func(args map[string]any) (string, bool) {
+		t.Helper()
+		return s.toolReadInput(rawArgs(t, args))
+	}
+	for _, tc := range []struct {
+		path, view, want string
+	}{
+		{"site/index.html", "", pageHTML},
+		{"site/index.html", ViewOriginal, pageHTML},
+		{"site/index.html", ViewText, pageMarkdown},
+		{"report.docx", "", "# Report\n\nThe quarterly review is on Friday.\n"},
+		{"report.docx", ViewText, "# Report\n\nThe quarterly review is on Friday.\n"},
+		{"notes.txt", ViewText, "Remember the Quarterly Review.\nnothing else\n"},
+		{"notes.txt", ViewOriginal, "Remember the Quarterly Review.\nnothing else\n"},
+	} {
+		if got, isErr := read(map[string]any{"path": tc.path, "view": tc.view}); isErr || got != tc.want {
+			t.Errorf("read_input %s view %q = (%q, %v), want %q", tc.path, tc.view, got, isErr, tc.want)
+		}
+	}
+	docx := "PK\x03\x04\x00\xff binary zip"
+	got, isErr := read(map[string]any{"path": "report.docx", "view": ViewOriginal})
+	want := "binary file; 17 bytes, detected as application/vnd.openxmlformats-officedocument.wordprocessingml.document; bytes 0 to 17 as base64:\n" + base64.StdEncoding.EncodeToString([]byte(docx))
+	if isErr || got != want {
+		t.Fatalf("a binary original = (%q, %v), want %q", got, isErr, want)
+	}
+	got, isErr = read(map[string]any{"path": "report.docx", "view": ViewOriginal, "offset": 2, "maxBytes": 4})
+	want = "binary file; 17 bytes, detected as application/vnd.openxmlformats-officedocument.wordprocessingml.document; bytes 2 to 6 as base64; pass offset 6 for the next page:\n" + base64.StdEncoding.EncodeToString([]byte(docx[2:6]))
+	if isErr || got != want {
+		t.Fatalf("a page of a binary original = (%q, %v), want %q", got, isErr, want)
+	}
+	if got, isErr := read(map[string]any{"path": "scans/page1.png", "view": ViewOriginal}); isErr || !strings.Contains(got, "detected as a type not detected; bytes 0 to 9 as base64:") {
+		t.Fatalf("an original of no recorded type = (%q, %v)", got, isErr)
+	}
+	if got, isErr := read(map[string]any{"path": "report.docx", "view": ViewOriginal, "offset": 17}); isErr || got != "binary file; 17 bytes; offset 17 is past its end" {
+		t.Fatalf("past the end = (%q, %v)", got, isErr)
+	}
+	if got, isErr := read(map[string]any{"path": "notes.txt", "view": "raw"}); !isErr || got != `read_input: view must be "text" or "original", not "raw"` {
+		t.Fatalf("an unknown view = (%q, %v)", got, isErr)
+	}
+	if got, isErr := read(map[string]any{"path": "blob.bin", "view": ViewOriginal}); !isErr || !strings.Contains(got, "could not be read") {
+		t.Fatalf("an unread input's original = (%q, %v)", got, isErr)
+	}
+	ls, _ := s.toolListInputs(rawArgs(t, map[string]any{"path": "site"}))
+	if !strings.HasSuffix(ls, "\nsite/index.html\ttext\t"+strconv.Itoa(len(pageHTML))+"\tread\t"+strconv.Itoa(len(pageMarkdown))+"\toriginal (default), text (Markdown)") {
+		t.Fatalf("list_inputs of a converted page: %q", ls)
+	}
+}
+
+// TestAMembersViews: a member read as text was copied out unchanged, so its
+// text is its original; one decoded from a document has only its text,
+// since the member stayed in the decode step.
+func TestAMembersViews(t *testing.T) {
+	s := inputsSpec(t)
+	s.InputsTextDir = t.TempDir()
+	mustWrite(t, filepath.Join(s.InputsDir, "bundle.zip"), []byte("PK\x03\x04 zip"))
+	text := filepath.Join(s.InputsTextDir, InputsTextSubdir)
+	mustWrite(t, filepath.Join(text, "bundle.zip", "contract.docx"), []byte("The contract text.\n"))
+	mustWrite(t, filepath.Join(text, "bundle.zip", "pom.xml"), []byte("<project/>\n"))
+	writeIndex(t, s, []InputEntry{
+		{Path: "bundle.zip", Type: "archive", Bytes: 13, Unpacked: true},
+		{Path: "bundle.zip/contract.docx", Type: "document", Bytes: 900, InArchive: "bundle.zip", Decoded: true, DecodedBy: "pandoc", TextBytes: 19},
+		{Path: "bundle.zip/pom.xml", Type: "text", Bytes: 11, InArchive: "bundle.zip", TextBytes: 11},
+	})
+	srv := newTestServer(t, s)
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "bundle.zip/pom.xml", "view": ViewOriginal})); isErr || got != "<project/>\n" {
+		t.Errorf("a text member's original = (%q, %v)", got, isErr)
+	}
+	got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "bundle.zip/contract.docx", "view": ViewOriginal}))
+	if !isErr || !strings.Contains(got, "has no original view") {
+		t.Errorf("a decoded member's original = (%q, %v)", got, isErr)
+	}
+	ls, _ := srv.toolListInputs(rawArgs(t, map[string]any{}))
+	if !strings.Contains(ls, "bundle.zip/contract.docx\tdocument\t900\tread\t19\ttext\n") {
+		t.Errorf("list_inputs of a decoded member: %q", ls)
+	}
+}
+
+// TestSearchInputsInAView: search_inputs reads each input's default view,
+// or the one asked for, and leaves out an input without it.
+func TestSearchInputsInAView(t *testing.T) {
+	s := newTestServer(t, viewsSpec(t))
+	search := func(args map[string]any) string {
+		t.Helper()
+		got, _ := s.toolSearchInputs(rawArgs(t, args))
+		return got
+	}
+	if got := search(map[string]any{"query": "innerHTML"}); got != "site/index.html:4: <script>out.innerHTML = location.hash</script>" {
+		t.Errorf("HTML is searched as uploaded by default: %q", got)
+	}
+	if got := search(map[string]any{"query": "innerHTML", "view": ViewText}); !strings.HasPrefix(got, "no input text matches") {
+		t.Errorf("HTML's Markdown holds no script: %q", got)
+	}
+	if got := search(map[string]any{"query": "quarterly", "view": ViewOriginal}); got != "notes.txt:1: Remember the Quarterly Review." {
+		t.Errorf("a binary original is never matched: %q", got)
+	}
+	if got, isErr := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "x", "view": "raw"})); !isErr || !strings.Contains(got, "view must be") {
+		t.Errorf("an unknown view = (%q, %v)", got, isErr)
 	}
 }
 
@@ -288,17 +421,17 @@ func TestAnArchivesMembersAreInputsOfTheirOwn(t *testing.T) {
 		{Path: "bundle.zip/notes/todo.md", Type: "text", Bytes: 17, TextBytes: 17, InArchive: "bundle.zip"},
 	})
 	srv := newTestServer(t, s)
-	want := "path\ttype\tbytes\toutcome\ttext bytes\n" +
-		"bundle.zip\tarchive\t13\tunpacked in part: unpacking stopped at the file cap\t-\n" +
-		"bundle.zip/contract.docx\tdocument\t900\tread\t36\n" +
-		"bundle.zip/link\tunknown\t0\tunread: a link in an archive is never unpacked\t-\n" +
-		"bundle.zip/notes/todo.md\ttext\t17\tread\t17"
+	want := "path\ttype\tbytes\toutcome\ttext bytes\tviews\n" +
+		"bundle.zip\tarchive\t13\tunpacked in part: unpacking stopped at the file cap\t-\t-\n" +
+		"bundle.zip/contract.docx\tdocument\t900\tread\t36\ttext\n" +
+		"bundle.zip/link\tunknown\t0\tunread: a link in an archive is never unpacked\t-\t-\n" +
+		"bundle.zip/notes/todo.md\ttext\t17\tread\t17\toriginal (default; the text is the same)"
 	for _, path := range []string{"", "bundle.zip"} {
 		if got, isErr := srv.toolListInputs(rawArgs(t, map[string]any{"path": path})); isErr || got != want {
 			t.Fatalf("list_inputs %q =\n%s\nwant\n%s", path, got, want)
 		}
 	}
-	if got, isErr := srv.toolListInputs(rawArgs(t, map[string]any{"path": "bundle.zip/notes"})); isErr || !strings.HasSuffix(got, "\nbundle.zip/notes/todo.md\ttext\t17\tread\t17") || strings.Contains(got, "contract") {
+	if got, isErr := srv.toolListInputs(rawArgs(t, map[string]any{"path": "bundle.zip/notes"})); isErr || !strings.HasSuffix(got, "\nbundle.zip/notes/todo.md\ttext\t17\tread\t17\toriginal (default; the text is the same)") || strings.Contains(got, "contract") {
 		t.Fatalf("a folder in an archive (%q, %v)", got, isErr)
 	}
 	for path, want := range map[string]string{

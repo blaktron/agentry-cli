@@ -171,8 +171,11 @@ func playDecode(t *testing.T, files []runnerdecode.File) func(dockerx.RunSpec) {
 	return func(r dockerx.RunSpec) {
 		out := mountSource(r, "/out")
 		for _, f := range files {
-			if f.Output != "" && !strings.Contains(f.Output, "..") {
-				p := filepath.Join(out, filepath.FromSlash(f.Output))
+			for _, rel := range []string{f.Output, f.Markdown} {
+				if rel == "" || strings.Contains(rel, "..") {
+					continue
+				}
+				p := filepath.Join(out, filepath.FromSlash(rel))
 				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 					t.Error(err)
 				}
@@ -243,6 +246,28 @@ var sampleImage = Image{
 	Tag:      "agentry-decode:0123456789abcdef",
 	Files:    "ghcr.io/blaktron/agentry-files:2026.10.02.1@sha256:0d35",
 	Packages: []string{"pandoc-cli-3.6.4-r0", "poppler-utils-25.04.0-r0", "tesseract-ocr-5.5.0-r2", "tesseract-ocr-data-eng-5.5.0-r2"},
+}
+
+// TestAMarkdownViewIsKeptBesideTheFile: a file read as text with pandoc's
+// Markdown at <path>.md passes the host's check, and the view is copied out
+// on its own (agentry-cli#631).
+func TestAMarkdownViewIsKeptBesideTheFile(t *testing.T) {
+	files := []runnerdecode.File{{Path: "notes.md", Family: "text", Tool: "pandoc", Outcome: runnerdecode.OutcomeText, Markdown: "notes.md.md", MarkdownBytes: 17}}
+	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, files)}}}
+	res, err := Run(context.Background(), f, sampleImage, staged(t), t.TempDir(), policy.Limits{}.WithDefaults(), os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "view.md")
+	if err := res.CopyMarkdown("notes.md", dst); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "text of notes.md\n" {
+		t.Fatalf("the Markdown view %q", b)
+	}
+	if err := res.CopyMarkdown("report.pdf", dst); err == nil {
+		t.Fatal("a file with no Markdown view was copied")
+	}
 }
 
 func TestRunDecodesInAContainerWithNothing(t *testing.T) {
@@ -425,6 +450,18 @@ func TestRunFailures(t *testing.T) {
 		{name: "a report naming a path that climbs out", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "../../etc/passwd", Family: "text", Outcome: runnerdecode.OutcomeText}})}
 		}, wantErr: "not a document once"},
+		{name: "a Markdown view of a decoded document", fg: func(t *testing.T) *dockerx.FakeForeground {
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "report.pdf", Family: "pdf", Tool: "pandoc", Outcome: runnerdecode.OutcomeDecoded, Output: "report.pdf.txt", Markdown: "report.pdf.md"}})}
+		}, wantErr: "has a Markdown view but the outcome"},
+		{name: "a Markdown view no converter wrote", fg: func(t *testing.T) *dockerx.FakeForeground {
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeText, Markdown: "notes.md.md"}})}
+		}, wantErr: "has a Markdown view but the outcome"},
+		{name: "a Markdown view outside the output root", fg: func(t *testing.T) *dockerx.FakeForeground {
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Tool: "pandoc", Outcome: runnerdecode.OutcomeText, Markdown: "report.pdf.txt"}})}
+		}, wantErr: "Markdown view outside the output root"},
+		{name: "a Markdown size with no view", fg: func(t *testing.T) *dockerx.FakeForeground {
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeText, MarkdownBytes: 9}})}
+		}, wantErr: "Markdown size but no Markdown view"},
 		{name: "a report of an unknown outcome", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: "trusted"}})}
 		}, wantErr: "unknown outcome"},

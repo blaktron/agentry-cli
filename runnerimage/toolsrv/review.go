@@ -89,8 +89,10 @@ const (
 // refused, or one ai_review call.
 type ReviewEntry struct {
 	Tool string `json:"tool"`
-	// Path is the input file, inputs-relative.
+	// Path is the input file, inputs-relative, and View the view of it
+	// read_input was asked for, when one was (agentry-cli#631).
 	Path string `json:"path,omitempty"`
+	View string `json:"view,omitempty"`
 	// Manifest and Dir are what an ai_review call read, inputs-relative and
 	// cleaned ("." is the inputs root).
 	Manifest string `json:"manifest,omitempty"`
@@ -219,10 +221,15 @@ func (s *server) recordReview(e ReviewEntry) {
 // is refused as read_input refuses binary without the grant. (ai_review
 // picks its files by stage S1's sniff instead, as the registry reads a
 // release; read_input keeps its own rule, which never returns binary.)
-func (s *server) reviewedInput(rel, abs string, fi fs.FileInfo) (instead string, isErr, ok bool) {
+func (s *server) reviewedInput(rel, view, abs string, fi fs.FileInfo) (instead string, isErr, ok bool) {
 	r := s.review()
+	// Each view of a file is its own text, reviewed on its own.
+	key := rel
+	if view != "" {
+		key += "#" + view
+	}
 	r.mu.Lock()
-	v, cached := r.verdicts[rel]
+	v, cached := r.verdicts[key]
 	r.mu.Unlock()
 	if cached && v.size == fi.Size() && v.modTime.Equal(fi.ModTime()) {
 		return v.answer(rel)
@@ -231,18 +238,18 @@ func (s *server) reviewedInput(rel, abs string, fi fs.FileInfo) (instead string,
 	switch data, err := readCapped(abs, ReviewFileBytes); {
 	case errors.Is(err, errTooLarge):
 		v.res = webscan.Result{Verdict: webscan.NotScanned, Failure: webscan.FailureTooLarge}
-		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: ReviewFileBytes + 1, Result: v.res})
+		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, View: view, Bytes: ReviewFileBytes + 1, Result: v.res})
 	case err != nil:
 		return "read_input: " + err.Error(), true, false
-	case !utf8.Valid(data):
+	case !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0:
 		v.binary = true
-		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: len(data), Refused: "binary file"})
+		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, View: view, Bytes: len(data), Refused: "binary file"})
 	default:
 		v.res = s.scanInput(string(data))
-		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, Bytes: len(data), Result: v.res})
+		s.recordReview(ReviewEntry{Tool: ToolReadInput, Path: rel, View: view, Bytes: len(data), Result: v.res})
 	}
 	r.mu.Lock()
-	r.verdicts[rel] = v
+	r.verdicts[key] = v
 	r.mu.Unlock()
 	return v.answer(rel)
 }

@@ -364,3 +364,51 @@ func TestReviewAnswersAreScrubbedOfTheKey(t *testing.T) {
 		t.Fatalf("a key in the environment built scanner %T (limit %v) and asker %v", s2.review().scanner, j, s2.review().asker)
 	}
 }
+
+// TestReadInputViewsUnderReview: under the review grant each view of a file
+// is reviewed as its own text before the model reads it, and a binary
+// original stays refused, since no review can read it (agentry-cli#631).
+func TestReadInputViewsUnderReview(t *testing.T) {
+	sc := &fakeScanner{verdict: passAll}
+	s, spec := reviewServer(t, sc, &fakeAsker{})
+	spec.InputsTextDir = t.TempDir()
+	mustWrite(t, filepath.Join(spec.InputsDir, "site", "index.html"), []byte(pageHTML))
+	mustWrite(t, filepath.Join(spec.InputsTextDir, InputsConvertedSubdir, "site", "index.html"), []byte(pageMarkdown))
+	mustWrite(t, filepath.Join(spec.InputsDir, "report.docx"), []byte("PK\x03\x04\x00\xff binary zip"))
+	mustWrite(t, filepath.Join(spec.InputsTextDir, InputsTextSubdir, "report.docx"), []byte("The report.\n"))
+	writeIndex(t, spec, []InputEntry{
+		{Path: "report.docx", Type: "document", Bytes: 17, Decoded: true, DecodedBy: "pandoc", TextBytes: 12},
+		{Path: "site/index.html", Type: "text", Bytes: int64(len(pageHTML)), TextBytes: int64(len(pageHTML)), MIME: "text/html",
+			Converted: true, ConvertedBy: "pandoc", ConvertedBytes: int64(len(pageMarkdown))},
+	})
+	for _, tc := range []struct{ path, view, want string }{
+		{"site/index.html", "", pageHTML},
+		{"site/index.html", ViewText, pageMarkdown},
+		{"site/index.html", ViewOriginal, pageHTML},
+		{"report.docx", "", "The report.\n"},
+	} {
+		if got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": tc.path, "view": tc.view})); isErr || got != tc.want {
+			t.Errorf("%s view %q = (%q, %v), want %q", tc.path, tc.view, got, isErr, tc.want)
+		}
+	}
+	got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": "report.docx", "view": ViewOriginal}))
+	if !isErr || got != "binary file; 17 bytes" {
+		t.Fatalf("a binary original under review = (%q, %v)", got, isErr)
+	}
+	// The page's two views were scanned once each (the default is the
+	// original, read again from the cache), the document's text once.
+	var texts []string
+	for _, c := range sc.calls() {
+		texts = append(texts, c.text)
+	}
+	if want := []string{pageHTML, pageMarkdown, "The report.\n"}; !slices.Equal(texts, want) {
+		t.Fatalf("scanned %q, want %q", texts, want)
+	}
+	var views []string
+	for _, e := range reviewLedgerOf(t, spec) {
+		views = append(views, e.Path+" "+e.View)
+	}
+	if want := []string{"site/index.html original", "site/index.html text", "report.docx text", "report.docx original"}; !slices.Equal(views, want) {
+		t.Fatalf("ledger %q, want %q", views, want)
+	}
+}
