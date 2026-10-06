@@ -70,7 +70,7 @@ func Correct(raw json.RawMessage) (json.RawMessage, []string) {
 		c.shortenAt(in, "opening", "interactive.opening", manifest.MaxOpeningChars, false)
 	}
 	c.dropIfEmpty(root, "interactive", "")
-	c.liftKnowledge(root)
+	c.lift(root, "knowledge")
 	if k := value(root, "knowledge"); k != nil && k.Kind == yaml.MappingNode {
 		c.noShips(k)
 		if a := value(k, "accepts"); a != nil && a.Kind == yaml.MappingNode {
@@ -78,6 +78,11 @@ func Correct(raw json.RawMessage) (json.RawMessage, []string) {
 		}
 	}
 	c.dropIfEmpty(root, "knowledge", "")
+	c.lift(root, "inputs")
+	if in := value(root, "inputs"); in != nil && in.Kind == yaml.MappingNode {
+		c.inputs(in)
+	}
+	c.dropIfEmpty(root, "inputs", "")
 	if len(c.did) == 0 {
 		return raw, nil
 	}
@@ -166,29 +171,74 @@ func (c *corrector) dropEmptyItems(l *yaml.Node, where, what string) {
 	l.Content = kept
 }
 
-// liftKnowledge moves a knowledge block written under capabilities to the
-// manifest's top level, where the manifest takes it (the Drafter's first
-// live draft with a pack put it there, agentry-cli#522). A manifest that
+// lift moves a block written under capabilities to the manifest's top
+// level, where the manifest takes it: knowledge (the Drafter's first live
+// draft with a pack put it there, agentry-cli#522) and inputs (DEV-218,
+// agentry-cli#634), neither of which is a capability. A manifest that
 // already has one keeps its own, and the misplaced one is removed.
-func (c *corrector) liftKnowledge(root *yaml.Node) {
+func (c *corrector) lift(root *yaml.Node, key string) {
 	caps := value(root, "capabilities")
 	if caps == nil || caps.Kind != yaml.MappingNode {
 		return
 	}
 	for i := 0; i+1 < len(caps.Content); i += 2 {
-		if caps.Content[i].Value != "knowledge" {
+		if caps.Content[i].Value != key {
 			continue
 		}
-		key, v := caps.Content[i], caps.Content[i+1]
+		k, v := caps.Content[i], caps.Content[i+1]
 		caps.Content = append(caps.Content[:i], caps.Content[i+2:]...)
-		if value(root, "knowledge") != nil {
-			c.did = append(c.did, "capabilities.knowledge was removed: knowledge is a field of the manifest itself, which already has one.")
+		if value(root, key) != nil {
+			c.did = append(c.did, fmt.Sprintf("capabilities.%s was removed: %s is a field of the manifest itself, which already has one.", key, key))
 			return
 		}
-		root.Content = append(root.Content, key, v)
-		c.did = append(c.did, "capabilities.knowledge was moved to knowledge: it is a field of the manifest itself, not a capability.")
+		root.Content = append(root.Content, k, v)
+		c.did = append(c.did, fmt.Sprintf("capabilities.%s was moved to %s: it is a field of the manifest itself, not a capability.", key, key))
 		return
 	}
+}
+
+// inputKindNames are the slips a kind is written with, and the kind's
+// name (manifest.InputKinds): its singular, or another case.
+var inputKindNames = map[string]manifest.InputKind{
+	"document": manifest.InputKindDocuments,
+	"image":    manifest.InputKindImages,
+}
+
+// inputs corrects the slips of the inputs block (DEV-218): a kind written
+// in the singular or another case, a kind named twice, and any beside the
+// kinds the draft names, which the rules refuse since any stands alone.
+// A kind outside the set is left for the rules to refuse.
+func (c *corrector) inputs(in *yaml.Node) {
+	l := value(in, "kinds")
+	if l == nil || l.Kind != yaml.SequenceNode {
+		return
+	}
+	for _, it := range l.Content {
+		if it.Kind != yaml.ScalarNode {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(it.Value))
+		if k, ok := inputKindNames[name]; ok {
+			name = string(k)
+		}
+		if name != it.Value && manifest.InputKind(name).Valid() {
+			c.did = append(c.did, fmt.Sprintf("inputs.kinds: %q was written %q, the kind's name.", it.Value, name))
+			it.Value = name
+		}
+	}
+	c.dedupe(in, "kinds", "inputs")
+	if len(l.Content) > 1 {
+		kept := l.Content[:0]
+		for _, it := range l.Content {
+			if it.Kind == yaml.ScalarNode && it.Value == string(manifest.InputKindAny) {
+				c.did = append(c.did, "inputs.kinds: any was dropped: it stands alone, and the draft names the kinds it takes.")
+				continue
+			}
+			kept = append(kept, it)
+		}
+		l.Content = kept
+	}
+	c.dropIfEmpty(in, "kinds", "inputs")
 }
 
 // noShips removes knowledge.ships: a draft never ships a pack (plan

@@ -98,7 +98,9 @@ What the guide states is also checked after you answer, whatever you read.
    network cannot look up. Pages: `draft/instructions.md`,
    `draft/examples.md`.
 5. **Declare the least contract that does the task.** Only what the
-   instructions use; commands only from the base commands. Pages:
+   instructions use; commands only from the base commands, and never to
+   read the inputs. A QuickAgent that takes files declares `inputs`: what
+   kinds and which view it reads first. Pages:
    `manifest/manifest.md`, `manifest/exec.md`, `manifest/secrets.md`,
    `manifest/inputs.md`.
 6. **Write the intake and the guide.** A `choice` question carries its

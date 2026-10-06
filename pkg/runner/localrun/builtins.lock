@@ -42,3 +42,5 @@ agentry/drafter@1.8.1 sha256:e37ead0ede4dba67b7fa4811736c7c32d3511929ffc4e5c57b5
 agentry/drafter@1.8.2 sha256:c00a79a705c57956c2cce9528aede211a9e1bba95e04da22c37ba9098ac530eb
 # 1.8.3: the post-step holds each MCP server pin to the drafting guide's lists: a pin on Does not run here, or a listed direct dependency, gets the repair turn; the notes say what admitted each server (agentry-cli#660).
 agentry/drafter@1.8.3 sha256:68f6895bc52002cb3447b16ba8686f074ea3bcd422a06583e4506e32c84d8fa7
+# 1.9.0: the drafting guide teaches the input cases, the two views and the manifest's inputs block, and drops the archive-reader how-to; the post-step corrects the block's slips and holds every archive reader to the repair turn; the how-a-run-works page says a run ends blocked (agentry-cli#634).
+agentry/drafter@1.9.0 sha256:7ea238ee336693c36cf178ea3fdaf7981cd83139fb639d189c77139b5a3a728d

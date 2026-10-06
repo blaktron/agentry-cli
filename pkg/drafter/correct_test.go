@@ -2,6 +2,7 @@ package drafter
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -167,5 +168,62 @@ func TestKnowledgeUnderCapabilitiesIsLifted(t *testing.T) {
 	out, did = Correct(json.RawMessage(both))
 	if !strings.Contains(string(out), `"Mine"`) || strings.Contains(string(out), `"Other"`) || len(did) != 1 {
 		t.Fatalf("%s %q", out, did)
+	}
+}
+
+// TestTheInputsBlockIsCorrected (agentry-cli#634, DEV-218): an inputs
+// block written under capabilities is lifted to the top level; a kind in
+// the singular or another case gets its name; a kind named twice once;
+// any beside named kinds is dropped, since it stands alone; an emptied
+// list and block go; a kind outside the set is left for the rules.
+func TestTheInputsBlockIsCorrected(t *testing.T) {
+	kindsOf := func(t *testing.T, out json.RawMessage) (*manifest.Inputs, map[string]json.RawMessage) {
+		t.Helper()
+		var got struct {
+			Inputs       *manifest.Inputs           `json:"inputs"`
+			Capabilities map[string]json.RawMessage `json:"capabilities"`
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Inputs, got.Capabilities
+	}
+	for _, tc := range []struct {
+		name, in  string
+		kinds     []manifest.InputKind
+		view      manifest.InputView
+		dids      int
+		didPrefix string
+	}{
+		{"lifted from capabilities", `{"capabilities":{"exec":"none","inputs":{"kinds":["code"],"view":"original"}}}`,
+			[]manifest.InputKind{"code"}, "original", 1, "capabilities.inputs was moved to inputs"},
+		{"singular and case", `{"inputs":{"kinds":["Document","image"],"view":"text"}}`,
+			[]manifest.InputKind{"documents", "images"}, "text", 2, `inputs.kinds: "Document" was written "documents"`},
+		{"named twice", `{"inputs":{"kinds":["code","code"]}}`,
+			[]manifest.InputKind{"code"}, "", 1, `inputs.kinds: "code" was named twice`},
+		{"any beside kinds", `{"inputs":{"kinds":["any","data"],"view":"both"}}`,
+			[]manifest.InputKind{"data"}, "both", 1, "inputs.kinds: any was dropped"},
+		{"a kind outside the set is kept", `{"inputs":{"kinds":["spreadsheets"]}}`,
+			[]manifest.InputKind{"spreadsheets"}, "", 0, ""},
+		{"nothing to correct", `{"inputs":{"kinds":["documents"],"view":"text"}}`,
+			[]manifest.InputKind{"documents"}, "text", 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, did := Correct(json.RawMessage(tc.in))
+			in, caps := kindsOf(t, out)
+			if in == nil || !slices.Equal(in.Kinds, tc.kinds) || in.View != tc.view {
+				t.Fatalf("inputs %s", out)
+			}
+			if _, ok := caps["inputs"]; ok {
+				t.Fatalf("inputs left under capabilities: %s", out)
+			}
+			if len(did) != tc.dids || (tc.didPrefix != "" && !strings.HasPrefix(did[0], tc.didPrefix)) {
+				t.Fatalf("did %q", did)
+			}
+		})
+	}
+	out, _ := Correct(json.RawMessage(`{"name":"x","inputs":{"kinds":[]}}`))
+	if strings.Contains(string(out), "inputs") {
+		t.Fatalf("an empty inputs block was kept: %s", out)
 	}
 }

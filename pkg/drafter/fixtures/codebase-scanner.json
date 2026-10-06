@@ -1,0 +1,21 @@
+{
+  "id": "codebase-scanner",
+  "description": "Scan my web app's source code for security vulnerabilities: I'll give you the project (a .zip of the repository, or its files). Look for injection, cross-site scripting, unsafe use of eval or exec, hard-coded secrets, and dependencies pinned at versions with known problems (package.json, pom.xml, requirements.txt), and write a report listing each finding with its file and line, severity and a fix.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "inputKinds": [
+      "code"
+    ],
+    "inputViews": [
+      "original"
+    ]
+  }
+}

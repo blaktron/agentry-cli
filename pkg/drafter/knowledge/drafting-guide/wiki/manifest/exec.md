@@ -1,14 +1,14 @@
 ---
 title: Commands
 type: guide
-summary: When a QuickAgent declares commands at all, the base commands every run provides, the archive readers, where a command can write, what a run In Agentry provides, and Unsafe Mode on the desktop.
+summary: When a QuickAgent declares commands at all (computation the tools cannot do, never reading its inputs), the base commands every run provides, where a command can write, what a run In Agentry provides, and Unsafe Mode on the desktop.
 sources: [doc:runtime-facts.md, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/agentry/unsafe-mode/]
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 # Commands
 
-`exec` is `none` unless the task needs a command. An agent reads a CSV, a log, a document or a diff itself, through its input tools, so most QuickAgents declare no command. With `exec: none` the run has no `run_command` tool at all [src: web:https://docs.secureagentry.net/quickagents/].
+`exec` is `none` unless the task needs a command. An agent reads a CSV, a log, a document, a codebase or a diff itself, through its input tools, in the file's text or as uploaded, so most QuickAgents declare no command. With `exec: none` the run has no `run_command` tool at all [src: web:https://docs.secureagentry.net/quickagents/].
 
 ## The base commands
 
@@ -16,9 +16,9 @@ Use `{commands: [...]}`, single command names, only for what reading cannot do, 
 
 A run calls a declared command by its name, with arguments, and nothing else: `run_command` takes only the declared names, and a command's `PATH` holds only them. There is no pipe and no shell, so each step is one command [src: web:https://docs.secureagentry.net/runner/].
 
-## The archive readers
+## Not for reading inputs
 
-`tar`, `unzip`, `gunzip`, `bunzip2`, `unxz`, `zcat`, `bzcat` and `xzcat` only when the QuickAgent takes input files: `guide.files` names them, or an intake question of type `file` asks for one. A command can write only under `/tmp`, so the instructions unpack there (`tar -xzf /inputs/src.tar.gz -C /tmp`, `unzip -d /tmp/src /inputs/src.zip`) and read what they unpacked with the other declared commands (`ls`, `cat`, `grep`), or read one member straight out (`tar -xzOf`, `unzip -p`).
+Commands are for computation the tools cannot do, never for reading the person's files. The runner unpacks every archive before the run, and `list_inputs`, `read_input` and `search_inputs` read every file, in its text or as uploaded (see [Input files](inputs.md)). So a draft never declares `cat`, `grep`, `ls`, `head`, `tail` or `tree` to read, search or list its inputs, and never declares `tar`, `unzip`, `gunzip`, `bunzip2`, `unxz`, `zcat`, `bzcat` or `xzcat` at all: the check after you answer sends an archive reader to a repair turn. What a command is for: a checksum (`sha256sum`), comparing two files (`diff`, `cmp`), a hex dump (`hexdump`, `od`), the printable strings of a binary (`strings`), counting or sorting a large file's lines (`wc`, `sort`, `uniq`).
 
 ## Where a command can write
 
