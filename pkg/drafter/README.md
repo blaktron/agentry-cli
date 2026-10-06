@@ -89,6 +89,14 @@ checks after a draft correct the block's slips (a kind in the singular,
 archive reader to the repair turn. A release that declares the block needs
 CLI v0.6.73 or later to run; an older CLI refuses its manifest.
 
+Since 1.10.0 the Drafter marks each key a draft declares: optional
+(`capabilities.optionalSecrets`) when the QuickAgent still does its job
+without it, required when it cannot. Its instructions say what to do when
+an optional key was not given, and a `secret` question's `required` matches
+its key. The Builders on the site and in the desktop show the marking, and
+the author can change it. A release that marks a key optional needs CLI
+v0.6.66 or later to run; an older CLI refuses its manifest.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

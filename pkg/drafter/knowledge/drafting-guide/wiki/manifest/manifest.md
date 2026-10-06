@@ -35,6 +35,7 @@ Every capability is shown to the person, asked for at install and scanned. Decla
 - `filesystem.read` and `filesystem.write`: `none`. Input files arrive under `/inputs` without a grant, and reports go out through `write_report` without one (see [Input files](inputs.md)). Use `workspace` or `{paths: [...]}` only when the instructions truly work on the person's workspace, which only a run on their computer has.
 - `exec`: `none`, or `{commands: [...]}` from the commands every run provides. See [Commands](exec.md).
 - `secrets`: the environment variable names of the keys the QuickAgent's own `fetch` uses. A key an MCP server needs goes in that server's `secrets`. See [Keys](secrets.md).
+- `optionalSecrets`: the declared keys, its own or a server's, a run can start without. Every other declared key is required. See [Keys](secrets.md).
 - `dataAccess`: from `email`, `calendar`, `files`, `tickets`, `code`, `messages`, `payments`, `other`, only what the task touches.
 - `mcpServers`: each `{"npm" or "pypi": package, "version": exact, "tools": [...], "egress": [hosts], "secrets": [NAMES], "env": {NAME: value}}`, the keys it does not need left out. See [Declared MCP servers](../servers/mcp-servers.md) before you pin one.
 

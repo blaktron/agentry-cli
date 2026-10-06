@@ -27,7 +27,7 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 - [The person's knowledge at run time](manifest/knowledge-accepts.md) — When a QuickAgent asks the person to attach a knowledge pack of their own at run time (knowledge.accepts), how to write its prompt, and what goes into the instructions instead. A draft never ships a pack.
 - [The manifest](manifest/manifest.md) — Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.
 - [Run modes](manifest/run-modes.md) — Autonomous and interactive runs, when a draft adds interactive, what a conversation can and cannot do, and the opening line.
-- [Keys](manifest/secrets.md) — How a QuickAgent declares the keys it needs (its own for fetch, a server's on that server), how a run gets them without the model seeing them, and what a run does without one. Today's facts; rewritten when drafts can mark a key optional.
+- [Keys](manifest/secrets.md) — How a QuickAgent declares the keys it needs (its own for fetch, a server's on that server), how to mark each one optional or required, how a run gets them without the model seeing them, and what a run does without an optional one.
 
 ## Runtime
 

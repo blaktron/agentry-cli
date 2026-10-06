@@ -449,11 +449,11 @@ func TestEveryPageIsOnTheMap(t *testing.T) {
 
 // stubPages are the pages that state today's facts until the milestone
 // that changes them rewrites them (plan drafter-knowledge.md §4.3, D6):
-// optional secrets (plan optional-secrets.md M6, agentry-cli#652) and what
-// holds publishing (plan quickagents-that-run.md M8, agentry#893). The
-// input cases were rewritten by agentry-cli#634 (M7). The pages are public
-// text and name the change, not the plan.
-var stubPages = []string{"manifest/secrets.md", "draft/review.md"}
+// what holds publishing (plan quickagents-that-run.md M8, agentry#893). The
+// input cases were rewritten by agentry-cli#634 (M7), and the keys page by
+// optional secrets M6 (agentry-cli#652). The pages are public text and
+// name the change, not the plan.
+var stubPages = []string{"draft/review.md"}
 
 // TestTheStubPagesSayTheyAreTodaysFacts: each stub says it states today's
 // facts and when it is rewritten, so a reader does not take it for the

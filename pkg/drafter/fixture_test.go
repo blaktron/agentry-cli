@@ -40,8 +40,10 @@ type Expect struct {
 	Hosts    []string `json:"hosts,omitempty"`
 	AnyHosts bool     `json:"anyHosts,omitempty"`
 	// MaxSecrets and MaxServers bound the keys (its own and its servers')
-	// and the declared MCP servers.
+	// and the declared MCP servers; MinSecrets is the fewest keys a fair
+	// reading needs, for a description that names one.
 	MaxSecrets int `json:"maxSecrets"`
+	MinSecrets int `json:"minSecrets,omitempty"`
 	MaxServers int `json:"maxServers"`
 	// Exec and Write allow a command or a filesystem write.
 	Exec  bool `json:"exec"`
@@ -57,6 +59,11 @@ type Expect struct {
 	// checked when empty.
 	InputKinds []string `json:"inputKinds,omitempty"`
 	InputViews []string `json:"inputViews,omitempty"`
+	// Keys is the marking the description calls for on every key a draft
+	// declares: "optional" when the QuickAgent can do its job without it,
+	// so each is in optionalSecrets, "required" when it cannot, so none is;
+	// not checked when empty (plan optional-secrets.md D3, agentry-cli#652).
+	Keys string `json:"keys,omitempty"`
 }
 
 // LoadFixtures reads the fixture set, sorted by id.
@@ -99,10 +106,10 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	}
 	c := m.Capabilities
 	hosts := append([]string(nil), c.Network.Egress.Hosts...)
-	secrets := len(c.Secrets)
+	keys := append([]string(nil), c.Secrets...)
 	for _, s := range c.MCPServers {
 		hosts = append(hosts, s.Egress...)
-		secrets += len(s.Secrets)
+		keys = append(keys, s.Secrets...)
 		if s.Version == "" || strings.ContainsAny(s.Version, "^~*<> ") || s.Version == "latest" {
 			out = append(out, fmt.Sprintf("server %s is not pinned at an exact version (%q)", s.SourceID(), s.Version))
 		}
@@ -123,8 +130,18 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 			out = append(out, fmt.Sprintf("reaches %s, not among %v", h, e.Hosts))
 		}
 	}
-	if secrets > e.MaxSecrets {
-		out = append(out, fmt.Sprintf("%d keys, want at most %d", secrets, e.MaxSecrets))
+	if n := len(keys); n > e.MaxSecrets {
+		out = append(out, fmt.Sprintf("%d keys, want at most %d", n, e.MaxSecrets))
+	} else if n < e.MinSecrets {
+		out = append(out, fmt.Sprintf("%d keys, want at least %d", n, e.MinSecrets))
+	}
+	for _, k := range keys {
+		switch optional := c.IsOptionalSecret(k); {
+		case e.Keys == "optional" && !optional:
+			out = append(out, fmt.Sprintf("key %s is required; the QuickAgent can do its job without it", k))
+		case e.Keys == "required" && optional:
+			out = append(out, fmt.Sprintf("key %s is optional; the QuickAgent cannot do its job without it", k))
+		}
 	}
 	if n := len(c.MCPServers); n > e.MaxServers {
 		out = append(out, fmt.Sprintf("%d MCP servers, want at most %d", n, e.MaxServers))
