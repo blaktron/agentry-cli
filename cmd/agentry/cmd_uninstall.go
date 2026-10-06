@@ -158,7 +158,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	// --keep-mcp.
 	if conns, err := connection.Open(home, nil).List(); err == nil {
 		for _, c := range conns {
-			if !refMatches(c.Ref, sel) {
+			if !profile.RefMatches(c.Ref, sel) {
 				continue
 			}
 			switch {

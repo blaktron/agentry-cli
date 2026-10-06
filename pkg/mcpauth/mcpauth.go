@@ -158,6 +158,8 @@ func DiscoverRemote(ctx context.Context, c *http.Client, serverURL string) (*Dis
 // WWW-Authenticate: the resource metadata address and the scopes, either
 // of which may be absent.
 func challenge(ctx context.Context, c *http.Client, serverURL string) (string, []string, error) {
+	// Any initialize will do: the request exists to be refused with the
+	// server's challenge, and a server that answers it takes no sign-in.
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agentry","version":"1"}}}`
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL, strings.NewReader(body))
 	if err != nil {
@@ -317,10 +319,17 @@ type Client struct {
 	Secret string `json:"-"`
 	// Kind is how it was obtained: ClientOwn, ClientCIMD or ClientDCR.
 	Kind string `json:"kind"`
-	// AuthMethod is how it authenticates at the token endpoint: "none",
-	// "client_secret_basic" or "client_secret_post".
+	// AuthMethod is how it authenticates at the token endpoint: AuthNone,
+	// AuthSecretBasic or AuthSecretPost.
 	AuthMethod string `json:"authMethod"`
 }
+
+// Token endpoint authentication methods (RFC 7591 §2).
+const (
+	AuthNone        = "none"
+	AuthSecretBasic = "client_secret_basic"
+	AuthSecretPost  = "client_secret_post"
+)
 
 // The kinds of Client.
 const (
@@ -410,7 +419,7 @@ func (r *Request) Callback(u *url.URL) (string, error) {
 		return "", fmt.Errorf("the redirect came from another issuer (%q, not %s): refused", iss, r.Server.Issuer)
 	}
 	if e := q.Get("error"); e != "" {
-		return "", &OAuthError{Status: http.StatusFound, Code: e, Description: trimDescription(q.Get("error_description"))}
+		return "", &OAuthError{Status: http.StatusFound, Code: safeCode(e), Description: trimDescription(q.Get("error_description"), nil)}
 	}
 	code := q.Get("code")
 	if code == "" {
@@ -455,7 +464,7 @@ func tokenRequest(ctx context.Context, c *http.Client, endpoint string, client C
 		return nil, fmt.Errorf("read the vendor's token answer: %w", err)
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, oauthError(res.StatusCode, raw)
+		return nil, oauthError(res.StatusCode, raw, form)
 	}
 	var out struct {
 		AccessToken  string          `json:"access_token"`
@@ -511,15 +520,15 @@ func Revoke(ctx context.Context, c *http.Client, endpoint string, client Client,
 	defer func() { _ = res.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, maxBody))
 	if res.StatusCode != http.StatusOK {
-		return oauthError(res.StatusCode, raw)
+		return oauthError(res.StatusCode, raw, form)
 	}
 	return nil
 }
 
 func postForm(ctx context.Context, c *http.Client, endpoint string, client Client, form url.Values) (*http.Response, error) {
 	switch client.AuthMethod {
-	case "client_secret_basic":
-	case "client_secret_post":
+	case AuthSecretBasic:
+	case AuthSecretPost:
 		form.Set("client_id", client.ID)
 		form.Set("client_secret", client.Secret)
 	default:
@@ -531,7 +540,7 @@ func postForm(ctx context.Context, c *http.Client, endpoint string, client Clien
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	if client.AuthMethod == "client_secret_basic" {
+	if client.AuthMethod == AuthSecretBasic {
 		req.SetBasicAuth(url.QueryEscape(client.ID), url.QueryEscape(client.Secret))
 	}
 	res, err := c.Do(req)
@@ -542,14 +551,23 @@ func postForm(ctx context.Context, c *http.Client, endpoint string, client Clien
 }
 
 // oauthError builds the error from a refusal, keeping its code and a
-// trimmed description and dropping everything else in the body.
-func oauthError(status int, raw []byte) error {
+// trimmed description and dropping everything else in the body. A value
+// the request carried (a refresh token, a client secret, a code, a
+// verifier) that the vendor echoes in its description is masked: the
+// description reaches the terminal and a broken connection's record.
+func oauthError(status int, raw []byte, sent url.Values) error {
 	var body struct {
 		Error       string `json:"error"`
 		Description string `json:"error_description"`
 	}
 	_ = json.Unmarshal(raw, &body)
-	return &OAuthError{Status: status, Code: safeCode(body.Error), Description: trimDescription(body.Description)}
+	var mask []string
+	for _, k := range []string{"refresh_token", "client_secret", "code", "code_verifier", "token"} {
+		if v := sent.Get(k); v != "" {
+			mask = append(mask, v)
+		}
+	}
+	return &OAuthError{Status: status, Code: safeCode(body.Error), Description: trimDescription(body.Description, mask)}
 }
 
 // safeCode keeps an error code to the RFC 6749 character set.
@@ -575,16 +593,20 @@ func codeChar(r rune) bool {
 	return false
 }
 
-// trimDescription keeps a description short and printable.
-func trimDescription(s string) string {
+// trimDescription keeps a description short and printable, with every
+// value in mask replaced.
+func trimDescription(s string, mask []string) string {
+	for _, m := range mask {
+		s = strings.ReplaceAll(s, m, "[redacted]")
+	}
 	s = strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {
 			return ' '
 		}
 		return r
-	}, s)
-	if len(s) > 200 {
-		s = s[:200] + "…"
+	}, strings.ToValidUTF8(s, ""))
+	if r := []rune(s); len(r) > 200 {
+		s = string(r[:200]) + "…"
 	}
 	return strings.TrimSpace(s)
 }

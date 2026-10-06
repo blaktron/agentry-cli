@@ -85,6 +85,10 @@ func issuerID(issuer string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+func clientAccount(id string) string           { return "mcp-client:" + id }
+func (c *Clients) recordPath(id string) string { return filepath.Join(c.dir, id+".json") }
+func (c *Clients) secretPath(id string) string { return filepath.Join(c.dir, id+".secret") }
+
 // NormalizeIssuer holds an issuer to an https address with no query or
 // fragment, without a trailing slash.
 func NormalizeIssuer(issuer string) (string, error) {
@@ -110,20 +114,27 @@ func (c *Clients) Set(issuer, clientID, secret string) error {
 	}
 	id := issuerID(issuer)
 	rec := OwnClient{Issuer: issuer, ClientID: clientID}
-	_ = removeIfThere(filepath.Join(c.dir, id+".secret"))
-	if c.keys != nil {
-		_ = c.keys.Delete("mcp-client:" + id)
-	}
-	if secret != "" {
-		rec.SecretIn = "file"
-		if c.keys != nil && c.keys.Set("mcp-client:"+id, secret) == nil {
-			rec.SecretIn = "keychain"
-		} else if err := writeFileAtomic(filepath.Join(c.dir, id+".secret"), []byte(secret)); err != nil {
+	// The new secret is kept first; then the place it is not kept is
+	// cleared, so neither a failure nor a keychain that refuses leaves
+	// an old secret behind or the client without one.
+	switch {
+	case secret == "":
+	case c.keys != nil && c.keys.Set(clientAccount(id), secret) == nil:
+		rec.SecretIn = secretInKeychain
+	default:
+		if err := writeFileAtomic(c.secretPath(id), []byte(secret)); err != nil {
 			return fmt.Errorf("keep the client secret: %w", err)
 		}
+		rec.SecretIn = secretInFile
+	}
+	if rec.SecretIn != secretInFile {
+		_ = removeIfThere(c.secretPath(id))
+	}
+	if rec.SecretIn != secretInKeychain && c.keys != nil {
+		_ = c.keys.Delete(clientAccount(id))
 	}
 	b, _ := json.MarshalIndent(rec, "", "  ")
-	return writeFileAtomic(filepath.Join(c.dir, id+".json"), append(b, '\n'))
+	return writeFileAtomic(c.recordPath(id), append(b, '\n'))
 }
 
 // Get is issuer's client with its secret, or nil when none is kept.
@@ -135,17 +146,17 @@ func (c *Clients) Get(issuer string) (*mcpauth.Client, error) {
 	cl := &mcpauth.Client{ID: rec.ClientID, Kind: mcpauth.ClientOwn}
 	id := issuerID(rec.Issuer)
 	switch rec.SecretIn {
-	case "keychain":
+	case secretInKeychain:
 		if c.keys == nil {
 			return nil, errors.New("your OAuth client's secret is in the OS keychain, which is not in use here")
 		}
-		v, err := c.keys.Get("mcp-client:" + id)
+		v, err := c.keys.Get(clientAccount(id))
 		if err != nil {
 			return nil, fmt.Errorf("read your OAuth client's secret for %s from the OS keychain: %w", rec.Issuer, err)
 		}
 		cl.Secret = v
-	case "file":
-		b, err := os.ReadFile(filepath.Join(c.dir, id+".secret")) //nolint:gosec // our store layout
+	case secretInFile:
+		b, err := os.ReadFile(c.secretPath(id)) //nolint:gosec // our store layout
 		if err != nil {
 			return nil, fmt.Errorf("read your OAuth client's secret for %s: %w", rec.Issuer, err)
 		}
@@ -159,7 +170,7 @@ func (c *Clients) record(issuer string) (*OwnClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(filepath.Join(c.dir, issuerID(issuer)+".json")) //nolint:gosec // our store layout
+	raw, err := os.ReadFile(c.recordPath(issuerID(issuer))) //nolint:gosec // our store layout
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -208,8 +219,8 @@ func (c *Clients) Remove(issuer string) (bool, error) {
 		return false, err
 	}
 	id := issuerID(rec.Issuer)
-	if c.keys != nil && rec.SecretIn == "keychain" {
-		_ = c.keys.Delete("mcp-client:" + id)
+	if c.keys != nil && rec.SecretIn == secretInKeychain {
+		_ = c.keys.Delete(clientAccount(id))
 	}
-	return true, errors.Join(removeIfThere(filepath.Join(c.dir, id+".secret")), removeIfThere(filepath.Join(c.dir, id+".json")))
+	return true, errors.Join(removeIfThere(c.secretPath(id)), removeIfThere(c.recordPath(id)))
 }

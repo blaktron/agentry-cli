@@ -1461,7 +1461,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		d := srv.Package + " (auth " + srv.Auth
 		switch {
 		case srv.SignsIn():
-			d += ", the person's connection for this release: an access token alone, refreshed by the runner before the run and written into a folder mounted read-only into its bridge; the refresh token never leaves the runner's store"
+			d += ", the person's connection for this release: an access token alone, refreshed by the runner before the run and written into a folder mounted read-only into its bridge; the refresh token and any client secret never enter the run"
 		case srv.SendsBearer():
 			d += ", " + strings.Join(srv.Secrets, ", ") + " sent as its bearer"
 		}

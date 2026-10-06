@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,18 +86,24 @@ func (c Consent) Run(ctx context.Context) (*Grant, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The manifest's scopes are the contract. A server that declares none
+	// is asked for what its own 401 names, else for nothing (the vendor's
+	// default), never for every scope its metadata lists, which would be
+	// wider than anything the release said.
 	scopes := c.Scopes
 	if len(scopes) == 0 {
 		scopes = d.ChallengeScopes
-	}
-	if len(scopes) == 0 {
-		scopes = d.ResourceScopes
 	}
 	req, err := NewRequest(d.Server, client, lb.RedirectURI, d.Resource, scopes)
 	if err != nil {
 		return nil, err
 	}
 	lb.Expect(req)
+	asked := "the vendor's default access"
+	if len(scopes) > 0 {
+		asked = strings.Join(scopes, " ")
+	}
+	c.say(fmt.Sprintf("The sign-in is at %s (the authorization server %s names), as %s, asking for: %s.", d.Server.Issuer, c.ServerURL, clientWords(client), asked))
 	if c.Present != nil {
 		c.Present(req.URL())
 	}
@@ -114,7 +121,33 @@ func (c Consent) Run(ctx context.Context) (*Grant, error) {
 	if err != nil {
 		return nil, fmt.Errorf("finish the sign-in to %s: %w", c.ServerURL, err)
 	}
+	if extra := beyond(tok.Scopes, scopes); len(scopes) > 0 && len(extra) > 0 {
+		c.say("The vendor granted more than was asked: " + strings.Join(extra, " ") + ".")
+	}
 	return &Grant{Discovery: *d, Client: client, Scopes: scopes, Token: *tok}, nil
+}
+
+// beyond is what granted holds that asked does not.
+func beyond(granted, asked []string) []string {
+	var out []string
+	for _, g := range granted {
+		if !slices.Contains(asked, g) {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// clientWords says which client the consent screen will name.
+func clientWords(c Client) string {
+	switch c.Kind {
+	case ClientOwn:
+		return "your own OAuth client " + c.ID
+	case ClientCIMD:
+		return "Agentry Desktop (" + c.ID + ")"
+	default:
+		return "Agentry Desktop, registered with the vendor for this connection"
+	}
 }
 
 // wait takes the first good answer from the loopback listener or the
@@ -177,7 +210,7 @@ func (c Consent) pickClient(ctx context.Context, md ServerMetadata, redirectURI 
 	}
 	if c.CIMDURL != "" && md.CIMDSupported && supportsNone(md) {
 		if CIMDServed(ctx, c.HTTP, c.CIMDURL) {
-			return Client{ID: c.CIMDURL, Kind: ClientCIMD, AuthMethod: "none"}, nil
+			return Client{ID: c.CIMDURL, Kind: ClientCIMD, AuthMethod: AuthNone}, nil
 		}
 	}
 	if md.RegistrationEndpoint != "" {
@@ -190,30 +223,29 @@ func (c Consent) pickClient(ctx context.Context, md ServerMetadata, redirectURI 
 // a server that lists no methods defaults to client_secret_basic (RFC
 // 8414), which a public client cannot use.
 func supportsNone(md ServerMetadata) bool {
-	for _, m := range md.TokenEndpointAuthMethodsSupported {
-		if m == "none" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(md.TokenEndpointAuthMethodsSupported, AuthNone)
 }
 
-// secretMethod is how the person's own client authenticates: post where
-// the server lists it or lists nothing (Google's documented way), else
-// basic; none for a client with no secret.
+// secretMethod is how a client authenticates: none for a client with no
+// secret, else confidentialMethod.
 func secretMethod(md ServerMetadata, secret string) string {
 	if secret == "" {
-		return "none"
+		return AuthNone
 	}
+	return confidentialMethod(md)
+}
+
+// confidentialMethod is how a client with a secret authenticates: post
+// where the server lists it or lists nothing (Google's documented way),
+// else basic.
+func confidentialMethod(md ServerMetadata) string {
 	if len(md.TokenEndpointAuthMethodsSupported) == 0 {
 		return "client_secret_post"
 	}
-	for _, m := range md.TokenEndpointAuthMethodsSupported {
-		if m == "client_secret_post" {
-			return m
-		}
+	if slices.Contains(md.TokenEndpointAuthMethodsSupported, AuthSecretPost) {
+		return AuthSecretPost
 	}
-	return "client_secret_basic"
+	return AuthSecretBasic
 }
 
 // CIMDServed reports whether Agentry's client metadata document is served
@@ -238,9 +270,9 @@ func CIMDServed(ctx context.Context, c *http.Client, docURL string) bool {
 
 // Register registers a public native client for this redirect (RFC 7591).
 func Register(ctx context.Context, c *http.Client, md ServerMetadata, redirectURI string) (Client, error) {
-	method := "none"
+	method := AuthNone
 	if !supportsNone(md) && len(md.TokenEndpointAuthMethodsSupported) > 0 {
-		method = secretMethod(md, "registered")
+		method = confidentialMethod(md)
 	}
 	body, _ := json.Marshal(map[string]any{
 		"client_name":                NativeClientName,
@@ -263,7 +295,7 @@ func Register(ctx context.Context, c *http.Client, md ServerMetadata, redirectUR
 	defer func() { _ = res.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, maxBody))
 	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusOK {
-		return Client{}, fmt.Errorf("register with %s: %w", md.Issuer, oauthError(res.StatusCode, raw))
+		return Client{}, fmt.Errorf("register with %s: %w", md.Issuer, oauthError(res.StatusCode, raw, nil))
 	}
 	var out struct {
 		ClientID   string `json:"client_id"`
@@ -278,7 +310,7 @@ func Register(ctx context.Context, c *http.Client, md ServerMetadata, redirectUR
 		cl.AuthMethod = method
 	}
 	if cl.Secret == "" {
-		cl.AuthMethod = "none"
+		cl.AuthMethod = AuthNone
 	}
 	return cl, nil
 }

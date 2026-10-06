@@ -213,7 +213,7 @@ func (s *Store) writeSecrets(c *Connection, id string, sec secrets) error {
 	}
 	if s.keys != nil {
 		if err := s.keys.Set(keychainAccount(id), string(raw)); err == nil {
-			c.SecretIn = "keychain"
+			c.SecretIn = secretInKeychain
 			_ = os.Remove(s.secretPath(id))
 			return nil
 		}
@@ -221,14 +221,19 @@ func (s *Store) writeSecrets(c *Connection, id string, sec secrets) error {
 	if err := writeFileAtomic(s.secretPath(id), raw); err != nil {
 		return fmt.Errorf("keep the connection's refresh token: %w", err)
 	}
-	c.SecretIn = "file"
+	// A keychain that refused this write may still hold an older secret:
+	// it is not left behind.
+	if s.keys != nil {
+		_ = s.keys.Delete(keychainAccount(id))
+	}
+	c.SecretIn = secretInFile
 	return nil
 }
 
 func (s *Store) readSecrets(c *Connection, id string) (secrets, error) {
 	var raw string
 	switch c.SecretIn {
-	case "keychain":
+	case secretInKeychain:
 		if s.keys == nil {
 			return secrets{}, errors.New("the connection's refresh token is in the OS keychain, which is not in use here")
 		}
@@ -253,57 +258,63 @@ func (s *Store) readSecrets(c *Connection, id string) (secrets, error) {
 
 func keychainAccount(id string) string { return "connection:" + id }
 
+// Where a secret half is kept (Connection.SecretIn, OwnClient.SecretIn).
+const (
+	secretInKeychain = "keychain"
+	secretInFile     = "file"
+)
+
 // Use is the run-start refresh (D8, D24): under the connection's lock, it
 // trades the kept refresh token for an access token, writes a rotated
 // refresh token back before returning, and stamps the record. A refusal
 // that means the grant is gone marks the connection broken
 // (*BrokenError); the next Start asks again. The access token is the only
 // thing a run is given.
-func (s *Store) Use(ctx context.Context, k Key, httpc *http.Client, clients *Clients) (string, time.Time, *Connection, error) {
+func (s *Store) Use(ctx context.Context, k Key, httpc *http.Client, clients *Clients) (string, *Connection, error) {
 	id := k.ID()
 	unlock, err := s.lock(id)
 	if err != nil {
-		return "", time.Time{}, nil, err
+		return "", nil, err
 	}
 	defer unlock()
 	c, err := s.Get(k)
 	if err != nil {
-		return "", time.Time{}, nil, err
+		return "", nil, err
 	}
 	if c.Broken != "" {
-		return "", time.Time{}, c, &BrokenError{Server: c.Server, Reason: c.Broken}
+		return "", c, &BrokenError{Server: c.Server, Reason: c.Broken}
 	}
 	sec, err := s.readSecrets(c, id)
 	if err != nil {
-		return "", time.Time{}, c, err
+		return "", c, err
 	}
 	client, err := s.clientOf(c, sec, clients)
 	if err != nil {
-		return "", time.Time{}, c, err
+		return "", c, err
 	}
 	tok, err := mcpauth.Refresh(ctx, httpc, c.TokenEndpoint, client, sec.RefreshToken, c.Resource)
 	if mcpauth.GrantRevoked(err) {
 		c.Broken = err.Error()
 		if serr := s.save(id, c); serr != nil {
-			return "", time.Time{}, c, serr
+			return "", c, serr
 		}
-		return "", time.Time{}, c, &BrokenError{Server: c.Server, Reason: c.Broken}
+		return "", c, &BrokenError{Server: c.Server, Reason: c.Broken}
 	}
 	if err != nil {
-		return "", time.Time{}, c, fmt.Errorf("refresh the connection to %s: %w", c.Server, err)
+		return "", c, fmt.Errorf("refresh the connection to %s: %w", c.Server, err)
 	}
 	if tok.RefreshToken != "" && tok.RefreshToken != sec.RefreshToken {
 		sec.RefreshToken = tok.RefreshToken
 		if err := s.writeSecrets(c, id, sec); err != nil {
-			return "", time.Time{}, c, err
+			return "", c, err
 		}
 	}
 	now := s.stamp()
 	c.RefreshedAt, c.LastUsedAt = now, now
 	if err := s.save(id, c); err != nil {
-		return "", time.Time{}, c, err
+		return "", c, err
 	}
-	return tok.AccessToken, tok.ExpiresAt, c, nil
+	return tok.AccessToken, c, nil
 }
 
 // clientOf is the client a connection refreshes as: a registered client
@@ -385,12 +396,13 @@ func (s *Store) Remove(ctx context.Context, k Key, httpc *http.Client, clients *
 	if c.RevocationEndpoint != "" {
 		outcome = s.revoke(ctx, c, id, httpc, clients)
 	}
-	if c.SecretIn == "keychain" && s.keys != nil {
+	if c.SecretIn == secretInKeychain && s.keys != nil {
 		_ = s.keys.Delete(keychainAccount(id))
 	}
+	// The lock file stays: removing it while another process waits on it
+	// would let a third lock a new file beside the old one.
 	rmErr := errors.Join(removeIfThere(s.secretPath(id)), removeIfThere(s.recordPath(id)))
 	unlock()
-	_ = removeIfThere(s.lockPath(id))
 	s.audit(c, why, outcome)
 	return outcome, rmErr
 }

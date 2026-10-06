@@ -2,6 +2,7 @@ package mcpauth_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -160,7 +161,8 @@ func TestPasteBackFinishesTheConsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Token.AccessToken == "" || len(said) != 1 || !strings.Contains(said[0], "state does not match") {
+	all := strings.Join(said, "\n")
+	if g.Token.AccessToken == "" || strings.Count(all, "state does not match") != 1 || !strings.Contains(said[0], "The sign-in is at "+v.URL) {
 		t.Fatalf("grant %+v, said %q", g, said)
 	}
 }
@@ -292,11 +294,67 @@ func TestTheGuardRefusesNonPublicAddresses(t *testing.T) {
 		return []netip.Addr{netip.MustParseAddr("93.184.216.34"), netip.MustParseAddr("10.0.0.5")}, nil
 	}
 	_, err := g.Client().Get("https://vendor.example/.well-known/oauth-authorization-server")
-	var blocked *mcpauth.ErrBlockedAddress
+	var blocked *mcpauth.BlockedAddressError
 	if !errors.As(err, &blocked) {
 		t.Fatalf("err = %v, want a blocked address", err)
 	}
 	if _, err := g.Client().Get("http://vendor.example/"); err == nil || !strings.Contains(err.Error(), "https only") {
 		t.Fatalf("plain http: %v", err)
+	}
+}
+
+func TestTheGuardFollowsNoRedirectAndTakesNoProxy(t *testing.T) {
+	var reachedTarget bool
+	target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reachedTarget = true }))
+	defer target.Close()
+	redirector := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/elsewhere", http.StatusFound)
+	}))
+	defer redirector.Close()
+	pool := redirector.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	g := mcpauth.Guard{AllowLoopback: true, TLS: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
+	// A proxy in the environment that would refuse everything: the guard
+	// never asks it.
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	t.Setenv("https_proxy", "http://127.0.0.1:1")
+	res, err := g.Client().Get(redirector.URL + "/start")
+	if err != nil {
+		t.Fatalf("the guard took the environment's proxy, or failed: %v", err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusFound || reachedTarget {
+		t.Fatalf("status %d, target reached %v: a redirect must end the request", res.StatusCode, reachedTarget)
+	}
+}
+
+func TestAnEchoedTokenIsMaskedInTheVendorsError(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant", "error_description": "token " + r.PostForm.Get("refresh_token") + " is revoked; secret " + r.PostForm.Get("client_secret")})
+	}))
+	defer srv.Close()
+	pool := srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	c := mcpauth.Guard{AllowLoopback: true, TLS: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}.Client()
+	_, err := mcpauth.Refresh(context.Background(), c, srv.URL+"/token", mcpauth.Client{ID: "id", Secret: "PROBE-SECRET", AuthMethod: mcpauth.AuthSecretPost}, "PROBE-REFRESH-1", "")
+	if err == nil || strings.Contains(err.Error(), "PROBE-") || !strings.Contains(err.Error(), "[redacted]") || !mcpauth.GrantRevoked(err) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNoScopesDeclaredAsksForNoneBeyondTheChallenge(t *testing.T) {
+	v := mcpauthtest.New(t) // its metadata lists read and write; its 401 names none
+	v.DCR = true
+	c := consent(v)
+	var authURL string
+	browser := v.Browser()
+	c.Present = func(u string) { authURL = u; browser(u) }
+	g, err := c.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(authURL)
+	if len(g.Scopes) != 0 || u.Query().Has("scope") {
+		t.Fatalf("asked for %v (%q): scopes_supported is not the contract", g.Scopes, u.Query().Get("scope"))
 	}
 }

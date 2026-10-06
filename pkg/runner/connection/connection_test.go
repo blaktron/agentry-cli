@@ -82,7 +82,7 @@ func TestAConnectionOpensForItsReleaseAlone(t *testing.T) {
 		if _, err := s.Get(other); !errors.Is(err, connection.ErrNone) {
 			t.Errorf("%s: err = %v, want ErrNone", name, err)
 		}
-		if _, _, _, err := s.Use(context.Background(), other, v.Guard().Client(), nil); !errors.Is(err, connection.ErrNone) {
+		if _, _, err := s.Use(context.Background(), other, v.Guard().Client(), nil); !errors.Is(err, connection.ErrNone) {
 			t.Errorf("%s: Use err = %v, want ErrNone", name, err)
 		}
 	}
@@ -140,7 +140,7 @@ func TestUseRefreshesAndWritesTheRotatedTokenBack(t *testing.T) {
 			if c.SecretIn != wantIn {
 				t.Fatalf("kept in %q, want %q", c.SecretIn, wantIn)
 			}
-			first, _, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
+			first, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
 			if err != nil || first == "" {
 				t.Fatalf("use: %q %v", first, err)
 			}
@@ -149,7 +149,7 @@ func TestUseRefreshesAndWritesTheRotatedTokenBack(t *testing.T) {
 			if v.Live(g.Token.RefreshToken) {
 				t.Fatal("the vendor did not rotate")
 			}
-			second, _, c, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
+			second, c, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
 			if err != nil || second == "" || second == first {
 				t.Fatalf("second run: %q %v", second, err)
 			}
@@ -187,7 +187,7 @@ func TestARefusedRefreshBreaksTheConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	v.Refused = true
-	_, _, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
+	_, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
 	var broken *connection.BrokenError
 	if !errors.As(err, &broken) || !strings.Contains(broken.Reason, "invalid_grant") {
 		t.Fatalf("err = %v, want a broken connection", err)
@@ -199,7 +199,7 @@ func TestARefusedRefreshBreaksTheConnection(t *testing.T) {
 	// It stays broken without asking the vendor again.
 	v.Refused = false
 	before := len(v.Requests)
-	if _, _, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil); !errors.As(err, &broken) || len(v.Requests) != before {
+	if _, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil); !errors.As(err, &broken) || len(v.Requests) != before {
 		t.Fatalf("a broken connection was refreshed: %v", err)
 	}
 }
@@ -266,7 +266,7 @@ func TestOwnClientsAreKeptOncePerIssuer(t *testing.T) {
 	if strings.Contains(keys.m["connection:"+k.ID()], "s3cret-client") {
 		t.Fatal("the connection keeps the person's client secret beside its own")
 	}
-	if _, _, _, err := s.Use(context.Background(), k, v.Guard().Client(), clients); err != nil {
+	if _, _, err := s.Use(context.Background(), k, v.Guard().Client(), clients); err != nil {
 		t.Fatal(err)
 	}
 	for _, ext := range []string{".json"} {
@@ -283,7 +283,7 @@ func TestOwnClientsAreKeptOncePerIssuer(t *testing.T) {
 		t.Fatalf("remove: %v %v", ok, err)
 	}
 	var broken *connection.BrokenError
-	if _, _, _, err := s.Use(context.Background(), k, v.Guard().Client(), clients); !errors.As(err, &broken) {
+	if _, _, err := s.Use(context.Background(), k, v.Guard().Client(), clients); !errors.As(err, &broken) {
 		t.Fatalf("err = %v, want broken", err)
 	}
 	if err := clients.Set("http://accounts.example", "x", ""); err == nil {

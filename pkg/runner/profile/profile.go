@@ -179,9 +179,16 @@ func (p *Profile) MatchesRef(sel string) bool {
 	if p == nil {
 		return false
 	}
-	if sel == p.Ref {
+	return RefMatches(p.Ref, sel)
+}
+
+// RefMatches is the release selector the runner's state commands share
+// (`profiles remove`, `connections remove`, `uninstall`): ref is
+// ns/name@version; sel names it exactly, or as ns/name for every version.
+func RefMatches(ref, sel string) bool {
+	if sel == ref {
 		return true
 	}
-	base, _, hasVer := strings.Cut(p.Ref, "@")
+	base, _, hasVer := strings.Cut(ref, "@")
 	return !strings.Contains(sel, "@") && hasVer && sel == base
 }

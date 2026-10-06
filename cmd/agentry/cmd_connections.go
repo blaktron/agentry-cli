@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 )
 
@@ -76,7 +78,7 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 	var used []string
 	for _, srv := range servers {
 		k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: srv.URL}
-		token, _, c, err := store.Use(cmd.Context(), k, httpc, clients)
+		token, c, err := store.Use(cmd.Context(), k, httpc, clients)
 		var broken *connection.BrokenError
 		switch {
 		case err == nil:
@@ -102,7 +104,9 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 				return nil, engine.Classify(engine.ExitCLI, err)
 			}
 		default:
-			return nil, engine.Classify(engine.ExitPolicy, err)
+			// The vendor could not be reached or answered something
+			// unexpected: not a policy refusal, and the connection is kept.
+			return nil, engine.Classify(engine.ExitCLI, err)
 		}
 		out.tokens[srv.URL] = token
 		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s, client %s)", srv.URL, c.Issuer, scopeList(c.Scopes), c.Client.Kind))
@@ -127,7 +131,7 @@ func scopeList(s []string) string {
 func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, httpc *http.Client, k connection.Key, srv manifest.MCPServer) (*mcpauth.Grant, error) {
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", k.Ref, srv.URL)
-	_, _ = fmt.Fprintln(errOut, "The connection is kept for this version alone and reused by its later runs; a run gets a short-lived access token, never the sign-in itself.")
+	_, _ = fmt.Fprintln(errOut, "The connection is kept on this machine for this version alone and reused by its later runs; each run is given an access token, never the refresh token or a client secret.")
 	if len(srv.Scopes) > 0 {
 		_, _ = fmt.Fprintf(errOut, "It asks for: %s\n", strings.Join(srv.Scopes, " "))
 	}
@@ -251,7 +255,8 @@ func askOwnClient(cmd *cobra.Command, in *bufio.Reader, clients *connection.Clie
 func ownClientSteps(issuer, server string) string {
 	if strings.TrimRight(issuer, "/") == "https://accounts.google.com" {
 		api := "the API of the product this server reaches"
-		if h := hostOf(server); strings.HasSuffix(h, ".googleapis.com") {
+		if u, err := url.Parse(server); err == nil && strings.HasSuffix(u.Hostname(), ".googleapis.com") {
+			h := u.Hostname()
 			api = "the product's API and its MCP API (" + h + ")"
 		}
 		return strings.Join([]string{
@@ -272,16 +277,6 @@ func ownClientSteps(issuer, server string) string {
 		"  http://127.0.0.1/callback (any port), the authorization code grant and refresh tokens, and the",
 		"  scopes this QuickAgent asks for. Copy its client ID and, if it has one, its client secret.",
 	}, "\n")
-}
-
-func hostOf(u string) string {
-	if i := strings.Index(u, "://"); i >= 0 {
-		u = u[i+3:]
-	}
-	if i := strings.IndexAny(u, "/:"); i >= 0 {
-		u = u[:i]
-	}
-	return u
 }
 
 // installedRelease is the release installed on this machine that sel
@@ -529,13 +524,13 @@ func removeConnections(ctx context.Context, home, sel, server, why string) ([]re
 	var errs []error
 	httpc := vendorHTTP()
 	for _, c := range list {
-		if sel != "" && !refMatches(c.Ref, sel) {
+		if sel != "" && !profile.RefMatches(c.Ref, sel) {
 			continue
 		}
 		if server != "" && c.Server != server {
 			continue
 		}
-		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		rctx, cancel := context.WithTimeout(ctx, revokeTimeout)
 		outcome, rerr := store.Remove(rctx, c.Key(), httpc, clients, why)
 		cancel()
 		r := removedConnection{Ref: c.Ref, Server: c.Server, Revocation: outcome}
@@ -548,15 +543,10 @@ func removeConnections(ctx context.Context, home, sel, server, why string) ([]re
 	return out, errors.Join(errs...)
 }
 
-// refMatches is the profiles selector's rule: ns/name@version exactly, or
-// ns/name for every version.
-func refMatches(ref, sel string) bool {
-	if sel == ref {
-		return true
-	}
-	base, _, hasVer := strings.Cut(ref, "@")
-	return !strings.Contains(sel, "@") && hasVer && sel == base
-}
+// revokeTimeout bounds one removal's revocation at the vendor; a vendor
+// that does not answer in time is recorded as a failed revocation and the
+// connection is removed all the same.
+const revokeTimeout = 30 * time.Second
 
 func newConnectionsClientCmd() *cobra.Command {
 	cmd := &cobra.Command{

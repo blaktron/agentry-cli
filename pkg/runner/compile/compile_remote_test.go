@@ -249,7 +249,7 @@ func TestCompileRendersAnOAuthServerOnTheBridge(t *testing.T) {
 	}
 	line := plan.Enforcement["mcpServers.remote"]
 	if !strings.Contains(line, "https://mcp.linear.app/mcp (auth oauth, the person's connection for this release: an access token alone") ||
-		!strings.Contains(line, "the refresh token never leaves the runner's store") {
+		!strings.Contains(line, "the refresh token and any client secret never enter the run") {
 		t.Fatalf("mcpServers.remote does not say what the run is given:\n%s", line)
 	}
 }

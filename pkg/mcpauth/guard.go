@@ -14,13 +14,14 @@ import (
 // the code exchange, a refresh or a revocation.
 const FetchTimeout = 20 * time.Second
 
-// ErrBlockedAddress is a vendor address that resolved to a non-public one.
-type ErrBlockedAddress struct {
+// BlockedAddressError is a vendor address that resolved to a non-public
+// one.
+type BlockedAddressError struct {
 	Host string
 	IP   string
 }
 
-func (e *ErrBlockedAddress) Error() string {
+func (e *BlockedAddressError) Error() string {
 	return fmt.Sprintf("refused to reach %s: it resolves to %s, which is not a public address", e.Host, e.IP)
 }
 
@@ -29,7 +30,8 @@ func (e *ErrBlockedAddress) Error() string {
 // address public unicast, the address dialled the one checked, no redirect
 // followed and no proxy taken from the environment. It holds the core's
 // webhook.Guard rules (agentry internal/webhook, T-08), which a module
-// outside the core cannot import; guard_test.go carries its cases.
+// outside the core cannot import; TestTheGuardRefusesNonPublicAddresses and
+// TestTheGuardFollowsNoRedirectAndTakesNoProxy carry its cases.
 //
 // AllowLoopback and TLS are test seams: a test's httptest server is on
 // loopback with its own certificate. Production leaves both zero.
@@ -61,19 +63,24 @@ func (g Guard) IsAllowedIP(ip netip.Addr) bool {
 	}
 	if ip.Is4() {
 		b := ip.As4()
+		// 0.0.0.0/8 is "this network" (RFC 1122 §3.2.1.3): IsUnspecified
+		// covers 0.0.0.0 alone, and Linux routes the whole /8 to loopback.
 		if b[0] == 0 {
-			return false // 0.0.0.0/8, routed to loopback on Linux
+			return false
 		}
+		// Carrier-grade NAT, 100.64.0.0/10 (RFC 6598): not routable.
 		if b[0] == 100 && b[1] >= 64 && b[1] <= 127 {
-			return false // 100.64.0.0/10
+			return false
 		}
 	}
 	return ip.IsGlobalUnicast()
 }
 
 // embeddedIPv4 is the IPv4 address an IPv6 one routes to under 6to4, the
-// NAT64 well-known prefix or the IPv4-compatible form; the NAT64 local-use
-// prefix is reported as unspecified so it is refused.
+// NAT64 well-known prefix or the IPv4-compatible form: 2002:7f00:1::1 is
+// 127.0.0.1 to a 6to4 relay and 64:ff9b::a00:1 is 10.0.0.1 to a NAT64
+// gateway, so the embedded address is the one to judge. The NAT64
+// local-use prefix is reported as unspecified so it is refused.
 func embeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
 	if !ip.Is6() || ip.Is4In6() {
 		return netip.Addr{}, false
@@ -115,11 +122,11 @@ func (g Guard) dialContext(ctx context.Context, network, addr string) (net.Conn,
 		}
 	}
 	if len(candidates) == 0 {
-		return nil, &ErrBlockedAddress{Host: host, IP: "no address"}
+		return nil, &BlockedAddressError{Host: host, IP: "no address"}
 	}
 	for _, ip := range candidates {
 		if !g.IsAllowedIP(ip) {
-			return nil, &ErrBlockedAddress{Host: host, IP: ip.String()}
+			return nil, &BlockedAddressError{Host: host, IP: ip.String()}
 		}
 	}
 	var d net.Dialer
