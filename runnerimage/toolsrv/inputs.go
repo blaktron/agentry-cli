@@ -58,8 +58,13 @@ func validView(view string) error {
 // InputsIndex is every input of the run and what the decode step made of
 // it, in path order.
 type InputsIndex struct {
-	Schema string       `json:"schema"`
-	Files  []InputEntry `json:"files"`
+	Schema string `json:"schema"`
+	// DefaultView is the release's own default (its manifest's
+	// inputs.view, agentry-cli#693): ViewText or ViewOriginal, which each
+	// input that has that view is read in when the model asks for none.
+	// Empty keeps each input's own default.
+	DefaultView string       `json:"defaultView,omitempty"`
+	Files       []InputEntry `json:"files"`
 }
 
 // InputEntry is one input. Its Type and outcome restate the decode
@@ -105,6 +110,9 @@ type InputEntry struct {
 	// can still be read as uploaded (D3): a file as staged that no reader
 	// took, never one ClamAV found, refused, or inside a .git folder.
 	Original bool `json:"original,omitempty"`
+	// releaseView is the index's DefaultView, stamped on each entry as
+	// the index is read; never part of the file.
+	releaseView string
 }
 
 // hasOriginal says whether the file as uploaded can be read: an input as
@@ -116,12 +124,17 @@ func (e InputEntry) hasOriginal() bool {
 }
 
 // viewOrDefault is the view asked for, or, when none was, the one
-// read_input and search_inputs read: a document's text, and anything else
-// as uploaded, HTML included (D2).
+// read_input and search_inputs read: the release's default where the input
+// has that view (agentry-cli#693, plan D2), else its own, a document's
+// text and anything else as uploaded, HTML included (D2).
 func (e InputEntry) viewOrDefault(view string) string {
 	switch {
 	case view != "":
 		return view
+	case e.releaseView == ViewText && e.hasText():
+		return ViewText
+	case e.releaseView == ViewOriginal && e.hasOriginal():
+		return ViewOriginal
 	case e.Decoded:
 		return ViewText
 	}
@@ -136,10 +149,16 @@ func (e InputEntry) views() string {
 	case !e.hasText():
 		return "-"
 	case e.Decoded && e.hasOriginal():
+		if e.viewOrDefault("") == ViewOriginal {
+			return "original (default), text"
+		}
 		return "text (default), original"
 	case e.Decoded:
 		return "text"
 	case e.Converted:
+		if e.viewOrDefault("") == ViewText {
+			return "text (Markdown; default), original"
+		}
 		return "original (default), text (Markdown)"
 	}
 	return "original (default; the text is the same)"
@@ -223,6 +242,12 @@ func (s *server) inputsIndex() (*InputsIndex, error) {
 	}
 	if idx.Schema != InputsIndexSchema {
 		return nil, fmt.Errorf("the inputs index has schema %q, not %q", idx.Schema, InputsIndexSchema)
+	}
+	if idx.DefaultView != "" && validView(idx.DefaultView) != nil {
+		return nil, fmt.Errorf("the inputs index names an unknown default view %q", idx.DefaultView)
+	}
+	for i := range idx.Files {
+		idx.Files[i].releaseView = idx.DefaultView
 	}
 	return &idx, nil
 }
