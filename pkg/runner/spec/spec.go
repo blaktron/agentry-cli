@@ -548,9 +548,10 @@ type MCPServerSpec struct {
 	// literal value), rendered into its catalog entry beside — never
 	// through — its secrets. Receipts name the keys only.
 	Env map[string]string `json:"env,omitempty"`
-	// Auth is a remote server's auth kind: "none", or "secret", its one
-	// Secrets name sent as the bearer (agentry-cli#663). Empty for a
-	// package server.
+	// Auth is a remote server's auth kind: "none"; "secret", its one
+	// Secrets name sent as the bearer (agentry-cli#663); or "oauth", the
+	// person's connection, whose access token the runner hands its bridge
+	// at each start (agentry-cli#664). Empty for a package server.
 	Auth string `json:"auth,omitempty"`
 }
 
@@ -561,9 +562,16 @@ func (s MCPServerSpec) SourceID() string { return s.Source + ":" + s.Package }
 // Remote reports whether the server is declared by address.
 func (s MCPServerSpec) Remote() bool { return s.Source == SourceURL }
 
-// SendsBearer reports whether the server is a remote one declared with
-// auth: secret, whose one secret its bridge sends as the bearer.
-func (s MCPServerSpec) SendsBearer() bool { return s.Remote() && s.Auth == "secret" } // manifest.AuthSecret
+// SendsBearer reports whether the server is a remote one whose bridge
+// sends a bearer from its connection folder: auth: secret (its one secret)
+// or auth: oauth (the connection's access token).
+func (s MCPServerSpec) SendsBearer() bool {
+	return s.Remote() && (s.Auth == "secret" || s.Auth == "oauth")
+}
+
+// SignsIn reports whether the server is a remote one signed in to by the
+// person's OAuth connection (manifest.AuthOAuth).
+func (s MCPServerSpec) SignsIn() bool { return s.Remote() && s.Auth == "oauth" }
 
 // Ref names the server in messages and receipts: the package pin
 // ("@scope/x@1.2.3"), or a remote server's address.

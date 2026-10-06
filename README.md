@@ -178,7 +178,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `files` · `run` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `verify` ·
+`setup` · `doctor` · `files` · `run` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -219,11 +219,13 @@ release anyone installs.
    and decodes it before the agent, in the signed, digest-pinned files image
    with no network and every capability dropped. A document ClamAV finds
    refuses the build, naming it, and so does a risky one Hybrid Analysis
-   calls malicious (looked up by its SHA-256 alone, as for a run). PDF uses `pdftotext`; DOCX, ODT, EPUB, RTF and HTML
+   calls malicious (looked up by its SHA-256 alone, as for a run). PDF uses `pdftotext`; DOCX, ODT, EPUB and RTF
    use `pandoc` to GitHub Markdown; images use `tesseract`'s English OCR.
-   XLSX, ODS and CSV become capped Markdown tables; PPTX and ODP become a
-   section per slide. Legacy Office, Outlook mail and other formats use
-   Apache Tika. UTF-8 text and JSON pass as they are; a file no reader can
+   XLSX and ODS become capped Markdown tables; PPTX and ODP become a
+   section per slide. Legacy Office, mail and other formats use
+   Apache Tika. Any other UTF-8 text passes as it is, byte for byte: code,
+   markup (HTML, XML, SVG), configuration and data (CSV, JSON, YAML),
+   told by `file` without starting Tika (agentry-cli#630); a file no reader can
    decode is listed as unread with its reason. An archive is listed as
    unread too: a pack keeps each document as given, and a build does not
    take what an archive holds yet (agentry-cli#619).
@@ -869,7 +871,22 @@ Around the enforcement core (v2): **`agentry setup`** configures your LLM
 provider and stands up the gateway plane before any agent is involved.
 **MCP profiles** store a QuickAgent's keys and identities once per exact
 release — guided setup on first run, then keep or remove on completion
-(`--keep-profile`, `agentry profiles list|remove`). **`--file`** hands a
+(`--keep-profile`, `agentry profiles list|remove`). **Connections**: a
+remote MCP server declared with `auth: oauth` is signed in to on the
+vendor's own consent screen, once per exact release, at the first run that
+needs it (on a terminal; the browser opens, or the address is printed and
+the address the browser ends on is pasted back), or ahead of it with
+`agentry connect ns/name[@version]`. The connection is kept for that
+release alone (another QuickAgent or another version asks again), its
+refresh token in the OS keychain (a 0600 file under the runner home where
+none answers); each run refreshes it under a lock before the sandbox
+starts and hands the server's bridge an access token alone. With no
+terminal a run that lacks one exits 11 naming the server. `agentry
+connections list|remove` manages them (a removal, and an uninstall, revoke
+at the vendor where it offers that); `agentry connections client
+set|list|remove` keeps your own OAuth client per vendor, which a vendor that
+registers no app on the fly needs (Google), with Agentry's steps for making
+one shown when it is asked for. **`--file`** hands a
 run external files read-only under `/inputs`. Before the agent starts the
 runner decodes them (a document, PDF or image into its text, and an
 archive into its files, each decoded in turn, in the files image, with no

@@ -29,3 +29,10 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^pkg/runner/engine/web_test\.go$''']
 regexes = ['''jev-person-key-0123456789abcdef''']
+
+[[allowlists]]
+description = "the probe client secret of the connections test, searched for raw and base64 to prove a run never holds one (agentry-cli#664, plan D8)"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^cmd/agentry/cmd_connections_test\.go$''']
+regexes = ['''PROBE-SECRET-d8-condition''']

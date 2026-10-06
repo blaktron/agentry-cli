@@ -33,6 +33,8 @@ func TestRiskyTypes(t *testing.T) {
 		{"application/x-iso9660-image", "disk.iso", true},
 		{"application/x-ms-shortcut", "x.lnk", true},
 		{"text/javascript", "a.js", true},
+		{"text/plain", "module.mjs", true},
+		{"text/plain", "common.CJS", true},
 		{"text/plain", "run.ps1", true},
 		{"text/plain", "go.BAT", true},
 		{"text/plain", "x.cmd", true},
