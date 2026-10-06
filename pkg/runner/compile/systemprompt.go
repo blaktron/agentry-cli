@@ -186,7 +186,7 @@ func inputsDefault(view string) string {
 	case manifest.InputViewText:
 		return `A document, PDF, image or web page was turned into text before you started, and this QuickAgent reads its inputs as text: read_input gives you each file's text (a web page as Markdown), and a file with no text as uploaded.`
 	case manifest.InputViewOriginal:
-		return `A document, PDF or image was also turned into text before you started, but this QuickAgent reads its inputs as uploaded: read_input gives you each file as it was uploaded, a binary one as base64 pages; ask for view "text" when only a document's words matter.`
+		return `A document, PDF or image was also turned into text before you started, but this QuickAgent reads its inputs as uploaded: read_input gives you each file as it was uploaded, a binary one as base64 pages (a file taken out of a document inside an archive has only its text); search_inputs still searches a document's text. Ask read_input for view "text" when only a document's words matter.`
 	}
 	return `A document, PDF or image was turned into text before you started, and read_input gives you that text; code, markup, configuration and data are read as uploaded.`
 }

@@ -53,13 +53,11 @@ func TestNoOrBothViewCompilesTheSamePlan(t *testing.T) {
 		return h, plan.Instruction.SHA256
 	}
 	plainHash, plainInstr := compileHash(pureTextYAML)
-	_, bothInstr := compileHash(pureTextYAML + "inputs:\n  view: both\n")
-	if bothInstr != plainInstr {
-		t.Fatal("view: both changed the rendered instruction")
-	}
-	again, _ := compileHash(pureTextYAML)
-	if again != plainHash {
-		t.Fatal("compiling the same manifest twice gave two hashes")
+	for _, block := range []string{"inputs:\n  view: both\n", "inputs:\n  kinds: [code]\n"} {
+		h, instr := compileHash(pureTextYAML + block)
+		if h != plainHash || instr != plainInstr {
+			t.Fatalf("%q changed the plan (hash %v, instruction %v)", block, h != plainHash, instr != plainInstr)
+		}
 	}
 	_, textInstr := compileHash(pureTextYAML + "inputs:\n  view: text\n")
 	if textInstr == plainInstr {
@@ -81,7 +79,7 @@ func TestTheInputsParagraphSaysTheReleasesView(t *testing.T) {
 	}{
 		"own":      {own, "code, markup, configuration and data are read as uploaded", "this QuickAgent reads its inputs"},
 		"text":     {text, "this QuickAgent reads its inputs as text: read_input gives you each file's text (a web page as Markdown), and a file with no text as uploaded", "code, markup, configuration and data are read as uploaded"},
-		"original": {orig, `this QuickAgent reads its inputs as uploaded: read_input gives you each file as it was uploaded, a binary one as base64 pages; ask for view "text" when only a document's words matter`, "code, markup, configuration and data are read as uploaded"},
+		"original": {orig, `this QuickAgent reads its inputs as uploaded: read_input gives you each file as it was uploaded, a binary one as base64 pages (a file taken out of a document inside an archive has only its text); search_inputs still searches a document's text. Ask read_input for view "text" when only a document's words matter`, "code, markup, configuration and data are read as uploaded"},
 	} {
 		if !strings.Contains(tc.prompt, tc.want) {
 			t.Errorf("%s: want %q", name, tc.want)

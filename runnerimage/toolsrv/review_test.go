@@ -412,3 +412,43 @@ func TestReadInputViewsUnderReview(t *testing.T) {
 		t.Fatalf("ledger %q, want %q", views, want)
 	}
 }
+
+// TestAReleaseDefaultViewUnderReview (agentry-cli#693): under the review
+// grant a release's default view is reviewed as any asked-for view is: an
+// original default reads a text original only after it is scanned, under
+// its own (path, original) ledger line, and a binary original stays
+// refused, since no review can read it.
+func TestAReleaseDefaultViewUnderReview(t *testing.T) {
+	sc := &fakeScanner{verdict: passAll}
+	s, spec := reviewServer(t, sc, &fakeAsker{})
+	spec.InputsTextDir = t.TempDir()
+	mustWrite(t, filepath.Join(spec.InputsDir, "site", "index.html"), []byte(pageHTML))
+	mustWrite(t, filepath.Join(spec.InputsTextDir, InputsConvertedSubdir, "site", "index.html"), []byte(pageMarkdown))
+	mustWrite(t, filepath.Join(spec.InputsDir, "report.docx"), []byte("PK\x03\x04\x00\xff binary zip"))
+	mustWrite(t, filepath.Join(spec.InputsTextDir, InputsTextSubdir, "report.docx"), []byte("The report.\n"))
+	writeIndexOf(t, spec, InputsIndex{Schema: InputsIndexSchema, DefaultView: ViewOriginal, Files: []InputEntry{
+		{Path: "report.docx", Type: "document", Bytes: 17, Decoded: true, DecodedBy: "pandoc", TextBytes: 12},
+		{Path: "site/index.html", Type: "text", Bytes: int64(len(pageHTML)), TextBytes: int64(len(pageHTML)), MIME: "text/html",
+			Converted: true, ConvertedBy: "pandoc", ConvertedBytes: int64(len(pageMarkdown))},
+	}})
+	if got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": "site/index.html"})); isErr || got != pageHTML {
+		t.Fatalf("the page by default = (%q, %v)", got, isErr)
+	}
+	if got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": "report.docx"})); !isErr || got != "binary file; 17 bytes" {
+		t.Fatalf("a binary original by default under review = (%q, %v)", got, isErr)
+	}
+	var texts []string
+	for _, c := range sc.calls() {
+		texts = append(texts, c.text)
+	}
+	if !slices.Equal(texts, []string{pageHTML}) {
+		t.Fatalf("scanned %q, want only the page's original", texts)
+	}
+	var views []string
+	for _, e := range reviewLedgerOf(t, spec) {
+		views = append(views, e.Path+" "+e.View)
+	}
+	if want := []string{"site/index.html original", "report.docx original"}; !slices.Equal(views, want) {
+		t.Fatalf("ledger %q, want %q", views, want)
+	}
+}

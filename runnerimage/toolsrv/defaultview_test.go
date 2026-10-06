@@ -129,6 +129,10 @@ func TestSearchInputsFollowsTheReleasesDefault(t *testing.T) {
 	if got, _ := orig.toolSearchInputs(rawArgs(t, map[string]any{"query": "innerHTML"})); !strings.Contains(got, "site/index.html:4:") {
 		t.Errorf("original default did not search HTML's original: %q", got)
 	}
+	// A decoded document's original is binary, so its text is searched.
+	if got, _ := orig.toolSearchInputs(rawArgs(t, map[string]any{"query": "Friday"})); !strings.Contains(got, "report.docx:3:") {
+		t.Errorf("original default did not search a document's text: %q", got)
+	}
 }
 
 // TestAnUnknownDefaultViewIsRefused: the index is the engine's, and a value

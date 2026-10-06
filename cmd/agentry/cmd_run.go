@@ -1253,7 +1253,7 @@ func inputsLine(m *manifest.Manifest) string {
 	if m.Inputs == nil {
 		return ""
 	}
-	kinds := make([]string, 0, len(m.Inputs.Kinds))
+	var kinds []string
 	for _, k := range m.TakesKinds() {
 		if k.Valid() {
 			kinds = append(kinds, string(k))

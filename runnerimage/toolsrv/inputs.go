@@ -406,7 +406,14 @@ func (s *server) searchTargets(clean, view string) ([]searchTarget, error) {
 			if !e.hasText() {
 				continue
 			}
-			abs, err := s.viewOf(e, view)
+			v := view
+			if v == "" && e.Decoded {
+				// A decoded document's original is binary and never
+				// searched, so with no view asked its text is, whatever
+				// the release's default (agentry-cli#693).
+				v = ViewText
+			}
+			abs, err := s.viewOf(e, v)
 			if err != nil {
 				continue
 			}

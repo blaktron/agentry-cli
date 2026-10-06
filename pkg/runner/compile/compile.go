@@ -251,6 +251,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 
 	// The System Prompt, then the package's instruction (agentry-cli#520).
 	declared := mcpServerNames(extraServers, in.MCPServers)
+	inputView := inputViewOf(m)
 	instruction := renderInstruction(promptFacts{
 		caps:      caps,
 		secrets:   sortedCopy(m.Capabilities.Secrets),
@@ -258,7 +259,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		servers:   declared,
 		schema:    len(schemaJSON) > 0,
 		intake:    len(m.Intake) > 0,
-		inputView: inputViewOf(m),
+		inputView: inputView,
 	}, body)
 
 	files := map[string][]byte{}
@@ -328,7 +329,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Capabilities: caps,
 		Tools:        tspec.GrantedTools(),
 		MCPServers:   in.MCPServers,
-		InputView:    inputViewOf(m),
+		InputView:    inputView,
 		Enforcement:  enforcement(caps, m.Capabilities.Secrets, m.Capabilities.OptionalSecrets, extraServers, in.Policy, in.MCPServers),
 		ExecImage:    execImage,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, in.MCPServers),
