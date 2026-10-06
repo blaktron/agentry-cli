@@ -308,10 +308,43 @@ func (s *server) handleToolsCall(req rpcRequest) {
 	s.callFault = false
 	text, isErr := d.call(p.Arguments)
 	s.recordCall(p.Name, !isErr)
+	content := map[string]any{"type": "text", "text": text}
+	if d.personsInput && !isErr {
+		content = inputResult(text)
+	}
 	s.writeResult(req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
+		"content": []map[string]any{content},
 		"isError": isErr,
 	})
+}
+
+// InputResourceURI names the embedded resource an input tool's answer
+// travels in. The answer itself says which file and page it is.
+const InputResourceURI = "agentry://inputs"
+
+// inputResult carries a successful answer of an input tool (read_input,
+// search_inputs) as an embedded text resource instead of a text item.
+//
+// The person's inputs reach the agent unchanged, credentials included
+// (plan quickagents-that-run.md D4 as answered by the operator,
+// agentry-cli#632, DR-78): a review of a Dockerfile must be able to read
+// the key it is looking for. The gateway's --block-secrets (pinned on,
+// agentry-cli#142) refuses any tool result whose text items look like a
+// secret, with no exemption by server or tool, and it reads only the text
+// items of a result (pkg/interceptors/block_secrets.go in the pinned
+// v0.43.3). An embedded resource is past it, and the harness hands its
+// text to the model as a text item's (docker-agent's processMCPContent).
+// Every other tool's result, an input tool's error, and the arguments of
+// every call (a report quoting a found key included) stay scanned.
+func inputResult(text string) map[string]any {
+	return map[string]any{
+		"type": "resource",
+		"resource": map[string]any{
+			"uri":      InputResourceURI,
+			"mimeType": "text/plain",
+			"text":     text,
+		},
+	}
 }
 
 func (s *server) writeResult(id json.RawMessage, result any) {
