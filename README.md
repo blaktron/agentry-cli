@@ -891,9 +891,14 @@ run external files read-only under `/inputs`. Before the agent starts the
 runner decodes them (a document, PDF or image into its text, and an
 archive into its files, each decoded in turn, in the files image, with no
 network; `agentry files ensure` pulls it ahead of time), and
-the run reads them through `list_inputs` (each file's type, size and
-whether it could be read), `read_input` (the text) and `search_inputs`; the
-receipt's `decode` line says what was read. **Every file, and every file in
+the run reads them through `list_inputs` (each file's type, size, whether
+it could be read and its views), `read_input` and `search_inputs`. Each
+reads a file in one of two views: `text`, a document's decoded text and the
+default for documents, or `original`, the file as uploaded and the default
+for everything else (code, markup and data pass through unconverted); a
+binary original comes as pages of base64 with its size and type, and HTML's
+`text` view is pandoc's Markdown. No QuickAgent needs `exec` to read its
+inputs (agentry-cli#631). The receipt's `decode` line says what was read. **Every file, and every file in
 an archive, is checked by ClamAV before its text is extracted**, in the same
 container, against a signature bundle the CLI refreshes once a day from
 `ghcr.io/blaktron/agentry-clamav-db` (about 110 MB the first time, the day's

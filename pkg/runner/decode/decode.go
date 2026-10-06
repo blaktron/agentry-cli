@@ -483,6 +483,9 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 	default:
 		return fmt.Errorf("%q has the unknown outcome %q", f.Path, f.Outcome)
 	}
+	if err := checkMarkdown(f, outRoot); err != nil {
+		return err
+	}
 	if !f.HasText() {
 		if f.Output != "" {
 			return fmt.Errorf("%q has no text but names an output", f.Path)
@@ -495,6 +498,29 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 	ti, err := plainpath.File(outRoot, f.Output)
 	if err != nil || ti.Size() > MaxTextBytes {
 		return fmt.Errorf("the text of %q is not a regular file within %d bytes", f.Path, MaxTextBytes)
+	}
+	return nil
+}
+
+// checkMarkdown holds a Markdown view to its rule (agentry-cli#631): only a
+// file read as text has one, written by pandoc at exactly <path>.md, a
+// regular file within the cap.
+func checkMarkdown(f runnerdecode.File, outRoot *os.Root) error {
+	if f.Markdown == "" {
+		if f.MarkdownBytes != 0 || f.MarkdownBy != "" {
+			return fmt.Errorf("%q names a Markdown size or converter but no Markdown view", f.Path)
+		}
+		return nil
+	}
+	if f.Outcome != runnerdecode.OutcomeText || f.MarkdownBy != "pandoc" {
+		return fmt.Errorf("%q has a Markdown view but the outcome %q and converter %q", f.Path, f.Outcome, f.MarkdownBy)
+	}
+	if f.Markdown != f.Path+".md" {
+		return fmt.Errorf("it names a Markdown view outside the output root: %q is not %q", f.Markdown, f.Path+".md")
+	}
+	ti, err := plainpath.File(outRoot, f.Markdown)
+	if err != nil || ti.Size() > MaxTextBytes {
+		return fmt.Errorf("the Markdown view of %q is not a regular file within %d bytes", f.Path, MaxTextBytes)
 	}
 	return nil
 }

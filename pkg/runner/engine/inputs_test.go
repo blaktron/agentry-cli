@@ -114,6 +114,7 @@ func standInDecoders() (runnerdecode.Tools, error) {
  *.png*) echo image/png ;;
  *.bin*) echo application/octet-stream ;;
  *.zip) echo application/zip ;;
+ *.html*) echo text/html ;;
  *) echo text/plain ;;
  esac`
 		standIns.tools = runnerdecode.Tools{
@@ -220,7 +221,9 @@ func TestEveryRunsInputsAreDecodedBeforeTheAgent(t *testing.T) {
 			t.Errorf("%s: %+v", name, e)
 		}
 	}
-	if e := got["blob.bin"]; e.Unread == "" || e.Decoded || e.Outcome() == "read" {
+	// No reader took it, but it is still there to read as uploaded
+	// (agentry-cli#631).
+	if e := got["blob.bin"]; e.Unread == "" || e.Decoded || e.Outcome() == "read" || !e.Original {
 		t.Errorf("blob.bin: %+v", e)
 	}
 	if b, err := os.ReadFile(filepath.Join(runDir, "inputs-text", "text", "report.docx")); err != nil || strings.TrimSpace(string(b)) != "pandoc read report.docx" {
@@ -242,6 +245,38 @@ func TestEveryRunsInputsAreDecodedBeforeTheAgent(t *testing.T) {
 	}
 	if !strings.Contains(string(b), gatewayPath(filepath.Join(runDir, "inputs-text"))+":/inputs-text:ro") {
 		t.Errorf("rendered catalog lacks the ro decoded-inputs mount:\n%s", b)
+	}
+}
+
+// TestAnHTMLInputIsStagedWithItsMarkdown: an HTML input stays under
+// /inputs as uploaded, its Markdown view is staged under
+// inputs-text/converted/<path>, and the index says it has both views, with
+// its detected type (agentry-cli#631; plan quickagents-that-run.md D2).
+func TestAnHTMLInputIsStagedWithItsMarkdown(t *testing.T) {
+	resetDecodeCalls()
+	p, f := fixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	src := t.TempDir()
+	page := "<!doctype html>\n<script>x()</script>\n"
+	p.InputPaths = []string{writeInput(t, src, "index.html", page)}
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatal(err)
+	}
+	runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
+	idx := readIndex(t, runDir)
+	if len(idx.Files) != 1 {
+		t.Fatalf("index %+v", idx.Files)
+	}
+	e := idx.Files[0]
+	if e.Type != "text" || e.Decoded || !e.Converted || e.ConvertedBy != "pandoc" || e.MIME != "text/html" || e.TextBytes != int64(len(page)) || e.ConvertedBytes != int64(len("pandoc read index.html\n")) {
+		t.Fatalf("index entry %+v", e)
+	}
+	if b, err := os.ReadFile(filepath.Join(runDir, "inputs-text", toolsrv.InputsConvertedSubdir, "index.html")); err != nil || string(b) != "pandoc read index.html\n" {
+		t.Fatalf("the Markdown view %q (%v)", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(runDir, "inputs", "index.html")); err != nil || string(b) != page {
+		t.Fatalf("the page as uploaded %q (%v)", b, err)
 	}
 }
 
