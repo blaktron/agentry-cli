@@ -93,3 +93,15 @@ agents:
           headers:
             Authorization: Bearer ${env.MCP_GATEWAY_TOKEN}
         allow_private_ips: true
+    redact_secrets: false
+    hooks:
+      pre_tool_use:
+        - matcher: '*'
+          hooks:
+            - type: builtin
+              command: redact_secrets
+      tool_response_transform:
+        - matcher: '|[^rs](?s:.*)|r(?:|[^e](?s:.*)|e(?:|[^a](?s:.*)|a(?:|[^d](?s:.*)|d(?:|[^_](?s:.*)|_(?:|[^i](?s:.*)|i(?:|[^n](?s:.*)|n(?:|[^p](?s:.*)|p(?:|[^u](?s:.*)|u(?:|[^t](?s:.*)|t(?:(?s:.+)))))))))))|s(?:|[^e](?s:.*)|e(?:|[^a](?s:.*)|a(?:|[^r](?s:.*)|r(?:|[^c](?s:.*)|c(?:|[^h](?s:.*)|h(?:|[^_](?s:.*)|_(?:|[^i](?s:.*)|i(?:|[^n](?s:.*)|n(?:|[^p](?s:.*)|p(?:|[^u](?s:.*)|u(?:|[^t](?s:.*)|t(?:|[^s](?s:.*)|s(?:(?s:.+))))))))))))))'
+          hooks:
+            - type: builtin
+              command: redact_secrets

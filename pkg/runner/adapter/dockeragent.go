@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -101,6 +103,10 @@ func harnessKeyVar(harnessProvider, policyVar string) string {
 	}
 }
 
+// redactFlagOff is docker-agent's redact_secrets flag, written false: the
+// runner wires the builtin itself (redactSecretsHooks).
+var redactFlagOff = false
+
 type agntYAML struct {
 	Model       string `yaml:"model"`
 	Description string `yaml:"description,omitempty"`
@@ -111,6 +117,106 @@ type agntYAML struct {
 	// the exec path's explicit --safety flag still wins (DR-15).
 	Safety   string        `yaml:"safety,omitempty"`
 	Toolsets []toolsetYAML `yaml:"toolsets"`
+	// RedactSecrets is docker-agent's redact_secrets flag, on unless set.
+	// It is written false and its builtin wired by hand in Hooks, so the
+	// person's inputs reach the model unchanged (agentry-cli#632).
+	RedactSecrets *bool      `yaml:"redact_secrets,omitempty"`
+	Hooks         *hooksYAML `yaml:"hooks,omitempty"`
+}
+
+// hooksYAML is the part of docker-agent's hooks block the runner writes.
+type hooksYAML struct {
+	PreToolUse            []hookMatcherYAML `yaml:"pre_tool_use,omitempty"`
+	ToolResponseTransform []hookMatcherYAML `yaml:"tool_response_transform,omitempty"`
+}
+
+type hookMatcherYAML struct {
+	Matcher string     `yaml:"matcher"`
+	Hooks   []hookYAML `yaml:"hooks"`
+}
+
+type hookYAML struct {
+	Type    string `yaml:"type"`
+	Command string `yaml:"command"`
+}
+
+// InputTools are the runner's tools that answer with the person's own
+// inputs, served unchanged (plan quickagents-that-run.md D4, DR-78).
+var InputTools = []string{"read_input", "search_inputs"}
+
+// redactSecretsHooks wires docker-agent's redact_secrets builtin, which
+// its redact_secrets flag puts under three events: tool arguments
+// (pre_tool_use), outgoing chat (before_llm_call) and tool output
+// (tool_response_transform), each scrubbing anything secret-shaped
+// (agentry-cli#632). The runner keeps two legs and drops one:
+//
+//   - every call's arguments are scrubbed, as before;
+//   - every tool's output is scrubbed but the input tools': a person's
+//     input reaches the model unchanged, credentials included, which the
+//     flag's blanket scrub undid even after the gateway passed it;
+//   - outgoing chat is not scrubbed, since that leg reads the whole
+//     history before each model call and would scrub an input again.
+//     Every other tool's output is scrubbed before it enters the history.
+func redactSecretsHooks() *hooksYAML {
+	redact := []hookYAML{{Type: "builtin", Command: "redact_secrets"}}
+	return &hooksYAML{
+		PreToolUse:            []hookMatcherYAML{{Matcher: "*", Hooks: redact}},
+		ToolResponseTransform: []hookMatcherYAML{{Matcher: notExactly(InputTools...), Hooks: redact}},
+	}
+}
+
+// notExactly is a pattern that matches every string but the given ones,
+// for a docker-agent hook matcher, which docker-agent anchors as
+// ^(?:pattern)$ and compiles with RE2, which has no negative lookahead.
+// It walks a trie of the words: at each point a string may end (where no
+// word does), take a byte no word takes next and then anything, or take
+// a word's next byte and go on.
+func notExactly(words ...string) string {
+	type node struct {
+		next map[byte]*node
+		end  bool
+	}
+	root := &node{next: map[byte]*node{}}
+	for _, w := range words {
+		n := root
+		for i := 0; i < len(w); i++ {
+			c := w[i]
+			if n.next[c] == nil {
+				n.next[c] = &node{next: map[byte]*node{}}
+			}
+			n = n.next[c]
+		}
+		n.end = true
+	}
+	var walk func(n *node) string
+	walk = func(n *node) string {
+		keys := make([]byte, 0, len(n.next))
+		for c := range n.next {
+			keys = append(keys, c)
+		}
+		slices.Sort(keys)
+		var alts []string
+		if !n.end {
+			alts = append(alts, "")
+		}
+		if len(keys) == 0 {
+			alts = append(alts, "(?s:.+)")
+		} else {
+			var cls strings.Builder
+			for _, c := range keys {
+				if strings.IndexByte(`\\]^-`, c) >= 0 {
+					cls.WriteByte('\\')
+				}
+				cls.WriteByte(c)
+			}
+			alts = append(alts, "[^"+cls.String()+"](?s:.*)")
+		}
+		for _, c := range keys {
+			alts = append(alts, regexp.QuoteMeta(string(c))+"(?:"+walk(n.next[c])+")")
+		}
+		return strings.Join(alts, "|")
+	}
+	return walk(root)
 }
 
 type toolsetYAML struct {
@@ -193,6 +299,8 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 					// without this docker-agent's SSRF guard refuses it.
 					AllowPrivateIPs: true,
 				}},
+				RedactSecrets: &redactFlagOff,
+				Hooks:         redactSecretsHooks(),
 			},
 		},
 	}
