@@ -952,8 +952,11 @@ reads a file in one of two views: `text`, a document's decoded text and the
 default for documents, or `original`, the file as uploaded and the default
 for everything else (code, markup and data pass through unconverted); a
 binary original comes as pages of base64 with its size and type, and HTML's
-`text` view is pandoc's Markdown. No QuickAgent needs `exec` to read its
-inputs (agentry-cli#631). The receipt's `decode` line says what was read. **Every file, and every file in
+`text` view is pandoc's Markdown. A release whose manifest declares
+`inputs.view: text` or `original` (core DEV-218) has every input that
+has that view read in it by default instead, and the System Prompt says so;
+`both`, or no declaration, keeps each file's own default (agentry-cli#693).
+No QuickAgent needs `exec` to read its inputs (agentry-cli#631). The receipt's `decode` line says what was read. **Every file, and every file in
 an archive, is checked by ClamAV before its text is extracted**, in the same
 container, against a signature bundle the CLI refreshes once a day from
 `ghcr.io/blaktron/agentry-clamav-db` (about 110 MB the first time, the day's

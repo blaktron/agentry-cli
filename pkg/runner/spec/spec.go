@@ -213,6 +213,12 @@ type Plan struct {
 	// one it has no value for and the gateway sets it empty. Absent when the
 	// manifest marks none, so such a plan is the same bytes as before.
 	OptionalSecrets []string `json:"optionalSecrets,omitempty"`
+	// InputView is the view the input tools serve an input in when the
+	// model asks for none, from the manifest's inputs.view (DEV-218,
+	// agentry-cli#693): "text" or "original". Absent for a release that
+	// declares neither, whose inputs keep their own defaults (DR-76), so
+	// such a plan is the same bytes as before.
+	InputView string `json:"inputView,omitempty"`
 	// MCPServers are the declared, resolved MCP servers this plan loads
 	// alongside the tools server (RUNNER-PLAN-3). Empty for agents that
 	// declare none — such plans are byte-identical to pre-PLAN-3 output.

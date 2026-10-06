@@ -77,6 +77,11 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 		return nil, nil
 	}
 	x := &inputsDecoder{d: d, p: p, rd: rd, index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
+	if p.Plan != nil {
+		// The release's own default view (agentry-cli#693), which the
+		// tools serve an input in when the model asks for none.
+		x.index.DefaultView = p.Plan.InputView
+	}
 	given, err := hasGivenInputs(rd.inputs)
 	if err != nil {
 		return nil, err

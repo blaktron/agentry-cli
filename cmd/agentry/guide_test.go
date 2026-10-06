@@ -213,3 +213,32 @@ func writeAgentYAML(t *testing.T, dir, yaml string) {
 		t.Fatal(err)
 	}
 }
+
+// TestSayGuideNamesTheInputs (agentry-cli#693, core DEV-218): a release's
+// inputs block is said with the guide, in the CLI's own words, and alone
+// when the release has no guide; a release with neither prints nothing.
+func TestSayGuideNamesTheInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		m      *manifest.Manifest
+		want   string
+		absent bool
+	}{
+		{"kinds and original", &manifest.Manifest{Guide: &manifest.Guide{Files: "The repository."},
+			Inputs: &manifest.Inputs{Kinds: []manifest.InputKind{manifest.InputKindCode, manifest.InputKindData}, View: manifest.InputViewOriginal}},
+			"Files it takes: code, data; read as uploaded.", false},
+		{"view only, no guide", &manifest.Manifest{Inputs: &manifest.Inputs{View: manifest.InputViewText}},
+			"Files it takes: any; read as text.", false},
+		{"kinds only", &manifest.Manifest{Inputs: &manifest.Inputs{Kinds: []manifest.InputKind{manifest.InputKindDocuments}}},
+			"Files it takes: documents; read as text or as uploaded.", false},
+		{"no block", &manifest.Manifest{Guide: &manifest.Guide{Files: "Anything."}}, "Files it takes", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			sayGuide(&out, tc.m, runOpts{outputFormat: "text", guideShown: new(bool)})
+			if got := strings.Contains(out.String(), tc.want); got == tc.absent {
+				t.Fatalf("contains %q = %v in:\n%s", tc.want, got, out.String())
+			}
+		})
+	}
+}

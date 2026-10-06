@@ -953,3 +953,41 @@ func TestTheKeyFromTheEnvironmentStaysInTheCLI(t *testing.T) {
 		t.Fatalf("decode line %q", env.CapabilitiesEnforced["decode"])
 	}
 }
+
+// TestTheIndexCarriesTheReleasesView (agentry-cli#693): the plan's
+// InputView, the manifest's inputs.view, is written into the inputs index
+// as the tools' default view, through a session's added files too; a plan
+// without one writes no defaultView.
+func TestTheIndexCarriesTheReleasesView(t *testing.T) {
+	for _, view := range []string{"", toolsrv.ViewOriginal, toolsrv.ViewText} {
+		t.Run("view "+view, func(t *testing.T) {
+			resetDecodeCalls()
+			p, f := sessionFixture(t)
+			happyFake(f)
+			p.Plan.InputView = view
+			runDir := filepath.Join(p.RunRoot, "runs", p.RunID)
+			if err := os.MkdirAll(filepath.Join(runDir, "inputs-text"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			rd := &runDirs{root: runDir, inputs: filepath.Join(runDir, "inputs"), inputsText: filepath.Join(runDir, "inputs-text")}
+			writeInput(t, rd.inputs, intakeFile, `{"answers":{}}`)
+			x, err := decodeInputs(context.Background(), f, p, rd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := x.add(context.Background(), "later.txt", []byte("later\n")); err != nil {
+				t.Fatal(err)
+			}
+			if got := readIndex(t, runDir).DefaultView; got != view {
+				t.Fatalf("the index's defaultView = %q, want %q", got, view)
+			}
+			raw, err := os.ReadFile(filepath.Join(runDir, "inputs-text", toolsrv.InputsIndexFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if has := strings.Contains(string(raw), "defaultView"); has != (view != "") {
+				t.Fatalf("the index names defaultView: %v, want %v", has, view != "")
+			}
+		})
+	}
+}
