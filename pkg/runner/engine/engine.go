@@ -149,6 +149,12 @@ type Params struct {
 	// — the QuickAgent's MCP profile rides in here (P2 §P2); the engine
 	// itself stays profile-agnostic.
 	SecretOverrides map[string]string
+	// Connections are the access tokens of the remote servers that sign in
+	// by OAuth (auth: oauth), keyed by the server's address: the caller
+	// refreshed each from the person's connection (pkg/runner/connection,
+	// agentry-cli#664). An access token is all a run is given of one; a
+	// server with none here refuses the run.
+	Connections map[string]string
 	// ServersDir is the signature's installed MCP-server store
 	// (RUNNER-PLAN-3), substituted for the PHServers placeholder.
 	// Required when the plan declares MCP servers; unused otherwise.

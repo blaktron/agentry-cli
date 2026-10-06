@@ -582,17 +582,36 @@ func (rd *runDirs) connections() string {
 	return filepath.Join(rd.cfg, spec.ConnectionsDir)
 }
 
-// writeConnectionFiles gives each auth: secret remote server its bearer
-// (plan mcp-oauth-connections.md §5; agentry-cli#663): the value resolved
-// as any declared secret is (values is secretValues' map, an optional one
-// absent written empty), written into the server's own folder under the
-// run's cfg, which the compiler mounts read-only into that server's bridge
-// alone. The gateway never reads it. The file is replaced by a rename, so
-// a bridge reading it mid-write sees the old value or the new one, which
-// is how a token renewed during a run (a later milestone) will be handed
-// over.
+// writeConnectionFiles gives each remote server that sends a bearer its
+// value (plan mcp-oauth-connections.md §5; agentry-cli#663, #664): an auth:
+// secret server's, resolved as any declared secret is (values is
+// secretValues' map, an optional one absent written empty), and an auth:
+// oauth server's access token from p.Connections, which is also added to
+// values so the run's redactor masks it. Each is written into the server's
+// own folder under the run's cfg, which the compiler mounts read-only into
+// that server's bridge alone. The gateway never reads it. The file is
+// replaced by a rename, so a bridge reading it mid-write sees the old value
+// or the new one, which is how a token renewed during a run (a later
+// milestone) will be handed over.
 func writeConnectionFiles(p Params, rd *runDirs, values map[string]string) error {
+	bearers := map[string]spec.MCPServerSpec{}
 	for key, server := range remoteBearerKeys(p.Plan) {
+		bearers[key] = server
+	}
+	for _, srv := range p.Plan.MCPServers {
+		if !srv.SignsIn() {
+			continue
+		}
+		token := p.Connections[srv.Package]
+		if token == "" {
+			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("the remote MCP server %s signs in by OAuth and this run was given no connection for it: connect it first (agentry connect)", srv.Package),
+				receipt.ReasonSecretMissing, ""))
+		}
+		key := connectionValueKey(srv.Name)
+		values[key] = token
+		bearers[key] = srv
+	}
+	for key, server := range bearers {
 		dir := filepath.Join(rd.connections(), server.Name)
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("make the credential folder of the remote MCP server %s: %w", server.Package, err))
@@ -604,6 +623,12 @@ func writeConnectionFiles(p Params, rd *runDirs, values map[string]string) error
 	}
 	return nil
 }
+
+// connectionValueKey is where an auth: oauth server's access token sits in
+// the run's value map: a key no secrets-file key can be (those are
+// "<server>.<env name>"), so it is masked and never written to
+// secrets.env, which is built before it is added.
+func connectionValueKey(serverName string) string { return "connection:" + serverName }
 
 // writeFileAtomic writes data beside path and renames it over path.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {

@@ -195,12 +195,12 @@ capabilities:
 
 func TestCompileRefusesMalformedRemoteSpecs(t *testing.T) {
 	for name, mut := range map[string]func(*spec.MCPServerSpec){
-		"http":               func(s *spec.MCPServerSpec) { s.Package = "http://api.githubcopilot.com/mcp/" },
-		"dollar":             func(s *spec.MCPServerSpec) { s.Package = "https://api.githubcopilot.com/$HOME" },
-		"secret, no name":    func(s *spec.MCPServerSpec) { s.Secrets = nil },
-		"none with a secret": func(s *spec.MCPServerSpec) { s.Auth = "none" },
-		"oauth":              func(s *spec.MCPServerSpec) { s.Auth = "oauth" },
-		"port 8443":          func(s *spec.MCPServerSpec) { s.Package = "https://api.githubcopilot.com:8443/mcp/" },
+		"http":                func(s *spec.MCPServerSpec) { s.Package = "http://api.githubcopilot.com/mcp/" },
+		"dollar":              func(s *spec.MCPServerSpec) { s.Package = "https://api.githubcopilot.com/$HOME" },
+		"secret, no name":     func(s *spec.MCPServerSpec) { s.Secrets = nil },
+		"none with a secret":  func(s *spec.MCPServerSpec) { s.Auth = "none" },
+		"oauth with a secret": func(s *spec.MCPServerSpec) { s.Auth = "oauth" },
+		"port 8443":           func(s *spec.MCPServerSpec) { s.Package = "https://api.githubcopilot.com:8443/mcp/" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := remoteSecretSpec()
@@ -212,20 +212,53 @@ func TestCompileRefusesMalformedRemoteSpecs(t *testing.T) {
 	}
 }
 
-func TestCompileRefusesAServerThatNeedsAConnection(t *testing.T) {
-	for name, server := range map[string]string{
-		"remote oauth": `    - url: https://gmailmcp.googleapis.com/mcp/v1
-      auth: oauth
-      scopes: [https://www.googleapis.com/auth/gmail.readonly]`,
-		"package oauth": `    - pypi: workspace-mcp
-      version: 2.0.1
-      oauth:
-        issuer: https://accounts.google.com
-        env: {GOOGLE_TOKEN: "{access_token}"}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			in := mcpFixtureInputs(t, nil, policy.Default())
-			doc := `schemaVersion: "2"
+func remoteOAuthSpec() spec.MCPServerSpec {
+	return spec.MCPServerSpec{
+		Name: "mcp-url-mcp-linear-app-mcp", Source: spec.SourceURL,
+		Package: "https://mcp.linear.app/mcp",
+		Egress:  []string{"mcp.linear.app"},
+		Auth:    "oauth",
+	}
+}
+
+// A remote server signed in to by OAuth (agentry-cli#664) runs on the
+// bridge exactly as an auth: secret one does: its access token in its own
+// connection folder, read-only, never the gateway's; the receipt says the
+// run is given an access token alone.
+func TestCompileRendersAnOAuthServerOnTheBridge(t *testing.T) {
+	planDir := t.TempDir()
+	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{remoteOAuthSpec()}, policy.Default()), planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := catalogServer(t, planDir, "mcp-url-mcp-linear-app-mcp")
+	if got, want := strs(e["command"]), []string{"bridge", "--url", "https://mcp.linear.app/mcp", "--token-file", spec.ConnectionMount + "/" + spec.BearerFile}; !slices.Equal(got, want) {
+		t.Fatalf("command = %v, want %v", got, want)
+	}
+	if got := strs(e["volumes"]); !slices.Equal(got, []string{spec.PHCfg + "/connections/mcp-url-mcp-linear-app-mcp:" + spec.ConnectionMount + ":ro"}) {
+		t.Fatalf("volumes = %v: the server's own connection folder, read-only", got)
+	}
+	if got := strs(e["allowHosts"]); !slices.Equal(got, []string{"mcp.linear.app:443/tcp"}) {
+		t.Fatalf("allowHosts = %v", got)
+	}
+	if e["secrets"] != nil || e["env"] != nil {
+		t.Fatalf("the access token must not be one of the gateway's secrets or an env value: %v", e)
+	}
+	if !slices.Contains(plan.Gateway.Args, "--block-network") {
+		t.Fatalf("gateway args lack --block-network: %v", plan.Gateway.Args)
+	}
+	line := plan.Enforcement["mcpServers.remote"]
+	if !strings.Contains(line, "https://mcp.linear.app/mcp (auth oauth, the person's connection for this release: an access token alone") ||
+		!strings.Contains(line, "the refresh token never leaves the runner's store") {
+		t.Fatalf("mcpServers.remote does not say what the run is given:\n%s", line)
+	}
+}
+
+// A package server's own OAuth sign-in (an oauth block) is agentry-cli#665's:
+// refused by name until then.
+func TestCompileRefusesAPackageServerOAuthBlock(t *testing.T) {
+	in := mcpFixtureInputs(t, nil, policy.Default())
+	m, err := manifest.Parse([]byte(`schemaVersion: "2"
 name: needs-servers
 namespace: acme
 modes: [autonomous]
@@ -235,18 +268,20 @@ entrypoints:
   instruction: SKILL.md
 capabilities:
   mcpServers:
-` + server + "\n"
-			m, err := manifest.Parse([]byte(doc))
-			if err != nil {
-				t.Fatal(err)
-			}
-			in.Manifest = m
-			_, err = Compile(in, t.TempDir())
-			var refusal *PolicyRefusal
-			if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "signs in by OAuth") {
-				t.Fatalf("err = %v, want a policy refusal naming the OAuth sign-in", err)
-			}
-		})
+    - pypi: workspace-mcp
+      version: 2.0.1
+      oauth:
+        issuer: https://accounts.google.com
+        env: {GOOGLE_TOKEN: "{access_token}"}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Manifest = m
+	_, err = Compile(in, t.TempDir())
+	var refusal *PolicyRefusal
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "pypi:workspace-mcp@2.0.1 takes an OAuth sign-in in its own package") {
+		t.Fatalf("err = %v, want a policy refusal naming the package server's OAuth sign-in", err)
 	}
 }
 

@@ -7,6 +7,11 @@
 // reinstall of the exact same release digest can ever use it again — not
 // another QuickAgent, not another user, not a newer version of this one.
 //
+// The version's OAuth connections go with its profile (plan
+// mcp-oauth-connections.md D17): each is revoked at the vendor where it
+// offers that, and the outcome is recorded; --keep-mcp keeps them, locked
+// to the release they were made for, like the profile.
+//
 // Embedded installs (claude-skill / agents-md exports, and the mcp exports
 // of older clients) are separate
 // state with their own records; this command does not touch them.
@@ -24,6 +29,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 )
@@ -40,13 +46,18 @@ type uninstallOutput struct {
 	// or, under --keep-mcp, kept: then they are listed under KeptProfiles.
 	Profiles     []string `json:"profiles"`
 	KeptProfiles []string `json:"keptProfiles,omitempty"`
+	// Connections are the version's OAuth connections removed, each with
+	// its revocation's outcome (or, with --plan, would be: no outcome).
+	Connections     []removedConnection `json:"connections"`
+	KeptConnections []string            `json:"keptConnections,omitempty"`
 	// ConsentRecord is true when the runner's consent record in the shared
 	// install state was (or would be) removed.
 	ConsentRecord bool `json:"consentRecord"`
 }
 
 func (o uninstallOutput) empty() bool {
-	return len(o.Installs) == 0 && len(o.Profiles) == 0 && len(o.KeptProfiles) == 0 && !o.ConsentRecord
+	return len(o.Installs) == 0 && len(o.Profiles) == 0 && len(o.KeptProfiles) == 0 && !o.ConsentRecord &&
+		len(o.Connections) == 0 && len(o.KeptConnections) == 0
 }
 
 func newUninstallCmd() *cobra.Command {
@@ -82,7 +93,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	if flags.jsonOut {
 		out = cmd.ErrOrStderr() // §R8: the result on stdout, the narration on stderr
 	}
-	result := uninstallOutput{Ref: sel, Plan: plan, Installs: []string{}, Profiles: []string{}}
+	result := uninstallOutput{Ref: sel, Plan: plan, Installs: []string{}, Profiles: []string{}, Connections: []removedConnection{}}
 	verb := "removed"
 	if plan {
 		verb = "would remove"
@@ -142,7 +153,36 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 		result.Profiles = append(result.Profiles, e.Dir)
 	}
 
-	// 3. The runner's consent record in the shared install state, so a
+	// 3. The version's OAuth connections (D17): removed with the profile,
+	// each revoked at the vendor where it offers that; kept with it under
+	// --keep-mcp.
+	if conns, err := connection.Open(home, nil).List(); err == nil {
+		for _, c := range conns {
+			if !refMatches(c.Ref, sel) {
+				continue
+			}
+			switch {
+			case keepMCP:
+				_, _ = fmt.Fprintf(out, "kept the connection of %s to %s — locked to its release\n", c.Ref, c.Server)
+				result.KeptConnections = append(result.KeptConnections, c.Ref+" "+c.Server)
+			case plan:
+				_, _ = fmt.Fprintf(out, "would remove the connection of %s to %s (revoked at the vendor where it offers that)\n", c.Ref, c.Server)
+				result.Connections = append(result.Connections, removedConnection{Ref: c.Ref, Server: c.Server})
+			}
+		}
+	}
+	if !keepMCP && !plan {
+		removed, rerr := removeConnections(cmd.Context(), home, sel, "", "the version was uninstalled")
+		for _, r := range removed {
+			_, _ = fmt.Fprintf(out, "removed the connection of %s to %s (revocation: %s)\n", r.Ref, r.Server, r.Revocation)
+		}
+		result.Connections = append(result.Connections, removed...)
+		if rerr != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", rerr)
+		}
+	}
+
+	// 4. The runner's consent record in the shared install state, so a
 	// future install asks about capabilities from scratch.
 	if state, serr := installed.Load(); serr == nil {
 		key := installdir.ConsentKey(home, ref.Namespace, ref.Name)

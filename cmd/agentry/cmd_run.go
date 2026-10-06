@@ -514,6 +514,21 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
+	// The connections of the remote servers that sign in by OAuth (plan
+	// mcp-oauth-connections.md §6, agentry-cli#664): asked for at Start on
+	// a terminal, refreshed under their locks before the sandbox starts.
+	// --prepare makes them too, as it does the profile.
+	conns, err := ensureConnections(cmd, home, meta, m)
+	if err != nil {
+		return err
+	}
+	if conns.line != "" {
+		if plan.Enforcement == nil {
+			plan.Enforcement = map[string]string{}
+		}
+		plan.Enforcement["mcpServers.connections"] = conns.line
+	}
+
 	if opts.prepare {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "prepared %s (plan %s, images installed) — run again without --prepare to execute\n",
 			plan.Ref, shortHash(plan))
@@ -587,6 +602,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		Policy:          pol,
 		PolicyFile:      &policyFile,
 		SecretOverrides: overrides,
+		Connections:     conns.tokens,
 		ServersDir:      serversDir,
 		Budgets:         budgets,
 		Attestation:     meta.Attestation,

@@ -198,14 +198,16 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		return nil, err
 	}
 
-	// A server that signs in by OAuth needs the person's connection
-	// (plan mcp-oauth-connections.md D4), which this runner does not make
-	// yet (agentry-cli#664, #665): refused by name, before anything runs
-	// without the credential the release says it needs.
+	// A package server's OAuth sign-in (a token in its environment or its
+	// token folder) is agentry-cli#665's: refused by name until then,
+	// before anything runs without the credential the release says it
+	// needs. A remote server's (auth: oauth) runs on the person's
+	// connection, whose access token the engine hands its bridge
+	// (agentry-cli#664).
 	for _, srv := range m.Capabilities.MCPServers {
-		if srv.NeedsConnection() {
+		if srv.NeedsConnection() && !srv.IsRemote() {
 			return nil, &PolicyRefusal{Reason: fmt.Sprintf(
-				"declared MCP server %s signs in by OAuth, with a connection this version of the runner cannot make yet; update Agentry, or run a version of the QuickAgent that declares it with auth: none or auth: secret",
+				"declared MCP server %s takes an OAuth sign-in in its own package, which this version of the runner cannot hand it yet; update Agentry, or run a version of the QuickAgent that declares it without an oauth block",
 				serverRef(srv))}
 		}
 	}
@@ -1087,9 +1089,9 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 // runs on the relay network behind that host's relay, under the run's
 // docker filter and the policy's runtime, as a package server does. The
 // gateway dials nothing itself and is unchanged. An auth: secret server's
-// bearer is not one of the gateway's secrets: the engine writes it into the
-// server's connection folder, mounted read-only, which the bridge reads at
-// every request.
+// bearer, and an auth: oauth server's access token, are not the gateway's
+// secrets: the engine writes either into the server's connection folder,
+// mounted read-only, which the bridge reads at every request.
 func remoteServerEntry(srv spec.MCPServerSpec, runnerImage string) *yaml.Node {
 	e := yamlMap{}
 	e.set("description", strNode(fmt.Sprintf("declared remote MCP server %s (auth %s), reached through the runner image's bridge", srv.Package, srv.Auth)))
@@ -1136,6 +1138,10 @@ func checkRemote(srv spec.MCPServerSpec) error {
 	case string(manifest.AuthSecret):
 		if len(srv.Secrets) != 1 {
 			return fmt.Errorf("declared remote MCP server %s: auth secret needs exactly one declared secret, its bearer", srv.Package)
+		}
+	case string(manifest.AuthOAuth):
+		if len(srv.Secrets) != 0 {
+			return fmt.Errorf("declared remote MCP server %s: auth oauth, yet it names a secret", srv.Package)
 		}
 	default:
 		return fmt.Errorf("declared remote MCP server %s: auth %q is not one this runner can send", srv.Package, srv.Auth)
@@ -1453,7 +1459,10 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			continue
 		}
 		d := srv.Package + " (auth " + srv.Auth
-		if srv.SendsBearer() {
+		switch {
+		case srv.SignsIn():
+			d += ", the person's connection for this release: an access token alone, refreshed by the runner before the run and written into a folder mounted read-only into its bridge; the refresh token never leaves the runner's store"
+		case srv.SendsBearer():
 			d += ", " + strings.Join(srv.Secrets, ", ") + " sent as its bearer"
 		}
 		if len(srv.Tools) > 0 {
