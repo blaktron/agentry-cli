@@ -446,8 +446,12 @@ esac
 		if f.Family != FamilyText || f.Outcome != OutcomeText || f.Tool != "" || f.Output != "" || f.Reason != "" {
 			t.Errorf("%s as staged: %+v, want text, read as it is", fx.name, f)
 		}
-		if want := fx.magic; want != "application/octet-stream" && f.MIME != want {
-			t.Errorf("%s as staged: type %q, want libmagic's %q", fx.name, f.MIME, want)
+		want := fx.magic
+		if want == "application/octet-stream" {
+			want = "text/plain"
+		}
+		if f.MIME != want {
+			t.Errorf("%s as staged: type %q, want %q", fx.name, f.MIME, want)
 		}
 		m := got["project.zip/src/"+fx.name]
 		if m.Family != FamilyText || m.Outcome != OutcomeText || m.Tool != "" || m.Output != m.Path+".txt" {
@@ -469,36 +473,66 @@ esac
 
 // TestTextDocumentsKeepTheirConverters: RTF and mail are documents that are
 // also UTF-8 text; they keep their converters ahead of the text fast path,
-// and so does a binary document (agentry-cli#630).
+// and so does a binary document. Text that is not UTF-8 is read by Tika,
+// which guesses its charset, as a Latin-1 CSV was by the table reader
+// before (agentry-cli#630).
 func TestTextDocumentsKeepTheirConverters(t *testing.T) {
 	tools := fakeTools(t)
 	dir := t.TempDir()
 	tools.File = filepath.Join(dir, "file")
 	if err := os.WriteFile(tools.File, []byte(`#!/bin/sh
+[ "$1 $2 $3" = "--brief --mime-type --" ] || exit 9
 case "$4" in
  *memo.rtf) echo text/rtf ;;
  *mail.eml) echo message/rfc822 ;;
+ *inbox.mbox) echo application/mbox ;;
  *report.pdf) echo application/pdf ;;
+ *) echo text/plain ;;
 esac
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tools.Tika = filepath.Join(dir, "java")
-	if err := os.WriteFile(tools.Tika, []byte("#!/bin/sh\n[ \"$5\" = --text ] || exit 9\nprintf 'mail body'\n"), 0o755); err != nil {
+	if err := os.WriteFile(tools.Tika, []byte(`#!/bin/sh
+[ "$1 $2 $3 $4" = "-Xmx512m -Djava.io.tmpdir=/tmp -jar /opt/tika/tika-app.jar" ] || exit 9
+case "$5" in
+ --detect) echo text/csv ;;
+ --text) printf 'tika read %s' "$(basename "$6")" ;;
+ *) exit 9 ;;
+esac
+`), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	in, out := t.TempDir(), t.TempDir()
 	write(t, in, "memo.rtf", []byte("{\\rtf1\\ansi Antwerp is ANR\\par}\n"))
 	write(t, in, "mail.eml", []byte("From: a@example.com\nSubject: hi\n\nmail body\n"))
+	write(t, in, "inbox.mbox", []byte("From a@example.com Mon Oct  5 09:00:00 2026\nSubject: hi\n\nmail body\n"))
 	write(t, in, "report.pdf", []byte("%PDF-1.4 all ASCII\n"))
+	write(t, in, "latin1.csv", []byte("depot,city\nANR,Li\xe8ge\n"))
 	rep, err := Decode(context.Background(), in, out, tools, Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"memo.rtf": "pandoc", "mail.eml": "tika", "report.pdf": "pdftotext"}
+	got := map[string]File{}
 	for _, f := range rep.Files {
-		if f.Outcome != OutcomeDecoded || f.Tool != want[f.Path] {
-			t.Errorf("%s: %+v, want decoded by %s", f.Path, f, want[f.Path])
+		got[f.Path] = f
+	}
+	for path, w := range map[string]struct {
+		family Family
+		tool   string
+	}{
+		"memo.rtf":   {FamilyDocument, "pandoc"},
+		"mail.eml":   {FamilyDocument, "tika"},
+		"inbox.mbox": {FamilyDocument, "tika"},
+		"report.pdf": {FamilyPDF, "pdftotext"},
+		"latin1.csv": {FamilyText, "tika"},
+	} {
+		f, ok := got[path]
+		if !ok || f.Outcome != OutcomeDecoded || f.Family != w.family || f.Tool != w.tool {
+			t.Errorf("%s: %+v, want %s decoded by %s", path, f, w.family, w.tool)
 		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(out, "latin1.csv.txt")); string(b) != "tika read latin1.csv" {
+		t.Errorf("latin1.csv: %q", b)
 	}
 }

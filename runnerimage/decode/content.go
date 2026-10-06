@@ -25,8 +25,9 @@ type contentKind struct {
 // Only the input path varies. Neither a detected type nor a document's
 // content is interpolated into argv: types select this closed table. It
 // names the documents alone, those whose text a converter reads out of
-// them. RTF and mail are the documents that are also UTF-8 text, so they
-// are matched here before the text fast path (detect). Code, markup,
+// them. RTF and mail (a message, a mailbox) are the documents that are
+// also UTF-8 text, so they are matched here before the text fast path
+// (detect). Code, markup,
 // configuration and data text (HTML, XML, SVG, CSV, JSON, YAML, scripts,
 // source) are not documents and never converted: they are read as
 // uploaded (agentry-cli#630).
@@ -46,6 +47,7 @@ var contentKinds = map[string]contentKind{
 	"application/vnd.ms-powerpoint": {family: FamilyPresentation, tool: "tika"},
 	"application/vnd.ms-outlook":    {family: FamilyDocument, tool: "tika"},
 	"message/rfc822":                {family: FamilyDocument, tool: "tika"},
+	"application/mbox":              {family: FamilyDocument, tool: "tika"},
 }
 
 func detectedKind(mime string) contentKind {
@@ -62,16 +64,17 @@ func detectedKind(mime string) contentKind {
 	if isImage(mime) {
 		return contentKind{family: FamilyImage, tool: "tesseract"}
 	}
+	// Text reaches Tika's detector only when it is not UTF-8 (the fast
+	// path in detect took the rest): a Latin-1 CSV, a UTF-16 XML file.
+	// Tika reads its text, guessing the charset, rather than refusing it.
 	switch mime {
-	case "image/svg+xml", "application/xml", "application/xhtml+xml":
-		return contentKind{family: FamilyText, text: true}
-	case "text/plain", "text/markdown", "application/json", "application/x-ndjson", "application/x-empty", "inode/x-empty":
-		return contentKind{family: FamilyText, text: true}
+	case "image/svg+xml", "application/xml", "application/xhtml+xml", "application/json", "application/x-ndjson":
+		return contentKind{family: FamilyText, tool: "tika"}
 	case "application/octet-stream":
 		return contentKind{family: FamilyUnknown}
 	}
 	if strings.HasPrefix(mime, "text/") {
-		return contentKind{family: FamilyText, text: true}
+		return contentKind{family: FamilyText, tool: "tika"}
 	}
 	return contentKind{family: FamilyDocument, tool: "tika"}
 }
@@ -96,10 +99,11 @@ func detect(ctx context.Context, src string, tools Tools) (contentKind, error) {
 	// whatever a detector calls it (Tika names a .ts file video/mp2t by
 	// its name), and told without a JVM. A repository's working tree
 	// took one Tika start per text file before (agentry-cli#630). A file
-	// libmagic calls a zip has a zip's signature, and goes to Tika even
-	// when the bytes after it happen to be text.
+	// libmagic calls a zip (the case above lets through) has a zip's
+	// signature, and goes to Tika even when the bytes after it happen to
+	// be text.
 	if mime != "application/zip" && isText(src) {
-		if err != nil || !ValidMIME(mime) {
+		if err != nil || !ValidMIME(mime) || mime == "application/octet-stream" {
 			mime = "text/plain"
 		}
 		return withMIME(contentKind{family: FamilyText, text: true}, mime), nil

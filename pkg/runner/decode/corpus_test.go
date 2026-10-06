@@ -77,10 +77,14 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 	}
 	isCode := map[string]bool{}
 	for name, body := range code {
-		isCode[name] = true
+		isCode[name] = true // code is emptied as each file is checked
 		if err := os.WriteFile(filepath.Join(in, name), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Text that is not UTF-8 is read by Tika, which guesses its charset.
+	if err := os.WriteFile(filepath.Join(in, "latin1.csv"), []byte("depot,city\nANR,Li\xe8ge\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	res, err := Run(ctx, d, img, in, out, pol.Docker.Limits.WithDefaults(), os.Stderr)
 	if err != nil {
@@ -128,6 +132,7 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 		"contact.html":                   {runnerdecode.OutcomeText, "", ""},
 		"depots.csv":                     {runnerdecode.OutcomeText, "", ""},
 		"runbook.md":                     {runnerdecode.OutcomeText, "", ""},
+		"latin1.csv":                     {runnerdecode.OutcomeDecoded, "tika", "Liège"},
 		"incident.pdf":                   {runnerdecode.OutcomeDecoded, "pdftotext", "fuel filter was clogged"},
 		"policy.docx":                    {runnerdecode.OutcomeDecoded, "pandoc", "45-minute break"},
 		"handbook.epub":                  {runnerdecode.OutcomeDecoded, "pandoc", "doors 7 to 12 for inbound"},

@@ -62,11 +62,13 @@ var riskyTypes = map[string]bool{
 // riskyNames are the extensions looked up whatever the content was
 // detected as: the scripts and shortcuts a detector reads as plain text or
 // data, and each risky type's own extension, so a file whose detection
-// failed is still looked up. Over-asking costs a lookup of a hash, never a
-// file.
+// failed is still looked up. A text file's type is libmagic's since
+// agentry-cli#630, and libmagic calls a plain .mjs text/plain where Tika's
+// name globs said text/javascript. Over-asking costs a lookup of a hash,
+// never a file.
 var riskyNames = map[string]bool{
 	"exe": true, "dll": true, "scr": true, "com": true, "sys": true, "msi": true, "apk": true, "jar": true,
-	"js": true, "jse": true, "vbs": true, "vbe": true, "ps1": true, "psm1": true, "bat": true, "cmd": true, "hta": true, "wsf": true,
+	"js": true, "mjs": true, "cjs": true, "jse": true, "vbs": true, "vbe": true, "ps1": true, "psm1": true, "bat": true, "cmd": true, "hta": true, "wsf": true,
 	"lnk": true, "iso": true, "img": true,
 	"doc": true, "xls": true, "ppt": true, "docm": true, "xlsm": true, "pptm": true, "dotm": true, "xltm": true, "potm": true,
 	"rtf": true, "pdf": true, "chm": true,
