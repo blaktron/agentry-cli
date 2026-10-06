@@ -64,8 +64,10 @@ const (
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// (RUNNER-PLAN-3 §P2). Node is 24 since agentry-cli#608: servers whose
-	// engines.node needs 24 (the OSV advisory server since 0.1.8) fail
-	// every tool call on 22.
+	// engines.node needs 24 fail every tool call on 22. The OSV advisory
+	// server declares >=24.0.0 in every version, and 0.1.14 and later do
+	// fail on 22 (Promise.try; 0.1.7 to 0.1.13 answered on 22.23.2,
+	// measured 2026-10-05, agentry-cli#658).
 	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:24-alpine"
 	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-alpine:3.12-alpine"
 	// The Node and Python the two default runtimes run, as `node --version`

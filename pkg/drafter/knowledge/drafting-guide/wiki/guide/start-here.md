@@ -19,6 +19,6 @@ This is the Drafter's drafting guide, the knowledge pack `drafting-guide`. It sh
 | Step of the draft | Read |
 | --- | --- |
 | Before you choose tools: what a run can and cannot do | [How a QuickAgent run works](../runtime/how-a-run-works.md) |
-| Before you pin any MCP server | [Declared MCP servers](../servers/mcp-servers.md) |
+| Before you pin any MCP server | [Declared MCP servers](../servers/mcp-servers.md), then the lists [Runs here](../servers/runs-here.md) and [Does not run here](../servers/does-not-run-here.md) |
 
 A rule the guide states is also checked after you answer. A draft that breaks one gets one repair turn, and a draft that still breaks it carries a note for the person. Reading the page first is cheaper than the repair [src: web:https://docs.secureagentry.net/runner/].

@@ -1,8 +1,8 @@
 {
   "schema": "knowledge/v1",
   "name": "drafting-guide",
-  "pages": 3,
-  "bytes": 17960,
-  "sha256": "sha256:7107b9fb2d5d0ed5ced0213cb08b95ce62c84e1d5628883e10089861f7c07a85",
+  "pages": 5,
+  "bytes": 90072,
+  "sha256": "sha256:6899a115ca9aabaeb1c532a91b3922d15fdb8716b9629eeb147b8e10f64890df",
   "scan": "not scanned"
 }

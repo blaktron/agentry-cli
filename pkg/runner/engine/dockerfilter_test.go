@@ -196,7 +196,7 @@ func TestARunWithRelaysHasRelayNetworksOfItsOwn(t *testing.T) {
 		t.Errorf("want the relay networks made before the gateway and removed after it stopped; got %v", ops)
 	}
 	for _, op := range ops {
-		if strings.Contains(op, "docker-mcp-proxies") || op == "PSByLabel:"+relayLabel && slices.Index(ops, op) < gw {
+		if strings.Contains(op, "docker-mcp-proxies") || op == "PSByLabel:"+RelayLabel && slices.Index(ops, op) < gw {
 			t.Errorf("the run touched the host's relay network or refused on another gateway's relays: %s", op)
 		}
 	}
@@ -207,7 +207,7 @@ func TestARunWithRelaysHasRelayNetworksOfItsOwn(t *testing.T) {
 // planted in the log reaches no other run's relay.
 func TestTheReaperTakesOnlyTheRunsOwnRelays(t *testing.T) {
 	f := &dockerx.Fake{ByLabel: map[string][]string{
-		relayLabel:                      {"docker-mcp-l4proxy-ours", "docker-mcp-l4proxy-theirs"},
+		RelayLabel:                      {"docker-mcp-l4proxy-ours", "docker-mcp-l4proxy-theirs"},
 		gatewayOwnerLabel + "=cafe0000": {"docker-mcp-l4proxy-ours", "mcp-server-x"},
 	}}
 	f.LogsByName = map[string]string{"gw": "starting l4 proxy docker-mcp-l4proxy-ours for a.example, ports 443\nstarting l4 proxy docker-mcp-l4proxy-theirs for b.example, ports 443\n"}

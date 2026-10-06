@@ -1,0 +1,970 @@
+# The drafting guide's two soft lists of declared MCP servers, Runs here
+# and Does not run here, and the packages whose presence as a server's
+# direct dependency means it does not run here (plan drafter-knowledge.md
+# §4.4; agentry-cli#658). Written by hand from the survey's results
+# (scripts/mcp-server-survey); the two list pages are generated from it
+# (go test ./pkg/drafter -run TestTheDraftingGuideIsCurrent -update).
+#
+# A list is one thing to look at when drafting, never a gate. An entry says
+# what was observed, on which runtime, on which date; never that a server is
+# safe or good. An entry comes off when the runner gains what the server
+# lacked. reason is a class of the closed set in pkg/drafter/serverlist.go.
+servers:
+- ecosystem: npm
+  package: "@aryanbv/pdf-toolkit-mcp"
+  versions: 0.3.1
+  list: does-not-run-here
+  reason: needs-run-files
+  runtime: Node 24.21.0
+  observed: Started and listed its tools; a call of pdf_get_metadata for /inputs/report.pdf returned FILE_NOT_FOUND. Every tool takes a local file path, and none of the run's files are in its container.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@azure/mcp"
+  versions: 3.0.0-beta.49
+  list: does-not-run-here
+  reason: musl-native
+  runtime: Node 24.21.0
+  observed: "Installed; at start it failed to run its bundled program (spawn …/azmcp ENOENT): azmcp is built for glibc (its interpreter is /lib64/ld-linux-x86-64.so.2), and the runtime image is musl. It is also started with a subcommand (server start), which the runner does not pass."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@bytebase/dbhub"
+  versions: 1.4.0
+  list: does-not-run-here
+  reason: non-443-port
+  runtime: Node 24.21.0
+  observed: Installed; exited at start asking for a database connection (--dsn, --demo, or DSN). A DSN can be given in env, but the databases it connects to listen on their own ports (5432, 3306, …), which a declared server cannot reach.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/sdk"
+  versions: 1.32.1
+  list: does-not-run-here
+  reason: not-a-server
+  runtime: Node 24.21.0
+  observed: "Not resolved: the package declares no bin. It is the MCP TypeScript SDK, a library for writing servers, and was declared by a published dev release as if it were a server."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-filesystem"
+  versions: 2026.8.31
+  list: does-not-run-here
+  reason: needs-run-files
+  runtime: Node 24.21.0
+  observed: Started and listed its tools. Its tools read and write local directories, and none of the run's files are in its container.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-gdrive"
+  versions: 2025.1.14
+  list: does-not-run-here
+  reason: oauth-browser
+  runtime: Node 24.21.0
+  observed: "Installed; exited at start: Credentials not found. Please run with 'auth' argument first. It signs in through a browser and keeps a credentials file."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-gitlab"
+  versions: 2025.4.25
+  list: does-not-run-here
+  reason: invalid-tool-schema
+  runtime: Node 24.21.0
+  observed: "Installed and started, and the runner's gateway stopped with a panic reading its tools (create_or_update_file: input schema must have type \"object\"), so no server in the run would have been served."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-postgres"
+  versions: 0.6.2
+  list: does-not-run-here
+  reason: needs-arguments
+  runtime: Node 24.21.0
+  observed: "Installed; exited at start: Please provide a database URL as a command-line argument. The database would also be on port 5432, which a declared server cannot reach."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-puppeteer"
+  versions: 2025.5.12
+  list: does-not-run-here
+  reason: spawns-binary
+  runtime: Node 24.21.0
+  observed: "Started and listed its tools; a call of puppeteer_navigate failed: Could not find Chrome. Puppeteer downloads its browser in an install script, which does not run here, and the container has no browser. Archived by its authors."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-redis"
+  versions: 2025.4.25
+  list: does-not-run-here
+  reason: non-443-port
+  runtime: Node 24.21.0
+  observed: Installed; at start it tried redis://localhost:6379 and kept retrying. Redis listens on its own port (6379), which a declared server cannot reach, and the URL is a command-line argument.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@playwright/mcp"
+  versions: 0.0.83
+  list: does-not-run-here
+  reason: spawns-binary
+  runtime: Node 24.21.0
+  observed: "Started and listed its tools; a call of browser_navigate failed: Chromium distribution 'chrome' is not found. The container has no browser."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@wonderwhy-er/desktop-commander"
+  versions: 0.2.52
+  list: does-not-run-here
+  reason: needs-run-files
+  runtime: Node 24.21.0
+  observed: Started and listed its tools. Its tools run shell commands and edit local files, and none of the run's files are in its container; the shell it reaches is the server container's own.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: agentation-mcp
+  versions: 1.3.2
+  list: does-not-run-here
+  reason: needs-arguments
+  runtime: Node 24.21.0
+  observed: Installed; started without the server subcommand it needs and wrote text, not MCP, to its output, so the gateway could not initialize it.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: chrome-devtools-mcp
+  versions: 1.10.1
+  list: does-not-run-here
+  reason: spawns-binary
+  runtime: Node 24.21.0
+  observed: Started and listed its tools; a call of new_page failed to launch Chrome. The container has no browser, and the server's container runs as root, which Chrome's sandbox refuses.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: mongodb-mcp-server
+  versions: 3.0.5
+  list: does-not-run-here
+  reason: non-443-port
+  runtime: Node 24.21.0
+  observed: Started and listed its tools. Its database tools connect through a MongoDB connection string on port 27017, which a declared server cannot reach.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: next-devtools-mcp
+  versions: 0.4.0
+  list: does-not-run-here
+  reason: non-443-port
+  runtime: Node 24.21.0
+  observed: Started and listed its tools. It connects to a running Next.js dev server on the same machine, which a declared server cannot reach.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: blender-mcp
+  versions: 2.0.0
+  list: does-not-run-here
+  reason: non-443-port
+  runtime: Python 3.12.14
+  observed: Started and listed its tools. They work by talking to the Blender add-on's socket on localhost:9876, which a declared server cannot reach.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: lean-lsp-mcp
+  versions: 0.31.0
+  list: does-not-run-here
+  reason: spawns-binary
+  runtime: Python 3.12.14
+  observed: Started and listed its tools. They run Lean's own programs (lake, the language server) on a local project, and the container has neither.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: markitdown-mcp
+  versions: 0.0.1a7
+  list: does-not-run-here
+  reason: musl-native
+  runtime: Python 3.12.14
+  observed: "Did not install: pip found no installable set of packages, because its markitdown[all] dependency pulls in onnxruntime (through magika), which publishes no musllinux wheel (agentry-cli#653)."
+  evidence: "survey 2026-10-05; agentry-cli#653"
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-for-blender
+  versions: 2.1.8
+  list: does-not-run-here
+  reason: non-443-port
+  runtime: Python 3.12.14
+  observed: Started and listed its tools. They work by talking to the Blender add-on's socket on the same machine, which a declared server cannot reach.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-grafana
+  versions: 2.0.0
+  list: does-not-run-here
+  reason: writes-own-tree
+  runtime: Python 3.12.14
+  observed: "Installed; exited at start with OSError: Read-only file system: it marks its bundled program executable inside its own installed files, which are read-only."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-server-git
+  versions: 2026.8.18
+  list: does-not-run-here
+  reason: spawns-binary
+  runtime: Python 3.12.14
+  observed: "Installed; exited at start with ImportError: Bad git executable. It works through GitPython, which runs the git program, and the container has none. It also works on local repositories, which are not in its container."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-server-sentry
+  versions: 2025.1.14
+  list: does-not-run-here
+  reason: broken-upstream
+  runtime: Python 3.12.14
+  observed: "Installed; exited at start with ModuleNotFoundError: No module named 'httpx'. It imports a package it does not declare, which its dependencies no longer bring in. Archived by its authors; @sentry/mcp-server is on Runs here."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-server-sqlite
+  versions: 2025.4.25
+  list: does-not-run-here
+  reason: broken-upstream
+  runtime: Python 3.12.14
+  observed: "Installed; exited at start with AttributeError: 'Server' object has no attribute 'list_resources'. Its unpinned mcp dependency installs a version whose API it no longer matches. It also works on a local database file."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: opensearch-mcp-server-py
+  versions: 0.12.0
+  list: does-not-run-here
+  reason: musl-native
+  runtime: Python 3.12.14
+  observed: "Did not install: No matching distribution found for scikit-learn>=1.3.0. scikit-learn publishes no musllinux wheel for CPython 3.12 (1.9.1 on this date)."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: postgres-mcp
+  versions: 0.3.0
+  list: does-not-run-here
+  reason: broken-upstream
+  runtime: Python 3.12.14
+  observed: "Installed; exited at start with ModuleNotFoundError: No module named 'mcp.server.fastmcp': its unpinned mcp dependency installs mcp 2.x, which renamed that module. The database would also be on port 5432."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@cyanheads/osv-advisory-mcp-server"
+  versions: 0.1.15
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started and listed its tools with no key; a call of osv_query_package for flask 0.12 on PyPI returned its advisories through api.osv.dev. Every published version (0.1.0 to 0.1.15) declares engines.node >=24.0.0. Installed by hand on Node 22.23.2 the same day, 0.1.14 and 0.1.15 failed every call (Promise.try is not a function) while 0.1.7 to 0.1.13 answered.
+  tools:
+  - osv_get_vulnerability
+  - osv_list_ecosystems
+  - osv_query_batch
+  - osv_query_package
+  conditions:
+  - "egress: api.osv.dev"
+  - no key
+  evidence: survey 2026-10-05; Node 22.23.2 installs by hand the same day
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-brave-search"
+  versions: 0.6.2
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools; not called. Archived by its authors.
+  tools:
+  - brave_local_search
+  - brave_web_search
+  conditions:
+  - "secrets: BRAVE_API_KEY"
+  - "egress: api.search.brave.com"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-everart"
+  versions: 0.6.2
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its one tool; not called. Archived by its authors.
+  tools:
+  - generate_image
+  conditions:
+  - "secrets: EVERART_API_KEY"
+  - "egress: api.everart.ai"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-everything"
+  versions: 2026.8.31
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: "Started and a call of echo answered. It is the MCP project's test server: its tools are demonstrations, not a task's."
+  tools:
+  - echo
+  - get-annotated-message
+  - get-env
+  - get-resource-links
+  - get-resource-reference
+  - get-roots-list
+  - get-structured-content
+  - get-sum
+  - get-tiny-image
+  - gzip-file-as-resource
+  - simulate-research-query
+  - toggle-simulated-logging
+  - toggle-subscriber-updates
+  - trigger-elicitation-request
+  - trigger-long-running-operation
+  - trigger-sampling-request
+  conditions:
+  - no network, no key
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-github"
+  versions: 2025.4.8
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools; not called. Its authors have archived it; github-mcp-server-js is also on this list.
+  tools:
+  - add_issue_comment
+  - create_branch
+  - create_issue
+  - create_or_update_file
+  - create_pull_request
+  - create_pull_request_review
+  - create_repository
+  - fork_repository
+  - get_file_contents
+  - get_issue
+  - get_pull_request
+  - get_pull_request_comments
+  - get_pull_request_files
+  - get_pull_request_reviews
+  - get_pull_request_status
+  - list_commits
+  - list_issues
+  - list_pull_requests
+  - merge_pull_request
+  - push_files
+  - search_code
+  - search_issues
+  - search_repositories
+  - search_users
+  - update_issue
+  - update_pull_request_branch
+  conditions:
+  - "secrets: GITHUB_PERSONAL_ACCESS_TOKEN"
+  - "egress: api.github.com"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-google-maps"
+  versions: 0.6.2
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools; not called. Archived by its authors.
+  tools:
+  - maps_directions
+  - maps_distance_matrix
+  - maps_elevation
+  - maps_geocode
+  - maps_place_details
+  - maps_reverse_geocode
+  - maps_search_places
+  conditions:
+  - "secrets: GOOGLE_MAPS_API_KEY"
+  - "egress: maps.googleapis.com"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-memory"
+  versions: 2026.8.31
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: "Started and a call of read_graph answered. By default it writes its memory file into its own installed files, which are read-only: in two runs the same day, create_entities failed with EROFS, and with MEMORY_FILE_PATH under /tmp it succeeded. The memory lasts only for the run."
+  tools:
+  - add_observations
+  - create_entities
+  - create_relations
+  - delete_entities
+  - delete_observations
+  - delete_relations
+  - open_nodes
+  - read_graph
+  - search_nodes
+  conditions:
+  - "env: MEMORY_FILE_PATH: /tmp/memory.jsonl (without it, every write fails)"
+  - no network, no key
+  evidence: survey 2026-10-05; create_entities runs with and without MEMORY_FILE_PATH the same day
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-sequential-thinking"
+  versions: 2026.8.31
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started and a call of sequentialthinking answered.
+  tools:
+  - sequentialthinking
+  conditions:
+  - no network, no key
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-slack"
+  versions: 2025.4.25
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with placeholder keys and listed its tools; not called. Archived by its authors.
+  tools:
+  - slack_add_reaction
+  - slack_get_channel_history
+  - slack_get_thread_replies
+  - slack_get_user_profile
+  - slack_get_users
+  - slack_list_channels
+  - slack_post_message
+  - slack_reply_to_thread
+  conditions:
+  - "secrets: SLACK_BOT_TOKEN, SLACK_TEAM_ID"
+  - "egress: slack.com"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@notionhq/notion-mcp-server"
+  versions: 2.5.2
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools; not called.
+  tools:
+  - API-create-a-comment
+  - API-create-a-data-source
+  - API-delete-a-block
+  - API-get-block-children
+  - API-get-self
+  - API-get-user
+  - API-get-users
+  - API-list-data-source-templates
+  - API-move-page
+  - API-patch-block-children
+  - API-patch-page
+  - API-post-page
+  - API-post-search
+  - API-query-data-source
+  - API-retrieve-a-block
+  - API-retrieve-a-comment
+  - API-retrieve-a-data-source
+  - API-retrieve-a-database
+  - API-retrieve-a-page
+  - API-retrieve-a-page-property
+  - API-retrieve-page-markdown
+  - API-update-a-block
+  - API-update-a-data-source
+  - API-update-page-markdown
+  conditions:
+  - "secrets: NOTION_TOKEN"
+  - "egress: api.notion.com"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@sentry/mcp-server"
+  versions: 0.42.0
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools; not called.
+  tools:
+  - analyze_issue_with_seer
+  - execute_sentry_tool
+  - find_organizations
+  - find_projects
+  - get_sentry_resource
+  - search_events
+  - search_issues
+  - search_sentry_tools
+  - update_issue
+  conditions:
+  - "secrets: SENTRY_ACCESS_TOKEN"
+  - "egress: sentry.io"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@supabase/mcp-server-supabase"
+  versions: 0.13.0
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools once both hosts were declared; with api.supabase.com alone, tools/list failed (fetch failed), because it also reads supabase.com when it lists its tools.
+  tools:
+  - apply_migration
+  - confirm_cost
+  - create_branch
+  - create_project
+  - delete_branch
+  - deploy_edge_function
+  - execute_sql
+  - generate_typescript_types
+  - get_advisors
+  - get_cost
+  - get_edge_function
+  - get_organization
+  - get_project
+  - get_project_url
+  - get_publishable_keys
+  - list_branches
+  - list_edge_functions
+  - list_extensions
+  - list_migrations
+  - list_organizations
+  - list_projects
+  - list_tables
+  - merge_branch
+  - pause_project
+  - query_logs
+  - rebase_branch
+  - reset_branch
+  - restore_project
+  - search_docs
+  conditions:
+  - "secrets: SUPABASE_ACCESS_TOKEN"
+  - "egress: api.supabase.com and supabase.com"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: "@upstash/context7-mcp"
+  versions: 4.1.1
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with no key; a call of resolve-library-id for React returned matching library IDs.
+  tools:
+  - query-docs
+  - resolve-library-id
+  conditions:
+  - "egress: context7.com, mcp.context7.com"
+  - no key for light use; CONTEXT7_API_KEY for more
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: firecrawl-mcp
+  versions: 3.27.3
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools; not called.
+  tools:
+  - firecrawl_agent
+  - firecrawl_agent_status
+  - firecrawl_check_crawl_status
+  - firecrawl_crawl
+  - firecrawl_credit_usage
+  - firecrawl_developer_search
+  - firecrawl_feedback
+  - firecrawl_find_tools
+  - firecrawl_interact
+  - firecrawl_interact_stop
+  - firecrawl_map
+  - firecrawl_monitor_check
+  - firecrawl_monitor_checks
+  - firecrawl_monitor_create
+  - firecrawl_monitor_delete
+  - firecrawl_monitor_get
+  - firecrawl_monitor_list
+  - firecrawl_monitor_run
+  - firecrawl_monitor_update
+  - firecrawl_parse
+  - firecrawl_research_inspect_paper
+  - firecrawl_research_read_paper
+  - firecrawl_research_related_papers
+  - firecrawl_research_search_papers
+  - firecrawl_scrape
+  - firecrawl_search
+  - firecrawl_search_feedback
+  conditions:
+  - "secrets: FIRECRAWL_API_KEY"
+  - "egress: api.firecrawl.dev"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: frankfurter-mcp-server
+  versions: 1.0.0
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with no key; a call of frankfurter_get_latest_rates for EUR returned the day's rates from api.frankfurter.dev.
+  tools:
+  - frankfurter_convert_currency
+  - frankfurter_get_historical_rates
+  - frankfurter_get_latest_rates
+  - frankfurter_get_time_series
+  - frankfurter_list_currencies
+  conditions:
+  - "egress: api.frankfurter.dev"
+  - no key
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: github-mcp-server-js
+  versions: 0.1.7
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed 77 tools with GITHUB_PERMISSION set to read-only; not called, since every call needs a real token.
+  tools:
+  - check_repo_starred
+  - get_app
+  - get_authenticated_user
+  - get_branch
+  - get_code_scanning_alert
+  - get_codespace
+  - get_commit
+  - get_copilot_organization_details
+  - get_copilot_seat_details_for_user
+  - get_dependabot_alert
+  - get_file_contents
+  - get_gist
+  - get_global_advisory
+  - get_issue
+  - get_meta
+  - get_org
+  - get_org_project
+  - get_org_project_item
+  - get_package_for_authenticated_user
+  - get_package_version_for_authenticated_user
+  - get_pull_request
+  - get_rate_limit
+  - get_repository
+  - get_repository_advisory
+  - get_secret_scanning_alert
+  - get_team_by_name
+  - get_tree
+  - get_user_by_username
+  - get_user_hovercard
+  - get_workflow
+  - get_workflow_run
+  - list_branches
+  - list_check_runs_for_ref
+  - list_code_scanning_alerts
+  - list_codespaces
+  - list_comments
+  - list_commits
+  - list_copilot_seats
+  - list_dependabot_alerts
+  - list_emojis
+  - list_gists
+  - list_global_advisories
+  - list_installation_repos_for_authenticated_user
+  - list_installations_for_authenticated_user
+  - list_issues
+  - list_labels
+  - list_labels_on_issue
+  - list_notifications
+  - list_org_members
+  - list_org_project_fields
+  - list_org_project_items
+  - list_org_projects
+  - list_org_repos
+  - list_package_versions_for_authenticated_user
+  - list_packages_for_authenticated_user
+  - list_pull_request_commits
+  - list_pull_request_files
+  - list_pull_request_reviews
+  - list_pull_requests
+  - list_repository_advisories
+  - list_secret_scanning_alerts
+  - list_starred_repos
+  - list_tags
+  - list_team_members
+  - list_teams
+  - list_user_followers
+  - list_user_following
+  - list_workflow_run_artifacts
+  - list_workflow_run_jobs
+  - list_workflow_runs
+  - list_workflows
+  - render_markdown
+  - search_code
+  - search_commits
+  - search_issues
+  - search_repos
+  - search_users
+  conditions:
+  - "secrets: GITHUB_TOKEN"
+  - "egress: api.github.com"
+  - "env: GITHUB_PERMISSION: read-only for the read-only tool set"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: hostinger-api-mcp
+  versions: 2.7.3
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with a placeholder key and listed its tools; not called. The runner starts the bin named after the package; the package's other bins (hostinger-dns-mcp and the rest) cannot be chosen.
+  tools:
+  - execute
+  - multi-execute
+  - search
+  conditions:
+  - "secrets: API_TOKEN"
+  - "egress: developers.hostinger.com"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: n8n-mcp
+  versions: 2.91.0
+  list: runs-here
+  runtime: Node 24.21.0
+  observed: Started with no key and listed its documentation tools; not called. Its tools that manage workflows need an n8n instance's address and key.
+  tools:
+  - get_node
+  - get_template
+  - search_nodes
+  - search_templates
+  - tools_documentation
+  - validate_node
+  - validate_workflow
+  conditions:
+  - "env and secrets: N8N_API_URL and N8N_API_KEY for the workflow tools"
+  - "egress: the n8n instance's host, served on port 443"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: awslabs-aws-api-mcp-server
+  versions: 1.5.6
+  list: runs-here
+  runtime: Python 3.12.14
+  observed: Started with placeholder keys and listed its tools once servicereference.us-east-1.amazonaws.com was declared; without it, it exits at start (it reads that host's service list when it starts).
+  tools:
+  - call_aws
+  - suggest_aws_commands
+  conditions:
+  - "secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY; env: AWS_REGION"
+  - "egress: servicereference.us-east-1.amazonaws.com and every AWS endpoint its commands call"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: awslabs-aws-documentation-mcp-server
+  versions: 1.2.2
+  list: runs-here
+  runtime: Python 3.12.14
+  observed: Started with no key; a call of search_documentation returned AWS documentation pages.
+  tools:
+  - read_documentation
+  - read_sections
+  - recommend
+  - search_documentation
+  - search_table
+  conditions:
+  - "egress: docs.aws.amazon.com, proxy.search.docs.aws.amazon.com"
+  - no key
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: ha-mcp
+  versions: 3.5.1
+  list: runs-here
+  runtime: Python 3.12.14
+  observed: Started with a placeholder token and listed its tools once its URL and token were set; without them it exits at start. 107 newer releases need a newer Python, so 3.5.1 is the newest that admits Python 3.12.14.
+  tools:
+  - ha_backup_create
+  - ha_backup_restore
+  - ha_bulk_control
+  - ha_call_service
+  - ha_config_delete_dashboard
+  - ha_config_get_automation
+  - ha_config_get_dashboard
+  - ha_config_get_script
+  - ha_config_list_dashboards
+  - ha_config_list_helpers
+  - ha_config_remove_automation
+  - ha_config_remove_helper
+  - ha_config_remove_script
+  - ha_config_set_automation
+  - ha_config_set_dashboard
+  - ha_config_set_helper
+  - ha_config_set_script
+  - ha_config_update_dashboard_metadata
+  - ha_deep_search
+  - ha_eval_template
+  - ha_get_bulk_status
+  - ha_get_card_documentation
+  - ha_get_card_types
+  - ha_get_dashboard_guide
+  - ha_get_domain_docs
+  - ha_get_logbook
+  - ha_get_operation_status
+  - ha_get_overview
+  - ha_get_state
+  - ha_search_entities
+  conditions:
+  - "env: HOMEASSISTANT_URL; secrets: HOMEASSISTANT_TOKEN"
+  - "egress: the Home Assistant host, which must be served over HTTPS on port 443 at a name the run can reach (Home Assistant's own port, 8123, cannot be reached)"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-atlassian
+  versions: 0.23.1
+  list: runs-here
+  runtime: Python 3.12.14
+  observed: Started with a placeholder key and listed its tools; not called.
+  tools:
+  - jira_add_comment
+  - jira_add_issues_to_sprint
+  - jira_add_watcher
+  - jira_add_worklog
+  - jira_assign_issue
+  - jira_batch_create_issues
+  - jira_batch_create_versions
+  - jira_batch_get_changelogs
+  - jira_create_customer_request
+  - jira_create_issue
+  - jira_create_issue_link
+  - jira_create_remote_issue_link
+  - jira_create_sprint
+  - jira_create_version
+  - jira_delete_issue
+  - jira_download_attachments
+  - jira_edit_comment
+  - jira_get_agile_boards
+  - jira_get_all_projects
+  - jira_get_board_issues
+  - jira_get_create_fields
+  - jira_get_cross_project_dependencies
+  - jira_get_field_options
+  - jira_get_issue
+  - jira_get_issue_dates
+  - jira_get_issue_development_info
+  - jira_get_issue_images
+  - jira_get_issue_proforma_forms
+  - jira_get_issue_sla
+  - jira_get_issue_watchers
+  - jira_get_issues_development_info
+  - jira_get_link_types
+  - jira_get_proforma_form_details
+  - jira_get_project_components
+  - jira_get_project_epic_hierarchy
+  - jira_get_project_fields
+  - jira_get_project_issue_types
+  - jira_get_project_issues
+  - jira_get_project_versions
+  - jira_get_queue_issues
+  - jira_get_request_type_fields
+  - jira_get_request_types
+  - jira_get_service_desk_for_project
+  - jira_get_service_desk_queues
+  - jira_get_sprint_issues
+  - jira_get_sprints_from_board
+  - jira_get_transitions
+  - jira_get_user_profile
+  - jira_get_worklog
+  - jira_link_to_epic
+  - jira_move_issue
+  - jira_move_issues_to_backlog
+  - jira_remove_issue_link
+  - jira_remove_watcher
+  - jira_search
+  - jira_search_assignable_users
+  - jira_search_fields
+  - jira_search_projects
+  - jira_transition_issue
+  - jira_update_issue
+  - jira_update_proforma_form_answers
+  - jira_update_sprint
+  - jira_update_version
+  conditions:
+  - "env: JIRA_URL, JIRA_USERNAME (and the Confluence equivalents)"
+  - "secrets: JIRA_API_TOKEN (and CONFLUENCE_API_TOKEN)"
+  - "egress: the site's host, such as <site>.atlassian.net"
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-server-fetch
+  versions: 2026.8.18
+  list: runs-here
+  runtime: Python 3.12.14
+  observed: Started and a call of fetch for https://example.com/ returned the page as Markdown. It reads the site's robots.txt from the same host first.
+  tools:
+  - fetch
+  conditions:
+  - "egress: every host it will fetch from, each on port 443"
+  - no key
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: mcp-server-time
+  versions: 2026.8.18
+  list: runs-here
+  runtime: Python 3.12.14
+  observed: Started and a call of get_current_time for UTC answered.
+  tools:
+  - convert_time
+  - get_current_time
+  conditions:
+  - no network, no key
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+dependencies:
+- ecosystem: pypi
+  package: onnxruntime
+  reason: musl-native
+  observed: "It publishes no musllinux wheel, so no server that needs it can install (markitdown-mcp, through magika; agentry-cli#653)."
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: magika
+  reason: musl-native
+  observed: It depends on onnxruntime.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: scikit-learn
+  reason: musl-native
+  observed: It published no musllinux wheel for CPython 3.12 (1.9.1); opensearch-mcp-server-py did not install.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: pypi
+  package: gitpython
+  reason: spawns-binary
+  observed: It runs the git program, which the container does not have; mcp-server-git exited at start.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: simple-git
+  reason: spawns-binary
+  observed: It runs the git program, which the container does not have. No surveyed server depends on it; listed for the cause GitPython showed.
+  evidence: survey 2026-10-05 (inferred)
+  date: 2026-10-05
+- ecosystem: npm
+  package: puppeteer
+  reason: spawns-binary
+  observed: It needs a browser, which it downloads in an install script that does not run here; @modelcontextprotocol/server-puppeteer could not navigate.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: playwright
+  reason: spawns-binary
+  observed: It needs a browser, which the container does not have; @playwright/mcp could not navigate.
+  evidence: survey 2026-10-05
+  date: 2026-10-05
+- ecosystem: npm
+  package: playwright-core
+  reason: spawns-binary
+  observed: It needs a browser, which the container does not have; it is the core of the playwright package, which @playwright/mcp uses.
+  evidence: survey 2026-10-05 (inferred)
+  date: 2026-10-05
+- ecosystem: pypi
+  package: playwright
+  reason: spawns-binary
+  observed: It needs a browser, which the container does not have. No surveyed server depends on it; listed for the cause the npm package showed.
+  evidence: survey 2026-10-05 (inferred)
+  date: 2026-10-05
+runtimes:
+- image: ghcr.io/blaktron/agentry-node-alpine:24-alpine
+  user: root
+  home: /root
+  observed: A server starts as the image's own user. HOME and /tmp are writable; writes there are discarded when the run ends.
+  programs:
+  - busybox (with wget)
+  - node
+  - npm
+  - npx
+  evidence: survey 2026-10-05 (runtimes probe)
+  date: 2026-10-05
+- image: ghcr.io/blaktron/agentry-python-alpine:3.12-alpine
+  user: root
+  home: /root
+  observed: A server starts as the image's own user. HOME and /tmp are writable; writes there are discarded when the run ends.
+  programs:
+  - busybox (with wget)
+  - python3
+  - pip
+  evidence: survey 2026-10-05 (runtimes probe)
+  date: 2026-10-05

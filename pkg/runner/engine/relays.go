@@ -32,8 +32,9 @@ import (
 // reaching each other's, and neither the lock nor the refusal is taken.
 // The relays are still reaped by name at teardown, on every path.
 
-// relayLabel is the label the gateway puts on every relay sidecar.
-const relayLabel = "docker-mcp-proxy=true"
+// RelayLabel is the label the gateway puts on every relay sidecar. The MCP
+// server survey reads it too (scripts/mcp-server-survey).
+const RelayLabel = "docker-mcp-proxy=true"
 
 // relaysNeeded reports whether the gateway will start relays for this
 // plan: a declared server with egress hosts (the gateway's L4 relays), or
@@ -45,7 +46,7 @@ func relaysNeeded(plan *spec.Plan) bool { return len(relayHosts(plan)) > 0 }
 // sidecars on the host now belong to another gateway (this run's has not
 // started), and a declared server launched beside them would reach them.
 func refuseForeignRelays(ctx context.Context, d dockerx.Client) error {
-	names, err := d.PSByLabel(ctx, relayLabel)
+	names, err := d.PSByLabel(ctx, RelayLabel)
 	if err != nil {
 		return Classify(ExitGateway, fmt.Errorf("list relay sidecars on the shared relay network: %w", err))
 	}
@@ -69,9 +70,11 @@ func refuseForeignRelays(ctx context.Context, d dockerx.Client) error {
 // removed.
 var relayStartRE = regexp.MustCompile(`(?m)^(?:starting l4 proxy (docker-mcp-l4proxy-\S+) for \S+, ports |[ \t]+- Starting l7 proxy (docker-mcp-l7proxy-\S+) for )`)
 
-// relaysStartedBy returns the relay sidecars the gateway's log says it
-// started, in log order, each once.
-func relaysStartedBy(logs string) []string {
+// RelaysStartedBy returns the relay sidecars the gateway's log says it
+// started, in log order, each once. Exported for the MCP server survey,
+// which starts the gateway itself and reaps its relays the same way
+// (scripts/mcp-server-survey, agentry-cli#658).
+func RelaysStartedBy(logs string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, m := range relayStartRE.FindAllStringSubmatch(logs, -1) {
@@ -114,7 +117,7 @@ type relayReaper struct {
 
 // snapshot records the relays the gateway's log names now.
 func (r *relayReaper) snapshot(logs string) {
-	r.names = relaysStartedBy(logs)
+	r.names = RelaysStartedBy(logs)
 }
 
 func (r *relayReaper) reap(ctx context.Context, d dockerx.Client, gwName string) {
@@ -124,7 +127,7 @@ func (r *relayReaper) reap(ctx context.Context, d dockerx.Client, gwName string)
 		for _, n := range names {
 			seen[n] = true
 		}
-		for _, n := range relaysStartedBy(logs) {
+		for _, n := range RelaysStartedBy(logs) {
 			if !seen[n] {
 				seen[n] = true
 				names = append(names, n)
@@ -134,7 +137,7 @@ func (r *relayReaper) reap(ctx context.Context, d dockerx.Client, gwName string)
 	if len(names) == 0 {
 		return
 	}
-	labelled, err := d.PSByLabel(ctx, relayLabel)
+	labelled, err := d.PSByLabel(ctx, RelayLabel)
 	if err != nil {
 		return
 	}
