@@ -127,17 +127,13 @@ func TestKeepFirstHoldsTheServerRule(t *testing.T) {
 	}
 }
 
-// The Drafter is told the runtimes' versions the rule checks against, so
-// the instruction and the code cannot drift apart.
-func TestTheInstructionNamesTheRuntimeVersions(t *testing.T) {
-	b, err := os.ReadFile("AGENT.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "npm servers run\n     on Node " + policy.DefaultNodeVersion + " and PyPI servers on Python " + policy.DefaultPythonVersion + "."
-	if !strings.Contains(string(b), want) {
-		t.Fatalf("AGENT.md does not say %q", want)
-	}
+// The Drafter is told the runtimes' versions the rule checks against, by
+// its guide's servers page since the rule moved there (agentry-cli#659),
+// so the page and the code cannot drift apart.
+func TestTheGuideNamesTheRuntimeVersions(t *testing.T) {
+	mustSay(t, map[string][]string{
+		"servers/mcp-servers.md": {"npm servers run on Node " + policy.DefaultNodeVersion + " and PyPI servers on Python " + policy.DefaultPythonVersion + "."},
+	})
 }
 
 // A pin its registry does not publish is the draft's fault and a rules

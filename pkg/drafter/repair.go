@@ -72,7 +72,7 @@ var repairWordsOf = [...]repairWords{
 		opening: "This is your one repair turn. The Agentry rules refused the draft you returned, and their report is below, " +
 			"with your manifest (or, when it was not a draft, your last message) and your instructions as you wrote them. ",
 		repaired: "The rules refused the Drafter's first answer, so it was given their report and its own manifest " +
-			"and instructions, and nothing else, for one more turn without its web tools. This draft is its second answer. " +
+			"and instructions, and nothing else but its drafting guide, for one more turn without its web tools. This draft is its second answer. " +
 			"What the rules said of the first:",
 		refused:  "The rules refused this answer. The Drafter was given their report",
 		announce: "The rules refused the draft (%[1]d problem(s)). The Drafter has one repair turn, given only their report and its own draft, without its web tools.",
@@ -81,7 +81,7 @@ var repairWordsOf = [...]repairWords{
 		opening: "This is your one repair turn. The draft you returned passed the Agentry rules, but AI Review's check of the finished draft " +
 			"flagged it, and what it flagged is below, with the task you were given, your manifest and your instructions as you wrote them. ",
 		repaired: "AI Review's check flagged the Drafter's first answer, so it was given what the check flagged, " +
-			"its task and its own manifest and instructions, and nothing else, for one more turn without its web tools. " +
+			"its task and its own manifest and instructions, and nothing else but its drafting guide, for one more turn without its web tools. " +
 			"This draft is its second answer. What the check said of the first:",
 		refused:  "AI Review's check flagged this answer. The Drafter was given what it flagged",
 		announce: "AI Review's check flagged the draft (%[2]d thing(s) it can fix). The Drafter has one repair turn, given what it flagged, its task and its own draft, without its web tools.",
@@ -90,7 +90,7 @@ var repairWordsOf = [...]repairWords{
 		opening: "This is your one repair turn. The Agentry rules refused the draft you returned, and AI Review's check of the finished draft " +
 			"flagged it. The rules' report and what AI Review flagged are below, with the task you were given, your manifest and your instructions as you wrote them. ",
 		repaired: "The rules refused the Drafter's first answer and AI Review's check flagged it, so it was given the rules' report, " +
-			"what the check flagged, its task and its own manifest and instructions, and nothing else, for one more turn without its web tools. " +
+			"what the check flagged, its task and its own manifest and instructions, and nothing else but its drafting guide, for one more turn without its web tools. " +
 			"This draft is its second answer. What was said of the first:",
 		refused:  "The rules refused this answer and AI Review's check flagged it. The Drafter was given both",
 		announce: "The rules refused the draft (%d problem(s)) and AI Review's check flagged it (%d thing(s) it can fix). The Drafter has one repair turn, given both, its task and its own draft, without its web tools.",
@@ -104,8 +104,8 @@ func RepairAnnouncement(r RepairReport) string {
 
 // repairFraming is the rest of the repair turn's framing, the same
 // whatever sent the draft there.
-const repairFraming = "You have no web tools this turn and nothing new to read: " +
-	"fix the draft from what is here.\n\n" +
+const repairFraming = "You have no web tools this turn: fix the draft from what is here, " +
+	"and from your drafting guide where a fix needs one of its pages (the bounds are in manifest/manifest.md).\n\n" +
 	"- Change what the report names, and only what a fix to it needs. Keep every choice it does not name.\n" +
 	"- Never remove a declared MCP server, egress host, command or secret, or a step of the instructions, that the report does not name: " +
 	"the task needs them, and an answer that drops one is not kept. A report about the wording of the instructions is fixed by rewording it.\n" +
@@ -121,7 +121,9 @@ const repairFraming = "You have no web tools this turn and nothing new to read: 
 // its last message as it wrote it. Nothing else goes in: not the description, not
 // the notes, the sources, the matches or AI Review's record, and no text the
 // Drafter read. The turn runs without the web tools, so the report is the
-// only thing in it the model did not write itself.
+// only thing in it the model did not write itself, beside the drafting
+// guide the Drafter ships (agentry-cli#657), which the framing points it
+// to for the page a fix needs (agentry-cli#659).
 //
 // A repair with a flag of AI Review's check is also given r.Task, the task
 // the Drafter's first turn was given, which AI Review passed before that

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -43,7 +45,7 @@ const updateGuide = "go test ./pkg/drafter -run TestTheDraftingGuideIsCurrent -u
 // so those cannot drift from the runner. The install flags, port 443 and
 // musl are written here as the runner's code writes them inline; a change
 // there must change this text, and the page tests below hold the pages to
-// it.
+// it. The fetch tool's response cap and timeout are the tools server's.
 func runtimeFacts() []byte {
 	var b bytes.Buffer
 	b.WriteString("# Runtime facts\n\n")
@@ -55,6 +57,8 @@ func runtimeFacts() []byte {
 	b.WriteString("- npm installs run with `--ignore-scripts`; PyPI installs take wheels only (`--only-binary=:all:`), for the server and every dependency.\n")
 	fmt.Fprintf(&b, "- A QuickAgent declares at most %d MCP servers.\n", manifest.MaxMCPServers)
 	b.WriteString("- A server's declared hosts are reached on TCP port 443 only; with none declared it has no network.\n\n")
+	b.WriteString("## The fetch tool\n\n")
+	fmt.Fprintf(&b, "- `fetch` returns at most %d KiB of a response's body, and gives up on a request after %d seconds.\n\n", toolsrv.DefaultMaxFetchBytes>>10, int(toolsrv.FetchTimeout.Seconds()))
 	b.WriteString("## Each container's limits\n\n")
 	fmt.Fprintf(&b, "- Memory %s and %d CPU; on Linux, also at most %d processes.\n\n", policy.DefaultMemory, policy.DefaultCPUs, policy.DefaultPids)
 	b.WriteString("## The base commands\n\n")
@@ -326,6 +330,68 @@ func TestTheDraftingGuideStatesTheRuntime(t *testing.T) {
 	}
 }
 
+// instructionFile is the Drafter's own instruction, by its path in the
+// package's tree; heldText reads any other path as a page of the guide.
+const instructionFile = "AGENT.md"
+
+// guideFile is a file the tests hold to the code (plan drafter-knowledge.md
+// D6, D11; agentry-cli#659): the instruction, or a page of the guide by its
+// path under the wiki (manifest/manifest.md), as the package embeds it.
+func guideFile(t *testing.T, rel string) []byte {
+	t.Helper()
+	p := rel
+	if rel != instructionFile {
+		p = guideDir + "/" + knowledge.WikiDir + "/" + rel
+	}
+	b, err := fs.ReadFile(FS(), p)
+	if err != nil {
+		t.Fatalf("%s: %v", rel, err)
+	}
+	return b
+}
+
+// heldText is guideFile with its whitespace collapsed, so that a held
+// phrase does not depend on where a line wraps.
+func heldText(t *testing.T, rel string) string {
+	t.Helper()
+	return strings.Join(strings.Fields(string(guideFile(t, rel))), " ")
+}
+
+// guidePages are the guide's pages by their path under the wiki, the index
+// and the log left out.
+func guidePages(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	root := guideDir + "/" + knowledge.WikiDir
+	if err := fs.WalkDir(FS(), root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel := strings.TrimPrefix(p, root+"/")
+		if strings.Contains(rel, "/") {
+			out = append(out, rel)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// mustSay fails for every phrase (by the file that must carry it) that its
+// file does not say.
+func mustSay(t *testing.T, want map[string][]string) {
+	t.Helper()
+	for file, phrases := range want {
+		text := heldText(t, file)
+		for _, p := range phrases {
+			if !strings.Contains(text, p) {
+				t.Errorf("%s does not say %q", file, p)
+			}
+		}
+	}
+}
+
 // numberWord is n as the guide writes a small number.
 func numberWord(n int) string {
 	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
@@ -335,17 +401,91 @@ func numberWord(n int) string {
 	return strconv.Itoa(n)
 }
 
-// TestTheInstructionNamesTheGuide: AGENT.md names the pack and sends the
-// Drafter to the servers page before it pins a server.
+// TestTheInstructionNamesTheGuide: AGENT.md names the pack, sends the
+// Drafter to the servers page before it pins a server and to the
+// manifest's bounds before it returns (plan drafter-knowledge.md §4.3,
+// D11), and every page it or the repair turn's framing names is a page of
+// the guide, so the map cannot point at nothing.
 func TestTheInstructionNamesTheGuide(t *testing.T) {
-	b, err := fs.ReadFile(FS(), "AGENT.md")
+	mustSay(t, map[string][]string{
+		instructionFile: {
+			"`" + GuideName + "`",
+			"**Before you pin any MCP server, read `servers/mcp-servers.md`**",
+			"**Before you return, check the manifest against the bounds in `manifest/manifest.md`.**",
+		},
+	})
+	pages := guidePages(t)
+	// A page as the text names it: a section and a slug, starting a word or
+	// a code span (pack:runbooks/topics/rollback.md, a citation of the
+	// person's pack, is not one).
+	page := regexp.MustCompile("(?:^|[\\s`(])([a-z0-9-]+/[a-z0-9-]+\\.md)\\b")
+	for from, text := range map[string]string{instructionFile: heldText(t, instructionFile), "the repair turn's framing": repairFraming} {
+		named := page.FindAllStringSubmatch(text, -1)
+		if len(named) == 0 {
+			t.Errorf("%s names no page of the guide", from)
+		}
+		for _, m := range named {
+			if p := m[1]; !slices.Contains(pages, p) {
+				t.Errorf("%s names %s, which is no page of the guide", from, p)
+			}
+		}
+	}
+	// The repair turn is told where the bounds are.
+	if !strings.Contains(repairFraming, "manifest/manifest.md") {
+		t.Error("the repair turn is not told where the bounds are")
+	}
+}
+
+// TestEveryPageIsOnTheMap: the guide's start page links every other page,
+// so a Drafter that reads it can reach the whole guide.
+func TestEveryPageIsOnTheMap(t *testing.T) {
+	start := heldText(t, "guide/start-here.md")
+	for _, p := range guidePages(t) {
+		if p != "guide/start-here.md" && !strings.Contains(start, "(../"+p) {
+			t.Errorf("guide/start-here.md does not link %s", p)
+		}
+	}
+}
+
+// stubPages are the pages that state today's facts until the milestone
+// that changes them rewrites them (plan drafter-knowledge.md §4.3, D6):
+// the input cases (plan quickagents-that-run.md M6, agentry#892, and M7,
+// agentry-cli#634), optional secrets (plan optional-secrets.md M6,
+// agentry-cli#652) and what holds publishing (plan quickagents-that-run.md
+// M8, agentry#893). The pages are public text and name the change, not the
+// plan.
+var stubPages = []string{"manifest/inputs.md", "manifest/secrets.md", "draft/review.md"}
+
+// TestTheStubPagesSayTheyAreTodaysFacts: each stub says it states today's
+// facts and when it is rewritten, so a reader does not take it for the
+// settled guide.
+func TestTheStubPagesSayTheyAreTodaysFacts(t *testing.T) {
+	for _, p := range stubPages {
+		text := heldText(t, p)
+		if !strings.Contains(text, "This page states") || !strings.Contains(text, "It is rewritten when") {
+			t.Errorf("%s does not say it states today's facts and when it is rewritten", p)
+		}
+	}
+}
+
+// TestTheGuidesPagesStateTheRules: the rules that moved off AGENT.md are
+// stated on the pages that now carry them, each where a draft reads it.
+func TestTheGuidesPagesStateTheRules(t *testing.T) {
+	mustSay(t, map[string][]string{
+		"manifest/egress-and-fetch.md":  {"**Never `\"*\"`.**", "A host an MCP server reaches goes in that server's `egress`, not here.", "port 443"},
+		"manifest/intake-and-guide.md":  {"**A `choice` question always carries its `choices`**", "**Leave out a field that has nothing to say.**"},
+		"manifest/knowledge-accepts.md": {"**Never declare `ships`.**", "a field of the manifest itself and never under `capabilities`"},
+		"manifest/run-modes.md":         {"Add `interactive` only when the description asks for a conversation"},
+		"manifest/manifest.md":          {"`license`: `\"Apache-2.0\"` unless the description names another SPDX licence", "`publish`: `{\"include\": [\"agent.yaml\", \"AGENT.md\", \"README.md\", \"LICENSE\"]}`"},
+		"draft/instructions.md":         {"never copy a page's text", "Use these six headings, in this order"},
+		"servers/mcp-servers.md":        {"**An exact version**", "never a range and never `latest`"},
+	})
+	facts, err := fs.ReadFile(FS(), guideDir+"/"+knowledge.SourcesDir+"/runtime-facts.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"`" + GuideName + "`", "servers/mcp-servers.md"} {
-		if !strings.Contains(string(b), want) {
-			t.Errorf("AGENT.md does not name %q", want)
-		}
+	if want := fmt.Sprintf("at most %d KiB of a response's body", toolsrv.DefaultMaxFetchBytes>>10); !strings.Contains(string(facts), want) {
+		t.Errorf("the runtime facts do not say %q", want)
 	}
 }
 
