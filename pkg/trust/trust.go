@@ -390,32 +390,45 @@ func savePinnedFile(path string, set KeySet) error {
 // the login: a registry with signing switched off publishes an empty key set,
 // and that is a legitimate self-host configuration (§8.8), not a login error.
 func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string {
+	return PinAtLoginResult(ctx, hc, registryURL).Note
+}
+
+// LoginPinResult reports pinning without putting remote errors or key material
+// into a machine client's output. Note retains the terminal explanation.
+type LoginPinResult struct {
+	// Status is pinned, unchanged, unsigned, rotation, mismatch or unavailable.
+	Status string
+	Note   string
+}
+
+// PinAtLoginResult is PinAtLogin's structured counterpart for machine clients.
+func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) LoginPinResult {
 	// Login pins the registry it was pointed at, whatever
 	// AGENTRY_PIN_REGISTRY names: the override chooses which pins verify,
 	// and must never let a prefix's keys be written into another
 	// registry's pin file (agentry-cli#232).
 	own, err := ownPinnedKeysPath(registryURL)
 	if err != nil {
-		return "could not read pinned signing keys: " + err.Error()
+		return LoginPinResult{"unavailable", "could not read pinned signing keys: " + err.Error()}
 	}
 	existing, err := loadPinnedFile(own)
 	if err != nil {
-		return "could not read pinned signing keys: " + err.Error()
+		return LoginPinResult{"unavailable", "could not read pinned signing keys: " + err.Error()}
 	}
 
 	fetched, err := FetchKeys(ctx, hc, registryURL)
 	if err != nil {
-		return "could not fetch signing keys (" + err.Error() + "); they will be pinned on first verify"
+		return LoginPinResult{"unavailable", "could not fetch signing keys (" + err.Error() + "); they will be pinned on first verify"}
 	}
 	if len(fetched.Keys) == 0 {
-		return "the registry publishes no signing keys — releases from it are unsigned"
+		return LoginPinResult{"unsigned", "the registry publishes no signing keys — releases from it are unsigned"}
 	}
 
 	if len(existing.Keys) == 0 {
 		if err := savePinnedFile(own, fetched); err != nil {
-			return "could not pin signing keys: " + err.Error()
+			return LoginPinResult{"unavailable", "could not pin signing keys: " + err.Error()}
 		}
-		return fmt.Sprintf("pinned %d signing key(s) on first use (TOFU)", len(fetched.Keys))
+		return LoginPinResult{"pinned", fmt.Sprintf("pinned %d signing key(s) on first use (TOFU)", len(fetched.Keys))}
 	}
 	change := DiffKeys(existing, fetched)
 	// The registry's status record for keys still pinned (a key it has
@@ -432,7 +445,7 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 		statusNote = "; " + retired + statusNote
 	}
 	if change.Same() {
-		return fmt.Sprintf("signing keys unchanged (%d pinned)%s", len(existing.Keys), statusNote)
+		return LoginPinResult{"unchanged", fmt.Sprintf("signing keys unchanged (%d pinned)%s", len(existing.Keys), statusNote)}
 	}
 	// A changed key set at login is reported, never silently adopted:
 	// re-pinning on the strength of a fresh fetch would defeat the pin.
@@ -442,13 +455,13 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 	// re-pin.
 	repin := "delete " + own + " and log in again to re-pin deliberately"
 	if change.Rotation() {
-		return "possible key rotation: the registry " + change.String() + " and still advertises every pinned key" + statusNote + ", which is consistent with a key rotation. " +
+		return LoginPinResult{"rotation", "possible key rotation: the registry " + change.String() + " and still advertises every pinned key" + statusNote + ", which is consistent with a key rotation. " +
 			"Verification keeps using the pinned keys, so releases they signed still verify and a release signed only by the new key is refused until you re-pin. " +
-			"Confirm the rotation with the registry's operator, then " + repin
+			"Confirm the rotation with the registry's operator, then " + repin}
 	}
-	return "WARNING: the registry's signing keys no longer match the pinned set: " + change.String() + statusNote + ". " +
+	return LoginPinResult{"mismatch", "WARNING: the registry's signing keys no longer match the pinned set: " + change.String() + statusNote + ". " +
 		"A rotation keeps every earlier key listed, so this is not one; treat it as a possible compromise and confirm it with the registry's operator. " +
-		"Verification keeps using the pinned keys; only once the change is confirmed, " + repin
+		"Verification keeps using the pinned keys; only once the change is confirmed, " + repin}
 }
 
 // VerifyAttestation fetches and verifies the attestation for a version.
