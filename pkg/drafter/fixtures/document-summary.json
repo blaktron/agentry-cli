@@ -11,9 +11,6 @@
     "maxServers": 0,
     "exec": false,
     "write": false,
-    "inputKinds": [
-      "documents"
-    ],
     "inputViews": [
       "text",
       "both"

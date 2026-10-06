@@ -6,7 +6,9 @@
     "modes": [
       "autonomous"
     ],
-    "hosts": [],
+    "hosts": [
+      "api.osv.dev"
+    ],
     "maxSecrets": 0,
     "maxServers": 0,
     "exec": false,
