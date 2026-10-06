@@ -21,8 +21,8 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 ## Manifest
 
 - [Network and fetch](manifest/egress-and-fetch.md) — When a QuickAgent needs the network, how its own fetch tool works (methods, keys, redirects, the response cap), how to choose and name its hosts, and which hosts go on an MCP server instead.
-- [Commands](manifest/exec.md) — When a QuickAgent declares commands at all, the base commands every run provides, the archive readers, where a command can write, what a run In Agentry provides, and Unsafe Mode on the desktop.
-- [Input files](manifest/inputs.md) — How the person's files reach a run today (read-only, as text, through the input tools), how a draft asks for them, and the limits of a run In Agentry. Today's facts; rewritten when the manifest can declare how a QuickAgent takes its files.
+- [Commands](manifest/exec.md) — When a QuickAgent declares commands at all (computation the tools cannot do, never reading its inputs), the base commands every run provides, where a command can write, what a run In Agentry provides, and Unsafe Mode on the desktop.
+- [Input files](manifest/inputs.md) — How the person's files reach a run, the two views the input tools read them in, the manifest's inputs block that says what a QuickAgent takes and which view it reads first, the cases and what each declares, and how a draft asks for its files.
 - [The intake and the guide](manifest/intake-and-guide.md) — The questions a QuickAgent asks before each run (types, ids, when to ask at all) and the guide a person reads before a run (overview, prepare, files, task, connect), with their bounds and the fields to leave out.
 - [The person's knowledge at run time](manifest/knowledge-accepts.md) — When a QuickAgent asks the person to attach a knowledge pack of their own at run time (knowledge.accepts), how to write its prompt, and what goes into the instructions instead. A draft never ships a pack.
 - [The manifest](manifest/manifest.md) — Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.

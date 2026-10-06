@@ -1,0 +1,22 @@
+{
+  "id": "document-summary",
+  "description": "Summarise the policy documents I give you (PDFs and Word files): for each one, a short summary of what it requires, who it applies to and any deadlines, then one list of the obligations across all of them.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "inputKinds": [
+      "documents"
+    ],
+    "inputViews": [
+      "text",
+      "both"
+    ]
+  }
+}

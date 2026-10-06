@@ -3,7 +3,7 @@ title: The manifest
 type: guide
 summary: Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.
 sources: [web:https://docs.secureagentry.net/quickagents/, doc:runtime-facts.md]
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 # The manifest
@@ -22,6 +22,7 @@ updated: 2026-10-05
 - `entrypoints`: `{"instruction": "AGENT.md"}`.
 - `intake`: the questions asked before each run, each `{id, prompt, type, required}`. See [The intake and the guide](intake-and-guide.md).
 - `guide`: what a person reads before a run. See [The intake and the guide](intake-and-guide.md).
+- `inputs`: what files the QuickAgent takes and which view it reads them in first, `{"kinds": [...], "view": "text" | "original" | "both"}`, a field of the manifest itself and never under `capabilities`; left out when it takes no files. See [Input files](inputs.md).
 - `capabilities`: the least contract that does the task, line by line below.
 - `knowledge`: a field of the manifest itself, never under `capabilities`, and only `accepts`. See [The person's knowledge at run time](knowledge-accepts.md).
 - `publish`: `{"include": ["agent.yaml", "AGENT.md", "README.md", "LICENSE"]}`. The Builder writes the README and the licence file.
@@ -47,6 +48,7 @@ The registry refuses a manifest past any of these. Count before you return [src:
 - `guide.prepare`: each item one line of at most 200 characters.
 - `guide.files`: one line of at most 500 characters.
 - `guide.task`: one line of at most 200 characters.
+- `inputs.kinds`: from `documents`, `code`, `data`, `images`, each named once, or `any` alone; `inputs.view`: `text`, `original` or `both`.
 - `guide.connect`: each key's help at most 2,000 characters.
 - `interactive.opening`: at most 500 characters.
 - `knowledge.accepts.prompt`: one line of at most 300 characters.

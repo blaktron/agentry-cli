@@ -3,7 +3,7 @@ title: The intake and the guide
 type: guide
 summary: The questions a QuickAgent asks before each run (types, ids, when to ask at all) and the guide a person reads before a run (overview, prepare, files, task, connect), with their bounds and the fields to leave out.
 sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/hosted-runs/]
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 # The intake and the guide
@@ -21,7 +21,7 @@ Each question is `{id, prompt, type, required}`:
 - `type`:
   - `text`, the default: a line of text.
   - `choice`: one of a fixed set. **A `choice` question always carries its `choices`**, each named once (`"choices": ["markdown", "json"]`). If you cannot list the answers, make it a `text` question.
-  - `file`: a file the person adds, staged with the run's inputs. Name it in `guide.files` too.
+  - `file`: a file the person adds, staged with the run's inputs. Name it in `guide.files` too, and its kind in `inputs.kinds` (see [Input files](inputs.md)).
   - `secret`: only for a name declared in `secrets`, upper-cased from the `id` (`id` `github_token` for `GITHUB_TOKEN`). It is injected as that secret and never recorded. A declared key needs no question to be asked for: the run setup asks for every declared key it does not hold.
 - `required`: `true` when the run cannot go on without the answer.
 
