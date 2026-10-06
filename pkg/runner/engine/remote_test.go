@@ -191,7 +191,7 @@ func withOAuthServer(p Params) (Params, string) {
 	plan := *p.Plan
 	plan.MCPServers = append([]spec.MCPServerSpec(nil), srv)
 	p.Plan = &plan
-	p.Connections = map[string]string{srv.Package: remoteAccessToken}
+	p.Connections = map[string]ConnectionToken{srv.Package: {AccessToken: remoteAccessToken}}
 	return p, srv.Name
 }
 

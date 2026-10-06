@@ -83,7 +83,10 @@ const (
 // ConnectionsDir/<server name>/BearerFile under the run's cfg directory, and
 // the compiler mounts that folder, a folder and never the file alone so a
 // value rewritten mid-run is seen, read-only at ConnectionMount. The
-// gateway never holds it: it is not in the gateway's secrets file.
+// gateway never holds it: it is not in the gateway's secrets file. A package
+// server's OAuth sign-in (agentry-cli#665) uses the same folder at the same
+// mount, holding the files its oauth block declares instead of BearerFile,
+// mounted writable (DR-77).
 const (
 	ConnectionsDir  = "connections"
 	ConnectionMount = "/run/agentry/connection"
@@ -553,6 +556,39 @@ type MCPServerSpec struct {
 	// person's connection, whose access token the runner hands its bridge
 	// at each start (agentry-cli#664). Empty for a package server.
 	Auth string `json:"auth,omitempty"`
+	// OAuth is a package server's OAuth sign-in (agentry-cli#665): the
+	// issuer and scopes its connection is made with, and the files and env
+	// the runner renders the connection's access token into. Nil for a
+	// remote server and for a package server without one.
+	OAuth *OAuthSpec `json:"oauth,omitempty"`
+}
+
+// OAuthSpec is a package server's oauth block as the plan carries it: the
+// manifest's templates, never a token. The engine renders Files into the
+// server's connection folder (mounted writable at ConnectionMount) and the
+// Env entries holding {access_token} into the gateway's secrets file; an
+// entry naming only {dir} is plain env, rendered by the compiler.
+type OAuthSpec struct {
+	Issuer string            `json:"issuer"`
+	Scopes []string          `json:"scopes,omitempty"`
+	Files  []OAuthFile       `json:"files,omitempty"`
+	Env    map[string]string `json:"env,omitempty"`
+}
+
+// OAuthFile is one file of a package server's connection folder.
+type OAuthFile struct {
+	Path     string `json:"path"`
+	Template string `json:"template"`
+}
+
+// OAuthTokenPlaceholder is the placeholder an oauth template or env value
+// names the access token with (the manifest's grammar, DEV-215).
+const OAuthTokenPlaceholder = "{access_token}"
+
+// TokenEnv reports whether an oauth env entry carries the access token,
+// which makes it a secret of the run rather than plain configuration.
+func (o *OAuthSpec) TokenEnv(name string) bool {
+	return o != nil && strings.Contains(o.Env[name], OAuthTokenPlaceholder)
 }
 
 // SourceID is the declared server's ecosystem-qualified id, as the
@@ -569,9 +605,25 @@ func (s MCPServerSpec) SendsBearer() bool {
 	return s.Remote() && (s.Auth == "secret" || s.Auth == "oauth")
 }
 
-// SignsIn reports whether the server is a remote one signed in to by the
-// person's OAuth connection (manifest.AuthOAuth).
-func (s MCPServerSpec) SignsIn() bool { return s.Remote() && s.Auth == "oauth" }
+// SignsIn reports whether a run of the server needs the person's OAuth
+// connection: a remote server signed in to by OAuth (manifest.AuthOAuth),
+// or a package server with an oauth block (agentry-cli#665).
+func (s MCPServerSpec) SignsIn() bool {
+	if s.Remote() {
+		return s.Auth == "oauth"
+	}
+	return s.OAuth != nil
+}
+
+// ConnectionKey is how a run's connections name the server: a remote
+// server's address, or a package server's ecosystem-qualified id
+// ("pypi:workspace-mcp"), as the manifest's MCPServer.SourceID gives it.
+func (s MCPServerSpec) ConnectionKey() string {
+	if s.Remote() {
+		return s.Package
+	}
+	return s.SourceID()
+}
 
 // Ref names the server in messages and receipts: the package pin
 // ("@scope/x@1.2.3"), or a remote server's address.

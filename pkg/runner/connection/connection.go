@@ -264,57 +264,65 @@ const (
 	secretInFile     = "file"
 )
 
-// Use is the run-start refresh (D8, D24): under the connection's lock, it
+// Use is the refresh at a run's start and before its token expires mid-run
+// (D8, D24): under the connection's lock, it
 // trades the kept refresh token for an access token, writes a rotated
 // refresh token back before returning, and stamps the record. A refusal
 // that means the grant is gone marks the connection broken
 // (*BrokenError); the next Start asks again. The access token is the only
 // thing a run is given.
-func (s *Store) Use(ctx context.Context, k Key, httpc *http.Client, clients *Clients) (string, *Connection, error) {
+func (s *Store) Use(ctx context.Context, k Key, httpc *http.Client, clients *Clients) (Access, *Connection, error) {
 	id := k.ID()
 	unlock, err := s.lock(id)
 	if err != nil {
-		return "", nil, err
+		return Access{}, nil, err
 	}
 	defer unlock()
 	c, err := s.Get(k)
 	if err != nil {
-		return "", nil, err
+		return Access{}, nil, err
 	}
 	if c.Broken != "" {
-		return "", c, &BrokenError{Server: c.Server, Reason: c.Broken}
+		return Access{}, c, &BrokenError{Server: c.Server, Reason: c.Broken}
 	}
 	sec, err := s.readSecrets(c, id)
 	if err != nil {
-		return "", c, err
+		return Access{}, c, err
 	}
 	client, err := s.clientOf(c, sec, clients)
 	if err != nil {
-		return "", c, err
+		return Access{}, c, err
 	}
 	tok, err := mcpauth.Refresh(ctx, httpc, c.TokenEndpoint, client, sec.RefreshToken, c.Resource)
 	if mcpauth.GrantRevoked(err) {
 		c.Broken = err.Error()
 		if serr := s.save(id, c); serr != nil {
-			return "", c, serr
+			return Access{}, c, serr
 		}
-		return "", c, &BrokenError{Server: c.Server, Reason: c.Broken}
+		return Access{}, c, &BrokenError{Server: c.Server, Reason: c.Broken}
 	}
 	if err != nil {
-		return "", c, fmt.Errorf("refresh the connection to %s: %w", c.Server, err)
+		return Access{}, c, fmt.Errorf("refresh the connection to %s: %w", c.Server, err)
 	}
 	if tok.RefreshToken != "" && tok.RefreshToken != sec.RefreshToken {
 		sec.RefreshToken = tok.RefreshToken
 		if err := s.writeSecrets(c, id, sec); err != nil {
-			return "", c, err
+			return Access{}, c, err
 		}
 	}
 	now := s.stamp()
 	c.RefreshedAt, c.LastUsedAt = now, now
 	if err := s.save(id, c); err != nil {
-		return "", c, err
+		return Access{}, c, err
 	}
-	return tok.AccessToken, c, nil
+	return Access{Token: tok.AccessToken, ExpiresAt: tok.ExpiresAt}, c, nil
+}
+
+// Access is what Use gives a run of a connection: an access token and its
+// expiry (zero when the vendor did not say). Never the refresh token.
+type Access struct {
+	Token     string
+	ExpiresAt time.Time
 }
 
 // clientOf is the client a connection refreshes as: a registered client

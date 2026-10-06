@@ -74,6 +74,9 @@ type runDirs struct {
 	// secretsAbsent are the optional secrets the run goes without, for the
 	// System Prompt's spec.PHSecretsAbsent; set once its secrets resolve.
 	secretsAbsent []string
+	// conns are the run's connections as it holds them, for the renewer
+	// (writeConnectionFiles, renewConnections; agentry-cli#665).
+	conns []*heldConnection
 	// modelHosts are the llm-proxy's pinned model endpoints ("name:ip",
 	// modelhosts.go), for the receipt.
 	modelHosts []string
@@ -540,6 +543,13 @@ func writeSecretsFile(p Params, path string) error {
 	if err != nil {
 		return err
 	}
+	// A package server's oauth env entries that carry the access token
+	// (agentry-cli#665): the gateway sets them on the server from here.
+	tokenEnv, err := connectionEnvValues(p)
+	if err != nil {
+		return err
+	}
+	maps.Copy(values, tokenEnv)
 	bearers := remoteBearerKeys(p.Plan)
 	keys := make([]string, 0, len(values))
 	for k := range values {
@@ -582,56 +592,10 @@ func (rd *runDirs) connections() string {
 	return filepath.Join(rd.cfg, spec.ConnectionsDir)
 }
 
-// writeConnectionFiles gives each remote server that sends a bearer its
-// value (plan mcp-oauth-connections.md §5; agentry-cli#663, #664): an auth:
-// secret server's, resolved as any declared secret is (values is
-// secretValues' map, an optional one absent written empty), and an auth:
-// oauth server's access token from p.Connections, which is also added to
-// values so the run's redactor masks it. Each is written into the server's
-// own folder under the run's cfg, which the compiler mounts read-only into
-// that server's bridge alone. The gateway never reads it. The file is
-// replaced by a rename, so a bridge reading it mid-write sees the old value
-// or the new one, which is how a token renewed during a run (a later
-// milestone) will be handed over.
-func writeConnectionFiles(p Params, rd *runDirs, values map[string]string) error {
-	bearers := map[string]spec.MCPServerSpec{}
-	for key, server := range remoteBearerKeys(p.Plan) {
-		bearers[key] = server
-	}
-	for _, srv := range p.Plan.MCPServers {
-		if !srv.SignsIn() {
-			continue
-		}
-		token := p.Connections[srv.Package]
-		if token == "" {
-			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("the remote MCP server %s signs in by OAuth and this run was given no connection for it: connect it first (agentry connect)", srv.Package),
-				receipt.ReasonSecretMissing, ""))
-		}
-		key := connectionValueKey(srv.Name)
-		values[key] = token
-		bearers[key] = srv
-	}
-	for key, server := range bearers {
-		dir := filepath.Join(rd.connections(), server.Name)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return Classify(ExitCLI, fmt.Errorf("make the credential folder of the remote MCP server %s: %w", server.Package, err))
-		}
-		if err := writeFileAtomic(filepath.Join(dir, spec.BearerFile), []byte(values[key]), 0o600); err != nil {
-			return Classify(ExitCLI, fmt.Errorf("write the credential of the remote MCP server %s: %w", server.Package, err))
-		}
-		relabelShared(context.Background(), p.Stderr, dir)
-	}
-	return nil
-}
-
-// connectionValueKey is where an auth: oauth server's access token sits in
-// the run's value map: a key no secrets-file key can be (those are
-// "<server>.<env name>"), so it is masked and never written to
-// secrets.env, which is built before it is added.
-func connectionValueKey(serverName string) string { return "connection:" + serverName }
-
-// writeFileAtomic writes data beside path and renames it over path.
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+// writeFileAtomic writes data beside path and renames it over path,
+// calling label (when not nil) on the written file before the rename puts
+// it in place.
+func writeFileAtomic(path string, data []byte, mode os.FileMode, label func(string)) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err
@@ -650,6 +614,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(name)
 		return err
+	}
+	if label != nil {
+		label(name)
 	}
 	if err := os.Rename(name, path); err != nil {
 		_ = os.Remove(name)

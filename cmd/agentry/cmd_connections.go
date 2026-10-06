@@ -1,5 +1,6 @@
-// Connections (plan mcp-oauth-connections.md §6, agentry-cli#664): a
-// person's OAuth grant to a remote MCP server, for one QuickAgent release.
+// Connections (plan mcp-oauth-connections.md §6, agentry-cli#664, #665): a
+// person's OAuth grant to a remote MCP server, or at a package server's
+// issuer, for one QuickAgent release.
 // A run asks for each one it lacks at Start, on a terminal, and refreshes
 // each before the sandbox starts; `agentry connect` makes them ahead of a
 // run; `agentry connections` lists and removes them and keeps the person's
@@ -42,30 +43,73 @@ var (
 	nativeCIMD     = mcpauth.NativeClientMetadataURL
 )
 
-// oauthServers are the release's remote servers that sign in by OAuth.
+// oauthServers are the release's servers that sign in by OAuth: remote
+// servers declared auth: oauth, and package servers with an oauth block.
 func oauthServers(m *manifest.Manifest) []manifest.MCPServer {
 	var out []manifest.MCPServer
 	for _, s := range m.Capabilities.MCPServers {
-		if s.IsRemote() && s.Auth == manifest.AuthOAuth {
+		if s.NeedsConnection() {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
+// refuseUnsupported refuses a package that cannot run on an access token
+// alone (plan D25) before anyone is taken through consent for it: its runs
+// are refused at plan time anyway.
+func refuseUnsupported(servers []manifest.MCPServer) error {
+	for _, srv := range servers {
+		if alt, bad := manifest.UnsupportedOAuthPackage(srv.SourceID()); bad && !srv.IsRemote() {
+			return engine.Classify(engine.ExitPolicy, fmt.Errorf("declared MCP server %s cannot run on an access token alone, so it cannot take a connection: run a version of the QuickAgent that declares %s instead", srv.SourceID(), alt))
+		}
+	}
+	return nil
+}
+
+// connectionServer is how a connection names its server, the third part of
+// its key and engine.Params.Connections' key: a remote server's address, a
+// package server's ecosystem-qualified id ("pypi:workspace-mcp"), matching
+// spec.MCPServerSpec.ConnectionKey.
+func connectionServer(srv manifest.MCPServer) string {
+	if srv.IsRemote() {
+		return srv.URL
+	}
+	return srv.SourceID()
+}
+
+// connectionScopes are the scopes a server's consent asks for.
+func connectionScopes(srv manifest.MCPServer) []string {
+	if srv.OAuth != nil {
+		return srv.OAuth.Scopes
+	}
+	return srv.Scopes
+}
+
+// connectionWhat names a server in the person's words: a remote server's
+// address, or a package server and where it signs in.
+func connectionWhat(srv manifest.MCPServer) string {
+	if srv.IsRemote() {
+		return srv.URL
+	}
+	return srv.SourceID() + " (signing in at " + srv.OAuth.Issuer + ")"
+}
+
 // runConnections is what a run of a release is given of its connections:
-// each server's access token, and the receipt's line naming each one used
-// (server, issuer, scopes, client kind; never a token).
+// each server's access token, the receipt's line naming each one used
+// (server, issuer, scopes, client kind; never a token), and the renewal
+// the engine asks for before a token expires (plan D24).
 type runConnections struct {
-	tokens map[string]string
+	tokens map[string]engine.ConnectionToken
 	line   string
+	renew  func(ctx context.Context, server string) (engine.ConnectionToken, error)
 }
 
 // ensureConnections opens, or on a terminal makes, the connection of every
-// remote server of the release that signs in by OAuth, and refreshes each
-// under its lock (connection.Store.Use) before the sandbox starts. With no
+// server of the release that signs in by OAuth, and refreshes each under
+// its lock (connection.Store.Use) before the sandbox starts. With no
 // terminal a server with no working connection refuses the run with exit
-// 11, naming it.
+// 11, naming it. The renewal it returns refreshes the same way mid-run.
 func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m *manifest.Manifest) (*runConnections, error) {
 	servers := oauthServers(m)
 	if len(servers) == 0 {
@@ -74,11 +118,17 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 	store := connection.Open(home, connectionKeys())
 	clients := connection.OpenClients(home, connectionKeys())
 	httpc := vendorHTTP()
-	out := &runConnections{tokens: map[string]string{}}
+	out := &runConnections{
+		tokens: map[string]engine.ConnectionToken{},
+		renew: func(ctx context.Context, server string) (engine.ConnectionToken, error) {
+			a, _, err := store.Use(ctx, connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: server}, httpc, clients)
+			return engine.ConnectionToken{AccessToken: a.Token, ExpiresAt: a.ExpiresAt}, err
+		},
+	}
 	var used []string
 	for _, srv := range servers {
-		k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: srv.URL}
-		token, c, err := store.Use(cmd.Context(), k, httpc, clients)
+		k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: connectionServer(srv)}
+		access, c, err := store.Use(cmd.Context(), k, httpc, clients)
 		var broken *connection.BrokenError
 		switch {
 		case err == nil:
@@ -90,7 +140,7 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 				}
 				return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf(
 					"declared MCP server %s signs in by OAuth and %s, and there is no terminal to ask for consent: run `agentry connect %s` on a terminal first",
-					srv.URL, why, meta.Ref))
+					connectionServer(srv), why, meta.Ref))
 			}
 			if broken != nil {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%v\n", broken)
@@ -99,7 +149,7 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 			if cerr != nil {
 				return nil, engine.Classify(engine.ExitPolicy, cerr)
 			}
-			token = g.Token.AccessToken
+			access = connection.Access{Token: g.Token.AccessToken, ExpiresAt: g.Token.ExpiresAt}
 			if c, err = store.Get(k); err != nil {
 				return nil, engine.Classify(engine.ExitCLI, err)
 			}
@@ -108,10 +158,10 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 			// unexpected: not a policy refusal, and the connection is kept.
 			return nil, engine.Classify(engine.ExitCLI, err)
 		}
-		out.tokens[srv.URL] = token
-		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s, client %s)", srv.URL, c.Issuer, scopeList(c.Scopes), c.Client.Kind))
+		out.tokens[k.Server] = engine.ConnectionToken{AccessToken: access.Token, ExpiresAt: access.ExpiresAt}
+		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s, client %s)", k.Server, c.Issuer, scopeList(c.Scopes), c.Client.Kind))
 	}
-	out.line = "remote servers signed in to by the person's connection for this release, refreshed by the runner before the run; the run was given an access token alone: " + strings.Join(used, "; ")
+	out.line = "servers signed in to by the person's connection for this release, refreshed by the runner before the run, and renewed before a token expires during the run where the server reads it from a file (a renewal that fails is said on the run's stderr); the run was given an access token alone: " + strings.Join(used, "; ")
 	return out, nil
 }
 
@@ -130,23 +180,23 @@ func scopeList(s []string) string {
 // (whose refresh token is revoked where the vendor offers it).
 func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, httpc *http.Client, k connection.Key, srv manifest.MCPServer) (*mcpauth.Grant, error) {
 	errOut := cmd.ErrOrStderr()
-	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", k.Ref, srv.URL)
+	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", k.Ref, connectionWhat(srv))
 	_, _ = fmt.Fprintln(errOut, "The connection is kept on this machine for this version alone and reused by its later runs; each run is given an access token, never the refresh token or a client secret.")
-	if len(srv.Scopes) > 0 {
-		_, _ = fmt.Fprintf(errOut, "It asks for: %s\n", strings.Join(srv.Scopes, " "))
+	if scopes := connectionScopes(srv); len(scopes) > 0 {
+		_, _ = fmt.Fprintf(errOut, "It asks for: %s\n", strings.Join(scopes, " "))
 	}
 	in := bufio.NewReader(cmd.InOrStdin())
 	for attempt := 0; ; attempt++ {
 		g, err := runConsent(cmd, in, httpc, clients, srv)
 		var own *mcpauth.NeedsOwnClientError
 		if errors.As(err, &own) && attempt == 0 {
-			if aerr := askOwnClient(cmd, in, clients, own.Issuer, srv.URL); aerr != nil {
+			if aerr := askOwnClient(cmd, in, clients, own.Issuer, connectionServer(srv)); aerr != nil {
 				return nil, aerr
 			}
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("connect %s: %w", srv.URL, err)
+			return nil, fmt.Errorf("connect %s: %w", connectionServer(srv), err)
 		}
 		if old, gerr := store.Get(k); gerr == nil && old != nil {
 			if outcome, rerr := store.Remove(cmd.Context(), k, httpc, clients, "replaced by a new consent"); rerr == nil {
@@ -156,7 +206,7 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 		if _, err := store.Put(k, g, ""); err != nil {
 			return nil, err
 		}
-		_, _ = fmt.Fprintf(errOut, "connected %s for %s\n", srv.URL, k.Ref)
+		_, _ = fmt.Fprintf(errOut, "connected %s for %s\n", connectionServer(srv), k.Ref)
 		return g, nil
 	}
 }
@@ -171,7 +221,7 @@ func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, client
 	done := make(chan struct{})
 	var finished chan struct{}
 	c := mcpauth.Consent{
-		HTTP: httpc, ServerURL: srv.URL, Scopes: srv.Scopes,
+		HTTP: httpc, ServerURL: srv.URL, Scopes: connectionScopes(srv),
 		OwnClient: clients.Get, CIMDURL: nativeCIMD,
 		Pasted: pasted,
 		Say:    func(s string) { _, _ = fmt.Fprintln(errOut, s) },
@@ -186,6 +236,9 @@ func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, client
 			finished = make(chan struct{})
 			go readPasted(in, pasted, done, finished)
 		},
+	}
+	if !srv.IsRemote() {
+		c.Issuer = srv.OAuth.Issuer
 	}
 	g, err := c.Run(cmd.Context())
 	close(done)
@@ -266,8 +319,10 @@ func ownClientSteps(issuer, server string) string {
 			"  3. Google Auth Platform → Branding and Audience: set the app up; under Audience choose Internal",
 			"     (a Google Workspace account) or External and then Publish app, so it is In production. A client",
 			"     left in Testing gets sign-ins that stop working after 7 days.",
-			"  4. Data Access: add the scopes this QuickAgent asks for.",
-			"  5. Clients → Create client → Application type: Desktop app. Copy its client ID and client secret.",
+			"  4. If the app stays in Testing: Audience → Test users → add the Google account you will sign in",
+			"     with. Google refuses the sign-in of any account a Testing app does not list.",
+			"  5. Data Access: add the scopes this QuickAgent asks for.",
+			"  6. Clients → Create client → Application type: Desktop app. Copy its client ID and client secret.",
 			"Google may show an \"unverified app\" screen for a client of your own; it is your own app.",
 		}, "\n")
 	}
@@ -350,9 +405,10 @@ func newConnectCmd() *cobra.Command {
 	var again bool
 	cmd := &cobra.Command{
 		Use:   "connect <ns/name[@version]>",
-		Short: "Sign in to the remote MCP servers an installed QuickAgent version needs, ahead of a run",
-		Long: "Make the connection each remote MCP server of an installed QuickAgent version\n" +
-			"needs (auth: oauth): the vendor's consent screen in your browser, or its address\n" +
+		Short: "Sign in to the MCP servers an installed QuickAgent version needs, ahead of a run",
+		Long: "Make the connection each MCP server of an installed QuickAgent version needs\n" +
+			"(a remote server's auth: oauth, a package server's oauth block): the vendor's\n" +
+			"consent screen in your browser, or its address\n" +
 			"printed and the redirect pasted back. A connection is kept for that version\n" +
 			"alone and reused by its runs; --again replaces one that works.",
 		Args: cobra.ExactArgs(1),
@@ -367,8 +423,11 @@ func newConnectCmd() *cobra.Command {
 			}
 			servers := oauthServers(m)
 			if len(servers) == 0 {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s declares no remote MCP server that signs in by OAuth: nothing to connect\n", meta.Ref)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s declares no MCP server that signs in by OAuth: nothing to connect\n", meta.Ref)
 				return nil
+			}
+			if err := refuseUnsupported(servers); err != nil {
+				return err
 			}
 			if !consentTTY(cmd.InOrStdin()) {
 				return engine.Classify(engine.ExitPolicy, errors.New("connecting needs a terminal to ask for your consent"))
@@ -377,9 +436,9 @@ func newConnectCmd() *cobra.Command {
 			clients := connection.OpenClients(home, connectionKeys())
 			httpc := vendorHTTP()
 			for _, srv := range servers {
-				k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: srv.URL}
+				k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: connectionServer(srv)}
 				if c, err := store.Get(k); err == nil && c.Broken == "" && !again {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: connected (issuer %s, since %s); --again replaces it\n", srv.URL, c.Issuer, c.CreatedAt)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: connected (issuer %s, since %s); --again replaces it\n", k.Server, c.Issuer, c.CreatedAt)
 					continue
 				}
 				if _, err := consentFor(cmd, store, clients, httpc, k, srv); err != nil {
