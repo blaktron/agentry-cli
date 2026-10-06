@@ -30,7 +30,7 @@ Mark every key you declare one way or the other. `capabilities.optionalSecrets` 
   - a server that refuses to start without its key.
 - When in doubt, ask whether a run without the key would still hand the person something useful. If yes, the key is optional.
 - A name in `optionalSecrets` must be one you declared, in `capabilities.secrets` or a server's `secrets`. Never list a key there that you did not declare.
-- Write the instructions for both cases. Say what the QuickAgent does when an optional key was not given (for example, "If GITHUB_TOKEN was not given, read only public repositories and say so in the report"), and never tell it to stop because an optional key is missing.
+- Write the instructions for both cases. Say what the QuickAgent does when an optional key was not given, and have its output name the key it went without and what that left out (for example, "If GITHUB_TOKEN was not given, read only public repositories and say so in the report"). Never tell it to stop because an optional key is missing.
 
 ```json
 "capabilities": {

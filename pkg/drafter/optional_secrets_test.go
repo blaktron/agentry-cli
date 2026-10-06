@@ -9,25 +9,29 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// Optional secrets M6 (plan optional-secrets.md D3, D7; agentry-cli#652):
-// the Drafter marks each key it declares optional or required. A draft
-// with an optional key, one with a required key, and one whose secret
-// question disagrees with its key go through the post-step's own check;
-// the bench holds a draft to the marking its description calls for; and
-// a repair that only moves a key between optional and required drops
-// nothing.
+// question is the secret question a keyedDraft asks for its key.
+type question int
+
+const (
+	noQuestion  question = iota
+	notRequired          // a secret question with no required
+	required             // a secret question with required: true
+)
 
 // keyedDraft is a draft whose QuickAgent fetches from GitHub with
-// GITHUB_TOKEN, marked by optional, with a secret question for the key
-// when question is not "".
-func keyedDraft(optional bool, question string) *Draft {
+// GITHUB_TOKEN, the key marked optional or not, and asking q for it
+// (optional secrets M6: plan optional-secrets.md D3, D7; agentry-cli#652).
+func keyedDraft(optional bool, q question) *Draft {
 	caps := `"network": {"egress": ["api.github.com"]}, "filesystem": {"read": "none", "write": "none"}, "exec": "none", "secrets": ["GITHUB_TOKEN"]`
 	if optional {
 		caps += `, "optionalSecrets": ["GITHUB_TOKEN"]`
 	}
 	intake := ""
-	if question != "" {
-		intake = `"intake": [{"id": "github_token", "prompt": "A GitHub token for private repositories", "type": "secret"` + question + `}],`
+	switch q {
+	case notRequired:
+		intake = `"intake": [{"id": "github_token", "prompt": "A GitHub token for private repositories", "type": "secret"}],`
+	case required:
+		intake = `"intake": [{"id": "github_token", "prompt": "A GitHub token for private repositories", "type": "secret", "required": true}],`
 	}
 	return &Draft{
 		Manifest: json.RawMessage(`{"schemaVersion": "2", "name": "issue-summary", "namespace": "draft", "version": "0.1.0",
@@ -42,8 +46,9 @@ func keyedDraft(optional bool, question string) *Draft {
 	}
 }
 
-// v10 says whether the post-step's report names rule V10 on the intake.
-func v10(t *testing.T, d *Draft) (passed bool, refusedOnIntake bool) {
+// checkMarking runs the post-step's own check on d: whether it passed, and
+// whether its report refuses the intake question under rule V10.
+func checkMarking(t *testing.T, d *Draft) (passed bool, refusedOnIntake bool) {
 	t.Helper()
 	msg, raw := PostStep{OutDir: t.TempDir()}.renderAndValidate(d)
 	if msg != "" {
@@ -63,15 +68,15 @@ func TestThePostStepChecksAKeysMarking(t *testing.T) {
 		passes    bool
 		v10Refuse bool
 	}{
-		{"an optional key", keyedDraft(true, ""), true, false},
-		{"a required key", keyedDraft(false, ""), true, false},
-		{"an optional key's question, not required", keyedDraft(true, " "), true, false},
-		{"a required key's question, required", keyedDraft(false, `, "required": true`), true, false},
-		{"an optional key's question marked required (D7)", keyedDraft(true, `, "required": true`), false, true},
-		{"a required key's question not marked required (D7)", keyedDraft(false, " "), false, true},
+		{"an optional key", keyedDraft(true, noQuestion), true, false},
+		{"a required key", keyedDraft(false, noQuestion), true, false},
+		{"an optional key's question, not required", keyedDraft(true, notRequired), true, false},
+		{"a required key's question, required", keyedDraft(false, required), true, false},
+		{"an optional key's question marked required (D7)", keyedDraft(true, required), false, true},
+		{"a required key's question not marked required (D7)", keyedDraft(false, notRequired), false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			passed, refused := v10(t, tc.d)
+			passed, refused := checkMarking(t, tc.d)
 			if passed != tc.passes || refused != tc.v10Refuse {
 				t.Fatalf("passed %v (want %v), refused by V10 on the intake %v (want %v)", passed, tc.passes, refused, tc.v10Refuse)
 			}
@@ -93,17 +98,20 @@ func TestTheBenchHoldsADraftToItsDescriptionsMarking(t *testing.T) {
 		e.Modes, e.Hosts, e.MaxSecrets = []string{"autonomous"}, []string{"api.github.com"}, 1
 		return strings.Join(CheckShape(m, d, e), "; ")
 	}
-	if got := shape(keyedDraft(true, ""), Expect{OptionalKeys: true}); got != "" {
+	if got := shape(keyedDraft(true, noQuestion), Expect{Keys: "optional"}); got != "" {
 		t.Fatalf("an optional key where the description makes it optional: %s", got)
 	}
-	if got := shape(keyedDraft(false, ""), Expect{OptionalKeys: true}); !strings.Contains(got, "key GITHUB_TOKEN is required") {
+	if got := shape(keyedDraft(false, noQuestion), Expect{Keys: "optional"}); !strings.Contains(got, "key GITHUB_TOKEN is required") {
 		t.Fatalf("a required key where the description makes it optional: %q", got)
 	}
-	if got := shape(keyedDraft(true, ""), Expect{KeysRequired: true}); !strings.Contains(got, "key GITHUB_TOKEN is optional") {
+	if got := shape(keyedDraft(true, noQuestion), Expect{Keys: "required"}); !strings.Contains(got, "key GITHUB_TOKEN is optional") {
 		t.Fatalf("an optional key where the task cannot run without it: %q", got)
 	}
-	if got := shape(keyedDraft(false, ""), Expect{}); got != "" {
+	if got := shape(keyedDraft(false, noQuestion), Expect{}); got != "" {
 		t.Fatalf("a fixture that says nothing of the marking: %s", got)
+	}
+	if got := shape(keyedDraft(true, noQuestion), Expect{Keys: "optional", MinSecrets: 2}); !strings.Contains(got, "1 keys, want at least 2") {
+		t.Fatalf("a draft short of the keys its description names: %q", got)
 	}
 }
 
@@ -111,7 +119,7 @@ func TestTheBenchHoldsADraftToItsDescriptionsMarking(t *testing.T) {
 // keeps every key it declared, so it drops nothing (agentry-cli#633's
 // rule reads the declared names, never the marking).
 func TestMovingAKeyBetweenOptionalAndRequiredIsNoDrop(t *testing.T) {
-	first, second := keyedDraft(false, ""), keyedDraft(true, "")
+	first, second := keyedDraft(false, noQuestion), keyedDraft(true, noQuestion)
 	second.Validation = json.RawMessage(`{"passed":true}`)
 	if got := droppedUnnamed(first, second, RepairReport{}); len(got) != 0 {
 		t.Fatalf("required → optional dropped %v", got)

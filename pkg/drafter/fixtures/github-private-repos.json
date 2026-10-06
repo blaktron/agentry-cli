@@ -13,10 +13,11 @@
       "github.com"
     ],
     "maxSecrets": 1,
+    "minSecrets": 1,
     "maxServers": 1,
     "exec": false,
     "write": false,
     "intake": true,
-    "optionalKeys": true
+    "keys": "optional"
   }
 }

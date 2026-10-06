@@ -15,6 +15,6 @@
     "maxServers": 1,
     "exec": false,
     "write": false,
-    "keysRequired": true
+    "keys": "required"
   }
 }

@@ -36,6 +36,6 @@ Input files rewritten from today's facts to the settled guide: the two views eve
 
 ## [2026-10-06] ingest | optional and required keys (Drafter 1.10.0)
 
-The Keys page is rewritten from today's facts to the settled guide: every declared key is marked optional (`optionalSecrets`) when the QuickAgent still does its job without it, and left required when it cannot, with examples of each, the instructions written for both cases, and a `secret` question's `required` matching its key (rule V10). It leaves the stub list. The manifest and intake pages name the field and the rule.
+The Keys page is rewritten from today's facts to the settled guide: every declared key is marked optional (`optionalSecrets`) when the QuickAgent still does its job without it, and left required when it cannot, with examples of each, the instructions written for both cases, and a `secret` question's `required` matching its key (rule V10). It is no longer marked as today's facts. The manifest and intake pages name the field and the rule.
 
 - updated: manifest/secrets.md, manifest/manifest.md, manifest/intake-and-guide.md
