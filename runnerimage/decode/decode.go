@@ -92,7 +92,8 @@ type File struct {
 	Family Family `json:"family"`
 	// Tool is the decoder that ran: pdftotext, pandoc, tesseract, or
 	// agentry-runner for this package's own readers, or tika; for an
-	// archive, what read it: agentry-runner, bsdcat or bsdtar.
+	// archive, what read it: agentry-runner, bsdcat or bsdtar. A file read
+	// as text names none; its Markdown view names its own (MarkdownBy).
 	Tool    string  `json:"tool,omitempty"`
 	Outcome Outcome `json:"outcome"`
 	// Output is the text's slash path relative to the output root. A
@@ -100,8 +101,17 @@ type File struct {
 	// already, since the member itself stays in the decode container.
 	Output string `json:"output,omitempty"`
 	// Bytes is the size of the text written.
-	Bytes  int64  `json:"bytes,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	Bytes int64 `json:"bytes,omitempty"`
+	// Markdown is the slash path, relative to the output root, of a
+	// second view of a file read as text: HTML converted to Markdown by
+	// MarkdownBy (pandoc), at exactly <path>.md (plan
+	// quickagents-that-run.md D2; agentry-cli#631). The file itself stays
+	// its own view; a failed conversion leaves this empty and the file read
+	// as it is. MarkdownBytes is the size of the Markdown written.
+	Markdown      string `json:"markdown,omitempty"`
+	MarkdownBy    string `json:"markdownBy,omitempty"`
+	MarkdownBytes int64  `json:"markdownBytes,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 	// In is the archive a member was unpacked from, empty for a file as
 	// staged.
 	In string `json:"in,omitempty"`
@@ -475,6 +485,7 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 	// The text fast path (detect) has read it as UTF-8 already.
 	if kind.text {
 		f.Outcome = OutcomeText
+		f = markdownView(ctx, f, kind, src, out, tools, lim)
 		if !member {
 			return f
 		}
@@ -538,8 +549,43 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 	return finish(f, text, dst, lim.MaxOutputBytes)
 }
 
+// htmlTypes are the text files that also get a Markdown view (D2): a page
+// is code to a reviewer and a document to a reader.
+var htmlTypes = map[string]bool{"text/html": true, "application/xhtml+xml": true}
+
+// markdownView converts an HTML file read as text to Markdown with
+// sandboxed pandoc, into out/<rel>.md, cut to the text cap. The file stays
+// text whatever happens: a conversion that fails only leaves no Markdown.
+func markdownView(ctx context.Context, f File, kind contentKind, src, out string, tools Tools, lim Limits) File {
+	if !htmlTypes[kind.mime] {
+		return f
+	}
+	scratch, err := os.MkdirTemp(lim.ScratchDir, "decode-")
+	if err != nil {
+		return f
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+	text := filepath.Join(scratch, "out.md")
+	if err := runTool(ctx, tools.Pandoc, "--sandbox", "--from=html", "--to=gfm", "--wrap=none", "--output="+text, src); err != nil {
+		return f
+	}
+	rel := f.Path + ".md"
+	dst := filepath.Join(out, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return f
+	}
+	view := finish(File{Path: f.Path}, text, dst, lim.MaxOutputBytes)
+	if view.Outcome != OutcomeDecoded {
+		_ = os.Remove(dst)
+		return f
+	}
+	f.Markdown, f.MarkdownBy, f.MarkdownBytes = rel, "pandoc", view.Bytes
+	return f
+}
+
 func undecodable(f File, reason string) File {
 	f.Output, f.Outcome, f.Reason = "", OutcomeUndecodable, reason
+	f.Markdown, f.MarkdownBy, f.MarkdownBytes = "", "", 0
 	return f
 }
 

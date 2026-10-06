@@ -443,7 +443,13 @@ esac
 	}
 	for _, fx := range codeFixtures {
 		f := got[fx.name]
-		if f.Family != FamilyText || f.Outcome != OutcomeText || f.Tool != "" || f.Output != "" || f.Reason != "" {
+		// HTML also gets pandoc's Markdown as a second view (D2,
+		// agentry-cli#631); the file itself stays text.
+		by, markdown := "", ""
+		if htmlTypes[fx.magic] {
+			by, markdown = "pandoc", fx.name+".md"
+		}
+		if f.Family != FamilyText || f.Outcome != OutcomeText || f.Tool != "" || f.Markdown != markdown || f.MarkdownBy != by || f.Output != "" || f.Reason != "" {
 			t.Errorf("%s as staged: %+v, want text, read as it is", fx.name, f)
 		}
 		want := fx.magic
@@ -454,7 +460,10 @@ esac
 			t.Errorf("%s as staged: type %q, want %q", fx.name, f.MIME, want)
 		}
 		m := got["project.zip/src/"+fx.name]
-		if m.Family != FamilyText || m.Outcome != OutcomeText || m.Tool != "" || m.Output != m.Path+".txt" {
+		if markdown != "" {
+			markdown = m.Path + ".md"
+		}
+		if m.Family != FamilyText || m.Outcome != OutcomeText || m.Tool != "" || m.Markdown != markdown || m.MarkdownBy != by || m.Output != m.Path+".txt" {
 			t.Errorf("%s as a member: %+v", fx.name, m)
 			continue
 		}
@@ -534,5 +543,58 @@ esac
 	}
 	if b, _ := os.ReadFile(filepath.Join(out, "latin1.csv.txt")); string(b) != "tika read latin1.csv" {
 		t.Errorf("latin1.csv: %q", b)
+	}
+}
+
+// TestHTMLGetsAMarkdownView: an HTML file read as text also gets pandoc's
+// Markdown at <path>.md, staged or a member, and the file stays its own
+// view; a conversion that fails leaves the file text with no Markdown
+// (plan quickagents-that-run.md D2; agentry-cli#631).
+func TestHTMLGetsAMarkdownView(t *testing.T) {
+	page := "<!doctype html>\n<h1>Hi</h1><script>x()</script>\n"
+	run := func(t *testing.T, tools Tools) (map[string]File, string) {
+		t.Helper()
+		in, out := t.TempDir(), t.TempDir()
+		write(t, in, "site/index.html", []byte(page))
+		write(t, in, "site.zip", zipOf(t, zipEntry{name: "index.html", body: page}))
+		rep, err := Decode(context.Background(), in, out, tools, Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]File{}
+		for _, f := range rep.Files {
+			got[f.Path] = f
+		}
+		return got, out
+	}
+	tools := fakeTools(t)
+	tools.File = filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(tools.File, []byte("#!/bin/sh\ncase \"$4\" in *.zip) echo application/zip ;; *) echo text/html ;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools.Tika = filepath.Join(t.TempDir(), "java")
+	if err := os.WriteFile(tools.Tika, []byte("#!/bin/sh\necho application/zip\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, out := run(t, tools)
+	for _, path := range []string{"site/index.html", "site.zip/index.html"} {
+		f := got[path]
+		if f.Outcome != OutcomeText || f.Tool != "" || f.MarkdownBy != "pandoc" || f.Markdown != path+".md" || f.MarkdownBytes != int64(len("pandoc read index.html\n")) {
+			t.Fatalf("%s: %+v", path, f)
+		}
+		if b, _ := os.ReadFile(filepath.Join(out, filepath.FromSlash(f.Markdown))); string(b) != "pandoc read index.html\n" {
+			t.Fatalf("%s: Markdown %q", path, b)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(out, "site.zip", "index.html.txt")); string(b) != page {
+		t.Fatalf("a member's own view is the page as uploaded: %q", b)
+	}
+	tools.Pandoc = filepath.Join(t.TempDir(), "missing")
+	got, out = run(t, tools)
+	if f := got["site/index.html"]; f.Outcome != OutcomeText || f.MarkdownBy != "" || f.Markdown != "" {
+		t.Fatalf("a failed conversion: %+v", f)
+	}
+	if _, err := os.Stat(filepath.Join(out, "site", "index.html.md")); err == nil {
+		t.Fatal("a failed conversion left a Markdown file")
 	}
 }
