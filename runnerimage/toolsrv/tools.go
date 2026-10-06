@@ -80,6 +80,11 @@ type toolDef struct {
 	description string
 	schema      map[string]any
 	call        func(args json.RawMessage) (text string, isError bool)
+	// personsInput marks a tool whose answer is the person's own input,
+	// served unchanged (plan quickagents-that-run.md D4, agentry-cli#632):
+	// its result goes out as an embedded text resource, which the
+	// gateway's --block-secrets does not scan (see inputResult).
+	personsInput bool
 }
 
 // buildTools registers exactly the granted subset, iterating
@@ -91,6 +96,16 @@ func (s *server) buildTools() {
 	add := func(name, desc string, schema map[string]any, call func(json.RawMessage) (string, bool)) {
 		s.order = append(s.order, name)
 		s.tools[name] = toolDef{name: name, description: desc, schema: schema, call: call}
+	}
+	// addInput registers a tool that serves the person's inputs unchanged.
+	// Under the review grant a file reaches the model only after AI Review,
+	// which may withhold it or answer with its reason instead, so there the
+	// answer stays a text item, scanned by the gateway as before.
+	addInput := func(name, desc string, schema map[string]any, call func(json.RawMessage) (string, bool)) {
+		add(name, desc, schema, call)
+		d := s.tools[name]
+		d.personsInput = !s.spec.Review.Enabled
+		s.tools[name] = d
 	}
 	for _, name := range s.spec.GrantedTools() {
 		switch name {
@@ -112,10 +127,10 @@ func (s *server) buildTools() {
 			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided.",
 				listInputsSchema(), s.toolListInputs)
 		case ToolReadInput:
-			add(name, "Read one of the run's provided input files (read-only), in the view list_inputs marks as its default unless view says which: \"text\" is the text decoded from a document, PDF or image before the run (HTML as Markdown), \"original\" the file as uploaded (a binary file as a page of base64, with its size and type). Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+			addInput(name, "Read one of the run's provided input files (read-only), in the view list_inputs marks as its default unless view says which: \"text\" is the text decoded from a document, PDF or image before the run (HTML as Markdown), \"original\" the file as uploaded (a binary file as a page of base64, with its size and type). Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
 				readInputSchema(), s.toolReadInput)
 		case ToolSearchInputs:
-			add(name, "Search the run's input files for a word or phrase, without regard to case, each in its default view (the one list_inputs marks) unless view says which; a document, PDF or image is searched in its text unless view is \"original\". Returns each matching line as path:line: excerpt; read the file with read_input for more.",
+			addInput(name, "Search the run's input files for a word or phrase, without regard to case, each in its default view (the one list_inputs marks) unless view says which; a document, PDF or image is searched in its text unless view is \"original\". Returns each matching line as path:line: excerpt; read the file with read_input for more.",
 				searchInputsSchema(), s.toolSearchInputs)
 		case ToolAIReview:
 			add(name, aiReviewDescription, aiReviewSchema(), s.toolAIReview)
@@ -537,6 +552,9 @@ func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
 	if a.Path == "" {
 		return "fs_write: path is required", true
 	}
+	if env := s.holdsRunSecret(a.Content); env != "" {
+		return "fs_write: the content holds the value of this run's secret " + env + "; write what it is and where it was found, not the value", true
+	}
 	// The workspace mount is :ro unless this grant exists; checking here
 	// too keeps the layers in agreement instead of in trust (spec.go).
 	if !s.spec.FSWrite.Enabled {
@@ -720,11 +738,7 @@ func (s *server) fetchHostAllowed(host string) bool {
 // the credential (auth debuggers, error pages) must not teach it to the
 // model. The gateway's --block-secrets does the same at its layer.
 func (s *server) scrubSecrets(text string) string {
-	envs := append(append([]string(nil), s.spec.Fetch.SecretEnv...), webKeysForScrub(s.spec.Web)...)
-	if s.spec.Review.Enabled {
-		envs = append(envs, ReviewSecretEnv()...)
-	}
-	for _, env := range envs {
+	for _, env := range s.grantedSecretEnv() {
 		v := os.Getenv(env)
 		if v == "" {
 			continue
@@ -732,6 +746,31 @@ func (s *server) scrubSecrets(text string) string {
 		text = strings.ReplaceAll(text, v, "[redacted:"+env+"]")
 	}
 	return text
+}
+
+// grantedSecretEnv names the environment variables that hold this tools
+// server's own secrets: fetch's granted secrets, the web tools' keys and
+// the review key.
+func (s *server) grantedSecretEnv() []string {
+	envs := append(append([]string(nil), s.spec.Fetch.SecretEnv...), webKeysForScrub(s.spec.Web)...)
+	if s.spec.Review.Enabled {
+		envs = append(envs, ReviewSecretEnv()...)
+	}
+	return envs
+}
+
+// holdsRunSecret names the first of this server's own secrets whose value
+// content holds, or "". A file the agent writes never carries one: the
+// person's inputs are served unchanged (D4) and may hold such a value, and
+// the gateway's --block-secrets matches only secret-shaped text, so a
+// report is held to the values themselves here (agentry-cli#632).
+func (s *server) holdsRunSecret(content string) string {
+	for _, env := range s.grantedSecretEnv() {
+		if v := os.Getenv(env); v != "" && strings.Contains(content, v) {
+			return env
+		}
+	}
+	return ""
 }
 
 // ---- run_command ----
@@ -1203,6 +1242,9 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	}
 	if a.Path == "" {
 		return "write_report: path is required", true
+	}
+	if env := s.holdsRunSecret(a.Content); env != "" {
+		return "write_report: the content holds the value of this run's secret " + env + "; write what it is and where it was found, not the value", true
 	}
 	if limit := s.spec.Limits.writeCap(); int64(len(a.Content)) > limit {
 		return fmt.Sprintf("write_report: content is %d bytes, over the %d-byte limit — append in parts", len(a.Content), limit), true

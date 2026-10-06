@@ -260,6 +260,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		schema:    len(schemaJSON) > 0,
 		intake:    len(m.Intake) > 0,
 		inputView: inputView,
+		review:    in.Review,
 	}, body)
 
 	files := map[string][]byte{}

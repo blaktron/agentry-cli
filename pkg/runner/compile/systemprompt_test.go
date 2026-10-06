@@ -315,3 +315,20 @@ func TestTheVoiceIsGuidedAsKnowledgeIs(t *testing.T) {
 		}
 	}
 }
+
+// The inputs paragraph says the files come unchanged, keys included,
+// except under the review grant, where a file reaches the model only after
+// AI Review (agentry-cli#632, DR-78).
+func TestTheInputsParagraphSaysTheFilesComeUnchanged(t *testing.T) {
+	const unchanged = "come to you unchanged, keys and passwords included"
+	var b strings.Builder
+	writeInputs(&b, promptFacts{})
+	if !strings.Contains(b.String(), unchanged) {
+		t.Errorf("the inputs paragraph lacks %q:\n%s", unchanged, b.String())
+	}
+	b.Reset()
+	writeInputs(&b, promptFacts{review: true})
+	if strings.Contains(b.String(), unchanged) {
+		t.Errorf("under the review grant the paragraph says %q", unchanged)
+	}
+}

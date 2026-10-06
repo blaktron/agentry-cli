@@ -196,9 +196,12 @@ func TestInputsToolsOnTheWire(t *testing.T) {
 		if res["isError"] != false {
 			t.Fatalf("read_input over the wire errored: %v", res)
 		}
+		// The person's input travels as an embedded text resource, past the
+		// gateway's secret block (agentry-cli#632).
 		content := res["content"].([]any)[0].(map[string]any)
-		if content["text"] != "payload" {
-			t.Errorf("read_input text = %v", content["text"])
+		resource, _ := content["resource"].(map[string]any)
+		if content["type"] != "resource" || resource["text"] != "payload" || resource["uri"] != InputResourceURI || resource["mimeType"] != "text/plain" {
+			t.Errorf("read_input content = %v", content)
 		}
 	})
 	t.Run("without inputs channel the tools do not exist", func(t *testing.T) {
@@ -292,4 +295,95 @@ func TestWriteMsgFailuresAreLoggedNotFatal(t *testing.T) {
 			t.Errorf("logs = %q", logs.String())
 		}
 	})
+}
+
+// TestInputsReachTheAgentUnchanged pins plan quickagents-that-run.md D4
+// (agentry-cli#632, DR-78): a person's input that holds a credential is
+// served byte for byte, as an embedded text resource, which the gateway's
+// --block-secrets does not scan. Everything else the server answers stays
+// a text item, which it does: the listing, and an input tool's error.
+func TestInputsReachTheAgentUnchanged(t *testing.T) {
+	spec := inputsSpec(t)
+	// Built at run time, so the repository's own gitleaks job does not
+	// read the test as a leak.
+	key := "sk_" + "live_" + strings.Repeat("4eC39HqLyjWDarjtT1zdp7dc", 1)
+	dockerfile := "FROM alpine:3.23\nENV API_KEY=" + key + "\nCMD [\"sh\"]\n"
+	mustWrite(t, filepath.Join(spec.InputsDir, "Dockerfile"), []byte(dockerfile))
+	read := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_input","arguments":{"path":"Dockerfile","view":"original"}}}`
+	list := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_inputs","arguments":{}}}`
+	missing := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_input","arguments":{"path":"nope.txt"}}}`
+	resps := runServe(t, spec, initLine, listLine, read, list, missing)
+
+	res := resultOf(t, resps[2])
+	content := res["content"].([]any)[0].(map[string]any)
+	resource, _ := content["resource"].(map[string]any)
+	text, _ := resource["text"].(string)
+	if content["type"] != "resource" || res["isError"] != false || !strings.Contains(text, dockerfile) {
+		t.Fatalf("read_input of a Dockerfile with a key = %v", res)
+	}
+	for i, what := range map[int]string{3: "list_inputs", 4: "read_input's error"} {
+		c := resultOf(t, resps[i])["content"].([]any)[0].(map[string]any)
+		if c["type"] != "text" {
+			t.Errorf("%s is %v, want a text item", what, c["type"])
+		}
+	}
+
+	// Of every tool the server grants, only the two that answer with the
+	// person's input content serve it as a resource: fetch, run_command and
+	// the rest stay text items under the gateway's block.
+	spec.InputsTextDir = t.TempDir()
+	spec.Fetch = Fetch{Enabled: true, Hosts: []string{"api.invalid.example"}}
+	spec.Exec = Exec{Commands: []string{"cat"}}
+	s := newTestServer(t, spec)
+	for name, d := range s.tools {
+		want := name == ToolReadInput || name == ToolSearchInputs
+		if d.personsInput != want {
+			t.Errorf("%s personsInput = %v, want %v", name, d.personsInput, want)
+		}
+	}
+	for _, name := range []string{ToolReadInput, ToolSearchInputs, ToolFetch, ToolRunCommand} {
+		if _, ok := s.tools[name]; !ok {
+			t.Errorf("%s is not granted in the test's spec", name)
+		}
+	}
+
+	// Under the review grant a file reaches the model only after AI
+	// Review, which may answer with a withheld file's reason instead: no
+	// tool answers as a resource there.
+	rspec := inputsSpec(t)
+	rspec.Review = Review{Enabled: true, Ledger: filepath.Join(rspec.OutDir, "receipts", "review.ndjson")}
+	for name, d := range newTestServer(t, rspec).tools {
+		if d.personsInput {
+			t.Errorf("under the review grant %s answers as a resource", name)
+		}
+	}
+}
+
+// TestAReportNeverHoldsARunSecret: the person's inputs are served
+// unchanged and may hold a value of the run's own secrets; the gateway's
+// block matches only secret-shaped text, so write_report and fs_write
+// refuse content that holds one of the server's granted secret values,
+// whatever its shape (agentry-cli#632).
+func TestAReportNeverHoldsARunSecret(t *testing.T) {
+	const env = "AGENTRY_T632_TOKEN"
+	value := "plain" + "words-no-shape-" + "7f3a"
+	t.Setenv(env, value)
+	spec := inputsSpec(t)
+	spec.Fetch = Fetch{Enabled: true, Hosts: []string{"api.invalid.example"}, SecretEnv: []string{env}}
+	spec.FSWrite = Access{Enabled: true}
+	s := newTestServer(t, spec)
+	for _, tool := range []string{ToolWriteReport, ToolFSWrite} {
+		d, ok := s.tools[tool]
+		if !ok {
+			t.Fatalf("%s not granted", tool)
+		}
+		got, isErr := d.call(rawArgs(t, map[string]any{"path": "found.md", "content": "found " + value + " in Dockerfile:2"}))
+		if !isErr || !strings.Contains(got, env) || strings.Contains(got, value) {
+			t.Errorf("%s with a run secret's value = (%q, %v)", tool, got, isErr)
+		}
+		got, isErr = d.call(rawArgs(t, map[string]any{"path": "found.md", "content": "a token at Dockerfile:2"}))
+		if isErr {
+			t.Errorf("%s without one = (%q, %v)", tool, got, isErr)
+		}
+	}
 }
