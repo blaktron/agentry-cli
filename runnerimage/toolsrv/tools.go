@@ -112,10 +112,10 @@ func (s *server) buildTools() {
 			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided.",
 				listInputsSchema(), s.toolListInputs)
 		case ToolReadInput:
-			add(name, "Read one of the run's provided input files (read-only). By default a document, PDF or image is read as the text decoded from it before the run, and any other file as it was uploaded. view \"original\" reads a document as uploaded too (a binary file as a page of base64, with its size and type); view \"text\" reads HTML as Markdown. Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+			add(name, "Read one of the run's provided input files (read-only), in the view list_inputs marks as its default unless view says which: \"text\" is the text decoded from a document, PDF or image before the run (HTML as Markdown), \"original\" the file as uploaded (a binary file as a page of base64, with its size and type). Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
 				readInputSchema(), s.toolReadInput)
 		case ToolSearchInputs:
-			add(name, "Search the run's input files for a word or phrase, without regard to case, each in its default view unless view says which (a document's text, other files as uploaded). Returns each matching line as path:line: excerpt; read the file with read_input for more.",
+			add(name, "Search the run's input files for a word or phrase, without regard to case, each in its default view (the one list_inputs marks) unless view says which; a document, PDF or image is searched in its text unless view is \"original\". Returns each matching line as path:line: excerpt; read the file with read_input for more.",
 				searchInputsSchema(), s.toolSearchInputs)
 		case ToolAIReview:
 			add(name, aiReviewDescription, aiReviewSchema(), s.toolAIReview)
@@ -172,7 +172,7 @@ func intProp(desc string) map[string]any {
 // viewProp is the input tools' choice of view (agentry-cli#631).
 func viewProp() map[string]any {
 	return map[string]any{"type": "string", "enum": []string{ViewText, ViewOriginal},
-		"description": "which view of the file: \"text\" (a document's decoded text, HTML as Markdown) or \"original\" (the file as uploaded, a binary one as base64); default: a document's text, anything else as uploaded. list_inputs says which views each file has"}
+		"description": "which view of the file: \"text\" (a document's decoded text, HTML as Markdown) or \"original\" (the file as uploaded, a binary one as base64); default: the view list_inputs marks for that file, which says which views each file has"}
 }
 
 func boolProp(desc string) map[string]any {

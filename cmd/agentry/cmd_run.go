@@ -1217,13 +1217,16 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 // overview is markdown and is printed as its text behind termtext's gutter,
 // so no line of it can read as the CLI's own (agentry-cli#419).
 func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
-	if m.Guide == nil || opts.outputFormat == "json" || (opts.guideShown != nil && *opts.guideShown) {
+	if (m.Guide == nil && m.Inputs == nil) || opts.outputFormat == "json" || (opts.guideShown != nil && *opts.guideShown) {
 		return
 	}
 	if opts.guideShown != nil {
 		*opts.guideShown = true
 	}
 	g := m.Guide
+	if g == nil {
+		g = &manifest.Guide{}
+	}
 	if ov := strings.TrimSpace(g.Overview); ov != "" {
 		_, _ = fmt.Fprintf(w, "\n%s\n", termtext.Quote(ov))
 	}
@@ -1236,7 +1239,37 @@ func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
 	if g.Files != "" {
 		_, _ = fmt.Fprintf(w, "Files: %s\n", termtext.Safe(g.Files))
 	}
+	if line := inputsLine(m); line != "" {
+		_, _ = fmt.Fprintln(w, line)
+	}
 	_, _ = fmt.Fprintln(w)
+}
+
+// inputsLine says what files a release takes and how its agent reads them
+// (the manifest's inputs block, DEV-218, agentry-cli#693), or nothing for a
+// release without the block. Its words are the CLI's own: the block holds
+// only the closed kinds and views, never the author's text.
+func inputsLine(m *manifest.Manifest) string {
+	if m.Inputs == nil {
+		return ""
+	}
+	var kinds []string
+	for _, k := range m.TakesKinds() {
+		if k.Valid() {
+			kinds = append(kinds, string(k))
+		}
+	}
+	how := "as text or as uploaded"
+	switch m.DefaultInputView() {
+	case manifest.InputViewText:
+		how = "as text"
+	case manifest.InputViewOriginal:
+		how = "as uploaded"
+	}
+	if len(kinds) == 0 {
+		kinds = []string{string(manifest.InputKindAny)}
+	}
+	return "Files it takes: " + strings.Join(kinds, ", ") + "; read " + how + "."
 }
 
 // secretOverrides merges the profile's stored secrets with the intake's
