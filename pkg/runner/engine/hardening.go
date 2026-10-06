@@ -95,7 +95,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	default:
 		containers = append(containers, "the agent")
 	}
-	if len(p.Plan.MCPServers) > 0 {
+	if spec.HasPackageServers(p.Plan.MCPServers) {
 		containers = append(containers, "the MCP server installer")
 	}
 	line := strings.Join(containers, ", ") +
@@ -144,7 +144,7 @@ func gatewaySandboxed(plan *spec.Plan) bool {
 // and what the run starts.
 func runtimeLine(p Params) string {
 	rt := p.Plan.Runtime()
-	servers := len(p.Plan.MCPServers) > 0
+	servers := spec.HasPackageServers(p.Plan.MCPServers)
 	rs := p.Plan.SandboxResolvers()
 	var under []string
 	if p.Plan.Harness.Host == nil {

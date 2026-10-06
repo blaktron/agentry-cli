@@ -106,13 +106,18 @@ type VulnStatus struct {
 	// Status is the registry's word — "safe" (no known advisories at
 	// CheckedAt), "vulnerable", "error" (its last lookup failed; Advisories
 	// are the last known) — or the runner's: "unknown" (the registry has
-	// never seen this version) or "unreachable" (no answer; Err says why).
+	// never seen this version) or "unreachable" (no answer; Err says why),
+	// or StatusRemote for a remote server, which is never looked up.
 	Status      string         `json:"status"`
 	MaxSeverity string         `json:"maxSeverity,omitempty"`
 	Advisories  []VulnAdvisory `json:"advisories,omitempty"`
 	CheckedAt   time.Time      `json:"checkedAt,omitempty"`
 	Err         string         `json:"error,omitempty"`
 }
+
+// StatusRemote is a remote server's status: not looked up, since it is a
+// service its vendor runs, not a package version (agentry-cli#663).
+const StatusRemote = "remote"
 
 // Refusing is the advisories that refuse a run by default: those rated
 // high or critical, on a record that lists advisories ("vulnerable", or
@@ -194,6 +199,13 @@ func CheckVulnerabilities(ctx context.Context, client *http.Client, registry str
 	base := strings.TrimRight(registry, "/")
 	out := make([]VulnStatus, 0, len(servers))
 	for _, srv := range servers {
+		if srv.IsRemote() {
+			// A remote server is the vendor's running service: there is no
+			// package version to look up, and the registry records none
+			// (S7/remote-server, DEV-215).
+			out = append(out, VulnStatus{Ref: srv.URL, Server: srv.SourceID(), Status: StatusRemote})
+			continue
+		}
 		st := VulnStatus{Ref: srv.SourceID() + "@" + srv.Version, Server: srv.SourceID()}
 		eco, pkg := "npm", srv.NPM
 		if srv.NPM == "" {
@@ -257,6 +269,9 @@ func Summary(statuses []VulnStatus) string {
 	parts := make([]string, 0, len(statuses))
 	for _, s := range statuses {
 		p := s.Ref + " " + s.Status
+		if s.Status == StatusRemote {
+			p += " (not looked up: a remote server is its vendor's running service, not a package version)"
+		}
 		if s.Status == "vulnerable" || (s.Status == "error" && len(s.Advisories) > 0) {
 			labels := make([]string, 0, len(s.Advisories))
 			for _, a := range s.Advisories {

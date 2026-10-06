@@ -178,6 +178,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := writeSecretsFile(p, rd.secretsPath); err != nil {
 		return fail(err)
 	}
+	if err := writeConnectionFiles(p, rd, secrets); err != nil {
+		return fail(err)
+	}
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
 	// receipt (DR-70).

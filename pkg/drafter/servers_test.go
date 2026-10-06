@@ -200,3 +200,24 @@ func TestCheckServersReadsTheRunsRegistries(t *testing.T) {
 		t.Fatalf("with none given, resolved against %+v, want the defaults", got)
 	}
 }
+
+// A draft that declares a remote server (agentry-cli#663) is not looked up
+// in any registry: it has no package and no runtime range, and its
+// address is not a pin a registry could answer.
+func TestCheckServersLeavesARemoteServerAlone(t *testing.T) {
+	calls := 0
+	p := PostStep{serverChecks: map[string]serverCheck{}, Servers: func(_ context.Context, srv manifest.MCPServer) (mcpinstall.Resolved, error) {
+		calls++
+		return mcpinstall.Resolved{Source: "npm"}, nil
+	}}
+	d := &Draft{Manifest: json.RawMessage(`{"capabilities": {"mcpServers": [{"url": "https://mcp.deepwiki.com/mcp", "auth": "none"}, {"npm": "a-mcp", "version": "1.0.0"}]}}`)}
+	p.checkServers(context.Background(), d)
+	if calls != 1 || len(d.serverProblems) != 0 || len(d.serversUnchecked) != 0 {
+		t.Fatalf("%d lookups, problems %q, unchecked %q: only the package server is looked up", calls, d.serverProblems, d.serversUnchecked)
+	}
+	// The registry resolver itself answers a remote server with an error,
+	// never a panic.
+	if _, err := mcpinstall.ResolveAll(context.Background(), nil, policy.Default().MCPRegistries, []manifest.MCPServer{{URL: "https://mcp.deepwiki.com/mcp"}}); err != nil {
+		t.Fatalf("ResolveAll on a remote server: %v", err)
+	}
+}

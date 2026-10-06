@@ -197,3 +197,22 @@ func TestGatewaySecretListingKeepsNoCharacterOfTheValue(t *testing.T) {
 		check(t, env.Receipts.Dir, masked(toolsrv.EnvWebJevKey, toolsrv.EnvWebJobToken, toolsrv.EnvWebSearchKey), testJevKey, testJobToken, testSearchKey)
 	})
 }
+
+// A remote server's bearer (agentry-cli#663) is one of the values the run's
+// redactor masks, though it is never in the gateway's secrets file.
+func TestRedactorMasksARemoteServersBearer(t *testing.T) {
+	p, _ := fixture(t)
+	p, name := withRemoteServer(p)
+	t.Setenv("REMOTE_TOKEN", remoteBearer)
+	values, err := secretValues(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values[compile.ServerSecretKey(name, "REMOTE_TOKEN")] != remoteBearer {
+		t.Fatal("the bearer is not among the run's resolved values")
+	}
+	r := newRedactor("tok-0123456789", values, nil)
+	if got := r.String("Authorization: Bearer " + remoteBearer + " and " + gatewayMask(remoteBearer)); got != "Authorization: Bearer [redacted] and [redacted]" {
+		t.Fatalf("String = %q", got)
+	}
+}

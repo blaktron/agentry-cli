@@ -373,9 +373,10 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 	if m != nil {
 		needNode, needPython := false, false
 		for _, srv := range m.Capabilities.MCPServers {
-			if srv.NPM != "" {
+			switch {
+			case srv.NPM != "":
 				needNode = true
-			} else {
+			case srv.PyPI != "":
 				needPython = true
 			}
 		}
@@ -558,10 +559,10 @@ func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manife
 
 func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *manifest.Manifest, meta *installdir.Meta, installDir string) {
 	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, installdir.DigestSuffix(meta.Digest))
-	if n := len(m.Capabilities.MCPServers); n > 0 {
+	if n := len(mcpinstall.Packages(m.Capabilities.MCPServers)); n > 0 {
 		serversDir := mcpinstall.StoreDir(profDir)
 		missing := []string{}
-		for _, srv := range m.Capabilities.MCPServers {
+		for _, srv := range mcpinstall.Packages(m.Capabilities.MCPServers) {
 			sm, err := mcpinstall.LoadMeta(serversDir, mcpinstall.IDFor(srv))
 			if err != nil || sm == nil || sm.Package != srvPackage(srv) || sm.Version != srv.Version {
 				missing = append(missing, srv.SourceID()+"@"+srv.Version)
@@ -593,6 +594,8 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 				rep.warn("mcpServers.vulnerabilities", "%s: the registry has not scanned this version (no manifest declared it yet)", st.Ref)
 			case st.Status == "unreachable":
 				rep.warn("mcpServers.vulnerabilities", "%s: could not ask the registry (%s) — a run proceeds unchecked", st.Ref, st.Err)
+			case st.Status == mcpinstall.StatusRemote:
+				continue // a remote server is no package version; nothing to look up
 			default:
 				rep.ok("mcpServers.vulnerabilities", "%s: no known advisories as of %s", st.Ref, st.CheckedAt.UTC().Format("2006-01-02"))
 			}

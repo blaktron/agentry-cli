@@ -213,8 +213,14 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		outDir:      p.OutDir,
 		receiptsDir: filepath.Join(p.OutDir, "receipts"),
 	}
-	if len(p.Plan.MCPServers) > 0 && rd.serversDir == "" {
+	if spec.HasPackageServers(p.Plan.MCPServers) && rd.serversDir == "" {
 		return nil, Classify(ExitCLI, fmt.Errorf("plan declares MCP servers but no server store was provided"))
+	}
+	if !spec.HasPackageServers(p.Plan.MCPServers) {
+		// No package server, no store: nothing mounts it, and it need not
+		// exist, so it is neither labelled nor named (agentry-cli#329; a
+		// remote server has none, agentry-cli#663).
+		rd.serversDir = ""
 	}
 	// Before anything is made: a folder the gateway could not be given as
 	// a /<drive>/… path is refused by name (agentry-cli#425).
@@ -243,6 +249,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// would otherwise leave in the clear there; DR-42).
 	td.add(func(context.Context) {
 		td.removeSensitive(rd.secretsPath, false)
+		td.removeSensitive(rd.connections(), true)
 		td.removeSensitive(rd.knowledge, true)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
@@ -533,8 +540,12 @@ func writeSecretsFile(p Params, path string) error {
 	if err != nil {
 		return err
 	}
+	bearers := remoteBearerKeys(p.Plan)
 	keys := make([]string, 0, len(values))
 	for k := range values {
+		if _, bearer := bearers[k]; bearer {
+			continue // its bridge's alone (writeConnectionFiles), never the gateway's
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -547,6 +558,77 @@ func writeSecretsFile(p Params, path string) error {
 	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("write secrets file: %w", err))
+	}
+	return nil
+}
+
+// remoteBearerKeys maps the secrets-file key of each remote server's
+// bearer (agentry-cli#663) to that server.
+func remoteBearerKeys(plan *spec.Plan) map[string]spec.MCPServerSpec {
+	out := map[string]spec.MCPServerSpec{}
+	for _, srv := range plan.MCPServers {
+		if srv.SendsBearer() {
+			for _, name := range srv.Secrets {
+				out[compile.ServerSecretKey(srv.Name, name)] = srv
+			}
+		}
+	}
+	return out
+}
+
+// connections is the run's folder of remote servers' connection folders
+// (spec.ConnectionsDir), deleted at teardown whatever the run kept.
+func (rd *runDirs) connections() string {
+	return filepath.Join(rd.cfg, spec.ConnectionsDir)
+}
+
+// writeConnectionFiles gives each auth: secret remote server its bearer
+// (plan mcp-oauth-connections.md §5; agentry-cli#663): the value resolved
+// as any declared secret is (values is secretValues' map, an optional one
+// absent written empty), written into the server's own folder under the
+// run's cfg, which the compiler mounts read-only into that server's bridge
+// alone. The gateway never reads it. The file is replaced by a rename, so
+// a bridge reading it mid-write sees the old value or the new one, which
+// is how a token renewed during a run (a later milestone) will be handed
+// over.
+func writeConnectionFiles(p Params, rd *runDirs, values map[string]string) error {
+	for key, server := range remoteBearerKeys(p.Plan) {
+		dir := filepath.Join(rd.connections(), server.Name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return Classify(ExitCLI, fmt.Errorf("make the credential folder of the remote MCP server %s: %w", server.Package, err))
+		}
+		if err := writeFileAtomic(filepath.Join(dir, spec.BearerFile), []byte(values[key]), 0o600); err != nil {
+			return Classify(ExitCLI, fmt.Errorf("write the credential of the remote MCP server %s: %w", server.Package, err))
+		}
+		relabelShared(context.Background(), p.Stderr, dir)
+	}
+	return nil
+}
+
+// writeFileAtomic writes data beside path and renames it over path.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		_ = os.Remove(name)
+		return err
 	}
 	return nil
 }
@@ -775,6 +857,30 @@ func relabelForToolContainers(ctx context.Context, stderr io.Writer, targets ...
 	}
 }
 
+// relabelShared labels one of the run's own folders, and what it holds,
+// for every container of the run, as docker's `z` does: the type, and the
+// level with no category. A folder inherits its parent's categories (a
+// runner home under a directory once bound with docker's `Z` carries that
+// container's own), which relabelForToolContainers's type alone keeps, and
+// a connection folder's 0600 file must be read by a bridge in a container
+// of any category (agentry-cli#663). Best effort, as relabelForToolContainers.
+func relabelShared(ctx context.Context, stderr io.Writer, dir string) {
+	if _, err := os.Stat(selinuxRoot); err != nil {
+		return
+	}
+	chcon, err := exec.LookPath("chcon")
+	if err != nil {
+		return // relabelForToolContainers has said so already
+	}
+	out, cerr := exec.CommandContext(ctx, chcon, "-R", "-t", containerFileType, "-l", sharedLevel, dir).CombinedOutput() //nolint:gosec // our own run directory
+	if cerr != nil {
+		_, _ = fmt.Fprintf(stderr, "note: could not label %s for its server's container: %v %s\n", dir, cerr, bytes.TrimSpace(out))
+	}
+}
+
+// sharedLevel is the SELinux level with no category, docker's `z`.
+const sharedLevel = "s0"
+
 // relabelTarget is one directory to label, and whether its contents go with
 // it. Recursing is right for the directories the runner made under its own
 // run root, and wrong for the output folder: `--out` is the operator's
@@ -792,16 +898,20 @@ type relabelTarget struct {
 // made, never through what the operator brought — can be asserted without
 // an SELinux host to run on.
 func relabelTargets(rd *runDirs) []relabelTarget {
-	return []relabelTarget{
+	t := []relabelTarget{
 		{rd.workspace, true},
 		{rd.inputs, true},
 		{rd.inputsText, true},
 		{rd.knowledge, true},
 		{rd.cfg, true},
-		{rd.serversDir, true},
-		{rd.outDir, false},
-		{filepath.Join(rd.outDir, "reports"), true},
 	}
+	if rd.serversDir != "" {
+		t = append(t, relabelTarget{rd.serversDir, true})
+	}
+	return append(t,
+		relabelTarget{rd.outDir, false},
+		relabelTarget{filepath.Join(rd.outDir, "reports"), true},
+	)
 }
 
 // relabelTargetsFor adds the ledgers a run has, the only files of the
