@@ -33,3 +33,9 @@ The check after a draft now holds each pin to the two lists: a pin *Does not run
 Input files rewritten from today's facts to the settled guide: the two views every input is read in (its text, or as uploaded), the manifest's `inputs` block (`kinds`, `view`) that says what a QuickAgent takes and which view it reads first, a table of the common cases, and how a draft asks for its files. Commands drops the archive readers' how-to: the runner unpacks archives and the input tools read every file, so no command is declared to read inputs, and the check after a draft sends an archive reader to the repair turn. How a run works says a run that cannot do its task ends as blocked.
 
 - updated: manifest/inputs.md, manifest/exec.md, manifest/manifest.md, manifest/intake-and-guide.md, runtime/how-a-run-works.md
+
+## [2026-10-06] ingest | optional and required keys (Drafter 1.10.0)
+
+The Keys page is rewritten from today's facts to the settled guide: every declared key is marked optional (`optionalSecrets`) when the QuickAgent still does its job without it, and left required when it cannot, with examples of each, the instructions written for both cases, and a `secret` question's `required` matching its key (rule V10). It is no longer marked as today's facts. The manifest and intake pages name the field and the rule.
+
+- updated: manifest/secrets.md, manifest/manifest.md, manifest/intake-and-guide.md
