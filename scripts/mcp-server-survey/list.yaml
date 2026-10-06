@@ -1,0 +1,227 @@
+# The servers the survey installs and starts (README.md, "The list").
+# egress, env and secrets are what a QuickAgent would declare for the
+# server, from its README; a secret gets a placeholder value, never a key.
+# call is one read-only tool call that needs no key, where one exists.
+
+# --- Every server a published QuickAgent declares (dev and production, 2026-10-05)
+- ecosystem: npm
+  package: "@cyanheads/osv-advisory-mcp-server"
+  why: registry (dev, production)
+  egress: [api.osv.dev]
+  call: {tool: osv_query_package, arguments: {ecosystem: PyPI, name: flask, version: "0.12"}}
+- ecosystem: npm
+  package: frankfurter-mcp-server
+  why: registry (dev)
+  egress: [api.frankfurter.dev]
+  call: {tool: frankfurter_get_latest_rates, arguments: {base: EUR}}
+- ecosystem: npm
+  package: github-mcp-server-js
+  why: registry (dev)
+  egress: [api.github.com]
+  secrets: [GITHUB_TOKEN]
+  env: {GITHUB_PERMISSION: read-only}
+- ecosystem: npm
+  package: "@bytebase/dbhub"
+  why: registry (dev)
+- ecosystem: npm
+  package: "@modelcontextprotocol/sdk"
+  why: registry (dev)
+  note: the MCP TypeScript SDK, declared by a published dev release as if it were a server
+- ecosystem: npm
+  package: "@aryanbv/pdf-toolkit-mcp"
+  why: registry (production)
+  call: {tool: pdf_get_metadata, arguments: {filePath: /inputs/report.pdf}}
+  note: its tools take local file paths; the call asks for a path where a run's inputs would be
+- ecosystem: pypi
+  package: markitdown-mcp
+  why: registry (production)
+
+# --- The MCP reference servers (modelcontextprotocol/servers), current
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-everything"
+  why: reference
+  call: {tool: echo, arguments: {message: survey}}
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-filesystem"
+  why: reference
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-memory"
+  why: reference
+  call: {tool: read_graph}
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-sequential-thinking"
+  why: reference
+  call: {tool: sequentialthinking, arguments: {thought: survey, nextThoughtNeeded: false, thoughtNumber: 1, totalThoughts: 1}}
+- ecosystem: pypi
+  package: mcp-server-fetch
+  why: reference
+  egress: [example.com]
+  call: {tool: fetch, arguments: {url: "https://example.com/"}}
+- ecosystem: pypi
+  package: mcp-server-git
+  why: reference
+  call: {tool: git_status, arguments: {repo_path: /tmp}}
+- ecosystem: pypi
+  package: mcp-server-time
+  why: reference
+  call: {tool: get_current_time, arguments: {timezone: UTC}}
+
+# --- The MCP reference servers, archived
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-github"
+  why: reference (archived)
+  egress: [api.github.com]
+  secrets: [GITHUB_PERSONAL_ACCESS_TOKEN]
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-postgres"
+  why: reference (archived)
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-puppeteer"
+  why: reference (archived)
+  egress: [example.com]
+  call: {tool: puppeteer_navigate, arguments: {url: "https://example.com/"}}
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-slack"
+  why: reference (archived)
+  egress: [slack.com]
+  secrets: [SLACK_BOT_TOKEN, SLACK_TEAM_ID]
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-brave-search"
+  why: reference (archived)
+  egress: [api.search.brave.com]
+  secrets: [BRAVE_API_KEY]
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-google-maps"
+  why: reference (archived)
+  egress: [maps.googleapis.com]
+  secrets: [GOOGLE_MAPS_API_KEY]
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-gdrive"
+  why: reference (archived)
+  egress: [www.googleapis.com, oauth2.googleapis.com]
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-gitlab"
+  why: reference (archived)
+  egress: [gitlab.com]
+  secrets: [GITLAB_PERSONAL_ACCESS_TOKEN]
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-redis"
+  why: reference (archived)
+- ecosystem: npm
+  package: "@modelcontextprotocol/server-everart"
+  why: reference (archived)
+  egress: [api.everart.ai]
+  secrets: [EVERART_API_KEY]
+- ecosystem: pypi
+  package: mcp-server-sqlite
+  why: reference (archived)
+- ecosystem: pypi
+  package: mcp-server-sentry
+  why: reference (archived)
+  egress: [sentry.io]
+
+# --- The most-downloaded MCP servers on npm (last month, 2026-10-05)
+- ecosystem: npm
+  package: "@playwright/mcp"
+  why: top npm
+  egress: [example.com]
+  call: {tool: browser_navigate, arguments: {url: "https://example.com/"}}
+- ecosystem: npm
+  package: chrome-devtools-mcp
+  why: top npm
+  egress: [example.com]
+  call: {tool: new_page, arguments: {url: "https://example.com/"}}
+- ecosystem: npm
+  package: "@upstash/context7-mcp"
+  why: top npm
+  egress: [mcp.context7.com, context7.com]
+  call: {tool: resolve-library-id, arguments: {libraryName: React, query: "useEffect cleanup"}}
+- ecosystem: npm
+  package: "@wonderwhy-er/desktop-commander"
+  why: top npm
+- ecosystem: npm
+  package: hostinger-api-mcp
+  why: top npm
+  egress: [developers.hostinger.com]
+  secrets: [API_TOKEN]
+- ecosystem: npm
+  package: "@notionhq/notion-mcp-server"
+  why: top npm
+  egress: [api.notion.com]
+  secrets: [NOTION_TOKEN]
+- ecosystem: npm
+  package: "@azure/mcp"
+  why: top npm
+- ecosystem: npm
+  package: "@sentry/mcp-server"
+  why: top npm
+  egress: [sentry.io]
+  secrets: [SENTRY_ACCESS_TOKEN]
+- ecosystem: npm
+  package: next-devtools-mcp
+  why: top npm
+- ecosystem: npm
+  package: agentation-mcp
+  why: top npm
+- ecosystem: npm
+  package: mongodb-mcp-server
+  why: top npm
+- ecosystem: npm
+  package: firecrawl-mcp
+  why: top npm
+  egress: [api.firecrawl.dev]
+  secrets: [FIRECRAWL_API_KEY]
+- ecosystem: npm
+  package: "@supabase/mcp-server-supabase"
+  why: top npm
+  egress: [api.supabase.com, supabase.com]
+  secrets: [SUPABASE_ACCESS_TOKEN]
+- ecosystem: npm
+  package: n8n-mcp
+  why: top npm
+
+# --- The most-downloaded MCP servers on PyPI (last 30 days, 2026-10-01)
+- ecosystem: pypi
+  package: mcp-for-blender
+  why: top PyPI
+- ecosystem: pypi
+  package: lean-lsp-mcp
+  why: top PyPI
+- ecosystem: pypi
+  package: mcp-grafana
+  why: top PyPI
+  secrets: [GRAFANA_SERVICE_ACCOUNT_TOKEN]
+  env: {GRAFANA_URL: "https://grafana.example.com"}
+  egress: [grafana.example.com]
+- ecosystem: pypi
+  package: mcp-atlassian
+  why: top PyPI
+  egress: [example.atlassian.net]
+  secrets: [JIRA_API_TOKEN]
+  env: {JIRA_URL: "https://example.atlassian.net", JIRA_USERNAME: survey@example.com}
+- ecosystem: pypi
+  package: blender-mcp
+  why: top PyPI
+- ecosystem: pypi
+  package: postgres-mcp
+  why: top PyPI
+- ecosystem: pypi
+  package: awslabs-aws-documentation-mcp-server
+  why: top PyPI
+  egress: [docs.aws.amazon.com, proxy.search.docs.aws.amazon.com]
+  call: {tool: search_documentation, arguments: {search_phrase: S3 bucket versioning, search_intent: how to turn on versioning for an S3 bucket, limit: 3}}
+- ecosystem: pypi
+  package: opensearch-mcp-server-py
+  why: top PyPI
+- ecosystem: pypi
+  package: ha-mcp
+  why: top PyPI
+  egress: [ha.example.com]
+  secrets: [HOMEASSISTANT_TOKEN]
+  env: {HOMEASSISTANT_URL: "https://ha.example.com"}
+- ecosystem: pypi
+  package: awslabs-aws-api-mcp-server
+  why: top PyPI
+  egress: [servicereference.us-east-1.amazonaws.com, sts.amazonaws.com]
+  secrets: [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]
+  env: {AWS_REGION: us-east-1}

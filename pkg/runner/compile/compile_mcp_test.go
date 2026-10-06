@@ -8,8 +8,11 @@ package compile
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -345,5 +348,59 @@ func TestEnforcementNamesEverySecretWithWhereItGoes(t *testing.T) {
 				t.Fatalf("secrets line\n got: %s\nwant: %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDeclaredServerGatewayFilesAreARunsEntries: the files the MCP server
+// survey launches a server with (agentry-cli#658) carry the same catalog
+// entry, enablement and tool filter as a compiled run's, so the survey
+// starts each server as a run would.
+func TestDeclaredServerGatewayFilesAreARunsEntries(t *testing.T) {
+	srv := githubServerSpec()
+	srv.Env = map[string]string{"LOG_LEVEL": "warn"}
+	planDir := t.TempDir()
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), planDir); err != nil {
+		t.Fatal(err)
+	}
+	files, err := DeclaredServerGatewayFiles([]spec.MCPServerSpec{srv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryOf := func(doc []byte) map[string]any {
+		t.Helper()
+		var d struct {
+			Registry map[string]map[string]any `yaml:"registry"`
+		}
+		if err := yaml.Unmarshal(doc, &d); err != nil {
+			t.Fatal(err)
+		}
+		return d.Registry[srv.Name]
+	}
+	for _, name := range []string{"catalog.yaml", "registry.yaml"} {
+		run, err := os.ReadFile(filepath.Join(planDir, "gateway", name)) //nolint:gosec // test plan dir
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := entryOf(files[name]), entryOf(run); want == nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s entry for %s:\n got %v\nwant %v", name, srv.Name, got, want)
+		}
+	}
+	toolsOf := func(doc []byte) []string {
+		t.Helper()
+		var d map[string][]string
+		if err := yaml.Unmarshal(doc, &d); err != nil {
+			t.Fatal(err)
+		}
+		return d[srv.Name]
+	}
+	run, err := os.ReadFile(filepath.Join(planDir, "gateway", "tools.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := toolsOf(files["tools.yaml"]), toolsOf(run); want == nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("tools.yaml filter for %s: got %v, want %v", srv.Name, got, want)
+	}
+	if _, ok := files["config.yaml"]; !ok {
+		t.Error("no config.yaml")
 	}
 }

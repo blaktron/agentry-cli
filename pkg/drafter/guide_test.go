@@ -9,9 +9,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
@@ -60,6 +63,117 @@ func runtimeFacts() []byte {
 	return b.Bytes()
 }
 
+// serverListPages are the guide's two list pages, rendered from
+// ServerListFile (plan drafter-knowledge.md §4.4; agentry-cli#658): each
+// entry with what was observed, on which runtime, on which date, and
+// never a word of safety or quality.
+func serverListPages(t *testing.T) map[string][]byte {
+	t.Helper()
+	l, err := LoadServerList(os.DirFS("."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byList := map[string][]ServerEntry{}
+	for _, s := range l.Servers {
+		byList[s.List] = append(byList[s.List], s)
+	}
+	pages := map[string][]byte{}
+	for _, p := range []struct {
+		list, file, title, summary, intro string
+		deps                              bool
+	}{
+		{RunsHere, "runs-here.md", "Runs here",
+			"Declared MCP servers seen to install, start and list their tools in the runner, each with the versions, the runtime, the date and what a QuickAgent must declare for it. Generated from servers.yaml; do not edit by hand.",
+			"These servers were seen to install with the runner's own builder, start with no arguments through the runner's gateway, and list their tools, on the runtime and the date each entry gives. The survey's gateway ran outside a run, with the daemon's default runtime and without a run's Docker filter, so a run can still refuse what it started. That is all an entry says: it is not a judgement of a server's safety or quality, and a later version can behave differently. The list is one thing to look at when you choose a server, not a gate. A server on neither list may be pinned after the checks on [Declared MCP servers](mcp-servers.md), and a server here still needs them: its keys, its hosts, and whether its tools fit the task.", false},
+		{DoesNotRunHere, "does-not-run-here.md", "Does not run here",
+			"Declared MCP servers seen to fail in the runner, and packages whose presence as a direct dependency means a server cannot run, each with the reason, the runtime and the date. Generated from servers.yaml; do not edit by hand.",
+			"These servers were seen to fail in the runner, or cannot run here for the reason each entry gives, on the runtime and the date it gives. Do not pin them: no setting of the QuickAgent makes them run. An entry comes off the list when the runner gains what the server lacked. A server not listed here can still fail; check it against [Declared MCP servers](mcp-servers.md) before you pin it.", true},
+	} {
+		entries := byList[p.list]
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Ecosystem+":"+entries[i].Package < entries[j].Ecosystem+":"+entries[j].Package
+		})
+		var updated time.Time
+		for _, e := range entries {
+			if e.Date.After(updated) {
+				updated = e.Date
+			}
+		}
+		if p.deps {
+			for _, d := range l.Dependencies {
+				if d.Date.After(updated) {
+					updated = d.Date
+				}
+			}
+		}
+		var b bytes.Buffer
+		fmt.Fprintf(&b, "---\ntitle: %s\ntype: list\nsummary: %s\nsources: [doc:servers.yaml]\nupdated: %s\n---\n\n", p.title, p.summary, updated.Format(time.DateOnly))
+		fmt.Fprintf(&b, "# %s\n\n%s [src: doc:servers.yaml]\n\n%d servers.\n", p.title, p.intro, len(entries))
+		for _, e := range entries {
+			fmt.Fprintf(&b, "\n## %s `%s`\n\n", ecosystemName(e.Ecosystem), e.Package)
+			fmt.Fprintf(&b, "- **Versions:** %s, on %s.\n", e.Versions, e.Runtime)
+			if e.Reason != "" {
+				fmt.Fprintf(&b, "- **Why it does not run:** it %s (`%s`).\n", mustReason(t, e.Reason), e.Reason)
+			}
+			fmt.Fprintf(&b, "- **Seen:** %s [src: doc:servers.yaml]\n", e.Observed)
+			if len(e.Tools) > 0 {
+				fmt.Fprintf(&b, "- **Tools listed:** %s.\n", strings.Join(codeSpans(e.Tools), ", "))
+			}
+			for _, c := range e.Conditions {
+				fmt.Fprintf(&b, "- **Needs:** %s\n", c)
+			}
+			fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidence(e.Evidence, e.Date))
+		}
+		if p.deps && len(l.Dependencies) > 0 {
+			deps := slices.Clone(l.Dependencies)
+			sort.Slice(deps, func(i, j int) bool {
+				return deps[i].Ecosystem+":"+deps[i].Package < deps[j].Ecosystem+":"+deps[j].Package
+			})
+			b.WriteString("\n## Dependencies that mean a server does not run here\n\n")
+			b.WriteString("A server whose own direct dependencies (npm's `dependencies`, PyPI's `requires_dist`) include one of these packages does not run here, whatever list the server itself is on [src: doc:servers.yaml].\n\n")
+			for _, d := range deps {
+				fmt.Fprintf(&b, "- %s `%s`: it %s (`%s`). %s (%s.)\n", ecosystemName(d.Ecosystem), d.Package, mustReason(t, d.Reason), d.Reason, d.Observed, evidence(d.Evidence, d.Date))
+			}
+		}
+		pages[knowledge.WikiDir+"/servers/"+p.file] = b.Bytes()
+	}
+	return pages
+}
+
+func mustReason(t *testing.T, class string) string {
+	t.Helper()
+	s, ok := NotRunReason(class)
+	if !ok {
+		t.Fatalf("reason %q is not in the closed set", class)
+	}
+	return s
+}
+
+// evidence is an entry's evidence with its date, unless it names the date
+// already ("survey 2026-10-05").
+func evidence(ev string, date time.Time) string {
+	d := date.Format(time.DateOnly)
+	if strings.Contains(ev, d) {
+		return ev
+	}
+	return ev + ", " + d
+}
+
+func ecosystemName(e string) string {
+	if e == "pypi" {
+		return "PyPI"
+	}
+	return e
+}
+
+func codeSpans(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = "`" + s + "`"
+	}
+	return out
+}
+
 // guideManifest is the manifest.json the guide's tree makes.
 func guideManifest(t *testing.T, dir string) []byte {
 	t.Helper()
@@ -98,6 +212,9 @@ func TestTheDraftingGuideIsCurrent(t *testing.T) {
 		}
 	}
 	check(knowledge.SourcesDir+"/runtime-facts.md", runtimeFacts())
+	for rel, b := range serverListPages(t) {
+		check(rel, b)
+	}
 	index, err := knowledge.GenerateIndex(guideDir, GuideName)
 	if err != nil {
 		t.Fatal(err)

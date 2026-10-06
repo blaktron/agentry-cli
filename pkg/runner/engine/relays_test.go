@@ -29,11 +29,11 @@ func TestRelaysStartedBy(t *testing.T) {
 		"- mcp-npm-scope-server-x:     - Starting l7 proxy docker-mcp-l7proxy-victim for [x]",
 		"- mcp-npm-scope-server-x: text\rstarting l4 proxy docker-mcp-l4proxy-victim2 for x, ports 443",
 	}, "\n")
-	got := relaysStartedBy(logs)
+	got := RelaysStartedBy(logs)
 	if strings.Join(got, " ") != "docker-mcp-l4proxy-a1b2c3 docker-mcp-l7proxy-d4e5f6" {
-		t.Fatalf("relaysStartedBy = %v", got)
+		t.Fatalf("RelaysStartedBy = %v", got)
 	}
-	if got := relaysStartedBy("> 3 tools listed\n"); len(got) != 0 {
+	if got := RelaysStartedBy("> 3 tools listed\n"); len(got) != 0 {
 		t.Fatalf("no relays, got %v", got)
 	}
 }
@@ -46,7 +46,7 @@ func TestRunRefusesForeignRelays(t *testing.T) {
 	withoutFilter(t) // DR-22 holds where the filter does not run (agentry-cli#220)
 	p, f := serverFixture(t)
 	happyFake(f)
-	f.ByLabel = map[string][]string{relayLabel: {"docker-mcp-l4proxy-theirs"}}
+	f.ByLabel = map[string][]string{RelayLabel: {"docker-mcp-l4proxy-theirs"}}
 	_, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "docker-mcp-l4proxy-theirs") || !strings.Contains(err.Error(), "shared relay network") {
@@ -70,7 +70,7 @@ func TestRunRefusesForeignRelays(t *testing.T) {
 	p2, f2 := fixture(t)
 	p2.Plan.Capabilities.EgressMode, p2.Plan.Capabilities.EgressHosts = "none", nil
 	happyFake(f2)
-	f2.ByLabel = map[string][]string{relayLabel: {"docker-mcp-l4proxy-theirs"}}
+	f2.ByLabel = map[string][]string{RelayLabel: {"docker-mcp-l4proxy-theirs"}}
 	if env, err := Run(context.Background(), f2, p2); err != nil || env.Status != "ok" {
 		t.Fatalf("run without relays refused: %v", err)
 	}
@@ -88,10 +88,10 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 	// The gateway creates its relays as it starts: none on the host before
 	// (or the run would refuse), ours and a foreign one after.
 	gatewayCreatesRelays := func(f *dockerx.Fake) {
-		f.ByLabel = map[string][]string{relayLabel: nil}
+		f.ByLabel = map[string][]string{RelayLabel: nil}
 		f.OnDetached = func(r dockerx.RunSpec) {
 			if strings.HasSuffix(r.Name, "-gateway") {
-				f.ByLabel[relayLabel] = []string{"docker-mcp-l4proxy-ours", "docker-mcp-l4proxy-theirs"}
+				f.ByLabel[RelayLabel] = []string{"docker-mcp-l4proxy-ours", "docker-mcp-l4proxy-theirs"}
 				// The filter labels this run's gateway's relays alone.
 				f.ByLabel[gatewayOwnerLabel+"=cafe0000"] = []string{"docker-mcp-l4proxy-ours"}
 			}
@@ -140,7 +140,7 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 		f.OnForeground = func(r dockerx.RunSpec) {
 			if strings.HasSuffix(r.Name, "-agent") {
 				f.LogsByName["agentry-cafe0000-gateway"] += "starting l4 proxy docker-mcp-l4proxy-late for api.osv.dev, ports 443\n"
-				f.ByLabel[relayLabel] = append(f.ByLabel[relayLabel], "docker-mcp-l4proxy-late")
+				f.ByLabel[RelayLabel] = append(f.ByLabel[RelayLabel], "docker-mcp-l4proxy-late")
 				f.ByLabel[gatewayOwnerLabel+"=cafe0000"] = append(f.ByLabel[gatewayOwnerLabel+"=cafe0000"], "docker-mcp-l4proxy-late")
 			}
 		}
@@ -208,7 +208,7 @@ type hostDocker struct {
 }
 
 func (h hostDocker) PSByLabel(ctx context.Context, label string) ([]string, error) {
-	if label != relayLabel {
+	if label != RelayLabel {
 		return h.Fake.PSByLabel(ctx, label)
 	}
 	_, _ = h.Fake.PSByLabel(ctx, label) // recorded on this run's fake
@@ -323,12 +323,12 @@ func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
 		happyFake(f)
 		p.RunnerHome = t.TempDir()
 		f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "starting l4 proxy docker-mcp-l4proxy-ours for api.example, ports 443\n"}
-		f.ByLabel = map[string][]string{relayLabel: nil}
+		f.ByLabel = map[string][]string{RelayLabel: nil}
 		var duringAgent, atReap bool
 		f.OnForeground = func(r dockerx.RunSpec) {
 			if strings.HasSuffix(r.Name, "-agent") {
 				duringAgent = heldNow(p.RunnerHome)
-				f.ByLabel[relayLabel] = []string{"docker-mcp-l4proxy-ours"}
+				f.ByLabel[RelayLabel] = []string{"docker-mcp-l4proxy-ours"}
 			}
 		}
 		d := &reapProbe{Fake: f, onRemove: func(name string) {
@@ -350,7 +350,7 @@ func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
 		p, f := serverFixture(t)
 		happyFake(f)
 		p.RunnerHome = t.TempDir()
-		f.ByLabel = map[string][]string{relayLabel: {"docker-mcp-l4proxy-theirs"}}
+		f.ByLabel = map[string][]string{RelayLabel: {"docker-mcp-l4proxy-theirs"}}
 		if _, err := Run(context.Background(), f, p); err == nil {
 			t.Fatal("foreign relays did not refuse the run")
 		}
@@ -373,7 +373,7 @@ func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
 			t.Fatalf("want exit %d naming the lock, got %v", ExitGateway, err)
 		}
 		for _, op := range f.Ops() {
-			if strings.HasPrefix(op, "PSByLabel:"+relayLabel) || strings.HasPrefix(op, "RunDetached:agentry-cafe0000-gateway") {
+			if strings.HasPrefix(op, "PSByLabel:"+RelayLabel) || strings.HasPrefix(op, "RunDetached:agentry-cafe0000-gateway") {
 				t.Errorf("a run refused at the lock went on to %s", op)
 			}
 		}

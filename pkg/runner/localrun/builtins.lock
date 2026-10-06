@@ -36,3 +36,5 @@ agentry/drafter@1.6.0 sha256:48633e2daa5d9a6f9d10915f5e5243e64eb67e3e46701f77cab
 agentry/drafter@1.7.0 sha256:5515a87005cda967c85c4603786ff48ad28aeb5e85e1ac3e4f65ffadbca3089f
 # 1.8.0: ships its drafting guide, the knowledge pack drafting-guide, given to every run of the Drafter (agentry-cli#657).
 agentry/drafter@1.8.0 sha256:5b728c9660472c6b814cff743be7e2c6d166f930f8fd348b313bc2a1ee139fbd
+# 1.8.1: the drafting guide gains the Runs here and Does not run here lists of declared MCP servers, from a survey of 50, and its guide to judging a server on neither (agentry-cli#658).
+agentry/drafter@1.8.1 sha256:e37ead0ede4dba67b7fa4811736c7c32d3511929ffc4e5c57b5afa65a9444c41
