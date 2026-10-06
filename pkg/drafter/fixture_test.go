@@ -57,6 +57,12 @@ type Expect struct {
 	// checked when empty.
 	InputKinds []string `json:"inputKinds,omitempty"`
 	InputViews []string `json:"inputViews,omitempty"`
+	// OptionalKeys says the description makes every key a draft declares
+	// one the QuickAgent can do without, so each must be in
+	// optionalSecrets; KeysRequired says none can be, so optionalSecrets
+	// stays empty (plan optional-secrets.md D3, agentry-cli#652).
+	OptionalKeys bool `json:"optionalKeys,omitempty"`
+	KeysRequired bool `json:"keysRequired,omitempty"`
 }
 
 // LoadFixtures reads the fixture set, sorted by id.
@@ -125,6 +131,20 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	}
 	if secrets > e.MaxSecrets {
 		out = append(out, fmt.Sprintf("%d keys, want at most %d", secrets, e.MaxSecrets))
+	}
+	if e.OptionalKeys || e.KeysRequired {
+		declared := append([]string(nil), c.Secrets...)
+		for _, s := range c.MCPServers {
+			declared = append(declared, s.Secrets...)
+		}
+		for _, k := range declared {
+			switch optional := c.IsOptionalSecret(k); {
+			case e.OptionalKeys && !optional:
+				out = append(out, fmt.Sprintf("key %s is required; the QuickAgent can do its job without it", k))
+			case e.KeysRequired && optional:
+				out = append(out, fmt.Sprintf("key %s is optional; the QuickAgent cannot do its job without it", k))
+			}
+		}
 	}
 	if n := len(c.MCPServers); n > e.MaxServers {
 		out = append(out, fmt.Sprintf("%d MCP servers, want at most %d", n, e.MaxServers))

@@ -1,0 +1,22 @@
+{
+  "id": "github-private-repos",
+  "description": "Summarise the open issues of a GitHub repository I name: their titles, labels and age. It reads public repositories as they are, and can use a GitHub token for private repositories when I give it one.",
+  "hints": [
+    "The repository changes each run."
+  ],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.github.com",
+      "github.com"
+    ],
+    "maxSecrets": 1,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "intake": true,
+    "optionalKeys": true
+  }
+}
