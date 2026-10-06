@@ -1,0 +1,654 @@
+// Connections (plan mcp-oauth-connections.md §6, agentry-cli#664): a
+// person's OAuth grant to a remote MCP server, for one QuickAgent release.
+// A run asks for each one it lacks at Start, on a terminal, and refreshes
+// each before the sandbox starts; `agentry connect` makes them ahead of a
+// run; `agentry connections` lists and removes them and keeps the person's
+// own OAuth clients. The run is given an access token and nothing else.
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/mcpauth"
+	"github.com/blaktron/agentry-cli/pkg/runner/connection"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/profile"
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
+)
+
+// Seams for tests: the vendor client (the egress guard in production), the
+// keychain (the OS's), whether consent can be asked, and the CIMD address.
+var (
+	vendorHTTP     = func() *http.Client { return mcpauth.Guard{}.Client() }
+	connectionKeys = func() connection.Keychain { return connection.OSKeychain{} }
+	consentTTY     = stdinIsTTY
+	nativeCIMD     = mcpauth.NativeClientMetadataURL
+)
+
+// oauthServers are the release's remote servers that sign in by OAuth.
+func oauthServers(m *manifest.Manifest) []manifest.MCPServer {
+	var out []manifest.MCPServer
+	for _, s := range m.Capabilities.MCPServers {
+		if s.IsRemote() && s.Auth == manifest.AuthOAuth {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// runConnections is what a run of a release is given of its connections:
+// each server's access token, and the receipt's line naming each one used
+// (server, issuer, scopes, client kind; never a token).
+type runConnections struct {
+	tokens map[string]string
+	line   string
+}
+
+// ensureConnections opens, or on a terminal makes, the connection of every
+// remote server of the release that signs in by OAuth, and refreshes each
+// under its lock (connection.Store.Use) before the sandbox starts. With no
+// terminal a server with no working connection refuses the run with exit
+// 11, naming it.
+func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m *manifest.Manifest) (*runConnections, error) {
+	servers := oauthServers(m)
+	if len(servers) == 0 {
+		return &runConnections{}, nil
+	}
+	store := connection.Open(home, connectionKeys())
+	clients := connection.OpenClients(home, connectionKeys())
+	httpc := vendorHTTP()
+	out := &runConnections{tokens: map[string]string{}}
+	var used []string
+	for _, srv := range servers {
+		k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: srv.URL}
+		token, c, err := store.Use(cmd.Context(), k, httpc, clients)
+		var broken *connection.BrokenError
+		switch {
+		case err == nil:
+		case errors.Is(err, connection.ErrNone) || errors.As(err, &broken):
+			if !consentTTY(cmd.InOrStdin()) {
+				why := "has no connection for this version"
+				if broken != nil {
+					why = "has a connection the vendor no longer honours (" + broken.Reason + ")"
+				}
+				return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf(
+					"declared MCP server %s signs in by OAuth and %s, and there is no terminal to ask for consent: run `agentry connect %s` on a terminal first",
+					srv.URL, why, meta.Ref))
+			}
+			if broken != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%v\n", broken)
+			}
+			g, cerr := consentFor(cmd, store, clients, httpc, k, srv)
+			if cerr != nil {
+				return nil, engine.Classify(engine.ExitPolicy, cerr)
+			}
+			token = g.Token.AccessToken
+			if c, err = store.Get(k); err != nil {
+				return nil, engine.Classify(engine.ExitCLI, err)
+			}
+		default:
+			// The vendor could not be reached or answered something
+			// unexpected: not a policy refusal, and the connection is kept.
+			return nil, engine.Classify(engine.ExitCLI, err)
+		}
+		out.tokens[srv.URL] = token
+		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s, client %s)", srv.URL, c.Issuer, scopeList(c.Scopes), c.Client.Kind))
+	}
+	out.line = "remote servers signed in to by the person's connection for this release, refreshed by the runner before the run; the run was given an access token alone: " + strings.Join(used, "; ")
+	return out, nil
+}
+
+func scopeList(s []string) string {
+	if len(s) == 0 {
+		return "the vendor's default"
+	}
+	return strings.Join(s, " ")
+}
+
+// consentFor asks the person, on the terminal, to connect srv for the
+// release k names: the vendor's consent screen in the browser, or its
+// address printed and the redirect pasted back (D21). A vendor that needs
+// the person's own client (Google) asks for one first, with Agentry's
+// steps where it has them (D22). The grant is kept, replacing a broken one
+// (whose refresh token is revoked where the vendor offers it).
+func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, httpc *http.Client, k connection.Key, srv manifest.MCPServer) (*mcpauth.Grant, error) {
+	errOut := cmd.ErrOrStderr()
+	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", k.Ref, srv.URL)
+	_, _ = fmt.Fprintln(errOut, "The connection is kept on this machine for this version alone and reused by its later runs; each run is given an access token, never the refresh token or a client secret.")
+	if len(srv.Scopes) > 0 {
+		_, _ = fmt.Fprintf(errOut, "It asks for: %s\n", strings.Join(srv.Scopes, " "))
+	}
+	in := bufio.NewReader(cmd.InOrStdin())
+	for attempt := 0; ; attempt++ {
+		g, err := runConsent(cmd, in, httpc, clients, srv)
+		var own *mcpauth.NeedsOwnClientError
+		if errors.As(err, &own) && attempt == 0 {
+			if aerr := askOwnClient(cmd, in, clients, own.Issuer, srv.URL); aerr != nil {
+				return nil, aerr
+			}
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("connect %s: %w", srv.URL, err)
+		}
+		if old, gerr := store.Get(k); gerr == nil && old != nil {
+			if outcome, rerr := store.Remove(cmd.Context(), k, httpc, clients, "replaced by a new consent"); rerr == nil {
+				_, _ = fmt.Fprintf(errOut, "the previous connection was removed (revocation: %s)\n", outcome)
+			}
+		}
+		if _, err := store.Put(k, g, ""); err != nil {
+			return nil, err
+		}
+		_, _ = fmt.Fprintf(errOut, "connected %s for %s\n", srv.URL, k.Ref)
+		return g, nil
+	}
+}
+
+// runConsent runs one consent. The redirect comes back to the loopback
+// listener, or, where the browser is elsewhere, its address is pasted at
+// the prompt; stdin is read only once the address is shown, and the line
+// being read is finished before returning, so nothing typed later is lost.
+func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, clients *connection.Clients, srv manifest.MCPServer) (*mcpauth.Grant, error) {
+	errOut := cmd.ErrOrStderr()
+	pasted := make(chan string)
+	done := make(chan struct{})
+	var finished chan struct{}
+	c := mcpauth.Consent{
+		HTTP: httpc, ServerURL: srv.URL, Scopes: srv.Scopes,
+		OwnClient: clients.Get, CIMDURL: nativeCIMD,
+		Pasted: pasted,
+		Say:    func(s string) { _, _ = fmt.Fprintln(errOut, s) },
+		Present: func(authURL string) {
+			_, _ = fmt.Fprintf(errOut, "Approve it in your browser:\n  %s\n", authURL)
+			if os.Getenv("AGENTRY_NO_BROWSER") == "" {
+				if err := openBrowser(authURL); err != nil {
+					_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v; open the address above yourself)\n", err)
+				}
+			}
+			_, _ = fmt.Fprintln(errOut, "Waiting for the browser (up to 10 minutes). If it is on another machine and ends on a page that does not load, paste that page's address here and press Enter:")
+			finished = make(chan struct{})
+			go readPasted(in, pasted, done, finished)
+		},
+	}
+	g, err := c.Run(cmd.Context())
+	close(done)
+	if finished != nil {
+		select {
+		case <-finished:
+		default:
+			_, _ = fmt.Fprintln(errOut, "Press Enter to continue.")
+			<-finished
+		}
+	}
+	return g, err
+}
+
+// readPasted sends each non-empty line until done; it returns once a line
+// read after done, or the input's end, so the caller can wait for it.
+func readPasted(in *bufio.Reader, out chan<- string, done <-chan struct{}, finished chan<- struct{}) {
+	defer close(finished)
+	for {
+		line, err := in.ReadString('\n')
+		select {
+		case <-done:
+			return
+		default:
+		}
+		if line = strings.TrimSpace(line); line != "" {
+			select {
+			case out <- line:
+			case <-done:
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// askOwnClient asks for the person's own OAuth client for issuer and keeps
+// it for every later consent there (D23), after Agentry's steps for making
+// one where it has written them (D22).
+func askOwnClient(cmd *cobra.Command, in *bufio.Reader, clients *connection.Clients, issuer, server string) error {
+	errOut := cmd.ErrOrStderr()
+	_, _ = fmt.Fprintf(errOut, "\n%s lets no app register itself, so signing in there needs an OAuth client of your own.\n", issuer)
+	_, _ = fmt.Fprintln(errOut, ownClientSteps(issuer, server))
+	p := &setup.TTYPrompter{In: in, Err: errOut}
+	id, err := p.Ask("Client ID", "")
+	if err != nil {
+		return err
+	}
+	secret, err := p.AskSecret("Client secret")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("no client id was given, so the connection cannot be made")
+	}
+	if err := clients.Set(issuer, id, strings.TrimSpace(secret)); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(errOut, "kept your OAuth client for %s; every QuickAgent you connect there will use it (agentry connections client list)\n", issuer)
+	return nil
+}
+
+// ownClientSteps are Agentry's steps for making one's own client (D22):
+// Google's, which Agentry writes; any other vendor's general shape.
+func ownClientSteps(issuer, server string) string {
+	if strings.TrimRight(issuer, "/") == "https://accounts.google.com" {
+		api := "the API of the product this server reaches"
+		if u, err := url.Parse(server); err == nil && strings.HasSuffix(u.Hostname(), ".googleapis.com") {
+			h := u.Hostname()
+			api = "the product's API and its MCP API (" + h + ")"
+		}
+		return strings.Join([]string{
+			"Make one in Google Cloud (once; every QuickAgent you connect to Google uses it):",
+			"  1. In the Google Cloud console (console.cloud.google.com), create a project or pick one.",
+			"  2. APIs & Services → Library: enable " + api + ".",
+			"  3. Google Auth Platform → Branding and Audience: set the app up; under Audience choose Internal",
+			"     (a Google Workspace account) or External and then Publish app, so it is In production. A client",
+			"     left in Testing gets sign-ins that stop working after 7 days.",
+			"  4. Data Access: add the scopes this QuickAgent asks for.",
+			"  5. Clients → Create client → Application type: Desktop app. Copy its client ID and client secret.",
+			"Google may show an \"unverified app\" screen for a client of your own; it is your own app.",
+		}, "\n")
+	}
+	return strings.Join([]string{
+		"Make one in the vendor's developer settings (once; every QuickAgent you connect there uses it):",
+		"  register an OAuth app or client of the native or desktop kind, with the redirect address",
+		"  http://127.0.0.1/callback (any port), the authorization code grant and refresh tokens, and the",
+		"  scopes this QuickAgent asks for. Copy its client ID and, if it has one, its client secret.",
+	}, "\n")
+}
+
+// installedRelease is the release installed on this machine that sel
+// names (ns/name or ns/name@version), with its manifest. Several installed
+// versions and no version named is a refusal that lists them.
+func installedRelease(home, sel string) (*installdir.Meta, *manifest.Manifest, error) {
+	ref, err := manifest.ParseRef(sel)
+	if err != nil {
+		return nil, nil, err
+	}
+	agentDir := installdir.AgentDir(home, ref.Namespace, ref.Name)
+	entries, err := os.ReadDir(agentDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	type found struct {
+		meta *installdir.Meta
+		dir  string
+	}
+	var all []found
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(agentDir, e.Name())
+		digest := recordedDigest(dir)
+		if digest == "" {
+			continue
+		}
+		meta, ierr := installdir.Inspect(dir, digest)
+		if ierr != nil && !errors.Is(ierr, installdir.ErrNoRecord) {
+			continue
+		}
+		if ref.Range != "" && meta.Version != ref.Range {
+			continue
+		}
+		all = append(all, found{meta, dir})
+	}
+	switch {
+	case len(all) == 0:
+		return nil, nil, fmt.Errorf("%s is not installed on this machine: install it first (agentry install %s, or agentry run %s --prepare)", sel, sel, sel)
+	case len(all) > 1:
+		var vs []string
+		for _, f := range all {
+			vs = append(vs, f.meta.Ref)
+		}
+		return nil, nil, fmt.Errorf("several versions of %s are installed (%s): name one, ns/name@version", sel, strings.Join(vs, ", "))
+	}
+	m, err := localrun.ManifestFrom(filepath.Join(all[0].dir, "workspace"))
+	if err != nil {
+		return nil, nil, err
+	}
+	return all[0].meta, m, nil
+}
+
+// recordedDigest is the digest an install's install.json records, "" for
+// none; Inspect then holds the install to it.
+func recordedDigest(dir string) string {
+	raw, err := os.ReadFile(filepath.Join(dir, "install.json")) //nolint:gosec // our install layout
+	if err != nil {
+		return ""
+	}
+	var meta installdir.Meta
+	if json.Unmarshal(raw, &meta) != nil {
+		return ""
+	}
+	return meta.Digest
+}
+
+func newConnectCmd() *cobra.Command {
+	var again bool
+	cmd := &cobra.Command{
+		Use:   "connect <ns/name[@version]>",
+		Short: "Sign in to the remote MCP servers an installed QuickAgent version needs, ahead of a run",
+		Long: "Make the connection each remote MCP server of an installed QuickAgent version\n" +
+			"needs (auth: oauth): the vendor's consent screen in your browser, or its address\n" +
+			"printed and the redirect pasted back. A connection is kept for that version\n" +
+			"alone and reused by its runs; --again replaces one that works.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			meta, m, err := installedRelease(home, args[0])
+			if err != nil {
+				return err
+			}
+			servers := oauthServers(m)
+			if len(servers) == 0 {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s declares no remote MCP server that signs in by OAuth: nothing to connect\n", meta.Ref)
+				return nil
+			}
+			if !consentTTY(cmd.InOrStdin()) {
+				return engine.Classify(engine.ExitPolicy, errors.New("connecting needs a terminal to ask for your consent"))
+			}
+			store := connection.Open(home, connectionKeys())
+			clients := connection.OpenClients(home, connectionKeys())
+			httpc := vendorHTTP()
+			for _, srv := range servers {
+				k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: srv.URL}
+				if c, err := store.Get(k); err == nil && c.Broken == "" && !again {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: connected (issuer %s, since %s); --again replaces it\n", srv.URL, c.Issuer, c.CreatedAt)
+					continue
+				}
+				if _, err := consentFor(cmd, store, clients, httpc, k, srv); err != nil {
+					return engine.Classify(engine.ExitPolicy, err)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&again, "again", false, "make the connection again even where one works")
+	return cmd
+}
+
+// connectionOut is one connection in `connections list --json`.
+type connectionOut struct {
+	Ref       string   `json:"ref"`
+	Digest    string   `json:"digest"`
+	Server    string   `json:"server"`
+	Issuer    string   `json:"issuer"`
+	Client    string   `json:"client"`
+	Scopes    []string `json:"scopes,omitempty"`
+	State     string   `json:"state"`
+	CreatedAt string   `json:"createdAt"`
+	LastUsed  string   `json:"lastUsedAt,omitempty"`
+	KeptIn    string   `json:"keptIn"`
+}
+
+func newConnectionsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "connections",
+		Short: "List and remove the OAuth connections kept for QuickAgent versions, and your own OAuth clients",
+	}
+	cmd.AddCommand(newConnectionsListCmd(), newConnectionsRemoveCmd(), newConnectionsClientCmd())
+	return cmd
+}
+
+func newConnectionsListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List kept connections (never a token)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			list, err := connection.Open(home, nil).List()
+			if err != nil {
+				return err
+			}
+			rows := make([]connectionOut, 0, len(list))
+			for _, c := range list {
+				state := "connected"
+				if c.Broken != "" {
+					state = "broken: " + c.Broken
+				}
+				rows = append(rows, connectionOut{
+					Ref: c.Ref, Digest: c.Digest, Server: c.Server, Issuer: c.Issuer, Client: c.Client.Kind,
+					Scopes: c.Scopes, State: state, CreatedAt: c.CreatedAt, LastUsed: c.LastUsedAt, KeptIn: c.SecretIn,
+				})
+			}
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), rows)
+			}
+			out := cmd.OutOrStdout()
+			if len(rows) == 0 {
+				_, _ = fmt.Fprintln(out, "no connections kept (a run asks for one the first time a QuickAgent version needs it)")
+				return nil
+			}
+			for _, r := range rows {
+				last := r.LastUsed
+				if last == "" {
+					last = "never used"
+				}
+				_, _ = fmt.Fprintf(out, "%s → %s\n  digest %s · issuer %s · %s client · scopes %s · %s · last used: %s · kept in the %s\n",
+					r.Ref, r.Server, installdir.DigestSuffix(r.Digest), r.Issuer, r.Client, scopeList(r.Scopes), r.State, last, r.KeptIn)
+			}
+			return nil
+		},
+	}
+}
+
+// removedConnection is one removal in `connections remove --json`.
+type removedConnection struct {
+	Ref        string `json:"ref"`
+	Server     string `json:"server"`
+	Revocation string `json:"revocation"`
+	Error      string `json:"error,omitempty"`
+}
+
+func newConnectionsRemoveCmd() *cobra.Command {
+	var all bool
+	var server string
+	cmd := &cobra.Command{
+		Use:   "remove [ns/name[@version]]",
+		Short: "Remove kept connections (revoked at the vendor where it offers that)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if all == (len(args) == 1) {
+				return errors.New("pass exactly one of ns/name[@version] or --all")
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			sel := ""
+			if len(args) == 1 {
+				sel = args[0]
+			}
+			removed, err := removeConnections(cmd.Context(), home, sel, server, "removed by the person")
+			if flags.jsonOut {
+				if jerr := emitJSON(cmd.OutOrStdout(), removed); jerr != nil {
+					return jerr
+				}
+				return err
+			}
+			for _, r := range removed {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed the connection of %s to %s (revocation: %s)\n", r.Ref, r.Server, r.Revocation)
+			}
+			if len(removed) == 0 && err == nil {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "nothing matched")
+			}
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "remove every kept connection")
+	cmd.Flags().StringVar(&server, "server", "", "remove only the connection to this server address")
+	return cmd
+}
+
+// removeConnections removes the connections of the releases sel matches
+// ("" for all), to server where one is named, revoking each at the vendor
+// where it offers that (D17).
+func removeConnections(ctx context.Context, home, sel, server, why string) ([]removedConnection, error) {
+	store := connection.Open(home, connectionKeys())
+	clients := connection.OpenClients(home, connectionKeys())
+	list, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	out := []removedConnection{}
+	var errs []error
+	httpc := vendorHTTP()
+	for _, c := range list {
+		if sel != "" && !profile.RefMatches(c.Ref, sel) {
+			continue
+		}
+		if server != "" && c.Server != server {
+			continue
+		}
+		rctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+		outcome, rerr := store.Remove(rctx, c.Key(), httpc, clients, why)
+		cancel()
+		r := removedConnection{Ref: c.Ref, Server: c.Server, Revocation: outcome}
+		if rerr != nil {
+			r.Error = rerr.Error()
+			errs = append(errs, rerr)
+		}
+		out = append(out, r)
+	}
+	return out, errors.Join(errs...)
+}
+
+// revokeTimeout bounds one removal's revocation at the vendor; a vendor
+// that does not answer in time is recorded as a failed revocation and the
+// connection is removed all the same.
+const revokeTimeout = 30 * time.Second
+
+func newConnectionsClientCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "client",
+		Short: "Keep, list and remove your own OAuth clients (one per vendor's issuer)",
+	}
+	var clientID string
+	set := &cobra.Command{
+		Use:   "set <issuer>",
+		Short: "Keep your own OAuth client for an issuer (the secret is read from stdin)",
+		Long: "Keep your own OAuth client for a vendor that lets no app register itself\n" +
+			"(Google: https://accounts.google.com). Every QuickAgent you connect there\n" +
+			"uses it. The client secret is read from stdin: typed without echo on a\n" +
+			"terminal, or piped; an empty one keeps a client without a secret.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			secret, err := readClientSecret(cmd)
+			if err != nil {
+				return err
+			}
+			if err := connection.OpenClients(home, connectionKeys()).Set(args[0], clientID, secret); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "kept your OAuth client for %s\n", args[0])
+			return nil
+		},
+	}
+	set.Flags().StringVar(&clientID, "client-id", "", "the client's id (required)")
+	_ = set.MarkFlagRequired("client-id")
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List your kept OAuth clients (never a secret)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			cs, err := connection.OpenClients(home, nil).List()
+			if err != nil {
+				return err
+			}
+			if flags.jsonOut {
+				if cs == nil {
+					cs = []connection.OwnClient{}
+				}
+				return emitJSON(cmd.OutOrStdout(), cs)
+			}
+			if len(cs) == 0 {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no OAuth clients of your own kept")
+			}
+			for _, c := range cs {
+				secret := "no secret"
+				if c.SecretIn != "" {
+					secret = "secret kept in the " + c.SecretIn
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s  client %s  (%s)\n", c.Issuer, c.ClientID, secret)
+			}
+			return nil
+		},
+	}
+	remove := &cobra.Command{
+		Use:   "remove <issuer>",
+		Short: "Forget your OAuth client for an issuer; connections made with it then ask again",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			ok, err := connection.OpenClients(home, connectionKeys()).Remove(args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no OAuth client kept for %s\n", args[0])
+				return nil
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "forgot your OAuth client for %s\n", args[0])
+			return nil
+		},
+	}
+	cmd.AddCommand(set, list, remove)
+	return cmd
+}
+
+// readClientSecret reads the client secret: without echo on a terminal,
+// else the first line of stdin.
+func readClientSecret(cmd *cobra.Command) (string, error) {
+	if consentTTY(cmd.InOrStdin()) {
+		p := &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+		s, err := p.AskSecret("Client secret (Enter for none)")
+		return strings.TrimSpace(s), err
+	}
+	raw, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 4096))
+	if err != nil {
+		return "", err
+	}
+	line, _, _ := strings.Cut(string(raw), "\n")
+	return strings.TrimSpace(line), nil
+}

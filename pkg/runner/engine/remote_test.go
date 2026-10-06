@@ -173,3 +173,97 @@ func TestNoPackageServerNoStore(t *testing.T) {
 		})
 	}
 }
+
+// An auth: oauth server (agentry-cli#664) is handed the access token the
+// caller refreshed from the person's connection, in the same folder and
+// the same way as a bearer: the bridge's alone, masked in receipts, gone
+// with the run.
+
+const remoteAccessToken = "lin-oauth-access-token-0123456789"
+
+func withOAuthServer(p Params) (Params, string) {
+	srv := spec.MCPServerSpec{
+		Name: "mcp-url-mcp-linear-app-mcp", Source: spec.SourceURL,
+		Package: "https://mcp.linear.app/mcp",
+		Egress:  []string{"mcp.linear.app"},
+		Auth:    "oauth",
+	}
+	plan := *p.Plan
+	plan.MCPServers = append([]spec.MCPServerSpec(nil), srv)
+	p.Plan = &plan
+	p.Connections = map[string]string{srv.Package: remoteAccessToken}
+	return p, srv.Name
+}
+
+func TestAnOAuthAccessTokenReachesItsBridgeAloneAndDiesWithTheRun(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p, name := withOAuthServer(p)
+	cfg := filepath.Join(p.RunRoot, "runs", "cafe0000", "cfg")
+	tokenPath := filepath.Join(cfg, spec.ConnectionsDir, name, spec.BearerFile)
+	var secretsFile, tokenFile string
+	var mode os.FileMode
+	f.Foreground["-probe"].Before = func(dockerx.RunSpec) {
+		b, _ := os.ReadFile(filepath.Join(cfg, "gateway", "secrets.env")) //nolint:gosec // the test's run dir
+		secretsFile = string(b)
+		b, _ = os.ReadFile(tokenPath) //nolint:gosec // the test's run dir
+		tokenFile = string(b)
+		if fi, err := os.Stat(tokenPath); err == nil {
+			mode = fi.Mode().Perm()
+		}
+	}
+	f.LogsByName["agentry-cafe0000-gateway"] = "- " + name + ": Authorization: Bearer " + remoteAccessToken + "\n"
+
+	env, err := Run(context.Background(), f, p)
+	if err != nil || env.Status != "ok" {
+		t.Fatalf("run: %v (%+v)", err, env)
+	}
+	if tokenFile != remoteAccessToken || mode != 0o600 {
+		t.Fatalf("the bridge's token file holds %q (mode %v), want the access token, 0600", tokenFile, mode)
+	}
+	if strings.Contains(secretsFile, remoteAccessToken) {
+		t.Fatalf("the gateway's secrets file holds the access token:\n%s", secretsFile)
+	}
+	if _, err := os.Stat(filepath.Join(cfg, spec.ConnectionsDir)); !os.IsNotExist(err) {
+		t.Fatalf("the connection folders outlived the run: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(env.Receipts.Dir, "gateway.log"))
+	if err != nil || strings.Contains(string(b), remoteAccessToken) || !strings.Contains(string(b), "Bearer [redacted]") {
+		t.Fatalf("gateway.log = %q (%v)", b, err)
+	}
+	// No container was given it in its environment or its arguments (the
+	// process listing): the file is the only way it travels.
+	for _, c := range f.Calls {
+		blob := c.Arg + " " + strings.Join(c.Run.Argv, " ")
+		for k, v := range c.Run.Env {
+			blob += " " + k + "=" + v
+		}
+		if strings.Contains(blob, remoteAccessToken) {
+			t.Fatalf("a docker call carries the access token: %+v", c)
+		}
+	}
+	// Nothing the run left in its output folder holds it.
+	_ = filepath.WalkDir(p.OutDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if b, _ := os.ReadFile(path); strings.Contains(string(b), remoteAccessToken) { //nolint:gosec // the test's out dir
+				t.Errorf("%s holds the access token", path)
+			}
+		}
+		return nil
+	})
+}
+
+func TestAnOAuthServerWithNoConnectionRefusesTheRunByName(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p, _ = withOAuthServer(p)
+	p.Connections = nil
+	_, err := Run(context.Background(), f, p)
+	if err == nil || !strings.Contains(err.Error(), "https://mcp.linear.app/mcp") {
+		t.Fatalf("a server with no connection must refuse the run naming it: %v", err)
+	}
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy {
+		t.Fatalf("want exit %d, got %v", ExitPolicy, err)
+	}
+}
