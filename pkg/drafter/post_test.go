@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/draftcheck"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // postDraft is a first answer the rules refuse (a choice question with no
@@ -287,5 +291,66 @@ func TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed(t *testing.T) {
 		if got := brokeARule(tc.first, tc.second); got != tc.brokeARule {
 			t.Errorf("%s: brokeARule %v", tc.name, got)
 		}
+	}
+}
+
+// TestADraftThatReadNoPageIsStillHeld (plan drafter-knowledge.md §4.3;
+// agentry-cli#659): the rules that moved from AGENT.md into the guide are
+// still the post-step's, whatever the model read. A first answer from a
+// model that called no knowledge tool (its receipts hold no gateway log)
+// and breaks a rule of each moved page (a bound of manifest/manifest.md,
+// a command off manifest/exec.md's list, a choice question without
+// choices from manifest/intake-and-guide.md, a pin whose runtime range
+// servers/mcp-servers.md excludes) goes to the repair turn with a line for
+// each.
+func TestADraftThatReadNoPageIsStillHeld(t *testing.T) {
+	out := t.TempDir()
+	broken := strings.Replace(postDraft, `"summary": "Turns meeting notes into decisions and action items."`,
+		`"summary": "`+strings.Repeat("Turns meeting notes into decisions. ", 6)+`"`, 1)
+	// A version no registry publishes, given a range no run admits.
+	broken = withServer(broken, "99.0.0")
+	broken = strings.Replace(broken, `"exec": "none"`, `"exec": {"commands": ["curl"]}`, 1)
+	var tasks []string
+	p := PostStep{
+		OutDir: out, Description: "Summarize my notes.", Task: "Summarize my notes.",
+		Scan: webscan.Result{Verdict: webscan.Pass}, Ref: Namespace + "/" + Name + "@" + Version, Checker: &postChecker{},
+		Servers: fakeServers(map[string]string{"99.0.0": ">=26.0.0"}),
+		Repair: func(_ context.Context, rt RepairTurn) (*receipt.Envelope, error) {
+			tasks = append(tasks, rt.Task)
+			return &receipt.Envelope{Status: "ok", Result: json.RawMessage(postRepaired)}, nil
+		},
+	}
+	first := firstTurn(t, out, broken)
+	if _, err := os.Stat(filepath.Join(out, "receipts", "gateway.log")); !os.IsNotExist(err) {
+		t.Fatalf("the first turn has a gateway log: %v", err)
+	}
+	if _, _, err := p.Run(context.Background(), first, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("%d repair turn(s)", len(tasks))
+	}
+	_, report, ok := strings.Cut(tasks[0], "## The rules' report")
+	if !ok {
+		t.Fatalf("the repair task carries no rules' report:\n%s", tasks[0])
+	}
+	for _, want := range []string{
+		// manifest/intake-and-guide.md
+		"- V10 intake[0].choices: ",
+		// manifest/exec.md's list
+		"- capabilities.exec: curl: not a command every machine provides",
+		// servers/mcp-servers.md's runtime range
+		"- capabilities.mcpServers[0]: npm:@cyanheads/osv-advisory-mcp-server@99.0.0: it needs Node >=26.0.0 (its engines.node), and runs use Node " +
+			policy.DefaultNodeVersion,
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the rules' report does not say %q:\n%s", want, report)
+		}
+	}
+	// manifest/manifest.md's bounds are held before the rules run: the
+	// summary was shortened at a word, within its bound.
+	m := regexp.MustCompile(`"summary": "([^"]*)"`).FindStringSubmatch(report)
+	if m == nil || utf8.RuneCountInString(m[1]) > manifest.MaxSummaryChars || !strings.HasSuffix(m[1], "…") {
+		t.Errorf("the summary the repair turn is given: %q", m)
 	}
 }

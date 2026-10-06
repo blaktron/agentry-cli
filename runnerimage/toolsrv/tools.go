@@ -559,6 +559,11 @@ func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
 
 // ---- fetch ----
 
+// FetchTimeout is how long fetch waits for one request, redirects
+// included, before it gives up. The Drafter's guide states it (its runtime
+// facts are generated from it).
+const FetchTimeout = 60 * time.Second
+
 func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 	var a struct {
 		URL     string            `json:"url"`
@@ -641,7 +646,7 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		}
 	}
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: FetchTimeout,
 		// Redirects re-run the host gate hop by hop: an allowlisted host
 		// must not be usable as a bounce toward one that is not. This is
 		// the only place redirects are validated (spec.go Fetch comment);

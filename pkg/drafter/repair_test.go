@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,7 +203,7 @@ func TestRepaired(t *testing.T) {
 		"## Corrected after drafting\n\nThe draft broke a rule in a way that needed no judgement, so it was corrected before the rules checked it:\n\n" +
 		"- modes: \"autonomous\" was named twice, so the second was dropped.\n\n" +
 		"## Repaired once\n\nThe rules refused the Drafter's first answer, so it was given their report and its own manifest and instructions, " +
-		"and nothing else, for one more turn without its web tools. This draft is its second answer. What the rules said of the first:\n\n" +
+		"and nothing else but its drafting guide, for one more turn without its web tools. This draft is its second answer. What the rules said of the first:\n\n" +
 		"- V10 intake[0].choices: type choice requires at least one choice\n\n" +
 		"## Withheld by AI Review\n\nThe Drafter was given the address and the reason for each of these, never the text:\n\n" +
 		"- https://WITHHELD-MARKER.example/ (web_read): AI Review flagged it (injection)\n"
@@ -240,37 +239,52 @@ func TestRepaired(t *testing.T) {
 	}
 }
 
+// maxNameChars is the longest name the core's pattern admits, which the
+// guide states.
+const maxNameChars = 65
+
 // TestTheInstructionStatesItsBoundsByValue: the instruction teaches the
-// model the numbers the rules use, and its own caps (plan
-// builder-simplify.md §5.1, D8), each held equal to where it is enforced.
+// model its own caps (plan builder-simplify.md §5.1, D8), and the guide the
+// numbers the rules use (plan drafter-knowledge.md D11; agentry-cli#659),
+// each held equal to where it is enforced, in the file that now carries it.
 func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
-	raw, err := fs.ReadFile(FS(), "AGENT.md")
-	if err != nil {
-		t.Fatal(err)
+	headings := make([]string, 0, len(instructionShape))
+	for _, h := range instructionShape {
+		headings = append(headings, "`"+h+"`")
 	}
-	text := strings.Join(strings.Fields(string(raw)), " ")
-	for _, want := range []string{
-		fmt.Sprintf("`summary`: one line of at most %d characters", manifest.MaxSummaryChars),
-		fmt.Sprintf("`tags`: at most %d, each named once", manifest.MaxTags),
-		fmt.Sprintf("`guide.overview`: at most %s bytes", thousands(manifest.MaxGuideOverviewBytes)),
-		fmt.Sprintf("`guide.prepare`: each item one line of at most %d characters", manifest.MaxGuidePrepareChars),
-		fmt.Sprintf("`guide.files`: one line of at most %d characters", manifest.MaxGuideFilesChars),
-		fmt.Sprintf("`guide.task`: one line of at most %d characters", manifest.MaxGuideTaskChars),
-		fmt.Sprintf("`guide.connect`: each key's help at most %s characters", thousands(manifest.MaxGuideConnectChars)),
-		fmt.Sprintf("`interactive.opening`: at most %d characters", manifest.MaxOpeningChars),
-		fmt.Sprintf("Intake questions: **at most %d**", MaxIntake),
-		fmt.Sprintf("`prepare`: **at most %d** short items", MaxPrepare),
-		fmt.Sprintf("`openQuestions`: **at most %d**", MaxOpenQuestions),
-		fmt.Sprintf("The notes: **at most %d short bullets**", MaxNoteBullets),
-		fmt.Sprintf("`prepare` (at most %d things to gather first)", MaxPrepare),
-		fmt.Sprintf("at most %d short Markdown bullets", MaxNoteBullets),
-		fmt.Sprintf("`openQuestions`: at most %d (above)", MaxOpenQuestions),
-		fmt.Sprintf("**at most %s bytes**", thousands(MaxInstructionBytes)),
-		fmt.Sprintf("When the report names an instruction file past %s bytes", thousands(MaxInstructionBytes)),
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the instruction does not state %q", want)
-		}
+	mustSay(t, map[string][]string{
+		instructionFile: append([]string{
+			fmt.Sprintf("Intake questions: **at most %d**", MaxIntake),
+			fmt.Sprintf("`prepare`: **at most %d** short items", MaxPrepare),
+			fmt.Sprintf("`openQuestions`: **at most %d**", MaxOpenQuestions),
+			fmt.Sprintf("The notes: **at most %d short bullets**", MaxNoteBullets),
+			fmt.Sprintf("at most %d short Markdown bullets", MaxNoteBullets),
+			fmt.Sprintf("`openQuestions`: at most %d (above)", MaxOpenQuestions),
+			fmt.Sprintf("**at most %s bytes**", thousands(MaxInstructionBytes)),
+			fmt.Sprintf("When the report names an instruction file past %s bytes", thousands(MaxInstructionBytes)),
+		}, headings...),
+		"manifest/manifest.md": {
+			fmt.Sprintf("`summary`: one line of at most %d characters", manifest.MaxSummaryChars),
+			fmt.Sprintf("`tags`: at most %d, each named once", manifest.MaxTags),
+			fmt.Sprintf("`guide.overview`: at most %s bytes", thousands(manifest.MaxGuideOverviewBytes)),
+			fmt.Sprintf("`guide.prepare`: each item one line of at most %d characters", manifest.MaxGuidePrepareChars),
+			fmt.Sprintf("`guide.files`: one line of at most %d characters", manifest.MaxGuideFilesChars),
+			fmt.Sprintf("`guide.task`: one line of at most %d characters", manifest.MaxGuideTaskChars),
+			fmt.Sprintf("`guide.connect`: each key's help at most %s characters", thousands(manifest.MaxGuideConnectChars)),
+			fmt.Sprintf("`interactive.opening`: at most %d characters", manifest.MaxOpeningChars),
+			fmt.Sprintf("`capabilities.mcpServers`: at most %d servers", manifest.MaxMCPServers),
+			fmt.Sprintf("`knowledge.accepts.prompt`: one line of at most %d characters", manifest.MaxKnowledgePromptChars),
+			fmt.Sprintf("at most %d characters, starting and ending with a letter or a digit", maxNameChars),
+		},
+		"manifest/intake-and-guide.md": {fmt.Sprintf("`prepare` (at most %d things to gather first)", MaxPrepare)},
+		// Where another page repeats a bound, it is held there too.
+		"manifest/knowledge-accepts.md": {fmt.Sprintf("one plain line of at most %d characters", manifest.MaxKnowledgePromptChars)},
+		"manifest/run-modes.md":         {fmt.Sprintf("at most %d characters", manifest.MaxOpeningChars)},
+		"draft/instructions.md":         append([]string{fmt.Sprintf("**at most %s bytes**", thousands(MaxInstructionBytes))}, headings...),
+	})
+	// The name's bound is the core's name pattern.
+	if !manifest.ValidName(strings.Repeat("a", maxNameChars)) || manifest.ValidName(strings.Repeat("a", maxNameChars+1)) {
+		t.Errorf("a name of %d characters is not the core's bound", maxNameChars)
 	}
 	// The caps are the Drafter's, inside the rules' bounds.
 	if MaxIntake > manifest.MaxIntakeQuestions || MaxPrepare > manifest.MaxGuidePrepare {
@@ -281,11 +295,6 @@ func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
 	// one is read and repaired rather than lost.
 	if MaxInstructionBytes != corejudge.DraftMaxInstruction || MaxInstructionBytes >= maxInstructions {
 		t.Errorf("the instruction cap %d, the check's bound %d, the report bound %d", MaxInstructionBytes, corejudge.DraftMaxInstruction, maxInstructions)
-	}
-	for _, h := range instructionShape {
-		if !strings.Contains(text, "`"+h+"`") {
-			t.Errorf("the instruction does not teach the heading %s", h)
-		}
 	}
 }
 

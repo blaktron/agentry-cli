@@ -48,23 +48,33 @@ draft starts. What a scan flagged is withheld, and the notes name it.
 
 The Drafter ships a knowledge pack of its own, `drafting-guide`, under
 `knowledge/drafting-guide/` in this release, declared in `knowledge.ships`.
-It covers how a QuickAgent run works and what a declared MCP server meets
-in the runner: musl runtimes, no install scripts, no launch arguments,
-stdio only, none of the run's files, and only port 443 to its declared
-hosts. It also has a checklist for a server before it is pinned, and two
-lists of servers: *Runs here*, the servers a survey saw install, start and
-list their tools in the runner, and *Does not run here*, the ones it saw
-fail, each with the reason, the runtime and the date. The lists are one
-thing for the Drafter to look at, not a judgement of any server's safety or
-quality (`knowledge/drafting-guide/sources/servers.yaml`; the survey is
-`scripts/mcp-server-survey` in the CLI's repository). The runner
-attaches it to every run of the Drafter, through the same knowledge tools,
-the repair turn included. It is part of this release, so the registry
-scans it with the published release. It is not one of your packs and does
-not count against a draft's limit of packs, but a pack of yours with the
-same name is refused. An
-install of this release from the registry is an ordinary QuickAgent and
-carries the pack like any release that ships one.
+It covers how a QuickAgent run works and what a declared MCP server meets in
+the runner: musl runtimes, no install scripts, no launch arguments, stdio
+only, none of the run's files, and only port 443 to its declared hosts. It
+also has a checklist for a server before it is pinned, and two lists of
+servers: *Runs here*, the servers a survey saw install, start and list their
+tools in the runner, and *Does not run here*, the ones it saw fail, each
+with the reason, the runtime and the date. The lists are one thing for the
+Drafter to look at, not a judgement of any server's safety or quality
+(`knowledge/drafting-guide/sources/servers.yaml`; the survey is
+`scripts/mcp-server-survey` in the CLI's repository).
+
+Since 1.8.2 the guide also holds the reference the Drafter's instruction
+used to carry on every turn: every field of the manifest and the rules'
+bounds, the commands every run provides, the network and the `fetch` tool,
+the intake and the guide, run modes, a person's knowledge at run time, how
+to write a QuickAgent's instructions, and three worked drafts. `AGENT.md`
+keeps the role, the rules for deciding, the steps, each naming the pages it
+needs, and the shape of the answer. The checks after a draft hold every rule
+they check, whatever the Drafter read.
+
+The runner attaches the guide to every run of the Drafter, through the same
+knowledge tools, the repair turn included. It is part of this release, so
+the registry scans it with the published release. It is not one of your
+packs and does not count against a draft's limit of packs, but a pack of
+yours with the same name is refused. An install of this release from the
+registry is an ordinary QuickAgent and carries the pack like any release
+that ships one.
 
 ## What it returns
 

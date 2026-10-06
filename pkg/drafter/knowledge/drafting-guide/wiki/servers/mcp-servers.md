@@ -37,6 +37,14 @@ First look the server up on the two lists, [Runs here](runs-here.md) and [Does n
 - **Results that look like credentials are blocked.** The runner replaces a tool result that looks like it holds a key or a token with an error. A server whose results echo tokens or carry key-shaped strings fails on those calls.
 - **Limits.** Each container gets the memory and CPU limits in [the numbers](#the-numbers), by default, and on Linux the process limit too [src: doc:runtime-facts.md].
 
+## Pinning it
+
+- **An exact version** you read from the package registry (`https://registry.npmjs.org/<package>/latest`, `https://pypi.org/pypi/<package>/json`), never a range and never `latest`. The pin is part of the release [src: web:https://docs.secureagentry.net/quickagents/].
+- **A version that runs where the runs put it:** npm servers run on Node 24.21.0 and PyPI servers on Python 3.12.14. Read the version's `engines.node` (npm) or `info.requires_python` (PyPI) in the same metadata. When it excludes that Node or Python, take the newest version whose range admits it (`https://registry.npmjs.org/<package>` lists every version with its `engines`), or another server [src: doc:runtime-facts.md].
+- **The registry's check of that version,** read with `registry_search` (`ecosystem`, `package`, `version`), below.
+- **Only the tools the task calls,** in `tools`, by their exact names from the server's documentation or its entry on [Runs here](runs-here.md).
+- **Its hosts, keys and settings on the server's own entry:** `egress` (exact hosts, never `"*"`), `secrets` (the names it reads its keys from) and `env` (plain settings, never a key). Prefer a server that needs no key, and one whose hosts you can name.
+
 ## Before a run
 
 At most eight servers. The registry looks every declared version up in OSV, and `registry_search` (with `ecosystem`, `package` and `version`) reads its answer. A version with an advisory the registry's gate rates high or critical is refused before a run starts, and a run In Agentry has no way past that. Prefer a version with no known advisories [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/runner/].
