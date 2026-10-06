@@ -73,6 +73,11 @@ type Draft struct {
 	// whose metadata could not be read (checkServers).
 	serverProblems   []string
 	serversUnchecked []string
+	// serverSigns are what to check before a run, and serversAdmitted what
+	// admitted each server with no problem: a Runs here entry or the
+	// Drafter's judgement (checkServers, agentry-cli#660).
+	serverSigns     []string
+	serversAdmitted []string
 }
 
 // Match is a published QuickAgent that does the task, or most of it.

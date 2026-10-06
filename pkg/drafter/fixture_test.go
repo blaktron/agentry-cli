@@ -100,6 +100,14 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 		if s.Version == "" || strings.ContainsAny(s.Version, "^~*<> ") || s.Version == "latest" {
 			out = append(out, fmt.Sprintf("server %s is not pinned at an exact version (%q)", s.SourceID(), s.Version))
 		}
+		// The post-step's list check (agentry-cli#660) has had its say by
+		// now; a pin it covers that is still here is the bench's to count.
+		if l, err := serverList(); err == nil && !s.IsRemote() {
+			eco, pkg := packageOf(s)
+			if e, ok := l.NotRunHere(eco, pkg, s.Version); ok {
+				out = append(out, fmt.Sprintf("server %s@%s is on Does not run here (%s)", s.SourceID(), s.Version, e.Reason))
+			}
+		}
 	}
 	for _, h := range hosts {
 		switch {
