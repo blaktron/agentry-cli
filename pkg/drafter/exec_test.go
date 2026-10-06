@@ -26,9 +26,9 @@ func execManifest(exec string, files bool) json.RawMessage {
 }
 
 // TestExecProblems is the Drafter's rule on exec (agentry-cli#595): only
-// the commands every machine provides, and an archive reader only in a
-// QuickAgent that takes input files (guide.files, or an intake question of
-// type file).
+// the commands every machine provides, and never an archive reader, since
+// the runner unpacks every archive before the run (agentry-cli#634, DR-64
+// amended), whether or not the QuickAgent takes input files.
 func TestExecProblems(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -39,10 +39,10 @@ func TestExecProblems(t *testing.T) {
 		{"no exec at all", json.RawMessage(`{"name": "x"}`), nil},
 		{"a manifest that does not parse", json.RawMessage(`{`), nil},
 		{"base commands", execManifest(`{"commands": ["grep", "sha256sum"]}`, false), nil},
-		{"tar with input files", execManifest(`{"commands": ["tar", "grep"]}`, true), nil},
-		{"tar with a file question", json.RawMessage(`{"intake": [{"id": "src", "type": "file"}], "capabilities": {"exec": {"commands": ["unzip"]}}}`), nil},
+		{"tar with input files", execManifest(`{"commands": ["tar", "grep"]}`, true), []string{"capabilities.exec: tar: reads archives, which the runner unpacks"}},
+		{"unzip with a file question", json.RawMessage(`{"intake": [{"id": "src", "type": "file"}], "capabilities": {"exec": {"commands": ["unzip"]}}}`), []string{"capabilities.exec: unzip: reads archives"}},
 		{"tar without input files", execManifest(`{"commands": ["tar", "grep"]}`, false), []string{"capabilities.exec: tar: reads archives"}},
-		{"the operator's case", execManifest(`{"commands": ["tar", "trivy", "curl"]}`, true), []string{"capabilities.exec: trivy, curl: not a command every machine provides"}},
+		{"the operator's case", execManifest(`{"commands": ["tar", "trivy", "curl"]}`, true), []string{"capabilities.exec: trivy, curl: not a command every machine provides", "capabilities.exec: tar: reads archives"}},
 		{"both", execManifest(`{"commands": ["sh", "unzip"]}`, false), []string{"capabilities.exec: sh: not a command", "capabilities.exec: unzip: reads archives"}},
 	} {
 		got := execProblems(tc.raw)
@@ -80,8 +80,8 @@ func TestTheGuideListsTheBaseCommands(t *testing.T) {
 	if want := policy.BaseExecCommands(); !slices.Equal(listed, want) {
 		t.Fatalf("manifest/exec.md lists %v,\nthe runner provides %v", listed, want)
 	}
-	// The archive readers' rule moved with the list.
-	mustSay(t, map[string][]string{"manifest/exec.md": {"only when the QuickAgent takes input files", "A command can write only under `/tmp`"}})
+	// The rule on reading inputs moved with the list (agentry-cli#634).
+	mustSay(t, map[string][]string{"manifest/exec.md": {"Commands are for computation the tools cannot do, never for reading the person's files.", "never declares `tar`, `unzip`", "Only beneath `/tmp`"}})
 }
 
 // TestADraftDeclaringAnUnprovidedCommandGetsTheRepairTurn: the post-step
@@ -112,7 +112,7 @@ func TestADraftDeclaringAnUnprovidedCommandGetsTheRepairTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) != 1 || !strings.Contains(tasks[0], "- capabilities.exec: tar: reads archives, but the QuickAgent takes no input files") {
+	if len(tasks) != 1 || !strings.Contains(tasks[0], "- capabilities.exec: tar: reads archives, which the runner unpacks before the run") {
 		t.Fatalf("the repair task(s):\n%.800s", strings.Join(tasks, "\n---\n"))
 	}
 	// Both answers break the rule, so the second stands, and its notes

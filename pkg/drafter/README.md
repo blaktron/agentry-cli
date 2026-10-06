@@ -79,6 +79,16 @@ guide for a server on neither list. The lists stay soft: nothing outside
 the Drafter reads them, and a server on neither list may be pinned. The
 check sends nothing new off your computer.
 
+Since 1.9.0 the guide teaches how a QuickAgent takes its files: every input
+is read in its text or as uploaded, the runner unpacks archives, and the
+manifest's `inputs` block says what kinds of file to bring and which view
+to read first. A draft that takes files declares the block, writes
+`guide.files` to match, and declares no command to read its inputs. The
+checks after a draft correct the block's slips (a kind in the singular,
+`any` beside named kinds, the block under `capabilities`) and send any
+archive reader to the repair turn. A release that declares the block needs
+CLI v0.6.73 or later to run; an older CLI refuses its manifest.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

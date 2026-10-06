@@ -9,30 +9,23 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// archiveReaders are the base commands that read archives. A draft
-// declares one only when its QuickAgent takes input files (the operator,
-// 2026-10-03; agentry-cli#595): the archive is one of them.
+// archiveReaders are the base commands that read archives. A draft never
+// declares one: the runner unpacks every archive before the run, and the
+// input tools read each file in it (DR-64 amended by agentry-cli#634;
+// plan quickagents-that-run.md M7). Exec is for computation the tools
+// cannot do, never for reading inputs.
 var archiveReaders = []string{"tar", "unzip", "gunzip", "bunzip2", "unxz", "zcat", "bzcat", "xzcat"}
-
-// intakeType is an intake question as far as execProblems reads it.
-type intakeType struct {
-	Type string `json:"type"`
-}
 
 // execProblems is the Drafter's rule on exec, one line each: a declared
 // command that is not one every machine provides (policy.BaseExecCommands),
-// which a run would refuse at plan time, and an archive reader in a
-// QuickAgent that takes no input files. Nil when the draft declares no
+// which a run would refuse at plan time, and an archive reader, which only
+// reads what the runner already unpacked. Nil when the draft declares no
 // commands, or its manifest does not parse (validate says so).
 func execProblems(raw json.RawMessage) []string {
 	var m struct {
 		Capabilities struct {
 			Exec json.RawMessage `json:"exec"`
 		} `json:"capabilities"`
-		Guide struct {
-			Files string `json:"files"`
-		} `json:"guide"`
-		Intake []intakeType `json:"intake"`
 	}
 	var exec struct {
 		Commands []string `json:"commands"`
@@ -42,14 +35,12 @@ func execProblems(raw json.RawMessage) []string {
 		return nil
 	}
 	base := policy.BaseExecCommands()
-	takesFiles := strings.TrimSpace(m.Guide.Files) != "" ||
-		slices.Contains(m.Intake, intakeType{Type: "file"})
 	var foreign, archives []string
 	for _, c := range exec.Commands {
 		switch {
 		case !slices.Contains(base, c):
 			foreign = append(foreign, c)
-		case !takesFiles && slices.Contains(archiveReaders, c):
+		case slices.Contains(archiveReaders, c):
 			archives = append(archives, c)
 		}
 	}
@@ -59,7 +50,7 @@ func execProblems(raw json.RawMessage) []string {
 			strings.Join(foreign, ", "), strings.Join(base, ", ")))
 	}
 	if len(archives) > 0 {
-		out = append(out, fmt.Sprintf("capabilities.exec: %s: reads archives, but the QuickAgent takes no input files (no guide.files, no intake question of type file); leave it out",
+		out = append(out, fmt.Sprintf("capabilities.exec: %s: reads archives, which the runner unpacks before the run, each file in them read through the input tools; leave it out",
 			strings.Join(archives, ", ")))
 	}
 	return out

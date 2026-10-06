@@ -51,6 +51,12 @@ type Expect struct {
 	// something only the person knows.
 	Intake bool `json:"intake,omitempty"`
 	Open   bool `json:"open,omitempty"`
+	// InputKinds are kinds the draft's inputs block must declare, so the
+	// block is required; InputViews are the views a declared block may
+	// choose, checked only when there is one (agentry-cli#634). Neither is
+	// checked when empty.
+	InputKinds []string `json:"inputKinds,omitempty"`
+	InputViews []string `json:"inputViews,omitempty"`
 }
 
 // LoadFixtures reads the fixture set, sorted by id.
@@ -128,6 +134,19 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	}
 	if !e.Write && c.Filesystem.Write.Mode != "" && c.Filesystem.Write.Mode != manifest.FSModeNone {
 		out = append(out, fmt.Sprintf("declares a filesystem write (%s)", c.Filesystem.Write.Mode))
+	}
+	if m.Inputs == nil && len(e.InputKinds) > 0 {
+		out = append(out, "no inputs block")
+	}
+	if m.Inputs != nil {
+		for _, k := range e.InputKinds {
+			if !slices.Contains(m.Inputs.Kinds, manifest.InputKind(k)) {
+				out = append(out, fmt.Sprintf("inputs.kinds %v, want %s among them", m.Inputs.Kinds, k))
+			}
+		}
+		if len(e.InputViews) > 0 && !slices.Contains(e.InputViews, string(m.Inputs.View)) {
+			out = append(out, fmt.Sprintf("inputs.view %q, want one of %v", m.Inputs.View, e.InputViews))
+		}
 	}
 	if e.Intake && len(m.Intake) == 0 {
 		out = append(out, "no intake question")

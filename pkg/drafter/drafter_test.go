@@ -357,6 +357,24 @@ func TestTheFixtureSet(t *testing.T) {
 			t.Errorf("shape check missed %q: %s", want, got)
 		}
 	}
+	// The inputs block (agentry-cli#634): wanted and absent, the wrong
+	// kind, a view outside the ones allowed.
+	m2, _ := manifest.Parse(yml)
+	inputs := Expect{Modes: []string{"autonomous"}, InputKinds: []string{"code"}, InputViews: []string{"original"}}
+	if got := strings.Join(CheckShape(m2, d, inputs), "; "); !strings.Contains(got, "no inputs block") {
+		t.Errorf("shape check missed the absent inputs block: %s", got)
+	}
+	m2.Inputs = &manifest.Inputs{Kinds: []manifest.InputKind{manifest.InputKindDocuments}, View: manifest.InputViewText}
+	got = strings.Join(CheckShape(m2, d, inputs), "; ")
+	for _, want := range []string{"want code among them", `inputs.view "text", want one of [original]`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("shape check missed %q: %s", want, got)
+		}
+	}
+	m2.Inputs = &manifest.Inputs{Kinds: []manifest.InputKind{manifest.InputKindCode}, View: manifest.InputViewOriginal}
+	if got := CheckShape(m2, d, inputs); len(got) != 0 {
+		t.Errorf("the expected inputs block was flagged: %v", got)
+	}
 	// The Drafter's caps and the instruction's shape.
 	m.Intake = make([]manifest.IntakeQuestion, MaxIntake+1)
 	m.Guide.Prepare = make([]string, MaxPrepare+1)
