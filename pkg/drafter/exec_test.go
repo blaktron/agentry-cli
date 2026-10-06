@@ -63,25 +63,25 @@ func TestExecProblems(t *testing.T) {
 	}
 }
 
-// TestTheInstructionListsTheBaseCommands: the Drafter is told exactly the
-// commands a run provides, so the list in AGENT.md and the runner's cannot
-// drift apart.
-func TestTheInstructionListsTheBaseCommands(t *testing.T) {
-	b, err := os.ReadFile("AGENT.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := regexp.MustCompile(`(?s)which every run provides \(a\s+run refuses any other\):(.*?)\. No shell`).FindSubmatch(b)
+// TestTheGuideListsTheBaseCommands: the Drafter is told exactly the
+// commands a run provides, by its guide's page on commands since the list
+// moved there (agentry-cli#659), so the list it reads and the runner's
+// cannot drift apart.
+func TestTheGuideListsTheBaseCommands(t *testing.T) {
+	b := heldText(t, "manifest/exec.md")
+	m := regexp.MustCompile(`which every run provides \(a run refuses any other\):(.*?)\. No shell`).FindStringSubmatch(b)
 	if m == nil {
-		t.Fatal("AGENT.md does not list the commands every run provides")
+		t.Fatal("manifest/exec.md does not list the commands every run provides")
 	}
 	var listed []string
-	for _, c := range regexp.MustCompile("`([a-z0-9]+)`").FindAllSubmatch(m[1], -1) {
-		listed = append(listed, string(c[1]))
+	for _, c := range regexp.MustCompile("`([a-z0-9]+)`").FindAllStringSubmatch(m[1], -1) {
+		listed = append(listed, c[1])
 	}
 	if want := policy.BaseExecCommands(); !slices.Equal(listed, want) {
-		t.Fatalf("AGENT.md lists %v,\nthe runner provides %v", listed, want)
+		t.Fatalf("manifest/exec.md lists %v,\nthe runner provides %v", listed, want)
 	}
+	// The archive readers' rule moved with the list.
+	mustSay(t, map[string][]string{"manifest/exec.md": {"only when the QuickAgent takes input files", "A command can write only under `/tmp`"}})
 }
 
 // TestADraftDeclaringAnUnprovidedCommandGetsTheRepairTurn: the post-step

@@ -11,6 +11,10 @@ Generated from the Agentry CLI's code by its tests; do not edit by hand. These a
 - A QuickAgent declares at most 8 MCP servers.
 - A server's declared hosts are reached on TCP port 443 only; with none declared it has no network.
 
+## The fetch tool
+
+- `fetch` returns at most 512 KiB of a response's body, and gives up on a request after 60 seconds.
+
 ## Each container's limits
 
 - Memory 2g and 1 CPU; on Linux, also at most 512 processes.

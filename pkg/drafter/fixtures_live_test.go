@@ -29,14 +29,14 @@ func TestTheFixtureRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	b.WriteString("| Fixture | Exit | validate | Corrected | Repaired | Shape | Instruction | off_task | Rubric | Turns | Input tokens | Output tokens | Credits | Wall | Pages | Registry | Searches | Read | Withheld | Scan requests | Scan input tokens |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| Fixture | Exit | validate | Corrected | Repaired | Shape | Instruction | off_task | Rubric | Turns | Input tokens | Output tokens | Credits | Wall | Pages | Registry | Searches | Read | Withheld | Scan requests | Scan input tokens | Guide calls |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, f := range fx {
 		dir := filepath.Join(root, f.ID)
 		var env receipt.Envelope
 		raw, err := os.ReadFile(filepath.Join(dir, "result.json"))
 		if err != nil {
-			fmt.Fprintf(&b, "| %s | not run | | | | | | | | | | | | | | | | | | | |\n", f.ID)
+			fmt.Fprintf(&b, "| %s | not run | | | | | | | | | | | | | | | | | | | | |\n", f.ID)
 			continue
 		}
 		if err := json.Unmarshal(raw, &env); err != nil {
@@ -98,10 +98,11 @@ func TestTheFixtureRuns(t *testing.T) {
 				u.WallMS += r.Usage.WallMS
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %d %s | %s | %d | %s | %s | %d | %s | %s | %d | %d | %d | %d | %ds | %d | %d | %d | %d | %d | %d | %d |\n",
+		fmt.Fprintf(&b, "| %s | %d %s | %s | %d | %s | %s | %d | %s | %s | %d | %d | %d | %d | %ds | %d | %d | %d | %d | %d | %d | %d | %d |\n",
 			f.ID, env.ExitCode, env.ExitClass, valid, corrected, repaired, shape, instBytes, offTask, rubric,
 			u.Turns, u.InputTokens, u.OutputTokens, tokenCredits(u.InputTokens, u.OutputTokens), u.WallMS/1000,
-			w.Pages, w.RegistryCalls, w.Searches, w.Read, w.Withheld+w.NotScanned, w.ScanRequests, w.ScanInputTokens)
+			w.Pages, w.RegistryCalls, w.Searches, w.Read, w.Withheld+w.NotScanned, w.ScanRequests, w.ScanInputTokens,
+			knowledgeCalls(dir)+knowledgeCalls(filepath.Join(dir, "repair")))
 	}
 	t.Log("\n" + b.String())
 }
@@ -160,4 +161,15 @@ func sectionBullets(notes, heading string) int {
 		rest = rest[:j]
 	}
 	return strings.Count(rest, "\n- ")
+}
+
+// knowledgeCalls counts the knowledge tool calls (the drafting guide's and
+// any pack's the person gave) in the gateway log of the run whose output
+// folder is dir; 0 when it kept none.
+func knowledgeCalls(dir string) int {
+	b, err := os.ReadFile(filepath.Join(dir, "receipts", "gateway.log")) //nolint:gosec // a bench result folder
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(b), "- Calling tool knowledge_")
 }
