@@ -2,6 +2,7 @@ package mcpinstall
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -308,8 +310,8 @@ func TestChooseConsoleScript(t *testing.T) {
 			t.Errorf("chooseConsoleScript(%q, %v) = %q,%v want %q,%v", c.pkg, c.names, got, ok, c.want, c.ok)
 		}
 	}
-	if normalizePyPIName("Mcp__Server.Fetch-") != "mcp-server-fetch" {
-		t.Fatal(normalizePyPIName("Mcp__Server.Fetch-"))
+	if NormalizePyPIName("Mcp__Server.Fetch-") != "mcp-server-fetch" {
+		t.Fatal(NormalizePyPIName("Mcp__Server.Fetch-"))
 	}
 }
 
@@ -800,5 +802,70 @@ func TestRemoteServersAreSpecsNotPackages(t *testing.T) {
 	}
 	if !specs[0].Remote() || specs[0].Ref() != "https://api.githubcopilot.com/mcp/readonly" || specs[0].RemoteHost() != "api.githubcopilot.com" || !specs[0].SendsBearer() {
 		t.Fatalf("spec helpers: %+v", specs[0])
+	}
+}
+
+// The Drafter's server check reads a release's direct dependencies and
+// install scripts from the one metadata request a resolution already makes
+// (agentry-cli#660; DR-67: what leaves the machine does not grow).
+func TestResolveAllReadsDependenciesFromItsOneRequest(t *testing.T) {
+	var requests atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /dep-server/2.0.0", func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"name":"dep-server","bin":"cli.js","dependencies":{"zod":"^3","puppeteer":"^22"},
+		  "peerDependencies":{"playwright":"*","sharp":"*"},"peerDependenciesMeta":{"sharp":{"optional":true}},
+		  "scripts":{"build":"tsc","postinstall":"node fetch-browser.js","install":" ","preinstall":["odd"]},"dist":{"tarball":"t","integrity":"sha512-CCC"}}`))
+	})
+	// An old packument's odd shapes read as empty, never a failed resolution.
+	mux.HandleFunc("GET /old-server/0.1.0", func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"name":"old-server","bin":"cli.js","dependencies":["zod"],"scripts":"make","peerDependencies":null,"dist":{"tarball":"t","integrity":"sha512-DDD"}}`))
+	})
+	mux.HandleFunc("GET /pypi/Markitdown_MCP/0.0.1a7/json", func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"info":{"requires_dist":[
+		  "markitdown[all]>=0.1.1",
+		  "mcp~=1.8.0",
+		  "Onnx.Runtime (>=1.17) ; python_version >= \"3.10\"",
+		  "pytest ; extra == \"test\"",
+		  "mcp>=1"]},
+		  "urls":[{"packagetype":"bdist_wheel","filename":"m-0.0.1a7-py3-none-any.whl","digests":{"sha256":"aa"}}]}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	res, err := ResolveAll(t.Context(), nil, policy.MCPRegistries{NPM: srv.URL, PyPI: srv.URL}, []manifest.MCPServer{
+		decl("dep-server", "", "2.0.0"),
+		decl("", "Markitdown_MCP", "0.0.1a7"),
+		decl("old-server", "", "0.1.0"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 3 {
+		t.Fatalf("%d registry requests for three servers, want one each", got)
+	}
+	if len(res[2].Dependencies) != 0 || len(res[2].InstallScripts) != 0 || res[2].BinName != "old-server" {
+		t.Fatalf("old packument: %+v", res[2])
+	}
+	if got := strings.Join(res[0].Dependencies, ","); got != "playwright,puppeteer,zod" {
+		t.Fatalf("npm dependencies = %q, want dependencies and the peers that are not optional", got)
+	}
+	if got := strings.Join(res[0].InstallScripts, ","); got != "postinstall" {
+		t.Fatalf("npm install scripts = %q, want the non-empty lifecycle scripts only", got)
+	}
+	if got := strings.Join(res[1].Dependencies, ","); got != "markitdown,mcp,onnx-runtime" {
+		t.Fatalf("pypi dependencies = %q, want normalized names without the extras' requirements", got)
+	}
+	if len(res[1].InstallScripts) != 0 {
+		t.Fatalf("pypi install scripts = %v", res[1].InstallScripts)
+	}
+	// Neither is part of the recorded resolution.
+	b, err := json.Marshal(res[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "puppeteer") || strings.Contains(string(b), "postinstall") {
+		t.Fatalf("recorded resolution carries the check's metadata: %s", b)
 	}
 }

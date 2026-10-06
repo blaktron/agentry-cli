@@ -219,11 +219,13 @@ release anyone installs.
    and decodes it before the agent, in the signed, digest-pinned files image
    with no network and every capability dropped. A document ClamAV finds
    refuses the build, naming it, and so does a risky one Hybrid Analysis
-   calls malicious (looked up by its SHA-256 alone, as for a run). PDF uses `pdftotext`; DOCX, ODT, EPUB, RTF and HTML
+   calls malicious (looked up by its SHA-256 alone, as for a run). PDF uses `pdftotext`; DOCX, ODT, EPUB and RTF
    use `pandoc` to GitHub Markdown; images use `tesseract`'s English OCR.
-   XLSX, ODS and CSV become capped Markdown tables; PPTX and ODP become a
-   section per slide. Legacy Office, Outlook mail and other formats use
-   Apache Tika. UTF-8 text and JSON pass as they are; a file no reader can
+   XLSX and ODS become capped Markdown tables; PPTX and ODP become a
+   section per slide. Legacy Office, mail and other formats use
+   Apache Tika. Any other UTF-8 text passes as it is, byte for byte: code,
+   markup (HTML, XML, SVG), configuration and data (CSV, JSON, YAML),
+   told by `file` without starting Tika (agentry-cli#630); a file no reader can
    decode is listed as unread with its reason. An archive is listed as
    unread too: a pack keeps each document as given, and a build does not
    take what an archive holds yet (agentry-cli#619).

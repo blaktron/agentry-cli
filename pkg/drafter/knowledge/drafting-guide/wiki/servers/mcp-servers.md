@@ -3,7 +3,7 @@ title: Declared MCP servers
 type: guide
 summary: What a declared MCP server meets in the runner (how it is installed, started and reached, and what it can reach), what that rules out, and how to check a server before you pin it. Read it before you pin any server.
 sources: [doc:runtime-facts.md, doc:servers.yaml, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.npmjs.com/cli/v11/commands/npm-install, web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json, web:https://pip.pypa.io/en/stable/cli/pip_install/, web:https://peps.python.org/pep-0656/, web:https://packaging.python.org/en/latest/specifications/entry-points/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports]
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 # Declared MCP servers
@@ -12,7 +12,7 @@ A declared MCP server is an npm or PyPI package, pinned at an exact version, tha
 
 Most servers published on npm and PyPI were written for a person's laptop. The runner is not one, and a server that works on a laptop can fail here. Some fail at install. Others install, start, list their tools and then fail on every call. Each point below is how the runner works today. Pin a server only when it passes all of them; otherwise use no server, or `fetch` to exact hosts, or ask for the data as an input file.
 
-First look the server up on the two lists, [Runs here](runs-here.md) and [Does not run here](does-not-run-here.md). They hold what a survey of 50 servers saw in the runner on 2026-10-05: which ones started, listed their tools and answered, and why the others failed. Never pin a server on *Does not run here*. A server on *Runs here* still needs what its entry lists (its keys, its hosts, an `env` setting) and tools that fit the task. For a server on neither list, follow [Judging a server on neither list](#judging-a-server-on-neither-list) [src: doc:servers.yaml].
+First look the server up on the two lists, [Runs here](runs-here.md) and [Does not run here](does-not-run-here.md). They hold what a survey of 50 servers saw in the runner on 2026-10-05: which ones started, listed their tools and answered, and why the others failed. Never pin a server on *Does not run here*, or one whose own dependencies include a package listed at that page's end: the check after you answer sends either to a repair turn, and the notes say what admitted each server you keep. A server on *Runs here* still needs what its entry lists (its keys, its hosts, an `env` setting) and tools that fit the task. For a server on neither list, follow [Judging a server on neither list](#judging-a-server-on-neither-list) [src: doc:servers.yaml].
 
 ## How it is installed
 

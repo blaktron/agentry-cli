@@ -3,7 +3,7 @@ title: What checks a draft
 type: guide
 summary: The checks a draft meets after you answer (the rules, AI Review's check of the finished draft, one repair turn) and the scan that decides whether a submitted QuickAgent publishes, goes to review or is rejected. Today's facts; rewritten when the scan's rules on describing risk change.
 sources: [web:https://docs.secureagentry.net/trust/, web:https://docs.secureagentry.net/agentry/builder/]
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 # What checks a draft
@@ -12,7 +12,7 @@ This page states today's checks. It is rewritten when the scan's rules for instr
 
 ## After you answer
 
-1. **The rules.** The registry's own rules check the manifest, and the Drafter's rules check the rest: the bounds, the six headings and size of the instructions, the commands, and that every MCP server pin is published and runs on the runtime. Small slips (a stray empty field, a duplicate tag) are corrected and named in the notes.
+1. **The rules.** The registry's own rules check the manifest, and the Drafter's rules check the rest: the bounds, the six headings and size of the instructions, the commands, and that every MCP server pin is published, runs on the runtime, and is neither on [Does not run here](../servers/does-not-run-here.md) nor depends directly on a package listed there. An npm install script is a note for the person, not a refusal. The notes say what admitted each server: its *Runs here* entry, or your judgement with this guide. Small slips (a stray empty field, a duplicate tag) are corrected and named in the notes.
 2. **AI Review's check of the finished draft.** It asks whether the draft does the task it was given, and reads the draft against the same rubric the registry's scan uses. A draft read as not doing its task is flagged. Its other findings are notes for the person [src: web:https://docs.secureagentry.net/agentry/builder/].
 3. **One repair turn.** A draft the rules refuse, or AI Review flags as not doing its task, gets one more turn with the report. Your instruction's *A repair turn* says what that turn may change.
 

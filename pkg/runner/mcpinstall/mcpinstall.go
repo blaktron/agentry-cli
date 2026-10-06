@@ -23,6 +23,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -84,6 +86,15 @@ type Resolved struct {
 	// PyPI's requires_python; "" when it declares none (RuntimeMismatch,
 	// agentry-cli#609).
 	DeclaredRuntime string `json:"declaredRuntime,omitempty"`
+	// Dependencies are the release's direct dependencies, by name, as the
+	// metadata the resolution already fetched gives them: npm's
+	// dependencies, PyPI's requires_dist less the extras' (normalized,
+	// PEP 503). InstallScripts are the npm lifecycle scripts an install
+	// would run (preinstall, install, postinstall), which a run's install
+	// skips. Both are read by the Drafter's server check (agentry-cli#660)
+	// and are not part of the recorded resolution.
+	Dependencies   []string `json:"-"`
+	InstallScripts []string `json:"-"`
 }
 
 // SourceID is the declared server's ecosystem-qualified id, as the
@@ -239,7 +250,13 @@ func resolveNPM(ctx context.Context, client *http.Client, registry, pkg, version
 		Name    string          `json:"name"`
 		Bin     json.RawMessage `json:"bin"`
 		Engines json.RawMessage `json:"engines"`
-		Dist    struct {
+		// Read leniently (npmNames): an old packument's odd shape here
+		// must not fail a resolution a run depends on.
+		Dependencies     json.RawMessage `json:"dependencies"`
+		PeerDependencies json.RawMessage `json:"peerDependencies"`
+		PeerMeta         json.RawMessage `json:"peerDependenciesMeta"`
+		Scripts          json.RawMessage `json:"scripts"`
+		Dist             struct {
 			Tarball   string `json:"tarball"`
 			Integrity string `json:"integrity"`
 			Shasum    string `json:"shasum"`
@@ -262,7 +279,57 @@ func resolveNPM(ctx context.Context, client *http.Client, registry, pkg, version
 		ID: sanitizeID("npm", pkg), BinName: bin, Integrity: integrity,
 		FetchHosts:      fetchHosts(registry, meta.Dist.Tarball),
 		DeclaredRuntime: npmEnginesNode(meta.Engines),
+		Dependencies:    npmDirectDependencies(meta.Dependencies, meta.PeerDependencies, meta.PeerMeta),
+		InstallScripts:  npmInstallScripts(meta.Scripts),
 	}, nil
+}
+
+// npmDirectDependencies are the names a plain install pulls in directly:
+// dependencies, and the peer dependencies npm 7 and later install unless
+// peerDependenciesMeta marks them optional. Sorted and unique; a field of
+// another shape than an object reads as empty.
+func npmDirectDependencies(deps, peers, peerMeta json.RawMessage) []string {
+	var optional map[string]struct {
+		Optional bool `json:"optional"`
+	}
+	_ = json.Unmarshal(peerMeta, &optional)
+	seen := map[string]bool{}
+	for name := range npmObject(deps) {
+		seen[name] = true
+	}
+	for name := range npmObject(peers) {
+		if !optional[name].Optional {
+			seen[name] = true
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
+// npmInstallScripts are the lifecycle scripts an npm install would run, in
+// the order it runs them.
+func npmInstallScripts(raw json.RawMessage) []string {
+	scripts := npmObject(raw)
+	var out []string
+	for _, name := range []string{"preinstall", "install", "postinstall"} {
+		var cmd string
+		if json.Unmarshal(scripts[name], &cmd) == nil && strings.TrimSpace(cmd) != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// npmObject is a packument field read as an object; nil for any other
+// shape (an old package's array, a string).
+func npmObject(raw json.RawMessage) map[string]json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	return m
 }
 
 // npmEnginesNode is a packument version's engines.node, or "" when it has
@@ -311,7 +378,8 @@ func npmBinName(pkg string, raw json.RawMessage) (string, error) {
 func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, version string) (Resolved, error) {
 	var meta struct {
 		Info struct {
-			RequiresPython *string `json:"requires_python"`
+			RequiresPython *string  `json:"requires_python"`
+			RequiresDist   []string `json:"requires_dist"`
 		} `json:"info"`
 		URLs []struct {
 			PackageType string `json:"packagetype"`
@@ -368,13 +436,47 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 		// Provisional (DR-11): the JSON API does not expose entry points,
 		// so start from the normalized project name; the builder reads
 		// the real console script from the installed dist (below).
-		BinName:         normalizePyPIName(pkg),
+		BinName:         NormalizePyPIName(pkg),
 		Integrity:       integrity,
 		Artifacts:       artifacts,
 		FetchHosts:      fetchHosts(registry, urls...),
 		DeclaredRuntime: requiresPython(meta.Info.RequiresPython),
+		Dependencies:    pypiDirectDependencies(meta.Info.RequiresDist),
 	}, nil
 }
+
+// pypiDirectDependencies are the project names of a release's
+// requires_dist (PEP 508) that a plain install pulls in: a requirement
+// whose marker names an extra is left out, and every other marker is kept,
+// since the check says what may be installed, not what will. Names are
+// normalized (PEP 503), sorted and unique.
+func pypiDirectDependencies(reqs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, req := range reqs {
+		name, marker, _ := strings.Cut(req, ";")
+		if extraMarker.MatchString(marker) {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		// The name ends where its extras, version or URL begin.
+		if i := strings.IndexAny(name, "[(<>=!~@ \t"); i >= 0 {
+			name = name[:i]
+		}
+		if name == "" {
+			continue
+		}
+		if n := NormalizePyPIName(name); !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// extraMarker matches a PEP 508 marker that names an extra.
+var extraMarker = regexp.MustCompile(`\bextra\s*==`)
 
 func requiresPython(s *string) string {
 	if s == nil {
@@ -675,9 +777,9 @@ func writeArtifactSums(hostDir string, artifacts map[string]string) error {
 // entry_points metadata), read back by adoptConsoleScript.
 const consoleScriptsFile = "console-scripts"
 
-// normalizePyPIName applies PEP 503 normalization: lower-case, with every
+// NormalizePyPIName applies PEP 503 normalization: lower-case, with every
 // run of '-', '_' or '.' collapsed to a single '-'.
-func normalizePyPIName(pkg string) string {
+func NormalizePyPIName(pkg string) string {
 	var b strings.Builder
 	dash := false
 	for _, ch := range strings.ToLower(pkg) {
@@ -709,9 +811,9 @@ func chooseConsoleScript(pkg string, names []string) (name string, ok bool) {
 	if len(clean) == 0 {
 		return "", false
 	}
-	want := normalizePyPIName(pkg)
+	want := NormalizePyPIName(pkg)
 	for _, n := range clean {
-		if normalizePyPIName(n) == want {
+		if NormalizePyPIName(n) == want {
 			return n, true
 		}
 	}

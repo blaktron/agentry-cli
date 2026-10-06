@@ -1,0 +1,15 @@
+{
+  "id": "resume-from-word",
+  "description": "Rebuild my résumé from a Word file: read the .docx résumé I give you, keep every fact in it, and write it again as a clean, well-ordered résumé in Markdown with a short summary at the top.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false
+  }
+}
