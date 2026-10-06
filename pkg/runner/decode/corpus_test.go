@@ -97,9 +97,9 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 		}
 		// HTML also gets pandoc's Markdown as its text view (D2,
 		// agentry-cli#631).
-		wantTool := ""
+		wantBy := ""
 		if f.Path == "index.html" {
-			wantTool = "pandoc"
+			wantBy = "pandoc"
 			md := filepath.Join(t.TempDir(), "view.md")
 			if err := res.CopyMarkdown(f.Path, md); err != nil {
 				t.Fatalf("%s: %v", f.Path, err)
@@ -108,7 +108,7 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 				t.Errorf("%s: the Markdown view %q", f.Path, b)
 			}
 		}
-		if f.Family != runnerdecode.FamilyText || f.Outcome != runnerdecode.OutcomeText || f.Tool != wantTool {
+		if f.Family != runnerdecode.FamilyText || f.Outcome != runnerdecode.OutcomeText || f.Tool != "" || f.MarkdownBy != wantBy {
 			t.Errorf("%s (%s): %+v, want text read as uploaded", f.Path, f.MIME, f)
 		}
 		dst := filepath.Join(t.TempDir(), "original")
@@ -142,7 +142,7 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 		"data.json":                      {runnerdecode.OutcomeText, "", ""},
 		"unread.bin":                     {runnerdecode.OutcomeUndecodable, "", ""},
 		"renamed.bin":                    {runnerdecode.OutcomeDecoded, "pandoc", "45-minute break"},
-		"contact.html":                   {runnerdecode.OutcomeText, "pandoc", ""},
+		"contact.html":                   {runnerdecode.OutcomeText, "", ""},
 		"depots.csv":                     {runnerdecode.OutcomeText, "", ""},
 		"runbook.md":                     {runnerdecode.OutcomeText, "", ""},
 		"latin1.csv":                     {runnerdecode.OutcomeDecoded, "tika", "Liège"},

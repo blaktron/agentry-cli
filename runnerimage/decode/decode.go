@@ -92,7 +92,8 @@ type File struct {
 	Family Family `json:"family"`
 	// Tool is the decoder that ran: pdftotext, pandoc, tesseract, or
 	// agentry-runner for this package's own readers, or tika; for an
-	// archive, what read it: agentry-runner, bsdcat or bsdtar.
+	// archive, what read it: agentry-runner, bsdcat or bsdtar. A file read
+	// as text names none; its Markdown view names its own (MarkdownBy).
 	Tool    string  `json:"tool,omitempty"`
 	Outcome Outcome `json:"outcome"`
 	// Output is the text's slash path relative to the output root. A
@@ -103,11 +104,12 @@ type File struct {
 	Bytes int64 `json:"bytes,omitempty"`
 	// Markdown is the slash path, relative to the output root, of a
 	// second view of a file read as text: HTML converted to Markdown by
-	// Tool (pandoc), at exactly <path>.md (plan quickagents-that-run.md
-	// D2; agentry-cli#631). The file itself stays its own view; a failed
-	// conversion leaves this empty and the file read as it is.
-	Markdown string `json:"markdown,omitempty"`
-	// MarkdownBytes is the size of the Markdown written.
+	// MarkdownBy (pandoc), at exactly <path>.md (plan
+	// quickagents-that-run.md D2; agentry-cli#631). The file itself stays
+	// its own view; a failed conversion leaves this empty and the file read
+	// as it is. MarkdownBytes is the size of the Markdown written.
+	Markdown      string `json:"markdown,omitempty"`
+	MarkdownBy    string `json:"markdownBy,omitempty"`
 	MarkdownBytes int64  `json:"markdownBytes,omitempty"`
 	Reason        string `json:"reason,omitempty"`
 	// In is the archive a member was unpacked from, empty for a file as
@@ -577,12 +579,13 @@ func markdownView(ctx context.Context, f File, kind contentKind, src, out string
 		_ = os.Remove(dst)
 		return f
 	}
-	f.Tool, f.Markdown, f.MarkdownBytes = "pandoc", rel, view.Bytes
+	f.Markdown, f.MarkdownBy, f.MarkdownBytes = rel, "pandoc", view.Bytes
 	return f
 }
 
 func undecodable(f File, reason string) File {
 	f.Output, f.Outcome, f.Reason = "", OutcomeUndecodable, reason
+	f.Markdown, f.MarkdownBy, f.MarkdownBytes = "", "", 0
 	return f
 }
 

@@ -184,7 +184,6 @@ func fsReadSchema() map[string]any {
 		"path":     strProp("workspace-relative slash path of the file"),
 		"offset":   intProp("byte offset to start reading from (default 0)"),
 		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
-		"view":     viewProp(),
 	}, "path")
 }
 
@@ -248,6 +247,7 @@ func readInputSchema() map[string]any {
 		"path":     strProp("inputs-relative slash path of the file"),
 		"offset":   intProp("byte offset to start reading from (default 0)"),
 		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
+		"view":     viewProp(),
 	}, "path")
 }
 
@@ -1012,8 +1012,8 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return s.failed("read_input", err)
 	}
-	if a.View != "" && a.View != ViewText && a.View != ViewOriginal {
-		return fmt.Sprintf("read_input: view must be %q or %q, not %q", ViewText, ViewOriginal, a.View), true
+	if err := validView(a.View); err != nil {
+		return "read_input: " + err.Error(), true
 	}
 	if a.Path == "" {
 		return "read_input: path is required", true
@@ -1040,16 +1040,13 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	view, mime := a.View, ""
 	if idx != nil {
 		if e, ok := idx.lookup(path.Clean(a.Path)); ok {
-			if e.Unread != "" {
+			if e.Unread != "" && (!e.Original || view == ViewText) {
 				return fmt.Sprintf("read_input: %s could not be read: %s", e.Path, e.Unread), true
 			}
 			if e.Unpacked {
 				return fmt.Sprintf("read_input: %s is an archive; list_inputs with path %q lists what was unpacked from it, each read by its own path", e.Path, e.Path), true
 			}
-			if view == "" {
-				view = e.defaultView()
-			}
-			mime = e.MIME
+			view, mime = e.viewOrDefault(view), e.MIME
 			if abs, err = s.viewOf(e, view); err != nil {
 				return s.failed("read_input", err)
 			}

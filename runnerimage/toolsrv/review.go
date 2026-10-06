@@ -129,7 +129,7 @@ type reviewState struct {
 	// failed is not asked again in the run: the file stays withheld, and
 	// the model cannot spend the person's key retrying it. Requests are
 	// handled one at a time (mcp.go), so no two reads scan a file at once.
-	verdicts map[string]reviewVerdict
+	verdicts map[reviewKey]reviewVerdict
 	calls    int
 	ledger   *os.File
 }
@@ -146,7 +146,7 @@ type reviewVerdict struct {
 // newReviewState builds the scanner and the asker from the key in this
 // container's environment.
 func (s *server) newReviewState() *reviewState {
-	r := &reviewState{verdicts: map[string]reviewVerdict{}}
+	r := &reviewState{verdicts: map[reviewKey]reviewVerdict{}}
 	key := os.Getenv(EnvReviewJevKey)
 	if key == "" {
 		_, _ = fmt.Fprintln(s.logw, "review: no AI Review key: every input file will be withheld")
@@ -214,20 +214,21 @@ func (s *server) recordReview(e ReviewEntry) {
 
 // ---- read_input, scanned ----
 
-// reviewedInput answers whether read_input may page out the file at abs:
-// ok when it may, and otherwise what the model is told instead and whether
-// that is a tool error. The whole file is scanned once; a file past
-// ReviewFileBytes is withheld as too large, and one that is not UTF-8 text
-// is refused as read_input refuses binary without the grant. (ai_review
-// picks its files by stage S1's sniff instead, as the registry reads a
-// release; read_input keeps its own rule, which never returns binary.)
+// reviewKey names one view of one input file, as its verdict is kept.
+type reviewKey struct{ rel, view string }
+
+// reviewedInput answers whether read_input may page out the file at abs,
+// one view of the input rel: ok when it may, and otherwise what the model
+// is told instead and whether that is a tool error. Each view is scanned
+// once, whole; a file past ReviewFileBytes is withheld as too large, and a
+// binary one (a NUL, or not UTF-8) is refused, since no review reads it,
+// though without the grant read_input answers a binary original as base64
+// (agentry-cli#631). (ai_review picks its files by stage S1's sniff
+// instead, as the registry reads a release.)
 func (s *server) reviewedInput(rel, view, abs string, fi fs.FileInfo) (instead string, isErr, ok bool) {
 	r := s.review()
 	// Each view of a file is its own text, reviewed on its own.
-	key := rel
-	if view != "" {
-		key += "#" + view
-	}
+	key := reviewKey{rel: rel, view: view}
 	r.mu.Lock()
 	v, cached := r.verdicts[key]
 	r.mu.Unlock()

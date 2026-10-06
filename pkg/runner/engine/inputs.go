@@ -221,6 +221,11 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 			e.Unpacked, e.Partial = true, decode.UnpackedInPart(f)
 		default:
 			e.Unread = decode.UnreadReason(f)
+			// A file as staged that no reader took is still there to read
+			// as uploaded (D3, agentry-cli#631); one ClamAV found, one
+			// refused and one inside a .git folder are not.
+			e.Original = f.In == "" && f.Outcome == runnerdecode.OutcomeUndecodable &&
+				f.Why != runnerdecode.WhyFound && f.Why != runnerdecode.WhyRepository
 		}
 		if f.Markdown != "" && e.Unread == "" {
 			dst := filepath.Join(convertedRoot, filepath.FromSlash(f.Path))
@@ -231,7 +236,7 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 			if err != nil {
 				return nil, Classify(ExitCLI, fmt.Errorf("the Markdown converted from %s: %w", f.Path, err))
 			}
-			e.Converted, e.ConvertedBy, e.ConvertedBytes = true, f.Tool, fi.Size()
+			e.Converted, e.ConvertedBy, e.ConvertedBytes = true, f.MarkdownBy, fi.Size()
 		}
 		entries = append(entries, e)
 	}

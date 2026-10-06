@@ -507,13 +507,13 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 // regular file within the cap.
 func checkMarkdown(f runnerdecode.File, outRoot *os.Root) error {
 	if f.Markdown == "" {
-		if f.MarkdownBytes != 0 {
-			return fmt.Errorf("%q has a Markdown size but no Markdown view", f.Path)
+		if f.MarkdownBytes != 0 || f.MarkdownBy != "" {
+			return fmt.Errorf("%q names a Markdown size or converter but no Markdown view", f.Path)
 		}
 		return nil
 	}
-	if f.Outcome != runnerdecode.OutcomeText || f.Tool != "pandoc" {
-		return fmt.Errorf("%q has a Markdown view but the outcome %q and tool %q", f.Path, f.Outcome, f.Tool)
+	if f.Outcome != runnerdecode.OutcomeText || f.MarkdownBy != "pandoc" {
+		return fmt.Errorf("%q has a Markdown view but the outcome %q and converter %q", f.Path, f.Outcome, f.MarkdownBy)
 	}
 	if f.Markdown != f.Path+".md" {
 		return fmt.Errorf("it names a Markdown view outside the output root: %q is not %q", f.Markdown, f.Path+".md")

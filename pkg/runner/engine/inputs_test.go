@@ -221,7 +221,9 @@ func TestEveryRunsInputsAreDecodedBeforeTheAgent(t *testing.T) {
 			t.Errorf("%s: %+v", name, e)
 		}
 	}
-	if e := got["blob.bin"]; e.Unread == "" || e.Decoded || e.Outcome() == "read" {
+	// No reader took it, but it is still there to read as uploaded
+	// (agentry-cli#631).
+	if e := got["blob.bin"]; e.Unread == "" || e.Decoded || e.Outcome() == "read" || !e.Original {
 		t.Errorf("blob.bin: %+v", e)
 	}
 	if b, err := os.ReadFile(filepath.Join(runDir, "inputs-text", "text", "report.docx")); err != nil || strings.TrimSpace(string(b)) != "pandoc read report.docx" {

@@ -252,7 +252,7 @@ var sampleImage = Image{
 // Markdown at <path>.md passes the host's check, and the view is copied out
 // on its own (agentry-cli#631).
 func TestAMarkdownViewIsKeptBesideTheFile(t *testing.T) {
-	files := []runnerdecode.File{{Path: "notes.md", Family: "text", Tool: "pandoc", Outcome: runnerdecode.OutcomeText, Markdown: "notes.md.md", MarkdownBytes: 17}}
+	files := []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeText, Markdown: "notes.md.md", MarkdownBy: "pandoc", MarkdownBytes: 17}}
 	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, files)}}}
 	res, err := Run(context.Background(), f, sampleImage, staged(t), t.TempDir(), policy.Limits{}.WithDefaults(), os.Stderr)
 	if err != nil {
@@ -451,17 +451,17 @@ func TestRunFailures(t *testing.T) {
 			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "../../etc/passwd", Family: "text", Outcome: runnerdecode.OutcomeText}})}
 		}, wantErr: "not a document once"},
 		{name: "a Markdown view of a decoded document", fg: func(t *testing.T) *dockerx.FakeForeground {
-			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "report.pdf", Family: "pdf", Tool: "pandoc", Outcome: runnerdecode.OutcomeDecoded, Output: "report.pdf.txt", Markdown: "report.pdf.md"}})}
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "report.pdf", Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: "report.pdf.txt", Markdown: "report.pdf.md", MarkdownBy: "pandoc"}})}
 		}, wantErr: "has a Markdown view but the outcome"},
 		{name: "a Markdown view no converter wrote", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeText, Markdown: "notes.md.md"}})}
 		}, wantErr: "has a Markdown view but the outcome"},
 		{name: "a Markdown view outside the output root", fg: func(t *testing.T) *dockerx.FakeForeground {
-			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Tool: "pandoc", Outcome: runnerdecode.OutcomeText, Markdown: "report.pdf.txt"}})}
+			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeText, Markdown: "report.pdf.txt", MarkdownBy: "pandoc"}})}
 		}, wantErr: "Markdown view outside the output root"},
 		{name: "a Markdown size with no view", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: runnerdecode.OutcomeText, MarkdownBytes: 9}})}
-		}, wantErr: "Markdown size but no Markdown view"},
+		}, wantErr: "names a Markdown size or converter but no Markdown view"},
 		{name: "a report of an unknown outcome", fg: func(t *testing.T) *dockerx.FakeForeground {
 			return &dockerx.FakeForeground{Before: playDecode(t, []runnerdecode.File{{Path: "notes.md", Family: "text", Outcome: "trusted"}})}
 		}, wantErr: "unknown outcome"},

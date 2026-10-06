@@ -169,11 +169,51 @@ func TestReadInputViews(t *testing.T) {
 		t.Fatalf("an unknown view = (%q, %v)", got, isErr)
 	}
 	if got, isErr := read(map[string]any{"path": "blob.bin", "view": ViewOriginal}); !isErr || !strings.Contains(got, "could not be read") {
-		t.Fatalf("an unread input's original = (%q, %v)", got, isErr)
+		t.Fatalf("an unread input with no original = (%q, %v)", got, isErr)
 	}
 	ls, _ := s.toolListInputs(rawArgs(t, map[string]any{"path": "site"}))
 	if !strings.HasSuffix(ls, "\nsite/index.html\ttext\t"+strconv.Itoa(len(pageHTML))+"\tread\t"+strconv.Itoa(len(pageMarkdown))+"\toriginal (default), text (Markdown)") {
 		t.Fatalf("list_inputs of a converted page: %q", ls)
+	}
+}
+
+// TestAnUnreadInputsOriginal: a file no reader took has no text, but is
+// still read as uploaded, by default, as base64 (D3; agentry-cli#631).
+func TestAnUnreadInputsOriginal(t *testing.T) {
+	s := decodedSpec(t)
+	writeIndex(t, s, []InputEntry{
+		{Path: "blob.bin", Type: "unknown", Bytes: 4, Unread: "not text, and no decoder reads this kind of file", Original: true, MIME: "application/octet-stream"},
+	})
+	srv := newTestServer(t, s)
+	want := "binary file; 4 bytes, detected as application/octet-stream; bytes 0 to 4 as base64:\n" + base64.StdEncoding.EncodeToString([]byte{0, 1, 2, 0xff})
+	for _, view := range []string{"", ViewOriginal} {
+		if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "blob.bin", "view": view})); isErr || got != want {
+			t.Errorf("view %q = (%q, %v), want %q", view, got, isErr, want)
+		}
+	}
+	if got, isErr := srv.toolReadInput(rawArgs(t, map[string]any{"path": "blob.bin", "view": ViewText})); !isErr || got != "read_input: blob.bin could not be read: not text, and no decoder reads this kind of file" {
+		t.Errorf("its text = (%q, %v)", got, isErr)
+	}
+	if ls, _ := srv.toolListInputs(rawArgs(t, map[string]any{})); !strings.HasSuffix(ls, "\tunread: not text, and no decoder reads this kind of file\t-\toriginal (no text)") {
+		t.Errorf("list_inputs: %q", ls)
+	}
+	if got, _ := srv.toolSearchInputs(rawArgs(t, map[string]any{"query": "a", "view": ViewOriginal})); !strings.HasPrefix(got, "no input text matches") {
+		t.Errorf("an unread original was searched: %q", got)
+	}
+}
+
+// TestTheInputToolsOfferAView: read_input and search_inputs say they take
+// a view, and fs_read, the workspace's, does not.
+func TestTheInputToolsOfferAView(t *testing.T) {
+	for name, schema := range map[string]map[string]any{"read_input": readInputSchema(), "search_inputs": searchInputsSchema()} {
+		props, _ := schema["properties"].(map[string]any)
+		v, ok := props["view"].(map[string]any)
+		if !ok || !slices.Equal(v["enum"].([]string), []string{ViewText, ViewOriginal}) {
+			t.Errorf("%s offers no view: %v", name, props)
+		}
+	}
+	if props, _ := fsReadSchema()["properties"].(map[string]any); props["view"] != nil {
+		t.Error("fs_read offers a view")
 	}
 }
 

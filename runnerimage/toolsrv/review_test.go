@@ -55,7 +55,7 @@ func reviewServer(t *testing.T, sc webscan.Scanner, asker judge.Asker) (*server,
 	spec := inputsSpec(t)
 	spec.Review = Review{Enabled: true, Ledger: filepath.Join(spec.OutDir, "receipts", "review.ndjson")}
 	s := newTestServer(t, spec)
-	s.reviewState = &reviewState{scanner: sc, asker: asker, verdicts: map[string]reviewVerdict{}}
+	s.reviewState = &reviewState{scanner: sc, asker: asker, verdicts: map[reviewKey]reviewVerdict{}}
 	return s, spec
 }
 

@@ -445,11 +445,11 @@ esac
 		f := got[fx.name]
 		// HTML also gets pandoc's Markdown as a second view (D2,
 		// agentry-cli#631); the file itself stays text.
-		tool, markdown := "", ""
+		by, markdown := "", ""
 		if htmlTypes[fx.magic] {
-			tool, markdown = "pandoc", fx.name+".md"
+			by, markdown = "pandoc", fx.name+".md"
 		}
-		if f.Family != FamilyText || f.Outcome != OutcomeText || f.Tool != tool || f.Markdown != markdown || f.Output != "" || f.Reason != "" {
+		if f.Family != FamilyText || f.Outcome != OutcomeText || f.Tool != "" || f.Markdown != markdown || f.MarkdownBy != by || f.Output != "" || f.Reason != "" {
 			t.Errorf("%s as staged: %+v, want text, read as it is", fx.name, f)
 		}
 		want := fx.magic
@@ -463,7 +463,7 @@ esac
 		if markdown != "" {
 			markdown = m.Path + ".md"
 		}
-		if m.Family != FamilyText || m.Outcome != OutcomeText || m.Tool != tool || m.Markdown != markdown || m.Output != m.Path+".txt" {
+		if m.Family != FamilyText || m.Outcome != OutcomeText || m.Tool != "" || m.Markdown != markdown || m.MarkdownBy != by || m.Output != m.Path+".txt" {
 			t.Errorf("%s as a member: %+v", fx.name, m)
 			continue
 		}
@@ -579,7 +579,7 @@ func TestHTMLGetsAMarkdownView(t *testing.T) {
 	got, out := run(t, tools)
 	for _, path := range []string{"site/index.html", "site.zip/index.html"} {
 		f := got[path]
-		if f.Outcome != OutcomeText || f.Tool != "pandoc" || f.Markdown != path+".md" || f.MarkdownBytes != int64(len("pandoc read index.html\n")) {
+		if f.Outcome != OutcomeText || f.Tool != "" || f.MarkdownBy != "pandoc" || f.Markdown != path+".md" || f.MarkdownBytes != int64(len("pandoc read index.html\n")) {
 			t.Fatalf("%s: %+v", path, f)
 		}
 		if b, _ := os.ReadFile(filepath.Join(out, filepath.FromSlash(f.Markdown))); string(b) != "pandoc read index.html\n" {
@@ -591,7 +591,7 @@ func TestHTMLGetsAMarkdownView(t *testing.T) {
 	}
 	tools.Pandoc = filepath.Join(t.TempDir(), "missing")
 	got, out = run(t, tools)
-	if f := got["site/index.html"]; f.Outcome != OutcomeText || f.Tool != "" || f.Markdown != "" {
+	if f := got["site/index.html"]; f.Outcome != OutcomeText || f.MarkdownBy != "" || f.Markdown != "" {
 		t.Fatalf("a failed conversion: %+v", f)
 	}
 	if _, err := os.Stat(filepath.Join(out, "site", "index.html.md")); err == nil {
