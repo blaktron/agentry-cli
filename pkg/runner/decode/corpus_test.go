@@ -61,9 +61,51 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(in, "scan.tiff"), tiff, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Code, markup, configuration and data text, as the hosted test of
+	// 2026-10-04 gave them: each is read as uploaded, whatever libmagic
+	// calls it (agentry-cli#630).
+	code := map[string]string{
+		"index.html": "<!doctype html>\n<form action=\"/q\"><input name=\"q\"></form>\n<div id=\"out\"></div>\n<script>document.getElementById('out').innerHTML = location.hash.slice(1);</script>\n",
+		"pom.xml":    "<?xml version=\"1.0\"?>\n<project><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>\n",
+		"deploy.sh":  "#!/bin/sh\nset -eu\nscp build.tgz \"$HOST\":/srv/\n",
+		"server.ts":  "import { exec } from 'child_process';\nexport const run = (dir: string) => exec(`ls ${dir}`);\n",
+		"logo.svg":   "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script><circle r=\"4\"/></svg>\n",
+		"login.php":  "<?php $r = mysqli_query($db, \"SELECT * FROM users WHERE id = \" . $_GET['id']); ?>\n",
+		"Dockerfile": "FROM alpine:3.20\nENV API_KEY=sk_live_not_a_real_key\nRUN apk add curl\n",
+		"Makefile":   "build:\n\tgo build ./...\n",
+		"k8s.yaml":   "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext: {privileged: true}\n",
+	}
+	isCode := map[string]bool{}
+	for name, body := range code {
+		isCode[name] = true
+		if err := os.WriteFile(filepath.Join(in, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	res, err := Run(ctx, d, img, in, out, pol.Docker.Limits.WithDefaults(), os.Stderr)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, f := range res.Report.Files {
+		body, ok := code[f.Path]
+		if !ok {
+			continue
+		}
+		if f.Family != runnerdecode.FamilyText || f.Outcome != runnerdecode.OutcomeText || f.Tool != "" {
+			t.Errorf("%s (%s): %+v, want text read as uploaded", f.Path, f.MIME, f)
+		}
+		dst := filepath.Join(t.TempDir(), "original")
+		if err := res.CopyOriginal(f.Path, dst); err != nil {
+			t.Fatalf("%s: %v", f.Path, err)
+		}
+		if b, _ := os.ReadFile(dst); string(b) != body {
+			t.Errorf("%s: served %q, want %q", f.Path, b, body)
+		}
+		t.Logf("%s: libmagic %s, read as uploaded", f.Path, f.MIME)
+		delete(code, f.Path)
+	}
+	if len(code) != 0 {
+		t.Errorf("not in the report: %v", code)
 	}
 	// Each family's decoder, and a phrase only that document holds.
 	want := map[string]struct {
@@ -83,8 +125,8 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 		"data.json":                      {runnerdecode.OutcomeText, "", ""},
 		"unread.bin":                     {runnerdecode.OutcomeUndecodable, "", ""},
 		"renamed.bin":                    {runnerdecode.OutcomeDecoded, "pandoc", "45-minute break"},
-		"contact.html":                   {runnerdecode.OutcomeDecoded, "pandoc", ""},
-		"depots.csv":                     {runnerdecode.OutcomeDecoded, "agentry-runner", "|"},
+		"contact.html":                   {runnerdecode.OutcomeText, "", ""},
+		"depots.csv":                     {runnerdecode.OutcomeText, "", ""},
 		"runbook.md":                     {runnerdecode.OutcomeText, "", ""},
 		"incident.pdf":                   {runnerdecode.OutcomeDecoded, "pdftotext", "fuel filter was clogged"},
 		"policy.docx":                    {runnerdecode.OutcomeDecoded, "pandoc", "45-minute break"},
@@ -98,13 +140,15 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 		"scan.tif":                       {runnerdecode.OutcomeDecoded, "tesseract", "FOR ALARMED REEFERS"},
 		"sign.webp":                      {runnerdecode.OutcomeDecoded, "tesseract", "FOR ALARMED REEFERS"},
 	}
-	if len(res.Report.Files) != len(want) {
-		t.Fatalf("%d files decoded, want %d: %+v", len(res.Report.Files), len(want), res.Report.Files)
+	if len(res.Report.Files) != len(want)+len(isCode) {
+		t.Fatalf("%d files decoded, want %d: %+v", len(res.Report.Files), len(want)+len(isCode), res.Report.Files)
 	}
 	for _, f := range res.Report.Files {
 		w, ok := want[f.Path]
 		if !ok {
-			t.Errorf("unexpected %s", f.Path)
+			if !isCode[f.Path] {
+				t.Errorf("unexpected %s", f.Path)
+			}
 			continue
 		}
 		if f.Outcome != w.outcome || f.Tool != w.tool {

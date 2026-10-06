@@ -11,8 +11,9 @@
 // one clamscan run, and a file it finds is never decoded (clamav.go).
 // A git repository's internals, everything under a .git directory, are
 // listed and checked but never detected or decoded (InRepository).
-// Nothing a document contains reaches an argv but its own path. Text
-// formats pass as they are. The caller runs this in a container with no
+// Nothing a document contains reaches an argv but its own path. Any other
+// UTF-8 text (code, markup, configuration, data) passes as it is, byte for
+// byte, told without a JVM (detect; agentry-cli#630). The caller runs this in a container with no
 // network and no capabilities, the inputs mounted read-only.
 //
 // This package is part of the embedded runner-image build context and so
@@ -526,8 +527,6 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 			body, err = odsText(src, lim.MaxExpandedBytes)
 		case "odp":
 			body, err = odpText(src, lim.MaxExpandedBytes)
-		case "csv":
-			body, err = csvText(src, lim.MaxExpandedBytes)
 		}
 		if err == nil {
 			err = os.WriteFile(text, []byte(body), 0o600)

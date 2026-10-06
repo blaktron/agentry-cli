@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -131,7 +132,7 @@ func TestDecodeFamilies(t *testing.T) {
 		output, text string
 	}{
 		"notes.md":          {FamilyText, "", OutcomeText, "", ""},
-		"data.csv":          {FamilySpreadsheet, "agentry-runner", OutcomeDecoded, "data.csv.txt", "## Sheet 1\n| a | b |\n| --- | --- |\n| 1 | 2 |\n"},
+		"data.csv":          {FamilyText, "", OutcomeText, "", ""},
 		"config.unknownext": {FamilyText, "", OutcomeText, "", ""},
 		"report.pdf":        {FamilyPDF, "pdftotext", OutcomeDecoded, "report.pdf.txt", "pdftotext read report.pdf\n"},
 		"memo.docx":         {FamilyDocument, "pandoc", OutcomeDecoded, "memo.docx.txt", "pandoc read memo.docx\n"},
@@ -277,7 +278,7 @@ func TestDecodeRefusals(t *testing.T) {
 
 func TestRenamedDocumentsUseTheirContentAndMarkdown(t *testing.T) {
 	in, out := t.TempDir(), t.TempDir()
-	write(t, in, "renamed.bin", []byte("a renamed Office document"))
+	write(t, in, "renamed.bin", ooxml(t, map[string]string{"word/document.xml": "<w:document/>"}))
 	tools := fakeTools(t)
 	tools.File = filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(tools.File, []byte("#!/bin/sh\n[ \"$1 $2 $3\" = \"--brief --mime-type --\" ] || exit 9\necho application/zip\n"), 0o755); err != nil {
@@ -363,5 +364,141 @@ func TestSpreadsheetMarkdownPreservesSparseCellsAndBoundsRepeats(t *testing.T) {
 	got = decode("repeat.ods", "application/vnd.oasis.opendocument.spreadsheet", ooxml(t, map[string]string{"content.xml": content}))
 	if len(got) > 10<<20 || !strings.Contains(got, "| Format |") || !strings.Contains(got, "| repeat |") {
 		t.Fatalf("repeat output: %d bytes", len(got))
+	}
+}
+
+// codeFixtures are the code, markup, configuration and data text of
+// agentry-cli#630, one per family, each with what libmagic calls it. The
+// HTML and XML are the issue's own cases: pandoc dropped the script and
+// the form, and Tika every tag.
+var codeFixtures = []struct{ name, magic, body string }{
+	{"index.html", "text/html", "<!doctype html>\n<form action=\"/q\"><input name=\"q\"></form>\n<div id=\"out\"></div>\n<script>document.getElementById('out').innerHTML = location.hash.slice(1);</script>\n"},
+	{"page.xhtml", "application/xhtml+xml", "<?xml version=\"1.0\"?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><script>eval(name)</script></body></html>\n"},
+	{"pom.xml", "text/xml", "<project><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>\n"},
+	{"logo.svg", "image/svg+xml", "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script><circle r=\"4\"/></svg>\n"},
+	{"app.js", "application/javascript", "const { exec } = require('child_process');\nexec('ls ' + process.argv[2]);\n"},
+	{"server.ts", "application/octet-stream", "import { exec } from 'child_process';\nexport const run = (dir: string) => exec(`ls ${dir}`);\n"},
+	{"deploy.sh", "text/x-shellscript", "#!/bin/sh\nset -eu\nscp build.tgz \"$HOST\":/srv/\n"},
+	{"schema.sql", "text/plain", "SELECT * FROM users WHERE name = '$name';\n"},
+	{"login.php", "text/x-php", "<?php $r = mysqli_query($db, \"SELECT * FROM users WHERE id = \" . $_GET['id']); ?>\n"},
+	{"k8s.yaml", "text/plain", "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext: {privileged: true}\n"},
+	{"Cargo.toml", "text/plain", "[package]\nname = \"demo\"\n\n[dependencies]\nserde = \"1\"\n"},
+	{"package.json", "application/json", "{\"dependencies\": {\"lodash\": \"4.17.20\"}}\n"},
+	{"settings.ini", "text/plain", "[db]\nhost = localhost ; the dev box\n"},
+	{"Dockerfile", "text/plain", "FROM alpine:3.20\nENV API_KEY=sk_live_not_a_real_key\nRUN apk add curl\n"},
+	{"Makefile", "text/x-makefile", "build:\n\tgo build ./...\n"},
+	{"depots.csv", "text/csv", "depot,code\nAntwerp,ANR\n\"Rotterdam, NL\",RTM\n"},
+	{"notes.txt", "text/plain", "Ünïcödé text, as uploaded.\n"},
+}
+
+// TestCodeAndMarkupAreReadAsUploaded: every code, markup, configuration and
+// data text is listed text and served byte for byte, never converted,
+// whatever a detector calls it, and told without starting Tika's JVM
+// (agentry-cli#630). As staged, a text file is served from /inputs itself;
+// as an archive's member, its text is copied out, and the copy is the
+// member's bytes.
+func TestCodeAndMarkupAreReadAsUploaded(t *testing.T) {
+	tools := fakeTools(t)
+	dir := t.TempDir()
+	var magic strings.Builder
+	magic.WriteString("[ \"$1 $2 $3\" = \"--brief --mime-type --\" ] || exit 9\ncase \"$4\" in\n")
+	for _, f := range codeFixtures {
+		fmt.Fprintf(&magic, " *%s) echo %s ;;\n", f.name, f.magic)
+	}
+	magic.WriteString(" *.zip) echo application/zip ;;\n *) echo application/octet-stream ;;\nesac\n")
+	tools.File = filepath.Join(dir, "file")
+	if err := os.WriteFile(tools.File, []byte("#!/bin/sh\n"+magic.String()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Tika answers by name, as it does for a .ts file, and leaves a mark
+	// for every file it was started on.
+	marks := filepath.Join(dir, "tika-ran")
+	tools.Tika = filepath.Join(dir, "java")
+	if err := os.WriteFile(tools.Tika, []byte(`#!/bin/sh
+echo "$6" >> `+marks+`
+case "$6" in
+ *.zip) echo application/zip ;;
+ *.ts) echo video/mp2t ;;
+ *.xml) echo application/xml ;;
+ *.sh) echo application/x-sh ;;
+ *) echo text/html ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	in, out := t.TempDir(), t.TempDir()
+	var entries []zipEntry
+	for _, f := range codeFixtures {
+		write(t, in, f.name, []byte(f.body))
+		entries = append(entries, zipEntry{name: "src/" + f.name, body: f.body})
+	}
+	write(t, in, "project.zip", zipOf(t, entries...))
+	rep, err := Decode(context.Background(), in, out, tools, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]File{}
+	for _, f := range rep.Files {
+		got[f.Path] = f
+	}
+	for _, fx := range codeFixtures {
+		f := got[fx.name]
+		if f.Family != FamilyText || f.Outcome != OutcomeText || f.Tool != "" || f.Output != "" || f.Reason != "" {
+			t.Errorf("%s as staged: %+v, want text, read as it is", fx.name, f)
+		}
+		if want := fx.magic; want != "application/octet-stream" && f.MIME != want {
+			t.Errorf("%s as staged: type %q, want libmagic's %q", fx.name, f.MIME, want)
+		}
+		m := got["project.zip/src/"+fx.name]
+		if m.Family != FamilyText || m.Outcome != OutcomeText || m.Tool != "" || m.Output != m.Path+".txt" {
+			t.Errorf("%s as a member: %+v", fx.name, m)
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(m.Output)))
+		if err != nil || string(b) != fx.body || m.Bytes != int64(len(fx.body)) {
+			t.Errorf("%s as a member: served %q (%v), want the bytes as uploaded %q", fx.name, b, err, fx.body)
+		}
+	}
+	// Tika is started on the zip alone, which only it tells from an
+	// Office file; never on a text file.
+	ran, _ := os.ReadFile(marks)
+	if lines := strings.Fields(string(ran)); len(lines) != 1 || !strings.HasSuffix(lines[0], "project.zip") {
+		t.Errorf("Tika ran on %q, want project.zip alone", lines)
+	}
+}
+
+// TestTextDocumentsKeepTheirConverters: RTF and mail are documents that are
+// also UTF-8 text; they keep their converters ahead of the text fast path,
+// and so does a binary document (agentry-cli#630).
+func TestTextDocumentsKeepTheirConverters(t *testing.T) {
+	tools := fakeTools(t)
+	dir := t.TempDir()
+	tools.File = filepath.Join(dir, "file")
+	if err := os.WriteFile(tools.File, []byte(`#!/bin/sh
+case "$4" in
+ *memo.rtf) echo text/rtf ;;
+ *mail.eml) echo message/rfc822 ;;
+ *report.pdf) echo application/pdf ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools.Tika = filepath.Join(dir, "java")
+	if err := os.WriteFile(tools.Tika, []byte("#!/bin/sh\n[ \"$5\" = --text ] || exit 9\nprintf 'mail body'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	in, out := t.TempDir(), t.TempDir()
+	write(t, in, "memo.rtf", []byte("{\\rtf1\\ansi Antwerp is ANR\\par}\n"))
+	write(t, in, "mail.eml", []byte("From: a@example.com\nSubject: hi\n\nmail body\n"))
+	write(t, in, "report.pdf", []byte("%PDF-1.4 all ASCII\n"))
+	rep, err := Decode(context.Background(), in, out, tools, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"memo.rtf": "pandoc", "mail.eml": "tika", "report.pdf": "pdftotext"}
+	for _, f := range rep.Files {
+		if f.Outcome != OutcomeDecoded || f.Tool != want[f.Path] {
+			t.Errorf("%s: %+v, want decoded by %s", f.Path, f, want[f.Path])
+		}
 	}
 }
