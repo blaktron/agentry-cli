@@ -197,6 +197,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	rep := rd.replacer()
 	s.redact = rd.newRedactor(p, token, secrets)
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
+	// A session's connections are renewed for as long as it lives (plan
+	// D24); teardown stops the renewer before it deletes their folders.
+	stopRenewal := renewConnections(ctx, p, rd)
+	td.add(func(context.Context) { stopRenewal() })
 
 	var served []string
 	infraErr := startInfra(ctx, d, p, rd, td, runID, token, rep, &served)

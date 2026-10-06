@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -21,7 +22,12 @@ import (
 // declared server that prints its environment on failure would otherwise
 // put a secret into gateway.log and, through the quoted tail, into
 // result.json (agentry-cli#109).
-type redactor struct{ values []string }
+// A token renewed during the run (plan D24) is added while other
+// goroutines mask, so the values are guarded.
+type redactor struct {
+	mu     sync.RWMutex
+	values []string
+}
 
 // gatewayMask is how docker/mcp-gateway (v0.43.3, pkg/gateway/clientpool.go
 // and pkg/mcp/remote.go maskSecret) lists a secret it injects at a server's
@@ -52,14 +58,37 @@ func newRedactor(token string, secrets map[string]string, extra []string) *redac
 	for _, v := range extra {
 		add(v)
 	}
-	// Longest first so a value that contains another is masked whole.
-	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
-	// The gateway's partial masks after every whole value, so none of them
-	// can split a value that is masked whole.
-	for _, v := range slices.Clone(vals) {
+	return &redactor{values: maskOrder(vals)}
+}
+
+// maskOrder lays out the values the redactor masks: the whole values
+// longest first, so a value that contains another is masked whole, then
+// the gateway's partial mask of each, so none of them can split a value
+// that is masked whole. A redactor's values are always this layout, whole
+// values in the first half.
+func maskOrder(whole []string) []string {
+	whole = slices.Clone(whole)
+	sort.Slice(whole, func(i, j int) bool { return len(whole[i]) > len(whole[j]) })
+	vals := slices.Clone(whole)
+	for _, v := range whole {
 		vals = append(vals, gatewayMask(v))
 	}
-	return &redactor{values: vals}
+	return vals
+}
+
+// add masks one more value from now on: a connection's access token
+// renewed mid-run. Nil-safe, as the rest.
+func (r *redactor) add(v string) {
+	if r == nil || len(v) < redactMinLen {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	whole := r.values[:len(r.values)/2]
+	if slices.Contains(whole, v) {
+		return
+	}
+	r.values = maskOrder(append(slices.Clone(whole), v))
 }
 
 // withRedactionNote names, in the receipt's enforced capabilities, every
@@ -106,6 +135,8 @@ func (r *redactor) String(s string) string {
 	if r == nil {
 		return s
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, v := range r.values {
 		s = strings.ReplaceAll(s, v, "[redacted]")
 	}
@@ -135,7 +166,13 @@ func (r *redactor) Err(err error) error {
 // it untouched — byte for byte — when there is nothing to mask. Used for
 // the agent's stderr, which the harness process writes directly.
 func (r *redactor) File(path string) {
-	if r == nil || len(r.values) == 0 {
+	if r == nil {
+		return
+	}
+	r.mu.RLock()
+	empty := len(r.values) == 0
+	r.mu.RUnlock()
+	if empty {
 		return
 	}
 	b, err := os.ReadFile(path) //nolint:gosec // our receipts file

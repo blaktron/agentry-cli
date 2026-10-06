@@ -254,34 +254,143 @@ func TestCompileRendersAnOAuthServerOnTheBridge(t *testing.T) {
 	}
 }
 
-// A package server's own OAuth sign-in (an oauth block) is agentry-cli#665's:
-// refused by name until then.
-func TestCompileRefusesAPackageServerOAuthBlock(t *testing.T) {
-	in := mcpFixtureInputs(t, nil, policy.Default())
-	m, err := manifest.Parse([]byte(`schemaVersion: "2"
-name: needs-servers
-namespace: acme
-modes: [autonomous]
-version: 1.0.0
-summary: "connection fixture"
-entrypoints:
-  instruction: SKILL.md
-capabilities:
-  mcpServers:
-    - pypi: workspace-mcp
-      version: 2.0.1
-      oauth:
-        issuer: https://accounts.google.com
-        env: {GOOGLE_TOKEN: "{access_token}"}
-`))
+func workspaceMCPSpec() spec.MCPServerSpec {
+	return spec.MCPServerSpec{
+		Name: "mcp-pypi-workspace-mcp", Source: "pypi",
+		Package: "workspace-mcp", Version: "1.4.2", Integrity: "sha256:aaa",
+		Image:       "python:3.13-alpine",
+		Command:     []string{"/opt/agentry-mcp/pypi-workspace-mcp/bin/workspace-mcp"},
+		StoreSubdir: "pypi-workspace-mcp",
+		Egress:      []string{"gmail.googleapis.com"},
+		Env:         map[string]string{"MCP_SINGLE_USER_MODE": "1"},
+		OAuth: &spec.OAuthSpec{
+			Issuer: "https://accounts.google.com",
+			Scopes: []string{"https://www.googleapis.com/auth/gmail.readonly"},
+			Files: []spec.OAuthFile{{
+				Path:     "me.json",
+				Template: `{"token":"{access_token}","expiry":"{expiry}","client_id":"agentry","client_secret":"agentry"}`,
+			}},
+			Env: map[string]string{
+				"WORKSPACE_MCP_CREDENTIALS_DIR": "{dir}",
+				"GOOGLE_ACCESS_TOKEN":           "Bearer {access_token}",
+			},
+		},
+	}
+}
+
+// A package server's OAuth sign-in (agentry-cli#665, plan D15): its token
+// folder is mounted writable (DR-77; a bridge's stays read-only), an env entry naming only the folder is
+// plain env with the folder's mount filled in, and one carrying the access
+// token is a server-scoped secret the engine fills per run. The plan keeps
+// the templates, never a token, and the receipt says where the token goes
+// and that nothing else of the connection enters the run.
+func TestCompileRendersAPackageServerOAuthSignIn(t *testing.T) {
+	planDir := t.TempDir()
+	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{workspaceMCPSpec()}, policy.Default()), planDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in.Manifest = m
-	_, err = Compile(in, t.TempDir())
+	e := catalogServer(t, planDir, "mcp-pypi-workspace-mcp")
+	vols := strs(e["volumes"])
+	if !slices.Contains(vols, ConnectionFolder("mcp-pypi-workspace-mcp")+":"+spec.ConnectionMount) || len(vols) != 2 {
+		t.Fatalf("volumes = %v, want the store and the token folder, writable", vols)
+	}
+	var secrets []string
+	for _, x := range e["secrets"].([]any) {
+		m := x.(map[string]any)
+		secrets = append(secrets, m["name"].(string)+"="+m["env"].(string))
+	}
+	if !slices.Equal(secrets, []string{"mcp-pypi-workspace-mcp.google_access_token=GOOGLE_ACCESS_TOKEN"}) {
+		t.Fatalf("secrets = %v, want the token env alone, server-scoped", secrets)
+	}
+	env := map[string]string{}
+	for _, x := range e["env"].([]any) {
+		m := x.(map[string]any)
+		env[m["name"].(string)] = m["value"].(string)
+	}
+	if env["WORKSPACE_MCP_CREDENTIALS_DIR"] != spec.ConnectionMount || env["MCP_SINGLE_USER_MODE"] != "1" || len(env) != 2 {
+		t.Fatalf("env = %v, want the plain env and {dir} as the folder's mount", env)
+	}
+	// The gateway, and the run's docker filter after it, let that folder
+	// alone be bound writable: its exact path, never the run's cfg or its
+	// connections folder.
+	var writable string
+	for _, e := range plan.Gateway.Env {
+		if e.Name == "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS" {
+			writable = e.Value
+		}
+	}
+	roots := strings.Split(writable, ":")
+	if !slices.Contains(roots, ConnectionFolder("mcp-pypi-workspace-mcp")) || slices.Contains(roots, spec.PHCfg) || slices.Contains(roots, spec.PHCfg+"/"+spec.ConnectionsDir) {
+		t.Fatalf("writable bind roots = %q", writable)
+	}
+	if got := plan.MCPServers[0].OAuth; got == nil || got.Files[0].Template != workspaceMCPSpec().OAuth.Files[0].Template {
+		t.Fatalf("the plan does not keep the oauth templates: %+v", got)
+	}
+	line := plan.Enforcement["mcpServers"]
+	for _, want := range []string{
+		"signed in at https://accounts.google.com by the person's connection for this release: an access token alone",
+		"rendered into me.json in the server's own folder at " + spec.ConnectionMount + " (writable by the server, deleted at teardown) and rewritten before it expires during a local run",
+		"set in env GOOGLE_ACCESS_TOKEN through the gateway's secrets file, fixed for the run",
+		"the refresh token and any client secret never enter the run",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("mcpServers line lacks %q:\n%s", want, line)
+		}
+	}
+	if strings.Contains(line, "client_secret") || strings.Contains(line, "{access_token}") {
+		t.Fatalf("the receipt quotes a template:\n%s", line)
+	}
+}
+
+// A server with an env token alone has no token folder, so nothing is
+// mounted for it.
+func TestAnEnvOnlyOAuthSignInMountsNoFolder(t *testing.T) {
+	srv := workspaceMCPSpec()
+	srv.OAuth.Files = nil
+	delete(srv.OAuth.Env, "WORKSPACE_MCP_CREDENTIALS_DIR")
+	planDir := t.TempDir()
+	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vols := strs(catalogServer(t, planDir, srv.Name)["volumes"]); len(vols) != 1 {
+		t.Fatalf("volumes = %v, want the store alone", vols)
+	}
+	for _, e := range plan.Gateway.Env {
+		if e.Name == "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS" && strings.Contains(e.Value, spec.ConnectionsDir) {
+			t.Fatalf("writable bind roots = %q", e.Value)
+		}
+	}
+}
+
+// An oauth env value is held to the plain env's rules: nothing the gateway
+// would expand, nor the runner's placeholder marker, nor a placeholder
+// outside the grammar.
+func TestCompileRefusesAnOAuthEnvValueItCannotHandOver(t *testing.T) {
+	for _, v := range []string{"$HOME/{access_token}", "{{access_token}}", "@@RUN_CFG@@/{dir}", "{refresh_token}"} {
+		srv := workspaceMCPSpec()
+		srv.OAuth.Env = map[string]string{"TOKEN": v}
+		if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir()); err == nil {
+			t.Fatalf("%q compiled", v)
+		}
+	}
+}
+
+// The unsupported list (plan D25) holds at plan time as well as at
+// validation: a release published before its package was listed is
+// refused by name, with the alternative.
+func TestCompileRefusesAnUnsupportedOAuthPackage(t *testing.T) {
+	in := mcpFixtureInputs(t, nil, policy.Default())
+	in.Manifest.SchemaVersion = "2"
+	in.Manifest.Capabilities.MCPServers = []manifest.MCPServer{{
+		PyPI: "mcp-gsuite", Version: "0.4.1",
+		OAuth: &manifest.MCPOAuth{Issuer: "https://accounts.google.com", Env: map[string]string{"TOKEN": "{access_token}"}},
+	}}
+	_, err := Compile(in, t.TempDir())
 	var refusal *PolicyRefusal
-	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "pypi:workspace-mcp@2.0.1 takes an OAuth sign-in in its own package") {
-		t.Fatalf("err = %v, want a policy refusal naming the package server's OAuth sign-in", err)
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "pypi:mcp-gsuite@0.4.1 cannot run on an access token alone") || !strings.Contains(refusal.Reason, "pypi:workspace-mcp") {
+		t.Fatalf("err = %v, want a policy refusal naming the package and its alternative", err)
 	}
 }
 

@@ -39,6 +39,9 @@ type Vendor struct {
 	NoPublic bool
 	// Scope, when set, is the WWW-Authenticate scope.
 	Scope string
+	// IssuerOnly is a sign-in at the issuer for a package server
+	// (agentry-cli#665): the authorization request must carry no resource.
+	IssuerOnly bool
 
 	mu       sync.Mutex
 	codes    map[string]codeGrant
@@ -159,7 +162,11 @@ func (v *Vendor) authorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown client", http.StatusBadRequest)
 		return
 	}
-	if q.Get("code_challenge_method") != "S256" || q.Get("resource") != v.ServerURL() {
+	resource := v.ServerURL()
+	if v.IssuerOnly {
+		resource = ""
+	}
+	if q.Get("code_challenge_method") != "S256" || q.Get("resource") != resource {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

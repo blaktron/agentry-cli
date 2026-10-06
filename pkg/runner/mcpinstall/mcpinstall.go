@@ -722,6 +722,7 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 			Egress:      append([]string(nil), m.Egress...),
 			Secrets:     append([]string(nil), m.Secrets...),
 			Env:         copyEnv(m.Env),
+			OAuth:       oauthSpec(m.OAuth),
 		})
 	}
 	for _, srv := range servers {
@@ -739,6 +740,23 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// oauthSpec is a package server's oauth block as the plan carries it
+// (agentry-cli#665): the templates, which the engine renders per run.
+func oauthSpec(o *manifest.MCPOAuth) *spec.OAuthSpec {
+	if o == nil {
+		return nil
+	}
+	out := &spec.OAuthSpec{
+		Issuer: o.Issuer,
+		Scopes: append([]string(nil), o.Scopes...),
+		Env:    copyEnv(o.Env),
+	}
+	for _, f := range o.Files {
+		out.Files = append(out.Files, spec.OAuthFile{Path: f.Path, Template: f.Template})
+	}
 	return out
 }
 
