@@ -21,3 +21,9 @@ The reference half of the Drafter's instruction moves into the guide, and the in
 
 - wrote: manifest/manifest.md, manifest/exec.md, manifest/egress-and-fetch.md, manifest/intake-and-guide.md, manifest/run-modes.md, manifest/knowledge-accepts.md, manifest/inputs.md, manifest/secrets.md, draft/instructions.md, draft/examples.md, draft/review.md
 - updated: guide/start-here.md, servers/mcp-servers.md, sources/runtime-facts.md
+
+## [2026-10-06] ingest | the post-step's list check (Drafter 1.8.3)
+
+The check after a draft now holds each pin to the two lists: a pin *Does not run here* covers, or a server with a listed direct dependency, goes to the repair turn, and an npm install script is a note. An entry on *Does not run here* speaks for every version of its server unless its reason is bound to the version seen; a *Runs here* entry speaks for its own version. The notes say what admitted each server.
+
+- updated: servers/mcp-servers.md, servers/runs-here.md, servers/does-not-run-here.md, draft/review.md

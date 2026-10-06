@@ -71,6 +71,8 @@ dependencies:
 		"no reason":               {"    reason: musl-native\n    runtime: Python", "    runtime: Python", "closed set"},
 		"reason on runs here":     {"list: runs-here\n", "list: runs-here\n    reason: musl-native\n", "carries no reason"},
 		"unknown list":            {"list: runs-here", "list: maybe", "list must be"},
+		"a version range":         {"versions: 1.0.0", `versions: ">=1.0.0"`, "not a range"},
+		"a caret range":           {"versions: 1.0.0", "versions: ^1.0.0", "not a range"},
 		"no evidence":             {"    evidence: survey 2026-10-05\n    date: 2026-10-05\n  - ecosystem: pypi", "    date: 2026-10-05\n  - ecosystem: pypi", "required"},
 		"no date on a dependency": {"wheel.\n    evidence: survey 2026-10-05\n    date: 2026-10-05", "wheel.\n    evidence: survey 2026-10-05", "required"},
 		"unknown ecosystem":       {"ecosystem: npm\n    package: a", "ecosystem: cargo\n    package: a", "ecosystem"},
