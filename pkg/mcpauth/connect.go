@@ -39,12 +39,18 @@ func (e *NeedsOwnClientError) Error() string {
 	return fmt.Sprintf("%s registers no client on the fly, so a sign-in there needs your own OAuth client: make one at the vendor, then enter its client id and secret", e.Issuer)
 }
 
-// Consent is one sign-in to a remote server.
+// Consent is one sign-in to a remote server, or at a package server's
+// issuer.
 type Consent struct {
 	// HTTP reaches the vendor; Guard{}.Client() in production.
 	HTTP *http.Client
-	// ServerURL is the remote server's address; Scopes the manifest's.
+	// ServerURL is the remote server's address, discovered from its own
+	// metadata. Issuer, for a package server (agentry-cli#665), which has
+	// no address, is the authorization server its oauth block names; no
+	// resource parameter is sent then. Exactly one is set. Scopes are the
+	// manifest's.
 	ServerURL string
+	Issuer    string
 	Scopes    []string
 	// OwnClient is the person's own client for an issuer, or nil for none.
 	OwnClient func(issuer string) (*Client, error)
@@ -73,7 +79,7 @@ type Grant struct {
 // Run discovers the server, picks a client, opens consent, and exchanges
 // the code the redirect brings back.
 func (c Consent) Run(ctx context.Context) (*Grant, error) {
-	d, err := DiscoverRemote(ctx, c.HTTP, c.ServerURL)
+	d, err := c.discover(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +109,11 @@ func (c Consent) Run(ctx context.Context) (*Grant, error) {
 	if len(scopes) > 0 {
 		asked = strings.Join(scopes, " ")
 	}
-	c.say(fmt.Sprintf("The sign-in is at %s (the authorization server %s names), as %s, asking for: %s.", d.Server.Issuer, c.ServerURL, clientWords(client), asked))
+	where := fmt.Sprintf("%s (the authorization server %s names)", d.Server.Issuer, c.ServerURL)
+	if c.ServerURL == "" {
+		where = d.Server.Issuer
+	}
+	c.say(fmt.Sprintf("The sign-in is at %s, as %s, asking for: %s.", where, clientWords(client), asked))
 	if c.Present != nil {
 		c.Present(req.URL())
 	}
@@ -119,12 +129,38 @@ func (c Consent) Run(ctx context.Context) (*Grant, error) {
 	}
 	tok, err := Exchange(ctx, c.HTTP, req, code)
 	if err != nil {
-		return nil, fmt.Errorf("finish the sign-in to %s: %w", c.ServerURL, err)
+		return nil, fmt.Errorf("finish the sign-in to %s: %w", c.target(), err)
 	}
 	if extra := beyond(tok.Scopes, scopes); len(scopes) > 0 && len(extra) > 0 {
 		c.say("The vendor granted more than was asked: " + strings.Join(extra, " ") + ".")
 	}
 	return &Grant{Discovery: *d, Client: client, Scopes: scopes, Token: *tok}, nil
+}
+
+// discover is how the sign-in is made: a remote server's own metadata, or
+// a package server's issuer, held to the same rules (DiscoverIssuer).
+func (c Consent) discover(ctx context.Context) (*Discovery, error) {
+	switch {
+	case c.ServerURL != "" && c.Issuer != "":
+		return nil, errors.New("a sign-in is to a remote server or at an issuer, not both")
+	case c.ServerURL != "":
+		return DiscoverRemote(ctx, c.HTTP, c.ServerURL)
+	case c.Issuer != "":
+		md, err := DiscoverIssuer(ctx, c.HTTP, c.Issuer)
+		if err != nil {
+			return nil, err
+		}
+		return &Discovery{Server: *md}, nil
+	}
+	return nil, errors.New("a sign-in needs a remote server's address or an issuer")
+}
+
+// target names what is signed in to, in messages.
+func (c Consent) target() string {
+	if c.ServerURL != "" {
+		return c.ServerURL
+	}
+	return c.Issuer
 }
 
 // beyond is what granted holds that asked does not.

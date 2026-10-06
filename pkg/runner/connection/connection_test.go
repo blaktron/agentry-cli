@@ -140,7 +140,8 @@ func TestUseRefreshesAndWritesTheRotatedTokenBack(t *testing.T) {
 			if c.SecretIn != wantIn {
 				t.Fatalf("kept in %q, want %q", c.SecretIn, wantIn)
 			}
-			first, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
+			a1, _, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
+			first := a1.Token
 			if err != nil || first == "" {
 				t.Fatalf("use: %q %v", first, err)
 			}
@@ -149,7 +150,8 @@ func TestUseRefreshesAndWritesTheRotatedTokenBack(t *testing.T) {
 			if v.Live(g.Token.RefreshToken) {
 				t.Fatal("the vendor did not rotate")
 			}
-			second, c, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
+			a2, c, err := s.Use(context.Background(), k, v.Guard().Client(), nil)
+			second := a2.Token
 			if err != nil || second == "" || second == first {
 				t.Fatalf("second run: %q %v", second, err)
 			}

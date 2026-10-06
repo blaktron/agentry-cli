@@ -198,17 +198,19 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		return nil, err
 	}
 
-	// A package server's OAuth sign-in (a token in its environment or its
-	// token folder) is agentry-cli#665's: refused by name until then,
-	// before anything runs without the credential the release says it
-	// needs. A remote server's (auth: oauth) runs on the person's
-	// connection, whose access token the engine hands its bridge
-	// (agentry-cli#664).
+	// A package server's OAuth sign-in runs on the person's connection, as
+	// a remote server's does (agentry-cli#665), except for a package known
+	// not to run on an access token alone (plan D25): refused by name here
+	// as well as at validation, so a release published before the package
+	// was listed does not run without what it needs.
 	for _, srv := range m.Capabilities.MCPServers {
-		if srv.NeedsConnection() && !srv.IsRemote() {
+		if srv.IsRemote() || srv.OAuth == nil {
+			continue
+		}
+		if alt, bad := manifest.UnsupportedOAuthPackage(srv.SourceID()); bad {
 			return nil, &PolicyRefusal{Reason: fmt.Sprintf(
-				"declared MCP server %s takes an OAuth sign-in in its own package, which this version of the runner cannot hand it yet; update Agentry, or run a version of the QuickAgent that declares it without an oauth block",
-				serverRef(srv))}
+				"declared MCP server %s cannot run on an access token alone, so it cannot take a connection: run a version of the QuickAgent that declares %s instead",
+				serverRef(srv), alt)}
 		}
 	}
 
@@ -219,6 +221,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, err
 		}
 		if err := checkLiteralEnv(srv); err != nil {
+			return nil, err
+		}
+		if _, _, err := oauthEnv(srv); err != nil {
 			return nil, err
 		}
 		for _, h := range srv.Egress {
@@ -324,7 +329,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		MCPServers:   in.MCPServers,
 		Enforcement:  enforcement(caps, m.Capabilities.Secrets, m.Capabilities.OptionalSecrets, extraServers, in.Policy, in.MCPServers),
 		ExecImage:    execImage,
-		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, spec.HasPackageServers(in.MCPServers)),
+		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, in.MCPServers),
 		Harness: spec.HarnessSpec{
 			Adapter:    adapterName,
 			Model:      res.Model,
@@ -811,10 +816,19 @@ func GatewayGuardFlags() []string {
 // invariant 1 pins this in a test). The guards that the gateway itself
 // defaults on are passed explicitly too, so the run never inherits one it
 // depends on from a version's default.
-func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore bool) spec.GatewaySpec {
+func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServers []spec.MCPServerSpec) spec.GatewaySpec {
+	withStore := spec.HasPackageServers(mcpServers)
 	writable := []string{spec.PHOut}
 	if caps.FSWriteMode != "none" {
 		writable = append(writable, spec.PHWorkspace)
+	}
+	// A package server's token folder (agentry-cli#665, DR-77), each one
+	// by its exact path: never the run's cfg or its connections folder,
+	// which hold the gateway's own files and the other servers' folders.
+	for _, srv := range mcpServers {
+		if srv.OAuth != nil && len(srv.OAuth.Files) > 0 {
+			writable = append(writable, ConnectionFolder(srv.Name))
+		}
 	}
 	return spec.GatewaySpec{
 		Image: image,
@@ -1040,9 +1054,19 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	e.set("image", strNode(srv.Image))
 	e.set("command", strListNode(srv.Command))
 	e.set("longLived", boolNode(true))
-	e.set("volumes", strListNode([]string{
-		spec.PHServers + "/" + srv.StoreSubdir + ":" + spec.MCPStorePrefix + "/" + srv.StoreSubdir + ":ro",
-	}))
+	volumes := []string{spec.PHServers + "/" + srv.StoreSubdir + ":" + spec.MCPStorePrefix + "/" + srv.StoreSubdir + ":ro"}
+	if srv.OAuth != nil && len(srv.OAuth.Files) > 0 {
+		// The token folder of a package server's OAuth sign-in
+		// (agentry-cli#665): a folder, never a single-file bind, so the
+		// files the runner renews mid-run are seen. Writable, unlike a
+		// bridge's: workspace-mcp, the measured Gmail server, refuses to
+		// start unless it can write a probe file there (the operator's
+		// decision of 2026-10-06, DR-77). It holds the access token alone,
+		// is the run's own and is deleted at teardown; the runner still
+		// renames each renewed file into place.
+		volumes = append(volumes, ConnectionFolder(srv.Name)+":"+spec.ConnectionMount)
+	}
+	e.set("volumes", strListNode(volumes))
 	switch {
 	case len(srv.Egress) > 0:
 		// "host:443/tcp": the gateway fronts each host with a TCP relay
@@ -1059,9 +1083,15 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	default:
 		e.set("disableNetwork", boolNode(true))
 	}
-	if len(srv.Secrets) > 0 {
+	// A package server's OAuth sign-in (agentry-cli#665): an env entry that
+	// carries the access token is a secret of the run, which the engine
+	// renders into the gateway's secrets file under this server's key, and
+	// one naming only the token folder is plain env. Checked by oauthEnv
+	// before any entry renders.
+	plainOAuth, tokenEnv, _ := oauthEnv(srv)
+	if secretNames := append(sortedCopy(srv.Secrets), tokenEnv...); len(secretNames) > 0 {
 		var entries []*yaml.Node
-		for _, name := range sortedCopy(srv.Secrets) {
+		for _, name := range secretNames {
 			s := yamlMap{}
 			s.set("name", strNode(ServerSecretKey(srv.Name, name)))
 			s.set("env", strNode(name))
@@ -1069,17 +1099,70 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 		}
 		e.set("secrets", seqNode(entries))
 	}
-	if len(srv.Env) > 0 {
+	if env := mergeEnv(srv.Env, plainOAuth); len(env) > 0 {
 		var entries []*yaml.Node
-		for _, name := range slices.Sorted(maps.Keys(srv.Env)) {
+		for _, name := range slices.Sorted(maps.Keys(env)) {
 			kv := yamlMap{}
 			kv.set("name", strNode(name))
-			kv.set("value", strNode(srv.Env[name]))
+			kv.set("value", strNode(env[name]))
 			entries = append(entries, kv.node())
 		}
 		e.set("env", seqNode(entries))
 	}
 	return e.node()
+}
+
+// oauthEnv splits a package server's oauth env (agentry-cli#665): the
+// entries that name only the token folder, rendered here with {dir} as the
+// folder's mount, and the names of those that carry the access token, which
+// the engine renders per run into the secrets file. A value the gateway
+// would interpret, one that spells the run placeholder marker, or one with
+// a placeholder outside the grammar is refused, as checkLiteralEnv refuses
+// the plain env.
+func oauthEnv(srv spec.MCPServerSpec) (plain map[string]string, tokenEnv []string, err error) {
+	if srv.OAuth == nil {
+		return nil, nil, nil
+	}
+	for _, name := range slices.Sorted(maps.Keys(srv.OAuth.Env)) {
+		v := srv.OAuth.Env[name]
+		if !manifest.LiteralEnvValue(v) || strings.Contains(v, "@@") {
+			return nil, nil, fmt.Errorf("declared MCP server %s: oauth env %s: the value contains $, {{ }} or @@, which the gateway or the runner would interpret", srv.Ref(), name)
+		}
+		if _, exists := srv.Env[name]; exists || slices.Contains(srv.Secrets, name) {
+			return nil, nil, fmt.Errorf("declared MCP server %s: oauth env %s is also the server's env or one of its secrets", srv.Ref(), name)
+		}
+		if srv.OAuth.TokenEnv(name) {
+			// Checked here, rendered by the engine with the run's token.
+			if _, err := manifest.ExpandOAuthEnvValue(v, map[string]string{"access_token": "x", "dir": spec.ConnectionMount}); err != nil {
+				return nil, nil, fmt.Errorf("declared MCP server %s: oauth env %s: %w", srv.Ref(), name, err)
+			}
+			tokenEnv = append(tokenEnv, name)
+			continue
+		}
+		r, err := manifest.ExpandOAuthEnvValue(v, map[string]string{"dir": spec.ConnectionMount})
+		if err != nil {
+			return nil, nil, fmt.Errorf("declared MCP server %s: oauth env %s: %w", srv.Ref(), name, err)
+		}
+		if plain == nil {
+			plain = map[string]string{}
+		}
+		plain[name] = r
+	}
+	return plain, tokenEnv, nil
+}
+
+// mergeEnv is the plain env and the rendered oauth env as one map; nil
+// when both are empty.
+func mergeEnv(a, b map[string]string) map[string]string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	out := maps.Clone(a)
+	if out == nil {
+		out = map[string]string{}
+	}
+	maps.Copy(out, b)
+	return out
 }
 
 // remoteServerEntry renders one declared remote server (plan
@@ -1461,7 +1544,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		d := srv.Package + " (auth " + srv.Auth
 		switch {
 		case srv.SignsIn():
-			d += ", the person's connection for this release: an access token alone, refreshed by the runner before the run and written into a folder mounted read-only into its bridge; the refresh token and any client secret never enter the run"
+			d += ", the person's connection for this release: an access token alone, refreshed by the runner before the run and again before it expires during a local run, and written into a folder mounted read-only into its bridge; the refresh token and any client secret never enter the run"
 		case srv.SendsBearer():
 			d += ", " + strings.Join(srv.Secrets, ", ") + " sent as its bearer"
 		}
@@ -1488,12 +1571,44 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 				// Keys only: a receipt never carries a configured value.
 				d += ", env keys " + strings.Join(slices.Sorted(maps.Keys(srv.Env)), "/")
 			}
+			if srv.OAuth != nil {
+				d += ", " + oauthDesc(srv)
+			}
 			d += ")"
 			parts = append(parts, d)
 		}
 		e["mcpServers"] = "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network with a TCP relay linked under each host's name — a network the runner refuses to share: the run does not start while another gateway's relays are on it (checked as the run starts; a gateway started during the run is not refused), and its own relays are removed at teardown — one with none has no network — with server-scoped secrets and the manifest's plain env: " + strings.Join(parts, "; ")
 	}
 	return e
+}
+
+// oauthDesc is the receipt's account of a package server's OAuth sign-in
+// (agentry-cli#665): where its access token goes, by file and env name,
+// and that nothing else of the connection does. Never a template.
+func oauthDesc(srv spec.MCPServerSpec) string {
+	o := srv.OAuth
+	d := "signed in at " + o.Issuer + " by the person's connection for this release: an access token alone, refreshed by the runner before the run"
+	var where []string
+	if len(o.Files) > 0 {
+		names := make([]string, 0, len(o.Files))
+		for _, f := range o.Files {
+			names = append(names, f.Path)
+		}
+		where = append(where, "rendered into "+strings.Join(names, "/")+" in the server's own folder at "+spec.ConnectionMount+" (writable by the server, deleted at teardown) and rewritten before it expires during a local run")
+	}
+	var tokenEnv []string
+	for name := range o.Env {
+		if o.TokenEnv(name) {
+			tokenEnv = append(tokenEnv, name)
+		}
+	}
+	if len(tokenEnv) > 0 {
+		where = append(where, "set in env "+strings.Join(slices.Sorted(slices.Values(tokenEnv)), "/")+" through the gateway's secrets file, fixed for the run")
+	}
+	if len(where) > 0 {
+		d += ", " + strings.Join(where, ", and ")
+	}
+	return d + "; the refresh token and any client secret never enter the run"
 }
 
 // execEnforcement is the exec line of the receipt: the allowlist, the

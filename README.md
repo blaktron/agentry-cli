@@ -872,7 +872,8 @@ provider and stands up the gateway plane before any agent is involved.
 **MCP profiles** store a QuickAgent's keys and identities once per exact
 release — guided setup on first run, then keep or remove on completion
 (`--keep-profile`, `agentry profiles list|remove`). **Connections**: a
-remote MCP server declared with `auth: oauth` is signed in to on the
+remote MCP server declared with `auth: oauth`, or a package server with an
+`oauth` block (signed in to at its `issuer`), is signed in to on the
 vendor's own consent screen, once per exact release, at the first run that
 needs it (on a terminal; the browser opens, or the address is printed and
 the address the browser ends on is pasted back), or ahead of it with
@@ -880,7 +881,13 @@ the address the browser ends on is pasted back), or ahead of it with
 release alone (another QuickAgent or another version asks again), its
 refresh token in the OS keychain (a 0600 file under the runner home where
 none answers); each run refreshes it under a lock before the sandbox
-starts and hands the server's bridge an access token alone. With no
+starts and hands the server an access token alone: a remote server's bridge
+in a read-only folder; a package server in the files its `oauth` block
+templates, in a folder of its own it may write to (some servers will not
+start otherwise), or in an env variable through the gateway's secrets
+file. While a run or session lasts, the runner renews a token before it
+expires and rewrites the folder (a bridge, and a server that re-reads its
+file, pick it up; an env token is fixed for the run). With no
 terminal a run that lacks one exits 11 naming the server. `agentry
 connections list|remove` manages them (a removal, and an uninstall, revoke
 at the vendor where it offers that); `agentry connections client

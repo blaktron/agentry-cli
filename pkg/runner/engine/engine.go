@@ -149,12 +149,20 @@ type Params struct {
 	// — the QuickAgent's MCP profile rides in here (P2 §P2); the engine
 	// itself stays profile-agnostic.
 	SecretOverrides map[string]string
-	// Connections are the access tokens of the remote servers that sign in
-	// by OAuth (auth: oauth), keyed by the server's address: the caller
-	// refreshed each from the person's connection (pkg/runner/connection,
-	// agentry-cli#664). An access token is all a run is given of one; a
-	// server with none here refuses the run.
-	Connections map[string]string
+	// Connections are the access tokens of the servers that sign in by
+	// OAuth, keyed by spec.MCPServerSpec.ConnectionKey (a remote server's
+	// address, a package server's "pypi:name"): the caller refreshed each
+	// from the person's connection (pkg/runner/connection, agentry-cli#664,
+	// #665). An access token is all a run is given of one; a server with
+	// none here refuses the run.
+	Connections map[string]ConnectionToken
+	// RenewConnection, when set, is asked for a new access token for a
+	// server (by its ConnectionKey) before the one the run holds expires
+	// (plan mcp-oauth-connections.md D24): the engine rewrites the
+	// server's connection folder with it, which a bridge and a server that
+	// re-reads its token file pick up. Nil leaves each token as given for
+	// the whole run.
+	RenewConnection func(ctx context.Context, server string) (ConnectionToken, error)
 	// ServersDir is the signature's installed MCP-server store
 	// (RUNNER-PLAN-3), substituted for the PHServers placeholder.
 	// Required when the plan declares MCP servers; unused otherwise.
@@ -310,6 +318,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	rep := rd.replacer()
 	redact = rd.newRedactor(p, token, secrets)
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
+	// Connections are renewed before they expire for as long as the run
+	// lives (plan D24); teardown stops the renewer before it deletes the
+	// connection folders.
+	stopRenewal := renewConnections(ctx, p, rd)
+	td.add(func(context.Context) { stopRenewal() })
 
 	env.Stage = receipt.StageInfra
 	err = startInfra(ctx, d, p, rd, td, runID, token, rep, nil)

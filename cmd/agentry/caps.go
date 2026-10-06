@@ -63,6 +63,15 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 			}
 			line += " (env: " + strings.Join(pairs, ", ") + ")"
 		}
+		if srv.OAuth != nil {
+			// The sign-in is contract (plan §3 invariant 7): its issuer and
+			// scopes are what the person's consent at the vendor will ask.
+			line += " (OAuth sign-in at " + srv.OAuth.Issuer
+			if len(srv.OAuth.Scopes) > 0 {
+				line += ", scopes: " + renderList(srv.OAuth.Scopes)
+			}
+			line += "; given an access token alone)"
+		}
 		lines = append(lines, line)
 	}
 	// Shipped knowledge (plan knowledge.md §4.6): packs inside the release

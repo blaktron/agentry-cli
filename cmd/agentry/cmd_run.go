@@ -603,6 +603,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		PolicyFile:      &policyFile,
 		SecretOverrides: overrides,
 		Connections:     conns.tokens,
+		RenewConnection: conns.renew,
 		ServersDir:      serversDir,
 		Budgets:         budgets,
 		Attestation:     meta.Attestation,

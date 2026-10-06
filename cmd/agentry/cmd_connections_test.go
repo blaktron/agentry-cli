@@ -79,7 +79,7 @@ func TestAConnectionIsAskedForOnceAndReusedByTheNextRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first run: %v\n%s", err, stderr.String())
 	}
-	if *opened != 1 || first.tokens[v.ServerURL()] == "" {
+	if *opened != 1 || first.tokens[v.ServerURL()].AccessToken == "" {
 		t.Fatalf("first run: opened %d, tokens %v", *opened, first.tokens)
 	}
 	second, err := ensureConnections(testCmd(&stderr), home, meta, m)
@@ -89,7 +89,7 @@ func TestAConnectionIsAskedForOnceAndReusedByTheNextRun(t *testing.T) {
 	if *opened != 1 {
 		t.Fatal("the second run of the same version asked for consent again")
 	}
-	if tok := second.tokens[v.ServerURL()]; tok == "" || tok == first.tokens[v.ServerURL()] {
+	if tok := second.tokens[v.ServerURL()].AccessToken; tok == "" || tok == first.tokens[v.ServerURL()].AccessToken {
 		t.Fatalf("the second run's access token %q is not a fresh one", tok)
 	}
 	if !strings.Contains(second.line, v.ServerURL()+" (issuer "+v.URL+", scopes read, client dcr)") || !strings.Contains(second.line, "an access token alone") {
@@ -112,9 +112,9 @@ func TestAConnectionIsAskedForOnceAndReusedByTheNextRun(t *testing.T) {
 	// the store's own secret files: searched raw and base64.
 	probes := append([]string{probeClientSecret}, v.Issued...)
 	given := stderr.String() + first.line + second.line
-	for _, tok := range []map[string]string{first.tokens, second.tokens} {
+	for _, tok := range []map[string]engine.ConnectionToken{first.tokens, second.tokens} {
 		for _, t := range tok {
-			given += " " + t
+			given += " " + t.AccessToken
 		}
 	}
 	assertNoProbe(t, "what the run is given and the terminal", given, probes)
@@ -124,6 +124,83 @@ func TestAConnectionIsAskedForOnceAndReusedByTheNextRun(t *testing.T) {
 		}
 		if filepath.Dir(path) == connection.Dir(home) && strings.HasSuffix(path, ".secret") {
 			return nil // the store's 0600 secret half, where no keychain answers (D6)
+		}
+		b, rerr := os.ReadFile(path) //nolint:gosec // the test's runner home
+		if rerr != nil {
+			return rerr
+		}
+		assertNoProbe(t, path, string(b), probes)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A package server's oauth block (agentry-cli#665) is signed in to at its
+// issuer, with no resource, keyed by the package's id; the next run of the
+// same version asks nothing; the renewal the engine calls mid-run refreshes
+// the same connection, writing each rotated refresh token back; and
+// neither a refresh token nor the client secret reaches anything a run is
+// given (D8, searched raw and base64).
+func TestAPackageServerIsSignedInAtItsIssuerAndRenewedMidRun(t *testing.T) {
+	v, m, meta, opened := connectionFixture(t)
+	v.IssuerOnly = true
+	m.Capabilities.MCPServers = []manifest.MCPServer{{
+		PyPI: "workspace-mcp", Version: "2.0.1",
+		OAuth: &manifest.MCPOAuth{Issuer: v.URL, Scopes: []string{"read"}, Env: map[string]string{"GOOGLE_ACCESS_TOKEN": "{access_token}"}},
+	}}
+	home, err := runnerHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	first, err := ensureConnections(testCmd(&stderr), home, meta, m)
+	if err != nil {
+		t.Fatalf("first run: %v\n%s", err, stderr.String())
+	}
+	tok := first.tokens["pypi:workspace-mcp"]
+	if *opened != 1 || tok.AccessToken == "" || tok.ExpiresAt.IsZero() {
+		t.Fatalf("first run: opened %d, tokens %v", *opened, first.tokens)
+	}
+	if !strings.Contains(stderr.String(), "needs you to sign in to pypi:workspace-mcp (signing in at "+v.URL+")") {
+		t.Fatalf("the consent does not name the package and its issuer:\n%s", stderr.String())
+	}
+	for _, f := range v.Requests {
+		if f.Has("resource") {
+			t.Fatalf("a token request carried a resource: %v", f)
+		}
+	}
+	second, err := ensureConnections(testCmd(&stderr), home, meta, m)
+	if err != nil || *opened != 1 {
+		t.Fatalf("the second run asked again (opened %d): %v", *opened, err)
+	}
+	if !strings.Contains(second.line, "pypi:workspace-mcp (issuer "+v.URL+", scopes read, client dcr)") {
+		t.Fatalf("receipt line = %q", second.line)
+	}
+	// Two renewals in a row: the second works only if the first wrote the
+	// rotated refresh token back.
+	var renewed []string
+	for range 2 {
+		r, err := second.renew(context.Background(), "pypi:workspace-mcp")
+		if err != nil || r.AccessToken == "" || r.ExpiresAt.IsZero() {
+			t.Fatalf("renew: %+v %v", r, err)
+		}
+		renewed = append(renewed, r.AccessToken)
+	}
+	if renewed[0] == renewed[1] || renewed[0] == second.tokens["pypi:workspace-mcp"].AccessToken {
+		t.Fatalf("renewals did not bring fresh tokens: %v", renewed)
+	}
+
+	probes := append([]string{probeClientSecret}, v.Issued...)
+	given := stderr.String() + first.line + second.line + " " + tok.AccessToken + " " + strings.Join(renewed, " ")
+	assertNoProbe(t, "what the run is given and the terminal", given, probes)
+	err = filepath.WalkDir(home, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if filepath.Dir(path) == connection.Dir(home) && strings.HasSuffix(path, ".secret") {
+			return nil
 		}
 		b, rerr := os.ReadFile(path) //nolint:gosec // the test's runner home
 		if rerr != nil {
@@ -172,7 +249,7 @@ func TestARefusedRefreshAsksForConsentAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr.String())
 	}
-	if *opened != 2 || got.tokens[v.ServerURL()] == "" || !strings.Contains(stderr.String(), "no longer works") {
+	if *opened != 2 || got.tokens[v.ServerURL()].AccessToken == "" || !strings.Contains(stderr.String(), "no longer works") {
 		t.Fatalf("opened %d, stderr:\n%s", *opened, stderr.String())
 	}
 }
@@ -231,6 +308,20 @@ func TestConnectionsClientSetListRemove(t *testing.T) {
 	}
 }
 
+// agentry connect takes nobody through consent for a package its runs
+// would refuse (plan D25).
+func TestConnectRefusesAnUnsupportedPackage(t *testing.T) {
+	gsuite := manifest.MCPServer{PyPI: "mcp-gsuite", Version: "0.4.1", OAuth: &manifest.MCPOAuth{Issuer: "https://accounts.google.com"}}
+	err := refuseUnsupported([]manifest.MCPServer{{PyPI: "workspace-mcp", Version: "2.0.1", OAuth: gsuite.OAuth}, gsuite})
+	var ce *engine.ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), "pypi:mcp-gsuite cannot run on an access token alone") || !strings.Contains(err.Error(), "pypi:workspace-mcp") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := refuseUnsupported([]manifest.MCPServer{{PyPI: "workspace-mcp", Version: "2.0.1", OAuth: gsuite.OAuth}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConnectNeedsAnInstalledRelease(t *testing.T) {
 	_, _, _, _ = connectionFixture(t)
 	_, _, err := runCLI(t, nil, "connect", "acme/mail")
@@ -241,7 +332,7 @@ func TestConnectNeedsAnInstalledRelease(t *testing.T) {
 
 func TestGoogleGetsAgentrysOwnSteps(t *testing.T) {
 	s := ownClientSteps("https://accounts.google.com", "https://gmailmcp.googleapis.com/mcp/v1")
-	for _, want := range []string{"Desktop app", "gmailmcp.googleapis.com", "7 days", "In production"} {
+	for _, want := range []string{"Desktop app", "gmailmcp.googleapis.com", "7 days", "In production", "Test users"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("Google steps miss %q:\n%s", want, s)
 		}
