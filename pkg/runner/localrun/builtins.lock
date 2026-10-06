@@ -40,3 +40,5 @@ agentry/drafter@1.8.0 sha256:5b728c9660472c6b814cff743be7e2c6d166f930f8fd348b313
 agentry/drafter@1.8.1 sha256:e37ead0ede4dba67b7fa4811736c7c32d3511929ffc4e5c57b5afa65a9444c41
 # 1.8.2: the drafting guide holds the reference half of the instruction (the manifest and its bounds, commands, network and fetch, the intake and the guide, run modes, knowledge, writing the instructions, worked drafts), and AGENT.md keeps the basics and a map of the pages (agentry-cli#659).
 agentry/drafter@1.8.2 sha256:c00a79a705c57956c2cce9528aede211a9e1bba95e04da22c37ba9098ac530eb
+# 1.8.3: the post-step holds each MCP server pin to the drafting guide's lists: a pin on Does not run here, or a listed direct dependency, gets the repair turn; the notes say what admitted each server (agentry-cli#660).
+agentry/drafter@1.8.3 sha256:68f6895bc52002cb3447b16ba8686f074ea3bcd422a06583e4506e32c84d8fa7

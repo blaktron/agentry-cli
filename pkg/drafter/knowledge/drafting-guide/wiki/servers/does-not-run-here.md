@@ -8,7 +8,7 @@ updated: 2026-10-05
 
 # Does not run here
 
-These servers were seen to fail in the runner, or cannot run here for the reason each entry gives, on the runtime and the date it gives. Do not pin them: no setting of the QuickAgent makes them run. An entry comes off the list when the runner gains what the server lacked. A server not listed here can still fail; check it against [Declared MCP servers](mcp-servers.md) before you pin it. [src: doc:servers.yaml]
+These servers were seen to fail in the runner, or cannot run here for the reason each entry gives, on the runtime and the date it gives. Do not pin them: no setting of the QuickAgent makes them run. An entry comes off the list when the runner gains what the server lacked. A server not listed here can still fail; check it against [Declared MCP servers](mcp-servers.md) before you pin it. An entry speaks for every version of its server, unless its reason is `broken-upstream`, `invalid-tool-schema` or `runtime-excluded`, which hold for the version seen. The check after you answer sends a pin this page covers, or a server with a dependency listed at its end, to a repair turn. [src: doc:servers.yaml]
 
 26 servers.
 

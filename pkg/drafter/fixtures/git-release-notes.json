@@ -1,0 +1,22 @@
+{
+  "id": "git-release-notes",
+  "description": "Write release notes for a git repository on GitHub that I name: read the commits since its last tag and group them into features, fixes and breaking changes, in Markdown.",
+  "hints": [
+    "The repository changes each run."
+  ],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.github.com",
+      "github.com",
+      "raw.githubusercontent.com"
+    ],
+    "maxSecrets": 1,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "intake": true
+  }
+}

@@ -68,6 +68,17 @@ keeps the role, the rules for deciding, the steps, each naming the pages it
 needs, and the shape of the answer. The checks after a draft hold every rule
 they check, whatever the Drafter read.
 
+Since 1.8.3 the checks after a draft hold each MCP server pin to the two
+lists. A pin on *Does not run here*, or a server whose own direct
+dependencies (from the package metadata the check of its version already
+reads) include a package the list names, gets the one repair turn, like any
+rule the draft breaks. An npm install script is noted for you to check
+before a run, not refused. The notes say what admitted each server the
+draft keeps: its *Runs here* entry, or the Drafter's judgement with the
+guide for a server on neither list. The lists stay soft: nothing outside
+the Drafter reads them, and a server on neither list may be pinned. The
+check sends nothing new off your computer.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

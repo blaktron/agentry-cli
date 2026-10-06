@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -85,8 +88,9 @@ type RuntimeEntry struct {
 type ServerEntry struct {
 	Ecosystem string `yaml:"ecosystem"`
 	Package   string `yaml:"package"`
-	// Versions is the versions the entry is about: an exact version, a
-	// range in the ecosystem's grammar, or "all".
+	// Versions is the versions the entry is about: the exact version that
+	// was seen, or "all". It is never a range (LoadServerList). Which other
+	// versions an exact entry speaks for is versionBound's rule.
 	Versions string `yaml:"versions"`
 	List     string `yaml:"list"`
 	// Reason is a class of the closed set (NotRunReason), on Does not run here only.
@@ -146,6 +150,8 @@ func LoadServerList(fsys fs.FS) (*ServerList, error) {
 			return nil, fmt.Errorf("%s: reason %q is not one of the closed set", at, s.Reason)
 		case s.List == RunsHere && s.Reason != "":
 			return nil, fmt.Errorf("%s: a Runs here entry carries no reason", at)
+		case s.Versions != AllVersions && strings.ContainsAny(s.Versions, versionRangeChars):
+			return nil, fmt.Errorf("%s: versions %q must be one version or %q, not a range", at, s.Versions, AllVersions)
 		}
 		key := s.Ecosystem + ":" + s.Package + ":" + s.List
 		if seen[key] {
@@ -174,3 +180,81 @@ func LoadServerList(fsys fs.FS) (*ServerList, error) {
 
 // ecosystems are the two a declared server comes from.
 var ecosystems = []string{"npm", "pypi"}
+
+// AllVersions is an entry's versions when it speaks for every version.
+const AllVersions = "all"
+
+// versionRangeChars are what a range has and a version does not.
+const versionRangeChars = " <>=^~*|,!"
+
+// versionBound are the reasons that hold for the version seen and not for
+// the package's others: a runtime range a later release may widen, a tool
+// schema it may correct, an upstream break it may mend. Every other reason
+// is the server's design (a glibc binary, launch arguments, a browser it
+// spawns, a port), so a Does not run here entry with an exact version
+// speaks for every version of its package unless its reason is one of
+// these (agentry-cli#660; DR-67's addendum). A Runs here entry speaks for
+// its own version only: another version is judged with the guide. The
+// Does not run here page names them (VersionBoundReasons).
+var versionBound = map[string]bool{"runtime-excluded": true, "invalid-tool-schema": true, "broken-upstream": true}
+
+// VersionBoundReasons are versionBound's classes, sorted.
+func VersionBoundReasons() []string { return slices.Sorted(maps.Keys(versionBound)) }
+
+// packageOf is a declared package server's ecosystem and package name.
+func packageOf(srv manifest.MCPServer) (ecosystem, pkg string) {
+	if srv.NPM != "" {
+		return "npm", srv.NPM
+	}
+	return "pypi", srv.PyPI
+}
+
+// NotRunHere is the Does not run here entry that covers a pin: its
+// package, in the ecosystem's own name rule, and a version the entry
+// speaks for.
+func (l *ServerList) NotRunHere(ecosystem, pkg, version string) (ServerEntry, bool) {
+	for _, e := range l.Servers {
+		if e.List == DoesNotRunHere && e.is(ecosystem, pkg) &&
+			(e.Versions == AllVersions || e.Versions == version || !versionBound[e.Reason]) {
+			return e, true
+		}
+	}
+	return ServerEntry{}, false
+}
+
+// RunsHereEntry is the Runs here entry of a package, if it is listed; seen
+// says the entry speaks for this version (its own, or all).
+func (l *ServerList) RunsHereEntry(ecosystem, pkg, version string) (e ServerEntry, listed, seen bool) {
+	for _, e := range l.Servers {
+		if e.List == RunsHere && e.is(ecosystem, pkg) {
+			return e, true, e.Versions == AllVersions || e.Versions == version
+		}
+	}
+	return ServerEntry{}, false, false
+}
+
+// ListedDependency is the first of deps, a server's direct dependencies in
+// one ecosystem, that the dependencies section lists.
+func (l *ServerList) ListedDependency(ecosystem string, deps []string) (DependencyEntry, bool) {
+	for _, dep := range deps {
+		for _, d := range l.Dependencies {
+			if d.Ecosystem == ecosystem && samePackage(ecosystem, d.Package, dep) {
+				return d, true
+			}
+		}
+	}
+	return DependencyEntry{}, false
+}
+
+func (e ServerEntry) is(ecosystem, pkg string) bool {
+	return e.Ecosystem == ecosystem && samePackage(ecosystem, e.Package, pkg)
+}
+
+// samePackage compares names as the ecosystem does: npm's exactly, PyPI's
+// normalized (PEP 503).
+func samePackage(ecosystem, a, b string) bool {
+	if ecosystem == "pypi" {
+		return mcpinstall.NormalizePyPIName(a) == mcpinstall.NormalizePyPIName(b)
+	}
+	return a == b
+}

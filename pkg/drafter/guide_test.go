@@ -88,10 +88,10 @@ func serverListPages(t *testing.T) map[string][]byte {
 	}{
 		{RunsHere, "runs-here.md", "Runs here",
 			"Declared MCP servers seen to install, start and list their tools in the runner, each with the versions, the runtime, the date and what a QuickAgent must declare for it. Generated from servers.yaml; do not edit by hand.",
-			"These servers were seen to install with the runner's own builder, start with no arguments through the runner's gateway, and list their tools, on the runtime and the date each entry gives. The survey's gateway ran outside a run, with the daemon's default runtime and without a run's Docker filter, so a run can still refuse what it started. That is all an entry says: it is not a judgement of a server's safety or quality, and a later version can behave differently. The list is one thing to look at when you choose a server, not a gate. A server on neither list may be pinned after the checks on [Declared MCP servers](mcp-servers.md), and a server here still needs them: its keys, its hosts, and whether its tools fit the task.", false},
+			"These servers were seen to install with the runner's own builder, start with no arguments through the runner's gateway, and list their tools, on the runtime and the date each entry gives. The survey's gateway ran outside a run, with the daemon's default runtime and without a run's Docker filter, so a run can still refuse what it started. That is all an entry says: it is not a judgement of a server's safety or quality, and a later version can behave differently. The list is one thing to look at when you choose a server, not a gate. A server on neither list may be pinned after the checks on [Declared MCP servers](mcp-servers.md), and a server here still needs them: its keys, its hosts, and whether its tools fit the task. An entry speaks for the version it gives; another version of the server is on neither list.", false},
 		{DoesNotRunHere, "does-not-run-here.md", "Does not run here",
 			"Declared MCP servers seen to fail in the runner, and packages whose presence as a direct dependency means a server cannot run, each with the reason, the runtime and the date. Generated from servers.yaml; do not edit by hand.",
-			"These servers were seen to fail in the runner, or cannot run here for the reason each entry gives, on the runtime and the date it gives. Do not pin them: no setting of the QuickAgent makes them run. An entry comes off the list when the runner gains what the server lacked. A server not listed here can still fail; check it against [Declared MCP servers](mcp-servers.md) before you pin it.", true},
+			"These servers were seen to fail in the runner, or cannot run here for the reason each entry gives, on the runtime and the date it gives. Do not pin them: no setting of the QuickAgent makes them run. An entry comes off the list when the runner gains what the server lacked. A server not listed here can still fail; check it against [Declared MCP servers](mcp-servers.md) before you pin it. An entry speaks for every version of its server, unless its reason is " + orList(codeSpans(VersionBoundReasons())) + ", which hold for the version seen. The check after you answer sends a pin this page covers, or a server with a dependency listed at its end, to a repair turn.", true},
 	} {
 		entries := byList[p.list]
 		sort.Slice(entries, func(i, j int) bool {
@@ -535,4 +535,12 @@ func TestADraftRecordsTheGuideItHad(t *testing.T) {
 	if !strings.Contains(string(out), `"guide":{"name":"`+GuideName+`","digest":"`+m.SHA256+`"`) {
 		t.Fatalf("draft.json's drafter block %s", out)
 	}
+}
+
+// orList joins items as prose: "a", "a or b", "a, b or c".
+func orList(items []string) string {
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " or " + items[len(items)-1]
 }
