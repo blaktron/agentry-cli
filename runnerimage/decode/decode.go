@@ -11,8 +11,9 @@
 // one clamscan run, and a file it finds is never decoded (clamav.go).
 // A git repository's internals, everything under a .git directory, are
 // listed and checked but never detected or decoded (InRepository).
-// Nothing a document contains reaches an argv but its own path. Text
-// formats pass as they are. The caller runs this in a container with no
+// Nothing a document contains reaches an argv but its own path. Any other
+// UTF-8 text (code, markup, configuration, data) passes as it is, byte
+// for byte, told without a JVM (detect; agentry-cli#630). The caller runs this in a container with no
 // network and no capabilities, the inputs mounted read-only.
 //
 // This package is part of the embedded runner-image build context and so
@@ -471,10 +472,8 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 		f.Tool = "tika"
 		return undecodable(f, "content detection failed: "+err.Error())
 	}
+	// The text fast path (detect) has read it as UTF-8 already.
 	if kind.text {
-		if !isText(src) {
-			return undecodable(f, "not UTF-8 text")
-		}
 		f.Outcome = OutcomeText
 		if !member {
 			return f
@@ -526,8 +525,6 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 			body, err = odsText(src, lim.MaxExpandedBytes)
 		case "odp":
 			body, err = odpText(src, lim.MaxExpandedBytes)
-		case "csv":
-			body, err = csvText(src, lim.MaxExpandedBytes)
 		}
 		if err == nil {
 			err = os.WriteFile(text, []byte(body), 0o600)
@@ -614,8 +611,9 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// isText says whether a file of no known family reads as text: its first
-// 64 KiB are UTF-8 (a cut rune at the end aside) with no NUL.
+// isText says whether a file that is no document reads as text, the text
+// fast path's test in front of Tika (detect): its first 64 KiB are UTF-8
+// (a cut rune at the end aside) with no NUL.
 func isText(p string) bool {
 	f, err := os.Open(p) //nolint:gosec // an input under the root being decoded
 	if err != nil {

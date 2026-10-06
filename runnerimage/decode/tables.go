@@ -2,11 +2,9 @@ package decode
 
 import (
 	"bytes"
-	"encoding/csv"
 	"encoding/xml"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -70,38 +68,6 @@ func markdownTable(rows [][]string) string {
 		b.WriteString("\nTable cut at 10,000 rows.\n")
 	}
 	return b.String()
-}
-
-func csvText(src string, budget int64) (string, error) {
-	f, err := os.Open(src) //nolint:gosec // staged regular input
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = f.Close() }()
-	fi, err := f.Stat()
-	if err != nil {
-		return "", err
-	}
-	if fi.Size() > budget {
-		return "", fmt.Errorf("the file expands past its cap")
-	}
-	r := csv.NewReader(io.LimitReader(f, budget))
-	r.FieldsPerRecord = -1
-	var rows [][]string
-	for len(rows) <= maxTableRows {
-		row, err := r.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", err
-		}
-		if len(row) > maxTableColumns {
-			return "", fmt.Errorf("more than 1,024 columns")
-		}
-		rows = append(rows, row)
-	}
-	return "## Sheet 1\n" + markdownTable(rows), nil
 }
 
 // OpenDocument keeps the document in one bounded content.xml. Decode
