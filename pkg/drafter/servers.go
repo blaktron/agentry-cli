@@ -28,6 +28,9 @@ var registryResolver = func(regs policy.MCPRegistries) ServerResolver {
 		if err != nil {
 			return mcpinstall.Resolved{}, err
 		}
+		if len(res) != 1 {
+			return mcpinstall.Resolved{}, fmt.Errorf("%s is not a package a registry publishes", srv.SourceID())
+		}
 		return res[0], nil
 	}
 }
@@ -55,6 +58,8 @@ func (p PostStep) checkServers(ctx context.Context, d *Draft) {
 	if len(servers) > manifest.MaxMCPServers {
 		servers = servers[:manifest.MaxMCPServers]
 	}
+	// A remote server has no package to look up (agentry-cli#663).
+	servers = mcpinstall.Packages(servers)
 	if len(servers) == 0 {
 		return
 	}

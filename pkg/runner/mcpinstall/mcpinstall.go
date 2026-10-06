@@ -133,10 +133,27 @@ func sanitizeID(source, pkg string) string {
 // IDFor is the store/catalog id a declared server resolves under —
 // exported so callers can check the store before resolving.
 func IDFor(srv manifest.MCPServer) string {
-	if srv.NPM != "" {
+	switch {
+	case srv.NPM != "":
 		return sanitizeID("npm", srv.NPM)
+	case srv.IsRemote():
+		// The address without its scheme: host and path name the server.
+		return sanitizeID(spec.SourceURL, strings.TrimPrefix(srv.URL, "https://"))
 	}
 	return sanitizeID("pypi", srv.PyPI)
+}
+
+// Packages is the declared servers that are packages: what is resolved
+// against the registries and installed into the store. A remote server
+// (agentry-cli#663) has neither; Specs renders it as it is declared.
+func Packages(servers []manifest.MCPServer) []manifest.MCPServer {
+	out := make([]manifest.MCPServer, 0, len(servers))
+	for _, srv := range servers {
+		if !srv.IsRemote() {
+			out = append(out, srv)
+		}
+	}
+	return out
 }
 
 // ResolveAll resolves every declared server against the configured
@@ -146,6 +163,7 @@ func ResolveAll(ctx context.Context, client *http.Client, regs policy.MCPRegistr
 	if client == nil {
 		client = &http.Client{Timeout: httpTimeout}
 	}
+	servers = Packages(servers)
 	out := make([]Resolved, 0, len(servers))
 	for _, srv := range servers {
 		pkg := srv.NPM
@@ -577,7 +595,10 @@ func invokingUser() string {
 	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
-// Specs turns resolutions into the plan's server specs.
+// Specs turns resolutions into the plan's server specs, and each declared
+// remote server into its own: an address, its auth, its tools and its one
+// host, which the compiler runs the runner image's bridge for
+// (agentry-cli#663).
 func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Images) []spec.MCPServerSpec {
 	bySource := map[string]manifest.MCPServer{}
 	for _, srv := range servers {
@@ -599,6 +620,20 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 			Egress:      append([]string(nil), m.Egress...),
 			Secrets:     append([]string(nil), m.Secrets...),
 			Env:         copyEnv(m.Env),
+		})
+	}
+	for _, srv := range servers {
+		if !srv.IsRemote() {
+			continue
+		}
+		out = append(out, spec.MCPServerSpec{
+			Name:    "mcp-" + IDFor(srv),
+			Source:  spec.SourceURL,
+			Package: srv.URL,
+			Tools:   append([]string(nil), srv.Tools...),
+			Egress:  []string{srv.RemoteHost() + ":443"}, // the one port the bridge reaches
+			Secrets: append([]string(nil), srv.Secrets...),
+			Auth:    string(srv.Auth),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -176,5 +177,29 @@ func TestCheckVulnerabilitiesReadsGateSeverity(t *testing.T) {
 	a := got[0].Advisories[0]
 	if a.GateSeverity != "medium" || a.CVSSScore == nil || *a.CVSSScore != 7.1 || got[0].Refuses() {
 		t.Fatalf("parsed: %+v", got[0])
+	}
+}
+
+// A remote server (agentry-cli#663) is never looked up: it is its vendor's
+// running service, with no package version, and the registry records none
+// (S7/remote-server). It never refuses a run.
+func TestRemoteServerIsNotLookedUp(t *testing.T) {
+	asked := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	got := CheckVulnerabilities(context.Background(), srv.Client(), srv.URL, []manifest.MCPServer{
+		{URL: "https://mcp.deepwiki.com/mcp", Auth: manifest.AuthNone},
+	})
+	if asked != 0 {
+		t.Fatalf("the registry was asked %d times about a remote server", asked)
+	}
+	if len(got) != 1 || got[0].Status != StatusRemote || got[0].Ref != "https://mcp.deepwiki.com/mcp" || got[0].Refuses() {
+		t.Fatalf("status = %+v", got)
+	}
+	if s := Summary(got); !strings.Contains(s, "https://mcp.deepwiki.com/mcp remote (not looked up") {
+		t.Fatalf("summary = %q", s)
 	}
 }

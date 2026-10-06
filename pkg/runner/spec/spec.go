@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -76,6 +77,22 @@ const (
 	PHHostGatewayURL = "@@HOST_GATEWAY_URL@@"
 	PHHostProxyURL   = "@@HOST_PROXY_URL@@"
 )
+
+// A remote server's credential reaches its bridge as a file (plan
+// mcp-oauth-connections.md §5, agentry-cli#663): the engine writes it into
+// ConnectionsDir/<server name>/BearerFile under the run's cfg directory, and
+// the compiler mounts that folder, a folder and never the file alone so a
+// value rewritten mid-run is seen, read-only at ConnectionMount. The
+// gateway never holds it: it is not in the gateway's secrets file.
+const (
+	ConnectionsDir  = "connections"
+	ConnectionMount = "/run/agentry/connection"
+	BearerFile      = "bearer"
+)
+
+// SourceURL is a remote server's Source: no package, no version, no image
+// and no store; the compiler runs the runner image's bridge for it.
+const SourceURL = "url"
 
 // MCPStorePrefix is the fixed in-container prefix a declared server's
 // dependency closure is installed under AND mounted at — the same path in
@@ -503,6 +520,9 @@ type MCPServerSpec struct {
 	// Name is the gateway catalog name ("mcp-" + sanitized package id).
 	Name string `json:"name"`
 	// Source is "npm" or "pypi"; Package and Version are the manifest pin.
+	// For a remote server (agentry-cli#663) Source is SourceURL, Package
+	// the server's address, and Version, Integrity, Image, Command and
+	// StoreSubdir are empty: the compiler runs the runner image's bridge.
 	Source  string `json:"source"`
 	Package string `json:"package"`
 	Version string `json:"version"`
@@ -528,11 +548,55 @@ type MCPServerSpec struct {
 	// literal value), rendered into its catalog entry beside — never
 	// through — its secrets. Receipts name the keys only.
 	Env map[string]string `json:"env,omitempty"`
+	// Auth is a remote server's auth kind: "none", or "secret", its one
+	// Secrets name sent as the bearer (agentry-cli#663). Empty for a
+	// package server.
+	Auth string `json:"auth,omitempty"`
 }
 
 // SourceID is the declared server's ecosystem-qualified id, as the
-// manifest's MCPServer.SourceID gives it ("npm:@scope/x").
+// manifest's MCPServer.SourceID gives it ("npm:@scope/x", "url:https://…").
 func (s MCPServerSpec) SourceID() string { return s.Source + ":" + s.Package }
+
+// Remote reports whether the server is declared by address.
+func (s MCPServerSpec) Remote() bool { return s.Source == SourceURL }
+
+// SendsBearer reports whether the server is a remote one declared with
+// auth: secret, whose one secret its bridge sends as the bearer.
+func (s MCPServerSpec) SendsBearer() bool { return s.Remote() && s.Auth == "secret" } // manifest.AuthSecret
+
+// Ref names the server in messages and receipts: the package pin
+// ("@scope/x@1.2.3"), or a remote server's address.
+func (s MCPServerSpec) Ref() string {
+	if s.Remote() {
+		return s.Package
+	}
+	return s.Package + "@" + s.Version
+}
+
+// RemoteHost is a remote server's host name, its one egress host; "" for
+// a package server.
+func (s MCPServerSpec) RemoteHost() string {
+	if !s.Remote() {
+		return ""
+	}
+	u, err := url.Parse(s.Package)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// HasPackageServers reports whether any declared server is a package,
+// installed into the signature's server store.
+func HasPackageServers(servers []MCPServerSpec) bool {
+	for _, s := range servers {
+		if !s.Remote() {
+			return true
+		}
+	}
+	return false
+}
 
 // OutputSpec is the optional structured-output convention (§R2).
 type OutputSpec struct {

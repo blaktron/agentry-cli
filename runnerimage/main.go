@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/runnerimage/bridge"
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
@@ -43,6 +44,10 @@ const usageText = `usage: agentry-runner <mode> [flags]
         run the CONNECT egress allowlist proxy (llm-proxy); --forward adds
         a plain TCP pipe (the host's door to the gateway, which never
         leaves the run network)
+  bridge --url <https address> [--token-file <path>]
+        serve one remote MCP server on stdio, forwarding each message to it
+        over streamable HTTP (or HTTP+SSE); the bearer, when there is one,
+        is read from --token-file at every request
   confine --write <dir> [--write <dir>...] -- <program> [<arg>...]
         (the tools server's) run a declared command, able to write only
         beneath the named directories
@@ -71,6 +76,8 @@ func main() {
 		err = runProbe(os.Args[2:])
 	case "decode":
 		err = runDecode(os.Args[2:])
+	case "bridge":
+		err = runBridge(os.Args[2:])
 	case confine.Role:
 		// agentry-cli#596: run_command's trampoline. It never returns,
 		// and the command never runs unconfined.
@@ -146,6 +153,27 @@ func runTools(args []string) error {
 		return fmt.Errorf("parse tool spec %s: %w", *specPath, err)
 	}
 	return toolsrv.Serve(os.Stdin, os.Stdout, os.Stderr, &spec)
+}
+
+// runBridge serves one remote MCP server on stdio (plan
+// mcp-oauth-connections.md §5, agentry-cli#663) until the gateway closes
+// stdin.
+func runBridge(args []string) error {
+	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
+	addr := fs.String("url", "", "the remote MCP server's https address")
+	tokenFile := fs.String("token-file", "", "the file holding the bearer value, read at every request (unset: auth none)")
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
+	if *addr == "" {
+		fmt.Fprintln(os.Stderr, "agentry-runner bridge: --url is required")
+		os.Exit(2)
+	}
+	b, err := bridge.New(bridge.Config{URL: *addr, TokenFile: *tokenFile, Log: os.Stderr}, os.Stdout)
+	if err != nil {
+		return err
+	}
+	return b.Serve(context.Background(), os.Stdin)
 }
 
 // runProxy starts the llm-proxy. The allowlist is required: an empty one

@@ -138,3 +138,31 @@ func TestCapabilityLinesDeclaredServerEnv(t *testing.T) {
 		t.Errorf("got  %q\nwant %q", lines[len(lines)-1], want)
 	}
 }
+
+// A remote server's consent line (agentry-cli#663) names its address, that
+// it runs at its vendor, how it is signed in to and what it may be asked;
+// and a release that declares one needs confirmation, as egress does.
+func TestCapabilityLinesRemoteServer(t *testing.T) {
+	caps := parseCaps(t, `capabilities:
+  secrets: [GITHUB_TOKEN]
+  mcpServers:
+    - url: https://api.githubcopilot.com/mcp/readonly
+      auth: secret
+      secrets: [GITHUB_TOKEN]
+      tools: [get_me, search_repositories]
+    - url: https://mcp.deepwiki.com/mcp
+      auth: none
+`)
+	got := strings.Join(capabilityLines(caps), "\n")
+	for _, want := range []string{
+		"mcpServer: https://api.githubcopilot.com/mcp/readonly (remote, at its vendor; auth: secret, sends GITHUB_TOKEN as its bearer) (tools: get_me, search_repositories)",
+		"mcpServer: https://mcp.deepwiki.com/mcp (remote, at its vendor; auth: none) (tools: every tool it serves)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("consent lines miss %q:\n%s", want, got)
+		}
+	}
+	if !capabilityNeedsConfirm(caps) {
+		t.Error("a remote server must need confirmation")
+	}
+}

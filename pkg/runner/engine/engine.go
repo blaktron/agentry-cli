@@ -280,6 +280,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := writeSecretsFile(p, rd.secretsPath); err != nil {
 		return fail(env, redact, err)
 	}
+	if err := writeConnectionFiles(p, rd, secrets); err != nil {
+		return fail(env, redact, err)
+	}
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
 	// receipt (DR-70).
@@ -752,7 +755,7 @@ func checkDeclaredServersStarted(logs string, servers []spec.MCPServerSpec) erro
 		for _, line := range lines {
 			t := strings.TrimSpace(line)
 			if strings.HasPrefix(t, "> Can't start "+srv.Name+":") || strings.HasPrefix(t, "> Can't list tools "+srv.Name+":") {
-				return receipt.WithReason(fmt.Errorf("declared MCP server %s@%s did not start; the gateway said: %s%s", srv.Package, srv.Version, t, serverOutputTail(lines, srv.Name)),
+				return receipt.WithReason(fmt.Errorf("declared MCP server %s did not start; the gateway said: %s%s", srv.Ref(), t, serverOutputTail(lines, srv.Name)),
 					receipt.ReasonMCPStartFailed, "", srv.SourceID())
 			}
 		}

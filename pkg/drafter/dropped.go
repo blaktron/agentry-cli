@@ -42,6 +42,7 @@ func declaredCapabilities(raw json.RawMessage) []declared {
 			MCPServers []struct {
 				NPM     string   `json:"npm"`
 				PyPI    string   `json:"pypi"`
+				URL     string   `json:"url"`
 				Secrets []string `json:"secrets"`
 				Egress  []string `json:"egress"`
 			} `json:"mcpServers"`
@@ -86,7 +87,10 @@ func declaredCapabilities(raw json.RawMessage) []declared {
 	for i, srv := range caps.MCPServers {
 		p := fmt.Sprintf("capabilities.mcpServers[%d]", i)
 		name := srv.NPM
-		if name == "" {
+		switch {
+		case srv.URL != "":
+			name = srv.URL // a remote server (agentry-cli#663)
+		case name == "":
 			name = srv.PyPI
 		}
 		add(kindServer, name, p)
