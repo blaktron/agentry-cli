@@ -43,6 +43,10 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 	// Declared MCP servers (RUNNER-PLAN-3): one line each — the consent
 	// gate and guided setup must show exactly what will be installed.
 	for _, srv := range c.MCPServers {
+		if srv.IsRemote() {
+			lines = append(lines, remoteServerLine(srv))
+			continue
+		}
 		line := "mcpServer: " + srv.SourceID() + "@" + srv.Version
 		if len(srv.Egress) > 0 {
 			line += " (egress: " + renderList(srv.Egress) + ")"
@@ -79,7 +83,10 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 // capabilityNeedsConfirm reports whether install must ask before proceeding:
 // declared network egress or subprocess execution (§11 install row).
 func capabilityNeedsConfirm(c manifest.Capabilities) bool {
-	return len(c.Network.Egress.Hosts) > 0 || len(c.Exec.Commands) > 0
+	// A remote server is network reach to its vendor, whatever the
+	// release's own egress says (agentry-cli#663).
+	return len(c.Network.Egress.Hosts) > 0 || len(c.Exec.Commands) > 0 ||
+		slices.ContainsFunc(c.MCPServers, manifest.MCPServer.IsRemote)
 }
 
 // isZeroCapabilities reports a completely undeclared capability block.
@@ -185,4 +192,26 @@ func parseModes(s string) ([]manifest.Mode, error) {
 		return nil, errors.New("--modes must name at least one run mode: autonomous, interactive")
 	}
 	return out, nil
+}
+
+// remoteServerLine is a remote server's consent line (agentry-cli#663):
+// its address, how it is signed in to, and what it may be asked; it runs
+// at its vendor, reached through the runner image's bridge.
+func remoteServerLine(srv manifest.MCPServer) string {
+	line := "mcpServer: " + srv.URL + " (remote, at its vendor; auth: " + string(srv.Auth)
+	switch srv.Auth {
+	case manifest.AuthSecret:
+		line += ", sends " + renderList(srv.Secrets) + " as its bearer"
+	case manifest.AuthOAuth:
+		if len(srv.Scopes) > 0 {
+			line += ", scopes: " + renderList(srv.Scopes)
+		}
+	}
+	line += ")"
+	if len(srv.Tools) > 0 {
+		line += " (tools: " + renderList(srv.Tools) + ")"
+	} else {
+		line += " (tools: every tool it serves)"
+	}
+	return line
 }

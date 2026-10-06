@@ -182,6 +182,21 @@ grep -q '"status": "ok"' "$WORK/envelope-mcp.json" || { echo "FAIL: declared-ser
 check_filter "$MCPOUT"
 echo "declared MCP server: run ok, relays launched through the docker filter"
 
+# A declared remote MCP server (agentry-cli#663): the gateway launches the
+# runner image's bridge for it like any declared server, behind one relay to
+# the server's host, through the docker filter. The fixture's server is
+# DeepWiki's public one (no sign-in), so the docker host needs to reach
+# mcp.deepwiki.com:443.
+REMOTEOUT="$WORK/out-remote"
+echo "modelcontextprotocol/go-sdk" | "$AGENTRY" run --local testdata/runner/mcp-remote ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} \
+  --allow-unsigned --yes --out "$REMOTEOUT" --output-format json --timeout 300 >"$WORK/envelope-remote.json" \
+  || { echo "FAIL: remote-server run exited non-zero"; cat "$WORK/envelope-remote.json"; filter_refusals "$REMOTEOUT"; exit 1; }
+grep -q '"status": "ok"' "$WORK/envelope-remote.json" || { echo "FAIL: remote-server run not ok"; cat "$WORK/envelope-remote.json"; exit 1; }
+check_filter "$REMOTEOUT"
+grep -q 'https://mcp.deepwiki.com/mcp (auth none' "$REMOTEOUT/result.json" || { echo "FAIL: the receipt does not name the remote server and its auth"; exit 1; }
+grep -qE 'docker-mcp-l[47]proxy-[^ ]+ for mcp\.deepwiki\.com' "$REMOTEOUT/receipts/gateway.log" || { echo "FAIL: no relay to mcp.deepwiki.com named in the remote run's gateway.log"; exit 1; }
+echo "declared remote MCP server: run ok, bridged behind one relay through the docker filter"
+
 # §R11 invariant 6: nothing of ours survives. (The EXIT trap repeats this
 # on every path; here it is the success-path assertion with the names.)
 LEFT=$(docker ps -a --filter label=agentry.run --format '{{.Names}}')
@@ -191,6 +206,7 @@ NETS=$(docker network ls --format '{{.Name}}' | grep '^agentry-' || true)
 VOLS=$(docker volume ls --filter label=agentry.run --format '{{.Name}}')
 [ -z "$VOLS" ] || { echo "FAIL: leftover volumes: $VOLS"; exit 1; }
 find "$AGENTRY_RUNNER_HOME" -name secrets.env | grep -q . && { echo "FAIL: secrets.env survived"; exit 1; }
+find "$AGENTRY_RUNNER_HOME" -type d -name connections -path '*/cfg/*' | grep -q . && { echo "FAIL: a run's connection folders survived"; exit 1; }
 # The relay sidecars the gateway started for a declared server are reaped
 # by the names its log gave them (agentry-cli#106, #108): none named in any
 # run's gateway.log receipt may survive. Checked by name, never by label —
@@ -198,7 +214,7 @@ find "$AGENTRY_RUNNER_HOME" -name secrets.env | grep -q . && { echo "FAIL: secre
 # must be non-empty: the mcp-osv run above declares a server, so an empty
 # list means the assertion is looping over nothing (DR-22 was "accepted"
 # on exactly that for a while, agentry-cli#160).
-RELAYS=$(cat "$OUT"/receipts/gateway.log "$EXECOUT"/receipts/gateway.log "$MCPOUT"/receipts/gateway.log 2>/dev/null | grep -oE '^(starting l4 proxy docker-mcp-l4proxy-[^ ]+ for|[[:space:]]+- Starting l7 proxy docker-mcp-l7proxy-[^ ]+ for)' | grep -oE 'docker-mcp-l[47]proxy-[^ ]+' | sort -u || true)
+RELAYS=$(cat "$OUT"/receipts/gateway.log "$EXECOUT"/receipts/gateway.log "$MCPOUT"/receipts/gateway.log "$REMOTEOUT"/receipts/gateway.log 2>/dev/null | grep -oE '^(starting l4 proxy docker-mcp-l4proxy-[^ ]+ for|[[:space:]]+- Starting l7 proxy docker-mcp-l7proxy-[^ ]+ for)' | grep -oE 'docker-mcp-l[47]proxy-[^ ]+' | sort -u || true)
 [ -n "$RELAYS" ] || { echo "FAIL: no relay sidecar named in any gateway.log — the declared-server fixture started none, so the DR-22 assertion proves nothing"; exit 1; }
 for r in $RELAYS; do
   docker ps -a --format '{{.Names}}' | grep -qx "$r" && { echo "FAIL: relay sidecar $r survived teardown"; exit 1; }

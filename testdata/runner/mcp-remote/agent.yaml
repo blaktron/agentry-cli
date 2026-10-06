@@ -1,0 +1,26 @@
+schemaVersion: "2"
+name: mcp-remote
+namespace: fixtures
+modes: [autonomous]
+version: 1.0.0
+summary: "Declares one remote MCP server (DeepWiki's, no sign-in) - the fixture behind runner-r2's bridge and relay-teardown assertions"
+license: Apache-2.0
+tags: [fixture]
+
+entrypoints:
+  instruction: SKILL.md
+
+capabilities:
+  filesystem:
+    read: none
+    write: none
+  network:
+    egress: none
+  exec: none
+  mcpServers:
+    - url: https://mcp.deepwiki.com/mcp
+      auth: none
+      tools: [read_wiki_structure]
+
+publish:
+  include: [agent.yaml, SKILL.md]

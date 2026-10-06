@@ -1,6 +1,7 @@
 package mcpinstall
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // fakeRegistries serves just enough npm + PyPI metadata for resolution.
@@ -769,5 +771,34 @@ func TestResolveAllNamesTheServerItCouldNotResolve(t *testing.T) {
 	want := &receipt.Reason{Code: receipt.ReasonMCPNotResolved, Names: []string{"npm:@scope/no-such-server"}}
 	if got := receipt.ReasonOf(err); err == nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("reason = %+v, want %+v (err %v)", got, want, err)
+	}
+}
+
+// A remote server (agentry-cli#663) is neither resolved nor installed, and
+// becomes a plan spec of its own: its address, auth, tools, bearer secret
+// and its one host.
+func TestRemoteServersAreSpecsNotPackages(t *testing.T) {
+	servers := []manifest.MCPServer{
+		{URL: "https://api.githubcopilot.com/mcp/readonly", Auth: manifest.AuthSecret, Secrets: []string{"GITHUB_TOKEN"}, Tools: []string{"get_me"}},
+	}
+	if got := Packages(servers); len(got) != 0 {
+		t.Fatalf("Packages kept a remote server: %+v", got)
+	}
+	res, err := ResolveAll(context.Background(), nil, policy.MCPRegistries{NPM: "https://127.0.0.1:1", PyPI: "https://127.0.0.1:1"}, servers)
+	if err != nil || len(res) != 0 {
+		t.Fatalf("ResolveAll on a remote server: %v %+v", err, res)
+	}
+	specs := Specs(nil, servers, policy.Default().Images)
+	want := spec.MCPServerSpec{
+		Name: "mcp-url-api-githubcopilot-com-mcp-readonly", Source: spec.SourceURL,
+		Package: "https://api.githubcopilot.com/mcp/readonly",
+		Tools:   []string{"get_me"}, Egress: []string{"api.githubcopilot.com:443"},
+		Secrets: []string{"GITHUB_TOKEN"}, Auth: "secret",
+	}
+	if len(specs) != 1 || !reflect.DeepEqual(specs[0], want) {
+		t.Fatalf("Specs = %+v\nwant %+v", specs, want)
+	}
+	if !specs[0].Remote() || specs[0].Ref() != "https://api.githubcopilot.com/mcp/readonly" || specs[0].RemoteHost() != "api.githubcopilot.com" || !specs[0].SendsBearer() {
+		t.Fatalf("spec helpers: %+v", specs[0])
 	}
 }

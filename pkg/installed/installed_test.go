@@ -459,3 +459,73 @@ func TestReconsentKeepsALocalInstall(t *testing.T) {
 		t.Fatal("a registry record became local")
 	}
 }
+
+// A remote server in the consent record (agentry-cli#663): the record keeps
+// its address, auth, scopes, tools and bearer secret, so the same release
+// asks nothing again, while a changed auth, a new tool or a lifted
+// allowlist re-asks through the core's rule (DEV-215).
+func TestSnapshotAndDiffOfRemoteServers(t *testing.T) {
+	parse := func(servers string) manifest.Capabilities {
+		t.Helper()
+		m, err := manifest.Parse([]byte(`schemaVersion: "2"
+name: snap
+namespace: demo
+modes: [autonomous]
+version: 1.0.0
+summary: "remote snapshot fixture"
+capabilities:
+  secrets: [GITHUB_TOKEN]
+  mcpServers:
+` + servers + `
+publish:
+  include: [agent.yaml]
+`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.Capabilities
+	}
+	base := parse(`    - url: https://api.githubcopilot.com/mcp/readonly
+      auth: secret
+      secrets: [GITHUB_TOKEN]
+      tools: [get_me]
+    - url: https://gmailmcp.googleapis.com/mcp/v1
+      auth: oauth
+      scopes: [https://www.googleapis.com/auth/gmail.readonly]
+    - pypi: workspace-mcp
+      version: 2.0.1
+      oauth:
+        issuer: https://accounts.google.com
+        env: {GOOGLE_TOKEN: "{access_token}"}`)
+	snap := Snapshot(base)
+	if r := snap.MCPRemote["url:https://api.githubcopilot.com/mcp/readonly"]; r.Auth != "secret" || !slices.Equal(r.Secrets, []string{"GITHUB_TOKEN"}) || !slices.Equal(r.Tools, []string{"get_me"}) {
+		t.Fatalf("the record misses the remote server: %+v", snap.MCPRemote)
+	}
+	if d := DiffCapabilities(snap, Snapshot(base)); !d.Empty() {
+		t.Fatalf("the same release read as a changed contract: %+v", d)
+	}
+	if !reflect.DeepEqual(Snapshot(snap.capabilities()), snap) {
+		t.Fatalf("capabilities() does not invert Snapshot for remote servers:\n%+v\n%+v", Snapshot(snap.capabilities()), snap)
+	}
+	for _, c := range []struct{ servers, want string }{
+		{`    - url: https://api.githubcopilot.com/mcp/readonly
+      auth: none
+      tools: [get_me]`, "changes auth of MCP server url:https://api.githubcopilot.com/mcp/readonly"},
+		{`    - url: https://api.githubcopilot.com/mcp/readonly
+      auth: secret
+      secrets: [GITHUB_TOKEN]`, "lifts the tool allowlist"},
+		{`    - url: https://api.githubcopilot.com/mcp/readonly
+      auth: secret
+      secrets: [GITHUB_TOKEN]
+      tools: [get_me, create_issue]`, "adds tool create_issue"},
+	} {
+		first := Snapshot(parse(`    - url: https://api.githubcopilot.com/mcp/readonly
+      auth: secret
+      secrets: [GITHUB_TOKEN]
+      tools: [get_me]`))
+		d := DiffCapabilities(first, Snapshot(parse(c.servers)))
+		if !strings.Contains(strings.Join(d.Widened, "|"), c.want) {
+			t.Errorf("want a widening %q, got %+v", c.want, d)
+		}
+	}
+}

@@ -70,12 +70,30 @@ type CapSnapshot struct {
 	// to what the server receives and re-asks for consent. Absent in
 	// records written before env existed, which reads as "no env".
 	MCPServerEnv map[string]map[string]string `yaml:"mcpServerEnv,omitempty" json:"mcpServerEnv,omitempty"`
+	// MCPRemote is each declared remote server's sign-in and reach, keyed
+	// like MCPServers ("url:<address>"; agentry-cli#663): the core's diff
+	// compares a remote server's auth, scopes, tool allowlist and bearer
+	// secret, so a record without them would read every run as a widening.
+	// Absent in records written before remote servers existed.
+	MCPRemote map[string]RemoteSnapshot `yaml:"mcpRemote,omitempty" json:"mcpRemote,omitempty"`
+	// MCPServerOAuth is each package server's OAuth sign-in, keyed like
+	// MCPServers, for the same reason (DEV-215).
+	MCPServerOAuth map[string]*manifest.MCPOAuth `yaml:"mcpServerOAuth,omitempty" json:"mcpServerOAuth,omitempty"`
 	// Knowledge lists the knowledge packs the release ships in its archive
 	// (the manifest's knowledge.ships, as manifest.Contract carries them):
 	// a new one is text entering the agent's context, a widening the
 	// consent gate re-asks about. Absent in records written before shipped
 	// knowledge existed, which reads as "ships none".
 	Knowledge []string `yaml:"knowledge,omitempty" json:"knowledge,omitempty"`
+}
+
+// RemoteSnapshot is what a consent recorded of one remote server beside
+// its address.
+type RemoteSnapshot struct {
+	Auth    string   `yaml:"auth" json:"auth"`
+	Scopes  []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
+	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }
 
 // Snapshot flattens a manifest capability block for storage.
@@ -98,6 +116,24 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 				s.MCPServerEnv = map[string]map[string]string{}
 			}
 			s.MCPServerEnv[id] = maps.Clone(srv.Env)
+		}
+		if srv.IsRemote() {
+			if s.MCPRemote == nil {
+				s.MCPRemote = map[string]RemoteSnapshot{}
+			}
+			s.MCPRemote[id] = RemoteSnapshot{
+				Auth:    string(srv.Auth),
+				Scopes:  slices.Clone(srv.Scopes),
+				Tools:   slices.Clone(srv.Tools),
+				Secrets: slices.Clone(srv.Secrets),
+			}
+		}
+		if srv.OAuth != nil {
+			if s.MCPServerOAuth == nil {
+				s.MCPServerOAuth = map[string]*manifest.MCPOAuth{}
+			}
+			o := *srv.OAuth
+			s.MCPServerOAuth[id] = &o
 		}
 	}
 	for _, d := range c.DataAccess {
@@ -133,6 +169,16 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 	for _, id := range s.MCPServers {
 		srv := serverFromID(id)
 		srv.Env = maps.Clone(s.MCPServerEnv[id])
+		if r, ok := s.MCPRemote[id]; ok && srv.IsRemote() {
+			srv.Auth = manifest.MCPAuth(r.Auth)
+			srv.Scopes = slices.Clone(r.Scopes)
+			srv.Tools = slices.Clone(r.Tools)
+			srv.Secrets = slices.Clone(r.Secrets)
+		}
+		if o := s.MCPServerOAuth[id]; o != nil {
+			cp := *o
+			srv.OAuth = &cp
+		}
 		c.MCPServers = append(c.MCPServers, srv)
 	}
 	return c
@@ -150,6 +196,9 @@ const unparsedServer = "\x00unparsed:"
 // so the release's own server reads as added and the gate asks again, as
 // the raw-string comparison this replaced did.
 func serverFromID(id string) manifest.MCPServer {
+	if addr, ok := strings.CutPrefix(id, "url:"); ok && addr != "" {
+		return manifest.MCPServer{URL: addr}
+	}
 	for _, src := range []string{"npm:", "pypi:"} {
 		rest, ok := strings.CutPrefix(id, src)
 		if !ok {
@@ -383,9 +432,14 @@ func ArchiveWidenings(consented, archive manifest.Capabilities) []string {
 }
 
 // serverID is a declared server's key in a snapshot and in the core's
-// diff: its package id and pin, "npm:@scope/x@1.2.3" (serverFromID's
-// inverse).
-func serverID(s manifest.MCPServer) string { return s.SourceID() + "@" + s.Version }
+// diff: its package id and pin, "npm:@scope/x@1.2.3", or a remote
+// server's "url:<address>" (serverFromID's inverse).
+func serverID(s manifest.MCPServer) string {
+	if s.IsRemote() {
+		return s.SourceID()
+	}
+	return s.SourceID() + "@" + s.Version
+}
 
 // serverWidenings reports what the archive grants a declared MCP server
 // beyond the consented declaration of the same server (same package and
@@ -397,6 +451,9 @@ func serverWidenings(consented, archive []manifest.MCPServer) []string {
 	}
 	var out []string
 	for _, s := range archive {
+		if s.IsRemote() {
+			continue // the core's diff compares a remote server's tools and secret (DEV-215)
+		}
 		id := serverID(s)
 		c, ok := byID[id]
 		if !ok {

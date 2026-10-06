@@ -198,9 +198,24 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		return nil, err
 	}
 
+	// A server that signs in by OAuth needs the person's connection
+	// (plan mcp-oauth-connections.md D4), which this runner does not make
+	// yet (agentry-cli#664, #665): refused by name, before anything runs
+	// without the credential the release says it needs.
+	for _, srv := range m.Capabilities.MCPServers {
+		if srv.NeedsConnection() {
+			return nil, &PolicyRefusal{Reason: fmt.Sprintf(
+				"declared MCP server %s signs in by OAuth, with a connection this version of the runner cannot make yet; update Agentry, or run a version of the QuickAgent that declares it with auth: none or auth: secret",
+				serverRef(srv))}
+		}
+	}
+
 	// Declared MCP servers (RUNNER-PLAN-3): policy-gate their egress and
 	// refuse name collisions before anything renders.
 	for _, srv := range in.MCPServers {
+		if err := checkRemote(srv); err != nil {
+			return nil, err
+		}
 		if err := checkLiteralEnv(srv); err != nil {
 			return nil, err
 		}
@@ -256,7 +271,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		// runs with its PATH (the operator's decision of 2026-09-30).
 		tspec.Exec.ImagePath = execImage.Unsafe != nil
 	}
-	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, extraServers, extraEntries, in.MCPServers); err != nil {
+	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, in.RunnerImage, extraServers, extraEntries, in.MCPServers); err != nil {
 		return nil, err
 	}
 
@@ -307,7 +322,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		MCPServers:   in.MCPServers,
 		Enforcement:  enforcement(caps, m.Capabilities.Secrets, m.Capabilities.OptionalSecrets, extraServers, in.Policy, in.MCPServers),
 		ExecImage:    execImage,
-		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, len(in.MCPServers) > 0),
+		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, spec.HasPackageServers(in.MCPServers)),
 		Harness: spec.HarnessSpec{
 			Adapter:    adapterName,
 			Model:      res.Model,
@@ -840,7 +855,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, withStore
 // renderGatewayFiles writes the five-file gateway config set (§R4) into
 // the files map.
 func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.CapSummary,
-	secrets []string, runnerImage string, extraServers []string, extraEntries map[string]yaml.Node,
+	secrets []string, toolsImage, runnerImage string, extraServers []string, extraEntries map[string]yaml.Node,
 	mcpServers []spec.MCPServerSpec,
 ) error {
 	tspecJSON, err := json.MarshalIndent(tspec, "", "  ")
@@ -849,7 +864,7 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	}
 	files["gateway/toolspec.json"] = append(tspecJSON, '\n')
 
-	entry := catalogEntry(tspec, caps, secrets, runnerImage)
+	entry := catalogEntry(tspec, caps, secrets, toolsImage)
 	catalog := yamlMap{}
 	catalog.set(spec.ToolServerName, entry)
 	for _, name := range extraServers {
@@ -857,6 +872,10 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 		catalog.set(name, &node)
 	}
 	for _, srv := range mcpServers {
+		if srv.Remote() {
+			catalog.set(srv.Name, remoteServerEntry(srv, runnerImage))
+			continue
+		}
 		catalog.set(srv.Name, mcpServerEntry(srv))
 	}
 	catalogDoc := yamlMap{}
@@ -924,15 +943,15 @@ func checkLiteralEnv(srv spec.MCPServerSpec) error {
 	for _, name := range slices.Sorted(maps.Keys(srv.Env)) {
 		v := srv.Env[name]
 		if v == "" {
-			return fmt.Errorf("declared MCP server %s: env %s: the value is empty and the gateway would not set it; declare a value or leave the key out", srv.Package, name)
+			return fmt.Errorf("declared MCP server %s: env %s: the value is empty and the gateway would not set it; declare a value or leave the key out", srv.Ref(), name)
 		}
 		if !manifest.LiteralEnvValue(v) {
-			return fmt.Errorf("declared MCP server %s: env %s: the value contains $ or {{ }}, which the gateway would interpret; declare a literal value", srv.Package, name)
+			return fmt.Errorf("declared MCP server %s: env %s: the value contains $ or {{ }}, which the gateway would interpret; declare a literal value", srv.Ref(), name)
 		}
 		if strings.Contains(v, "@@") {
 			// The engine rewrites @@RUN_*@@ placeholders in plan files into
 			// host paths; a manifest value must not be able to spell one.
-			return fmt.Errorf("declared MCP server %s: env %s: the value contains @@, the run placeholder marker; declare a literal value", srv.Package, name)
+			return fmt.Errorf("declared MCP server %s: env %s: the value contains @@, the run placeholder marker; declare a literal value", srv.Ref(), name)
 		}
 	}
 	return nil
@@ -1059,6 +1078,78 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 		e.set("env", seqNode(entries))
 	}
 	return e.node()
+}
+
+// remoteServerEntry renders one declared remote server (plan
+// mcp-oauth-connections.md §5, D3; agentry-cli#663) as an ordinary gateway
+// catalog entry: the runner image's bridge, forwarding stdio to the
+// server's address, with the address's host as its one allowed host, so it
+// runs on the relay network behind that host's relay, under the run's
+// docker filter and the policy's runtime, as a package server does. The
+// gateway dials nothing itself and is unchanged. An auth: secret server's
+// bearer is not one of the gateway's secrets: the engine writes it into the
+// server's connection folder, mounted read-only, which the bridge reads at
+// every request.
+func remoteServerEntry(srv spec.MCPServerSpec, runnerImage string) *yaml.Node {
+	e := yamlMap{}
+	e.set("description", strNode(fmt.Sprintf("declared remote MCP server %s (auth %s), reached through the runner image's bridge", srv.Package, srv.Auth)))
+	e.set("title", strNode(srv.Package))
+	e.set("type", strNode("server"))
+	e.set("image", strNode(runnerImage))
+	command := []string{"bridge", "--url", srv.Package}
+	if srv.SendsBearer() {
+		command = append(command, "--token-file", spec.ConnectionMount+"/"+spec.BearerFile)
+		e.set("volumes", strListNode([]string{ConnectionFolder(srv.Name) + ":" + spec.ConnectionMount + ":ro"}))
+	}
+	e.set("command", strListNode(command))
+	e.set("longLived", boolNode(true))
+	e.set("allowHosts", strListNode([]string{srv.RemoteHost() + ":443/tcp"}))
+	return e.node()
+}
+
+// ConnectionFolder is a remote server's connection folder, in plan
+// placeholders: under the run's cfg directory, never under cfg/gateway,
+// which is the gateway's own mount.
+func ConnectionFolder(serverName string) string {
+	return spec.PHCfg + "/" + spec.ConnectionsDir + "/" + serverName
+}
+
+// checkRemote refuses a remote server spec the compiler cannot render as
+// the manifest's rules promise: an https address on a host, auth none with
+// no secret, or auth secret with exactly one.
+func checkRemote(srv spec.MCPServerSpec) error {
+	if !srv.Remote() {
+		return nil
+	}
+	if !strings.HasPrefix(srv.Package, "https://") || srv.RemoteHost() == "" || strings.ContainsAny(srv.Package, "${} \t\n\"'") {
+		return fmt.Errorf("declared remote MCP server %q: not an https address a run can reach", srv.Package)
+	}
+	if u, err := url.Parse(srv.Package); err != nil || (u.Port() != "" && u.Port() != "443") {
+		// The bridge's one allowed host is on 443 (the manifest's rule too).
+		return fmt.Errorf("declared remote MCP server %s: a run reaches a remote server on port 443 only", srv.Package)
+	}
+	switch srv.Auth {
+	case string(manifest.AuthNone):
+		if len(srv.Secrets) != 0 {
+			return fmt.Errorf("declared remote MCP server %s: auth none, yet it names a secret", srv.Package)
+		}
+	case string(manifest.AuthSecret):
+		if len(srv.Secrets) != 1 {
+			return fmt.Errorf("declared remote MCP server %s: auth secret needs exactly one declared secret, its bearer", srv.Package)
+		}
+	default:
+		return fmt.Errorf("declared remote MCP server %s: auth %q is not one this runner can send", srv.Package, srv.Auth)
+	}
+	return nil
+}
+
+// serverRef names a manifest's declared server: its pin, or a remote
+// server's address.
+func serverRef(srv manifest.MCPServer) string {
+	if srv.IsRemote() {
+		return srv.URL
+	}
+	return srv.SourceID() + "@" + srv.Version
 }
 
 // ServerSecretKey is the gateway secrets-file key for a declared server's
@@ -1277,22 +1368,45 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	// container, so the line names each with its server (agentry-cli#376):
 	// "none declared" beside a server that was handed a key would state less
 	// than the run enforced.
-	var serverSecrets []string
+	var serverSecrets, remoteSecrets, alsoOwn []string
 	for _, srv := range mcpServers {
-		if len(srv.Secrets) > 0 {
+		if srv.SendsBearer() {
+			for _, name := range srv.Secrets {
+				if slices.Contains(secrets, name) {
+					alsoOwn = append(alsoOwn, name)
+				}
+			}
+		}
+		switch {
+		case len(srv.Secrets) == 0:
+		case srv.Remote():
+			// A remote server's bearer (agentry-cli#663) is not one of the
+			// gateway's secrets: the engine writes it into the server's
+			// connection folder for its bridge alone.
+			remoteSecrets = append(remoteSecrets, srv.Package+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
+		default:
 			serverSecrets = append(serverSecrets, srv.Package+"@"+srv.Version+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
 		}
 	}
 	serverPart := "each declared server's own, injected only into that server's container via gateway secret scoping: " + strings.Join(serverSecrets, "; ")
+	remotePart := "each remote server's bearer, written by the runner into a run-owned folder mounted read-only into that server's bridge alone, never into the gateway's secrets file, and deleted at teardown: " + strings.Join(remoteSecrets, "; ")
 	switch {
-	case len(secrets) == 0 && len(serverSecrets) == 0:
+	case len(secrets) == 0 && len(serverSecrets) == 0 && len(remoteSecrets) == 0:
 		e["secrets"] = "none declared"
+	case len(secrets) == 0 && len(serverSecrets) == 0:
+		e["secrets"] = "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + remotePart
 	case len(secrets) == 0:
 		e["secrets"] = "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; " + serverPart
+		if len(remoteSecrets) > 0 {
+			e["secrets"] += "; " + remotePart
+		}
 	default:
 		e["secrets"] = "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: " + strings.Join(sortedCopy(secrets), ", ")
 		if len(serverSecrets) > 0 {
 			e["secrets"] += "; " + serverPart
+		}
+		if len(remoteSecrets) > 0 {
+			e["secrets"] += "; " + remotePart
 		}
 	}
 	// An optional secret (capabilities.optionalSecrets, DR-70) is the one
@@ -1307,8 +1421,17 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	// the gateway reads the whole --secrets file to inject them, so its own
 	// container holds every value, the release's and each server's
 	// (agentry-cli#404).
-	if e["secrets"] != "none declared" {
+	if len(secrets) > 0 || len(serverSecrets) > 0 {
 		e["secrets"] += "; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
+		if len(remoteSecrets) > 0 && len(alsoOwn) == 0 {
+			e["secrets"] += ", a remote server's bearer excepted"
+		}
+	}
+	// A bearer whose name the release also declares as its own secret is
+	// that secret's value too: it is in the gateway's file for the tools
+	// container under the release's name, and the line must not say less.
+	if len(alsoOwn) > 0 {
+		e["secrets"] += "; " + strings.Join(sortedCopy(alsoOwn), ", ") + " is also the release's own secret, so its value is in the gateway's secrets file for the tools container as well, and the gateway holds it"
 	}
 	proxyLine := fmt.Sprintf("CONNECT allowlist: %s", strings.Join(pol.Model.ProxyAllow, ", "))
 	if plain := plainHTTPTargets(pol); len(plain) > 0 {
@@ -1324,9 +1447,30 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			e["dataAccess"] = "declared " + strings.Join(caps.DataAccess, ", ") + "; no servers cataloged by policy (declaration recorded for audit)"
 		}
 	}
-	if len(mcpServers) > 0 {
+	var remote []string
+	for _, srv := range mcpServers {
+		if !srv.Remote() {
+			continue
+		}
+		d := srv.Package + " (auth " + srv.Auth
+		if srv.SendsBearer() {
+			d += ", " + strings.Join(srv.Secrets, ", ") + " sent as its bearer"
+		}
+		if len(srv.Tools) > 0 {
+			d += ", tools filtered to " + strings.Join(sortedCopy(srv.Tools), "/")
+		}
+		d += ", reaching " + srv.RemoteHost() + ":443 alone)"
+		remote = append(remote, d)
+	}
+	if len(remote) > 0 {
+		e["mcpServers.remote"] = "declared remote servers, run at their vendors and reached through the runner image's bridge, a stdio server the gateway launches like a package server: on the gateway's relay network behind one relay to the address's host, under the run's docker filter and runtime; the gateway dials none of them and keeps no network of its own; what the vendor's server does is not checked here: " + strings.Join(remote, "; ")
+	}
+	if spec.HasPackageServers(mcpServers) {
 		var parts []string
 		for _, srv := range mcpServers {
+			if srv.Remote() {
+				continue
+			}
 			d := fmt.Sprintf("%s@%s (%s, %s", srv.Package, srv.Version, srv.Source, egressDesc(srv.Egress))
 			if len(srv.Tools) > 0 {
 				d += ", tools filtered to " + strings.Join(sortedCopy(srv.Tools), "/")
