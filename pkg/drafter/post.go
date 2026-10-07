@@ -142,6 +142,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 				runErr = nil
 			} else if d.repairFailure != "" {
 				runErr = fmt.Errorf("%w; its one repair turn returned no draft (%s)", runErr, d.repairFailure)
+				env.Error = runErr.Error()
 			}
 		}
 		if runErr == nil {
@@ -272,9 +273,12 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 		why := "its run did not finish"
 		var ce *engine.ClassifiedError
 		if errors.As(rerr, &ce) {
-			why = fmt.Sprintf("its run ended with exit %d (%s)", ce.Code, ce.Err)
+			why = fmt.Sprintf("its run ended with exit %d", ce.Code)
 		}
 		d.NoteNotRepaired(r, why)
+		if ce != nil {
+			d.repairFailure = fmt.Sprintf("%s (%s)", why, ce.Err)
+		}
 		return d, &total
 	}
 	rd, err := Repaired(d, renv, dir, r)

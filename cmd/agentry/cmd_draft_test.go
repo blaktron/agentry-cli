@@ -541,7 +541,7 @@ func TestDraftJSONRecoveryIsRecordedWithoutSpendingTheRepair(t *testing.T) {
 		return env, engine.Classify(engine.ExitOutputSchema, errors.New("not JSON"))
 	}
 	out := filepath.Join(t.TempDir(), "draft-out")
-	stdout, stderr, err := runCLI(t, nil, "draft", "Summarize my meeting notes.", "--out", out, "--policy", policyPath, "--json")
+	stdout, stderr, err := runCLI(t, nil, "draft", "Summarize my meeting notes.", "--out", out, "--policy", policyPath, "--output-format", "json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
@@ -556,8 +556,38 @@ func TestDraftJSONRecoveryIsRecordedWithoutSpendingTheRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	var d drafter.Draft
-	if json.Unmarshal(b, &d) != nil || !d.Recovered || !strings.Contains(d.Notes, "44 characters") {
+	if json.Unmarshal(b, &d) != nil || !d.Recovered || !strings.Contains(d.Notes, "45 characters") {
 		t.Fatalf("draft %s", b)
+	}
+}
+
+func TestDraftFailureReportsTheFailedRepairInTextAndJSON(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			isolateEnv(t)
+			_, policyPath := isolateRunnerHome(t)
+			t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+			draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+			draftRun = func(_ *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+				if r.Web == nil {
+					return &receipt.Envelope{}, engine.Classify(engine.ExitTimeout, errors.New("run timed out after 300s"))
+				}
+				return &receipt.Envelope{Status: "error", ExitCode: 17, Error: "first parse failure", Result: receipt.TextResult("truncated {\"manifest\":")},
+					engine.Classify(engine.ExitOutputSchema, errors.New("first parse failure"))
+			}
+			stdout, _, err := runCLI(t, nil, "draft", "Summarize my meeting notes.", "--out", t.TempDir(), "--policy", policyPath, "--output-format", format)
+			wantClassified(t, err, engine.ExitOutputSchema)
+			if !strings.Contains(err.Error(), "its run ended with exit 15 (run timed out after 300s)") {
+				t.Fatalf("error %v", err)
+			}
+			if format == "json" {
+				env := draftEnvelope(t, stdout)
+				wantField(t, env, "exitCode", "17")
+				if !strings.Contains(string(env["error"]), "its run ended with exit 15") {
+					t.Fatalf("envelope error %s", env["error"])
+				}
+			}
+		})
 	}
 }
 
