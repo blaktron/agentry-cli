@@ -627,8 +627,10 @@ Before a draft is written, the CLI checks it in four steps:
    leaves the first, with its problems and a note saying why, or, when the
    first was not a draft either, ends with exit 17 and says why the repair
    returned no draft. The turn's
-   budget is the draft's, capped at 300 seconds and 8 tool calls, and what
-   is left of `--max-cost`. Its receipts are in `DIR/repair/`.
+   budget keeps at most 8 tool calls and what is left of `--max-cost`.
+   When the draft has a timeout, the repair gets at most 300 seconds within
+   the time left. A draft with no timeout gives its repair turn none either.
+   Its receipts are in `DIR/repair/`.
 
 A draft that still fails the rules is kept with its problems for you to fix.
 Review every part before you publish it. `--timeout`, `--max-turns` and

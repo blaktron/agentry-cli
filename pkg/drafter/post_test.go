@@ -255,13 +255,35 @@ func TestTheRepairTurnHasOnlyWhatTheFirstLeft(t *testing.T) {
 	if !ok || r.TimeoutSeconds != 100 || r.MaxTurns != 3 {
 		t.Fatalf("%+v", r)
 	}
-	if r, ok := repairBudgets(spec.Budgets{}, receipt.Usage{WallMS: 1 << 30, Turns: 1000}); !ok || r.TimeoutSeconds != RepairTimeoutSeconds || r.MaxTurns != RepairMaxTurns || r.MaxCostUSD != 0 {
+	if r, ok := repairBudgets(spec.Budgets{}, receipt.Usage{WallMS: 1 << 30, Turns: 1000}); !ok || r.TimeoutSeconds != 0 || r.MaxTurns != RepairMaxTurns || r.MaxCostUSD != 0 {
 		t.Fatalf("no budgets: %+v", r)
 	}
 	for _, spent := range []receipt.Usage{{WallMS: 900000}, {Turns: 60}, {CostUSD: 1}} {
 		if _, ok := repairBudgets(b, spent); ok {
 			t.Errorf("a repair after the first turn spent %+v", spent)
 		}
+	}
+}
+
+func TestANoTimeoutDraftKeepsItsRepairTurnAndCostLimits(t *testing.T) {
+	b := spec.Budgets{TimeoutSeconds: 0, MaxTurns: 60, MaxCostUSD: 1}
+	for _, tc := range []struct {
+		name  string
+		spent receipt.Usage
+		want  spec.Budgets
+		ok    bool
+	}{
+		{"slow first turn", receipt.Usage{WallMS: 1680000, Turns: 24, CostUSD: 0.25}, spec.Budgets{TimeoutSeconds: 0, MaxTurns: 8, MaxCostUSD: 0.75}, true},
+		{"few turns left", receipt.Usage{WallMS: 1680000, Turns: 57, CostUSD: 0.25}, spec.Budgets{TimeoutSeconds: 0, MaxTurns: 3, MaxCostUSD: 0.75}, true},
+		{"turns spent", receipt.Usage{Turns: 60}, spec.Budgets{}, false},
+		{"cost spent", receipt.Usage{CostUSD: 1}, spec.Budgets{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := repairBudgets(b, tc.spent)
+			if ok != tc.ok || (ok && got != tc.want) {
+				t.Fatalf("repair budgets = %+v, %t; want %+v, %t", got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }
 
