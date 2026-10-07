@@ -719,8 +719,9 @@ says where to add one.
   `script`, `instruction`, `other`), the files it did not read, and the files
   AI Review withheld from it. It is never counted (`counted: false`). When
   the runner refused the model's last message at the output schema (a
-  sentence before the object, say), the object fenced inside it is taken if
-  the schema passes it, and the reading is marked `recovered`.
+  sentence before the object, say), its terminal object is taken if the
+  schema passes it, with only whitespace or one standalone closing fence
+  after it; a fence before it is optional. The reading is marked `recovered`.
 - `notRunHere`: the registry's secrets and scripts stages, the publisher
   signals, the diff against the last published version, an organization's
   policy, a shipped pack's secrets scan, URL reputation and AI Review (its
