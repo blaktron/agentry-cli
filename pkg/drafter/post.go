@@ -20,10 +20,10 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// The repair turn's own caps (plan builder-simplify.md §5.2 step 3): it
-// reads nothing and writes one manifest, and at most the instruction file,
-// so it needs a few minutes and a few tool calls at most. It also gets no
-// more than the draft's budgets left after the first turn (repairBudgets).
+// The repair turn's caps (plan builder-simplify.md §5.2 step 3): at most
+// eight tool calls and, for a draft with a timeout, five minutes. A draft
+// without a timeout gives the repair turn none either (DR-54 addendum).
+// It also gets no more than the draft's remaining budgets (repairBudgets).
 const (
 	RepairTimeoutSeconds = 300
 	RepairMaxTurns       = 8
@@ -496,12 +496,11 @@ func validationReport(d *Draft) ([]string, bool) {
 }
 
 // repairBudgets is the repair turn's budgets: what the first turn left of
-// the draft's b, after it spent spent, under the repair turn's own caps; ok
-// is false when the first turn left none of the time, the tool calls or
-// the cost.
+// the draft's b, after it spent spent, under the repair turn's own caps.
+// A draft without a timeout gives the repair turn none either. ok is false
+// when the first turn left none of the time, the tool calls or the cost.
 func repairBudgets(b spec.Budgets, spent receipt.Usage) (spec.Budgets, bool) {
 	r := b
-	r.TimeoutSeconds = RepairTimeoutSeconds
 	if b.TimeoutSeconds > 0 {
 		left := b.TimeoutSeconds - int(spent.WallMS/1000)
 		if left <= 0 {
