@@ -553,6 +553,50 @@ func TestTimeoutKillsRun(t *testing.T) {
 	}
 }
 
+func TestRunWithoutTimeoutHasNoAgentDeadlineAndRecordsZero(t *testing.T) {
+	p, f := fixture(t)
+	p.Budgets.TimeoutSeconds = 0
+	happyFake(f)
+	agentOutput := f.Foreground["-agent"].Stdout
+	observed := make(chan error, 1)
+	f.Foreground["-agent"] = &dockerx.FakeForeground{
+		Handler: func(ctx context.Context, _ dockerx.RunSpec, _ io.Reader, stdout, _ io.Writer) (int, error) {
+			contextErr := ctx.Err()
+			if deadline, ok := ctx.Deadline(); ok {
+				contextErr = fmt.Errorf("agent has deadline %s", deadline)
+			}
+			observed <- contextErr
+			_, err := io.WriteString(stdout, agentOutput)
+			return 0, err
+		},
+	}
+	env, err := Run(context.Background(), f, p)
+	if err != nil || env == nil || env.Status != "ok" || env.ExitCode != ExitOK {
+		t.Fatalf("untimed run: envelope=%+v error=%v", env, err)
+	}
+	select {
+	case err := <-observed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatal("the fake agent never observed its context")
+	}
+	b, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta struct {
+		Budgets map[string]int `json:"budgets"`
+	}
+	if err := json.Unmarshal(b, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if timeout, present := meta.Budgets["timeoutSeconds"]; !present || timeout != 0 {
+		t.Fatalf("receipt timeoutSeconds = %d, present=%t; want explicit zero", timeout, present)
+	}
+}
+
 func TestJSONResultKindEnforced(t *testing.T) {
 	p, _ := fixture(t)
 	// Recompile with an output schema so ResultKind flips to json.
