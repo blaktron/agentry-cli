@@ -209,31 +209,19 @@ type Reading struct {
 	// was not one.
 	Error string `json:"error,omitempty"`
 	// Recovered says the runner refused the model's last message at the
-	// output schema (exit 17), and the reading is the one JSON object in a
-	// fence inside it, which output.schema.json passes.
+	// output schema (exit 17), and the reading is a terminal JSON object
+	// inside it, which output.schema.json passes.
 	Recovered bool `json:"recovered,omitempty"`
 }
 
-// recoverReading is the reading inside a last message the runner refused at
-// its output schema, when the model wrote a sentence and then the object in
-// a fence (as models do, however the instruction asks): the last fenced
-// block, held to output.schema.json by the runner's own convention
-// (engine.JSONResult). A fence inside the answer's own text misplaces the
-// block, which the schema then refuses: nothing is recovered. The reading
+// recoverReading is a schema-valid terminal object in a last message the
+// runner refused at its output schema (engine.RecoverJSONResult). The reading
 // is never counted, so a recovered one changes nothing but the report's
 // third kind.
 func recoverReading(result json.RawMessage) (json.RawMessage, error) {
 	var text string
 	if err := json.Unmarshal(result, &text); err != nil {
 		return nil, errors.New("the refused message is not text")
-	}
-	end := strings.LastIndex(text, "```")
-	start := -1
-	if end > 0 {
-		start = strings.LastIndex(text[:end], "```")
-	}
-	if start < 0 {
-		return nil, errors.New("no fenced block in the refused message")
 	}
 	schemaBytes, err := fs.ReadFile(FS(), compile.OutputSchemaFile)
 	if err != nil {
@@ -243,7 +231,8 @@ func recoverReading(result json.RawMessage) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return engine.JSONResult(text[start:end+len("```")], sch)
+	result, _, err = engine.RecoverJSONResult(text, sch)
+	return result, err
 }
 
 // NotRead is a file and why it was not read.

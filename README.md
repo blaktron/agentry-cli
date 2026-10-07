@@ -613,13 +613,20 @@ Before a draft is written, the CLI checks it in four steps:
    passed, or when it no longer declares an MCP server, an egress host, a
    command or a secret of the first's that the report did not name, even
    if it mends what the first broke: a repair never clears a report by
-   stripping what the task needs. A last message that was not a draft at all (not one JSON object,
-   exit 17) gets the same turn, given the error and that message back. It returns the manifest again, and the instruction file too if
+   stripping what the task needs. If the runner refused a last message for
+   prose before its JSON object, the post-step recovers the object only when
+   it ends the message (apart from a closing fence) and passes the Drafter's
+   output schema. The draft records `recovered` and its notes say how much
+   text was dropped; the original message stays in the receipts. Recovery
+   leaves the repair turn available for a rules failure. An answer that
+   cannot be recovered (exit 17) gets the same turn, given the error and that
+   message back. It returns the manifest again, and the instruction file too if
    the report names it. The second answer is corrected and checked like the
    first, and kept whether or not it passes; its notes say "Repaired once"
    and what the rules said of the first. A repair turn that returns no draft
    leaves the first, with its problems and a note saying why, or, when the
-   first was not a draft either, ends with exit 17 as before. The turn's
+   first was not a draft either, ends with exit 17 and says why the repair
+   returned no draft. The turn's
    budget is the draft's, capped at 300 seconds and 8 tool calls, and what
    is left of `--max-cost`. Its receipts are in `DIR/repair/`.
 
@@ -634,7 +641,8 @@ stdout is the Drafter run's result envelope (its usage, the attestation
 `builtin`, the `web` counts) with the draft's report under `draft`: where
 `draft.json` is, whether the package was rendered and passed, how many
 matches, open questions and withheld sources it has, how many slips were
-corrected (`corrections`), whether it was repaired (`repaired`), and AI
+corrected (`corrections`), whether it was repaired (`repaired`) or recovered
+from a refused message (`recovered`, when true), and AI
 Review's check as one word (`check`: `pass`, `flagged`, `not_scanned`, or
 `unanswered` when it has no answer). The
 envelope's usage is both turns' together, and the usage lines the repair
@@ -711,8 +719,9 @@ says where to add one.
   `script`, `instruction`, `other`), the files it did not read, and the files
   AI Review withheld from it. It is never counted (`counted: false`). When
   the runner refused the model's last message at the output schema (a
-  sentence before the object, say), the object fenced inside it is taken if
-  the schema passes it, and the reading is marked `recovered`.
+  sentence before the object, say), its terminal object is taken if the
+  schema passes it, with only whitespace or one standalone closing fence
+  after it; a fence before it is optional. The reading is marked `recovered`.
 - `notRunHere`: the registry's secrets and scripts stages, the publisher
   signals, the diff against the last published version, an organization's
   policy, a shipped pack's secrets scan, URL reputation and AI Review (its

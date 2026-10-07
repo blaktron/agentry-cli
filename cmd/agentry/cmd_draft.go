@@ -387,6 +387,7 @@ type draftReport struct {
 	// its repair turn.
 	Corrections int  `json:"corrections"`
 	Repaired    bool `json:"repaired"`
+	Recovered   bool `json:"recovered,omitempty"`
 	// Check is AI Review's check of the finished draft as one word: pass,
 	// flagged or not_scanned, unanswered when it has no answer, absent
 	// when the draft could not be rendered to check.
@@ -396,7 +397,7 @@ type draftReport struct {
 func draftReportOf(outDir string, d *drafter.Draft) draftReport {
 	r := draftReport{File: filepath.Join(outDir, "draft.json"), ManifestError: d.ManifestError != "",
 		Matches: len(d.Matches), OpenQuestions: len(d.OpenQuestions), Rendered: isDir(filepath.Join(outDir, "package")),
-		Corrections: len(d.Corrections()), Repaired: d.IsRepaired()}
+		Corrections: len(d.Corrections()), Repaired: d.IsRepaired(), Recovered: d.Recovered}
 	r.Passed = d.Passed()
 	if a := d.AIReview; a != nil {
 		r.Withheld = len(a.WithheldSources)

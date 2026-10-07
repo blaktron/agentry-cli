@@ -275,6 +275,7 @@ func Repaired(first *Draft, env *receipt.Envelope, outDir string, r RepairReport
 // NoteNotRepaired says in the notes that the rules refused this draft and
 // its repair turn returned no draft, with why in the CLI's own words.
 func (d *Draft) NoteNotRepaired(r RepairReport, why string) {
+	d.repairFailure = why
 	d.composeNotes("## Not repaired\n\n" + repairWordsOf[r.by()].refused + " for one more turn, " +
 		"and that turn returned no draft (" + why + "), so this is its first answer, with its problems.\n")
 }
