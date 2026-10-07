@@ -61,6 +61,10 @@ type Config struct {
 	// An empty file sends no Authorization header (an optional secret the
 	// run goes without). Unset, the server is declared auth: none.
 	TokenFile string
+	// OAuth says the token is a connection's OAuth access token (auth:
+	// oauth), not a secret the person set: a 401 then names the connection
+	// and says a new run is given a fresh token (plan D13, agentry-cli#722).
+	OAuth bool
 	// Client is the HTTP client; nil builds one that takes no proxy from
 	// the environment and follows no redirect.
 	Client *http.Client
@@ -373,6 +377,8 @@ func (b *Bridge) refusal(res *http.Response) error {
 		return nil
 	case res.StatusCode == http.StatusUnauthorized && b.cfg.TokenFile == "":
 		return b.failed("asks for a sign-in (HTTP 401), and this QuickAgent declares it with auth: none, so the run sends no credential")
+	case res.StatusCode == http.StatusUnauthorized && b.cfg.OAuth:
+		return b.failed("did not accept the access token of this run's connection to it (HTTP 401): the token expired during the run or the vendor withdrew the grant; a new run is given a fresh token, and if it is refused again, connect the server again")
 	case res.StatusCode == http.StatusUnauthorized:
 		return b.failed("did not accept the credential the run sent (HTTP 401): it may be wrong, expired or revoked; set it again and start a new run")
 	case res.StatusCode == http.StatusForbidden:

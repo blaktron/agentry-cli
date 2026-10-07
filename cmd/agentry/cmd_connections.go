@@ -9,6 +9,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -162,6 +164,85 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s, client %s)", k.Server, c.Issuer, scopeList(c.Scopes), c.Client.Kind))
 	}
 	out.line = "servers signed in to by the person's connection for this release, refreshed by the runner before the run, and renewed before a token expires during the run where the server reads it from a file (a renewal that fails is said on the run's stderr); the run was given an access token alone: " + strings.Join(used, "; ")
+	return out, nil
+}
+
+// fileConnection is one server's entry in --connections-file
+// (agentry-cli#722): an access token a host fetched for the run, its
+// expiry, and the issuer and scopes for the receipt's line. Never a
+// refresh token or a client secret: the file has no field for one.
+type fileConnection struct {
+	AccessToken string    `json:"accessToken"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+	Issuer      string    `json:"issuer,omitempty"`
+	Scopes      []string  `json:"scopes,omitempty"`
+}
+
+// maxConnectionsFile bounds --connections-file.
+const maxConnectionsFile = 256 << 10
+
+// connectionsFromFile is a hosted run's connections (agentry-cli#722, plan
+// mcp-oauth-connections.md D8): the access tokens the deployment's worker
+// refreshed at the hand-off, keyed as engine.Params.Connections is. Nothing
+// is consented to, refreshed or renewed here, and no store is opened: a
+// token that expires during the run ends that server's calls (D13). The
+// file must be a regular file only its owner can read; a key the release
+// does not declare as signing in by OAuth, an unknown field, or a declared
+// server it does not name refuses the run.
+func connectionsFromFile(path string, m *manifest.Manifest) (*runConnections, error) {
+	refuse := func(format string, a ...any) error {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("--connections-file: "+format, a...))
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("--connections-file: %w", err))
+	}
+	switch {
+	case !fi.Mode().IsRegular():
+		return nil, refuse("%s is not a regular file", path)
+	case runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0:
+		return nil, refuse("%s can be read by others (mode %04o); it must be 0600", path, fi.Mode().Perm())
+	case fi.Size() > maxConnectionsFile:
+		return nil, refuse("%s is larger than %d bytes", path, maxConnectionsFile)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("--connections-file: %w", err))
+	}
+	var file map[string]fileConnection
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&file); err != nil {
+		return nil, refuse("%s is not a connections file: %v", path, err)
+	}
+	servers := oauthServers(m)
+	declared := map[string]bool{}
+	for _, srv := range servers {
+		declared[connectionServer(srv)] = true
+	}
+	for k := range file {
+		if !declared[k] {
+			return nil, refuse("it names %s, which this release does not declare as an MCP server that signs in by OAuth", k)
+		}
+	}
+	out := &runConnections{tokens: map[string]engine.ConnectionToken{}}
+	var used []string
+	for _, srv := range servers {
+		k := connectionServer(srv)
+		c, ok := file[k]
+		if !ok || c.AccessToken == "" {
+			return nil, refuse("declared MCP server %s signs in by OAuth and this run was handed no connection for it", k)
+		}
+		out.tokens[k] = engine.ConnectionToken{AccessToken: c.AccessToken, ExpiresAt: c.ExpiresAt}
+		issuer := c.Issuer
+		if issuer == "" {
+			issuer = "not named"
+		}
+		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s)", k, issuer, scopeList(c.Scopes)))
+	}
+	if len(used) > 0 {
+		out.line = "servers signed in to by connections the deployment keeps, refreshed before the run was handed to this host; the run was given an access token alone and renews nothing during the run, so a token that expires ends that server's calls: " + strings.Join(used, "; ")
+	}
 	return out, nil
 }
 

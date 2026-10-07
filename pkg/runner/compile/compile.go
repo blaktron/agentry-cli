@@ -1188,6 +1188,9 @@ func remoteServerEntry(srv spec.MCPServerSpec, runnerImage string) *yaml.Node {
 	command := []string{"bridge", "--url", srv.Package}
 	if srv.SendsBearer() {
 		command = append(command, "--token-file", spec.ConnectionMount+"/"+spec.BearerFile)
+		if srv.SignsIn() {
+			command = append(command, "--oauth")
+		}
 		e.set("volumes", strListNode([]string{ConnectionFolder(srv.Name) + ":" + spec.ConnectionMount + ":ro"}))
 	}
 	e.set("command", strListNode(command))

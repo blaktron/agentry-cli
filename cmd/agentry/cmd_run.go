@@ -108,6 +108,9 @@ type runOpts struct {
 	// sessionInputs is the directory the protocol's driver stages the files
 	// it adds in; an add names a file directly in it.
 	sessionInputs string
+	// connectionsFile hands the run access tokens a host already fetched
+	// (agentry-cli#722): the store is not opened and nothing is refreshed.
+	connectionsFile string
 }
 
 // newRunCmd builds the run command.
@@ -194,6 +197,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode; asked on a terminal when it declares both, autonomous otherwise)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
+	f.StringVar(&opts.connectionsFile, "connections-file", "", "take each OAuth-signed-in MCP server's access token from this 0600 JSON FILE instead of this computer's connections, refreshing nothing (a hosted run's host)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
 	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack to attach read-only at /knowledge/<name>, searched with the knowledge tools: a pack kept on this computer by NAME, or a pack DIRECTORY (repeatable)")
@@ -518,7 +522,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// mcp-oauth-connections.md §6, agentry-cli#664): asked for at Start on
 	// a terminal, refreshed under their locks before the sandbox starts.
 	// --prepare makes them too, as it does the profile.
-	conns, err := ensureConnections(cmd, home, meta, m)
+	var conns *runConnections
+	if opts.connectionsFile != "" {
+		conns, err = connectionsFromFile(opts.connectionsFile, m)
+	} else {
+		conns, err = ensureConnections(cmd, home, meta, m)
+	}
 	if err != nil {
 		return err
 	}
