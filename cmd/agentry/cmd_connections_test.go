@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -340,4 +341,101 @@ func TestGoogleGetsAgentrysOwnSteps(t *testing.T) {
 	if strings.Contains(ownClientSteps("https://auth.example", "https://mcp.example/mcp"), "Google") {
 		t.Fatal("another vendor got Google's steps")
 	}
+}
+
+// TestAHostedRunTakesItsTokensFromAFile: --connections-file (agentry-cli#722)
+// hands the run the access tokens a host was given, keyed as the engine
+// keys them, renews nothing and opens no store; the receipt's line says so.
+func TestAHostedRunTakesItsTokensFromAFile(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
+	prev := vendorHTTP
+	vendorHTTP = func() *http.Client { t.Fatal("a vendor was reached"); return nil }
+	t.Cleanup(func() { vendorHTTP = prev })
+	m := &manifest.Manifest{}
+	m.Capabilities.MCPServers = []manifest.MCPServer{
+		{URL: "https://mcp.linear.app/mcp", Auth: manifest.AuthOAuth, Scopes: []string{"read"}},
+		{PyPI: "workspace-mcp", Version: "2.0.1", OAuth: &manifest.MCPOAuth{Issuer: "https://accounts.google.com", Scopes: []string{"gmail.readonly"}}},
+		{URL: "https://api.example.com/mcp", Auth: manifest.AuthNone},
+	}
+	exp := time.Date(2026, 10, 7, 22, 0, 0, 0, time.UTC)
+	path := writeConnectionsFile(t, 0o600, `{
+		"https://mcp.linear.app/mcp": {"accessToken": "lin-access", "expiresAt": "2026-10-07T22:00:00Z", "issuer": "https://mcp.linear.app", "scopes": ["read"]},
+		"pypi:workspace-mcp": {"accessToken": "ya29.google-access"}
+	}`)
+	conns, err := connectionsFromFile(path, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conns.renew != nil {
+		t.Fatal("a hosted run's connections must renew nothing")
+	}
+	if got := conns.tokens["https://mcp.linear.app/mcp"]; got.AccessToken != "lin-access" || !got.ExpiresAt.Equal(exp) {
+		t.Fatalf("linear: %+v", got)
+	}
+	if got := conns.tokens["pypi:workspace-mcp"]; got.AccessToken != "ya29.google-access" || !got.ExpiresAt.IsZero() {
+		t.Fatalf("workspace-mcp: %+v", got)
+	}
+	if len(conns.tokens) != 2 {
+		t.Fatalf("tokens for %d servers, want the two that sign in", len(conns.tokens))
+	}
+	for _, want := range []string{"renews nothing", "https://mcp.linear.app/mcp (issuer https://mcp.linear.app, scopes read)", "pypi:workspace-mcp (issuer not named"} {
+		if !strings.Contains(conns.line, want) {
+			t.Fatalf("receipt line %q lacks %q", conns.line, want)
+		}
+	}
+	if strings.Contains(conns.line, "lin-access") || strings.Contains(conns.line, "ya29") {
+		t.Fatal("a token reached the receipt's line")
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("AGENTRY_RUNNER_HOME"), "connections")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the connection store was opened: %v", err)
+	}
+}
+
+// TestAConnectionsFileIsRefusedWhenItIsNotExact: a file others can read, a
+// symlink, an unknown field (there is no place for a refresh token), a
+// server the release does not declare, or a declared server it does not
+// name each refuse the run with exit 11.
+func TestAConnectionsFileIsRefusedWhenItIsNotExact(t *testing.T) {
+	isolateEnv(t)
+	m := &manifest.Manifest{}
+	m.Capabilities.MCPServers = []manifest.MCPServer{{URL: "https://mcp.linear.app/mcp", Auth: manifest.AuthOAuth}}
+	good := `{"https://mcp.linear.app/mcp": {"accessToken": "a"}}`
+	link := filepath.Join(t.TempDir(), "link.json")
+	if err := os.Symlink(writeConnectionsFile(t, 0o600, good), link); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		path string
+		want string
+	}{
+		"readable by others": {writeConnectionsFile(t, 0o644, good), "it must be 0600"},
+		"a symlink":          {link, "not a regular file"},
+		"a refresh token":    {writeConnectionsFile(t, 0o600, `{"https://mcp.linear.app/mcp": {"accessToken": "a", "refreshToken": "r"}}`), "unknown field"},
+		"an undeclared server": {writeConnectionsFile(t, 0o600, `{"https://mcp.linear.app/mcp": {"accessToken": "a"}, "https://evil.example/mcp": {"accessToken": "b"}}`),
+			"does not declare"},
+		"a missing server": {writeConnectionsFile(t, 0o600, `{}`), "handed no connection for it"},
+		"an empty token":   {writeConnectionsFile(t, 0o600, `{"https://mcp.linear.app/mcp": {"accessToken": ""}}`), "handed no connection for it"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := connectionsFromFile(c.path, m)
+			var ce *engine.ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want exit 11 saying %q", err, c.want)
+			}
+		})
+	}
+}
+
+func writeConnectionsFile(t *testing.T, mode os.FileMode, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "connections.json")
+	if err := os.WriteFile(p, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, mode); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

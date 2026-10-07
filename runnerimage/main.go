@@ -44,7 +44,7 @@ const usageText = `usage: agentry-runner <mode> [flags]
         run the CONNECT egress allowlist proxy (llm-proxy); --forward adds
         a plain TCP pipe (the host's door to the gateway, which never
         leaves the run network)
-  bridge --url <https address> [--token-file <path>]
+  bridge --url <https address> [--token-file <path> [--oauth]]
         serve one remote MCP server on stdio, forwarding each message to it
         over streamable HTTP (or HTTP+SSE); the bearer, when there is one,
         is read from --token-file at every request
@@ -162,6 +162,7 @@ func runBridge(args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
 	addr := fs.String("url", "", "the remote MCP server's https address")
 	tokenFile := fs.String("token-file", "", "the file holding the bearer value, read at every request (unset: auth none)")
+	oauth := fs.Bool("oauth", false, "the token file holds a connection's OAuth access token (auth: oauth)")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -169,7 +170,7 @@ func runBridge(args []string) error {
 		fmt.Fprintln(os.Stderr, "agentry-runner bridge: --url is required")
 		os.Exit(2)
 	}
-	b, err := bridge.New(bridge.Config{URL: *addr, TokenFile: *tokenFile, Log: os.Stderr}, os.Stdout)
+	b, err := bridge.New(bridge.Config{URL: *addr, TokenFile: *tokenFile, OAuth: *oauth, Log: os.Stderr}, os.Stdout)
 	if err != nil {
 		return err
 	}

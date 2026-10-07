@@ -232,7 +232,7 @@ func TestCompileRendersAnOAuthServerOnTheBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := catalogServer(t, planDir, "mcp-url-mcp-linear-app-mcp")
-	if got, want := strs(e["command"]), []string{"bridge", "--url", "https://mcp.linear.app/mcp", "--token-file", spec.ConnectionMount + "/" + spec.BearerFile}; !slices.Equal(got, want) {
+	if got, want := strs(e["command"]), []string{"bridge", "--url", "https://mcp.linear.app/mcp", "--token-file", spec.ConnectionMount + "/" + spec.BearerFile, "--oauth"}; !slices.Equal(got, want) {
 		t.Fatalf("command = %v, want %v", got, want)
 	}
 	if got := strs(e["volumes"]); !slices.Equal(got, []string{spec.PHCfg + "/connections/mcp-url-mcp-linear-app-mcp:" + spec.ConnectionMount + ":ro"}) {

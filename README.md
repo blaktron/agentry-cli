@@ -952,7 +952,14 @@ connections list|remove` manages them (a removal, and an uninstall, revoke
 at the vendor where it offers that); `agentry connections client
 set|list|remove` keeps your own OAuth client per vendor, which a vendor that
 registers no app on the fly needs (Google), with Agentry's steps for making
-one shown when it is asked for. **`--file`** hands a
+one shown when it is asked for. A hosted run's host passes
+**`--connections-file`** instead: a 0600 JSON file of the access tokens the
+deployment refreshed for the run, keyed by server (its address, or a
+package server's source id), each `{"accessToken", "expiresAt"}` with an
+optional `issuer` and `scopes` for the receipt. Nothing is consented to,
+refreshed or renewed and no connection is kept; a token that expires during
+the run ends that server's calls with a sentence naming the connection
+(agentry-cli#722). **`--file`** hands a
 run external files read-only under `/inputs`. Before the agent starts the
 runner decodes them (a document, PDF or image into its text, and an
 archive into its files, each decoded in turn, in the files image, with no
