@@ -347,6 +347,9 @@ type Token struct {
 }
 
 // Request is one authorization request, kept until its redirect returns.
+// A client whose redirect returns to another process (the registry's HTTPS
+// callback, answered after the start's request has ended) keeps the state
+// and the verifier itself and rebuilds the request with ResumeRequest.
 type Request struct {
 	Server      ServerMetadata
 	Client      Client
@@ -354,7 +357,12 @@ type Request struct {
 	Resource    string
 	Scopes      []string
 	State       string
-	verifier    string
+	// Extra are further authorization parameters the consent address
+	// carries, such as Google's access_type=offline and prompt=consent,
+	// without which a web client is given no refresh token. They never
+	// replace one the request sets itself.
+	Extra    url.Values
+	verifier string
 }
 
 // NewRequest makes a request with a fresh state and PKCE verifier.
@@ -369,6 +377,18 @@ func NewRequest(md ServerMetadata, client Client, redirectURI, resource string, 
 	}
 	return &Request{Server: md, Client: client, RedirectURI: redirectURI, Resource: resource, Scopes: scopes, State: state, verifier: verifier}, nil
 }
+
+// ResumeRequest rebuilds a request from the state and the PKCE verifier its
+// client kept (agentry-cli#715): the registry seals the verifier between
+// the consent's start and its callback, which arrive as two requests.
+func ResumeRequest(md ServerMetadata, client Client, redirectURI, resource string, scopes []string, state, verifier string) *Request {
+	return &Request{Server: md, Client: client, RedirectURI: redirectURI, Resource: resource, Scopes: scopes, State: state, verifier: verifier}
+}
+
+// Verifier is the request's PKCE verifier, for a client that must keep it
+// (sealed) until the redirect returns. It is a secret of the sign-in:
+// never logged, never sent but to the token endpoint.
+func (r *Request) Verifier() string { return r.verifier }
 
 func randomString(n int) (string, error) {
 	b := make([]byte, n)
@@ -393,6 +413,14 @@ func (r *Request) URL() string {
 	}
 	if len(r.Scopes) > 0 {
 		q.Set("scope", strings.Join(r.Scopes, " "))
+	}
+	for k, vs := range r.Extra {
+		if _, set := q[k]; set {
+			continue
+		}
+		for _, v := range vs {
+			q.Add(k, v)
+		}
 	}
 	sep := "?"
 	if strings.Contains(r.Server.AuthorizationEndpoint, "?") {
@@ -464,7 +492,7 @@ func tokenRequest(ctx context.Context, c *http.Client, endpoint string, client C
 		return nil, fmt.Errorf("read the vendor's token answer: %w", err)
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, oauthError(res.StatusCode, raw, form)
+		return nil, oauthError(res.StatusCode, raw, form, client.Secret)
 	}
 	var out struct {
 		AccessToken  string          `json:"access_token"`
@@ -520,7 +548,7 @@ func Revoke(ctx context.Context, c *http.Client, endpoint string, client Client,
 	defer func() { _ = res.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, maxBody))
 	if res.StatusCode != http.StatusOK {
-		return oauthError(res.StatusCode, raw, form)
+		return oauthError(res.StatusCode, raw, form, client.Secret)
 	}
 	return nil
 }
@@ -554,8 +582,10 @@ func postForm(ctx context.Context, c *http.Client, endpoint string, client Clien
 // trimmed description and dropping everything else in the body. A value
 // the request carried (a refresh token, a client secret, a code, a
 // verifier) that the vendor echoes in its description is masked: the
-// description reaches the terminal and a broken connection's record.
-func oauthError(status int, raw []byte, sent url.Values) error {
+// description reaches the terminal and a broken connection's record. also
+// names values sent outside the form, such as a client secret in a basic
+// Authorization header.
+func oauthError(status int, raw []byte, sent url.Values, also ...string) error {
 	var body struct {
 		Error       string `json:"error"`
 		Description string `json:"error_description"`
@@ -564,6 +594,11 @@ func oauthError(status int, raw []byte, sent url.Values) error {
 	var mask []string
 	for _, k := range []string{"refresh_token", "client_secret", "code", "code_verifier", "token"} {
 		if v := sent.Get(k); v != "" {
+			mask = append(mask, v)
+		}
+	}
+	for _, v := range also {
+		if v != "" {
 			mask = append(mask, v)
 		}
 	}

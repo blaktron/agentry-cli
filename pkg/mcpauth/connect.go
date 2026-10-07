@@ -304,19 +304,41 @@ func CIMDServed(ctx context.Context, c *http.Client, docURL string) bool {
 	return false
 }
 
+// Registration is how a client describes itself when it registers (RFC
+// 7591 §2): its name, shown on the vendor's consent screen, and its
+// application type, "native" for a loopback redirect or "web" for an HTTPS
+// one (OpenID Connect Dynamic Client Registration §2).
+type Registration struct {
+	Name            string
+	ApplicationType string
+}
+
+// NativeRegistration is the CLI's and the desktop's: "Agentry Desktop", a
+// native client.
+var NativeRegistration = Registration{Name: NativeClientName, ApplicationType: "native"}
+
 // Register registers a public native client for this redirect (RFC 7591).
 func Register(ctx context.Context, c *http.Client, md ServerMetadata, redirectURI string) (Client, error) {
+	return RegisterAs(ctx, c, md, redirectURI, NativeRegistration)
+}
+
+// RegisterAs registers a client for this redirect under the name and the
+// application type given (agentry-cli#715: the registry's hosted consent
+// registers a web client named Agentry). It asks to be public where the
+// token endpoint takes a public client; a vendor that issues a secret all
+// the same gets the secret sent the way its metadata allows, never none.
+func RegisterAs(ctx context.Context, c *http.Client, md ServerMetadata, redirectURI string, reg Registration) (Client, error) {
 	method := AuthNone
 	if !supportsNone(md) && len(md.TokenEndpointAuthMethodsSupported) > 0 {
 		method = confidentialMethod(md)
 	}
 	body, _ := json.Marshal(map[string]any{
-		"client_name":                NativeClientName,
+		"client_name":                reg.Name,
 		"redirect_uris":              []string{redirectURI},
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": method,
-		"application_type":           "native",
+		"application_type":           reg.ApplicationType,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, md.RegistrationEndpoint, bytes.NewReader(body))
 	if err != nil {
@@ -338,15 +360,17 @@ func Register(ctx context.Context, c *http.Client, md ServerMetadata, redirectUR
 		Secret     string `json:"client_secret"`
 		AuthMethod string `json:"token_endpoint_auth_method"`
 	}
-	if err := json.Unmarshal(raw, &out); err != nil || out.ClientID == "" {
+	if err := json.Unmarshal(raw, &out); err != nil || out.ClientID == "" || len(out.ClientID) > 512 {
 		return Client{}, fmt.Errorf("register with %s: the answer carries no client id", md.Issuer)
 	}
 	cl := Client{ID: out.ClientID, Secret: out.Secret, Kind: ClientDCR, AuthMethod: out.AuthMethod}
-	if cl.AuthMethod == "" {
-		cl.AuthMethod = method
-	}
-	if cl.Secret == "" {
+	switch {
+	case cl.Secret == "":
 		cl.AuthMethod = AuthNone
+	case cl.AuthMethod != AuthSecretBasic && cl.AuthMethod != AuthSecretPost:
+		// Issued a secret but named no way to send it, or none: a
+		// confidential client sends its secret, as the metadata allows.
+		cl.AuthMethod = confidentialMethod(md)
 	}
 	return cl, nil
 }

@@ -358,3 +358,159 @@ func TestNoScopesDeclaredAsksForNoneBeyondTheChallenge(t *testing.T) {
 		t.Fatalf("asked for %v (%q): scopes_supported is not the contract", g.Scopes, u.Query().Get("scope"))
 	}
 }
+
+// TestAKeptVerifierFinishesTheSignIn: a client whose redirect returns to
+// another request (the registry's HTTPS callback, agentry-cli#715)
+// registers as a web client under its own name, keeps the state and the
+// verifier, rebuilds the request from them when the vendor's answer
+// arrives, and exchanges the code; the consent address carries its extra
+// parameters, which never replace the request's own.
+func TestAKeptVerifierFinishesTheSignIn(t *testing.T) {
+	v := mcpauthtest.New(t)
+	v.DCR = true
+	ctx := context.Background()
+	c := v.Guard().Client()
+	d, err := mcpauth.DiscoverRemote(ctx, c, v.ServerURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const redirect = "https://registry.example/api/v1/x/vault/me/connections/callback"
+	cl, err := mcpauth.RegisterAs(ctx, c, d.Server, redirect, mcpauth.Registration{Name: "Agentry", ApplicationType: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg := v.Registrations[len(v.Registrations)-1]; reg["client_name"] != "Agentry" || reg["application_type"] != "web" {
+		t.Fatalf("registered as %v", reg)
+	}
+	start, err := mcpauth.NewRequest(d.Server, cl, redirect, d.Resource, []string{"read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.Extra = url.Values{"access_type": {"offline"}, "prompt": {"consent"}, "state": {"not-this-one"}}
+	addr := start.URL()
+	q := mustQuery(t, addr)
+	if q.Get("access_type") != "offline" || q.Get("prompt") != "consent" || q.Get("state") != start.State || len(q["state"]) != 1 {
+		t.Fatalf("the consent address: %v", q)
+	}
+	state, verifier := start.State, start.Verifier()
+	if verifier == "" {
+		t.Fatal("no verifier to keep")
+	}
+
+	back, err := v.Redirect(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(back)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed := mcpauth.ResumeRequest(d.Server, cl, redirect, d.Resource, []string{"read"}, state, verifier)
+	code, err := resumed.Callback(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := mcpauth.Exchange(ctx, c, resumed, code)
+	if err != nil || tok.RefreshToken == "" || tok.ExpiresAt.IsZero() {
+		t.Fatalf("exchange: %+v %v", tok, err)
+	}
+	if got := v.Requests[len(v.Requests)-1].Get("code_verifier"); got != verifier {
+		t.Fatal("the exchange did not carry the kept verifier")
+	}
+
+	other := mcpauth.ResumeRequest(d.Server, cl, redirect, d.Resource, nil, "another-state", verifier)
+	if _, err := other.Callback(u); !errors.Is(err, mcpauth.ErrStateMismatch) {
+		t.Fatalf("a resumed request with another state: %v", err)
+	}
+}
+
+// TestNativeRegistrationIsUnchanged: the CLI's own Register still names
+// Agentry Desktop, a native client.
+func TestNativeRegistrationIsUnchanged(t *testing.T) {
+	v := mcpauthtest.New(t)
+	v.DCR = true
+	ctx := context.Background()
+	c := v.Guard().Client()
+	d, err := mcpauth.DiscoverRemote(ctx, c, v.ServerURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mcpauth.Register(ctx, c, d.Server, "http://127.0.0.1:1/callback"); err != nil {
+		t.Fatal(err)
+	}
+	if reg := v.Registrations[0]; reg["client_name"] != mcpauth.NativeClientName || reg["application_type"] != "native" || reg["token_endpoint_auth_method"] != "none" {
+		t.Fatalf("registered as %v", reg)
+	}
+}
+
+// TestARegisteredClientIssuedASecretSendsIt: a vendor that issues a
+// secret to a client that asked to be public, and names no method, gets
+// the secret sent the way its metadata allows, never none; the exchange
+// then authenticates.
+func TestARegisteredClientIssuedASecretSendsIt(t *testing.T) {
+	v := mcpauthtest.New(t)
+	v.DCR, v.SecretAnyway, v.ClientSecret = true, true, "PROBE-SECRET-DCR"
+	ctx := context.Background()
+	c := v.Guard().Client()
+	d, err := mcpauth.DiscoverRemote(ctx, c, v.ServerURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const redirect = "https://registry.example/callback"
+	cl, err := mcpauth.RegisterAs(ctx, c, d.Server, redirect, mcpauth.Registration{Name: "Agentry", ApplicationType: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cl.Secret != "PROBE-SECRET-DCR" || cl.AuthMethod != mcpauth.AuthSecretPost {
+		t.Fatalf("client = %+v, want the issued secret sent by post", cl)
+	}
+	r, err := mcpauth.NewRequest(d.Server, cl, redirect, d.Resource, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := v.Redirect(r.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(back)
+	code, err := r.Callback(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mcpauth.Exchange(ctx, c, r, code); err != nil {
+		t.Fatalf("the confidential client's exchange: %v", err)
+	}
+}
+
+// TestASecretSentByBasicAuthIsMasked: a client secret travels in the
+// Authorization header under client_secret_basic, not in the form; a
+// vendor that echoes it has it masked all the same.
+func TestASecretSentByBasicAuthIsMasked(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, secret, _ := r.BasicAuth()
+		secret, _ = url.QueryUnescape(secret)
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client", "error_description": "client secret " + secret + " is wrong"})
+	}))
+	defer srv.Close()
+	pool := srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	c := mcpauth.Guard{AllowLoopback: true, TLS: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}.Client()
+	cl := mcpauth.Client{ID: "id", Secret: "PROBE-SECRET-BASIC", AuthMethod: mcpauth.AuthSecretBasic}
+	_, err := mcpauth.Refresh(context.Background(), c, srv.URL+"/token", cl, "rt", "")
+	if err == nil || strings.Contains(err.Error(), "PROBE-") || !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("refresh: %v", err)
+	}
+	err = mcpauth.Revoke(context.Background(), c, srv.URL+"/revoke", cl, "rt", "refresh_token")
+	if err == nil || strings.Contains(err.Error(), "PROBE-") {
+		t.Fatalf("revoke: %v", err)
+	}
+}
+
+func mustQuery(t *testing.T, raw string) url.Values {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Query()
+}
