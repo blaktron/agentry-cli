@@ -316,6 +316,42 @@ func TestTheVoiceIsGuidedAsKnowledgeIs(t *testing.T) {
 	}
 }
 
+// TestTheSystemPromptGuidesEachMode (agentry-cli#717): the head names the
+// run's mode through a placeholder the engine fills in, so the text stays
+// the same bytes in both modes' plans (DR-15), and "Your mode" says how
+// each one starts: an autonomous run from what it was given, a session by
+// talking to the person before it reads through its inputs or knowledge.
+func TestTheSystemPromptGuidesEachMode(t *testing.T) {
+	if !strings.Contains(systemPromptHead, "This run's mode is "+spec.PHRunMode+".") {
+		t.Fatal("the head does not name the run's mode")
+	}
+	if !strings.Contains(systemPromptHead, "In interactive mode your first reply to the person comes before it") {
+		t.Error("the head's knowledge rule does not let a session speak first")
+	}
+	for _, f := range []promptFacts{{caps: capsNone(false)}, {caps: capsNone(true), schema: true}} {
+		p := systemPrompt(f)
+		w, m, e := strings.Index(p, "\n## What you are\n"), strings.Index(p, "\n## Your mode\n"), strings.Index(p, "\n## Your environment\n")
+		if w < 0 || m < w || e < m {
+			t.Fatalf("\"Your mode\" is missing or not between \"What you are\" and \"Your environment\" (%d, %d, %d)", w, m, e)
+		}
+		for _, want := range []string{
+			"**Autonomous.** Nobody answers questions while the run works.",
+			"decide it sensibly, say what you assumed, and finish.",
+			"**Interactive.** A session with the person",
+			"Reply to their first message straight away.",
+			"Do not read through your inputs or knowledge before that first reply.",
+			"Keep them in the loop as you work",
+		} {
+			if !strings.Contains(p[m:e], want) {
+				t.Errorf("\"Your mode\" does not say %q", want)
+			}
+		}
+		if strings.Contains(p, "one-shot") {
+			t.Error("the prompt still calls a run one-shot rather than autonomous")
+		}
+	}
+}
+
 // The inputs paragraph says the files come unchanged, keys included,
 // except under the review grant, where a file reaches the model only after
 // AI Review (agentry-cli#632, DR-78).

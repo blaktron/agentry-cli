@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/removal"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
@@ -74,6 +76,10 @@ type runDirs struct {
 	// secretsAbsent are the optional secrets the run goes without, for the
 	// System Prompt's spec.PHSecretsAbsent; set once its secrets resolve.
 	secretsAbsent []string
+	// interactive says the run is a session, for the System Prompt's
+	// spec.PHRunMode (agentry-cli#717); set by StartSession before the harness
+	// files are rendered.
+	interactive bool
 	// conns are the run's connections as it holds them, for the renewer
 	// (writeConnectionFiles, renewConnections; agentry-cli#665).
 	conns []*heldConnection
@@ -150,6 +156,14 @@ func (rd *runDirs) absentForPrompt() string {
 	return strings.Join(rd.secretsAbsent, ", ")
 }
 
+// modeForPrompt is spec.PHRunMode's value: the mode the run is in.
+func (rd *runDirs) modeForPrompt() string {
+	if rd.interactive {
+		return string(manifest.ModeInteractive)
+	}
+	return string(manifest.ModeAutonomous)
+}
+
 func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer {
 	return strings.NewReplacer(
 		spec.PHWorkspace, hostPath(rd.workspace),
@@ -165,6 +179,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHHostProxyURL, rd.hostProxyURL,
 		spec.PHRunID, filepath.Base(rd.root),
 		spec.PHSecretsAbsent, rd.absentForPrompt(),
+		spec.PHRunMode, rd.modeForPrompt(),
 	)
 }
 

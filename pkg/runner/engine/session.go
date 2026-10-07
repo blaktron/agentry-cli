@@ -120,6 +120,8 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err != nil {
 		return fail(err)
 	}
+	// The System Prompt tells the model it is in a session (spec.PHRunMode).
+	rd.interactive = true
 	s.rd = rd
 	// What the driver may permit is read now, before any harness starts:
 	// a host-run harness runs as the person and could rewrite the file.
