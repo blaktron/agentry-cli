@@ -177,6 +177,7 @@ func Parse(result json.RawMessage) (*Draft, error) {
 	// Only the Drafter's own fields are read from its answer; the
 	// post-step's are Finish's and the CLI's to write.
 	d.Drafter, d.AIReview, d.Knowledge, d.Validation, d.ManifestError = nil, nil, nil, nil, ""
+	d.Recovered = false
 	if d.Matches == nil {
 		d.Matches = []Match{}
 	}

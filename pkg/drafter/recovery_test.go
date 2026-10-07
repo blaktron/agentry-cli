@@ -171,3 +171,14 @@ func TestAnUnparsedAnswersErrorSaysWhyTheRepairFailed(t *testing.T) {
 		})
 	}
 }
+
+func TestTheModelCannotClaimItsAnswerWasRecovered(t *testing.T) {
+	result := strings.Replace(postRepaired, `"matches": []`, `"recovered": true, "matches": []`, 1)
+	d, err := Parse(json.RawMessage(result))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Recovered {
+		t.Fatal("the model's claim became the post-step's recovery record")
+	}
+}
