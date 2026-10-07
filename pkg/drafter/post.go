@@ -116,7 +116,8 @@ func CheckerFor(w *engine.WebRun) (Checker, error) {
 }
 
 // Run is the post-step over the first turn's envelope and error. An answer
-// the output schema refused (exit 17) is given the one repair turn with
+// the output schema refused (exit 17) is first recovered when it ends in
+// a schema-valid object; otherwise it is given the one repair turn with
 // that error and its own last message; a draft it returns stands as the
 // run's answer, and the envelope is made ok (its usage stays both turns').
 // Any other failed run, or a second answer that is still not a draft, comes
@@ -126,14 +127,25 @@ func CheckerFor(w *engine.WebRun) (Checker, error) {
 func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) (*Draft, *receipt.Envelope, error) {
 	p.serverChecks = map[string]serverCheck{}
 	var d *Draft
+	recoveredChars := -1
 	var ce *engine.ClassifiedError
 	if runErr != nil && env != nil && errors.As(runErr, &ce) && ce.Code == engine.ExitOutputSchema && ctx.Err() == nil {
-		u := Unparsed(env, p.OutDir, p.Scan, p.Ref, p.Build, runErr)
-		u.readKnowledge(p.Knowledge)
-		lines, _ := rulesReport(u)
-		d, env = p.repair(ctx, u, env, RepairReport{Rules: lines})
-		if d.IsRepaired() {
-			runErr = nil
+		if recovered, chars, err := recoverAnswer(env); err == nil {
+			env, recoveredChars, runErr = recovered, chars, nil
+		}
+		if runErr != nil {
+			u := Unparsed(env, p.OutDir, p.Scan, p.Ref, p.Build, runErr)
+			u.readKnowledge(p.Knowledge)
+			lines, _ := rulesReport(u)
+			d, env = p.repair(ctx, u, env, RepairReport{Rules: lines})
+			if d.IsRepaired() {
+				runErr = nil
+			} else if d.repairFailure != "" {
+				runErr = fmt.Errorf("%w; its one repair turn returned no draft (%s)", runErr, d.repairFailure)
+				env.Error = runErr.Error()
+			}
+		}
+		if runErr == nil {
 			env.Status, env.ExitCode, env.ExitClass, env.Error, env.Stage = "ok", engine.ExitOK, receipt.ExitClassName(engine.ExitOK), "", ""
 		}
 	}
@@ -148,6 +160,10 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 			return nil, env, err
 		}
 		d.readKnowledge(p.Knowledge)
+		if recoveredChars >= 0 {
+			d.Recovered = true
+			d.composeNotes(fmt.Sprintf("## Recovered\n\nThe runner refused the last message for %d characters of text before the answer. The post-step took the schema-valid JSON object after them. The original message is in the run's receipts.\n", recoveredChars))
+		}
 		d.revise(p.Revision)
 		p.validate(d)
 		p.checkServers(ctx, d)
@@ -260,6 +276,9 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 			why = fmt.Sprintf("its run ended with exit %d", ce.Code)
 		}
 		d.NoteNotRepaired(r, why)
+		if ce != nil {
+			d.repairFailure = fmt.Sprintf("%s (%s)", why, ce.Err)
+		}
 		return d, &total
 	}
 	rd, err := Repaired(d, renv, dir, r)

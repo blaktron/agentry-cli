@@ -525,6 +525,72 @@ func TestDraftJSONEnvelope(t *testing.T) {
 // writes an envelope with its code, class and stage and no usage — a
 // description AI Review did not pass at stage description, exit 11 — and
 // an unknown format is a usage error.
+func TestDraftJSONRecoveryIsRecordedWithoutSpendingTheRepair(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	_, runs, _ := draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, draftLedger)
+	seamRun := draftRun
+	draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+		env, err := seamRun(cmd, r)
+		if err != nil {
+			return env, err
+		}
+		env.Result = receipt.TextResult("Both reports are written. Here is the draft.\n" + goodDraft)
+		env.Status, env.ExitCode, env.ExitClass, env.Error, env.Stage = "error", 17, "outputSchema", "not JSON", "output"
+		return env, engine.Classify(engine.ExitOutputSchema, errors.New("not JSON"))
+	}
+	out := filepath.Join(t.TempDir(), "draft-out")
+	stdout, stderr, err := runCLI(t, nil, "draft", "Summarize my meeting notes.", "--out", out, "--policy", policyPath, "--output-format", "json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	env := draftEnvelope(t, stdout)
+	var report draftReport
+	if json.Unmarshal(env["draft"], &report) != nil || !report.Recovered || !report.Passed || report.Repaired || len(*runs) != 1 {
+		t.Fatalf("draft report %s, runs %d", env["draft"], len(*runs))
+	}
+	wantField(t, env, "exitCode", "0")
+	b, err := os.ReadFile(filepath.Join(out, "draft.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d drafter.Draft
+	if json.Unmarshal(b, &d) != nil || !d.Recovered || !strings.Contains(d.Notes, "45 characters") {
+		t.Fatalf("draft %s", b)
+	}
+}
+
+func TestDraftFailureReportsTheFailedRepairInTextAndJSON(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			isolateEnv(t)
+			_, policyPath := isolateRunnerHome(t)
+			t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+			draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, "")
+			draftRun = func(_ *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
+				if r.Web == nil {
+					return &receipt.Envelope{}, engine.Classify(engine.ExitTimeout, errors.New("run timed out after 300s"))
+				}
+				return &receipt.Envelope{Status: "error", ExitCode: 17, Error: "first parse failure", Result: receipt.TextResult("truncated {\"manifest\":")},
+					engine.Classify(engine.ExitOutputSchema, errors.New("first parse failure"))
+			}
+			stdout, _, err := runCLI(t, nil, "draft", "Summarize my meeting notes.", "--out", t.TempDir(), "--policy", policyPath, "--output-format", format)
+			wantClassified(t, err, engine.ExitOutputSchema)
+			if !strings.Contains(err.Error(), "its run ended with exit 15 (run timed out after 300s)") {
+				t.Fatalf("error %v", err)
+			}
+			if format == "json" {
+				env := draftEnvelope(t, stdout)
+				wantField(t, env, "exitCode", "17")
+				if !strings.Contains(string(env["error"]), "its run ended with exit 15") {
+					t.Fatalf("envelope error %s", env["error"])
+				}
+			}
+		})
+	}
+}
+
 func TestDraftJSONFailures(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)

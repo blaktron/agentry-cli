@@ -371,7 +371,7 @@ func TestAReadingTheRunnerRefusedIsRecoveredOnlyWhenTheSchemaPassesIt(t *testing
 		t.Fatalf("reading %+v", r.Reading)
 	}
 	for _, bad := range []string{
-		"No fence: {\"summary\":\"s\",\"findings\":[],\"notRead\":[]}",
+		"Trailing text: {\"summary\":\"s\",\"findings\":[],\"notRead\":[]} Done.",
 		"```json\n{\"summary\":\"s\",\"findings\":[],\"notRead\":[],\"approved\":true}\n```",
 		"```json\n{\"summary\":\"s\"\n",
 	} {

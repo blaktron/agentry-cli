@@ -58,14 +58,18 @@ type Draft struct {
 	// to fix), its instruction path or its reports were refused (nothing is
 	// rendered), or validation could not run. Validation is then absent.
 	ManifestError string `json:"manifestError,omitempty"`
+	// Recovered says the post-step took a schema-valid terminal object
+	// from a last message the runner refused for text before it.
+	Recovered bool `json:"recovered,omitempty"`
 
 	// ownNotes is the notes as the Drafter wrote them, before the
 	// post-step's sections; corrections is what Correct did; extras are
 	// the post-step's other sections, in the order they were added.
-	ownNotes    string
-	corrections []string
-	extras      []string
-	repaired    bool
+	ownNotes      string
+	corrections   []string
+	extras        []string
+	repaired      bool
+	repairFailure string
 	// lastMessage is an unparsed answer's last message (Unparsed).
 	lastMessage string
 	// serverProblems are the declared MCP servers whose own runtime range
@@ -173,6 +177,7 @@ func Parse(result json.RawMessage) (*Draft, error) {
 	// Only the Drafter's own fields are read from its answer; the
 	// post-step's are Finish's and the CLI's to write.
 	d.Drafter, d.AIReview, d.Knowledge, d.Validation, d.ManifestError = nil, nil, nil, nil, ""
+	d.Recovered = false
 	if d.Matches == nil {
 		d.Matches = []Match{}
 	}
