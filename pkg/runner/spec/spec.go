@@ -46,6 +46,11 @@ const (
 	// the same bytes whichever they are. Unlike the others it stands for
 	// text, never a path, an id or an address.
 	PHSecretsAbsent = "@@RUN_SECRETS_ABSENT@@"
+	// PHRunMode is the run's mode, "autonomous" or "interactive", for the
+	// System Prompt (agentry-cli#717): a release's two plans carry one
+	// instruction (DR-15), so the text guides both modes and only the run
+	// says which one it is. Text, like PHSecretsAbsent.
+	PHRunMode = "@@RUN_MODE@@"
 	// PHInputs is the host path of the per-run read-only inputs dir
 	// (RUNNER-PLAN-2 §P4) — operator-provided files, mounted :ro into the
 	// tools container, empty when the run got no --file.
