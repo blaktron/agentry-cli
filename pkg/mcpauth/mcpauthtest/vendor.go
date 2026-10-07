@@ -42,6 +42,10 @@ type Vendor struct {
 	// IssuerOnly is a sign-in at the issuer for a package server
 	// (agentry-cli#665): the authorization request must carry no resource.
 	IssuerOnly bool
+	// SecretAnyway issues ClientSecret to every registration, one that
+	// asked to be public included, and names no auth method in the answer
+	// (a vendor that makes every client confidential).
+	SecretAnyway bool
 
 	mu       sync.Mutex
 	codes    map[string]codeGrant
@@ -51,6 +55,8 @@ type Vendor struct {
 	Requests []url.Values // every token-endpoint form
 	Refused  bool         // refuse every refresh with invalid_grant
 	Issued   []string     // every refresh token issued
+	// Registrations is every registration request's body.
+	Registrations []map[string]any
 }
 
 type codeGrant struct {
@@ -225,19 +231,24 @@ func (v *Vendor) token(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *Vendor) register(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Method string `json:"token_endpoint_auth_method"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	method, _ := body["token_endpoint_auth_method"].(string)
 	id := "dcr-" + random()
-	out := map[string]any{"client_id": id, "token_endpoint_auth_method": req.Method}
+	out := map[string]any{"client_id": id, "token_endpoint_auth_method": method}
 	secret := ""
-	if req.Method != "none" {
+	switch {
+	case v.SecretAnyway:
+		secret = v.ClientSecret
+		out["client_secret"] = secret
+		delete(out, "token_endpoint_auth_method")
+	case method != "none":
 		secret = v.ClientSecret
 		out["client_secret"] = secret
 	}
 	v.mu.Lock()
 	v.clients[id] = secret
+	v.Registrations = append(v.Registrations, body)
 	v.mu.Unlock()
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, out)
