@@ -898,9 +898,23 @@ manifest + operator policy into a deterministic run plan → execute:
   nothing. Only local PNG and JPEG images are drawn; links stay links
   only for `http`, `https` and `mailto`; Typst code in the Markdown is text.
   The PDF is tagged (PDF/UA-1), its author is the QuickAgent's
-  `namespace/name@version`, and its look is the run's theme (Plain for now),
-  never the model's choice. `write_report` refuses a PDF, so a PDF in
+  `namespace/name@version`, and its look is the run's report theme, never
+  the model's choice. `write_report` refuses a PDF, so a PDF in
   `reports/` that the receipt names is one `export_pdf` wrote.
+- **The report theme** is one of five (agentry-cli#731): `plain`, `formal`
+  (serif, a cover page, "page n of N"), `brief` (a compact memo),
+  `technical` (dense, banded tables) and `letter` (a letterhead, and each
+  short line of a paragraph kept, so an address or a To/From block stays
+  one line to a line). A run takes the first that is set:
+  `agentry run --report-theme NAME` for that run alone, then your account's
+  report theme when you are signed in (chosen on the site or the desktop,
+  read from the registry at the start of the run), then `report.theme` in
+  `~/.config/agentry/config.yaml` (`report: {theme: formal}`), then Plain.
+  A name in the flag or the config that is not one of the five stops the
+  run before it starts (exit 2); an account the CLI cannot reach, or a theme
+  it does not have, is a warning and the next choice is used. The receipt's
+  `capabilities_enforced["pdf.theme"]` names the theme, its digest and what
+  chose it.
 - **Everything the run produces** lands in the output folder: the
   QuickAgent's report files, `result.json` (the machine-readable envelope;
   its `pdfs` block names the theme and each exported PDF's SHA-256),

@@ -102,3 +102,46 @@ func TestNoExportNoPDFsBlock(t *testing.T) {
 		t.Errorf("the granted run's ledger: %v", err)
 	}
 }
+
+// TestTheRunsReportThemeIsStampedAndNamed (agentry-cli#731): the theme the
+// caller chose is the one the tools spec carries, byte for byte, and the
+// receipt names it and what chose it whether or not a PDF was exported;
+// a run told nothing takes Plain, chosen by the default.
+func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
+	for _, c := range []struct {
+		theme ReportTheme
+		want  string
+		from  string
+	}{
+		{ReportTheme{Name: "formal", From: "the account's report theme"}, "formal", "the account's report theme"},
+		{ReportTheme{}, "plain", "the default"},
+	} {
+		p, f := fixture(t)
+		happyFake(f)
+		p.KeepRunDir = true
+		p.ReportTheme = c.theme
+		env, err := Run(context.Background(), f, p)
+		if err != nil {
+			t.Fatalf("%s: run: %v", c.want, err)
+		}
+		doc, err := toolsrv.BuiltinTheme(c.want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(filepath.Join(p.RunRoot, "runs", p.RunID, "cfg", "gateway", "toolspec.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ts toolsrv.Spec
+		if err := json.Unmarshal(b, &ts); err != nil {
+			t.Fatal(err)
+		}
+		if ts.PDF.Theme == nil || ts.PDF.Theme.Name != c.want || ts.PDF.Theme.Document != string(doc) {
+			t.Errorf("%s: the tools spec's theme = %+v", c.want, ts.PDF.Theme)
+		}
+		line := env.CapabilitiesEnforced["pdf.theme"]
+		if !strings.HasPrefix(line, c.want+" 1.0.0 (sha256:"+sha(doc)+")") || !strings.Contains(line, "chosen by "+c.from) {
+			t.Errorf("%s: the receipt's pdf.theme line = %q", c.want, line)
+		}
+	}
+}
