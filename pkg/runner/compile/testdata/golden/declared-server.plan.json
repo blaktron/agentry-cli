@@ -11,27 +11,32 @@
   "policySha256": "policysha",
   "instruction": {
     "sourcePath": "SKILL.md",
-    "sha256": "210a4ef51c7b130a8fd711d7ef27acbeddf4c27b2f6a4c2a285ca4aa1c00e797",
+    "sha256": "4c73518ad809834b39bcb013a0780ed532bad8a57441dc15010d74461dae45e0",
     "bodySha256": "ab7eeb2d198a6e44757e77befdfde811a705e2556b46ea2398e5e13e0c4c95a1"
   },
   "capabilities": {
     "egressMode": "none",
     "fsReadMode": "none",
-    "fsWriteMode": "none"
+    "fsWriteMode": "none",
+    "scratch": true
   },
   "tools": [
     "list_inputs",
     "read_input",
     "search_inputs",
+    "scratch_list",
+    "scratch_read",
+    "scratch_write",
     "write_report"
   ],
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
     "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
-    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
+    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; on Linux the run's docker filter mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; under Docker Desktop (macOS, Windows), which runs no filter, it is the container's own layer, unbounded",
     "mcpServers": "declared servers installed per-signature from the operator's registries, launched from the release's read-only store on no network of the run's own — a server with declared hosts sits on the gateway's relay network with a TCP relay linked under each host's name — a network the runner refuses to share: the run does not start while another gateway's relays are on it (checked as the run starts; a gateway started during the run is not refused), and its own relays are removed at teardown — one with none has no network — with server-scoped secrets and the manifest's plain env: @scope/server-x@1.2.3 (npm, egress api.github.com, tools filtered to list_issues, env keys GITHUB_PERMISSION)",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read and scratch_write over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
     "secrets": "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
   },
   "gateway": {
@@ -194,8 +199,8 @@
     "gateway/catalog.yaml": "9c9f9d1d57c3788504d2aa9fae89458b082835c1162c166b09ce231f69e7a5c0",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "cc21e4caab49d9b939989a497d4e1bf65dfcb9251550d5d95fd925fa82296a20",
-    "gateway/tools.yaml": "410e1be8bfc28c795ab6a30e330b4ef37431a0d4c6d6bf2e6769fec5cefc2a3a",
-    "gateway/toolspec.json": "144936ab277a6620348b89d4a84211b363abc2803030b13e994b5b568968e201",
-    "harness/agent.yaml": "4f09724929dc2bea4ab0ae7d43773cc84bdacaf523e87d8f728b90239bc28cb6"
+    "gateway/tools.yaml": "eee4428668083aa7e7b749ded979bda7539a126b87c854e0a3cf5fc425b11e74",
+    "gateway/toolspec.json": "1ef45564246f718688bb4647068c32639c79c12f99d38b8aaf6cf13a8e38edcd",
+    "harness/agent.yaml": "f1724c2e36696b45140162d369f69eb6d0792e891b0ef71724370fb07ae72dfb"
   }
 }

@@ -17,11 +17,12 @@ package toolsrv
 // desktop-review-key-and-run-cards.md §6.2, agentry-cli#503); "6" the
 // decoded inputs and search_inputs (plan file-handling.md §5,
 // agentry-cli#560); "7" the calls ledger and end_blocked (plan
-// quickagents-that-run.md M9, agentry-cli#629). The server
+// quickagents-that-run.md M9, agentry-cli#629); "8" the scratch folder
+// (plan scratch-and-pdf-reports.md §4, agentry-cli#729). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "7"
+const SpecVersion = "8"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -75,6 +76,22 @@ type Spec struct {
 	// it into the run's own copy of this file, and voice_read exists only
 	// then.
 	Voice *VoiceFile `json:"voice,omitempty"`
+	// ScratchDir is the container path of the run's scratch folder
+	// (conventionally /scratch; plan scratch-and-pdf-reports.md §4,
+	// agentry-cli#729): an empty tmpfs the docker filter mounts, private
+	// to the run and gone with the container. scratch_read, scratch_list
+	// and scratch_write are granted whenever it is set; the compiler sets
+	// it for every package but a built-in. It is a grant of the runner,
+	// not a line of the contract, and never aliases the workspace, which
+	// FSRead and FSWrite govern.
+	ScratchDir string `json:"scratchDir,omitempty"`
+	// TmpfsBytes, when set, is the size the run's docker filter caps the
+	// tools container's /tmp and ScratchDir at, each a tmpfs (Linux; the
+	// filter runs nowhere else). The engine stamps it into the run's own
+	// copy of this file, never into the compiled plan, and the tools role
+	// then refuses to serve unless both are tmpfs no larger than it
+	// (PrepareMounts).
+	TmpfsBytes int64 `json:"tmpfsBytes,omitempty"`
 	// FSRead gates fs_read and fs_list.
 	FSRead Access `json:"fsRead"`
 	// FSWrite gates fs_write.
@@ -219,6 +236,11 @@ const (
 	// §5), granted with InputsTextDir.
 	ToolSearchInputs = "search_inputs"
 	ToolWriteReport  = "write_report"
+	// The scratch folder's tools (plan scratch-and-pdf-reports.md §4),
+	// granted with ScratchDir.
+	ToolScratchList  = "scratch_list"
+	ToolScratchRead  = "scratch_read"
+	ToolScratchWrite = "scratch_write"
 	// The knowledge tools (plan knowledge.md §4.5), granted only while a
 	// pack is attached.
 	ToolKnowledgeList   = "knowledge_list"
@@ -262,6 +284,9 @@ func (s *Spec) GrantedTools() []string {
 		} else if s.InputsTextDir != "" {
 			names = append(names, ToolSearchInputs)
 		}
+	}
+	if s.ScratchDir != "" {
+		names = append(names, ToolScratchList, ToolScratchRead, ToolScratchWrite)
 	}
 	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {
 		names = append(names, ToolKnowledgeList, ToolKnowledgeSearch, ToolKnowledgeRead)

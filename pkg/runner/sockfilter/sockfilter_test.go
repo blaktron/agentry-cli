@@ -1218,3 +1218,59 @@ func TestTheWebToolsServerResolvesThroughTheRunsResolvConf(t *testing.T) {
 		}
 	}
 }
+
+// TestTheToolsServerGetsTheRunsBoundedTmpfs (agentry-cli#599, #729): the
+// filter mounts ToolsTmpfs into the tools server, the container of
+// ToolsImage running ToolsCmd, and into nothing else; a request that puts
+// anything of the gateway's at or beneath those targets is refused.
+func TestTheToolsServerGetsTheRunsBoundedTmpfs(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	opts := "size=268435456,mode=1777"
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
+		c.ToolsTmpfs = map[string]string{"/tmp": opts, "/scratch": opts}
+	})
+	tools := func(edit func(doc map[string]any)) map[string]any {
+		doc := map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", target}, "HostConfig": map[string]any{}}
+		if edit != nil {
+			edit(doc)
+		}
+		return doc
+	}
+	tmpfsOf := func() map[string]any {
+		hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+		m, _ := hc["Tmpfs"].(map[string]any)
+		return m
+	}
+	if code, body := g.do(t, "POST", "/containers/create", tools(nil)); code != http.StatusCreated {
+		t.Fatalf("the tools server: %d %s", code, body)
+	}
+	if m := tmpfsOf(); m["/tmp"] != opts || m["/scratch"] != opts || len(m) != 2 {
+		t.Fatalf("the tools server was created with tmpfs %v", m)
+	}
+	for name, doc := range map[string]map[string]any{
+		"another image":   tools(func(d map[string]any) { d["Image"] = "node:22" }),
+		"another command": tools(func(d map[string]any) { d["Cmd"] = []string{"node", "server.js"} }),
+		"no command":      tools(func(d map[string]any) { delete(d, "Cmd") }),
+	} {
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("%s: %d %s", name, code, body)
+		}
+		if m := tmpfsOf(); len(m) != 0 {
+			t.Fatalf("%s was given the tools server's tmpfs %v", name, m)
+		}
+	}
+	for name, doc := range map[string]map[string]any{
+		"a tmpfs of its own at /tmp": tools(func(d map[string]any) {
+			d["HostConfig"] = map[string]any{"Tmpfs": map[string]any{"/tmp": "size=100g"}}
+		}),
+		"a volume beneath /scratch": tools(func(d map[string]any) {
+			d["Volumes"] = map[string]any{"/scratch/x": map[string]any{}}
+		}),
+		"a tmpfs mount at /scratch": tools(func(d map[string]any) {
+			d["HostConfig"] = map[string]any{"Mounts": []any{map[string]any{"Type": "tmpfs", "Target": "/scratch/"}}}
+		}),
+	} {
+		g.refused(t, name, "POST", "/containers/create", doc, "the run's own tmpfs")
+	}
+}

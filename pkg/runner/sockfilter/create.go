@@ -332,6 +332,9 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		// gateway named.
 		hc.Binds = append(hc.Binds, f.cfg.WebResolvConf+":"+resolvConfTarget+":ro")
 	}
+	if err := f.toolsTmpfs(ctx, &c, imageID); err != nil {
+		return nil, err
+	}
 	if err := f.bound(hc); err != nil {
 		return nil, err
 	}
@@ -360,6 +363,66 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	}
 	c.Labels = f.label(c.Labels)
 	return c, nil
+}
+
+// toolsTmpfs mounts Config.ToolsTmpfs into the run's tools server, the
+// container of ToolsImage that runs ToolsCmd, and into no other: its /tmp
+// and scratch folder become size-capped tmpfs (agentry-cli#599, #729), so
+// what a declared command or the scratch tools write is bounded and never
+// reaches the host's disk. Added after the storage check, as the run's
+// own; a request that puts anything of the gateway's at or beneath one of
+// those targets is refused rather than shadowed.
+func (f *Filter) toolsTmpfs(ctx context.Context, c *containerCreateBody, imageID string) error {
+	if len(f.cfg.ToolsTmpfs) == 0 {
+		return nil
+	}
+	var cmd []string
+	if !present(c.Cmd) || json.Unmarshal(c.Cmd, &cmd) != nil || !slices.Equal(cmd, f.cfg.ToolsCmd) {
+		return nil
+	}
+	tools, err := f.toolsImage(ctx)
+	if err != nil {
+		return err
+	}
+	if imageID != tools {
+		return nil
+	}
+	hc := c.HostConfig
+	var declared map[string]json.RawMessage
+	if present(c.Volumes) {
+		if err := json.Unmarshal(c.Volumes, &declared); err != nil {
+			return deny("the tools server's Volumes are a map of targets")
+		}
+	}
+	targets := make([]string, 0, len(declared)+len(hc.Binds)+len(hc.Mounts)+len(hc.Tmpfs))
+	for t := range declared {
+		targets = append(targets, t)
+	}
+	for _, b := range hc.Binds {
+		if parts := strings.Split(b, ":"); len(parts) >= 2 {
+			targets = append(targets, parts[1])
+		}
+	}
+	for _, m := range hc.Mounts {
+		targets = append(targets, m.Target)
+	}
+	for t := range hc.Tmpfs {
+		targets = append(targets, t)
+	}
+	for mine := range f.cfg.ToolsTmpfs {
+		for _, t := range targets {
+			if t := path.Clean(t); t == mine || strings.HasPrefix(t, mine+"/") {
+				return deny("the tools server's %s is the run's own tmpfs; the gateway mounts nothing at %s", mine, t)
+			}
+		}
+	}
+	if hc.Tmpfs == nil {
+		hc.Tmpfs = map[string]string{}
+	}
+	for target, opts := range f.cfg.ToolsTmpfs {
+		hc.Tmpfs[target] = opts
+	}
+	return nil
 }
 
 // pinLinks gives a container that will run under the run's runtime an

@@ -12,7 +12,7 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "SKILL.md",
-    "sha256": "18fdbaf6fef735ea11e2668eb4e343069e9a142a853bc284179d498f857bd6c9",
+    "sha256": "e0ef47464243ddcdadfa32b1c077107f7d2c67aab2b1f136e1257205b2b8e921",
     "bodySha256": "8086e9508d39ffb5d93fe51fea7e272784044e1acb1118e77bd9d721441a3723"
   },
   "capabilities": {
@@ -33,7 +33,8 @@
     ],
     "dataAccess": [
       "tickets"
-    ]
+    ],
+    "scratch": true
   },
   "tools": [
     "fs_read",
@@ -44,15 +45,19 @@
     "list_inputs",
     "read_input",
     "search_inputs",
+    "scratch_list",
+    "scratch_read",
+    "scratch_write",
     "write_report"
   ],
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
     "dataAccess": "declared tickets; no servers cataloged by policy (declaration recorded for audit)",
     "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools container is the runner image with the operator's catalogued packages installed (git ← apk git, jq ← apk jq) and minimized to exactly those binaries (per-QuickAgent exec image, agentry-cli#9, #100); git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned",
-    "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
+    "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; on Linux the run's docker filter mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; under Docker Desktop (macOS, Windows), which runs no filter, it is the container's own layer, unbounded",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
+    "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read and scratch_write over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
     "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
   },
   "gateway": {
@@ -202,8 +207,8 @@
     "gateway/catalog.yaml": "a71acc02135997b891298d866eb3fa0fc23fb4d49a19790633f802cedd842c0b",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
-    "gateway/tools.yaml": "cd8b444b8c5e3355026af0711c68ec1f6616052b5a9b0ac8df4c2a52a923dba6",
-    "gateway/toolspec.json": "1610713fbd9376c657d5c584d5d78b0e52fe666af632fc93b18a3a4955fba678",
-    "harness/agent.yaml": "7f74929f31dff9f5f36c00a2e196a8ec0962b4e516e8326291ae12285bf0c029"
+    "gateway/tools.yaml": "84a2ccb2f20752692a989b41a080205a2bc533f5895cdd5d6922bfdf5f143d18",
+    "gateway/toolspec.json": "01181c92b0ceda9e1087a64c885318d74d31950f6de576a76e7c521e30f50c04",
+    "harness/agent.yaml": "cfe00afd0912b4f6394aac6691ffd2119a57b65dd6fdebec07a3cf09d61058b0"
   }
 }

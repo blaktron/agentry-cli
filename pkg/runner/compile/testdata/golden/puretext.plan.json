@@ -11,26 +11,31 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "AGENT.md",
-    "sha256": "0f417860dff6ca199d6f80783c8ddbdfd8e17b1d8679818aaf3999805296fc89",
+    "sha256": "e0311a3e1205bed8a43e7169f060deebb818328744b286eb1224667cb0c97aa9",
     "bodySha256": "ea04f9c2aced19c2b7daccfaf1beb2b5fd5e4301a18ecd1a922bf738ffd87b9a"
   },
   "capabilities": {
     "egressMode": "none",
     "fsReadMode": "none",
-    "fsWriteMode": "none"
+    "fsWriteMode": "none",
+    "scratch": true
   },
   "tools": [
     "list_inputs",
     "read_input",
     "search_inputs",
+    "scratch_list",
+    "scratch_read",
+    "scratch_write",
     "write_report"
   ],
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
     "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
-    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks",
+    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; on Linux the run's docker filter mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; under Docker Desktop (macOS, Windows), which runs no filter, it is the container's own layer, unbounded",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read and scratch_write over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
     "secrets": "none declared"
   },
   "gateway": {
@@ -166,8 +171,8 @@
     "gateway/catalog.yaml": "302d165fc42fca1ae946f1de4819f93e3560e585d5e5369a964ee94febff2df3",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
-    "gateway/tools.yaml": "0798fb254b6297bd83a8b5a16ccfc544d034bd4be73c4389cf9095ee1740db18",
-    "gateway/toolspec.json": "144936ab277a6620348b89d4a84211b363abc2803030b13e994b5b568968e201",
-    "harness/agent.yaml": "d316062a6f8298036410a75e6dea60d6f4c00823dc8cd99b7c10e981ed5fdae8"
+    "gateway/tools.yaml": "6bd0c945d5d1da659f3ebfd2f6e4ac20e775c10e15a06f957876cfac8a0f1a80",
+    "gateway/toolspec.json": "1ef45564246f718688bb4647068c32639c79c12f99d38b8aaf6cf13a8e38edcd",
+    "harness/agent.yaml": "33589da913ec32d9f0606bb00f1d5e92c06a39bd8a0bd8e158265dec35823e9f"
   }
 }
