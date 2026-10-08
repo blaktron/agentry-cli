@@ -55,6 +55,10 @@ func ForThisSystem() (Alarm, error) {
 	switch runtime.GOOS {
 	case "linux":
 		return NewSystemd()
+	case "darwin":
+		return NewLaunchd()
+	case "windows":
+		return NewTaskScheduler()
 	}
 	return nil, fmt.Errorf("%s: %w", runtime.GOOS, ErrUnsupported)
 }
@@ -323,4 +327,76 @@ func oneLine(s string) string {
 		return r
 	}, s)
 	return strings.ReplaceAll(s, "%", "%%")
+}
+
+// probeWithReport runs a probe through an alarm that pipes nothing back
+// (launchd, Task Scheduler): start registers and starts e, given a
+// folder of its own; the probe writes its result to a report file there,
+// which this waits for; start's cleanup and the folder are removed after.
+func probeWithReport(e Entry, wait time.Duration, start func(e Entry, dir string) (cleanup func(), err error)) (string, error) {
+	if !filepath.IsAbs(e.Binary) {
+		return "", fmt.Errorf("the agentry binary %q is not an absolute path", e.Binary)
+	}
+	dir, err := os.MkdirTemp("", "agentry-schedule-probe-")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	report := filepath.Join(dir, "report.txt")
+	e.Args = append(append([]string{}, e.Args...), "--report", report)
+	cleanup, err := start(e, dir)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	return waitReport(report, wait)
+}
+
+// waitReport waits for the probe's report file and returns it. The probe
+// writes it in one rename when it is done, ending in "ok" or its gaps; an
+// exit with gaps is an error, as a failed systemd-run is.
+func waitReport(path string, wait time.Duration) (string, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		b, err := os.ReadFile(path)
+		if err == nil {
+			out := strings.TrimSpace(string(b))
+			lines := strings.Split(out, "\n")
+			if lines[len(lines)-1] == "ok" {
+				return out, nil
+			}
+			return out, errors.New("the probe found gaps")
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("the scheduler did not run agentry within %s", wait)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// xmlTextEscaper escapes what an XML text node cannot hold as it is;
+// quotes need no escape there, and stay readable in a golden file.
+var xmlTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\r", "&#xD;", "\n", "&#xA;")
+
+// xmlText escapes s for an XML text node, and replaces a character XML
+// cannot carry at all with U+FFFD.
+func xmlText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if (r < 0x20 && r != '\t' && r != '\n' && r != '\r') || r == 0xFFFE || r == 0xFFFF {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
+	return xmlTextEscaper.Replace(s)
+}
+
+// singleLine is s with its control characters made spaces, for a
+// description or a comment that must stay on one line.
+func singleLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 {
+			return ' '
+		}
+		return r
+	}, s)
 }

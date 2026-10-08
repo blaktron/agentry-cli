@@ -8,7 +8,8 @@ import (
 )
 
 // LocalZone is this computer's IANA zone name, the default for a new
-// schedule: $TZ, else the zone /etc/localtime links to, else UTC. Go's
+// schedule: $TZ, else the zone /etc/localtime links to (Linux, macOS),
+// else the one Windows is set to, else UTC. Go's
 // time.Local is named "Local", which no other system can read back.
 func LocalZone() string {
 	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" {
@@ -18,6 +19,11 @@ func LocalZone() string {
 	}
 	if target, err := filepath.EvalSymlinks("/etc/localtime"); err == nil {
 		if name := zoneFromPath(target); name != "" {
+			return name
+		}
+	}
+	if name := systemZone(); name != "" {
+		if _, err := time.LoadLocation(name); err == nil {
 			return name
 		}
 	}

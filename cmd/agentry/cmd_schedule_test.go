@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -21,6 +24,7 @@ import (
 type fakeAlarm struct {
 	installed map[string]schedule.Entry
 	removed   []string
+	listErr   error // Installed fails with it
 }
 
 func (*fakeAlarm) Name() string { return "fake" }
@@ -38,6 +42,9 @@ func (a *fakeAlarm) Remove(id string) error {
 func (*fakeAlarm) Probe(schedule.Entry) (string, error) { return "ok", nil }
 
 func (a *fakeAlarm) Installed() ([]string, error) {
+	if a.listErr != nil {
+		return nil, a.listErr
+	}
 	var ids []string
 	for id := range a.installed {
 		ids = append(ids, id)
@@ -321,6 +328,26 @@ func TestFireEntryCarriesNoCredential(t *testing.T) {
 	if !slices.Equal(e.Args, []string{"schedule", "fire", "abcdefghij"}) {
 		t.Fatalf("args %v", e.Args)
 	}
+	// The whole chain: what each system's entry is written from carries
+	// none of it either.
+	sc := schedule.Schedule{ID: "abcdefghij", Name: "digest", When: schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12)}}
+	service, timer, err := schedule.SystemdUnits(sc, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plist, err := schedule.LaunchAgentPlist(sc, e, time.UTC, utc(8, 12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := schedule.TaskXML(sc, e, "S-1-5-21-1-2-3-1001", `C:\Windows\System32\conhost.exe`, time.UTC, utc(8, 12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, doc := range map[string]string{"service": service, "timer": timer, "plist": string(plist), "task": task} {
+		if strings.Contains(doc, "never") || strings.Contains(doc, "admin:") {
+			t.Fatalf("the %s carries a credential:\n%s", name, doc)
+		}
+	}
 }
 
 func TestCheckFireInputs(t *testing.T) {
@@ -447,4 +474,165 @@ func TestRunLocalHonoursPin(t *testing.T) {
 	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath,
 		"--pin", "sha256:0000000000000000000000000000000000000000000000000000000000000000")
 	wantClassified(t, err, engine.ExitVerify)
+}
+
+// D5, the same on every system because fire decides: whatever rings it
+// (a timer at boot, a LaunchAgent at sign-in, a logon trigger), an
+// occurrence missed while the computer was off, asleep or signed out runs
+// once, late, if no later occurrence has fallen due; one whose following
+// occurrence is already due is recorded missed and does not run.
+func TestScheduleFireMissedOccurrenceRule(t *testing.T) {
+	cases := []struct {
+		name        string
+		r           schedule.Recurrence
+		rings       []time.Time // when the system rang fire
+		wantRan     []time.Time // the occurrences run, in order
+		wantMissed  []time.Time
+		wantRunsLog int // ran lines in fires.ndjson
+	}{
+		{
+			name:    "back before the following occurrence: runs late, once",
+			r:       schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12)},
+			rings:   []time.Time{utc(9, 17), utc(9, 17).Add(time.Minute)}, // sign-in, and a second trigger at once
+			wantRan: []time.Time{utc(9, 9)}, wantRunsLog: 1,
+		},
+		{
+			name:    "back as the following occurrence falls due: that one runs, the earlier is missed",
+			r:       schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12)},
+			rings:   []time.Time{utc(10, 9)},
+			wantRan: []time.Time{utc(10, 9)}, wantMissed: []time.Time{utc(9, 9)}, wantRunsLog: 1,
+		},
+		{
+			name:    "asleep across two weekly occurrences: the latest runs, the earlier is missed",
+			r:       schedule.Recurrence{Kind: schedule.Weekly, Days: []string{"tue", "thu"}, Time: "22:00", Zone: "UTC", Start: utc(9, 12)},
+			rings:   []time.Time{utc(16, 7)}, // Fri 16th: Tue 13th and Thu 15th fell while asleep
+			wantRan: []time.Time{utc(15, 22)}, wantMissed: []time.Time{utc(13, 22)}, wantRunsLog: 1,
+		},
+		{
+			name:    "a once schedule has no following occurrence: it runs when the computer is back",
+			r:       schedule.Recurrence{Kind: schedule.Once, Date: "2026-10-10", Time: "08:00", Zone: "UTC", Start: utc(8, 12)},
+			rings:   []time.Time{utc(12, 10)},
+			wantRan: []time.Time{utc(10, 8)}, wantRunsLog: 1,
+		},
+		{
+			name:  "a ring before anything is due runs nothing",
+			r:     schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12)},
+			rings: []time.Time{utc(8, 13), utc(9, 8)},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newScheduleHarness(t)
+			sc := h.add(t, c.r)
+			for _, at := range c.rings {
+				h.now = at
+				if err := fire(t, sc.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !slices.EqualFunc(h.runs, c.wantRan, time.Time.Equal) {
+				t.Fatalf("ran %v, want %v", h.runs, c.wantRan)
+			}
+			fires, _ := h.store.Fires(sc.ID, 0)
+			var missed []time.Time
+			ran := 0
+			for _, f := range fires {
+				switch f.Outcome {
+				case schedule.Missed:
+					missed = append(missed, f.Occurrence)
+				case schedule.Ran:
+					ran++
+				}
+			}
+			if !slices.EqualFunc(missed, c.wantMissed, time.Time.Equal) || ran != c.wantRunsLog {
+				t.Fatalf("fires.ndjson: missed %v ran %d, want missed %v ran %d (%+v)", missed, ran, c.wantMissed, c.wantRunsLog, fires)
+			}
+		})
+	}
+}
+
+// list and show mark a schedule whose OS entry is missing; sync writes it
+// again.
+func TestScheduleListMarksAMissingAlarmAndSyncRepairsIt(t *testing.T) {
+	h := newScheduleHarness(t)
+	h.now = utc(8, 13)
+	sc := h.add(t, schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12)})
+	delete(h.alarm.installed, sc.ID) // removed by hand, or lost
+
+	list := func() (text string, views []scheduleViewJSON) {
+		t.Helper()
+		var out bytes.Buffer
+		cmd := newScheduleListCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		if err := cmd.RunE(cmd, nil); err != nil {
+			t.Fatal(err)
+		}
+		saved := flags.jsonOut
+		flags.jsonOut = true
+		defer func() { flags.jsonOut = saved }()
+		var js bytes.Buffer
+		cmd.SetOut(&js)
+		if err := cmd.RunE(cmd, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(js.Bytes(), &views); err != nil {
+			t.Fatal(err)
+		}
+		return out.String(), views
+	}
+	text, views := list()
+	if !strings.Contains(text, "no alarm: run `agentry schedule sync`") || len(views) != 1 || views[0].Alarm || views[0].AlarmUnknown {
+		t.Fatalf("a missing alarm is not marked:\n%s\n%+v", text, views)
+	}
+	var show bytes.Buffer
+	sh := newScheduleShowCmd()
+	sh.SetOut(&show)
+	if err := sh.RunE(sh, []string{sc.ID}); err != nil || !strings.Contains(show.String(), "no alarm") {
+		t.Fatalf("show: %v\n%s", err, show.String())
+	}
+	if _, _, err := scheduleSync(); err != nil {
+		t.Fatal(err)
+	}
+	text, views = list()
+	if strings.Contains(text, "no alarm") || !views[0].Alarm {
+		t.Fatalf("sync did not repair it:\n%s", text)
+	}
+	// A scheduler that cannot be asked is said so, not called missing.
+	h.alarm.listErr = errors.New("schtasks /Query: exit status 1")
+	text, views = list()
+	if strings.Contains(text, "no alarm") || !strings.Contains(text, "could not be asked") || !views[0].AlarmUnknown {
+		t.Fatalf("an unanswered scheduler:\n%s\n%+v", text, views)
+	}
+}
+
+// What a Task Scheduler entry carries as --env is set before fire or the
+// probe reads anything; the probe's result also lands in --report.
+func TestScheduleProbeTakesEnvAndReport(t *testing.T) {
+	report := filepath.Join(t.TempDir(), "report.txt")
+	t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
+	// --env sets the process's own environment: register both so the
+	// test's cleanup restores them.
+	t.Setenv("AGENTRY_DOCKER", "")
+	t.Setenv("PATH", os.Getenv("PATH"))
+	dir := t.TempDir()
+	cmd := newScheduleProbeCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	cmd.SetArgs([]string{"--env", "AGENTRY_DOCKER=" + filepath.Join(dir, "no-docker-here"), "--env", "PATH=" + dir,
+		"--policy", filepath.Join(dir, "policy.yaml"), "--report", report})
+	err := cmd.Execute()
+	if code, ok := exitCodeOf(err); !ok || code != engine.ExitPolicy {
+		t.Fatalf("probe = %v, want the policy exit", err)
+	}
+	if got := os.Getenv("AGENTRY_DOCKER"); got != filepath.Join(dir, "no-docker-here") {
+		t.Fatalf("--env not applied: %q", got)
+	}
+	b, rerr := os.ReadFile(report)
+	if rerr != nil || !strings.HasPrefix(string(b), "gap: ") || strings.HasSuffix(strings.TrimSpace(string(b)), "ok") {
+		t.Fatalf("report %q %v", b, rerr)
+	}
+	if err := applyAlarmEnv([]string{"NOEQUALS"}); err == nil {
+		t.Fatal("an --env without = was accepted")
+	}
 }
