@@ -885,11 +885,29 @@ manifest + operator policy into a deterministic run plan → execute:
   A runtime the daemon has not registered stops the run (exit 13), and
   `agentry doctor` checks each. The receipt's runtime line names every
   container class and says why any is on the daemon's default.
+- **A report can be a PDF.** A release's run (not a built-in's) has
+  `export_pdf`, which turns a Markdown report the agent wrote into a PDF
+  beside it in `reports/` (agentry-cli#730): when the person asks for one,
+  or when the report is for someone else. Typst renders it inside the tools
+  container from the runner image's pinned copy (built without a package
+  downloader, with the Noto fonts for every script), through the runner's
+  `confine` role: an empty environment, a fresh render root it reads from,
+  no write of its own where Landlock holds it (the PDF comes back on its
+  output), no TCP where Landlock can refuse it, 1 GiB of address space and
+  60 seconds; without Landlock (gVisor) it runs as a user that owns
+  nothing. Only local PNG and JPEG images are drawn; links stay links
+  only for `http`, `https` and `mailto`; Typst code in the Markdown is text.
+  The PDF is tagged (PDF/UA-1), its author is the QuickAgent's
+  `namespace/name@version`, and its look is the run's theme (Plain for now),
+  never the model's choice. `write_report` refuses a PDF, so a PDF in
+  `reports/` that the receipt names is one `export_pdf` wrote.
 - **Everything the run produces** lands in the output folder: the
-  QuickAgent's report files, `result.json` (the machine-readable envelope),
+  QuickAgent's report files, `result.json` (the machine-readable envelope;
+  its `pdfs` block names the theme and each exported PDF's SHA-256),
   and `receipts/` (event stream, gateway log, the exact run plan; for a
   one-shot run, `calls.ndjson`: each runner tool call's outcome, never its
-  arguments, and the agent's `end_blocked` sentence, masked like the rest).
+  arguments, and the agent's `end_blocked` sentence, masked like the rest;
+  `pdfs.ndjson`, the record of each export).
   The runner tears down containers, networks, and secret files on every
   exit path. Each teardown step is best effort: a docker call that fails
   is not retried and never replaces the run's own error, so something can

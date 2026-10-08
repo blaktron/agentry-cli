@@ -510,7 +510,7 @@ func TestRunnerImageBasesArePinnedByDigest(t *testing.T) {
 			args[name] = val
 		}
 	}
-	for _, name := range []string{"GO_IMAGE", "RUNTIME_IMAGE"} {
+	for _, name := range []string{"GO_IMAGE", "RUNTIME_IMAGE", "TYPST_IMAGE"} {
 		if !digestRef.MatchString(args[name]) {
 			t.Errorf("Dockerfile ARG %s = %q, want name:tag@sha256:<digest>", name, args[name])
 		}

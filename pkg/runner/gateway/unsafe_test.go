@@ -89,6 +89,8 @@ func TestEnsureUnsafeExecImageBuildsFromTheBaseWithTheValuesInFiles(t *testing.T
 	for _, must := range []string{
 		"FROM " + unsafeBase + "\n",
 		"COPY --from=agentry-runner:v1 /usr/local/bin/agentry-runner /usr/local/bin/agentry-runner\n",
+		// export_pdf's renderer travels with the runner (agentry-cli#730).
+		"COPY --from=agentry-runner:v1 /opt/agentry/typst /opt/agentry/typst\n",
 		"RUN [\"/bin/sh\", \"/agentry-build/install.sh\"]\n",
 		"ENTRYPOINT [\"/usr/local/bin/agentry-runner\"]\n",
 	} {

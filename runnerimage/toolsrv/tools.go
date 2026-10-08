@@ -169,6 +169,8 @@ func (s *server) buildTools() {
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
 				writeReportSchema(), s.toolWriteReport)
+		case ToolExportPDF:
+			add(name, exportPDFDescription, exportPDFSchema(), s.toolExportPDF)
 		case ToolEndBlocked:
 			add(name, endBlockedDescription, endBlockedSchema(), s.toolEndBlocked)
 		}
@@ -1282,6 +1284,12 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	if limit := s.spec.Limits.writeCap(); int64(len(a.Content)) > limit {
 		return fmt.Sprintf("write_report: content is %d bytes, over the %d-byte limit — append in parts", len(a.Content), limit), true
 	}
+	// Only export_pdf puts a PDF in reports/ (plan scratch-and-pdf-reports.md
+	// D15): a name ending .pdf is refused, and so is content that would open
+	// as one.
+	if strings.EqualFold(path.Ext(a.Path), ".pdf") {
+		return "write_report: a report named .pdf is written only by export_pdf: write the report as Markdown here, then call export_pdf", true
+	}
 	// Reports root under the out mount (RQ3): created lazily so a run
 	// that writes no report leaves no empty reports/ dir behind.
 	root := filepath.Join(s.spec.OutDir, "reports")
@@ -1297,6 +1305,9 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 		return s.failed("write_report", err)
 	}
 	s.ownBetween(root, filepath.Dir(abs))
+	if opensAsPDF(abs, a.Content, a.Append) {
+		return "write_report: the content would open as a PDF (\"%PDF-\" within the file's first 1,024 bytes), and only export_pdf writes a PDF: write the report as Markdown, and quote a PDF header further into it", true
+	}
 	defer s.own(abs)
 	if a.Append {
 		f, err := os.OpenFile(abs, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -1345,4 +1356,24 @@ func (s *server) ownBetween(root, dir string) {
 		cur = filepath.Join(cur, part)
 		s.own(cur)
 	}
+}
+
+// pdfHeaderWindow is how far into a file a PDF reader looks for the
+// header.
+const pdfHeaderWindow = 1024
+
+// opensAsPDF says whether the file at abs would hold "%PDF-" in its first
+// pdfHeaderWindow bytes once content is written (appended, or replacing
+// it): a reader would take it for a PDF.
+func opensAsPDF(abs, content string, appending bool) bool {
+	head := content
+	if appending {
+		if prior, _, err := readUpTo(abs, pdfHeaderWindow); err == nil {
+			head = string(prior) + content
+		}
+	}
+	if len(head) > pdfHeaderWindow {
+		head = head[:pdfHeaderWindow]
+	}
+	return strings.Contains(head, "%PDF-")
 }

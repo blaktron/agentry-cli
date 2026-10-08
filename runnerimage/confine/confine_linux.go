@@ -5,6 +5,7 @@ package confine
 import (
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"syscall"
 	"unsafe"
 )
@@ -45,11 +46,24 @@ const (
 		accessMakeReg | accessMakeSock | accessMakeFifo | accessMakeBlock | accessMakeSym
 )
 
-// rulesetAttr is struct landlock_ruleset_attr's first field; the kernel
-// accepts the shorter struct of an older ABI.
+// The network access rights (LANDLOCK_ACCESS_NET_*, ABI 4): a ruleset that
+// handles them and grants no port refuses every TCP bind and connect.
+const (
+	accessNetBindTCP    = 1 << 0
+	accessNetConnectTCP = 1 << 1
+	netABI              = 4
+)
+
+// rulesetAttr is struct landlock_ruleset_attr. The kernel takes the
+// shorter struct of an older ABI, so only a ruleset that handles the
+// network passes the second field.
 type rulesetAttr struct {
-	handledAccessFS uint64
+	handledAccessFS  uint64
+	handledAccessNet uint64
 }
+
+// NetworkDenied says whether NoNetwork refuses TCP at Landlock ABI abi.
+func NetworkDenied(abi int) bool { return abi >= netABI }
 
 // pathBeneathAttr is struct landlock_path_beneath_attr, which the kernel
 // declares packed: 12 bytes, which Go's layout matches before its padding.
@@ -87,16 +101,88 @@ func writeRights(abi int) (all, file uint64) {
 	return all, file
 }
 
-// Exec confines this process to writing beneath dirs (and to /dev/null),
-// then replaces it with path, argv and env. It returns only on failure.
-func Exec(dirs []string, path string, argv, env []string) error {
+// ExecWith holds this process to o, then replaces it with path, argv and
+// env. It returns only on failure.
+//
+// The address-space limit comes last, after every argument of execve is
+// built: this process is Go, whose runtime may already hold more address
+// space than the limit, so nothing may allocate once it is set. A failed
+// execve past that point is reported and exits without allocating
+// (failExec).
+func ExecWith(o Options, path string, argv, env []string) error {
+	argv0p, err := syscall.BytePtrFromString(path)
+	if err != nil {
+		return fmt.Errorf("confine: exec %s: %w", path, err)
+	}
+	argvp, err := syscall.SlicePtrFromStrings(argv)
+	if err != nil {
+		return fmt.Errorf("confine: exec %s: %w", path, err)
+	}
+	envvp, err := syscall.SlicePtrFromStrings(env)
+	if err != nil {
+		return fmt.Errorf("confine: exec %s: %w", path, err)
+	}
+	// The failure report must not reach the command (ErrorFD); EBADF only
+	// says the caller passed none.
+	_, _, _ = syscall.RawSyscall(syscall.SYS_FCNTL, ErrorFD, syscall.F_SETFD, syscall.FD_CLOEXEC)
+	// Landlock and no_new_privs bind the calling thread, and execve
+	// starts the program from that thread, so all of it happens on one.
+	runtime.LockOSThread()
+	if _, _, errno := syscall.RawSyscall6(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0, 0, 0, 0); errno != 0 {
+		return fmt.Errorf("confine: set no_new_privs: %w", errno)
+	}
+	if !o.LimitsOnly {
+		if err := restrict(o); err != nil {
+			return err
+		}
+	}
+	if o.MaxMemory == 0 {
+		_, _, errno := syscall.RawSyscall(syscall.SYS_EXECVE, uintptr(unsafe.Pointer(argv0p)), uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envvp[0])))
+		return fmt.Errorf("confine: exec %s: %w", path, errno)
+	}
+	// From here on, no allocation: no collection either.
+	debug.SetGCPercent(-1)
+	lim := syscall.Rlimit{Cur: o.MaxMemory, Max: o.MaxMemory}
+	if _, _, errno := syscall.RawSyscall6(syscall.SYS_PRLIMIT64, 0, syscall.RLIMIT_AS, uintptr(unsafe.Pointer(&lim)), 0, 0, 0); errno != 0 {
+		debug.SetGCPercent(100)
+		return fmt.Errorf("confine: limit the address space to %d bytes: %w", o.MaxMemory, errno)
+	}
+	_, _, errno := syscall.RawSyscall(syscall.SYS_EXECVE, uintptr(unsafe.Pointer(argv0p)), uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envvp[0])))
+	failExec(errno)
+	return nil
+}
+
+// execFailed prefixes failExec's report.
+const execFailed = "confine: exec under the memory limit failed: "
+
+// failExec reports a failed execve on ErrorFD (stderr when the caller
+// passed none) and exits ExitFailed, allocating nothing: Errno.Error is a
+// constant for every errno execve returns.
+func failExec(errno syscall.Errno) {
+	msg := errno.Error()
+	for _, fd := range []uintptr{ErrorFD, 2} {
+		if _, _, e := syscall.RawSyscall(syscall.SYS_WRITE, fd, uintptr(unsafe.Pointer(unsafe.StringData(execFailed))), uintptr(len(execFailed))); e == 0 {
+			_, _, _ = syscall.RawSyscall(syscall.SYS_WRITE, fd, uintptr(unsafe.Pointer(unsafe.StringData(msg))), uintptr(len(msg)))
+			break
+		}
+	}
+	_, _, _ = syscall.RawSyscall(syscall.SYS_EXIT_GROUP, ExitFailed, 0, 0)
+}
+
+// restrict applies o's Landlock ruleset to this thread.
+func restrict(o Options) error {
 	abi, err := ABI()
 	if err != nil {
 		return err
 	}
 	all, file := writeRights(abi)
 	attr := rulesetAttr{handledAccessFS: all}
-	fd, _, errno := syscall.RawSyscall(sysLandlockCreateRuleset, uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
+	size := unsafe.Sizeof(attr.handledAccessFS)
+	if o.NoNetwork && NetworkDenied(abi) {
+		attr.handledAccessNet = accessNetBindTCP | accessNetConnectTCP
+		size = unsafe.Sizeof(attr)
+	}
+	fd, _, errno := syscall.RawSyscall(sysLandlockCreateRuleset, uintptr(unsafe.Pointer(&attr)), size, 0)
 	if errno != 0 {
 		return fmt.Errorf("landlock: create the ruleset: %w", errno)
 	}
@@ -104,25 +190,14 @@ func Exec(dirs []string, path string, argv, env []string) error {
 	if err := addRule(int(fd), devNull, file); err != nil {
 		return err
 	}
-	for _, d := range dirs {
+	for _, d := range o.Writable {
 		if err := addRule(int(fd), d, all); err != nil {
 			return err
 		}
 	}
-	// The failure report must not reach the command (ErrorFD); EBADF only
-	// says the caller passed none.
-	_, _, _ = syscall.RawSyscall(syscall.SYS_FCNTL, ErrorFD, syscall.F_SETFD, syscall.FD_CLOEXEC)
-	// Landlock and no_new_privs bind the calling thread, and execve
-	// starts the program from that thread, so all three happen on one.
-	runtime.LockOSThread()
-	if _, _, errno := syscall.RawSyscall6(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0, 0, 0, 0); errno != 0 {
-		return fmt.Errorf("landlock: set no_new_privs: %w", errno)
-	}
+	// restrict_self needs no_new_privs, which ExecWith set first.
 	if _, _, errno := syscall.RawSyscall(sysLandlockRestrictSelf, fd, 0, 0); errno != 0 {
 		return fmt.Errorf("landlock: restrict: %w", errno)
-	}
-	if err := syscall.Exec(path, argv, env); err != nil {
-		return fmt.Errorf("confine: exec %s: %w", path, err)
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -385,5 +386,20 @@ func TestAReportNeverHoldsARunSecret(t *testing.T) {
 		if isErr {
 			t.Errorf("%s without one = (%q, %v)", tool, got, isErr)
 		}
+	}
+	// export_pdf reads a file the agent could have written some other way
+	// (a declared command in the scratch folder): it renders none that
+	// holds a run secret's value, and Typst never sees it (agentry-cli#730).
+	spec.ScratchDir = t.TempDir()
+	spec.PDF = PDF{Enabled: true}
+	s = newTestServer(t, spec)
+	s.typst = fakeTypst(t, `printf '%%PDF-1.7\n'`)
+	mustWrite(t, filepath.Join(spec.ScratchDir, "found.md"), []byte("# Found\n\nfound "+value+" in Dockerfile:2\n"))
+	got, isErr := s.toolExportPDF(rawArgs(t, map[string]any{"source": "scratch/found.md"}))
+	if !isErr || !strings.Contains(got, env) || strings.Contains(got, value) {
+		t.Errorf("export_pdf of a source with a run secret's value = (%q, %v)", got, isErr)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(spec.OutDir, "reports")); len(entries) != 1 {
+		t.Errorf("reports/ holds %d entries after the refused export, want only the found.md write_report left there, and no PDF", len(entries))
 	}
 }

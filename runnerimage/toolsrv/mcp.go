@@ -21,6 +21,7 @@ import (
 	"io"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 const (
@@ -96,6 +97,16 @@ type server struct {
 	// callFault says the call being handled failed on the run's own
 	// machinery (calls.go): set by failed, read and cleared by recordCall.
 	callFault bool
+	// typst, render and pdfTimeout are export_pdf's renderer, how it is
+	// held, and how long a render may take (pdf.go); set when it is
+	// granted, and by a test.
+	typst      typstFiles
+	render     renderConfinement
+	pdfTimeout time.Duration
+	// renderRootMade, when a test sets it, is called with each render
+	// root as soon as it exists: what a declared command racing an export
+	// could do to it.
+	renderRootMade func(dir string)
 }
 
 func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
@@ -112,6 +123,10 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 	if len(spec.Exec.Commands) > 0 {
 		s.confine = newConfinement(spec)
 		_, _ = fmt.Fprintln(logw, "agentry-runner tools: run_command: "+s.confine.describe())
+	}
+	if spec.PDF.Enabled {
+		s.typst, s.render, s.pdfTimeout = defaultTypst(), newRenderConfinement(), PDFRenderTimeout
+		_, _ = fmt.Fprintln(logw, "agentry-runner tools: export_pdf: "+s.render.describe())
 	}
 	s.buildTools()
 	if err := s.buildShims(); err != nil {
@@ -195,6 +210,9 @@ func validateSpec(spec *Spec) error {
 		return errors.New("the review grant is never granted beside fetch, exec or the web tools, nor without the inputs channel")
 	}
 	if err := validateKnowledge(spec); err != nil {
+		return err
+	}
+	if err := validatePDF(spec); err != nil {
 		return err
 	}
 	if err := validateCalls(spec); err != nil {

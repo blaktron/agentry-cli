@@ -112,6 +112,12 @@ func (c confinement) run(cmd *exec.Cmd) (failed string, err error) {
 	if c.landlock == 0 {
 		return "", cmd.Run()
 	}
+	return runTrampolined(cmd)
+}
+
+// runTrampolined starts cmd, which is the confine trampoline, and waits for
+// it; what the trampoline says on confine.ErrorFD is failed.
+func runTrampolined(cmd *exec.Cmd) (failed string, err error) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		return "", err

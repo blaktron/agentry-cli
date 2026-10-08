@@ -1,5 +1,5 @@
 {
-  "specVersion": "8",
+  "specVersion": "9",
   "workspaceDir": "/workspace",
   "outDir": "/out",
   "inputsDir": "/inputs",
@@ -31,6 +31,9 @@
       "git",
       "jq"
     ]
+  },
+  "pdf": {
+    "enabled": true
   },
   "limits": {}
 }

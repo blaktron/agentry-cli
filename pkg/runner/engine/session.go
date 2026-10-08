@@ -854,6 +854,10 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	}
 	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start, "")
 	daemon := daemonLine(s.rd)
+	if s.rd.pdfLedger != "" {
+		s.rd.redact.File(s.rd.pdfLedger)
+	}
+	pdfs := pdfRecord(s.rd)
 
 	s.mu.Lock()
 	reason := s.reason
@@ -867,6 +871,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
 	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
 	env.CapabilitiesEnforced["daemon"] = daemon
+	env.PDFs = pdfs
 	// Every decode the session made, the files added mid-run included.
 	if line := s.dec.line(); line != "" {
 		env.CapabilitiesEnforced["decode"] = line

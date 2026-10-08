@@ -7,8 +7,9 @@
 #
 # The context is self-contained on purpose (RQ1): module sources plus a
 # generated go.mod, no third-party imports, so the build needs no module
-# proxy. What it does fetch: the two base images below, which since DR-32
-# come from Agentry's registry (ghcr.io/blaktron), and nothing else. The
+# proxy. What it does fetch: the two base images below and the Typst image,
+# which since DR-32 come from Agentry's registry (ghcr.io/blaktron), and
+# nothing else. The
 # file deliberately carries no `# syntax=` parser directive: one would make
 # BuildKit pull its frontend image (docker.io/docker/dockerfile:1, by a tag
 # that can move) before every build and let that image's code parse this
@@ -44,6 +45,16 @@
 # images.runner. Nothing in policy.yaml changes it.
 ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
 ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+# export_pdf's renderer (plan scratch-and-pdf-reports.md D23, D25, D26;
+# agentry-cli#730): agentry-dockerimages' files-only image of Typst built
+# from pinned source without its package downloader, the Noto fonts for
+# every script and the vendored cmarker, signed by its typst workflow on main
+# (scripts/verify-typst-image.sh holds the pin to that signature). Like
+# RUNTIME_IMAGE it has no policy field: repointing it means building this
+# context yourself.
+ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.08.1@sha256:37eb0ef5b52af3abd4635f249fa06e6aab4a13626abda482d40bdfe9a38828b9
+FROM ${TYPST_IMAGE} AS typst
+
 FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY . .
@@ -66,4 +77,11 @@ FROM ${RUNTIME_IMAGE}
 # whole class of "works on host, fails in container" reports.
 RUN apk add --no-cache ca-certificates
 COPY --from=build /agentry-runner /usr/local/bin/agentry-runner
+# Outside every bin directory (toolsrv.TypstDir): an exec image's minimize
+# keeps it, and no declared command finds it on a PATH. The licences travel
+# with the binary and the fonts.
+COPY --from=typst /typst /opt/agentry/typst/typst
+COPY --from=typst /fonts /opt/agentry/typst/fonts
+COPY --from=typst /typst-packages /opt/agentry/typst/packages
+COPY --from=typst /licenses /opt/agentry/typst/licenses
 ENTRYPOINT ["/usr/local/bin/agentry-runner"]
