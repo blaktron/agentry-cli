@@ -24,10 +24,30 @@ func TestOnCalendar(t *testing.T) {
 	}
 	for _, c := range cases {
 		c.r.Zone, c.r.Start = "Europe/London", start
-		got, err := OnCalendar(c.r)
+		got, err := OnCalendar(c.r, start)
 		if err != nil || !reflect.DeepEqual(got, []string{c.want}) {
 			t.Errorf("%s: %v %v, want %q", c.r.Kind, got, err, c.want)
 		}
+	}
+}
+
+// systemd never rings at a skipped wall time, so the calendar carries a
+// one-off ring at the instant the plan's rule runs it.
+func TestOnCalendarRingsSkippedTimes(t *testing.T) {
+	r := Recurrence{Kind: Daily, Time: "02:30", Zone: "America/New_York", Start: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}
+	got, err := OnCalendar(r, r.Start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2027-03-14, 2028-03-12 and 2029-03-11 skip 02:00–03:00: each runs at 03:00 EDT = 07:00Z.
+	want := []string{"*-*-* 02:30:00 America/New_York", "2027-03-14 07:00:00 UTC", "2028-03-12 07:00:00 UTC", "2029-03-11 07:00:00 UTC"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OnCalendar = %q, want %q", got, want)
+	}
+	// A time no change skips gets no extra ring.
+	r.Time = "09:00"
+	if got, _ := OnCalendar(r, r.Start); len(got) != 1 {
+		t.Fatalf("09:00: %q", got)
 	}
 }
 
@@ -122,6 +142,22 @@ func TestSystemdUnitsEscape(t *testing.T) {
 	e.Env = []string{"PATH=/bin\nExecStart=/bin/sh"}
 	if _, _, err := SystemdUnits(sc, e); err == nil {
 		t.Fatal("a multi-line environment entry was accepted")
+	}
+}
+
+func TestSystemdProbe(t *testing.T) {
+	var got []string
+	s := &Systemd{SystemdRun: func(args ...string) ([]byte, error) {
+		got = args
+		return []byte("ok\n"), nil
+	}}
+	e := goldenEntry()
+	e.Args = []string{"schedule", "probe"}
+	out, err := s.Probe(e)
+	want := []string{"--wait", "--pipe", "--collect", "--quiet", "--setenv=PATH=/usr/local/bin:/usr/bin",
+		"--setenv=AGENTRY_DOCKER=/usr/bin/docker", "--", "/usr/bin/agentry", "schedule", "probe"}
+	if err != nil || out != "ok" || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Probe = %q %v, args %q", out, err, got)
 	}
 }
 

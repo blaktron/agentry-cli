@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Alarm is an operating system's own scheduler, which wakes
@@ -26,6 +27,11 @@ type Alarm interface {
 	Remove(id string) error
 	// Installed lists the schedule ids that have an entry.
 	Installed() ([]string, error)
+	// Probe runs e once now in the context the alarm will run it in (the
+	// same user manager, groups and environment) and returns its output,
+	// so a schedule is refused when made rather than failing at its first
+	// fire: a shell can reach what the scheduler cannot (D8).
+	Probe(e Entry) (string, error)
 }
 
 // Entry is what every alarm runs: Binary with Args, under Env. Env holds
@@ -66,6 +72,9 @@ type Systemd struct {
 	Dir string
 	// Systemctl runs `systemctl --user` with args; replaced in tests.
 	Systemctl func(args ...string) error
+	// SystemdRun runs `systemd-run --user` with args and returns its
+	// output; replaced in tests.
+	SystemdRun func(args ...string) ([]byte, error)
 }
 
 // NewSystemd is the alarm for the person running this process.
@@ -86,6 +95,9 @@ func NewSystemd() (*Systemd, error) {
 				return fmt.Errorf("systemctl --user %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 			}
 			return nil
+		},
+		SystemdRun: func(args ...string) ([]byte, error) {
+			return exec.Command("systemd-run", append([]string{"--user"}, args...)...).CombinedOutput()
 		},
 	}, nil
 }
@@ -171,12 +183,28 @@ func (s *Systemd) Installed() ([]string, error) {
 	return ids, nil
 }
 
+// Probe implements Alarm: a transient unit in the person's own manager,
+// waited for, its output piped back.
+func (s *Systemd) Probe(e Entry) (string, error) {
+	if !filepath.IsAbs(e.Binary) {
+		return "", fmt.Errorf("the agentry binary %q is not an absolute path", e.Binary)
+	}
+	args := []string{"--wait", "--pipe", "--collect", "--quiet"}
+	for _, kv := range e.Env {
+		args = append(args, "--setenv="+kv)
+	}
+	args = append(args, "--", e.Binary)
+	args = append(args, e.Args...)
+	out, err := s.SystemdRun(args...)
+	return strings.TrimSpace(string(out)), err
+}
+
 // SystemdUnits is the service and the timer for sc, as text.
 func SystemdUnits(sc Schedule, e Entry) (service, timer string, err error) {
 	if !filepath.IsAbs(e.Binary) {
 		return "", "", fmt.Errorf("the agentry binary %q is not an absolute path", e.Binary)
 	}
-	cal, err := OnCalendar(sc.When)
+	cal, err := OnCalendar(sc.When, time.Now())
 	if err != nil {
 		return "", "", err
 	}
@@ -217,31 +245,58 @@ func SystemdUnits(sc Schedule, e Entry) (service, timer string, err error) {
 // on every occurrence, and for a month day past the 28th on every day
 // from the 28th on, which fire narrows to the month's own day (a month
 // without the 31st runs on its last day). The end of a repeat is fire's.
-func OnCalendar(r Recurrence) ([]string, error) {
+//
+// systemd does not ring at a wall time the spring change skips (checked
+// with systemd-analyze 259: 02:30 New York on 2027-03-14 never elapses),
+// where the plan's rule runs the occurrence at the first valid minute
+// after it. Each such occurrence in the three years from now gets a
+// one-off ring of its own at that instant, in UTC; every sync and every
+// add or edit writes them afresh.
+func OnCalendar(r Recurrence, now time.Time) ([]string, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
 	at := r.Time + ":00 " + r.Zone
+	var cal []string
 	switch r.Kind {
 	case Once:
-		return []string{r.Date + " " + at}, nil
+		cal = []string{r.Date + " " + at}
 	case Daily:
-		return []string{"*-*-* " + at}, nil
+		cal = []string{"*-*-* " + at}
 	case Weekdays:
-		return []string{"Mon..Fri *-*-* " + at}, nil
+		cal = []string{"Mon..Fri *-*-* " + at}
 	case Weekly:
 		days := make([]string, len(r.Days))
 		for i, d := range r.Days {
 			days[i] = strings.ToUpper(d[:1]) + d[1:]
 		}
-		return []string{strings.Join(days, ",") + " *-*-* " + at}, nil
+		cal = []string{strings.Join(days, ",") + " *-*-* " + at}
 	case Monthly:
 		if r.MonthDay <= 28 {
-			return []string{fmt.Sprintf("*-*-%02d %s", r.MonthDay, at)}, nil
+			cal = []string{fmt.Sprintf("*-*-%02d %s", r.MonthDay, at)}
+		} else {
+			cal = []string{"*-*-28..31 " + at}
 		}
-		return []string{"*-*-28..31 " + at}, nil
+	default:
+		return nil, fmt.Errorf("unknown repeat %q", r.Kind)
 	}
-	return nil, fmt.Errorf("unknown repeat %q", r.Kind)
+	return append(cal, skippedTimeRings(r, now)...), nil
+}
+
+// skippedTimeRings are one-off rings, in UTC, for the occurrences in the
+// three years from now whose wall time the spring change skips.
+func skippedTimeRings(r Recurrence, now time.Time) []string {
+	loc, err := time.LoadLocation(r.Zone)
+	if err != nil {
+		return nil
+	}
+	var rings []string
+	for _, t := range r.Between(now, now.AddDate(3, 0, 0), 0) {
+		if t.In(loc).Format("15:04") != r.Time {
+			rings = append(rings, t.UTC().Format("2006-01-02 15:04:05")+" UTC")
+		}
+	}
+	return rings
 }
 
 // envQuote quotes one Environment= assignment: systemd expands no

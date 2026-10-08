@@ -42,7 +42,9 @@ const (
 	EndNever EndKind = "never"
 	// EndOn repeats until a date, that date's occurrence included.
 	EndOn EndKind = "on"
-	// EndAfter repeats for a number of occurrences.
+	// EndAfter repeats for a number of runs: the store counts the
+	// occurrences fire runs (State.Runs), so an occurrence missed or one
+	// that fell while the schedule was paused uses none of them.
 	EndAfter EndKind = "after"
 )
 
@@ -51,7 +53,7 @@ type End struct {
 	Kind EndKind `yaml:"kind" json:"kind"`
 	// On is the last date (YYYY-MM-DD, in the schedule's zone) for EndOn.
 	On string `yaml:"on,omitempty" json:"on,omitempty"`
-	// After is the number of occurrences for EndAfter.
+	// After is the number of runs for EndAfter.
 	After int `yaml:"after,omitempty" json:"after,omitempty"`
 }
 
@@ -70,7 +72,7 @@ type Recurrence struct {
 	// Zone is the IANA time zone the times are in (Europe/London).
 	Zone string `yaml:"zone" json:"zone"`
 	// Start is the instant the schedule was made: nothing before it is an
-	// occurrence, and an EndAfter count starts from it.
+	// occurrence.
 	Start time.Time `yaml:"start" json:"start"`
 	End   End       `yaml:"end,omitempty" json:"end,omitempty"`
 }
@@ -179,7 +181,8 @@ func (r Recurrence) Validate() error {
 }
 
 // Next is the first occurrence strictly after after, or false when the
-// schedule has none left. r must be valid.
+// calendar has none left. An EndAfter count is not the calendar's but the
+// runs': Remaining applies it. r must be valid.
 func (r Recurrence) Next(after time.Time) (time.Time, bool) {
 	loc, err := time.LoadLocation(r.Zone)
 	if err != nil {
@@ -197,10 +200,8 @@ func (r Recurrence) Next(after time.Time) (time.Time, bool) {
 		}
 		endDay = dayStart(d)
 	}
-	// An EndAfter count is of occurrences since Start, so the walk starts
-	// there and counts; otherwise it starts at the later of Start and after.
 	from := after
-	if r.End.Kind == EndAfter || from.Before(r.Start) {
+	if from.Before(r.Start) {
 		from = r.Start
 	}
 	if r.Kind == Once {
@@ -214,7 +215,6 @@ func (r Recurrence) Next(after time.Time) (time.Time, bool) {
 		}
 		return time.Time{}, false
 	}
-	count := 0
 	day := dayStart(from.In(loc))
 	// Ten years of days bounds the walk; a valid repeat is due far sooner.
 	for i := 0; i < 3660; i++ {
@@ -223,19 +223,22 @@ func (r Recurrence) Next(after time.Time) (time.Time, bool) {
 		}
 		if r.dueOn(day) {
 			t := wallTime(day, c, loc)
-			if !t.Before(r.Start) {
-				count++
-				if r.End.Kind == EndAfter && count > r.End.After {
-					return time.Time{}, false
-				}
-				if t.After(after) {
-					return t, true
-				}
+			if !t.Before(r.Start) && t.After(after) {
+				return t, true
 			}
 		}
 		day = dayStart(day.AddDate(0, 0, 1))
 	}
 	return time.Time{}, false
+}
+
+// Remaining is how many runs an EndAfter schedule has left after runs of
+// them, and -1 for any other end.
+func (r Recurrence) Remaining(runs int) int {
+	if r.End.Kind != EndAfter {
+		return -1
+	}
+	return max(r.End.After-runs, 0)
 }
 
 // Between is every occurrence in (from, to], at most limit of them (0: no

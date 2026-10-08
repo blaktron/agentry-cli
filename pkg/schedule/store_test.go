@@ -33,7 +33,11 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err != nil || got.Name != sc.Name || got.Digest != sc.Digest || !got.When.Start.Equal(sc.When.Start) {
 		t.Fatalf("Get = %+v, %v", got, err)
 	}
-	if b, _ := os.ReadFile(s.TaskPath(sc.ID)); string(b) != "summarise the news" {
+	tp, err := s.TaskPath(sc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(tp); string(b) != "summarise the news" {
 		t.Fatalf("task = %q", b)
 	}
 	for _, f := range []string{"schedule.yaml", "task.txt"} {

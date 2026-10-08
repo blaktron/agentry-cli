@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
@@ -32,6 +34,8 @@ func (a *fakeAlarm) Remove(id string) error {
 	a.removed = append(a.removed, id)
 	return nil
 }
+
+func (*fakeAlarm) Probe(schedule.Entry) (string, error) { return "ok", nil }
 
 func (a *fakeAlarm) Installed() ([]string, error) {
 	var ids []string
@@ -207,6 +211,48 @@ func TestScheduleFirePausedAndGone(t *testing.T) {
 	}
 }
 
+// An end after N runs counts runs: a missed occurrence uses none of them.
+func TestScheduleEndsAfterNRuns(t *testing.T) {
+	h := newScheduleHarness(t)
+	sc := h.add(t, schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12),
+		End: schedule.End{Kind: schedule.EndAfter, After: 2}})
+	h.now = utc(9, 9)
+	_ = fire(t, sc.ID)
+	h.now = utc(12, 9) // the 10th and 11th missed: one more run left
+	_ = fire(t, sc.ID)
+	st, _ := h.store.State(sc.ID)
+	if st.Runs != 2 || !st.Ended || len(h.runs) != 2 {
+		t.Fatalf("state %+v runs %v", st, h.runs)
+	}
+	if _, ok := h.alarm.installed[sc.ID]; ok {
+		t.Fatal("the alarm outlived the last run")
+	}
+}
+
+// A refusal not lifted refuses the schedule; an --allow-* flag given for
+// nothing is not kept, so it cannot accept a refusal nobody has seen yet;
+// an interactive-only release is refused (invariant 2).
+func TestAdmitPreview(t *testing.T) {
+	r := schedule.RunSpec{AllowUnsigned: true, AllowUnscanned: true, AllowVulnerableMCP: true}
+	p := &runPlanOutput{Ref: "acme/x@1.0.0", Modes: []string{"autonomous"},
+		Refusals: []runPlanRefusal{{Kind: refusalAttestation, Message: "unscanned", Lift: "--allow-unscanned"}}}
+	got, err := admitPreview(p, r)
+	if err != nil || !got.AllowUnscanned || got.AllowUnsigned || got.AllowVulnerableMCP {
+		t.Fatalf("admitPreview = %+v %v, want only --allow-unscanned kept", got, err)
+	}
+	if _, err := admitPreview(p, schedule.RunSpec{}); err == nil {
+		t.Fatal("an unlifted refusal was admitted")
+	}
+	p.Refusals = []runPlanRefusal{{Kind: refusalInstalledChanged, Message: "changed"}}
+	if _, err := admitPreview(p, r); err == nil {
+		t.Fatal("a refusal no flag lifts was admitted")
+	}
+	p = &runPlanOutput{Ref: "acme/chat@1.0.0", Modes: []string{"interactive"}}
+	if _, err := admitPreview(p, r); err == nil {
+		t.Fatal("an interactive-only release was admitted")
+	}
+}
+
 func TestScheduleSync(t *testing.T) {
 	h := newScheduleHarness(t)
 	live := h.add(t, schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12)})
@@ -246,6 +292,11 @@ func TestBaseRunArgsPinsAndNeverSaysYes(t *testing.T) {
 	if !slices.Contains(baseRunArgs(sc), "--allow-unscanned") {
 		t.Error("a consent given at add is not passed")
 	}
+	// A local directory is pinned too: an edited one is another release.
+	local := schedule.Schedule{Local: "/src/agent", Digest: "sha256:def", Run: schedule.RunSpec{MaxTurns: -1, MaxCost: -1}}
+	if j := strings.Join(baseRunArgs(local), " "); !strings.Contains(j, "--local /src/agent --pin sha256:def") || strings.Contains(j, "--yes") {
+		t.Errorf("local args %q", j)
+	}
 }
 
 // The alarm's entry names paths, never a credential (invariant 7).
@@ -253,6 +304,7 @@ func TestFireEntryCarriesNoCredential(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-should-never-appear")
 	t.Setenv("GITHUB_TOKEN", "ghp_should_never_appear")
 	t.Setenv("AGENTRY_TOKEN", "agt_should_never_appear")
+	t.Setenv("DOCKER_HOST", "tcp://admin:never@docker.internal:2376")
 	e, err := fireEntry("abcdefghij")
 	if err != nil {
 		t.Fatal(err)
@@ -372,4 +424,27 @@ func TestWhenFlags(t *testing.T) {
 			t.Errorf("%+v: accepted", w)
 		}
 	}
+}
+
+// --pin holds a --local directory to its digest (a schedule's pin of a
+// local QuickAgent): the right digest runs, any other is a verify refusal.
+func TestRunLocalHonoursPin(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	pkg := repoPath(t, "testdata/runner/pure-text")
+
+	stdout, stderr, err := runCLI(t, strings.NewReader(""), "--json", "run", "--local", pkg, "--allow-unsigned", "--plan", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("plan: %v (stderr %q)", err, stderr)
+	}
+	var p runPlanOutput
+	if err := json.Unmarshal([]byte(stdout), &p); err != nil || p.Digest == "" {
+		t.Fatalf("plan JSON: %v %q", err, stdout)
+	}
+	if _, stderr, err := runCLI(t, strings.NewReader(""), "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath, "--pin", p.Digest); err != nil {
+		t.Fatalf("the pinned digest refused: %v (stderr %q)", err, stderr)
+	}
+	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath,
+		"--pin", "sha256:0000000000000000000000000000000000000000000000000000000000000000")
+	wantClassified(t, err, engine.ExitVerify)
 }

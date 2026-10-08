@@ -44,8 +44,9 @@ func TestNextShapes(t *testing.T) {
 		{"once passed", Recurrence{Kind: Once, Date: "2026-10-20", Time: "08:00"}, "2026-10-20 08:00", ""},
 		{"end on a date includes it", Recurrence{Kind: Daily, Time: "09:00", End: End{Kind: EndOn, On: "2026-10-10"}}, "2026-10-09 10:00", "2026-10-10 09:00"},
 		{"end on a date stops after it", Recurrence{Kind: Daily, Time: "09:00", End: End{Kind: EndOn, On: "2026-10-10"}}, "2026-10-10 10:00", ""},
-		{"end after 2: the second", Recurrence{Kind: Daily, Time: "09:00", End: End{Kind: EndAfter, After: 2}}, "2026-10-09 10:00", "2026-10-10 09:00"},
-		{"end after 2: none after", Recurrence{Kind: Daily, Time: "09:00", End: End{Kind: EndAfter, After: 2}}, "2026-10-10 10:00", ""},
+		// An EndAfter count is of runs, which the store keeps: the calendar
+		// itself goes on (Remaining applies the count).
+		{"end after 2 is not the calendar's", Recurrence{Kind: Daily, Time: "09:00", End: End{Kind: EndAfter, After: 2}}, "2026-10-10 10:00", "2026-10-11 09:00"},
 		{"nothing before the start", Recurrence{Kind: Daily, Time: "09:00"}, "2026-10-01 10:00", "2026-10-09 09:00"},
 	}
 	for _, c := range cases {
@@ -136,6 +137,16 @@ func TestValidateRefuses(t *testing.T) {
 		if err := r.Validate(); err == nil {
 			t.Errorf("case %d (%+v): validated", i, r)
 		}
+	}
+}
+
+func TestRemaining(t *testing.T) {
+	r := Recurrence{End: End{Kind: EndAfter, After: 3}}
+	if r.Remaining(1) != 2 || r.Remaining(5) != 0 {
+		t.Fatalf("Remaining = %d, %d", r.Remaining(1), r.Remaining(5))
+	}
+	if (Recurrence{End: End{Kind: EndNever}}).Remaining(9) != -1 {
+		t.Fatal("a never-ending repeat has a count")
 	}
 }
 

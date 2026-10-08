@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
@@ -77,6 +80,7 @@ func newScheduleCmd() *cobra.Command {
 		newScheduleRunCmd(),
 		newScheduleFireCmd(),
 		newScheduleSyncCmd(),
+		newScheduleProbeCmd(),
 	)
 	return cmd
 }
@@ -189,12 +193,11 @@ type runSpecFlags struct {
 
 func newScheduleAddCmd() *cobra.Command {
 	var (
-		when    whenFlags
-		spec    runSpecFlags
-		name    string
-		out     string
-		yes     bool
-		noCheck bool
+		when whenFlags
+		spec runSpecFlags
+		name string
+		out  string
+		yes  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add [ns/name[@range]]",
@@ -228,7 +231,7 @@ func newScheduleAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return scheduleAdd(cmd, ref, name, out, spec, when, now, yes, noCheck)
+			return scheduleAdd(cmd, ref, name, out, spec, when, now, yes)
 		},
 	}
 	when.bind(cmd)
@@ -252,15 +255,13 @@ func newScheduleAddCmd() *cobra.Command {
 	f.BoolVar(&spec.allowUnscanned, "allow-unscanned", false, "allow a release the registry admitted without a scan, at every run of this schedule")
 	f.BoolVar(&spec.allowVulnMCP, "allow-vulnerable-mcp", false, "allow a declared MCP server the gate rates high or critical, at every run of this schedule")
 	f.BoolVar(&yes, "yes", false, "consent to the release's capabilities without the prompt (no terminal)")
-	f.BoolVar(&noCheck, "no-check", false, "skip the install step and the input checks (for tests only; the first run may fail)")
-	_ = f.MarkHidden("no-check")
 	return cmd
 }
 
 // scheduleAdd makes one schedule: resolve and pin (D3), consent and
 // install through `run --prepare`, check every input a fire needs (D8),
 // keep it, and write its alarm.
-func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, when schedule.Recurrence, now time.Time, yes, noCheck bool) error {
+func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, when schedule.Recurrence, now time.Time, yes bool) error {
 	outAbs, err := filepath.Abs(expandHome(out))
 	if err != nil {
 		return err
@@ -301,13 +302,8 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(preview.Modes, string(manifest.ModeAutonomous)) {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s runs interactive only: a schedule runs with nobody there to answer, so it can only run an autonomous release", preview.Ref))
-	}
-	for _, r := range preview.Refusals {
-		if r.Lift == "" || !liftGiven(r.Lift, sc.Run) {
-			return engine.Classify(engine.ExitPolicy, fmt.Errorf("a run would refuse: %s", r.Message))
-		}
+	if sc.Run, err = admitPreview(preview, sc.Run); err != nil {
+		return err
 	}
 	if sc.Local == "" {
 		parsed, perr := manifest.ParseRef(preview.Ref)
@@ -323,15 +319,18 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 		sc.Name = sc.Ref
 	}
 
-	if !noCheck {
-		// The install step a run makes, with consent asked now on a terminal
-		// (or given by --yes) and recorded for this exact version.
-		if err := schedulePrepare(cmd, sc, yes); err != nil {
-			return err
-		}
-		if gaps := fireGaps(sc); len(gaps) > 0 {
-			return engine.Classify(engine.ExitPolicy, fmt.Errorf("a scheduled run of %s would not have what it needs:\n  - %s", sc.Ref, strings.Join(gaps, "\n  - ")))
-		}
+	// The install step a run makes, with consent asked now on a terminal
+	// (or given by --yes) and recorded for this exact version.
+	if err := schedulePrepare(cmd, sc, yes); err != nil {
+		return err
+	}
+	gaps := fireGaps(sc)
+	if len(gaps) == 0 {
+		// Only once the shell's view is clean: the scheduler's own.
+		gaps = probeGaps(sc)
+	}
+	if len(gaps) > 0 {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("a scheduled run of %s would not have what it needs:\n  - %s", sc.Ref, strings.Join(gaps, "\n  - ")))
 	}
 
 	store, err := scheduleStore()
@@ -359,6 +358,32 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	return nil
 }
 
+// admitPreview refuses what a schedule may not run, a release that cannot
+// run autonomous (invariant 2) or a refusal the person did not lift, and
+// keeps only the --allow-* flags that lifted a refusal now: a flag given
+// for nothing would otherwise accept, unattended, a refusal nobody has
+// seen yet (an advisory published after the schedule was made).
+func admitPreview(p *runPlanOutput, r schedule.RunSpec) (schedule.RunSpec, error) {
+	if !slices.Contains(p.Modes, string(manifest.ModeAutonomous)) {
+		return r, engine.Classify(engine.ExitUsage, fmt.Errorf("%s runs interactive only: a schedule runs with nobody there to answer, so it can only run an autonomous release", p.Ref))
+	}
+	used := map[string]bool{}
+	for _, ref := range p.Refusals {
+		if ref.Lift == "" || !liftGiven(ref.Lift, r) {
+			return r, engine.Classify(engine.ExitPolicy, fmt.Errorf("a run would refuse: %s", ref.Message))
+		}
+		used[ref.Lift] = true
+	}
+	r.AllowUnsigned = r.AllowUnsigned && used[receipt.ConsentAllowUnsigned]
+	r.AllowUnscanned = r.AllowUnscanned && used[receipt.ConsentAllowUnscanned]
+	r.AllowVulnerableMCP = r.AllowVulnerableMCP && used[allowVulnerableMCPFlag]
+	return r, nil
+}
+
+// allowVulnerableMCPFlag is the run flag that lifts a vulnerable declared
+// server's refusal, as --plan names it.
+const allowVulnerableMCPFlag = "--allow-vulnerable-mcp"
+
 // liftGiven reports whether the person gave, at add, the flag that lifts a
 // refusal.
 func liftGiven(lift string, r schedule.RunSpec) bool {
@@ -367,7 +392,7 @@ func liftGiven(lift string, r schedule.RunSpec) bool {
 		return r.AllowUnsigned
 	case receipt.ConsentAllowUnscanned:
 		return r.AllowUnscanned
-	case "--allow-vulnerable-mcp":
+	case allowVulnerableMCPFlag:
 		return r.AllowVulnerableMCP
 	}
 	return false
@@ -395,7 +420,7 @@ func schedulePreview(cmd *cobra.Command, sc schedule.Schedule, ref string) (*run
 	}
 	var p runPlanOutput
 	if err := json.Unmarshal(stdout.Bytes(), &p); err != nil {
-		return nil, fmt.Errorf("read the run plan: %w", err)
+		return nil, fmt.Errorf("read what a run of %s would do: %w", ref+sc.Local, err)
 	}
 	if p.Digest == "" || p.Version == "" {
 		return nil, errors.New("the run plan names no version and digest to pin")
@@ -416,7 +441,7 @@ func schedulePrepare(cmd *cobra.Command, sc schedule.Schedule, yes bool) error {
 
 // runInProcess runs `agentry run args…` in this process against the
 // schedule's registry, with in as its stdin and its stdout to out.
-func runInProcess(cmd *cobra.Command, args []string, in interface{ Read([]byte) (int, error) }, out interface{ Write([]byte) (int, error) }) error {
+func runInProcess(cmd *cobra.Command, args []string, in io.Reader, out io.Writer) error {
 	rc := newRunCmd()
 	rc.SetArgs(args)
 	rc.SetIn(in)
@@ -433,9 +458,9 @@ func baseRunArgs(sc schedule.Schedule) []string {
 	if sc.Local != "" {
 		args = append(args, "--local", sc.Local)
 	} else {
-		args = append(args, sc.Ref+"@"+sc.Version, "--pin", sc.Digest)
+		args = append(args, sc.Ref+"@"+sc.Version)
 	}
-	args = append(args, "--mode", string(manifest.ModeAutonomous))
+	args = append(args, "--pin", sc.Digest, "--mode", string(manifest.ModeAutonomous))
 	r := sc.Run
 	if r.Policy != "" {
 		args = append(args, "--policy", r.Policy)
@@ -607,7 +632,10 @@ func installAlarm(sc schedule.Schedule) error {
 	if err != nil {
 		return err
 	}
-	return alarm.Install(sc, e)
+	if err := alarm.Install(sc, e); err != nil {
+		return fmt.Errorf("write the %s for schedule %s: %w", alarm.Name(), sc.ID, err)
+	}
+	return nil
 }
 
 func removeAlarm(id string) error {
@@ -615,7 +643,98 @@ func removeAlarm(id string) error {
 	if err != nil {
 		return err
 	}
-	return alarm.Remove(id)
+	if err := alarm.Remove(id); err != nil {
+		return fmt.Errorf("remove the %s of schedule %s: %w", alarm.Name(), id, err)
+	}
+	return nil
+}
+
+// probeGaps runs `agentry schedule probe` where a fire will run, in the
+// system scheduler's own context, and reports what it could not reach. The
+// shell that makes a schedule can reach more than the scheduler: a user
+// manager started before its user joined the docker group cannot reach
+// the daemon, and sees no variable this shell exported.
+func probeGaps(sc schedule.Schedule) []string {
+	alarm, err := scheduleAlarm()
+	if err != nil {
+		return []string{err.Error()}
+	}
+	e, err := fireEntry(sc.ID)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	e.Args = []string{"schedule", "probe"}
+	if sc.Run.Policy != "" {
+		e.Args = append(e.Args, "--policy", sc.Run.Policy)
+	}
+	out, err := alarm.Probe(e)
+	if err == nil {
+		return nil
+	}
+	var gaps []string
+	for _, line := range strings.Split(out, "\n") {
+		if g, ok := strings.CutPrefix(strings.TrimSpace(line), "gap: "); ok {
+			gaps = append(gaps, "from the "+alarm.Name()+": "+g)
+		}
+	}
+	if len(gaps) == 0 {
+		gaps = append(gaps, fmt.Sprintf("the %s could not run agentry: %v: %s", alarm.Name(), err, out))
+	}
+	return gaps
+}
+
+func newScheduleProbeCmd() *cobra.Command {
+	var policyPath string
+	cmd := &cobra.Command{
+		Use:    "probe",
+		Short:  "Check, where a fire runs, that Docker and the model key are reachable",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			gaps := schedulerContextGaps(cmd, policyPath)
+			for _, g := range gaps {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "gap: "+g)
+			}
+			if len(gaps) > 0 {
+				return &exitError{code: engine.ExitPolicy, err: errors.New("a scheduled run would not have what it needs here")}
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "ok")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file")
+	return cmd
+}
+
+// schedulerContextGaps is the probe's check: the docker daemon answers,
+// and the model key the policy names is in the keychain.
+func schedulerContextGaps(cmd *cobra.Command, policyPath string) []string {
+	var gaps []string
+	if err := dockerx.New().Available(cmd.Context()); err != nil {
+		g := err.Error()
+		if strings.Contains(g, "permission denied") {
+			g += " (this user's service manager may have started before you joined the docker group: sign out of every session and back in, or restart the computer)"
+		}
+		gaps = append(gaps, g)
+	}
+	pf, err := policy.Resolve(policyPath)
+	if err != nil {
+		return append(gaps, err.Error())
+	}
+	pol, _, err := policy.EnsureDefault(pf.Path)
+	if err != nil {
+		return append(gaps, err.Error())
+	}
+	if pol.Model.APIKeyEnv != "" && pol.Model.APIKeySource == modelkey.SourceKeyring {
+		ok, err := modelkey.Present(pol.Model.Provider)
+		switch {
+		case err != nil:
+			gaps = append(gaps, fmt.Sprintf("the keychain: %v", err))
+		case !ok:
+			gaps = append(gaps, "no model key is kept in the keychain this scheduler reaches")
+		}
+	}
+	return gaps
 }
 
 // fireEntry is the command the alarm runs: this binary's absolute path,
@@ -645,11 +764,26 @@ func fireEntry(id string) (schedule.Entry, error) {
 	// Where the runner home, the CLI's config and the docker daemon are,
 	// when this shell names them: paths and names, never values of keys.
 	for _, k := range []string{"AGENTRY_RUNNER_HOME", "AGENTRY_CONFIG_DIR", "DOCKER_HOST", "DOCKER_CONTEXT"} {
-		if v := os.Getenv(k); v != "" {
-			e.Env = append(e.Env, k+"="+v)
+		v := os.Getenv(k)
+		if v == "" || (k == "DOCKER_HOST" && hostCarriesPassword(v)) {
+			// A daemon address with a password (tcp://user:pass@…) stays
+			// out of the unit; the fire uses the context or the default.
+			continue
 		}
+		e.Env = append(e.Env, k+"="+v)
 	}
 	return e, nil
+}
+
+// hostCarriesPassword reports whether a daemon address names a password,
+// or cannot be read well enough to say it does not.
+func hostCarriesPassword(addr string) bool {
+	u, err := url.Parse(addr)
+	if err != nil {
+		return true
+	}
+	_, has := u.User.Password()
+	return has
 }
 
 func newScheduleFireCmd() *cobra.Command {
@@ -700,7 +834,7 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 			continue
 		}
 		_ = store.AppendFire(id, schedule.Fire{Occurrence: m, Outcome: schedule.Missed,
-			Message: "the computer was off, asleep or signed out, and the next chance came after the following occurrence"})
+			Message: "no fire ran it in time (the computer off, asleep or signed out, or the run before still going) and a later occurrence fell due first"})
 		st.Last = m
 	}
 	if run.IsZero() {
@@ -719,7 +853,10 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 		return nil
 	}
 	st.Last = run
+	st.Runs++
 	if err := store.SaveState(id, st); err != nil {
+		_ = store.AppendFire(id, schedule.Fire{Occurrence: run, Outcome: schedule.Failed, ExitCode: engine.ExitCLI,
+			Message: "could not record the occurrence before running it: " + err.Error()})
 		return err
 	}
 	store.Prune(id, now.AddDate(0, 0, -30))
@@ -734,10 +871,10 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 	return nil
 }
 
-// endIfDone marks a schedule with no occurrence after t as ended and
-// removes its alarm.
+// endIfDone marks a schedule ended, and removes its alarm, once its
+// calendar has no occurrence after t or it has made all its runs.
 func endIfDone(store schedule.Store, sc schedule.Schedule, st schedule.State, t time.Time) error {
-	if _, ok := sc.When.Next(t); ok {
+	if _, ok := sc.When.Next(t); ok && sc.When.Remaining(st.Runs) != 0 {
 		return nil
 	}
 	st.Ended = true
@@ -761,7 +898,12 @@ func executeScheduledRun(cmd *cobra.Command, store schedule.Store, sc schedule.S
 	args := append(baseRunArgs(sc), "--out", outDir, "--output-format", "json")
 	switch {
 	case sc.Run.Task:
-		args = append(args, "--input", store.TaskPath(sc.ID))
+		tp, terr := store.TaskPath(sc.ID)
+		if terr != nil {
+			rec.Outcome, rec.ExitCode, rec.Message, rec.Ended = schedule.Failed, engine.ExitCLI, terr.Error(), scheduleNow()
+			return rec
+		}
+		args = append(args, "--input", tp)
 	case sc.Run.Input != "":
 		args = append(args, "--input", sc.Run.Input)
 	}
@@ -861,6 +1003,7 @@ type scheduleViewJSON struct {
 	Describe string          `json:"describe"`
 	Next     *time.Time      `json:"next,omitempty"`
 	Ended    bool            `json:"ended,omitempty"`
+	Runs     int             `json:"runs,omitempty"`
 	Alarm    bool            `json:"alarm"`
 	Last     *schedule.Fire  `json:"lastFire,omitempty"`
 	Upcoming []time.Time     `json:"upcoming,omitempty"`
@@ -870,8 +1013,9 @@ type scheduleViewJSON struct {
 func scheduleView(store schedule.Store, sc schedule.Schedule, now time.Time) scheduleViewJSON {
 	v := scheduleViewJSON{Schedule: sc, Describe: sc.When.Describe()}
 	st, _ := store.State(sc.ID)
-	v.Ended = st.Ended
-	if !st.Ended {
+	v.Ended = st.Ended || sc.When.Remaining(st.Runs) == 0
+	v.Runs = st.Runs
+	if !v.Ended {
 		if n, ok := sc.When.Next(now); ok {
 			v.Next = &n
 		}
@@ -918,7 +1062,7 @@ func newScheduleListCmd() *cobra.Command {
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			_, _ = fmt.Fprintln(tw, "ID\tNAME\tQUICKAGENT\tWHEN\tNEXT\tLAST")
 			for _, v := range views {
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Name, v.Ref+"@"+v.Version, v.Describe, nextLabel(v), lastLabel(v.Last))
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Name, v.Ref+"@"+v.Version, v.Describe, nextLabel(v), lastLabel(v.Last, v.When.Zone))
 			}
 			return tw.Flush()
 		},
@@ -937,7 +1081,7 @@ func nextLabel(v scheduleViewJSON) string {
 	return fmtWhen(*v.Next, v.When.Zone)
 }
 
-func lastLabel(f *schedule.Fire) string {
+func lastLabel(f *schedule.Fire, zone string) string {
 	if f == nil {
 		return "-"
 	}
@@ -945,7 +1089,7 @@ func lastLabel(f *schedule.Fire) string {
 	if f.Outcome == schedule.Failed {
 		s += " (exit " + strconv.Itoa(f.ExitCode) + ")"
 	}
-	return s + " " + f.Occurrence.Local().Format("2006-01-02 15:04")
+	return s + " " + fmtWhen(f.Occurrence, zone)
 }
 
 func newScheduleShowCmd() *cobra.Command {
@@ -965,7 +1109,11 @@ func newScheduleShowCmd() *cobra.Command {
 			now := scheduleNow()
 			v := scheduleView(store, sc, now)
 			if !v.Ended && !sc.Paused {
-				v.Upcoming = sc.When.Between(now, now.AddDate(1, 0, 0), 5)
+				n := 5
+				if left := sc.When.Remaining(v.Runs); left >= 0 {
+					n = min(n, left)
+				}
+				v.Upcoming = sc.When.Between(now, now.AddDate(1, 0, 0), n)
 			}
 			v.Fires, _ = store.Fires(sc.ID, 10)
 			if flags.jsonOut {
@@ -1030,7 +1178,7 @@ func newScheduleEditCmd() *cobra.Command {
 				sc.When = r
 				// A new repeat counts from now; what is past stays handled.
 				st, _ := store.State(sc.ID)
-				st.Ended, st.Last = false, now
+				st.Ended, st.Last, st.Runs = false, now, 0
 				if err := store.SaveState(sc.ID, st); err != nil {
 					return err
 				}
@@ -1061,6 +1209,10 @@ func newScheduleEditCmd() *cobra.Command {
 			}
 			if err := store.Save(sc); err != nil {
 				return err
+			}
+			if st, _ := store.State(sc.ID); st.Ended {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s has ended; give it a new repeat to run again\n", sc.Name)
+				return nil
 			}
 			if !sc.Paused {
 				if err := installAlarm(sc); err != nil {

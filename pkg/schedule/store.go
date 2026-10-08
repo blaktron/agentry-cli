@@ -77,6 +77,9 @@ type State struct {
 	Last time.Time `json:"last,omitempty"`
 	// Ended is set once no occurrence is left.
 	Ended bool `json:"ended,omitempty"`
+	// Runs counts the occurrences fire ran (succeeded or failed), for an
+	// end after N runs; a missed occurrence and a Run now are not counted.
+	Runs int `json:"runs,omitempty"`
 }
 
 // Outcome is what became of one occurrence.
@@ -124,7 +127,7 @@ func newID() (string, error) {
 	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 10)
 	if _, err := rand.Read(b); err != nil {
-		return "", err
+		return "", fmt.Errorf("draw a schedule id: %w", err)
 	}
 	for i := range b {
 		b[i] = alphabet[int(b[i])%len(alphabet)]
@@ -150,9 +153,9 @@ func (s Store) Create(sc *Schedule, task []byte) error {
 		return err
 	}
 	sc.ID = id
-	d, _ := s.dir(id)
+	d, _ := s.dir(id) // newID's alphabet and length are ValidID's
 	if err := os.MkdirAll(d, 0o700); err != nil {
-		return err
+		return fmt.Errorf("make the schedule's folder: %w", err)
 	}
 	if task != nil {
 		if err := writeAtomic(filepath.Join(d, "task.txt"), task, 0o600); err != nil {
@@ -237,7 +240,13 @@ func (s Store) Remove(id string) error {
 }
 
 // TaskPath is where a schedule's own task text is kept.
-func (s Store) TaskPath(id string) string { return filepath.Join(s.Dir, id, "task.txt") }
+func (s Store) TaskPath(id string) (string, error) {
+	d, err := s.dir(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "task.txt"), nil
+}
 
 // State reads what fires have done; none yet is the zero State.
 func (s Store) State(id string) (State, error) {
@@ -253,7 +262,10 @@ func (s Store) State(id string) (State, error) {
 		return State{}, err
 	}
 	var st State
-	return st, json.Unmarshal(b, &st)
+	if err := json.Unmarshal(b, &st); err != nil {
+		return State{}, fmt.Errorf("schedule %s's record of its runs: %w", id, err)
+	}
+	return st, nil
 }
 
 // SaveState writes what fires have done.
@@ -291,8 +303,8 @@ func (s Store) Claim(id string, occurrence time.Time) (bool, error) {
 	return true, f.Close()
 }
 
-// Prune removes claims older than keep, which only stop a duplicate fire
-// of an occurrence that has long been handled.
+// Prune removes the claims of occurrences before before: they only stop a
+// duplicate fire of an occurrence that has long been handled.
 func (s Store) Prune(id string, before time.Time) {
 	d, err := s.dir(id)
 	if err != nil {
