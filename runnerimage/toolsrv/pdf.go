@@ -316,6 +316,9 @@ type pdfMeta struct {
 	// Agentry (D14).
 	Author string              `json:"author"`
 	Images map[string]pdfImage `json:"images"`
+	// Date is the day of the render (UTC, YYYY-MM-DD), for a theme's cover
+	// page: the same in every language.
+	Date string `json:"date"`
 }
 
 var (
@@ -578,7 +581,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if s.renderRootMade != nil {
 		s.renderRootMade(renderRoot)
 	}
-	doc := scanMarkdown(src)
+	doc := reportMarkdown(src, theme)
 	if err := root.Mkdir("img", 0o755); err != nil {
 		return s.renderFailed(err)
 	}
@@ -590,7 +593,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if title == "" {
 		title = strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 	}
-	meta, err := json.Marshal(pdfMeta{Title: title, Author: s.spec.PDF.Author, Images: images})
+	meta, err := json.Marshal(pdfMeta{Title: title, Author: s.spec.PDF.Author, Images: images, Date: time.Now().UTC().Format(time.DateOnly)})
 	if err != nil {
 		return s.renderFailed(err)
 	}

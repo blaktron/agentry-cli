@@ -199,3 +199,67 @@ func hasScheme(src string) bool {
 	}
 	return true
 }
+
+// reportMarkdown is the Markdown export_pdf hands Typst for src under a
+// theme: its headings renumbered, and its lines kept when the theme keeps
+// them.
+func reportMarkdown(src string, theme *Theme) mdDoc {
+	doc := scanMarkdown(src)
+	if theme.LineBreaks == "hard" {
+		doc.text = hardLineBreaks(doc.text)
+	}
+	return doc
+}
+
+// shortLine is the length under which a paragraph's line is a line of its
+// own (an address, a To line, a signature) and not prose wrapped in the
+// source, which an agent wraps near 80 columns if it wraps at all.
+const shortLine = 60
+
+// mdHardBreak is a line that already ends in a hard break: a backslash, or
+// two spaces.
+var mdHardBreak = regexp.MustCompile(`(\\| {2,})$`)
+
+// hardLineBreaks keeps each line of a paragraph on a line of its own (a
+// theme's lineBreaks "hard"; agentry-cli#731): a letter's address block,
+// its To, From and Date lines and its signature are written one to a line,
+// and Markdown joins them. A short paragraph line (under shortLine runes)
+// followed by another gets a CommonMark hard break, a trailing backslash;
+// a longer one is prose wrapped in the source, which stays one paragraph. Lines that could be anything
+// but a paragraph's are left alone (a heading, a list item, a quote, a
+// fence and what it holds, indented code, HTML, a table row, a setext
+// underline and the line above it), so the scanner can only miss a break,
+// never change a block.
+func hardLineBreaks(text string) string {
+	lines := strings.Split(text, "\n")
+	paragraph := func(i int) bool {
+		if i >= len(lines) {
+			return false
+		}
+		l := lines[i]
+		return !mdNotParagraph.MatchString(l) && !mdSetext.MatchString(l) && !strings.Contains(l, "|")
+	}
+	fence := ""
+	for i, line := range lines {
+		if fence != "" {
+			if m := mdFence.FindStringSubmatch(line); m != nil && strings.HasPrefix(m[1], fence) && strings.TrimSpace(m[2]) == "" {
+				fence = ""
+			}
+			continue
+		}
+		if m := mdFence.FindStringSubmatch(line); m != nil && (m[1][0] != '`' || !strings.Contains(m[2], "`")) {
+			fence = m[1]
+			continue
+		}
+		if !paragraph(i) || !paragraph(i+1) || mdHardBreak.MatchString(line) || utf8.RuneCountInString(strings.TrimSpace(line)) >= shortLine {
+			continue
+		}
+		// The next line starts a block of its own when it is a fence; a
+		// paragraph above a setext underline is a heading.
+		if mdFence.MatchString(lines[i+1]) || (i+2 < len(lines) && mdSetext.MatchString(lines[i+2])) {
+			continue
+		}
+		lines[i] = line + `\`
+	}
+	return strings.Join(lines, "\n")
+}

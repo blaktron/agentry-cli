@@ -15,6 +15,12 @@
 //   in raw HTML, is its alt text.
 // - The theme is data; its strings are drawn as text.
 // - Heading levels never skip (below), so that PDF/UA-1 can hold.
+//
+// A theme's optional fields (agentry-cli#731) are read with defaults, so
+// Plain, which has none, draws as it did: cover (a title page, the pages
+// after it numbered from 1), title (the first heading as a block of its
+// own, aligned and ruled: a memo's heading, a letter's letterhead) and
+// lineBreaks, which the server applies to the Markdown before the render.
 #import "@preview/cmarker:0.1.10"
 
 #let theme = json("theme.json")
@@ -62,6 +68,22 @@
 #show heading: it => {
   set text(size: body-size * theme.sizes.headingScale.at(it.level - 1, default: 1.0))
   it
+}
+// The first heading as a theme's title block. It stays the heading it is,
+// so the document's structure, and its tag, do not move.
+#let title-block = theme.at("title", default: none)
+#show heading.where(level: 1): it => context {
+  if title-block != none and it.location() == query(heading).first().location() {
+    block(width: 100%, below: 1.4em, {
+      align(aligned.at(title-block.align), it)
+      if title-block.rule {
+        v(-0.3em)
+        line(length: 100%, stroke: 0.6pt + rgb(theme.colours.rules))
+      }
+    })
+  } else {
+    it
+  }
 }
 #show raw: set text(font: fonts(theme.fonts.code), size: theme.sizes.codePt * 1pt)
 #show raw.where(block: true): block.with(fill: rgb(theme.colours.codeBackground), inset: 6pt, radius: 2pt, width: 100%)
@@ -116,6 +138,17 @@
 // in markdown.go); a heading in raw HTML is drawn as a bold paragraph instead, so
 // that none escapes the renumbering.
 #let html-heading = (attrs, body) => block(strong(body))
+
+#if theme.at("cover", default: false) {
+  page(header: none, footer: none, {
+    v(1fr)
+    text(font: fonts(theme.fonts.headings), size: body-size * 2.2, weight: "bold", fill: rgb(theme.colours.accent), meta.title)
+    v(0.8em)
+    text(size: body-size, meta.date)
+    v(2fr)
+  })
+  counter(page).update(1)
+}
 
 #cmarker.render(
   read("report.md"),
