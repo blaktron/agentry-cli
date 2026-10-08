@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -149,28 +150,60 @@ func TestNormalizeBundleDigest(t *testing.T) {
 	}
 }
 
-// TestLoadRulesBundlePrecedence: $AGENTRY_RULES_DIR beats ./rules beats the
-// cache beats the embedded bundle — and a broken override is a hard error,
-// never a silent fall-through to weaker rules (DEV-011).
+// plantCachedBundle writes the embedded bundle into the --rules-update
+// cache as the given version: its bundle.yaml declares that version and it
+// sits under that directory, as a fetch of a registry at that version would.
+func plantCachedBundle(t *testing.T, version string) {
+	t.Helper()
+	_, tar := bundleFixture(t)
+	root, err := rulesCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, version)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rules.UntarBundle(tar, func(name string, content []byte) error {
+		if name == "bundle.yaml" {
+			content = regexp.MustCompile(`(?m)^version: .*$`).ReplaceAll(content, []byte(`version: "`+version+`"`))
+		}
+		return os.WriteFile(filepath.Join(dir, name), content, 0o600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLoadRulesBundlePrecedence: $AGENTRY_RULES_DIR beats ./rules beats a
+// cached bundle newer than the embedded one beats the embedded bundle, and
+// a broken override is a hard error, never a silent fall-through to weaker
+// rules (DEV-011).
 func TestLoadRulesBundlePrecedence(t *testing.T) {
 	isolateEnv(t)
 	t.Chdir(t.TempDir()) // no ./rules dir here
 	t.Setenv(envRulesDir, "")
 
 	// Floor: the embedded bundle.
-	b, source, err := loadRulesBundle()
-	if err != nil || b == nil || source != "embedded" {
-		t.Fatalf("embedded fallback = %v, %q, %v", b, source, err)
+	emb, source, err := loadRulesBundle()
+	if err != nil || emb == nil || source != "embedded" {
+		t.Fatalf("embedded fallback = %v, %q, %v", emb, source, err)
 	}
 
-	// A cached bundle (planted via the real fetch path) beats embedded.
+	// A cached bundle (planted via the real fetch path) of the embedded
+	// version does not displace the binary's own copy.
 	bundle, tar := bundleFixture(t)
 	srv := bundleServer(t, tar, bundle.Version(), bundle.Digest())
 	if _, err := fetchRulesBundle(context.Background(), &strings.Builder{}, srv.URL); err != nil {
 		t.Fatal(err)
 	}
-	if _, source, err = loadRulesBundle(); err != nil || source != "cached via --rules-update" {
-		t.Fatalf("cached source = %q, %v", source, err)
+	if b, source, err := loadRulesBundle(); err != nil || source != "embedded" || b.Version() != emb.Version() {
+		t.Fatalf("a cached bundle of the embedded version %s: source %q (%v), want embedded", emb.Version(), source, err)
+	}
+
+	// A newer cached bundle beats the embedded one.
+	plantCachedBundle(t, "999.0.0")
+	if b, source, err := loadRulesBundle(); err != nil || source != "cached via --rules-update" || b.Version() != "999.0.0" {
+		t.Fatalf("newer cached source = %q (%v), want cached 999.0.0", source, err)
 	}
 
 	// An env override wins over everything…
@@ -239,5 +272,28 @@ func TestFetchRulesBundleUnsignedIsReported(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "pinned by digest only") {
 		t.Fatalf("output = %s", out.String())
+	}
+}
+
+// TestAnOlderCachedBundleYieldsToTheEmbeddedOne is agentry-cli#586: a
+// machine that ran `validate --rules-update` once kept scanning with that
+// bundle after every upgrade, because the newest cached bundle was preferred
+// whatever the binary embedded. On 2026-10-03 the workstation's cached 0.3.0
+// hid an embedded 0.3.4.
+func TestAnOlderCachedBundleYieldsToTheEmbeddedOne(t *testing.T) {
+	isolateEnv(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(envRulesDir, "")
+	emb, _, err := loadRulesBundle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plantCachedBundle(t, "0.0.1")
+	if _, v := newestCachedBundle(); v != "0.0.1" {
+		t.Fatalf("the planted cache entry is %q, want 0.0.1", v)
+	}
+	b, source, err := loadRulesBundle()
+	if err != nil || source != "embedded" || b.Version() != emb.Version() {
+		t.Fatalf("with a cached 0.0.1 under an embedded %s: %s %q (%v), want the embedded bundle", emb.Version(), b.Version(), source, err)
 	}
 }

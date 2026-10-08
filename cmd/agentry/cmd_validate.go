@@ -34,10 +34,11 @@ func newValidateCmd() *cobra.Command {
 			"The S4 rule bundle is EMBEDDED in this binary, so validation never depends\n" +
 			"on where it runs. `--rules-update` fetches the registry's current bundle and\n" +
 			"caches it under ~/.config/agentry/rules/<semver>/; the newest cached bundle\n" +
-			"is then preferred over the embedded one. The fetched bundle is pinned by\n" +
-			"digest and its DSSE signature is verified against the registry's pinned\n" +
-			"keys (an absent signature is reported and tolerated, an invalid one is\n" +
-			"fatal).\n" +
+			"is then preferred over the embedded one while it is newer (a CLI upgrade\n" +
+			"that embeds the same or a later version scans with its own). The fetched\n" +
+			"bundle is pinned by digest and its DSSE signature is verified against the\n" +
+			"registry's pinned keys (an absent signature is reported and tolerated, an\n" +
+			"invalid one is fatal).\n" +
 			"$AGENTRY_RULES_DIR (or ./rules) overrides both, for rule development.\n\n" +
 			"An override bundle that will not load is a hard ERROR, never a skipped scan:\n" +
 			"reporting PASSED over content the signature engine never examined is the\n" +
@@ -113,13 +114,17 @@ func readWorkspaceManifest(dir string) (*manifest.Manifest, error) { return vali
 //
 //  1. $AGENTRY_RULES_DIR — rule development against an unreleased bundle
 //  2. ./rules            — the same, from a rules checkout
-//  3. the newest bundle cached by `--rules-update`
+//  3. the newest bundle cached by `--rules-update`, when it is newer than
+//     the embedded one
 //  4. the bundle EMBEDDED in this binary
 //
 // The embedded bundle is the floor, not the ceiling: it means local/remote
 // parity (D-12) never depends on where the CLI is run from, while a cached
 // update means it does not depend on how recently the CLI was released
-// either. It returns the bundle and a short description of where it came
+// either. A cached bundle no newer than the embedded one is passed over: it
+// was fetched by an older CLI, and preferring it would scan an upgraded
+// CLI's workspaces with the rules it replaced (agentry-cli#586). On a tie
+// the embedded copy wins, so the line names this binary's own bundle. It returns the bundle and a short description of where it came
 // from, because "which rules did this pass under" is the first question
 // anyone asks about a clean validate.
 //
@@ -142,8 +147,14 @@ func loadRulesBundle() (*rules.Bundle, string, error) {
 		}
 		return b, "./rules", nil
 	}
+	emb, source, err := validate.Embedded()
 	if b, _ := newestCachedBundle(); b != nil {
-		return b, "cached via --rules-update", nil
+		if err != nil {
+			return b, "cached via --rules-update", nil
+		}
+		if c, ok := compareSemver(b.Version(), emb.Version()); ok && c > 0 {
+			return b, "cached via --rules-update", nil
+		}
 	}
-	return validate.Embedded()
+	return emb, source, err
 }
