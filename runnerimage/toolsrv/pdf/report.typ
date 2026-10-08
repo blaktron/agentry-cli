@@ -71,7 +71,7 @@
   stroke: 0.4pt + rgb(theme.colours.rules),
   fill: (x, y) => if y == 0 {
     rgb(theme.colours.tableHeader)
-  } else if theme.tables.striped and calc.even(y) {
+  } else if theme.tables.banded and calc.even(y) {
     rgb(theme.colours.codeBackground)
   },
 )

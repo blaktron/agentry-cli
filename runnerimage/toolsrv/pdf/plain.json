@@ -35,6 +35,6 @@
   },
   "tables": {
     "headerBold": true,
-    "striped": false
+    "banded": false
   }
 }

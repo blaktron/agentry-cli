@@ -128,7 +128,7 @@ type Theme struct {
 	} `json:"footer"`
 	Tables struct {
 		HeaderBold bool `json:"headerBold"`
-		Striped    bool `json:"striped"`
+		Banded     bool `json:"banded"` // alternate body rows shaded
 	} `json:"tables"`
 }
 
