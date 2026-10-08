@@ -139,7 +139,9 @@
 // that none escapes the renumbering.
 #let html-heading = (attrs, body) => block(strong(body))
 
-#if theme.at("cover", default: false) {
+// A cover only for a report with a heading of its own: without one the title
+// is the file's name, which no title page should show.
+#if theme.at("cover", default: false) and meta.at("titled", default: false) {
   page(header: none, footer: none, {
     v(1fr)
     text(font: fonts(theme.fonts.headings), size: body-size * 2.2, weight: "bold", fill: rgb(theme.colours.accent), meta.title)
