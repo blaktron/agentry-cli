@@ -3,4 +3,7 @@ agentry-tools:
   - list_inputs
   - read_input
   - search_inputs
+  - scratch_list
+  - scratch_read
+  - scratch_write
   - write_report

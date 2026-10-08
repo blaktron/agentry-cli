@@ -28,6 +28,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -118,6 +119,15 @@ func (s *server) buildTools() {
 		case ToolFSWrite:
 			add(name, "Write a file in the agent workspace, creating parent directories. Content larger than the server's byte limit is refused — split large writes.",
 				fsWriteSchema(), s.toolFSWrite)
+		case ToolScratchList:
+			add(name, "List one directory level of this run's scratch folder: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for its root. The folder starts empty.",
+				scratchListSchema(), s.toolScratchList)
+		case ToolScratchRead:
+			add(name, "Read a file from this run's scratch folder. Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+				scratchReadSchema(), s.toolScratchRead)
+		case ToolScratchWrite:
+			add(name, "Write a file in this run's scratch folder, for notes and working files, creating parent directories; set append to extend a file. The folder is private to the run and deleted when it ends: nothing in it reaches the person, so write the result with write_report.",
+				scratchWriteSchema(), s.toolScratchWrite)
 		case ToolFetch:
 			add(name, "Make an HTTP(S) request to an allowlisted host. Credentials go via the auth parameter, which injects a granted secret server-side; Authorization/Cookie headers are refused.",
 				fetchSchema(), s.toolFetch)
@@ -408,33 +418,43 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return "fs_read: " + err.Error(), true
 	}
-	fi, err := os.Stat(abs)
-	if err != nil {
-		return "fs_read: " + err.Error(), true
-	}
-	if fi.IsDir() {
-		return fmt.Sprintf("fs_read: %q is a directory (use fs_list)", path.Clean(a.Path)), true
-	}
-	limit := s.spec.Limits.readCap()
-	if a.MaxBytes > 0 && a.MaxBytes < limit {
-		limit = a.MaxBytes
-	}
-	f, err := os.Open(abs)
+	f, err := os.Open(abs) //nolint:gosec // resolved under the workspace
 	if err != nil {
 		return "fs_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
-	if a.Offset > 0 {
-		if _, err := f.Seek(a.Offset, io.SeekStart); err != nil {
-			return "fs_read: " + err.Error(), true
+	return readText(fileTools{ToolFSRead, ToolFSList}, f, path.Clean(a.Path), a.Offset, a.MaxBytes, s.spec.Limits.readCap())
+}
+
+// fileTools names a root's read and list tools, for their messages.
+type fileTools struct{ read, list string }
+
+// readText reads the open file f (rel as the model named it) for a root's
+// read tool: a directory points at its list tool, a binary file is named
+// rather than returned, and a capped read says where it stopped.
+func readText(t fileTools, f *os.File, rel string, offset, maxBytes, limit int64) (string, bool) {
+	tool := t.read
+	fi, err := f.Stat()
+	if err != nil {
+		return tool + ": " + err.Error(), true
+	}
+	if fi.IsDir() {
+		return fmt.Sprintf("%s: %q is a directory (use %s)", tool, rel, t.list), true
+	}
+	if maxBytes > 0 && maxBytes < limit {
+		limit = maxBytes
+	}
+	if offset > 0 {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return tool + ": " + err.Error(), true
 		}
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit))
 	if err != nil {
-		return "fs_read: " + err.Error(), true
+		return tool + ": " + err.Error(), true
 	}
 	total := fi.Size()
-	truncated := a.Offset+int64(len(data)) < total
+	truncated := offset+int64(len(data)) < total
 	if truncated {
 		// The cap can split a multibyte rune; a split rune must not make
 		// a text file look binary, so shave at most an incomplete tail.
@@ -513,10 +533,23 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return "fs_list: " + err.Error(), true
 	}
-	entries, err := os.ReadDir(abs)
+	d, err := os.Open(abs) //nolint:gosec // resolved under the workspace
 	if err != nil {
 		return "fs_list: " + err.Error(), true
 	}
+	defer func() { _ = d.Close() }()
+	return listDir(ToolFSList, d)
+}
+
+// listDir lists one directory level of the open directory d for the list
+// tool named tool: directories as "name/", files as "name<TAB>size".
+func listDir(tool string, d *os.File) (string, bool) {
+	entries, err := d.ReadDir(-1)
+	if err != nil {
+		return tool + ": " + err.Error(), true
+	}
+	// In name order, as os.ReadDir gives it.
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	if len(entries) == 0 {
 		return "(empty directory)", false
 	}

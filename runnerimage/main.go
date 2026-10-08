@@ -152,6 +152,9 @@ func runTools(args []string) error {
 	if err := dec.Decode(&spec); err != nil {
 		return fmt.Errorf("parse tool spec %s: %w", *specPath, err)
 	}
+	if err := toolsrv.PrepareMounts(&spec); err != nil {
+		return fmt.Errorf("agentry-runner tools: %w", err)
+	}
 	return toolsrv.Serve(os.Stdin, os.Stdout, os.Stderr, &spec)
 }
 

@@ -166,6 +166,9 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		b.WriteString("- **The web tools.** AI Review reads " + read + " before you do. A result it flagged, or could not scan, is withheld: you get only where it came from (and, for a page, why). Never guess at what a withheld source said. Search only for what your inputs and any attached knowledge do not already hold: they come first, and every search and page costs time.\n")
 	}
 	b.WriteString(workspaceLine(c))
+	if c.Scratch {
+		fmt.Fprintf(b, "- **Scratch folder.** %s is yours for notes and working files: scratch_write writes there, scratch_list and scratch_read read it back. It starts empty, is private to this run and is deleted when the run ends, so nothing in it reaches the person: the result goes through write_report.\n", spec.ScratchMount)
+	}
 	if len(c.ExecCommands) > 0 {
 		fmt.Fprintf(b, "- **Commands.** run_command can call only these commands, each with a time limit and its output capped: %s. Its own description says how they run.\n", strings.Join(c.ExecCommands, ", "))
 	} else {
@@ -299,6 +302,8 @@ func workspaceLine(c spec.CapSummary) string {
 		"paths":     "fs_write writes only these paths of the workspace at " + ws + ": " + strings.Join(c.FSWritePaths, ", "),
 	}[c.FSWriteMode]
 	switch {
+	case read == "" && write == "" && c.Scratch:
+		return "- **Workspace.** You have no workspace file access; your files are your inputs, your reports and your scratch folder.\n"
 	case read == "" && write == "":
 		return "- **Workspace.** You have no workspace file access; your files are your inputs and your reports.\n"
 	case write == "":

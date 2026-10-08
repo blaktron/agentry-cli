@@ -123,6 +123,13 @@ const (
 	// KnowledgeMount is where tools see the attached knowledge packs, each
 	// at KnowledgeMount/<name> (plan knowledge.md §4.5).
 	KnowledgeMount = "/knowledge"
+	// ScratchMount is the run's scratch folder in the tools container
+	// (plan scratch-and-pdf-reports.md §4, agentry-cli#729): empty at the
+	// start, a tmpfs of ToolsTmpfsBytes, gone with the container.
+	ScratchMount = "/scratch"
+	// ToolsTmpMount is the tools container's /tmp, a tmpfs of the same
+	// size (agentry-cli#599): the place a declared command may write.
+	ToolsTmpMount = "/tmp"
 	// PlanMount is where the agent container sees its harness files.
 	PlanMount = "/plan"
 	// ToolSpecMount is where the tools container sees its spec file.
@@ -288,7 +295,34 @@ type CapSummary struct {
 	// built-in package the CLI grants it to, and refuses it to everything
 	// else.
 	ReviewTools bool `json:"reviewTools,omitempty"`
+	// Scratch is the runner's grant of the scratch folder (scratch_list,
+	// scratch_read, scratch_write over ScratchMount; plan
+	// scratch-and-pdf-reports.md D1-D5, agentry-cli#729) to every
+	// release's run and session. It is never the manifest's: the compiler
+	// sets it for every package but a built-in.
+	Scratch bool `json:"scratch,omitempty"`
 }
+
+// ToolsCmd is the one command the tools server runs with in its container:
+// the runner image's tools role reading its spec. The compiler writes it
+// into the gateway's catalog, and the docker filter knows the tools server
+// by it (the web network and the bounded tmpfs), so there is one copy.
+func ToolsCmd() []string { return []string{"tools", "--spec", ToolSpecMount} }
+
+// ToolsImage is the image the plan's tools server runs in: the
+// QuickAgent's exec image when it declares commands (DR-1, DR-64), the
+// runner image otherwise. The compiler chooses it; the engine reads it here.
+func (p *Plan) ToolsImage() string {
+	if p.ExecImage != nil && p.ExecImage.Tag != "" {
+		return p.ExecImage.Tag
+	}
+	return p.Proxy.Image
+}
+
+// ToolsTmpfsBytes bounds each of the tools container's two tmpfs mounts,
+// /tmp and the scratch folder (agentry-cli#599, #729). Each counts against
+// the container's memory limit, and a write past it fails with ENOSPC.
+const ToolsTmpfsBytes = 256 << 20
 
 // Fetches reports whether the contract grants fetch: egress to named
 // hosts, or to any.

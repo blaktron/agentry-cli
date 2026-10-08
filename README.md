@@ -864,8 +864,15 @@ manifest + operator policy into a deterministic run plan → execute:
   The agent's, the proxy's and the probe's root filesystem is read-only.
   The tool and MCP server containers the gateway launches get the same
   memory and CPU bounds through its flags, and its own no-new-privileges;
-  their capabilities are the gateway's defaults. The receipt names what
-  was applied.
+  their capabilities are the gateway's defaults. The tools container's
+  `/tmp` is a 256 MiB tmpfs, and so is a release's scratch folder,
+  `/scratch` (on Linux, both mounted by the run's docker filter and counted
+  inside its memory bound; agentry-cli#599, #729): a write past either
+  fails, and nothing reaches the host's disk. A tools server that finds
+  either is not a tmpfs refuses to start, and the run stops (exit 13).
+  Docker Desktop (macOS, Windows) runs no filter, so there both are the
+  container's own layer, unbounded. The receipt names
+  what was applied.
 - **Under a sandboxed runtime** (`docker.runtime: runsc`, gVisor), the
   containers that hold the QuickAgent's code run under it, and so do the
   tools and MCP server containers the gateway launches (through the run's
