@@ -96,6 +96,8 @@ func TestHardLineBreaks(t *testing.T) {
 		"a heading":        {"# Title\nbody\nmore", "# Title\nbody\\\nmore"},
 		"a quote":          {"> a\n> b", "> a\n> b"},
 		"html":             {"<div>\nx\n</div>", "<div>\nx\n</div>"},
+		"an html block":    {"<table>\n<tr><td>a</td></tr>\nshort\nline\n\nafter\nmore", "<table>\n<tr><td>a</td></tr>\nshort\nline\n\nafter\\\nmore"},
+		"a reference":      {"![logo][l]\n[l]: logo.png\n[m]: <x y.png>\nend", "![logo][l]\n[l]: logo.png\n[m]: <x y.png>\nend"},
 		"before a fence":   {"text\n```\ncode\n```", "text\n```\ncode\n```"},
 		"wrapped prose": {"This report covers the third quarter. It is written to be read once, start to\nfinish, and then kept.",
 			"This report covers the third quarter. It is written to be read once, start to\nfinish, and then kept."},

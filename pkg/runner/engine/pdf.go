@@ -36,12 +36,22 @@ import (
 const PDFLedgerFile = "pdfs.ndjson"
 
 // ReportTheme is a run's report theme: a built-in theme's name, and what
-// chose it, as the receipt says it (the flag, the account, the config, the
-// default).
+// chose it.
 type ReportTheme struct {
 	Name string
-	From string
+	From ThemeSource
 }
+
+// ThemeSource is what chose a run's report theme, as the receipt says it.
+type ThemeSource string
+
+// What can choose a run's report theme (agentry-cli#731, DR-82).
+const (
+	ThemeFromFlag    ThemeSource = "the --report-theme flag"
+	ThemeFromAccount ThemeSource = "the account's report theme"
+	ThemeFromConfig  ThemeSource = "report.theme in the CLI's config"
+	ThemeFromDefault ThemeSource = "the default"
+)
 
 // stamp is the theme's document as the tools spec carries it.
 func (t ReportTheme) stamp() (*toolsrv.ThemeStamp, error) {
@@ -57,9 +67,9 @@ func (t ReportTheme) stamp() (*toolsrv.ThemeStamp, error) {
 }
 
 // from is what chose the theme, for the receipt.
-func (t ReportTheme) from() string {
+func (t ReportTheme) from() ThemeSource {
 	if t.Name == "" || t.From == "" {
-		return "the default"
+		return ThemeFromDefault
 	}
 	return t.From
 }
@@ -105,20 +115,20 @@ func grantPDF(gatewayDir string, plan *spec.Plan, theme ReportTheme, rd *runDirs
 // withReportTheme adds the receipt's line for the run's report theme when
 // the plan grants export_pdf: which theme, its version and digest, and what
 // chose it, whether or not the run exports a PDF.
-func withReportTheme(enforced map[string]string, p Params) map[string]string {
-	if !slices.Contains(p.Plan.Tools, toolsrv.ToolExportPDF) {
+// A theme that does not stamp adds no line: grantPDF fails that run.
+func withReportTheme(enforced map[string]string, tools []string, theme ReportTheme) map[string]string {
+	if !slices.Contains(tools, toolsrv.ToolExportPDF) {
+		return enforced
+	}
+	st, err := theme.stamp()
+	if err != nil {
 		return enforced
 	}
 	out := maps.Clone(enforced)
 	if out == nil {
 		out = map[string]string{}
 	}
-	st, err := p.ReportTheme.stamp()
-	if err != nil {
-		out["pdf.theme"] = "no theme: " + err.Error()
-		return out
-	}
-	out["pdf.theme"] = fmt.Sprintf("%s %s (sha256:%s), chosen by %s; the model cannot choose another", st.Name, st.Version, st.SHA256, p.ReportTheme.from())
+	out["pdf.theme"] = fmt.Sprintf("%s %s (sha256:%s), chosen by %s; the model cannot choose another", st.Name, st.Version, st.SHA256, theme.from())
 	return out
 }
 

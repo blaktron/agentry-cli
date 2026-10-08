@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,16 +26,8 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// The places a run's report theme can come from, as the receipt names them.
-const (
-	themeFromFlag    = "the --report-theme flag"
-	themeFromAccount = "the account's report theme"
-	themeFromConfig  = "report.theme in the CLI's config"
-	themeFromDefault = "the default"
-)
-
-// profileThemeTimeout bounds the read of the account's report theme.
-const profileThemeTimeout = 10 * time.Second
+// accountThemeTimeout bounds the read of the account's report theme.
+const accountThemeTimeout = 10 * time.Second
 
 // accountTheme reads the signed-in account's report theme: a name, or ""
 // when the account never chose one.
@@ -48,20 +41,20 @@ func chooseReportTheme(ctx context.Context, flag string, cfg cliConfig, account 
 		if !toolsrv.IsBuiltinTheme(flag) {
 			return engine.ReportTheme{}, engine.Classify(engine.ExitUsage, fmt.Errorf("--report-theme %q is not a report theme (they are: %s)", flag, themes))
 		}
-		return engine.ReportTheme{Name: flag, From: themeFromFlag}, nil
+		return engine.ReportTheme{Name: flag, From: engine.ThemeFromFlag}, nil
 	}
-	fallback := engine.ReportTheme{Name: toolsrv.DefaultTheme, From: themeFromDefault}
+	fallback := engine.ReportTheme{Name: toolsrv.DefaultTheme, From: engine.ThemeFromDefault}
 	if name := strings.TrimSpace(cfg.Report.Theme); name != "" {
 		if !toolsrv.IsBuiltinTheme(name) {
 			path, _ := configPath()
 			return engine.ReportTheme{}, engine.Classify(engine.ExitUsage, fmt.Errorf("report.theme %q in %s is not a report theme (they are: %s)", name, path, themes))
 		}
-		fallback = engine.ReportTheme{Name: name, From: themeFromConfig}
+		fallback = engine.ReportTheme{Name: name, From: engine.ThemeFromConfig}
 	}
 	if account == nil {
 		return fallback, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, profileThemeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, accountThemeTimeout)
 	defer cancel()
 	switch name, err := account(ctx); {
 	case err != nil:
@@ -70,7 +63,7 @@ func chooseReportTheme(ctx context.Context, flag string, cfg cliConfig, account 
 	case !toolsrv.IsBuiltinTheme(name):
 		_, _ = fmt.Fprintf(warn, "agentry: warning: your account's report theme %q is not one this CLI has (update agentry); PDFs use %s (%s)\n", name, fallback.Name, fallback.From)
 	default:
-		return engine.ReportTheme{Name: name, From: themeFromAccount}, nil
+		return engine.ReportTheme{Name: name, From: engine.ThemeFromAccount}, nil
 	}
 	return fallback, nil
 }
@@ -88,24 +81,41 @@ func readAccountTheme(regURL string) accountTheme {
 		return nil
 	}
 	return func(ctx context.Context) (string, error) {
-		c, err := newAPIClient(regURL, token)
+		// A plain request, not the generated client: the route is the core's
+		// since agentry#989, and moving the core dependency to get its client
+		// would bring unrelated changes with it. The minimum-version gate is
+		// the run's own resolve's; a local run is not refused over a theme.
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(regURL, "/")+"/api/v1/user/report-settings", nil)
 		if err != nil {
 			return "", err
 		}
-		res, err := c.GetUserReportSettingsWithResponse(ctx)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/json")
+		res, err := httpClient.Do(req)
 		if err != nil {
 			return "", err
 		}
-		switch res.StatusCode() {
+		defer func() { _ = res.Body.Close() }()
+		body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+		if err != nil {
+			return "", err
+		}
+		switch res.StatusCode {
 		case http.StatusOK:
-			if res.JSON200 == nil || res.JSON200.Theme == nil {
+			var settings struct {
+				Theme *string `json:"theme"`
+			}
+			if err := json.Unmarshal(body, &settings); err != nil {
+				return "", fmt.Errorf("read your report theme: %w", err)
+			}
+			if settings.Theme == nil {
 				return "", nil
 			}
-			return string(*res.JSON200.Theme), nil
+			return *settings.Theme, nil
 		case http.StatusNotFound:
 			// A registry from before the setting: nothing was chosen there.
 			return "", nil
 		}
-		return "", apiProblem("read your report theme", res.StatusCode(), res.ApplicationproblemJSONDefault, res.Body)
+		return "", apiProblem("read your report theme", res.StatusCode, nil, body)
 	}
 }

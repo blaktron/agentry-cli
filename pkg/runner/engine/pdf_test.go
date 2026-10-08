@@ -113,7 +113,7 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 		want  string
 		from  string
 	}{
-		{ReportTheme{Name: "formal", From: "the account's report theme"}, "formal", "the account's report theme"},
+		{ReportTheme{Name: "formal", From: ThemeFromAccount}, "formal", "the account's report theme"},
 		{ReportTheme{}, "plain", "the default"},
 	} {
 		p, f := fixture(t)

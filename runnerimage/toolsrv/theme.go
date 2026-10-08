@@ -22,7 +22,7 @@ import (
 	"unicode/utf8"
 )
 
-//go:embed pdf/report.typ pdf/plain.json pdf/formal.json pdf/brief.json pdf/technical.json pdf/letter.json
+//go:embed pdf/report.typ pdf/*.json
 var pdfFiles embed.FS
 
 // ThemeVersion is the theme document's schema version, its "agentryTheme".
@@ -157,7 +157,7 @@ type Theme struct {
 // ThemeTitle is how a theme draws the report's first heading.
 type ThemeTitle struct {
 	Align string `json:"align"`
-	// Rule draws a line under it, the width of the text.
+	// Rule draws a line under it across the page's text width.
 	Rule bool `json:"rule"`
 }
 
@@ -228,7 +228,11 @@ func ParseTheme(doc []byte) (*Theme, error) {
 			bad("colours.%s %q is not #rrggbb", name, c)
 		}
 	}
-	for name, a := range map[string]string{"header.align": t.Header.Align, "footer.align": t.Footer.Align} {
+	aligns := map[string]string{"header.align": t.Header.Align, "footer.align": t.Footer.Align}
+	if t.Title != nil {
+		aligns["title.align"] = t.Title.Align
+	}
+	for name, a := range aligns {
 		if a != "left" && a != "center" && a != "right" {
 			bad("%s %q is not left, center or right", name, a)
 		}
@@ -237,9 +241,6 @@ func ParseTheme(doc []byte) (*Theme, error) {
 		if len(s) > maxThemeText || !utf8.ValidString(s) {
 			bad("%s is not UTF-8 text of at most %d bytes", name, maxThemeText)
 		}
-	}
-	if t.Title != nil && t.Title.Align != "left" && t.Title.Align != "center" && t.Title.Align != "right" {
-		bad("title.align %q is not left, center or right", t.Title.Align)
 	}
 	if t.LineBreaks != "" && t.LineBreaks != "soft" && t.LineBreaks != "hard" {
 		bad("lineBreaks %q is neither soft nor hard", t.LineBreaks)

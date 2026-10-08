@@ -73,17 +73,9 @@ func scanMarkdown(src string) mdDoc {
 		prev = drawn
 		return drawn
 	}
-	fence := ""
+	var fences fenceScan
 	for i, line := range lines {
-		if fence != "" {
-			if m := mdFence.FindStringSubmatch(line); m != nil && strings.HasPrefix(m[1], fence) && strings.TrimSpace(m[2]) == "" {
-				fence = ""
-			}
-			continue
-		}
-		// A backtick fence's info string holds no backtick (CommonMark).
-		if m := mdFence.FindStringSubmatch(line); m != nil && (m[1][0] != '`' || !strings.Contains(m[2], "`")) {
-			fence = m[1]
+		if fences.fenced(line) {
 			continue
 		}
 		if m := mdATX.FindStringSubmatch(line); m != nil {
@@ -216,20 +208,48 @@ func reportMarkdown(src string, theme *Theme) mdDoc {
 // source, which an agent wraps near 80 columns if it wraps at all.
 const shortLine = 60
 
-// mdHardBreak is a line that already ends in a hard break: a backslash, or
-// two spaces.
-var mdHardBreak = regexp.MustCompile(`(\\| {2,})$`)
+// fenceScan follows a scan's fenced code blocks, line by line.
+type fenceScan struct{ fence string }
+
+// fenced says whether line opens, closes or is inside a fence, which no
+// scanner here may change.
+func (f *fenceScan) fenced(line string) bool {
+	if f.fence != "" {
+		if m := mdFence.FindStringSubmatch(line); m != nil && strings.HasPrefix(m[1], f.fence) && strings.TrimSpace(m[2]) == "" {
+			f.fence = ""
+		}
+		return true
+	}
+	// A backtick fence's info string holds no backtick (CommonMark).
+	if m := mdFence.FindStringSubmatch(line); m != nil && (m[1][0] != '`' || !strings.Contains(m[2], "`")) {
+		f.fence = m[1]
+		return true
+	}
+	return false
+}
+
+var (
+	// mdHardBreak is a line that already ends in a hard break: a
+	// backslash, or two spaces.
+	mdHardBreak = regexp.MustCompile(`(\\| {2,})$`)
+	// mdRefDefLine opens a link reference definition, whose destination a
+	// trailing backslash would change.
+	mdRefDefLine = regexp.MustCompile(`^ {0,3}\[(?:[^\]\\]|\\.)+\]:`)
+	// mdHTMLStart opens an HTML block, which runs to the next blank line.
+	mdHTMLStart = regexp.MustCompile(`^ {0,3}<`)
+)
 
 // hardLineBreaks keeps each line of a paragraph on a line of its own (a
 // theme's lineBreaks "hard"; agentry-cli#731): a letter's address block,
 // its To, From and Date lines and its signature are written one to a line,
 // and Markdown joins them. A short paragraph line (under shortLine runes)
 // followed by another gets a CommonMark hard break, a trailing backslash;
-// a longer one is prose wrapped in the source, which stays one paragraph. Lines that could be anything
-// but a paragraph's are left alone (a heading, a list item, a quote, a
-// fence and what it holds, indented code, HTML, a table row, a setext
-// underline and the line above it), so the scanner can only miss a break,
-// never change a block.
+// a longer one is prose wrapped in the source, which stays one paragraph.
+// Lines that could be anything but a paragraph's are left alone (a
+// heading, a list item, a quote, a fence and what it holds, indented code,
+// an HTML block to its blank line, a link reference definition, a table
+// row, a setext underline and the line above it), so the scanner can only
+// miss a break, never change a block.
 func hardLineBreaks(text string) string {
 	lines := strings.Split(text, "\n")
 	paragraph := func(i int) bool {
@@ -237,18 +257,16 @@ func hardLineBreaks(text string) string {
 			return false
 		}
 		l := lines[i]
-		return !mdNotParagraph.MatchString(l) && !mdSetext.MatchString(l) && !strings.Contains(l, "|")
+		return !mdNotParagraph.MatchString(l) && !mdSetext.MatchString(l) && !mdRefDefLine.MatchString(l) && !strings.Contains(l, "|")
 	}
-	fence := ""
+	var fences fenceScan
+	html := false
 	for i, line := range lines {
-		if fence != "" {
-			if m := mdFence.FindStringSubmatch(line); m != nil && strings.HasPrefix(m[1], fence) && strings.TrimSpace(m[2]) == "" {
-				fence = ""
-			}
+		if fences.fenced(line) {
 			continue
 		}
-		if m := mdFence.FindStringSubmatch(line); m != nil && (m[1][0] != '`' || !strings.Contains(m[2], "`")) {
-			fence = m[1]
+		if html || mdHTMLStart.MatchString(line) {
+			html = strings.TrimSpace(line) != ""
 			continue
 		}
 		if !paragraph(i) || !paragraph(i+1) || mdHardBreak.MatchString(line) || utf8.RuneCountInString(strings.TrimSpace(line)) >= shortLine {

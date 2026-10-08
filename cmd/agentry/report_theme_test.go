@@ -29,13 +29,13 @@ func TestChooseReportTheme(t *testing.T) {
 		want    engine.ReportTheme
 		warns   string
 	}{
-		{"nothing set", "", cliConfig{}, nil, engine.ReportTheme{Name: "plain", From: themeFromDefault}, ""},
-		{"the flag wins", "letter", conf("brief"), account("formal", nil), engine.ReportTheme{Name: "letter", From: themeFromFlag}, ""},
-		{"the account over the config", "", conf("brief"), account("formal", nil), engine.ReportTheme{Name: "formal", From: themeFromAccount}, ""},
-		{"never chosen is not plain", "", conf("brief"), account("", nil), engine.ReportTheme{Name: "brief", From: themeFromConfig}, ""},
-		{"no account", "", conf("technical"), nil, engine.ReportTheme{Name: "technical", From: themeFromConfig}, ""},
-		{"an account that cannot be read", "", conf("brief"), account("", errors.New("offline")), engine.ReportTheme{Name: "brief", From: themeFromConfig}, "could not be read (offline); PDFs use brief"},
-		{"a theme this CLI does not have", "", cliConfig{}, account("house-style", nil), engine.ReportTheme{Name: "plain", From: themeFromDefault}, `"house-style" is not one this CLI has`},
+		{"nothing set", "", cliConfig{}, nil, engine.ReportTheme{Name: "plain", From: engine.ThemeFromDefault}, ""},
+		{"the flag wins", "letter", conf("brief"), account("formal", nil), engine.ReportTheme{Name: "letter", From: engine.ThemeFromFlag}, ""},
+		{"the account over the config", "", conf("brief"), account("formal", nil), engine.ReportTheme{Name: "formal", From: engine.ThemeFromAccount}, ""},
+		{"never chosen is not plain", "", conf("brief"), account("", nil), engine.ReportTheme{Name: "brief", From: engine.ThemeFromConfig}, ""},
+		{"no account", "", conf("technical"), nil, engine.ReportTheme{Name: "technical", From: engine.ThemeFromConfig}, ""},
+		{"an account that cannot be read", "", conf("brief"), account("", errors.New("offline")), engine.ReportTheme{Name: "brief", From: engine.ThemeFromConfig}, "could not be read (offline); PDFs use brief"},
+		{"a theme this CLI does not have", "", cliConfig{}, account("house-style", nil), engine.ReportTheme{Name: "plain", From: engine.ThemeFromDefault}, `"house-style" is not one this CLI has`},
 	} {
 		var warn bytes.Buffer
 		got, err := chooseReportTheme(context.Background(), c.flag, c.cfg, c.account, &warn)
