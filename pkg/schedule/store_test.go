@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -42,7 +43,8 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	for _, f := range []string{"schedule.yaml", "task.txt"} {
 		fi, err := os.Stat(filepath.Join(s.Dir, sc.ID, f))
-		if err != nil || fi.Mode().Perm() != 0o600 {
+		// Windows keeps no POSIX modes; the runner home's own ACL holds there.
+		if err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
 			t.Fatalf("%s mode %v, %v", f, fi.Mode(), err)
 		}
 	}
