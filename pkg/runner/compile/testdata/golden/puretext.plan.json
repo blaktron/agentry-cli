@@ -11,7 +11,7 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "AGENT.md",
-    "sha256": "e0311a3e1205bed8a43e7169f060deebb818328744b286eb1224667cb0c97aa9",
+    "sha256": "ec066259382aa7c7c237246ee5b32e3093efaae8bccff14728291a2599ffb416",
     "bodySha256": "ea04f9c2aced19c2b7daccfaf1beb2b5fd5e4301a18ecd1a922bf738ffd87b9a"
   },
   "capabilities": {
@@ -27,7 +27,8 @@
     "scratch_list",
     "scratch_read",
     "scratch_write",
-    "write_report"
+    "write_report",
+    "export_pdf"
   ],
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
@@ -35,6 +36,7 @@
     "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; on Linux the run's docker filter mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; under Docker Desktop (macOS, Windows), which runs no filter, it is the container's own layer, unbounded",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "pdf": "the runner's grant, not the contract's: export_pdf renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst 0.15.1 in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under /tmp whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, 1 GiB of address space and 60 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
     "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read and scratch_write over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
     "secrets": "none declared"
   },
@@ -171,8 +173,8 @@
     "gateway/catalog.yaml": "302d165fc42fca1ae946f1de4819f93e3560e585d5e5369a964ee94febff2df3",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
-    "gateway/tools.yaml": "6bd0c945d5d1da659f3ebfd2f6e4ac20e775c10e15a06f957876cfac8a0f1a80",
-    "gateway/toolspec.json": "1ef45564246f718688bb4647068c32639c79c12f99d38b8aaf6cf13a8e38edcd",
-    "harness/agent.yaml": "33589da913ec32d9f0606bb00f1d5e92c06a39bd8a0bd8e158265dec35823e9f"
+    "gateway/tools.yaml": "f53d988c3307789f8c0bca51ee6fb160ef442004098734ee2443baf59a0d684a",
+    "gateway/toolspec.json": "51ae1e090e65b811e3d06ee19044463385eb16b755595c162caf608714764173",
+    "harness/agent.yaml": "d5989757ca7628c5d9cd952b5ba34d7e3760eef08a4da35028ca3b4626069f1d"
   }
 }

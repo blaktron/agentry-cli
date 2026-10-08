@@ -19,7 +19,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == ConfineRole {
 		confine.Trampoline(os.Args[2:])
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	removeOpenDir()
+	os.Exit(code)
 }
 
 // TestChooseConfinement is agentry-cli#596's decision table: Landlock

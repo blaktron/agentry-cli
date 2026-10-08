@@ -12,5 +12,8 @@ var errNotLinux = errors.New("landlock: Linux only")
 // ABI reports that there is no Landlock off Linux.
 func ABI() (int, error) { return 0, errNotLinux }
 
-// Exec refuses off Linux rather than run the program unconfined.
-func Exec(_ []string, _ string, _, _ []string) error { return errNotLinux }
+// ExecWith refuses off Linux rather than run the program unconfined.
+func ExecWith(_ Options, _ string, _, _ []string) error { return errNotLinux }
+
+// NetworkDenied is false off Linux.
+func NetworkDenied(int) bool { return false }

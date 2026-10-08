@@ -280,6 +280,14 @@ func TestValidateSpec(t *testing.T) {
 			wantErr: "not supported",
 		},
 		{
+			// A plan compiled for export_pdf meets an image built before it
+			// (agentry-cli#730): the server refuses, the probe fails and the
+			// run stops (exit 13), never runs with export_pdf missing.
+			name:    "the version before export_pdf",
+			spec:    &Spec{SpecVersion: "8", WorkspaceDir: abs, OutDir: abs},
+			wantErr: "not supported",
+		},
+		{
 			name:    "relative workspace",
 			spec:    &Spec{SpecVersion: SpecVersion, WorkspaceDir: "workspace", OutDir: abs},
 			wantErr: "workspaceDir",

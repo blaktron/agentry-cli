@@ -378,6 +378,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if rd.callsLedger != "" {
 		rd.redact.File(rd.callsLedger)
 	}
+	// The PDF ledger holds names the agent chose: masked the same way, so
+	// a PDF named with a secret's value is not one the receipt can name.
+	if rd.pdfLedger != "" {
+		rd.redact.File(rd.pdfLedger)
+	}
 	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.
@@ -390,6 +395,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if env.Review = reviewRecord(rd.receiptsDir, p.Review); env.Review != nil {
 		env.CapabilitiesEnforced["review.aiReview"] = reviewLine(env.Review)
 	}
+	env.PDFs = pdfRecord(rd)
 
 	if outcome.err != nil {
 		env.Result = receipt.TextResult(outcome.lastText)

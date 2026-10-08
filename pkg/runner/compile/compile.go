@@ -773,6 +773,9 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// mounts an empty directory when there were none.
 		InputsTextDir: spec.InputsTextMount,
 		ScratchDir:    scratchDir(caps),
+		// export_pdf goes with the scratch folder, to every release's run
+		// and session (plan scratch-and-pdf-reports.md D5, D6).
+		PDF: toolsrv.PDF{Enabled: caps.Scratch},
 		FSRead: toolsrv.Access{
 			Enabled: caps.FSReadMode != "none",
 			Paths:   caps.FSReadPaths,
@@ -1470,6 +1473,8 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		" — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; " +
 		fmt.Sprintf("on Linux the run's docker filter mounts the tools container's %s as a %d MiB tmpfs and the tools server refuses to serve without it; under Docker Desktop (macOS, Windows), which runs no filter, it is the container's own layer, unbounded", spec.ToolsTmpMount, spec.ToolsTmpfsBytes>>20)
 	if caps.Scratch {
+		e["pdf"] = fmt.Sprintf("the runner's grant, not the contract's: %s renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst %s in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under %s whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, %d GiB of address space and %d seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
+			toolsrv.ToolExportPDF, toolsrv.TypstVersion, spec.ToolsTmpMount, toolsrv.PDFRenderMemory>>30, int(toolsrv.PDFRenderTimeout.Seconds()))
 		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a %d MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
 			toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
 	}

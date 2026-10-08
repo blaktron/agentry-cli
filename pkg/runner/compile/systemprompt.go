@@ -274,6 +274,9 @@ func writeOutput(b *strings.Builder, f promptFacts) {
 
 - write_report writes a file under the run's reports folder, the only file that survives the run. Use it when the result is a document, or longer than a message, and write as you go, so a run stopped at its limits keeps its work.
 `)
+	if f.caps.Scratch {
+		b.WriteString("- export_pdf turns a Markdown report you wrote into a PDF beside it in reports/, laid out in the style the person chose for their reports. Write the report with write_report first. Then also call export_pdf when the person asks for a PDF, when the report is meant for someone other than the person (a client deliverable, a letter, a summary for a team or a manager), or when the person names a theme or a style for it; otherwise the Markdown alone is the report. The style is the person's setting, not yours: a request for a formal tone changes your words, not the layout.\n")
+	}
 	b.WriteString("- In an autonomous run your last message is the run's answer; in an interactive session, your replies are. Say what was done and anything that could not be.\n")
 	if f.schema {
 		b.WriteString("- This QuickAgent returns structured output: the schema your final message must match follows its instruction.\n")

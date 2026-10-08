@@ -18,11 +18,12 @@ package toolsrv
 // decoded inputs and search_inputs (plan file-handling.md §5,
 // agentry-cli#560); "7" the calls ledger and end_blocked (plan
 // quickagents-that-run.md M9, agentry-cli#629); "8" the scratch folder
-// (plan scratch-and-pdf-reports.md §4, agentry-cli#729). The server
+// (plan scratch-and-pdf-reports.md §4, agentry-cli#729); "9" export_pdf
+// (plan scratch-and-pdf-reports.md §5, agentry-cli#730). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "8"
+const SpecVersion = "9"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -111,6 +112,10 @@ type Spec struct {
 	// Calls is the calls ledger (calls.go): stamped by the engine into a
 	// release's one-shot run alone, with end_blocked granted beside it.
 	Calls Calls `json:"calls,omitzero"`
+	// PDF is export_pdf's grant (pdf.go): Enabled by the compiler with the
+	// scratch folder, the theme, the author line and the ledger stamped by
+	// the engine.
+	PDF PDF `json:"pdf,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
 	// Owner, when set, is the host user who ran the command: every file
@@ -304,6 +309,9 @@ func (s *Spec) GrantedTools() []string {
 		}
 	}
 	names = append(names, ToolWriteReport)
+	if s.PDF.Enabled {
+		names = append(names, ToolExportPDF)
+	}
 	if s.Calls.Ledger != "" {
 		names = append(names, ToolEndBlocked)
 	}

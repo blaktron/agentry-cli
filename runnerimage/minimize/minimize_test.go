@@ -37,11 +37,14 @@ func TestMinimizeKeepsOnlyDeclared(t *testing.T) {
 	mk("usr/bin/curl", "curl")
 	mk("usr/local/bin/agentry-runner", "runner")
 	mk("usr/lib/libz.so", "lib") // libraries are not touched
+	// export_pdf's renderer lives outside the bin directories, so an exec
+	// image keeps it (agentry-cli#730).
+	mk("opt/agentry/typst/typst", "typst")
 
 	if err := Minimize(root, []string{"jq", "ls"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"bin/busybox", "bin/ls", "usr/bin/jq", "usr/local/bin/agentry-runner", "usr/lib/libz.so"} {
+	for _, want := range []string{"bin/busybox", "bin/ls", "usr/bin/jq", "usr/local/bin/agentry-runner", "usr/lib/libz.so", "opt/agentry/typst/typst"} {
 		if _, err := os.Lstat(filepath.Join(root, want)); err != nil {
 			t.Errorf("%s must survive: %v", want, err)
 		}

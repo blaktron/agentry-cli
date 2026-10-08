@@ -88,6 +88,36 @@ type Envelope struct {
 	// the inputs it scanned before the model, and the rubric calls; absent
 	// for any other run.
 	Review *Review `json:"review,omitempty"`
+	// PDFs is what export_pdf wrote (plan scratch-and-pdf-reports.md §5,
+	// D15; agentry-cli#730): the theme every PDF of the run was laid out
+	// with, and each PDF in reports/ whose bytes are the ones the tools
+	// server recorded. A reader opens in place only a PDF this names with a
+	// matching SHA-256; any other is download-only. Absent for a run that
+	// exported none.
+	PDFs *PDFs `json:"pdfs,omitempty"`
+}
+
+// PDFs is a run's exported PDFs.
+type PDFs struct {
+	Theme PDFTheme  `json:"theme"`
+	Files []PDFFile `json:"files"`
+}
+
+// PDFTheme names a theme document: its name and version, and the SHA-256
+// of its exact bytes.
+type PDFTheme struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	SHA256  string `json:"sha256"`
+}
+
+// PDFFile is one exported PDF. Path is relative to the output folder
+// (reports/…).
+type PDFFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Pages  int    `json:"pages"`
+	Bytes  int64  `json:"bytes"`
 }
 
 // Web is a run's count of the web tools' reads and AI Review's verdicts.
