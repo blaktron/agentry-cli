@@ -23,11 +23,103 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 )
+
+// A test run as root, as CI's jobs are, starts the renderer as typstID,
+// which must reach the trampoline and the renderer as it reaches the runner
+// image's (/usr/local/bin, /opt/agentry/typst): the go-build and t.TempDir
+// directories are root's alone. So, as root, both are staged in a directory
+// anyone may enter, made once a test binary and removed by TestMain.
+var openDir struct {
+	sync.Mutex
+	path   string
+	copies map[string]string
+}
+
+// openTempDir is a new directory anyone may enter: under the shared one as
+// root, a t.TempDir otherwise.
+func openTempDir(t *testing.T) string {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		return t.TempDir()
+	}
+	openDir.Lock()
+	defer openDir.Unlock()
+	if openDir.path == "" {
+		d, err := os.MkdirTemp("", "agentry-toolsrv-test-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		openDir.path, openDir.copies = d, map[string]string{}
+	}
+	d, err := os.MkdirTemp(openDir.path, "t-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{openDir.path, d} {
+		if err := os.Chmod(p, 0o755); err != nil { //nolint:gosec // entered by the renderer's own user
+			t.Fatal(err)
+		}
+	}
+	return d
+}
+
+// removeOpenDir removes the shared directory, when one was made.
+func removeOpenDir() {
+	if openDir.path != "" {
+		_ = os.RemoveAll(openDir.path)
+	}
+}
+
+// openCopy is src (a file or a tree) where the renderer's user can reach
+// it: src itself unless the test runs as root, else a copy made once.
+func openCopy(t *testing.T, key, src string) string {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		return src
+	}
+	openDir.Lock()
+	if c, ok := openDir.copies[key]; ok {
+		openDir.Unlock()
+		return c
+	}
+	openDir.Unlock()
+	dst := filepath.Join(openTempDir(t), filepath.Base(src))
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		b, err := os.ReadFile(p) //nolint:gosec // the test's own fixture
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o755) //nolint:gosec // run or read by the renderer's own user
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openDir.Lock()
+	openDir.copies[key] = dst
+	openDir.Unlock()
+	return dst
+}
+
+// openTrampoline is this test binary, the confine trampoline, where the
+// renderer's user can start it.
+func openTrampoline(t *testing.T) string {
+	t.Helper()
+	return openCopy(t, "trampoline", os.Args[0])
+}
 
 // fakeTypst is a renderer that runs body under sh with ROOT set to the
 // render root (Typst's --root; the environment is empty), the bundled font
@@ -37,7 +129,7 @@ func fakeTypst(t *testing.T, body string) typstFiles {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake renderer is a shell script")
 	}
-	dir := t.TempDir()
+	dir := openTempDir(t)
 	bin := filepath.Join(dir, "typst")
 	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --root ] && ROOT=$2; shift; done\n" + body + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // an executable test script
@@ -72,7 +164,7 @@ func pdfServer(t *testing.T, spec *Spec, typst typstFiles) *server {
 	s := newTestServer(t, spec)
 	s.typst = typst
 	abi, abiErr := confine.ABI()
-	s.render = chooseRenderConfinement(runtime.GOOS, abi, abiErr, os.Geteuid(), os.Args[0])
+	s.render = chooseRenderConfinement(runtime.GOOS, abi, abiErr, os.Geteuid(), openTrampoline(t))
 	if s.render.refused != "" {
 		t.Skipf("this machine cannot hold a render: %s", s.render.refused)
 	}
@@ -648,6 +740,7 @@ func realTypst(t *testing.T) typstFiles {
 		}
 		t.Skip("AGENTRY_TYPST_DIR is not set: the real renderer is the typst-image CI job's")
 	}
+	dir = openCopy(t, "typst", dir)
 	return typstFiles{bin: filepath.Join(dir, "typst"), fonts: filepath.Join(dir, "fonts"), packages: filepath.Join(dir, "packages")}
 }
 
