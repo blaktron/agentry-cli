@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -33,11 +35,49 @@ import (
 // PDFLedgerFile is the PDF ledger under the run's receipts.
 const PDFLedgerFile = "pdfs.ndjson"
 
+// ReportTheme is a run's report theme: a built-in theme's name, and what
+// chose it.
+type ReportTheme struct {
+	Name string
+	From ThemeSource
+}
+
+// ThemeSource is what chose a run's report theme, as the receipt says it.
+type ThemeSource string
+
+// What can choose a run's report theme (agentry-cli#731, DR-82).
+const (
+	ThemeFromFlag    ThemeSource = "the --report-theme flag"
+	ThemeFromAccount ThemeSource = "the account's report theme"
+	ThemeFromConfig  ThemeSource = "report.theme in the CLI's config"
+	ThemeFromDefault ThemeSource = "the default"
+)
+
+// stamp is the theme's document as the tools spec carries it.
+func (t ReportTheme) stamp() (*toolsrv.ThemeStamp, error) {
+	name := t.Name
+	if name == "" {
+		name = toolsrv.DefaultTheme
+	}
+	doc, err := toolsrv.BuiltinTheme(name)
+	if err != nil {
+		return nil, err
+	}
+	return toolsrv.StampTheme(doc)
+}
+
+// from is what chose the theme, for the receipt.
+func (t ReportTheme) from() ThemeSource {
+	if t.Name == "" || t.From == "" {
+		return ThemeFromDefault
+	}
+	return t.From
+}
+
 // grantPDF stamps export_pdf's run-time half into the run's rendered tools
-// spec when the plan grants the tool: the theme (the built-in default until
-// a run can choose one, agentry-cli#731), the plan's ref as the author, and
-// the ledger prepareRunDirs made.
-func grantPDF(gatewayDir string, plan *spec.Plan, rd *runDirs) error {
+// spec when the plan grants the tool: the run's theme, the plan's ref as
+// the author, and the ledger prepareRunDirs made.
+func grantPDF(gatewayDir string, plan *spec.Plan, theme ReportTheme, rd *runDirs) error {
 	specPath := filepath.Join(gatewayDir, "toolspec.json")
 	b, err := os.ReadFile(specPath) //nolint:gosec // our own rendered config
 	if errors.Is(err, os.ErrNotExist) {
@@ -55,11 +95,7 @@ func grantPDF(gatewayDir string, plan *spec.Plan, rd *runDirs) error {
 	if !ts.PDF.Enabled {
 		return nil
 	}
-	doc, err := toolsrv.BuiltinTheme(toolsrv.DefaultTheme)
-	if err != nil {
-		return err
-	}
-	stamp, err := toolsrv.StampTheme(doc)
+	stamp, err := theme.stamp()
 	if err != nil {
 		return err
 	}
@@ -74,6 +110,26 @@ func grantPDF(gatewayDir string, plan *spec.Plan, rd *runDirs) error {
 		return err
 	}
 	return os.WriteFile(specPath, append(out, '\n'), 0o644) //nolint:gosec // read by the tools container
+}
+
+// withReportTheme adds the receipt's line for the run's report theme when
+// the plan grants export_pdf: which theme, its version and digest, and what
+// chose it, whether or not the run exports a PDF.
+// A theme that does not stamp adds no line: grantPDF fails that run.
+func withReportTheme(enforced map[string]string, tools []string, theme ReportTheme) map[string]string {
+	if !slices.Contains(tools, toolsrv.ToolExportPDF) {
+		return enforced
+	}
+	st, err := theme.stamp()
+	if err != nil {
+		return enforced
+	}
+	out := maps.Clone(enforced)
+	if out == nil {
+		out = map[string]string{}
+	}
+	out["pdf.theme"] = fmt.Sprintf("%s %s (sha256:%s), chosen by %s; the model cannot choose another", st.Name, st.Version, st.SHA256, theme.from())
+	return out
 }
 
 // ReadPDFLedger reads a run's PDF ledger. A missing ledger is none; a line

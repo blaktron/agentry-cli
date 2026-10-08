@@ -746,8 +746,23 @@ func realTypst(t *testing.T) typstFiles {
 
 func realExport(t *testing.T, md string, files map[string][]byte) (*Spec, []byte) {
 	t.Helper()
+	return realExportIn(t, DefaultTheme, md, files)
+}
+
+// realExportIn is realExport under a built-in theme.
+func realExportIn(t *testing.T, theme, md string, files map[string][]byte) (*Spec, []byte) {
+	t.Helper()
+	doc, err := BuiltinTheme(theme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp, err := StampTheme(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	spec := pdfSpec(t)
 	spec.PDF.Author = "acme/demo@1.2.3"
+	spec.PDF.Theme = stamp
 	s := pdfServer(t, spec, realTypst(t))
 	for name, b := range files {
 		mustWrite(t, filepath.Join(spec.OutDir, "reports", name), b)
@@ -776,9 +791,21 @@ func uris(pdf []byte) []string {
 // run. Each line would stop the render if it ran (#panic, a package the
 // renderer cannot download, a file outside the render root), so the render
 // succeeding is the proof; and none of the links it would make is there.
+// Under every theme (agentry-cli#731): the first heading, markup included,
+// is Formal's cover title and Letter's letterhead, and Letter's kept lines
+// put a backslash after short ones.
 func TestRawTypstIsText(t *testing.T) {
-	_, pdf := realExport(t, strings.Join([]string{
-		"# Injection",
+	for _, theme := range BuiltinThemes() {
+		t.Run(theme, func(t *testing.T) { rawTypstIsText(t, theme) })
+	}
+}
+
+func rawTypstIsText(t *testing.T, theme string) {
+	_, pdf := realExportIn(t, theme, strings.Join([]string{
+		`# Injection #panic("heading ran") #link("https://heading.example")[h]`,
+		"",
+		`#panic("short line ran")`,
+		`#read("/etc/passwd")`,
 		`#link("https://text-markup.example")[x] #import "@preview/whatever:0.1.0": * #read("/etc/passwd") #panic("text ran")`,
 		"",
 		`<!--raw-typst #link("https://raw-typst.example")[y] -->`,
@@ -795,9 +822,16 @@ func TestRawTypstIsText(t *testing.T) {
 }
 
 // TestLinksAreHttpOrMail (invariant 5): http, https and mailto stay links;
-// every other scheme, an anchor and a link in raw HTML are text.
+// every other scheme, an anchor and a link in raw HTML are text, under
+// every theme (agentry-cli#731).
 func TestLinksAreHttpOrMail(t *testing.T) {
-	_, pdf := realExport(t, strings.Join([]string{
+	for _, theme := range BuiltinThemes() {
+		t.Run(theme, func(t *testing.T) { linksAreHttpOrMail(t, theme) })
+	}
+}
+
+func linksAreHttpOrMail(t *testing.T, theme string) {
+	_, pdf := realExportIn(t, theme, strings.Join([]string{
 		"# Links",
 		"[a](https://a.example) [b](http://b.example) [c](mailto:c@example.com) <https://d.example>",
 		"[e](javascript:alert(1)) [f](file:///etc/passwd) [g](#links) [h](ftp://h.example) [i](data:text/html,x)",

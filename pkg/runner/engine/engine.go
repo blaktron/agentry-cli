@@ -112,6 +112,10 @@ type Params struct {
 	// voice_read granted and the receipt's voice line written only then.
 	// A built-in's run never carries one (D5).
 	Voice *AttachedVoice
+	// ReportTheme is the theme export_pdf lays the run's PDFs out with, and
+	// what chose it (agentry-cli#731); an empty Name is the built-in
+	// default. Used only when the plan grants export_pdf.
+	ReportTheme ReportTheme
 	// Decoded, when set, is the decode step the caller ran on the inputs
 	// before this run (pkg/runner/decode); the receipt names it.
 	Decoded *decode.Result

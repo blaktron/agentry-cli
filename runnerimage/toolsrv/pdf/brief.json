@@ -1,0 +1,44 @@
+{
+  "agentryTheme": 1,
+  "name": "brief",
+  "version": "1.0.0",
+  "page": {
+    "paper": "a4",
+    "marginMm": 18
+  },
+  "fonts": {
+    "body": "Noto Sans",
+    "headings": "Noto Sans",
+    "code": "Noto Sans Mono"
+  },
+  "sizes": {
+    "bodyPt": 10,
+    "codePt": 8.5,
+    "headingScale": [1.45, 1.2, 1.05, 1.0, 1.0, 1.0]
+  },
+  "colours": {
+    "text": "#1a1a1a",
+    "accent": "#1a1a1a",
+    "link": "#1f4e9e",
+    "tableHeader": "#efefef",
+    "rules": "#bfbfbf",
+    "codeBackground": "#f4f4f4"
+  },
+  "header": {
+    "text": "",
+    "align": "right"
+  },
+  "footer": {
+    "text": "",
+    "align": "right",
+    "pageNumbers": "n"
+  },
+  "tables": {
+    "headerBold": true,
+    "banded": false
+  },
+  "title": {
+    "align": "left",
+    "rule": true
+  }
+}

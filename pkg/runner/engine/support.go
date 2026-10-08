@@ -432,7 +432,7 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 			return Classify(ExitCLI, fmt.Errorf("configure the calls ledger: %w", err))
 		}
 	}
-	if err := grantPDF(dir, p.Plan, rd); err != nil {
+	if err := grantPDF(dir, p.Plan, p.ReportTheme, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure export_pdf: %w", err))
 	}
 	if err := writeResolvConf(dir, p.Plan); err != nil {

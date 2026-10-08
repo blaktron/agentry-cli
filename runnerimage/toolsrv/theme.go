@@ -18,10 +18,11 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"unicode/utf8"
 )
 
-//go:embed pdf/report.typ pdf/plain.json
+//go:embed pdf/report.typ pdf/*.json
 var pdfFiles embed.FS
 
 // ThemeVersion is the theme document's schema version, its "agentryTheme".
@@ -30,15 +31,21 @@ const ThemeVersion = 1
 // DefaultTheme is the theme a run gets when nothing chooses another.
 const DefaultTheme = "plain"
 
-// builtinThemes are the themes in this image, by name. Plain alone in
-// agentry-cli#730; the plan's other four arrive with agentry-cli#731.
-var builtinThemes = []string{DefaultTheme}
+// builtinThemes are the themes in this image, by name: the plan's five
+// (D13), Plain first.
+var builtinThemes = []string{DefaultTheme, "formal", "brief", "technical", "letter"}
+
+// BuiltinThemes are the names of the built-in themes, Plain first.
+func BuiltinThemes() []string { return slices.Clone(builtinThemes) }
+
+// IsBuiltinTheme says whether name is a built-in theme's.
+func IsBuiltinTheme(name string) bool { return slices.Contains(builtinThemes, name) }
 
 // BuiltinTheme is a built-in theme's document, exactly the bytes whose
 // SHA-256 a receipt names.
 func BuiltinTheme(name string) ([]byte, error) {
-	if !slices.Contains(builtinThemes, name) {
-		return nil, fmt.Errorf("no built-in report theme %q (there are: %v)", name, builtinThemes)
+	if !IsBuiltinTheme(name) {
+		return nil, fmt.Errorf("no built-in report theme %q (there are: %s)", name, strings.Join(builtinThemes, ", "))
 	}
 	return pdfFiles.ReadFile("pdf/" + name + ".json")
 }
@@ -130,6 +137,28 @@ type Theme struct {
 		HeaderBold bool `json:"headerBold"`
 		Banded     bool `json:"banded"` // alternate body rows shaded
 	} `json:"tables"`
+
+	// The optional fields of version 1 (agentry-cli#731; DR-81 departure
+	// 6), absent in Plain: a theme and the template that reads it ship in
+	// the same image, so they need no version of their own.
+
+	// Cover puts a page before the report with its title and the date, and
+	// numbers the pages after it from 1.
+	Cover bool `json:"cover,omitempty"`
+	// Title draws the report's first heading as a block of its own: a
+	// memo's heading, a letter's letterhead.
+	Title *ThemeTitle `json:"title,omitempty"`
+	// LineBreaks "hard" keeps each line of a paragraph on a line of its
+	// own, as a letter's address and signature blocks need; Markdown, and
+	// so the default "soft", joins them into one.
+	LineBreaks string `json:"lineBreaks,omitempty"`
+}
+
+// ThemeTitle is how a theme draws the report's first heading.
+type ThemeTitle struct {
+	Align string `json:"align"`
+	// Rule draws a line under it across the page's text width.
+	Rule bool `json:"rule"`
 }
 
 // The bundled families a theme may name for a role; the fallback fonts for
@@ -199,7 +228,11 @@ func ParseTheme(doc []byte) (*Theme, error) {
 			bad("colours.%s %q is not #rrggbb", name, c)
 		}
 	}
-	for name, a := range map[string]string{"header.align": t.Header.Align, "footer.align": t.Footer.Align} {
+	aligns := map[string]string{"header.align": t.Header.Align, "footer.align": t.Footer.Align}
+	if t.Title != nil {
+		aligns["title.align"] = t.Title.Align
+	}
+	for name, a := range aligns {
 		if a != "left" && a != "center" && a != "right" {
 			bad("%s %q is not left, center or right", name, a)
 		}
@@ -208,6 +241,9 @@ func ParseTheme(doc []byte) (*Theme, error) {
 		if len(s) > maxThemeText || !utf8.ValidString(s) {
 			bad("%s is not UTF-8 text of at most %d bytes", name, maxThemeText)
 		}
+	}
+	if t.LineBreaks != "" && t.LineBreaks != "soft" && t.LineBreaks != "hard" {
+		bad("lineBreaks %q is neither soft nor hard", t.LineBreaks)
 	}
 	if !slices.Contains([]string{"none", "n", "n of N"}, t.Footer.PageNumbers) {
 		bad("footer.pageNumbers %q is not none, n or \"n of N\"", t.Footer.PageNumbers)

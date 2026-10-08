@@ -1,0 +1,45 @@
+{
+  "agentryTheme": 1,
+  "name": "letter",
+  "version": "1.0.0",
+  "page": {
+    "paper": "a4",
+    "marginMm": 25
+  },
+  "fonts": {
+    "body": "Noto Serif",
+    "headings": "Noto Serif",
+    "code": "Noto Sans Mono"
+  },
+  "sizes": {
+    "bodyPt": 11,
+    "codePt": 9,
+    "headingScale": [1.5, 1.2, 1.05, 1.0, 1.0, 1.0]
+  },
+  "colours": {
+    "text": "#1a1a1a",
+    "accent": "#1a1a1a",
+    "link": "#1f4e9e",
+    "tableHeader": "#efefef",
+    "rules": "#9a9a9a",
+    "codeBackground": "#f4f4f4"
+  },
+  "header": {
+    "text": "",
+    "align": "right"
+  },
+  "footer": {
+    "text": "",
+    "align": "center",
+    "pageNumbers": "none"
+  },
+  "tables": {
+    "headerBold": true,
+    "banded": false
+  },
+  "title": {
+    "align": "center",
+    "rule": true
+  },
+  "lineBreaks": "hard"
+}

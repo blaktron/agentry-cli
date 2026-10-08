@@ -61,6 +61,15 @@ type cliConfig struct {
 	DefaultRegistry string `yaml:"defaultRegistry,omitempty"`
 	// Registries lists known registries and their credential references.
 	Registries []registryEntry `yaml:"registries,omitempty"`
+	// Report holds this computer's report settings (agentry-cli#731).
+	Report reportConfig `yaml:"report,omitempty"`
+}
+
+// reportConfig is config.yaml's report block.
+type reportConfig struct {
+	// Theme is the report theme a run takes when neither --report-theme
+	// nor the signed-in account chooses one (plan D21).
+	Theme string `yaml:"theme,omitempty"`
 }
 
 // configDir returns the CLI config directory, honoring envConfigDir.
