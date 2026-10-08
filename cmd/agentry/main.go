@@ -97,6 +97,7 @@ func newRootCmd() *cobra.Command {
 		newDoctorCmd(),
 		newFilesCmd(),
 		newRunCmd(),
+		newScheduleCmd(),
 		newKnowledgeCmd(),
 		newVoiceCmd(),
 		newDraftCmd(),
@@ -111,6 +112,7 @@ func newRootCmd() *cobra.Command {
 		newSearchCmd(),
 		newInfoCmd(),
 		newYankCmd(),
+		newForkCmd(),
 		newRunnerToolsCmd(),
 		newRunnerConfineCmd(),
 	)

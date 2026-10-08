@@ -67,6 +67,7 @@ func enforcedAtStart(p Params) map[string]string {
 	e := withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p)
 	e = withKnowledge(e, p.Knowledge, p.Plan.Capabilities.ExecCommands)
 	e = withVoice(e, p.Voice, p.Plan.Capabilities.ExecCommands)
+	e = withReportTheme(e, p.Plan.Tools, p.ReportTheme)
 	return withDecoded(e, p.Decoded)
 }
 

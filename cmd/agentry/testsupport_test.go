@@ -147,6 +147,12 @@ type fakeAgent struct {
 	modes             []string
 	versions          map[string]*fakeVersion
 	latest            string
+	// forkedFrom, forkStates and forkDetail make the agent a fork
+	// (agentry-cli#752): each read answers the next state, the last one
+	// standing.
+	forkedFrom map[string]any
+	forkStates []string
+	forkDetail string
 }
 
 // fakeRegistry is an httptest server implementing the endpoint subset the
@@ -183,9 +189,15 @@ type fakeRegistry struct {
 	// (the scan record's JSON); a package with none is 404, "unknown".
 	scans map[string]string
 
-	mu             sync.Mutex
-	searchQueries  []url.Values
-	yankBodies     []string
+	mu            sync.Mutex
+	searchQueries []url.Values
+	yankBodies    []string
+	// forkBodies records each fork request's body; forkProblem makes every
+	// fork answer this problem, and forkStates are the states a new fork's
+	// reads answer (copying first, then ready, by default).
+	forkBodies     []string
+	forkProblem    *fakeProblem
+	forkStates     []string
 	installIntents []string
 	downloadAuths  []string
 	resolveAuths   []string
@@ -291,13 +303,39 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			writeProblem(w, http.StatusNotFound, "agent not found", "")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"id": "00000000-0000-0000-0000-000000000001", "namespace": fa.ns, "name": fa.name,
-			"modes": fa.modes, "summary": fa.summary, "visibility": "public",
-			"quarantineState": "none", "defaultBranch": "main",
-			"gitHttpUrl": fr.srv.URL + "/git/" + fa.ns + "/" + fa.name + ".git",
-			"createdAt":  "2026-01-02T03:04:05Z",
-		})
+		writeJSON(w, http.StatusOK, fr.agentDoc(fa))
+	})
+
+	mux.HandleFunc("POST /api/v1/agents/{ns}/{name}/fork", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		fr.mu.Lock()
+		fr.forkBodies = append(fr.forkBodies, string(body))
+		fr.mu.Unlock()
+		if p := fr.forkProblem; p != nil {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(p.Status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": p.Type, "title": p.Title, "status": p.Status, "detail": p.Detail})
+			return
+		}
+		origin := fr.agents[r.PathValue("ns")+"/"+r.PathValue("name")]
+		if origin == nil {
+			writeProblem(w, http.StatusNotFound, "agent not found", "")
+			return
+		}
+		var req struct{ Namespace, Name string }
+		_ = json.Unmarshal(body, &req)
+		if req.Name == "" {
+			req.Name = origin.name
+		}
+		states := fr.forkStates
+		if states == nil {
+			states = []string{"copying", "ready"}
+		}
+		fa := fr.addAgent(req.Namespace, req.Name, strings.Join(origin.modes, ","), origin.summary)
+		fa.forkedFrom = map[string]any{"namespace": origin.ns, "name": origin.name, "version": origin.latest, "available": true}
+		fa.forkStates = append([]string(nil), states...)
+		fa.forkDetail = "the origin's repository could not be read"
+		writeJSON(w, http.StatusAccepted, fr.agentDoc(fa))
 	})
 
 	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}/versions/{v}/download", func(w http.ResponseWriter, r *http.Request) {
@@ -481,6 +519,35 @@ func (fr *fakeRegistry) versionDoc(version, status string) map[string]any {
 
 // url returns the registry base URL for --registry.
 func (fr *fakeRegistry) url() string { return fr.srv.URL }
+
+// agentDoc is an agent's read as the registry answers it. A fork answers
+// its next state each read, the last one standing.
+func (fr *fakeRegistry) agentDoc(fa *fakeAgent) map[string]any {
+	doc := map[string]any{
+		"id": "00000000-0000-0000-0000-000000000001", "namespace": fa.ns, "name": fa.name,
+		"modes": fa.modes, "summary": fa.summary, "visibility": "public",
+		"quarantineState": "none", "defaultBranch": "main",
+		"gitHttpUrl": fr.srv.URL + "/git/" + fa.ns + "/" + fa.name + ".git",
+		"createdAt":  "2026-01-02T03:04:05Z",
+	}
+	if fa.forkedFrom != nil {
+		fr.mu.Lock()
+		state := fa.forkStates[0]
+		if len(fa.forkStates) > 1 {
+			fa.forkStates = fa.forkStates[1:]
+		}
+		fr.mu.Unlock()
+		doc["visibility"] = "private"
+		doc["forkedFrom"] = fa.forkedFrom
+		if state != "" {
+			doc["forkState"] = state
+		}
+		if state == "failed" {
+			doc["forkDetail"] = fa.forkDetail
+		}
+	}
+	return doc
+}
 
 // addAgent registers an agent shell (no versions yet); modes is the
 // comma-separated run mode set the registry reports for it.

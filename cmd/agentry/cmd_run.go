@@ -24,6 +24,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/runnerimage"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 
 	"github.com/spf13/cobra"
 
@@ -95,8 +96,10 @@ type runOpts struct {
 	// voice and noVoice override the Writing Voice's always-attach flag
 	// for one run; voiceFile attaches a VOICE.md a driver names (plan
 	// writing-voice.md D5, D11).
-	voice, noVoice     bool
-	voiceFile          string
+	voice, noVoice bool
+	voiceFile      string
+	// reportTheme is --report-theme (agentry-cli#731).
+	reportTheme        string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
 	// sessionProtocol drives an interactive session from JSON-line commands
@@ -203,6 +206,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack to attach read-only at /knowledge/<name>, searched with the knowledge tools: a pack kept on this computer by NAME, or a pack DIRECTORY (repeatable)")
 	f.BoolVar(&opts.voice, "voice", false, "attach the Writing Voice kept on this computer even when it is not set to attach to every run")
 	f.BoolVar(&opts.noVoice, "no-voice", false, "do not attach the Writing Voice to this run")
+	f.StringVar(&opts.reportTheme, "report-theme", "", "the report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's when signed in, else report.theme in the config, else plain)")
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
@@ -240,6 +244,21 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
 	}
 	opts.guideShown = new(bool)
+	// The report theme is chosen before anything starts, so a name that is
+	// not a theme's refuses here (agentry-cli#731). A preview asks no
+	// account.
+	cfg, cerr := loadCLIConfig()
+	if cerr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; its report.theme is not read\n", cerr)
+	}
+	var account accountTheme
+	if !opts.plan && !opts.dryRun && !opts.prepare {
+		account = readAccountTheme(registryURL())
+	}
+	reportTheme, err := chooseReportTheme(cmd.Context(), opts.reportTheme, cfg, account, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
 	attached, detach, err := attachKnowledge(cmd, opts.knowledge)
 	if err != nil {
 		return err
@@ -305,6 +324,13 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 		integrity = integrityLocal
 		meta, installDir, err = materializeLocal(cmd, opts.local, home, matOpts.allowUnsigned)
+		// --pin holds a local directory to the digest it had when it was
+		// pinned (a schedule's, agentry-cli#747): an edited directory is
+		// another release and does not run in its place.
+		if err == nil && opts.pin != "" && meta.Digest != opts.pin {
+			err = engine.Classify(engine.ExitVerify,
+				fmt.Errorf("--pin mismatch: the directory %s is now %s, pin requires %s", opts.local, meta.Digest, opts.pin))
+		}
 	} else {
 		meta, installDir, err = materializeRegistry(cmd, ref, home, matOpts)
 		if err == nil && opts.plan {
@@ -606,6 +632,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		InputPaths:      opts.files,
 		Knowledge:       attached,
 		Voice:           attachedVoice,
+		ReportTheme:     reportTheme,
 		Intake:          answers,
 		Adapter:         ad,
 		Policy:          pol,
