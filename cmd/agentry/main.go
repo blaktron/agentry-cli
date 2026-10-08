@@ -111,6 +111,7 @@ func newRootCmd() *cobra.Command {
 		newSearchCmd(),
 		newInfoCmd(),
 		newYankCmd(),
+		newForkCmd(),
 		newRunnerToolsCmd(),
 		newRunnerConfineCmd(),
 	)
