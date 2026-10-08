@@ -243,16 +243,20 @@ func TestRefusalsEndTheCallWithASentenceNamingTheServer(t *testing.T) {
 	cases := []struct {
 		status    int
 		withToken bool
+		oauth     bool
 		want      string
 	}{
-		{http.StatusUnauthorized, true, "did not accept the credential the run sent (HTTP 401)"},
-		{http.StatusUnauthorized, false, "asks for a sign-in (HTTP 401), and this QuickAgent declares it with auth: none"},
-		{http.StatusForbidden, true, "refused the call with the credential the run sent (HTTP 403)"},
-		{http.StatusFound, true, "follows no redirect"},
-		{http.StatusInternalServerError, true, "answered 500 Internal Server Error"},
+		{http.StatusUnauthorized, true, false, "did not accept the credential the run sent (HTTP 401)"},
+		// An OAuth connection's token that expired during a hosted run
+		// (plan D13): the sentence names the connection, not a secret.
+		{http.StatusUnauthorized, true, true, "did not accept the access token of this run's connection to it (HTTP 401)"},
+		{http.StatusUnauthorized, false, false, "asks for a sign-in (HTTP 401), and this QuickAgent declares it with auth: none"},
+		{http.StatusForbidden, true, false, "refused the call with the credential the run sent (HTTP 403)"},
+		{http.StatusFound, true, false, "follows no redirect"},
+		{http.StatusInternalServerError, true, false, "answered 500 Internal Server Error"},
 	}
 	for _, c := range cases {
-		t.Run(fmt.Sprint(c.status, c.withToken), func(t *testing.T) {
+		t.Run(fmt.Sprint(c.status, c.withToken, c.oauth), func(t *testing.T) {
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if c.status == http.StatusFound {
 					http.Redirect(w, r, "https://elsewhere.example/mcp", http.StatusFound)
@@ -270,6 +274,7 @@ func TestRefusalsEndTheCallWithASentenceNamingTheServer(t *testing.T) {
 			}
 			var out, log lockedBuffer
 			b := newBridge(t, srv, tok, &out, &log)
+			b.cfg.OAuth = c.oauth
 			in := initLine + "\n" + `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"x"}}` + "\n"
 			if err := b.Serve(context.Background(), strings.NewReader(in)); err != nil {
 				t.Fatal(err)
