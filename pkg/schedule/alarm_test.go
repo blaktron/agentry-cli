@@ -4,10 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// unixAlarm skips a test of an alarm that writes Unix paths (systemd,
+// launchd) where the running system cannot call them absolute: those
+// alarms never run on Windows.
+func unixAlarm(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("a systemd or launchd entry names Unix paths; this alarm never runs on Windows")
+	}
+}
 
 func TestOnCalendar(t *testing.T) {
 	start := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
@@ -76,6 +87,7 @@ func goldenEntry() Entry {
 // Golden: the generated units hold the binary, the schedule id, paths and
 // the calendar, and nothing else (invariant 7).
 func TestSystemdUnitsGolden(t *testing.T) {
+	unixAlarm(t)
 	sc := sample(t)
 	sc.ID = "abcdefghij"
 	service, timer, err := SystemdUnits(sc, goldenEntry())
@@ -114,6 +126,7 @@ WantedBy=timers.target
 }
 
 func TestSystemdUnitsEscape(t *testing.T) {
+	unixAlarm(t)
 	sc := sample(t)
 	sc.ID = "abcdefghij"
 	sc.Name = "100% of it\n[Service]\nExecStart=/bin/sh"
@@ -146,6 +159,7 @@ func TestSystemdUnitsEscape(t *testing.T) {
 }
 
 func TestSystemdProbe(t *testing.T) {
+	unixAlarm(t)
 	var got []string
 	s := &Systemd{SystemdRun: func(args ...string) ([]byte, error) {
 		got = args
@@ -162,6 +176,7 @@ func TestSystemdProbe(t *testing.T) {
 }
 
 func TestSystemdInstallRemove(t *testing.T) {
+	unixAlarm(t)
 	var calls []string
 	s := &Systemd{Dir: filepath.Join(t.TempDir(), "user"), Systemctl: func(args ...string) error {
 		calls = append(calls, strings.Join(args, " "))

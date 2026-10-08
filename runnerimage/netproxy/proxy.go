@@ -179,6 +179,14 @@ func (p *Proxy) forwardPlain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.logf("allow http %s:%s", host, port)
+	// Full duplex: the upstream transport may still be reading the request
+	// body when the answer's first bytes are written back. Without it the
+	// server closes that body at the first write, the transport fails its
+	// next read and drops the upstream connection, and the answer is cut
+	// after its first event (agentry-cli#756). The proxy's own HTTP/1
+	// server supports it; a writer that does not is used as it is.
+	rc := http.NewResponseController(w)
+	_ = rc.EnableFullDuplex()
 	out := r.Clone(r.Context())
 	out.RequestURI = ""
 	out.Host = r.URL.Host
@@ -197,7 +205,6 @@ func (p *Proxy) forwardPlain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	rc := http.NewResponseController(w)
 	buf := make([]byte, 32<<10)
 	for {
 		n, rerr := resp.Body.Read(buf)

@@ -427,9 +427,9 @@ func TestPlainHTTPForwardedToAListedEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || string(body) != "data: 0\n\ndata: 1\n\ndata: 2\n\n" {
-		t.Fatalf("status %d body %q", resp.StatusCode, body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK || string(body) != "data: 0\n\ndata: 1\n\ndata: 2\n\n" {
+		t.Fatalf("status %d body %q, %v", resp.StatusCode, body, err)
 	}
 	if got.host != target || got.auth != "Bearer k" || got.body != `{"model":"m"}` {
 		t.Fatalf("upstream saw host=%q auth=%q body=%q", got.host, got.auth, got.body)
@@ -535,6 +535,62 @@ func TestPlainHTTPStreamsAsItArrives(t *testing.T) {
 	rest, _ := io.ReadAll(br)
 	if string(rest) != "\ndata: 1\n\n" {
 		t.Fatalf("rest = %q", rest)
+	}
+}
+
+// An answer that starts before the request has been read to its end is
+// relayed whole (agentry-cli#756): the proxy must not close the request
+// body under the upstream transport when it writes the answer's first
+// bytes, or the transport, failing to read the rest, drops the upstream
+// connection and cuts the answer after its first event. Here the client
+// sends the rest of its body only after it has read the first event, so
+// a proxy that is not full duplex never gets past it.
+func TestPlainHTTPAnswerMayStartBeforeTheRequestEnds(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := http.NewResponseController(w).EnableFullDuplex(); err != nil {
+			t.Errorf("upstream full duplex: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: 0\n\n")
+		w.(http.Flusher).Flush()
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			return
+		}
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+	}))
+	t.Cleanup(upstream.Close)
+	target := strings.TrimPrefix(upstream.URL, "http://")
+	addr := startProxy(t, &Proxy{Allow: []string{target}, PlainHTTP: []string{target}})
+	// The rest of the body goes once the first event is read, or after 3s,
+	// so a proxy that cuts the answer fails the test rather than hang it.
+	pr, pw := io.Pipe()
+	firstRead := make(chan struct{})
+	go func() {
+		_, _ = io.WriteString(pw, `{"model":`)
+		select {
+		case <-firstRead:
+		case <-time.After(3 * time.Second):
+		}
+		_, _ = io.WriteString(pw, `"m"}`)
+		_ = pw.Close()
+	}()
+	req, _ := http.NewRequest(http.MethodPost, upstream.URL+"/v1/chat/completions", pr)
+	resp, err := plainClient(t, addr).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	br := bufio.NewReader(resp.Body)
+	first, err := br.ReadString('\n')
+	close(firstRead)
+	if err != nil || first != "data: 0\n" {
+		t.Fatalf("first event %q, %v", first, err)
+	}
+	rest, err := io.ReadAll(br)
+	if err != nil || string(rest) != "\ndata: {\"model\":\"m\"}\n\n" {
+		t.Fatalf("rest = %q, %v: the answer was cut", rest, err)
 	}
 }
 

@@ -61,10 +61,11 @@ func newScheduleCmd() *cobra.Command {
 			"Everything a run needs (the model key in the keychain, the secrets, the\n" +
 			"connections, Docker, the output folder) is checked when it is made.\n\n" +
 			"The schedule is kept under the runner home; the system's own scheduler\n" +
-			"(on Linux a systemd user timer) wakes `agentry schedule fire`. Schedules\n" +
-			"run while you are signed in to this computer. An occurrence missed while\n" +
-			"the computer was off runs once when it is back, if that is before the next\n" +
-			"one; otherwise it is recorded as missed.\n\n" +
+			"(a systemd user timer on Linux, a LaunchAgent on macOS, a Task Scheduler\n" +
+			"task on Windows) wakes `agentry schedule fire`. Schedules run while you\n" +
+			"are signed in to this computer, and never wake it. An occurrence missed\n" +
+			"while the computer was off, asleep or signed out runs once when it is\n" +
+			"back, if that is before the next one; otherwise it is recorded as missed.\n\n" +
 			"  agentry schedule add acme/digest --daily 09:00 --out ~/reports\n" +
 			"  agentry schedule add acme/digest --weekly tue --at 22:00 --out ~/reports\n" +
 			"  agentry schedule add acme/digest --once \"2026-10-20 08:00\" --out ~/reports",
@@ -350,7 +351,7 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	}
 	next, _ := sc.When.Next(now)
 	if flags.jsonOut {
-		return emitJSON(cmd.OutOrStdout(), scheduleView(store, sc, now))
+		return emitJSON(cmd.OutOrStdout(), scheduleView(store, sc, now, installedAlarms()))
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "scheduled %s (%s@%s): %s\nnext run %s\nschedule id %s\n",
 		sc.Name, sc.Ref, sc.Version, sc.When.Describe(), fmtWhen(next, sc.When.Zone), sc.ID)
@@ -684,26 +685,81 @@ func probeGaps(sc schedule.Schedule) []string {
 }
 
 func newScheduleProbeCmd() *cobra.Command {
-	var policyPath string
+	var (
+		policyPath string
+		report     string
+		env        []string
+	)
 	cmd := &cobra.Command{
 		Use:    "probe",
 		Short:  "Check, where a fire runs, that Docker and the model key are reachable",
 		Args:   cobra.NoArgs,
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			gaps := schedulerContextGaps(cmd, policyPath)
+			// Every outcome reaches the report: an alarm waiting for it
+			// would otherwise wait out its time and blame the scheduler.
+			var gaps []string
+			if err := applyAlarmEnv(env); err != nil {
+				gaps = []string{err.Error()}
+			} else {
+				gaps = schedulerContextGaps(cmd, policyPath)
+			}
+			var b strings.Builder
 			for _, g := range gaps {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "gap: "+g)
+				b.WriteString("gap: " + g + "\n")
+			}
+			if len(gaps) == 0 {
+				b.WriteString("ok\n")
+			}
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), b.String())
+			if report != "" {
+				// launchd and Task Scheduler pipe nothing back: the alarm
+				// waits for this file, written whole.
+				if err := writeReport(report, b.String()); err != nil {
+					return err
+				}
 			}
 			if len(gaps) > 0 {
 				return &exitError{code: engine.ExitPolicy, err: errors.New("a scheduled run would not have what it needs here")}
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "ok")
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file")
+	cmd.Flags().StringVar(&report, "report", "", "also write the result to FILE")
+	bindAlarmEnv(cmd, &env)
 	return cmd
+}
+
+// bindAlarmEnv adds --env KEY=VALUE, the environment a Task Scheduler
+// entry carries as arguments because a task cannot set it.
+func bindAlarmEnv(cmd *cobra.Command, env *[]string) {
+	cmd.Flags().StringArrayVar(env, "env", nil, "set KEY=VALUE in this process first (what the system's scheduler could not set)")
+}
+
+// applyAlarmEnv sets an entry's environment in this process, before
+// anything reads it.
+func applyAlarmEnv(env []string) error {
+	for _, kv := range env {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			return fmt.Errorf("--env %q is not KEY=VALUE", kv)
+		}
+		if err := os.Setenv(k, v); err != nil {
+			return fmt.Errorf("--env %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
+// writeReport writes a probe's result to path in one rename, so the alarm
+// waiting for it never reads half of it.
+func writeReport(path, text string) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(text), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // schedulerContextGaps is the probe's check: the docker daemon answers,
@@ -787,15 +843,21 @@ func hostCarriesPassword(addr string) bool {
 }
 
 func newScheduleFireCmd() *cobra.Command {
-	return &cobra.Command{
+	var env []string
+	cmd := &cobra.Command{
 		Use:    "fire <id>",
 		Short:  "Run a schedule's occurrence if one is due (what the system's scheduler calls)",
 		Args:   cobra.ExactArgs(1),
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := applyAlarmEnv(env); err != nil {
+				return err
+			}
 			return scheduleFire(cmd, args[0])
 		},
 	}
+	bindAlarmEnv(cmd, &env)
+	return cmd
 }
 
 // scheduleFire is one alarm ring: re-read the store, record what was
@@ -1000,17 +1062,39 @@ func newScheduleRunCmd() *cobra.Command {
 // scheduleViewJSON is one schedule as list and show report it.
 type scheduleViewJSON struct {
 	schedule.Schedule
-	Describe string          `json:"describe"`
-	Next     *time.Time      `json:"next,omitempty"`
-	Ended    bool            `json:"ended,omitempty"`
-	Runs     int             `json:"runs,omitempty"`
-	Alarm    bool            `json:"alarm"`
-	Last     *schedule.Fire  `json:"lastFire,omitempty"`
-	Upcoming []time.Time     `json:"upcoming,omitempty"`
-	Fires    []schedule.Fire `json:"fires,omitempty"`
+	Describe string     `json:"describe"`
+	Next     *time.Time `json:"next,omitempty"`
+	Ended    bool       `json:"ended,omitempty"`
+	Runs     int        `json:"runs,omitempty"`
+	Alarm    bool       `json:"alarm"`
+	// AlarmUnknown: the system's scheduler could not be asked, so Alarm
+	// says nothing.
+	AlarmUnknown bool            `json:"alarmUnknown,omitempty"`
+	Last         *schedule.Fire  `json:"lastFire,omitempty"`
+	Upcoming     []time.Time     `json:"upcoming,omitempty"`
+	Fires        []schedule.Fire `json:"fires,omitempty"`
 }
 
-func scheduleView(store schedule.Store, sc schedule.Schedule, now time.Time) scheduleViewJSON {
+// installedAlarms is the ids the system's scheduler holds an entry for,
+// read once per command (on Windows each read is a schtasks query); nil,
+// not empty, when the scheduler cannot say.
+func installedAlarms() map[string]bool {
+	alarm, err := scheduleAlarm()
+	if err != nil {
+		return nil
+	}
+	ids, err := alarm.Installed()
+	if err != nil {
+		return nil
+	}
+	have := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		have[id] = true
+	}
+	return have
+}
+
+func scheduleView(store schedule.Store, sc schedule.Schedule, now time.Time, alarms map[string]bool) scheduleViewJSON {
 	v := scheduleViewJSON{Schedule: sc, Describe: sc.When.Describe()}
 	st, _ := store.State(sc.ID)
 	v.Ended = st.Ended || sc.When.Remaining(st.Runs) == 0
@@ -1023,10 +1107,8 @@ func scheduleView(store schedule.Store, sc schedule.Schedule, now time.Time) sch
 	if fires, _ := store.Fires(sc.ID, 1); len(fires) == 1 {
 		v.Last = &fires[0]
 	}
-	if alarm, err := scheduleAlarm(); err == nil {
-		ids, _ := alarm.Installed()
-		v.Alarm = slices.Contains(ids, sc.ID)
-	}
+	v.Alarm = alarms[sc.ID]
+	v.AlarmUnknown = alarms == nil
 	return v
 }
 
@@ -1048,9 +1130,10 @@ func newScheduleListCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", b)
 			}
 			now := scheduleNow()
+			alarms := installedAlarms()
 			views := make([]scheduleViewJSON, 0, len(list))
 			for _, sc := range list {
-				views = append(views, scheduleView(store, sc, now))
+				views = append(views, scheduleView(store, sc, now, alarms))
 			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), views)
@@ -1075,6 +1158,8 @@ func nextLabel(v scheduleViewJSON) string {
 		return "paused"
 	case v.Ended || v.Next == nil:
 		return "ended"
+	case v.AlarmUnknown:
+		return fmtWhen(*v.Next, v.When.Zone) + " (the system's scheduler could not be asked for its alarm)"
 	case !v.Alarm:
 		return fmtWhen(*v.Next, v.When.Zone) + " (no alarm: run `agentry schedule sync`)"
 	}
@@ -1107,7 +1192,7 @@ func newScheduleShowCmd() *cobra.Command {
 				return err
 			}
 			now := scheduleNow()
-			v := scheduleView(store, sc, now)
+			v := scheduleView(store, sc, now, installedAlarms())
 			if !v.Ended && !sc.Paused {
 				n := 5
 				if left := sc.When.Remaining(v.Runs); left >= 0 {
@@ -1382,7 +1467,7 @@ func fmtWhen(t time.Time, zone string) string {
 }
 
 func expandHome(p string) string {
-	if p == "~" || strings.HasPrefix(p, "~/") {
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~"+string(filepath.Separator)) {
 		if h, err := os.UserHomeDir(); err == nil {
 			return filepath.Join(h, strings.TrimPrefix(p, "~"))
 		}

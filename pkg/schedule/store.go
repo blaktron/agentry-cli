@@ -117,7 +117,10 @@ type Store struct{ Dir string }
 // StoreIn is the store under a runner home.
 func StoreIn(runnerHome string) Store { return Store{Dir: filepath.Join(runnerHome, "schedules")} }
 
-var idPattern = regexp.MustCompile(`^[a-z0-9]{10}$`)
+// idExpr is a schedule id: what newID draws.
+const idExpr = `[a-z0-9]{10}`
+
+var idPattern = regexp.MustCompile(`^` + idExpr + `$`)
 
 // ValidID reports whether id is a schedule id; every path and every OS
 // entry name is built from one, so nothing else may reach them.

@@ -852,19 +852,36 @@ The schedule lives in the runner home under `schedules/<id>/`:
   or missed;
 - `task.txt`, the task, when given with `--task`.
 
-None of these files holds a credential. On Linux, each schedule has a
-systemd user timer and service, `~/.config/systemd/user/agentry-schedule-<id>.{timer,service}`.
-They hold this binary's absolute path and `PATH` and `AGENTRY_DOCKER` as
-they were when written, and they run `agentry schedule fire <id>`.
+None of these files holds a credential. Each schedule has one entry in
+the system's own scheduler, which runs `agentry schedule fire <id>`. The
+entry holds this binary's absolute path and `PATH` and `AGENTRY_DOCKER`
+as they were when it was written:
+- **Linux:** a systemd user timer and service,
+  `~/.config/systemd/user/agentry-schedule-<id>.{timer,service}`.
+- **macOS:** a LaunchAgent in your GUI session,
+  `~/Library/LaunchAgents/net.secureagentry.schedule.<id>.plist`. Making
+  one needs you signed in to the Mac's desktop, not only over SSH.
+- **Windows:** a Task Scheduler task, `\Agentry\agentry-schedule-<id>` (in
+  the root folder where you may not make `\Agentry\`). It runs as you, only
+  while you are logged on, through `conhost --headless`, so no console
+  window opens. A task cannot set its program's environment, so the
+  pinned paths travel as `--env` arguments.
+
+launchd and Task Scheduler keep only this computer's local time, so their
+entries ring on every local time the schedule's own occurrences fall on
+(a schedule in another zone, a month's last day, the daylight-saving
+changes), and fire runs only what is due.
 
 Fire re-reads the store, so a paused, ended or removed schedule does
 nothing. A run that fails is recorded and not retried. Schedules run while
-you are signed in. The timer is `Persistent=true`: an occurrence missed
-while the computer was off runs once at the next boot, if no later
-occurrence fell due first; otherwise it is recorded as missed.
-`agentry schedule sync` rewrites every timer from the store and removes
-any timer that has no schedule. Windows and macOS follow in
-agentry-cli#748.
+you are signed in, and never wake the computer. An occurrence missed while
+the computer was off, asleep or signed out runs once when it is back, if no
+later occurrence fell due first; otherwise it is recorded as missed. What
+rings for it then is the system's own catch-up: `Persistent=true` on Linux,
+the agent's run at sign-in on macOS, a logon trigger and "start when
+available" on Windows. `agentry schedule list` and `show` mark a schedule
+whose entry is missing, and `agentry schedule sync` rewrites every entry
+from the store and removes any entry that has no schedule.
 
 ### Signing keys and `verify`
 
