@@ -319,6 +319,10 @@ type pdfMeta struct {
 	// Date is the day of the render (UTC, YYYY-MM-DD), for a theme's cover
 	// page: the same in every language.
 	Date string `json:"date"`
+	// Titled says the title is the report's own first heading, not its
+	// file's name: a cover page is drawn only for a titled report, since a
+	// file name on a title page is worse than none (agentry-cli#731).
+	Titled bool `json:"titled"`
 }
 
 var (
@@ -593,7 +597,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if title == "" {
 		title = strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 	}
-	meta, err := json.Marshal(pdfMeta{Title: title, Author: s.spec.PDF.Author, Images: images, Date: time.Now().UTC().Format(time.DateOnly)})
+	meta, err := json.Marshal(pdfMeta{Title: title, Author: s.spec.PDF.Author, Images: images, Date: time.Now().UTC().Format(time.DateOnly), Titled: doc.title != ""})
 	if err != nil {
 		return s.renderFailed(err)
 	}

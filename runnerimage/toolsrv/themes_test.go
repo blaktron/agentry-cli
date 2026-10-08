@@ -146,6 +146,21 @@ func TestExportPDFKeepsALettersLines(t *testing.T) {
 	}
 }
 
+// TestRealRenderACoverNeedsATitle: Formal draws its cover only for a report with a
+// heading of its own; a report without one, whose title is its file's name,
+// starts on its first page (found live on dev, agentry-cli#731).
+func TestRealRenderACoverNeedsATitle(t *testing.T) {
+	for _, c := range []struct {
+		md    string
+		pages int
+	}{{"# A titled report\n\nOne line.\n", 2}, {"Dear Dana,\n\nOne line.\n", 1}} {
+		_, pdf := realExportIn(t, "formal", c.md, nil)
+		if got := pdfPages(pdf); got != c.pages {
+			t.Errorf("%q drew %d pages under formal, want %d", c.md, got, c.pages)
+		}
+	}
+}
+
 // TestRealRenderEveryTheme (agentry-cli#731's acceptance): each built-in
 // theme renders the sample, every script in it, as a tagged PDF; and drawn
 // as images, no page puts ink in its left or right margin, so a long line,
@@ -211,7 +226,7 @@ func renderPNGs(t *testing.T, typst typstFiles, theme *Theme, themeDoc []byte, s
 		t.Fatal(err)
 	}
 	doc := reportMarkdown(src, theme)
-	meta, err := json.Marshal(pdfMeta{Title: doc.title, Author: "acme/demo@1.2.3", Images: map[string]pdfImage{}, Date: "2026-10-08"})
+	meta, err := json.Marshal(pdfMeta{Title: doc.title, Author: "acme/demo@1.2.3", Images: map[string]pdfImage{}, Date: "2026-10-08", Titled: doc.title != ""})
 	if err != nil {
 		t.Fatal(err)
 	}
