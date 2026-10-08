@@ -396,6 +396,11 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	if err := stampOwner(filepath.Join(dir, "toolspec.json")); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
 	}
+	if filterSupported {
+		if err := stampBoundedTmpfs(filepath.Join(dir, "toolspec.json")); err != nil {
+			return Classify(ExitCLI, fmt.Errorf("stamp the bounded tmpfs into toolspec: %w", err))
+		}
+	}
 	if err := grantKnowledge(dir, gwRep.Replace(spec.PHKnowledge), p.Knowledge); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("grant the knowledge tools: %w", err))
 	}
@@ -1281,6 +1286,31 @@ func stampOwner(specPath string) error {
 		return err
 	}
 	return os.WriteFile(specPath, append(out, '\n'), 0o644)
+}
+
+// stampBoundedTmpfs tells the tools server, in the run's own copy of its
+// spec, the size the run's docker filter caps its /tmp and scratch folder
+// at (toolsTmpfs), so it refuses to serve without them, or with larger
+// ones (agentry-cli#599, #729). Only where the filter runs: the plan is the
+// same bytes on every host.
+func stampBoundedTmpfs(specPath string) error {
+	b, err := os.ReadFile(specPath) //nolint:gosec // our own rendered config
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return err
+	}
+	doc["tmpfsBytes"] = spec.ToolsTmpfsBytes
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(specPath, append(out, '\n'), 0o644) //nolint:gosec // read by the tools container
 }
 
 // keyringLookup reads a keychain account (spec.EnvVar.FromKeyring); a seam

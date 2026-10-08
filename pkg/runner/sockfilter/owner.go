@@ -222,6 +222,22 @@ func (f *Filter) webImage(ctx context.Context) (string, error) {
 	return id, nil
 }
 
+// toolsImage is the tools server's image id (Config.ToolsImage), resolved
+// and kept as webImage is.
+func (f *Filter) toolsImage(ctx context.Context) (string, error) {
+	f.webMu.Lock()
+	defer f.webMu.Unlock()
+	if f.toolsImageID != "" {
+		return f.toolsImageID, nil
+	}
+	id, err := f.resolveImage(ctx, f.cfg.ToolsImage)
+	if err != nil {
+		return "", err
+	}
+	f.toolsImageID = id
+	return id, nil
+}
+
 // relayPin is the pinned relay digest an image, by id, is, or "" when it
 // is none of any egress network's relays. The pin names the relay's kind
 // (docker/mcp-l4proxy or docker/mcp-l7proxy), which fixes the settings it

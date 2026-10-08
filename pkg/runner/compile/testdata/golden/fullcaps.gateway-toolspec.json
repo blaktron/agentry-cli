@@ -1,9 +1,10 @@
 {
-  "specVersion": "7",
+  "specVersion": "8",
   "workspaceDir": "/workspace",
   "outDir": "/out",
   "inputsDir": "/inputs",
   "inputsTextDir": "/inputs-text",
+  "scratchDir": "/scratch",
   "fsRead": {
     "enabled": true
   },

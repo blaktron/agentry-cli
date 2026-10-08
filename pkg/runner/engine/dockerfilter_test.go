@@ -301,3 +301,49 @@ func TestARunWhoseToolsServerDidNotStartFails(t *testing.T) {
 		}
 	}
 }
+
+// TestTheToolsServerIsGivenItsBoundedTmpfs (agentry-cli#599, #729): the
+// filter is told the tools server's image (the exec image when the plan has
+// one) and mounts its /tmp for every plan and its scratch folder when the
+// plan grants one, each a 256 MiB tmpfs anyone may write.
+func TestTheToolsServerIsGivenItsBoundedTmpfs(t *testing.T) {
+	plan := &spec.Plan{Proxy: spec.ProxySpec{Image: "agentry-runner:test"}}
+	want := "size=268435456,mode=1777"
+	if got := toolsTmpfs(plan); len(got) != 1 || got["/tmp"] != want {
+		t.Fatalf("a built-in's tools server gets %v", got)
+	}
+	if plan.ToolsImage() != "agentry-runner:test" {
+		t.Fatalf("tools image %q", plan.ToolsImage())
+	}
+	plan.Capabilities.Scratch = true
+	plan.ExecImage = &spec.ExecImageSpec{Tag: "agentry-runner-exec:abc"}
+	if got := toolsTmpfs(plan); len(got) != 2 || got["/tmp"] != want || got["/scratch"] != want {
+		t.Fatalf("a release's tools server gets %v", got)
+	}
+	if plan.ToolsImage() != "agentry-runner-exec:abc" {
+		t.Fatalf("tools image %q, want the exec image", plan.ToolsImage())
+	}
+}
+
+// TestTheRunsToolSpecSaysItsTmpfsIsBounded: where the docker filter runs,
+// the run's own tools spec says so, and the tools role then refuses to
+// serve without the tmpfs; the compiled plan's copy is not touched.
+func TestTheRunsToolSpecSaysItsTmpfsIsBounded(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "toolspec.json")
+	if err := os.WriteFile(p, []byte(`{"specVersion":"8","scratchDir":"/scratch"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := stampBoundedTmpfs(p); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"tmpfsBytes": 268435456`) || !strings.Contains(string(b), `"scratchDir": "/scratch"`) {
+		t.Fatalf("stamped spec = %s", b)
+	}
+	if err := stampBoundedTmpfs(filepath.Join(t.TempDir(), "absent.json")); err != nil {
+		t.Fatalf("a plan without a tools server: %v", err)
+	}
+}

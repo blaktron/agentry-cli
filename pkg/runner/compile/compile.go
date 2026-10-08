@@ -182,6 +182,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.ReviewTools = true
 	}
+	// The scratch folder is the runner's grant to every release's run and
+	// session, never a line of the contract; the built-ins keep their own
+	// fixed surfaces (plan scratch-and-pdf-reports.md D2, D5).
+	caps.Scratch = in.Source != "builtin"
 	instructionPath, body, err := deriveInstruction(m, in.WorkspaceDir)
 	if err != nil {
 		return nil, err
@@ -768,6 +772,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// engine decodes a run's inputs before the agent starts, and
 		// mounts an empty directory when there were none.
 		InputsTextDir: spec.InputsTextMount,
+		ScratchDir:    scratchDir(caps),
 		FSRead: toolsrv.Access{
 			Enabled: caps.FSReadMode != "none",
 			Paths:   caps.FSReadPaths,
@@ -790,6 +795,15 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// run.
 		Review: toolsrv.Review{Enabled: caps.ReviewTools},
 	}
+}
+
+// scratchDir is the tools spec's scratch folder: the mount when the plan
+// grants it, empty otherwise.
+func scratchDir(caps spec.CapSummary) string {
+	if caps.Scratch {
+		return spec.ScratchMount
+	}
+	return ""
 }
 
 // GatewayConfigDir is where the rendered gateway files are mounted inside
@@ -1263,7 +1277,7 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	e.set("title", strNode("QuickAgent Tools"))
 	e.set("type", strNode("server"))
 	e.set("image", strNode(runnerImage))
-	e.set("command", strListNode([]string{"tools", "--spec", spec.ToolSpecMount}))
+	e.set("command", strListNode(spec.ToolsCmd()))
 	e.set("longLived", boolNode(true))
 
 	vols := []string{spec.PHCfg + "/gateway/toolspec.json:" + spec.ToolSpecMount + ":ro"}
@@ -1453,7 +1467,12 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	}
 	e["filesystem"] = "read " + fsDesc(caps.FSReadMode, caps.FSReadPaths) +
 		"; write " + fsDesc(caps.FSWriteMode, caps.FSWritePaths) +
-		" — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks"
+		" — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; " +
+		fmt.Sprintf("on Linux the run's docker filter mounts the tools container's %s as a %d MiB tmpfs and the tools server refuses to serve without it; under Docker Desktop (macOS, Windows), which runs no filter, it is the container's own layer, unbounded", spec.ToolsTmpMount, spec.ToolsTmpfsBytes>>20)
+	if caps.Scratch {
+		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a %d MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
+			toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
+	}
 	if len(caps.ExecCommands) == 0 {
 		e["exec"] = "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled"
 	} else {

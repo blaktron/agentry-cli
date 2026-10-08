@@ -120,7 +120,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 	var webCmd []string
 	if plan.Capabilities.WebTools {
 		webNet, webImage = webNetwork(runID), plan.Proxy.Image
-		webCmd = []string{"tools", "--spec", spec.ToolSpecMount}
+		webCmd = spec.ToolsCmd()
 		webSpec = filepath.Join(rd.cfg, "gateway", "toolspec.json")
 		if len(plan.WebResolvers()) > 0 {
 			webResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
@@ -152,6 +152,9 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		WebSpecTarget:   spec.ToolSpecMount,
 		WebResolvConf:   webResolv,
 		RelayResolvConf: relayResolv,
+		ToolsImage:      plan.ToolsImage(),
+		ToolsCmd:        spec.ToolsCmd(),
+		ToolsTmpfs:      toolsTmpfs(plan),
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
@@ -165,6 +168,19 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		return nil, "", Classify(ExitGateway, fmt.Errorf("start the gateway's docker filter: %w", err))
 	}
 	return f, sock, nil
+}
+
+// toolsTmpfs is what the docker filter mounts into the tools server: its
+// /tmp always (agentry-cli#599), and the scratch folder when the plan
+// grants it (agentry-cli#729), each a tmpfs of spec.ToolsTmpfsBytes that
+// anyone may write (a declared command may run as nobody).
+func toolsTmpfs(plan *spec.Plan) map[string]string {
+	opts := fmt.Sprintf("size=%d,mode=1777", spec.ToolsTmpfsBytes)
+	m := map[string]string{spec.ToolsTmpMount: opts}
+	if plan.Capabilities.Scratch {
+		m[spec.ScratchMount] = opts
+	}
+	return m
 }
 
 // gatewayOwnerLabel marks what the gateway made through its filter, and so

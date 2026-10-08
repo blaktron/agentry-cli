@@ -46,6 +46,7 @@ agents:
 
       - **Network.** Only through fetch, and only to these hosts: api.example.com, api.other.net. Every other address is refused. There is no web search.
       - **Workspace.** fs_list and fs_read read the workspace at /workspace; fs_write writes only these paths of the workspace at /workspace: notes/summary.md, reports.
+      - **Scratch folder.** /scratch is yours for notes and working files: scratch_write writes there, scratch_list and scratch_read read it back. It starts empty, is private to this run and is deleted when the run ends, so nothing in it reaches the person: the result goes through write_report.
       - **Commands.** run_command can call only these commands, each with a time limit and its output capped: git, jq. Its own description says how they run.
       - **Credentials.** This run is granted these secrets, by name: EXAMPLE_TOKEN. You never see a value. fetch injects one into a request through its auth parameter. Never ask for, print or guess a credential.
 

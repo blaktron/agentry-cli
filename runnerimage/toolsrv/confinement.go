@@ -55,11 +55,14 @@ type confinement struct {
 // chooseConfinement picks the confinement for spec on this machine: goos,
 // what Landlock answered, this process's euid, and the executable that
 // serves the confine role.
-func chooseConfinement(spec *Spec, goos string, abi int, abiErr error, euid int, exe string, scratch string) confinement {
+func chooseConfinement(spec *Spec, goos string, abi int, abiErr error, euid int, exe string, tmp string) confinement {
 	if goos != "linux" {
 		return confinement{none: true}
 	}
-	writable := []string{scratch}
+	writable := []string{tmp}
+	if spec.ScratchDir != "" {
+		writable = append(writable, spec.ScratchDir)
+	}
 	if spec.FSWrite.Enabled {
 		writable = append(writable, spec.WorkspaceDir)
 	}

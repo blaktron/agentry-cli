@@ -127,6 +127,17 @@ type Config struct {
 	// (agentry-cli#346), each "host" (ports 443 and 80), "host:port",
 	// "*.domain" or "*". Empty admits no relay.
 	RelayHosts []string
+	// ToolsImage and ToolsCmd name the run's tools server: the image it
+	// runs in, by reference (resolved to its id when first needed, as
+	// WebImage is), and the one command it runs with. ToolsTmpfs is what
+	// the filter mounts into that container and no other, target to
+	// options: its /tmp and scratch folder as size-capped tmpfs
+	// (agentry-cli#599, #729), since the gateway's catalog cannot ask for
+	// one. A tools server whose request names anything at or beneath one
+	// of those targets is refused. Empty adds nothing.
+	ToolsImage string
+	ToolsCmd   []string
+	ToolsTmpfs map[string]string
 	// Limits bound every container created through the filter: a request
 	// asking for more is refused, one asking for none gets these.
 	Limits Limits
@@ -160,9 +171,12 @@ type Filter struct {
 	proxy    *httputil.ReverseProxy
 
 	// webImageID is WebImage resolved on the first check that needs it
-	// (webImage), and kept once it resolved.
+	// (webImage), and kept once it resolved. webMu guards it and
+	// toolsImageID.
 	webImageID string
 	webMu      sync.Mutex
+	// toolsImageID is ToolsImage resolved the same way, under webMu too.
+	toolsImageID string
 
 	mu      sync.Mutex
 	execs   map[string]bool
