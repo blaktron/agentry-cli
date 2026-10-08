@@ -12,3 +12,4 @@ agentry-tools:
   - scratch_read
   - scratch_write
   - write_report
+  - export_pdf

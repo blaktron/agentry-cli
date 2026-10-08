@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // Role is the runner binary's argument that runs Trampoline.
@@ -51,24 +52,76 @@ func Trampoline(args []string) {
 	os.Exit(ExitFailed)
 }
 
-// Main is the trampoline: `confine --write DIR [--write DIR …] -- PROGRAM
-// [ARG …]`. It confines this process to writing beneath each DIR and then
-// execs PROGRAM with ARGs and this process's environment. It returns only
-// on failure, and never runs PROGRAM unconfined.
+// Options is what the trampoline holds a program to.
+type Options struct {
+	// Writable are the directories the program may write beneath (with
+	// /dev/null), by Landlock.
+	Writable []string
+	// MaxMemory, when set, is the program's address-space limit in bytes
+	// (RLIMIT_AS): an allocation past it fails.
+	MaxMemory uint64
+	// NoNetwork refuses the program every TCP bind and connect where
+	// Landlock can (ABI 4 and later); on an older ABI it is not refused,
+	// which NetworkDenied tells the caller beforehand.
+	NoNetwork bool
+	// LimitsOnly applies MaxMemory and no_new_privs and no Landlock: the
+	// caller holds the program's writes another way, by starting it as a
+	// user that owns nothing it must not write. For a machine without
+	// Landlock (gVisor).
+	LimitsOnly bool
+}
+
+// Main is the trampoline: `confine [--write DIR …] [--max-memory BYTES]
+// [--no-network] -- PROGRAM [ARG …]`, or `confine --limits-only
+// [--max-memory BYTES] -- PROGRAM [ARG …]`. It confines this process to
+// writing beneath each DIR, with the limits, and then execs PROGRAM with
+// ARGs and this process's environment. It returns only on failure, and
+// never runs PROGRAM with less than it was told.
 func Main(args []string, env []string) error {
-	var dirs []string
+	const usage = "confine: usage: confine [--write DIR …] [--max-memory BYTES] [--no-network] -- PROGRAM [ARG …], or confine --limits-only [--max-memory BYTES] -- PROGRAM [ARG …]"
+	var o Options
 	for len(args) > 0 && args[0] != "--" {
-		if args[0] != "--write" || len(args) < 2 {
-			return fmt.Errorf("confine: usage: confine --write DIR [--write DIR …] -- PROGRAM [ARG …]")
+		switch args[0] {
+		case "--write":
+			if len(args) < 2 {
+				return errors.New(usage)
+			}
+			if !filepath.IsAbs(args[1]) {
+				return fmt.Errorf("confine: --write %q must be an absolute path", args[1])
+			}
+			o.Writable = append(o.Writable, args[1])
+			args = args[2:]
+		case "--max-memory":
+			if len(args) < 2 {
+				return errors.New(usage)
+			}
+			n, err := strconv.ParseUint(args[1], 10, 64)
+			if err != nil || n == 0 {
+				return fmt.Errorf("confine: --max-memory %q must be a positive number of bytes", args[1])
+			}
+			o.MaxMemory = n
+			args = args[2:]
+		case "--no-network":
+			o.NoNetwork = true
+			args = args[1:]
+		case "--limits-only":
+			o.LimitsOnly = true
+			args = args[1:]
+		default:
+			return errors.New(usage)
 		}
-		if !filepath.IsAbs(args[1]) {
-			return fmt.Errorf("confine: --write %q must be an absolute path", args[1])
-		}
-		dirs = append(dirs, args[1])
-		args = args[2:]
+	}
+	if o.LimitsOnly && (len(o.Writable) > 0 || o.NoNetwork) {
+		return errors.New("confine: --limits-only applies no Landlock, so it takes neither --write nor --no-network")
 	}
 	if len(args) < 2 {
 		return errors.New("confine: a program after -- is required")
 	}
-	return Exec(dirs, args[1], args[1:], env)
+	return ExecWith(o, args[1], args[1:], env)
+}
+
+// Exec confines this process to writing beneath dirs (and to /dev/null),
+// then replaces it with path, argv and env. It returns only on failure.
+func Exec(dirs []string, path string, argv, env []string) error {
+	return ExecWith(Options{Writable: dirs}, path, argv, env)
 }

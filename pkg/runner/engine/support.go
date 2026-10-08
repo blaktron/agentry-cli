@@ -65,6 +65,11 @@ type runDirs struct {
 	// (blocked.go), made as webLedger is: a ledger an earlier run left in
 	// a reused output folder never stands for this one's.
 	callsLedger string
+	// pdfLedger is receipts/pdfs.ndjson for a run granted export_pdf
+	// (pdf.go), made as webLedger is, and pdfTheme the theme stamped into
+	// the run's tools spec, for the receipt.
+	pdfLedger string
+	pdfTheme  *toolsrv.ThemeStamp
 	// web says the run has the web tools, and runID names it, for the
 	// receipt's daemon line.
 	web   bool
@@ -304,6 +309,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		}
 		_ = f.Close()
 	}
+	if slices.Contains(p.Plan.Tools, toolsrv.ToolExportPDF) {
+		rd.pdfLedger = filepath.Join(rd.receiptsDir, PDFLedgerFile)
+		_ = os.Remove(rd.pdfLedger)
+		f, err := os.OpenFile(rd.pdfLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the PDF ledger: %w", err))
+		}
+		_ = f.Close()
+	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
 	}
@@ -417,6 +431,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 		if err := grantCalls(dir); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("configure the calls ledger: %w", err))
 		}
+	}
+	if err := grantPDF(dir, p.Plan, rd); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure export_pdf: %w", err))
 	}
 	if err := writeResolvConf(dir, p.Plan); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
@@ -928,11 +945,15 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 
 // relabelTargetsFor adds the ledgers a run has, the only files of the
 // receipts the tools server appends to: the web tools' (web.go), the
-// review's (review.go) and the calls ledger (blocked.go).
+// review's (review.go), the calls ledger (blocked.go) and the PDF ledger
+// (pdf.go).
 func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	t := relabelTargets(rd)
 	if rd.callsLedger != "" {
 		t = append(t, relabelTarget{rd.callsLedger, false})
+	}
+	if rd.pdfLedger != "" {
+		t = append(t, relabelTarget{rd.pdfLedger, false})
 	}
 	if rd.webLedger != "" {
 		t = append(t, relabelTarget{rd.webLedger, false})

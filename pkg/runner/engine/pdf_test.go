@@ -1,0 +1,104 @@
+package engine
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+)
+
+func sha(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// TestTheReceiptNamesTheTheme (plan scratch-and-pdf-reports.md §3
+// invariants 9 and 10, D15, D19; agentry-cli#730): a release's run gets
+// export_pdf's run-time half in its own tools spec (the theme, verbatim,
+// the release as the author, the ledger), and its receipt names the theme
+// by name, version and SHA-256 and each exported PDF whose bytes are still
+// the recorded ones, the last record of a path exported twice; a PDF
+// changed after its export, or gone, is not named.
+func TestTheReceiptNamesTheTheme(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	reports := filepath.Join(p.OutDir, "reports")
+	first, second, changed := []byte("%PDF-1.7 first"), []byte("%PDF-1.7 second"), []byte("%PDF-1.7 changed")
+	f.OnForeground = func(r dockerx.RunSpec) {
+		if !strings.HasSuffix(r.Name, "-agent") {
+			return
+		}
+		_ = os.MkdirAll(filepath.Join(reports, "sub"), 0o755)
+		_ = os.WriteFile(filepath.Join(reports, "sub", "a.pdf"), second, 0o644)
+		_ = os.WriteFile(filepath.Join(reports, "b.pdf"), changed, 0o644)
+		lines := []string{
+			`{"path":"reports/sub/a.pdf","sha256":"` + sha(first) + `","pages":1,"bytes":14}`,
+			`{"path":"reports/b.pdf","sha256":"` + sha([]byte("%PDF-1.7 b as exported")) + `","pages":2,"bytes":20}`,
+			`{"path":"reports/gone.pdf","sha256":"` + sha(first) + `","pages":1,"bytes":14}`,
+			`{"path":"reports/sub/a.pdf","sha256":"` + sha(second) + `","pages":4,"bytes":15}`,
+		}
+		_ = os.WriteFile(filepath.Join(p.OutDir, "receipts", PDFLedgerFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	plain, err := toolsrv.BuiltinTheme(toolsrv.DefaultTheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.PDFs == nil {
+		t.Fatal("the receipt has no pdfs block")
+	}
+	if th := env.PDFs.Theme; th.Name != "plain" || th.Version != "1.0.0" || th.SHA256 != sha(plain) {
+		t.Errorf("theme = %+v", th)
+	}
+	if len(env.PDFs.Files) != 1 {
+		t.Fatalf("files = %+v, want sub/a.pdf alone", env.PDFs.Files)
+	}
+	if got := env.PDFs.Files[0]; got.Path != "reports/sub/a.pdf" || got.SHA256 != sha(second) || got.Pages != 4 || got.Bytes != int64(len(second)) {
+		t.Errorf("file = %+v", got)
+	}
+	result, err := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
+	if err != nil || !strings.Contains(string(result), `"pdfs"`) {
+		t.Errorf("result.json lacks the pdfs block: %v\n%s", err, result)
+	}
+
+	b, err := os.ReadFile(filepath.Join(p.RunRoot, "runs", p.RunID, "cfg", "gateway", "toolspec.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ts toolsrv.Spec
+	if err := json.Unmarshal(b, &ts); err != nil {
+		t.Fatal(err)
+	}
+	if !ts.PDF.Enabled || ts.PDF.Theme == nil || ts.PDF.Theme.Document != string(plain) || ts.PDF.Theme.SHA256 != sha(plain) ||
+		ts.PDF.Author != p.Plan.Ref || ts.PDF.Ledger != "/out/receipts/"+PDFLedgerFile {
+		t.Errorf("the run's tools spec pdf = %+v", ts.PDF)
+	}
+}
+
+// A run that exported no PDF has no pdfs block, and a run without the
+// grant gets no ledger.
+func TestNoExportNoPDFsBlock(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if env.PDFs != nil {
+		t.Errorf("pdfs = %+v", env.PDFs)
+	}
+	if fi, err := os.Stat(filepath.Join(p.OutDir, "receipts", PDFLedgerFile)); err != nil || fi.Size() != 0 {
+		t.Errorf("the granted run's ledger: %v", err)
+	}
+}

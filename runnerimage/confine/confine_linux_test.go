@@ -3,6 +3,8 @@
 package confine
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,24 +16,47 @@ import (
 // AGENTRY_CONFINE_HELPER=1, it is `confine` and never runs the tests.
 func TestMain(m *testing.M) {
 	if os.Getenv("AGENTRY_CONFINE_HELPER") == "1" {
+		if len(os.Args) == 1 {
+			// The program the trampoline started (TestNoNetworkRefusesTCP).
+			dial(os.Getenv("AGENTRY_CONFINE_DIAL"))
+		}
 		Trampoline(os.Args[1:])
 	}
 	os.Exit(m.Run())
+}
+
+// dial is the confined program of TestNoNetworkRefusesTCP: it says whether
+// a TCP connection to addr was refused, and exits.
+func dial(addr string) {
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		fmt.Println("dial refused:", err)
+		os.Exit(0)
+	}
+	_ = c.Close()
+	fmt.Println("dial connected")
+	os.Exit(0)
 }
 
 // confined runs script under sh through the trampoline, writable beneath
 // dirs, and returns its combined output.
 func confined(t *testing.T, dirs []string, script string) (string, error) {
 	t.Helper()
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("no sh on this machine")
-	}
 	args := []string{}
 	for _, d := range dirs {
 		args = append(args, "--write", d)
 	}
-	args = append(args, "--", sh, "-c", script)
+	return trampoline(t, args, script)
+}
+
+// trampoline runs script under sh through the trampoline with flags.
+func trampoline(t *testing.T, flags []string, script string) (string, error) {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh on this machine")
+	}
+	args := append(append([]string{}, flags...), "--", sh, "-c", script)
 	cmd := exec.Command(os.Args[0], args...) //nolint:gosec // the test binary, re-executed as the trampoline
 	cmd.Env = append(os.Environ(), "AGENTRY_CONFINE_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -90,14 +115,96 @@ func TestExecConfinesWrites(t *testing.T) {
 // not told how to confine.
 func TestMainRefusesBadUsage(t *testing.T) {
 	for name, args := range map[string][]string{
-		"no program":       {"--write", "/tmp", "--"},
-		"no separator":     {"--write", "/tmp", "/bin/true"},
-		"relative dir":     {"--write", "tmp", "--", "/bin/true"},
-		"unknown flag":     {"--read", "/tmp", "--", "/bin/true"},
-		"flag with no dir": {"--write"},
+		"no program":          {"--write", "/tmp", "--"},
+		"no separator":        {"--write", "/tmp", "/bin/true"},
+		"relative dir":        {"--write", "tmp", "--", "/bin/true"},
+		"unknown flag":        {"--read", "/tmp", "--", "/bin/true"},
+		"flag with no dir":    {"--write"},
+		"memory not a number": {"--max-memory", "lots", "--", "/bin/true"},
+		"memory zero":         {"--max-memory", "0", "--", "/bin/true"},
+		"limits-only writes":  {"--limits-only", "--write", "/tmp", "--", "/bin/true"},
+		"limits-only network": {"--limits-only", "--no-network", "--", "/bin/true"},
 	} {
 		if err := Main(args, nil); err == nil {
 			t.Errorf("%s: Main(%q) = nil, want a refusal", name, args)
 		}
 	}
+}
+
+// TestMaxMemoryLimitsTheAddressSpace (plan scratch-and-pdf-reports.md §5,
+// D24): the program starts with RLIMIT_AS at the limit, with or without
+// Landlock, and cannot raise it.
+func TestMaxMemoryLimitsTheAddressSpace(t *testing.T) {
+	flags := [][]string{{"--limits-only", "--max-memory", "1073741824"}}
+	if _, err := ABI(); err == nil {
+		flags = append(flags, []string{"--write", t.TempDir(), "--max-memory", "1073741824"})
+	}
+	for _, f := range flags {
+		got, err := trampoline(t, f, `ulimit -v; ulimit -v unlimited 2>/dev/null && echo raised || echo held`)
+		if err != nil {
+			t.Fatalf("%q: %v\n%s", f, err, got)
+		}
+		if got != "1048576\nheld\n" {
+			t.Errorf("%q: the program saw %q, want a 1048576 KiB address space it cannot raise", f, got)
+		}
+	}
+}
+
+// TestLimitsOnlyAppliesNoLandlock: --limits-only runs the program with no
+// Landlock ruleset, so it writes where its user may (the caller picks the
+// user), and still under no_new_privs.
+func TestLimitsOnlyAppliesNoLandlock(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("D", dir)
+	got, err := trampoline(t, []string{"--limits-only"}, `echo x > "$D/f" && echo wrote; grep NoNewPrivs /proc/self/status`)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, got)
+	}
+	if !strings.Contains(got, "wrote\n") || !strings.Contains(got, "NoNewPrivs:\t1") {
+		t.Errorf("limits-only = %q, want the write and no_new_privs", got)
+	}
+}
+
+// TestNoNetworkRefusesTCP: at Landlock ABI 4 and later a program started
+// with --no-network can neither connect nor bind over TCP; the caller is
+// told beforehand where it cannot be refused (NetworkDenied).
+func TestNoNetworkRefusesTCP(t *testing.T) {
+	abi, err := ABI()
+	if err != nil || !NetworkDenied(abi) {
+		t.Skipf("this kernel's Landlock (ABI %d, %v) cannot refuse TCP", abi, err)
+	}
+	if NetworkDenied(netABI - 1) {
+		t.Fatal("NetworkDenied claims ABI 3 refuses TCP")
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	// The test binary is the program, re-executed to dial.
+	cmd := exec.Command(os.Args[0], "--write", t.TempDir(), "--no-network", "--", os.Args[0]) //nolint:gosec // the test binary
+	cmd.Env = append(os.Environ(), "AGENTRY_CONFINE_HELPER=1", "AGENTRY_CONFINE_DIAL="+ln.Addr().String())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); !strings.HasPrefix(got, "dial refused") {
+		t.Errorf("the confined dial = %q, want refused", got)
+	}
+	// And the same dial unconfined reaches the listener, so the refusal
+	// is the rule's.
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("the unconfined dial failed: %v", err)
+	}
+	_ = c.Close()
 }
