@@ -178,7 +178,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `logout` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `files` · `run` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `verify` ·
+`setup` · `doctor` · `files` · `run` · `schedule` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -802,6 +802,69 @@ constant, and append the new line `agentry builtins` prints to
 `pkg/runner/localrun/builtins.lock`. `TestTheBuiltinsLockHoldsEveryBuiltin`
 fails until you do, and CI's `scripts/builtins-lock-check.sh` refuses an
 edited line.
+
+### Runs for later and on repeat: `schedule`
+
+`agentry schedule add` gives a run on this computer a schedule, like a
+calendar entry: `--once "YYYY-MM-DD HH:MM"`, `--daily HH:MM`, `--weekdays
+HH:MM`, `--weekly tue,thu --at HH:MM` or `--monthly N --at HH:MM` (a month
+without day N runs on its last day), in `--zone` (an IANA name; this
+computer's by default), ending `--until DATE` or after `--times N` runs.
+`--out DIR` is required: each run gets its own folder in it. The run
+setup's flags are the run's (`--task TEXT` or `--input FILE`, `--file`,
+`--knowledge`, `--intake`, `--voice`, the limits). No sign-in is needed for
+a public release (plan `quickagent-scheduling.md`, DR-83).
+
+```bash
+agentry schedule add acme/digest --daily 09:00 --task "Today's summary" --out ~/reports
+agentry schedule list            # id, name, version, repeat, next, last outcome
+agentry schedule show <id>       # the next five occurrences and the last ten runs
+agentry schedule run <id>        # Run now: an ordinary run, no occurrence used
+agentry schedule edit <id> --weekly tue --at 22:00
+agentry schedule pause <id>      # resume <id> skips what fell due meanwhile
+agentry schedule remove <id>     # the runs' folders are kept
+```
+
+What a schedule runs is fixed when it is made. `add` resolves the release
+and pins its exact version and digest (a `--local` directory too: an edited
+directory refuses with exit 10). It shows the capabilities and takes your
+consent on the terminal, or `--yes`. Then it runs the install step
+`run --prepare` makes. A newer version needs a new schedule. Only a release
+that can run autonomous can be scheduled. An `--allow-*` flag is kept only
+when it lifted a refusal at add.
+
+A scheduled run does not see your shell, so `add` refuses a schedule that
+could not reach what it needs, and names each gap:
+- the model key must be in the keychain (`agentry setup`);
+- each declared secret must be in the QuickAgent's MCP profile or the
+  policy's `envFile` source;
+- a secret intake question cannot be answered by flag;
+- Docker and the keychain must answer from the system scheduler itself.
+
+`add` checks the last one by running `agentry schedule probe` there. A
+systemd user manager started before you joined the `docker` group cannot
+reach the daemon until you sign out of every session and back in.
+
+The schedule lives in the runner home under `schedules/<id>/`:
+- `schedule.yaml`, the definition;
+- `state.json`, what its fires did;
+- `fires.ndjson`, one line per occurrence: ran, failed with its exit code,
+  or missed;
+- `task.txt`, the task, when given with `--task`.
+
+None of these files holds a credential. On Linux, each schedule has a
+systemd user timer and service, `~/.config/systemd/user/agentry-schedule-<id>.{timer,service}`.
+They hold this binary's absolute path and `PATH` and `AGENTRY_DOCKER` as
+they were when written, and they run `agentry schedule fire <id>`.
+
+Fire re-reads the store, so a paused, ended or removed schedule does
+nothing. A run that fails is recorded and not retried. Schedules run while
+you are signed in. The timer is `Persistent=true`: an occurrence missed
+while the computer was off runs once at the next boot, if no later
+occurrence fell due first; otherwise it is recorded as missed.
+`agentry schedule sync` rewrites every timer from the store and removes
+any timer that has no schedule. Windows and macOS follow in
+agentry-cli#748.
 
 ### Signing keys and `verify`
 

@@ -324,6 +324,13 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 		integrity = integrityLocal
 		meta, installDir, err = materializeLocal(cmd, opts.local, home, matOpts.allowUnsigned)
+		// --pin holds a local directory to the digest it had when it was
+		// pinned (a schedule's, agentry-cli#747): an edited directory is
+		// another release and does not run in its place.
+		if err == nil && opts.pin != "" && meta.Digest != opts.pin {
+			err = engine.Classify(engine.ExitVerify,
+				fmt.Errorf("--pin mismatch: the directory %s is now %s, pin requires %s", opts.local, meta.Digest, opts.pin))
+		}
 	} else {
 		meta, installDir, err = materializeRegistry(cmd, ref, home, matOpts)
 		if err == nil && opts.plan {
