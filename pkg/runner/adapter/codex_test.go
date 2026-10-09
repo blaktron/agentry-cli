@@ -91,6 +91,86 @@ func TestCodexCompileGatewayOnly(t *testing.T) {
 	}
 }
 
+// TestCodexCompileRendersModelCatalog: codex's bundled catalog switches on
+// apply_patch, deferred tool_search, code mode and experimental tools for
+// real OpenAI models (agentry-cli#737). The adapter renders its own
+// one-model catalog instead, and keeps the gateway's tools out of the
+// deferred surface, so the model's tools are the gateway's and nothing else
+// whatever the model id.
+func TestCodexCompileRendersModelCatalog(t *testing.T) {
+	for _, model := range []string{"gpt-5.5", "gpt-6-astra", "some-model"} {
+		in := codexInput()
+		in.Model.Name = model
+		res := codexCompile(t, in)
+		cfg := string(res.Files[codexConfigFile])
+		for _, want := range []string{
+			"model_catalog_json = \"" + spec.PHCfg + "/harness/" + codexCatalogFile + "\"",
+			"omit_tools_from = [\"deferred\"]",
+			"code_mode = false", "code_mode_only = false", "goals = false",
+			"[tools.experimental_request_user_input]\nenabled = false",
+		} {
+			if !strings.Contains(cfg, want) {
+				t.Errorf("%s: config.toml lacks %q:\n%s", model, want, cfg)
+			}
+		}
+		// The deferral switch belongs to the gateway's server block.
+		if i, j := strings.Index(cfg, "[mcp_servers."+codexGatewayServer+"]"), strings.Index(cfg, "omit_tools_from"); i < 0 || j < i {
+			t.Errorf("%s: omit_tools_from is not in the gateway's block:\n%s", model, cfg)
+		}
+
+		raw := res.Files[codexCatalogFile]
+		var catalog struct {
+			Models []map[string]any `json:"models"`
+		}
+		if err := json.Unmarshal(raw, &catalog); err != nil {
+			t.Fatalf("%s: catalog is not JSON: %v\n%s", model, err, raw)
+		}
+		if len(catalog.Models) != 1 {
+			t.Fatalf("%s: catalog has %d models, want exactly the run's one", model, len(catalog.Models))
+		}
+		m := catalog.Models[0]
+		for key, want := range map[string]any{
+			"slug":                              model,
+			"apply_patch_tool_type":             nil,
+			"supports_search_tool":              false,
+			"tool_mode":                         "direct",
+			"shell_type":                        "disabled",
+			"include_skills_usage_instructions": false,
+			"include_plugin_usage_instructions": false,
+			"include_apps_usage_instructions":   false,
+			"supported_in_api":                  true,
+		} {
+			got, ok := m[key]
+			if !ok || got != want {
+				t.Errorf("%s: catalog %s = %v (present %v), want %v", model, key, got, ok, want)
+			}
+		}
+		if tools, _ := m["experimental_supported_tools"].([]any); tools == nil || len(tools) != 0 {
+			t.Errorf("%s: experimental_supported_tools = %v, want an empty list", model, m["experimental_supported_tools"])
+		}
+		// Every field codex-cli 0.153.4 requires to parse a ModelInfo (no
+		// serde default) is present, so the catalog is never refused.
+		for _, key := range codexCatalogRequiredFields {
+			if _, ok := m[key]; !ok {
+				t.Errorf("%s: catalog lacks required field %q", model, key)
+			}
+		}
+	}
+}
+
+// codexCatalogRequiredFields are ModelInfo's fields without a serde default
+// in codex-cli 0.153.4 (protocol/src/openai_models.rs), plus tool_mode,
+// which defaults to unset but must be set here, and base_instructions.
+var codexCatalogRequiredFields = []string{
+	"slug", "display_name", "description", "supported_reasoning_levels", "shell_type",
+	"visibility", "supported_in_api", "priority", "availability_nux", "upgrade",
+	"support_verbosity", "default_verbosity", "apply_patch_tool_type", "truncation_policy",
+	"experimental_supported_tools", "tool_mode",
+	// Not a ModelInfo field but required beside it unless the entry carries
+	// model_messages.instructions_template (deserialize_model_infos_with_legacy_base).
+	"base_instructions",
+}
+
 func TestCodexCompileEnvironment(t *testing.T) {
 	in := codexInput()
 	res := codexCompile(t, in)

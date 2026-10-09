@@ -11,10 +11,18 @@
 //     server, the run's gateway, and switches every built-in tool off:
 //     the shell (features.shell_tool), the image viewer
 //     (features.view_image), web search, apps, the browser, computer use,
-//     image generation, sub-agents, hooks, memories. What is left to the
-//     model is the gateway's catalog plus codex's own three MCP resource
-//     readers, which read from that same gateway. --strict-config makes a
-//     renamed key a loud failure rather than a silently re-enabled tool.
+//     image generation, sub-agents, hooks, memories, code mode, goals,
+//     the question to the person (request_user_input). What is
+//     left to the model is the gateway's catalog plus codex's own three MCP
+//     resource readers, which read from that same gateway. --strict-config
+//     makes a renamed key a loud failure rather than a silently re-enabled
+//     tool. Some tools are not feature keys but come from the model's
+//     catalog entry: codex's bundled catalog gives every real OpenAI model
+//     apply_patch and deferred tool_search, and most of them code mode
+//     (agentry-cli#737). So the config points codex at a one-model catalog
+//     the adapter renders (codexCatalog), which replaces the bundled one
+//     for the process, and keeps the gateway's tools out of the deferred
+//     surface, so none hides behind tool_search.
 //   - Secrets by name. The gateway token reaches the config as the NAME
 //     of the variable codex reads it from (bearer_token_env_var); the model
 //     key likewise (env_key). No plan file holds a value.
@@ -60,6 +68,9 @@ const (
 	codexInstructionFile = "instruction.md"
 	codexHomeDir         = ".codex-home"
 	codexConfigFile      = codexHomeDir + "/config.toml"
+	// codexCatalogFile is the rendered model catalog (codexCatalog); the
+	// config names it as model_catalog_json.
+	codexCatalogFile = codexHomeDir + "/models.json"
 	// codexGatewayServer is the MCP server id in the config, and the
 	// serverName an approval elicitation carries.
 	codexGatewayServer = "gateway"
@@ -131,6 +142,9 @@ func codexConfig(model, baseURL, keyEnv string) []byte {
 	// The instruction is the QuickAgent's, in place of codex's built-in
 	// prompt; the path is rendered per run (a plan carries no host path).
 	b.WriteString("model_instructions_file = " + tomlString(spec.PHCfg+"/harness/"+codexInstructionFile) + "\n")
+	// The model's metadata is the adapter's, never codex's bundled catalog
+	// (codexCatalog); like the instruction, the path is rendered per run.
+	b.WriteString("model_catalog_json = " + tomlString(spec.PHCfg+"/harness/"+codexCatalogFile) + "\n")
 	// Nothing prompts (there is no one to answer in an autonomous run),
 	// and the gateway's own tools are auto-approved by the server block
 	// below — a global "never" alone REFUSES an MCP tool call that would
@@ -143,11 +157,20 @@ func codexConfig(model, baseURL, keyEnv string) []byte {
 	for _, f := range []string{
 		"shell_tool", "view_image", "apps", "browser_use", "computer_use",
 		"image_generation", "multi_agent", "hooks", "memories", "skill_mcp_dependency_install",
+		// Code mode adds a script tool that calls the others; the rendered
+		// catalog already says "direct", and these are the second lock.
+		"code_mode", "code_mode_only",
+		// Goal tools (get/create/update_goal): offered by codex-cli 0.162.0,
+		// the key already known to 0.153.4 (agentry-cli#737, measured).
+		"goals",
 	} {
 		b.WriteString(f + " = false\n")
 	}
 	b.WriteString("\n[analytics]\nenabled = false\n")
 	b.WriteString("\n[otel]\nexporter = \"none\"\n")
+	// Asking the person a question is a built-in tool too, on unless
+	// switched off here (not a feature key; measured on 0.153.4).
+	b.WriteString("\n[tools.experimental_request_user_input]\nenabled = false\n")
 	b.WriteString("\n[model_providers." + codexProviderID + "]\n")
 	b.WriteString("name = " + tomlString(codexProviderID) + "\n")
 	b.WriteString("base_url = " + tomlString(baseURL) + "\n")
@@ -168,7 +191,89 @@ func codexConfig(model, baseURL, keyEnv string) []byte {
 	// prompt; an interactive session still routes approvals to the runner
 	// when the harness sends them (the session driver).
 	b.WriteString("default_tools_approval_mode = \"approve\"\n")
+	// Never deferred: a deferred tool reaches the model only through codex's
+	// own tool_search, which is not the gateway's and which ChatGPT plan
+	// usage refuses. With "deferred" omitted the tools are direct, and
+	// codex registers no tool_search at all (none is deferred).
+	b.WriteString("omit_tools_from = [\"deferred\"]\n")
 	return []byte(b.String())
+}
+
+// codexModelInfo is one entry of a codex model catalog (codex-cli's
+// ModelInfo, protocol/src/openai_models.rs). Field order is the bytes'
+// order, which the plan hash covers.
+type codexModelInfo struct {
+	Slug                           string          `json:"slug"`
+	DisplayName                    string          `json:"display_name"`
+	Description                    *string         `json:"description"`
+	SupportedReasoningLevels       []struct{}      `json:"supported_reasoning_levels"`
+	ShellType                      string          `json:"shell_type"`
+	Visibility                     string          `json:"visibility"`
+	SupportedInAPI                 bool            `json:"supported_in_api"`
+	Priority                       int             `json:"priority"`
+	AvailabilityNux                *struct{}       `json:"availability_nux"`
+	Upgrade                        *struct{}       `json:"upgrade"`
+	IncludeSkillsUsageInstructions bool            `json:"include_skills_usage_instructions"`
+	IncludePluginUsageInstructions bool            `json:"include_plugin_usage_instructions"`
+	IncludeAppsUsageInstructions   bool            `json:"include_apps_usage_instructions"`
+	DefaultReasoningSummary        string          `json:"default_reasoning_summary"`
+	SupportVerbosity               bool            `json:"support_verbosity"`
+	DefaultVerbosity               *string         `json:"default_verbosity"`
+	ApplyPatchToolType             *string         `json:"apply_patch_tool_type"`
+	WebSearchToolType              string          `json:"web_search_tool_type"`
+	TruncationPolicy               codexTruncation `json:"truncation_policy"`
+	ContextWindow                  int64           `json:"context_window"`
+	MaxContextWindow               int64           `json:"max_context_window"`
+	EffectiveContextWindowPercent  int64           `json:"effective_context_window_percent"`
+	ExperimentalSupportedTools     []string        `json:"experimental_supported_tools"`
+	SupportsSearchTool             bool            `json:"supports_search_tool"`
+	ToolMode                       string          `json:"tool_mode"`
+	// BaseInstructions is codex's legacy field for the model's built-in
+	// prompt; a catalog entry must carry it or an instruction template, or
+	// the whole catalog is refused. The run's model_instructions_file
+	// replaces it, so it only has to be there.
+	BaseInstructions string `json:"base_instructions"`
+}
+
+type codexTruncation struct {
+	Mode  string `json:"mode"`
+	Limit int64  `json:"limit"`
+}
+
+// codexCatalog renders the run's model catalog: the run's model alone, so
+// codex's longest-prefix lookup finds it exactly, with the values of codex's
+// own fallback metadata for an unknown model (model_info_from_slug, the
+// shape every recording of this adapter ran on) except the tool fields,
+// which are pinned off: no apply_patch, no tool_search, no experimental
+// tools, no shell (also off by feature), and direct tools rather than code
+// mode. A catalog in the config replaces the bundled one and is
+// authoritative: codex fetches no model list from the provider.
+func codexCatalog(model string) ([]byte, error) {
+	entry := codexModelInfo{
+		Slug:                          model,
+		DisplayName:                   model,
+		SupportedReasoningLevels:      []struct{}{},
+		ShellType:                     "disabled",
+		Visibility:                    "none",
+		SupportedInAPI:                true,
+		Priority:                      99,
+		DefaultReasoningSummary:       "auto",
+		WebSearchToolType:             "text",
+		TruncationPolicy:              codexTruncation{Mode: "bytes", Limit: 10_000},
+		ContextWindow:                 272_000,
+		MaxContextWindow:              272_000,
+		EffectiveContextWindowPercent: 95,
+		ExperimentalSupportedTools:    []string{},
+		ToolMode:                      "direct",
+		BaseInstructions:              "Follow the instructions you are given.",
+	}
+	out, err := json.MarshalIndent(struct {
+		Models []codexModelInfo `json:"models"`
+	}{[]codexModelInfo{entry}}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("codex adapter: model catalog: %w", err)
+	}
+	return append(out, '\n'), nil
 }
 
 // Compile renders the instruction, the config and the host process.
@@ -195,6 +300,10 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 		baseURL = codexDefaultBaseURL
 	}
 	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
+	catalog, err := codexCatalog(model)
+	if err != nil {
+		return Result{}, err
+	}
 
 	mode := in.Mode
 	if mode == "" {
@@ -232,6 +341,7 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 		Files: map[string][]byte{
 			codexInstructionFile: []byte(instruction),
 			codexConfigFile:      codexConfig(model, baseURL, keyEnv),
+			codexCatalogFile:     catalog,
 		},
 		Host: &spec.HostProcessSpec{
 			Command:     codexExecutable,
