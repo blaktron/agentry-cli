@@ -7,6 +7,7 @@ package compile
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -30,15 +31,33 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 		return nil
 	}
 	what := policy.SignInSentence(kind)
-	if res.Host != nil || msi == nil {
+	if msi == nil {
 		return signInRefusal(adapterName, kind)
 	}
 	if msi.Kind != kind || msi.Provider != policy.SignInProvider(kind) {
 		return fmt.Errorf("adapter %s: compiled a %s/%s sign-in for the policy's %s", adapterName, msi.Provider, msi.Kind, kind)
 	}
-	for _, e := range res.Agent.Env {
+	env := res.Agent.Env
+	if res.Host != nil {
+		env = res.Host.Env
+	}
+	for _, e := range env {
 		if e.FromHostEnv != "" || e.FromKeyring != "" {
-			return fmt.Errorf("adapter %s: a run paid by %s carries no key, and the agent container names %s", adapterName, what, e.Name)
+			return fmt.Errorf("adapter %s: a run paid by %s carries no key, and the harness is given %s", adapterName, what, e.Name)
+		}
+	}
+	if res.Host != nil {
+		// A harness on this machine reads the token file where the runner
+		// writes it, in the run's own folder: nothing is mounted (plan D14).
+		// A config directory on a host is the Claude milestone's (M5).
+		if msi.Delivery != spec.ModelSignInToken || msi.Path != spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile {
+			return fmt.Errorf("adapter %s: a host harness reads its sign-in's token at %s/%s, not as %s at %s", adapterName, spec.PHModelSignIn, spec.ModelSignInTokenFile, msi.Delivery, msi.Path)
+		}
+		return nil
+	}
+	for _, e := range env {
+		if e.FromModelSignIn {
+			return fmt.Errorf("adapter %s: the agent container reads its token from the token file, not from %s", adapterName, e.Name)
 		}
 	}
 	m := spec.Mount{Source: spec.PHModelSignIn}
@@ -66,6 +85,22 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 	return nil
 }
 
+// signInProxy holds a run paid by a token-file sign-in to its vendor's
+// inference endpoint alone (invariant I2): the egress proxy is the harness's
+// only way out, and a sign-in's run reaches the model and nothing else —
+// never the vendor's token endpoint, which only the CLI talks to.
+func signInProxy(kind string, allow []string) error {
+	want := policy.SignInProxyAllow(kind)
+	if want == nil {
+		return nil
+	}
+	if !slices.Equal(allow, want) {
+		return &PolicyRefusal{Reason: fmt.Sprintf("a run paid by %s reaches %s alone, and model.proxyAllow is %s: set it to exactly that (agentry setup does)",
+			policy.SignInSentence(kind), strings.Join(want, ", "), strings.Join(allow, ", "))}
+	}
+	return nil
+}
+
 // signInRefusal is the refusal of a sign-in the adapter cannot spend.
 func signInRefusal(adapterName, kind string) error {
 	return &PolicyRefusal{Reason: fmt.Sprintf("the %s adapter cannot spend %s (policy apiKeyKind %s): choose the adapter that runs one, or an API key",
@@ -78,6 +113,22 @@ func modelSignInLine(msi *spec.ModelSignInSpec) string {
 	if msi.Delivery == spec.ModelSignInConfigDir {
 		return line + "the harness's own config directory, which only it writes, mounted read-write at " + msi.Path +
 			" into this run's agent container alone; the runner never reads it"
+	}
+	if msi.Env != "" {
+		// The restart route: the harness takes the token from its
+		// environment, read from the file when it starts.
+		line += "the access token read once when the harness starts, from one file "
+		if msi.Path == spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile {
+			line += "in this run's own folder"
+		} else {
+			line += "read-only at " + msi.Path
+		}
+		return line + ", into the harness's environment as " + msi.Env + "; a renewed token reaches it when the harness is started again between turns; " +
+			"no refresh token and no client secret enter the run"
+	}
+	if msi.Path == spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile {
+		return line + "a short-lived access token in one file in this run's own folder, which the harness on this machine reads, " +
+			"rewritten by the runner before it expires; no refresh token and no client secret enter the run"
 	}
 	return line + "a short-lived access token in one read-only file at " + msi.Path +
 		", rewritten by the runner before it expires; no refresh token and no client secret enter the run"

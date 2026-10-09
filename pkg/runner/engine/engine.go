@@ -348,7 +348,20 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	td.add(func(context.Context) { stopRenewal() })
 
 	env.Stage = receipt.StageInfra
-	err = startInfra(ctx, d, p, rd, td, runID, token, rep, nil)
+	// A run driven as one session turn may approve the gateway's tools: its
+	// grant, read before any harness starts (a host harness runs as the
+	// person and could rewrite the file), and what the gateway serves beyond
+	// it (the declared servers' tools), as a session's (agentry-cli#578).
+	var oneTurnTools []string
+	var served []string
+	var servedInto *[]string
+	if p.Plan.Harness.OneTurn != nil {
+		if oneTurnTools, err = grantedTools(filepath.Join(rd.cfg, "gateway")); err != nil {
+			return fail(env, redact, Classify(ExitCLI, fmt.Errorf("the run's tool grant: %w", err)))
+		}
+		servedInto = &served
+	}
+	err = startInfra(ctx, d, p, rd, td, runID, token, rep, servedInto)
 	if len(rd.modelHosts) > 0 {
 		env.CapabilitiesEnforced["llm-proxy.hosts"] = modelHostsLine(rd.modelHosts)
 	}
@@ -364,12 +377,14 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		return fail(env, redact, err)
 	}
 
+	oneTurnTools = permitted(oneTurnTools, served)
+
 	env.Stage = receipt.StageAgent
 	var outcome agentOutcome
 	if p.Plan.Harness.Host != nil {
-		outcome = runHostHarness(ctx, p, rd, token, rep, task)
+		outcome = runHostHarness(ctx, p, rd, token, rep, task, oneTurnTools)
 	} else {
-		outcome = runAgent(ctx, d, p, rd, runID, token, rep, task)
+		outcome = runAgent(ctx, d, p, rd, runID, token, rep, task, oneTurnTools)
 	}
 	if outcome.hostInfo != "" {
 		env.Harness.Host = outcome.hostInfo
@@ -864,7 +879,7 @@ func gatewayHostname(runID string) string { return "gw-" + runID }
 
 // runAgent runs the harness container under the budgets, streaming events.
 func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
-	runID, token string, rep *strings.Replacer, task []byte,
+	runID, token string, rep *strings.Replacer, task []byte, tools []string,
 ) agentOutcome {
 	agentCtx := ctx
 	var cancelTimeout context.CancelFunc
@@ -887,12 +902,13 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	runSpec := dockerx.RunSpec{
 		Name:        name,
 		Image:       p.Plan.Harness.Agent.Image,
+		Entrypoint:  p.Plan.Harness.Agent.Entrypoint,
 		Argv:        substituteAll(p.Plan.Harness.Agent.Argv, rep),
 		Env:         agentEnv,
 		Mounts:      resolveMounts(p.Plan.Harness.Agent.Mounts, rep),
 		Network:     networkName(runID),
 		Labels:      runLabels(runID),
-		Interactive: p.Plan.Harness.Agent.StdinTask,
+		Interactive: p.Plan.Harness.Agent.StdinTask || p.Plan.Harness.OneTurn != nil,
 		AutoRemove:  true,
 		Runtime:     p.Plan.Runtime(),
 		ExtraHosts:  hosts,
@@ -927,12 +943,6 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			cancelCause(errPlanLimit)
 		},
 	}
-	done := consumeGuarded(collector, pr, cancelCause)
-
-	var stdin io.Reader
-	if runSpec.Interactive {
-		stdin = bytes.NewReader(task)
-	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
 	if err != nil {
@@ -940,9 +950,32 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 	defer func() { _ = stderrFile.Close() }()
 
-	exit, runErr := d.RunForeground(agentCtx, runSpec, stdin, pw, stderrFile)
-	_ = pw.Close()
-	<-done
+	var exit int
+	var runErr, turnErr error
+	if p.Plan.Harness.OneTurn != nil {
+		// The task is the one turn of the harness's session (oneturn.go).
+		_ = pr.Close()
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		ran := make(chan struct{})
+		go func() {
+			defer close(ran)
+			exit, runErr = d.RunForeground(agentCtx, runSpec, stdinR, stdoutW, stderrFile)
+			_ = stdoutW.Close()
+			_ = stdinR.Close()
+		}()
+		turnErr = oneTurn(agentCtx, p, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, task, tools, collector, cancelCause)
+		<-ran
+	} else {
+		done := consumeGuarded(collector, pr, cancelCause)
+		var stdin io.Reader
+		if runSpec.Interactive {
+			stdin = bytes.NewReader(task)
+		}
+		exit, runErr = d.RunForeground(agentCtx, runSpec, stdin, pw, stderrFile)
+		_ = pw.Close()
+		<-done
+	}
 	// The harness wrote its stderr straight into the receipt; mask it now,
 	// before the tail below quotes it.
 	_ = stderrFile.Close()
@@ -968,6 +1001,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		out.err = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", collector.costUSD, p.Budgets.MaxCostUSD))
 	case errors.Is(context.Cause(agentCtx), context.DeadlineExceeded):
 		out.err = Classify(ExitTimeout, fmt.Errorf("run timed out after %ds", p.Budgets.TimeoutSeconds))
+	case turnErr != nil:
+		out.err = Classify(ExitHarness, turnFailure(turnErr, collector.harnessErrReported, stderrPath))
 	case runErr != nil:
 		out.err = Classify(ExitGateway, fmt.Errorf("agent container failed to run: %w", runErr))
 	case exit != 0:
@@ -978,6 +1013,16 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		out.err = Classify(ExitHarness, fmt.Errorf("agent exited %d%s", exit, detail))
 	}
 	return out
+}
+
+// turnFailure is a one-turn run's failed turn, with the harness's own
+// error when it reported one the turn's does not already say.
+func turnFailure(turnErr error, reported, stderrPath string) error {
+	detail := ""
+	if reported != "" && !strings.Contains(turnErr.Error(), reported) {
+		detail = "\nharness error: " + reported
+	}
+	return fmt.Errorf("the harness's turn failed: %w%s%s", turnErr, detail, stderrTail(stderrPath))
 }
 
 var (
@@ -1157,55 +1202,67 @@ func (c *eventCollector) consume(r io.Reader) {
 	sc.Buffer(make([]byte, 0, 64*1024), 8<<20)
 	for sc.Scan() {
 		line := sc.Bytes()
-		masked := append([]byte(c.redact.String(string(line))), '\n')
-		_, _ = c.events.Write(masked)
-		if c.tee != nil {
-			// A driver reading this file is metering a live run, so the
-			// line goes out as it arrives; a write it cannot take is its
-			// problem, never the run's.
-			_, _ = c.tee.Write(masked)
-		}
+		c.recordRaw(line)
 		for _, ev := range c.adapter.Events(line) {
-			switch ev.Kind {
-			case adapter.EventToolCall:
-				c.curText.Reset() // text before a tool call is its own message
-				c.turns++
-				if c.maxTurns > 0 && c.turns > c.maxTurns && !c.budgetTripped {
-					c.budgetTripped = true
-					c.overBudget()
-				}
-			case adapter.EventAssistantText:
-				switch {
-				case ev.Text == "":
-				case ev.Delta:
-					c.curText.WriteString(ev.Text)
-					c.lastText = c.curText.String()
-				default:
-					c.curText.Reset()
-					c.lastText = ev.Text
-				}
-			case adapter.EventUsage:
-				c.curText.Reset() // usage is reported once the message is complete
-				c.inTok += ev.InputTokens
-				c.outTok += ev.OutputTokens
-				c.totTok += ev.TotalTokens
-				if ev.CostUSD > c.costUSD && !c.signIn {
-					c.costUSD = ev.CostUSD
-				}
-				if c.maxCostUSD > 0 && c.costUSD > c.maxCostUSD && !c.costTripped && c.overCost != nil {
-					c.costTripped = true
-					c.overCost()
-				}
-				c.notifyUsage()
-			case adapter.EventError:
-				c.harnessErrReported = ev.Text
-			case adapter.EventPlanLimit:
-				if c.planLimit == nil {
-					c.planLimit = &ev
-					if c.onPlanLimit != nil {
-						c.onPlanLimit()
-					}
-				}
+			c.record(ev)
+		}
+	}
+}
+
+// recordRaw keeps one harness line in the events receipt, masked, and
+// hands it to the tee.
+func (c *eventCollector) recordRaw(line []byte) {
+	masked := append([]byte(c.redact.String(string(line))), '\n')
+	_, _ = c.events.Write(masked)
+	if c.tee != nil {
+		// A driver reading this file is metering a live run, so the
+		// line goes out as it arrives; a write it cannot take is its
+		// problem, never the run's.
+		_, _ = c.tee.Write(masked)
+	}
+}
+
+// record applies one normalized event: the turn and cost budgets, the
+// result text, the usage, the harness's error and a plan's limit.
+func (c *eventCollector) record(ev adapter.Event) {
+	switch ev.Kind {
+	case adapter.EventToolCall:
+		c.curText.Reset() // text before a tool call is its own message
+		c.turns++
+		if c.maxTurns > 0 && c.turns > c.maxTurns && !c.budgetTripped {
+			c.budgetTripped = true
+			c.overBudget()
+		}
+	case adapter.EventAssistantText:
+		switch {
+		case ev.Text == "":
+		case ev.Delta:
+			c.curText.WriteString(ev.Text)
+			c.lastText = c.curText.String()
+		default:
+			c.curText.Reset()
+			c.lastText = ev.Text
+		}
+	case adapter.EventUsage:
+		c.curText.Reset() // usage is reported once the message is complete
+		c.inTok += ev.InputTokens
+		c.outTok += ev.OutputTokens
+		c.totTok += ev.TotalTokens
+		if ev.CostUSD > c.costUSD && !c.signIn {
+			c.costUSD = ev.CostUSD
+		}
+		if c.maxCostUSD > 0 && c.costUSD > c.maxCostUSD && !c.costTripped && c.overCost != nil {
+			c.costTripped = true
+			c.overCost()
+		}
+		c.notifyUsage()
+	case adapter.EventError:
+		c.harnessErrReported = ev.Text
+	case adapter.EventPlanLimit:
+		if c.planLimit == nil {
+			c.planLimit = &ev
+			if c.onPlanLimit != nil {
+				c.onPlanLimit()
 			}
 		}
 	}

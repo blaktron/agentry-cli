@@ -69,6 +69,10 @@ type Result struct {
 	Model string
 	// ResultKind is "json" when SchemaJSON was wired, else "text".
 	ResultKind string
+	// OneTurn, on an autonomous plan, is the session protocol the run is
+	// driven by as one turn (spec.HarnessSpec.OneTurn); the adapter's
+	// Session is its driver. Nil when the harness prints its events.
+	OneTurn *spec.SessionSpec
 	// ModelSignIn is how the harness reads the model sign-in the policy
 	// names (policy.IsModelSignIn of its key kind): its kind, its delivery
 	// and the container path the harness reads it at. The compiler adds
@@ -170,6 +174,23 @@ type SessionOptions struct {
 	// every tool call, and a denial does not reach the model as a refused
 	// tool result — docker-agent fails the whole turn).
 	GatewayTools []string
+	// ModelSignIn says the run is paid by a model sign-in: a 429 from the
+	// model is then the plan's limit (EventPlanLimit), not a rate limit to
+	// wait out (invariant I9).
+	ModelSignIn bool
+	// Resumable asks for a conversation the driver can carry over to a new
+	// harness process (spec.SessionSpec.RestartOnRenewal): the engine may
+	// end the harness between turns and hand the driver a new one (Resumer).
+	Resumable bool
+}
+
+// Resumer is a SessionDriver that carries its conversation over to a new
+// harness process: after the engine has ended the old one between turns
+// (its stdin closed, the process gone), Resume performs the handshake on
+// rw and resumes the conversation, on the same event stream (the restart
+// token route, plan model-sign-ins.md D10).
+type Resumer interface {
+	Resume(ctx context.Context, rw io.ReadWriteCloser) error
 }
 
 // ModelSignInAdapter is implemented by an adapter that can spend a model
@@ -318,6 +339,17 @@ func Names() []string {
 
 // DefaultName is the v1 default adapter (annex §7, Q-R4).
 const DefaultName = "docker-agent"
+
+// DefaultFor is the adapter a run uses when none is named: the Codex image
+// when the policy's model is paid by a ChatGPT plan, which docker-agent
+// cannot spend (plan model-sign-ins.md D8, D15; agentry-cli#739), else
+// DefaultName. docker-agent stays the default for every key (D16).
+func DefaultFor(pol *policy.Policy) string {
+	if pol != nil && policy.KeyKind(pol.Harness[DefaultName], pol.Model) == policy.KeyKindChatGPTPlan {
+		return CodexImageAdapterName
+	}
+	return DefaultName
+}
 
 // keyringAccount is the OS keychain account a run falls back to for the
 // model key when the named variable is unset (policy.KeySource says

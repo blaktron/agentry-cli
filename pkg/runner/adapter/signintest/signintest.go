@@ -44,6 +44,9 @@ func Policy(p *policy.Policy, kind string) {
 	p.Model.Provider = policy.SignInProvider(kind)
 	p.Model.APIKeyKind = kind
 	p.Model.APIKeyEnv = ""
+	if allow := policy.SignInProxyAllow(kind); allow != nil {
+		p.Model.ProxyAllow = allow
+	}
 	p.Images.HarnessImages = map[string]policy.HarnessImage{
 		TokenAdapter: {Ref: Image},
 		DirAdapter:   {Ref: Image},
