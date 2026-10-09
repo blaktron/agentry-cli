@@ -4,17 +4,25 @@
 # `docker build` from stdlib-only sources with no module download (DR-2), so
 # the tools server cannot import the core; it carries these two packages
 # instead, and a local scan asks exactly what the registry asks (plan
-# builder-rework.md D25). runnerimage's TestTheImageJudgeIsTheCores fails
-# until this is run after the core dependency moves.
+# builder-rework.md D25). Since agentry-cli#784 (DR-87) it copies
+# pkg/reportdesign too, with its built-in themes, so the tools server holds a
+# report design to the same rules the core stored it under (plan
+# report-designs.md D22, invariant 3). runnerimage's
+# TestTheImageJudgeIsTheCores fails until this is run after the core
+# dependency moves.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 dir=$(GOWORK=off go list -m -f '{{.Dir}}' github.com/blaktron/agentry)
-for pkg in judge websearch; do
+for pkg in judge websearch reportdesign; do
   mkdir -p "runnerimage/$pkg"
-  rm -f "runnerimage/$pkg"/*.go
-  for f in "$dir/pkg/$pkg"/*.go; do
+  rm -f "runnerimage/$pkg"/*.go "runnerimage/$pkg"/*.json
+  for f in "$dir/pkg/$pkg"/*.go "$dir/pkg/$pkg"/*.json; do
+    [ -e "$f" ] || continue
     case "$f" in *_test.go) continue ;; esac
     install -m 0644 "$f" "runnerimage/$pkg/"
   done
 done
-echo "runnerimage/judge and runnerimage/websearch now match $(GOWORK=off go list -m -f '{{.Path}}@{{.Version}}' github.com/blaktron/agentry)"
+mkdir -p runnerimage/reportdesign/builtins
+rm -f runnerimage/reportdesign/builtins/*.json
+install -m 0644 "$dir/pkg/reportdesign/builtins"/*.json runnerimage/reportdesign/builtins/
+echo "runnerimage/judge, runnerimage/websearch and runnerimage/reportdesign now match $(GOWORK=off go list -m -f '{{.Path}}@{{.Version}}' github.com/blaktron/agentry)"

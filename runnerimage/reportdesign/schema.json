@@ -1,0 +1,176 @@
+{
+  "$id": "https://secureagentry.net/schemas/report-design-2.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "accent": {
+      "pattern": "^#[0-9a-f]{6}$",
+      "type": "string"
+    },
+    "agentryTheme": {
+      "enum": [
+        2
+      ],
+      "type": "integer"
+    },
+    "basedOn": {
+      "enum": [
+        "plain",
+        "classic",
+        "modern",
+        "editorial",
+        "technical"
+      ],
+      "type": "string"
+    },
+    "fonts": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "enum": [
+            "Inter",
+            "IBM Plex Sans",
+            "Source Sans 3",
+            "Work Sans",
+            "Source Serif 4",
+            "Lora",
+            "Merriweather",
+            "IBM Plex Serif",
+            "EB Garamond"
+          ],
+          "type": "string"
+        },
+        "code": {
+          "enum": [
+            "IBM Plex Mono",
+            "JetBrains Mono",
+            "Source Code Pro"
+          ],
+          "type": "string"
+        },
+        "headings": {
+          "enum": [
+            "Inter",
+            "IBM Plex Sans",
+            "Source Sans 3",
+            "Work Sans",
+            "Montserrat",
+            "Source Serif 4",
+            "Lora",
+            "Merriweather",
+            "IBM Plex Serif",
+            "EB Garamond",
+            "Playfair Display",
+            "IBM Plex Mono",
+            "JetBrains Mono",
+            "Source Code Pro"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "headings",
+        "body",
+        "code"
+      ],
+      "type": "object"
+    },
+    "footer": {
+      "additionalProperties": false,
+      "properties": {
+        "pageNumbers": {
+          "enum": [
+            "none",
+            "n",
+            "nOfN"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 120,
+          "type": "string"
+        }
+      },
+      "required": [
+        "pageNumbers",
+        "text"
+      ],
+      "type": "object"
+    },
+    "headings": {
+      "enum": [
+        "rule",
+        "bar",
+        "smallcaps",
+        "numbered",
+        "plain"
+      ],
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 60,
+      "minLength": 1,
+      "type": "string"
+    },
+    "paper": {
+      "enum": [
+        "a4",
+        "letter"
+      ],
+      "type": "string"
+    },
+    "quotes": {
+      "enum": [
+        "callout",
+        "plain"
+      ],
+      "type": "string"
+    },
+    "tables": {
+      "additionalProperties": false,
+      "properties": {
+        "banded": {
+          "type": "boolean"
+        },
+        "tinted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tinted",
+        "banded"
+      ],
+      "type": "object"
+    },
+    "titleBlock": {
+      "enum": [
+        "band",
+        "bar",
+        "ruled",
+        "none"
+      ],
+      "type": "string"
+    },
+    "version": {
+      "maximum": 1000000,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "agentryTheme",
+    "name",
+    "basedOn",
+    "version",
+    "paper",
+    "fonts",
+    "accent",
+    "titleBlock",
+    "headings",
+    "tables",
+    "quotes",
+    "footer"
+  ],
+  "title": "Agentry report design (theme document version 2)",
+  "type": "object"
+}

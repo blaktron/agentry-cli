@@ -1,256 +1,102 @@
 package toolsrv
 
-// The theme document (plan scratch-and-pdf-reports.md §5, D8, D13;
-// agentry-cli#730): what export_pdf's template reads to lay a report out.
-// It is data, versioned by "agentryTheme", and the one seam a person's own
-// design standard will plug into later: one more document of this shape,
-// rendered by the same template. The built-in themes ship in this package
-// (pdf/*.json), and the engine delivers the run's theme in the tools spec
-// (PDF.Theme); the model never chooses one (D19).
+// The run's report design (plan report-designs.md §4, D1, D11, D12, D14,
+// D22; agentry-cli#784, DR-87): the theme document, version 2, that
+// export_pdf's template reads to lay a report out. It is data, defined once
+// in the core's pkg/reportdesign, which this image carries as a byte-for-byte
+// copy (runnerimage/reportdesign, DR-43's rule), so a design is held here to
+// the rules the core stored it under (invariant 3). The five built-in themes
+// are that package's; the engine delivers the run's design in the tools spec
+// (PDF.Theme), and the model never chooses one (D1): it chooses only each
+// PDF's form.
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
+	"strconv"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/blaktron/agentry-cli/runnerimage/reportdesign"
 )
 
-//go:embed pdf/report.typ pdf/*.json
+// pdfFiles holds the template; the themes are reportdesign's.
+//
+//go:embed pdf/report.typ
 var pdfFiles embed.FS
 
-// ThemeVersion is the theme document's schema version, its "agentryTheme".
-const ThemeVersion = 1
+// DefaultTheme is the built-in theme a run gets when nothing chooses
+// another: Plain.
+const DefaultTheme = reportdesign.DefaultID
 
-// DefaultTheme is the theme a run gets when nothing chooses another.
-const DefaultTheme = "plain"
+// BuiltinThemes are the ids of the built-in themes, Plain first.
+func BuiltinThemes() []string { return reportdesign.BuiltinIDs() }
 
-// builtinThemes are the themes in this image, by name: the plan's five
-// (D13), Plain first.
-var builtinThemes = []string{DefaultTheme, "formal", "brief", "technical", "letter"}
+// IsBuiltinTheme says whether name is a built-in theme's id.
+func IsBuiltinTheme(name string) bool { return slices.Contains(reportdesign.BuiltinIDs(), name) }
 
-// BuiltinThemes are the names of the built-in themes, Plain first.
-func BuiltinThemes() []string { return slices.Clone(builtinThemes) }
-
-// IsBuiltinTheme says whether name is a built-in theme's.
-func IsBuiltinTheme(name string) bool { return slices.Contains(builtinThemes, name) }
-
-// BuiltinTheme is a built-in theme's document, exactly the bytes whose
-// SHA-256 a receipt names.
+// BuiltinTheme is a built-in theme's document as the core ships it, its
+// canonical form (invariant 8).
 func BuiltinTheme(name string) ([]byte, error) {
-	if !IsBuiltinTheme(name) {
-		return nil, fmt.Errorf("no built-in report theme %q (there are: %s)", name, strings.Join(builtinThemes, ", "))
+	doc, ok := reportdesign.BuiltinDocument(name)
+	if !ok {
+		return nil, fmt.Errorf("no built-in report theme %q (there are: %s)", name, strings.Join(reportdesign.BuiltinIDs(), ", "))
 	}
-	return pdfFiles.ReadFile("pdf/" + name + ".json")
+	return doc, nil
 }
 
-// ThemeStamp is the run's theme as the engine stamps it into the tools
-// spec: the document verbatim, and what the receipt names it by.
+// ThemeStamp is the run's report design as the engine stamps it into the
+// tools spec: the canonical document verbatim, and what the receipt names it
+// by.
 type ThemeStamp struct {
-	Name    string `json:"name"`
+	// Name is the design's own label (a built-in's name, or the person's).
+	Name string `json:"name"`
+	// BasedOn is the built-in theme it started from.
+	BasedOn string `json:"basedOn"`
+	// Version is the design's revision, as text.
 	Version string `json:"version"`
-	// SHA256 is the hex SHA-256 of Document's bytes.
+	// SHA256 is the hex SHA-256 of Document's bytes, which are the design's
+	// canonical form, so it is pkg/reportdesign's SHA256 of the design.
 	SHA256 string `json:"sha256"`
-	// Document is the theme document's JSON text, kept as a string so that
-	// re-encoding the spec cannot change its bytes, and so its hash.
+	// Document is the design's canonical JSON text, kept as a string so
+	// that re-encoding the spec cannot change its bytes, and so its hash.
 	Document string `json:"document"`
 }
 
-// StampTheme reads a theme document into the stamp the engine writes into
-// the run's tools spec: it is parsed and checked here first, so a document
-// the template could not use never reaches a run.
+// StampTheme reads a design document, held to every rule of
+// pkg/reportdesign, into the stamp the engine writes into the run's tools
+// spec. The stamp carries the canonical document, whatever spacing the
+// source had, so its hash is the design's identity everywhere (the core
+// answers the same bytes).
 func StampTheme(doc []byte) (*ThemeStamp, error) {
-	t, err := ParseTheme(doc)
+	d, err := reportdesign.Parse(doc)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(doc)
-	return &ThemeStamp{Name: t.Name, Version: t.Version, SHA256: hex.EncodeToString(sum[:]), Document: string(doc)}, nil
+	canonical := d.Canonical()
+	sum := sha256.Sum256(canonical)
+	return &ThemeStamp{Name: d.Name, BasedOn: d.BasedOn, Version: strconv.Itoa(d.Version), SHA256: hex.EncodeToString(sum[:]), Document: string(canonical)}, nil
 }
 
-// check holds a stamp to its own document: the hash, and the name and
-// version the receipt will repeat.
-func (st *ThemeStamp) check() (*Theme, error) {
+// check holds a stamp to its own document: the hash, the design's rules, its
+// canonical form, and the name, theme and version the receipt will repeat.
+func (st *ThemeStamp) check() (reportdesign.Design, error) {
 	sum := sha256.Sum256([]byte(st.Document))
 	if hex.EncodeToString(sum[:]) != st.SHA256 {
-		return nil, errors.New("pdf.theme: the document's SHA-256 is not the one stamped")
+		return reportdesign.Design{}, errors.New("pdf.theme: the document's SHA-256 is not the one stamped")
 	}
-	t, err := ParseTheme([]byte(st.Document))
+	d, err := reportdesign.Parse([]byte(st.Document))
 	if err != nil {
-		return nil, fmt.Errorf("pdf.theme: %w", err)
+		return reportdesign.Design{}, fmt.Errorf("pdf.theme: %w", err)
 	}
-	if t.Name != st.Name || t.Version != st.Version {
-		return nil, fmt.Errorf("pdf.theme: stamped as %s %s, the document says %s %s", st.Name, st.Version, t.Name, t.Version)
+	if string(d.Canonical()) != st.Document {
+		return reportdesign.Design{}, errors.New("pdf.theme: the document is not the design's canonical form")
 	}
-	return t, nil
-}
-
-// Theme is a theme document, version 1. Every field is required; the
-// template reads them all.
-type Theme struct {
-	AgentryTheme int    `json:"agentryTheme"`
-	Name         string `json:"name"`
-	Version      string `json:"version"`
-	Page         struct {
-		// Paper is Typst's paper name: "a4" or "us-letter".
-		Paper    string  `json:"paper"`
-		MarginMM float64 `json:"marginMm"`
-	} `json:"page"`
-	// Fonts name a bundled family for each role.
-	Fonts struct {
-		Body     string `json:"body"`
-		Headings string `json:"headings"`
-		Code     string `json:"code"`
-	} `json:"fonts"`
-	Sizes struct {
-		BodyPt float64 `json:"bodyPt"`
-		CodePt float64 `json:"codePt"`
-		// HeadingScale multiplies BodyPt for heading levels 1 to 6.
-		HeadingScale []float64 `json:"headingScale"`
-	} `json:"sizes"`
-	// Colours are #rrggbb.
-	Colours struct {
-		Text           string `json:"text"`
-		Accent         string `json:"accent"`
-		Link           string `json:"link"`
-		TableHeader    string `json:"tableHeader"`
-		Rules          string `json:"rules"`
-		CodeBackground string `json:"codeBackground"`
-	} `json:"colours"`
-	Header struct {
-		Text  string `json:"text"`
-		Align string `json:"align"`
-	} `json:"header"`
-	Footer struct {
-		Text  string `json:"text"`
-		Align string `json:"align"`
-		// PageNumbers is "none", "n" or "n of N".
-		PageNumbers string `json:"pageNumbers"`
-	} `json:"footer"`
-	Tables struct {
-		HeaderBold bool `json:"headerBold"`
-		Banded     bool `json:"banded"` // alternate body rows shaded
-	} `json:"tables"`
-
-	// The optional fields of version 1 (agentry-cli#731; DR-81 departure
-	// 6), absent in Plain: a theme and the template that reads it ship in
-	// the same image, so they need no version of their own.
-
-	// Cover puts a page before the report with its title and the date, and
-	// numbers the pages after it from 1.
-	Cover bool `json:"cover,omitempty"`
-	// Title draws the report's first heading as a block of its own: a
-	// memo's heading, a letter's letterhead.
-	Title *ThemeTitle `json:"title,omitempty"`
-	// LineBreaks "hard" keeps each line of a paragraph on a line of its
-	// own, as a letter's address and signature blocks need; Markdown, and
-	// so the default "soft", joins them into one.
-	LineBreaks string `json:"lineBreaks,omitempty"`
-}
-
-// ThemeTitle is how a theme draws the report's first heading.
-type ThemeTitle struct {
-	Align string `json:"align"`
-	// Rule draws a line under it across the page's text width.
-	Rule bool `json:"rule"`
-}
-
-// The bundled families a theme may name for a role; the fallback fonts for
-// other scripts and emoji are the template's own.
-var themeFonts = []string{"Noto Sans", "Noto Serif", "Noto Sans Mono"}
-
-var (
-	themeName    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
-	themeVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
-	themeColour  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
-)
-
-// maxThemeText bounds a header's or footer's text, in bytes.
-const maxThemeText = 200
-
-// ParseTheme decodes a theme document strictly (no unknown field, every
-// value in range) so that the template meets only values it can draw.
-func ParseTheme(doc []byte) (*Theme, error) {
-	var t Theme
-	dec := json.NewDecoder(bytes.NewReader(doc))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&t); err != nil {
-		return nil, fmt.Errorf("the theme does not decode: %w", err)
+	if d.Name != st.Name || d.BasedOn != st.BasedOn || strconv.Itoa(d.Version) != st.Version {
+		return reportdesign.Design{}, fmt.Errorf("pdf.theme: stamped as %q (%s, version %s), the document says %q (%s, version %d)", st.Name, st.BasedOn, st.Version, d.Name, d.BasedOn, d.Version)
 	}
-	if dec.More() {
-		return nil, errors.New("the theme is more than one JSON document")
-	}
-	var problems []string
-	bad := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	if t.AgentryTheme != ThemeVersion {
-		bad("agentryTheme is %d, want %d", t.AgentryTheme, ThemeVersion)
-	}
-	if !themeName.MatchString(t.Name) {
-		bad("name %q is not a lower-case name", t.Name)
-	}
-	if !themeVersion.MatchString(t.Version) {
-		bad("version %q is not major.minor.patch", t.Version)
-	}
-	if t.Page.Paper != "a4" && t.Page.Paper != "us-letter" {
-		bad("page.paper %q is neither a4 nor us-letter", t.Page.Paper)
-	}
-	if t.Page.MarginMM < 10 || t.Page.MarginMM > 40 {
-		bad("page.marginMm %v is outside 10 to 40", t.Page.MarginMM)
-	}
-	for role, f := range map[string]string{"body": t.Fonts.Body, "headings": t.Fonts.Headings, "code": t.Fonts.Code} {
-		if !slices.Contains(themeFonts, f) {
-			bad("fonts.%s %q is not one of %v", role, f, themeFonts)
-		}
-	}
-	if t.Sizes.BodyPt < 7 || t.Sizes.BodyPt > 16 {
-		bad("sizes.bodyPt %v is outside 7 to 16", t.Sizes.BodyPt)
-	}
-	if t.Sizes.CodePt < 6 || t.Sizes.CodePt > 14 {
-		bad("sizes.codePt %v is outside 6 to 14", t.Sizes.CodePt)
-	}
-	if len(t.Sizes.HeadingScale) != 6 {
-		bad("sizes.headingScale has %d entries, want 6", len(t.Sizes.HeadingScale))
-	}
-	for i, v := range t.Sizes.HeadingScale {
-		if v < 0.8 || v > 3 {
-			bad("sizes.headingScale[%d] %v is outside 0.8 to 3", i, v)
-		}
-	}
-	for name, c := range map[string]string{"text": t.Colours.Text, "accent": t.Colours.Accent, "link": t.Colours.Link,
-		"tableHeader": t.Colours.TableHeader, "rules": t.Colours.Rules, "codeBackground": t.Colours.CodeBackground} {
-		if !themeColour.MatchString(c) {
-			bad("colours.%s %q is not #rrggbb", name, c)
-		}
-	}
-	aligns := map[string]string{"header.align": t.Header.Align, "footer.align": t.Footer.Align}
-	if t.Title != nil {
-		aligns["title.align"] = t.Title.Align
-	}
-	for name, a := range aligns {
-		if a != "left" && a != "center" && a != "right" {
-			bad("%s %q is not left, center or right", name, a)
-		}
-	}
-	for name, s := range map[string]string{"header.text": t.Header.Text, "footer.text": t.Footer.Text} {
-		if len(s) > maxThemeText || !utf8.ValidString(s) {
-			bad("%s is not UTF-8 text of at most %d bytes", name, maxThemeText)
-		}
-	}
-	if t.LineBreaks != "" && t.LineBreaks != "soft" && t.LineBreaks != "hard" {
-		bad("lineBreaks %q is neither soft nor hard", t.LineBreaks)
-	}
-	if !slices.Contains([]string{"none", "n", "n of N"}, t.Footer.PageNumbers) {
-		bad("footer.pageNumbers %q is not none, n or \"n of N\"", t.Footer.PageNumbers)
-	}
-	if len(problems) > 0 {
-		slices.Sort(problems)
-		return nil, fmt.Errorf("the theme is not usable: %v", problems)
-	}
-	return &t, nil
+	return d, nil
 }

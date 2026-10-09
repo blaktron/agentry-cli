@@ -6,79 +6,121 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry/pkg/reportdesign"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
-// TestChooseReportTheme (agentry-cli#731, plan D21, D22): the flag, then
-// the account, then the config, then Plain; a name typed in the flag or the
-// config that is not a theme's refuses as a usage error; the account's
-// theme, unread or unknown here, is a warning and the next choice runs.
+// designOf is a built-in's document with its name and accent changed, as a
+// person's own design would be.
+func designOf(t *testing.T, base, name, accent string) []byte {
+	t.Helper()
+	d, ok := reportdesign.Builtin(base)
+	if !ok {
+		t.Fatalf("no built-in %s", base)
+	}
+	d.Name, d.Accent = name, accent
+	return d.Canonical()
+}
+
+// TestChooseReportTheme (agentry-cli#731, plan D21, D22; agentry-cli#784,
+// report-designs.md D12, D19, D20): a flag, then the account, then the
+// config, then Plain; a name or a file typed in a flag or the config that is
+// not a design refuses as a usage error; the account's design, unread or not
+// one this CLI accepts, is a warning and the next choice runs.
 func TestChooseReportTheme(t *testing.T) {
-	account := func(name string, err error) accountTheme {
-		return func(context.Context) (string, error) { return name, err }
+	dir := t.TempDir()
+	house := designOf(t, "editorial", "House", "#7a1f1f")
+	houseFile := filepath.Join(dir, "house.json")
+	mustWriteFile(t, houseFile, house)
+	mine := designOf(t, "modern", "Mine", "#0b5394")
+	account := func(doc []byte, err error) accountTheme {
+		return func(context.Context) ([]byte, error) { return doc, err }
 	}
 	conf := func(name string) cliConfig { return cliConfig{Report: reportConfig{Theme: name}} }
 	for _, c := range []struct {
 		name    string
-		flag    string
+		flags   reportFlags
 		cfg     cliConfig
 		account accountTheme
 		want    engine.ReportTheme
 		warns   string
 	}{
-		{"nothing set", "", cliConfig{}, nil, engine.ReportTheme{Name: "plain", From: engine.ThemeFromDefault}, ""},
-		{"the flag wins", "letter", conf("brief"), account("formal", nil), engine.ReportTheme{Name: "letter", From: engine.ThemeFromFlag}, ""},
-		{"the account over the config", "", conf("brief"), account("formal", nil), engine.ReportTheme{Name: "formal", From: engine.ThemeFromAccount}, ""},
-		{"never chosen is not plain", "", conf("brief"), account("", nil), engine.ReportTheme{Name: "brief", From: engine.ThemeFromConfig}, ""},
-		{"no account", "", conf("technical"), nil, engine.ReportTheme{Name: "technical", From: engine.ThemeFromConfig}, ""},
-		{"an account that cannot be read", "", conf("brief"), account("", errors.New("offline")), engine.ReportTheme{Name: "brief", From: engine.ThemeFromConfig}, "could not be read (offline); PDFs use brief"},
-		{"a theme this CLI does not have", "", cliConfig{}, account("house-style", nil), engine.ReportTheme{Name: "plain", From: engine.ThemeFromDefault}, `"house-style" is not one this CLI has`},
+		{"nothing set", reportFlags{}, cliConfig{}, nil, engine.ReportTheme{Name: "plain", From: engine.ThemeFromDefault}, ""},
+		{"the theme flag wins", reportFlags{theme: "classic"}, conf("modern"), account(mine, nil), engine.ReportTheme{Name: "classic", From: engine.ThemeFromFlag}, ""},
+		{"the design flag wins", reportFlags{design: houseFile}, conf("modern"), account(mine, nil), engine.ReportTheme{Design: house, From: engine.ThemeFromDesignFlag}, ""},
+		{"the account over the config", reportFlags{}, conf("modern"), account(mine, nil), engine.ReportTheme{Design: mine, From: engine.ThemeFromAccount}, ""},
+		{"never chosen is not plain", reportFlags{}, conf("technical"), account(nil, nil), engine.ReportTheme{Name: "technical", From: engine.ThemeFromConfig}, ""},
+		{"a design file in the config", reportFlags{}, cliConfig{Report: reportConfig{Design: houseFile}}, nil, engine.ReportTheme{Design: house, From: engine.ThemeFromDesignConfig}, ""},
+		{"an account that cannot be read", reportFlags{}, conf("classic"), account(nil, errors.New("offline")), engine.ReportTheme{Name: "classic", From: engine.ThemeFromConfig}, "could not be read (offline); PDFs use classic"},
+		{"a design this CLI does not accept", reportFlags{}, cliConfig{Report: reportConfig{Design: houseFile}}, account(bytes.Replace(mine, []byte(`"agentryTheme": 2`), []byte(`"agentryTheme": 3`), 1), nil),
+			engine.ReportTheme{Design: house, From: engine.ThemeFromDesignConfig}, `is not one this CLI can draw (report design: agentryTheme: must be 2`},
 	} {
 		var warn bytes.Buffer
-		got, err := chooseReportTheme(context.Background(), c.flag, c.cfg, c.account, &warn)
+		got, err := chooseReportTheme(context.Background(), c.flags, c.cfg, c.account, &warn)
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
 			continue
 		}
-		if got != c.want {
+		if got.Name != c.want.Name || !bytes.Equal(got.Design, c.want.Design) || got.From != c.want.From {
 			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
 		}
 		if c.warns == "" && warn.Len() > 0 || !strings.Contains(warn.String(), c.warns) {
 			t.Errorf("%s: warned %q, want %q", c.name, warn.String(), c.warns)
 		}
 	}
+	pale := filepath.Join(dir, "pale.json")
+	mustWriteFile(t, pale, designOf(t, "modern", "Pale", "#7fb3d5"))
 	asked := false
-	spy := func(context.Context) (string, error) { asked = true; return "formal", nil }
+	spy := func(context.Context) ([]byte, error) { asked = true; return mine, nil }
 	for _, c := range []struct {
-		name string
-		flag string
-		cfg  cliConfig
+		name  string
+		flags reportFlags
+		cfg   cliConfig
+		says  string
 	}{
-		{"an unknown flag", "fancy", cliConfig{}},
-		{"a capitalised flag", "Formal", cliConfig{}},
-		{"an unknown config", "", conf("house")},
+		{"an unknown theme flag", reportFlags{theme: "fancy"}, cliConfig{}, "plain, classic, modern, editorial, technical"},
+		{"a capitalised theme flag", reportFlags{theme: "Classic"}, cliConfig{}, "plain, classic, modern, editorial, technical"},
+		{"an old theme's name", reportFlags{theme: "formal"}, cliConfig{}, "plain, classic, modern, editorial, technical"},
+		{"both flags", reportFlags{theme: "plain", design: houseFile}, cliConfig{}, "give one"},
+		{"a missing design file", reportFlags{design: filepath.Join(dir, "none.json")}, cliConfig{}, "no such file"},
+		{"a design that fails the contrast rule", reportFlags{design: pale}, cliConfig{}, "accent"},
+		{"an unknown config theme", reportFlags{}, conf("house"), "plain, classic, modern, editorial, technical"},
+		{"both in the config", reportFlags{}, cliConfig{Report: reportConfig{Theme: "plain", Design: houseFile}}, "keep one"},
+		{"a config design that is not one", reportFlags{}, cliConfig{Report: reportConfig{Design: pale}}, "accent"},
 	} {
-		_, err := chooseReportTheme(context.Background(), c.flag, c.cfg, spy, &bytes.Buffer{})
+		_, err := chooseReportTheme(context.Background(), c.flags, c.cfg, spy, &bytes.Buffer{})
 		var ce *engine.ClassifiedError
-		if !errors.As(err, &ce) || ce.Code != engine.ExitUsage || !strings.Contains(err.Error(), "plain, formal, brief, technical, letter") {
-			t.Errorf("%s: %v, want a usage error naming the themes", c.name, err)
+		if !errors.As(err, &ce) || ce.Code != engine.ExitUsage || !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%s: %v, want a usage error saying %q", c.name, err, c.says)
 		}
 	}
 	if asked {
-		t.Error("the account was asked although a typed name refused the run")
+		t.Error("the account was asked although a typed choice refused the run")
 	}
 }
 
-// TestReadAccountTheme: the signed-in account's report theme from the
-// registry, with the sign-in's token; {} and a registry from before the
-// setting are never chosen; any other answer is an error. No account is
+func mustWriteFile(t *testing.T, path string, b []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReadAccountTheme: the signed-in account's report design from the
+// registry, with the sign-in's token; {}, a null design, a core's answer
+// from before designs and a registry from before the setting are never
+// chosen; any other answer is an error. No account is
 // asked without a sign-in, nor in a driver's run, which holds a run grant.
 func TestReadAccountTheme(t *testing.T) {
 	isolateEnv(t)
-	answer, status := `{"theme":"formal"}`, http.StatusOK
+	mine := designOf(t, "modern", "Mine", "#0b5394")
+	answer, status := `{"design":`+string(mine)+`}`, http.StatusOK
 	var auth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/user/report-settings" || r.Method != http.MethodGet {
@@ -105,20 +147,22 @@ func TestReadAccountTheme(t *testing.T) {
 	if read == nil {
 		t.Fatal("a signed-in run asks no account")
 	}
-	if name, err := read(context.Background()); err != nil || name != "formal" || auth != "Bearer agy_test" {
-		t.Errorf("formal = (%q, %v), auth %q", name, err, auth)
+	if doc, err := read(context.Background()); err != nil || !bytes.Equal(bytes.TrimSpace(doc), bytes.TrimSpace(mine)) || auth != "Bearer agy_test" {
+		t.Errorf("a design = (%s, %v), auth %q", doc, err, auth)
 	}
-	answer = `{}`
-	if name, err := read(context.Background()); err != nil || name != "" {
-		t.Errorf("never chosen = (%q, %v)", name, err)
+	for _, never := range []string{`{}`, `{"design":null}`, `{"theme":"formal"}`} {
+		answer = never
+		if doc, err := read(context.Background()); err != nil || doc != nil {
+			t.Errorf("never chosen %s = (%s, %v)", never, doc, err)
+		}
 	}
 	status = http.StatusForbidden
 	if _, err := read(context.Background()); err == nil || !strings.Contains(err.Error(), "Access denied") {
 		t.Errorf("a refusal = %v", err)
 	}
 	old := readAccountTheme(srv.URL + "/older")
-	if name, err := old(context.Background()); err != nil || name != "" {
-		t.Errorf("a registry without the setting = (%q, %v)", name, err)
+	if doc, err := old(context.Background()); err != nil || doc != nil {
+		t.Errorf("a registry without the setting = (%s, %v)", doc, err)
 	}
 	t.Setenv(envRunGrant, "grant")
 	if readAccountTheme(srv.URL) != nil {
@@ -126,7 +170,8 @@ func TestReadAccountTheme(t *testing.T) {
 	}
 }
 
-// An unknown report theme stops the run before anything starts: a usage
+// An unknown report theme, or a design file that is not one, stops the run
+// before anything starts: a usage
 // error, not the docker error a run on this machine would meet next.
 func TestRunRefusesAnUnknownReportTheme(t *testing.T) {
 	isolateEnv(t)
@@ -140,12 +185,19 @@ func TestRunRefusesAnUnknownReportTheme(t *testing.T) {
 	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/pure-text"),
 		"--allow-unsigned", "--yes", "--policy", policyPath)
 	wantClassified(t, err, engine.ExitUsage)
+	if err := saveCLIConfig(cliConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/pure-text"),
+		"--allow-unsigned", "--yes", "--policy", policyPath, "--report-design", filepath.Join(t.TempDir(), "none.json"))
+	wantClassified(t, err, engine.ExitUsage)
 }
 
-// report.theme survives the CLI rewriting its config, as a sign-in does.
+// report.theme and report.design survive the CLI rewriting its config, as a
+// sign-in does.
 func TestReportThemeSurvivesAConfigRewrite(t *testing.T) {
 	isolateConfig(t)
-	if err := saveCLIConfig(cliConfig{Report: reportConfig{Theme: "letter"}}); err != nil {
+	if err := saveCLIConfig(cliConfig{Report: reportConfig{Theme: "classic", Design: "house.json"}}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := loadCLIConfig()
@@ -156,7 +208,7 @@ func TestReportThemeSurvivesAConfigRewrite(t *testing.T) {
 	if err := saveCLIConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, err = loadCLIConfig(); err != nil || cfg.Report.Theme != "letter" {
-		t.Errorf("report.theme after a rewrite = %q (%v)", cfg.Report.Theme, err)
+	if cfg, err = loadCLIConfig(); err != nil || cfg.Report.Theme != "classic" || cfg.Report.Design != "house.json" {
+		t.Errorf("report after a rewrite = %+v (%v)", cfg.Report, err)
 	}
 }

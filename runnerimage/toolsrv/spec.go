@@ -19,11 +19,13 @@ package toolsrv
 // agentry-cli#560); "7" the calls ledger and end_blocked (plan
 // quickagents-that-run.md M9, agentry-cli#629); "8" the scratch folder
 // (plan scratch-and-pdf-reports.md §4, agentry-cli#729); "9" export_pdf
-// (plan scratch-and-pdf-reports.md §5, agentry-cli#730). The server
+// (plan scratch-and-pdf-reports.md §5, agentry-cli#730); "10" the report
+// design, theme document version 2, and export_pdf's form (plan
+// report-designs.md §4, agentry-cli#784). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "9"
+const SpecVersion = "10"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -113,8 +115,8 @@ type Spec struct {
 	// release's one-shot run alone, with end_blocked granted beside it.
 	Calls Calls `json:"calls,omitzero"`
 	// PDF is export_pdf's grant (pdf.go): Enabled by the compiler with the
-	// scratch folder, the theme, the author line and the ledger stamped by
-	// the engine.
+	// scratch folder, the report design, the author line and the ledger
+	// stamped by the engine.
 	PDF PDF `json:"pdf,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
