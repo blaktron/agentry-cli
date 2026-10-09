@@ -33,6 +33,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
@@ -254,6 +255,25 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	switch {
 	case pol.Model.Provider == "" || pol.Model.Name == "":
 		rep.fail("model", "no provider/model configured — run `agentry setup`")
+	case policy.IsModelSignIn(pol.Model.APIKeyKind):
+		// A model sign-in (agentry-cli#738): the person's grant, kept in
+		// the model sign-in store; doctor asks only whether one is kept.
+		vendor := modelsignin.VendorOf(pol.Model.APIKeyKind)
+		var r *modelsignin.Record
+		h, err := runnerHome()
+		if err == nil {
+			r, err = modelsignin.Open(h, nil).Get(vendor)
+		}
+		switch {
+		case err != nil && !errors.Is(err, modelsignin.ErrNone):
+			rep.fail("model", "%s/%s: %v", pol.Model.Provider, pol.Model.Name, err)
+		case err != nil:
+			rep.fail("model", "%s/%s spends %s (apiKeyKind %s) and none is kept on this computer — run `agentry setup` to sign in", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), pol.Model.APIKeyKind)
+		case r.Broken != "":
+			rep.fail("model", "%s/%s: the %s sign-in no longer works (%s) — run `agentry setup` to sign in again", pol.Model.Provider, pol.Model.Name, vendor, r.Broken)
+		default:
+			rep.ok("model", "%s/%s (spends %s, kept as the model sign-in %s; runs report tokens, not dollars)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), vendor)
+		}
 	case pol.Model.APIKeyEnv == "":
 		rep.fail("model", "%s/%s: no apiKeyEnv configured — run `agentry setup`", pol.Model.Provider, pol.Model.Name)
 	case os.Getenv(pol.Model.APIKeyEnv) == "" && policy.KeySource(policy.HarnessPolicy{}, pol.Model) == modelkey.SourceKeyring:

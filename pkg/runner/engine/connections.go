@@ -153,7 +153,10 @@ func writeConnectionFiles(p Params, rd *runDirs, values map[string]string) error
 		} else if err := writeOAuthFiles(context.Background(), p, rd, srv, t, false); err != nil {
 			return err
 		}
-		rd.conns = append(rd.conns, &heldConnection{srv: srv, due: renewAt(t, now)})
+		rd.conns = append(rd.conns, heldConnection(p, rd, srv, renewAt(t, now)))
+	}
+	if err := writeModelSignIn(p, rd, values); err != nil {
+		return err
 	}
 	for key, server := range bearers {
 		dir := filepath.Join(rd.connections(), server.Name)
@@ -205,9 +208,21 @@ func writeOAuthFiles(ctx context.Context, p Params, rd *runDirs, srv spec.MCPSer
 	return nil
 }
 
-// heldConnection is one server's connection as the run holds it.
-type heldConnection struct {
-	srv spec.MCPServerSpec
+// heldToken is one access token the run holds and renews: a server's
+// connection (heldConnection) or the run's model sign-in's
+// (writeModelSignIn). Each knows how to ask for its next token and where to
+// write it; the renewer is the same for both.
+type heldToken struct {
+	// what names it in the run's notes.
+	what string
+	// ask is the caller's renewal; nil leaves the token as given.
+	ask func(context.Context) (ConnectionToken, error)
+	// write hands a renewed token over, labelling the new file before it
+	// is renamed into place.
+	write func(context.Context, ConnectionToken) error
+	// shaped holds a renewed token to an access token's shape before it is
+	// written where a template or a harness reads it.
+	shaped bool
 	// due is when the renewer asks for its next token, fixed when the
 	// token is taken (or a renewal fails).
 	due time.Time
@@ -215,11 +230,24 @@ type heldConnection struct {
 	failing bool
 }
 
-// renewable reports whether a renewed token would reach the server: a
-// bridge reads its bearer at every request, a package server its files;
-// an env token is fixed for the run.
-func (h *heldConnection) renewable() bool {
-	return h.srv.Remote() || len(h.srv.OAuth.Files) > 0
+// heldConnection is a server's connection as the run holds it: renewable
+// when a renewed token would reach the server (a bridge reads its bearer
+// at every request, a package server its files; an env token is fixed for
+// the run), and only when the caller gave a renewal.
+func heldConnection(p Params, rd *runDirs, srv spec.MCPServerSpec, due time.Time) *heldToken {
+	h := &heldToken{what: "the connection of MCP server " + srv.Ref(), shaped: !srv.Remote(), due: due}
+	if p.RenewConnection == nil || (!srv.Remote() && len(srv.OAuth.Files) == 0) {
+		return h
+	}
+	h.ask = func(ctx context.Context) (ConnectionToken, error) { return p.RenewConnection(ctx, srv.ConnectionKey()) }
+	h.write = func(ctx context.Context, t ConnectionToken) error {
+		if srv.Remote() {
+			return writeBearer(filepath.Join(rd.connections(), srv.Name), t.AccessToken,
+				func(tmp string) { relabelShared(ctx, p.Stderr, tmp) })
+		}
+		return writeOAuthFiles(ctx, p, rd, srv, t, true)
+	}
+	return h
 }
 
 // renewAt is when to ask for a new token taken at now: half its remaining
@@ -245,13 +273,13 @@ var renewRetry = time.Minute
 // connection folders are deleted. Nothing starts when the caller gave no
 // RenewConnection or no connection would see a new token.
 func renewConnections(ctx context.Context, p Params, rd *runDirs) (stop func()) {
-	var held []*heldConnection
+	var held []*heldToken
 	for _, h := range rd.conns {
-		if h.renewable() {
+		if h.ask != nil {
 			held = append(held, h)
 		}
 	}
-	if p.RenewConnection == nil || len(held) == 0 {
+	if len(held) == 0 {
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -288,39 +316,34 @@ func renewConnections(ctx context.Context, p Params, rd *runDirs) (stop func()) 
 // said once, on the run's stderr (masked), and asked again after
 // renewRetry; the server's calls fail once the old token expires, which is
 // plan D13's outcome for a hosted run.
-func renewOne(ctx context.Context, p Params, rd *runDirs, h *heldConnection) {
-	t, err := p.RenewConnection(ctx, h.srv.ConnectionKey())
+func renewOne(ctx context.Context, p Params, rd *runDirs, h *heldToken) {
+	t, err := h.ask(ctx)
 	if err == nil && t.AccessToken == "" {
 		err = fmt.Errorf("the vendor sent no access token")
 	}
-	if err == nil && !h.srv.Remote() && !accessTokenRE.MatchString(t.AccessToken) {
+	if err == nil && h.shaped && !accessTokenRE.MatchString(t.AccessToken) {
 		err = fmt.Errorf("the vendor's new access token is not in the shape an access token takes")
 	}
 	if err == nil {
 		// Masked before it is written anywhere a log could quote it.
 		rd.redact.add(t.AccessToken)
 		t = withExpiry(t, time.Now())
-		if h.srv.Remote() {
-			err = writeBearer(filepath.Join(rd.connections(), h.srv.Name), t.AccessToken,
-				func(tmp string) { relabelShared(ctx, p.Stderr, tmp) })
-		} else {
-			err = writeOAuthFiles(ctx, p, rd, h.srv, t, true)
-		}
+		err = h.write(ctx, t)
 	}
 	if ctx.Err() != nil {
 		return
 	}
 	if err != nil {
 		if !h.failing {
-			_, _ = fmt.Fprintf(p.Stderr, "note: could not renew the connection of MCP server %s before its access token expires (%v); trying again until it can, and its calls fail once the token expires\n",
-				h.srv.Ref(), rd.redact.Err(err))
+			_, _ = fmt.Fprintf(p.Stderr, "note: could not renew %s before its access token expires (%v); trying again until it can, and its calls fail once the token expires\n",
+				h.what, rd.redact.Err(err))
 			h.failing = true
 		}
 		h.due = time.Now().Add(renewRetry)
 		return
 	}
 	if h.failing {
-		_, _ = fmt.Fprintf(p.Stderr, "note: renewed the connection of MCP server %s\n", h.srv.Ref())
+		_, _ = fmt.Fprintf(p.Stderr, "note: renewed %s\n", h.what)
 		h.failing = false
 	}
 	// Never sooner than renewRetry, however short-lived the vendor's

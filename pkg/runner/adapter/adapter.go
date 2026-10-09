@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -67,6 +69,12 @@ type Result struct {
 	Model string
 	// ResultKind is "json" when SchemaJSON was wired, else "text".
 	ResultKind string
+	// ModelSignIn is how the harness reads the model sign-in the policy
+	// names (policy.IsModelSignIn of its key kind): its kind, its delivery
+	// and the container path the harness reads it at. The compiler adds
+	// the mount itself (invariant I4) and refuses the plan when the policy
+	// names a sign-in and the adapter returned none. Nil for a key.
+	ModelSignIn *spec.ModelSignInSpec
 }
 
 // EventKind classifies normalized harness events.
@@ -93,6 +101,13 @@ const (
 	// runner refused: a tool outside the gateway's catalog, which should
 	// never occur (interactive sessions; plan §6.10 line 4).
 	EventPermissionDenied EventKind = "permission_denied"
+	// EventPlanLimit says the person's plan refused the run's model calls
+	// for its usage limit (plan model-sign-ins.md D12, invariant I9): the
+	// engine ends the run with the plan-limit outcome, never retries it
+	// and never reports it as success. Text is the vendor's own words,
+	// ResetsAt when it said when the limit lifts (zero otherwise: no reset
+	// time is invented).
+	EventPlanLimit EventKind = "plan_limit"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )
@@ -117,6 +132,9 @@ type Event struct {
 	// delta since the previous update (agentry-cli#71). Input and output
 	// stay zero then — unknown, not guessed.
 	TotalTokens int64
+	// ResetsAt is set on EventPlanLimit when the harness said when the
+	// plan's limit lifts.
+	ResetsAt time.Time
 	// Raw is the original line for receipts.
 	Raw json.RawMessage
 }
@@ -152,6 +170,21 @@ type SessionOptions struct {
 	// every tool call, and a denial does not reach the model as a refused
 	// tool result — docker-agent fails the whole turn).
 	GatewayTools []string
+}
+
+// ModelSignInAdapter is implemented by an adapter that can spend a model
+// sign-in (plan model-sign-ins.md §4.2): it names the kinds it can, and
+// for those its Compile returns Result.ModelSignIn. The compiler refuses a
+// policy naming a sign-in kind for any other adapter by policy, before
+// the adapter compiles, so no adapter renders a key for a sign-in.
+type ModelSignInAdapter interface {
+	ModelSignIns() []string
+}
+
+// SpendsModelSignIn reports whether a can spend a model sign-in of kind.
+func SpendsModelSignIn(a Adapter, kind string) bool {
+	s, ok := a.(ModelSignInAdapter)
+	return ok && slices.Contains(s.ModelSignIns(), kind)
 }
 
 // HostHarness is implemented by adapters that drive the person's own

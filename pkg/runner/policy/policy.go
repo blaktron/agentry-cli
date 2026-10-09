@@ -63,7 +63,11 @@ const Version = "1"
 // Versions match the survey of 2026-08-30, re-verified 2026-09-23.
 const (
 	DefaultGatewayImage = "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3"
-	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.128.0"
+	// DefaultHarnessImage is pinned by digest since agentry-cli#738
+	// (agentry-cli#224's option A): the tag is a label, the digest the
+	// bytes, and the receipt names it. Pulled, inspected and run in that
+	// form on the workstation's daemon on 2026-10-09.
+	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.128.0@sha256:50bef17dfbc43c56f8c7c68eade9fc36cd4de5a2fc7ad0f28e34d0030002d5f1"
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// (RUNNER-PLAN-3 §P2). Node is 24 since agentry-cli#608: servers whose
@@ -414,8 +418,16 @@ func (p *Policy) KeepProfilesByDefault() bool {
 type Images struct {
 	// Gateway is the docker/mcp-gateway image.
 	Gateway string `yaml:"gateway"`
-	// HarnessDockerAgent is the docker-agent harness image.
+	// HarnessDockerAgent is the docker-agent harness image. The default is
+	// pinned by digest; a file written before it was may still name a tag,
+	// and the receipt then says the image was pinned by tag alone.
 	HarnessDockerAgent string `yaml:"harnessDockerAgent"`
+	// HarnessImages pins the harness image of each other adapter that runs
+	// in a container, by adapter name (agentry-cli#224 option A, plan
+	// model-sign-ins.md D5): by digest when published, by the vendor
+	// artifact's hash when built on this machine, never by a tag. Unset
+	// entries take the CLI's DefaultHarnessImages.
+	HarnessImages map[string]HarnessImage `yaml:"harnessImages,omitempty"`
 	// GoBuilder builds the local runner image (§R7).
 	GoBuilder string `yaml:"goBuilder"`
 	// Runner overrides the local runner image tag ("" = derived from the
@@ -889,6 +901,14 @@ func (p *Policy) Validate() error {
 	if p.Images.Gateway == "" || p.Images.HarnessDockerAgent == "" || p.Images.GoBuilder == "" {
 		return errors.New("images.gateway, images.harnessDockerAgent, and images.goBuilder are all required")
 	}
+	for name, h := range p.Images.HarnessImages {
+		if name == DockerAgentAdapter {
+			return errors.New("images.harnessImages names docker-agent: its image is images.harnessDockerAgent")
+		}
+		if err := h.validate(name); err != nil {
+			return err
+		}
+	}
 	if p.Images.Files != "" && !PinnedByDigest(p.Images.Files) {
 		return fmt.Errorf("images.files %q must be pinned by digest (<name>@sha256:<64 hex>): the files image is pulled by digest only", p.Images.Files)
 	}
@@ -904,14 +924,14 @@ func (p *Policy) Validate() error {
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
 	}
-	if p.Model.APIKeyEnv == "" {
+	if p.Model.APIKeyEnv == "" && !IsModelSignIn(p.Model.APIKeyKind) {
 		return errors.New("model.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)")
 	}
 	if !validKeySource(p.Model.APIKeySource) {
 		return fmt.Errorf("model.apiKeySource %q must be env or keyring", p.Model.APIKeySource)
 	}
-	if !validKeyKind(p.Model.APIKeyKind) {
-		return fmt.Errorf("model.apiKeyKind %q must be api or subscription", p.Model.APIKeyKind)
+	if err := checkKind("model.apiKeyKind", p.Model.APIKeyKind, p.Model.Provider); err != nil {
+		return err
 	}
 	if p.Model.APIKeyKind == KeyKindSubscription && p.Model.Provider != ProviderAnthropic {
 		return fmt.Errorf("model.apiKeyKind subscription needs model.provider anthropic (it is %q): only Anthropic has such tokens, and only Claude Code may use one", p.Model.Provider)
@@ -920,8 +940,8 @@ func (p *Policy) Validate() error {
 		if !validKeySource(hp.APIKeySource) {
 			return fmt.Errorf("harness.%s.apiKeySource %q must be env or keyring", name, hp.APIKeySource)
 		}
-		if !validKeyKind(hp.APIKeyKind) {
-			return fmt.Errorf("harness.%s.apiKeyKind %q must be api or subscription", name, hp.APIKeyKind)
+		if err := checkKind("harness."+name+".apiKeyKind", hp.APIKeyKind, p.Model.Provider); err != nil {
+			return err
 		}
 		if hp.APIKeyKind == KeyKindSubscription && name != "claude" {
 			return fmt.Errorf("harness.%s.apiKeyKind subscription: %s", name, SubscriptionTokenSentence)
@@ -952,6 +972,17 @@ func (p *Policy) Validate() error {
 	}
 	if p.Budgets.MaxTurns < 0 {
 		return errors.New("budgets.maxTurns must be >= 0 (0 = unlimited)")
+	}
+	if p.Budgets.MaxCostUSD > 0 {
+		kinds := []string{p.Model.APIKeyKind}
+		for _, hp := range p.Harness {
+			kinds = append(kinds, hp.APIKeyKind)
+		}
+		for _, k := range kinds {
+			if IsModelSignIn(k) {
+				return fmt.Errorf("budgets.maxCostUsd cannot apply beside apiKeyKind %s: %s", k, MaxCostSignInSentence)
+			}
+		}
 	}
 	for name, u := range map[string]string{
 		"mcpRegistries.npm": p.MCPRegistries.NPM, "mcpRegistries.pypi": p.MCPRegistries.PyPI,
@@ -1093,7 +1124,14 @@ images:
   # the digest from that repository's images.tsv (repo:tag@sha256:...), or
   # point these at any registry you prefer: a private one, or your own mirror.
   gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
-  harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0
+  # The default harness, pinned by digest: the receipt names the digest.
+  harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0@sha256:50bef17dfbc43c56f8c7c68eade9fc36cd4de5a2fc7ad0f28e34d0030002d5f1
+  # Other adapters' harness images, by adapter name: pinned by digest
+  # (ref: <name>@sha256:...) or, for one built on this machine from its
+  # vendor's artifact, by that artifact's hash (artifact: sha256:...).
+  # Unset, the CLI's pinned defaults are used.
+  # harnessImages:
+  #   codex: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:24-alpine
@@ -1130,6 +1168,12 @@ model:
   #   setup-token): Claude Code only, so anthropic only; written by setup
   #   from the key's shape (or harness.claude.apiKeyKind, beside an API
   #   key for the container harness here)
+  # apiKeyKind: chatgpt-plan | claude-signin | copilot-signin
+  #   # a model sign-in: your own ChatGPT plan (provider openai), Claude
+  #   # subscription through Claude Code (anthropic) or Copilot plan
+  #   # (copilot), kept by "agentry model-signins", never in this file; no
+  #   # apiKeyEnv; runs report tokens, not dollars; never used by a hosted
+  #   # run. Only an adapter that can spend one runs it.
   # baseUrl: https://llm.internal:8443/v1   # custom only
   # The llm-proxy CONNECT allowlist: the agent container can reach these
   # host:port pairs and nothing else. Keep it to model endpoints.
@@ -1148,7 +1192,8 @@ budgets:
   timeoutSeconds: 900
   maxTurns: 60
   # maxCostUsd: 0 = unlimited; a positive value is a hard stop (exit 16)
-  # on the harness's reported running cost.
+  # on the harness's reported running cost. Must be 0 beside a model
+  # sign-in, which spends your plan and has no dollars to measure.
   maxCostUsd: 0
 # Interactive sessions (DR-15): silence, wall clock and user-turn caps. A
 # manifest may ask for a shorter idle timeout, never a longer one.
@@ -1312,9 +1357,10 @@ func CredentialKindOf(provider, key string) string {
 // the first model call.
 const SubscriptionTokenSentence = "an Anthropic subscription token works with Claude Code only (agentry run --adapter claude); runs in the container harness need a Console API key (sk-ant-api…)"
 
-// validKeyKind admits the apiKeyKind values: unset, api, subscription.
+// validKeyKind admits the apiKeyKind values: unset, api, subscription,
+// and the model sign-in kinds (signin.go).
 func validKeyKind(v string) bool {
-	return v == "" || v == KeyKindAPI || v == KeyKindSubscription
+	return v == "" || v == KeyKindAPI || v == KeyKindSubscription || IsModelSignIn(v)
 }
 
 // KeyKind is what the credential a run resolves is expected to be: the

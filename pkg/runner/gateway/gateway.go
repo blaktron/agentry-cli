@@ -93,6 +93,39 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	return nil
 }
 
+// EnsureInstalledFor is EnsureInstalled for one plan: the harness image
+// prepared is the one the plan's adapter runs and no other (plan
+// model-sign-ins.md D7), none for a host harness. A published image is
+// pulled by its pinned ref; one pinned by the artifact it is built from
+// is built on this machine by its adapter's preparation, and until that
+// exists here it must already be present (I8).
+func EnsureInstalledFor(ctx context.Context, d dockerx.Client, pol *policy.Policy,
+	runnerTag, imageCtxDir string, logw io.Writer, plan *spec.Plan,
+) error {
+	h := plan.Harness
+	if h.Host != nil || h.Agent.Image == "" || h.Agent.Image == pol.Images.HarnessDockerAgent {
+		return EnsureInstalled(ctx, d, pol, runnerTag, imageCtxDir, logw, h.Host == nil && h.Agent.Image != "")
+	}
+	// An image pinned by the artifact it is built from is never taken by
+	// its tag: only the build that makes it can say it holds that artifact,
+	// and this build has none, so the receipt's pin could not be true.
+	if h.ImagePin != nil && h.ImagePin.By == policy.PinArtifact {
+		return fmt.Errorf("the %s harness image %s is built on this computer from its vendor's artifact (%s), and this build of agentry can neither build it nor check one already there", h.Adapter, h.Agent.Image, h.ImagePin.Value)
+	}
+	if err := EnsureInstalled(ctx, d, pol, runnerTag, imageCtxDir, logw, false); err != nil {
+		return err
+	}
+	ok, err := d.ImageExists(ctx, h.Agent.Image)
+	if err != nil || ok {
+		return err
+	}
+	_, _ = fmt.Fprintf(logw, "pulling %s (first use)\n", h.Agent.Image)
+	if err := d.Pull(ctx, h.Agent.Image); err != nil {
+		return fmt.Errorf("pull %s: %w", h.Agent.Image, err)
+	}
+	return nil
+}
+
 // EnsureRuntime refuses, before anything is pulled or started, a policy
 // whose docker.runtime the daemon has not registered (DR-23): a run that
 // quietly landed on runc after asking for runsc would carry a receipt

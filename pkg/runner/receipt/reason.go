@@ -67,6 +67,15 @@ const (
 	// evidence (agent; agentry-cli#629): the runner's tools failed the
 	// agent. Detail: what the evidence was.
 	ReasonRunnerBlocked ReasonCode = "runner-blocked"
+	// ReasonSignInMissing: the run spends a model sign-in and was given
+	// none, or none it could use (prepare; agentry-cli#738). Never on a
+	// hosted run, which never spends one.
+	ReasonSignInMissing ReasonCode = "signin-missing"
+	// ReasonPlanLimit: the person's plan refused the model's calls for its
+	// usage limit (agent; plan model-sign-ins.md D12, invariant I9). The
+	// run is not retried; the vendor's words, and its reset time when it
+	// gave one, are in the error and the receipts.
+	ReasonPlanLimit ReasonCode = "plan-limit"
 )
 
 // The details of ReasonMCPInstallFailed: the install's step that failed.
@@ -160,6 +169,8 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonInputsNotDecoded: {details: []string{DecodeImage, DecodeRun}},
 	ReasonAgentBlocked:     {},
 	ReasonRunnerBlocked:    {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},
+	ReasonSignInMissing:    {},
+	ReasonPlanLimit:        {},
 }
 
 // ReasonCodes returns the closed list of codes, sorted.
