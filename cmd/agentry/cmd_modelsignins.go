@@ -192,10 +192,10 @@ func newModelSignInsRemoveCmd() *cobra.Command {
 				return emitJSON(cmd.OutOrStdout(), removedModelSignIn{Vendor: args[0], Revocation: outcome})
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed the %s sign-in (revocation: %s)\n", args[0], outcome)
-			if args[0] == modelsignin.Copilot && outcome == modelsignin.RevokeDone {
-				// GitHub revokes the tokens; the app's authorization, which only
-				// a holder of its client secret could revoke, stays listed.
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "GitHub revoked the sign-in's tokens; Agentry's app stays in your authorized apps until you remove it there: https://github.com/settings/applications")
+			if args[0] == modelsignin.Copilot && outcome == modelsignin.RevokeSubmitted {
+				// GitHub takes the tokens for revocation; the app's authorization,
+				// which only a holder of its client secret could revoke, stays.
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "GitHub accepted the sign-in's tokens for revocation; Agentry's app stays in your authorized apps until you remove it there: https://github.com/settings/applications")
 			}
 			return nil
 		},

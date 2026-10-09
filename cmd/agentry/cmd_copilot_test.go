@@ -67,7 +67,7 @@ func TestModelSignInsAddCopilotThenRemoveRevokesIt(t *testing.T) {
 		t.Fatalf("the GitHub App's sign-in asked a scope: %v", v.DeviceRequests[0])
 	}
 	out, _, err = runCLI(t, nil, "model-signins", "remove", "copilot")
-	if err != nil || !strings.Contains(out, "revocation: "+modelsignin.RevokeDone) || !strings.Contains(out, "stays in your authorized apps") {
+	if err != nil || !strings.Contains(out, "revocation: "+modelsignin.RevokeSubmitted) || !strings.Contains(out, "stays in your authorized apps") {
 		t.Fatalf("remove = %q (%v)", out, err)
 	}
 	if len(v.Revoked) != 3 {

@@ -1227,8 +1227,10 @@ plan. **Sign in with GitHub** (agentry-cli#741): `agentry model-signins add
 copilot` (or `agentry setup`, provider `copilot`) shows a code to enter on
 GitHub's own device page and signs in through Agentry's GitHub App
 (`--oauth-app`: its OAuth App instead), with no client secret anywhere; the
-refresh token is kept, and `remove copilot` revokes the grant's tokens through
-GitHub's credential revocation (GitHub tells the account's owner). Until this
+refresh token is kept, and `remove copilot` submits the grant's tokens to
+GitHub's credential revocation, which accepts them and acts after it answers
+(GitHub tells the account's owner; Agentry's app stays in your authorized apps
+until you remove it there). Until this
 build carries Agentry's public client ids (agentry-cli#743),
 `AGENTRY_GITHUB_APP_CLIENT_ID` or `AGENTRY_GITHUB_OAUTH_APP_CLIENT_ID` names
 one. Such a run uses the Copilot CLI image, built at first use from

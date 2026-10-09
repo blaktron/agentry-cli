@@ -98,7 +98,7 @@ func TestRemovingACopilotSignInRevokesItsGrant(t *testing.T) {
 	}
 	kept, _ := s.readSecret(mustGet(t, s), Copilot)
 	out, err := s.Remove(context.Background(), Copilot, "test")
-	if err != nil || out != RevokeDone {
+	if err != nil || out != RevokeSubmitted {
 		t.Fatalf("remove: %q %v", out, err)
 	}
 	if len(v.Revoked) != 3 || !slices.Contains(v.Revoked, kept) || len(v.RevokeAuth) != 0 {
