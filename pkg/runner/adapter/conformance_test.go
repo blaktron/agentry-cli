@@ -54,7 +54,21 @@ var conformanceCases = []conformanceCase{
 	{"interactive", manifest.ModeInteractive, false, ""},
 	{"signin-autonomous", manifest.ModeAutonomous, false, policy.KeyKindChatGPTPlan},
 	{"signin-interactive", manifest.ModeInteractive, false, policy.KeyKindChatGPTPlan},
+	{"claude-signin-autonomous", manifest.ModeAutonomous, false, policy.KeyKindClaudeSignIn},
+	{"claude-signin-interactive", manifest.ModeInteractive, false, policy.KeyKindClaudeSignIn},
 }
+
+// signInOnly are the adapters that run on a model sign-in and on no key
+// (Claude Code's image: an Anthropic key stays docker-agent's or the
+// installed claude's), so the key cases are not theirs.
+var signInOnly = map[string]bool{ClaudeImageAdapterName: true}
+
+// recordingOf names the adapter whose recorded harness output an adapter
+// is held to, when it reads the same harness's stream with the same
+// Events: the Claude Code image is Claude Code, read as the host claude
+// adapter reads it; its own recording waits for the live test (M11,
+// agentry-cli#744).
+var recordingOf = map[string]string{ClaudeImageAdapterName: ClaudeAdapterName}
 
 // goldenView is what the golden records: plan content, not Go pointers.
 type goldenView struct {
@@ -85,7 +99,7 @@ func TestConformance(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			for _, tc := range conformanceCases {
-				if tc.signIn != "" && !SpendsModelSignIn(ad, tc.signIn) {
+				if tc.signIn != "" && !SpendsModelSignIn(ad, tc.signIn) || tc.signIn == "" && signInOnly[name] {
 					continue
 				}
 				t.Run(tc.name, func(t *testing.T) { conformCompile(t, ad, tc) })
@@ -167,14 +181,19 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	switch {
 	case tc.signIn != "":
 		// A run paid by a sign-in carries no key at all (I3), and reads
-		// one token file the compiler mounts or the runner writes (I4).
+		// one token file the compiler mounts or the runner writes, or, for
+		// Claude Code, its own config directory (I4).
 		for _, v := range env {
 			if v.FromHostEnv != "" || v.FromKeyring != "" {
 				t.Errorf("a sign-in run is given the key variable %s", v.Name)
 			}
 		}
-		if m := r.ModelSignIn; m == nil || m.Kind != tc.signIn || m.Delivery != spec.ModelSignInToken {
-			t.Errorf("modelSignIn = %+v, want a %s token file", m, tc.signIn)
+		delivery := spec.ModelSignInToken
+		if tc.signIn == policy.KeyKindClaudeSignIn {
+			delivery = spec.ModelSignInConfigDir
+		}
+		if m := r.ModelSignIn; m == nil || m.Kind != tc.signIn || m.Delivery != delivery {
+			t.Errorf("modelSignIn = %+v, want a %s %s", m, tc.signIn, delivery)
 		}
 	case !keyByName:
 		t.Errorf("no env var resolves the model key %s from the host environment: %+v", in.Model.APIKeyEnv, env)
@@ -268,7 +287,11 @@ func conformEvents(t *testing.T, ad Adapter) {
 	if r, err := ad.Compile(conformanceInput(manifest.ModeAutonomous, false)); err == nil && r.OneTurn != nil {
 		t.Skip("every run of this adapter is driven by its session driver, which normalizes the stream itself (TestCodexSession; the engine's TestACodexImageRunOnAChatGPTPlanIsOneAppServerTurn)")
 	}
-	dir := filepath.Join("testdata", "conformance", ad.Name())
+	recording := ad.Name()
+	if of, ok := recordingOf[recording]; ok {
+		recording = of
+	}
+	dir := filepath.Join("testdata", "conformance", recording)
 	raw, err := os.ReadFile(filepath.Join(dir, "events.ndjson")) //nolint:gosec // testdata
 	if err != nil {
 		t.Fatalf("recorded harness output: %v (capture one with scripts/acceptance/runner-r4.sh)", err)

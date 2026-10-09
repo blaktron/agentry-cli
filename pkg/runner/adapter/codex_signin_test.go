@@ -214,7 +214,8 @@ func TestTheCodexImageRunsOnAnAPIKeyByChoice(t *testing.T) {
 }
 
 // docker-agent stays the default for every key; a ChatGPT plan runs on the
-// Codex image unless the policy or the flag picks otherwise.
+// Codex image, and a Claude subscription on the Claude Code image, unless
+// the policy or the flag picks otherwise.
 func TestTheDefaultAdapterFollowsThePlan(t *testing.T) {
 	pol := policy.Default()
 	if DefaultFor(pol) != DefaultName || DefaultFor(nil) != DefaultName {
@@ -225,8 +226,8 @@ func TestTheDefaultAdapterFollowsThePlan(t *testing.T) {
 		t.Fatalf("a ChatGPT plan's default is %q", DefaultFor(pol))
 	}
 	pol.Model.APIKeyKind, pol.Model.Provider = policy.KeyKindClaudeSignIn, policy.ProviderAnthropic
-	if DefaultFor(pol) != DefaultName {
-		t.Fatal("a Claude sign-in defaulted to the Codex image")
+	if DefaultFor(pol) != ClaudeImageAdapterName {
+		t.Fatalf("a Claude sign-in's default is %q", DefaultFor(pol))
 	}
 	if p, ok := policy.Default().Images.HarnessImageFor(CodexImageAdapterName); !ok || !policy.PinnedByDigest(p.Ref) || p.Artifact != "" {
 		t.Fatalf("the Codex image default %+v is not pinned by digest", p)

@@ -116,6 +116,10 @@ type ModelOpts struct {
 	// model-sign-ins.md §4.3; agentry-cli#739): nil offers none. APIKeyKind
 	// chatgpt-plan asks for it without the question.
 	ChatGPT ChatGPTOffer
+	// Claude offers ClaudeSignInLabel for provider anthropic (plan
+	// model-sign-ins.md §4.4; agentry-cli#740): nil offers none.
+	// APIKeyKind claude-signin asks for it without the question.
+	Claude ClaudeOffer
 	// Yes suppresses prompting entirely: table defaults fill the gaps, the
 	// same provider's policy fills what it customized, and a custom
 	// provider with no BaseURL left is an error rather than a question.
@@ -131,6 +135,86 @@ type ChatGPTOffer struct {
 	// SignIn signs in (fresh, or when none is kept) or refreshes the kept
 	// sign-in, and returns its account and the models its plan offers.
 	SignIn func(fresh bool) (account string, models []string, err error)
+}
+
+// ClaudeSignInLabel is the Claude choice's wording everywhere (plan D24):
+// plain text that runs use Claude Code, no logo, no "Sign in with Claude".
+const ClaudeSignInLabel = "Use your Claude subscription (runs Claude Code)"
+
+// AnthropicKeyCredits is what the API-key choice for Anthropic says (D24):
+// the plans whose included API credits a key spends.
+const AnthropicKeyCredits = "an Anthropic API key (the Max and Team plans include monthly API credits, spent through a key from the Console organization linked to the plan)"
+
+// ClaudeOffer is how setup reaches Claude Code's own sign-in, which the
+// caller owns (the image, docker, the terminal).
+type ClaudeOffer struct {
+	// Kept is the account of the Claude Code image's kept sign-in, ""
+	// when there is none.
+	Kept func() string
+	// SignIn runs Claude Code's own sign-in and returns its account.
+	SignIn func() (account string, err error)
+}
+
+// configureClaude is the model setup for a Claude subscription through
+// Claude Code: Claude Code's own sign-in, a model, and the policy's model
+// block. No key variable and no base URL: Claude Code talks to Anthropic
+// itself, and the proxy allows Anthropic's API and the host Claude Code
+// refreshes its sign-in at, alone (invariant I2).
+func configureClaude(p Prompter, pol *policy.Policy, opts ModelOpts) error {
+	if opts.Claude.SignIn == nil {
+		return errors.New("this setup cannot start Claude Code's sign-in")
+	}
+	acct := ""
+	if opts.Claude.Kept != nil {
+		acct = opts.Claude.Kept()
+	}
+	fresh := acct == ""
+	if !fresh && !opts.Yes {
+		use, err := p.Confirm(fmt.Sprintf("Use the Claude sign-in kept on this computer (%s)?", acct), true)
+		if err != nil {
+			return err
+		}
+		fresh = !use
+	}
+	if fresh {
+		p.Say(ClaudeSignInLabel + ": Claude Code signs you in itself; your Claude plan pays for the runs on this computer, and hosted runs never use it.")
+		var err error
+		if acct, err = opts.Claude.SignIn(); err != nil {
+			return err
+		}
+	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		def := DefaultsFor(policy.ProviderAnthropic).Model
+		if pol.Model.APIKeyKind == policy.KeyKindClaudeSignIn && pol.Model.Name != "" {
+			def = pol.Model.Name
+		}
+		if opts.Yes {
+			model = def
+		} else {
+			ans, err := p.Ask("Model (a Claude model id, or Claude Code's alias: sonnet, opus)", def)
+			if err != nil {
+				return err
+			}
+			model = strings.TrimSpace(ans)
+		}
+	}
+	if model == "" {
+		return errors.New("no model chosen for the Claude subscription (pass --model)")
+	}
+	pol.Model = policy.Model{
+		Provider:   policy.ProviderAnthropic,
+		Name:       model,
+		APIKeyKind: policy.KeyKindClaudeSignIn,
+		ProxyAllow: policy.SignInProxyAllow(policy.KeyKindClaudeSignIn),
+	}
+	who := ""
+	if acct != "" {
+		who = " as " + acct
+	}
+	p.Say(fmt.Sprintf("model: anthropic/%s, paid by your Claude subscription (signed in%s; runs use Claude Code, and the agent container reaches %s alone)",
+		model, who, strings.Join(pol.Model.ProxyAllow, ", ")))
+	return nil
 }
 
 // configureChatGPT is the model setup for a ChatGPT plan: the sign-in, the
@@ -270,6 +354,35 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		}
 	} else if strings.EqualFold(strings.TrimSpace(opts.APIKeyKind), policy.KeyKindChatGPTPlan) {
 		return fmt.Errorf("api key kind chatgpt-plan needs provider openai (it is %q)", prov)
+	}
+
+	// Anthropic is paid by a key, a pasted subscription token (DR-26), or
+	// the person's Claude subscription through Claude Code's own sign-in
+	// (D19–D24): the last asked when setup can start it.
+	if prov == policy.ProviderAnthropic {
+		kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind))
+		if kind == "" && !opts.Yes && opts.Claude.SignIn != nil {
+			def := "key"
+			if pol.Model.APIKeyKind == policy.KeyKindClaudeSignIn {
+				def = "claude"
+			}
+			ans, err := p.Ask("Pay for Anthropic models with (claude = "+ClaudeSignInLabel+" | key = "+AnthropicKeyCredits+")", def)
+			if err != nil {
+				return err
+			}
+			switch strings.ToLower(strings.TrimSpace(ans)) {
+			case "claude", policy.KeyKindClaudeSignIn:
+				kind = policy.KeyKindClaudeSignIn
+			case "key", "api", "":
+			default:
+				return fmt.Errorf("%q is neither claude nor key", ans)
+			}
+		}
+		if kind == policy.KeyKindClaudeSignIn {
+			return configureClaude(p, pol, opts)
+		}
+	} else if strings.EqualFold(strings.TrimSpace(opts.APIKeyKind), policy.KeyKindClaudeSignIn) {
+		return fmt.Errorf("api key kind claude-signin needs provider anthropic (it is %q)", prov)
 	}
 
 	// A provider switch prefers the new provider's table defaults; staying

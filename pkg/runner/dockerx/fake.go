@@ -47,6 +47,10 @@ type Fake struct {
 	IPs map[string]string
 	// ExistingImages marks refs ImageExists reports true for.
 	ExistingImages map[string]bool
+	// Labels answers ImageLabel by ref, then key.
+	Labels map[string]map[string]string
+	// Arch is what ServerArch answers; "" answers amd64.
+	Arch string
 	// ImageFiles answers ImageFile by "ref:path"; a missing entry is an error.
 	ImageFiles map[string]string
 	// BuildArgs records the build args of the last Build of each tag.
@@ -185,6 +189,23 @@ func (f *Fake) ImageFile(_ context.Context, ref, path string) ([]byte, error) {
 		return []byte(b), nil
 	}
 	return nil, fmt.Errorf("fake docker: %s has no %s", ref, path)
+}
+
+// ServerArch implements Client from Arch.
+func (f *Fake) ServerArch(context.Context) (string, error) {
+	f.record("ServerArch", "", RunSpec{})
+	if f.Arch == "" {
+		return "amd64", nil
+	}
+	return f.Arch, nil
+}
+
+// ImageLabel implements Client from Labels.
+func (f *Fake) ImageLabel(_ context.Context, ref, key string) (string, error) {
+	f.record("ImageLabel", ref+":"+key, RunSpec{})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Labels[ref][key], nil
 }
 
 // ImageExists implements Client.

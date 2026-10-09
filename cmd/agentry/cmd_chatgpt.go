@@ -120,24 +120,39 @@ type signedInJSON struct {
 }
 
 func newModelSignInsAddCmd() *cobra.Command {
-	var newAccount bool
+	var newAccount, installed bool
 	cmd := &cobra.Command{
 		Use:   "add <vendor>",
-		Short: "Sign in with a model vendor so your local runs can spend your plan (chatgpt)",
+		Short: "Sign in with a model vendor so your local runs can spend your plan (chatgpt, claude)",
 		Long: "add chatgpt signs in with ChatGPT in your browser. Your ChatGPT plan then pays for the runs on this\n" +
 			"computer whose model setup names it (agentry setup → openai → chatgpt); a hosted run never spends it.\n" +
-			"The sign-in is kept in the OS keychain; runs are handed a one-hour access token, never the sign-in.",
+			"The sign-in is kept in the OS keychain; runs are handed a one-hour access token, never the sign-in.\n\n" +
+			"add claude is " + setup.ClaudeSignInLabel + ": Claude Code signs you in itself, in Anthropic's own pages,\n" +
+			"and keeps the sign-in in a directory of Agentry's own that Agentry never reads (never your ~/.claude).\n" +
+			"It signs in the Claude Code image, built on this computer, which runs Claude runs by default; with\n" +
+			"--installed, the Claude Code installed on this computer, for runs with --adapter claude.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			vendor := strings.ToLower(args[0])
-			if vendor != modelsignin.ChatGPT {
-				return fmt.Errorf("this build signs in with chatgpt only (%q: Claude and Copilot come later)", args[0])
-			}
 			home, err := runnerHome()
 			if err != nil {
 				return err
 			}
-			got, err := signInChatGPT(cmd, bufio.NewReader(cmd.InOrStdin()), home, newAccount)
+			in := bufio.NewReader(cmd.InOrStdin())
+			switch vendor {
+			case modelsignin.ChatGPT:
+				if installed {
+					return errors.New("--installed is for claude")
+				}
+			case modelsignin.Claude:
+				if newAccount {
+					return errors.New("--new-account is for chatgpt")
+				}
+				return addClaude(cmd, in, home, installed)
+			default:
+				return fmt.Errorf("this build signs in with chatgpt and claude only (%q: Copilot comes later)", args[0])
+			}
+			got, err := signInChatGPT(cmd, in, home, newAccount)
 			var ne *mcpauth.ChatGPTNotEligibleError
 			if errors.As(err, &ne) || errors.Is(err, mcpauth.ErrChatGPTNoPlanScope) {
 				return fmt.Errorf("nothing kept: %w", err)
@@ -158,5 +173,6 @@ func newModelSignInsAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&newAccount, "new-account", false, "sign in to another ChatGPT account than the one this computer is registered for")
+	cmd.Flags().BoolVar(&installed, "installed", false, "claude: sign in the Claude Code installed on this computer rather than the Claude Code image")
 	return cmd
 }

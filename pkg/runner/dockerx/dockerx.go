@@ -37,8 +37,13 @@ type Client interface {
 	Runtimes(ctx context.Context) (map[string]Runtime, error)
 	// ContainerIP is a running container's address on one network.
 	ContainerIP(ctx context.Context, name, network string) (string, error)
+	// ServerArch is the daemon's architecture as Go names it (amd64,
+	// arm64): the platform an image built here runs on.
+	ServerArch(ctx context.Context) (string, error)
 	// ImageExists reports whether ref is present locally.
 	ImageExists(ctx context.Context, ref string) (bool, error)
+	// ImageLabel is a present image's label key, "" when it has none.
+	ImageLabel(ctx context.Context, ref, key string) (string, error)
 	// ImageFile reads one file out of an image without running it (a
 	// stopped container is created, copied from, removed).
 	ImageFile(ctx context.Context, ref, path string) ([]byte, error)
@@ -384,6 +389,28 @@ func (c *CLI) ImageExists(ctx context.Context, ref string) (bool, error) {
 		return false, nil // inspect exits 1 for a missing image
 	}
 	return false, fmt.Errorf("docker image inspect %s: %w", ref, err)
+}
+
+// ServerArch implements Client.
+func (c *CLI) ServerArch(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "version", "--format", "{{.Server.Arch}}")
+	if err != nil {
+		return "", fmt.Errorf("docker daemon not reachable: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ImageLabel implements Client.
+func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
+	out, err := c.run(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", ref)
+	if err != nil {
+		return "", fmt.Errorf("docker image inspect %s: %w", ref, err)
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &labels); err != nil {
+		return "", fmt.Errorf("docker image inspect %s labels: %w", ref, err)
+	}
+	return labels[key], nil
 }
 
 // ImageFile implements Client: `docker create` a container from the image

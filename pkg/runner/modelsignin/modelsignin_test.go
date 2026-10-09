@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // memKeys is a keychain in memory.
@@ -226,6 +227,84 @@ func TestOnlyAClaudeSignInNamesADirectory(t *testing.T) {
 	}
 	if _, err := s.Put(ChatGPT, Record{ConfigDir: "agentry-x"}, Grant{RefreshToken: "rt"}); err == nil {
 		t.Fatal("a ChatGPT sign-in with a directory")
+	}
+	if _, err := s.Put(ChatGPT, Record{HostConfigDir: "/x"}, Grant{RefreshToken: "rt"}); err == nil {
+		t.Fatal("a ChatGPT sign-in with a host directory")
+	}
+}
+
+// A Claude run is handed the directory of the Claude Code that runs it:
+// the image's volume, or the installed Claude Code's directory, each signed
+// in apart (agentry-cli#740); a run on one that is not signed in says how
+// to sign it in.
+func TestAClaudeRunIsHandedItsOwnHarnesssDirectory(t *testing.T) {
+	home := t.TempDir()
+	s := Open(home, nil)
+	host := filepath.Join(Dir(home), "claude-code")
+	if _, err := s.Put(Claude, Record{ConfigDir: "agentry-claude-signin"}, Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	g, err := s.ForRun(ctx, policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, false)
+	if err != nil || g.ConfigDir != "agentry-claude-signin" || g.Renew != nil || g.Access.Token != "" {
+		t.Fatalf("image: %+v %v", g, err)
+	}
+	if _, err := s.ForRun(ctx, policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, true); !errors.Is(err, ErrNoSignIn) || !strings.Contains(err.Error(), "add claude --installed") {
+		t.Fatalf("host, not signed in: %v", err)
+	}
+	if _, err := s.Put(Claude, Record{ConfigDir: "agentry-claude-signin", HostConfigDir: host}, Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	if g, err = s.ForRun(ctx, policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, true); err != nil || g.ConfigDir != host {
+		t.Fatalf("host: %+v %v", g, err)
+	}
+	if _, err := s.Put(Claude, Record{HostConfigDir: host}, Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ForRun(ctx, policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, false); !errors.Is(err, ErrNoSignIn) || !strings.Contains(err.Error(), "the Claude Code image") {
+		t.Fatalf("image, not signed in: %v", err)
+	}
+}
+
+// Removing a Claude sign-in ends its directories first (EndClaude: Claude
+// Code's logout, then the deletion) and logs that outcome; when they cannot
+// be ended the record is kept, so nothing is forgotten while a directory
+// still holds the sign-in.
+func TestRemovingAClaudeSignInEndsItsDirectoriesFirst(t *testing.T) {
+	home := t.TempDir()
+	s := Open(home, nil)
+	rec := Record{ConfigDir: "agentry-claude-signin", HostConfigDir: filepath.Join(Dir(home), "claude-code")}
+	if _, err := s.Put(Claude, rec, Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	var ended []Record
+	s.EndClaude = func(_ context.Context, r Record) (string, error) {
+		ended = append(ended, r)
+		return "", errors.New("docker is not running")
+	}
+	if _, err := s.Remove(context.Background(), Claude, "test"); err == nil || !strings.Contains(err.Error(), "docker is not running") {
+		t.Fatalf("a failed end: %v", err)
+	}
+	if _, err := s.Get(Claude); err != nil {
+		t.Fatalf("the record went with its directories still there: %v", err)
+	}
+	s.EndClaude = func(_ context.Context, r Record) (string, error) {
+		ended = append(ended, r)
+		return "Claude Code logged out and its directories were deleted", nil
+	}
+	out, err := s.Remove(context.Background(), Claude, "test")
+	if err != nil || out != "Claude Code logged out and its directories were deleted" {
+		t.Fatalf("remove: %q %v", out, err)
+	}
+	if len(ended) != 2 || ended[1].ConfigDir != rec.ConfigDir || ended[1].HostConfigDir != rec.HostConfigDir {
+		t.Fatalf("ended %+v", ended)
+	}
+	if _, err := s.Get(Claude); !errors.Is(err, ErrNone) {
+		t.Fatalf("after remove: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(Dir(home), "audit.ndjson")) //nolint:gosec // the test's store
+	if !strings.Contains(string(b), "logged out") {
+		t.Fatalf("audit:\n%s", b)
 	}
 }
 

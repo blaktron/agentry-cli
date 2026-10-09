@@ -1,0 +1,106 @@
+{
+  "files": {
+    "instruction.md": "You are the conformance fixture. Read the inputs, write one report.",
+    "mcp.json": "{\n  \"mcpServers\": {\n    \"gateway\": {\n      \"type\": \"http\",\n      \"url\": \"http://gateway:8811/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${MCP_GATEWAY_TOKEN}\"\n      }\n    }\n  }\n}\n"
+  },
+  "agent": {
+    "image": "harness:fixture",
+    "entrypoint": "/usr/local/bin/claude",
+    "argv": [
+      "-p",
+      "--verbose",
+      "--output-format",
+      "stream-json",
+      "--system-prompt-file",
+      "/plan/instruction.md",
+      "--mcp-config",
+      "/plan/mcp.json",
+      "--strict-mcp-config",
+      "--setting-sources",
+      "",
+      "--tools",
+      "",
+      "--allowedTools",
+      "mcp__gateway",
+      "--permission-mode",
+      "dontAsk",
+      "--permission-prompts",
+      "none",
+      "--no-session-persistence",
+      "--disable-slash-commands",
+      "--model",
+      "fixture-model"
+    ],
+    "env": [
+      {
+        "name": "MCP_GATEWAY_TOKEN",
+        "fromRunToken": true
+      },
+      {
+        "name": "HOME",
+        "value": "/home/node"
+      },
+      {
+        "name": "CLAUDE_CONFIG_DIR",
+        "value": "/claude"
+      },
+      {
+        "name": "HTTPS_PROXY",
+        "value": "http://llm-proxy:3128"
+      },
+      {
+        "name": "HTTP_PROXY",
+        "value": "http://llm-proxy:3128"
+      },
+      {
+        "name": "NO_PROXY",
+        "value": "gateway,localhost,127.0.0.1"
+      },
+      {
+        "name": "ENABLE_CLAUDEAI_MCP_SERVERS",
+        "value": "false"
+      },
+      {
+        "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_TELEMETRY",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_ERROR_REPORTING",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_AUTOUPDATER",
+        "value": "1"
+      },
+      {
+        "name": "DISABLE_BUG_COMMAND",
+        "value": "1"
+      }
+    ],
+    "mounts": [
+      {
+        "source": "@@RUN_CFG@@/harness",
+        "target": "/plan",
+        "readOnly": true
+      }
+    ],
+    "stdinTask": true,
+    "readOnlyRoot": true,
+    "tmpfs": [
+      "/tmp:mode=1777",
+      "/home/node:mode=1777"
+    ]
+  },
+  "modelSignIn": {
+    "kind": "claude-signin",
+    "provider": "anthropic",
+    "delivery": "config-dir",
+    "path": "/claude"
+  },
+  "model": "anthropic/fixture-model",
+  "resultKind": "text"
+}

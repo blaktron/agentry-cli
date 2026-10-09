@@ -25,7 +25,9 @@
 // and hands the run the access token alone (invariant I3). A Claude
 // sign-in keeps no secret here at all: Claude Code holds it, in a
 // directory Agentry owns and never reads (D19, D20), which the record
-// names. A connected key (OpenRouter, Poe, Hugging Face; D30) is an API
+// names: the Claude Code image's docker volume, the installed Claude
+// Code's directory under this store, or both, each signed in by the
+// Claude Code that uses it (agentry-cli#740). A connected key (OpenRouter, Poe, Hugging Face; D30) is an API
 // key in the model key's keychain entry; its record here only marks it
 // connected, for its Disconnect.
 //
@@ -126,9 +128,12 @@ type Record struct {
 	Connected bool     `json:"connected,omitempty"`
 	Label     string   `json:"label,omitempty"`
 	Scopes    []string `json:"scopes,omitempty"`
-	// ConfigDir is a Claude sign-in's directory (a host path, or a docker
-	// volume's name), which only Claude Code writes.
-	ConfigDir string `json:"configDir,omitempty"`
+	// ConfigDir is a Claude sign-in's directory for the Claude Code image
+	// (a docker volume's name), and HostConfigDir the one for the Claude
+	// Code installed on this computer (a directory under this store): each
+	// written only by the Claude Code that signed in there.
+	ConfigDir     string `json:"configDir,omitempty"`
+	HostConfigDir string `json:"hostConfigDir,omitempty"`
 	// ClientID is the client the vendor issued this host at its first
 	// sign-in, which every refresh and revocation presents (ChatGPT's
 	// oaiapp_…). Not a secret: it proves nothing without the grant.
@@ -223,6 +228,13 @@ type Store struct {
 	dir  string
 	keys connection.Keychain
 	now  func() time.Time
+	// EndClaude, when set, ends a Claude sign-in's directories before
+	// Remove forgets the record: Claude Code's own logout in each, then
+	// the directory or volume deleted (the caller has docker and the
+	// installed Claude Code; this package has neither). It reports the
+	// outcome; an error keeps the record, so nothing is forgotten while a
+	// directory still holds the sign-in.
+	EndClaude func(ctx context.Context, r Record) (string, error)
 }
 
 // Open is the store under home, keeping secrets in keys
@@ -267,7 +279,7 @@ func (s *Store) Put(vendor string, rec Record, g Grant) (*Record, error) {
 	}
 	defer unlock()
 	k := vendorKinds[vendor]
-	if (rec.ConfigDir != "") != (k.kind == policy.KeyKindClaudeSignIn) {
+	if (rec.ConfigDir != "" || rec.HostConfigDir != "") != (k.kind == policy.KeyKindClaudeSignIn) {
 		return nil, fmt.Errorf("a %s sign-in %s a config directory", vendor, map[bool]string{true: "needs", false: "takes no"}[k.kind == policy.KeyKindClaudeSignIn])
 	}
 	rec.Version, rec.Vendor, rec.Kind, rec.Provider, rec.Connected = Version, vendor, k.kind, k.provider, k.connected
@@ -469,14 +481,15 @@ const (
 	RevokeNotOffered = "not offered by this build: forgotten here; revoke it in your account at the vendor"
 	RevokeNothing    = "nothing to revoke: no grant was kept here"
 	// RevokeClaudeDir: a Claude sign-in's grant is Claude Code's, in its
-	// own directory, which this build neither logs out of nor deletes.
-	RevokeClaudeDir = "forgotten here; Claude Code's own sign-in stays in its directory until it logs out there, which this build does not do yet: delete %s to end it"
+	// own directory, which a store without EndClaude neither logs out of
+	// nor deletes.
+	RevokeClaudeDir = "forgotten here; Claude Code's own sign-in stays in its directory until it logs out there: delete %s to end it"
 )
 
 // Remove forgets vendor's sign-in: it revokes the kept grant at the vendor
 // where the vendor's flow can, deletes the secret and the record, and logs
-// the outcome. A Claude sign-in's directory is the caller's to log out of
-// and delete (Claude Code's own logout runs there; M5).
+// the outcome. A Claude sign-in's directories are ended by EndClaude
+// (Claude Code's own logout, then the deletion) before the record goes.
 func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) {
 	if err := checkVendor(vendor); err != nil {
 		return "", err
@@ -491,8 +504,14 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 		return "", err
 	}
 	outcome := RevokeNothing
-	if r.ConfigDir != "" {
-		outcome = fmt.Sprintf(RevokeClaudeDir, r.ConfigDir)
+	if dirs := claudeDirs(*r); dirs != "" {
+		outcome = fmt.Sprintf(RevokeClaudeDir, dirs)
+		if s.EndClaude != nil {
+			if outcome, err = s.EndClaude(ctx, *r); err != nil {
+				unlock()
+				return "", err
+			}
+		}
 	}
 	if r.SecretIn != "" {
 		outcome = RevokeNotOffered
@@ -511,6 +530,17 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 	unlock()
 	s.audit(r, why, outcome)
 	return outcome, rmErr
+}
+
+// claudeDirs names a Claude sign-in's directories, "" when it has none.
+func claudeDirs(r Record) string {
+	var dirs []string
+	for _, d := range []string{r.ConfigDir, r.HostConfigDir} {
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return strings.Join(dirs, " and ")
 }
 
 func (s *Store) save(r *Record) error {
@@ -622,8 +652,10 @@ var ErrNoSignIn = errors.New("not signed in")
 
 // ForRun is the grant a plan's model sign-in (spec.ModelSignInSpec's kind
 // and delivery) is run on: the kind's vendor's, refreshed now for a token
-// file. ErrNoSignIn (wrapped) when none is kept.
-func (s *Store) ForRun(ctx context.Context, kind, delivery string) (*RunGrant, error) {
+// file; for a config directory, the one of the harness that runs, on this
+// computer (onHost) or in its image. ErrNoSignIn (wrapped) when none is
+// kept.
+func (s *Store) ForRun(ctx context.Context, kind, delivery string, onHost bool) (*RunGrant, error) {
 	vendor := VendorOf(kind)
 	if vendor == "" {
 		return nil, fmt.Errorf("%q is not a model sign-in kind", kind)
@@ -638,10 +670,14 @@ func (s *Store) ForRun(ctx context.Context, kind, delivery string) (*RunGrant, e
 	g := &RunGrant{Kind: kind}
 	switch delivery {
 	case spec.ModelSignInConfigDir:
-		if r.ConfigDir == "" {
-			return nil, fmt.Errorf("%w: the %s sign-in names no directory; sign in again (agentry setup)", ErrNoSignIn, vendor)
-		}
+		where, add := "the Claude Code image", "agentry model-signins add "+vendor
 		g.ConfigDir = r.ConfigDir
+		if onHost {
+			g.ConfigDir, where, add = r.HostConfigDir, "the Claude Code installed on this computer", add+" --installed"
+		}
+		if g.ConfigDir == "" {
+			return nil, fmt.Errorf("%w: this run uses %s, which is not signed in on this computer (%s)", ErrNoSignIn, where, add)
+		}
 	case spec.ModelSignInToken:
 		if g.Access, err = s.Use(ctx, vendor); err != nil {
 			return nil, err
