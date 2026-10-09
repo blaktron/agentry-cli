@@ -848,9 +848,11 @@ reach the daemon until you sign out of every session and back in.
 `add --check` decides all of this and keeps nothing: it asks no consent,
 installs nothing, seals nothing and leaves linger alone. It prints every
 gap a schedule made with the same flags would meet, and whether making it
-would ask for consent, and exits 0 either way. With `--json` it prints
-`{ref, version, digest, modes, ready, gaps, needsConsent, refusals,
-signedOut, describe, next}`. Agentry Desktop keeps its Schedule button off
+would ask for consent, and exits 0 either way. A version not installed
+yet is no gap (`installed: false`): making the schedule installs it and
+checks the inputs it reads then. With `--json` it prints `{ref, version,
+digest, modes, ready, gaps, needsConsent, refusals, installed, signedOut,
+describe, next}`. Agentry Desktop keeps its Schedule button off
 until it says `ready`, then makes the schedule with this binary.
 
 The schedule lives in the runner home under `schedules/<id>/`:

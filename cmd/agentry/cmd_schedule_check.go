@@ -38,6 +38,11 @@ type scheduleCheckJSON struct {
 	// Refusals is every refusal a run would meet, as `run --plan` names
 	// them; one the flags given do not lift is also a gap.
 	Refusals []runPlanRefusal `json:"refusals"`
+	// Installed: the pinned version is laid down on this computer, so the
+	// inputs its fires read were checked. A version that is not is
+	// installed by add (the consent step), which checks them then: they
+	// are no gap here, and add may still refuse with them.
+	Installed bool `json:"installed"`
 	// SignedOut is whether this computer can run any schedule while its
 	// person is signed out, whatever --signed-out says.
 	SignedOut signedOutAvailability `json:"signedOut"`
@@ -90,16 +95,14 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out string, spec runSpecFlags,
 	}
 	res.Ref, res.Version, res.Digest = sc.Ref, sc.Version, sc.Digest
 
-	if installedHere(sc) {
+	res.Installed = installedHere(sc)
+	if res.Installed {
 		res.Gaps = append(res.Gaps, fireGaps(sc)...)
 		if sc.SignedOut {
 			res.Gaps = append(res.Gaps, signedOutGaps(cmd.Context(), sc)...)
 		}
-	} else {
-		res.Gaps = append(res.Gaps, fmt.Sprintf("%s@%s is not installed on this computer: `agentry install %s@%s` installs it (so does making the schedule), and its inputs are checked once it is", sc.Ref, sc.Version, sc.Ref, sc.Version))
-		if sc.SignedOut {
-			res.Gaps = append(res.Gaps, signedOutMachineGaps(cmd.Context())...)
-		}
+	} else if sc.SignedOut {
+		res.Gaps = append(res.Gaps, signedOutMachineGaps(cmd.Context())...)
 	}
 	if len(res.Gaps) == 0 {
 		// Only once the shell's view is clean: the scheduler's own. A
@@ -119,6 +122,9 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out string, spec runSpecFlags,
 		_, _ = fmt.Fprintf(o, "ready: %s@%s can be scheduled (%s)\n", res.Ref, res.Version, res.Describe)
 	} else {
 		_, _ = fmt.Fprintf(o, "not ready: a scheduled run of %s@%s would not have what it needs:\n  - %s\n", res.Ref, res.Version, strings.Join(res.Gaps, "\n  - "))
+	}
+	if !res.Installed {
+		_, _ = fmt.Fprintf(o, "%s@%s is not installed yet: making the schedule installs it and checks its inputs then\n", res.Ref, res.Version)
 	}
 	if res.NeedsConsent {
 		_, _ = fmt.Fprintf(o, "making it asks for consent to its capabilities: %s\n", res.ConsentReason)

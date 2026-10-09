@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
@@ -53,10 +54,30 @@ func TestScheduleCheckReadyKeepsNothing(t *testing.T) {
 	if !strings.HasPrefix(res.Ref, "fixtures/pure-text") || res.Version != "1.0.0" || res.Digest == "" || res.Next == nil || res.Describe == "" {
 		t.Errorf("check = %+v", res)
 	}
-	if !res.SignedOut.Available {
-		t.Errorf("signed out unavailable: %s", res.SignedOut.Reason)
+	if !res.SignedOut.Available || !res.Installed {
+		t.Errorf("signed out %+v, installed %v", res.SignedOut, res.Installed)
 	}
 	assertNothingKept(t, h)
+}
+
+// A registry release not laid down on this computer is no gap: add
+// installs it. The machine's signed-out refusals still are.
+func TestScheduleCheckNotInstalledIsNoGap(t *testing.T) {
+	newSignedOutHarness(t)
+	sc := schedule.Schedule{Ref: "acme/digest", Version: "1.0.0", Digest: "sha256:aa"}
+	if installedHere(sc) {
+		t.Fatal("an empty runner home holds acme/digest")
+	}
+	home, _ := runnerHome()
+	if err := os.MkdirAll(installdirReleaseDir(home, sc), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !installedHere(sc) {
+		t.Fatal("a laid-down release reads as not installed")
+	}
+	if !installedHere(schedule.Schedule{Local: t.TempDir()}) {
+		t.Fatal("a local directory reads as not installed")
+	}
 }
 
 func TestScheduleCheckListsEveryGap(t *testing.T) {
@@ -192,4 +213,9 @@ func TestScheduleResealCommand(t *testing.T) {
 	if credentialKept(h.store, a.ID) || credentialKept(h.store, b.ID) {
 		t.Fatal("a failed reseal kept the old keys")
 	}
+}
+
+func installdirReleaseDir(home string, sc schedule.Schedule) string {
+	ns, name, _ := strings.Cut(sc.Ref, "/")
+	return installdir.ReleaseDir(home, ns, name, sc.Version, sc.Digest)
 }
