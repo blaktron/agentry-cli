@@ -116,13 +116,14 @@ developer = [c.get("text", "") for it in req.get("input", []) if it.get("role") 
 instruction = (req.get("instructions") or (developer[0] if developer else "")).strip()
 if sorted(names) != want or instruction != "Do the thing.":
     print(f"FAIL {model}: tools {sorted(names)}, instruction {instruction[:80]!r}", file=sys.stderr); sys.exit(1)
-# Codex's bundled skills (imagegen, openai-docs, ...) are a capability the
+# Codex's bundled skills (imagegen, openai-docs, …) are a capability the
 # run does not have; the prompt must not list them (agentry-cli#762).
 if any("<skills_instructions>" in m for m in developer):
     print(f"FAIL {model}: a developer message lists codex's skills (<skills_instructions>)", file=sys.stderr); sys.exit(1)
-if os.path.exists(f"{d}/home/skills"):
-    print(f"FAIL {model}: codex installed skills into CODEX_HOME ({sorted(os.listdir(f'{d}/home/skills'))})", file=sys.stderr); sys.exit(1)
-print(f"ok   {model}: the gateway's tools and the three resource readers, nothing else; no skills listed")
+installed = sorted(os.listdir(f"{d}/home/skills")) if os.path.isdir(f"{d}/home/skills") else []
+if installed:
+    print(f"FAIL {model}: codex installed skills into CODEX_HOME ({installed})", file=sys.stderr); sys.exit(1)
+print(f"ok   {model}: the gateway's tools and the three resource readers, nothing else; no skill listed or installed")
 PY
   then fail=1; fi
 done
