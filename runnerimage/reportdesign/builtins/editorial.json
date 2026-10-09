@@ -1,0 +1,24 @@
+{
+  "agentryTheme": 2,
+  "name": "Editorial",
+  "basedOn": "editorial",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Playfair Display",
+    "body": "Source Sans 3",
+    "code": "Source Code Pro"
+  },
+  "accent": "#b3261e",
+  "titleBlock": "bar",
+  "headings": "rule",
+  "tables": {
+    "tinted": true,
+    "banded": false
+  },
+  "quotes": "callout",
+  "footer": {
+    "pageNumbers": "n",
+    "text": ""
+  }
+}

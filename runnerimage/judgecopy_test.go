@@ -15,12 +15,15 @@ import (
 )
 
 // TestTheImageJudgeIsTheCores holds the runner image's copies of the core's
-// pkg/judge and pkg/websearch to the module this CLI builds against, byte for
-// byte (DR-43; plan builder-rework.md D25). The image compiles from
+// pkg/judge, pkg/websearch and pkg/reportdesign (with its built-in themes) to
+// the module this CLI builds against, byte for byte (DR-43; plan
+// builder-rework.md D25; DR-87, plan report-designs.md D22). The image compiles from
 // stdlib-only embedded sources with no module download (DR-2), so its tools
 // server cannot import the core; a copy that drifted would ask Jev something
-// the registry does not, which is the fork D20 refused. After the core
-// dependency moves, scripts/sync-image-judge.sh refreshes both.
+// the registry does not, which is the fork D20 refused; a design copy that
+// drifted would draw a design the core refuses, or refuse one it stored.
+// After the core dependency moves, scripts/sync-image-judge.sh refreshes
+// all three.
 func TestTheImageJudgeIsTheCores(t *testing.T) {
 	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/blaktron/agentry")
 	out, err := cmd.Output()
@@ -28,7 +31,7 @@ func TestTheImageJudgeIsTheCores(t *testing.T) {
 		t.Fatalf("locate the core module: %v", err)
 	}
 	coreDir := strings.TrimSpace(string(out))
-	for _, pkg := range []string{"judge", "websearch"} {
+	for _, pkg := range []string{"judge", "websearch", "reportdesign", "reportdesign/builtins"} {
 		want := goSources(t, filepath.Join(coreDir, "pkg", pkg))
 		got := goSources(t, pkg)
 		if strings.Join(keys(want), ",") != strings.Join(keys(got), ",") {
@@ -65,7 +68,9 @@ func goSources(t *testing.T, dir string) map[string][]byte {
 	out := map[string][]byte{}
 	for _, e := range entries {
 		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+		// The Go sources, and the JSON beside them (reportdesign's schema
+		// and built-in themes).
+		if e.IsDir() || !(strings.HasSuffix(n, ".go") || strings.HasSuffix(n, ".json")) || strings.HasSuffix(n, "_test.go") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(dir, n)) //nolint:gosec // the test's own tree and the module cache

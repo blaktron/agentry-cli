@@ -1,0 +1,24 @@
+{
+  "agentryTheme": 2,
+  "name": "Plain",
+  "basedOn": "plain",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Inter",
+    "body": "Inter",
+    "code": "IBM Plex Mono"
+  },
+  "accent": "#2b2f36",
+  "titleBlock": "ruled",
+  "headings": "plain",
+  "tables": {
+    "tinted": true,
+    "banded": false
+  },
+  "quotes": "plain",
+  "footer": {
+    "pageNumbers": "nOfN",
+    "text": ""
+  }
+}
