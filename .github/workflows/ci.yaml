@@ -204,7 +204,10 @@ jobs:
   # digest, so the pin is held to the signature on every pull request; then
   # its renderer, fonts and packages render the tests that need the real
   # Typst (raw Typst is text, links are http or mail, only local images are
-  # drawn, the PDF is tagged with every script), which may not skip here.
+  # drawn, the PDF is tagged with every script; since agentry-cli#784 every
+  # report design theme in every form, the image carries every family
+  # pkg/reportdesign names, and pkg/reportthumbs' thumbnails are this
+  # template's render), which may not skip here.
   typst-image:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
@@ -223,7 +226,7 @@ jobs:
       - name: export_pdf renders with the real Typst
         env:
           AGENTRY_TYPST_REQUIRED: "1"
-        run: AGENTRY_TYPST_DIR="$RUNNER_TEMP/typst" go test -count=1 ./runnerimage/toolsrv/ -run 'TestRawTypstIsText|TestLinksAreHttpOrMail|TestRealRender' -v
+        run: AGENTRY_TYPST_DIR="$RUNNER_TEMP/typst" go test -count=1 ./runnerimage/toolsrv/ -run 'TestRawTypstIsText|TestLinksAreHttpOrMail|TestRealRender|TestTheImageCarriesEveryDesignFamily|TestThumbnailsAreTheTemplates' -v
 
   # Secret scanning (agentry-cli#165): gitleaks over the commits this event
   # brings — a pull request's own range, or a push's before..after — with the

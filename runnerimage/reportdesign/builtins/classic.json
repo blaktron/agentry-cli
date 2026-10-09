@@ -1,0 +1,24 @@
+{
+  "agentryTheme": 2,
+  "name": "Classic",
+  "basedOn": "classic",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Source Serif 4",
+    "body": "Source Serif 4",
+    "code": "IBM Plex Mono"
+  },
+  "accent": "#1f3a5f",
+  "titleBlock": "ruled",
+  "headings": "smallcaps",
+  "tables": {
+    "tinted": true,
+    "banded": false
+  },
+  "quotes": "callout",
+  "footer": {
+    "pageNumbers": "n",
+    "text": ""
+  }
+}

@@ -98,8 +98,10 @@ type runOpts struct {
 	// writing-voice.md D5, D11).
 	voice, noVoice bool
 	voiceFile      string
-	// reportTheme is --report-theme (agentry-cli#731).
+	// reportTheme is --report-theme (agentry-cli#731), reportDesign
+	// --report-design (agentry-cli#784).
 	reportTheme        string
+	reportDesign       string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
 	// sessionProtocol drives an interactive session from JSON-line commands
@@ -206,7 +208,8 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack to attach read-only at /knowledge/<name>, searched with the knowledge tools: a pack kept on this computer by NAME, or a pack DIRECTORY (repeatable)")
 	f.BoolVar(&opts.voice, "voice", false, "attach the Writing Voice kept on this computer even when it is not set to attach to every run")
 	f.BoolVar(&opts.noVoice, "no-voice", false, "do not attach the Writing Voice to this run")
-	f.StringVar(&opts.reportTheme, "report-theme", "", "the report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's when signed in, else report.theme in the config, else plain)")
+	f.StringVar(&opts.reportTheme, "report-theme", "", "the built-in report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's report design when signed in, else report.design or report.theme in the config, else plain)")
+	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: a FILE holding a report design (theme document version 2); instead of --report-theme")
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
@@ -249,13 +252,13 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// account.
 	cfg, cerr := loadCLIConfig()
 	if cerr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; its report.theme is not read\n", cerr)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; its report settings are not read\n", cerr)
 	}
 	var account accountTheme
 	if !opts.plan && !opts.dryRun && !opts.prepare {
 		account = readAccountTheme(registryURL())
 	}
-	reportTheme, err := chooseReportTheme(cmd.Context(), opts.reportTheme, cfg, account, cmd.ErrOrStderr())
+	reportTheme, err := chooseReportTheme(cmd.Context(), reportFlags{theme: opts.reportTheme, design: opts.reportDesign}, cfg, account, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

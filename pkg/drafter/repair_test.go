@@ -134,7 +134,8 @@ func TestRecordCheck(t *testing.T) {
 	flagged := &Check{Rubric: &CheckRubric{Verdict: CheckFlagged, Findings: []CheckFinding{
 		{ID: RubricIDUndeclared, Score: 3, Path: "AGENT.md", Severity: SeverityHigh},
 		{ID: "C6_destructive_actions", Score: 2, Path: "AGENT.md", Severity: SeverityMedium},
-		// A record with no severity (before agentry-cli#569) reads the core's rule.
+		// A record with no severity (before agentry-cli#569) reads the core's
+		// rule, which rates C2 medium at most since ruleset 0.4.0 (DEV-221).
 		{ID: "C2_exfiltration", Score: 3, Path: "agent.yaml"}}},
 		Draft: &CheckDraft{Verdict: CheckFlagged, Score: 3, Flagged: []string{"off_task"}}}
 	d.RecordCheck(flagged, 2, nil)
@@ -144,7 +145,8 @@ func TestRecordCheck(t *testing.T) {
 			"At publish a high finding sends the version to a person for review, not to refusal.",
 		"flagged AGENT.md: the text reads as taking destructive actions the task does not need. (C6_destructive_actions, medium) " +
 			"At publish a finding of this severity is shown on the report of a version that publishes.",
-		"flagged agent.yaml: the text reads as sending data somewhere the task does not need. (C2_exfiltration, high) At publish a high finding sends the version to a person",
+		"flagged agent.yaml: the text reads as sending data somewhere the task does not need. (C2_exfiltration, medium) " +
+			"At publish a finding of this severity is shown on the report of a version that publishes.",
 	} {
 		if !strings.Contains(d.Notes, want) {
 			t.Errorf("a flag's notes lack %q", want)

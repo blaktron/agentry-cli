@@ -48,11 +48,13 @@ ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6e
 # export_pdf's renderer (plan scratch-and-pdf-reports.md D23, D25, D26;
 # agentry-cli#730): agentry-dockerimages' files-only image of Typst built
 # from pinned source without its package downloader, the Noto fonts for
-# every script and the vendored cmarker, signed by its typst workflow on main
+# every script, since 2026.10.09.2 the report designs' fourteen open-licence
+# families (agentry-dockerimages#58, taken by agentry-cli#784) and the
+# vendored cmarker, signed by its typst workflow on main
 # (scripts/verify-typst-image.sh holds the pin to that signature). Like
 # RUNTIME_IMAGE it has no policy field: repointing it means building this
 # context yourself.
-ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.08.1@sha256:37eb0ef5b52af3abd4635f249fa06e6aab4a13626abda482d40bdfe9a38828b9
+ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.09.2@sha256:da55b1dbe359c01def900853b2e65803bf783d8098b4ddcea6164ca946d38dd1
 FROM ${TYPST_IMAGE} AS typst
 
 FROM ${GO_IMAGE} AS build

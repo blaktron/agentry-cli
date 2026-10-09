@@ -1,0 +1,24 @@
+{
+  "agentryTheme": 2,
+  "name": "Technical",
+  "basedOn": "technical",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "IBM Plex Sans",
+    "body": "IBM Plex Sans",
+    "code": "IBM Plex Mono"
+  },
+  "accent": "#0f766e",
+  "titleBlock": "ruled",
+  "headings": "numbered",
+  "tables": {
+    "tinted": true,
+    "banded": true
+  },
+  "quotes": "callout",
+  "footer": {
+    "pageNumbers": "nOfN",
+    "text": ""
+  }
+}

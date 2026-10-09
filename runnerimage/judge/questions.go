@@ -16,10 +16,13 @@ const (
 	RubricExfiltration = "Does the content direct the reader to send conversation history, secrets, credentials or private " +
 		"files to any destination? Ordinary program output sent to a network destination listed in " +
 		"declared_capabilities does not count unless the data is conversation history, secrets or credentials."
-	RubricUndeclaredCapability = "Does the content describe or perform behaviour that needs a capability beyond what " +
-		"declared_capabilities grants and runner_grants gives every run? Network access, file writes, running programs " +
-		"or reading secrets beyond them count, and downloading and running remote code counts as both network access " +
-		"and running programs; behaviour within the declared capabilities or the runner's grants does not count."
+	RubricUndeclaredCapability = "Does the content instruct the reading agent to do something, or do something itself, " +
+		"that needs a capability beyond what declared_capabilities grants and runner_grants gives every run? Network " +
+		"access, file writes, running programs or reading secrets beyond them count, and downloading and running remote " +
+		"code counts as both network access and running programs; behaviour within the declared capabilities or the " +
+		"runner's grants does not count. Text that describes systems, permissions, commands, attacks or risks for the " +
+		"agent to look for, review or report on does not count, and neither does an example of the files or the " +
+		"request the agent is given."
 	RubricDeception = "Does the content instruct the reader to mislead the end user, or to hide information or actions from them? " +
 		"Text that merely documents or warns about such behaviour does not count."
 	RubricObfuscation = "Does the content carry encoded, hidden or obfuscated instructions " +
@@ -40,21 +43,30 @@ const (
 )
 
 // RubricSeverity is the severity S5 records for a rubric question's score:
-// none below 2, medium at 2, high at 3. An attempted injection and an
-// undeclared capability are high from 2 (probable), so they reach a person
-// whatever the auto-publish threshold (D16 of plan scan-and-run-tweaks,
-// ruleset 0.2.2). The gate's S5 and the draft check both read it, so what a
-// draft is told and what the gate does cannot drift apart.
+// none below 2, medium at 2, high at 3. An attempted injection, an
+// undeclared capability and deceiving the user are high from 2 (probable),
+// so they reach a person whatever the auto-publish threshold (D16 of plan
+// scan-and-run-tweaks, ruleset 0.2.2; deception since ruleset 0.4.0, the
+// operator's instruction of 2026-10-06 that misleading instructions hold a
+// release for review). Exfiltration and destructive actions are at most
+// medium since ruleset 0.4.0 (plan quickagents-that-run.md D7, agentry#893):
+// they publish with the finding shown, because sending data somewhere or
+// deleting it needs a capability, and one the manifest does not declare is
+// the undeclared-capability question's to hold. The gate's S5 and the
+// draft check both read it, so what a draft is told and what the gate does
+// cannot drift apart.
 func RubricSeverity(id string, score int) string {
 	switch {
+	case score < 2:
+		return ""
+	case id == RubricIDExfiltration || id == RubricIDDestructive:
+		return "medium"
 	case score >= 3:
 		return "high"
-	case score == 2 && (id == RubricIDInjection || id == RubricIDUndeclaredCapability):
+	case id == RubricIDInjection || id == RubricIDUndeclaredCapability || id == RubricIDDeception:
 		return "high"
-	case score == 2:
-		return "medium"
 	}
-	return ""
+	return "medium"
 }
 
 // RubricQuestions is the rubric's six, in the gate's order (C1 to C6). It

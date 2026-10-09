@@ -67,9 +67,14 @@ type cliConfig struct {
 
 // reportConfig is config.yaml's report block.
 type reportConfig struct {
-	// Theme is the report theme a run takes when neither --report-theme
-	// nor the signed-in account chooses one (plan D21).
+	// Theme is the built-in report theme a run takes when no flag and no
+	// signed-in account chooses a design (plan D21).
 	Theme string `yaml:"theme,omitempty"`
+	// Design is a file holding a report design document (theme document
+	// version 2), taken as Theme is; a relative path is the config
+	// directory's (report-designs.md D12, agentry-cli#784). At most one of
+	// the two is set.
+	Design string `yaml:"design,omitempty"`
 }
 
 // configDir returns the CLI config directory, honoring envConfigDir.
