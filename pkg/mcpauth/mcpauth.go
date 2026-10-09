@@ -344,6 +344,9 @@ type Token struct {
 	RefreshToken string
 	ExpiresAt    time.Time // zero when the vendor did not say
 	Scopes       []string  // as granted, when the vendor said
+	// IDToken is the OpenID Connect ID token, when the vendor sent one
+	// (a sign-in that asked for openid); "" otherwise.
+	IDToken string
 }
 
 // Request is one authorization request, kept until its redirect returns.
@@ -500,6 +503,7 @@ func tokenRequest(ctx context.Context, c *http.Client, endpoint string, client C
 		ExpiresIn    json.RawMessage `json:"expires_in"`
 		RefreshToken string          `json:"refresh_token"`
 		Scope        string          `json:"scope"`
+		IDToken      string          `json:"id_token"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil || out.AccessToken == "" {
 		return nil, errors.New("the vendor's token answer carries no access token")
@@ -507,7 +511,7 @@ func tokenRequest(ctx context.Context, c *http.Client, endpoint string, client C
 	if !strings.EqualFold(out.TokenType, "bearer") {
 		return nil, fmt.Errorf("the vendor issued a %q token; only a bearer token can be sent", out.TokenType)
 	}
-	t := &Token{AccessToken: out.AccessToken, RefreshToken: out.RefreshToken, Scopes: strings.Fields(out.Scope)}
+	t := &Token{AccessToken: out.AccessToken, RefreshToken: out.RefreshToken, Scopes: strings.Fields(out.Scope), IDToken: out.IDToken}
 	if secs, ok := expiresIn(out.ExpiresIn); ok && secs > 0 {
 		t.ExpiresAt = time.Now().Add(time.Duration(secs) * time.Second)
 	}

@@ -107,19 +107,100 @@ func TestAKeyPlanMountsNoSignInFolder(t *testing.T) {
 // An adapter that cannot spend the sign-in the policy names refuses the
 // plan by policy (exit 11), naming the adapter and the kind: docker-agent
 // for every kind (D8), and a host adapter, which drives the person's own
-// installation, until its milestone gives it a delivery.
+// installation, until its milestone gives it a delivery (codex's came with
+// agentry-cli#739).
 func TestAnAdapterThatCannotSpendASignInRefusesByPolicy(t *testing.T) {
 	for _, c := range []struct{ adapter, kind string }{
 		{"docker-agent", policy.KeyKindChatGPTPlan},
 		{"docker-agent", policy.KeyKindClaudeSignIn},
 		{"docker-agent", policy.KeyKindCopilotSignIn},
-		{"codex", policy.KeyKindChatGPTPlan},
 		{"claude", policy.KeyKindClaudeSignIn},
+		{"codex-image", policy.KeyKindClaudeSignIn},
 	} {
 		_, err := compileSignIn(t, c.adapter, c.kind, nil)
 		var refusal *PolicyRefusal
 		if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "the "+c.adapter+" adapter cannot spend") || !strings.Contains(err.Error(), c.kind) {
 			t.Errorf("%s with %s: %v", c.adapter, c.kind, err)
 		}
+	}
+}
+
+// compileCodexPlan compiles the pure-text fixture for a codex adapter under
+// a ChatGPT plan.
+func compileCodexPlan(t *testing.T, adapterName string, edit func(*policy.Policy)) (*spec.Plan, error) {
+	t.Helper()
+	return compileSignIn(t, adapterName, policy.KeyKindChatGPTPlan, func(p *policy.Policy) {
+		p.Model.Name = "gpt-fixture"
+		if edit != nil {
+			edit(p)
+		}
+	})
+}
+
+// A run paid by a ChatGPT plan reaches OpenAI's inference API alone (I2):
+// a proxy allowlist naming anything else, or nothing, is refused by policy.
+func TestAChatGPTPlanRunReachesOpenAIsAPIAlone(t *testing.T) {
+	for _, allow := range [][]string{
+		{"api.openai.com:443", "auth.openai.com:443"},
+		{"chatgpt.com:443"},
+		{"api.openai.com:443", "api.openai.com:443"},
+	} {
+		_, err := compileCodexPlan(t, "codex-image", func(p *policy.Policy) { p.Model.ProxyAllow = allow })
+		var refusal *PolicyRefusal
+		if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "reaches api.openai.com:443 alone") {
+			t.Errorf("allow %v: %v", allow, err)
+		}
+	}
+	plan, err := compileCodexPlan(t, "codex-image", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(plan.Proxy.Allow, ",") != "api.openai.com:443" {
+		t.Fatalf("proxy allow %v", plan.Proxy.Allow)
+	}
+}
+
+// The Codex image on a ChatGPT plan: the default pinned image by digest,
+// the plan and the token folder read-only and nothing else (I4, I8), the
+// autonomous run one app-server turn.
+func TestTheCodexImageCompilesAPlanRun(t *testing.T) {
+	plan, err := compileCodexPlan(t, "codex-image", func(p *policy.Policy) { p.Images.HarnessImages = nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := plan.Harness
+	def, _ := policy.Default().Images.HarnessImageFor("codex-image")
+	if h.Agent.Image != def.Ref || h.ImagePin == nil || h.ImagePin.By != policy.PinDigest {
+		t.Fatalf("image %q pin %+v", h.Agent.Image, h.ImagePin)
+	}
+	if len(h.Agent.Mounts) != 2 || h.Agent.Mounts[1] != (spec.Mount{Source: spec.PHModelSignIn, Target: spec.ModelSignInMount, ReadOnly: true}) {
+		t.Fatalf("mounts %+v", h.Agent.Mounts)
+	}
+	if h.OneTurn == nil || h.Agent.StdinTask || h.Agent.Entrypoint != "/bin/sh" {
+		t.Fatalf("one turn %+v, stdin %v, entrypoint %q", h.OneTurn, h.Agent.StdinTask, h.Agent.Entrypoint)
+	}
+}
+
+// The installed Codex on a ChatGPT plan reads the token in the run's own
+// folder: no mount, no key, the host line in the receipt (D14).
+func TestTheInstalledCodexCompilesAPlanRun(t *testing.T) {
+	plan, err := compileCodexPlan(t, "codex", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := plan.Harness
+	if h.Host == nil || h.Agent.Image != "" || len(h.Agent.Mounts) != 0 || h.ImagePin != nil {
+		t.Fatalf("host %+v, agent %+v", h.Host, h.Agent)
+	}
+	if h.ModelSignIn == nil || h.ModelSignIn.Path != spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile {
+		t.Fatalf("modelSignIn %+v", h.ModelSignIn)
+	}
+	for _, e := range h.Host.Env {
+		if e.FromHostEnv != "" || e.FromKeyring != "" {
+			t.Fatalf("a plan run on the host names a key: %+v", e)
+		}
+	}
+	if l := plan.Enforcement["model.signIn"]; !strings.Contains(l, "one file in this run's own folder") {
+		t.Fatalf("model.signIn %q", l)
 	}
 }

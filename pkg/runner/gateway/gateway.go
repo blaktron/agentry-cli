@@ -106,22 +106,44 @@ func EnsureInstalledFor(ctx context.Context, d dockerx.Client, pol *policy.Polic
 	if h.Host != nil || h.Agent.Image == "" || h.Agent.Image == pol.Images.HarnessDockerAgent {
 		return EnsureInstalled(ctx, d, pol, runnerTag, imageCtxDir, logw, h.Host == nil && h.Agent.Image != "")
 	}
-	// An image pinned by the artifact it is built from is never taken by
-	// its tag: only the build that makes it can say it holds that artifact,
-	// and this build has none, so the receipt's pin could not be true.
+	pin := policy.HarnessImage{Ref: h.Agent.Image}
 	if h.ImagePin != nil && h.ImagePin.By == policy.PinArtifact {
-		return fmt.Errorf("the %s harness image %s is built on this computer from its vendor's artifact (%s), and this build of agentry can neither build it nor check one already there", h.Adapter, h.Agent.Image, h.ImagePin.Value)
+		pin.Artifact = h.ImagePin.Value
+	}
+	if err := checkHarnessImage(h.Adapter, pin); err != nil {
+		return err
 	}
 	if err := EnsureInstalled(ctx, d, pol, runnerTag, imageCtxDir, logw, false); err != nil {
 		return err
 	}
-	ok, err := d.ImageExists(ctx, h.Agent.Image)
+	return EnsureHarnessImage(ctx, d, h.Adapter, pin, logw)
+}
+
+// checkHarnessImage refuses an image pinned by the artifact it is built
+// from: such an image is never taken by its tag, since only the build that
+// makes it can say it holds that artifact, and this build has none, so the
+// receipt's pin could not be true.
+func checkHarnessImage(adapterName string, h policy.HarnessImage) error {
+	if h.Artifact != "" {
+		return fmt.Errorf("the %s harness image %s is built on this computer from its vendor's artifact (%s), and this build of agentry can neither build it nor check one already there", adapterName, h.Ref, h.Artifact)
+	}
+	return nil
+}
+
+// EnsureHarnessImage pulls adapterName's harness image h when it is not
+// here: by its pinned ref, which names a digest (I8). Setup prepares the
+// default adapter's image with it, a run its plan's (EnsureInstalledFor).
+func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName string, h policy.HarnessImage, logw io.Writer) error {
+	if err := checkHarnessImage(adapterName, h); err != nil {
+		return err
+	}
+	ok, err := d.ImageExists(ctx, h.Ref)
 	if err != nil || ok {
 		return err
 	}
-	_, _ = fmt.Fprintf(logw, "pulling %s (first use)\n", h.Agent.Image)
-	if err := d.Pull(ctx, h.Agent.Image); err != nil {
-		return fmt.Errorf("pull %s: %w", h.Agent.Image, err)
+	_, _ = fmt.Fprintf(logw, "pulling %s (first use)\n", h.Ref)
+	if err := d.Pull(ctx, h.Ref); err != nil {
+		return fmt.Errorf("pull %s: %w", h.Ref, err)
 	}
 	return nil
 }

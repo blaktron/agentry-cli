@@ -43,26 +43,34 @@ type conformanceCase struct {
 	name   string
 	mode   manifest.Mode
 	schema bool
+	// signIn is a model sign-in kind the policy names instead of a key;
+	// such a case runs for the adapters that can spend it.
+	signIn string
 }
 
 var conformanceCases = []conformanceCase{
-	{"autonomous", manifest.ModeAutonomous, false},
-	{"schema", manifest.ModeAutonomous, true},
-	{"interactive", manifest.ModeInteractive, false},
+	{"autonomous", manifest.ModeAutonomous, false, ""},
+	{"schema", manifest.ModeAutonomous, true, ""},
+	{"interactive", manifest.ModeInteractive, false, ""},
+	{"signin-autonomous", manifest.ModeAutonomous, false, policy.KeyKindChatGPTPlan},
+	{"signin-interactive", manifest.ModeInteractive, false, policy.KeyKindChatGPTPlan},
 }
 
 // goldenView is what the golden records: plan content, not Go pointers.
 type goldenView struct {
-	Files      map[string]string     `json:"files"`
-	Agent      spec.ContainerSpec    `json:"agent"`
-	Host       *spec.HostProcessSpec `json:"host,omitempty"`
-	Session    *spec.SessionSpec     `json:"session,omitempty"`
-	Model      string                `json:"model"`
-	ResultKind string                `json:"resultKind"`
+	Files       map[string]string     `json:"files"`
+	Agent       spec.ContainerSpec    `json:"agent"`
+	Host        *spec.HostProcessSpec `json:"host,omitempty"`
+	Session     *spec.SessionSpec     `json:"session,omitempty"`
+	OneTurn     *spec.SessionSpec     `json:"oneTurn,omitempty"`
+	ModelSignIn *spec.ModelSignInSpec `json:"modelSignIn,omitempty"`
+	Model       string                `json:"model"`
+	ResultKind  string                `json:"resultKind"`
 }
 
 func view(r Result) goldenView {
-	v := goldenView{Files: map[string]string{}, Agent: r.Agent, Host: r.Host, Session: r.Session, Model: r.Model, ResultKind: r.ResultKind}
+	v := goldenView{Files: map[string]string{}, Agent: r.Agent, Host: r.Host, Session: r.Session, OneTurn: r.OneTurn,
+		ModelSignIn: r.ModelSignIn, Model: r.Model, ResultKind: r.ResultKind}
 	for name, b := range r.Files {
 		v.Files[name] = string(b)
 	}
@@ -77,6 +85,9 @@ func TestConformance(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			for _, tc := range conformanceCases {
+				if tc.signIn != "" && !SpendsModelSignIn(ad, tc.signIn) {
+					continue
+				}
 				t.Run(tc.name, func(t *testing.T) { conformCompile(t, ad, tc) })
 			}
 			t.Run("events", func(t *testing.T) { conformEvents(t, ad) })
@@ -87,6 +98,9 @@ func TestConformance(t *testing.T) {
 func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	t.Helper()
 	in := conformanceInput(tc.mode, tc.schema)
+	if tc.signIn != "" {
+		in.Model = policy.Model{Provider: policy.SignInProvider(tc.signIn), Name: "fixture-model", APIKeyKind: tc.signIn}
+	}
 	r1, err := ad.Compile(in)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -150,7 +164,19 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 			keyByName = true
 		}
 	}
-	if !keyByName {
+	switch {
+	case tc.signIn != "":
+		// A run paid by a sign-in carries no key at all (I3), and reads
+		// one token file the compiler mounts or the runner writes (I4).
+		for _, v := range env {
+			if v.FromHostEnv != "" || v.FromKeyring != "" {
+				t.Errorf("a sign-in run is given the key variable %s", v.Name)
+			}
+		}
+		if m := r.ModelSignIn; m == nil || m.Kind != tc.signIn || m.Delivery != spec.ModelSignInToken {
+			t.Errorf("modelSignIn = %+v, want a %s token file", m, tc.signIn)
+		}
+	case !keyByName:
 		t.Errorf("no env var resolves the model key %s from the host environment: %+v", in.Model.APIKeyEnv, env)
 	}
 	for _, v := range env {
@@ -186,8 +212,12 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	}
 	switch tc.mode {
 	case manifest.ModeAutonomous:
-		if !stdinTask {
-			t.Error("autonomous mode must take the task on stdin")
+		// The task goes in on stdin, or as the one turn of a session.
+		if stdinTask == (r.OneTurn != nil) {
+			t.Errorf("an autonomous run takes its task on stdin or as one session turn, exactly one: stdin=%v oneTurn=%+v", stdinTask, r.OneTurn)
+		}
+		if r.OneTurn != nil && r.OneTurn.Transport == "" {
+			t.Error("a one-turn run names no transport")
 		}
 		if r.Session != nil {
 			t.Error("autonomous plan carries a session block")
@@ -235,6 +265,9 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 // and checks the shape the engine relies on.
 func conformEvents(t *testing.T, ad Adapter) {
 	t.Helper()
+	if r, err := ad.Compile(conformanceInput(manifest.ModeAutonomous, false)); err == nil && r.OneTurn != nil {
+		t.Skip("every run of this adapter is driven by its session driver, which normalizes the stream itself (TestCodexSession; the engine's TestACodexImageRunOnAChatGPTPlanIsOneAppServerTurn)")
+	}
 	dir := filepath.Join("testdata", "conformance", ad.Name())
 	raw, err := os.ReadFile(filepath.Join(dir, "events.ndjson")) //nolint:gosec // testdata
 	if err != nil {

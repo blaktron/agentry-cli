@@ -36,3 +36,10 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^cmd/agentry/cmd_connections_test\.go$''']
 regexes = ['''PROBE-SECRET-d8-condition''']
+
+[[allowlists]]
+description = "the fake OpenAI's ID token header (an unsigned JWT's literal {\"alg\":\"RS256\"}), which the ChatGPT sign-in tests read claims from and probe-search a run for (agentry-cli#739)"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^pkg/mcpauth/mcpauthtest/chatgpt\.go$''']
+regexes = ['''eyJhbGciOiJSUzI1NiJ9''']

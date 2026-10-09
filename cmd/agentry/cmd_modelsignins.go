@@ -83,12 +83,12 @@ func runModelSignIn(ctx context.Context, home string, plan *spec.Plan, hosted bo
 func newModelSignInsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model-signins",
-		Short: "List and remove the model sign-ins your local runs can spend (your own ChatGPT, Claude or Copilot plan, or a connected key)",
+		Short: "Add, list and remove the model sign-ins your local runs can spend (your own ChatGPT, Claude or Copilot plan, or a connected key)",
 		Long: "A model sign-in lets the runs on this computer spend a plan you hold instead of an API key.\n" +
 			"Any number are kept; model setup (agentry setup) names the one in use, and switching signs\n" +
 			"nothing out. A hosted run never spends one. These are not MCP connections (agentry connections).",
 	}
-	cmd.AddCommand(newModelSignInsListCmd(), newModelSignInsRemoveCmd())
+	cmd.AddCommand(newModelSignInsAddCmd(), newModelSignInsListCmd(), newModelSignInsRemoveCmd())
 	return cmd
 }
 

@@ -42,6 +42,12 @@ type codexSession struct {
 
 	// permit says whether an MCP approval for server/tool is granted.
 	permit func(server, tool string) bool
+	// signIn says the run is paid by a model sign-in (SessionOptions): a
+	// 429 is then the plan's limit, said once (planLimited).
+	signIn      bool
+	planLimited bool
+	// resumable keeps the thread so Resume can carry it to a new process.
+	resumable bool
 }
 
 // codexTurn accumulates one Prompt's answer.
@@ -67,20 +73,17 @@ var codexElicitationAccept = map[string]any{"action": "accept", "content": map[s
 // codexElicitationDecline is the answer for anything else.
 var codexElicitationDecline = map[string]any{"action": "decline"}
 
-// Start implements SessionDriver: the handshake and a fresh ephemeral
-// thread. The working directory is the process's, so the thread's cwd is
+// Start implements SessionDriver: the handshake and a fresh thread,
+// ephemeral unless the conversation may be resumed (SessionOptions.Resumable). The working directory is the process's, so the thread's cwd is
 // left to default to it — a plan carries no host path.
 func (s *codexSession) Start(ctx context.Context) error {
-	if _, err := s.call(ctx, "initialize", map[string]any{
-		"clientInfo":   map[string]any{"name": "agentry", "version": "runner"},
-		"capabilities": map[string]any{},
-	}); err != nil {
+	if err := s.handshake(ctx); err != nil {
 		return err
 	}
-	if err := s.send(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}); err != nil {
-		return fmt.Errorf("initialized: %w", err)
-	}
-	res, err := s.call(ctx, "thread/start", map[string]any{"ephemeral": true})
+	// A thread the restart route may resume is kept in CODEX_HOME, which is
+	// then the run's own (the session store, the run's folder); otherwise
+	// nothing of the conversation is persisted.
+	res, err := s.call(ctx, "thread/start", map[string]any{"ephemeral": !s.resumable})
 	if err != nil {
 		return err
 	}
@@ -93,6 +96,65 @@ func (s *codexSession) Start(ctx context.Context) error {
 		return fmt.Errorf("thread/start: no thread id in %s", string(res))
 	}
 	s.threadID = ts.Thread.ID
+	return nil
+}
+
+// handshake is initialize and initialized. The name is the request
+// originator codex sends; OpenAI's plan usage asks that it match the app's
+// registered name (agent_name_hint), and it is the same for a key run.
+func (s *codexSession) handshake(ctx context.Context) error {
+	if _, err := s.call(ctx, "initialize", map[string]any{
+		"clientInfo":   map[string]any{"name": codexClientName, "title": codexClientName, "version": "runner"},
+		"capabilities": map[string]any{},
+	}); err != nil {
+		return err
+	}
+	if err := s.send(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}); err != nil {
+		return fmt.Errorf("initialized: %w", err)
+	}
+	return nil
+}
+
+// Resume implements Resumer: the old process is gone (its stdout ended),
+// so its unanswered requests are dropped, and the conversation goes on
+// over rw — the handshake again, then thread/resume with the thread's id
+// (OpenAI's route for a renewed token: restart app-server, initialize,
+// thread/resume). Called between turns only.
+func (s *codexSession) Resume(ctx context.Context, rw io.ReadWriteCloser) error {
+	if !s.resumable || s.threadID == "" {
+		return errors.New("codex session: this conversation cannot be resumed")
+	}
+	select {
+	case <-s.readDone:
+	case <-ctx.Done():
+		return fmt.Errorf("codex session: the old harness did not end: %w", ctx.Err())
+	}
+	s.mu.Lock()
+	for id, ch := range s.pending {
+		close(ch)
+		delete(s.pending, id)
+	}
+	s.mu.Unlock()
+	s.writeMu.Lock()
+	s.rw = rw
+	s.writeMu.Unlock()
+	s.readDone = make(chan struct{})
+	go s.readLoop(rw, s.readDone)
+	if err := s.handshake(ctx); err != nil {
+		return err
+	}
+	res, err := s.call(ctx, "thread/resume", map[string]any{"threadId": s.threadID})
+	if err != nil {
+		return err
+	}
+	var tr struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(res, &tr); err != nil || tr.Thread.ID != s.threadID {
+		return fmt.Errorf("thread/resume: resumed %q, not the conversation %q", tr.Thread.ID, s.threadID)
+	}
 	return nil
 }
 
@@ -138,8 +200,15 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 			out.Usage = &TurnUsage{InputTokens: int(t.inTok), OutputTokens: int(t.outTok), TotalTokens: int(t.inTok + t.outTok)}
 		}
 		s.mu.Unlock()
-		if end.err != "" && end.status != "completed" {
-			return out, fmt.Errorf("codex session: turn %s: %s", end.status, firstLineOf(end.err))
+		// A turn that did not complete is not an answer, whether or not it
+		// said why: a failed turn with no error object would otherwise read
+		// as a success (I9).
+		if end.status != "completed" {
+			why := firstLineOf(end.err)
+			if why == "" {
+				why = "codex gave no reason"
+			}
+			return out, fmt.Errorf("codex session: turn %s: %s", end.status, why)
 		}
 		return out, nil
 	case <-ctx.Done():
@@ -206,9 +275,9 @@ func (s *codexSession) call(ctx context.Context, method string, params any) (jso
 	}
 }
 
-func (s *codexSession) readLoop() {
-	defer close(s.readDone)
-	sc := bufio.NewScanner(s.rw)
+func (s *codexSession) readLoop(rw io.Reader, done chan struct{}) {
+	defer close(done)
+	sc := bufio.NewScanner(rw)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
 		line := sc.Bytes()
@@ -241,6 +310,91 @@ func (s *codexSession) readLoop() {
 	}
 }
 
+// codexClientName is the app's name to codex, and to OpenAI through it.
+const codexClientName = "Agentry"
+
+// codexError is codex's error object, on an error notification and a
+// failed turn (codex-cli 0.162.0, measured): its message and, under
+// codexErrorInfo, a variant that may carry the HTTP status the model's
+// endpoint answered (responseTooManyFailedAttempts for a 429 it gave up on,
+// httpConnectionFailed for a 403).
+type codexError struct {
+	Message string          `json:"message"`
+	Info    json.RawMessage `json:"codexErrorInfo"`
+}
+
+// codexUsageLimit is codex's own variant for a usage limit (with a
+// limitId, in 0.162.0's binary): the plan's limit, as a 429 is.
+const codexUsageLimit = "usageLimitExceeded"
+
+// status is the HTTP status the error carries, 0 when it names none; codex's
+// usage-limit variant, as an object or a bare name, counts as a 429.
+func (e *codexError) status() int {
+	if e == nil || len(e.Info) == 0 {
+		return 0
+	}
+	var name string
+	if json.Unmarshal(e.Info, &name) == nil {
+		if name == codexUsageLimit {
+			return 429
+		}
+		return 0
+	}
+	var variants map[string]json.RawMessage
+	if json.Unmarshal(e.Info, &variants) != nil {
+		return 0
+	}
+	if _, ok := variants[codexUsageLimit]; ok {
+		return 429
+	}
+	for _, raw := range variants {
+		var v struct {
+			HTTPStatusCode int `json:"httpStatusCode"`
+		}
+		if json.Unmarshal(raw, &v) == nil && v.HTTPStatusCode != 0 {
+			return v.HTTPStatusCode
+		}
+	}
+	return 0
+}
+
+// codexPlanRefusal is what a 403 on a run paid by a ChatGPT plan adds to
+// the vendor's words: OpenAI refuses plan usage for an account, workspace
+// or region it does not allow, and says not to retry.
+const codexPlanRefusal = " (ChatGPT refused plan usage for this account, its workspace or this region; if your plan does not include it in other apps, use an OpenAI API key: agentry setup)"
+
+// signInError is the event for a model error on this session: on a run
+// paid by a sign-in, a 429 is the plan's limit (I9), said once, and a 403
+// carries the advice; anything else is an error as it stands.
+func (s *codexSession) signInError(e *codexError, raw json.RawMessage) (Event, bool) {
+	msg := ""
+	if e != nil {
+		msg = e.Message
+	}
+	if s.signIn {
+		status := e.status()
+		// A release whose error object carries no status still says it in
+		// its message (0.162.0: "exceeded retry limit, last status: 429 …").
+		if status == 0 && strings.Contains(msg, "last status: 429") {
+			status = 429
+		}
+		switch status {
+		case 429:
+			s.mu.Lock()
+			said := s.planLimited
+			s.planLimited = true
+			s.mu.Unlock()
+			if said {
+				return Event{}, false
+			}
+			return Event{Kind: EventPlanLimit, Text: msg, Raw: raw}, true
+		case 403:
+			return Event{Kind: EventError, Text: msg + codexPlanRefusal, Raw: raw}, true
+		}
+	}
+	return Event{Kind: EventError, Text: msg, Raw: raw}, true
+}
+
 // codexNotification is the part of a notification's params this driver
 // reads across the methods it recognizes.
 type codexNotification struct {
@@ -254,11 +408,9 @@ type codexNotification struct {
 		Status string `json:"status"`
 	} `json:"item"`
 	Turn struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
+		ID     string      `json:"id"`
+		Status string      `json:"status"`
+		Error  *codexError `json:"error"`
 	} `json:"turn"`
 	TokenUsage struct {
 		Last struct {
@@ -266,7 +418,8 @@ type codexNotification struct {
 			OutputTokens int64 `json:"outputTokens"`
 		} `json:"last"`
 	} `json:"tokenUsage"`
-	Message string `json:"message"`
+	Message string      `json:"message"`
+	Error   *codexError `json:"error"`
 }
 
 func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
@@ -307,8 +460,15 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		s.emit(Event{Kind: EventUsage, InputTokens: p.TokenUsage.Last.InputTokens, OutputTokens: p.TokenUsage.Last.OutputTokens, Raw: raw})
 		return
 	case "turn/completed":
-		// The marker goes out before the turn ends: every event of a turn is
-		// queued before Prompt returns (SessionDriver).
+		// A failed turn's error is the plan's limit when it is a 429 on a
+		// sign-in, and goes out first; the marker goes out before the turn
+		// ends: every event of a turn is queued before Prompt returns
+		// (SessionDriver).
+		if p.Turn.Status == "failed" && p.Turn.Error != nil && s.signIn && p.Turn.Error.status() == 429 {
+			if ev, ok := s.signInError(p.Turn.Error, raw); ok {
+				s.emit(ev)
+			}
+		}
 		s.emit(Event{Kind: EventOther, Text: m.Method, Raw: raw})
 		s.mu.Lock()
 		t := s.turn
@@ -323,7 +483,15 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		}
 		return
 	case "error":
-		s.emit(Event{Kind: EventError, Text: p.Message, Raw: raw})
+		// The error object (0.162.0), or the bare message of an older
+		// release.
+		e := p.Error
+		if e == nil {
+			e = &codexError{Message: p.Message}
+		}
+		if ev, ok := s.signInError(e, raw); ok {
+			s.emit(ev)
+		}
 		return
 	case "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
 		"item/reasoning/summaryPartAdded", "item/plan/delta", "account/rateLimits/updated":

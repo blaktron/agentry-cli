@@ -983,7 +983,9 @@ enforcement and executes the QuickAgent once, with an output folder for
 its reports. The default adapter (`docker-agent`) runs the harness in an
 isolated container; `--adapter claude` or `codex` runs your own installed
 Claude Code or Codex as a host process behind the same gateway and egress
-proxy (`goose` is planned, not implemented):
+proxy; `--adapter codex-image` runs OpenAI's Codex in its own signed image
+(agentry-dockerimages' Codex image, pinned by digest), the default when your
+model is paid by your ChatGPT plan (`goose` is planned, not implemented):
 
 ```bash
 agentry run demo1/incident-summarizer@^1 --input incident.json --out ./reports
@@ -1168,15 +1170,29 @@ key: the policy's `apiKeyKind` names `chatgpt-plan`, `claude-signin` or
 `copilot-signin`, and the grant is kept per person under the runner home
 (`model-signins/`, its refresh token in the OS keychain, or a 0600 file
 where none answers), listed and
-removed by `agentry model-signins list|remove <vendor>`. A run is handed an
+removed by `agentry model-signins list|remove <vendor>`. **Sign in with
+ChatGPT** (agentry-cli#739): `agentry model-signins add chatgpt` (or `agentry
+setup`, provider `openai`, paying with `chatgpt`) signs in in your browser
+with OpenAI's plan usage, checks that the grant allows it
+(`chatgpt.tokens.use.direct`) and that your plan does (an ineligible account
+is told to use an API key and nothing is kept), and lists your plan's models;
+`remove chatgpt` revokes the grant at OpenAI. Such a run goes to
+`api.openai.com:443` alone and runs on the Codex image by default, or on your
+installed Codex with `--adapter codex` (not on Windows yet); both run Codex's
+app-server, an autonomous run as its one turn. Codex reads the token file
+whenever it needs a token (`harness.<adapter>.signInTokenRoute: auth-command`,
+the default), or, with `restart`, reads it once at start and, in a session,
+is started again on a renewed token and resumes the conversation (OpenAI's
+documented route). A run is handed an
 access token alone, in one file of its own mounted read-only into the
 agent container and rewritten before it expires, or the harness's own
 config directory; it reports tokens, never dollars, refuses `--max-cost`,
 and ends with the plan-limit outcome (exit 16, reason `plan-limit`) when
-the plan's limit is reached. A hosted run's host (a run grant,
-`--connections-file` or `--session-protocol`) is refused one. The vendors'
-sign-in flows and the adapters that spend them are not in this release yet,
-so today every adapter refuses a sign-in kind at plan time (exit 11).
+the plan's limit is reached (a 429 on a ChatGPT plan, never retried). A
+hosted run's host (a run grant, `--connections-file` or `--session-protocol`)
+is refused one. The Claude and Copilot sign-ins and their adapters are not in
+this release yet, so every other adapter refuses a sign-in kind at plan time
+(exit 11).
 Harness images are pinned per adapter: docker-agent's by digest
 (`images.harnessDockerAgent`), any other's in `images.harnessImages` by
 digest or by the vendor artifact it is built from, and the receipt names

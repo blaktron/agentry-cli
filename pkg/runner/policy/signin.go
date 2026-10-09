@@ -12,6 +12,7 @@ package policy
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -36,6 +37,34 @@ const (
 // images.harnessDockerAgent (the adapter package names it too; it imports
 // this one).
 const DockerAgentAdapter = "docker-agent"
+
+// The token routes of HarnessPolicy.SignInTokenRoute.
+const (
+	TokenRouteAuthCommand = "auth-command"
+	TokenRouteRestart     = "restart"
+)
+
+// SignInTokenRoute is the token route hp names, the default when it names
+// none.
+func SignInTokenRoute(hp HarnessPolicy) string {
+	if hp.SignInTokenRoute == "" {
+		return TokenRouteAuthCommand
+	}
+	return hp.SignInTokenRoute
+}
+
+// signInEndpoints are the endpoints a run paid by each token-file sign-in
+// kind may reach through the egress proxy, and nothing else (invariant
+// I2): the vendor's inference API alone, never its token endpoint, which
+// only the CLI talks to.
+var signInEndpoints = map[string][]string{
+	KeyKindChatGPTPlan: {"api.openai.com:443"},
+}
+
+// SignInProxyAllow is the proxy allowlist a run paid by kind must have,
+// nil for a kind with no fixed endpoint (a key; a sign-in whose harness is
+// not built yet).
+func SignInProxyAllow(kind string) []string { return slices.Clone(signInEndpoints[kind]) }
 
 // signInProviders maps each model sign-in kind to the one provider it
 // spends.
@@ -156,10 +185,17 @@ func (h HarnessImage) validate(adapterName string) error {
 }
 
 // DefaultHarnessImages are the CLI's pinned harness images for the
-// adapters beyond docker-agent, by adapter name. Empty until an adapter
-// that runs one ships (the Codex image, agentry-dockerimages#53, with
-// agentry-cli#739).
-var DefaultHarnessImages = map[string]HarnessImage{}
+// adapters beyond docker-agent, by adapter name, each by digest (I8).
+//
+// codex-image: agentry-dockerimages' Codex harness image (#53), OpenAI's
+// Codex CLI 0.162.0 release binary verified against OpenAI's signature,
+// amd64 and arm64, signed keyless by that repository's codex workflow on
+// main (agentry-cli's CI verifies this digest against that identity,
+// scripts/verify-codex-image.sh). A Codex bump re-records the adapter's
+// conformance before this pin moves (README "Bumping Codex" there).
+var DefaultHarnessImages = map[string]HarnessImage{
+	"codex-image": {Ref: "ghcr.io/blaktron/agentry-codex:0.162.0-2026.10.09.1@sha256:e6b0c020b797d7941b4365f82e743f190f82342f087621bddf57b087e4d703f9"},
+}
 
 // HarnessImageFor is the harness image adapterName runs in: docker-agent's
 // from images.harnessDockerAgent, any other's from images.harnessImages,

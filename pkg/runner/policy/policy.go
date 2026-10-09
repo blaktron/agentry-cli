@@ -359,6 +359,15 @@ type HarnessPolicy struct {
 	// (empty: model.apiKeySource); the keychain entry is the model
 	// provider's.
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
+	// SignInTokenRoute is how a harness that spends a token-file model
+	// sign-in reads its access token (plan model-sign-ins.md D9, D10;
+	// agentry-cli#739): auth-command (the default) has the harness read the
+	// token file itself whenever it needs a token, so a renewal reaches it
+	// mid-turn; restart starts the harness on the token of the moment and,
+	// between turns, starts it again on a renewed one and resumes the
+	// conversation (OpenAI's documented route for Codex's app-server). Only
+	// the codex adapters read it.
+	SignInTokenRoute string `yaml:"signInTokenRoute,omitempty"`
 }
 
 // MCPServersPolicy is the operator's stance on declared servers the
@@ -946,6 +955,11 @@ func (p *Policy) Validate() error {
 		if hp.APIKeyKind == KeyKindSubscription && name != "claude" {
 			return fmt.Errorf("harness.%s.apiKeyKind subscription: %s", name, SubscriptionTokenSentence)
 		}
+		switch hp.SignInTokenRoute {
+		case "", TokenRouteAuthCommand, TokenRouteRestart:
+		default:
+			return fmt.Errorf("harness.%s.signInTokenRoute %q must be %s or %s", name, hp.SignInTokenRoute, TokenRouteAuthCommand, TokenRouteRestart)
+		}
 	}
 	if len(p.Model.ProxyAllow) == 0 {
 		return errors.New("model.proxyAllow must list the model endpoint host:port (it is the agent container's only egress)")
@@ -1131,7 +1145,7 @@ images:
   # vendor's artifact, by that artifact's hash (artifact: sha256:...).
   # Unset, the CLI's pinned defaults are used.
   # harnessImages:
-  #   codex: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
+  #   codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:24-alpine
@@ -1173,7 +1187,8 @@ model:
   #   # subscription through Claude Code (anthropic) or Copilot plan
   #   # (copilot), kept by "agentry model-signins", never in this file; no
   #   # apiKeyEnv; runs report tokens, not dollars; never used by a hosted
-  #   # run. Only an adapter that can spend one runs it.
+  #   # run. Only an adapter that can spend one runs it: for a ChatGPT
+  #   # plan, codex-image (the default then) or your installed codex.
   # baseUrl: https://llm.internal:8443/v1   # custom only
   # The llm-proxy CONNECT allowlist: the agent container can reach these
   # host:port pairs and nothing else. Keep it to model endpoints.
@@ -1215,6 +1230,12 @@ sessions:
 #     # baseUrl: https://api.anthropic.com
 #     # model: claude-sonnet-4-5
 #     # apiKeyEnv: ANTHROPIC_API_KEY
+#   codex-image:            # (or codex) on a ChatGPT plan
+#     # How Codex reads the plan's access token: auth-command (the default)
+#     # reads the runner's token file whenever it needs one; restart reads
+#     # it once at start and, in a session, starts Codex again on a renewed
+#     # token and resumes the conversation.
+#     # signInTokenRoute: auth-command
 
 profiles:
   # A QuickAgent's MCP profile stores the keys/identities guided setup

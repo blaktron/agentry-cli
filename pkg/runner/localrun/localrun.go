@@ -596,7 +596,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	if err != nil {
 		return nil, err
 	}
-	adapterName := cmp.Or(r.Adapter, adapter.DefaultName)
+	adapterName := cmp.Or(r.Adapter, adapter.DefaultFor(r.Policy))
 	ad, err := adapter.Get(adapterName)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitCLI, err)

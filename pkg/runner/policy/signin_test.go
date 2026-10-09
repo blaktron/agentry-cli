@@ -128,3 +128,24 @@ func TestTheDefaultHarnessImageIsPinnedByDigest(t *testing.T) {
 		t.Fatal("the host claude adapter has no default image")
 	}
 }
+
+// harness.<name>.signInTokenRoute is auth-command or restart, nothing else
+// (plan model-sign-ins.md D10); unset is the auth command.
+func TestASignInTokenRouteIsOneOfTwo(t *testing.T) {
+	for route, ok := range map[string]bool{"": true, TokenRouteAuthCommand: true, TokenRouteRestart: true, "env": false, "Restart": false} {
+		p := Default()
+		p.Harness = map[string]HarnessPolicy{"codex-image": {SignInTokenRoute: route}}
+		err := p.Validate()
+		if (err == nil) != ok {
+			t.Errorf("route %q: %v", route, err)
+		}
+	}
+	if SignInTokenRoute(HarnessPolicy{}) != TokenRouteAuthCommand {
+		t.Error("an unset route is not the auth command")
+	}
+	allow := SignInProxyAllow(KeyKindChatGPTPlan)
+	allow[0] = "elsewhere:443"
+	if SignInProxyAllow(KeyKindChatGPTPlan)[0] != "api.openai.com:443" {
+		t.Error("a caller can change the endpoints a plan run is held to")
+	}
+}

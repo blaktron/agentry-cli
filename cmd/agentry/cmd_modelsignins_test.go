@@ -24,7 +24,7 @@ const (
 // fakePlanVendor issues probeSignInAccess for probeSignInRefresh.
 type fakePlanVendor struct{ refreshes int }
 
-func (v *fakePlanVendor) Refresh(_ context.Context, rt string) (modelsignin.Refreshed, error) {
+func (v *fakePlanVendor) Refresh(_ context.Context, _ modelsignin.Record, rt string) (modelsignin.Refreshed, error) {
 	if rt != probeSignInRefresh {
 		return modelsignin.Refreshed{}, errors.New("unknown refresh token")
 	}
@@ -32,7 +32,7 @@ func (v *fakePlanVendor) Refresh(_ context.Context, rt string) (modelsignin.Refr
 	return modelsignin.Refreshed{AccessToken: probeSignInAccess, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
-func (v *fakePlanVendor) Revoke(context.Context, string) error { return nil }
+func (v *fakePlanVendor) Revoke(context.Context, modelsignin.Record, string) error { return nil }
 
 // panicKeys fails the test the moment anything opens the keychain.
 type panicKeys struct{ t *testing.T }
