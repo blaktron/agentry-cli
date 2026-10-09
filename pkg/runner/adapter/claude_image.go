@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/harnessbuild"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -50,9 +51,9 @@ const (
 	// claudeImageHome is the image user's home, the working directory.
 	claudeImageHome = "/home/node"
 	// ClaudeImageConfigDir is where the image keeps Claude Code's config
-	// directory, the sign-in's volume (harnessbuild.ClaudeConfigDir, which
-	// the build makes for the image's user).
-	ClaudeImageConfigDir = "/claude"
+	// directory, the sign-in's volume: made by the build for the image's
+	// user.
+	ClaudeImageConfigDir = harnessbuild.ClaudeConfigDir
 )
 
 // claudeImageAdapter implements Adapter for the Claude Code image. It is

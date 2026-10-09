@@ -1142,10 +1142,13 @@ images:
   harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0@sha256:50bef17dfbc43c56f8c7c68eade9fc36cd4de5a2fc7ad0f28e34d0030002d5f1
   # Other adapters' harness images, by adapter name: pinned by digest
   # (ref: <name>@sha256:...) or, for one built on this machine from its
-  # vendor's artifact, by that artifact's hash (artifact: sha256:...).
-  # Unset, the CLI's pinned defaults are used.
+  # vendor's artifact, by that artifact's hash (artifact: sha256:<hex>, or
+  # an npm package's integrity, sha512-<base64>). Claude Code's is built
+  # here from the npm packages this CLI pins, and a pin naming a release
+  # it does not carry is refused. Unset, the CLI's pinned defaults are used.
   # harnessImages:
   #   codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
+  #   claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:24-alpine
@@ -1188,7 +1191,10 @@ model:
   #   # (copilot), kept by "agentry model-signins", never in this file; no
   #   # apiKeyEnv; runs report tokens, not dollars; never used by a hosted
   #   # run. Only an adapter that can spend one runs it: for a ChatGPT
-  #   # plan, codex-image (the default then) or your installed codex.
+  #   # plan, codex-image (the default then) or your installed codex; for
+  #   # a Claude subscription, claude-image (the default then, built on
+  #   # this computer) or your installed claude, each signed in by
+  #   # "agentry model-signins add claude [--installed]".
   # baseUrl: https://llm.internal:8443/v1   # custom only
   # The llm-proxy CONNECT allowlist: the agent container can reach these
   # host:port pairs and nothing else. Keep it to model endpoints.

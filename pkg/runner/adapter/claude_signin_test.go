@@ -11,6 +11,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/harnessbuild"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -164,5 +165,15 @@ func TestARejectedRateLimitEventIsThePlansLimit(t *testing.T) {
 	img := &claudeImageAdapter{}
 	if evs := img.Events([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}`)); len(evs) != 1 || evs[0].Kind != EventPlanLimit || !evs[0].ResetsAt.IsZero() {
 		t.Fatalf("the image's reading: %+v", evs)
+	}
+}
+
+// The image this adapter runs is the one harnessbuild builds, by one name.
+func TestTheClaudeImageAdapterIsTheOneHarnessbuildBuilds(t *testing.T) {
+	if ClaudeImageAdapterName != harnessbuild.ClaudeImageAdapter || !harnessbuild.Builds(ClaudeImageAdapterName) {
+		t.Fatal("the adapter and the build name two images")
+	}
+	if _, ok := policy.Default().Images.HarnessImageFor(ClaudeImageAdapterName); !ok {
+		t.Fatal("no default image for the adapter")
 	}
 }

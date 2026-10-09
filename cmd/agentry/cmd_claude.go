@@ -45,9 +45,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 )
 
-// ClaudeSignInLabel is what every surface calls the choice (D24).
-const ClaudeSignInLabel = setup.ClaudeSignInLabel
-
 // claudeDocker is the daemon the image's sign-in runs on: a seam for tests.
 var claudeDocker = func() dockerx.Client { return dockerx.New() }
 
@@ -162,10 +159,15 @@ func claudeStdin(cmd *cobra.Command, in *bufio.Reader) io.Reader {
 }
 
 // claudeRun is one Claude Code command in the image, on its volume: the
-// image's user, a read-only root, nothing of the person's.
-func claudeRun(image, what string, argv ...string) dockerx.RunSpec {
+// image's user, a read-only root, nothing of the person's, every
+// capability dropped and the policy's docker.limits. It is the one
+// container Agentry starts with open egress (the default bridge): Claude
+// Code's sign-in reaches Anthropic's pages and token endpoint itself, and
+// it carries no model traffic and no run.
+func claudeRun(pol *policy.Policy, image, what string, argv ...string) dockerx.RunSpec {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
+	lim := pol.Docker.Limits.WithDefaults()
 	return dockerx.RunSpec{
 		Name:       "agentry-claude-" + what + "-" + hex.EncodeToString(b),
 		Image:      image,
@@ -176,14 +178,12 @@ func claudeRun(image, what string, argv ...string) dockerx.RunSpec {
 			"HOME":                "/home/node",
 			"DISABLE_AUTOUPDATER": "1",
 		},
-		Mounts:          []dockerx.Mount{{Source: claudeVolume, Target: adapter.ClaudeImageConfigDir}},
-		Interactive:     true,
-		AutoRemove:      true,
-		ReadOnly:        true,
-		Tmpfs:           []string{"/tmp:mode=1777", "/home/node:mode=1777"},
-		CapDrop:         []string{"ALL"},
-		NoNewPrivileges: true,
-	}
+		Mounts:      []dockerx.Mount{{Source: claudeVolume, Target: adapter.ClaudeImageConfigDir}},
+		Interactive: true,
+		AutoRemove:  true,
+		ReadOnly:    true,
+		Tmpfs:       []string{"/tmp:mode=1777", "/home/node:mode=1777"},
+	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 }
 
 // runClaude runs one Claude Code command in the image and removes its
@@ -225,7 +225,7 @@ func signInClaudeImage(cmd *cobra.Command, in *bufio.Reader, pol *policy.Policy)
 	if err := d.VolumeCreate(ctx, claudeVolume, map[string]string{"org.agentry.model-signin": modelsignin.Claude}); err != nil {
 		return "", "", err
 	}
-	_, _ = fmt.Fprintf(errOut, "%s: Claude Code signs you in itself, in Anthropic's own pages, and keeps the sign-in in its docker volume %s, which Agentry never reads.\n", ClaudeSignInLabel, claudeVolume)
+	_, _ = fmt.Fprintf(errOut, "%s: Claude Code signs you in itself, in Anthropic's own pages, and keeps the sign-in in its docker volume %s, which Agentry never reads.\n", setup.ClaudeSignInLabel, claudeVolume)
 	_, _ = fmt.Fprintln(errOut, "When the browser shows a code, copy it, paste it at Claude Code's prompt below and press Enter.")
 	open := func(u string) {
 		if os.Getenv("AGENTRY_NO_BROWSER") != "" {
@@ -237,7 +237,7 @@ func signInClaudeImage(cmd *cobra.Command, in *bufio.Reader, pol *policy.Policy)
 	}
 	lctx, cancel := context.WithTimeout(ctx, claudeSignInTimeout)
 	defer cancel()
-	code, err := runClaude(lctx, d, claudeRun(h.Ref, "login", "auth", "login"), claudeStdin(cmd, in), &urlOpener{w: errOut, open: open}, errOut)
+	code, err := runClaude(lctx, d, claudeRun(pol, h.Ref, "login", "auth", "login"), claudeStdin(cmd, in), &urlOpener{w: errOut, open: open}, errOut)
 	if lctx.Err() != nil {
 		return "", "", fmt.Errorf("nothing kept: the sign-in was interrupted, or not finished within %s", claudeSignInTimeout)
 	}
@@ -248,7 +248,7 @@ func signInClaudeImage(cmd *cobra.Command, in *bufio.Reader, pol *policy.Policy)
 		return "", "", fmt.Errorf("nothing kept: the sign-in in Claude Code did not complete (exit %d)", code)
 	}
 	var out bytes.Buffer
-	if _, err := runClaude(ctx, d, claudeRun(h.Ref, "status", "auth", "status"), nil, &out, io.Discard); err != nil {
+	if _, err := runClaude(ctx, d, claudeRun(pol, h.Ref, "status", "auth", "status"), nil, &out, io.Discard); err != nil {
 		return "", "", fmt.Errorf("the sign-in status in Claude Code: %w", err)
 	}
 	st, err := parseClaudeStatus(out.Bytes())
@@ -289,7 +289,7 @@ func signInInstalledClaude(cmd *cobra.Command, in *bufio.Reader, home string, po
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", err
 	}
-	_, _ = fmt.Fprintf(errOut, "%s: the Claude Code installed on this computer signs you in itself and keeps the sign-in in %s (never your own ~/.claude), which Agentry never reads.\n", ClaudeSignInLabel, dir)
+	_, _ = fmt.Fprintf(errOut, "%s: the Claude Code installed on this computer signs you in itself and keeps the sign-in in %s (never your own ~/.claude), which Agentry never reads.\n", setup.ClaudeSignInLabel, dir)
 	lctx, cancel := context.WithTimeout(ctx, claudeSignInTimeout)
 	defer cancel()
 	login := exec.CommandContext(lctx, exe, "auth", "login") //nolint:gosec // the installed Claude Code, found as the run finds it
@@ -299,7 +299,12 @@ func signInInstalledClaude(cmd *cobra.Command, in *bufio.Reader, home string, po
 	}
 	status := exec.CommandContext(ctx, exe, "auth", "status") //nolint:gosec // as above
 	status.Env = claudeHostEnv(dir)
-	out, _ := status.Output()
+	// auth status exits 1 when no one is signed in, with its JSON still
+	// printed: the JSON is the answer, and only no answer is an error.
+	out, serr := status.Output()
+	if len(bytes.TrimSpace(out)) == 0 {
+		return "", "", fmt.Errorf("nothing kept: the installed Claude Code did not say who is signed in (%v)", serr)
+	}
 	st, err := parseClaudeStatus(out)
 	if err != nil {
 		return "", "", err
@@ -317,6 +322,11 @@ func signInClaude(cmd *cobra.Command, in *bufio.Reader, home string, installed b
 	if err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
+	s := modelsignin.Open(home, connectionKeys())
+	var rec modelsignin.Record
+	if old, err := s.Get(modelsignin.Claude); err == nil {
+		rec.ConfigDir, rec.HostConfigDir = old.ConfigDir, old.HostConfigDir
+	}
 	var dir, label string
 	if installed {
 		dir, label, err = signInInstalledClaude(cmd, in, home, pol)
@@ -324,12 +334,19 @@ func signInClaude(cmd *cobra.Command, in *bufio.Reader, home string, installed b
 		dir, label, err = signInClaudeImage(cmd, in, pol)
 	}
 	if err != nil {
+		// "Nothing kept" must be true: a first sign-in that failed may
+		// still have left Claude Code's state (a Console login, a half
+		// sign-in) in the directory it made, which no record would name
+		// for a removal. A failed sign-in again leaves the kept one alone.
+		if installed && rec.HostConfigDir == "" {
+			_ = os.RemoveAll(claudeHostDir(home))
+		}
+		if !installed && rec.ConfigDir == "" {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), 30*time.Second)
+			_ = claudeDocker().VolumeRemove(rctx, claudeVolume)
+			cancel()
+		}
 		return nil, err
-	}
-	s := modelsignin.Open(home, connectionKeys())
-	var rec modelsignin.Record
-	if old, err := s.Get(modelsignin.Claude); err == nil {
-		rec.ConfigDir, rec.HostConfigDir = old.ConfigDir, old.HostConfigDir
 	}
 	if installed {
 		rec.HostConfigDir = dir
@@ -338,6 +355,28 @@ func signInClaude(cmd *cobra.Command, in *bufio.Reader, home string, installed b
 	}
 	rec.Label = label
 	return s.Put(modelsignin.Claude, rec, modelsignin.Grant{})
+}
+
+// addClaude is `agentry model-signins add claude [--installed]`.
+func addClaude(cmd *cobra.Command, in *bufio.Reader, home string, installed bool) error {
+	rec, err := signInClaude(cmd, in, home, installed)
+	if err != nil {
+		return err
+	}
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), signedInJSON{Vendor: modelsignin.Claude, Kind: rec.Kind, Account: rec.Label, Models: []string{}})
+	}
+	who := ""
+	if rec.Label != "" {
+		who = " as " + rec.Label
+	}
+	where, how := "the Claude Code image", "agentry setup (provider anthropic, pay with claude)"
+	if installed {
+		where, how = "the Claude Code installed on this computer", "agentry setup (provider anthropic, pay with claude), then agentry run --adapter claude"
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signed in to Claude%s in %s\n", who, where)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "to run on it: "+how)
+	return nil
 }
 
 // endClaude is the store's EndClaude: Claude Code's own logout in each of
@@ -353,14 +392,16 @@ func endClaude(errOut io.Writer, home string) func(context.Context, modelsignin.
 		}
 		var notLoggedOut []string
 		if r.ConfigDir != "" {
-			if !engine.OwnSignInDir("", r.ConfigDir) {
-				return "", fmt.Errorf("the Claude sign-in names %q, which is not a docker volume of Agentry's own; nothing removed", r.ConfigDir)
+			// Only the volume this CLI makes is ever deleted, whatever a
+			// record says.
+			if r.ConfigDir != claudeVolume {
+				return "", fmt.Errorf("the Claude sign-in names %q, not the Claude Code image's volume %s; nothing removed", r.ConfigDir, claudeVolume)
 			}
 			d := claudeDocker()
 			loggedOut := false
 			if h, ok := pol.Images.HarnessImageFor(adapter.ClaudeImageAdapterName); ok {
 				if here, _ := d.ImageExists(ctx, h.Ref); here {
-					code, err := runClaude(ctx, d, claudeRun(h.Ref, "logout", "auth", "logout"), nil, errOut, errOut)
+					code, err := runClaude(ctx, d, claudeRun(pol, h.Ref, "logout", "auth", "logout"), nil, errOut, errOut)
 					loggedOut = err == nil && code == 0
 				}
 			}
@@ -372,8 +413,8 @@ func endClaude(errOut io.Writer, home string) func(context.Context, modelsignin.
 			}
 		}
 		if r.HostConfigDir != "" {
-			if !engine.OwnSignInDir(home, r.HostConfigDir) {
-				return "", fmt.Errorf("the Claude sign-in names %s, which is not a directory of Agentry's own; nothing removed", r.HostConfigDir)
+			if filepath.Clean(r.HostConfigDir) != claudeHostDir(home) {
+				return "", fmt.Errorf("the Claude sign-in names %s, not the installed Claude Code's directory %s; nothing removed", r.HostConfigDir, claudeHostDir(home))
 			}
 			loggedOut := false
 			if exe, _, err := harnessprobe.Find(pol, adapter.ClaudeAdapterName); err == nil {

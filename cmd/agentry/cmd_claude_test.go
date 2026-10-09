@@ -75,6 +75,9 @@ func TestModelSignInsAddClaudeRunsClaudeCodesOwnSignIn(t *testing.T) {
 	if !ok {
 		t.Fatal("Claude Code's sign-in never ran")
 	}
+	if login.Memory == "" || login.CPUs == 0 || login.PidsLimit == 0 || !slices.Equal(login.CapDrop, []string{"ALL"}) || !login.NoNewPrivileges {
+		t.Fatalf("the sign-in container is not bounded: %+v", login)
+	}
 	if login.Entrypoint != "/usr/local/bin/claude" || !slices.Equal(login.Argv, []string{"auth", "login"}) || !login.ReadOnly || !login.Interactive ||
 		len(login.Mounts) != 1 || login.Mounts[0] != (dockerx.Mount{Source: claudeVolume, Target: "/claude"}) || login.Env["CLAUDE_CONFIG_DIR"] != "/claude" {
 		t.Fatalf("the sign-in container %+v", login)
@@ -123,6 +126,10 @@ func TestModelSignInsAddClaudeKeepsNothingUnlessClaudeCodeIsSignedIn(t *testing.
 		}
 		if _, err := modelsignin.Open(mustRunnerHome(t), nil).Get(modelsignin.Claude); err == nil {
 			t.Fatalf("%s: a record was kept", name)
+		}
+		// Nothing kept means nothing: the volume the first sign-in made goes.
+		if !strings.Contains(strings.Join(f.Ops(), " "), "VolumeRemove:"+claudeVolume) {
+			t.Fatalf("%s: the volume of a failed first sign-in was left: %v", name, f.Ops())
 		}
 	}
 }
@@ -289,5 +296,51 @@ func TestARunIsHandedItsClaudeCodesDirectory(t *testing.T) {
 	}
 	if _, _, err = runModelSignIn(context.Background(), home, image, true); err == nil || !strings.Contains(err.Error(), "a hosted run never spends a model sign-in") {
 		t.Fatalf("hosted: %v", err)
+	}
+}
+
+// A failed sign-in again leaves the kept one alone: its volume is the
+// record's, and remove ends it.
+func TestAFailedSignInAgainKeepsTheKeptOne(t *testing.T) {
+	f, _ := claudeFixture(t)
+	if _, errOut, err := runCLI(t, strings.NewReader(""), "model-signins", "add", "claude"); err != nil {
+		t.Fatalf("add: %v\n%s", err, errOut)
+	}
+	f.Foreground["agentry-claude-login"].ExitCode = 1
+	if _, _, err := runCLI(t, strings.NewReader(""), "model-signins", "add", "claude"); err == nil {
+		t.Fatal("a failed sign-in kept")
+	}
+	if strings.Contains(strings.Join(f.Ops(), " "), "VolumeRemove:") {
+		t.Fatalf("the kept sign-in's volume was removed: %v", f.Ops())
+	}
+	if r, err := modelsignin.Open(mustRunnerHome(t), nil).Get(modelsignin.Claude); err != nil || r.ConfigDir != claudeVolume {
+		t.Fatalf("the kept record: %+v %v", r, err)
+	}
+}
+
+// Removal deletes only the volume and the directory this CLI makes, never
+// another a tampered record names.
+func TestRemovingClaudeDeletesOnlyAgentrysOwn(t *testing.T) {
+	for name, rec := range map[string]modelsignin.Record{
+		"another volume": {ConfigDir: "agentry-runner-cache"},
+		"the store":      {HostConfigDir: "STORE"},
+	} {
+		f, _ := claudeFixture(t)
+		home := mustRunnerHome(t)
+		if rec.HostConfigDir == "STORE" {
+			rec.HostConfigDir = modelsignin.Dir(home)
+		}
+		if _, err := modelsignin.Open(home, nil).Put(modelsignin.Claude, rec, modelsignin.Grant{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := runCLI(t, nil, "model-signins", "remove", "claude"); err == nil || !strings.Contains(err.Error(), "nothing removed") {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(strings.Join(f.Ops(), " "), "VolumeRemove:") {
+			t.Fatalf("%s: removed %v", name, f.Ops())
+		}
+		if _, err := os.Stat(modelsignin.Dir(home)); err != nil {
+			t.Fatalf("%s: the store went: %v", name, err)
+		}
 	}
 }

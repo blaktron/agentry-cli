@@ -1211,8 +1211,10 @@ under `model-signins/`, with Claude Code's own browser and callback), for
 checked against the npm integrity this build carries (a mismatch builds
 nothing). A Claude run gets that directory read-write and nothing else of
 the sign-in, no `--bare`, no API-key variable, no settings, the gateway as
-its only tool server, and reaches `api.anthropic.com:443` and
-`platform.claude.com:443` alone; a `rate_limit_event` Claude Code reports as
+its only tool server, and its egress proxy allows `api.anthropic.com:443` and
+`platform.claude.com:443` alone (the image's only way out; the installed
+Claude Code, a process on your computer, is asked to use it, as any host
+adapter is); a `rate_limit_event` Claude Code reports as
 rejected ends it with the plan-limit outcome and Claude Code's reset time.
 `remove claude` runs Claude Code's own logout there and deletes the
 directory. The API-key choice stays: the Max and Team plans include monthly

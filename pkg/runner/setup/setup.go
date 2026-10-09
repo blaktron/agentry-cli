@@ -371,7 +371,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 				return err
 			}
 			switch strings.ToLower(strings.TrimSpace(ans)) {
-			case "claude", policy.KeyKindClaudeSignIn, "subscription-signin":
+			case "claude", policy.KeyKindClaudeSignIn:
 				kind = policy.KeyKindClaudeSignIn
 			case "key", "api", "":
 			default:

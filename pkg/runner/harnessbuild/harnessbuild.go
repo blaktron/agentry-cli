@@ -40,7 +40,8 @@ const (
 )
 
 // ClaudeImageAdapter is the adapter whose image this package builds (the
-// adapter package names it too; it does not import this one).
+// adapter package, which imports this one, names it too; a test there
+// holds the two to one name).
 const ClaudeImageAdapter = "claude-image"
 
 // ClaudeBase is the image Claude Code is installed on: agentry-dockerimages'

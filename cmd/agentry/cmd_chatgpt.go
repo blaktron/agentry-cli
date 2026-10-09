@@ -127,7 +127,7 @@ func newModelSignInsAddCmd() *cobra.Command {
 		Long: "add chatgpt signs in with ChatGPT in your browser. Your ChatGPT plan then pays for the runs on this\n" +
 			"computer whose model setup names it (agentry setup → openai → chatgpt); a hosted run never spends it.\n" +
 			"The sign-in is kept in the OS keychain; runs are handed a one-hour access token, never the sign-in.\n\n" +
-			"add claude is " + ClaudeSignInLabel + ": Claude Code signs you in itself, in Anthropic's own pages,\n" +
+			"add claude is " + setup.ClaudeSignInLabel + ": Claude Code signs you in itself, in Anthropic's own pages,\n" +
 			"and keeps the sign-in in a directory of Agentry's own that Agentry never reads (never your ~/.claude).\n" +
 			"It signs in the Claude Code image, built on this computer, which runs Claude runs by default; with\n" +
 			"--installed, the Claude Code installed on this computer, for runs with --adapter claude.",
@@ -148,24 +148,7 @@ func newModelSignInsAddCmd() *cobra.Command {
 				if newAccount {
 					return errors.New("--new-account is for chatgpt")
 				}
-				rec, err := signInClaude(cmd, in, home, installed)
-				if err != nil {
-					return err
-				}
-				if flags.jsonOut {
-					return emitJSON(cmd.OutOrStdout(), signedInJSON{Vendor: vendor, Kind: rec.Kind, Account: rec.Label, Models: []string{}})
-				}
-				who := ""
-				if rec.Label != "" {
-					who = " as " + rec.Label
-				}
-				where, how := "the Claude Code image", "agentry setup (provider anthropic, pay with claude)"
-				if installed {
-					where, how = "the Claude Code installed on this computer", "agentry setup (provider anthropic, pay with claude), then agentry run --adapter claude"
-				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signed in to Claude%s in %s\n", who, where)
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "to run on it: "+how)
-				return nil
+				return addClaude(cmd, in, home, installed)
 			default:
 				return fmt.Errorf("this build signs in with chatgpt and claude only (%q: Copilot comes later)", args[0])
 			}
