@@ -124,6 +124,9 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "policy written: %s\n", policyPath)
+	// A schedule that runs signed out holds its own sealed copy of the
+	// keys: a changed key or provider is sealed again now (D18).
+	resealSignedOut(cmd.ErrOrStderr())
 	result := setupOutput{PolicyPath: policyPath, Provider: pol.Model.Provider, Model: pol.Model.Name,
 		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, APIKeyKind: pol.Model.APIKeyKind, BaseURL: pol.Model.BaseURL, Images: "skipped"}
 

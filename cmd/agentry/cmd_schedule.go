@@ -66,6 +66,10 @@ func newScheduleCmd() *cobra.Command {
 			"are signed in to this computer, and never wake it. An occurrence missed\n" +
 			"while the computer was off, asleep or signed out runs once when it is\n" +
 			"back, if that is before the next one; otherwise it is recorded as missed.\n\n" +
+			"On Linux with Docker Engine, --signed-out also runs a schedule while you\n" +
+			"are signed out: linger, turned on once with your confirm, starts your\n" +
+			"schedules with the computer, and the keys a run reads are sealed in an\n" +
+			"encrypted systemd credential (systemd 256 or later), never a plain file.\n\n" +
 			"  agentry schedule add acme/digest --daily 09:00 --out ~/reports\n" +
 			"  agentry schedule add acme/digest --weekly tue --at 22:00 --out ~/reports\n" +
 			"  agentry schedule add acme/digest --once \"2026-10-20 08:00\" --out ~/reports",
@@ -190,6 +194,7 @@ type runSpecFlags struct {
 	maxCost                                     float64
 	adapter, policyPath                         string
 	allowUnsigned, allowUnscanned, allowVulnMCP bool
+	signedOut                                   bool
 }
 
 func newScheduleAddCmd() *cobra.Command {
@@ -211,7 +216,14 @@ func newScheduleAddCmd() *cobra.Command {
 			"system does not see this shell, so the model key must be in the keychain\n" +
 			"and every secret in the MCP profile or the policy's envFile source.\n\n" +
 			"Only a release that can run autonomous can be scheduled: nobody is there\n" +
-			"to answer an interactive one.",
+			"to answer an interactive one.\n\n" +
+			"--signed-out (Linux with Docker Engine) also runs it while you are signed\n" +
+			"out. The first time, it turns on linger for you after a confirm (--yes\n" +
+			"gives it), and it seals the model key, your own provider keys and the\n" +
+			"registry token kept in the keychain into an encrypted systemd credential\n" +
+			"beside the schedule. It is refused below systemd 256, on Docker Desktop,\n" +
+			"for a QuickAgent with an OAuth connection and for a kept knowledge pack,\n" +
+			"whose keys stay in the keychain.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := ""
@@ -226,6 +238,9 @@ func newScheduleAddCmd() *cobra.Command {
 			}
 			if spec.input != "" && spec.task != "" {
 				return errors.New("give --input FILE or --task TEXT, not both")
+			}
+			if spec.signedOut && scheduleGOOS != "linux" {
+				return signedOutUnsupported()
 			}
 			now := scheduleNow()
 			when, err := when.recurrence(now)
@@ -255,7 +270,8 @@ func newScheduleAddCmd() *cobra.Command {
 	f.BoolVar(&spec.allowUnsigned, "allow-unsigned", false, "allow a release with no registry attestation, at every run of this schedule")
 	f.BoolVar(&spec.allowUnscanned, "allow-unscanned", false, "allow a release the registry admitted without a scan, at every run of this schedule")
 	f.BoolVar(&spec.allowVulnMCP, "allow-vulnerable-mcp", false, "allow a declared MCP server the gate rates high or critical, at every run of this schedule")
-	f.BoolVar(&yes, "yes", false, "consent to the release's capabilities without the prompt (no terminal)")
+	f.BoolVar(&spec.signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine; turns on linger, seals the keys in an encrypted systemd credential)")
+	f.BoolVar(&yes, "yes", false, "consent to the release's capabilities without the prompt (no terminal); with --signed-out, also confirms turning on linger")
 	return cmd
 }
 
@@ -271,7 +287,7 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 		return fmt.Errorf("--out %s: %w", out, err)
 	}
 	sc := schedule.Schedule{
-		Name: name, Registry: registryURL(), Created: now, When: when,
+		Name: name, Registry: registryURL(), Created: now, When: when, SignedOut: spec.signedOut,
 		Run: schedule.RunSpec{
 			OutDir: outAbs, Files: absAll(spec.files), Knowledge: knowledgeRefs(spec.knowledge), Intake: spec.intake,
 			Voice: spec.voice, NoVoice: spec.noVoice, Timeout: spec.timeout, MaxTurns: spec.maxTurns, MaxCost: spec.maxCost,
@@ -325,19 +341,29 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	if err := schedulePrepare(cmd, sc, yes); err != nil {
 		return err
 	}
-	gaps := fireGaps(sc)
-	if len(gaps) == 0 {
-		// Only once the shell's view is clean: the scheduler's own.
-		gaps = probeGaps(sc)
-	}
-	if len(gaps) > 0 {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("a scheduled run of %s would not have what it needs:\n  - %s", sc.Ref, strings.Join(gaps, "\n  - ")))
-	}
-
 	store, err := scheduleStore()
 	if err != nil {
 		return err
 	}
+	gaps := fireGaps(sc)
+	var pending string
+	if len(gaps) == 0 && sc.SignedOut {
+		// Its keys are sealed before it is kept, so the probe loads them.
+		if pending, err = store.PendingCredentialPath(); err != nil {
+			return err
+		}
+		defer func() { _ = os.Remove(pending) }()
+		if err := signedOutOn(cmd, sc, pending, yes); err != nil {
+			return err
+		}
+	} else if len(gaps) == 0 {
+		// Only once the shell's view is clean: the scheduler's own.
+		gaps = probeGaps(sc, "")
+	}
+	if len(gaps) > 0 {
+		return needsErr(sc, gaps, "")
+	}
+
 	var task []byte
 	if spec.task != "" {
 		task = []byte(spec.task)
@@ -345,8 +371,21 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	if err := store.Create(&sc, task); err != nil {
 		return err
 	}
+	if sc.SignedOut {
+		if err := store.MoveCredential(pending, sc.ID); err != nil {
+			_ = store.Remove(sc.ID)
+			return fmt.Errorf("the schedule was not kept: %w", err)
+		}
+		if err := enableLinger(cmd, store); err != nil {
+			_ = store.Remove(sc.ID)
+			return fmt.Errorf("the schedule was not kept: %w", err)
+		}
+	}
 	if err := installAlarm(sc); err != nil {
 		_ = store.Remove(sc.ID)
+		if sc.SignedOut {
+			releaseLinger(cmd.InOrStdin(), errOut, store)
+		}
 		return fmt.Errorf("the schedule was not kept: %w", err)
 	}
 	next, _ := sc.When.Next(now)
@@ -355,6 +394,10 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "scheduled %s (%s@%s): %s\nnext run %s\nschedule id %s\n",
 		sc.Name, sc.Ref, sc.Version, sc.When.Describe(), fmtWhen(next, sc.When.Zone), sc.ID)
+	if sc.SignedOut {
+		_, _ = fmt.Fprintln(errOut, "it runs whether or not you are signed in to this computer, with its keys sealed beside it; each run's folder is made in "+sc.Run.OutDir)
+		return nil
+	}
 	_, _ = fmt.Fprintln(errOut, "it runs while you are signed in to this computer; each run's folder is made in "+sc.Run.OutDir)
 	return nil
 }
@@ -629,7 +672,7 @@ func installAlarm(sc schedule.Schedule) error {
 	if err != nil {
 		return err
 	}
-	e, err := fireEntry(sc.ID)
+	e, err := scheduleEntry(sc, "")
 	if err != nil {
 		return err
 	}
@@ -655,12 +698,14 @@ func removeAlarm(id string) error {
 // shell that makes a schedule can reach more than the scheduler: a user
 // manager started before its user joined the docker group cannot reach
 // the daemon, and sees no variable this shell exported.
-func probeGaps(sc schedule.Schedule) []string {
+// A signed-out schedule's probe loads credential (its sealed keys) with
+// the keychain off, as its fire will.
+func probeGaps(sc schedule.Schedule, credential string) []string {
 	alarm, err := scheduleAlarm()
 	if err != nil {
 		return []string{err.Error()}
 	}
-	e, err := fireEntry(sc.ID)
+	e, err := scheduleEntry(sc, credential)
 	if err != nil {
 		return []string{err.Error()}
 	}
@@ -793,6 +838,28 @@ func schedulerContextGaps(cmd *cobra.Command, policyPath string) []string {
 	return gaps
 }
 
+// scheduleEntry is fireEntry for sc: a signed-out schedule's also loads
+// its sealed keys (credential, else its own in the store) and turns the
+// keychain off, so nothing waits on a keychain that cannot unlock (D18).
+func scheduleEntry(sc schedule.Schedule, credential string) (schedule.Entry, error) {
+	e, err := fireEntry(sc.ID)
+	if err != nil || !sc.SignedOut {
+		return e, err
+	}
+	if credential == "" {
+		store, err := scheduleStore()
+		if err != nil {
+			return e, err
+		}
+		if credential, err = store.CredentialPath(sc.ID); err != nil {
+			return e, err
+		}
+	}
+	e.Credential = credential
+	e.Env = append(e.Env, modelkey.EnvNoKeyring+"=1")
+	return e, nil
+}
+
 // fireEntry is the command the alarm runs: this binary's absolute path,
 // and the paths a fire needs resolved now, never a credential
 // (invariant 7).
@@ -889,6 +956,13 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 		_, _ = fmt.Fprintf(errOut, "schedule %s is paused\n", id)
 		return nil
 	}
+	if !sc.SignedOut && !scheduleSignedIn() {
+		// Linger, on for another schedule, rang this one with nobody signed
+		// in: it runs only while its person is, so it takes nothing, and
+		// the next ring signed in records it as D5 says.
+		_, _ = fmt.Fprintf(errOut, "schedule %s runs only while you are signed in, and nobody is\n", id)
+		return nil
+	}
 	now := scheduleNow()
 	run, missed := schedule.Due(sc.When, st, now)
 	for _, m := range missed {
@@ -904,7 +978,7 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 			_ = store.SaveState(id, st)
 		}
 		_, _ = fmt.Fprintf(errOut, "schedule %s: nothing due\n", id)
-		return endIfDone(store, sc, st, now)
+		return endIfDone(store, sc, st, now, errOut)
 	}
 	won, err := store.Claim(id, run)
 	if err != nil {
@@ -926,7 +1000,7 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 	if err := store.AppendFire(id, rec); err != nil {
 		_, _ = fmt.Fprintf(errOut, "warning: record the run: %v\n", err)
 	}
-	_ = endIfDone(store, sc, st, run)
+	_ = endIfDone(store, sc, st, run, errOut)
 	if rec.Outcome != schedule.Ran {
 		return &exitError{code: max(rec.ExitCode, 1), err: fmt.Errorf("scheduled run of %s failed: %s", sc.Ref, rec.Message)}
 	}
@@ -934,8 +1008,11 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 }
 
 // endIfDone marks a schedule ended, and removes its alarm, once its
-// calendar has no occurrence after t or it has made all its runs.
-func endIfDone(store schedule.Store, sc schedule.Schedule, st schedule.State, t time.Time) error {
+// calendar has no occurrence after t or it has made all its runs. A
+// signed-out schedule's sealed keys go with it, and linger with the last
+// one, last of all: turning linger off while nobody is signed in stops
+// the user manager this fire runs in.
+func endIfDone(store schedule.Store, sc schedule.Schedule, st schedule.State, t time.Time, errOut io.Writer) error {
 	if _, ok := sc.When.Next(t); ok && sc.When.Remaining(st.Runs) != 0 {
 		return nil
 	}
@@ -943,7 +1020,27 @@ func endIfDone(store schedule.Store, sc schedule.Schedule, st schedule.State, t 
 	if err := store.SaveState(sc.ID, st); err != nil {
 		return err
 	}
-	return removeAlarm(sc.ID)
+	err := removeAlarm(sc.ID)
+	if sc.SignedOut {
+		err = errors.Join(err, dropCredential(store, sc.ID))
+		releaseLinger(nil, errOut, store)
+	}
+	return err
+}
+
+// installAlarmUnlessIdle writes sc's alarm unless it is paused or has
+// ended, which have none.
+func installAlarmUnlessIdle(store schedule.Store, sc schedule.Schedule) error {
+	if st, _ := store.State(sc.ID); sc.Paused || st.Ended {
+		return nil
+	}
+	return installAlarm(sc)
+}
+
+// needsErr is the refusal of a schedule a fire could not run, naming each
+// gap; where says when ("" or " while you are signed out").
+func needsErr(sc schedule.Schedule, gaps []string, where string) error {
+	return engine.Classify(engine.ExitPolicy, fmt.Errorf("a scheduled run of %s would not have what it needs%s:\n  - %s", sc.Ref, where, strings.Join(gaps, "\n  - ")))
 }
 
 // executeScheduledRun runs sc once, for occurrence (or now, manual), with
@@ -1207,6 +1304,9 @@ func newScheduleShowCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(w, "%s (%s)\nquickagent: %s@%s %s\nwhen: %s\nnext: %s\noutput folder: %s\n",
 				sc.Name, sc.ID, sc.Ref, sc.Version, sc.Digest, v.Describe, nextLabel(v), sc.Run.OutDir)
+			if sc.SignedOut {
+				_, _ = fmt.Fprintln(w, "runs while signed out: yes (its keys are sealed in an encrypted systemd credential)")
+			}
 			for _, u := range v.Upcoming {
 				_, _ = fmt.Fprintf(w, "  upcoming %s\n", fmtWhen(u, sc.When.Zone))
 			}
@@ -1230,19 +1330,25 @@ func newScheduleShowCmd() *cobra.Command {
 
 func newScheduleEditCmd() *cobra.Command {
 	var (
-		when     whenFlags
-		name     string
-		out      string
-		timeout  int
-		maxTurns int
-		maxCost  float64
+		when      whenFlags
+		name      string
+		out       string
+		timeout   int
+		maxTurns  int
+		maxCost   float64
+		signedOut bool
+		yes       bool
 	)
 	cmd := &cobra.Command{
 		Use:   "edit <id>",
 		Short: "Change a schedule's repeat, name, output folder or limits",
 		Long: "Change when a schedule runs, its name, its output folder or its limits. What\n" +
 			"it runs and with which inputs is fixed when it is made: for a new version or\n" +
-			"other inputs, remove it and add a new one.",
+			"other inputs, remove it and add a new one.\n\n" +
+			"--signed-out (Linux with Docker Engine) makes it also run while you are\n" +
+			"signed out, as `add --signed-out` does; --signed-out=false makes it run\n" +
+			"only while you are signed in again, removes its sealed keys, and turns\n" +
+			"linger off if agentry turned it on and no other schedule needs it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := scheduleStore()
@@ -1292,17 +1398,65 @@ func newScheduleEditCmd() *cobra.Command {
 			if f.Changed("max-cost") {
 				sc.Run.MaxCost = maxCost
 			}
+			turnOn := f.Changed("signed-out") && signedOut && !sc.SignedOut
+			turnOff := f.Changed("signed-out") && !signedOut && sc.SignedOut
+			st, _ := store.State(sc.ID)
+			// A signed-out schedule that ended lost its sealed keys; given a
+			// new repeat, it is sealed and probed again like a new one.
+			reseal := sc.SignedOut && !turnOff && !st.Ended && !credentialKept(store, sc.ID)
+			if turnOn || reseal {
+				if scheduleGOOS != "linux" {
+					return signedOutUnsupported()
+				}
+				if st.Ended {
+					return fmt.Errorf("%s has ended: give it a new repeat (--daily, --weekly …) with --signed-out to run it again", sc.Name)
+				}
+				sc.SignedOut = true
+				if gaps := fireGaps(sc); len(gaps) > 0 {
+					return needsErr(sc, gaps, "")
+				}
+				cred, err := store.CredentialPath(sc.ID)
+				if err != nil {
+					return err
+				}
+				if err := signedOutOn(cmd, sc, cred, yes); err != nil {
+					return err
+				}
+			}
+			if turnOff {
+				sc.SignedOut = false
+			}
 			if err := store.Save(sc); err != nil {
+				if turnOn || reseal {
+					_ = dropCredential(store, sc.ID)
+				}
+				return err
+			}
+			if turnOn || reseal {
+				if err := enableLinger(cmd, store); err != nil {
+					// Back to what it was: signed in only, with no keys kept.
+					sc.SignedOut = false
+					_ = store.Save(sc)
+					_ = dropCredential(store, sc.ID)
+					_ = installAlarmUnlessIdle(store, sc)
+					return err
+				}
+			}
+			err = installAlarmUnlessIdle(store, sc)
+			if turnOff {
+				// The keys go even when the alarm could not be rewritten: an
+				// alarm still loading them then fails to start, closed.
+				err = errors.Join(err, dropCredential(store, sc.ID))
+			}
+			// Linger the CLI turned on goes once nothing runs signed out,
+			// including after a fire that could not turn it off itself.
+			releaseLinger(cmd.InOrStdin(), cmd.ErrOrStderr(), store)
+			if err != nil {
 				return err
 			}
 			if st, _ := store.State(sc.ID); st.Ended {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s has ended; give it a new repeat to run again\n", sc.Name)
 				return nil
-			}
-			if !sc.Paused {
-				if err := installAlarm(sc); err != nil {
-					return err
-				}
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", sc.Name, sc.When.Describe())
 			return nil
@@ -1315,6 +1469,8 @@ func newScheduleEditCmd() *cobra.Command {
 	f.IntVar(&timeout, "timeout", 0, "the policy timeout override (seconds; 0 = the policy's)")
 	f.IntVar(&maxTurns, "max-turns", -1, "the tool-call budget override (-1 = the policy's, 0 = unlimited)")
 	f.Float64Var(&maxCost, "max-cost", -1, "the cost budget override in USD (-1 = the policy's, 0 = unlimited)")
+	f.BoolVar(&signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine); =false to run only while signed in")
+	f.BoolVar(&yes, "yes", false, "with --signed-out, confirm turning on linger without the prompt")
 	return cmd
 }
 
@@ -1386,6 +1542,7 @@ func newScheduleRemoveCmd() *cobra.Command {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed %s\n", sc.Name)
+			releaseLinger(cmd.InOrStdin(), cmd.ErrOrStderr(), store)
 			return nil
 		},
 	}
@@ -1400,6 +1557,9 @@ func newScheduleSyncCmd() *cobra.Command {
 			n, removed, err := scheduleSync()
 			if err != nil {
 				return err
+			}
+			if store, serr := scheduleStore(); serr == nil {
+				releaseLinger(cmd.InOrStdin(), cmd.ErrOrStderr(), store)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d alarm(s) written, %d removed\n", n, removed)
 			return nil
@@ -1431,7 +1591,7 @@ func scheduleSync() (written, removed int, err error) {
 			continue
 		}
 		live[sc.ID] = true
-		e, ferr := fireEntry(sc.ID)
+		e, ferr := scheduleEntry(sc, "")
 		if ferr != nil {
 			return written, removed, ferr
 		}

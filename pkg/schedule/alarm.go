@@ -45,6 +45,10 @@ type Entry struct {
 	// entry was written, so the system's own minimal PATH cannot hide
 	// docker (the launchd and Windows first-launch PATH lessons).
 	Env []string
+	// Credential is a signed-out schedule's encrypted credential, which
+	// the unit loads with LoadCredentialEncrypted= (Linux only; the other
+	// alarms refuse an entry that names one).
+	Credential string
 }
 
 // ErrUnsupported is a system this build has no alarm for yet.
@@ -79,6 +83,9 @@ type Systemd struct {
 	// SystemdRun runs `systemd-run --user` with args and returns its
 	// output; replaced in tests.
 	SystemdRun func(args ...string) ([]byte, error)
+	// Running reports whether a unit is starting, running or stopping;
+	// nil is never. Replaced in tests.
+	Running func(unit string) bool
 }
 
 // NewSystemd is the alarm for the person running this process.
@@ -102,6 +109,14 @@ func NewSystemd() (*Systemd, error) {
 		},
 		SystemdRun: func(args ...string) ([]byte, error) {
 			return exec.Command("systemd-run", append([]string{"--user"}, args...)...).CombinedOutput()
+		},
+		Running: func(unit string) bool {
+			out, err := exec.Command("systemctl", "--user", "show", "-p", "ActiveState", "--value", unit).Output()
+			switch strings.TrimSpace(string(out)) {
+			case "activating", "active", "deactivating", "reloading", "refreshing":
+				return err == nil
+			}
+			return false
 		},
 	}, nil
 }
@@ -130,6 +145,8 @@ func (s *Systemd) Install(sc Schedule, e Entry) error {
 	if err := writeAtomic(filepath.Join(s.Dir, n+".timer"), []byte(timer), 0o644); err != nil {
 		return err
 	}
+	// A file a fire left while its service ran goes once it has stopped.
+	_ = s.removeIdleServices()
 	if err := s.Systemctl("daemon-reload"); err != nil {
 		return err
 	}
@@ -140,7 +157,13 @@ func (s *Systemd) Install(sc Schedule, e Entry) error {
 	return s.Systemctl("restart", n+".timer")
 }
 
-// Remove implements Alarm.
+// Remove implements Alarm. The timer goes at once. The service's file
+// stays while the service runs: a fire that ends its own schedule removes
+// its alarm from inside that service, and a reload that finds a running
+// unit's file gone reloads it with the manager's defaults, among them a
+// start timeout (45 s on Fedora) that stops a run already longer than that
+// (agentry-cli#749's live check). Such a file, inert without its timer, is
+// swept by the next Install or Remove once its service has stopped.
 func (s *Systemd) Remove(id string) error {
 	if !ValidID(id) {
 		return fmt.Errorf("%q is not a schedule id", id)
@@ -152,15 +175,43 @@ func (s *Systemd) Remove(id string) error {
 		_ = s.Systemctl("disable", "--now", n+".timer")
 	}
 	var errs []error
-	for _, p := range []string{timerPath, filepath.Join(s.Dir, n+".service")} {
-		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, err)
-		}
+	if err := os.Remove(timerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, err)
 	}
+	errs = append(errs, s.removeIdleServices())
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
 	return s.Systemctl("daemon-reload")
+}
+
+// removeIdleServices removes every schedule service file that has no timer
+// and whose service is not running.
+func (s *Systemd) removeIdleServices() error {
+	entries, err := os.ReadDir(s.Dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, unitPrefix) || !strings.HasSuffix(name, ".service") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(s.Dir, strings.TrimSuffix(name, ".service")+".timer")); err == nil {
+			continue
+		}
+		if s.Running != nil && s.Running(name) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.Dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Installed implements Alarm.
@@ -194,6 +245,13 @@ func (s *Systemd) Probe(e Entry) (string, error) {
 		return "", fmt.Errorf("the agentry binary %q is not an absolute path", e.Binary)
 	}
 	args := []string{"--wait", "--pipe", "--collect", "--quiet"}
+	if e.Credential != "" {
+		cred, err := loadCredential(e.Credential)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--property="+cred)
+	}
 	for _, kv := range e.Env {
 		args = append(args, "--setenv="+kv)
 	}
@@ -216,6 +274,15 @@ func SystemdUnits(sc Schedule, e Entry) (service, timer string, err error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Written by agentry schedule; the schedule itself is %s in the runner home.\n", sc.ID)
 	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n\n[Service]\nType=oneshot\n", desc)
+	if e.Credential != "" {
+		cred, err := loadCredential(e.Credential)
+		if err != nil {
+			return "", "", err
+		}
+		// The keys a signed-out fire reads: systemd decrypts them into
+		// $CREDENTIALS_DIRECTORY for this service alone (D18).
+		fmt.Fprintf(&b, "%s\n", strings.ReplaceAll(cred, "%", "%%"))
+	}
 	for _, kv := range e.Env {
 		if strings.ContainsAny(kv, "\n\r") || !strings.Contains(kv, "=") {
 			return "", "", fmt.Errorf("environment entry %q is not KEY=VALUE on one line", kv)

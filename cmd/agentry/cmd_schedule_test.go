@@ -25,10 +25,15 @@ type fakeAlarm struct {
 	installed map[string]schedule.Entry
 	removed   []string
 	listErr   error // Installed fails with it
+	// installErr makes Install fail with it.
+	installErr error
 }
 
 func (*fakeAlarm) Name() string { return "fake" }
 func (a *fakeAlarm) Install(sc schedule.Schedule, e schedule.Entry) error {
+	if a.installErr != nil {
+		return a.installErr
+	}
 	a.installed[sc.ID] = e
 	return nil
 }
@@ -73,8 +78,11 @@ func newScheduleHarness(t *testing.T) *scheduleHarness {
 		t.Fatal(err)
 	}
 	h.store = store
-	savedAlarm, savedNow, savedExec := scheduleAlarm, scheduleNow, scheduleExecute
-	t.Cleanup(func() { scheduleAlarm, scheduleNow, scheduleExecute = savedAlarm, savedNow, savedExec })
+	savedAlarm, savedNow, savedExec, savedSignedIn := scheduleAlarm, scheduleNow, scheduleExecute, scheduleSignedIn
+	t.Cleanup(func() {
+		scheduleAlarm, scheduleNow, scheduleExecute, scheduleSignedIn = savedAlarm, savedNow, savedExec, savedSignedIn
+	})
+	scheduleSignedIn = func() bool { return true }
 	scheduleAlarm = func() (schedule.Alarm, error) { return h.alarm, nil }
 	scheduleNow = func() time.Time { return h.now }
 	scheduleExecute = func(_ *cobra.Command, _ schedule.Store, _ schedule.Schedule, occ time.Time, manual bool) schedule.Fire {

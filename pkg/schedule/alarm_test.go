@@ -212,3 +212,47 @@ func TestSystemdInstallRemove(t *testing.T) {
 		t.Fatal("Remove took a path")
 	}
 }
+
+// A fire that ends its own schedule removes its alarm from inside the
+// service that runs it: the timer goes, the running service keeps its
+// file (a reload without it would stop the run on the manager's default
+// start timeout), and the next Remove sweeps it once it has stopped.
+func TestSystemdRemoveKeepsARunningServiceFile(t *testing.T) {
+	unixAlarm(t)
+	running := map[string]bool{}
+	s := &Systemd{Dir: filepath.Join(t.TempDir(), "user"), Systemctl: func(...string) error { return nil },
+		Running: func(unit string) bool { return running[unit] }}
+	for _, id := range []string{"abcdefghij", "klmnopqrst"} {
+		sc := sample(t)
+		sc.ID = id
+		if err := s.Install(sc, goldenEntry()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := filepath.Join(s.Dir, "agentry-schedule-abcdefghij.service")
+	running["agentry-schedule-abcdefghij.service"] = true
+	if err := s.Remove("abcdefghij"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(svc); err != nil {
+		t.Fatal("the running service's file was removed under it")
+	}
+	if ids, _ := s.Installed(); !reflect.DeepEqual(ids, []string{"klmnopqrst"}) {
+		t.Fatalf("Installed = %v: a timerless service is no alarm", ids)
+	}
+	running["agentry-schedule-abcdefghij.service"] = false
+	sc := sample(t)
+	sc.ID = "klmnopqrst"
+	if err := s.Install(sc, goldenEntry()); err != nil { // a sync
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(svc); !os.IsNotExist(err) {
+		t.Fatal("the stopped service's file was not swept")
+	}
+	if err := s.Remove("klmnopqrst"); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := os.ReadDir(s.Dir); len(left) != 0 {
+		t.Fatalf("left behind: %v", left)
+	}
+}
