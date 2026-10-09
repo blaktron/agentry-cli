@@ -107,7 +107,7 @@ func TestReasonCodesAreTheClosedList(t *testing.T) {
 	want := []ReasonCode{
 		ReasonAgentBlocked, ReasonExecNotProvided, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
 		ReasonMCPNotResolved, ReasonMCPRuntimeExcluded, ReasonMCPStartFailed, ReasonMCPVulnerable,
-		ReasonRunnerBlocked, ReasonSecretMissing,
+		ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing,
 	}
 	if got := ReasonCodes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ReasonCodes() = %v, want %v", got, want)

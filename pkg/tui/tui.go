@@ -34,6 +34,9 @@ type Options struct {
 	Budgets    spec.SessionBudgets
 	MaxTurns   int
 	MaxCostUSD float64
+	// PlanRun says the run is paid by the person's own plan (a model
+	// sign-in, agentry-cli#738): the status line shows no dollars.
+	PlanRun bool
 	// Opening is the manifest's opening line, shown when the session
 	// starts without a task.
 	Opening string
@@ -349,6 +352,9 @@ func (m model) statusLine() string {
 	cost := fmt.Sprintf("$%.2f", m.costUSD)
 	if m.opts.MaxCostUSD > 0 {
 		cost += fmt.Sprintf("/$%.2f", m.opts.MaxCostUSD)
+	}
+	if m.opts.PlanRun {
+		cost = "paid by your plan"
 	}
 	idle := ""
 	if m.opts.Budgets.IdleTimeoutSeconds > 0 {

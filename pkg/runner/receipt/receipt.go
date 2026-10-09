@@ -253,8 +253,18 @@ type Harness struct {
 	Image   string `json:"image"`
 	// Host is the executable (and version, when known) a host-run
 	// harness adapter ran; empty for a container harness.
-	Host  string `json:"host,omitempty"`
-	Model string `json:"model"`
+	Host string `json:"host,omitempty"`
+	// ImagePin is how Image was pinned: "digest sha256:…" for a published
+	// image, "artifact sha256:…" for one built on the machine from its
+	// vendor's artifact, or "tag (not pinned: …)" (agentry-cli#738,
+	// invariant I8). Empty for a host harness.
+	ImagePin string `json:"imagePin,omitempty"`
+	// CredentialKind is the kind of credential that paid for the model:
+	// api, subscription, or a model sign-in's kind (chatgpt-plan,
+	// claude-signin, copilot-signin). A word of that closed list, never an
+	// account or a token (I6).
+	CredentialKind string `json:"credentialKind,omitempty"`
+	Model          string `json:"model"`
 	// Mode is the run mode (autonomous or interactive); empty in
 	// envelopes written before run modes existed.
 	Mode string `json:"mode,omitempty"`

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
@@ -453,5 +454,30 @@ func TestDoctorRatesDeclaredServersAsTheGate(t *testing.T) {
 	}
 	if strings.Contains(out, "@acme/failed@1.0.0: no known advisories") {
 		t.Fatalf("a failed lookup reported clean:\n%s", out)
+	}
+}
+
+// A model sign-in is checked in the model sign-in store, never as a key
+// variable: fail until one is kept, ok once it is, naming the vendor and
+// never the account (agentry-cli#738).
+func TestDoctorChecksAModelSignInInItsStore(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	pol := policy.Default()
+	pol.Model = policy.Model{Provider: policy.ProviderOpenAI, Name: "gpt-test", APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"api.openai.com:443"}}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	fr := newFakeRegistry(t)
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  model") || !strings.Contains(out, "none is kept on this computer") {
+		t.Fatalf("not signed in:\n%s", out)
+	}
+	home, _ := runnerHome()
+	if _, err := modelsignin.Open(home, nil).Put(modelsignin.ChatGPT, modelsignin.Record{Label: "person@example.com"}, modelsignin.Grant{RefreshToken: "rt"}); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "ok    model") || !strings.Contains(out, "model sign-in chatgpt") || strings.Contains(out, "person@example.com") {
+		t.Fatalf("signed in:\n%s", out)
 	}
 }

@@ -81,7 +81,68 @@ const (
 	// are up, so they are rendered into harness files and argv per run.
 	PHHostGatewayURL = "@@HOST_GATEWAY_URL@@"
 	PHHostProxyURL   = "@@HOST_PROXY_URL@@"
+	// PHModelSignIn is the host path of what a model sign-in hands the
+	// agent container (plan model-sign-ins.md §4.2, agentry-cli#738): the
+	// run's own folder holding the one token file the engine writes and
+	// rewrites before it expires (ModelSignInToken), or the Claude Code
+	// config directory the person's sign-in lives in (ModelSignInConfigDir).
+	PHModelSignIn = "@@RUN_MODEL_SIGNIN@@"
 )
+
+// The two ways a model sign-in reaches the agent container
+// (ModelSignInSpec.Delivery).
+const (
+	// ModelSignInToken: a short-lived access token in one file, in a
+	// folder of the run's own mounted read-only at ModelSignInMount, so a
+	// token rewritten by a rename is seen (a single-file bind would keep
+	// the old inode). No refresh token ever enters the run (invariant I3).
+	ModelSignInToken = "token-file"
+	// ModelSignInConfigDir: the harness's own config directory, which only
+	// the harness writes (Claude Code, plan D20), mounted read-write. The
+	// one exception to "no refresh token in a run" (I3).
+	ModelSignInConfigDir = "config-dir"
+	// ModelSignInMount is the container folder a token file is in, and
+	// ModelSignInTokenFile its name there.
+	ModelSignInMount     = "/run/agentry/model-signin"
+	ModelSignInTokenFile = "token"
+)
+
+// ModelSignInSpec says how a run spends a person's plan instead of a key
+// (plan model-sign-ins.md §4.2): which kind of sign-in the plan was
+// compiled for, which the engine holds the caller's grant to at run start
+// (invariant I7), and how it reaches the agent container. The plan never
+// carries the token, the account or a host path.
+type ModelSignInSpec struct {
+	// Kind is the policy's apiKeyKind, a model sign-in kind
+	// (policy.IsModelSignIn), and Provider the provider it spends.
+	Kind     string `json:"kind"`
+	Provider string `json:"provider"`
+	// Delivery is ModelSignInToken or ModelSignInConfigDir.
+	Delivery string `json:"delivery"`
+	// Path is where the harness reads it in the container: the token
+	// file's path, or the config directory's.
+	Path string `json:"path"`
+}
+
+// ImagePin says how the harness image that ran was pinned (invariant I8):
+// By "digest" (a published image, Value its sha256 digest), "artifact" (an
+// image built on the machine, Value the vendor artifact's sha256) or "tag"
+// (a policy naming images.harnessDockerAgent by tag alone, Value empty).
+type ImagePin struct {
+	By    string `json:"by"`
+	Value string `json:"value,omitempty"`
+}
+
+// String is the pin as a receipt line says it.
+func (p *ImagePin) String() string {
+	if p == nil {
+		return ""
+	}
+	if p.Value == "" {
+		return p.By + " (not pinned: the tag can move)"
+	}
+	return p.By + " " + p.Value
+}
 
 // A remote server's credential reaches its bridge as a file (plan
 // mcp-oauth-connections.md §5, agentry-cli#663): the engine writes it into
@@ -368,6 +429,12 @@ type HarnessSpec struct {
 	// Session says how the harness is driven when Mode is interactive;
 	// nil for an autonomous plan.
 	Session *SessionSpec `json:"session,omitempty"`
+	// ImagePin is how Agent.Image is pinned (invariant I8); nil for a host
+	// harness, which runs no image.
+	ImagePin *ImagePin `json:"imagePin,omitempty"`
+	// ModelSignIn is set when the run spends a person's plan through a
+	// model sign-in instead of a key; nil for a key.
+	ModelSignIn *ModelSignInSpec `json:"modelSignIn,omitempty"`
 }
 
 // SessionSpec is the interactive drive of the harness (DR-15, plan §6.3):

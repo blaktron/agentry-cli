@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/internal/storefile"
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 )
 
@@ -198,7 +199,7 @@ func (s *Store) save(id string, c *Connection) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(s.recordPath(id), append(b, '\n'))
+	return storefile.WriteAtomic(s.recordPath(id), append(b, '\n'))
 }
 
 // writeSecrets keeps the secret half in the keychain, or in the 0600 file
@@ -218,7 +219,7 @@ func (s *Store) writeSecrets(c *Connection, id string, sec secrets) error {
 			return nil
 		}
 	}
-	if err := writeFileAtomic(s.secretPath(id), raw); err != nil {
+	if err := storefile.WriteAtomic(s.secretPath(id), raw); err != nil {
 		return fmt.Errorf("keep the connection's refresh token: %w", err)
 	}
 	// A keychain that refused this write may still hold an older secret:
@@ -409,7 +410,7 @@ func (s *Store) Remove(ctx context.Context, k Key, httpc *http.Client, clients *
 	}
 	// The lock file stays: removing it while another process waits on it
 	// would let a third lock a new file beside the old one.
-	rmErr := errors.Join(removeIfThere(s.secretPath(id)), removeIfThere(s.recordPath(id)))
+	rmErr := errors.Join(storefile.RemoveIfThere(s.secretPath(id)), storefile.RemoveIfThere(s.recordPath(id)))
 	unlock()
 	s.audit(c, why, outcome)
 	return outcome, rmErr
@@ -452,61 +453,9 @@ func (s *Store) audit(c *Connection, why, outcome string) {
 	_ = f.Close()
 }
 
-func removeIfThere(path string) error {
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
-// writeFileAtomic writes data 0600 beside path and renames it over path.
-func writeFileAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	return nil
-}
-
 // lock holds the connection's lock file until the returned func is called;
 // it waits for another process holding it (a run and `agentry connect` at
 // once), so one writer at a time writes a rotated refresh token back.
 func (s *Store) lock(id string) (func(), error) {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(s.lockPath(id), os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // our store layout
-	if err != nil {
-		return nil, fmt.Errorf("lock the connection %s: %w", id, err)
-	}
-	if err := lockFile(f); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("lock the connection %s: %w", id, err)
-	}
-	return func() {
-		_ = unlockFile(f)
-		_ = f.Close()
-	}, nil
+	return storefile.Lock(s.lockPath(id), "the connection "+id)
 }

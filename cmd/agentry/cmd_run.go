@@ -505,10 +505,14 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	// Gateway + harness + runner images: the RQ2/RQ5 install step.
 	opts.progress.at(receipt.StageImages)
-	docker := dockerx.New()
+	docker := newDockerClient()
 	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
-	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr(),
-		plan.Harness.Host == nil); err != nil {
+	// A plan run is refused for a hosted run and with a cost budget
+	// before anything is installed for it (I5, D13).
+	if err := refuseSignInRun(plan, opts); err != nil {
+		return err
+	}
+	if err := gateway.EnsureInstalledFor(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr(), plan); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	// The per-QuickAgent exec image the plan names (agentry-cli#9, #100):
@@ -605,6 +609,10 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	overrides := secretOverrides(profSecrets, answers)
+	signIn, renewSignIn, err := runModelSignIn(cmd.Context(), home, plan, hostedRun(opts))
+	if err != nil {
+		return err
+	}
 
 	// A driver metering a live run reads the harness's usage two ways, both
 	// beside the envelope rather than instead of it (agentry-cli#138).
@@ -620,34 +628,36 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	params := engine.Params{
-		Plan:            plan,
-		ExecPackages:    execPackages,
-		PlanDir:         planDir,
-		WorkspaceSrc:    workspaceDir,
-		CheckWorkspace:  installedCopyCheck(opts, installDir, meta),
-		RunRoot:         installDir,
-		RunnerHome:      home,
-		OutDir:          outDir,
-		Task:            runTask(cmd, opts),
-		InputPaths:      opts.files,
-		Knowledge:       attached,
-		Voice:           attachedVoice,
-		ReportTheme:     reportTheme,
-		Intake:          answers,
-		Adapter:         ad,
-		Policy:          pol,
-		PolicyFile:      &policyFile,
-		SecretOverrides: overrides,
-		Connections:     conns.tokens,
-		RenewConnection: conns.renew,
-		ServersDir:      serversDir,
-		Budgets:         budgets,
-		Attestation:     meta.Attestation,
-		KeepRunDir:      opts.keepRunDir,
-		RunID:           runID,
-		Stderr:          cmd.ErrOrStderr(),
-		OnUsage:         onUsage,
-		Events:          eventsOut,
+		Plan:             plan,
+		ExecPackages:     execPackages,
+		PlanDir:          planDir,
+		WorkspaceSrc:     workspaceDir,
+		CheckWorkspace:   installedCopyCheck(opts, installDir, meta),
+		RunRoot:          installDir,
+		RunnerHome:       home,
+		OutDir:           outDir,
+		Task:             runTask(cmd, opts),
+		InputPaths:       opts.files,
+		Knowledge:        attached,
+		Voice:            attachedVoice,
+		ReportTheme:      reportTheme,
+		Intake:           answers,
+		Adapter:          ad,
+		Policy:           pol,
+		PolicyFile:       &policyFile,
+		SecretOverrides:  overrides,
+		Connections:      conns.tokens,
+		RenewConnection:  conns.renew,
+		ModelSignIn:      signIn,
+		RenewModelSignIn: renewSignIn,
+		ServersDir:       serversDir,
+		Budgets:          budgets,
+		Attestation:      meta.Attestation,
+		KeepRunDir:       opts.keepRunDir,
+		RunID:            runID,
+		Stderr:           cmd.ErrOrStderr(),
+		OnUsage:          onUsage,
+		Events:           eventsOut,
 	}
 	if mode == manifest.ModeInteractive {
 		runErr := runInteractive(cmd, docker, params, m, plan, opts)
@@ -706,6 +716,7 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 		Caps:       capabilityLines(m.Contract()),
 		MaxTurns:   params.Budgets.MaxTurns,
 		MaxCostUSD: params.Budgets.MaxCostUSD,
+		PlanRun:    plan.Harness.ModelSignIn != nil,
 		HasTask:    opts.input != "",
 	}
 	if plan.Harness.Session != nil {

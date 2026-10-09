@@ -95,6 +95,9 @@ const (
 	EndToolBudget EndReason = "tool_budget"
 	// EndCostBudget: the cost budget.
 	EndCostBudget EndReason = "cost_budget"
+	// EndPlanLimit: the person's plan refused the model's calls for its
+	// usage limit (plan model-sign-ins.md D12; agentry-cli#738).
+	EndPlanLimit EndReason = "plan_limit"
 	// EndHarness: the harness exited on its own.
 	EndHarness EndReason = "harness_exit"
 	// EndCancelled: the caller's context ended.
