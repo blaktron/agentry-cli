@@ -831,9 +831,13 @@ func Load(path string) (*Policy, string, error) {
 	// (formerDefaultNodeRuntimes, DR-66): the file's sha stays the same
 	// while the image it means moves with the CLI, as an absent key's
 	// always has. Plans still recompile, because a new CLI build changes
-	// the plan's compiledBy.
+	// the plan's compiledBy. A goBuilder that is a former generated default
+	// resolves the same way (formerDefaultGoBuilders, agentry-cli#770).
 	if p.Images.NodeRuntime == "" || slices.Contains(formerDefaultNodeRuntimes, p.Images.NodeRuntime) {
 		p.Images.NodeRuntime = DefaultNodeRuntime
+	}
+	if slices.Contains(formerDefaultGoBuilders, p.Images.GoBuilder) {
+		p.Images.GoBuilder = DefaultGoBuilder
 	}
 	if p.Images.PythonRuntime == "" {
 		p.Images.PythonRuntime = DefaultPythonRuntime
@@ -1045,6 +1049,23 @@ func (p *Policy) RunnerImageTag(version string) string {
 var formerDefaultNodeRuntimes = []string{
 	"node:22-alpine",
 	"ghcr.io/blaktron/agentry-node-alpine:22-alpine",
+}
+
+// formerDefaultGoBuilders are the values earlier CLIs wrote into every
+// generated policy file as goBuilder: Docker Hub's golang:1.27-alpine until
+// DR-32, our 1.27-alpine mirror by tag until agentry-cli#269, then that
+// mirror pinned by digest at go1.27.1 until agentry-cli#770 re-pinned it at
+// go1.27.2 for the 2026-10-08 net/http advisories. A file still naming one
+// carries the builder of the day it was written, not an operator's choice,
+// so it loads as the current default (DR-66's rule for nodeRuntime), or a
+// re-pinned builder would compile no runner image on a machine set up
+// before it. Any other value, another digest of the same mirror included,
+// is the operator's and is kept. When DefaultGoBuilder moves, its old value
+// joins this list.
+var formerDefaultGoBuilders = []string{
+	"golang:1.27-alpine",
+	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine",
+	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414",
 }
 
 // defaultFileText is the generated first-use policy. It must parse to
