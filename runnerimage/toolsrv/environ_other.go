@@ -6,7 +6,3 @@ package toolsrv
 // the (Linux) runner image; off Linux it runs as `agentry runner-tools`,
 // a host-side debugging path with no /proc to protect in the same way.
 func hideEnvironment() error { return nil }
-
-// environmentHideable reports whether hideEnvironment protects anything on
-// this platform.
-const environmentHideable = false
