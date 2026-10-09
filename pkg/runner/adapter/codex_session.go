@@ -42,6 +42,10 @@ type codexSession struct {
 
 	// permit says whether an MCP approval for server/tool is granted.
 	permit func(server, tool string) bool
+	// signIn says the run is paid by a model sign-in (SessionOptions): a
+	// 429 is then the plan's limit, said once (planLimited).
+	signIn      bool
+	planLimited bool
 }
 
 // codexTurn accumulates one Prompt's answer.
@@ -71,8 +75,11 @@ var codexElicitationDecline = map[string]any{"action": "decline"}
 // thread. The working directory is the process's, so the thread's cwd is
 // left to default to it — a plan carries no host path.
 func (s *codexSession) Start(ctx context.Context) error {
+	// The name is the request originator codex sends; OpenAI's plan usage
+	// asks that it match the app's registered name (agent_name_hint), and
+	// it is the same for a key run.
 	if _, err := s.call(ctx, "initialize", map[string]any{
-		"clientInfo":   map[string]any{"name": "agentry", "version": "runner"},
+		"clientInfo":   map[string]any{"name": codexClientName, "title": codexClientName, "version": "runner"},
 		"capabilities": map[string]any{},
 	}); err != nil {
 		return err
@@ -241,6 +248,69 @@ func (s *codexSession) readLoop() {
 	}
 }
 
+// codexClientName is the app's name to codex, and to OpenAI through it.
+const codexClientName = "Agentry"
+
+// codexError is codex's error object, on an error notification and a
+// failed turn (codex-cli 0.162.0, measured): its message and, under
+// codexErrorInfo, a variant that may carry the HTTP status the model's
+// endpoint answered (responseTooManyFailedAttempts for a 429 it gave up on,
+// httpConnectionFailed for a 403).
+type codexError struct {
+	Message string          `json:"message"`
+	Info    json.RawMessage `json:"codexErrorInfo"`
+}
+
+// status is the HTTP status the error carries, 0 when it names none.
+func (e *codexError) status() int {
+	if e == nil || len(e.Info) == 0 {
+		return 0
+	}
+	var variants map[string]struct {
+		HTTPStatusCode int `json:"httpStatusCode"`
+	}
+	if json.Unmarshal(e.Info, &variants) != nil {
+		return 0
+	}
+	for _, v := range variants {
+		if v.HTTPStatusCode != 0 {
+			return v.HTTPStatusCode
+		}
+	}
+	return 0
+}
+
+// codexPlanRefusal is what a 403 on a run paid by a ChatGPT plan adds to
+// the vendor's words: OpenAI refuses plan usage for an account, workspace
+// or region it does not allow, and says not to retry.
+const codexPlanRefusal = " (ChatGPT refused plan usage for this account, its workspace or this region; if your plan does not include it in other apps, use an OpenAI API key: agentry setup)"
+
+// signInError is the event for a model error on this session: on a run
+// paid by a sign-in, a 429 is the plan's limit (I9), said once, and a 403
+// carries the advice; anything else is an error as it stands.
+func (s *codexSession) signInError(e *codexError, raw json.RawMessage) (Event, bool) {
+	msg := ""
+	if e != nil {
+		msg = e.Message
+	}
+	if s.signIn {
+		switch e.status() {
+		case 429:
+			s.mu.Lock()
+			said := s.planLimited
+			s.planLimited = true
+			s.mu.Unlock()
+			if said {
+				return Event{}, false
+			}
+			return Event{Kind: EventPlanLimit, Text: msg, Raw: raw}, true
+		case 403:
+			return Event{Kind: EventError, Text: msg + codexPlanRefusal, Raw: raw}, true
+		}
+	}
+	return Event{Kind: EventError, Text: msg, Raw: raw}, true
+}
+
 // codexNotification is the part of a notification's params this driver
 // reads across the methods it recognizes.
 type codexNotification struct {
@@ -254,11 +324,9 @@ type codexNotification struct {
 		Status string `json:"status"`
 	} `json:"item"`
 	Turn struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
+		ID     string      `json:"id"`
+		Status string      `json:"status"`
+		Error  *codexError `json:"error"`
 	} `json:"turn"`
 	TokenUsage struct {
 		Last struct {
@@ -266,7 +334,8 @@ type codexNotification struct {
 			OutputTokens int64 `json:"outputTokens"`
 		} `json:"last"`
 	} `json:"tokenUsage"`
-	Message string `json:"message"`
+	Message string      `json:"message"`
+	Error   *codexError `json:"error"`
 }
 
 func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
@@ -307,8 +376,15 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		s.emit(Event{Kind: EventUsage, InputTokens: p.TokenUsage.Last.InputTokens, OutputTokens: p.TokenUsage.Last.OutputTokens, Raw: raw})
 		return
 	case "turn/completed":
-		// The marker goes out before the turn ends: every event of a turn is
-		// queued before Prompt returns (SessionDriver).
+		// A failed turn's error is the plan's limit when it is a 429 on a
+		// sign-in, and goes out first; the marker goes out before the turn
+		// ends: every event of a turn is queued before Prompt returns
+		// (SessionDriver).
+		if p.Turn.Status == "failed" && p.Turn.Error != nil && s.signIn && p.Turn.Error.status() == 429 {
+			if ev, ok := s.signInError(p.Turn.Error, raw); ok {
+				s.emit(ev)
+			}
+		}
 		s.emit(Event{Kind: EventOther, Text: m.Method, Raw: raw})
 		s.mu.Lock()
 		t := s.turn
@@ -323,7 +399,15 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		}
 		return
 	case "error":
-		s.emit(Event{Kind: EventError, Text: p.Message, Raw: raw})
+		// The error object (0.162.0), or the bare message of an older
+		// release.
+		e := p.Error
+		if e == nil {
+			e = &codexError{Message: p.Message}
+		}
+		if ev, ok := s.signInError(e, raw); ok {
+			s.emit(ev)
+		}
 		return
 	case "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
 		"item/reasoning/summaryPartAdded", "item/plan/delta", "account/rateLimits/updated":

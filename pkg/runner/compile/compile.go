@@ -144,7 +144,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 	adapterName := in.AdapterName
 	if adapterName == "" {
-		adapterName = adapter.DefaultName
+		adapterName = adapter.DefaultFor(in.Policy)
 	}
 	ad, err := adapter.Get(adapterName)
 	if err != nil {
@@ -314,6 +314,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err := modelSignIn(adapterName, keyKind, &res); err != nil {
 		return nil, err
 	}
+	if err := signInProxy(keyKind, in.Policy.Model.ProxyAllow); err != nil {
+		return nil, err
+	}
 	if res.Session != nil {
 		res.Session.Budgets = sessionBudgets(m, in.Policy)
 	}
@@ -353,6 +356,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			Host:        res.Host,
 			ResultKind:  res.ResultKind,
 			Session:     res.Session,
+			OneTurn:     res.OneTurn,
 			ImagePin:    imagePin(res.Agent.Image, harnessImage),
 			ModelSignIn: res.ModelSignIn,
 		},

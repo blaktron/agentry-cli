@@ -142,7 +142,13 @@ func playCodex(in io.Reader, out io.Writer) int {
 			delete(pending, id)
 			sayLine(out, map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "t1", "turnId": "u1", "item": map[string]any{"type": "mcpToolCall", "id": "c1", "server": "gateway", "tool": "read_input", "status": "completed"}}})
 			sayLine(out, map[string]any{"method": "thread/tokenUsage/updated", "params": map[string]any{"threadId": "t1", "turnId": "u1", "tokenUsage": map[string]any{"last": map[string]any{"inputTokens": 10, "outputTokens": 5}, "total": map[string]any{"inputTokens": 10, "outputTokens": 5}}}})
-			sayLine(out, map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "t1", "turnId": "u1", "item": map[string]any{"type": "agentMessage", "id": "m1", "text": fakeReply(strings.TrimSpace(text))}}})
+			reply := fakeReply(strings.TrimSpace(text))
+			// A harness started on a model sign-in's token (the restart
+			// route) says so, token and all: the run must mask it.
+			if tok := os.Getenv("CODEX_ACCESS_TOKEN"); tok != "" {
+				reply += " [plan token: " + tok + "]"
+			}
+			sayLine(out, map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "t1", "turnId": "u1", "item": map[string]any{"type": "agentMessage", "id": "m1", "text": reply}}})
 			sayLine(out, map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "t1", "turn": map[string]any{"id": "u1", "status": "completed"}}})
 		}
 	}

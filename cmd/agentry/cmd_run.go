@@ -186,7 +186,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.out, "out", "", "output folder for reports and receipts (default ./agentry-out/<ns>-<name>-<runid>)")
 	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope)")
 	f.StringVar(&opts.eventsPath, "events", "", "append the harness event stream to FILE as JSON lines while the run is live (the receipt keeps its own copy either way)")
-	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+"); see --list-adapters")
+	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
@@ -432,7 +432,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.at(receipt.StageCompile)
 	adapterName := opts.adapterName
 	if adapterName == "" {
-		adapterName = adapter.DefaultName
+		adapterName = adapter.DefaultFor(pol)
 	}
 	ad, err := adapter.Get(adapterName)
 	if err != nil {

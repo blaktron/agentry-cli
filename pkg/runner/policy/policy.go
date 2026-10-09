@@ -359,6 +359,15 @@ type HarnessPolicy struct {
 	// (empty: model.apiKeySource); the keychain entry is the model
 	// provider's.
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
+	// SignInTokenRoute is how a harness that spends a token-file model
+	// sign-in reads its access token (plan model-sign-ins.md D9, D10;
+	// agentry-cli#739): auth-command (the default) has the harness read the
+	// token file itself whenever it needs a token, so a renewal reaches it
+	// mid-turn; restart starts the harness on the token of the moment and,
+	// between turns, starts it again on a renewed one and resumes the
+	// conversation (OpenAI's documented route for Codex's app-server). Only
+	// the codex adapters read it.
+	SignInTokenRoute string `yaml:"signInTokenRoute,omitempty"`
 }
 
 // MCPServersPolicy is the operator's stance on declared servers the
@@ -945,6 +954,11 @@ func (p *Policy) Validate() error {
 		}
 		if hp.APIKeyKind == KeyKindSubscription && name != "claude" {
 			return fmt.Errorf("harness.%s.apiKeyKind subscription: %s", name, SubscriptionTokenSentence)
+		}
+		switch hp.SignInTokenRoute {
+		case "", TokenRouteAuthCommand, TokenRouteRestart:
+		default:
+			return fmt.Errorf("harness.%s.signInTokenRoute %q must be %s or %s", name, hp.SignInTokenRoute, TokenRouteAuthCommand, TokenRouteRestart)
 		}
 	}
 	if len(p.Model.ProxyAllow) == 0 {

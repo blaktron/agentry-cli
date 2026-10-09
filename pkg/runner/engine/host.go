@@ -183,6 +183,19 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	if err != nil {
 		return nil, hostStart{}, err
 	}
+	// The model sign-in's access token as it is now (the restart token
+	// route): read from the run's own token file, which the renewer keeps
+	// current, so a process started again starts on the renewed token.
+	for _, v := range hs.Env {
+		if !v.FromModelSignIn {
+			continue
+		}
+		b, rerr := os.ReadFile(filepath.Join(rd.modelSignInDir(), spec.ModelSignInTokenFile)) //nolint:gosec // the run's own folder
+		if rerr != nil {
+			return nil, hostStart{}, Classify(ExitCLI, fmt.Errorf("read the model sign-in's token for %s: %w", v.Name, rerr))
+		}
+		envMap[v.Name] = string(b)
+	}
 	envMap[spec.HostGatewayURLEnv] = rd.hostGatewayURL
 	envMap[spec.HostProxyURLEnv] = rd.hostProxyURL
 	inherited := hostInherit(hs.InheritEnv, hostOS)
@@ -258,7 +271,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 // runHostHarness is runAgent for a host-run harness: the same event
 // collection, budgets and classification, with the process in place of
 // the container.
-func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, rep *strings.Replacer, task []byte) agentOutcome {
+func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, rep *strings.Replacer, task []byte, tools []string) agentOutcome {
 	agentCtx := ctx
 	var cancelTimeout context.CancelFunc
 	if p.Budgets.TimeoutSeconds > 0 {
@@ -283,46 +296,78 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		maxCostUSD: p.Budgets.MaxCostUSD,
 		overBudget: func() { cancelCause(errBudget) },
 		overCost:   func() { cancelCause(errCostBudget) },
-	}
-	done := consumeGuarded(collector, pr, cancelCause)
-	var stdin io.Reader
-	if p.Plan.Harness.Host.StdinTask {
-		stdin = bytes.NewReader(task)
+		// A run paid by a sign-in ends on its plan's limit, as in a
+		// container (I9).
+		signIn:      p.Plan.Harness.ModelSignIn != nil,
+		onPlanLimit: func() { cancelCause(errPlanLimit) },
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
 	if err != nil {
 		_ = pw.Close()
-		<-done
 		return agentOutcome{err: Classify(ExitCLI, fmt.Errorf("create stderr receipt: %w", err))}
 	}
 	defer func() { _ = stderrFile.Close() }()
-	wait, started, err := startHostProcess(agentCtx, p, rd, rep, token, stdin, pw, stderrFile)
-	info := started.info
-	if err != nil {
+	var exit int
+	var runErr, turnErr error
+	var info string
+	var inherited []string
+	if p.Plan.Harness.OneTurn != nil {
+		// The task is the one turn of the harness's session (oneturn.go).
+		_ = pw.Close()
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		wait, started, err := startHostProcess(agentCtx, p, rd, rep, token, stdinR, stdoutW, stderrFile)
+		info, inherited = started.info, started.inherited
+		if err != nil {
+			return agentOutcome{err: err, hostInfo: info, hostEnv: inherited}
+		}
+		ran := make(chan struct{})
+		go func() {
+			defer close(ran)
+			exit, runErr = wait()
+			_ = stdoutW.Close()
+			_ = stdinR.Close()
+		}()
+		turnErr = oneTurn(agentCtx, p, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, task, tools, collector, cancelCause)
+		<-ran
+	} else {
+		done := consumeGuarded(collector, pr, cancelCause)
+		var stdin io.Reader
+		if p.Plan.Harness.Host.StdinTask {
+			stdin = bytes.NewReader(task)
+		}
+		wait, started, err := startHostProcess(agentCtx, p, rd, rep, token, stdin, pw, stderrFile)
+		info, inherited = started.info, started.inherited
+		if err != nil {
+			_ = pw.Close()
+			<-done
+			return agentOutcome{err: err, hostInfo: info, hostEnv: inherited}
+		}
+		exit, runErr = wait()
 		_ = pw.Close()
 		<-done
-		return agentOutcome{err: err, hostInfo: info, hostEnv: started.inherited}
 	}
-	exit, runErr := wait()
-	_ = pw.Close()
-	<-done
 	// The harness wrote its stderr straight into the receipt; mask it now,
 	// before the tail below quotes it.
 	_ = stderrFile.Close()
 	rd.redact.File(stderrPath)
-	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info, hostEnv: started.inherited}
+	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info, hostEnv: inherited}
 	switch {
 	// First, as in the container path: a panic that stopped the reader is the
 	// reason anything downstream looks wrong (agentry-cli#161).
 	case collector.panicErr != nil:
 		out.err = Classify(ExitCLI, collector.panicErr)
+	case collector.planLimit != nil:
+		out.err = planLimitError(collector.planLimit.Text, collector.planLimit.ResetsAt)
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", collector.costUSD, p.Budgets.MaxCostUSD))
 	case errors.Is(context.Cause(agentCtx), context.DeadlineExceeded):
 		out.err = Classify(ExitTimeout, fmt.Errorf("run timed out after %ds", p.Budgets.TimeoutSeconds))
+	case turnErr != nil:
+		out.err = Classify(ExitHarness, turnFailure(turnErr, collector.harnessErrReported, stderrPath))
 	case runErr != nil:
 		out.err = Classify(ExitHarness, fmt.Errorf("harness process failed: %w", runErr))
 	case exit != 0:

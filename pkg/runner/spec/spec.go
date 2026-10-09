@@ -429,6 +429,13 @@ type HarnessSpec struct {
 	// Session says how the harness is driven when Mode is interactive;
 	// nil for an autonomous plan.
 	Session *SessionSpec `json:"session,omitempty"`
+	// OneTurn, on an autonomous plan, says the harness is driven as one
+	// turn of this session protocol rather than read from its stdout: the
+	// engine opens the session, sends the task as its one user turn and
+	// ends it (the codex adapters on a model sign-in, whose vendor serves
+	// app-server's requests and not exec's; agentry-cli#739). Nil for a
+	// harness whose autonomous run prints its events.
+	OneTurn *SessionSpec `json:"oneTurn,omitempty"`
 	// ImagePin is how Agent.Image is pinned (invariant I8); nil for a host
 	// harness, which runs no image.
 	ImagePin *ImagePin `json:"imagePin,omitempty"`
@@ -467,6 +474,12 @@ type SessionSpec struct {
 	// Budgets are the session caps the engine enforces (policy §6.7,
 	// tightened by the manifest's interactive hints).
 	Budgets SessionBudgets `json:"budgets"`
+	// RestartOnRenewal says the harness reads its model sign-in's access
+	// token once, when it starts: before a turn, when the runner has
+	// renewed the token since, the engine starts the harness again and the
+	// driver resumes the conversation (policy signInTokenRoute restart,
+	// plan model-sign-ins.md D10).
+	RestartOnRenewal bool `json:"restartOnRenewal,omitempty"`
 }
 
 // SessionBudgets are the interactive caps: the engine ends the session
@@ -554,6 +567,10 @@ func (p *Plan) WebResolvers() []string {
 // values may contain the PH* placeholders.
 type ContainerSpec struct {
 	Image string `json:"image"`
+	// Entrypoint replaces the image's entrypoint; empty keeps it. The codex
+	// image's runs start a shell that puts the plan's configuration into
+	// the harness's writable home before the harness starts.
+	Entrypoint string `json:"entrypoint,omitempty"`
 	// Argv is the command+args passed after the image (entrypoint's argv).
 	Argv []string `json:"argv,omitempty"`
 	Env  []EnvVar `json:"env,omitempty"`
@@ -586,6 +603,11 @@ type EnvVar struct {
 	FromKeyring string `json:"fromKeyring,omitempty"`
 	// FromRunToken injects the per-run gateway Bearer token.
 	FromRunToken bool `json:"fromRunToken,omitempty"`
+	// FromModelSignIn injects the run's model sign-in access token as it
+	// is when the process starts (a host harness on the restart token
+	// route, which reads its token from the environment): the access token
+	// alone, never the sign-in (I3).
+	FromModelSignIn bool `json:"fromModelSignIn,omitempty"`
 	// ExpectedKind, beside FromHostEnv, is the credential kind the plan
 	// was compiled for (policy apiKeyKind, agentry-cli#171): the engine
 	// checks the value it resolves against it and refuses a mismatch by

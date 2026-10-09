@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
@@ -144,9 +145,20 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	}
 	docker := dockerx.New()
 	imageCtx := homeImageDir(home)
+	// The harness image prepared is the default adapter's for this model
+	// setup, and no other (plan model-sign-ins.md D7): docker-agent for a
+	// key, the Codex image for a ChatGPT plan.
+	runsOn := adapter.DefaultFor(pol)
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
-		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), true); err != nil {
+		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), runsOn == adapter.DefaultName); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
+	}
+	if runsOn != adapter.DefaultName {
+		if h, ok := pol.Images.HarnessImageFor(runsOn); ok {
+			if err := gateway.EnsureHarnessImage(cmd.Context(), docker, runsOn, h, cmd.ErrOrStderr()); err != nil {
+				return engine.Classify(engine.ExitGateway, err)
+			}
+		}
 	}
 	result.Images = "ready"
 	if flags.jsonOut {

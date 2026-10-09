@@ -349,6 +349,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	runSpec := dockerx.RunSpec{
 		Name:        name,
 		Image:       p.Plan.Harness.Agent.Image,
+		Entrypoint:  p.Plan.Harness.Agent.Entrypoint,
 		Argv:        substituteAll(p.Plan.Harness.Agent.Argv, rep),
 		Env:         agentEnv,
 		Mounts:      mounts,
@@ -434,7 +435,8 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		case <-time.After(5 * time.Second):
 		}
 	}
-	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, adapter.SessionOptions{GatewayTools: s.granted})
+	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW},
+		adapter.SessionOptions{GatewayTools: s.granted, ModelSignIn: p.Plan.Harness.ModelSignIn != nil})
 	if err != nil {
 		cancel(err)
 		awaitExit()

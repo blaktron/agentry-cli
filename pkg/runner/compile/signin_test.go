@@ -107,14 +107,15 @@ func TestAKeyPlanMountsNoSignInFolder(t *testing.T) {
 // An adapter that cannot spend the sign-in the policy names refuses the
 // plan by policy (exit 11), naming the adapter and the kind: docker-agent
 // for every kind (D8), and a host adapter, which drives the person's own
-// installation, until its milestone gives it a delivery.
+// installation, until its milestone gives it a delivery (codex's came with
+// agentry-cli#739).
 func TestAnAdapterThatCannotSpendASignInRefusesByPolicy(t *testing.T) {
 	for _, c := range []struct{ adapter, kind string }{
 		{"docker-agent", policy.KeyKindChatGPTPlan},
 		{"docker-agent", policy.KeyKindClaudeSignIn},
 		{"docker-agent", policy.KeyKindCopilotSignIn},
-		{"codex", policy.KeyKindChatGPTPlan},
 		{"claude", policy.KeyKindClaudeSignIn},
+		{"codex-image", policy.KeyKindClaudeSignIn},
 	} {
 		_, err := compileSignIn(t, c.adapter, c.kind, nil)
 		var refusal *PolicyRefusal
