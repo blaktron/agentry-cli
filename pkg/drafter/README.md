@@ -118,6 +118,9 @@ person chose. The checks after a draft send instructions that have the run
 write a PDF with `write_report`, or leave the person to print a page to PDF,
 to the repair turn. A release whose instructions call
 `export_pdf` needs CLI v0.6.82 or later to run.
+1.12.1 teaches the two paths: `write_report`'s `path` is inside `reports/`
+(`resume.md`), and `export_pdf`'s `source` names it from the output folder
+(`reports/resume.md`), so a draft no longer writes into `reports/reports/`.
 
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
