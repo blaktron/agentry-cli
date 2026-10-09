@@ -809,6 +809,40 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 	}
 }
 
+// A policy file written by an earlier CLI names that day's goBuilder
+// explicitly, the digest-pinned go1.27.1 mirror included; it loads as
+// today's default, so a moved builder reaches machines set up before it,
+// while any other value is the operator's and is kept (agentry-cli#770).
+func TestLoadMovesAFormerDefaultGoBuilder(t *testing.T) {
+	for _, c := range []struct{ written, want string }{
+		{"golang:1.27-alpine", DefaultGoBuilder},
+		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine", DefaultGoBuilder},
+		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414", DefaultGoBuilder},
+		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+		{"registry.example/golang:1.27-alpine", "registry.example/golang:1.27-alpine"},
+	} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := strings.Replace(defaultFileText, "goBuilder: "+DefaultGoBuilder, "goBuilder: "+c.written, 1)
+		if text == defaultFileText {
+			t.Fatal("the generated text no longer names the default goBuilder")
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Images.GoBuilder != c.want {
+			t.Errorf("goBuilder %q loads as %q, want %q", c.written, p.Images.GoBuilder, c.want)
+		}
+	}
+	if slices.Contains(formerDefaultGoBuilders, DefaultGoBuilder) {
+		t.Fatal("the current default is listed as a former one")
+	}
+}
+
 // The runtimes' language versions name the line their images' tags do, so
 // a moved image cannot leave the Drafter checking against the old one
 // (agentry-cli#609).
