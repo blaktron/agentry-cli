@@ -110,6 +110,15 @@ with a remote server needs CLI v0.6.69 or later to run, one signed in to by
 OAuth CLI v0.6.70, and a package's sign-in CLI v0.6.71; an older CLI refuses
 its manifest.
 
+Since 1.12.0 the Drafter knows the tools every run has beyond its manifest:
+the scratch folder, and `export_pdf`, the only way a run makes a PDF. A
+QuickAgent whose result is a PDF writes it in Markdown with `write_report` and
+turns it into the PDF with `export_pdf`, laid out in the report theme the
+person chose. The checks after a draft send instructions that have the run
+write a PDF with `write_report`, or leave the person to print a page to PDF,
+to the repair turn. A release whose instructions call
+`export_pdf` needs CLI v0.6.82 or later to run.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your
