@@ -11,7 +11,9 @@ import (
 
 // ContentVersion identifies the embedded build context by content: the
 // first 12 hex digits of a SHA-256 over every embedded file's path and
-// bytes (tests excluded, the same set Materialize writes out). Two clients
+// bytes (tests excluded, the same set Materialize writes out) and the
+// generated go.mod, whose go line decides the oldest builder that may
+// compile the image (agentry-cli#786). Two clients
 // that embed the same context — the CLI and the desktop app at whatever
 // versions — derive the same tag and therefore share one built image; a
 // change to the context changes the tag and forces a rebuild. Deriving the
@@ -41,6 +43,7 @@ func ContentVersion() string {
 			h.Write(data)
 			h.Write([]byte{0})
 		}
+		h.Write([]byte("go.mod\x00" + contextGoMod + "\x00"))
 		contentVersion = "c" + hex.EncodeToString(h.Sum(nil))[:12]
 	})
 	return contentVersion

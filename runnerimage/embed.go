@@ -27,8 +27,11 @@ const ImageTagPrefix = "agentry-runner"
 // module path matches this repo so main.go's runnerimage/* imports
 // resolve inside the standalone module; there are no require lines
 // because the tree is stdlib-only, which is what lets the docker build
-// run with no module downloads (§R7).
-const contextGoMod = "module github.com/blaktron/agentry-cli\n\ngo 1.27\n"
+// run with no module downloads (§R7). The go line is the CLI's own, to the
+// patch (TestContextGoModFollowsTheModule): under the Go images'
+// GOTOOLCHAIN=local, a builder older than it refuses rather than building
+// the runner with an older standard library (agentry-cli#786).
+const contextGoMod = "module github.com/blaktron/agentry-cli\n\ngo 1.27.2\n"
 
 // mainIgnoreTag is the build constraint main.go carries IN THIS REPO,
 // where it keeps package main out of package runnerimage's directory
@@ -67,7 +70,7 @@ func validTagVersion(v string) bool {
 // Materialize writes the standalone build context into dir: the embedded
 // files placed under dir/runnerimage/ (Dockerfile promoted to
 // dir/Dockerfile), *_test.go files skipped, plus a generated dir/go.mod
-// (module github.com/blaktron/agentry-cli, go 1.27) so the context
+// (module github.com/blaktron/agentry-cli, the CLI's go line) so the context
 // compiles with no network access beyond the base images, and a
 // dir/.dockerignore excluding tests. Overwrite-safe: MkdirAll + WriteFile,
 // so re-materializing over an existing context just refreshes it.

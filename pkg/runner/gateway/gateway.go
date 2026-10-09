@@ -81,6 +81,13 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 		return fmt.Errorf("materialize runner image context: %w", err)
 	}
 	if err := d.Build(ctx, imageCtxDir, runnerTag, map[string]string{"GO_IMAGE": pol.Images.GoBuilder}); err != nil {
+		// The context's go.mod names the CLI's Go to the patch, and the Go
+		// images refuse a newer go line under GOTOOLCHAIN=local: say which
+		// setting to change rather than leave it in docker's output
+		// (agentry-cli#786).
+		if strings.Contains(err.Error(), "go.mod requires go >=") {
+			return fmt.Errorf("build runner image: images.goBuilder %s is older than the Go the runner needs; point it at a builder of that Go or newer, or remove it for the default: %w", pol.Images.GoBuilder, err)
+		}
 		return fmt.Errorf("build runner image: %w", err)
 	}
 	return nil

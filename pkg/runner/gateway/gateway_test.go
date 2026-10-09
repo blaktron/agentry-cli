@@ -4,6 +4,8 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +116,23 @@ func TestEnsureRuntime(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `docker.gatewayRuntime "runsc-uds"`) || !strings.Contains(err.Error(), "claim a sandbox") {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// TestEnsureInstalledNamesAStaleGoBuilder: a builder older than the runner
+// context's go line refuses inside docker's output; the error names the
+// policy setting to change (agentry-cli#786).
+func TestEnsureInstalledNamesAStaleGoBuilder(t *testing.T) {
+	pol := policy.Default()
+	pol.Images.GoBuilder = "registry.example/golang:1.27.1-alpine"
+	f := &dockerx.Fake{FailBuild: map[string]error{
+		"agentry-runner:test": errors.New("exit status 1: go: go.mod requires go >= 1.27.2 (running go 1.27.1; GOTOOLCHAIN=local)"),
+	}}
+	err := EnsureInstalled(context.Background(), f, pol, "agentry-runner:test", filepath.Join(t.TempDir(), "image"), io.Discard, true)
+	if err == nil || !strings.Contains(err.Error(), "images.goBuilder registry.example/golang:1.27.1-alpine is older than the Go the runner needs") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "running go 1.27.1") {
+		t.Errorf("the docker output is dropped: %v", err)
 	}
 }
