@@ -86,7 +86,7 @@ func TestMaterializeLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(gomod) != "module github.com/blaktron/agentry-cli\n\ngo 1.27\n" {
+	if string(gomod) != contextGoMod {
 		t.Errorf("go.mod = %q", gomod)
 	}
 	di, err := os.ReadFile(filepath.Join(dir, ".dockerignore"))
@@ -209,5 +209,31 @@ func TestImageTag(t *testing.T) {
 		if got := ImageTag(tc.version); got != tc.want {
 			t.Errorf("ImageTag(%q) = %q, want %q", tc.version, got, tc.want)
 		}
+	}
+}
+
+// TestContextGoModFollowsTheModule: the runner image builds with the Go of
+// the CLI's own go.mod, to the patch, so a builder older than it refuses
+// under the Go images' GOTOOLCHAIN=local instead of building the runner
+// with an older standard library (agentry-cli#786).
+func TestContextGoModFollowsTheModule(t *testing.T) {
+	goLine := func(gomod string) string {
+		for _, line := range strings.Split(gomod, "\n") {
+			if f := strings.Fields(line); len(f) == 2 && f[0] == "go" {
+				return f[1]
+			}
+		}
+		return ""
+	}
+	mod, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := goLine(string(mod))
+	if want == "" {
+		t.Fatal("the repository's go.mod has no go line")
+	}
+	if got := goLine(contextGoMod); got != want {
+		t.Errorf("the runner context's go.mod says go %s; the CLI's says go %s", got, want)
 	}
 }
