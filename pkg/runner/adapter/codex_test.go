@@ -159,6 +159,21 @@ func TestCodexCompileRendersModelCatalog(t *testing.T) {
 	}
 }
 
+// TestCodexCompileSwitchesOffSkills: the model has no tool to use codex's
+// bundled skills, so the config installs none and lists none
+// (agentry-cli#762).
+func TestCodexCompileSwitchesOffSkills(t *testing.T) {
+	cfg := string(codexCompile(t, codexInput()).Files[codexConfigFile])
+	for _, want := range []string{
+		"[skills]\ninclude_instructions = false",
+		"[skills.bundled]\nenabled = false",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("config.toml lacks %q:\n%s", want, cfg)
+		}
+	}
+}
+
 // tomlTableAt returns the header of the TOML table that holds offset i.
 func tomlTableAt(cfg string, i int) string {
 	header := ""

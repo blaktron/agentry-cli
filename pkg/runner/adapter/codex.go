@@ -29,7 +29,9 @@
 //   - No ambient context. CODEX_HOME points inside the run, so none of the
 //     person's config, rules, skills or sessions is read and nothing of
 //     this run lands in theirs; --ignore-rules keeps their execpolicy out;
-//     --ephemeral persists no session.
+//     --ephemeral persists no session. Codex's own bundled skills are
+//     switched off too ([skills.bundled], [skills].include_instructions), so
+//     the prompt lists none (agentry-cli#762).
 //   - Operator-owned model access. The model endpoint is a provider block
 //     built from the policy: codex speaks the OpenAI Responses API and
 //     nothing else in this release, and the policy's baseUrl, key
@@ -172,6 +174,12 @@ func codexConfig(model, baseURL, keyEnv string) []byte {
 	// Asking the person a question is a built-in tool too, on unless
 	// switched off here (not a feature key; measured on 0.153.4).
 	b.WriteString("\n[tools.experimental_request_user_input]\nenabled = false\n")
+	// Codex installs its bundled system skills (imagegen, openai-docs, …)
+	// into CODEX_HOME and lists them in a <skills_instructions> developer
+	// message, though the model has no tool to use them: install none and
+	// list none (agentry-cli#762, measured on 0.153.4 and 0.162.0).
+	b.WriteString("\n[skills]\ninclude_instructions = false\n")
+	b.WriteString("\n[skills.bundled]\nenabled = false\n")
 	b.WriteString("\n[model_providers." + codexProviderID + "]\n")
 	b.WriteString("name = " + tomlString(codexProviderID) + "\n")
 	b.WriteString("base_url = " + tomlString(baseURL) + "\n")
