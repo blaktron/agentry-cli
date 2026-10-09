@@ -988,7 +988,11 @@ proxy; `--adapter codex-image` runs OpenAI's Codex in its own signed image
 model is paid by your ChatGPT plan; `--adapter claude-image` runs Anthropic's
 Claude Code in an image built on your machine from its npm packages, pinned
 by their npm integrity and never published, the default when your model is
-paid by your Claude subscription (`goose` is planned, not implemented):
+paid by your Claude subscription; `--adapter copilot-image` runs GitHub's
+Copilot CLI in an image built on your machine from GitHub's release
+download, pinned by its published checksum (not signed) and never published,
+the default when your model is paid by your Copilot plan (`goose` is
+planned, not implemented):
 
 ```bash
 agentry run demo1/incident-summarizer@^1 --input incident.json --out ./reports
@@ -1219,8 +1223,33 @@ rejected ends it with the plan-limit outcome and Claude Code's reset time.
 `remove claude` runs Claude Code's own logout there and deletes the
 directory. The API-key choice stays: the Max and Team plans include monthly
 API credits, spent through a key from the Console organization linked to the
-plan. The Copilot sign-in and its adapter are not in this release yet, so a
-`copilot-signin` policy is refused at plan time (exit 11).
+plan. **Sign in with GitHub** (agentry-cli#741): `agentry model-signins add
+copilot` (or `agentry setup`, provider `copilot`) shows a code to enter on
+GitHub's own device page and signs in through Agentry's GitHub App
+(`--oauth-app`: its OAuth App instead), with no client secret anywhere; the
+refresh token is kept, and `remove copilot` submits the grant's tokens to
+GitHub's credential revocation, which accepts them and acts after it answers
+(GitHub tells the account's owner; Agentry's app stays in your authorized apps
+until you remove it there). Until this
+build carries Agentry's public client ids (agentry-cli#743),
+`AGENTRY_GITHUB_APP_CLIENT_ID` or `AGENTRY_GITHUB_OAUTH_APP_CLIENT_ID` names
+one. Such a run uses the Copilot CLI image, built at first use from
+`copilot-linuxmusl-<arch>.tar.gz` of a release this build pins: its
+`SHA256SUMS.txt` is held to the pin and the download to the checksum it names
+(a mismatch builds nothing), the package unpacked into the image at build.
+Copilot CLI runs in its JSON-RPC server mode, driven by the runner: the
+access token goes to it through its token callback over its own stdio
+(never its environment, a file or the plan), renewed when it asks; the run's
+instruction replaces GitHub's system prompt; the gateway is its only MCP
+server and `--available-tools mcp:*` its only tools; telemetry, custom
+instructions, skills, memory and auto-update are off; the runner approves
+each tool call of the run's own. Its egress proxy allows `api.github.com:443`
+and the Copilot API host of your plan alone (`setup --copilot-plan
+individual|business|enterprise`; GitHub's telemetry and experiment hosts are
+denied). A quota or rate-limit error ends it with the plan-limit outcome; an
+organization's policy that turns Copilot CLI off for your account, or
+requires a person to approve each tool call, ends it refused by that policy
+(exit 11, reason `org-policy`, the policy named).
 Harness images are pinned per adapter: docker-agent's by digest
 (`images.harnessDockerAgent`), any other's in `images.harnessImages` by
 digest or by the vendor artifact it is built from, and the receipt names

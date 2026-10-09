@@ -98,6 +98,9 @@ const (
 	// EndPlanLimit: the person's plan refused the model's calls for its
 	// usage limit (plan model-sign-ins.md D12; agentry-cli#738).
 	EndPlanLimit EndReason = "plan_limit"
+	// EndOrgPolicy: a policy of the person's organization at the model
+	// vendor refused the run (plan model-sign-ins.md D29; agentry-cli#741).
+	EndOrgPolicy EndReason = "org_policy"
 	// EndHarness: the harness exited on its own.
 	EndHarness EndReason = "harness_exit"
 	// EndCancelled: the caller's context ended.

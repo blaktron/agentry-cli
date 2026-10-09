@@ -107,10 +107,23 @@ func TestReasonCodesAreTheClosedList(t *testing.T) {
 	want := []ReasonCode{
 		ReasonAgentBlocked, ReasonExecNotProvided, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
 		ReasonMCPNotResolved, ReasonMCPRuntimeExcluded, ReasonMCPStartFailed, ReasonMCPVulnerable,
-		ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing,
+		ReasonOrgPolicy, ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing,
 	}
 	if got := ReasonCodes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ReasonCodes() = %v, want %v", got, want)
+	}
+}
+
+// An organization's policy is named by a word of its closed list, never by
+// the vendor's text (agentry-cli#741).
+func TestAnOrgPolicyReasonKeepsOnlyItsWord(t *testing.T) {
+	for _, d := range []string{OrgPolicyClient, OrgPolicyManagedApproval} {
+		if r := (&Reason{Code: ReasonOrgPolicy, Detail: d}).Clean(); r == nil || r.Detail != d {
+			t.Fatalf("org-policy %q kept %+v", d, r)
+		}
+	}
+	if r := (&Reason{Code: ReasonOrgPolicy, Detail: "Access denied by policy settings", Names: []string{"acme"}}).Clean(); r == nil || r.Detail != "" || len(r.Names) != 0 {
+		t.Fatalf("org-policy kept %+v", r)
 	}
 }
 
