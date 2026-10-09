@@ -26,15 +26,20 @@ import (
 // original as uploaded when that is text too, archive members included.
 // A text AI Review flags, or one it could not read, refuses the run before
 // the agent starts (the route's rule: not scanned is withheld), naming the
-// file; in a session, a file added mid-run is refused alone. AI Review is
+// file; in a session, a file added mid-run is refused alone. A file past
+// what AI Review reads of a run is withheld, never refused: it is listed as
+// not read and none of its views is served, and the run goes on with the
+// rest (the operator's rule of 2026-10-05: input is scanned, not blocked).
+// AI Review is
 // one credit a run however many calls (DEV-150), which the sandbox host's
 // runs extension settles, never this process. Local runs are not reviewed.
 
 // MaxInputReviewText is the most text AI Review reads of one run's inputs,
-// a session's added files included: a run past it is refused before any
-// call, since what AI Review has not read never reaches the agent. The
-// hosted upload cap is 10 MiB, so only an archive that unpacks to much
-// more, or a session that adds a great deal, meets it.
+// a session's added files included, so that one credit cannot buy an
+// unbounded number of judge requests. A file whose texts do not fit in
+// what is left is withheld, unasked: no text AI Review has not read
+// reaches the agent. The hosted upload cap is 10 MiB, so only an archive
+// that unpacks to much more, or a session that adds a great deal, meets it.
 const MaxInputReviewText = 16 << 20
 
 // The shape of the review's calls. A call carries at most webscan.MaxText,
@@ -52,6 +57,14 @@ const (
 
 // reviewPace is a variable so the engine's tests need not wait.
 var reviewPace = 550 * time.Millisecond
+
+// reviewLeft is how much text AI Review has left to read of the run, a
+// variable so a test can spend it without staging 16 MiB.
+var reviewLeft = func(r *inputReview) int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return MaxInputReviewText - r.before.bytes - r.added.bytes
+}
 
 // reviewText is one text of an input as the model could read it: the
 // input's path, what the review calls it, and the file that holds it.
@@ -81,6 +94,8 @@ type inputReview struct {
 type reviewCounts struct {
 	texts, calls, requests int
 	bytes                  int64
+	// withheld are the inputs past MaxInputReviewText, not asked about.
+	withheld []string
 }
 
 // reviewRefusal is why the review refused: a receipt.Input* detail and the
@@ -89,6 +104,10 @@ type reviewRefusal struct {
 	detail, why string
 }
 
+// notReviewed is the unread reason list_inputs gives a file withheld past
+// MaxInputReviewText: fixed words, as every unread reason.
+const notReviewed = "not read by AI Review, past the 16 MiB of text it reads of a run, so it is not given to the agent"
+
 func newInputReview(sc webscan.Scanner) *inputReview {
 	if sc == nil {
 		return nil
@@ -96,13 +115,13 @@ func newInputReview(sc webscan.Scanner) *inputReview {
 	return &inputReview{sc: sc}
 }
 
-// texts lists the texts the model could read of the decoded files, in path
+// reviewTexts lists the texts the model could read of the decoded files, in path
 // order: each read input's text view (the decoded text staged under
 // inputs-text, or the input itself when it was read as it is), its Markdown
 // view, and its original when that is a text other than the text view (an
 // RTF or HTML document, a file no decoder took) — what read_input serves a
-// binary original as, base64, is not text to steer a model with. in is
-// where the decode read the inputs from.
+// binary original as, base64, is not text to steer a model with.
+// in is the directory the decode read the inputs from.
 func reviewTexts(entries []toolsrv.InputEntry, in, textRoot, convertedRoot string) []reviewText {
 	var out []reviewText
 	for _, e := range entries {
@@ -153,35 +172,54 @@ func isTextFile(path string) bool {
 	return n > 0 && !strings.ContainsRune(string(data), 0) && utf8.Valid(data)
 }
 
-// review reads texts with AI Review. It answers nil when every text passed,
-// a refusal when one did not or the run's cap would be passed, and an error
-// only when a staged text could not be read. added says the texts are a
-// session's added file's.
-func (r *inputReview) review(ctx context.Context, texts []reviewText, added bool) (*reviewRefusal, error) {
-	if r == nil || len(texts) == 0 {
-		return nil, nil
+// review reads texts with AI Review. It answers the inputs withheld, each
+// a path whose texts did not fit in what the run has left of
+// MaxInputReviewText and were not asked about; a refusal when a text it
+// read did not pass; and an error only when a staged text is missing.
+// added says the texts are a session's added file's.
+func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) (withheld []string, _ *reviewRefusal, _ error) {
+	if r == nil || len(all) == 0 {
+		return nil, nil, nil
 	}
-	var size int64
-	for _, t := range texts {
+	// An input's texts are read together or not at all, in path order.
+	sizes := map[string]int64{}
+	var order []string
+	for _, t := range all {
 		fi, err := os.Lstat(t.file)
 		if err != nil || !fi.Mode().IsRegular() {
-			return nil, fmt.Errorf("the text of %s for AI Review: not a file this run staged", t.path)
+			return nil, nil, fmt.Errorf("the staged text of %s is missing", t.path)
 		}
-		size += fi.Size()
+		if _, ok := sizes[t.path]; !ok {
+			order = append(order, t.path)
+		}
+		sizes[t.path] += fi.Size()
 	}
-	r.mu.Lock()
-	spent := r.before.bytes + r.added.bytes
-	r.mu.Unlock()
-	if spent+size > MaxInputReviewText {
-		return &reviewRefusal{detail: receipt.InputReviewLimit, why: fmt.Sprintf(
-			"AI Review reads at most %d MiB of a run's text, and its inputs come to more (%d MiB): nothing it has not read reaches the agent",
-			MaxInputReviewText>>20, (spent+size+(1<<20)-1)>>20)}, nil
+	left := reviewLeft(r)
+	fits := map[string]bool{}
+	var size int64
+	for _, p := range order {
+		if size+sizes[p] > left {
+			withheld = append(withheld, p)
+			continue
+		}
+		fits[p] = true
+		size += sizes[p]
+	}
+	var texts []reviewText
+	for _, t := range all {
+		if fits[t.path] {
+			texts = append(texts, t)
+		}
+	}
+	if len(texts) == 0 {
+		r.record(reviewCounts{withheld: withheld}, "", "", added)
+		return withheld, nil, nil
 	}
 	pieces := make([][]string, len(texts))
 	for i, t := range texts {
 		b, err := os.ReadFile(t.file)
 		if err != nil {
-			return nil, fmt.Errorf("the text of %s for AI Review: %w", t.path, err)
+			return nil, nil, fmt.Errorf("the staged text of %s: %w", t.path, err)
 		}
 		pieces[i] = headedPieces(t.label, string(b))
 	}
@@ -189,10 +227,12 @@ func (r *inputReview) review(ctx context.Context, texts []reviewText, added bool
 
 	var (
 		mu       sync.Mutex
-		counts   = reviewCounts{texts: len(texts), bytes: size}
+		counts   = reviewCounts{texts: len(texts), bytes: size, withheld: withheld}
 		flagged  = map[int][]string{} // text → the questions it failed
 		unread   = map[int]string{}   // text → why it could not be read
 		failedAt [][]reviewPiece      // the flagged calls of several texts
+		model    string
+		set      string
 	)
 	call := func(ctx context.Context, body string) webscan.Result {
 		res := r.sc.Scan(ctx, webscan.SourceInputFile, body)
@@ -200,9 +240,7 @@ func (r *inputReview) review(ctx context.Context, texts []reviewText, added bool
 		counts.calls++
 		counts.requests += max(res.Requests, 0)
 		if res.Model != "" {
-			r.mu.Lock()
-			r.model, r.questionSet = res.Model, res.QuestionSet
-			r.mu.Unlock()
+			model, set = res.Model, res.QuestionSet
 		}
 		mu.Unlock()
 		return res
@@ -236,7 +274,7 @@ func (r *inputReview) review(ctx context.Context, texts []reviewText, added bool
 					continue
 				}
 				switch {
-				case res.Verdict == webscan.Withheld && distinctTexts(batch) > 1:
+				case res.Verdict == webscan.Withheld && len(textsOf(batch)) > 1:
 					failedAt = append(failedAt, batch)
 				case res.Verdict == webscan.Withheld:
 					flagged[batch[0].text] = res.Flagged
@@ -283,27 +321,45 @@ func (r *inputReview) review(ctx context.Context, texts []reviewText, added bool
 		}
 	}
 
+	r.record(counts, model, set, added)
+
+	switch {
+	case len(flagged) > 0:
+		said := map[int]string{}
+		for i, q := range flagged {
+			said[i] = strings.Join(q, ", ")
+		}
+		return withheld, &reviewRefusal{detail: receipt.InputFlagged, why: "AI Review flagged " + namedTexts(texts, said)}, nil
+	case len(unread) > 0:
+		said := map[int]string{}
+		for i, w := range unread {
+			said[i] = strings.TrimPrefix(w, "it ")
+		}
+		return withheld, &reviewRefusal{detail: receipt.InputNotReviewed, why: "AI Review could not read " + namedTexts(texts, said) +
+			", and no text it has not read reaches the agent"}, nil
+	case ctx.Err() != nil:
+		return withheld, &reviewRefusal{detail: receipt.InputNotReviewed, why: "the run stopped before AI Review had read its inputs"}, nil
+	}
+	return withheld, nil, nil
+}
+
+// record adds one review's counts to the run's, before the agent started
+// or for a session's added file.
+func (r *inputReview) record(c reviewCounts, model, set string, added bool) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if model != "" {
+		r.model, r.questionSet = model, set
+	}
 	into := &r.before
 	if added {
 		into = &r.added
 	}
-	into.texts += counts.texts
-	into.calls += counts.calls
-	into.requests += counts.requests
-	into.bytes += counts.bytes
-	r.mu.Unlock()
-
-	switch {
-	case len(flagged) > 0:
-		return &reviewRefusal{detail: receipt.InputFlagged, why: "AI Review flagged " + namedTexts(texts, flagged)}, nil
-	case len(unread) > 0:
-		return &reviewRefusal{detail: receipt.InputNotReviewed, why: "AI Review could not read " + namedUnread(texts, unread) +
-			", and nothing it has not read reaches the agent"}, nil
-	case ctx.Err() != nil:
-		return &reviewRefusal{detail: receipt.InputNotReviewed, why: "the run stopped before AI Review had read its inputs"}, nil
-	}
-	return nil, nil
+	into.texts += c.texts
+	into.calls += c.calls
+	into.requests += c.requests
+	into.bytes += c.bytes
+	into.withheld = append(into.withheld, c.withheld...)
 }
 
 // headedPieces cuts a text into the parts one call can carry, each headed
@@ -342,6 +398,10 @@ func splitText(s string, n int) []string {
 			cut = n
 			for cut > 0 && !utf8.RuneStart(s[cut]) {
 				cut--
+			}
+			if cut == 0 {
+				// No character starts in the part: not UTF-8, cut as bytes.
+				cut = n
 			}
 		}
 		out = append(out, s[:cut])
@@ -387,9 +447,6 @@ func packBatches(pieces [][]string) [][]reviewPiece {
 	return out
 }
 
-// distinctTexts counts the texts a call carries.
-func distinctTexts(batch []reviewPiece) int { return len(textsOf(batch)) }
-
 // textsOf is the texts a call carries, in order.
 func textsOf(batch []reviewPiece) []int {
 	var out []int
@@ -401,13 +458,14 @@ func textsOf(batch []reviewPiece) []int {
 	return out
 }
 
-// namedTexts names the inputs AI Review flagged, with the questions each
-// failed: "a.docx (injection), b.pdf".
-func namedTexts(texts []reviewText, flagged map[int][]string) string {
+// namedTexts names the inputs a review refused, in path order, each with
+// what was said of its texts: the questions they failed, or why they could
+// not be read ("a.docx (injection), b.pdf").
+func namedTexts(texts []reviewText, said map[int]string) string {
 	byPath := map[string][]string{}
-	for i, qs := range flagged {
+	for i, w := range said {
 		p := texts[i].path
-		byPath[p] = append(byPath[p], qs...)
+		byPath[p] = append(byPath[p], w)
 	}
 	paths := make([]string, 0, len(byPath))
 	for p := range byPath {
@@ -416,30 +474,17 @@ func namedTexts(texts []reviewText, flagged map[int][]string) string {
 	sort.Strings(paths)
 	names := make([]string, 0, len(paths))
 	for _, p := range paths {
-		qs := uniqueSorted(byPath[p])
-		if len(qs) > 0 {
-			names = append(names, p+" ("+strings.Join(qs, ", ")+")")
+		var words []string
+		for _, w := range byPath[p] {
+			if w != "" {
+				words = append(words, strings.Split(w, ", ")...)
+			}
+		}
+		if words = uniqueSorted(words); len(words) > 0 {
+			names = append(names, p+" ("+strings.Join(words, ", ")+")")
 		} else {
 			names = append(names, p)
 		}
-	}
-	return joinNamed(names)
-}
-
-// namedUnread names the inputs AI Review could not read, with why.
-func namedUnread(texts []reviewText, unread map[int]string) string {
-	byPath := map[string]string{}
-	for i, why := range unread {
-		byPath[texts[i].path] = why
-	}
-	paths := make([]string, 0, len(byPath))
-	for p := range byPath {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	names := make([]string, 0, len(paths))
-	for _, p := range paths {
-		names = append(names, p+" ("+strings.TrimPrefix(byPath[p], "it ")+")")
 	}
 	return joinNamed(names)
 }
@@ -498,7 +543,7 @@ func (r *inputReview) line() string {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.before.calls == 0 && r.added.calls == 0 {
+	if r.before.calls == 0 && r.added.calls == 0 && len(r.before.withheld) == 0 && len(r.added.withheld) == 0 {
 		return ""
 	}
 	what := "AI Review (the registry's model-input scan"
@@ -508,19 +553,24 @@ func (r *inputReview) line() string {
 	if r.model != "" {
 		what += ", " + r.model
 	}
-	what += ") read the inputs' text"
+	what += ") was asked about the inputs' text"
 	var parts []string
-	if r.before.calls > 0 {
+	if r.before.calls > 0 || len(r.before.withheld) > 0 {
 		parts = append(parts, "before the agent started: "+r.before.say())
 	}
-	if r.added.calls > 0 {
+	if r.added.calls > 0 || len(r.added.withheld) > 0 {
 		parts = append(parts, "the files added during the session, each before the agent was told of it: "+r.added.say())
 	}
 	return what + "; " + strings.Join(parts, "; ")
 }
 
 func (c reviewCounts) say() string {
-	return fmt.Sprintf("%d text(s), %s, in %d call(s) and %d judge request(s)", c.texts, sizeWord(c.bytes), c.calls, c.requests)
+	out := fmt.Sprintf("%d text(s), %s, in %d call(s) and %d judge request(s), none flagged", c.texts, sizeWord(c.bytes), c.calls, c.requests)
+	if len(c.withheld) > 0 {
+		out += fmt.Sprintf("; %d file(s) withheld unread, past the %d MiB AI Review reads of a run: %s",
+			len(c.withheld), MaxInputReviewText>>20, joinNamed(c.withheld))
+	}
+	return out
 }
 
 // sizeWord is a size in KiB, at least 1.

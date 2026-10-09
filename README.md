@@ -1248,13 +1248,15 @@ inputs are also read by AI Review** (agentry-cli#321): with
 could read of them (a document's decoded text, and its original when that
 is text too, HTML as uploaded and as Markdown, each file in an archive) is
 sent to that registry's model-input scan as `input_file` before the agent
-starts, several small texts to a call and at most 16 MiB of text a run. An
-input AI Review flags, or one it could not read, refuses the run with exit
-11, naming the file (the reason's detail `ai-review`, `not-reviewed` or,
-past the 16 MiB, `review-limit`); in a session, a file you add is refused
-alone. The receipt's `inputReview` line says how much was read, in how
-many calls, with which question set. A run on your own computer is not
-reviewed. A zip, tar, 7z or rar (or a
+starts, several small texts to a call. An input AI Review flags, or one it
+could not read, refuses the run with exit 11, naming the file (the
+reason's detail `ai-review` or `not-reviewed`); in a session, a file you
+add is refused alone. AI Review reads at most 16 MiB of text a run: a file
+past that is not refused but withheld, listed by `list_inputs` as not read
+with no view, and the run goes on with the rest. A binary original, which
+`read_input` serves as base64, is not sent. The receipt's `inputReview`
+line says how much was sent, in how many calls, with which question set,
+and names any file withheld. A run on your own computer is not reviewed. A zip, tar, 7z or rar (or a
 gzip, bzip2, xz or zstd stream) is unpacked and each file in it is listed
 and read by its path inside it, `archive.zip/folder/file.docx`: at most
 three archives deep, 2,000 files and 512 MiB unpacked in all. Links,

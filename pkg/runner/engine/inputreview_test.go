@@ -117,7 +117,7 @@ func TestAHostedRunsInputsAreReviewedBeforeTheAgent(t *testing.T) {
 		t.Errorf("%d calls, want the texts packed into one", n)
 	}
 	line := env.CapabilitiesEnforced["inputReview"]
-	if !strings.HasPrefix(line, "AI Review (the registry's model-input scan, question set 0123456789ab, jev-test) read the inputs' text; before the agent started: 7 text(s), 1 KiB, in 1 call(s) and 1 judge request(s)") {
+	if !strings.HasPrefix(line, "AI Review (the registry's model-input scan, question set 0123456789ab, jev-test) was asked about the inputs' text; before the agent started: 7 text(s), 1 KiB, in 1 call(s) and 1 judge request(s), none flagged") {
 		t.Fatalf("inputReview line %q", line)
 	}
 }
@@ -186,7 +186,7 @@ func TestAnInputAIReviewCannotReadRefusesTheRun(t *testing.T) {
 	p.InputPaths = []string{writeInput(t, t.TempDir(), "notes.txt", "clean notes\n")}
 	env, err := Run(context.Background(), f, p)
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputNotReviewed})
-	if !strings.Contains(err.Error(), "AI Review could not read notes.txt (could not be scanned (unavailable)), and nothing it has not read reaches the agent") {
+	if !strings.Contains(err.Error(), "AI Review could not read notes.txt (could not be scanned (unavailable)), and no text it has not read reaches the agent") {
 		t.Fatalf("err %q", err)
 	}
 	if _, ok := f.FindRun("-agent"); ok {
@@ -194,23 +194,54 @@ func TestAnInputAIReviewCannotReadRefusesTheRun(t *testing.T) {
 	}
 }
 
-// A run whose text is more than AI Review reads of one run is refused
-// before any call.
-func TestInputsPastTheReviewsCapAreRefusedUnasked(t *testing.T) {
+// A file whose texts do not fit in what AI Review has left to read of the
+// run is withheld unasked, never refused: the run goes on with the files
+// that fit, the withheld one is listed as not read with no view, its
+// texts are taken back, and the receipt names it.
+func TestAFilePastTheReviewsCapIsWithheldUnasked(t *testing.T) {
 	rv := &fakeReview{}
 	r := newInputReview(rv)
-	r.before.bytes = MaxInputReviewText - 3
+	r.before.bytes = MaxInputReviewText - 8
 	dir := t.TempDir()
-	file := writeInput(t, dir, "big.txt", "four")
-	rf, err := r.review(context.Background(), []reviewText{{path: "big.txt", label: "big.txt", file: file}}, false)
-	if err != nil {
+	small := writeInput(t, dir, "a.txt", "four")
+	big := writeInput(t, dir, "b.txt", "more than four")
+	withheld, rf, err := r.review(context.Background(), []reviewText{
+		{path: "a.txt", label: "a.txt", file: small}, {path: "b.txt", label: "b.txt", file: big}, {path: "b.txt", label: "b.txt (as Markdown)", file: small},
+	}, false)
+	if err != nil || rf != nil {
+		t.Fatalf("refusal %+v, err %v", rf, err)
+	}
+	if len(withheld) != 1 || withheld[0] != "b.txt" {
+		t.Fatalf("withheld %v", withheld)
+	}
+	if all := strings.Join(rv.seen(), "\n"); !strings.Contains(all, "a.txt\nfour") || strings.Contains(all, "b.txt") {
+		t.Fatalf("AI Review was asked %q", all)
+	}
+	if line := r.line(); !strings.HasSuffix(line, "; 1 file(s) withheld unread, past the 16 MiB AI Review reads of a run: b.txt") {
+		t.Fatalf("line %q", line)
+	}
+
+	// Through a run: the entry is unread, with no view to read.
+	resetDecodeCalls()
+	p, f := fixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	p.InputReview = rv
+	src := t.TempDir()
+	p.InputPaths = []string{writeInput(t, src, "report.docx", "PK\x03\x04\x00 binary")}
+	saved := reviewLeft
+	reviewLeft = func(*inputReview) int64 { return 0 }
+	defer func() { reviewLeft = saved }()
+	if _, err := Run(context.Background(), f, p); err != nil {
 		t.Fatal(err)
 	}
-	if rf == nil || rf.detail != receipt.InputReviewLimit || !strings.Contains(rf.why, "at most 16 MiB") {
-		t.Fatalf("refusal %+v", rf)
+	runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
+	idx := readIndex(t, runDir)
+	if len(idx.Files) != 1 || idx.Files[0].Unread != notReviewed || idx.Files[0].Original || idx.Files[0].TextBytes != 0 || idx.Files[0].Decoded {
+		t.Fatalf("index %+v", idx.Files)
 	}
-	if len(rv.seen()) != 0 {
-		t.Fatal("AI Review was asked past the cap")
+	if _, err := os.Stat(filepath.Join(runDir, "inputs-text", "text", "report.docx")); !os.IsNotExist(err) {
+		t.Fatalf("the withheld file's text is still staged: %v", err)
 	}
 }
 
@@ -237,6 +268,10 @@ func TestTheReviewsCallsFitTheRoute(t *testing.T) {
 	if joined.String() != long {
 		t.Fatal("the pieces do not make the text")
 	}
+	// Not UTF-8 at all: cut as bytes, and the cut ends.
+	if got := splitText(strings.Repeat("\x80", 50), 7); strings.Join(got, "") != strings.Repeat("\x80", 50) || len(got) != 8 {
+		t.Fatalf("a split of continuation bytes: %d parts", len(got))
+	}
 	if got := splitText(strings.Repeat("é", 100), 7); strings.Join(got, "") != strings.Repeat("é", 100) {
 		t.Fatal("a split without lines lost text")
 	} else {
@@ -251,8 +286,8 @@ func TestTheReviewsCallsFitTheRoute(t *testing.T) {
 		small[i] = []string{"t\nx"}
 	}
 	batches := packBatches(small)
-	if len(batches) != 3 || distinctTexts(batches[0]) != reviewBatchTexts || distinctTexts(batches[2]) != 8 {
-		t.Fatalf("batches of %d, %d texts first", len(batches), distinctTexts(batches[0]))
+	if len(batches) != 3 || len(textsOf(batches[0])) != reviewBatchTexts || len(textsOf(batches[2])) != 8 {
+		t.Fatalf("batches of %d, %d texts first", len(batches), len(textsOf(batches[0])))
 	}
 	big := [][]string{headedPieces("a", strings.Repeat("x\n", 40000)), {"b\nsmall"}}
 	for _, b := range packBatches(big) {

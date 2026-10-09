@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1889,13 +1890,26 @@ func inputReview(registry string) (webscan.Scanner, error) {
 	if registry == "" {
 		return nil, nil
 	}
+	// The credential rides on every call: https, or http to this machine
+	// alone (a test registry). The value is not echoed back: it is the
+	// host's, and could carry what it should not.
 	u, err := url.Parse(registry)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("--review-inputs takes the registry's address, http(s)://host[/path], not %q", registry))
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		(u.Scheme != "https" && (u.Scheme != "http" || !loopbackHost(u.Hostname()))) {
+		return nil, engine.Classify(engine.ExitUsage, errors.New("--review-inputs takes the registry's address, https://host[/path] (http only to this machine)"))
 	}
 	tok := strings.TrimSpace(os.Getenv(envJobToken))
 	if tok == "" {
 		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("--review-inputs reviews with the job's credential in $%s, and it is not set", envJobToken))
 	}
 	return &webscan.Registry{Base: strings.TrimRight(registry, "/"), JobToken: tok}, nil
+}
+
+// loopbackHost says whether host names this machine.
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

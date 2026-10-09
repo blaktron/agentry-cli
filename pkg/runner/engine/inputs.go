@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -109,7 +110,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	if err != nil {
 		return nil, err
 	}
-	refusal, err := x.reviewEntries(ctx, res, entries, false)
+	entries, refusal, err := x.reviewEntries(ctx, res, entries, false)
 	if err != nil {
 		return nil, err
 	}
@@ -121,18 +122,45 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 }
 
 // reviewEntries has AI Review read the texts of a decode's files, once
-// they are staged and before the index names them. The caller holds x.mu.
-func (x *inputsDecoder) reviewEntries(ctx context.Context, res *decode.Result, entries []toolsrv.InputEntry, added bool) (*reviewRefusal, error) {
+// they are staged and before the index names them, and answers the
+// entries as the index is to name them: a file withheld past what AI
+// Review reads of a run is listed as not read, with no view, and its
+// staged texts are taken back. The caller holds x.mu.
+func (x *inputsDecoder) reviewEntries(ctx context.Context, res *decode.Result, entries []toolsrv.InputEntry, added bool) ([]toolsrv.InputEntry, *reviewRefusal, error) {
 	if x.review == nil {
-		return nil, nil
+		return entries, nil, nil
 	}
-	texts := reviewTexts(entries, res.In,
-		filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir), filepath.Join(x.rd.inputsText, toolsrv.InputsConvertedSubdir))
-	refusal, err := x.review.review(ctx, texts, added)
+	texts := reviewTexts(entries, res.In, x.textRoot(), x.convertedRoot())
+	withheld, refusal, err := x.review.review(ctx, texts, added)
 	if err != nil {
-		return nil, Classify(ExitCLI, err)
+		return nil, nil, Classify(ExitCLI, err)
 	}
-	return refusal, nil
+	for i, e := range entries {
+		if !slices.Contains(withheld, e.Path) {
+			continue
+		}
+		x.dropTexts(e.Path)
+		entries[i] = toolsrv.InputEntry{Path: e.Path, Type: e.Type, InArchive: e.InArchive, MIME: e.MIME, Bytes: e.Bytes, Unread: notReviewed}
+	}
+	return entries, refusal, nil
+}
+
+// textRoot and convertedRoot are where the run's decoded texts and
+// Markdown views are staged (toolsrv's layout).
+func (x *inputsDecoder) textRoot() string {
+	return filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir)
+}
+
+func (x *inputsDecoder) convertedRoot() string {
+	return filepath.Join(x.rd.inputsText, toolsrv.InputsConvertedSubdir)
+}
+
+// dropTexts takes back what was staged of one path: its text, its
+// Markdown view, and, for an archive, its members'.
+func (x *inputsDecoder) dropTexts(path string) {
+	for _, root := range []string{x.textRoot(), x.convertedRoot()} {
+		_ = os.RemoveAll(filepath.Join(root, filepath.FromSlash(path)))
+	}
 }
 
 // inputRefused names why an input was refused, in the run's reason; never
@@ -217,8 +245,7 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 // (agentry-cli#631), and answers every file's index entry, for commit to
 // publish. The caller holds x.mu.
 func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, error) {
-	textRoot := filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir)
-	convertedRoot := filepath.Join(x.rd.inputsText, toolsrv.InputsConvertedSubdir)
+	textRoot, convertedRoot := x.textRoot(), x.convertedRoot()
 	entries := make([]toolsrv.InputEntry, 0, len(res.Report.Files))
 	for _, f := range res.Report.Files {
 		e := toolsrv.InputEntry{Path: f.Path, Type: string(f.Family), InArchive: f.In, MIME: f.MIME}
@@ -300,6 +327,13 @@ func (x *inputsDecoder) commit(entries []toolsrv.InputEntry) error {
 func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (toolsrv.InputEntry, error) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
+	// Two adds of one name could both pass the caller's check before
+	// either is staged; the second would write over the first's texts.
+	for _, e := range x.index.Files {
+		if e.Path == base || strings.HasPrefix(e.Path, base+"/") {
+			return toolsrv.InputEntry{}, fmt.Errorf("an input named %q is already staged; rename the file", base)
+		}
+	}
 	in := filepath.Join(x.rd.root, "decode", "add-"+strconv.Itoa(x.seq))
 	if err := os.MkdirAll(in, 0o755); err != nil {
 		return toolsrv.InputEntry{}, fmt.Errorf("stage %s for the decode: %w", base, err)
@@ -323,14 +357,12 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	}
 	// AI Review's flag refuses this file alone, as a finding does: its
 	// staged texts are taken back, and nothing names it to the agent.
-	refusal, err := x.reviewEntries(ctx, res, entries, true)
+	entries, refusal, err := x.reviewEntries(ctx, res, entries, true)
 	if err != nil {
 		return toolsrv.InputEntry{}, err
 	}
 	if refusal != nil {
-		for _, sub := range []string{toolsrv.InputsTextSubdir, toolsrv.InputsConvertedSubdir} {
-			_ = os.RemoveAll(filepath.Join(x.rd.inputsText, sub, base))
-		}
+		x.dropTexts(base)
 		x.refused = append(x.refused, refusal.why)
 		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", refusal.why)
 	}
