@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -126,7 +128,7 @@ func serverListPages(t *testing.T) map[string][]byte {
 			for _, c := range e.Conditions {
 				fmt.Fprintf(&b, "- **Needs:** %s\n", c)
 			}
-			fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidence(e.Evidence, e.Date))
+			fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidenceOn(e.Evidence, e.Date))
 		}
 		if p.deps && len(l.Dependencies) > 0 {
 			deps := slices.Clone(l.Dependencies)
@@ -136,12 +138,98 @@ func serverListPages(t *testing.T) map[string][]byte {
 			b.WriteString("\n## Dependencies that mean a server does not run here\n\n")
 			b.WriteString("A server whose own direct dependencies (npm's `dependencies`, PyPI's `requires_dist`) include one of these packages does not run here, whatever list the server itself is on [src: doc:servers.yaml].\n\n")
 			for _, d := range deps {
-				fmt.Fprintf(&b, "- %s `%s`: it %s (`%s`). %s (%s.)\n", ecosystemName(d.Ecosystem), d.Package, mustReason(t, d.Reason), d.Reason, d.Observed, evidence(d.Evidence, d.Date))
+				fmt.Fprintf(&b, "- %s `%s`: it %s (`%s`). %s (%s.)\n", ecosystemName(d.Ecosystem), d.Package, mustReason(t, d.Reason), d.Reason, d.Observed, evidenceOn(d.Evidence, d.Date))
 			}
 		}
 		pages[knowledge.WikiDir+"/servers/"+p.file] = b.Bytes()
 	}
+	pages[knowledge.WikiDir+"/servers/sign-ins.md"] = signInsPage(t, l)
 	return pages
+}
+
+// signInsPage renders the list's remote servers and package sign-ins
+// (agentry-cli#667): what each vendor's server asks of whoever runs it,
+// and the package sign-ins a draft may copy.
+func signInsPage(t *testing.T, l *ServerList) []byte {
+	t.Helper()
+	var updated time.Time
+	for _, r := range l.Remote {
+		if r.Date.After(updated) {
+			updated = r.Date
+		}
+	}
+	for _, si := range l.SignIns {
+		if si.Date.After(updated) {
+			updated = si.Date
+		}
+	}
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "---\ntitle: Remote servers and sign-ins\ntype: list\nsummary: Vendors' own remote MCP servers, by address and how each signs in, and the package servers' OAuth sign-ins seen working, which a draft copies exactly. Generated from servers.yaml; do not edit by hand.\nsources: [doc:servers.yaml]\nupdated: %s\n---\n\n", updated.Format(time.DateOnly))
+	b.WriteString("# Remote servers and sign-ins\n\n")
+	b.WriteString("An entry says what was seen, or what the vendor's own metadata said on its date. It is not a judgement of a vendor's safety or quality. How a remote server or a sign-in runs, and when to choose one, is on [Declared MCP servers](mcp-servers.md#remote-servers) [src: doc:servers.yaml].\n\n")
+	fmt.Fprintf(&b, "## Remote servers\n\n%s. *Agentry signs in as itself* means the vendor lets Agentry register its own client; *the person brings their own client* means it does not, so whoever runs the QuickAgent makes an OAuth client at the vendor once, and the run setup shows how [src: doc:servers.yaml].\n", entriesWord(len(l.Remote)))
+	remote := slices.Clone(l.Remote)
+	sort.SliceStable(remote, func(i, j int) bool {
+		return remote[i].Vendor+remote[i].URL+string(remote[i].Auth) < remote[j].Vendor+remote[j].URL+string(remote[j].Auth)
+	})
+	for _, r := range remote {
+		fmt.Fprintf(&b, "\n### %s, `%s`\n\n", r.Vendor, r.URL)
+		fmt.Fprintf(&b, "- **Signs in with:** `auth: %s`", r.Auth)
+		switch r.Client {
+		case ClientAgentry:
+			b.WriteString("; Agentry signs in as itself.\n")
+		case ClientOwn:
+			b.WriteString("; the person brings their own client.\n")
+		default:
+			b.WriteString(".\n")
+		}
+		if len(r.Scopes) > 0 {
+			fmt.Fprintf(&b, "- **Scopes it offers:** %s.\n", strings.Join(codeSpans(r.Scopes), ", "))
+		}
+		if r.Seen {
+			fmt.Fprintf(&b, "- **Seen to run here:** %s [src: doc:servers.yaml]\n", r.Observed)
+		} else {
+			fmt.Fprintf(&b, "- **Not seen to run here.** %s [src: doc:servers.yaml]\n", r.Observed)
+		}
+		for _, c := range r.Conditions {
+			fmt.Fprintf(&b, "- **Needs:** %s\n", c)
+		}
+		fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidenceOn(r.Evidence, r.Date))
+	}
+	fmt.Fprintf(&b, "\n## Package sign-ins\n\n%s. A package's `oauth` block is written only by copying one of these exactly, with the egress and settings it lists: the check after you answer sends any other to a repair turn [src: doc:servers.yaml].\n", entriesWord(len(l.SignIns)))
+	for _, si := range l.SignIns {
+		fmt.Fprintf(&b, "\n### %s `%s` %s\n\n", ecosystemName(si.Ecosystem), si.Package, si.Versions)
+		if si.Client == ClientOwn {
+			b.WriteString("- **Its client:** the person brings their own client.\n")
+		} else {
+			b.WriteString("- **Its client:** Agentry signs in as itself.\n")
+		}
+		fmt.Fprintf(&b, "- **Seen:** %s [src: doc:servers.yaml]\n", si.Observed)
+		fmt.Fprintf(&b, "- **Evidence:** %s.\n\n", evidenceOn(si.Evidence, si.Date))
+		b.WriteString("Copy this entry into `capabilities.mcpServers`, with the server's tools, exactly as it stands:\n\n```yaml\n")
+		// The manifest's own order: the package, its version, its hosts, its
+		// settings, then the sign-in.
+		entry := struct {
+			NPM     string            `yaml:"npm,omitempty"`
+			PyPI    string            `yaml:"pypi,omitempty"`
+			Version string            `yaml:"version"`
+			Egress  []string          `yaml:"egress,flow"`
+			Env     map[string]string `yaml:"env,omitempty"`
+			OAuth   manifest.MCPOAuth `yaml:"oauth"`
+		}{Version: si.Versions, Egress: si.Egress, Env: si.Env, OAuth: si.OAuth}
+		if si.Ecosystem == "npm" {
+			entry.NPM = si.Package
+		} else {
+			entry.PyPI = si.Package
+		}
+		enc := yaml.NewEncoder(&b)
+		enc.SetIndent(2)
+		if err := enc.Encode([]any{entry}); err != nil {
+			t.Fatal(err)
+		}
+		b.WriteString("```\n")
+	}
+	return b.Bytes()
 }
 
 func mustReason(t *testing.T, class string) string {
@@ -151,16 +239,6 @@ func mustReason(t *testing.T, class string) string {
 		t.Fatalf("reason %q is not in the closed set", class)
 	}
 	return s
-}
-
-// evidence is an entry's evidence with its date, unless it names the date
-// already ("survey 2026-10-05").
-func evidence(ev string, date time.Time) string {
-	d := date.Format(time.DateOnly)
-	if strings.Contains(ev, d) {
-		return ev
-	}
-	return ev + ", " + d
 }
 
 func ecosystemName(e string) string {
@@ -325,7 +403,7 @@ func TestTheDraftingGuideStatesTheRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "Up to " + numberWord(manifest.MaxMCPServers) + " npm or PyPI packages"; !strings.Contains(string(run), want) {
+	if want := "Up to " + numberWord(manifest.MaxMCPServers) + " the manifest declares"; !strings.Contains(string(run), want) {
 		t.Errorf("how a run works does not say %q", want)
 	}
 }
@@ -410,7 +488,8 @@ func TestTheInstructionNamesTheGuide(t *testing.T) {
 	mustSay(t, map[string][]string{
 		instructionFile: {
 			"`" + GuideName + "`",
-			"**Before you pin any MCP server, read `servers/mcp-servers.md`**",
+			"**Before you declare any MCP server, read `servers/mcp-servers.md`**",
+			"`servers/sign-ins.md`",
 			"**Before you return, check the manifest against the bounds in `manifest/manifest.md`.**",
 		},
 	})
@@ -542,4 +621,12 @@ func orList(items []string) string {
 		return strings.Join(items, "")
 	}
 	return strings.Join(items[:len(items)-1], ", ") + " or " + items[len(items)-1]
+}
+
+// entriesWord is "1 entry" or "n entries".
+func entriesWord(n int) string {
+	if n == 1 {
+		return "1 entry"
+	}
+	return fmt.Sprintf("%d entries", n)
 }

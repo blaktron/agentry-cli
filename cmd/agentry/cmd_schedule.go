@@ -86,6 +86,8 @@ func newScheduleCmd() *cobra.Command {
 		newScheduleFireCmd(),
 		newScheduleSyncCmd(),
 		newScheduleProbeCmd(),
+		newScheduleResealCmd(),
+		newScheduleCheckSignedOutCmd(),
 	)
 	return cmd
 }
@@ -199,11 +201,12 @@ type runSpecFlags struct {
 
 func newScheduleAddCmd() *cobra.Command {
 	var (
-		when whenFlags
-		spec runSpecFlags
-		name string
-		out  string
-		yes  bool
+		when  whenFlags
+		spec  runSpecFlags
+		name  string
+		out   string
+		yes   bool
+		check bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add [ns/name[@range]]",
@@ -223,7 +226,11 @@ func newScheduleAddCmd() *cobra.Command {
 			"registry token kept in the keychain into an encrypted systemd credential\n" +
 			"beside the schedule. It is refused below systemd 256, on Docker Desktop,\n" +
 			"for a QuickAgent with an OAuth connection and for a kept knowledge pack,\n" +
-			"whose keys stay in the keychain.",
+			"whose keys stay in the keychain.\n\n" +
+			"--check decides all of that and keeps nothing: no consent is asked, nothing\n" +
+			"is installed, sealed or written, and linger is left alone. It prints what a\n" +
+			"schedule would still need (with --json, for a client such as Agentry\n" +
+			"Desktop) and exits 0 whether or not the schedule could be made.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := ""
@@ -239,10 +246,13 @@ func newScheduleAddCmd() *cobra.Command {
 			if spec.input != "" && spec.task != "" {
 				return errors.New("give --input FILE or --task TEXT, not both")
 			}
+			now := scheduleNow()
+			if check {
+				return scheduleCheck(cmd, ref, name, out, spec, when, now)
+			}
 			if spec.signedOut && scheduleGOOS != "linux" {
 				return signedOutUnsupported()
 			}
-			now := scheduleNow()
 			when, err := when.recurrence(now)
 			if err != nil {
 				return err
@@ -272,6 +282,7 @@ func newScheduleAddCmd() *cobra.Command {
 	f.BoolVar(&spec.allowVulnMCP, "allow-vulnerable-mcp", false, "allow a declared MCP server the gate rates high or critical, at every run of this schedule")
 	f.BoolVar(&spec.signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine; turns on linger, seals the keys in an encrypted systemd credential)")
 	f.BoolVar(&yes, "yes", false, "consent to the release's capabilities without the prompt (no terminal); with --signed-out, also confirms turning on linger")
+	f.BoolVar(&check, "check", false, "only check whether the schedule could be made, and what it would still need; nothing is asked, installed or kept")
 	return cmd
 }
 
@@ -279,41 +290,10 @@ func newScheduleAddCmd() *cobra.Command {
 // install through `run --prepare`, check every input a fire needs (D8),
 // keep it, and write its alarm.
 func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, when schedule.Recurrence, now time.Time, yes bool) error {
-	outAbs, err := filepath.Abs(expandHome(out))
+	sc, err := scheduleFromFlags(name, out, spec, when, now)
 	if err != nil {
 		return err
 	}
-	if err := writableDir(outAbs); err != nil {
-		return fmt.Errorf("--out %s: %w", out, err)
-	}
-	sc := schedule.Schedule{
-		Name: name, Registry: registryURL(), Created: now, When: when, SignedOut: spec.signedOut,
-		Run: schedule.RunSpec{
-			OutDir: outAbs, Files: absAll(spec.files), Knowledge: knowledgeRefs(spec.knowledge), Intake: spec.intake,
-			Voice: spec.voice, NoVoice: spec.noVoice, Timeout: spec.timeout, MaxTurns: spec.maxTurns, MaxCost: spec.maxCost,
-			Adapter: spec.adapter, AllowUnsigned: spec.allowUnsigned, AllowUnscanned: spec.allowUnscanned,
-			AllowVulnerableMCP: spec.allowVulnMCP,
-		},
-	}
-	if spec.policyPath != "" {
-		if sc.Run.Policy, err = filepath.Abs(expandHome(spec.policyPath)); err != nil {
-			return err
-		}
-	}
-	if spec.input != "" {
-		if sc.Run.Input, err = filepath.Abs(expandHome(spec.input)); err != nil {
-			return err
-		}
-		if _, err := os.Stat(sc.Run.Input); err != nil {
-			return fmt.Errorf("--input: %w", err)
-		}
-	}
-	if spec.local != "" {
-		if sc.Local, err = filepath.Abs(expandHome(spec.local)); err != nil {
-			return err
-		}
-	}
-
 	errOut := cmd.ErrOrStderr()
 	preview, err := schedulePreview(cmd, sc, ref)
 	if err != nil {
@@ -322,18 +302,8 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	if sc.Run, err = admitPreview(preview, sc.Run); err != nil {
 		return err
 	}
-	if sc.Local == "" {
-		parsed, perr := manifest.ParseRef(preview.Ref)
-		if perr != nil {
-			return perr
-		}
-		sc.Ref = parsed.Namespace + "/" + parsed.Name
-	} else {
-		sc.Ref = preview.Ref
-	}
-	sc.Version, sc.Digest = preview.Version, preview.Digest
-	if sc.Name == "" {
-		sc.Name = sc.Ref
+	if sc, err = pinPreview(sc, preview); err != nil {
+		return err
 	}
 
 	// The install step a run makes, with consent asked now on a terminal
@@ -400,6 +370,70 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	}
 	_, _ = fmt.Fprintln(errOut, "it runs while you are signed in to this computer; each run's folder is made in "+sc.Run.OutDir)
 	return nil
+}
+
+// scheduleFromFlags is the schedule add's flags describe, before the
+// release is resolved: paths made absolute, the output folder checked.
+func scheduleFromFlags(name, out string, spec runSpecFlags, when schedule.Recurrence, now time.Time) (schedule.Schedule, error) {
+	outAbs, err := filepath.Abs(expandHome(out))
+	if err != nil {
+		return schedule.Schedule{}, err
+	}
+	sc := schedule.Schedule{
+		Name: name, Registry: registryURL(), Created: now, When: when, SignedOut: spec.signedOut,
+		Run: schedule.RunSpec{
+			OutDir: outAbs, Files: absAll(spec.files), Knowledge: knowledgeRefs(spec.knowledge), Intake: spec.intake,
+			Voice: spec.voice, NoVoice: spec.noVoice, Timeout: spec.timeout, MaxTurns: spec.maxTurns, MaxCost: spec.maxCost,
+			Adapter: spec.adapter, AllowUnsigned: spec.allowUnsigned, AllowUnscanned: spec.allowUnscanned,
+			AllowVulnerableMCP: spec.allowVulnMCP,
+		},
+	}
+	if spec.policyPath != "" {
+		if sc.Run.Policy, err = filepath.Abs(expandHome(spec.policyPath)); err != nil {
+			return sc, err
+		}
+	}
+	if spec.input != "" {
+		if sc.Run.Input, err = filepath.Abs(expandHome(spec.input)); err != nil {
+			return sc, err
+		}
+	}
+	if spec.local != "" {
+		if sc.Local, err = filepath.Abs(expandHome(spec.local)); err != nil {
+			return sc, err
+		}
+	}
+	// What the person can fix comes last, every one of it, with sc whole:
+	// --check reports each and goes on.
+	var errs []error
+	if err := writableDir(outAbs); err != nil {
+		errs = append(errs, fmt.Errorf("--out %s: %w", out, err))
+	}
+	if sc.Run.Input != "" {
+		if _, err := os.Stat(sc.Run.Input); err != nil {
+			errs = append(errs, fmt.Errorf("--input: %w", err))
+		}
+	}
+	return sc, errors.Join(errs...)
+}
+
+// pinPreview pins sc to the version and digest the run plan resolved (D3)
+// and names it.
+func pinPreview(sc schedule.Schedule, preview *runPlanOutput) (schedule.Schedule, error) {
+	if sc.Local == "" {
+		parsed, err := manifest.ParseRef(preview.Ref)
+		if err != nil {
+			return sc, err
+		}
+		sc.Ref = parsed.Namespace + "/" + parsed.Name
+	} else {
+		sc.Ref = preview.Ref
+	}
+	sc.Version, sc.Digest = preview.Version, preview.Digest
+	if sc.Name == "" {
+		sc.Name = sc.Ref
+	}
+	return sc, nil
 }
 
 // admitPreview refuses what a schedule may not run, a release that cannot

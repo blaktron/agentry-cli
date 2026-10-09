@@ -1,0 +1,22 @@
+{
+  "id": "linear-triage",
+  "description": "Every morning, read my team's Linear issues that are still in Triage and list them by priority, oldest first, with a one-line note on what each needs. Use my own Linear account.",
+  "hints": [
+    "The services or sites it works with: Linear"
+  ],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "mcp.linear.app"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "remote": {
+      "mcp.linear.app": "oauth"
+    }
+  }
+}

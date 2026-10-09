@@ -97,6 +97,19 @@ its key. The Builders on the site and in the desktop show the marking, and
 the author can change it. A release that marks a key optional needs CLI
 v0.6.66 or later to run; an older CLI refuses its manifest.
 
+Since 1.11.0 the Drafter may declare a vendor's own remote MCP server by its
+address, and prefers one to a package for the same service. A remote server
+signs in by OAuth, by one key sent as a bearer token, or not at all, and an
+OAuth one asks whoever runs the QuickAgent to sign in at the vendor at the
+first run of each version. The draft's notes say so, and say whose OAuth
+client the vendor needs. A package server signs in only with a sign-in its
+guide lists as seen working, copied exactly: the checks after a draft send
+any other `oauth` block to the repair turn. The guide's
+`servers/sign-ins.md` lists the vendors' servers and the sign-ins. A release
+with a remote server needs CLI v0.6.69 or later to run, one signed in to by
+OAuth CLI v0.6.70, and a package's sign-in CLI v0.6.71; an older CLI refuses
+its manifest.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your
