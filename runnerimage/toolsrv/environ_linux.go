@@ -25,7 +25,3 @@ func hideEnvironment() error {
 	}
 	return nil
 }
-
-// environmentHideable reports whether hideEnvironment protects anything on
-// this platform.
-const environmentHideable = true
