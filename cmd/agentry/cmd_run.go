@@ -14,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +27,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 
 	"github.com/spf13/cobra"
 
@@ -116,6 +119,10 @@ type runOpts struct {
 	// connectionsFile hands the run access tokens a host already fetched
 	// (agentry-cli#722): the store is not opened and nothing is refreshed.
 	connectionsFile string
+	// reviewInputs is the registry whose AI Review reads the inputs' text
+	// before the agent starts, with the job's credential in $envJobToken
+	// (a hosted run's host; plan file-handling.md §8, agentry-cli#321).
+	reviewInputs string
 }
 
 // newRunCmd builds the run command.
@@ -202,6 +209,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode; asked on a terminal when it declares both, autonomous otherwise)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
+	f.StringVar(&opts.reviewInputs, "review-inputs", "", "have AI Review read every input's text through this REGISTRY's model-input scan, with the job's credential in $"+envJobToken+", before the agent starts; an input it flags, or cannot read, refuses the run (a hosted run's host)")
 	f.StringVar(&opts.connectionsFile, "connections-file", "", "take each OAuth-signed-in MCP server's access token from this 0600 JSON FILE instead of this computer's connections, refreshing nothing (a hosted run's host)")
 	f.BoolVar(&opts.listAdapters, "list-adapters", false, "list harness adapters and exit")
 	f.StringArrayVar(&opts.files, "file", nil, "file or directory to provide to the run read-only under /inputs (repeatable)")
@@ -247,6 +255,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
 	}
 	opts.guideShown = new(bool)
+	// AI Review of the inputs is checked before anything is pulled: a
+	// host that asks for it and gives no credential refuses here.
+	review, err := inputReview(opts.reviewInputs)
+	if err != nil {
+		return err
+	}
 	// The report theme is chosen before anything starts, so a name that is
 	// not a theme's refuses here (agentry-cli#731). A preview asks no
 	// account.
@@ -631,6 +645,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	params := engine.Params{
+		InputReview:      review,
 		Plan:             plan,
 		ExecPackages:     execPackages,
 		PlanDir:          planDir,
@@ -1864,3 +1879,37 @@ func finishProfile(errOut io.Writer, prof *profile.Profile, dir string, keep boo
 
 // runnerCLIVersion feeds the runner image tag derivation (§R7: a new CLI
 // version is what triggers a runner image rebuild).
+
+// inputReview is AI Review of the inputs for --review-inputs: the named
+// registry's model-input scan with the job's credential (plan
+// file-handling.md §8, agentry-cli#321). Nil without the flag: a local run
+// reviews nothing. The registry is named apart from --registry because a
+// private release's run reaches the registry through a prefix
+// (agentry-enterprise#92), and the scan route is at the registry's root.
+func inputReview(registry string) (webscan.Scanner, error) {
+	if registry == "" {
+		return nil, nil
+	}
+	// The credential rides on every call: https, or http to this machine
+	// alone (a test registry). The value is not echoed back: it is the
+	// host's, and could carry what it should not.
+	u, err := url.Parse(registry)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		(u.Scheme != "https" && (u.Scheme != "http" || !loopbackHost(u.Hostname()))) {
+		return nil, engine.Classify(engine.ExitUsage, errors.New("--review-inputs takes the registry's address, https://host[/path] (http only to this machine)"))
+	}
+	tok := strings.TrimSpace(os.Getenv(envJobToken))
+	if tok == "" {
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("--review-inputs reviews with the job's credential in $%s, and it is not set", envJobToken))
+	}
+	return &webscan.Registry{Base: strings.TrimRight(registry, "/"), JobToken: tok}, nil
+}
+
+// loopbackHost says whether host names this machine.
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}

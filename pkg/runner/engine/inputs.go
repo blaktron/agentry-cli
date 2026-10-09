@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,7 +37,9 @@ import (
 // any decoder reads it (plan file-handling.md §7; agentry-cli#563): a
 // finding refuses the run before the agent starts, with the policy class,
 // so a hosted run settles nothing (D9), and refuses a session's added file
-// alone.
+// alone. On a hosted run, AI Review then reads every text the model could
+// read of them (review.go; plan file-handling.md §8, agentry-cli#321), and
+// refuses the run, or the added file, on one it flags.
 type inputsDecoder struct {
 	d  dockerx.Client
 	p  Params
@@ -47,6 +50,8 @@ type inputsDecoder struct {
 	// lookup asks Hybrid Analysis about the risky inputs by hash (plan
 	// file-handling.md §7, agentry-cli#564), with the policy's key or none.
 	lookup *hybrid.Client
+	// review is AI Review of the inputs' text, nil on a local run.
+	review *inputReview
 	// seq numbers the decode directories under the run root.
 	seq int
 	// before is what was decoded before the agent started, added what a
@@ -76,7 +81,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	if p.Decoded != nil || p.TextInputs {
 		return nil, nil
 	}
-	x := &inputsDecoder{d: d, p: p, rd: rd, index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
+	x := &inputsDecoder{d: d, p: p, rd: rd, review: newInputReview(p.InputReview), index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
 	if p.Plan != nil {
 		// The release's own default view (agentry-cli#693), which the
 		// tools serve an input in when the model asks for none.
@@ -105,8 +110,57 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	if err != nil {
 		return nil, err
 	}
+	entries, refusal, err := x.reviewEntries(ctx, res, entries, false)
+	if err != nil {
+		return nil, err
+	}
+	if refusal != nil {
+		return nil, refusal.refusedRun()
+	}
 	x.before = merged(x.before, res)
 	return x, x.commit(entries)
+}
+
+// reviewEntries has AI Review read the texts of a decode's files, once
+// they are staged and before the index names them, and answers the
+// entries as the index is to name them: a file withheld past what AI
+// Review reads of a run is listed as not read, with no view, and its
+// staged texts are taken back. The caller holds x.mu.
+func (x *inputsDecoder) reviewEntries(ctx context.Context, res *decode.Result, entries []toolsrv.InputEntry, added bool) ([]toolsrv.InputEntry, *reviewRefusal, error) {
+	if x.review == nil {
+		return entries, nil, nil
+	}
+	texts := reviewTexts(entries, res.In, x.textRoot(), x.convertedRoot())
+	withheld, refusal, err := x.review.review(ctx, texts, added)
+	if err != nil {
+		return nil, nil, Classify(ExitCLI, err)
+	}
+	for i, e := range entries {
+		if !slices.Contains(withheld, e.Path) {
+			continue
+		}
+		x.dropTexts(e.Path)
+		entries[i] = toolsrv.InputEntry{Path: e.Path, Type: e.Type, InArchive: e.InArchive, MIME: e.MIME, Bytes: e.Bytes, Unread: notReviewed}
+	}
+	return entries, refusal, nil
+}
+
+// textRoot and convertedRoot are where the run's decoded texts and
+// Markdown views are staged (toolsrv's layout).
+func (x *inputsDecoder) textRoot() string {
+	return filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir)
+}
+
+func (x *inputsDecoder) convertedRoot() string {
+	return filepath.Join(x.rd.inputsText, toolsrv.InputsConvertedSubdir)
+}
+
+// dropTexts takes back what was staged of one path: its text, its
+// Markdown view, and, for an archive, its members'.
+func (x *inputsDecoder) dropTexts(path string) {
+	for _, root := range []string{x.textRoot(), x.convertedRoot()} {
+		_ = os.RemoveAll(filepath.Join(root, filepath.FromSlash(path)))
+	}
 }
 
 // inputRefused names why an input was refused, in the run's reason; never
@@ -191,8 +245,7 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 // (agentry-cli#631), and answers every file's index entry, for commit to
 // publish. The caller holds x.mu.
 func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, error) {
-	textRoot := filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir)
-	convertedRoot := filepath.Join(x.rd.inputsText, toolsrv.InputsConvertedSubdir)
+	textRoot, convertedRoot := x.textRoot(), x.convertedRoot()
 	entries := make([]toolsrv.InputEntry, 0, len(res.Report.Files))
 	for _, f := range res.Report.Files {
 		e := toolsrv.InputEntry{Path: f.Path, Type: string(f.Family), InArchive: f.In, MIME: f.MIME}
@@ -274,6 +327,13 @@ func (x *inputsDecoder) commit(entries []toolsrv.InputEntry) error {
 func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (toolsrv.InputEntry, error) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
+	// Two adds of one name could both pass the caller's check before
+	// either is staged; the second would write over the first's texts.
+	for _, e := range x.index.Files {
+		if e.Path == base || strings.HasPrefix(e.Path, base+"/") {
+			return toolsrv.InputEntry{}, fmt.Errorf("an input named %q is already staged; rename the file", base)
+		}
+	}
 	in := filepath.Join(x.rd.root, "decode", "add-"+strconv.Itoa(x.seq))
 	if err := os.MkdirAll(in, 0o755); err != nil {
 		return toolsrv.InputEntry{}, fmt.Errorf("stage %s for the decode: %w", base, err)
@@ -294,6 +354,17 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	entries, err := x.stageTexts(res)
 	if err != nil {
 		return toolsrv.InputEntry{}, err
+	}
+	// AI Review's flag refuses this file alone, as a finding does: its
+	// staged texts are taken back, and nothing names it to the agent.
+	entries, refusal, err := x.reviewEntries(ctx, res, entries, true)
+	if err != nil {
+		return toolsrv.InputEntry{}, err
+	}
+	if refusal != nil {
+		x.dropTexts(base)
+		x.refused = append(x.refused, refusal.why)
+		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", refusal.why)
 	}
 	// An archive brings its members, each under its path.
 	for _, e := range entries {
@@ -327,6 +398,20 @@ func merged(into decode.Result, res *decode.Result) decode.Result {
 		}
 	}
 	return into
+}
+
+// lines puts the receipt's decode and inputReview lines into enforced,
+// when the run has them.
+func (x *inputsDecoder) lines(enforced map[string]string) {
+	if line := x.line(); line != "" {
+		enforced["decode"] = line
+	}
+	if x == nil {
+		return
+	}
+	if line := x.review.line(); line != "" {
+		enforced["inputReview"] = line
+	}
 }
 
 // line is the receipt's decode line for every decode this run made, empty
