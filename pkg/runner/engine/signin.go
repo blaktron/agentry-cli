@@ -14,13 +14,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -84,7 +87,10 @@ func checkModelSignIn(p Params) error {
 		return Classify(ExitUsage, errors.New("--max-cost cannot apply: "+policy.MaxCostSignInSentence))
 	}
 	switch msi.Delivery {
-	case spec.ModelSignInToken:
+	case spec.ModelSignInToken, spec.ModelSignInCallback:
+		if msi.Delivery == spec.ModelSignInCallback && p.Plan.Harness.Host != nil {
+			return Classify(ExitCLI, errors.New("the plan hands a harness on this computer its model sign-in through a session callback, which only a harness image is driven by"))
+		}
 		if g.Token.AccessToken == "" {
 			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("the %s gave this run no access token: sign in again (agentry setup)", policy.SignInSentence(msi.Kind)),
 				receipt.ReasonSignInMissing, ""))
@@ -139,6 +145,14 @@ func writeModelSignIn(p Params, rd *runDirs, values map[string]string) error {
 		rd.modelSignIn = p.ModelSignIn.ConfigDir
 		return nil
 	}
+	if msi.Delivery == spec.ModelSignInCallback {
+		// Nothing is written: the session's driver hands the harness the
+		// token when it asks (signInTokens).
+		t := withExpiry(p.ModelSignIn.Token, time.Now())
+		values[modelSignInValueKey] = t.AccessToken
+		rd.signInTokens = &signInTokens{cur: t, renew: p.RenewModelSignIn, rd: rd, stderr: p.Stderr}
+		return nil
+	}
 	rd.modelSignIn = rd.modelSignInDir()
 	t := withExpiry(p.ModelSignIn.Token, time.Now())
 	values[modelSignInValueKey] = t.AccessToken
@@ -180,12 +194,78 @@ func writeModelSignInToken(ctx context.Context, p Params, rd *runDirs, t Connect
 // says the runner rewrites it, which is true only when it can. A copy.
 func withSignInRenewal(enforced map[string]string, p Params) map[string]string {
 	msi := p.Plan.Harness.ModelSignIn
-	if msi == nil || msi.Delivery != spec.ModelSignInToken || p.RenewModelSignIn != nil {
+	if msi == nil || p.RenewModelSignIn != nil {
+		return enforced
+	}
+	from := ""
+	switch msi.Delivery {
+	case spec.ModelSignInToken:
+		from = "rewritten by the runner before it expires"
+	case spec.ModelSignInCallback:
+		from = "then renewed first whenever the harness asks for a refresh or the token held has less than about an hour left"
+	default:
 		return enforced
 	}
 	out := maps.Clone(enforced)
-	out["model.signIn"] = strings.Replace(out["model.signIn"], "rewritten by the runner before it expires", "given for the whole run and not renewed (this run's client gave no renewal)", 1)
+	out["model.signIn"] = strings.Replace(out["model.signIn"], from, "given for the whole run and not renewed (this run's client gave no renewal)", 1)
 	return out
+}
+
+// signInMinLife is the life a token handed through a session callback must
+// have left: Copilot CLI refuses one with an hour or less (its preflight
+// refresh threshold) and asks for a refresh once the one it holds is down
+// to that, so a renewal is asked for below an hour and five minutes.
+const signInMinLife = time.Hour + 5*time.Minute
+
+// signInTokens is the run's model sign-in as a session's driver hands it
+// to the harness through the harness's token callback (spec.
+// ModelSignInCallback; plan model-sign-ins.md D25): the token held, and
+// the caller's renewal, asked when the harness asks for a refresh or the
+// token held has less than signInMinLife left. Every token it hands out is
+// masked first. Nothing of it is written anywhere.
+type signInTokens struct {
+	mu     sync.Mutex
+	cur    ConnectionToken
+	renew  func(context.Context) (ConnectionToken, error)
+	rd     *runDirs
+	stderr io.Writer
+}
+
+// token is what the driver answers the harness with (adapter.SignInToken).
+func (s *signInTokens) token(ctx context.Context, refresh bool) (adapter.SignInToken, error) {
+	if s == nil {
+		return adapter.SignInToken{}, errors.New("this run hands its harness no model sign-in")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if (refresh || time.Until(s.cur.ExpiresAt) < signInMinLife) && s.renew != nil {
+		t, err := s.renew(ctx)
+		switch {
+		case err != nil:
+		case t.AccessToken == "":
+			err = errors.New("the vendor sent no access token")
+		case !accessTokenRE.MatchString(t.AccessToken):
+			err = errors.New("the vendor's new access token is not in the shape an access token takes")
+		}
+		if err != nil {
+			err = fmt.Errorf("could not renew the model sign-in's access token: %w", s.rd.redact.Err(err))
+			_, _ = fmt.Fprintf(s.stderr, "note: %v\n", err)
+			return adapter.SignInToken{}, err
+		}
+		// Masked before the driver can write it anywhere a log quotes.
+		s.rd.redact.add(t.AccessToken)
+		s.cur = withExpiry(t, time.Now())
+	}
+	return adapter.SignInToken{AccessToken: s.cur.AccessToken, ExpiresAt: s.cur.ExpiresAt}, nil
+}
+
+// signInTokenFunc is the callback a session's driver is given, nil when
+// the run hands its sign-in no other way.
+func (rd *runDirs) signInTokenFunc() func(context.Context, bool) (adapter.SignInToken, error) {
+	if rd.signInTokens == nil {
+		return nil
+	}
+	return rd.signInTokens.token
 }
 
 // planLimitError is the plan-limit outcome (D12, I9): the budget class,
@@ -200,6 +280,24 @@ func planLimitError(text string, resets time.Time) error {
 		msg += "; it resets at " + resets.UTC().Format(time.RFC3339)
 	}
 	return Classify(ExitBudget, receipt.WithReason(errors.New(msg), receipt.ReasonPlanLimit, ""))
+}
+
+// orgPolicyError is the organization-policy outcome (D29): the policy's
+// class, with its own reason naming which policy, and the vendor's words.
+// Never retried, never a success.
+func orgPolicyError(ev *adapter.Event) error {
+	what := "a policy of your organization or enterprise"
+	switch ev.Policy {
+	case receipt.OrgPolicyClient:
+		what = "your organization's or enterprise's policy for this client (it is turned off for your account, or your account is barred from it)"
+	case receipt.OrgPolicyManagedApproval:
+		what = "your organization's managed settings, which require a person to approve each tool call; a run's tools are approved by the runner"
+	}
+	msg := "refused by " + what + " at the model's vendor: ask its administrators, or pay with another account or an API key"
+	if ev.Text != "" {
+		msg += "; the vendor said: " + ev.Text
+	}
+	return Classify(ExitPolicy, receipt.WithReason(errors.New(msg), receipt.ReasonOrgPolicy, ev.Policy))
 }
 
 // credentialKind is the receipt's credential kind for a plan: the model

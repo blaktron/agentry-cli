@@ -112,6 +112,12 @@ const (
 	// ResetsAt when it said when the limit lifts (zero otherwise: no reset
 	// time is invented).
 	EventPlanLimit EventKind = "plan_limit"
+	// EventOrgPolicy says a policy of the person's organization or
+	// enterprise at the vendor refused the run (plan model-sign-ins.md D29):
+	// the engine ends the run with that policy named, never retries it and
+	// never reports it as success. Policy is which, a word of
+	// receipt's closed list (receipt.OrgPolicy*); Text the vendor's words.
+	EventOrgPolicy EventKind = "org_policy"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )
@@ -139,6 +145,8 @@ type Event struct {
 	// ResetsAt is set on EventPlanLimit when the harness said when the
 	// plan's limit lifts.
 	ResetsAt time.Time
+	// Policy is set on EventOrgPolicy: which policy refused the run.
+	Policy string
 	// Raw is the original line for receipts.
 	Raw json.RawMessage
 }
@@ -182,6 +190,26 @@ type SessionOptions struct {
 	// harness process (spec.SessionSpec.RestartOnRenewal): the engine may
 	// end the harness between turns and hand the driver a new one (Resumer).
 	Resumable bool
+	// SignInToken is the run's model sign-in for a harness that asks its
+	// driver for a token (spec.ModelSignInCallback): the token to hand it,
+	// renewed first when refresh is set or the one held is near its end.
+	// Nil when the run hands its sign-in no such way.
+	SignInToken func(ctx context.Context, refresh bool) (SignInToken, error)
+	// GatewayToken is the run's bearer for its gateway, for a driver that
+	// tells its harness the gateway's MCP server over the session itself
+	// rather than through a plan file that names the variable.
+	GatewayToken string
+	// HarnessFile reads one of the plan's harness files as the run
+	// rendered it, for a driver that hands its harness the instruction
+	// over the session rather than by path.
+	HarnessFile func(name string) ([]byte, error)
+}
+
+// SignInToken is a model sign-in's access token as a driver hands it to
+// its harness, and when it expires. Never a refresh token (I3).
+type SignInToken struct {
+	AccessToken string
+	ExpiresAt   time.Time
 }
 
 // Resumer is a SessionDriver that carries its conversation over to a new
@@ -343,7 +371,8 @@ const DefaultName = "docker-agent"
 // DefaultFor is the adapter a run uses when none is named, for a model
 // sign-in docker-agent cannot spend: the Codex image for a ChatGPT plan
 // (plan model-sign-ins.md D8, D15; agentry-cli#739), the Claude Code image
-// for a Claude subscription (D19, D23; agentry-cli#740); else DefaultName.
+// for a Claude subscription (D19, D23; agentry-cli#740), the Copilot CLI
+// image for a Copilot plan (D25, D28; agentry-cli#741); else DefaultName.
 // docker-agent stays the default for every key (D16).
 func DefaultFor(pol *policy.Policy) string {
 	if pol == nil {
@@ -354,6 +383,8 @@ func DefaultFor(pol *policy.Policy) string {
 		return CodexImageAdapterName
 	case policy.KeyKindClaudeSignIn:
 		return ClaudeImageAdapterName
+	case policy.KeyKindCopilotSignIn:
+		return CopilotImageAdapterName
 	}
 	return DefaultName
 }
@@ -378,6 +409,17 @@ func keyringAccount(in Input) string {
 func anthropicKeyExpectation(in Input) *spec.CredentialKind {
 	return &spec.CredentialKind{Provider: policy.ProviderAnthropic, Kind: policy.KeyKind(in.Harness, in.Model)}
 }
+
+// OrgPolicyRefusal is a driver's Start refused by a policy of the person's
+// organization at the vendor (plan model-sign-ins.md D29): the engine ends
+// the run with that outcome, as it does for an EventOrgPolicy mid-run.
+type OrgPolicyRefusal struct {
+	// Policy is which, a word of receipt's closed list; Text the vendor's
+	// words.
+	Policy, Text string
+}
+
+func (r *OrgPolicyRefusal) Error() string { return "refused by an organization's policy: " + r.Text }
 
 // Refusal is an adapter's policy-shaped refusal at compile time: the
 // compiler reports it as a refusal by policy (exit 11), not a compile

@@ -56,12 +56,21 @@ var conformanceCases = []conformanceCase{
 	{"signin-interactive", manifest.ModeInteractive, false, policy.KeyKindChatGPTPlan},
 	{"claude-signin-autonomous", manifest.ModeAutonomous, false, policy.KeyKindClaudeSignIn},
 	{"claude-signin-interactive", manifest.ModeInteractive, false, policy.KeyKindClaudeSignIn},
+	{"copilot-signin-autonomous", manifest.ModeAutonomous, false, policy.KeyKindCopilotSignIn},
+	{"copilot-signin-interactive", manifest.ModeInteractive, false, policy.KeyKindCopilotSignIn},
 }
 
 // signInOnly are the adapters that run on a model sign-in and on no key
 // (Claude Code's image: an Anthropic key stays docker-agent's or the
-// installed claude's), so the key cases are not theirs.
-var signInOnly = map[string]bool{ClaudeImageAdapterName: true}
+// installed claude's; Copilot CLI's), so the key cases are not theirs, by
+// the kind they run on.
+var signInOnly = map[string]string{ClaudeImageAdapterName: policy.KeyKindClaudeSignIn, CopilotImageAdapterName: policy.KeyKindCopilotSignIn}
+
+// gatewayBySession are the adapters whose driver hands the harness the
+// gateway's bearer and the plan over the session itself (Copilot CLI's
+// session.create), so the agent container is given neither: no variable
+// carries the bearer and nothing is mounted.
+var gatewayBySession = map[string]bool{CopilotImageAdapterName: true}
 
 // recordingOf names the adapter whose recorded harness output an adapter
 // is held to, when it reads the same harness's stream with the same
@@ -99,7 +108,7 @@ func TestConformance(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			for _, tc := range conformanceCases {
-				if tc.signIn != "" && !SpendsModelSignIn(ad, tc.signIn) || tc.signIn == "" && signInOnly[name] {
+				if tc.signIn != "" && !SpendsModelSignIn(ad, tc.signIn) || tc.signIn == "" && signInOnly[name] != "" {
 					continue
 				}
 				t.Run(tc.name, func(t *testing.T) { conformCompile(t, ad, tc) })
@@ -163,8 +172,15 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	if v, ok := find("NO_PROXY"); !ok || !strings.Contains(v.Value, wantNoProxy) {
 		t.Errorf("NO_PROXY = %+v, want it to name %q", v, wantNoProxy)
 	}
-	// §3 invariant 2: the token and the model key travel by name.
-	if v, ok := find(spec.GatewayTokenEnv); !ok || !v.FromRunToken || v.Value != "" {
+	// §3 invariant 2: the token and the model key travel by name, or over
+	// the session alone.
+	if v, ok := find(spec.GatewayTokenEnv); gatewayBySession[ad.Name()] {
+		for _, e := range env {
+			if e.FromRunToken {
+				t.Errorf("the gateway's bearer reaches %s over the session, and env %s carries it too", ad.Name(), e.Name)
+			}
+		}
+	} else if !ok || !v.FromRunToken || v.Value != "" {
 		t.Errorf("gateway token env = %+v, want FromRunToken", v)
 	}
 	// The VARIABLE the harness reads the key under is the harness's own
@@ -189,8 +205,11 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 			}
 		}
 		delivery := spec.ModelSignInToken
-		if tc.signIn == policy.KeyKindClaudeSignIn {
+		switch tc.signIn {
+		case policy.KeyKindClaudeSignIn:
 			delivery = spec.ModelSignInConfigDir
+		case policy.KeyKindCopilotSignIn:
+			delivery = spec.ModelSignInCallback
 		}
 		if m := r.ModelSignIn; m == nil || m.Kind != tc.signIn || m.Delivery != delivery {
 			t.Errorf("modelSignIn = %+v, want a %s %s", m, tc.signIn, delivery)
@@ -218,7 +237,11 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	if !sawGateway {
 		t.Error("no plan file names the gateway URL")
 	}
-	if !host {
+	if gatewayBySession[ad.Name()] {
+		if len(r.Agent.Mounts) != 0 {
+			t.Errorf("%s's harness is handed its plan over the session, and its container mounts %+v", ad.Name(), r.Agent.Mounts)
+		}
+	} else if !host {
 		ro := false
 		for _, m := range r.Agent.Mounts {
 			if m.Target == spec.PlanMount && m.ReadOnly {
@@ -284,8 +307,12 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 // and checks the shape the engine relies on.
 func conformEvents(t *testing.T, ad Adapter) {
 	t.Helper()
-	if r, err := ad.Compile(conformanceInput(manifest.ModeAutonomous, false)); err == nil && r.OneTurn != nil {
-		t.Skip("every run of this adapter is driven by its session driver, which normalizes the stream itself (TestCodexSession; the engine's TestACodexImageRunOnAChatGPTPlanIsOneAppServerTurn)")
+	in := conformanceInput(manifest.ModeAutonomous, false)
+	if kind := signInOnly[ad.Name()]; kind != "" {
+		in.Model = policy.Model{Provider: policy.SignInProvider(kind), Name: "fixture-model", APIKeyKind: kind}
+	}
+	if r, err := ad.Compile(in); err == nil && r.OneTurn != nil {
+		t.Skip("every run of this adapter is driven by its session driver, which normalizes the stream itself (TestCodexSession, TestACopilotSessionIsHandedItsTokenThroughTheCallback; the engine's TestACodexImageRunOnAChatGPTPlanIsOneAppServerTurn)")
 	}
 	recording := ad.Name()
 	if of, ok := recordingOf[recording]; ok {

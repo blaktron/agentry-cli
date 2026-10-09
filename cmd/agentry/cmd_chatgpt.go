@@ -120,17 +120,21 @@ type signedInJSON struct {
 }
 
 func newModelSignInsAddCmd() *cobra.Command {
-	var newAccount, installed bool
+	var newAccount, installed, oauthApp bool
 	cmd := &cobra.Command{
 		Use:   "add <vendor>",
-		Short: "Sign in with a model vendor so your local runs can spend your plan (chatgpt, claude)",
+		Short: "Sign in with a model vendor so your local runs can spend your plan (chatgpt, claude, copilot)",
 		Long: "add chatgpt signs in with ChatGPT in your browser. Your ChatGPT plan then pays for the runs on this\n" +
 			"computer whose model setup names it (agentry setup → openai → chatgpt); a hosted run never spends it.\n" +
 			"The sign-in is kept in the OS keychain; runs are handed a one-hour access token, never the sign-in.\n\n" +
 			"add claude is " + setup.ClaudeSignInLabel + ": Claude Code signs you in itself, in Anthropic's own pages,\n" +
 			"and keeps the sign-in in a directory of Agentry's own that Agentry never reads (never your ~/.claude).\n" +
 			"It signs in the Claude Code image, built on this computer, which runs Claude runs by default; with\n" +
-			"--installed, the Claude Code installed on this computer, for runs with --adapter claude.",
+			"--installed, the Claude Code installed on this computer, for runs with --adapter claude.\n\n" +
+			"add copilot is " + setup.CopilotSignInLabel + ": you enter a code on GitHub's own page for Agentry's GitHub App\n" +
+			"(with --oauth-app, its OAuth App). Your Copilot plan then pays for the runs on this computer whose model\n" +
+			"setup names it (agentry setup → copilot), through GitHub's Copilot CLI in an image built on this computer.\n" +
+			"The sign-in is kept in the OS keychain; runs are handed an eight-hour access token, never the sign-in.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			vendor := strings.ToLower(args[0])
@@ -139,6 +143,9 @@ func newModelSignInsAddCmd() *cobra.Command {
 				return err
 			}
 			in := bufio.NewReader(cmd.InOrStdin())
+			if oauthApp && vendor != modelsignin.Copilot {
+				return errors.New("--oauth-app is for copilot")
+			}
 			switch vendor {
 			case modelsignin.ChatGPT:
 				if installed {
@@ -149,8 +156,13 @@ func newModelSignInsAddCmd() *cobra.Command {
 					return errors.New("--new-account is for chatgpt")
 				}
 				return addClaude(cmd, in, home, installed)
+			case modelsignin.Copilot:
+				if newAccount || installed {
+					return errors.New("--new-account is for chatgpt, --installed for claude")
+				}
+				return addCopilot(cmd, home, oauthApp)
 			default:
-				return fmt.Errorf("this build signs in with chatgpt and claude only (%q: Copilot comes later)", args[0])
+				return fmt.Errorf("this build signs in with chatgpt, claude and copilot (not %q)", args[0])
 			}
 			got, err := signInChatGPT(cmd, in, home, newAccount)
 			var ne *mcpauth.ChatGPTNotEligibleError
@@ -174,5 +186,6 @@ func newModelSignInsAddCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&newAccount, "new-account", false, "sign in to another ChatGPT account than the one this computer is registered for")
 	cmd.Flags().BoolVar(&installed, "installed", false, "claude: sign in the Claude Code installed on this computer rather than the Claude Code image")
+	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "copilot: sign in through Agentry's OAuth App rather than its GitHub App (the fallback, plan D26)")
 	return cmd
 }

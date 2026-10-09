@@ -101,6 +101,13 @@ const (
 	// the harness writes (Claude Code, plan D20), mounted read-write. The
 	// one exception to "no refresh token in a run" (I3).
 	ModelSignInConfigDir = "config-dir"
+	// ModelSignInCallback: the harness asks the session's driver for a
+	// token over its own protocol, at the session's start and before the
+	// token expires (Copilot CLI's token callback, plan model-sign-ins.md
+	// D25). Nothing is mounted and nothing is in the environment: the
+	// access token passes the harness's stdio alone, and no refresh token
+	// enters the run (I3).
+	ModelSignInCallback = "session-callback"
 	// ModelSignInMount is the container folder a token file is in, and
 	// ModelSignInTokenFile its name there.
 	ModelSignInMount     = "/run/agentry/model-signin"
@@ -117,11 +124,12 @@ type ModelSignInSpec struct {
 	// (policy.IsModelSignIn), and Provider the provider it spends.
 	Kind     string `json:"kind"`
 	Provider string `json:"provider"`
-	// Delivery is ModelSignInToken or ModelSignInConfigDir.
+	// Delivery is ModelSignInToken, ModelSignInConfigDir or
+	// ModelSignInCallback.
 	Delivery string `json:"delivery"`
 	// Path is where the harness reads it in the container: the token
-	// file's path, or the config directory's.
-	Path string `json:"path"`
+	// file's path, or the config directory's; empty for a callback.
+	Path string `json:"path,omitempty"`
 	// Env, on the restart token route, is the variable the harness is
 	// started with the token in, read from that file when it starts
 	// (policy signInTokenRoute restart); "" when the harness reads the
@@ -136,6 +144,10 @@ type ModelSignInSpec struct {
 type ImagePin struct {
 	By    string `json:"by"`
 	Value string `json:"value,omitempty"`
+	// Note is what the pin does not prove, when the build knows: an image
+	// built from a download its vendor publishes a checksum of and does
+	// not sign is "pinned by checksum, not signed" (plan D27).
+	Note string `json:"note,omitempty"`
 }
 
 // String is the pin as a receipt line says it.
@@ -145,6 +157,9 @@ func (p *ImagePin) String() string {
 	}
 	if p.Value == "" {
 		return p.By + " (not pinned: the tag can move)"
+	}
+	if p.Note != "" {
+		return p.By + " " + p.Value + " (" + p.Note + ")"
 	}
 	return p.By + " " + p.Value
 }

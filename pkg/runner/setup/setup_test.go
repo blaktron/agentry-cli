@@ -320,7 +320,7 @@ func TestGuidedProfileShowsContractAndDiscardChoice(t *testing.T) {
 
 func TestProvidersAndDefaultsFor(t *testing.T) {
 	got := Providers()
-	if strings.Join(got, ",") != "anthropic,openai,google,custom" {
+	if strings.Join(got, ",") != "anthropic,openai,google,copilot,custom" {
 		t.Errorf("Providers() = %v", got)
 	}
 	if d := DefaultsFor("openai"); d == nil || d.APIKeyEnv != "OPENAI_API_KEY" {

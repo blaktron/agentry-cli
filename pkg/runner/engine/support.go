@@ -94,6 +94,10 @@ type runDirs struct {
 	// modelSignIn is spec.PHModelSignIn's value: the run's token folder,
 	// or the sign-in's config directory; empty for a key.
 	modelSignIn string
+	// signInTokens is the run's model sign-in when its harness asks the
+	// session's driver for its token (spec.ModelSignInCallback); nil
+	// otherwise.
+	signInTokens *signInTokens
 	// modelHosts are the llm-proxy's pinned model endpoints ("name:ip",
 	// modelhosts.go), for the receipt.
 	modelHosts []string

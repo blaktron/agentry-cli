@@ -76,6 +76,22 @@ const (
 	// run is not retried; the vendor's words, and its reset time when it
 	// gave one, are in the error and the receipts.
 	ReasonPlanLimit ReasonCode = "plan-limit"
+	// ReasonOrgPolicy: a policy of the person's organization or enterprise
+	// at the model vendor refused the run (agent; plan model-sign-ins.md
+	// D29, agentry-cli#741). Detail: which policy (OrgPolicy*). The vendor's
+	// words are in the error and the receipts.
+	ReasonOrgPolicy ReasonCode = "org-policy"
+)
+
+// The details of ReasonOrgPolicy: the organization's policy that refused.
+const (
+	// OrgPolicyClient: the policy that turns the vendor's client (Copilot
+	// CLI) off for the person, or bars their account from it.
+	OrgPolicyClient = "client-disabled"
+	// OrgPolicyManagedApproval: the organization's managed settings require
+	// a person to approve each tool call, which a run's driver, approving
+	// the run's own tools itself, does not do.
+	OrgPolicyManagedApproval = "managed-approval"
 )
 
 // The details of ReasonMCPInstallFailed: the install's step that failed.
@@ -180,6 +196,7 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonRunnerBlocked:    {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},
 	ReasonSignInMissing:    {},
 	ReasonPlanLimit:        {},
+	ReasonOrgPolicy:        {details: []string{OrgPolicyClient, OrgPolicyManagedApproval}},
 }
 
 // ReasonCodes returns the closed list of codes, sorted.

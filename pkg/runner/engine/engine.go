@@ -947,6 +947,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		onPlanLimit: func() {
 			cancelCause(errPlanLimit)
 		},
+		onOrgPolicy: func() { cancelCause(errOrgPolicy) },
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
@@ -969,7 +970,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			_ = stdoutW.Close()
 			_ = stdinR.Close()
 		}()
-		turnErr = oneTurn(agentCtx, p, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, task, tools, collector, cancelCause)
+		turnErr = oneTurn(agentCtx, p, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, task, sessionOptions(p, rd, token, tools), collector, cancelCause)
 		<-ran
 	} else {
 		done := consumeGuarded(collector, pr, cancelCause)
@@ -989,6 +990,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// fact rather than a hope. Not-found is the normal case (--rm).
 	_ = d.RemoveForce(ctx, name)
 
+	var refused *adapter.OrgPolicyRefusal
 	out := agentOutcome{lastText: collector.lastText, usage: collector.usage()}
 	switch {
 	// First, because a panic that stopped the reader is the reason anything
@@ -1000,6 +1002,11 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// exit 0 after saying so, and a run its plan refused is no success.
 	case collector.planLimit != nil:
 		out.err = planLimitError(collector.planLimit.Text, collector.planLimit.ResetsAt)
+	// So is an organization's policy: the vendor refused the run.
+	case collector.orgPolicy != nil:
+		out.err = orgPolicyError(collector.orgPolicy)
+	case errors.As(turnErr, &refused):
+		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:
@@ -1034,6 +1041,7 @@ var (
 	errBudget     = errors.New("turn budget exceeded")
 	errCostBudget = errors.New("cost budget exceeded")
 	errPlanLimit  = errors.New("plan limit reached")
+	errOrgPolicy  = errors.New("refused by an organization's policy")
 )
 
 // outputSchema loads and compiles the package's output.schema.json for a
@@ -1133,6 +1141,10 @@ type eventCollector struct {
 	signIn      bool
 	onPlanLimit func()
 	planLimit   *adapter.Event
+	// onOrgPolicy ends the run when the harness reports that a policy of
+	// the person's organization refused it (D29), keeping the event.
+	onOrgPolicy func()
+	orgPolicy   *adapter.Event
 
 	turns         int
 	inTok, outTok int64
@@ -1268,6 +1280,13 @@ func (c *eventCollector) record(ev adapter.Event) {
 			c.planLimit = &ev
 			if c.onPlanLimit != nil {
 				c.onPlanLimit()
+			}
+		}
+	case adapter.EventOrgPolicy:
+		if c.orgPolicy == nil {
+			c.orgPolicy = &ev
+			if c.onOrgPolicy != nil {
+				c.onOrgPolicy()
 			}
 		}
 	}

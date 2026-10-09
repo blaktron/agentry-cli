@@ -211,7 +211,7 @@ func TestWhatTheBuildCannotPinIsRefused(t *testing.T) {
 		"unknown release": {policy.HarnessImage{Ref: h.Ref, Artifact: integrity([]byte("x"))}, "", ClaudeImageAdapter, "knows no Claude Code release"},
 		"other version":   {policy.HarnessImage{Ref: "agentry-claude-code:9.9.8", Artifact: h.Artifact}, "", ClaudeImageAdapter, "its tag must be 9.9.9"},
 		"platform":        {h, "s390x", ClaudeImageAdapter, "linux/s390x"},
-		"adapter":         {h, "", "copilot-image", "cannot build"},
+		"adapter":         {h, "", "gemini-image", "cannot build"},
 	} {
 		d := &dockerx.Fake{Arch: c.arch}
 		err := Builder{Docker: d, Registry: reg.URL, Dir: t.TempDir()}.Ensure(ctx, c.adapter, c.h)

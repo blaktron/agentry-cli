@@ -7,10 +7,10 @@ package compile
 import (
 	"fmt"
 	"path"
-	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
+	"github.com/blaktron/agentry-cli/pkg/runner/harnessbuild"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -68,6 +68,19 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 	}
 	m := spec.Mount{Source: spec.PHModelSignIn}
 	switch msi.Delivery {
+	case spec.ModelSignInCallback:
+		// The harness asks the session's driver for its token over its own
+		// stdio (Copilot CLI's token callback, D25): nothing is mounted.
+		if kind != policy.KeyKindCopilotSignIn {
+			return fmt.Errorf("adapter %s: only %s is delivered through the session's token callback, not %s", adapterName, policy.KeyKindCopilotSignIn, kind)
+		}
+		if msi.Path != "" || msi.Env != "" {
+			return fmt.Errorf("adapter %s: a token handed through the session's callback is read at no path and from no variable", adapterName)
+		}
+		if res.Session == nil && res.OneTurn == nil {
+			return fmt.Errorf("adapter %s: a token callback needs a session driver to answer it", adapterName)
+		}
+		return nil
 	case spec.ModelSignInToken:
 		if msi.Path != spec.ModelSignInMount+"/"+spec.ModelSignInTokenFile {
 			return fmt.Errorf("adapter %s: a token file is read at %s, not %s", adapterName, spec.ModelSignInMount+"/"+spec.ModelSignInTokenFile, msi.Path)
@@ -96,15 +109,11 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 // harness's only way out. A token-file sign-in's run reaches the model
 // alone, never the vendor's token endpoint, which only the CLI talks to; a
 // Claude run reaches Anthropic's API and the host Claude Code refreshes its
-// own sign-in at.
+// own sign-in at; a Copilot run GitHub's API and its plan's Copilot host.
 func signInProxy(kind string, allow []string) error {
-	want := policy.SignInProxyAllow(kind)
-	if want == nil {
-		return nil
-	}
-	if !slices.Equal(allow, want) {
+	if ok, want := policy.SignInProxyAllowed(kind, allow); !ok {
 		return &PolicyRefusal{Reason: fmt.Sprintf("a run paid by %s reaches %s alone, and model.proxyAllow is %s: set it to exactly that (agentry setup does)",
-			policy.SignInSentence(kind), strings.Join(want, ", "), strings.Join(allow, ", "))}
+			policy.SignInSentence(kind), want, strings.Join(allow, ", "))}
 	}
 	return nil
 }
@@ -118,6 +127,11 @@ func signInRefusal(adapterName, kind string) error {
 // modelSignInLine is the receipt's model.signIn line.
 func modelSignInLine(msi *spec.ModelSignInSpec) string {
 	line := policy.SignInSentence(msi.Kind) + " (policy apiKeyKind " + msi.Kind + "), the person's own, chosen in model setup; "
+	if msi.Delivery == spec.ModelSignInCallback {
+		return line + "a short-lived access token the runner's session driver hands the harness over its stdio when the harness asks for one: " +
+			"at the session's start, then renewed first whenever the harness asks for a refresh or the token held has less than about an hour left; " +
+			"the runner puts it in no environment variable, file or plan file, and no refresh token and no client secret enter the run"
+	}
 	if msi.Delivery == spec.ModelSignInConfigDir {
 		if msi.Path == spec.PHModelSignIn {
 			return line + "the harness's own config directory, Agentry's own for the harness installed on this computer (never the person's own), " +
@@ -149,7 +163,7 @@ func modelSignInLine(msi *spec.ModelSignInSpec) string {
 // imagePin is how the agent container's image is pinned: h's pin when the
 // adapter ran the image the policy names, else what the ref itself says.
 // Nil for a host harness.
-func imagePin(image string, h policy.HarnessImage) *spec.ImagePin {
+func imagePin(adapterName, image string, h policy.HarnessImage) *spec.ImagePin {
 	if image == "" {
 		return nil
 	}
@@ -157,5 +171,9 @@ func imagePin(image string, h policy.HarnessImage) *spec.ImagePin {
 		h = policy.HarnessImage{Ref: image}
 	}
 	by, value := h.Pin()
-	return &spec.ImagePin{By: by, Value: value}
+	pin := &spec.ImagePin{By: by, Value: value}
+	if by == policy.PinArtifact {
+		pin.Note = harnessbuild.PinNote(adapterName)
+	}
+	return pin
 }

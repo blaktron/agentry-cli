@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -102,6 +103,8 @@ type modelSignInOut struct {
 	CreatedAt string `json:"createdAt"`
 	LastUsed  string `json:"lastUsedAt,omitempty"`
 	KeptIn    string `json:"keptIn,omitempty"`
+	// App is which of Agentry's GitHub apps a Copilot sign-in went through.
+	App string `json:"app,omitempty"`
 }
 
 func newModelSignInsListCmd() *cobra.Command {
@@ -128,7 +131,7 @@ func newModelSignInsListCmd() *cobra.Command {
 					state = "broken: " + r.Broken
 				}
 				rows = append(rows, modelSignInOut{Vendor: r.Vendor, Kind: r.Kind, Connected: r.Connected, Account: r.Label,
-					State: state, CreatedAt: r.CreatedAt, LastUsed: r.LastUsedAt, KeptIn: r.SecretIn})
+					State: state, CreatedAt: r.CreatedAt, LastUsed: r.LastUsedAt, KeptIn: r.SecretIn, App: r.App})
 			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), rows)
@@ -147,7 +150,11 @@ func newModelSignInsListCmd() *cobra.Command {
 				if r.Account != "" {
 					acct = " as " + r.Account
 				}
-				_, _ = fmt.Fprintf(out, "%s%s · %s · %s · last used: %s\n", r.Vendor, acct, r.Kind, r.State, last)
+				via := ""
+				if r.App != "" {
+					via = " (through Agentry's " + mcpauth.GitHubAppName(r.App) + ")"
+				}
+				_, _ = fmt.Fprintf(out, "%s%s%s · %s · %s · last used: %s\n", r.Vendor, acct, via, r.Kind, r.State, last)
 			}
 			return nil
 		},
@@ -185,6 +192,11 @@ func newModelSignInsRemoveCmd() *cobra.Command {
 				return emitJSON(cmd.OutOrStdout(), removedModelSignIn{Vendor: args[0], Revocation: outcome})
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed the %s sign-in (revocation: %s)\n", args[0], outcome)
+			if args[0] == modelsignin.Copilot && outcome == modelsignin.RevokeDone {
+				// GitHub revokes the tokens; the app's authorization, which only
+				// a holder of its client secret could revoke, stays listed.
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "GitHub revoked the sign-in's tokens; Agentry's app stays in your authorized apps until you remove it there: https://github.com/settings/applications")
+			}
 			return nil
 		},
 	}
