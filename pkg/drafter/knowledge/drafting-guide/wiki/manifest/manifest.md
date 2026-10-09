@@ -3,7 +3,7 @@ title: The manifest
 type: guide
 summary: Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.
 sources: [web:https://docs.secureagentry.net/quickagents/, doc:runtime-facts.md]
-updated: 2026-10-06
+updated: 2026-10-09
 ---
 
 # The manifest
@@ -37,7 +37,7 @@ Every capability is shown to the person, asked for at install and scanned. Decla
 - `secrets`: the environment variable names of the keys the QuickAgent's own `fetch` uses. A key an MCP server needs goes in that server's `secrets`. See [Keys](secrets.md).
 - `optionalSecrets`: the declared keys, its own or a server's, a run can start without. Every other declared key is required. See [Keys](secrets.md).
 - `dataAccess`: from `email`, `calendar`, `files`, `tickets`, `code`, `messages`, `payments`, `other`, only what the task touches.
-- `mcpServers`: each `{"npm" or "pypi": package, "version": exact, "tools": [...], "egress": [hosts], "secrets": [NAMES], "env": {NAME: value}}`, the keys it does not need left out. See [Declared MCP servers](../servers/mcp-servers.md) before you pin one.
+- `mcpServers`: a package server is `{"npm" or "pypi": package, "version": exact, "tools": [...], "egress": [hosts], "secrets": [NAMES], "env": {NAME: value}}`, the keys it does not need left out, and an `"oauth"` block only as copied from [Remote servers and sign-ins](../servers/sign-ins.md#package-sign-ins). A vendor's remote server is `{"url": address, "auth": "oauth" or "secret" or "none", "scopes": [...], "tools": [...]}`, with `"secrets": [one NAME]` only for `"auth": "secret"` and `"scopes"` only for `"auth": "oauth"`. See [Declared MCP servers](../servers/mcp-servers.md) before you declare one.
 
 ## The rules' bounds
 
@@ -53,7 +53,7 @@ The registry refuses a manifest past any of these. Count before you return [src:
 - `guide.connect`: each key's help at most 2,000 characters.
 - `interactive.opening`: at most 500 characters.
 - `knowledge.accepts.prompt`: one line of at most 300 characters.
-- `capabilities.mcpServers`: at most 8 servers, each pinned at an exact version [src: doc:runtime-facts.md].
+- `capabilities.mcpServers`: at most 8 servers, remote ones included; each package pinned at an exact version. A remote server's address is `https://` on a public host name and port 443, with no user name, query or fragment, at most 512 characters, and it declares at most 32 scopes [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/quickagents/].
 
 Your own limits are tighter than the rules' on some of these (the intake, `prepare`, the notes) and are in your instruction, under *Decide, don't ask*.
 

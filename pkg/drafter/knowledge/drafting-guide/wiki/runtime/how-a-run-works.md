@@ -3,7 +3,7 @@ title: How a QuickAgent run works
 type: concept
 summary: What a run of the QuickAgent you draft can and cannot do, what the System Prompt already tells it, and how a run on the person's computer, a run In Agentry and a desktop run in Unsafe Mode differ.
 sources: [web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/hosted-runs/, web:https://docs.secureagentry.net/agentry/unsafe-mode/, doc:runtime-facts.md]
-updated: 2026-10-06
+updated: 2026-10-09
 ---
 
 # How a QuickAgent run works
@@ -31,7 +31,7 @@ Do not repeat any of this in the instruction you write, and do not invent a conv
 - **Output.** The run's last message is its answer. `write_report` writes a file the person receives, and it is the only file that outlives the run [src: web:https://docs.secureagentry.net/runner/].
 - **Network.** None, unless the manifest's `egress` names hosts. Then `fetch` reaches only those hosts. There is no web search. Most QuickAgents run with no network at all, so the instruction carries what the run needs to know [src: web:https://docs.secureagentry.net/quickagents/].
 - **Commands.** None, unless `exec` declares them. A declared command runs only if the machine provides it. Every runner provides a fixed set of base commands (listed in [the runtime facts](../servers/mcp-servers.md#the-numbers)); anything else needs the operator's catalogue, or Unsafe Mode on the desktop [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/agentry/unsafe-mode/].
-- **MCP servers.** Up to eight npm or PyPI packages the manifest declares, each in its own container with its own hosts and keys. They meet a runtime with sharp limits; read [Declared MCP servers](../servers/mcp-servers.md) before you pin one [src: doc:runtime-facts.md].
+- **MCP servers.** Up to eight the manifest declares: npm or PyPI packages, each in its own container with its own hosts and keys, and vendors' remote servers, reached at their address through one relay to its host. A package meets a runtime with sharp limits, and a server that signs the person in asks for their consent at the first run of each version; read [Declared MCP servers](../servers/mcp-servers.md) before you declare one [src: doc:runtime-facts.md].
 - **Credentials.** Granted by name. The model never sees a value: `fetch` injects one into a request, and a declared server gets its own as environment variables [src: web:https://docs.secureagentry.net/runner/].
 - **The person's knowledge.** When the manifest's `knowledge.accepts` asks for it, the person attaches a pack of their own at run time [src: web:https://docs.secureagentry.net/quickagents/].
 - **Limits.** Every run stops at its limits of turns, time and cost.

@@ -62,11 +62,13 @@ Read a page when its step comes, and skip the ones a draft does not need.
 It is not the person's: never cite its pages in `sources`, and never
 declare `knowledge.accepts` because of it. Two pages you never skip:
 
-- **Before you pin any MCP server, read `servers/mcp-servers.md`**, then
-  look the server up on `servers/runs-here.md` and
-  `servers/does-not-run-here.md`. Most servers were written for a laptop,
-  and the runner starts a server with no arguments, over stdio, on musl,
-  with none of the run's files and only port 443 to its declared hosts.
+- **Before you declare any MCP server, read `servers/mcp-servers.md`**,
+  then look it up on `servers/runs-here.md`,
+  `servers/does-not-run-here.md` and `servers/sign-ins.md`. Most package
+  servers were written for a laptop, and the runner starts one with no
+  arguments, over stdio, on musl, with none of the run's files and only
+  port 443 to its declared hosts. Give a package an `oauth` block only by
+  copying a sign-in `servers/sign-ins.md` lists, exactly.
 - **Before you return, check the manifest against the bounds in
   `manifest/manifest.md`.** The registry refuses a manifest past any of
   them.
@@ -88,8 +90,10 @@ What the guide states is also checked after you answer, whatever you read.
    queries. A published QuickAgent that does the task goes in `matches`
    with why it fits or what it lacks, and you still write the draft.
 3. **Choose the tools.** Prefer no tool, then the QuickAgent's own `fetch`
-   to a few exact hosts, then a published MCP server pinned at an
-   **exact version**. Egress is exact hosts, **never `"*"`**. Pages:
+   to a few exact hosts, then an MCP server: a vendor's own remote server
+   by its address, which signs the person in at the vendor, before a
+   package for the same service, and a package pinned at an **exact
+   version**. Egress is exact hosts, **never `"*"`**. Pages:
    `manifest/egress-and-fetch.md`, `servers/mcp-servers.md`.
 4. **Write the instructions in your own words.** Draw on what you read, but
    never copy a page's text. Use the six headings `## Role`, `## Inputs`,

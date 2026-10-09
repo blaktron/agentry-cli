@@ -42,8 +42,8 @@ var notRunReasons = map[string]string{
 	"needs-run-files":       "works on local files or folders, and none of the run's files are in its container",
 	"spawns-binary":         "runs another program (a browser, git, a CLI), and its container holds only its runtime and busybox",
 	"non-443-port":          "talks to its service on a port other than 443 (a database, a local socket), and declared hosts are reached on 443 only",
-	"remote-only":           "is a remote or HTTP-only server, and a declared server must speak stdio",
-	"oauth-browser":         "signs in through a browser window or a credentials file, and a server gets only environment variables",
+	"remote-only":           "is an HTTP-only server, and a package server must speak stdio (a vendor's own remote server is declared by its address instead)",
+	"oauth-browser":         "signs in through a browser window or a credentials file of its own, and a package server gets only its environment and, with a sign-in the drafting guide lists, a token folder",
 	"runtime-excluded":      "declares a runtime range that excludes the runtime's version",
 	"writes-own-tree":       "writes into its own installed files, which are read-only",
 	"secret-shaped-output":  "returns results that look like credentials, which the runner blocks",
@@ -70,7 +70,62 @@ type ServerList struct {
 	Servers      []ServerEntry     `yaml:"servers"`
 	Dependencies []DependencyEntry `yaml:"dependencies"`
 	Runtimes     []RuntimeEntry    `yaml:"runtimes"`
+	// Remote are vendors' own remote MCP servers, by address and sign-in,
+	// and SignIns the package servers' OAuth sign-ins seen working
+	// (agentry-cli#667; DR-67's addendum). A draft may give a package an
+	// oauth block only by copying one listed here.
+	Remote  []RemoteEntry `yaml:"remote"`
+	SignIns []SignInEntry `yaml:"signins"`
 }
+
+// RemoteEntry is one vendor's remote MCP server, as an address and a way
+// of signing in (agentry-cli#667). Seen says it answered a tool call
+// through Agentry; otherwise the entry is what the vendor's own metadata
+// said on its date, read anonymously.
+type RemoteEntry struct {
+	Vendor string `yaml:"vendor"`
+	URL    string `yaml:"url"`
+	// Auth is the manifest's: oauth, secret or none.
+	Auth string `yaml:"auth"`
+	// Scopes are what the vendor's metadata offers, for auth oauth.
+	Scopes []string `yaml:"scopes,omitempty"`
+	// Client is, for auth oauth, ClientAgentry (the vendor lets Agentry
+	// register itself) or ClientOwn (the person brings their own client).
+	Client     string    `yaml:"client,omitempty"`
+	Seen       bool      `yaml:"seen"`
+	Observed   string    `yaml:"observed"`
+	Conditions []string  `yaml:"conditions,omitempty"`
+	Evidence   string    `yaml:"evidence"`
+	Date       time.Time `yaml:"date"`
+}
+
+// SignInEntry is a package server's OAuth sign-in seen working: the
+// package and version, the hosts and plain settings the block needs beside
+// it, and the block itself, which a draft copies exactly (agentry-cli#667).
+type SignInEntry struct {
+	Ecosystem string `yaml:"ecosystem"`
+	Package   string `yaml:"package"`
+	// Versions is the exact version seen, or "all".
+	Versions string `yaml:"versions"`
+	// Egress are hosts the server's egress must name.
+	Egress []string `yaml:"egress"`
+	// Env are plain settings the server's env must carry, as given.
+	Env   map[string]string `yaml:"env,omitempty"`
+	OAuth manifest.MCPOAuth `yaml:"oauth"`
+	// Client is ClientAgentry or ClientOwn, as on a RemoteEntry.
+	Client   string    `yaml:"client"`
+	Observed string    `yaml:"observed"`
+	Evidence string    `yaml:"evidence"`
+	Date     time.Time `yaml:"date"`
+}
+
+// How a vendor's OAuth sign-in gets its client: Agentry registers itself
+// (a client metadata document or dynamic registration), or the person
+// brings their own OAuth client, entered once per vendor.
+const (
+	ClientAgentry = "agentry"
+	ClientOwn     = "own"
+)
 
 // RuntimeEntry is what a server meets inside one default runtime image:
 // the user and HOME it starts as, and the programs the image has.
@@ -175,6 +230,38 @@ func LoadServerList(fsys fs.FS) (*ServerList, error) {
 			return nil, fmt.Errorf("%s: runtimes[%d]: image, user, home, observed, evidence and date are required", ServerListFile, i)
 		}
 	}
+	seenRemote := map[string]bool{}
+	for i, r := range l.Remote {
+		at := fmt.Sprintf("%s: remote[%d] (%s)", ServerListFile, i, r.URL)
+		switch {
+		case r.Vendor == "" || r.URL == "" || r.Observed == "" || r.Evidence == "" || r.Date.IsZero():
+			return nil, fmt.Errorf("%s: vendor, url, observed, evidence and date are required", at)
+		case !strings.HasPrefix(r.URL, "https://"):
+			return nil, fmt.Errorf("%s: url must be https://", at)
+		case r.Auth != string(manifest.AuthOAuth) && r.Auth != string(manifest.AuthSecret) && r.Auth != string(manifest.AuthNone):
+			return nil, fmt.Errorf("%s: auth %q is not oauth, secret or none", at, r.Auth)
+		case r.Auth == string(manifest.AuthOAuth) && r.Client != ClientAgentry && r.Client != ClientOwn:
+			return nil, fmt.Errorf("%s: an oauth entry's client must be %s or %s", at, ClientAgentry, ClientOwn)
+		case r.Auth != string(manifest.AuthOAuth) && (r.Client != "" || len(r.Scopes) > 0):
+			return nil, fmt.Errorf("%s: client and scopes belong to an oauth entry", at)
+		case seenRemote[r.URL+" "+r.Auth]:
+			return nil, fmt.Errorf("%s: listed twice for auth %s", at, r.Auth)
+		}
+		seenRemote[r.URL+" "+r.Auth] = true
+	}
+	for i, si := range l.SignIns {
+		at := fmt.Sprintf("%s: signins[%d] (%s:%s)", ServerListFile, i, si.Ecosystem, si.Package)
+		switch {
+		case !slices.Contains(ecosystems, si.Ecosystem):
+			return nil, fmt.Errorf("%s: ecosystem must be npm or pypi", at)
+		case si.Package == "" || si.Versions == "" || si.OAuth.Issuer == "" || si.Observed == "" || si.Evidence == "" || si.Date.IsZero():
+			return nil, fmt.Errorf("%s: package, versions, oauth.issuer, observed, evidence and date are required", at)
+		case si.Versions != AllVersions && strings.ContainsAny(si.Versions, versionRangeChars):
+			return nil, fmt.Errorf("%s: versions %q must be one version or %q, not a range", at, si.Versions, AllVersions)
+		case si.Client != ClientAgentry && si.Client != ClientOwn:
+			return nil, fmt.Errorf("%s: client must be %s or %s", at, ClientAgentry, ClientOwn)
+		}
+	}
 	return &l, nil
 }
 
@@ -257,4 +344,62 @@ func samePackage(ecosystem, a, b string) bool {
 		return mcpinstall.NormalizePyPIName(a) == mcpinstall.NormalizePyPIName(b)
 	}
 	return a == b
+}
+
+// RemoteServer is the Remote entry for a remote server's address and
+// auth, compared as written, with a trailing slash ignored.
+func (l *ServerList) RemoteServer(address, auth string) (RemoteEntry, bool) {
+	for _, r := range l.Remote {
+		if strings.TrimSuffix(r.URL, "/") == strings.TrimSuffix(address, "/") && r.Auth == auth {
+			return r, true
+		}
+	}
+	return RemoteEntry{}, false
+}
+
+// SignIn is the listed sign-in for a package's version, if one is listed.
+func (l *ServerList) SignIn(ecosystem, pkg, version string) (SignInEntry, bool) {
+	for _, si := range l.SignIns {
+		if si.Ecosystem == ecosystem && samePackage(ecosystem, si.Package, pkg) && (si.Versions == AllVersions || si.Versions == version) {
+			return si, true
+		}
+	}
+	return SignInEntry{}, false
+}
+
+// Differs names, by field, how a declared server's sign-in departs from
+// the listed one: its oauth block not copied exactly, a host the listed
+// egress names and the server's lacks, a listed setting missing or
+// changed. "" when it is the listed sign-in. Every word is the entry's or
+// a field's name, never the draft's, so nothing the model wrote reaches
+// the repair turn through it (DR-43, DR-44).
+func (si SignInEntry) Differs(srv manifest.MCPServer) string {
+	var out []string
+	o := srv.OAuth
+	if o == nil {
+		return "it has no oauth block"
+	}
+	if o.Issuer != si.OAuth.Issuer {
+		out = append(out, "oauth.issuer is not "+si.OAuth.Issuer)
+	}
+	if !slices.Equal(o.Scopes, si.OAuth.Scopes) {
+		out = append(out, "oauth.scopes are not "+strings.Join(si.OAuth.Scopes, ", "))
+	}
+	if !slices.Equal(o.Files, si.OAuth.Files) {
+		out = append(out, "oauth.files are not the listed files, path and template")
+	}
+	if !maps.Equal(o.Env, si.OAuth.Env) {
+		out = append(out, "oauth.env is not the listed env")
+	}
+	for _, h := range si.Egress {
+		if !slices.Contains(srv.Egress, h) {
+			out = append(out, "egress lacks "+h)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(si.Env)) {
+		if v, ok := srv.Env[k]; !ok || v != si.Env[k] {
+			out = append(out, "env."+k+" is not "+si.Env[k])
+		}
+	}
+	return strings.Join(out, "; ")
 }

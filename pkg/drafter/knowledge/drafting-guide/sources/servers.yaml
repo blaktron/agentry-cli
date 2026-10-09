@@ -968,3 +968,100 @@ runtimes:
   - pip
   evidence: survey 2026-10-05 (runtimes probe)
   date: 2026-10-05
+# Vendors' own remote MCP servers (agentry-cli#667; DR-67's addendum):
+# declared by url with an auth, reached through the runner image's bridge
+# behind one relay to the address's host. seen is true only for a server
+# that answered a tool call through Agentry; the others are what the
+# vendor's metadata said, read anonymously on the date given. client says
+# who an OAuth sign-in's client is: agentry (the vendor lets Agentry
+# register itself) or own (the person brings their own OAuth client).
+remote:
+- vendor: Linear
+  url: https://mcp.linear.app/mcp
+  auth: oauth
+  scopes: [read, write]
+  client: agentry
+  seen: true
+  observed: A consent on dev and two hosted runs listed the person's issues; the vendor registers Agentry's client itself (dynamic registration and a client metadata document).
+  evidence: agentry-enterprise#425, agentry-enterprise#426
+  date: 2026-10-07
+- vendor: GitHub
+  url: https://api.githubcopilot.com/mcp/readonly
+  auth: secret
+  seen: true
+  observed: A local run reached GitHub's read-only tools with a GitHub token sent as the bearer header.
+  conditions:
+    - "One key: a GitHub token, declared as the server's one secret."
+  evidence: agentry-cli#663
+  date: 2026-10-05
+- vendor: GitHub
+  url: https://api.githubcopilot.com/mcp/
+  auth: oauth
+  scopes: [repo, read:org, read:user, user:email, read:packages, write:packages, read:project, project, gist, notifications]
+  client: own
+  seen: false
+  observed: Its metadata names github.com/login/oauth, which offers neither dynamic registration nor a client metadata document, so the person brings their own OAuth App. The read-only tools are at the address ending /readonly.
+  evidence: vendor metadata read 2026-10-09
+  date: 2026-10-09
+- vendor: Notion
+  url: https://mcp.notion.com/mcp
+  auth: oauth
+  scopes: [default]
+  client: agentry
+  seen: false
+  observed: Its metadata offers dynamic registration and a client metadata document, and one scope, default.
+  evidence: vendor metadata read 2026-10-09
+  date: 2026-10-09
+- vendor: Sentry
+  url: https://mcp.sentry.dev/mcp
+  auth: oauth
+  scopes: [org:read, project:write, team:write, event:write, alerts:write]
+  client: agentry
+  seen: false
+  observed: Its metadata offers dynamic registration and a client metadata document.
+  evidence: vendor metadata read 2026-10-09
+  date: 2026-10-09
+- vendor: Asana
+  url: https://mcp.asana.com/v2/mcp
+  auth: oauth
+  scopes: [default]
+  client: own
+  seen: false
+  observed: Its metadata names app.asana.com, which offers neither dynamic registration nor a client metadata document, so the person brings their own Asana app of the type MCP app. The older address ending /sse is past its shutdown date.
+  evidence: vendor metadata read 2026-10-09
+  date: 2026-10-09
+- vendor: Google
+  url: https://gmailmcp.googleapis.com/mcp/v1
+  auth: oauth
+  scopes: [https://www.googleapis.com/auth/gmail.readonly]
+  client: own
+  seen: false
+  observed: Google's Gmail server is in its Workspace Developer Preview, which an account must join, and has no tool that sends mail. Google offers neither dynamic registration nor a client metadata document, so the person brings their own Google OAuth client. For Gmail without the preview, the listed sign-in of the PyPI package workspace-mcp is the alternative.
+  evidence: vendor metadata read 2026-10-09; agentry-desktop#666
+  date: 2026-10-09
+# Package servers' OAuth sign-ins seen working (agentry-cli#667). A draft
+# gives a package an oauth block only by copying one of these exactly, with
+# the egress and env it lists: a token file the package does not read fails
+# silently at run time, so a block nobody saw work is not written.
+signins:
+- ecosystem: pypi
+  package: workspace-mcp
+  versions: 2.0.1
+  egress: [gmail.googleapis.com]
+  env:
+    MCP_SINGLE_USER_MODE: "1"
+    WORKSPACE_MCP_TOOLS: gmail
+    WORKSPACE_MCP_READ_ONLY: "true"
+    USER_GOOGLE_EMAIL: me@agentry.invalid
+  oauth:
+    issuer: https://accounts.google.com
+    scopes: [https://www.googleapis.com/auth/gmail.readonly]
+    files:
+      - path: me@agentry.invalid.json
+        template: '{"token": "{access_token}", "expiry": "{expiry}", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"], "token_uri": "https://oauth2.googleapis.com/token", "client_id": "agentry", "client_secret": "agentry"}'
+    env:
+      WORKSPACE_MCP_CREDENTIALS_DIR: "{dir}"
+  client: own
+  observed: Read the person's Gmail inbox on a run, and again 65 minutes later after the runner renewed the token mid-run. The file is named for USER_GOOGLE_EMAIL, and client_id and client_secret are fixed dummies, never a real client's.
+  evidence: agentry-cli#665, agentry#937
+  date: 2026-10-06

@@ -46,3 +46,5 @@ agentry/drafter@1.8.3 sha256:68f6895bc52002cb3447b16ba8686f074ea3bcd422a06583e45
 agentry/drafter@1.9.0 sha256:7ea238ee336693c36cf178ea3fdaf7981cd83139fb639d189c77139b5a3a728d
 # 1.10.0: the drafting guide teaches marking each declared key optional (capabilities.optionalSecrets) or required, writing the instructions for a run without an optional key, and a secret question's required matching its key (V10); AGENT.md's step 5 says to mark each key (agentry-cli#652).
 agentry/drafter@1.10.0 sha256:cdc6c0a773e08f709f3a67883249a3e7683f04ec56919c1c50dd5acb111eafc2
+# 1.11.0: the drafting guide teaches vendors' remote MCP servers (declared by url, signed in by OAuth, a bearer key or nothing; consent at the first run of each version) and prefers one to a package for the same service; a package's oauth block is written only as copied from a sign-in the new servers/sign-ins.md lists, which the post-step holds; the notes say what a remote server's first run asks (agentry-cli#667).
+agentry/drafter@1.11.0 sha256:aaba07c41132de62be783084a9ab567bcb8371cd00e1a7403be92c305472b0f9

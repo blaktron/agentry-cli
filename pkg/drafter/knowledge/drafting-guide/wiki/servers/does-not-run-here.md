@@ -50,7 +50,7 @@ These servers were seen to fail in the runner, or cannot run here for the reason
 ## npm `@modelcontextprotocol/server-gdrive`
 
 - **Versions:** 2025.1.14, on Node 24.21.0.
-- **Why it does not run:** it signs in through a browser window or a credentials file, and a server gets only environment variables (`oauth-browser`).
+- **Why it does not run:** it signs in through a browser window or a credentials file of its own, and a package server gets only its environment and, with a sign-in the drafting guide lists, a token folder (`oauth-browser`).
 - **Seen:** Installed; exited at start: Credentials not found. Please run with 'auth' argument first. It signs in through a browser and keeps a credentials file. [src: doc:servers.yaml]
 - **Evidence:** survey 2026-10-05.
 

@@ -64,6 +64,12 @@ type Expect struct {
 	// so each is in optionalSecrets, "required" when it cannot, so none is;
 	// not checked when empty (plan optional-secrets.md D3, agentry-cli#652).
 	Keys string `json:"keys,omitempty"`
+	// Remote are hosts of vendors' remote MCP servers the draft must
+	// declare by address, each signed in to by OAuth, and SignIns the
+	// package servers (ecosystem:package) that must carry the sign-in the
+	// guide lists for them (agentry-cli#667). Neither is checked when empty.
+	Remote  []string `json:"remote,omitempty"`
+	SignIns []string `json:"signIns,omitempty"`
 }
 
 // LoadFixtures reads the fixture set, sorted by id.
@@ -107,9 +113,26 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	c := m.Capabilities
 	hosts := append([]string(nil), c.Network.Egress.Hosts...)
 	keys := append([]string(nil), c.Secrets...)
+	remote := map[string]bool{}
+	signIns := map[string]bool{}
 	for _, s := range c.MCPServers {
 		hosts = append(hosts, s.Egress...)
 		keys = append(keys, s.Secrets...)
+		if s.IsRemote() {
+			// A remote server runs at its vendor: no version, and its one
+			// host is its address's.
+			hosts = append(hosts, s.RemoteHost())
+			if s.Auth == manifest.AuthOAuth {
+				remote[s.RemoteHost()] = true
+			}
+			continue
+		}
+		if l, err := serverList(); err == nil && s.OAuth != nil {
+			eco, pkg := packageOf(s)
+			if si, ok := l.SignIn(eco, pkg, s.Version); ok && si.Differs(s) == "" {
+				signIns[s.SourceID()] = true
+			}
+		}
 		if s.Version == "" || strings.ContainsAny(s.Version, "^~*<> ") || s.Version == "latest" {
 			out = append(out, fmt.Sprintf("server %s is not pinned at an exact version (%q)", s.SourceID(), s.Version))
 		}
@@ -141,6 +164,16 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 			out = append(out, fmt.Sprintf("key %s is required; the QuickAgent can do its job without it", k))
 		case e.Keys == "required" && optional:
 			out = append(out, fmt.Sprintf("key %s is optional; the QuickAgent cannot do its job without it", k))
+		}
+	}
+	for _, h := range e.Remote {
+		if !remote[h] {
+			out = append(out, fmt.Sprintf("no remote server at %s signed in to by OAuth", h))
+		}
+	}
+	for _, id := range e.SignIns {
+		if !signIns[id] {
+			out = append(out, fmt.Sprintf("%s does not carry the sign-in the drafting guide lists", id))
 		}
 	}
 	if n := len(c.MCPServers); n > e.MaxServers {

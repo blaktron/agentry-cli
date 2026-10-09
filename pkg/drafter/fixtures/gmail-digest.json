@@ -1,0 +1,22 @@
+{
+  "id": "gmail-digest",
+  "description": "Read my Gmail inbox and summarise the unread messages from the last day: who wrote, what they want, and which need a reply today. It only reads; it never sends or changes mail. Use the workspace-mcp server with my own Google account.",
+  "hints": [
+    "The services or sites it works with: Gmail"
+  ],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "gmail.googleapis.com"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "signIns": [
+      "pypi:workspace-mcp"
+    ]
+  }
+}
