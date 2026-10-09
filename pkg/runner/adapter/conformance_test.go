@@ -266,7 +266,7 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 func conformEvents(t *testing.T, ad Adapter) {
 	t.Helper()
 	if r, err := ad.Compile(conformanceInput(manifest.ModeAutonomous, false)); err == nil && r.OneTurn != nil {
-		t.Skip("every run of this adapter is driven by its session driver, which normalizes the stream itself (TestCodexSession, TestCodexOneTurn)")
+		t.Skip("every run of this adapter is driven by its session driver, which normalizes the stream itself (TestCodexSession; the engine's TestACodexImageRunOnAChatGPTPlanIsOneAppServerTurn)")
 	}
 	dir := filepath.Join("testdata", "conformance", ad.Name())
 	raw, err := os.ReadFile(filepath.Join(dir, "events.ndjson")) //nolint:gosec // testdata

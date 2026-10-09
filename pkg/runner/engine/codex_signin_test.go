@@ -97,7 +97,10 @@ func playCodexRefusing(status int) func(io.Reader, io.Writer) int {
 	if status == 403 {
 		variant, msg = "httpConnectionFailed", "unexpected status 403 Forbidden: This account is not eligible for ChatGPT plan usage in this app., url: https://api.openai.com/v1/responses"
 	}
-	errObj := map[string]any{"message": msg, "codexErrorInfo": map[string]any{variant: map[string]any{"httpStatusCode": status}}}
+	var errObj map[string]any
+	if status != 0 {
+		errObj = map[string]any{"message": msg, "codexErrorInfo": map[string]any{variant: map[string]any{"httpStatusCode": status}}}
+	}
 	return func(in io.Reader, out io.Writer) int {
 		sc := bufio.NewScanner(in)
 		for sc.Scan() {
@@ -115,8 +118,12 @@ func playCodexRefusing(status int) func(io.Reader, io.Writer) int {
 				sayLine(out, map[string]any{"id": m.ID, "result": map[string]any{"thread": map[string]any{"id": "t1"}}})
 			case "turn/start":
 				sayLine(out, map[string]any{"id": m.ID, "result": map[string]any{"turn": map[string]any{"id": "u1", "status": "inProgress"}}})
-				sayLine(out, map[string]any{"method": "error", "params": map[string]any{"error": errObj, "willRetry": false, "threadId": "t1", "turnId": "u1"}})
-				sayLine(out, map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "t1", "turn": map[string]any{"id": "u1", "status": "failed", "error": errObj}}})
+				turn := map[string]any{"id": "u1", "status": "failed"}
+				if errObj != nil {
+					sayLine(out, map[string]any{"method": "error", "params": map[string]any{"error": errObj, "willRetry": false, "threadId": "t1", "turnId": "u1"}})
+					turn["error"] = errObj
+				}
+				sayLine(out, map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "t1", "turn": turn}})
 			}
 		}
 		return 0
@@ -290,25 +297,53 @@ func codexSessionOnAPlan(t *testing.T, route string) (Params, *dockerx.Fake, fun
 		Token: ConnectionToken{AccessToken: signInAccessToken, ExpiresAt: time.Now().Add(2 * time.Second)}}
 	p.RenewModelSignIn = gatedRenewal(t)
 	var mu sync.Mutex
-	var seen []string
+	var seen, turns []string
 	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: func(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+		tokenFile := ""
 		for _, mt := range r.Mounts {
 			if mt.Target == spec.ModelSignInMount {
-				b, _ := os.ReadFile(filepath.Join(mt.Source, spec.ModelSignInTokenFile)) //nolint:gosec // the test's run dir
+				tokenFile = filepath.Join(mt.Source, spec.ModelSignInTokenFile)
+				b, _ := os.ReadFile(tokenFile) //nolint:gosec // the test's run dir
 				mu.Lock()
 				seen = append(seen, string(b))
 				mu.Unlock()
 			}
 		}
-		return playCodex(stdin, stdout), nil
+		// As codex's auth command does on the default route, read the token
+		// file when a turn calls the model: a renewal reaches the turn
+		// without a restart.
+		pr, pw := io.Pipe()
+		go func() {
+			sc := bufio.NewScanner(stdin)
+			for sc.Scan() {
+				if strings.Contains(sc.Text(), `"turn/start"`) && tokenFile != "" {
+					b, _ := os.ReadFile(tokenFile) //nolint:gosec // the test's run dir
+					mu.Lock()
+					turns = append(turns, string(b))
+					mu.Unlock()
+				}
+				_, _ = pw.Write(append(sc.Bytes(), '\n'))
+			}
+			_ = pw.Close()
+		}()
+		return playCodex(pr, stdout), nil
 	}}
 	codexThreads.take()
+	tokensByTurn = func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), turns...)
+	}
 	return p, f, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]string(nil), seen...)
 	}
 }
+
+// tokensByTurn is the token file's content at each turn the last
+// codexSessionOnAPlan fixture's codex took.
+var tokensByTurn func() []string
 
 // renewals holds each test's renewal until allowRenewal: on a slow
 // machine the renewer would otherwise rewrite the token before the first
@@ -414,6 +449,11 @@ func TestTheRestartRouteResumesTheConversationOnARenewedToken(t *testing.T) {
 	if got := seen(); len(got) != 1 {
 		t.Fatalf("the default route started codex %d times", len(got))
 	}
+	// The auth-command route: the one codex read the renewed token at its
+	// second turn, from the file the runner rewrote (D9).
+	if got := tokensByTurn(); len(got) != 2 || got[0] != signInAccessToken || got[1] != signInRenewedToken {
+		t.Fatalf("the turns read %q, want the first token then the renewed one, without a restart", got)
+	}
 	if got := codexThreads.take(); strings.Join(got, ",") != "start ephemeral=true" {
 		t.Fatalf("threads %v", got)
 	}
@@ -467,5 +507,20 @@ func TestTheInstalledCodexRestartsOnARenewedToken(t *testing.T) {
 	}
 	if !strings.Contains(env.CapabilitiesEnforced["model.signIn"], "started again 1 time(s)") {
 		t.Fatalf("model.signIn %q", env.CapabilitiesEnforced["model.signIn"])
+	}
+}
+
+// A turn that fails without saying why is no answer: the run fails as the
+// harness's, never a success (I9).
+func TestAFailedTurnThatSaysNothingIsNoSuccess(t *testing.T) {
+	p, f := codexPlanFixture(t, adapter.CodexImageAdapterName, nil)
+	play := playCodexRefusing(0)
+	f.Foreground["-agent"].Handler = func(_ context.Context, _ dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+		return play(stdin, stdout), nil
+	}
+	env, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitHarness || env.Status == "ok" || !strings.Contains(err.Error(), "turn failed: codex gave no reason") {
+		t.Fatalf("want a harness failure, got %v (%s)", err, env.Status)
 	}
 }

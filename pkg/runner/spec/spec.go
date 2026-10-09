@@ -122,6 +122,11 @@ type ModelSignInSpec struct {
 	// Path is where the harness reads it in the container: the token
 	// file's path, or the config directory's.
 	Path string `json:"path"`
+	// Env, on the restart token route, is the variable the harness is
+	// started with the token in, read from that file when it starts
+	// (policy signInTokenRoute restart); "" when the harness reads the
+	// file itself.
+	Env string `json:"env,omitempty"`
 }
 
 // ImagePin says how the harness image that ran was pinned (invariant I8):

@@ -171,3 +171,40 @@ func TestChatGPTRevokeRevokesTheRefreshTokenAsTheIssuedClient(t *testing.T) {
 		t.Errorf("revoking again: %v", err)
 	}
 }
+
+// The refresh token goes to OpenAI alone (I6): a discovery document that
+// names a revocation endpoint elsewhere is refused, and nothing is sent.
+func TestChatGPTRevokesAtOpenAIsDomainAlone(t *testing.T) {
+	v := mcpauthtest.NewChatGPT(t)
+	ctx := context.Background()
+	in, err := v.Flow().SignIn(ctx, mcpauth.ChatGPTRegistration{HostID: "urn:uuid:fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.RevocationURL = "https://revoke.example.net/oauth/revoke"
+	err = v.Flow().Revoke(ctx, in.ClientID, in.Token.RefreshToken)
+	if err == nil || !strings.Contains(err.Error(), "off OpenAI's domain") {
+		t.Fatalf("err %v", err)
+	}
+	if !v.Live(in.Token.RefreshToken) || len(v.Revocations) != 0 {
+		t.Fatal("a revocation was sent")
+	}
+	for host, ok := range map[string]bool{
+		"auth.openai.com": true, "revoke.auth.openai.com": true, "api.openai.com": true,
+		"openai.com.example.net": false, "example.net": false, "notopenai.com": false,
+	} {
+		if mcpauth.SameVendorForTest(host, mcpauth.ChatGPTIssuer) != ok {
+			t.Errorf("%s: want %v", host, ok)
+		}
+	}
+}
+
+// An ID token must say when it expires (OpenID Connect requires exp).
+func TestChatGPTRefusesAnIDTokenWithoutExpiry(t *testing.T) {
+	v := mcpauthtest.NewChatGPT(t)
+	v.NoExpiry = true
+	_, err := v.Flow().SignIn(context.Background(), mcpauth.ChatGPTRegistration{HostID: "urn:uuid:fixture"})
+	if err == nil || !strings.Contains(err.Error(), "no expiry") || v.Live(v.Issued[0]) {
+		t.Fatalf("err %v", err)
+	}
+}

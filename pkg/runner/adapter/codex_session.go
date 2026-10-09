@@ -73,8 +73,8 @@ var codexElicitationAccept = map[string]any{"action": "accept", "content": map[s
 // codexElicitationDecline is the answer for anything else.
 var codexElicitationDecline = map[string]any{"action": "decline"}
 
-// Start implements SessionDriver: the handshake and a fresh ephemeral
-// thread. The working directory is the process's, so the thread's cwd is
+// Start implements SessionDriver: the handshake and a fresh thread,
+// ephemeral unless the conversation may be resumed (SessionOptions.Resumable). The working directory is the process's, so the thread's cwd is
 // left to default to it — a plan carries no host path.
 func (s *codexSession) Start(ctx context.Context) error {
 	if err := s.handshake(ctx); err != nil {
@@ -200,8 +200,15 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 			out.Usage = &TurnUsage{InputTokens: int(t.inTok), OutputTokens: int(t.outTok), TotalTokens: int(t.inTok + t.outTok)}
 		}
 		s.mu.Unlock()
-		if end.err != "" && end.status != "completed" {
-			return out, fmt.Errorf("codex session: turn %s: %s", end.status, firstLineOf(end.err))
+		// A turn that did not complete is not an answer, whether or not it
+		// said why: a failed turn with no error object would otherwise read
+		// as a success (I9).
+		if end.status != "completed" {
+			why := firstLineOf(end.err)
+			if why == "" {
+				why = "codex gave no reason"
+			}
+			return out, fmt.Errorf("codex session: turn %s: %s", end.status, why)
 		}
 		return out, nil
 	case <-ctx.Done():
@@ -316,19 +323,35 @@ type codexError struct {
 	Info    json.RawMessage `json:"codexErrorInfo"`
 }
 
-// status is the HTTP status the error carries, 0 when it names none.
+// codexUsageLimit is codex's own variant for a usage limit (with a
+// limitId, in 0.162.0's binary): the plan's limit, as a 429 is.
+const codexUsageLimit = "usageLimitExceeded"
+
+// status is the HTTP status the error carries, 0 when it names none; codex's
+// usage-limit variant, as an object or a bare name, counts as a 429.
 func (e *codexError) status() int {
 	if e == nil || len(e.Info) == 0 {
 		return 0
 	}
-	var variants map[string]struct {
-		HTTPStatusCode int `json:"httpStatusCode"`
+	var name string
+	if json.Unmarshal(e.Info, &name) == nil {
+		if name == codexUsageLimit {
+			return 429
+		}
+		return 0
 	}
+	var variants map[string]json.RawMessage
 	if json.Unmarshal(e.Info, &variants) != nil {
 		return 0
 	}
-	for _, v := range variants {
-		if v.HTTPStatusCode != 0 {
+	if _, ok := variants[codexUsageLimit]; ok {
+		return 429
+	}
+	for _, raw := range variants {
+		var v struct {
+			HTTPStatusCode int `json:"httpStatusCode"`
+		}
+		if json.Unmarshal(raw, &v) == nil && v.HTTPStatusCode != 0 {
 			return v.HTTPStatusCode
 		}
 	}
@@ -349,7 +372,13 @@ func (s *codexSession) signInError(e *codexError, raw json.RawMessage) (Event, b
 		msg = e.Message
 	}
 	if s.signIn {
-		switch e.status() {
+		status := e.status()
+		// A release whose error object carries no status still says it in
+		// its message (0.162.0: "exceeded retry limit, last status: 429 …").
+		if status == 0 && strings.Contains(msg, "last status: 429") {
+			status = 429
+		}
+		switch status {
 		case 429:
 			s.mu.Lock()
 			said := s.planLimited

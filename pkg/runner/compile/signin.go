@@ -114,6 +114,18 @@ func modelSignInLine(msi *spec.ModelSignInSpec) string {
 		return line + "the harness's own config directory, which only it writes, mounted read-write at " + msi.Path +
 			" into this run's agent container alone; the runner never reads it"
 	}
+	if msi.Env != "" {
+		// The restart route: the harness takes the token from its
+		// environment, read from the file when it starts.
+		line += "the access token read once when the harness starts, from one file "
+		if msi.Path == spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile {
+			line += "in this run's own folder"
+		} else {
+			line += "read-only at " + msi.Path
+		}
+		return line + ", into the harness's environment as " + msi.Env + "; a renewed token reaches it when the harness is started again between turns; " +
+			"no refresh token and no client secret enter the run"
+	}
 	if msi.Path == spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile {
 		return line + "a short-lived access token in one file in this run's own folder, which the harness on this machine reads, " +
 			"rewritten by the runner before it expires; no refresh token and no client secret enter the run"

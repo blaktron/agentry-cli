@@ -37,6 +37,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -333,7 +334,9 @@ func (g ChatGPT) idClaims(raw, clientID, nonce string) (*idClaims, error) {
 		return nil, fmt.Errorf("ChatGPT's ID token names another issuer (%q): refused", c.Issuer)
 	case !slices.Contains(aud, clientID):
 		return nil, errors.New("ChatGPT's ID token is not for this app's registration: refused")
-	case c.Expiry != 0 && time.Unix(c.Expiry, 0).Before(now()):
+	case c.Expiry == 0:
+		return nil, errors.New("ChatGPT's ID token carries no expiry: refused")
+	case time.Unix(c.Expiry, 0).Before(now()):
 		return nil, errors.New("ChatGPT's ID token has expired: sign in again")
 	case c.Nonce != nonce:
 		return nil, errors.New("ChatGPT's ID token is not the answer to this sign-in (its nonce does not match): refused")
@@ -450,6 +453,26 @@ func ChatGPTGrantGone(err error) bool {
 	return false
 }
 
+// sameVendor reports whether host is the issuer's host or under the
+// issuer's registrable domain (its last two labels; an address only as
+// itself).
+func sameVendor(host, issuer string) bool {
+	iu, err := url.Parse(issuer)
+	if err != nil {
+		return false
+	}
+	ih := strings.ToLower(iu.Hostname())
+	host = strings.ToLower(host)
+	if host == ih {
+		return true
+	}
+	labels := strings.Split(ih, ".")
+	if len(labels) < 2 || net.ParseIP(ih) != nil {
+		return false
+	}
+	return strings.HasSuffix(host, "."+strings.Join(labels[len(labels)-2:], "."))
+}
+
 // revokeTries and revokeBackoff bound Revoke's retries of a network failure
 // or a 5xx, which OpenAI asks for while the refresh token is still at hand.
 var (
@@ -470,6 +493,11 @@ func (g ChatGPT) Revoke(ctx context.Context, clientID, refreshToken string) erro
 	u, err := url.Parse(doc.RevocationEndpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return errors.New("ChatGPT's discovery document names no usable revocation endpoint")
+	}
+	// The refresh token goes to OpenAI and nowhere else (invariant I6): the
+	// endpoint must be the issuer's host or under its domain.
+	if !sameVendor(u.Hostname(), g.issuer()) {
+		return fmt.Errorf("ChatGPT's discovery document names a revocation endpoint off OpenAI's domain (%s): refused", u.Hostname())
 	}
 	var last error
 	for try := 0; try < revokeTries; try++ {

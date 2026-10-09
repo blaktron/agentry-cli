@@ -43,6 +43,11 @@ type ChatGPT struct {
 	// AccessPrefix and RefreshPrefix start every token issued, so a test can
 	// search for them.
 	AccessPrefix, RefreshPrefix string
+	// RevocationURL, when set, is the revocation endpoint the discovery
+	// document names instead of the fake's own; NoExpiry leaves exp out
+	// of the ID token.
+	RevocationURL string
+	NoExpiry      bool
 
 	mu sync.Mutex
 	// Authorizations is every authorization request's query.
@@ -217,10 +222,11 @@ func (v *ChatGPT) issue(w http.ResponseWriter, client, nonce string) {
 	if v.NoPlanScope {
 		scope = "email offline_access openid profile resource.invoke"
 	}
-	claims, _ := json.Marshal(map[string]any{
-		"iss": v.URL, "aud": []string{client}, "sub": v.Subject, "email": v.Email,
-		"exp": time.Now().Add(time.Hour).Unix(), "nonce": nonce,
-	})
+	c := map[string]any{"iss": v.URL, "aud": []string{client}, "sub": v.Subject, "email": v.Email, "nonce": nonce}
+	if !v.NoExpiry {
+		c["exp"] = time.Now().Add(time.Hour).Unix()
+	}
+	claims, _ := json.Marshal(c)
 	idToken := "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(claims) + ".c2ln"
 	writeJSON(w, map[string]any{
 		"access_token": access, "refresh_token": refresh, "id_token": idToken,
@@ -229,9 +235,13 @@ func (v *ChatGPT) issue(w http.ResponseWriter, client, nonce string) {
 }
 
 func (v *ChatGPT) discovery(w http.ResponseWriter, _ *http.Request) {
+	revoke := v.URL + "/oauth/revoke"
+	if v.RevocationURL != "" {
+		revoke = v.RevocationURL
+	}
 	writeJSON(w, map[string]any{
 		"issuer": v.URL, "authorization_endpoint": v.URL + "/api/accounts/authorize",
-		"token_endpoint": v.URL + "/api/accounts/oauth/token", "revocation_endpoint": v.URL + "/oauth/revoke",
+		"token_endpoint": v.URL + "/api/accounts/oauth/token", "revocation_endpoint": revoke,
 	})
 }
 

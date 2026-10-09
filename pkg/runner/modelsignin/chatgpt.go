@@ -2,8 +2,8 @@ package modelsignin
 
 // The ChatGPT sign-in (plan model-sign-ins.md §4.3, D8–D16;
 // agentry-cli#739): OpenAI's flow is mcpauth.ChatGPT; this keeps what it
-// hands back, and refreshes and revokes through it. The CLI and the
-// desktop both sign in through SignInChatGPT.
+// hands back, and refreshes and revokes through it. SignInChatGPT is the
+// one entry point: the CLI's, and the desktop's when it signs in (M9).
 
 import (
 	"context"

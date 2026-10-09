@@ -1,9 +1,10 @@
 // The codex adapter (plan runner-m-r4-adapters §4.2, agentry-cli#81): the
 // person's own installation of the OpenAI Codex CLI, driven as a host
-// process from a run-scoped CODEX_HOME (decision D2). `codex exec --json`
-// is the autonomous run; codex's own app-server protocol over stdio is
-// the interactive session (DR-18's reasoning applies: the vendor's ACP
-// package would be a second install).
+// process from a run-scoped CODEX_HOME (decision D2). On a key `codex exec
+// --json` is the autonomous run; codex's own app-server protocol over stdio
+// is the interactive session (DR-18's reasoning applies: the vendor's ACP
+// package would be a second install), and both modes of a run paid by a
+// ChatGPT plan (agentry-cli#739; codex_image.go says why).
 //
 // The §3 invariants, by construction:
 //
@@ -29,7 +30,9 @@
 //   - No ambient context. CODEX_HOME points inside the run, so none of the
 //     person's config, rules, skills or sessions is read and nothing of
 //     this run lands in theirs; --ignore-rules keeps their execpolicy out;
-//     --ephemeral persists no session. Codex's own bundled skills are
+//     --ephemeral (an ephemeral thread, under app-server) persists no
+//     session, but on the restart token route, whose thread is kept in the
+//     run's own CODEX_HOME so it can be resumed. Codex's own bundled skills are
 //     switched off too ([skills.bundled], [skills].include_instructions), so
 //     the prompt lists none (agentry-cli#762).
 //   - Operator-owned model access. The model endpoint is a provider block
@@ -39,7 +42,9 @@
 //
 // Written against codex-cli 0.153.4 (codexProbeVersion); the flags, keys
 // and event shapes were established by running it, and the conformance
-// fixture is a recording of a real run.
+// fixture is a recording of a real run. The plan-usage provider block, the
+// auth command and the error shapes a ChatGPT plan meets were measured on
+// 0.162.0, the Codex image's release.
 package adapter
 
 import (
@@ -208,11 +213,10 @@ func codexConfig(r codexRender) []byte {
 	b.WriteString("\n[model_providers." + codexProviderID + "]\n")
 	b.WriteString("name = " + tomlString(codexProviderID) + "\n")
 	b.WriteString("base_url = " + tomlString(r.baseURL) + "\n")
-	switch r.signInRoute {
-	case "":
+	if r.signInRoute == "" {
 		b.WriteString("env_key = " + tomlString(r.keyEnv) + "\n")
 		b.WriteString("wire_api = \"responses\"\n")
-	default:
+	} else {
 		// A ChatGPT plan, as OpenAI documents it for Codex's app-server
 		// (developers.openai.com/siwc/token-sharing-open-source/codex-app-server):
 		// the Responses API, no OpenAI login of codex's own, no websocket.
@@ -224,17 +228,17 @@ func codexConfig(r codexRender) []byte {
 		b.WriteString("request_max_retries = 0\n")
 		if r.signInRoute == policy.TokenRouteRestart {
 			b.WriteString("env_key = " + tomlString(codexTokenEnv) + "\n")
-			break
+		} else {
+			// The token file is rewritten by the runner before the token
+			// expires; codex runs the reader when it needs a token, at most
+			// every five minutes, and again on a 401 (codex-rs, measured on
+			// 0.162.0: the file's content arrives as the bearer).
+			b.WriteString("\n[model_providers." + codexProviderID + ".auth]\n")
+			b.WriteString("command = " + tomlString(r.tokenReader) + "\n")
+			b.WriteString("args = [" + tomlString(r.tokenPath) + "]\n")
+			b.WriteString("timeout_ms = 5000\n")
+			b.WriteString("refresh_interval_ms = 300000\n")
 		}
-		// The token file is rewritten by the runner before the token
-		// expires; codex runs the reader when it needs a token, at most
-		// every five minutes, and again on a 401 (codex-rs, measured on
-		// 0.162.0: the file's content arrives as the bearer).
-		b.WriteString("\n[model_providers." + codexProviderID + ".auth]\n")
-		b.WriteString("command = " + tomlString(r.tokenReader) + "\n")
-		b.WriteString("args = [" + tomlString(r.tokenPath) + "]\n")
-		b.WriteString("timeout_ms = 5000\n")
-		b.WriteString("refresh_interval_ms = 300000\n")
 	}
 	b.WriteString("\n[mcp_servers." + codexGatewayServer + "]\n")
 	b.WriteString("url = " + tomlString(r.gatewayURL) + "\n")
@@ -453,7 +457,7 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 		// The token file is read with cat, which a Windows host has not got:
 		// there the Codex image runs a ChatGPT plan (D15's default).
 		if hostOS == "windows" {
-			return Result{}, &Refusal{Reason: "the installed Codex cannot spend your ChatGPT plan on Windows yet: run the Codex image instead (agentry run --adapter " + CodexImageAdapterName + ")"}
+			return Result{}, &Refusal{Reason: "the installed Codex cannot spend your ChatGPT plan on Windows yet (agentry-cli#798): run the Codex image instead (agentry run --adapter " + CodexImageAdapterName + ")"}
 		}
 		r.baseURL, r.signInRoute = codexDefaultBaseURL, policy.SignInTokenRoute(in.Harness)
 		r.tokenReader, r.tokenPath = "cat", spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile
@@ -461,6 +465,9 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 			env = append(env, spec.EnvVar{Name: codexTokenEnv, FromModelSignIn: true})
 		}
 		msi = &spec.ModelSignInSpec{Kind: signIn, Provider: policy.SignInProvider(signIn), Delivery: spec.ModelSignInToken, Path: r.tokenPath}
+		if r.signInRoute == policy.TokenRouteRestart {
+			msi.Env = codexTokenEnv
+		}
 	}
 	env = append(env,
 		spec.EnvVar{Name: "CODEX_HOME", Value: spec.PHCfg + "/harness/" + codexHomeDir},

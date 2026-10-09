@@ -13,7 +13,9 @@
 //     the user's home, a tmpfs: codex must write there (its helper links,
 //     its state) and refuses a read-only home, so the entrypoint copies the
 //     plan's config.toml and models.json into it and starts codex
-//     (measured on 0.162.0: a read-only CODEX_HOME fails at start).
+//     (measured on 0.162.0: a read-only CODEX_HOME fails at start). A
+//     session on the restart token route keeps CODEX_HOME in the run's
+//     session store instead, so a new container resumes the conversation.
 //   - A ChatGPT plan's access token in one read-only file
 //     (/run/agentry/model-signin/token, mounted by the compiler, I4), which
 //     the runner rewrites before it expires; codex reads it with cat. No
@@ -65,10 +67,13 @@ func (c *codexImageAdapter) ModelSignIns() []string { return []string{policy.Key
 func codexImageStart(restart bool) string {
 	script := `cp ` + codexImagePlanHome + `/config.toml ` + codexImagePlanHome + `/models.json "$CODEX_HOME"/ && `
 	if restart {
-		script += codexTokenEnv + `="$(cat ` + spec.ModelSignInMount + "/" + spec.ModelSignInTokenFile + `)" && export ` + codexTokenEnv + ` && `
+		script += codexTokenEnv + `="$(cat ` + codexImageTokenPath + `)" && export ` + codexTokenEnv + ` && `
 	}
 	return script + `exec ` + codexImageBinary + ` app-server --strict-config`
 }
+
+// codexImageTokenPath is where the container reads a plan's token.
+const codexImageTokenPath = spec.ModelSignInMount + "/" + spec.ModelSignInTokenFile
 
 // Compile renders the instruction, the config and the agent container.
 func (c *codexImageAdapter) Compile(in Input) (Result, error) {
@@ -96,12 +101,22 @@ func (c *codexImageAdapter) Compile(in Input) (Result, error) {
 		env = append(env, spec.EnvVar{Name: keyEnv, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)})
 	} else {
 		r.baseURL, r.signInRoute = codexDefaultBaseURL, policy.SignInTokenRoute(in.Harness)
-		r.tokenReader, r.tokenPath = "/bin/cat", spec.ModelSignInMount+"/"+spec.ModelSignInTokenFile
+		r.tokenReader, r.tokenPath = "/bin/cat", codexImageTokenPath
 		restart = r.signInRoute == policy.TokenRouteRestart
 		msi = &spec.ModelSignInSpec{Kind: signIn, Provider: policy.SignInProvider(signIn), Delivery: spec.ModelSignInToken, Path: r.tokenPath}
+		if restart {
+			msi.Env = codexTokenEnv
+		}
+	}
+	// A session on the restart route keeps its conversation in the run's
+	// session store, which CODEX_HOME then is (below).
+	interactive := cc.mode == manifest.ModeInteractive
+	codexHome := codexImageHome
+	if interactive && restart {
+		codexHome = spec.SessionMount
 	}
 	env = append(env,
-		spec.EnvVar{Name: "CODEX_HOME", Value: codexImageHome},
+		spec.EnvVar{Name: "CODEX_HOME", Value: codexHome},
 		// The model goes through the run's egress proxy; MCP traffic stays
 		// direct on the run network.
 		spec.EnvVar{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},
@@ -127,21 +142,15 @@ func (c *codexImageAdapter) Compile(in Input) (Result, error) {
 		ResultKind:  cc.resultKind,
 		ModelSignIn: msi,
 	}
-	if cc.mode == manifest.ModeInteractive {
+	if interactive {
 		res.Session = codexSessionSpec()
 		res.Session.RestartOnRenewal = restart
 		if restart {
 			// A restart is a new container, whose tmpfs home starts empty:
 			// the conversation thread/resume needs is kept in the run's
-			// session store instead, a volume given to the image's user,
-			// which CODEX_HOME then is.
+			// session store instead, a volume given to the image's user.
 			res.Session.Mounts = []spec.Mount{{Source: spec.PHSession, Target: spec.SessionMount}}
 			res.Session.StoreOwner = "codex"
-			for i := range res.Agent.Env {
-				if res.Agent.Env[i].Name == "CODEX_HOME" {
-					res.Agent.Env[i].Value = spec.SessionMount
-				}
-			}
 		}
 	} else {
 		res.OneTurn = codexSessionSpec()

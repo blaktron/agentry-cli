@@ -233,3 +233,26 @@ func TestTheDefaultAdapterFollowsThePlan(t *testing.T) {
 	}
 	_ = spec.ModelSignInToken
 }
+
+// codex's own usage-limit variant, as an object or a bare name, is the
+// plan's limit as a 429 is; a failed turn that says nothing is an error.
+func TestCodexsUsageLimitVariantIsThePlansLimit(t *testing.T) {
+	s := &codexSession{signIn: true}
+	for _, info := range []string{`{"usageLimitExceeded":{"limitId":"weekly"}}`, `"usageLimitExceeded"`, `{"other":{"httpStatusCode":429}}`} {
+		s.planLimited = false
+		ev, ok := s.signInError(&codexError{Message: "limit", Info: json.RawMessage(info)}, nil)
+		if !ok || ev.Kind != EventPlanLimit {
+			t.Errorf("%s: %+v", info, ev)
+		}
+	}
+	s.planLimited = false
+	ev, _ := s.signInError(&codexError{Message: "exceeded retry limit, last status: 429 Too Many Requests"}, nil)
+	if ev.Kind != EventPlanLimit {
+		t.Errorf("the message alone: %+v", ev)
+	}
+	s.planLimited = false
+	ev, _ = s.signInError(&codexError{Message: "boom", Info: json.RawMessage(`"internalServerError"`)}, nil)
+	if ev.Kind != EventError {
+		t.Errorf("another variant: %+v", ev)
+	}
+}

@@ -12,6 +12,7 @@ package policy
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -63,7 +64,7 @@ var signInEndpoints = map[string][]string{
 // SignInProxyAllow is the proxy allowlist a run paid by kind must have,
 // nil for a kind with no fixed endpoint (a key; a sign-in whose harness is
 // not built yet).
-func SignInProxyAllow(kind string) []string { return signInEndpoints[kind] }
+func SignInProxyAllow(kind string) []string { return slices.Clone(signInEndpoints[kind]) }
 
 // signInProviders maps each model sign-in kind to the one provider it
 // spends.

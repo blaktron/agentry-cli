@@ -188,12 +188,12 @@ func configureChatGPT(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if len(models) > 0 && !slices.Contains(models, model) {
 		p.Say(fmt.Sprintf("warning: your plan's model list does not name %q; runs will ask for it anyway", model))
 	}
-	d := DefaultsFor(policy.ProviderOpenAI)
 	pol.Model = policy.Model{
 		Provider:   policy.ProviderOpenAI,
 		Name:       model,
 		APIKeyKind: policy.KeyKindChatGPTPlan,
-		ProxyAllow: append([]string(nil), d.ProxyAllow...),
+		// The one endpoint the compiler holds a plan run to (I2).
+		ProxyAllow: policy.SignInProxyAllow(policy.KeyKindChatGPTPlan),
 	}
 	who := ""
 	if acct != "" {
