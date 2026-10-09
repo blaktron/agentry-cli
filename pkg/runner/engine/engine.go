@@ -1005,6 +1005,9 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// So is an organization's policy: the vendor refused the run.
 	case collector.orgPolicy != nil:
 		out.err = orgPolicyError(collector.orgPolicy)
+	// And a provider out of credits: the account that pays refused.
+	case collector.outOfCredits != nil:
+		out.err = outOfCreditsError(collector.outOfCredits.Text)
 	case errors.As(turnErr, &refused):
 		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:
@@ -1145,6 +1148,8 @@ type eventCollector struct {
 	// the person's organization refused it (D29), keeping the event.
 	onOrgPolicy func()
 	orgPolicy   *adapter.Event
+	// outOfCredits is the provider's first out-of-credits answer.
+	outOfCredits *adapter.Event
 
 	turns         int
 	inTok, outTok int64
@@ -1281,6 +1286,11 @@ func (c *eventCollector) record(ev adapter.Event) {
 			if c.onPlanLimit != nil {
 				c.onPlanLimit()
 			}
+		}
+	case adapter.EventOutOfCredits:
+		c.harnessErrReported = ev.Text
+		if c.outOfCredits == nil {
+			c.outOfCredits = &ev
 		}
 	case adapter.EventOrgPolicy:
 		if c.orgPolicy == nil {

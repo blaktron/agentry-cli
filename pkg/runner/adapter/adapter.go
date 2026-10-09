@@ -118,6 +118,13 @@ const (
 	// never reports it as success. Policy is which, a word of
 	// receipt's closed list (receipt.OrgPolicy*); Text the vendor's words.
 	EventOrgPolicy EventKind = "org_policy"
+	// EventOutOfCredits says the model's provider refused the run's calls
+	// because the account that pays has no credits left: an HTTP 402, or
+	// the provider's own words for it (plan model-sign-ins.md §4.6;
+	// agentry-cli#742). The engine ends the run with the out-of-credits
+	// outcome and the provider's reason, never retried, never a success.
+	// Text is the provider's words.
+	EventOutOfCredits EventKind = "out_of_credits"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )

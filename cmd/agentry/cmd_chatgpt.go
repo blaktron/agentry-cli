@@ -113,17 +113,21 @@ func chatgptOffer(cmd *cobra.Command, in *bufio.Reader, home string) setup.ChatG
 
 // signedInJSON is `model-signins add --json`: never a token.
 type signedInJSON struct {
-	Vendor  string   `json:"vendor"`
-	Kind    string   `json:"kind"`
-	Account string   `json:"account,omitempty"`
-	Models  []string `json:"models"`
+	Vendor string `json:"vendor"`
+	Kind   string `json:"kind"`
+	// Connected marks a connected key (OpenRouter, Poe, Hugging Face), with
+	// KeyExpiresAt when the key expires once.
+	Connected    bool     `json:"connected,omitempty"`
+	Account      string   `json:"account,omitempty"`
+	KeyExpiresAt string   `json:"keyExpiresAt,omitempty"`
+	Models       []string `json:"models"`
 }
 
 func newModelSignInsAddCmd() *cobra.Command {
 	var newAccount, installed, oauthApp bool
 	cmd := &cobra.Command{
 		Use:   "add <vendor>",
-		Short: "Sign in with a model vendor so your local runs can spend your plan (chatgpt, claude, copilot)",
+		Short: "Sign in with a model vendor so your local runs can spend your plan (chatgpt, claude, copilot), or connect your account (openrouter, poe, huggingface)",
 		Long: "add chatgpt signs in with ChatGPT in your browser. Your ChatGPT plan then pays for the runs on this\n" +
 			"computer whose model setup names it (agentry setup → openai → chatgpt); a hosted run never spends it.\n" +
 			"The sign-in is kept in the OS keychain; runs are handed a one-hour access token, never the sign-in.\n\n" +
@@ -134,7 +138,11 @@ func newModelSignInsAddCmd() *cobra.Command {
 			"add copilot is " + setup.CopilotSignInLabel + ": you enter a code on GitHub's own page for Agentry's GitHub App\n" +
 			"(with --oauth-app, its OAuth App). Your Copilot plan then pays for the runs on this computer whose model\n" +
 			"setup names it (agentry setup → copilot), through GitHub's Copilot CLI in an image built on this computer.\n" +
-			"The sign-in is kept in the OS keychain; runs are handed an eight-hour access token, never the sign-in.",
+			"The sign-in is kept in the OS keychain; runs are handed an eight-hour access token, never the sign-in.\n\n" +
+			"add openrouter, add poe and add huggingface are " + setup.ConnectLabel + ": the vendor makes a key (Hugging Face,\n" +
+			"an inference token) for Agentry in your browser, billed to your account there, and it is kept in the OS\n" +
+			"keychain where a pasted key is (provider:<provider>), for the runs whose model setup names that provider\n" +
+			"(agentry setup → openrouter | poe | huggingface → connect). Hugging Face's token is renewed at each run's start.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			vendor := strings.ToLower(args[0])
@@ -145,6 +153,12 @@ func newModelSignInsAddCmd() *cobra.Command {
 			in := bufio.NewReader(cmd.InOrStdin())
 			if oauthApp && vendor != modelsignin.Copilot {
 				return errors.New("--oauth-app is for copilot")
+			}
+			if modelsignin.IsConnectVendor(vendor) {
+				if newAccount || installed {
+					return errors.New("--new-account is for chatgpt, --installed for claude")
+				}
+				return addConnect(cmd, in, home, vendor)
 			}
 			switch vendor {
 			case modelsignin.ChatGPT:
@@ -162,7 +176,7 @@ func newModelSignInsAddCmd() *cobra.Command {
 				}
 				return addCopilot(cmd, home, oauthApp)
 			default:
-				return fmt.Errorf("this build signs in with chatgpt, claude and copilot (not %q)", args[0])
+				return fmt.Errorf("this build signs in with chatgpt, claude and copilot, and connects openrouter, poe and huggingface (not %q)", args[0])
 			}
 			got, err := signInChatGPT(cmd, in, home, newAccount)
 			var ne *mcpauth.ChatGPTNotEligibleError

@@ -29,11 +29,13 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -609,6 +611,11 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	})
 	if err != nil {
 		return nil, err
+	}
+	// A connected account's key is readied in the keychain the run reads
+	// (Hugging Face's token renewed; agentry-cli#742).
+	if err := modelsignin.Open(r.Home, connection.OSKeychain{}).ReadyForRun(ctx, plan); err != nil {
+		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
 	runnerTag := r.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	ctxDir := filepath.Join(r.Home, "image")

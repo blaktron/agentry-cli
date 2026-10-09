@@ -105,6 +105,8 @@ type modelSignInOut struct {
 	KeptIn    string `json:"keptIn,omitempty"`
 	// App is which of Agentry's GitHub apps a Copilot sign-in went through.
 	App string `json:"app,omitempty"`
+	// KeyExpiresAt is when a connected key that cannot be renewed expires.
+	KeyExpiresAt string `json:"keyExpiresAt,omitempty"`
 }
 
 func newModelSignInsListCmd() *cobra.Command {
@@ -131,7 +133,7 @@ func newModelSignInsListCmd() *cobra.Command {
 					state = "broken: " + r.Broken
 				}
 				rows = append(rows, modelSignInOut{Vendor: r.Vendor, Kind: r.Kind, Connected: r.Connected, Account: r.Label,
-					State: state, CreatedAt: r.CreatedAt, LastUsed: r.LastUsedAt, KeptIn: r.SecretIn, App: r.App})
+					State: state, CreatedAt: r.CreatedAt, LastUsed: r.LastUsedAt, KeptIn: r.SecretIn, App: r.App, KeyExpiresAt: r.KeyExpiresAt})
 			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), rows)
@@ -154,7 +156,11 @@ func newModelSignInsListCmd() *cobra.Command {
 				if r.App != "" {
 					via = " (through Agentry's " + mcpauth.GitHubAppName(r.App) + ")"
 				}
-				_, _ = fmt.Fprintf(out, "%s%s%s · %s · %s · last used: %s\n", r.Vendor, acct, via, r.Kind, r.State, last)
+				expires := ""
+				if r.KeyExpiresAt != "" {
+					expires = " · key expires " + r.KeyExpiresAt
+				}
+				_, _ = fmt.Fprintf(out, "%s%s%s · %s · %s%s · last used: %s\n", r.Vendor, acct, via, r.Kind, r.State, expires, last)
 			}
 			return nil
 		},
@@ -170,14 +176,14 @@ type removedModelSignIn struct {
 func newModelSignInsRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <vendor>",
-		Short: "Remove a model sign-in (revoked at the vendor where this build can; for claude, Claude Code logs out and its directory is deleted)",
+		Short: "Remove a model sign-in or disconnect an account (revoked at the vendor where this build can; for claude, Claude Code logs out and its directory is deleted; a connected key is forgotten, with where to delete it at the vendor)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := runnerHome()
 			if err != nil {
 				return err
 			}
-			s := modelsignin.Open(home, connectionKeys())
+			s := connectStore(home)
 			// A Claude sign-in is Claude Code's, in its own directories:
 			// Claude Code logs out there, then they are deleted.
 			s.EndClaude = endClaude(cmd.ErrOrStderr(), home)
@@ -190,6 +196,10 @@ func newModelSignInsRemoveCmd() *cobra.Command {
 			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), removedModelSignIn{Vendor: args[0], Revocation: outcome})
+			}
+			if modelsignin.IsConnectVendor(args[0]) {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "disconnected your %s account (revocation: %s)\n", modelsignin.ConnectName(args[0]), outcome)
+				return nil
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed the %s sign-in (revocation: %s)\n", args[0], outcome)
 			if args[0] == modelsignin.Copilot && outcome == modelsignin.RevokeSubmitted {

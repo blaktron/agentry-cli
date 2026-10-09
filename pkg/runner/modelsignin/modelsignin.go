@@ -27,9 +27,10 @@
 // directory Agentry owns and never reads (D19, D20), which the record
 // names: the Claude Code image's docker volume, the installed Claude
 // Code's directory under this store, or both, each signed in by the
-// Claude Code that uses it (agentry-cli#740). A connected key (OpenRouter, Poe, Hugging Face; D30) is an API
-// key in the model key's keychain entry; its record here only marks it
-// connected, for its Disconnect.
+// Claude Code that uses it (agentry-cli#740). A connected key (OpenRouter,
+// Poe, Hugging Face; D30, agentry-cli#742) is an API key in the model key's
+// keychain entry; its record here marks it connected, for its Disconnect,
+// and keeps Hugging Face's refresh token (connect.go).
 //
 // The vendors' flows (M4–M7) register what refreshes and revokes their
 // grants (RegisterVendor; ChatGPT's and Copilot's are registered by this
@@ -51,6 +52,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/internal/storefile"
+	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -81,9 +83,9 @@ var vendorKinds = map[string]struct {
 	ChatGPT:     {policy.KeyKindChatGPTPlan, policy.ProviderOpenAI, false},
 	Claude:      {policy.KeyKindClaudeSignIn, policy.ProviderAnthropic, false},
 	Copilot:     {policy.KeyKindCopilotSignIn, policy.ProviderCopilot, false},
-	OpenRouter:  {policy.KeyKindAPI, "openrouter", true},
-	Poe:         {policy.KeyKindAPI, "poe", true},
-	HuggingFace: {policy.KeyKindAPI, "huggingface", true},
+	OpenRouter:  {policy.KeyKindAPI, policy.ProviderOpenRouter, true},
+	Poe:         {policy.KeyKindAPI, policy.ProviderPoe, true},
+	HuggingFace: {policy.KeyKindAPI, policy.ProviderHuggingFace, true},
 }
 
 // Vendors lists the vendor names, sorted.
@@ -142,6 +144,10 @@ type Record struct {
 	// App is which of Agentry's apps a Copilot sign-in went through
 	// (mcpauth.GitHubApp or GitHubOAuthApp; plan D26).
 	App string `json:"app,omitempty"`
+	// KeyExpiresAt is when a connected key that cannot be refreshed stops
+	// working (Poe's, the expiry the person chose), RFC 3339; "" when it
+	// does not expire.
+	KeyExpiresAt string `json:"keyExpiresAt,omitempty"`
 
 	CreatedAt   string `json:"createdAt"`
 	RefreshedAt string `json:"refreshedAt,omitempty"`
@@ -239,6 +245,11 @@ type Store struct {
 	// outcome; an error keeps the record, so nothing is forgotten while a
 	// directory still holds the sign-in.
 	EndClaude func(ctx context.Context, r Record) (string, error)
+	// StoreKey and DeleteKey put and remove a connected key in the model
+	// key's keychain entry (modelkey.Store and modelkey.Delete when nil):
+	// seams, as no test may touch a person's keychain.
+	StoreKey  func(provider, key string) error
+	DeleteKey func(provider string) error
 }
 
 // Open is the store under home, keeping secrets in keys
@@ -513,6 +524,15 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 		return "", err
 	}
 	outcome := RevokeNothing
+	if r.Connected {
+		// The key goes first: a keychain that will not let it go keeps the
+		// record, so nothing is forgotten while a run could still spend it.
+		if err := s.deleteKey(r.Provider); err != nil {
+			unlock()
+			return "", fmt.Errorf("the %s key would not leave the OS keychain, so nothing is removed: %w", ConnectName(vendor), err)
+		}
+		outcome = fmt.Sprintf(RevokeConnectedKey, ConnectName(vendor), ConnectPage(vendor))
+	}
 	if dirs := claudeDirs(*r); dirs != "" {
 		outcome = fmt.Sprintf(RevokeClaudeDir, dirs)
 		if s.EndClaude != nil {
@@ -527,7 +547,9 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 		if v := vendorOf(vendor); v != nil {
 			if rt, err := s.readSecret(r, vendor); err != nil {
 				outcome = "not attempted: " + err.Error()
-			} else if err := v.Revoke(ctx, *r, rt); err != nil {
+			} else if err := v.Revoke(ctx, *r, rt); errors.Is(err, mcpauth.ErrRevokeNotOffered) && r.Connected {
+				outcome = fmt.Sprintf(RevokeConnectedNotOffered, ConnectName(vendor), ConnectPage(vendor))
+			} else if err != nil {
 				outcome = "failed: " + err.Error()
 			} else {
 				outcome = RevokeDone
@@ -538,10 +560,14 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 		}
 	}
 	s.dropSecret(vendor)
-	rmErr := storefile.RemoveIfThere(s.recordPath(vendor))
+	rmErr := removeRecord(s, vendor)
 	unlock()
 	s.audit(r, why, outcome)
 	return outcome, rmErr
+}
+
+func removeRecord(s *Store, vendor string) error {
+	return storefile.RemoveIfThere(s.recordPath(vendor))
 }
 
 // claudeDirs names a Claude sign-in's directories, "" when it has none.

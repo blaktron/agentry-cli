@@ -282,6 +282,17 @@ func planLimitError(text string, resets time.Time) error {
 	return Classify(ExitBudget, receipt.WithReason(errors.New(msg), receipt.ReasonPlanLimit, ""))
 }
 
+// outOfCreditsError is the out-of-credits outcome (agentry-cli#742): the
+// budget class, with its own reason and the provider's words. Never
+// retried, never a success.
+func outOfCreditsError(text string) error {
+	msg := "out of credits: the model's provider refused the calls because the account that pays for them has no credits left; add credits there, or pay with another account or key (agentry setup)"
+	if text != "" {
+		msg += "; the provider said: " + text
+	}
+	return Classify(ExitBudget, receipt.WithReason(errors.New(msg), receipt.ReasonOutOfCredits, ""))
+}
+
 // orgPolicyError is the organization-policy outcome (D29): the policy's
 // class, with its own reason naming which policy, and the vendor's words.
 // Never retried, never a success.

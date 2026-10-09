@@ -67,6 +67,14 @@ var providerDefaults = []ProviderDefault{
 		ModelsURL: "https://api.openai.com/v1/models", KeyHeader: keyHeaderBearer},
 	{Provider: "google", Model: "gemini-3-pro", APIKeyEnv: "GEMINI_API_KEY", ProxyAllow: []string{"generativelanguage.googleapis.com:443"},
 		ModelsURL: "https://generativelanguage.googleapis.com/v1beta/models", KeyHeader: "x-goog-api-key"},
+	// The providers whose account a person may connect (plan §4.6, D30;
+	// agentry-cli#742), each also paid by a pasted key. No default model
+	// and no model list: the person types the model id (D33). The key
+	// variables are the ones docker-agent's aliases read (Poe's is the
+	// named provider's token_key), and the endpoints docker-agent's.
+	{Provider: policy.ProviderOpenRouter, APIKeyEnv: "OPENROUTER_API_KEY", ProxyAllow: []string{"openrouter.ai:443"}},
+	{Provider: policy.ProviderPoe, APIKeyEnv: "POE_API_KEY", ProxyAllow: []string{"api.poe.com:443"}},
+	{Provider: policy.ProviderHuggingFace, APIKeyEnv: "HF_TOKEN", ProxyAllow: []string{"router.huggingface.co:443"}},
 }
 
 // Providers lists the selectable provider names (copilot, paid by a
@@ -124,6 +132,11 @@ type ModelOpts struct {
 	// Copilot offers Sign in with GitHub for provider copilot, its one way
 	// to pay (plan model-sign-ins.md §4.5; agentry-cli#741).
 	Copilot CopilotOffer
+	// Connect offers Connect your account for OpenRouter, Poe and Hugging
+	// Face (plan model-sign-ins.md §4.6; agentry-cli#742): nil offers none.
+	// ConnectAccount asks for it without the question.
+	Connect        ConnectOffer
+	ConnectAccount bool
 	// CopilotPlan is the Copilot plan the account is on (policy.CopilotPlans:
 	// individual, business, enterprise), which names the Copilot API host
 	// runs reach; "" keeps the policy's, else asks, else individual.
@@ -171,6 +184,110 @@ type CopilotOffer struct {
 	Kept func() string
 	// SignIn signs in with GitHub and returns the account.
 	SignIn func() (account string, err error)
+}
+
+// ConnectLabel is the connect choice's wording (plan §4.1).
+const ConnectLabel = "Connect your account"
+
+// ConnectOffer is how setup reaches a connect, which the caller owns (the
+// browser, the network, the keychain). Each takes the policy's provider.
+type ConnectOffer struct {
+	// Kept is how a kept connect for provider is named ("Connected as …"),
+	// "" when none is kept.
+	Kept func(provider string) string
+	// Connect connects the person's account in their browser, keeps the
+	// key it minted in the OS keychain, and returns how the account is
+	// named.
+	Connect func(provider string) (account string, err error)
+}
+
+// connectNames are the connect providers, as a person knows them, with a
+// model id of the shape each takes.
+var connectNames = map[string]struct{ name, example string }{
+	policy.ProviderOpenRouter:  {"OpenRouter", "anthropic/claude-sonnet-4.5"},
+	policy.ProviderPoe:         {"Poe", "Claude-Sonnet-4.6"},
+	policy.ProviderHuggingFace: {"Hugging Face", "openai/gpt-oss-120b:groq, a model and the provider that serves it"},
+}
+
+// IsConnectProvider reports whether provider's account can be connected.
+func IsConnectProvider(provider string) bool { _, ok := connectNames[provider]; return ok }
+
+// configureConnect is the model setup for a connected account: the
+// connect (or the one kept), the model id the person types (D33), and a
+// policy whose key is the provider's keychain entry, where the connect
+// kept it. The variable still wins when it is set.
+func configureConnect(p Prompter, pol *policy.Policy, opts ModelOpts, prov string) error {
+	if opts.Connect.Connect == nil {
+		return errors.New("this setup cannot connect an account")
+	}
+	if modelkey.Disabled() {
+		return fmt.Errorf("%s keeps the key in the OS keychain, which is disabled here (%s is set): paste a key into the variable instead", ConnectLabel, modelkey.EnvNoKeyring)
+	}
+	d, n := DefaultsFor(prov), connectNames[prov]
+	same := pol.Model.Provider == prov
+	if opts.Yes && strings.TrimSpace(opts.Model) == "" && (!same || pol.Model.Name == "") {
+		// Said before the browser opens, not after the account is connected.
+		return fmt.Errorf("no model chosen for %s (pass --model)", n.name)
+	}
+	acct := ""
+	if opts.Connect.Kept != nil {
+		acct = opts.Connect.Kept(prov)
+	}
+	fresh := acct == ""
+	if !fresh && !opts.Yes {
+		use, err := p.Confirm(fmt.Sprintf("Use the %s account connected on this computer (%s)?", n.name, acct), true)
+		if err != nil {
+			return err
+		}
+		fresh = !use
+	}
+	if fresh {
+		p.Say(fmt.Sprintf("%s: %s makes an API key for Agentry in your browser, billed to your %s account; it is kept in this computer's keychain, never in the policy file, and hosted runs never use it.", ConnectLabel, n.name, n.name))
+		var err error
+		if acct, err = opts.Connect.Connect(prov); err != nil {
+			return err
+		}
+	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		def := ""
+		if same {
+			def = pol.Model.Name
+		}
+		if opts.Yes {
+			model = def
+		} else {
+			ans, err := p.Ask(fmt.Sprintf("Model (the %s model id, such as %s; Agentry does not list them, and a model without tool calling fails)", n.name, n.example), def)
+			if err != nil {
+				return err
+			}
+			model = strings.TrimSpace(ans)
+		}
+	}
+	if model == "" {
+		return fmt.Errorf("no model chosen for %s (pass --model)", n.name)
+	}
+	keyEnv := strings.TrimSpace(opts.APIKeyEnv)
+	if keyEnv == "" {
+		keyEnv = d.APIKeyEnv
+		if same && pol.Model.APIKeyEnv != "" {
+			keyEnv = pol.Model.APIKeyEnv
+		}
+	}
+	pol.Model = policy.Model{
+		Provider:     prov,
+		Name:         model,
+		APIKeyEnv:    keyEnv,
+		APIKeySource: modelkey.SourceKeyring,
+		ProxyAllow:   append([]string(nil), d.ProxyAllow...),
+	}
+	who := ""
+	if acct != "" {
+		who = " as " + acct
+	}
+	p.Say(fmt.Sprintf("model: %s/%s (paid by your %s account, connected%s; key from $%s when it is set, else the connected key in the OS keychain; agent-container egress limited to %s)",
+		prov, model, n.name, who, keyEnv, strings.Join(pol.Model.ProxyAllow, ", ")))
+	return nil
 }
 
 // CopilotSignInLabel is the Copilot choice's wording (plan §4.1).
@@ -506,6 +623,40 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		}
 	} else if strings.EqualFold(strings.TrimSpace(opts.APIKeyKind), policy.KeyKindClaudeSignIn) {
 		return fmt.Errorf("api key kind claude-signin needs provider anthropic (it is %q)", prov)
+	}
+
+	// OpenRouter, Poe and Hugging Face are paid by a key, pasted or minted
+	// by connecting the person's account (D30): asked when setup can
+	// connect, unless the caller already said.
+	if IsConnectProvider(prov) {
+		connect := opts.ConnectAccount
+		kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind))
+		if connect && kind != "" && kind != policy.KeyKindAPI {
+			return fmt.Errorf("%s pays with an API key (api key kind api), not %q", ConnectLabel, kind)
+		}
+		if !connect && kind == "" && !opts.Yes && opts.Connect.Connect != nil {
+			def := "connect"
+			if pol.Model.Provider == prov && (opts.Connect.Kept == nil || opts.Connect.Kept(prov) == "") {
+				def = "key"
+			}
+			n := connectNames[prov].name
+			ans, err := p.Ask(fmt.Sprintf("Pay for %s models with (connect = %s: %s makes a key for Agentry in your browser | key = a %s API key you paste)", n, ConnectLabel, n, n), def)
+			if err != nil {
+				return err
+			}
+			switch strings.ToLower(strings.TrimSpace(ans)) {
+			case "connect":
+				connect = true
+			case "key", "api", "":
+			default:
+				return fmt.Errorf("%q is neither connect nor key", ans)
+			}
+		}
+		if connect {
+			return configureConnect(p, pol, opts, prov)
+		}
+	} else if opts.ConnectAccount {
+		return fmt.Errorf("%s is for openrouter, poe and huggingface (the provider is %q)", ConnectLabel, prov)
 	}
 
 	// A provider switch prefers the new provider's table defaults; staying

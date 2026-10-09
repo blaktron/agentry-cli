@@ -54,6 +54,7 @@ type ServerMetadata struct {
 	TokenEndpoint                     string   `json:"token_endpoint"`
 	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
 	RevocationEndpoint                string   `json:"revocation_endpoint,omitempty"`
+	UserinfoEndpoint                  string   `json:"userinfo_endpoint,omitempty"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
 	ISSParameterSupported             bool     `json:"authorization_response_iss_parameter_supported,omitempty"`

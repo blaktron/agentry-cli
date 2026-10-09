@@ -365,6 +365,8 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		out.err = planLimitError(collector.planLimit.Text, collector.planLimit.ResetsAt)
 	case collector.orgPolicy != nil:
 		out.err = orgPolicyError(collector.orgPolicy)
+	case collector.outOfCredits != nil:
+		out.err = outOfCreditsError(collector.outOfCredits.Text)
 	case errors.As(turnErr, &refused):
 		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:
