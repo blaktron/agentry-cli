@@ -32,6 +32,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
 // Exit codes (RUNNER-PLAN §R8). The distinguishable failure classes are
@@ -126,6 +127,12 @@ type Params struct {
 	// Otherwise a run's inputs are decoded before the agent starts (plan
 	// file-handling.md §5, agentry-cli#560).
 	TextInputs bool
+	// InputReview, when set, is AI Review of the inputs' text before the
+	// agent starts (review.go; plan file-handling.md §8, agentry-cli#321):
+	// a hosted run's, through the registry with the job's credential. A
+	// flagged input refuses the run, and a session's added file alone.
+	// Nil reviews nothing, as every local run.
+	InputReview webscan.Scanner
 	// EndBlocked grants end_blocked and the calls ledger (blocked.go): the
 	// run ends blocked, not ok, when its agent says it could not do the task
 	// or the ledger shows the runner's tools failed it. A release's one-shot
@@ -307,9 +314,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err != nil {
 		return fail(env, redact, err)
 	}
-	if line := dec.line(); line != "" {
-		env.CapabilitiesEnforced["decode"] = line
-	}
+	dec.lines(env.CapabilitiesEnforced)
 	secrets, err := secretValues(p)
 	if err != nil {
 		return fail(env, redact, err)
