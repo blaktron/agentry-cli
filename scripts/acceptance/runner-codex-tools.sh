@@ -15,7 +15,9 @@
 # installed `codex exec`, with a local fake Responses endpoint that records
 # the request and a fake stdio MCP server standing in for the gateway, and
 # requires the request's tools to be exactly the gateway's namespace and
-# codex's three MCP resource readers (which read from that gateway).
+# codex's three MCP resource readers (which read from that gateway), and no
+# developer message to list codex's bundled skills, nor any skill to be
+# installed into its CODEX_HOME (agentry-cli#762).
 #
 # No model key, no network, no docker: the endpoint is 127.0.0.1 and
 # answers 400 after recording. Run it on every Codex version bump.
@@ -93,7 +95,7 @@ PY
      >"$d/stdout.jsonl" 2>"$d/stderr.txt") || true
   kill "$SRV" 2>/dev/null || true; wait "$SRV" 2>/dev/null || true
   if ! python3 - "$d" "$model" <<'PY'
-import json, sys
+import json, os, sys
 d, model = sys.argv[1:]
 lines = [l for l in open(f"{d}/requests.jsonl").read().splitlines() if l.strip()]
 if not lines:
@@ -114,7 +116,14 @@ developer = [c.get("text", "") for it in req.get("input", []) if it.get("role") 
 instruction = (req.get("instructions") or (developer[0] if developer else "")).strip()
 if sorted(names) != want or instruction != "Do the thing.":
     print(f"FAIL {model}: tools {sorted(names)}, instruction {instruction[:80]!r}", file=sys.stderr); sys.exit(1)
-print(f"ok   {model}: the gateway's tools and the three resource readers, nothing else")
+# Codex's bundled skills (imagegen, openai-docs, …) are a capability the
+# run does not have; the prompt must not list them (agentry-cli#762).
+if any("<skills_instructions>" in m for m in developer):
+    print(f"FAIL {model}: a developer message lists codex's skills (<skills_instructions>)", file=sys.stderr); sys.exit(1)
+installed = sorted(os.listdir(f"{d}/home/skills")) if os.path.isdir(f"{d}/home/skills") else []
+if installed:
+    print(f"FAIL {model}: codex installed skills into CODEX_HOME ({installed})", file=sys.stderr); sys.exit(1)
+print(f"ok   {model}: the gateway's tools and the three resource readers, nothing else; no skill listed or installed")
 PY
   then fail=1; fi
 done
