@@ -845,6 +845,14 @@ could not reach what it needs, and names each gap:
 systemd user manager started before you joined the `docker` group cannot
 reach the daemon until you sign out of every session and back in.
 
+`add --check` decides all of this and keeps nothing: it asks no consent,
+installs nothing, seals nothing and leaves linger alone. It prints every
+gap a schedule made with the same flags would meet, and whether making it
+would ask for consent, and exits 0 either way. With `--json` it prints
+`{ref, version, digest, modes, ready, gaps, needsConsent, refusals,
+signedOut, describe, next}`. Agentry Desktop keeps its Schedule button off
+until it says `ready`, then makes the schedule with this binary.
+
 The schedule lives in the runner home under `schedules/<id>/`:
 - `schedule.yaml`, the definition;
 - `state.json`, what its fires did;
@@ -916,8 +924,16 @@ agentry schedule edit <id> --signed-out=false   # signed in only again
   unlocked session can read your keychain; another user cannot, and a copy
   of the file on another computer does not decrypt.
 - **When a key changes.** `agentry setup`, `agentry login` and `agentry
-  logout` seal every signed-out schedule's keys again. The credential is
-  removed when the schedule is removed, ends, or stops running signed out.
+  logout` seal every signed-out schedule's keys again; `agentry schedule
+  reseal` does it alone, for a key changed elsewhere (Agentry Desktop's
+  Settings run it), and exits 1 if any schedule's keys could not be sealed
+  again (`--json` prints `{sealed, failed}`). A schedule whose keys could
+  not be sealed again loses the old ones and does not run until `edit <id>
+  --signed-out`. The credential is removed when the schedule is removed,
+  ends, or stops running signed out.
+- **Whether this computer can.** `agentry schedule check-signed-out` says
+  whether it can run schedules while you are signed out, and why not
+  (`--json`: `{available, reason}`).
 - **When it is refused.** On macOS and Windows, and with Docker Desktop for
   Linux (Docker Desktop stops when you sign out); below systemd 256; for a
   QuickAgent whose declared server signs in with an OAuth connection, or a
