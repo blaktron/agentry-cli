@@ -178,7 +178,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `logout` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `files` · `run` · `schedule` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `verify` ·
+`setup` · `doctor` · `files` · `run` · `schedule` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `model-signins` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -1145,7 +1145,25 @@ package server's source id), each `{"accessToken", "expiresAt"}` with an
 optional `issuer` and `scopes` for the receipt. Nothing is consented to,
 refreshed or renewed and no connection is kept; a token that expires during
 the run ends that server's calls with a sentence naming the connection
-(agentry-cli#722). **`--file`** hands a
+(agentry-cli#722). **Model sign-ins** (agentry-cli#738, the engine of
+the model sign-ins plan) let a run spend a plan you hold instead of an API
+key: the policy's `apiKeyKind` names `chatgpt-plan`, `claude-signin` or
+`copilot-signin`, and the grant is kept per person under the runner home
+(`model-signins/`, its refresh token in the OS keychain, or a 0600 file
+where none answers), listed and
+removed by `agentry model-signins list|remove <vendor>`. A run is handed an
+access token alone, in one file of its own mounted read-only into the
+agent container and rewritten before it expires, or the harness's own
+config directory; it reports tokens, never dollars, refuses `--max-cost`,
+and ends with the plan-limit outcome (exit 16, reason `plan-limit`) when
+the plan's limit is reached. A hosted run's host (a run grant,
+`--connections-file` or `--session-protocol`) is refused one. The vendors'
+sign-in flows and the adapters that spend them are not in this release yet,
+so today every adapter refuses a sign-in kind at plan time (exit 11).
+Harness images are pinned per adapter: docker-agent's by digest
+(`images.harnessDockerAgent`), any other's in `images.harnessImages` by
+digest or by the vendor artifact it is built from, and the receipt names
+the pin and the credential kind. **`--file`** hands a
 run external files read-only under `/inputs`. Before the agent starts the
 runner decodes them (a document, PDF or image into its text, and an
 archive into its files, each decoded in turn, in the files image, with no

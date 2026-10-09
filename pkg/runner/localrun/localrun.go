@@ -612,7 +612,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	}
 	runnerTag := r.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	ctxDir := filepath.Join(r.Home, "image")
-	if err := gateway.EnsureInstalled(ctx, d, r.Policy, runnerTag, ctxDir, logw, plan.Harness.Host == nil); err != nil {
+	if err := gateway.EnsureInstalledFor(ctx, d, r.Policy, runnerTag, ctxDir, logw, plan); err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
 	var execPackages []string

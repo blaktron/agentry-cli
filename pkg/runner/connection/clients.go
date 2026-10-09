@@ -14,6 +14,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
+	"github.com/blaktron/agentry-cli/internal/storefile"
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 )
@@ -122,19 +123,19 @@ func (c *Clients) Set(issuer, clientID, secret string) error {
 	case c.keys != nil && c.keys.Set(clientAccount(id), secret) == nil:
 		rec.SecretIn = secretInKeychain
 	default:
-		if err := writeFileAtomic(c.secretPath(id), []byte(secret)); err != nil {
+		if err := storefile.WriteAtomic(c.secretPath(id), []byte(secret)); err != nil {
 			return fmt.Errorf("keep the client secret: %w", err)
 		}
 		rec.SecretIn = secretInFile
 	}
 	if rec.SecretIn != secretInFile {
-		_ = removeIfThere(c.secretPath(id))
+		_ = storefile.RemoveIfThere(c.secretPath(id))
 	}
 	if rec.SecretIn != secretInKeychain && c.keys != nil {
 		_ = c.keys.Delete(clientAccount(id))
 	}
 	b, _ := json.MarshalIndent(rec, "", "  ")
-	return writeFileAtomic(c.recordPath(id), append(b, '\n'))
+	return storefile.WriteAtomic(c.recordPath(id), append(b, '\n'))
 }
 
 // Get is issuer's client with its secret, or nil when none is kept.
@@ -222,5 +223,5 @@ func (c *Clients) Remove(issuer string) (bool, error) {
 	if c.keys != nil && rec.SecretIn == secretInKeychain {
 		_ = c.keys.Delete(clientAccount(id))
 	}
-	return true, errors.Join(removeIfThere(c.secretPath(id)), removeIfThere(c.recordPath(id)))
+	return true, errors.Join(storefile.RemoveIfThere(c.secretPath(id)), storefile.RemoveIfThere(c.recordPath(id)))
 }

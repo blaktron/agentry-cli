@@ -116,6 +116,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := checkVoice(p); err != nil {
 		return fail(err)
 	}
+	if err := checkModelSignIn(p); err != nil {
+		return fail(err)
+	}
+	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
 		return fail(err)
@@ -306,6 +310,8 @@ type liveSession struct {
 	costUSD        float64
 	lastText       string
 	harnessErr     string
+	// planLimit is the harness's first plan-limit event (EndPlanLimit).
+	planLimit *adapter.Event
 	// panicErr is set when the pump or the watcher recovered a panic. It is
 	// the session's error whatever reason it then ended with, because that
 	// reason is a side effect of the recovery (agentry-cli#161).
@@ -528,7 +534,8 @@ func (s *liveSession) handle(ev adapter.Event) {
 		s.inTok += ev.InputTokens
 		s.outTok += ev.OutputTokens
 		s.totTok += ev.TotalTokens
-		if ev.CostUSD > s.costUSD {
+		// A plan run reports tokens, never dollars (D13).
+		if ev.CostUSD > s.costUSD && s.p.Plan.Harness.ModelSignIn == nil {
 			s.costUSD = ev.CostUSD
 		}
 		over := s.p.Budgets.MaxCostUSD > 0 && s.costUSD > s.p.Budgets.MaxCostUSD
@@ -546,6 +553,17 @@ func (s *liveSession) handle(ev adapter.Event) {
 		s.harnessErr = ev.Text
 		s.mu.Unlock()
 		s.emit(session.Event{Kind: session.KindError, Text: ev.Text, Raw: ev.Raw})
+	case adapter.EventPlanLimit:
+		s.mu.Lock()
+		first := s.planLimit == nil
+		if first {
+			s.planLimit = &ev
+		}
+		s.mu.Unlock()
+		s.emit(session.Event{Kind: session.KindError, Text: "plan limit reached: " + ev.Text, Raw: ev.Raw})
+		if first {
+			s.endWith(session.EndPlanLimit)
+		}
 	default:
 		s.emit(session.Event{Kind: session.KindOther, Text: ev.Text, Raw: ev.Raw})
 	}
@@ -867,6 +885,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	env.Usage = receipt.Usage{InputTokens: s.inTok, OutputTokens: s.outTok, TotalTokens: s.totTok, CostUSD: s.costUSD, Turns: s.toolCalls, UserTurns: s.userTurns}
 	harnessErr := s.harnessErr
 	panicErr := s.panicErr
+	planLimit := s.planLimit
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
 	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
@@ -899,6 +918,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		outErr = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", s.p.Budgets.MaxTurns))
 	case session.EndCostBudget:
 		outErr = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", env.Usage.CostUSD, s.p.Budgets.MaxCostUSD))
+	case session.EndPlanLimit:
+		outErr = planLimitError(planLimit.Text, planLimit.ResetsAt)
 	case session.EndIdle:
 		outErr = Classify(ExitTimeout, fmt.Errorf("session idle for more than %ds", s.budgets.IdleTimeoutSeconds))
 	case session.EndWall:

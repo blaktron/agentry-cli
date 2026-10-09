@@ -289,12 +289,17 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		return nil, err
 	}
 
+	keyKind := policy.KeyKind(in.Policy.Harness[adapterName], in.Policy.Model)
+	if policy.IsModelSignIn(keyKind) && !adapter.SpendsModelSignIn(ad, keyKind) {
+		return nil, signInRefusal(adapterName, keyKind)
+	}
+	harnessImage, _ := in.Policy.Images.HarnessImageFor(adapterName)
 	res, err := ad.Compile(adapter.Input{
 		Mode:         mode,
 		Instruction:  instruction,
 		Summary:      m.Summary,
 		Model:        in.Policy.Model,
-		HarnessImage: in.Policy.Images.HarnessDockerAgent,
+		HarnessImage: harnessImage.Ref,
 		GatewayURL:   spec.GatewayURL(),
 		SchemaJSON:   schemaJSON,
 		Harness:      in.Policy.Harness[adapterName],
@@ -305,6 +310,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, &PolicyRefusal{Reason: refusal.Reason}
 		}
 		return nil, fmt.Errorf("adapter %s: %w", adapterName, err)
+	}
+	if err := modelSignIn(adapterName, keyKind, &res); err != nil {
+		return nil, err
 	}
 	if res.Session != nil {
 		res.Session.Budgets = sessionBudgets(m, in.Policy)
@@ -339,12 +347,14 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		ExecImage:    execImage,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, in.MCPServers),
 		Harness: spec.HarnessSpec{
-			Adapter:    adapterName,
-			Model:      res.Model,
-			Agent:      res.Agent,
-			Host:       res.Host,
-			ResultKind: res.ResultKind,
-			Session:    res.Session,
+			Adapter:     adapterName,
+			Model:       res.Model,
+			Agent:       res.Agent,
+			Host:        res.Host,
+			ResultKind:  res.ResultKind,
+			Session:     res.Session,
+			ImagePin:    imagePin(res.Agent.Image, harnessImage),
+			ModelSignIn: res.ModelSignIn,
 		},
 		Proxy: spec.ProxySpec{
 			Image:     in.RunnerImage,
@@ -392,9 +402,19 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["runtime"] = rt + ": the run's containers are created with docker --runtime " + rt +
 			" where it holds; the receipt's runtime line names each container class, and each that takes the daemon's default and why"
 	}
+	// A model sign-in is the model's mechanism instead of a key (plan
+	// model-sign-ins.md §4.2): what reaches the harness, and that the run
+	// reports tokens, never dollars (D13).
+	if msi := plan.Harness.ModelSignIn; msi != nil {
+		if plan.Enforcement == nil {
+			plan.Enforcement = map[string]string{}
+		}
+		plan.Enforcement["model.signIn"] = modelSignInLine(msi)
+		plan.Enforcement["model.cost"] = "paid by the person's own plan (" + policy.SignInSentence(msi.Kind) + "): the receipt reports tokens, not dollars, and a cost budget is refused"
+	}
 	// The model key's source is a mechanism the receipt names (§R11): the
 	// variable, or the variable else the keychain (agentry-cli#148).
-	if keyEnv, account := modelKeySource(in.Policy, adapterName); keyEnv != "" {
+	if keyEnv, account := modelKeySource(in.Policy, adapterName); keyEnv != "" && plan.Harness.ModelSignIn == nil {
 		if plan.Enforcement == nil {
 			plan.Enforcement = map[string]string{}
 		}

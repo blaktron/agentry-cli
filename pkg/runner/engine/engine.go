@@ -167,6 +167,17 @@ type Params struct {
 	// re-reads its token file pick up. Nil leaves each token as given for
 	// the whole run.
 	RenewConnection func(ctx context.Context, server string) (ConnectionToken, error)
+	// ModelSignIn is what the run is given of the person's model sign-in
+	// when its plan spends one (spec.HarnessSpec.ModelSignIn, signin.go):
+	// an access token alone, or the harness's own config directory. The
+	// run refuses one its plan was not compiled for, and a plan that
+	// spends one refuses to run without it. Never set by a hosted run's
+	// driver (plan model-sign-ins.md D2).
+	ModelSignIn *ModelSignInGrant
+	// RenewModelSignIn, when set, is asked for a new access token for a
+	// token-file sign-in before the one the run holds expires; the engine
+	// rewrites the token file with it. Nil leaves the token as given.
+	RenewModelSignIn func(ctx context.Context) (ConnectionToken, error)
 	// ServersDir is the signature's installed MCP-server store
 	// (RUNNER-PLAN-3), substituted for the PHServers placeholder.
 	// Required when the plan declares MCP servers; unused otherwise.
@@ -231,9 +242,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		Attestation:          p.Attestation,
 		CapabilitiesEnforced: enforcedAtStart(p),
 		Harness: receipt.Harness{
-			Adapter: p.Plan.Harness.Adapter,
-			Image:   p.Plan.Harness.Agent.Image,
-			Model:   p.Plan.Harness.Model,
+			Adapter:        p.Plan.Harness.Adapter,
+			Image:          p.Plan.Harness.Agent.Image,
+			Model:          p.Plan.Harness.Model,
+			ImagePin:       p.Plan.Harness.ImagePin.String(),
+			CredentialKind: credentialKind(p.Plan),
 		},
 		Policy: policyRecord(p),
 		Result: receipt.TextResult(""),
@@ -261,6 +274,10 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkVoice(p); err != nil {
 		return fail(env, redact, err)
 	}
+	if err := checkModelSignIn(p); err != nil {
+		return fail(env, redact, err)
+	}
+	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 
 	// Everything below must tear down whatever it built, success or not
 	// (§R11 invariant 6): td runs in reverse order via defer, then sweeps
@@ -903,6 +920,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		overCost: func() {
 			cancelCause(errCostBudget)
 		},
+		signIn: p.Plan.Harness.ModelSignIn != nil,
+		onPlanLimit: func() {
+			cancelCause(errPlanLimit)
+		},
 	}
 	done := consumeGuarded(collector, pr, cancelCause)
 
@@ -935,6 +956,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// draining, and so was killed.
 	case collector.panicErr != nil:
 		out.err = Classify(ExitCLI, collector.panicErr)
+	// A plan limit is the outcome whatever the harness did next: it may
+	// exit 0 after saying so, and a run its plan refused is no success.
+	case collector.planLimit != nil:
+		out.err = planLimitError(collector.planLimit.Text, collector.planLimit.ResetsAt)
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:
@@ -956,6 +981,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 var (
 	errBudget     = errors.New("turn budget exceeded")
 	errCostBudget = errors.New("cost budget exceeded")
+	errPlanLimit  = errors.New("plan limit reached")
 )
 
 // outputSchema loads and compiles the package's output.schema.json for a
@@ -1048,6 +1074,13 @@ type eventCollector struct {
 	// usage_recorded_test.go pins this against the recorded streams).
 	maxCostUSD float64
 	overCost   func()
+	// signIn says the run is paid by a model sign-in: a harness's reported
+	// cost is not the person's to pay, so it is not recorded (D13), and
+	// onPlanLimit ends the run when the harness reports the plan's limit
+	// (I9), keeping its words in planLimit and planResets.
+	signIn      bool
+	onPlanLimit func()
+	planLimit   *adapter.Event
 
 	turns         int
 	inTok, outTok int64
@@ -1154,7 +1187,7 @@ func (c *eventCollector) consume(r io.Reader) {
 				c.inTok += ev.InputTokens
 				c.outTok += ev.OutputTokens
 				c.totTok += ev.TotalTokens
-				if ev.CostUSD > c.costUSD {
+				if ev.CostUSD > c.costUSD && !c.signIn {
 					c.costUSD = ev.CostUSD
 				}
 				if c.maxCostUSD > 0 && c.costUSD > c.maxCostUSD && !c.costTripped && c.overCost != nil {
@@ -1164,6 +1197,13 @@ func (c *eventCollector) consume(r io.Reader) {
 				c.notifyUsage()
 			case adapter.EventError:
 				c.harnessErrReported = ev.Text
+			case adapter.EventPlanLimit:
+				if c.planLimit == nil {
+					c.planLimit = &ev
+					if c.onPlanLimit != nil {
+						c.onPlanLimit()
+					}
+				}
 			}
 		}
 	}

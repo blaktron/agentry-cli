@@ -86,8 +86,12 @@ type runDirs struct {
 	// files are rendered.
 	interactive bool
 	// conns are the run's connections as it holds them, for the renewer
-	// (writeConnectionFiles, renewConnections; agentry-cli#665).
-	conns []*heldConnection
+	// (writeConnectionFiles, renewConnections; agentry-cli#665), and its
+	// model sign-in's token (writeModelSignIn; agentry-cli#738).
+	conns []*heldToken
+	// modelSignIn is spec.PHModelSignIn's value: the run's token folder,
+	// or the sign-in's config directory; empty for a key.
+	modelSignIn string
 	// modelHosts are the llm-proxy's pinned model endpoints ("name:ip",
 	// modelhosts.go), for the receipt.
 	modelHosts []string
@@ -185,6 +189,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHRunID, filepath.Base(rd.root),
 		spec.PHSecretsAbsent, rd.absentForPrompt(),
 		spec.PHRunMode, rd.modeForPrompt(),
+		spec.PHModelSignIn, hostPath(rd.modelSignIn),
 	)
 }
 
@@ -273,6 +278,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	td.add(func(context.Context) {
 		td.removeSensitive(rd.secretsPath, false)
 		td.removeSensitive(rd.connections(), true)
+		td.removeSensitive(rd.modelSignInDir(), true)
 		td.removeSensitive(rd.knowledge, true)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
