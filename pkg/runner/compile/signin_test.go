@@ -106,16 +106,17 @@ func TestAKeyPlanMountsNoSignInFolder(t *testing.T) {
 
 // An adapter that cannot spend the sign-in the policy names refuses the
 // plan by policy (exit 11), naming the adapter and the kind: docker-agent
-// for every kind (D8), and a host adapter, which drives the person's own
-// installation, until its milestone gives it a delivery (codex's came with
-// agentry-cli#739).
+// for every kind (D8), and each vendor's adapters for another vendor's
+// sign-in (codex's came with agentry-cli#739, claude's with #740).
 func TestAnAdapterThatCannotSpendASignInRefusesByPolicy(t *testing.T) {
 	for _, c := range []struct{ adapter, kind string }{
 		{"docker-agent", policy.KeyKindChatGPTPlan},
 		{"docker-agent", policy.KeyKindClaudeSignIn},
 		{"docker-agent", policy.KeyKindCopilotSignIn},
-		{"claude", policy.KeyKindClaudeSignIn},
 		{"codex-image", policy.KeyKindClaudeSignIn},
+		{"codex", policy.KeyKindClaudeSignIn},
+		{"claude-image", policy.KeyKindChatGPTPlan},
+		{"claude", policy.KeyKindChatGPTPlan},
 	} {
 		_, err := compileSignIn(t, c.adapter, c.kind, nil)
 		var refusal *PolicyRefusal
@@ -201,6 +202,92 @@ func TestTheInstalledCodexCompilesAPlanRun(t *testing.T) {
 		}
 	}
 	if l := plan.Enforcement["model.signIn"]; !strings.Contains(l, "one file in this run's own folder") {
+		t.Fatalf("model.signIn %q", l)
+	}
+}
+
+// compileClaudePlan compiles the pure-text fixture for a claude adapter
+// under a Claude subscription through Claude Code.
+func compileClaudePlan(t *testing.T, adapterName string, mode manifest.Mode, edit func(*policy.Policy)) (*spec.Plan, error) {
+	t.Helper()
+	m := parseManifest(t, pureTextYAML)
+	pol := testPolicy()
+	pol.Model = policy.Model{Provider: policy.ProviderAnthropic, Name: "claude-sonnet-4-6", APIKeyKind: policy.KeyKindClaudeSignIn,
+		ProxyAllow: policy.SignInProxyAllow(policy.KeyKindClaudeSignIn)}
+	pol.Images.HarnessImages = nil
+	if edit != nil {
+		edit(pol)
+	}
+	return Compile(Inputs{
+		Manifest: m, Mode: mode, Digest: "sha256:0123456789abcdef", Source: "local",
+		WorkspaceDir: workspaceFor(t, m, nil), Policy: pol, PolicySHA: "fixedpolicysha",
+		RunnerImage: "agentry-runner:test", AdapterName: adapterName,
+	}, t.TempDir())
+}
+
+// The Claude Code image on a Claude subscription (agentry-cli#740): the
+// image built on this machine, pinned by its npm integrity (I8); the plan
+// read-only and Claude Code's config directory read-write, and nothing
+// else (I4); the egress Anthropic's API and the host Claude Code refreshes
+// at, alone (I2). (The adapter's interactive form is the conformance
+// golden's; the fixture QuickAgent is autonomous.)
+func TestTheClaudeCodeImageCompilesASignInRun(t *testing.T) {
+	def, _ := policy.Default().Images.HarnessImageFor("claude-image")
+	for _, mode := range []manifest.Mode{manifest.ModeAutonomous} {
+		plan, err := compileClaudePlan(t, "claude-image", mode, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		h := plan.Harness
+		if h.Agent.Image != def.Ref || h.ImagePin == nil || *h.ImagePin != (spec.ImagePin{By: policy.PinArtifact, Value: def.Artifact}) {
+			t.Fatalf("%s: image %q pin %+v", mode, h.Agent.Image, h.ImagePin)
+		}
+		want := []spec.Mount{
+			{Source: spec.PHCfg + "/harness", Target: spec.PlanMount, ReadOnly: true},
+			{Source: spec.PHModelSignIn, Target: "/claude"},
+		}
+		if got := h.Agent.Mounts; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("%s: mounts %+v", mode, got)
+		}
+		if strings.Join(plan.Proxy.Allow, ",") != "api.anthropic.com:443,platform.claude.com:443" {
+			t.Fatalf("%s: proxy allow %v", mode, plan.Proxy.Allow)
+		}
+		if l := plan.Enforcement["model.signIn"]; !strings.Contains(l, "read-write at /claude into this run's agent container alone") {
+			t.Fatalf("%s: model.signIn %q", mode, l)
+		}
+		if h.Session != nil || !h.Agent.StdinTask {
+			t.Fatalf("%s: session %+v, stdin %v", mode, h.Session, h.Agent.StdinTask)
+		}
+	}
+	for _, allow := range [][]string{
+		{"api.anthropic.com:443"},
+		{"api.anthropic.com:443", "platform.claude.com:443", "claude.ai:443"},
+		{"api.anthropic.com:443", "platform.claude.com:443", "mcp-proxy.anthropic.com:443"},
+	} {
+		_, err := compileClaudePlan(t, "claude-image", manifest.ModeAutonomous, func(p *policy.Policy) { p.Model.ProxyAllow = allow })
+		var refusal *PolicyRefusal
+		if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "reaches api.anthropic.com:443, platform.claude.com:443 alone") {
+			t.Errorf("allow %v: %v", allow, err)
+		}
+	}
+}
+
+// The installed Claude Code on a Claude subscription: nothing mounted, no
+// key, its config directory Agentry's own, named by the engine; the receipt
+// says so (D23).
+func TestTheInstalledClaudeCodeCompilesASignInRun(t *testing.T) {
+	plan, err := compileClaudePlan(t, "claude", manifest.ModeAutonomous, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := plan.Harness
+	if h.Host == nil || h.Agent.Image != "" || len(h.Agent.Mounts) != 0 || h.ImagePin != nil {
+		t.Fatalf("host %+v, agent %+v", h.Host, h.Agent)
+	}
+	if h.ModelSignIn == nil || h.ModelSignIn.Delivery != spec.ModelSignInConfigDir || h.ModelSignIn.Path != spec.PHModelSignIn {
+		t.Fatalf("modelSignIn %+v", h.ModelSignIn)
+	}
+	if l := plan.Enforcement["model.signIn"]; !strings.Contains(l, "Agentry's own for the harness installed on this computer") || strings.Contains(l, "@@") {
 		t.Fatalf("model.signIn %q", l)
 	}
 }

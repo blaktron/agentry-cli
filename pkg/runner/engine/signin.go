@@ -99,6 +99,11 @@ func checkModelSignIn(p Params) error {
 		// own folder (plan D20: never their ~/.claude).
 		d := g.ConfigDir
 		switch {
+		case p.Plan.Harness.Host != nil && !filepath.IsAbs(d):
+			// A harness installed on this computer reads a directory here,
+			// not a docker volume (the image's sign-in is one; plan §4.4).
+			return Classify(ExitPolicy, fmt.Errorf("the %s on this computer reads its sign-in from a directory of Agentry's own, and this run was given the image's docker volume %s: sign in for the installed harness, or run in the image",
+				policy.SignInSentence(msi.Kind), d))
 		case filepath.IsAbs(d):
 			if !OwnSignInDir(p.RunnerHome, d) {
 				return Classify(ExitPolicy, fmt.Errorf("the %s's directory %s is not one of Agentry's own (under %s): sign in again (agentry setup)",

@@ -53,12 +53,16 @@ func SignInTokenRoute(hp HarnessPolicy) string {
 	return hp.SignInTokenRoute
 }
 
-// signInEndpoints are the endpoints a run paid by each token-file sign-in
-// kind may reach through the egress proxy, and nothing else (invariant
-// I2): the vendor's inference API alone, never its token endpoint, which
-// only the CLI talks to.
+// signInEndpoints are the endpoints a run paid by each sign-in kind may
+// reach through the egress proxy, and nothing else (invariant I2). For a
+// token-file sign-in, the vendor's inference API alone, never its token
+// endpoint, which only the CLI talks to. Claude Code keeps and refreshes
+// its own sign-in in its directory (plan D20), so a Claude run reaches
+// Anthropic's API and the host its refresh goes to (platform.claude.com,
+// Claude Code's TOKEN_URL in 2.1.296), and nothing of claude.ai.
 var signInEndpoints = map[string][]string{
-	KeyKindChatGPTPlan: {"api.openai.com:443"},
+	KeyKindChatGPTPlan:  {"api.openai.com:443"},
+	KeyKindClaudeSignIn: {"api.anthropic.com:443", "platform.claude.com:443"},
 }
 
 // SignInProxyAllow is the proxy allowlist a run paid by kind must have,
@@ -141,8 +145,10 @@ const (
 	PinTag = "tag"
 )
 
-// artifactRE is a vendor artifact's hash as a pin carries it.
-var artifactRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+// artifactRE is a vendor artifact's hash as a pin carries it: sha256 in
+// hex (a release download's checksum), or an npm package's integrity as
+// the registry gives it, sha512 in base64 (Subresource Integrity).
+var artifactRE = regexp.MustCompile(`^(sha256:[0-9a-f]{64}|sha512-[A-Za-z0-9+/]{86}==)$`)
 
 // localImageRE is the name of an image built on this machine: lowercase,
 // no registry host (no dot or port before the first slash), a tag.
@@ -173,7 +179,7 @@ func (h HarnessImage) validate(adapterName string) error {
 	switch {
 	case h.Artifact != "":
 		if !artifactRE.MatchString(h.Artifact) {
-			return fmt.Errorf("%s.artifact %q must be sha256:<64 hex>, the hash of the vendor artifact the image is built from", field, h.Artifact)
+			return fmt.Errorf("%s.artifact %q must be sha256:<64 hex> or an npm integrity (sha512-<base64>), the hash of the vendor artifact the image is built from", field, h.Artifact)
 		}
 		if !localImageRE.MatchString(h.Ref) || namesRegistry(h.Ref) {
 			return fmt.Errorf("%s.ref %q must be a local <name>:<tag> (an image built on this machine is never pulled)", field, h.Ref)
@@ -185,7 +191,8 @@ func (h HarnessImage) validate(adapterName string) error {
 }
 
 // DefaultHarnessImages are the CLI's pinned harness images for the
-// adapters beyond docker-agent, by adapter name, each by digest (I8).
+// adapters beyond docker-agent, by adapter name, each by digest or by the
+// artifact it is built from (I8).
 //
 // codex-image: agentry-dockerimages' Codex harness image (#53), OpenAI's
 // Codex CLI 0.162.0 release binary verified against OpenAI's signature,
@@ -193,8 +200,16 @@ func (h HarnessImage) validate(adapterName string) error {
 // main (agentry-cli's CI verifies this digest against that identity,
 // scripts/verify-codex-image.sh). A Codex bump re-records the adapter's
 // conformance before this pin moves (README "Bumping Codex" there).
+//
+// claude-image: Claude Code built on this machine, never published (plan
+// D22): the artifact is the npm integrity of @anthropic-ai/claude-code at
+// the tag's version, and the build (pkg/runner/harnessbuild) holds the
+// native package it installs to the integrity it carries for that release.
+// A bump adds the release there and re-records the adapter's conformance
+// before this pin moves.
 var DefaultHarnessImages = map[string]HarnessImage{
-	"codex-image": {Ref: "ghcr.io/blaktron/agentry-codex:0.162.0-2026.10.09.1@sha256:e6b0c020b797d7941b4365f82e743f190f82342f087621bddf57b087e4d703f9"},
+	"codex-image":  {Ref: "ghcr.io/blaktron/agentry-codex:0.162.0-2026.10.09.1@sha256:e6b0c020b797d7941b4365f82e743f190f82342f087621bddf57b087e4d703f9"},
+	"claude-image": {Ref: "agentry-claude-code:2.1.296", Artifact: "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="},
 }
 
 // HarnessImageFor is the harness image adapterName runs in: docker-agent's

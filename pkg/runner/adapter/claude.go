@@ -50,6 +50,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -142,71 +143,43 @@ type claudeMCPConfig struct {
 	MCPServers map[string]claudeMCPServer `json:"mcpServers"`
 }
 
-// Compile renders the instruction, the gateway-only MCP config and the
-// host process that runs them.
-func (c *claudeAdapter) Compile(in Input) (Result, error) {
-	if in.Instruction == "" {
-		return Result{}, errors.New("claude adapter: empty instruction")
-	}
-	model := in.Harness.Model
-	if model == "" {
-		model = in.Model.Name
-	}
-	if model == "" {
-		return Result{}, errors.New("claude adapter: no model (set model.name, or harness.claude.model in the policy)")
-	}
-	keyEnv := policy.KeyEnv(in.Harness, in.Model)
-	if keyEnv == "" {
-		return Result{}, errors.New("claude adapter: no model key variable (set model.apiKeyEnv, or harness.claude.apiKeyEnv in the policy)")
-	}
+// ModelSignIns implements ModelSignInAdapter: the installed Claude Code
+// spends a Claude subscription through its own sign-in, kept in a
+// directory Agentry owns (plan model-sign-ins.md D23; agentry-cli#740).
+func (c *claudeAdapter) ModelSignIns() []string { return []string{policy.KeyKindClaudeSignIn} }
 
-	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
-
+// claudeMCPJSON is the gateway-only MCP config, the gateway at url.
+func claudeMCPJSON(url string) ([]byte, error) {
 	cfg, err := json.MarshalIndent(claudeMCPConfig{MCPServers: map[string]claudeMCPServer{
 		claudeGatewayServer: {
 			Type: "http",
-			// The gateway is published on 127.0.0.1 for a host harness;
-			// the address is only known per run, so it is a placeholder
-			// the engine renders (plan §5).
-			URL: spec.PHHostGatewayURL,
+			URL:  url,
 			// ${VAR} is Claude Code's own expansion, from the process
 			// environment: the token never appears in plan bytes.
 			Headers: map[string]string{"Authorization": "Bearer ${" + spec.GatewayTokenEnv + "}"},
 		},
 	}}, "", "  ")
 	if err != nil {
-		return Result{}, fmt.Errorf("claude adapter: render %s: %w", claudeMCPFile, err)
+		return nil, fmt.Errorf("render %s: %w", claudeMCPFile, err)
 	}
-	cfg = append(cfg, '\n')
+	return append(cfg, '\n'), nil
+}
 
-	mode := in.Mode
-	if mode == "" {
-		mode = manifest.ModeAutonomous
-	}
-	// A subscription OAuth token is read from CLAUDE_CODE_OAUTH_TOKEN,
-	// and bare mode does not read that variable (Anthropic's own
-	// documentation: "Bare mode does not read CLAUDE_CODE_OAUTH_TOKEN"),
-	// so that kind runs without --bare. Most of what --bare withheld is
-	// withheld by the rest: --setting-sources "" loads no user, project
-	// or local settings, the run-scoped CLAUDE_CONFIG_DIR holds no login,
-	// no hooks, no plugins and no memory of the person's. Two things stay
-	// open and are said so (DR-26): CLAUDE.md files in the ancestors of
-	// the harness directory, which the engine refuses a subscription run
-	// over (engine: ancestorFile), and managed settings, which are the
-	// machine administrator's and no flag closes (agentry-cli#171).
-	subscription := policy.KeyKind(in.Harness, in.Model) == policy.KeyKindSubscription
-	// One argv for both modes but for the input side: an autonomous run
-	// takes its task on stdin and ends, a session reads user turns as
-	// stream-json and stays up until stdin closes.
-	argv := []string{"-p"}
-	if !subscription {
+// claudeArgv is the one argv of both modes but for the input side: an
+// autonomous run takes its task on stdin and ends, a session reads user
+// turns as stream-json and stays up until stdin closes. bare is --bare,
+// which reads no OAuth credential, so a run on a subscription token or on
+// Claude Code's own sign-in runs without it.
+func claudeArgv(mode manifest.Mode, instructionPath, mcpPath, model string, bare bool) (argv []string, session *spec.SessionSpec, stdinTask bool, err error) {
+	argv = []string{"-p"}
+	if bare {
 		argv = append(argv, "--bare")
 	}
 	argv = append(argv,
 		"--verbose",
 		"--output-format", "stream-json",
-		"--system-prompt-file", claudeInstructionFile,
-		"--mcp-config", claudeMCPFile,
+		"--system-prompt-file", instructionPath,
+		"--mcp-config", mcpPath,
 		"--strict-mcp-config",
 		"--setting-sources", "",
 		"--tools", "",
@@ -217,45 +190,131 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 		"--disable-slash-commands",
 		"--model", model,
 	)
-	var session *spec.SessionSpec
-	stdinTask := true
 	switch mode {
-	case manifest.ModeAutonomous:
+	case "", manifest.ModeAutonomous:
+		return argv, nil, true, nil
 	case manifest.ModeInteractive:
-		argv = append(argv, "--input-format", "stream-json")
-		stdinTask = false
-		session = &spec.SessionSpec{
+		return append(argv, "--input-format", "stream-json"), &spec.SessionSpec{
 			Transport:       claudeTransport,
 			ProtocolVersion: claudeProtocolVersion,
-		}
-	default:
-		return Result{}, fmt.Errorf("claude adapter: unknown run mode %q", mode)
+		}, false, nil
+	}
+	return nil, nil, false, fmt.Errorf("unknown run mode %q", mode)
+}
+
+// claudeQuietEnv turns off telemetry, error reporting, update checks and
+// every other background call (§3 invariant 7): a sandboxed run should
+// talk to the model and the gateway, and to nothing else.
+func claudeQuietEnv() []spec.EnvVar {
+	return []spec.EnvVar{
+		{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
+		{Name: "DISABLE_TELEMETRY", Value: "1"},
+		{Name: "DISABLE_ERROR_REPORTING", Value: "1"},
+		{Name: "DISABLE_AUTOUPDATER", Value: "1"},
+		{Name: "DISABLE_BUG_COMMAND", Value: "1"},
+	}
+}
+
+// claudeModel is the run's model: the harness block's, else the policy's.
+func claudeModel(adapterName string, in Input) (string, error) {
+	model := in.Harness.Model
+	if model == "" {
+		model = in.Model.Name
+	}
+	if model == "" {
+		return "", fmt.Errorf("%s adapter: no model (set model.name, or harness.%s.model in the policy)", adapterName, adapterName)
+	}
+	return model, nil
+}
+
+// Compile renders the instruction, the gateway-only MCP config and the
+// host process that runs them.
+func (c *claudeAdapter) Compile(in Input) (Result, error) {
+	if in.Instruction == "" {
+		return Result{}, errors.New("claude adapter: empty instruction")
+	}
+	model, err := claudeModel(ClaudeAdapterName, in)
+	if err != nil {
+		return Result{}, err
+	}
+	kind := policy.KeyKind(in.Harness, in.Model)
+	signIn := kind == policy.KeyKindClaudeSignIn
+	keyEnv := policy.KeyEnv(in.Harness, in.Model)
+	if keyEnv == "" && !signIn {
+		return Result{}, errors.New("claude adapter: no model key variable (set model.apiKeyEnv, or harness.claude.apiKeyEnv in the policy)")
+	}
+	if signIn && in.Harness.BaseURL != "" {
+		// Claude Code's own sign-in talks to Anthropic itself; pointing it
+		// at another endpoint would hand that endpoint the person's login.
+		return Result{}, &Refusal{Reason: "a Claude subscription through Claude Code reaches Anthropic itself, and harness.claude.baseUrl names " + in.Harness.BaseURL + ": remove it, or pay with an API key"}
 	}
 
-	// The model credential is the operator's, by name (§R4): an API key
-	// as ANTHROPIC_AUTH_TOKEN, the bearer an Anthropic-compatible
-	// endpoint expects; a subscription token as CLAUDE_CODE_OAUTH_TOKEN,
-	// the one variable Claude Code reads such a token from. The plan
-	// records which kind it was rendered for, and the engine refuses a
-	// value of the other kind.
-	credentialVar := "ANTHROPIC_AUTH_TOKEN"
+	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
+
+	// The gateway is published on 127.0.0.1 for a host harness; the address
+	// is only known per run, so it is a placeholder the engine renders
+	// (plan §5).
+	cfg, err := claudeMCPJSON(spec.PHHostGatewayURL)
+	if err != nil {
+		return Result{}, fmt.Errorf("claude adapter: %w", err)
+	}
+
+	// A subscription OAuth token is read from CLAUDE_CODE_OAUTH_TOKEN,
+	// and bare mode does not read that variable (Anthropic's own
+	// documentation: "Bare mode does not read CLAUDE_CODE_OAUTH_TOKEN"),
+	// so that kind runs without --bare; so does Claude Code's own sign-in,
+	// which bare mode does not read either. Most of what --bare withheld is
+	// withheld by the rest: --setting-sources "" loads no user, project
+	// or local settings, and the config directory holds no hooks, plugins
+	// or memory of the person's (run-scoped for a token; for a sign-in,
+	// Agentry's own, never the person's ~/.claude). Two things stay open
+	// and are said so (DR-26): CLAUDE.md files in the ancestors of the
+	// harness directory, which the engine refuses such a run over
+	// (engine: ancestorFile), and managed settings, which are the machine
+	// administrator's and no flag closes (agentry-cli#171).
+	subscription := kind == policy.KeyKindSubscription
+	argv, session, stdinTask, err := claudeArgv(in.Mode, claudeInstructionFile, claudeMCPFile, model, !subscription && !signIn)
+	if err != nil {
+		return Result{}, fmt.Errorf("claude adapter: %w", err)
+	}
+
 	// Without --bare, Claude Code reads CLAUDE.md, CLAUDE.local.md and
 	// .claude/rules from the working directory and every ancestor up to
 	// the root — the run directory sits under the person's home, so a
-	// ~/CLAUDE.md would enter a subscription run. The engine refuses the
-	// run when one is there (RefuseAncestorFiles), which is the
-	// invariant measured rather than assumed.
+	// ~/CLAUDE.md would enter such a run. The engine refuses the run when
+	// one is there (RefuseAncestorFiles), which is the invariant measured
+	// rather than assumed.
 	var ancestorContext []string
-	if subscription {
-		credentialVar = "CLAUDE_CODE_OAUTH_TOKEN"
+	if subscription || signIn {
 		ancestorContext = claudeAncestorContext
 	}
-	env := []spec.EnvVar{
-		{Name: spec.GatewayTokenEnv, FromRunToken: true},
-		{Name: credentialVar, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in), ExpectedKind: anthropicKeyExpectation(in)},
-	}
-	if in.Harness.BaseURL != "" {
-		env = append(env, spec.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: in.Harness.BaseURL})
+	env := []spec.EnvVar{{Name: spec.GatewayTokenEnv, FromRunToken: true}}
+	configDir := spec.PHCfg + "/harness/" + claudeConfigDirName
+	var msi *spec.ModelSignInSpec
+	if signIn {
+		// The person's sign-in lives in Agentry's own directory for the
+		// installed Claude Code, which only Claude Code reads and writes
+		// (plan D20): the engine names it here and never reads it. No key
+		// variable, so nothing outranks the sign-in (Claude Code reads
+		// ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY and apiKeyHelper first),
+		// and none of the person's is inherited (InheritEnv below).
+		configDir = spec.PHModelSignIn
+		msi = &spec.ModelSignInSpec{Kind: kind, Provider: policy.ProviderAnthropic, Delivery: spec.ModelSignInConfigDir, Path: spec.PHModelSignIn}
+	} else {
+		// The model credential is the operator's, by name (§R4): an API
+		// key as ANTHROPIC_AUTH_TOKEN, the bearer an Anthropic-compatible
+		// endpoint expects; a subscription token as CLAUDE_CODE_OAUTH_TOKEN,
+		// the one variable Claude Code reads such a token from. The plan
+		// records which kind it was rendered for, and the engine refuses a
+		// value of the other kind.
+		credentialVar := "ANTHROPIC_AUTH_TOKEN"
+		if subscription {
+			credentialVar = "CLAUDE_CODE_OAUTH_TOKEN"
+		}
+		env = append(env, spec.EnvVar{Name: credentialVar, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in), ExpectedKind: anthropicKeyExpectation(in)})
+		if in.Harness.BaseURL != "" {
+			env = append(env, spec.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: in.Harness.BaseURL})
+		}
 	}
 	env = append(env,
 		// The proxy is the intended route out. A host process is not
@@ -266,16 +325,14 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 		// The gateway and the proxy are both on 127.0.0.1: MCP traffic
 		// must reach the gateway directly rather than through the proxy.
 		spec.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost"},
-		spec.EnvVar{Name: "CLAUDE_CONFIG_DIR", Value: spec.PHCfg + "/harness/" + claudeConfigDirName},
-		// Telemetry, error reporting, update checks and every other
-		// background call off (§3 invariant 7): a sandboxed run should
-		// talk to the model and the gateway, and to nothing else.
-		spec.EnvVar{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
-		spec.EnvVar{Name: "DISABLE_TELEMETRY", Value: "1"},
-		spec.EnvVar{Name: "DISABLE_ERROR_REPORTING", Value: "1"},
-		spec.EnvVar{Name: "DISABLE_AUTOUPDATER", Value: "1"},
-		spec.EnvVar{Name: "DISABLE_BUG_COMMAND", Value: "1"},
+		spec.EnvVar{Name: "CLAUDE_CONFIG_DIR", Value: configDir},
 	)
+	if signIn {
+		// A claude.ai sign-in would otherwise fetch the account's own
+		// connectors as MCP servers.
+		env = append(env, spec.EnvVar{Name: "ENABLE_CLAUDEAI_MCP_SERVERS", Value: "false"})
+	}
+	env = append(env, claudeQuietEnv()...)
 
 	return Result{
 		Files: map[string][]byte{
@@ -297,8 +354,9 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 		Session: session,
 		// Claude Code speaks the Anthropic Messages API whatever endpoint
 		// it is pointed at; the policy's baseUrl says which one that was.
-		Model:      "anthropic/" + model,
-		ResultKind: resultKind,
+		Model:       "anthropic/" + model,
+		ResultKind:  resultKind,
+		ModelSignIn: msi,
 	}, nil
 }
 
@@ -324,6 +382,17 @@ type claudeMessage struct {
 	} `json:"usage"`
 	// ToolName appears on the permission-denial system message.
 	ToolName string `json:"tool_name"`
+	// RateLimit is a rate_limit_event's: what Claude Code's sign-in was
+	// told of the plan's usage limits (Anthropic's SDKRateLimitEvent).
+	RateLimit struct {
+		Status string `json:"status"`
+		// ResetsAt is in seconds since the epoch: Claude Code rounds
+		// Anthropic's anthropic-ratelimit-unified-reset header into it
+		// (read from 2.1.296's own code).
+		ResetsAt      int64  `json:"resetsAt"`
+		RateLimitType string `json:"rateLimitType"`
+		ErrorCode     string `json:"errorCode"`
+	} `json:"rate_limit_info"`
 }
 
 // claudeBlock is one content block of an assistant message.
@@ -355,6 +424,8 @@ func (c *claudeAdapter) Events(line []byte) []Event {
 		return claudeAssistantEvents(msg, raw)
 	case "result":
 		return claudeResultEvents(msg, raw)
+	case "rate_limit_event":
+		return []Event{claudeRateLimitEvent(msg, raw)}
 	case "system":
 		switch msg.Subtype {
 		case "thinking_tokens":
@@ -371,6 +442,30 @@ func (c *claudeAdapter) Events(line []byte) []Event {
 		return []Event{{Kind: EventOther, Text: msg.Subtype, Raw: raw}}
 	}
 	return []Event{{Kind: EventOther, Text: msg.Type, Raw: raw}}
+}
+
+// claudeRateLimitEvent maps a rate_limit_event: rejected, or a plan whose
+// included usage is spent (errorCode credits_required), is the plan's
+// limit (plan model-sign-ins.md §4.4, invariant I9), with Claude Code's
+// own reset time when it gave one; allowed and allowed_warning are kept
+// in the receipts and nothing more.
+func claudeRateLimitEvent(msg claudeMessage, raw json.RawMessage) Event {
+	rl := msg.RateLimit
+	if rl.Status != "rejected" && rl.ErrorCode != "credits_required" {
+		return Event{Kind: EventOther, Text: "rate_limit_event " + rl.Status, Raw: raw}
+	}
+	text := "Claude Code reported the plan's usage limit"
+	if rl.RateLimitType != "" {
+		text += " (" + rl.RateLimitType + ")"
+	}
+	if rl.ErrorCode == "credits_required" {
+		text += ": the plan's included usage is spent, and the run cannot continue until usage credits are bought"
+	}
+	ev := Event{Kind: EventPlanLimit, Text: text, Raw: raw}
+	if rl.ResetsAt > 0 {
+		ev.ResetsAt = time.Unix(rl.ResetsAt, 0).UTC()
+	}
+	return ev
 }
 
 // claudeAssistantEvents turns one assistant message into at most one text

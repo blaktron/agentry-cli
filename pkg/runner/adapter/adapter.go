@@ -340,13 +340,20 @@ func Names() []string {
 // DefaultName is the v1 default adapter (annex §7, Q-R4).
 const DefaultName = "docker-agent"
 
-// DefaultFor is the adapter a run uses when none is named: the Codex image
-// when the policy's model is paid by a ChatGPT plan, which docker-agent
-// cannot spend (plan model-sign-ins.md D8, D15; agentry-cli#739), else
-// DefaultName. docker-agent stays the default for every key (D16).
+// DefaultFor is the adapter a run uses when none is named, for a model
+// sign-in docker-agent cannot spend: the Codex image for a ChatGPT plan
+// (plan model-sign-ins.md D8, D15; agentry-cli#739), the Claude Code image
+// for a Claude subscription (D19, D23; agentry-cli#740); else DefaultName.
+// docker-agent stays the default for every key (D16).
 func DefaultFor(pol *policy.Policy) string {
-	if pol != nil && policy.KeyKind(pol.Harness[DefaultName], pol.Model) == policy.KeyKindChatGPTPlan {
+	if pol == nil {
+		return DefaultName
+	}
+	switch policy.KeyKind(pol.Harness[DefaultName], pol.Model) {
+	case policy.KeyKindChatGPTPlan:
 		return CodexImageAdapterName
+	case policy.KeyKindClaudeSignIn:
+		return ClaudeImageAdapterName
 	}
 	return DefaultName
 }
