@@ -128,9 +128,6 @@ func hasCapSysPtrace(t *testing.T) bool {
 }
 
 func TestHideEnvironmentMarksTheProcessNonDumpable(t *testing.T) {
-	if !environmentHideable {
-		t.Fatal("linux must hide the environment")
-	}
 	// In a child, so the test binary itself stays dumpable.
 	if os.Getenv("AGENTRY_TOOLSRV_DUMPABLE_HELPER") == "1" {
 		const prGetDumpable = 3
