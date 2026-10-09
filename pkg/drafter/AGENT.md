@@ -100,7 +100,9 @@ What the guide states is also checked after you answer, whatever you read.
    `## Steps`, `## Output`, `## Background` and `## Checks`, in that order,
    and **at most 32,768 bytes**. Carry the domain knowledge a run with no
    network cannot look up. A result the person wants as a PDF is written
-   in Markdown with `write_report`, then made a PDF with `export_pdf`;
+   in Markdown with `write_report`, whose `path` is already inside
+   `reports/`, then made a PDF with `export_pdf`, whose `source` adds
+   `reports/` to that path;
    never PDF syntax, a `.pdf` for `write_report`, or HTML to print. Every
    run also has a scratch folder for notes and working files, which never
    reaches the person. Pages: `draft/instructions.md`, `draft/examples.md`,

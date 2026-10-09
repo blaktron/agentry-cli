@@ -50,3 +50,5 @@ agentry/drafter@1.10.0 sha256:cdc6c0a773e08f709f3a67883249a3e7683f04ec56919c1c50
 agentry/drafter@1.11.0 sha256:3b5874e98c1e196aed53cbc0bce1b3c976673d4a86f98551a103cab43e559f25
 # 1.12.0: the drafting guide and AGENT.md teach the tools every run has beyond its manifest, the scratch folder and export_pdf (the only way a run makes a PDF), and the post-step sends instructions that write_report a .pdf or leave the person to print a page to PDF to the repair turn (agentry-cli#787).
 agentry/drafter@1.12.0 sha256:182f1f3d6cc1d16bd8c95ec934a435f793be3ff39c7b6d9d4b4ed0222d039921
+# 1.12.1: the guide and AGENT.md say write_report's path is inside reports/ (resume.md) and export_pdf's source names it from the output folder (reports/resume.md); 1.12.0's live draft wrote reports/reports/resume.md (agentry-cli#787).
+agentry/drafter@1.12.1 sha256:c4a268281ee01f9a428403a12c4e6af2a49517e946b2735dbdf0cb0225370e40
