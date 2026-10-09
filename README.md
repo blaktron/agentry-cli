@@ -1045,26 +1045,43 @@ manifest + operator policy into a deterministic run plan → execute:
   nothing. Only local PNG and JPEG images are drawn; links stay links
   only for `http`, `https` and `mailto`; Typst code in the Markdown is text.
   The PDF is tagged (PDF/UA-1), its author is the QuickAgent's
-  `namespace/name@version`, and its look is the run's report theme, never
+  `namespace/name@version`, and its look is the run's report design, never
   the model's choice. `write_report` refuses a PDF, so a PDF in
   `reports/` that the receipt names is one `export_pdf` wrote.
-- **The report theme** is one of five (agentry-cli#731): `plain`, `formal`
-  (serif, a cover page, "page n of N"), `brief` (a compact memo),
-  `technical` (dense, banded tables) and `letter` (a letterhead, and each
-  short line of a paragraph kept, so an address or a To/From block stays
-  one line to a line). A run takes the first that is set:
-  `agentry run --report-theme NAME` for that run alone, then your account's
-  report theme when you are signed in (chosen on the site or the desktop,
-  read from the registry at the start of the run), then `report.theme` in
-  `~/.config/agentry/config.yaml` (`report: {theme: formal}`), then Plain.
-  A name in the flag or the config that is not one of the five stops the
-  run before it starts (exit 2); an account the CLI cannot reach, or a theme
-  it does not have, is a warning and the next choice is used. The receipt's
-  `capabilities_enforced["pdf.theme"]` names the theme, its digest and what
-  chose it.
+- **The form is the agent's** (agentry-cli#784): `export_pdf` takes
+  `form`, one of `report` (the default; the opening heading is drawn as the
+  title block, and a titled report of 1,500 words or more gets a cover
+  page), `letter` (the opening heading as a letterhead, each short line of
+  a paragraph kept, so an address or a signature stays one line to a line,
+  and no page numbers on a one-page letter) and `memo` (the opening heading
+  as the title, and the To, From, Cc, Date, Subject or Re lines that open
+  the body drawn as the memo's header). It takes nothing else: a call that
+  names a theme, a colour or a font is refused.
+- **The report design is the person's** (agentry-cli#784; the core's
+  `pkg/reportdesign`, DEV-230): a theme document, version 2, holding the
+  paper (A4 or US Letter), three faces from the fourteen open-licence
+  families in the image, one accent colour and its tint, a title block, a
+  heading treatment, the tables, the quotes and the footer. Five built-in
+  themes are starting points: `plain` (the default, near-monochrome),
+  `classic`, `modern`, `editorial` and `technical`. A run takes the first
+  that is set: `agentry run --report-design FILE` or `--report-theme NAME`
+  for that run alone, then your account's report design when you are
+  signed in (chosen on the site or the desktop, read from the registry at
+  the start of the run), then `report.design` (a file; a relative path is
+  the config directory's) or `report.theme` in
+  `~/.config/agentry/config.yaml` (`report: {theme: classic}`), then Plain.
+  A name or a file in a flag or the config that is not a design stops the
+  run before it starts (exit 2): a theme that is not one of the five, a
+  file that breaks one of the design's rules (an accent that cannot carry
+  its text among them). An account the CLI cannot reach, or a design it
+  does not accept, is a warning and the next choice is used. The receipt's
+  `capabilities_enforced["pdf.design"]` names the design, the theme it is
+  based on, its digest and what chose it. A thumbnail of each built-in,
+  drawn by the same template, is in `pkg/reportthumbs`.
 - **Everything the run produces** lands in the output folder: the
   QuickAgent's report files, `result.json` (the machine-readable envelope;
-  its `pdfs` block names the theme and each exported PDF's SHA-256),
+  its `pdfs` block names the design and each exported PDF's SHA-256 and
+  form),
   and `receipts/` (event stream, gateway log, the exact run plan; for a
   one-shot run, `calls.ndjson`: each runner tool call's outcome, never its
   arguments, and the agent's `end_blocked` sentence, masked like the rest;

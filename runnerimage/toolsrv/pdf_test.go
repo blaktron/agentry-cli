@@ -219,7 +219,7 @@ func TestExportPDFWritesAndRecords(t *testing.T) {
 	mustWrite(t, filepath.Join(spec.ScratchDir, "notes", "draft.md"), []byte("# Draft\n"))
 
 	got, isErr := exportPDF(t, s, map[string]any{"source": "reports/sub/summary.md"})
-	if isErr || !strings.HasPrefix(got, "report written: reports/sub/summary.pdf (3 pages, 1 KiB; plain theme)") {
+	if isErr || !strings.HasPrefix(got, "report written: reports/sub/summary.pdf (3 pages, 1 KiB; the report form, in the Plain report design)") {
 		t.Fatalf("export = (%q, %v)", got, isErr)
 	}
 	got, isErr = exportPDF(t, s, map[string]any{"source": "/scratch-is-not-this/x.md"})
@@ -253,7 +253,7 @@ func TestExportPDFWritesAndRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(pdf)
-	if e.Path != "reports/sub/summary.pdf" || e.SHA256 != hex.EncodeToString(sum[:]) || e.Pages != 3 || e.Bytes != int64(len(pdf)) {
+	if e.Path != "reports/sub/summary.pdf" || e.SHA256 != hex.EncodeToString(sum[:]) || e.Pages != 3 || e.Bytes != int64(len(pdf)) || e.Form != FormReport {
 		t.Errorf("ledger entry = %+v", e)
 	}
 	if _, err := os.Stat(filepath.Join(spec.OutDir, "reports", "sub", "summary.md")); err != nil {
@@ -401,7 +401,7 @@ func TestASymlinkNeverReachesTheRenderRoot(t *testing.T) {
 	for _, f := range files {
 		names = append(names, f[1])
 	}
-	if want := []string{"img/1.png", "main.typ", "meta.json", "report.md", "theme.json"}; !slices.Equal(names, want) {
+	if want := []string{"design.json", "img/1.png", "main.typ", "meta.json", "report.md"}; !slices.Equal(names, want) {
 		t.Errorf("the render root held %v, want %v", names, want)
 	}
 	if !strings.Contains(pdf, `"real.png":{"path":"img/1.png","name":"real.png"}`) || strings.Contains(pdf, `"linked.png"`) {
@@ -560,72 +560,6 @@ func TestExportPDFInputCaps(t *testing.T) {
 	}
 }
 
-// TestExportPDFUsesTheRunTheme (invariant 9): the render gets the theme the
-// engine stamped, byte for byte, and the model has no theme argument; a
-// stamp whose document is not the one hashed never serves.
-func TestExportPDFUsesTheRunTheme(t *testing.T) {
-	plain, err := BuiltinTheme(DefaultTheme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	custom := bytes.Replace(bytes.Replace(plain, []byte(`"name": "plain"`), []byte(`"name": "house"`), 1), []byte(`"marginMm": 20`), []byte(`"marginMm": 31`), 1)
-	stamp, err := StampTheme(custom)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := pdfSpec(t)
-	spec.PDF.Theme = stamp
-	s := pdfServer(t, spec, fakeTypst(t, fakePDF+`; cat "$ROOT/theme.json"`))
-	if props := exportPDFSchema()["properties"].(map[string]any); len(props) != 2 || props["theme"] != nil {
-		t.Errorf("export_pdf takes %v, want source and path alone", props)
-	}
-	mustWrite(t, filepath.Join(spec.OutDir, "reports", "r.md"), []byte("# R\n"))
-	got, isErr := exportPDF(t, s, map[string]any{"source": "r.md", "theme": "formal"})
-	if isErr || !strings.Contains(got, "house theme") {
-		t.Fatalf("export = (%q, %v)", got, isErr)
-	}
-	if pdf := readReport(t, spec, "r.pdf"); !bytes.HasSuffix(pdf, custom) {
-		t.Errorf("the render did not get the stamped theme:\n%s", pdf)
-	}
-	forged := *stamp
-	forged.Document = strings.Replace(forged.Document, `"marginMm": 31`, `"marginMm": 32`, 1)
-	spec.PDF.Theme = &forged
-	if err := validateSpec(spec); err == nil || !strings.Contains(err.Error(), "SHA-256") {
-		t.Errorf("a stamp whose document changed = %v", err)
-	}
-}
-
-func TestParseTheme(t *testing.T) {
-	plain, err := BuiltinTheme("plain")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ParseTheme(plain); err != nil {
-		t.Fatalf("plain: %v", err)
-	}
-	if _, err := BuiltinTheme("../plain"); err == nil {
-		t.Error("a theme name that is a path was looked up")
-	}
-	for name, change := range map[string][2]string{
-		"unknown field": {`"agentryTheme": 1,`, `"agentryTheme": 1, "script": "#read(\"/etc/passwd\")",`},
-		"version 2":     {`"agentryTheme": 1`, `"agentryTheme": 2`},
-		"system font":   {`"body": "Noto Sans"`, `"body": "DejaVu Sans"`},
-		"colour":        {`"text": "#1a1a1a"`, `"text": "red"`},
-		"paper":         {`"paper": "a4"`, `"paper": "a0"`},
-		"margin":        {`"marginMm": 20`, `"marginMm": 2`},
-		"page numbers":  {`"pageNumbers": "n"`, `"pageNumbers": "#counter(page)"`},
-		"scale":         {`[1.7, 1.35, 1.15, 1.0, 1.0, 1.0]`, `[1.7]`},
-	} {
-		doc := bytes.Replace(plain, []byte(change[0]), []byte(change[1]), 1)
-		if bytes.Equal(doc, plain) {
-			t.Fatalf("%s: the change did not apply", name)
-		}
-		if _, err := ParseTheme(doc); err == nil {
-			t.Errorf("%s: accepted", name)
-		}
-	}
-}
-
 func TestChooseRenderConfinement(t *testing.T) {
 	noLandlock := errors.New("landlock: function not implemented")
 	c := chooseRenderConfinement("linux", 4, nil, 0, "/usr/local/bin/agentry-runner")
@@ -752,6 +686,12 @@ func realExport(t *testing.T, md string, files map[string][]byte) (*Spec, []byte
 // realExportIn is realExport under a built-in theme.
 func realExportIn(t *testing.T, theme, md string, files map[string][]byte) (*Spec, []byte) {
 	t.Helper()
+	return realExportForm(t, theme, FormReport, md, files)
+}
+
+// realExportForm is realExport under a built-in theme, in a form.
+func realExportForm(t *testing.T, theme, form, md string, files map[string][]byte) (*Spec, []byte) {
+	t.Helper()
 	doc, err := BuiltinTheme(theme)
 	if err != nil {
 		t.Fatal(err)
@@ -768,7 +708,7 @@ func realExportIn(t *testing.T, theme, md string, files map[string][]byte) (*Spe
 		mustWrite(t, filepath.Join(spec.OutDir, "reports", name), b)
 	}
 	mustWrite(t, filepath.Join(spec.OutDir, "reports", "r.md"), []byte(md))
-	got, isErr := exportPDF(t, s, map[string]any{"source": "r.md"})
+	got, isErr := exportPDF(t, s, map[string]any{"source": "r.md", "form": form})
 	if isErr {
 		t.Fatalf("export = %q", got)
 	}
@@ -791,17 +731,20 @@ func uris(pdf []byte) []string {
 // run. Each line would stop the render if it ran (#panic, a package the
 // renderer cannot download, a file outside the render root), so the render
 // succeeding is the proof; and none of the links it would make is there.
-// Under every theme (agentry-cli#731): the first heading, markup included,
-// is Formal's cover title and Letter's letterhead, and Letter's kept lines
-// put a backslash after short ones.
+// Under every theme and in every form (agentry-cli#731, #784): the first
+// heading, markup included, is the title block, a letter's letterhead and a
+// long report's cover, and a letter's kept lines put a backslash after short
+// ones.
 func TestRawTypstIsText(t *testing.T) {
 	for _, theme := range BuiltinThemes() {
-		t.Run(theme, func(t *testing.T) { rawTypstIsText(t, theme) })
+		for _, form := range Forms {
+			t.Run(theme+"/"+form, func(t *testing.T) { rawTypstIsText(t, theme, form) })
+		}
 	}
 }
 
-func rawTypstIsText(t *testing.T, theme string) {
-	_, pdf := realExportIn(t, theme, strings.Join([]string{
+func rawTypstIsText(t *testing.T, theme, form string) {
+	_, pdf := realExportForm(t, theme, form, strings.Join([]string{
 		`# Injection #panic("heading ran") #link("https://heading.example")[h]`,
 		"",
 		`#panic("short line ran")`,
@@ -815,6 +758,8 @@ func rawTypstIsText(t *testing.T, theme string) {
 		`<!--raw-typst #import "@preview/whatever:0.1.0": * -->`,
 		"",
 		"$ #link(\"https://math.example\")[z] #panic(\"math ran\") $",
+		"",
+		strings.Repeat("Words to pass the cover's length. ", 300),
 	}, "\n"), nil)
 	if got := uris(pdf); len(got) != 0 {
 		t.Errorf("Typst code in the Markdown ran: links %q", got)

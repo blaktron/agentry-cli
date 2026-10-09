@@ -26,6 +26,27 @@ type mdDoc struct {
 	// images are the image sources the file names, in order, once each, as
 	// written (cmarker passes the template the same strings).
 	images []string
+	// opening is the lines of the first heading when it opens the file
+	// (nothing but blank lines before it, and in no quote or list): the
+	// report's own title, which the template draws as its title block.
+	opening []int
+
+	// What reportMarkdown adds for the form.
+
+	// titleBlock says the opening heading was taken out of text, for the
+	// template to draw as the title block.
+	titleBlock bool
+	// memo is a memo's header: the To, From, Cc, Date, Subject and Re
+	// lines it opened with, taken out of text.
+	memo []memoField
+	// words counts the words of text, for the report form's cover.
+	words int
+}
+
+// memoField is one line of a memo's header, as plain text.
+type memoField struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 var (
@@ -74,6 +95,16 @@ func scanMarkdown(src string) mdDoc {
 		return drawn
 	}
 	var fences fenceScan
+	// blank says every line before i is blank: a heading there opens the
+	// file.
+	blank := func(i int) bool {
+		for _, l := range lines[:i] {
+			if strings.TrimSpace(l) != "" {
+				return false
+			}
+		}
+		return true
+	}
 	for i, line := range lines {
 		if fences.fenced(line) {
 			continue
@@ -83,6 +114,9 @@ func scanMarkdown(src string) mdDoc {
 			lines[i] = m[1] + strings.Repeat("#", drawn) + m[3]
 			if doc.title == "" {
 				doc.title = plainTitle(mdClosingAT.ReplaceAllString(" "+strings.TrimSpace(m[3]), ""))
+				if strings.TrimSpace(m[1]) == "" && doc.title != "" && blank(i) {
+					doc.opening = []int{i}
+				}
 			}
 			continue
 		}
@@ -96,6 +130,9 @@ func scanMarkdown(src string) mdDoc {
 			}
 			if doc.title == "" {
 				doc.title = plainTitle(lines[i-1])
+				if doc.title != "" && blank(i-1) {
+					doc.opening = []int{i - 1, i}
+				}
 			}
 		}
 	}
@@ -192,15 +229,82 @@ func hasScheme(src string) bool {
 	return true
 }
 
-// reportMarkdown is the Markdown export_pdf hands Typst for src under a
-// theme: its headings renumbered, and its lines kept when the theme keeps
-// them.
-func reportMarkdown(src string, theme *Theme) mdDoc {
+// The forms of a PDF (plan report-designs.md D1, D15): the document's
+// shape, which the agent chooses per export.
+const (
+	FormReport = "report"
+	FormLetter = "letter"
+	FormMemo   = "memo"
+)
+
+// Forms are export_pdf's forms, the default first.
+var Forms = []string{FormReport, FormLetter, FormMemo}
+
+// coverWords is the length past which a titled report gets a cover page of
+// its own: about three pages of prose (plan report-designs.md D15; M3 picks
+// the threshold).
+const coverWords = 1500
+
+// reportMarkdown is the Markdown export_pdf hands Typst for src in a form:
+// its headings renumbered; the opening heading taken out, for the template
+// to draw as the title block; a memo's header lines taken out, for the
+// template to draw as a block of their own; and a letter's lines kept.
+func reportMarkdown(src, form string) mdDoc {
 	doc := scanMarkdown(src)
-	if theme.LineBreaks == "hard" {
+	lines := strings.Split(doc.text, "\n")
+	if doc.opening != nil {
+		for _, i := range doc.opening {
+			lines[i] = ""
+		}
+		doc.titleBlock = true
+	}
+	if form == FormMemo {
+		doc.memo = takeMemoHeader(lines)
+	}
+	doc.text = strings.Join(lines, "\n")
+	if form == FormLetter {
 		doc.text = hardLineBreaks(doc.text)
 	}
+	doc.words = len(strings.Fields(doc.text))
 	return doc
+}
+
+// mdMemoLine is a line of a memo's header, "To: …" with its label set in
+// bold or not, as a list item or not, a hard break at its end or not.
+var mdMemoLine = regexp.MustCompile(`(?i)^ {0,3}(?:[-*+][ \t]+)?(?:\*\*|__)?(to|from|cc|date|subject|re)(?:(?:\*\*|__)[ \t]*:|:[ \t]*(?:\*\*|__)?)[ \t]*(.*?)(?:\\|[ \t]*)$`)
+
+// memoLabels spell each label as the header draws it.
+var memoLabels = map[string]string{"to": "To", "from": "From", "cc": "Cc", "date": "Date", "subject": "Subject", "re": "Re"}
+
+// takeMemoHeader reads a memo's header from the first block of lines: when
+// every line of it is a header line, and there are at least two, they are
+// taken out of lines and returned as plain text. Anything else is left as
+// the agent wrote it.
+func takeMemoHeader(lines []string) []memoField {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	var fields []memoField
+	end := start
+	for ; end < len(lines) && strings.TrimSpace(lines[end]) != ""; end++ {
+		m := mdMemoLine.FindStringSubmatch(lines[end])
+		if m == nil {
+			return nil
+		}
+		value := plainTitle(m[2])
+		if value == "" {
+			return nil
+		}
+		fields = append(fields, memoField{Label: memoLabels[strings.ToLower(m[1])], Value: value})
+	}
+	if len(fields) < 2 {
+		return nil
+	}
+	for i := start; i < end; i++ {
+		lines[i] = ""
+	}
+	return fields
 }
 
 // shortLine is the length under which a paragraph's line is a line of its

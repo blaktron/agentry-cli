@@ -70,7 +70,7 @@ func goSources(t *testing.T, dir string) map[string][]byte {
 		n := e.Name()
 		// The Go sources, and the JSON beside them (reportdesign's schema
 		// and built-in themes).
-		if e.IsDir() || !(strings.HasSuffix(n, ".go") || strings.HasSuffix(n, ".json")) || strings.HasSuffix(n, "_test.go") {
+		if e.IsDir() || !strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, ".json") || strings.HasSuffix(n, "_test.go") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(dir, n)) //nolint:gosec // the test's own tree and the module cache

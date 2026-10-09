@@ -70,6 +70,8 @@ type runDirs struct {
 	// the run's tools spec, for the receipt.
 	pdfLedger string
 	pdfTheme  *toolsrv.ThemeStamp
+	// pdfThemeFrom is what chose pdfTheme, for the receipt.
+	pdfThemeFrom ThemeSource
 	// web says the run has the web tools, and runID names it, for the
 	// receipt's daemon line.
 	web   bool

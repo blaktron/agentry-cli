@@ -89,35 +89,40 @@ type Envelope struct {
 	// for any other run.
 	Review *Review `json:"review,omitempty"`
 	// PDFs is what export_pdf wrote (plan scratch-and-pdf-reports.md §5,
-	// D15; agentry-cli#730): the theme every PDF of the run was laid out
-	// with, and each PDF in reports/ whose bytes are the ones the tools
-	// server recorded. A reader opens in place only a PDF this names with a
+	// D15; agentry-cli#730): the report design every PDF of the run was laid
+	// out with (report-designs.md, agentry-cli#784), and each PDF in reports/
+	// whose bytes are the ones the tools server recorded, with its form. A reader opens in place only a PDF this names with a
 	// matching SHA-256; any other is download-only. Absent for a run that
 	// exported none.
 	PDFs *PDFs `json:"pdfs,omitempty"`
 }
 
-// PDFs is a run's exported PDFs.
+// PDFs is a run's exported PDFs. The block keeps its key "theme" for the
+// design, which the site's and the desktop's readers know by that name.
 type PDFs struct {
 	Theme PDFTheme  `json:"theme"`
 	Files []PDFFile `json:"files"`
 }
 
-// PDFTheme names a theme document: its name and version, and the SHA-256
-// of its exact bytes.
+// PDFTheme names a report design (theme document version 2): its name, the
+// built-in theme it is based on, its version, the SHA-256 of its canonical
+// document (pkg/reportdesign's SHA256), and what chose it.
 type PDFTheme struct {
 	Name    string `json:"name"`
+	BasedOn string `json:"basedOn,omitempty"`
 	Version string `json:"version"`
 	SHA256  string `json:"sha256"`
+	From    string `json:"from,omitempty"`
 }
 
 // PDFFile is one exported PDF. Path is relative to the output folder
-// (reports/…).
+// (reports/…). Form is the form the agent chose: report, letter or memo.
 type PDFFile struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
 	Pages  int    `json:"pages"`
 	Bytes  int64  `json:"bytes"`
+	Form   string `json:"form,omitempty"`
 }
 
 // Web is a run's count of the web tools' reads and AI Review's verdicts.

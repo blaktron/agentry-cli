@@ -3,10 +3,11 @@ package toolsrv
 // export_pdf (plan scratch-and-pdf-reports.md §5, D6-D9, D14, D15, D17,
 // D19, D23, D24, D27; agentry-cli#730): the agent turns a Markdown file it
 // wrote, in reports/ or the scratch folder, into a PDF in reports/, laid out
-// by the run's theme. Typst renders it inside the tools container, from a
-// fresh render root under the bounded /tmp that holds the Markdown, the
-// theme, the server's own template and copies of the local images the
-// Markdown names, and nothing else:
+// by the run's report design in the form the agent chose (report, letter or
+// memo; plan report-designs.md D1, D15, agentry-cli#784). Typst renders it
+// inside the tools container, from a fresh render root under the bounded
+// /tmp that holds the Markdown, the design, the server's own template and
+// copies of the local images the Markdown names, and nothing else:
 //
 //   - Typst runs with a fixed argv and an empty environment, through the
 //     runner binary's confine role: it may write nothing (Landlock), it may
@@ -43,6 +44,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -50,6 +52,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
+	"github.com/blaktron/agentry-cli/runnerimage/reportdesign"
 )
 
 // ToolExportPDF renders a Markdown file to a PDF in reports/.
@@ -87,8 +90,8 @@ const typstID = 65533
 // rest into the run's own copy of the spec, never the compiled plan.
 type PDF struct {
 	Enabled bool `json:"enabled"`
-	// Theme is the run's theme (D13, D18-D22); without one, the built-in
-	// default.
+	// Theme is the run's report design (report-designs.md D11, D12);
+	// without one, the built-in default, Plain.
 	Theme *ThemeStamp `json:"theme,omitempty"`
 	// Author names the QuickAgent that wrote the report,
 	// namespace/name@version, for the PDF's metadata (D14): never the
@@ -106,6 +109,8 @@ type PDFEntry struct {
 	SHA256 string `json:"sha256"`
 	Pages  int    `json:"pages"`
 	Bytes  int64  `json:"bytes"`
+	// Form is the form the agent chose for it (report-designs.md D15).
+	Form string `json:"form,omitempty"`
 }
 
 func validatePDF(spec *Spec) error {
@@ -126,14 +131,21 @@ func validatePDF(spec *Spec) error {
 	return nil
 }
 
-const exportPDFDescription = "Turn a Markdown file you wrote into a PDF in reports/, laid out in the person's chosen report style. source is the Markdown: reports/<path> for one written with write_report, scratch/<path> for one in the scratch folder. path is the PDF under reports/ (default: the source's name with .pdf). Images are drawn when they are local PNG or JPEG files, named relative to the Markdown file or as /scratch/…, /inputs/… or /out/reports/…; any other image, a web address included, is drawn as its alt text. You cannot choose the style."
+const exportPDFDescription = "Turn a Markdown file you wrote into a PDF in reports/, laid out in the person's report design. source is the Markdown: reports/<path> for one written with write_report, scratch/<path> for one in the scratch folder. path is the PDF under reports/ (default: the source's name with .pdf). form is the document's shape: report (the default; its first heading, when it opens the file, is drawn as the title, and a long titled report gets a cover page), letter (its first heading is the letterhead and each short line is kept, for addresses and a signature) or memo (its first heading is the title, and To:, From:, Cc:, Date:, Subject: or Re: lines opening the body become the memo's header). Images are drawn when they are local PNG or JPEG files, named relative to the Markdown file or as /scratch/…, /inputs/… or /out/reports/…; any other image, a web address included, is drawn as its alt text. You cannot choose the design: its colours, fonts and layout are the person's."
 
 func exportPDFSchema() map[string]any {
 	return objSchema(map[string]any{
 		"source": strProp("the Markdown file: reports/<path> or scratch/<path>"),
 		"path":   strProp("the PDF's path under reports/, ending in .pdf (default: the source's name with .pdf)"),
+		"form":   map[string]any{"type": "string", "enum": Forms, "description": "the document's shape: report (the default), letter or memo"},
 	}, "source")
 }
+
+// exportPDFArgs are export_pdf's arguments, and nothing else: an argument
+// the model adds for the look ("theme", "accent", "font") is refused, never
+// ignored, so the model learns it cannot choose one (report-designs.md
+// invariant 1).
+var exportPDFArgs = []string{"source", "path", "form"}
 
 // typstFiles is where the renderer is; a test points it elsewhere.
 type typstFiles struct{ bin, fonts, packages string }
@@ -309,7 +321,7 @@ type pdfImage struct {
 	Name string `json:"name"`
 }
 
-// pdfMeta is meta.json: what the template is told besides the theme.
+// pdfMeta is meta.json: what the template is told besides the design.
 type pdfMeta struct {
 	Title string `json:"title"`
 	// Author is the QuickAgent's ref, or empty: never the person, nor
@@ -320,9 +332,28 @@ type pdfMeta struct {
 	// page: the same in every language.
 	Date string `json:"date"`
 	// Titled says the title is the report's own first heading, not its
-	// file's name: a cover page is drawn only for a titled report, since a
-	// file name on a title page is worse than none (agentry-cli#731).
+	// file's name (agentry-cli#731).
 	Titled bool `json:"titled"`
+	// Form is the form the agent chose: report, letter or memo.
+	Form string `json:"form"`
+	// TitleBlock says the report opened with its title, which the server
+	// took out of report.md for the template to draw in the design's
+	// title-block style.
+	TitleBlock bool `json:"titleBlock"`
+	// Cover puts a page of its own before a report that opens with its
+	// title and runs past coverWords; the pages after it are numbered from
+	// 1. A file name on a title page is worse than none, so an untitled
+	// report never has one.
+	Cover bool `json:"cover"`
+	// Tint is the accent's tint, pkg/reportdesign's Tint: the one the
+	// site's editor previews.
+	Tint string `json:"tint"`
+	// Memo is a memo's header, the lines the server took out of report.md.
+	Memo []memoField `json:"memo"`
+	// NotoBody and NotoHeadings are the Noto family behind the body and the
+	// headings faces.
+	NotoBody     string `json:"notoBody"`
+	NotoHeadings string `json:"notoHeadings"`
 }
 
 var (
@@ -512,15 +543,31 @@ func pdfPages(b []byte) int {
 }
 
 func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
+	var keys map[string]json.RawMessage
+	if err := unmarshalArgs(raw, &keys); err != nil {
+		return "export_pdf: " + err.Error(), true
+	}
+	for k := range keys {
+		if !slices.Contains(exportPDFArgs, k) {
+			return fmt.Sprintf("export_pdf: it takes source, path and form, not %q; the PDF's colours, fonts and layout are the person's report design, which you cannot choose", k), true
+		}
+	}
 	var a struct {
 		Source string `json:"source"`
 		Path   string `json:"path"`
+		Form   string `json:"form"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "export_pdf: " + err.Error(), true
 	}
 	if a.Source == "" {
 		return "export_pdf: source is required: the Markdown file to export, reports/<path> or scratch/<path>", true
+	}
+	if a.Form == "" {
+		a.Form = FormReport
+	}
+	if !slices.Contains(Forms, a.Form) {
+		return fmt.Sprintf("export_pdf: form %q is not one of %s", a.Form, strings.Join(Forms, ", ")), true
 	}
 	if !s.spec.PDF.Enabled {
 		return "export_pdf: PDF export is not granted to this run", true
@@ -557,7 +604,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if env := s.holdsRunSecret(src); env != "" {
 		return "export_pdf: " + from.name + "/" + rel + " holds the value of this run's secret " + env + "; take the value out and write what it is and where it was found", true
 	}
-	theme, themeDoc, err := s.pdfTheme()
+	design, designDoc, err := s.pdfDesign()
 	if err != nil {
 		return s.failed(ToolExportPDF, err)
 	}
@@ -585,7 +632,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if s.renderRootMade != nil {
 		s.renderRootMade(renderRoot)
 	}
-	doc := reportMarkdown(src, theme)
+	doc := reportMarkdown(src, a.Form)
 	if err := root.Mkdir("img", 0o755); err != nil {
 		return s.renderFailed(err)
 	}
@@ -597,7 +644,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if title == "" {
 		title = strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 	}
-	meta, err := json.Marshal(pdfMeta{Title: title, Author: s.spec.PDF.Author, Images: images, Date: time.Now().UTC().Format(time.DateOnly), Titled: doc.title != ""})
+	meta, err := renderMeta(design, a.Form, doc, title, s.spec.PDF.Author, images, time.Now())
 	if err != nil {
 		return s.renderFailed(err)
 	}
@@ -605,7 +652,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return s.renderFailed(err)
 	}
-	for name, b := range map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "theme.json": themeDoc, "meta.json": meta} {
+	for name, b := range map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": designDoc, "meta.json": meta} {
 		if err := createIn(root, name, bytes.NewReader(b)); err != nil {
 			return s.renderFailed(err)
 		}
@@ -629,7 +676,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	}
 	sum := sha256.Sum256(pdf)
 	pages := pdfPages(pdf)
-	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf))}); err != nil {
+	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf)), Form: a.Form}); err != nil {
 		s.logf("pdf ledger: %v", err)
 		return s.failed(ToolExportPDF, fmt.Errorf("the PDF was written to reports/%s, but the run could not record it, so it will not be shown as this run's export: %w", out, err))
 	}
@@ -639,7 +686,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	} else if pages > 1 {
 		count = strconv.Itoa(pages) + " pages"
 	}
-	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; %s theme)", out, count, (len(pdf)+1023)/1024, theme.Name)
+	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; the %s form, in the %s report design)", out, count, (len(pdf)+1023)/1024, a.Form, design.Name)
 	if len(skipped) > 0 {
 		answer += "\nDrawn as their alt text, not as images: " + strings.Join(skipped, "; ")
 	}
@@ -700,19 +747,41 @@ func readSource(from pdfRoot, rel string) (string, error) {
 	return string(b), nil
 }
 
-// pdfTheme is the run's theme and its document: the one the engine
-// stamped, or the built-in default.
-func (s *server) pdfTheme() (*Theme, []byte, error) {
+// pdfDesign is the run's report design and its canonical document: the one
+// the engine stamped, or the built-in default.
+func (s *server) pdfDesign() (reportdesign.Design, []byte, error) {
 	if st := s.spec.PDF.Theme; st != nil {
-		t, err := st.check()
-		return t, []byte(st.Document), err
+		d, err := st.check()
+		return d, []byte(st.Document), err
 	}
-	doc, err := BuiltinTheme(DefaultTheme)
+	d := reportdesign.Default()
+	return d, d.Canonical(), nil
+}
+
+// renderMeta is meta.json: what the template is told besides the design.
+func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author string, images map[string]pdfImage, now time.Time) ([]byte, error) {
+	tint, err := reportdesign.Tint(d.Accent)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	t, err := ParseTheme(doc)
-	return t, doc, err
+	memo := doc.memo
+	if memo == nil {
+		memo = []memoField{}
+	}
+	return json.Marshal(pdfMeta{
+		Title: title, Author: author, Images: images, Date: now.UTC().Format(time.DateOnly), Titled: doc.title != "",
+		Form: form, TitleBlock: doc.titleBlock, Cover: form == FormReport && doc.titleBlock && doc.words >= coverWords,
+		Tint: tint, Memo: memo, NotoBody: notoFor(d.Fonts.Body), NotoHeadings: notoFor(d.Fonts.Headings),
+	})
+}
+
+// notoFor is the Noto family set behind a design family for the scripts it
+// lacks: Noto Serif behind a serif, Noto Sans behind anything else.
+func notoFor(family string) string {
+	if f, ok := reportdesign.FamilyByName(family); ok && f.Kind == reportdesign.Serif {
+		return "Noto Serif"
+	}
+	return "Noto Sans"
 }
 
 // runTypst renders renderRoot/main.typ to a PDF on Typst's stdout, or

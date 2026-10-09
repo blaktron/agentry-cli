@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,12 +21,13 @@ func sha(b []byte) string {
 }
 
 // TestTheReceiptNamesTheTheme (plan scratch-and-pdf-reports.md §3
-// invariants 9 and 10, D15, D19; agentry-cli#730): a release's run gets
-// export_pdf's run-time half in its own tools spec (the theme, verbatim,
-// the release as the author, the ledger), and its receipt names the theme
-// by name, version and SHA-256 and each exported PDF whose bytes are still
-// the recorded ones, the last record of a path exported twice; a PDF
-// changed after its export, or gone, is not named.
+// invariants 9 and 10, D15, D19; agentry-cli#730; report-designs.md
+// invariant 9, agentry-cli#784): a release's run gets export_pdf's run-time
+// half in its own tools spec (the design, verbatim, the release as the
+// author, the ledger), and its receipt names the design by name, theme,
+// version, SHA-256 and what chose it, and each exported PDF whose bytes are
+// still the recorded ones with its form, the last record of a path
+// exported twice; a PDF changed after its export, or gone, is not named.
 func TestTheReceiptNamesTheTheme(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -43,7 +45,7 @@ func TestTheReceiptNamesTheTheme(t *testing.T) {
 			`{"path":"reports/sub/a.pdf","sha256":"` + sha(first) + `","pages":1,"bytes":14}`,
 			`{"path":"reports/b.pdf","sha256":"` + sha([]byte("%PDF-1.7 b as exported")) + `","pages":2,"bytes":20}`,
 			`{"path":"reports/gone.pdf","sha256":"` + sha(first) + `","pages":1,"bytes":14}`,
-			`{"path":"reports/sub/a.pdf","sha256":"` + sha(second) + `","pages":4,"bytes":15}`,
+			`{"path":"reports/sub/a.pdf","sha256":"` + sha(second) + `","pages":4,"bytes":15,"form":"memo"}`,
 		}
 		_ = os.WriteFile(filepath.Join(p.OutDir, "receipts", PDFLedgerFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 	}
@@ -58,13 +60,13 @@ func TestTheReceiptNamesTheTheme(t *testing.T) {
 	if env.PDFs == nil {
 		t.Fatal("the receipt has no pdfs block")
 	}
-	if th := env.PDFs.Theme; th.Name != "plain" || th.Version != "1.0.0" || th.SHA256 != sha(plain) {
+	if th := env.PDFs.Theme; th.Name != "Plain" || th.BasedOn != "plain" || th.Version != "1" || th.SHA256 != sha(plain) || th.From != string(ThemeFromDefault) {
 		t.Errorf("theme = %+v", th)
 	}
 	if len(env.PDFs.Files) != 1 {
 		t.Fatalf("files = %+v, want sub/a.pdf alone", env.PDFs.Files)
 	}
-	if got := env.PDFs.Files[0]; got.Path != "reports/sub/a.pdf" || got.SHA256 != sha(second) || got.Pages != 4 || got.Bytes != int64(len(second)) {
+	if got := env.PDFs.Files[0]; got.Path != "reports/sub/a.pdf" || got.SHA256 != sha(second) || got.Pages != 4 || got.Bytes != int64(len(second)) || got.Form != "memo" {
 		t.Errorf("file = %+v", got)
 	}
 	result, err := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
@@ -103,18 +105,29 @@ func TestNoExportNoPDFsBlock(t *testing.T) {
 	}
 }
 
-// TestTheRunsReportThemeIsStampedAndNamed (agentry-cli#731): the theme the
-// caller chose is the one the tools spec carries, byte for byte, and the
-// receipt names it and what chose it whether or not a PDF was exported;
-// a run told nothing takes Plain, chosen by the default.
+// TestTheRunsReportThemeIsStampedAndNamed (agentry-cli#731, #784): the
+// design the caller chose, a built-in by name or a whole document, is the
+// one the tools spec carries as its canonical document, and the receipt
+// names it and what chose it whether or not a PDF was exported; a run told
+// nothing takes Plain, chosen by the default; a design that breaks a rule
+// fails the run before it starts.
 func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
+	modern, err := toolsrv.BuiltinTheme("modern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, modern); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
-		theme ReportTheme
-		want  string
-		from  string
+		theme      ReportTheme
+		want, name string
+		from       string
 	}{
-		{ReportTheme{Name: "formal", From: ThemeFromAccount}, "formal", "the account's report theme"},
-		{ReportTheme{}, "plain", "the default"},
+		{ReportTheme{Name: "classic", From: ThemeFromFlag}, "classic", "Classic", "the --report-theme flag"},
+		{ReportTheme{Design: compact.Bytes(), From: ThemeFromAccount}, "modern", "Modern", "the account's report design"},
+		{ReportTheme{}, "plain", "Plain", "the default"},
 	} {
 		p, f := fixture(t)
 		happyFake(f)
@@ -136,12 +149,20 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 		if err := json.Unmarshal(b, &ts); err != nil {
 			t.Fatal(err)
 		}
-		if ts.PDF.Theme == nil || ts.PDF.Theme.Name != c.want || ts.PDF.Theme.Document != string(doc) {
+		if ts.PDF.Theme == nil || ts.PDF.Theme.Name != c.name || ts.PDF.Theme.BasedOn != c.want || ts.PDF.Theme.Document != string(doc) {
 			t.Errorf("%s: the tools spec's theme = %+v", c.want, ts.PDF.Theme)
 		}
-		line := env.CapabilitiesEnforced["pdf.theme"]
-		if !strings.HasPrefix(line, c.want+" 1.0.0 (sha256:"+sha(doc)+")") || !strings.Contains(line, "chosen by "+c.from) {
-			t.Errorf("%s: the receipt's pdf.theme line = %q", c.want, line)
+		line := env.CapabilitiesEnforced["pdf.design"]
+		if !strings.HasPrefix(line, `"`+c.name+`", based on `+c.want+", version 1 (sha256:"+sha(doc)+")") || !strings.Contains(line, "chosen by "+c.from) ||
+			!strings.Contains(line, "only each PDF's form (report, letter, memo)") {
+			t.Errorf("%s: the receipt's pdf.design line = %q", c.want, line)
 		}
+	}
+
+	p, f := fixture(t)
+	happyFake(f)
+	p.ReportTheme = ReportTheme{Design: bytes.Replace(modern, []byte(`"#1f6feb"`), []byte(`"#7fb3d5"`), 1), From: ThemeFromDesignFlag}
+	if _, err := Run(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "accent") {
+		t.Errorf("a design whose accent fails the contrast rule ran: %v", err)
 	}
 }

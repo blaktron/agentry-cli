@@ -1,7 +1,13 @@
 package toolsrv
 
+// The report design and the forms (plan report-designs.md §3 invariants 1-8;
+// agentry-cli#784, DR-87). The tests named TestRealRender… run the real
+// renderer from the pinned image, as the typst-image CI job does.
+
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -13,78 +19,397 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blaktron/agentry-cli/runnerimage/reportdesign"
 )
 
-// TestTheBuiltinThemes (agentry-cli#731, plan D13): the five themes ship,
-// each parses as the template reads it and is named by its file, and each
-// has what the plan gives it: Formal a cover and "n of N", Brief a title
-// block and no cover, Technical banded tables, Letter a letterhead and its
-// lines kept. Plain stays as agentry-cli#730 shipped it.
+// TestTheBuiltinThemes (invariant 8): the five themes are pkg/reportdesign's,
+// Plain first, and each stamps as its canonical document, byte for byte.
 func TestTheBuiltinThemes(t *testing.T) {
-	if got := BuiltinThemes(); !slices.Equal(got, []string{"plain", "formal", "brief", "technical", "letter"}) {
+	if got := BuiltinThemes(); !slices.Equal(got, []string{"plain", "classic", "modern", "editorial", "technical"}) {
 		t.Fatalf("built-in themes = %q", got)
 	}
-	themes := map[string]*Theme{}
 	for _, name := range BuiltinThemes() {
 		doc, err := BuiltinTheme(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		th, err := ParseTheme(doc)
+		st, err := StampTheme(doc)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if th.Name != name {
-			t.Errorf("%s.json names itself %q", name, th.Name)
+		if st.Document != string(doc) || st.BasedOn != name || st.Version != "1" {
+			t.Errorf("%s stamps as %+v, not its own document", name, st)
 		}
-		if _, err := StampTheme(doc); err != nil {
-			t.Errorf("%s: %v", name, err)
+		d, _ := reportdesign.Builtin(name)
+		if st.SHA256 != d.SHA256() {
+			t.Errorf("%s: the stamp's SHA-256 %s is not the design's %s", name, st.SHA256, d.SHA256())
 		}
-		themes[name] = th
 	}
-	if p := themes["plain"]; p.Cover || p.Title != nil || p.LineBreaks != "" {
-		t.Errorf("plain gained an optional field: %+v", p)
-	}
-	if f := themes["formal"]; !f.Cover || f.Footer.PageNumbers != "n of N" || f.Fonts.Body != "Noto Serif" {
-		t.Errorf("formal is not serif with a cover and n of N: %+v", f)
-	}
-	if b := themes["brief"]; b.Cover || b.Title == nil || !b.Title.Rule {
-		t.Errorf("brief is not a memo with a ruled heading and no cover: %+v", b)
-	}
-	if tc := themes["technical"]; !tc.Tables.Banded || tc.Sizes.BodyPt >= themes["plain"].Sizes.BodyPt {
-		t.Errorf("technical is not denser than plain with banded tables: %+v", tc)
-	}
-	if l := themes["letter"]; l.Title == nil || l.LineBreaks != "hard" || l.Cover {
-		t.Errorf("letter has no letterhead or does not keep its lines: %+v", l)
-	}
-	if IsBuiltinTheme("Formal") || IsBuiltinTheme("") || IsBuiltinTheme("../plain") {
-		t.Error("a name that is not a built-in's was taken for one")
+	for _, bad := range []string{"Plain", "", "../plain", "formal", "letter", "brief"} {
+		if IsBuiltinTheme(bad) {
+			t.Errorf("%q was taken for a built-in theme", bad)
+		}
+		if _, err := BuiltinTheme(bad); err == nil {
+			t.Errorf("%q has a built-in document", bad)
+		}
 	}
 }
 
-func TestParseThemeOptionalFields(t *testing.T) {
-	letter, err := BuiltinTheme("letter")
+// TestAHostileDesignNeverReachesTheTemplate (invariants 2, 3): a design is
+// held to pkg/reportdesign's rules when it is stamped and again when the
+// tools server reads the spec; markup, a path, an unknown key, a version 1
+// document and an accent that cannot carry its text are refused; a stamp
+// whose document changed, or is not canonical, never serves.
+func TestAHostileDesignNeverReachesTheTemplate(t *testing.T) {
+	modern, err := BuiltinTheme("modern")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, change := range map[string][2]string{
-		"title align": {`"align": "center",
-    "rule"`, `"align": "justify",
-    "rule"`},
-		"line breaks":   {`"lineBreaks": "hard"`, `"lineBreaks": "raw"`},
-		"unknown field": {`"lineBreaks": "hard"`, `"lineBreaks": "hard", "logo": "/etc/passwd"`},
-		"cover type":    {`"lineBreaks": "hard"`, `"lineBreaks": "hard", "cover": "yes"`},
+		"unknown key":      {`"quotes": "callout",`, `"quotes": "callout", "script": "#read(\"/etc/passwd\")",`},
+		"version 1":        {`"agentryTheme": 2`, `"agentryTheme": 1`},
+		"a font path":      {`"body": "Inter"`, `"body": "../../etc/passwd"`},
+		"a system font":    {`"body": "Inter"`, `"body": "DejaVu Sans"`},
+		"a mono body":      {`"body": "Inter"`, `"body": "JetBrains Mono"`},
+		"a colour word":    {`"accent": "#1f6feb"`, `"accent": "red"`},
+		"a pale accent":    {`"accent": "#1f6feb"`, `"accent": "#7fb3d5"`},
+		"a title block":    {`"titleBlock": "band"`, `"titleBlock": "#panic()"`},
+		"page numbers":     {`"pageNumbers": "nOfN"`, `"pageNumbers": "n of N"`},
+		"a footer newline": {`"text": ""`, `"text": "line\nbreak"`},
+		"a footer bidi":    {`"text": ""`, `"text": "a\u202eb"`},
+		"paper":            {`"paper": "a4"`, `"paper": "us-letter"`},
 	} {
-		doc := bytes.Replace(letter, []byte(change[0]), []byte(change[1]), 1)
-		if bytes.Equal(doc, letter) {
+		doc := bytes.Replace(modern, []byte(change[0]), []byte(change[1]), 1)
+		if bytes.Equal(doc, modern) {
 			t.Fatalf("%s: the change did not apply", name)
 		}
-		if _, err := ParseTheme(doc); err == nil {
-			t.Errorf("%s: accepted", name)
+		if _, err := StampTheme(doc); err == nil {
+			t.Errorf("%s: stamped", name)
+		}
+	}
+
+	// Any spacing is stamped as the canonical document.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, modern); err != nil {
+		t.Fatal(err)
+	}
+	st, err := StampTheme(compact.Bytes())
+	if err != nil || st.Document != string(modern) {
+		t.Fatalf("a compact design stamped as (%+v, %v), want its canonical form", st, err)
+	}
+
+	spec := pdfSpec(t)
+	spec.PDF.Theme = st
+	if err := validateSpec(spec); err != nil {
+		t.Fatalf("a stamped design: %v", err)
+	}
+	forged := *st
+	forged.Document = strings.Replace(forged.Document, `"accent": "#1f6feb"`, `"accent": "#7fb3d5"`, 1)
+	spec.PDF.Theme = &forged
+	if err := validateSpec(spec); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Errorf("a stamp whose document changed = %v", err)
+	}
+	loose := *st
+	loose.Document = compact.String()
+	loose.SHA256 = stampSHA(loose.Document)
+	spec.PDF.Theme = &loose
+	if err := validateSpec(spec); err == nil || !strings.Contains(err.Error(), "canonical") {
+		t.Errorf("a stamp of a non-canonical document = %v", err)
+	}
+	renamed := *st
+	renamed.Name = "Other"
+	spec.PDF.Theme = &renamed
+	if err := validateSpec(spec); err == nil {
+		t.Error("a stamp naming another design was accepted")
+	}
+}
+
+// TestExportPDFTakesAFormAndNothingElse (invariants 1, 9): export_pdf's
+// arguments are source, path and form; a call naming the look is refused,
+// not ignored; the render gets the stamped design byte for byte and the
+// form; the ledger records the form.
+func TestExportPDFTakesAFormAndNothingElse(t *testing.T) {
+	props := exportPDFSchema()["properties"].(map[string]any)
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"form", "path", "source"}) || !slices.Equal(exportPDFArgs, []string{"source", "path", "form"}) {
+		t.Fatalf("export_pdf takes %v", keys)
+	}
+	if enum := props["form"].(map[string]any)["enum"]; !slices.Equal(enum.([]string), []string{"report", "letter", "memo"}) {
+		t.Errorf("form's enum = %v", enum)
+	}
+
+	doc, err := BuiltinTheme("editorial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp, err := StampTheme(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := pdfSpec(t)
+	spec.PDF.Theme = stamp
+	s := pdfServer(t, spec, fakeTypst(t, fakePDF+`; cat "$ROOT/design.json" "$ROOT/meta.json"`))
+	mustWrite(t, filepath.Join(spec.OutDir, "reports", "r.md"), []byte("# R\n\nTo: Dana\nFrom: Sam\n\nBody.\n"))
+	for _, extra := range []map[string]any{{"theme": "modern"}, {"accent": "#ff0000"}, {"design": map[string]any{}}, {"font": "Lora"}} {
+		args := map[string]any{"source": "r.md"}
+		for k, v := range extra {
+			args[k] = v
+		}
+		got, isErr := exportPDF(t, s, args)
+		if !isErr || !strings.Contains(got, "report design") {
+			t.Errorf("a call with %v = (%q, %v), want refused", extra, got, isErr)
+		}
+	}
+	if got, isErr := exportPDF(t, s, map[string]any{"source": "r.md", "form": "poster"}); !isErr || !strings.Contains(got, "report, letter, memo") {
+		t.Errorf("an unknown form = (%q, %v)", got, isErr)
+	}
+	got, isErr := exportPDF(t, s, map[string]any{"source": "r.md", "form": "memo"})
+	if isErr || !strings.Contains(got, "the memo form, in the Editorial report design") {
+		t.Fatalf("export = (%q, %v)", got, isErr)
+	}
+	pdf := readReport(t, spec, "r.pdf")
+	if !bytes.Contains(pdf, doc) {
+		t.Errorf("the render did not get the stamped design:\n%s", pdf)
+	}
+	for _, want := range []string{`"form":"memo"`, `"titleBlock":true`, `"memo":[{"label":"To","value":"Dana"},{"label":"From","value":"Sam"}]`, `"tint":"#f6e5e4"`, `"notoHeadings":"Noto Serif"`, `"notoBody":"Noto Sans"`} {
+		if !bytes.Contains(pdf, []byte(want)) {
+			t.Errorf("meta.json lacks %s:\n%s", want, pdf)
+		}
+	}
+	b, err := os.ReadFile(spec.PDF.Ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e PDFEntry
+	if err := json.Unmarshal(bytes.TrimSpace(b), &e); err != nil || e.Form != FormMemo {
+		t.Errorf("ledger entry = %+v (%v)", e, err)
+	}
+	if got := readReport(t, spec, "r.md"); string(got) != "# R\n\nTo: Dana\nFrom: Sam\n\nBody.\n" {
+		t.Errorf("the agent's file changed:\n%s", got)
+	}
+}
+
+func TestReportMarkdownForms(t *testing.T) {
+	for _, c := range []struct {
+		name, src, form string
+		text            string
+		titleBlock      bool
+		memo            []memoField
+	}{
+		{"an opening heading", "# Title\n\nBody.\n", FormReport, "\n\nBody.\n", true, nil},
+		{"after blank lines", "\n\n## Title\n\n### Sub\n", FormReport, "\n\n\n\n## Sub\n", true, nil},
+		{"a setext title", "Title\n=====\n\nBody.\n", FormReport, "\n\n\nBody.\n", true, nil},
+		{"text before it", "Preface\n\n# Title\n", FormReport, "Preface\n\n# Title\n", false, nil},
+		{"in a quote", "> # Title\n", FormReport, "> # Title\n", false, nil},
+		{"an empty heading", "#\n\nBody.\n", FormReport, "#\n\nBody.\n", false, nil},
+		{"a memo", "# Memo\n\n**To:** Dana Okafor\n**From**: Sam\nDate: 9 October 2026\n- Subject: *Next* steps\n\nBody.\n", FormMemo, "\n\n\n\n\n\n\nBody.\n", true,
+			[]memoField{{"To", "Dana Okafor"}, {"From", "Sam"}, {"Date", "9 October 2026"}, {"Subject", "Next steps"}}},
+		{"a memo with no heading", "To: Dana\nRe: the audit\n\nBody.\n", FormMemo, "\n\n\nBody.\n", false, []memoField{{"To", "Dana"}, {"Re", "the audit"}}},
+		{"one header line is not a header", "# M\n\nTo: Dana\n\nBody.\n", FormMemo, "\n\nTo: Dana\n\nBody.\n", true, nil},
+		{"a paragraph is not a header", "# M\n\nTo: Dana\nand the team\n", FormMemo, "\n\nTo: Dana\nand the team\n", true, nil},
+		{"a report keeps its header lines", "# M\n\nTo: Dana\nFrom: Sam\n", FormReport, "\n\nTo: Dana\nFrom: Sam\n", true, nil},
+		{"a letter keeps its lines", "# Acme\n\nAcme\n14 Harbour Road\n\nDear Dana,\n", FormLetter, "\n\nAcme\\\n14 Harbour Road\n\nDear Dana,\n", true, nil},
+	} {
+		doc := reportMarkdown(c.src, c.form)
+		if doc.text != c.text || doc.titleBlock != c.titleBlock || !slices.Equal(doc.memo, c.memo) {
+			t.Errorf("%s: (%q, %v, %v), want (%q, %v, %v)", c.name, doc.text, doc.titleBlock, doc.memo, c.text, c.titleBlock, c.memo)
 		}
 	}
 }
 
+// TestRenderMeta: a cover only for a report that opens with its title and
+// passes coverWords; the tint is pkg/reportdesign's; Noto Serif behind a
+// serif face.
+func TestRenderMeta(t *testing.T) {
+	long := "# Title\n\n" + strings.Repeat("word ", coverWords)
+	short := "# Title\n\n" + strings.Repeat("word ", coverWords-10)
+	for _, c := range []struct {
+		src, form string
+		cover     bool
+	}{
+		{long, FormReport, true}, {short, FormReport, false}, {long, FormMemo, false}, {long, FormLetter, false},
+		{"Preface\n\n" + long, FormReport, false},
+	} {
+		doc := reportMarkdown(c.src, c.form)
+		b, err := renderMeta(reportdesign.Default(), c.form, doc, doc.title, "", map[string]pdfImage{}, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m pdfMeta
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Cover != c.cover || m.Form != c.form || m.Memo == nil {
+			t.Errorf("%s, %d words: %+v, want cover %v", c.form, doc.words, m, c.cover)
+		}
+	}
+	for _, d := range reportdesign.Builtins() {
+		b, err := renderMeta(d, FormReport, mdDoc{}, "t", "", nil, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m pdfMeta
+		_ = json.Unmarshal(b, &m)
+		tint, _ := reportdesign.Tint(d.Accent)
+		serif := d.BasedOn == "classic"
+		if m.Tint != tint || (m.NotoBody == "Noto Serif") != serif || (m.NotoHeadings == "Noto Serif") != (serif || d.BasedOn == "editorial") {
+			t.Errorf("%s: %+v", d.BasedOn, m)
+		}
+	}
+}
+
+// TestRealRenderEveryThemeAndForm (invariants 4-6; agentry-cli#784's
+// acceptance): each built-in theme renders the sample in each form, offline
+// under the render's confinement, every script in it, as a tagged PDF; and
+// drawn as images, no page puts ink in its left or right margin, so a long
+// line, a wide table, a long token or a band stays inside the page's text.
+func TestRealRenderEveryThemeAndForm(t *testing.T) {
+	typst := realTypst(t)
+	sample, err := os.ReadFile(filepath.Join("testdata", "pdf", "sample.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range BuiltinThemes() {
+		for _, form := range Forms {
+			t.Run(name+"/"+form, func(t *testing.T) {
+				doc, err := BuiltinTheme(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, pdf := realExportForm(t, name, form, string(sample), nil)
+				for _, want := range []string{"/StructTreeRoot", "pdfuaid:part", "NotoSansSC", "NotoSansArabic", "NotoSansDevanagari", "NotoSansThai", "NotoSansHebrew"} {
+					if !bytes.Contains(pdf, []byte(want)) {
+						t.Errorf("the PDF lacks %s", want)
+					}
+				}
+				d, _ := reportdesign.Builtin(name)
+				for _, f := range []string{d.Fonts.Headings, d.Fonts.Body, d.Fonts.Code} {
+					if !bytes.Contains(pdf, []byte(strings.ReplaceAll(f, " ", ""))) {
+						t.Errorf("the PDF does not use %s", f)
+					}
+				}
+				pages := renderPNGs(t, typst, doc, form, string(sample))
+				margin := 22.0
+				if form == FormLetter {
+					margin = 25
+				}
+				for i, page := range pages {
+					if x, y, ok := inkOutside(page, int(margin/25.4*pngPPI)-2); ok {
+						t.Errorf("page %d has ink in its side margin at (%d, %d)", i+1, x, y)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestRealRenderTextIsNeverTypst (invariant 2): a footer line, a title and
+// a memo's header lines that are Typst markup render as text: the render
+// succeeds and makes no link.
+func TestRealRenderTextIsNeverTypst(t *testing.T) {
+	typst := realTypst(t)
+	modern, err := BuiltinTheme("modern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := bytes.Replace(modern, []byte(`"text": ""`), []byte(`"text": "#panic(\"footer ran\") #link(\"https://footer.example\")[f] #read(\"/etc/passwd\")"`), 1)
+	stamp, err := StampTheme(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := pdfSpec(t)
+	spec.PDF.Theme = stamp
+	s := pdfServer(t, spec, typst)
+	mustWrite(t, filepath.Join(spec.OutDir, "reports", "m.md"), []byte(strings.Join([]string{
+		`# #panic("title ran") #link("https://title.example")[t]`,
+		"",
+		`To: #panic("memo ran")`,
+		`From: #link("https://memo.example")[m] $#panic("math")$`,
+		"",
+		"Body.",
+	}, "\n")))
+	if got, isErr := exportPDF(t, s, map[string]any{"source": "m.md", "form": "memo"}); isErr {
+		t.Fatalf("export = %q", got)
+	}
+	if got := uris(readReport(t, spec, "m.pdf")); len(got) != 0 {
+		t.Errorf("text in the design or the memo ran as Typst: links %q", got)
+	}
+}
+
+// TestRealRenderACover: a report that opens with its title and passes
+// coverWords gets a page before it; a short one, an untitled one and a memo
+// do not.
+func TestRealRenderACover(t *testing.T) {
+	long := strings.Repeat("A sentence of the report's body, long enough to fill. ", 200)
+	for _, c := range []struct {
+		md, form string
+		cover    bool
+	}{
+		{"# A titled report\n\n" + long, FormReport, true},
+		{"# A titled report\n\nOne line.\n", FormReport, false},
+		{"Dear Dana,\n\n" + long, FormReport, false},
+		{"# A titled memo\n\n" + long, FormMemo, false},
+	} {
+		_, pdf := realExportForm(t, "classic", c.form, c.md, nil)
+		_, without := realExportForm(t, "classic", c.form, strings.Replace(c.md, "# A titled", "A titled", 1), nil)
+		if got := pdfPages(pdf) - pdfPages(without); (got == 1) != c.cover {
+			t.Errorf("%s %.20q: %d pages, %d without its heading; cover %v", c.form, c.md, pdfPages(pdf), pdfPages(without), c.cover)
+		}
+	}
+}
+
+// TestTheImageCarriesEveryDesignFamily (D13; agentry-cli#784's acceptance):
+// the pinned image lists every family pkg/reportdesign names, and a render
+// in each family uses it, under the render's confinement (no network).
+func TestTheImageCarriesEveryDesignFamily(t *testing.T) {
+	typst := realTypst(t)
+	cmd := exec.Command(typst.bin, "fonts", "--ignore-system-fonts", "--font-path", typst.fonts)
+	cmd.Env = []string{}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("typst fonts: %v", err)
+	}
+	listed := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, f := range reportdesign.Families() {
+		if !slices.Contains(listed, f.Name) {
+			t.Errorf("the image lacks %s", f.Name)
+			continue
+		}
+		d := reportdesign.Default()
+		role := "body"
+		switch {
+		case f.HeadingsOnly:
+			role, d.Fonts.Headings = "headings", f.Name
+		case f.Kind == reportdesign.Mono:
+			role, d.Fonts.Code = "code", f.Name
+		default:
+			d.Fonts.Body = f.Name
+		}
+		doc := d.Canonical()
+		stamp, err := StampTheme(doc)
+		if err != nil {
+			t.Fatalf("%s as %s: %v", f.Name, role, err)
+		}
+		spec := pdfSpec(t)
+		spec.PDF.Theme = stamp
+		s := pdfServer(t, spec, typst)
+		mustWrite(t, filepath.Join(spec.OutDir, "reports", "f.md"), []byte("# Family\n\n## Section\n\nBody *italic* **bold** `code`.\n\n中文 العربية हिन्दी\n"))
+		if got, isErr := exportPDF(t, s, map[string]any{"source": "f.md"}); isErr {
+			t.Fatalf("%s: export = %q", f.Name, got)
+		}
+		if pdf := readReport(t, spec, "f.pdf"); !bytes.Contains(pdf, []byte(strings.ReplaceAll(f.Name, " ", ""))) {
+			t.Errorf("a render in %s does not use it", f.Name)
+		}
+	}
+}
+
+// TestHardLineBreaks: a letter keeps each short line of a paragraph
+// (agentry-cli#731, kept for the letter form by agentry-cli#784).
 func TestHardLineBreaks(t *testing.T) {
 	for name, c := range map[string][2]string{
 		"an address block": {"Acme\n14 Harbour Road\nRotterdam\n\nDear Dana,", "Acme\\\n14 Harbour Road\\\nRotterdam\n\nDear Dana,"},
@@ -109,133 +434,53 @@ func TestHardLineBreaks(t *testing.T) {
 	}
 }
 
-// TestExportPDFKeepsALettersLines: under Letter the render gets its lines
-// kept, under Plain the Markdown as written; either way the agent's own file
-// is untouched, and the render is told the day for a cover page.
-func TestExportPDFKeepsALettersLines(t *testing.T) {
-	for _, c := range []struct {
-		theme string
-		kept  bool
-	}{{"letter", true}, {"plain", false}} {
-		doc, err := BuiltinTheme(c.theme)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stamp, err := StampTheme(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		spec := pdfSpec(t)
-		spec.PDF.Theme = stamp
-		s := pdfServer(t, spec, fakeTypst(t, fakePDF+`; cat "$ROOT/report.md" "$ROOT/meta.json"`))
-		src := "# Letter\n\nAcme\n14 Harbour Road\n\nDear Dana,\n"
-		mustWrite(t, filepath.Join(spec.OutDir, "reports", "l.md"), []byte(src))
-		if got, isErr := exportPDF(t, s, map[string]any{"source": "l.md"}); isErr {
-			t.Fatalf("%s: export = %q", c.theme, got)
-		}
-		pdf := readReport(t, spec, "l.pdf")
-		if kept := bytes.Contains(pdf, []byte("Acme\\\n14 Harbour Road")); kept != c.kept {
-			t.Errorf("%s: lines kept = %v, want %v:\n%s", c.theme, kept, c.kept, pdf)
-		}
-		if want := `"date":"` + time.Now().UTC().Format(time.DateOnly) + `"`; !bytes.Contains(pdf, []byte(want)) {
-			t.Errorf("%s: meta.json lacks %s:\n%s", c.theme, want, pdf)
-		}
-		if got := readReport(t, spec, "l.md"); string(got) != src {
-			t.Errorf("%s: the agent's file changed:\n%s", c.theme, got)
-		}
-	}
-}
+// fixedNow is the day the tests render on.
+var fixedNow = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
-// TestRealRenderACoverNeedsATitle: Formal draws its cover only for a report with a
-// heading of its own; a report without one, whose title is its file's name,
-// starts on its first page (found live on dev, agentry-cli#731).
-func TestRealRenderACoverNeedsATitle(t *testing.T) {
-	for _, c := range []struct {
-		md    string
-		pages int
-	}{{"# A titled report\n\nOne line.\n", 2}, {"Dear Dana,\n\nOne line.\n", 1}} {
-		_, pdf := realExportIn(t, "formal", c.md, nil)
-		if got := pdfPages(pdf); got != c.pages {
-			t.Errorf("%q drew %d pages under formal, want %d", c.md, got, c.pages)
-		}
-	}
-}
-
-// TestRealRenderEveryTheme (agentry-cli#731's acceptance): each built-in
-// theme renders the sample, every script in it, as a tagged PDF; and drawn
-// as images, no page puts ink in its left or right margin, so a long line,
-// a wide table or a long token stays inside the page's text.
-func TestRealRenderEveryTheme(t *testing.T) {
-	typst := realTypst(t)
-	sample, err := os.ReadFile(filepath.Join("testdata", "pdf", "sample.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range BuiltinThemes() {
-		t.Run(name, func(t *testing.T) {
-			doc, err := BuiltinTheme(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			theme, err := ParseTheme(doc)
-			if err != nil {
-				t.Fatal(err)
-			}
-			stamp, err := StampTheme(doc)
-			if err != nil {
-				t.Fatal(err)
-			}
-			spec := pdfSpec(t)
-			spec.PDF.Author = "acme/demo@1.2.3"
-			spec.PDF.Theme = stamp
-			s := pdfServer(t, spec, typst)
-			mustWrite(t, filepath.Join(spec.OutDir, "reports", "r.md"), sample)
-			got, isErr := exportPDF(t, s, map[string]any{"source": "r.md"})
-			if isErr || !strings.Contains(got, name+" theme") {
-				t.Fatalf("export = (%q, %v)", got, isErr)
-			}
-			pdf := readReport(t, spec, "r.pdf")
-			for _, want := range []string{"/StructTreeRoot", "pdfuaid:part", "NotoSansSC", "NotoSansArabic", "NotoSansDevanagari", "NotoSansThai", "NotoSansHebrew"} {
-				if !bytes.Contains(pdf, []byte(want)) {
-					t.Errorf("the PDF lacks %s", want)
-				}
-			}
-			pages := renderPNGs(t, typst, theme, doc, string(sample))
-			if theme.Cover && len(pages) < 2 {
-				t.Errorf("a cover theme drew %d pages", len(pages))
-			}
-			margin := theme.Page.MarginMM / 25.4 * pngPPI
-			for i, page := range pages {
-				if x, y, ok := inkOutside(page, int(margin)-2); ok {
-					t.Errorf("page %d has ink in its side margin at (%d, %d); margin %.0f px of %d", i+1, x, y, margin, page.Bounds().Dx())
-				}
-			}
-		})
-	}
+// stampSHA is a document's hex SHA-256, as a stamp names it.
+func stampSHA(doc string) string {
+	sum := sha256.Sum256([]byte(doc))
+	return hex.EncodeToString(sum[:])
 }
 
 // pngPPI is the resolution the margin check draws at.
 const pngPPI = 48
 
-// renderPNGs draws src under theme as the export would, one PNG a page.
-func renderPNGs(t *testing.T, typst typstFiles, theme *Theme, themeDoc []byte, src string) []image.Image {
+// renderPNGs draws src in form under the design doc as the export would,
+// one PNG a page.
+func renderPNGs(t *testing.T, typst typstFiles, designDoc []byte, form, src string) []image.Image {
+	t.Helper()
+	return renderPNGsAt(t, typst, designDoc, form, src, pngPPI, false)
+}
+
+// renderPNGsAt is renderPNGs at a resolution, of the first page alone when
+// first is set.
+func renderPNGsAt(t *testing.T, typst typstFiles, designDoc []byte, form, src string, ppi int, first bool) []image.Image {
 	t.Helper()
 	root, out := t.TempDir(), t.TempDir()
+	d, err := reportdesign.Parse(designDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := reportMarkdown(src, form)
+	meta, err := renderMeta(d, form, doc, doc.title, "acme/demo@1.2.3", map[string]pdfImage{}, fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
 	template, err := pdfFiles.ReadFile("pdf/report.typ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := reportMarkdown(src, theme)
-	meta, err := json.Marshal(pdfMeta{Title: doc.title, Author: "acme/demo@1.2.3", Images: map[string]pdfImage{}, Date: "2026-10-08", Titled: doc.title != ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, b := range map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "theme.json": themeDoc, "meta.json": meta} {
+	for name, b := range map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": d.Canonical(), "meta.json": meta} {
 		mustWrite(t, filepath.Join(root, name), b)
 	}
-	cmd := exec.Command(typst.bin, "compile", "--root", root, "--ignore-system-fonts", "--font-path", typst.fonts,
+	args := []string{"compile", "--root", root, "--ignore-system-fonts", "--font-path", typst.fonts,
 		"--package-path", typst.packages, "--package-cache-path", filepath.Join(out, ".packages"),
-		"--format", "png", "--ppi", fmt.Sprint(pngPPI), filepath.Join(root, "main.typ"), filepath.Join(out, "page-{0p}.png"))
+		"--format", "png", "--ppi", fmt.Sprint(ppi)}
+	if first {
+		args = append(args, "--pages", "1")
+	}
+	cmd := exec.Command(typst.bin, append(args, filepath.Join(root, "main.typ"), filepath.Join(out, "page-{0p}.png"))...)
 	cmd.Env = []string{}
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("typst png: %v\n%s", err, b)
@@ -272,6 +517,73 @@ func inkOutside(img image.Image, w int) (int, int, bool) {
 				if r < 0xf000 || g < 0xf000 || bl < 0xf000 {
 					return x, y, true
 				}
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+// thumbnailPPI is the thumbnails' resolution: an A4 page is 496 by 702.
+const thumbnailPPI = 60
+
+// TestThumbnailsAreTheTemplates (D5; agentry-cli#784): each built-in
+// theme's thumbnail in pkg/reportthumbs is the first page of the sample
+// report as this template and the pinned image draw it, pixel for pixel.
+// AGENTRY_UPDATE_THUMBNAILS=1 writes them instead.
+func TestThumbnailsAreTheTemplates(t *testing.T) {
+	typst := realTypst(t)
+	sample, err := os.ReadFile(filepath.Join("testdata", "pdf", "thumbnail.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := os.Getenv("AGENTRY_UPDATE_THUMBNAILS") == "1"
+	for _, id := range BuiltinThemes() {
+		doc, err := BuiltinTheme(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := renderPNGsAt(t, typst, doc, FormReport, string(sample), thumbnailPPI, true)[0]
+		file := filepath.Join("..", "..", "pkg", "reportthumbs", id+".png")
+		if update {
+			var b bytes.Buffer
+			if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&b, page); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, b.Bytes(), 0o644); err != nil { //nolint:gosec // a committed asset
+				t.Fatal(err)
+			}
+			continue
+		}
+		// Read by path: this file is embedded in the image's build context,
+		// which imports nothing but the standard library.
+		kept, err := os.ReadFile(file) //nolint:gosec // the repository's own asset
+		if err != nil {
+			t.Errorf("%s has no thumbnail (%v): run with AGENTRY_UPDATE_THUMBNAILS=1", id, err)
+			continue
+		}
+		want, err := png.Decode(bytes.NewReader(kept))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if x, y, ok := firstDifference(want, page); ok {
+			t.Errorf("%s's thumbnail differs from the template's render at (%d, %d): run with AGENTRY_UPDATE_THUMBNAILS=1 and commit it", id, x, y)
+		}
+	}
+}
+
+// firstDifference is the first pixel where a and b differ, or a difference
+// in size at (-1, -1).
+func firstDifference(a, b image.Image) (int, int, bool) {
+	if a.Bounds() != b.Bounds() {
+		return -1, -1, true
+	}
+	r := a.Bounds()
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			ar, ag, ab, aa := a.At(x, y).RGBA()
+			br, bg, bb, ba := b.At(x, y).RGBA()
+			if ar != br || ag != bg || ab != bb || aa != ba {
+				return x, y, true
 			}
 		}
 	}
