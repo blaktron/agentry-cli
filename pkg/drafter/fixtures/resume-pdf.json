@@ -1,0 +1,23 @@
+{
+  "id": "resume-pdf",
+  "description": "Reformat my resume (a Word file or a PDF) to current applicant-tracking-system best practice, keeping every fact, and give it back to me as a PDF I can send, with a short list of what you changed.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "inputKinds": [
+      "documents"
+    ],
+    "inputViews": [
+      "text",
+      "both"
+    ],
+    "pdf": true
+  }
+}

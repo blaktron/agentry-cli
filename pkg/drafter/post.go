@@ -170,6 +170,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 	}
 	d, env = p.repairAndCheck(ctx, d, env, repairSpent)
 	d.noteExecProblems()
+	d.notePDFProblems()
 	d.noteServerProblems()
 	return d, env, nil
 }
@@ -397,8 +398,8 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 // the second broke a rule its first passed: validate's, which the registry
 // enforces, or else the Drafter's cap on the instructions, which keeps them
 // within what AI Review's check reads, or its rule on exec, which keeps them
-// to what a run provides, or its rule on declared servers' runtimes
-// (checkServers). A second answer that keeps what the first declared and
+// to what a run provides, or its rule on PDFs, which keeps a PDF to
+// export_pdf, or its rule on declared servers' runtimes (checkServers). A second answer that keeps what the first declared and
 // mends what it broke is kept whatever else it does.
 func keepFirst(first, second *Draft, r RepairReport) (broke bool, dropped []string) {
 	if dropped = droppedUnnamed(first, second, r); len(dropped) > 0 {
@@ -418,6 +419,9 @@ func brokeARule(first, second *Draft) bool {
 	if len(execProblems(first.Manifest)) == 0 && len(execProblems(second.Manifest)) > 0 {
 		return true
 	}
+	if len(pdfProblems(first.Instructions)) == 0 && len(pdfProblems(second.Instructions)) > 0 {
+		return true
+	}
 	return len(first.serverProblems) == 0 && len(second.serverProblems) > 0
 }
 
@@ -426,8 +430,9 @@ func (d *Draft) withinCap() bool { return len(d.Instructions) <= MaxInstructionB
 
 // rulesReport is what the rules said of a draft, one line each, in their
 // own words: validate's report on its package, and the Drafter's cap on its
-// instructions, its rule on exec (execProblems) and its rule on declared
-// servers' runtimes (checkServers), which validate does not hold. refused is false for a draft
+// instructions, its rule on exec (execProblems), its rule on PDFs
+// (pdfProblems) and its rule on declared servers' runtimes (checkServers),
+// which validate does not hold. refused is false for a draft
 // both pass, or one whose check could not run for a reason of this
 // computer's rather than the draft's.
 func rulesReport(d *Draft) (lines []string, refused bool) {
@@ -437,6 +442,10 @@ func rulesReport(d *Draft) (lines []string, refused bool) {
 		refused = true
 	}
 	if probs := execProblems(d.Manifest); len(probs) > 0 {
+		lines = append(lines, probs...)
+		refused = true
+	}
+	if probs := pdfProblems(d.Instructions); len(probs) > 0 {
 		lines = append(lines, probs...)
 		refused = true
 	}

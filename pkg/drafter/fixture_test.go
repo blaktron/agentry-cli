@@ -72,6 +72,10 @@ type Expect struct {
 	// Neither is checked when empty.
 	Remote  map[string]string `json:"remote,omitempty"`
 	SignIns []string          `json:"signIns,omitempty"`
+	// PDF wants the result as a PDF: the instructions call export_pdf and
+	// break none of the Drafter's rules on PDFs (agentry-cli#787). Not
+	// checked when false.
+	PDF bool `json:"pdf,omitempty"`
 }
 
 // LoadFixtures reads the fixture set, sorted by id.
@@ -176,6 +180,15 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 		if !signIns[id] {
 			out = append(out, fmt.Sprintf("%s does not carry the sign-in the drafting guide lists", id))
 		}
+	}
+	if e.PDF {
+		if !strings.Contains(d.Instructions, "export_pdf") {
+			out = append(out, "the instructions never call export_pdf")
+		}
+		if !strings.Contains(d.Instructions, ".md") {
+			out = append(out, "the instructions never write a Markdown file to export")
+		}
+		out = append(out, pdfProblems(d.Instructions)...)
 	}
 	if n := len(c.MCPServers); n > e.MaxServers {
 		out = append(out, fmt.Sprintf("%d MCP servers, want at most %d", n, e.MaxServers))

@@ -24,6 +24,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -61,6 +62,11 @@ func runtimeFacts() []byte {
 	b.WriteString("- A server's declared hosts are reached on TCP port 443 only; with none declared it has no network.\n\n")
 	b.WriteString("## The fetch tool\n\n")
 	fmt.Fprintf(&b, "- `fetch` returns at most %d KiB of a response's body, and gives up on a request after %d seconds.\n\n", toolsrv.DefaultMaxFetchBytes>>10, int(toolsrv.FetchTimeout.Seconds()))
+	b.WriteString("## Reports, PDFs and the scratch folder\n\n")
+	b.WriteString("- `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.\n")
+	fmt.Fprintf(&b, "- `export_pdf` turns a Markdown file from `reports/` or the scratch folder, of at most %d KiB, into a PDF in `reports/`, rendered by Typst %s within %d seconds, at most %d MiB. It draws at most %d local PNG or JPEG images of up to %d MiB each; any other image is drawn as its alt text. The PDF's look is the person's report theme, which the run cannot choose.\n",
+		toolsrv.MaxPDFSourceBytes>>10, toolsrv.TypstVersion, int(toolsrv.PDFRenderTimeout.Seconds()), toolsrv.MaxPDFBytes>>20, toolsrv.MaxPDFImages, toolsrv.MaxPDFImageBytes>>20)
+	fmt.Fprintf(&b, "- The scratch folder, `%s`, is the run's own working space through `scratch_write`, `scratch_list` and `scratch_read`: empty at the start, at most %d MiB on Linux, never part of what the person receives, and deleted with the run.\n\n", spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
 	b.WriteString("## Each container's limits\n\n")
 	fmt.Fprintf(&b, "- Memory %s and %d CPU; on Linux, also at most %d processes.\n\n", policy.DefaultMemory, policy.DefaultCPUs, policy.DefaultPids)
 	b.WriteString("## The base commands\n\n")
