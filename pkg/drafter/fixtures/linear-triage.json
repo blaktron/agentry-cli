@@ -15,8 +15,8 @@
     "maxServers": 1,
     "exec": false,
     "write": false,
-    "remote": [
-      "mcp.linear.app"
-    ]
+    "remote": {
+      "mcp.linear.app": "oauth"
+    }
   }
 }

@@ -27,21 +27,18 @@ const (
 	otherRemote  = `{"url": "https://mcp.example.com/mcp", "auth": "none"}`
 )
 
-// listedSignIn is the guide's workspace-mcp sign-in as a draft declares it,
-// with the given changes applied to the decoded server before encoding.
-func listedSignIn(t *testing.T, change func(*manifest.MCPServer)) string {
+// declaredAs is a listed sign-in as a draft declares it, with the given
+// change applied before encoding.
+func declaredAs(t *testing.T, si SignInEntry, change func(*manifest.MCPServer)) string {
 	t.Helper()
-	l, err := LoadServerList(FS())
-	if err != nil {
-		t.Fatal(err)
-	}
-	si, ok := l.SignIn("pypi", "workspace-mcp", "2.0.1")
-	if !ok {
-		t.Fatal("the guide lists no workspace-mcp 2.0.1 sign-in")
-	}
 	oauth := si.OAuth
-	srv := manifest.MCPServer{PyPI: si.Package, Version: si.Versions, Tools: []string{"search_gmail_messages"},
-		Egress: append([]string(nil), si.Egress...), Env: map[string]string{}, OAuth: &oauth}
+	oauth.Files = append([]manifest.MCPOAuthFile(nil), si.OAuth.Files...)
+	srv := manifest.MCPServer{Version: si.Versions, Egress: append([]string(nil), si.Egress...), Env: map[string]string{}, OAuth: &oauth}
+	if si.Ecosystem == "npm" {
+		srv.NPM = si.Package
+	} else {
+		srv.PyPI = si.Package
+	}
 	for k, v := range si.Env {
 		srv.Env[k] = v
 	}
@@ -53,6 +50,29 @@ func listedSignIn(t *testing.T, change func(*manifest.MCPServer)) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// listedSignIn is the guide's workspace-mcp sign-in as a draft declares
+// it, changed by change.
+func listedSignIn(t *testing.T, change func(*manifest.MCPServer)) string {
+	t.Helper()
+	l, err := LoadServerList(FS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	si, ok := l.SignIn("pypi", "workspace-mcp", "2.0.1")
+	if !ok {
+		t.Fatal("the guide lists no workspace-mcp 2.0.1 sign-in")
+	}
+	return declaredAs(t, si, change)
+}
+
+// manifestWith is a passing v2 manifest that declares the servers, a JSON
+// array's members.
+func manifestWith(servers string) string {
+	return `{"schemaVersion": "2", "name": "x", "namespace": "acme", "version": "0.1.0", "summary": "s", "modes": ["autonomous"],
+		"entrypoints": {"instruction": "AGENT.md"}, "publish": {"include": ["agent.yaml", "AGENT.md"]},
+		"capabilities": {"network": {"egress": "none"}, "mcpServers": [` + servers + `]}}`
 }
 
 func TestARemoteServerIsNotedWithWhatItsFirstRunAsks(t *testing.T) {
@@ -171,13 +191,7 @@ func TestEveryListedSignInPassesTheCore(t *testing.T) {
 		t.Fatal("the guide lists no sign-in or no remote server")
 	}
 	for _, si := range l.SignIns {
-		srv := listedSignIn(t, nil)
-		if si.Package != "workspace-mcp" {
-			t.Fatalf("listedSignIn builds only workspace-mcp's; extend it for %s", si.Package)
-		}
-		raw := `{"schemaVersion": "2", "name": "x", "namespace": "acme", "version": "0.1.0", "summary": "s", "modes": ["autonomous"],
-			"entrypoints": {"instruction": "AGENT.md"}, "publish": {"include": ["agent.yaml", "AGENT.md"]}, "capabilities": {"network": {"egress": "none"}, "mcpServers": [` + srv + `]}}`
-		m, err := manifest.Parse([]byte(raw))
+		m, err := manifest.Parse([]byte(manifestWith(declaredAs(t, si, nil))))
 		if err != nil {
 			t.Fatalf("%s: %v", si.Package, err)
 		}
@@ -186,14 +200,12 @@ func TestEveryListedSignInPassesTheCore(t *testing.T) {
 		}
 	}
 	for _, r := range l.Remote {
-		srv := map[string]any{"url": r.URL, "auth": r.Auth}
-		if r.Auth == string(manifest.AuthSecret) {
+		srv := map[string]any{"url": r.URL, "auth": r.Auth, "scopes": r.Scopes}
+		if r.Auth == manifest.AuthSecret {
 			srv["secrets"] = []string{"VENDOR_TOKEN"}
 		}
 		b, _ := json.Marshal(srv)
-		raw := `{"schemaVersion": "2", "name": "x", "namespace": "acme", "version": "0.1.0", "summary": "s", "modes": ["autonomous"],
-			"entrypoints": {"instruction": "AGENT.md"}, "publish": {"include": ["agent.yaml", "AGENT.md"]}, "capabilities": {"network": {"egress": "none"}, "mcpServers": [` + string(b) + `]}}`
-		m, err := manifest.Parse([]byte(raw))
+		m, err := manifest.Parse([]byte(manifestWith(string(b))))
 		if err != nil {
 			t.Fatalf("%s: %v", r.URL, err)
 		}
@@ -230,9 +242,7 @@ func TestTheListRefusesABadRemoteOrSignInEntry(t *testing.T) {
 func TestTheBenchHoldsADraftToItsRemoteServersAndSignIns(t *testing.T) {
 	shape := func(servers string, e Expect) string {
 		t.Helper()
-		d := &Draft{Manifest: json.RawMessage(`{"schemaVersion": "2", "name": "x", "namespace": "acme", "version": "0.1.0", "summary": "s",
-			"modes": ["autonomous"], "entrypoints": {"instruction": "AGENT.md"}, "publish": {"include": ["agent.yaml", "AGENT.md"]},
-			"capabilities": {"network": {"egress": "none"}, "mcpServers": [` + servers + `]}}`), Instructions: "## Role\nx\n## Inputs\nx\n## Steps\nx\n## Output\nx\n## Background\nx\n## Checks\nx\n"}
+		d := &Draft{Manifest: json.RawMessage(manifestWith(servers)), Instructions: "## Role\nx\n## Inputs\nx\n## Steps\nx\n## Output\nx\n## Background\nx\n## Checks\nx\n"}
 		yml, err := manifestYAML(d.Manifest)
 		if err != nil {
 			t.Fatal(err)
@@ -244,13 +254,16 @@ func TestTheBenchHoldsADraftToItsRemoteServersAndSignIns(t *testing.T) {
 		e.Modes, e.MaxServers = []string{"autonomous"}, 1
 		return strings.Join(CheckShape(m, d, e), "; ")
 	}
-	if got := shape(linearRemote, Expect{Hosts: []string{"mcp.linear.app"}, Remote: []string{"mcp.linear.app"}}); got != "" {
+	if got := shape(linearRemote, Expect{Hosts: []string{"mcp.linear.app"}, Remote: map[string]string{"mcp.linear.app": "oauth"}}); got != "" {
 		t.Fatalf("a draft with the remote server its fixture expects: %s", got)
 	}
 	if got := shape(linearRemote, Expect{Hosts: []string{"api.linear.app"}}); !strings.Contains(got, "reaches mcp.linear.app, not among") {
 		t.Fatalf("a remote server's host is not counted: %q", got)
 	}
-	if got := shape(githubRemote, Expect{Hosts: []string{"api.githubcopilot.com"}, MaxSecrets: 1, Remote: []string{"api.githubcopilot.com"}}); !strings.Contains(got, "no remote server at api.githubcopilot.com signed in to by OAuth") {
+	if got := shape(githubRemote, Expect{Hosts: []string{"api.githubcopilot.com"}, MaxSecrets: 1, Remote: map[string]string{"api.githubcopilot.com": "secret"}}); got != "" {
+		t.Fatalf("a key-signed remote server its fixture expects: %s", got)
+	}
+	if got := shape(githubRemote, Expect{Hosts: []string{"api.githubcopilot.com"}, MaxSecrets: 1, Remote: map[string]string{"api.githubcopilot.com": "oauth"}}); !strings.Contains(got, "no remote server at api.githubcopilot.com signed in with oauth") {
 		t.Fatalf("a key-signed remote server is taken for an OAuth one: %q", got)
 	}
 	if got := shape(listedSignIn(t, nil), Expect{Hosts: []string{"gmail.googleapis.com"}, SignIns: []string{"pypi:workspace-mcp"}}); got != "" {
@@ -259,5 +272,48 @@ func TestTheBenchHoldsADraftToItsRemoteServersAndSignIns(t *testing.T) {
 	own := listedSignIn(t, func(s *manifest.MCPServer) { s.OAuth.Files[0].Template = `{"token": "{access_token}"}` })
 	if got := shape(own, Expect{Hosts: []string{"gmail.googleapis.com"}, SignIns: []string{"pypi:workspace-mcp"}}); !strings.Contains(got, "pypi:workspace-mcp does not carry the sign-in the drafting guide lists") {
 		t.Fatalf("a sign-in of the draft's own passes the bench: %q", got)
+	}
+}
+
+// A remote server signed in to by OAuth names the scopes its task needs,
+// where the vendor offers more than one (agentry-cli#667's acceptance).
+func TestARemoteServerNamesItsScopes(t *testing.T) {
+	d := checked(t, &fakeMeta{}, otherRemote+", "+`{"url": "https://api.githubcopilot.com/mcp/readonly", "auth": "oauth"}`)
+	if len(d.serverProblems) != 1 || !strings.HasPrefix(d.serverProblems[0], "capabilities.mcpServers[1]: https://api.githubcopilot.com/mcp/readonly: it signs in with OAuth and names no scopes") ||
+		!strings.Contains(d.serverProblems[0], "from those GitHub offers (repo, read:org") {
+		t.Fatalf("a GitHub OAuth server with no scopes: %v", d.serverProblems)
+	}
+	if d := checked(t, &fakeMeta{}, asanaRemote); len(d.serverProblems) != 0 {
+		t.Fatalf("a vendor that offers one scope needs none named: %v", d.serverProblems)
+	}
+	if d := checked(t, &fakeMeta{}, `{"url": "https://mcp.unknown.example/mcp", "auth": "oauth"}`); len(d.serverProblems) != 0 {
+		t.Fatalf("a vendor the list does not know is not held to its scopes: %v", d.serverProblems)
+	}
+}
+
+// A package on the core's unsupported list (plan D25) is refused whatever
+// its block: it has no listed sign-in, and the core's V5 names it too.
+func TestAnUnsupportedPackageCannotSignIn(t *testing.T) {
+	gsuite := `{"pypi": "mcp-gsuite", "version": "0.4.1", "egress": ["gmail.googleapis.com"], "oauth": {"issuer": "https://accounts.google.com", "env": {"TOKEN": "{access_token}"}}}`
+	d := checked(t, &fakeMeta{}, gsuite)
+	if len(d.serverProblems) != 1 || !strings.Contains(d.serverProblems[0], unlistedSignIn) {
+		t.Fatalf("mcp-gsuite's sign-in: %v", d.serverProblems)
+	}
+	m, err := manifest.Parse([]byte(manifestWith(gsuite)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := manifest.Blocking(manifest.Validate(m)); len(errs) == 0 || !strings.Contains(errs[0].Error(), "declare pypi:workspace-mcp instead") {
+		t.Fatalf("the core does not name the alternative: %v", errs)
+	}
+}
+
+// A repair that drops a remote server the report does not name is a drop
+// (DR-69): a remote server's identity is its address.
+func TestARepairThatDropsARemoteServerIsCaught(t *testing.T) {
+	first := &Draft{Manifest: json.RawMessage(manifestWith(linearRemote))}
+	second := &Draft{Manifest: json.RawMessage(manifestWith("")), Validation: json.RawMessage(`{"passed":true}`)}
+	if got := droppedUnnamed(first, second, RepairReport{}); len(got) == 0 {
+		t.Fatal("a dropped remote server is not caught")
 	}
 }

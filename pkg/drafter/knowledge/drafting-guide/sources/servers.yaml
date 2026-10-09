@@ -995,6 +995,15 @@ remote:
   evidence: agentry-cli#663
   date: 2026-10-05
 - vendor: GitHub
+  url: https://api.githubcopilot.com/mcp/readonly
+  auth: oauth
+  scopes: [repo, read:org, read:user, user:email, read:packages, write:packages, read:project, project, gist, notifications]
+  client: own
+  seen: false
+  observed: The read-only tools, signed in to by OAuth. Its metadata names github.com/login/oauth, which offers neither dynamic registration nor a client metadata document, so the person brings their own OAuth App. GitHub has no read-only scope for private repositories, so a task that reads them asks for repo.
+  evidence: vendor metadata read 2026-10-09
+  date: 2026-10-09
+- vendor: GitHub
   url: https://api.githubcopilot.com/mcp/
   auth: oauth
   scopes: [repo, read:org, read:user, user:email, read:packages, write:packages, read:project, project, gist, notifications]

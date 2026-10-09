@@ -86,7 +86,7 @@ type RemoteEntry struct {
 	Vendor string `yaml:"vendor"`
 	URL    string `yaml:"url"`
 	// Auth is the manifest's: oauth, secret or none.
-	Auth string `yaml:"auth"`
+	Auth manifest.MCPAuth `yaml:"auth"`
 	// Scopes are what the vendor's metadata offers, for auth oauth.
 	Scopes []string `yaml:"scopes,omitempty"`
 	// Client is, for auth oauth, ClientAgentry (the vendor lets Agentry
@@ -238,20 +238,28 @@ func LoadServerList(fsys fs.FS) (*ServerList, error) {
 			return nil, fmt.Errorf("%s: vendor, url, observed, evidence and date are required", at)
 		case !strings.HasPrefix(r.URL, "https://"):
 			return nil, fmt.Errorf("%s: url must be https://", at)
-		case r.Auth != string(manifest.AuthOAuth) && r.Auth != string(manifest.AuthSecret) && r.Auth != string(manifest.AuthNone):
+		case r.Auth != manifest.AuthOAuth && r.Auth != manifest.AuthSecret && r.Auth != manifest.AuthNone:
 			return nil, fmt.Errorf("%s: auth %q is not oauth, secret or none", at, r.Auth)
-		case r.Auth == string(manifest.AuthOAuth) && r.Client != ClientAgentry && r.Client != ClientOwn:
+		case r.Auth == manifest.AuthOAuth && r.Client != ClientAgentry && r.Client != ClientOwn:
 			return nil, fmt.Errorf("%s: an oauth entry's client must be %s or %s", at, ClientAgentry, ClientOwn)
-		case r.Auth != string(manifest.AuthOAuth) && (r.Client != "" || len(r.Scopes) > 0):
+		case r.Auth == manifest.AuthOAuth && len(r.Scopes) == 0:
+			return nil, fmt.Errorf("%s: an oauth entry lists the scopes the vendor offers", at)
+		case r.Auth != manifest.AuthOAuth && (r.Client != "" || len(r.Scopes) > 0):
 			return nil, fmt.Errorf("%s: client and scopes belong to an oauth entry", at)
-		case seenRemote[r.URL+" "+r.Auth]:
+		case seenRemote[r.URL+" "+string(r.Auth)]:
 			return nil, fmt.Errorf("%s: listed twice for auth %s", at, r.Auth)
 		}
-		seenRemote[r.URL+" "+r.Auth] = true
+		seenRemote[r.URL+" "+string(r.Auth)] = true
 	}
+	seenSignIn := map[string]bool{}
 	for i, si := range l.SignIns {
 		at := fmt.Sprintf("%s: signins[%d] (%s:%s)", ServerListFile, i, si.Ecosystem, si.Package)
+		key := si.Ecosystem + ":" + si.Package + "@" + si.Versions
 		switch {
+		case seenSignIn[key]:
+			return nil, fmt.Errorf("%s: listed twice for version %s", at, si.Versions)
+		case len(si.Egress) == 0:
+			return nil, fmt.Errorf("%s: egress names the hosts the server reaches", at)
 		case !slices.Contains(ecosystems, si.Ecosystem):
 			return nil, fmt.Errorf("%s: ecosystem must be npm or pypi", at)
 		case si.Package == "" || si.Versions == "" || si.OAuth.Issuer == "" || si.Observed == "" || si.Evidence == "" || si.Date.IsZero():
@@ -261,6 +269,7 @@ func LoadServerList(fsys fs.FS) (*ServerList, error) {
 		case si.Client != ClientAgentry && si.Client != ClientOwn:
 			return nil, fmt.Errorf("%s: client must be %s or %s", at, ClientAgentry, ClientOwn)
 		}
+		seenSignIn[key] = true
 	}
 	return &l, nil
 }
@@ -348,7 +357,7 @@ func samePackage(ecosystem, a, b string) bool {
 
 // RemoteServer is the Remote entry for a remote server's address and
 // auth, compared as written, with a trailing slash ignored.
-func (l *ServerList) RemoteServer(address, auth string) (RemoteEntry, bool) {
+func (l *ServerList) RemoteServer(address string, auth manifest.MCPAuth) (RemoteEntry, bool) {
 	for _, r := range l.Remote {
 		if strings.TrimSuffix(r.URL, "/") == strings.TrimSuffix(address, "/") && r.Auth == auth {
 			return r, true
@@ -377,7 +386,7 @@ func (si SignInEntry) Differs(srv manifest.MCPServer) string {
 	var out []string
 	o := srv.OAuth
 	if o == nil {
-		return "it has no oauth block"
+		return "oauth is missing"
 	}
 	if o.Issuer != si.OAuth.Issuer {
 		out = append(out, "oauth.issuer is not "+si.OAuth.Issuer)

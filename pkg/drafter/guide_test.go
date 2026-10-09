@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
@@ -127,7 +128,7 @@ func serverListPages(t *testing.T) map[string][]byte {
 			for _, c := range e.Conditions {
 				fmt.Fprintf(&b, "- **Needs:** %s\n", c)
 			}
-			fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidence(e.Evidence, e.Date))
+			fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidenceOn(e.Evidence, e.Date))
 		}
 		if p.deps && len(l.Dependencies) > 0 {
 			deps := slices.Clone(l.Dependencies)
@@ -137,7 +138,7 @@ func serverListPages(t *testing.T) map[string][]byte {
 			b.WriteString("\n## Dependencies that mean a server does not run here\n\n")
 			b.WriteString("A server whose own direct dependencies (npm's `dependencies`, PyPI's `requires_dist`) include one of these packages does not run here, whatever list the server itself is on [src: doc:servers.yaml].\n\n")
 			for _, d := range deps {
-				fmt.Fprintf(&b, "- %s `%s`: it %s (`%s`). %s (%s.)\n", ecosystemName(d.Ecosystem), d.Package, mustReason(t, d.Reason), d.Reason, d.Observed, evidence(d.Evidence, d.Date))
+				fmt.Fprintf(&b, "- %s `%s`: it %s (`%s`). %s (%s.)\n", ecosystemName(d.Ecosystem), d.Package, mustReason(t, d.Reason), d.Reason, d.Observed, evidenceOn(d.Evidence, d.Date))
 			}
 		}
 		pages[knowledge.WikiDir+"/servers/"+p.file] = b.Bytes()
@@ -169,7 +170,7 @@ func signInsPage(t *testing.T, l *ServerList) []byte {
 	fmt.Fprintf(&b, "## Remote servers\n\n%s. *Agentry signs in as itself* means the vendor lets Agentry register its own client; *the person brings their own client* means it does not, so whoever runs the QuickAgent makes an OAuth client at the vendor once, and the run setup shows how [src: doc:servers.yaml].\n", entriesWord(len(l.Remote)))
 	remote := slices.Clone(l.Remote)
 	sort.SliceStable(remote, func(i, j int) bool {
-		return remote[i].Vendor+remote[i].URL+remote[i].Auth < remote[j].Vendor+remote[j].URL+remote[j].Auth
+		return remote[i].Vendor+remote[i].URL+string(remote[i].Auth) < remote[j].Vendor+remote[j].URL+string(remote[j].Auth)
 	})
 	for _, r := range remote {
 		fmt.Fprintf(&b, "\n### %s, `%s`\n\n", r.Vendor, r.URL)
@@ -193,7 +194,7 @@ func signInsPage(t *testing.T, l *ServerList) []byte {
 		for _, c := range r.Conditions {
 			fmt.Fprintf(&b, "- **Needs:** %s\n", c)
 		}
-		fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidence(r.Evidence, r.Date))
+		fmt.Fprintf(&b, "- **Evidence:** %s.\n", evidenceOn(r.Evidence, r.Date))
 	}
 	fmt.Fprintf(&b, "\n## Package sign-ins\n\n%s. A package's `oauth` block is written only by copying one of these exactly, with the egress and settings it lists: the check after you answer sends any other to a repair turn [src: doc:servers.yaml].\n", entriesWord(len(l.SignIns)))
 	for _, si := range l.SignIns {
@@ -204,7 +205,7 @@ func signInsPage(t *testing.T, l *ServerList) []byte {
 			b.WriteString("- **Its client:** Agentry signs in as itself.\n")
 		}
 		fmt.Fprintf(&b, "- **Seen:** %s [src: doc:servers.yaml]\n", si.Observed)
-		fmt.Fprintf(&b, "- **Evidence:** %s.\n\n", evidence(si.Evidence, si.Date))
+		fmt.Fprintf(&b, "- **Evidence:** %s.\n\n", evidenceOn(si.Evidence, si.Date))
 		b.WriteString("Copy this entry into `capabilities.mcpServers`, with the server's tools, exactly as it stands:\n\n```yaml\n")
 		// The manifest's own order: the package, its version, its hosts, its
 		// settings, then the sign-in.
@@ -238,16 +239,6 @@ func mustReason(t *testing.T, class string) string {
 		t.Fatalf("reason %q is not in the closed set", class)
 	}
 	return s
-}
-
-// evidence is an entry's evidence with its date, unless it names the date
-// already ("survey 2026-10-05").
-func evidence(ev string, date time.Time) string {
-	d := date.Format(time.DateOnly)
-	if strings.Contains(ev, d) {
-		return ev
-	}
-	return ev + ", " + d
 }
 
 func ecosystemName(e string) string {

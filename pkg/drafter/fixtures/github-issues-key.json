@@ -1,0 +1,25 @@
+{
+  "id": "github-issues-key",
+  "description": "List the open issues of a GitHub repository I name, newest first, with their labels, through GitHub's own MCP server. It only reads, and it signs in with a GitHub token I give it.",
+  "hints": [
+    "The repository changes each run."
+  ],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.githubcopilot.com"
+    ],
+    "maxSecrets": 1,
+    "minSecrets": 1,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "intake": true,
+    "keys": "required",
+    "remote": {
+      "api.githubcopilot.com": "secret"
+    }
+  }
+}

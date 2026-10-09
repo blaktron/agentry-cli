@@ -12,7 +12,7 @@ An entry says what was seen, or what the vendor's own metadata said on its date.
 
 ## Remote servers
 
-7 entries. *Agentry signs in as itself* means the vendor lets Agentry register its own client; *the person brings their own client* means it does not, so whoever runs the QuickAgent makes an OAuth client at the vendor once, and the run setup shows how [src: doc:servers.yaml].
+8 entries. *Agentry signs in as itself* means the vendor lets Agentry register its own client; *the person brings their own client* means it does not, so whoever runs the QuickAgent makes an OAuth client at the vendor once, and the run setup shows how [src: doc:servers.yaml].
 
 ### Asana, `https://mcp.asana.com/v2/mcp`
 
@@ -26,6 +26,13 @@ An entry says what was seen, or what the vendor's own metadata said on its date.
 - **Signs in with:** `auth: oauth`; the person brings their own client.
 - **Scopes it offers:** `repo`, `read:org`, `read:user`, `user:email`, `read:packages`, `write:packages`, `read:project`, `project`, `gist`, `notifications`.
 - **Not seen to run here.** Its metadata names github.com/login/oauth, which offers neither dynamic registration nor a client metadata document, so the person brings their own OAuth App. The read-only tools are at the address ending /readonly. [src: doc:servers.yaml]
+- **Evidence:** vendor metadata read 2026-10-09.
+
+### GitHub, `https://api.githubcopilot.com/mcp/readonly`
+
+- **Signs in with:** `auth: oauth`; the person brings their own client.
+- **Scopes it offers:** `repo`, `read:org`, `read:user`, `user:email`, `read:packages`, `write:packages`, `read:project`, `project`, `gist`, `notifications`.
+- **Not seen to run here.** The read-only tools, signed in to by OAuth. Its metadata names github.com/login/oauth, which offers neither dynamic registration nor a client metadata document, so the person brings their own OAuth App. GitHub has no read-only scope for private repositories, so a task that reads them asks for repo. [src: doc:servers.yaml]
 - **Evidence:** vendor metadata read 2026-10-09.
 
 ### GitHub, `https://api.githubcopilot.com/mcp/readonly`
