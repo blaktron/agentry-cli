@@ -1241,7 +1241,20 @@ keychain entry `provider:hybrid-analysis`, which the desktop's Providers
 settings are to write, agentry-desktop#530); with none, nothing is asked
 and the line says `not checked: no key`. A sandbox host hands its CLI
 Agentry's key in `$HYBRID_API_KEY` (agentry-enterprise#332), so a hosted
-run looks up once its host carries a CLI with this check. A zip, tar, 7z or rar (or a
+run looks up once its host carries a CLI with this check. **A hosted run's
+inputs are also read by AI Review** (agentry-cli#321): with
+**`--review-inputs REGISTRY`** and the job's credential in
+`$AGENTRY_JOB_TOKEN`, which a sandbox host passes, every text the agent
+could read of them (a document's decoded text, and its original when that
+is text too, HTML as uploaded and as Markdown, each file in an archive) is
+sent to that registry's model-input scan as `input_file` before the agent
+starts, several small texts to a call and at most 16 MiB of text a run. An
+input AI Review flags, or one it could not read, refuses the run with exit
+11, naming the file (the reason's detail `ai-review`, `not-reviewed` or,
+past the 16 MiB, `review-limit`); in a session, a file you add is refused
+alone. The receipt's `inputReview` line says how much was read, in how
+many calls, with which question set. A run on your own computer is not
+reviewed. A zip, tar, 7z or rar (or a
 gzip, bzip2, xz or zstd stream) is unpacked and each file in it is listed
 and read by its path inside it, `archive.zip/folder/file.docx`: at most
 three archives deep, 2,000 files and 512 MiB unpacked in all. Links,

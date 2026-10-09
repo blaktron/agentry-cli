@@ -138,9 +138,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if s.dec, err = decodeInputs(ctx, d, p, rd); err != nil {
 		return fail(err)
 	}
-	if line := s.dec.line(); line != "" {
-		env.CapabilitiesEnforced["decode"] = line
-	}
+	s.dec.lines(env.CapabilitiesEnforced)
 	// The session store: a per-run named volume, labelled like every run
 	// object and removed with it (agentry-cli#90; DR-15 called the
 	// world-writable host directory it replaces "for now"). A fresh
@@ -1034,9 +1032,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	env.CapabilitiesEnforced["daemon"] = daemon
 	env.PDFs = pdfs
 	// Every decode the session made, the files added mid-run included.
-	if line := s.dec.line(); line != "" {
-		env.CapabilitiesEnforced["decode"] = line
-	}
+	s.dec.lines(env.CapabilitiesEnforced)
 	_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "transcript.md"), []byte(transcript(env, log)), 0o644)
 
 	var outErr error

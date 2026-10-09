@@ -109,6 +109,18 @@ const (
 	InputNameClash = "name-clash"
 	// InputUnreadable: an input could not be read or staged.
 	InputUnreadable = "unreadable"
+	// InputFlagged: AI Review flagged an input's text as trying to steer
+	// the agent (a hosted run's review, agentry-cli#321). The review ran,
+	// so a hosted run settles AI Review's credit alone (DEV-150).
+	InputFlagged = "ai-review"
+	// InputNotReviewed: AI Review could not read an input's text (the
+	// registry did not answer, refused the call, or the run stopped
+	// first), and nothing it has not read reaches the agent: the
+	// platform's fault, refunded.
+	InputNotReviewed = "not-reviewed"
+	// InputReviewLimit: the inputs' text is more than AI Review reads of
+	// one run (engine.MaxInputReviewText); nothing was asked.
+	InputReviewLimit = "review-limit"
 )
 
 // The details of ReasonInputsNotDecoded.
@@ -165,7 +177,7 @@ var reasonCodes = map[ReasonCode]struct {
 	}},
 	ReasonMCPStartFailed:   {names: namesServer},
 	ReasonSecretMissing:    {names: namesSecret},
-	ReasonInputRefused:     {details: []string{InputMalware, InputNameClash, InputUnreadable}},
+	ReasonInputRefused:     {details: []string{InputMalware, InputNameClash, InputUnreadable, InputFlagged, InputNotReviewed, InputReviewLimit}},
 	ReasonInputsNotDecoded: {details: []string{DecodeImage, DecodeRun}},
 	ReasonAgentBlocked:     {},
 	ReasonRunnerBlocked:    {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},

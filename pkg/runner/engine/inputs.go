@@ -36,7 +36,9 @@ import (
 // any decoder reads it (plan file-handling.md §7; agentry-cli#563): a
 // finding refuses the run before the agent starts, with the policy class,
 // so a hosted run settles nothing (D9), and refuses a session's added file
-// alone.
+// alone. On a hosted run, AI Review then reads every text the model could
+// read of them (review.go; plan file-handling.md §8, agentry-cli#321), and
+// refuses the run, or the added file, on one it flags.
 type inputsDecoder struct {
 	d  dockerx.Client
 	p  Params
@@ -47,6 +49,8 @@ type inputsDecoder struct {
 	// lookup asks Hybrid Analysis about the risky inputs by hash (plan
 	// file-handling.md §7, agentry-cli#564), with the policy's key or none.
 	lookup *hybrid.Client
+	// review is AI Review of the inputs' text, nil on a local run.
+	review *inputReview
 	// seq numbers the decode directories under the run root.
 	seq int
 	// before is what was decoded before the agent started, added what a
@@ -76,7 +80,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	if p.Decoded != nil || p.TextInputs {
 		return nil, nil
 	}
-	x := &inputsDecoder{d: d, p: p, rd: rd, index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
+	x := &inputsDecoder{d: d, p: p, rd: rd, review: newInputReview(p.InputReview), index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
 	if p.Plan != nil {
 		// The release's own default view (agentry-cli#693), which the
 		// tools serve an input in when the model asks for none.
@@ -105,8 +109,30 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	if err != nil {
 		return nil, err
 	}
+	refusal, err := x.reviewEntries(ctx, res, entries, false)
+	if err != nil {
+		return nil, err
+	}
+	if refusal != nil {
+		return nil, refusal.refusedRun()
+	}
 	x.before = merged(x.before, res)
 	return x, x.commit(entries)
+}
+
+// reviewEntries has AI Review read the texts of a decode's files, once
+// they are staged and before the index names them. The caller holds x.mu.
+func (x *inputsDecoder) reviewEntries(ctx context.Context, res *decode.Result, entries []toolsrv.InputEntry, added bool) (*reviewRefusal, error) {
+	if x.review == nil {
+		return nil, nil
+	}
+	texts := reviewTexts(entries, res.In,
+		filepath.Join(x.rd.inputsText, toolsrv.InputsTextSubdir), filepath.Join(x.rd.inputsText, toolsrv.InputsConvertedSubdir))
+	refusal, err := x.review.review(ctx, texts, added)
+	if err != nil {
+		return nil, Classify(ExitCLI, err)
+	}
+	return refusal, nil
 }
 
 // inputRefused names why an input was refused, in the run's reason; never
@@ -295,6 +321,19 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	if err != nil {
 		return toolsrv.InputEntry{}, err
 	}
+	// AI Review's flag refuses this file alone, as a finding does: its
+	// staged texts are taken back, and nothing names it to the agent.
+	refusal, err := x.reviewEntries(ctx, res, entries, true)
+	if err != nil {
+		return toolsrv.InputEntry{}, err
+	}
+	if refusal != nil {
+		for _, sub := range []string{toolsrv.InputsTextSubdir, toolsrv.InputsConvertedSubdir} {
+			_ = os.RemoveAll(filepath.Join(x.rd.inputsText, sub, base))
+		}
+		x.refused = append(x.refused, refusal.why)
+		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", refusal.why)
+	}
 	// An archive brings its members, each under its path.
 	for _, e := range entries {
 		if e.Path != base && !strings.HasPrefix(e.Path, base+"/") {
@@ -327,6 +366,20 @@ func merged(into decode.Result, res *decode.Result) decode.Result {
 		}
 	}
 	return into
+}
+
+// lines puts the receipt's decode and inputReview lines into enforced,
+// when the run has them.
+func (x *inputsDecoder) lines(enforced map[string]string) {
+	if line := x.line(); line != "" {
+		enforced["decode"] = line
+	}
+	if x == nil {
+		return
+	}
+	if line := x.review.line(); line != "" {
+		enforced["inputReview"] = line
+	}
 }
 
 // line is the receipt's decode line for every decode this run made, empty
