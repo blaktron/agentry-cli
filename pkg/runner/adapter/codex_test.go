@@ -159,6 +159,32 @@ func TestCodexCompileRendersModelCatalog(t *testing.T) {
 	}
 }
 
+// TestCodexCompileSwitchesOffSkills: codex installs its bundled system
+// skills (imagegen, openai-docs, …) into CODEX_HOME and lists them in a
+// <skills_instructions> developer message on every run, though the model
+// has no tool to use them (agentry-cli#762, measured on 0.153.4 and
+// 0.162.0). The config switches both off, each key in its own table.
+func TestCodexCompileSwitchesOffSkills(t *testing.T) {
+	cfg := string(codexCompile(t, codexInput()).Files[codexConfigFile])
+	for key, table := range map[string]string{
+		"include_instructions = false": "[skills]",
+		"enabled = false":              "[skills.bundled]",
+	} {
+		found := false
+		for i := 0; !found; {
+			j := strings.Index(cfg[i:], "\n"+key+"\n")
+			if j < 0 {
+				break
+			}
+			i += j + 1
+			found = tomlTableAt(cfg, i) == table
+		}
+		if !found {
+			t.Errorf("config.toml has no %q in %s:\n%s", key, table, cfg)
+		}
+	}
+}
+
 // tomlTableAt returns the header of the TOML table that holds offset i.
 func tomlTableAt(cfg string, i int) string {
 	header := ""
