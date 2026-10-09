@@ -47,11 +47,17 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 		}
 	}
 	if res.Host != nil {
-		// A harness on this machine reads the token file where the runner
-		// writes it, in the run's own folder: nothing is mounted (plan D14).
-		// A config directory on a host is the Claude milestone's (M5).
-		if msi.Delivery != spec.ModelSignInToken || msi.Path != spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile {
-			return fmt.Errorf("adapter %s: a host harness reads its sign-in's token at %s/%s, not as %s at %s", adapterName, spec.PHModelSignIn, spec.ModelSignInTokenFile, msi.Delivery, msi.Path)
+		// A harness on this machine reads what the runner hands it where it
+		// is, and nothing is mounted: the token file in the run's own folder
+		// (plan D14), or Claude Code's config directory, Agentry's own
+		// directory for the installed Claude Code (D23), which the engine
+		// names and never reads.
+		switch {
+		case msi.Delivery == spec.ModelSignInToken && msi.Path == spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile:
+		case msi.Delivery == spec.ModelSignInConfigDir && msi.Path == spec.PHModelSignIn && kind == policy.KeyKindClaudeSignIn:
+		default:
+			return fmt.Errorf("adapter %s: a host harness reads its sign-in's token at %s/%s, or Claude Code's directory at %s, not %s at %s",
+				adapterName, spec.PHModelSignIn, spec.ModelSignInTokenFile, spec.PHModelSignIn, msi.Delivery, msi.Path)
 		}
 		return nil
 	}
@@ -85,10 +91,12 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 	return nil
 }
 
-// signInProxy holds a run paid by a token-file sign-in to its vendor's
-// inference endpoint alone (invariant I2): the egress proxy is the harness's
-// only way out, and a sign-in's run reaches the model and nothing else —
-// never the vendor's token endpoint, which only the CLI talks to.
+// signInProxy holds a run paid by a model sign-in to the endpoints its
+// kind names and nothing else (invariant I2): the egress proxy is the
+// harness's only way out. A token-file sign-in's run reaches the model
+// alone, never the vendor's token endpoint, which only the CLI talks to; a
+// Claude run reaches Anthropic's API and the host Claude Code refreshes its
+// own sign-in at.
 func signInProxy(kind string, allow []string) error {
 	want := policy.SignInProxyAllow(kind)
 	if want == nil {
@@ -111,6 +119,10 @@ func signInRefusal(adapterName, kind string) error {
 func modelSignInLine(msi *spec.ModelSignInSpec) string {
 	line := policy.SignInSentence(msi.Kind) + " (policy apiKeyKind " + msi.Kind + "), the person's own, chosen in model setup; "
 	if msi.Delivery == spec.ModelSignInConfigDir {
+		if msi.Path == spec.PHModelSignIn {
+			return line + "the harness's own config directory, Agentry's own for the harness installed on this computer (never the person's own), " +
+				"which only the harness reads and writes; the runner names it and never reads it"
+		}
 		return line + "the harness's own config directory, which only it writes, mounted read-write at " + msi.Path +
 			" into this run's agent container alone; the runner never reads it"
 	}

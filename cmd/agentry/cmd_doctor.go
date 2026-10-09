@@ -271,6 +271,10 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 			rep.fail("model", "%s/%s spends %s (apiKeyKind %s) and none is kept on this computer — run `agentry setup` to sign in", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), pol.Model.APIKeyKind)
 		case r.Broken != "":
 			rep.fail("model", "%s/%s: the %s sign-in no longer works (%s) — run `agentry setup` to sign in again", pol.Model.Provider, pol.Model.Name, vendor, r.Broken)
+		case vendor == modelsignin.Claude && r.ConfigDir == "":
+			// Each Claude Code signs in where it runs (agentry-cli#740):
+			// the image, the default, is not signed in.
+			rep.ok("model", "%s/%s (spends %s, signed in for the Claude Code installed on this computer only: runs need --adapter claude, or `agentry model-signins add claude` for the image, the default)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind))
 		default:
 			rep.ok("model", "%s/%s (spends %s, kept as the model sign-in %s; runs report tokens, not dollars)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), vendor)
 		}

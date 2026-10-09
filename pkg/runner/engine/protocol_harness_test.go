@@ -43,6 +43,8 @@ func fakeHostHarness(args []string) func(io.Reader, io.Writer) int {
 		return playCodex
 	case slices.Contains(args, "--input-format") && slices.Contains(args, "stream-json"):
 		return playClaude
+	case len(args) > 0 && args[0] == "-p" && slices.Contains(args, "--output-format"):
+		return playClaudePrint
 	}
 	return nil
 }

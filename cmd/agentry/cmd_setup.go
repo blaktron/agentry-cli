@@ -62,7 +62,7 @@ func newSetupCmd() *cobra.Command {
 	f.StringVar(&opts.model, "model", "", "model id (default: the provider's table default)")
 	f.StringVar(&opts.apiKeyEnv, "api-key-env", "", "env var NAME holding your api key (never the value)")
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
-	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what pays for the model: api (an API key, the default) | subscription (an Anthropic `claude setup-token` token — Claude Code only; derived from the key when this setup stores it) | chatgpt-plan (provider openai: your ChatGPT plan, signed in with ChatGPT; interactive setup asks)")
+	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what pays for the model: api (an API key, the default) | subscription (an Anthropic `claude setup-token` token — Claude Code only; derived from the key when this setup stores it) | chatgpt-plan (provider openai: your ChatGPT plan, signed in with ChatGPT; interactive setup asks) | claude-signin (provider anthropic: Use your Claude subscription (runs Claude Code): Claude Code signs you in itself; interactive setup asks)")
 	f.StringVar(&opts.baseURL, "base-url", "", "custom endpoint base URL (derives the egress-proxy allowlist)")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&opts.yes, "yes", false, "non-interactive: fill gaps from the provider table instead of asking")
@@ -122,6 +122,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		APIKeyKind:   opts.apiKeyKind,
 		BaseURL:      opts.baseURL,
 		ChatGPT:      chatgptOffer(cmd, in, home),
+		Claude:       claudeOffer(cmd, in, home),
 		Yes:          !interactive,
 	}); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
@@ -147,7 +148,8 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	imageCtx := homeImageDir(home)
 	// The harness image prepared is the default adapter's for this model
 	// setup, and no other (plan model-sign-ins.md D7): docker-agent for a
-	// key, the Codex image for a ChatGPT plan.
+	// key, the Codex image for a ChatGPT plan, the Claude Code image (built
+	// here) for a Claude subscription.
 	runsOn := adapter.DefaultFor(pol)
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
 		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), runsOn == adapter.DefaultName); err != nil {

@@ -1,11 +1,15 @@
 package policy
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
 
-const testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+const (
+	testDigest    = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	testIntegrity = "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="
+)
 
 // Each model sign-in kind is admitted beside the one provider it spends,
 // in the model block and a harness block alike, and refused beside any
@@ -86,6 +90,9 @@ func TestHarnessImagesArePinned(t *testing.T) {
 		{"tag", HarnessImage{Ref: "ghcr.io/blaktron/agentry-codex:0.162.0"}, false, ""},
 		{"artifact on a pulled name", HarnessImage{Ref: "ghcr.io/x/claude:1", Artifact: testDigest}, false, ""},
 		{"short artifact", HarnessImage{Ref: "agentry-harness-claude:1", Artifact: "sha256:abc"}, false, ""},
+		{"npm integrity", HarnessImage{Ref: "agentry-claude-code:2.1.296", Artifact: testIntegrity}, true, PinArtifact},
+		{"short npm integrity", HarnessImage{Ref: "agentry-claude-code:2.1.296", Artifact: "sha512-OX/k=="}, false, ""},
+		{"sha1 integrity", HarnessImage{Ref: "agentry-claude-code:2.1.296", Artifact: "sha1-wHwya2/f9vHCDIoatjqa+n85W6U="}, false, ""},
 	} {
 		p := Default()
 		p.Images.HarnessImages = map[string]HarnessImage{"codex": c.img}
@@ -97,7 +104,7 @@ func TestHarnessImagesArePinned(t *testing.T) {
 		if c.ok {
 			got, ok := p.Images.HarnessImageFor("codex")
 			by, val := got.Pin()
-			if !ok || by != c.by || val != testDigest {
+			if !ok || by != c.by || val != c.img.Artifact && val != testDigest {
 				t.Errorf("%s: pin %s %s (%v)", c.name, by, val, ok)
 			}
 		}
@@ -126,6 +133,23 @@ func TestTheDefaultHarnessImageIsPinnedByDigest(t *testing.T) {
 	}
 	if _, ok := p.Images.HarnessImageFor("claude"); ok {
 		t.Fatal("the host claude adapter has no default image")
+	}
+}
+
+// Claude Code's image is built on the machine, never pulled (plan D22): its
+// default is a local name pinned by the npm integrity of the release it is
+// built from, and a Claude run reaches Anthropic's API and the host Claude
+// Code refreshes its own sign-in at, nothing else (I2).
+func TestClaudeCodesImageIsPinnedByItsNpmIntegrity(t *testing.T) {
+	h, ok := Default().Images.HarnessImageFor("claude-image")
+	if by, val := h.Pin(); !ok || by != PinArtifact || !strings.HasPrefix(val, "sha512-") || namesRegistry(h.Ref) {
+		t.Fatalf("claude-image: %s %s %q (%v)", by, val, h.Ref, ok)
+	}
+	if err := h.validate("claude-image"); err != nil {
+		t.Fatal(err)
+	}
+	if got := SignInProxyAllow(KeyKindClaudeSignIn); !slices.Equal(got, []string{"api.anthropic.com:443", "platform.claude.com:443"}) {
+		t.Fatalf("claude-signin endpoints %v", got)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/harnessbuild"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -96,9 +97,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 // EnsureInstalledFor is EnsureInstalled for one plan: the harness image
 // prepared is the one the plan's adapter runs and no other (plan
 // model-sign-ins.md D7), none for a host harness. A published image is
-// pulled by its pinned ref; one pinned by the artifact it is built from
-// is built on this machine by its adapter's preparation, and until that
-// exists here it must already be present (I8).
+// pulled by its pinned ref; one pinned by the artifact it is built from is
+// built on this machine (harnessbuild), refused when this build cannot
+// build it (I8).
 func EnsureInstalledFor(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	runnerTag, imageCtxDir string, logw io.Writer, plan *spec.Plan,
 ) error {
@@ -120,22 +121,26 @@ func EnsureInstalledFor(ctx context.Context, d dockerx.Client, pol *policy.Polic
 }
 
 // checkHarnessImage refuses an image pinned by the artifact it is built
-// from: such an image is never taken by its tag, since only the build that
-// makes it can say it holds that artifact, and this build has none, so the
-// receipt's pin could not be true.
+// from when this build cannot build it: such an image is never taken by
+// its tag, since only the build that makes it can say it holds that
+// artifact, so the receipt's pin could not be true.
 func checkHarnessImage(adapterName string, h policy.HarnessImage) error {
-	if h.Artifact != "" {
+	if h.Artifact != "" && !harnessbuild.Builds(adapterName) {
 		return fmt.Errorf("the %s harness image %s is built on this computer from its vendor's artifact (%s), and this build of agentry can neither build it nor check one already there", adapterName, h.Ref, h.Artifact)
 	}
 	return nil
 }
 
-// EnsureHarnessImage pulls adapterName's harness image h when it is not
-// here: by its pinned ref, which names a digest (I8). Setup prepares the
-// default adapter's image with it, a run its plan's (EnsureInstalledFor).
+// EnsureHarnessImage makes adapterName's harness image h present: pulled
+// by its pinned ref, which names a digest, or built here from the artifact
+// it is pinned by (I8). Setup prepares the default adapter's image with
+// it, a run its plan's (EnsureInstalledFor).
 func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName string, h policy.HarnessImage, logw io.Writer) error {
 	if err := checkHarnessImage(adapterName, h); err != nil {
 		return err
+	}
+	if h.Artifact != "" {
+		return harnessbuild.Builder{Docker: d, Log: logw}.Ensure(ctx, adapterName, h)
 	}
 	ok, err := d.ImageExists(ctx, h.Ref)
 	if err != nil || ok {

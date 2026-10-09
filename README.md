@@ -985,7 +985,10 @@ isolated container; `--adapter claude` or `codex` runs your own installed
 Claude Code or Codex as a host process behind the same gateway and egress
 proxy; `--adapter codex-image` runs OpenAI's Codex in its own signed image
 (agentry-dockerimages' Codex image, pinned by digest), the default when your
-model is paid by your ChatGPT plan (`goose` is planned, not implemented):
+model is paid by your ChatGPT plan; `--adapter claude-image` runs Anthropic's
+Claude Code in an image built on your machine from its npm packages, pinned
+by their npm integrity and never published, the default when your model is
+paid by your Claude subscription (`goose` is planned, not implemented):
 
 ```bash
 agentry run demo1/incident-summarizer@^1 --input incident.json --out ./reports
@@ -1190,9 +1193,34 @@ config directory; it reports tokens, never dollars, refuses `--max-cost`,
 and ends with the plan-limit outcome (exit 16, reason `plan-limit`) when
 the plan's limit is reached (a 429 on a ChatGPT plan, never retried). A
 hosted run's host (a run grant, `--connections-file` or `--session-protocol`)
-is refused one. The Claude and Copilot sign-ins and their adapters are not in
-this release yet, so every other adapter refuses a sign-in kind at plan time
-(exit 11).
+is refused one. **Use your Claude subscription (runs Claude Code)**
+(agentry-cli#740): Anthropic does not let another program run or keep a
+Claude sign-in, so `agentry model-signins add claude` (or `agentry setup`,
+provider `anthropic`, paying with `claude`) starts the unmodified Claude
+Code's own `claude auth login` in a config directory of Agentry's own, never
+your `~/.claude`, opens the address Claude Code prints, and keeps only where
+that directory is and the account Claude Code reports; Claude Code keeps and
+refreshes its sign-in there and Agentry never reads it. It signs in the
+Claude Code image (a docker volume, `agentry-claude-signin`; the browser
+cannot reach Claude Code's callback inside the container, so you paste the
+code Anthropic's page shows at Claude Code's prompt), the default for such a
+run; `--installed` signs in your installed Claude Code instead (a directory
+under `model-signins/`, with Claude Code's own browser and callback), for
+`--adapter claude`. The image is built at first use from
+`@anthropic-ai/claude-code` and its native package for your platform, each
+checked against the npm integrity this build carries (a mismatch builds
+nothing). A Claude run gets that directory read-write and nothing else of
+the sign-in, no `--bare`, no API-key variable, no settings, the gateway as
+its only tool server, and its egress proxy allows `api.anthropic.com:443` and
+`platform.claude.com:443` alone (the image's only way out; the installed
+Claude Code, a process on your computer, is asked to use it, as any host
+adapter is); a `rate_limit_event` Claude Code reports as
+rejected ends it with the plan-limit outcome and Claude Code's reset time.
+`remove claude` runs Claude Code's own logout there and deletes the
+directory. The API-key choice stays: the Max and Team plans include monthly
+API credits, spent through a key from the Console organization linked to the
+plan. The Copilot sign-in and its adapter are not in this release yet, so a
+`copilot-signin` policy is refused at plan time (exit 11).
 Harness images are pinned per adapter: docker-agent's by digest
 (`images.harnessDockerAgent`), any other's in `images.harnessImages` by
 digest or by the vendor artifact it is built from, and the receipt names

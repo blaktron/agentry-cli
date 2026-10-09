@@ -61,7 +61,7 @@ func runModelSignIn(ctx context.Context, home string, plan *spec.Plan, hosted bo
 	if hosted {
 		return nil, nil, hostedSignInRefusal(msi.Kind)
 	}
-	g, err := modelsignin.Open(home, connectionKeys()).ForRun(ctx, msi.Kind, msi.Delivery)
+	g, err := modelsignin.Open(home, connectionKeys()).ForRun(ctx, msi.Kind, msi.Delivery, plan.Harness.Host != nil)
 	if errors.Is(err, modelsignin.ErrNoSignIn) {
 		return nil, nil, engine.Classify(engine.ExitPolicy, receipt.WithReason(err, receipt.ReasonSignInMissing, ""))
 	}
@@ -163,14 +163,18 @@ type removedModelSignIn struct {
 func newModelSignInsRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <vendor>",
-		Short: "Remove a model sign-in (revoked at the vendor where this build can)",
+		Short: "Remove a model sign-in (revoked at the vendor where this build can; for claude, Claude Code logs out and its directory is deleted)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := runnerHome()
 			if err != nil {
 				return err
 			}
-			outcome, err := modelsignin.Open(home, connectionKeys()).Remove(cmd.Context(), args[0], "removed by the person")
+			s := modelsignin.Open(home, connectionKeys())
+			// A Claude sign-in is Claude Code's, in its own directories:
+			// Claude Code logs out there, then they are deleted.
+			s.EndClaude = endClaude(cmd.ErrOrStderr(), home)
+			outcome, err := s.Remove(cmd.Context(), args[0], "removed by the person")
 			if errors.Is(err, modelsignin.ErrNone) {
 				return fmt.Errorf("no %s sign-in is kept on this computer", args[0])
 			}
