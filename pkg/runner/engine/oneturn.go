@@ -13,6 +13,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -28,11 +30,12 @@ var oneTurnExitWait = 30 * time.Second
 // oneTurn drives the task as the one turn of the plan's session protocol
 // over rw (the harness's stdout and stdin), recording every event in c. It
 // returns the turn's error, which the caller classifies after c's own
-// outcomes (a plan's limit, a budget). tools are the gateway tools the
-// driver may approve. kill stops the harness when it does not exit after
-// the session ends; a panic while recording is c's error and kills it too.
-func oneTurn(ctx context.Context, p Params, rw io.ReadWriteCloser, task []byte, tools []string, c *eventCollector, kill func(error)) error {
-	drv, err := p.Adapter.Session(ctx, rw, adapter.SessionOptions{GatewayTools: tools, ModelSignIn: p.Plan.Harness.ModelSignIn != nil})
+// outcomes (a plan's limit, a budget). opts are the driver's
+// (sessionOptions), the gateway tools it may approve among them. kill
+// stops the harness when it does not exit after the session ends; a panic
+// while recording is c's error and kills it too.
+func oneTurn(ctx context.Context, p Params, rw io.ReadWriteCloser, task []byte, opts adapter.SessionOptions, c *eventCollector, kill func(error)) error {
+	drv, err := p.Adapter.Session(ctx, rw, opts)
 	if err != nil {
 		_ = rw.Close()
 		return fmt.Errorf("one-turn session: %w", err)
@@ -69,4 +72,28 @@ func oneTurn(ctx context.Context, p Params, rw io.ReadWriteCloser, task []byte, 
 	stop.Stop()
 	<-pumped
 	return err
+}
+
+// sessionOptions is what a session's driver is told of the run: the
+// gateway tools it may approve, whether a model sign-in pays (and, for a
+// harness that asks its driver for its token, the token source), the
+// gateway's bearer and the plan's harness files as rendered, for a driver
+// that hands its harness the gateway and the instruction over the session.
+func sessionOptions(p Params, rd *runDirs, token string, tools []string) adapter.SessionOptions {
+	return adapter.SessionOptions{
+		GatewayTools: tools,
+		ModelSignIn:  p.Plan.Harness.ModelSignIn != nil,
+		SignInToken:  rd.signInTokenFunc(),
+		GatewayToken: token,
+		HarnessFile:  rd.harnessFile,
+	}
+}
+
+// harnessFile reads one of the plan's harness files as the run rendered it
+// (renderPlanFiles), by its name under the plan's harness folder.
+func (rd *runDirs) harnessFile(name string) ([]byte, error) {
+	if !filepath.IsLocal(name) {
+		return nil, fmt.Errorf("no harness file %q in the plan", name)
+	}
+	return os.ReadFile(filepath.Join(rd.cfg, "harness", filepath.FromSlash(name))) //nolint:gosec // the run's own rendered plan
 }

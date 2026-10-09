@@ -69,13 +69,14 @@ var providerDefaults = []ProviderDefault{
 		ModelsURL: "https://generativelanguage.googleapis.com/v1beta/models", KeyHeader: "x-goog-api-key"},
 }
 
-// Providers lists the selectable provider names (custom last).
+// Providers lists the selectable provider names (copilot, paid by a
+// Copilot plan alone, then custom last).
 func Providers() []string {
-	out := make([]string, 0, len(providerDefaults)+1)
+	out := make([]string, 0, len(providerDefaults)+2)
 	for _, d := range providerDefaults {
 		out = append(out, d.Provider)
 	}
-	return append(out, "custom")
+	return append(out, policy.ProviderCopilot, "custom")
 }
 
 // DefaultsFor returns the table row for a provider (nil for custom or
@@ -120,6 +121,13 @@ type ModelOpts struct {
 	// model-sign-ins.md §4.4; agentry-cli#740): nil offers none.
 	// APIKeyKind claude-signin asks for it without the question.
 	Claude ClaudeOffer
+	// Copilot offers Sign in with GitHub for provider copilot, its one way
+	// to pay (plan model-sign-ins.md §4.5; agentry-cli#741).
+	Copilot CopilotOffer
+	// CopilotPlan is the Copilot plan the account is on (policy.CopilotPlans:
+	// individual, business, enterprise), which names the Copilot API host
+	// runs reach; "" keeps the policy's, else asks, else individual.
+	CopilotPlan string
 	// Yes suppresses prompting entirely: table defaults fill the gaps, the
 	// same provider's policy fills what it customized, and a custom
 	// provider with no BaseURL left is an error rather than a question.
@@ -153,6 +161,111 @@ type ClaudeOffer struct {
 	Kept func() string
 	// SignIn runs Claude Code's own sign-in and returns its account.
 	SignIn func() (account string, err error)
+}
+
+// CopilotOffer is how setup reaches the Copilot sign-in, which the caller
+// owns (the store, the browser, the network).
+type CopilotOffer struct {
+	// Kept is the account of a kept Copilot sign-in that still works, ""
+	// when there is none.
+	Kept func() string
+	// SignIn signs in with GitHub and returns the account.
+	SignIn func() (account string, err error)
+}
+
+// CopilotSignInLabel is the Copilot choice's wording (plan §4.1).
+const CopilotSignInLabel = "Sign in with GitHub"
+
+// configureCopilot is the model setup for a Copilot plan: the sign-in, the
+// model, the plan whose Copilot API host the proxy allows, and the policy's
+// model block. No key variable and no base URL: Copilot CLI finds GitHub's
+// endpoints itself, and the proxy allows GitHub's API and the plan's
+// Copilot host alone (invariant I2).
+func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
+	if opts.Copilot.SignIn == nil {
+		return errors.New("this setup cannot sign in with GitHub")
+	}
+	// A plan named on the command line is held to the list before anything
+	// is signed in for it.
+	if plan := strings.ToLower(strings.TrimSpace(opts.CopilotPlan)); plan != "" {
+		if _, err := policy.CopilotProxyAllow(plan); err != nil {
+			return err
+		}
+	}
+	acct := ""
+	if opts.Copilot.Kept != nil {
+		acct = opts.Copilot.Kept()
+	}
+	fresh := acct == ""
+	if !fresh && !opts.Yes {
+		use, err := p.Confirm(fmt.Sprintf("Use the GitHub sign-in kept on this computer (%s)?", acct), true)
+		if err != nil {
+			return err
+		}
+		fresh = !use
+	}
+	if fresh {
+		p.Say(CopilotSignInLabel + ": your Copilot plan pays for the runs on this computer, through GitHub's Copilot CLI; hosted runs never use it.")
+		var err error
+		if acct, err = opts.Copilot.SignIn(); err != nil {
+			return err
+		}
+	}
+	samePlan := pol.Model.APIKeyKind == policy.KeyKindCopilotSignIn
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		def := "auto"
+		if samePlan && pol.Model.Name != "" {
+			def = pol.Model.Name
+		}
+		if opts.Yes {
+			model = def
+		} else {
+			ans, err := p.Ask("Model (auto lets Copilot choose, the only choice on Copilot Free; or a Copilot model id such as claude-sonnet-5.5)", def)
+			if err != nil {
+				return err
+			}
+			model = strings.TrimSpace(ans)
+		}
+	}
+	if model == "" {
+		return errors.New("no model chosen for the Copilot plan (pass --model)")
+	}
+	plan := strings.ToLower(strings.TrimSpace(opts.CopilotPlan))
+	if plan == "" {
+		def := policy.CopilotPlanIndividual
+		if samePlan {
+			if kept := policy.CopilotPlanOf(pol.Model.ProxyAllow); kept != "" {
+				def = kept
+			}
+		}
+		if opts.Yes {
+			plan = def
+		} else {
+			ans, err := p.Ask("Your Copilot plan (individual = Free, Pro, Pro+ or Max | business | enterprise)", def)
+			if err != nil {
+				return err
+			}
+			plan = strings.ToLower(strings.TrimSpace(ans))
+		}
+	}
+	allow, err := policy.CopilotProxyAllow(plan)
+	if err != nil {
+		return err
+	}
+	pol.Model = policy.Model{
+		Provider:   policy.ProviderCopilot,
+		Name:       model,
+		APIKeyKind: policy.KeyKindCopilotSignIn,
+		ProxyAllow: allow,
+	}
+	who := ""
+	if acct != "" {
+		who = " as " + acct
+	}
+	p.Say(fmt.Sprintf("model: copilot/%s, paid by your Copilot plan (signed in with GitHub%s; runs use Copilot CLI, and the agent container reaches %s alone)",
+		model, who, strings.Join(pol.Model.ProxyAllow, ", ")))
+	return nil
 }
 
 // configureClaude is the model setup for a Claude subscription through
@@ -316,7 +429,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	}
 
 	d := DefaultsFor(prov)
-	if d == nil && prov != "custom" {
+	if d == nil && prov != "custom" && prov != policy.ProviderCopilot {
 		// An unlisted provider name is passed to the harness as it is:
 		// docker-agent knows more providers than the table, which only
 		// carries the ones whose endpoints we can derive — but it does
@@ -324,6 +437,16 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		// client at the base URL (agentry-cli#169), and it will not know
 		// a name made up here.
 		p.Say(fmt.Sprintf("provider %q is not in the built-in table; the harness must know it by that name — for an OpenAI-compatible endpoint of your own, use custom with --base-url", prov))
+	}
+
+	// Copilot is paid by the person's Copilot plan alone (D25–D28).
+	if prov == policy.ProviderCopilot {
+		if kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind)); kind != "" && kind != policy.KeyKindCopilotSignIn {
+			return fmt.Errorf("provider copilot is paid by your Copilot plan alone (api key kind %s), not %q", policy.KeyKindCopilotSignIn, kind)
+		}
+		return configureCopilot(p, pol, opts)
+	} else if strings.EqualFold(strings.TrimSpace(opts.APIKeyKind), policy.KeyKindCopilotSignIn) {
+		return fmt.Errorf("api key kind copilot-signin needs provider copilot (it is %q)", prov)
 	}
 
 	// OpenAI is paid by a key or by the person's ChatGPT plan (D15, D16):

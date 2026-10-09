@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -300,6 +301,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		// container (I9).
 		signIn:      p.Plan.Harness.ModelSignIn != nil,
 		onPlanLimit: func() { cancelCause(errPlanLimit) },
+		onOrgPolicy: func() { cancelCause(errOrgPolicy) },
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
@@ -329,7 +331,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 			_ = stdoutW.Close()
 			_ = stdinR.Close()
 		}()
-		turnErr = oneTurn(agentCtx, p, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, task, tools, collector, cancelCause)
+		turnErr = oneTurn(agentCtx, p, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, task, sessionOptions(p, rd, token, tools), collector, cancelCause)
 		<-ran
 	} else {
 		done := consumeGuarded(collector, pr, cancelCause)
@@ -352,6 +354,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	// before the tail below quotes it.
 	_ = stderrFile.Close()
 	rd.redact.File(stderrPath)
+	var refused *adapter.OrgPolicyRefusal
 	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info, hostEnv: inherited}
 	switch {
 	// First, as in the container path: a panic that stopped the reader is the
@@ -360,6 +363,10 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		out.err = Classify(ExitCLI, collector.panicErr)
 	case collector.planLimit != nil:
 		out.err = planLimitError(collector.planLimit.Text, collector.planLimit.ResetsAt)
+	case collector.orgPolicy != nil:
+		out.err = orgPolicyError(collector.orgPolicy)
+	case errors.As(turnErr, &refused):
+		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:

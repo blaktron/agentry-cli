@@ -29,6 +29,8 @@ type setupOpts struct {
 	apiKeySource string
 	apiKeyKind   string
 	baseURL      string
+	copilotPlan  string
+	oauthApp     bool
 	policyPath   string
 	yes          bool
 	skipImages   bool
@@ -58,12 +60,14 @@ func newSetupCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.provider, "provider", "", "LLM provider: anthropic | openai | google | custom (or any docker-agent provider name)")
+	f.StringVar(&opts.provider, "provider", "", "LLM provider: anthropic | openai | google | copilot (your Copilot plan, Sign in with GitHub) | custom (or any docker-agent provider name)")
 	f.StringVar(&opts.model, "model", "", "model id (default: the provider's table default)")
 	f.StringVar(&opts.apiKeyEnv, "api-key-env", "", "env var NAME holding your api key (never the value)")
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
-	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what pays for the model: api (an API key, the default) | subscription (an Anthropic `claude setup-token` token — Claude Code only; derived from the key when this setup stores it) | chatgpt-plan (provider openai: your ChatGPT plan, signed in with ChatGPT; interactive setup asks) | claude-signin (provider anthropic: Use your Claude subscription (runs Claude Code): Claude Code signs you in itself; interactive setup asks)")
+	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what pays for the model: api (an API key, the default) | subscription (an Anthropic `claude setup-token` token — Claude Code only; derived from the key when this setup stores it) | chatgpt-plan (provider openai: your ChatGPT plan, signed in with ChatGPT; interactive setup asks) | claude-signin (provider anthropic: Use your Claude subscription (runs Claude Code): Claude Code signs you in itself; interactive setup asks) | copilot-signin (provider copilot, its only one: Sign in with GitHub)")
 	f.StringVar(&opts.baseURL, "base-url", "", "custom endpoint base URL (derives the egress-proxy allowlist)")
+	f.BoolVar(&opts.oauthApp, "oauth-app", false, "provider copilot: sign in through Agentry's OAuth App rather than its GitHub App (the fallback, plan D26)")
+	f.StringVar(&opts.copilotPlan, "copilot-plan", "", "provider copilot: your Copilot plan, which names the Copilot API host runs reach: individual (Free, Pro, Pro+, Max; the default) | business | enterprise")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&opts.yes, "yes", false, "non-interactive: fill gaps from the provider table instead of asking")
 	f.BoolVar(&opts.skipImages, "skip-images", false, "configure the policy only; skip the docker image pulls/build")
@@ -123,6 +127,8 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		BaseURL:      opts.baseURL,
 		ChatGPT:      chatgptOffer(cmd, in, home),
 		Claude:       claudeOffer(cmd, in, home),
+		Copilot:      copilotOffer(cmd, home, opts.oauthApp),
+		CopilotPlan:  opts.copilotPlan,
 		Yes:          !interactive,
 	}); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
@@ -149,7 +155,8 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	// The harness image prepared is the default adapter's for this model
 	// setup, and no other (plan model-sign-ins.md D7): docker-agent for a
 	// key, the Codex image for a ChatGPT plan, the Claude Code image (built
-	// here) for a Claude subscription.
+	// here) for a Claude subscription, the Copilot CLI image (built here)
+	// for a Copilot plan.
 	runsOn := adapter.DefaultFor(pol)
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
 		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), runsOn == adapter.DefaultName); err != nil {

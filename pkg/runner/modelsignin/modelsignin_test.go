@@ -187,30 +187,30 @@ func TestAVendorWithNoFlowIsKeptAndForgotten(t *testing.T) {
 	home := t.TempDir()
 	keys := &memKeys{m: map[string]string{}}
 	s := Open(home, keys)
-	if _, err := s.Put(Copilot, Record{Label: "octocat"}, Grant{RefreshToken: "ghr_x"}); err != nil {
+	if _, err := s.Put(HuggingFace, Record{Label: "hf-person"}, Grant{RefreshToken: "hf_refresh_x"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Put(Claude, Record{ConfigDir: "agentry-claude-config"}, Grant{}); err != nil {
 		t.Fatal(err)
 	}
 	list, err := s.List()
-	if err != nil || len(list) != 2 || list[0].Vendor != Claude || list[1].Vendor != Copilot {
+	if err != nil || len(list) != 2 || list[0].Vendor != Claude || list[1].Vendor != HuggingFace {
 		t.Fatalf("list %+v %v", list, err)
 	}
-	if _, err := s.Use(context.Background(), Copilot); err == nil || !strings.Contains(err.Error(), "cannot refresh a copilot sign-in yet") {
+	if _, err := s.Use(context.Background(), HuggingFace); err == nil || !strings.Contains(err.Error(), "cannot refresh a huggingface sign-in yet") {
 		t.Fatalf("use: %v", err)
 	}
 	if _, err := s.Use(context.Background(), Claude); err == nil || !strings.Contains(err.Error(), "keeps no grant") {
 		t.Fatalf("use claude: %v", err)
 	}
-	out, err := s.Remove(context.Background(), Copilot, "test")
+	out, err := s.Remove(context.Background(), HuggingFace, "test")
 	if err != nil || out != RevokeNotOffered || len(keys.m) != 0 {
 		t.Fatalf("remove: %q %v (keys %v)", out, err, keys.m)
 	}
 	if out, err = s.Remove(context.Background(), Claude, "test"); err != nil || !strings.Contains(out, "delete agentry-claude-config to end it") {
 		t.Fatalf("remove claude: %q %v", out, err)
 	}
-	if _, err := s.Get(Copilot); !errors.Is(err, ErrNone) {
+	if _, err := s.Get(HuggingFace); !errors.Is(err, ErrNone) {
 		t.Fatalf("after remove: %v", err)
 	}
 	b, _ := os.ReadFile(filepath.Join(Dir(home), "audit.ndjson")) //nolint:gosec // the test's store

@@ -1,16 +1,19 @@
 // Package harnessbuild makes the harness images that are built on this
 // machine from a vendor artifact and never published (plan
-// model-sign-ins.md D5, D22; agentry-cli#740). Claude Code's is the first:
-// its licence grants no redistribution, so each person's machine builds
-// its own from Anthropic's npm packages, as `npm install -g` would lay
-// them out, on agentry-dockerimages' Node base.
+// model-sign-ins.md D5, D22, D27). Claude Code's licence grants no
+// redistribution, so each person's machine builds its own from Anthropic's
+// npm packages, as `npm install -g` would lay them out, on
+// agentry-dockerimages' Node base (agentry-cli#740). Copilot CLI's allows
+// redistribution only inside an application, so it is built the same way,
+// from GitHub's release download, on agentry-dockerimages' Alpine base
+// (copilot.go; agentry-cli#741).
 //
-// Every package is held to the npm integrity this build carries before
-// anything reaches the daemon (invariant I8): a package whose bytes do not
-// hash to it is refused and nothing is built. The image is labelled with
-// the artifact it was built from, and an image of the tag without that
-// label, or with another, is built again, so the receipt's pin is true of
-// the image that ran.
+// Every download is held to the hash this build carries before anything
+// reaches the daemon (invariant I8): one whose bytes do not hash to it is
+// refused and nothing is built. The image is labelled with the artifact it
+// was built from, and an image of the tag without that label, or with
+// another, is built again, so the receipt's pin is true of the image that
+// ran.
 package harnessbuild
 
 import (
@@ -22,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -92,7 +96,19 @@ var npmCPU = map[string]string{"amd64": "x64", "arm64": "arm64"}
 const maxPackage = 1 << 30
 
 // Builds reports whether this build can make adapterName's image.
-func Builds(adapterName string) bool { return adapterName == ClaudeImageAdapter }
+func Builds(adapterName string) bool {
+	return adapterName == ClaudeImageAdapter || adapterName == CopilotImageAdapter
+}
+
+// PinNote is what an image this build makes for adapterName is pinned by
+// and does not prove, for the receipt (spec.ImagePin.Note): "" when the
+// pin says it all.
+func PinNote(adapterName string) string {
+	if adapterName == CopilotImageAdapter {
+		return CopilotPinNote
+	}
+	return ""
+}
 
 // Builder makes the images this package builds.
 type Builder struct {
@@ -101,6 +117,9 @@ type Builder struct {
 	HTTP *http.Client
 	// Registry is the npm registry; "" is policy.DefaultNPMRegistry.
 	Registry string
+	// Releases is where GitHub's release downloads are; ""
+	// is CopilotReleases.
+	Releases string
 	// Dir is where the build context is made and removed; "" is the
 	// system's temporary directory.
 	Dir string
@@ -124,9 +143,20 @@ func (b Builder) Ensure(ctx context.Context, adapterName string, h policy.Harnes
 	if !Builds(adapterName) {
 		return fmt.Errorf("this build of agentry cannot build the %s harness image", adapterName)
 	}
-	rel, err := claudeReleaseFor(h)
-	if err != nil {
-		return err
+	var build func() error
+	switch adapterName {
+	case CopilotImageAdapter:
+		rel, err := copilotReleaseFor(h)
+		if err != nil {
+			return err
+		}
+		build = func() error { return b.buildCopilot(ctx, h, rel) }
+	default:
+		rel, err := claudeReleaseFor(h)
+		if err != nil {
+			return err
+		}
+		build = func() error { return b.buildClaude(ctx, h, rel) }
 	}
 	ok, err := b.Docker.ImageExists(ctx, h.Ref)
 	if err != nil {
@@ -142,7 +172,7 @@ func (b Builder) Ensure(ctx context.Context, adapterName string, h policy.Harnes
 		}
 		b.logf("%s is here but was not built from %s; building it again\n", h.Ref, h.Artifact)
 	}
-	return b.buildClaude(ctx, h, rel)
+	return build()
 }
 
 // claudeReleaseFor is the release h's artifact names, whose version h's
@@ -242,15 +272,30 @@ WORKDIR /home/node
 
 // fetch downloads name@version's tarball into dest and holds it to
 // integrity, removing it when it does not match.
-func (b Builder) fetch(ctx context.Context, name, version, integrity, dest string) (err error) {
+func (b Builder) fetch(ctx context.Context, name, version, integrity, dest string) error {
 	reg := strings.TrimRight(b.Registry, "/")
 	if reg == "" {
 		reg = policy.DefaultNPMRegistry
 	}
 	url := reg + "/" + name + "/-/" + name[strings.LastIndex(name, "/")+1:] + "-" + version + ".tgz"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	sum, err := b.get(ctx, url, dest, maxPackage, sha512.New(), name+"@"+version, "the registry")
 	if err != nil {
 		return err
+	}
+	if got := "sha512-" + base64.StdEncoding.EncodeToString(sum); got != integrity {
+		_ = os.Remove(dest)
+		return &IntegrityError{Package: name + "@" + version, Want: integrity, Got: got}
+	}
+	return nil
+}
+
+// get downloads url into dest, at most limit bytes, and returns its hash
+// by h; dest is removed when the download fails. what and who name the
+// download and its server in errors.
+func (b Builder) get(ctx context.Context, url, dest string, limit int64, h hash.Hash, what, who string) (sum []byte, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
 	}
 	hc := b.HTTP
 	if hc == nil {
@@ -258,15 +303,15 @@ func (b Builder) fetch(ctx context.Context, name, version, integrity, dest strin
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("fetch %s@%s: %w", name, version, err)
+		return nil, fmt.Errorf("fetch %s: %w", what, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch %s@%s: the registry answered %s", name, version, resp.Status)
+		return nil, fmt.Errorf("fetch %s: %s answered %s", what, who, resp.Status)
 	}
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // a file in the build's own folder
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if cerr := f.Close(); err == nil {
@@ -276,18 +321,14 @@ func (b Builder) fetch(ctx context.Context, name, version, integrity, dest strin
 			_ = os.Remove(dest)
 		}
 	}()
-	sum := sha512.New()
-	n, err := io.Copy(io.MultiWriter(f, sum), io.LimitReader(resp.Body, maxPackage+1))
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return fmt.Errorf("fetch %s@%s: %w", name, version, err)
+		return nil, fmt.Errorf("fetch %s: %w", what, err)
 	}
-	if n > maxPackage {
-		return fmt.Errorf("fetch %s@%s: larger than %d bytes", name, version, maxPackage)
+	if n > limit {
+		return nil, fmt.Errorf("fetch %s: larger than %d bytes", what, limit)
 	}
-	if got := "sha512-" + base64.StdEncoding.EncodeToString(sum.Sum(nil)); got != integrity {
-		return &IntegrityError{Package: name + "@" + version, Want: integrity, Got: got}
-	}
-	return nil
+	return h.Sum(nil), nil
 }
 
 // checkWrapper holds the wrapper's package.json to the release: its name

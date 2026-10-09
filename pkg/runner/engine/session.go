@@ -58,6 +58,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			Image:   p.Plan.Harness.Agent.Image,
 			Model:   p.Plan.Harness.Model,
 			Mode:    p.Plan.Mode,
+			// A session's receipt names the pin and the credential kind as a
+			// run's does (I8; missing from sessions until agentry-cli#741).
+			ImagePin:       p.Plan.Harness.ImagePin.String(),
+			CredentialKind: credentialKind(p.Plan),
 		},
 		Policy: policyRecord(p),
 		Result: receipt.TextResult(""),
@@ -320,6 +324,9 @@ type liveSession struct {
 	harnessErr     string
 	// planLimit is the harness's first plan-limit event (EndPlanLimit).
 	planLimit *adapter.Event
+	// orgPolicy is the harness's first organization-policy event
+	// (EndOrgPolicy).
+	orgPolicy *adapter.Event
 	// panicErr is set when the pump or the watcher recovered a panic. It is
 	// the session's error whatever reason it then ended with, because that
 	// reason is a side effect of the recovery (agentry-cli#161).
@@ -388,8 +395,9 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		}
 	}
 	restart := p.Plan.Harness.Session.RestartOnRenewal
-	drv, err := p.Adapter.Session(agentCtx, rw, adapter.SessionOptions{
-		GatewayTools: s.granted, ModelSignIn: p.Plan.Harness.ModelSignIn != nil, Resumable: restart})
+	opts := sessionOptions(p, s.rd, token, s.granted)
+	opts.Resumable = restart
+	drv, err := p.Adapter.Session(agentCtx, rw, opts)
 	if err != nil {
 		cancel(err)
 		awaitExit()
@@ -401,6 +409,10 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	if err := drv.Start(handshake); err != nil {
 		cancel(err)
 		awaitExit()
+		var refused *adapter.OrgPolicyRefusal
+		if errors.As(err, &refused) {
+			return orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
+		}
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w%s", err, stderrTail(s.stderrPath)))
 	}
 	s.signInSum = s.signInTokenSum()
@@ -689,6 +701,17 @@ func (s *liveSession) handle(ev adapter.Event) {
 		s.emit(session.Event{Kind: session.KindError, Text: "plan limit reached: " + ev.Text, Raw: ev.Raw})
 		if first {
 			s.endWith(session.EndPlanLimit)
+		}
+	case adapter.EventOrgPolicy:
+		s.mu.Lock()
+		first := s.orgPolicy == nil
+		if first {
+			s.orgPolicy = &ev
+		}
+		s.mu.Unlock()
+		s.emit(session.Event{Kind: session.KindError, Text: "refused by an organization's policy: " + ev.Text, Raw: ev.Raw})
+		if first {
+			s.endWith(session.EndOrgPolicy)
 		}
 	default:
 		s.emit(session.Event{Kind: session.KindOther, Text: ev.Text, Raw: ev.Raw})
@@ -1022,6 +1045,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	harnessErr := s.harnessErr
 	panicErr := s.panicErr
 	planLimit := s.planLimit
+	orgPolicy := s.orgPolicy
 	restarts := s.restarts
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
@@ -1058,6 +1082,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		outErr = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", env.Usage.CostUSD, s.p.Budgets.MaxCostUSD))
 	case session.EndPlanLimit:
 		outErr = planLimitError(planLimit.Text, planLimit.ResetsAt)
+	case session.EndOrgPolicy:
+		outErr = orgPolicyError(orgPolicy)
 	case session.EndIdle:
 		outErr = Classify(ExitTimeout, fmt.Errorf("session idle for more than %ds", s.budgets.IdleTimeoutSeconds))
 	case session.EndWall:

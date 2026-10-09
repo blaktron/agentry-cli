@@ -1,0 +1,87 @@
+{
+  "files": {
+    "instruction.md": "You are the conformance fixture. Read the inputs, write one report.",
+    "session.json": "{\n  \"clientName\": \"Agentry\",\n  \"model\": \"fixture-model\",\n  \"availableTools\": [\n    \"mcp:*\"\n  ],\n  \"mcpServers\": {\n    \"gateway\": {\n      \"type\": \"http\",\n      \"url\": \"http://gateway:8811/mcp\",\n      \"tools\": [\n        \"*\"\n      ]\n    }\n  },\n  \"requestPermission\": true,\n  \"enableSessionTelemetry\": false,\n  \"skipCustomInstructions\": true,\n  \"customAgentsLocalOnly\": true,\n  \"enableSkills\": false,\n  \"enableFileHooks\": false,\n  \"enableHostGitOperations\": false,\n  \"enableSessionStore\": false,\n  \"enableOnDemandInstructionDiscovery\": false,\n  \"enableExperimentalMode\": false,\n  \"skipEmbeddingRetrieval\": true,\n  \"embeddingCacheStorage\": \"in-memory\",\n  \"mcpOAuthTokenStorage\": \"in-memory\",\n  \"envValueMode\": \"direct\",\n  \"memory\": {\n    \"enabled\": false\n  },\n  \"toolSearch\": {\n    \"enabled\": false\n  },\n  \"streaming\": false\n}\n"
+  },
+  "agent": {
+    "image": "harness:fixture",
+    "entrypoint": "/usr/local/bin/copilot",
+    "argv": [
+      "--headless",
+      "--stdio",
+      "--no-auto-update",
+      "--no-auto-login",
+      "--no-remote",
+      "--disable-builtin-mcps",
+      "--no-custom-instructions",
+      "--no-sandbox",
+      "--available-tools",
+      "mcp:*"
+    ],
+    "env": [
+      {
+        "name": "HOME",
+        "value": "/home/copilot"
+      },
+      {
+        "name": "COPILOT_HOME",
+        "value": "/home/copilot/.copilot"
+      },
+      {
+        "name": "COPILOT_PKG_CACHE_HOME",
+        "value": "/opt/copilot/cache"
+      },
+      {
+        "name": "COPILOT_DISABLE_KEYTAR",
+        "value": "1"
+      },
+      {
+        "name": "COPILOT_DISABLE_LOGIN_SHELL_ENV",
+        "value": "1"
+      },
+      {
+        "name": "COPILOT_AUTO_UPDATE",
+        "value": "false"
+      },
+      {
+        "name": "NO_COLOR",
+        "value": "1"
+      },
+      {
+        "name": "HTTPS_PROXY",
+        "value": "http://llm-proxy:3128"
+      },
+      {
+        "name": "HTTP_PROXY",
+        "value": "http://llm-proxy:3128"
+      },
+      {
+        "name": "NO_PROXY",
+        "value": "gateway,localhost,127.0.0.1"
+      }
+    ],
+    "readOnlyRoot": true,
+    "tmpfs": [
+      "/tmp:mode=1777",
+      "/home/copilot:mode=1777"
+    ]
+  },
+  "oneTurn": {
+    "transport": "copilot-jsonrpc-stdio",
+    "protocolVersion": 3,
+    "sessionDb": "",
+    "safety": "",
+    "budgets": {
+      "idleTimeoutSeconds": 0,
+      "maxWallSeconds": 0,
+      "maxUserTurns": 0
+    }
+  },
+  "modelSignIn": {
+    "kind": "copilot-signin",
+    "provider": "copilot",
+    "delivery": "session-callback"
+  },
+  "model": "copilot/fixture-model",
+  "resultKind": "text"
+}

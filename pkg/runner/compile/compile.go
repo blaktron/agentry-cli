@@ -357,7 +357,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			ResultKind:  res.ResultKind,
 			Session:     res.Session,
 			OneTurn:     res.OneTurn,
-			ImagePin:    imagePin(res.Agent.Image, harnessImage),
+			ImagePin:    imagePin(adapterName, res.Agent.Image, harnessImage),
 			ModelSignIn: res.ModelSignIn,
 		},
 		Proxy: spec.ProxySpec{

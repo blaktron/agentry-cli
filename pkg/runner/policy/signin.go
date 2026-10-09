@@ -65,10 +65,88 @@ var signInEndpoints = map[string][]string{
 	KeyKindClaudeSignIn: {"api.anthropic.com:443", "platform.claude.com:443"},
 }
 
-// SignInProxyAllow is the proxy allowlist a run paid by kind must have,
-// nil for a kind with no fixed endpoint (a key; a sign-in whose harness is
-// not built yet).
-func SignInProxyAllow(kind string) []string { return slices.Clone(signInEndpoints[kind]) }
+// CopilotGitHubAPI is GitHub's API, where Copilot CLI reads the account's
+// entitlement and its organization's managed settings: one of the two
+// hosts a Copilot run reaches (agentry-cli#741).
+const CopilotGitHubAPI = "api.github.com:443"
+
+// The Copilot plans, by the Copilot API host each is served from, the
+// other host a Copilot run reaches (GitHub's Copilot allowlist reference:
+// *.individual, *.business and *.enterprise.githubcopilot.com; plan
+// model-sign-ins.md §4.5). Copilot's telemetry and experiment hosts are
+// hosts of their own, so the proxy denies them. Which host each plan uses
+// is read from GitHub's docs, not measured: M11 (agentry-cli#744) confirms
+// it.
+const (
+	CopilotPlanIndividual = "individual"
+	CopilotPlanBusiness   = "business"
+	CopilotPlanEnterprise = "enterprise"
+)
+
+var copilotAPIHosts = map[string]string{
+	CopilotPlanIndividual: "api.individual.githubcopilot.com:443",
+	CopilotPlanBusiness:   "api.business.githubcopilot.com:443",
+	CopilotPlanEnterprise: "api.enterprise.githubcopilot.com:443",
+}
+
+// CopilotPlans lists the Copilot plans by the name setup takes: individual
+// (Free, Pro, Pro+ and Max), business and enterprise.
+func CopilotPlans() []string {
+	return []string{CopilotPlanIndividual, CopilotPlanBusiness, CopilotPlanEnterprise}
+}
+
+// CopilotProxyAllow is the proxy allowlist of a Copilot run on plan:
+// GitHub's API and that plan's Copilot API host.
+func CopilotProxyAllow(plan string) ([]string, error) {
+	host, ok := copilotAPIHosts[plan]
+	if !ok {
+		return nil, fmt.Errorf("no Copilot plan %q (one of %s)", plan, strings.Join(CopilotPlans(), ", "))
+	}
+	return []string{CopilotGitHubAPI, host}, nil
+}
+
+// CopilotPlanOf is the plan a Copilot run's allowlist names, "" when it is
+// not one CopilotProxyAllow makes.
+func CopilotPlanOf(allow []string) string {
+	for _, plan := range CopilotPlans() {
+		if want, _ := CopilotProxyAllow(plan); slices.Equal(allow, want) {
+			return plan
+		}
+	}
+	return ""
+}
+
+// SignInProxyAllow is the proxy allowlist a run paid by kind has by
+// default (a Copilot run's on the individual plans), nil for a kind with no
+// fixed endpoint (a key).
+func SignInProxyAllow(kind string) []string {
+	if kind == KeyKindCopilotSignIn {
+		allow, _ := CopilotProxyAllow(CopilotPlanIndividual)
+		return allow
+	}
+	return slices.Clone(signInEndpoints[kind])
+}
+
+// SignInProxyAllowed reports whether allow is an allowlist a run paid by
+// kind may have, and says what it must be when it is not: exactly the
+// kind's endpoints, or for Copilot GitHub's API and one plan's Copilot API
+// host. Any allowlist is allowed for a kind with no fixed endpoint.
+func SignInProxyAllowed(kind string, allow []string) (ok bool, want string) {
+	switch {
+	case kind == KeyKindCopilotSignIn:
+		if CopilotPlanOf(allow) != "" {
+			return true, ""
+		}
+		var hosts []string
+		for _, plan := range CopilotPlans() {
+			hosts = append(hosts, copilotAPIHosts[plan]+" ("+plan+")")
+		}
+		return false, CopilotGitHubAPI + " and one plan's Copilot API host: " + strings.Join(hosts, ", ")
+	case signInEndpoints[kind] == nil:
+		return true, ""
+	}
+	return slices.Equal(allow, signInEndpoints[kind]), strings.Join(signInEndpoints[kind], ", ")
+}
 
 // signInProviders maps each model sign-in kind to the one provider it
 // spends.
@@ -207,9 +285,19 @@ func (h HarnessImage) validate(adapterName string) error {
 // native package it installs to the integrity it carries for that release.
 // A bump adds the release there and re-records the adapter's conformance
 // before this pin moves.
+//
+// copilot-image: GitHub's Copilot CLI built on this machine, never
+// published (plan D27): the artifact is the SHA-256 of the release's
+// SHA256SUMS.txt, which names each platform's musl download's checksum;
+// GitHub signs neither, so the receipt says the image is pinned by
+// checksum, not signed. The build (pkg/runner/harnessbuild) fetches that
+// file, holds it to the artifact, and holds the daemon's platform's
+// download to the checksum it names. A bump adds the release there and
+// re-records the adapter's conformance before this pin moves.
 var DefaultHarnessImages = map[string]HarnessImage{
-	"codex-image":  {Ref: "ghcr.io/blaktron/agentry-codex:0.162.0-2026.10.09.1@sha256:e6b0c020b797d7941b4365f82e743f190f82342f087621bddf57b087e4d703f9"},
-	"claude-image": {Ref: "agentry-claude-code:2.1.296", Artifact: "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="},
+	"copilot-image": {Ref: "agentry-copilot:1.0.95", Artifact: "sha256:fd36c0e57ae6285ccd9cff306fbcdf114343c44f968ff2364fa7fd1a4dc4b7bf"},
+	"codex-image":   {Ref: "ghcr.io/blaktron/agentry-codex:0.162.0-2026.10.09.1@sha256:e6b0c020b797d7941b4365f82e743f190f82342f087621bddf57b087e4d703f9"},
+	"claude-image":  {Ref: "agentry-claude-code:2.1.296", Artifact: "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="},
 }
 
 // HarnessImageFor is the harness image adapterName runs in: docker-agent's

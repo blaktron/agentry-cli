@@ -32,7 +32,8 @@
 // connected, for its Disconnect.
 //
 // The vendors' flows (M4–M7) register what refreshes and revokes their
-// grants (RegisterVendor; ChatGPT's is registered by this package, M4); a
+// grants (RegisterVendor; ChatGPT's and Copilot's are registered by this
+// package, M4 and M6); a
 // vendor with none registered is kept and listed, and Use and Remove say
 // what this build cannot do with it.
 package modelsignin
@@ -138,6 +139,9 @@ type Record struct {
 	// sign-in, which every refresh and revocation presents (ChatGPT's
 	// oaiapp_…). Not a secret: it proves nothing without the grant.
 	ClientID string `json:"clientId,omitempty"`
+	// App is which of Agentry's apps a Copilot sign-in went through
+	// (mcpauth.GitHubApp or GitHubOAuthApp; plan D26).
+	App string `json:"app,omitempty"`
 
 	CreatedAt   string `json:"createdAt"`
 	RefreshedAt string `json:"refreshedAt,omitempty"`
@@ -635,9 +639,9 @@ func (s *Store) lock(vendor string) (func(), error) {
 }
 
 // RunGrant is what a run on this machine is given of a model sign-in: an
-// access token for a token-file sign-in, with the Renew that refreshes it
-// mid-run, or a config-directory sign-in's directory. Never the refresh
-// token (I3).
+// access token for a token-file or session-callback sign-in, with the Renew
+// that refreshes it mid-run, or a config-directory sign-in's directory.
+// Never the refresh token (I3).
 type RunGrant struct {
 	Kind      string
 	Access    Access
@@ -678,7 +682,7 @@ func (s *Store) ForRun(ctx context.Context, kind, delivery string, onHost bool) 
 		if g.ConfigDir == "" {
 			return nil, fmt.Errorf("%w: this run uses %s, which is not signed in on this computer (%s)", ErrNoSignIn, where, add)
 		}
-	case spec.ModelSignInToken:
+	case spec.ModelSignInToken, spec.ModelSignInCallback:
 		if g.Access, err = s.Use(ctx, vendor); err != nil {
 			return nil, err
 		}

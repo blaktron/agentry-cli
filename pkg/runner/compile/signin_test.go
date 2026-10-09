@@ -2,6 +2,7 @@ package compile
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -289,5 +290,65 @@ func TestTheInstalledClaudeCodeCompilesASignInRun(t *testing.T) {
 	}
 	if l := plan.Enforcement["model.signIn"]; !strings.Contains(l, "Agentry's own for the harness installed on this computer") || strings.Contains(l, "@@") {
 		t.Fatalf("model.signIn %q", l)
+	}
+}
+
+// compileCopilotPlan compiles the pure-text fixture for the Copilot image
+// under a Copilot plan whose allowlist is allow.
+func compileCopilotPlan(t *testing.T, allow []string) (*spec.Plan, error) {
+	t.Helper()
+	m := parseManifest(t, pureTextYAML)
+	pol := testPolicy()
+	pol.Model = policy.Model{Provider: policy.ProviderCopilot, Name: "auto", APIKeyKind: policy.KeyKindCopilotSignIn, ProxyAllow: allow}
+	pol.Images.HarnessImages = nil
+	return Compile(Inputs{
+		Manifest: m, Digest: "sha256:0123456789abcdef", Source: "local",
+		WorkspaceDir: workspaceFor(t, m, nil), Policy: pol, PolicySHA: "fixedpolicysha",
+		RunnerImage: "agentry-runner:test", AdapterName: "copilot-image",
+	}, t.TempDir())
+}
+
+// The Copilot image on a Copilot plan (agentry-cli#741): the image built
+// on this machine, pinned by the release's checksums and said to be not
+// signed (I8); nothing mounted, the token handed over the session (I4);
+// the egress GitHub's API and the plan's Copilot host alone, each plan's,
+// and never GitHub's telemetry or experiment hosts, the generic Copilot
+// host or a host beside them (I2).
+func TestTheCopilotImageCompilesASignInRunReachingGitHubAlone(t *testing.T) {
+	def, _ := policy.Default().Images.HarnessImageFor("copilot-image")
+	for _, plan := range policy.CopilotPlans() {
+		allow, _ := policy.CopilotProxyAllow(plan)
+		p, err := compileCopilotPlan(t, allow)
+		if err != nil {
+			t.Fatalf("%s: %v", plan, err)
+		}
+		h := p.Harness
+		if h.Agent.Image != def.Ref || h.ImagePin == nil || h.ImagePin.By != policy.PinArtifact || h.ImagePin.Value != def.Artifact ||
+			!strings.Contains(h.ImagePin.String(), "pinned by checksum, not signed") {
+			t.Fatalf("%s: image %q pin %+v", plan, h.Agent.Image, h.ImagePin)
+		}
+		if len(h.Agent.Mounts) != 0 || h.ModelSignIn == nil || h.ModelSignIn.Delivery != spec.ModelSignInCallback || h.OneTurn == nil {
+			t.Fatalf("%s: mounts %+v sign-in %+v", plan, h.Agent.Mounts, h.ModelSignIn)
+		}
+		if strings.Join(p.Proxy.Allow, ",") != strings.Join(allow, ",") || !strings.HasPrefix(p.Proxy.Allow[0], "api.github.com:") {
+			t.Fatalf("%s: proxy allow %v", plan, p.Proxy.Allow)
+		}
+	}
+	individual, _ := policy.CopilotProxyAllow(policy.CopilotPlanIndividual)
+	for name, allow := range map[string][]string{
+		"telemetry":      append(slices.Clone(individual), "copilot-telemetry.githubusercontent.com:443"),
+		"collector":      append(slices.Clone(individual), "collector.github.com:443"),
+		"experiments":    append(slices.Clone(individual), "default.exp-tas.com:443"),
+		"generic host":   {"api.github.com:443", "api.githubcopilot.com:443"},
+		"two plans":      {"api.github.com:443", "api.individual.githubcopilot.com:443", "api.business.githubcopilot.com:443"},
+		"no GitHub API":  {"api.individual.githubcopilot.com:443"},
+		"github.com":     append(slices.Clone(individual), "github.com:443"),
+		"another vendor": {"api.openai.com:443"},
+	} {
+		_, err := compileCopilotPlan(t, allow)
+		var pr *PolicyRefusal
+		if !errors.As(err, &pr) || !strings.Contains(err.Error(), "api.github.com:443 and one plan's Copilot API host") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
