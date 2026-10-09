@@ -481,7 +481,12 @@ func (s *Store) Use(ctx context.Context, vendor string) (Access, error) {
 
 // The revocation outcomes Remove reports.
 const (
-	RevokeDone       = "revoked at the vendor"
+	RevokeDone = "revoked at the vendor"
+	// RevokeSubmitted: the vendor took the grant's tokens for revocation
+	// and answered before acting, saying nothing of what it revoked
+	// (GitHub's credential revocation answers 202 even for a token it never
+	// issued; measured 2026-10-09).
+	RevokeSubmitted  = "submitted to the vendor's credential revocation, which accepted it"
 	RevokeNotOffered = "not offered by this build: forgotten here; revoke it in your account at the vendor"
 	RevokeNothing    = "nothing to revoke: no grant was kept here"
 	// RevokeClaudeDir: a Claude sign-in's grant is Claude Code's, in its
@@ -526,6 +531,9 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 				outcome = "failed: " + err.Error()
 			} else {
 				outcome = RevokeDone
+				if s, ok := v.(interface{ RevokeOutcome() string }); ok {
+					outcome = s.RevokeOutcome()
+				}
 			}
 		}
 	}

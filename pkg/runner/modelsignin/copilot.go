@@ -37,12 +37,12 @@ func (v CopilotVendor) Refresh(ctx context.Context, rec Record, refreshToken str
 
 // Revoke implements Vendor. GitHub revokes a grant only for a caller with
 // the client secret, which no client of Agentry's holds, so the grant's
-// credentials are revoked instead: the kept refresh token is traded once
-// more for the pair now live, and the access token and both refresh
-// tokens go to GitHub's credential revocation. An access token a run was
-// handed before lapses within its eight hours if GitHub does not revoke
-// it with them. When the trade fails, the kept refresh token is revoked
-// alone.
+// credentials go to its credential revocation instead, which accepts them
+// and acts after it answers: the kept refresh token is traded once more
+// for the pair now live, and the access token and both refresh tokens are
+// submitted. An access token a run was handed before lapses within its
+// eight hours if GitHub does not revoke it with them. When the trade
+// fails, the kept refresh token is submitted alone.
 func (v CopilotVendor) Revoke(ctx context.Context, rec Record, refreshToken string) error {
 	live, err := v.Flow.Refresh(ctx, rec.ClientID, refreshToken)
 	if err != nil {
@@ -50,6 +50,11 @@ func (v CopilotVendor) Revoke(ctx context.Context, rec Record, refreshToken stri
 	}
 	return v.Flow.Revoke(ctx, live.AccessToken, live.RefreshToken, refreshToken)
 }
+
+// RevokeOutcome is what Remove reports of a revocation GitHub accepted: its
+// answer comes before it acts and says nothing of what it revoked, so
+// "revoked" would be more than it said.
+func (CopilotVendor) RevokeOutcome() string { return RevokeSubmitted }
 
 // CopilotSignedIn is a kept Copilot sign-in.
 type CopilotSignedIn struct {
