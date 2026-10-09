@@ -22,6 +22,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 command -v codex >/dev/null || { echo "SKIP: no codex on PATH" >&2; exit 0; }
+command -v python3 >/dev/null || { echo "SKIP: no python3 (the fake endpoint and gateway are python)" >&2; exit 0; }
 GOLDEN=pkg/runner/adapter/testdata/conformance/codex/autonomous.json
 MODELS=("$@"); [ ${#MODELS[@]} -gt 0 ] || MODELS=(gpt-5.5 gpt-6-astra fixture-model)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/codex-tools.XXXXXX")
@@ -66,6 +67,7 @@ for model in "${MODELS[@]}"; do
   : > "$d/requests.jsonl"
   python3 "$WORK/endpoint.py" "$d/port" "$d/requests.jsonl" & SRV=$!
   for _ in $(seq 50); do [ -s "$d/port" ] && break; sleep 0.1; done
+  [ -s "$d/port" ] || { echo "FAIL $model: the fake endpoint did not start" >&2; fail=1; kill "$SRV" 2>/dev/null || true; continue; }
   python3 - "$GOLDEN" "$model" "$(cat "$d/port")" "$d" "$WORK/gateway.py" <<'PY'
 import json, sys
 golden, model, port, d, gateway = sys.argv[1:]
@@ -95,7 +97,7 @@ import json, sys
 d, model = sys.argv[1:]
 lines = [l for l in open(f"{d}/requests.jsonl").read().splitlines() if l.strip()]
 if not lines:
-    print(f"FAIL {model}: codex sent no request"); print(open(f"{d}/stderr.txt").read()[-800:]); sys.exit(1)
+    print(f"FAIL {model}: codex sent no request", file=sys.stderr); print(open(f"{d}/stderr.txt").read()[-800:], file=sys.stderr); sys.exit(1)
 req = json.loads(lines[0])
 names = []
 for t in req.get("tools", []):
@@ -111,7 +113,7 @@ developer = [c.get("text", "") for it in req.get("input", []) if it.get("role") 
              for c in it.get("content") or []]
 instruction = (req.get("instructions") or (developer[0] if developer else "")).strip()
 if sorted(names) != want or instruction != "Do the thing.":
-    print(f"FAIL {model}: tools {sorted(names)}, instruction {instruction[:80]!r}"); sys.exit(1)
+    print(f"FAIL {model}: tools {sorted(names)}, instruction {instruction[:80]!r}", file=sys.stderr); sys.exit(1)
 print(f"ok   {model}: the gateway's tools and the three resource readers, nothing else")
 PY
   then fail=1; fi

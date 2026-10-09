@@ -113,8 +113,9 @@ func TestCodexCompileRendersModelCatalog(t *testing.T) {
 				t.Errorf("%s: config.toml lacks %q:\n%s", model, want, cfg)
 			}
 		}
-		// The deferral switch belongs to the gateway's server block.
-		if i, j := strings.Index(cfg, "[mcp_servers."+codexGatewayServer+"]"), strings.Index(cfg, "omit_tools_from"); i < 0 || j < i {
+		// The deferral switch belongs to the gateway's server block: the
+		// last table header before it is the gateway's.
+		if j := strings.Index(cfg, "omit_tools_from"); j < 0 || tomlTableAt(cfg, j) != "[mcp_servers."+codexGatewayServer+"]" {
 			t.Errorf("%s: omit_tools_from is not in the gateway's block:\n%s", model, cfg)
 		}
 
@@ -156,6 +157,17 @@ func TestCodexCompileRendersModelCatalog(t *testing.T) {
 			}
 		}
 	}
+}
+
+// tomlTableAt returns the header of the TOML table that holds offset i.
+func tomlTableAt(cfg string, i int) string {
+	header := ""
+	for _, line := range strings.Split(cfg[:i], "\n") {
+		if strings.HasPrefix(line, "[") {
+			header = strings.TrimSpace(line)
+		}
+	}
+	return header
 }
 
 // codexCatalogRequiredFields are ModelInfo's fields without a serde default
@@ -257,6 +269,9 @@ func TestCodexCompileRefusesIncompletePolicy(t *testing.T) {
 		"no model":       func(in *Input) { in.Model.Name = "" },
 		"no key":         func(in *Input) { in.Model.APIKeyEnv = "" },
 		"unknown mode":   func(in *Input) { in.Mode = manifest.Mode("sideways") },
+		// A model id is substituted into plan files the engine renders.
+		"placeholder model": func(in *Input) { in.Model.Name = "gpt-5.5" + spec.PHCfg },
+		"control model":     func(in *Input) { in.Model.Name = "gpt-5.5\r" },
 	} {
 		in := codexInput()
 		mutate(&in)

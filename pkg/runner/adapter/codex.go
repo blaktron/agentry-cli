@@ -47,6 +47,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -242,8 +243,10 @@ type codexTruncation struct {
 
 // codexCatalog renders the run's model catalog: the run's model alone, so
 // codex's longest-prefix lookup finds it exactly, with the values of codex's
-// own fallback metadata for an unknown model (model_info_from_slug, the
-// shape every recording of this adapter ran on) except the tool fields,
+// own fallback metadata for an unknown model (model_info_from_slug in
+// codex-cli 0.153.4, the shape every recording of this adapter ran on; a
+// real OpenAI model therefore gets the API's default reasoning effort and
+// verbosity rather than codex's tuned ones) except the tool fields,
 // which are pinned off: no apply_patch, no tool_search, no experimental
 // tools, no shell (also off by feature), and direct tools rather than code
 // mode. A catalog in the config replaces the bundled one and is
@@ -287,6 +290,13 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 	}
 	if model == "" {
 		return Result{}, errors.New("codex adapter: no model (set model.name, or harness.codex.model in the policy)")
+	}
+	// The model id is written into config.toml and models.json, which the
+	// engine renders by substituting its @@…@@ placeholders; an id that
+	// carried one, or a control character, would change the file it lands
+	// in. No model id does either.
+	if strings.Contains(model, "@@") || strings.IndexFunc(model, unicode.IsControl) >= 0 {
+		return Result{}, fmt.Errorf("codex adapter: %q is not a model id", model)
 	}
 	keyEnv := policy.KeyEnv(in.Harness, in.Model)
 	if keyEnv == "" {
