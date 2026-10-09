@@ -54,7 +54,7 @@ type rotating struct {
 	refuse  bool
 }
 
-func (v *rotating) Refresh(_ context.Context, rt string) (Refreshed, error) {
+func (v *rotating) Refresh(_ context.Context, _ Record, rt string) (Refreshed, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.refuse {
@@ -68,7 +68,7 @@ func (v *rotating) Refresh(_ context.Context, rt string) (Refreshed, error) {
 	return Refreshed{AccessToken: "at-" + string(rune('a'+v.n)), ExpiresAt: time.Now().Add(time.Hour), RefreshToken: v.current}, nil
 }
 
-func (v *rotating) Revoke(_ context.Context, rt string) error {
+func (v *rotating) Revoke(_ context.Context, _ Record, rt string) error {
 	v.revoked = append(v.revoked, rt)
 	return nil
 }
@@ -232,12 +232,12 @@ func TestOnlyAClaudeSignInNamesADirectory(t *testing.T) {
 // slowRotating answers only after the caller's context is cancelled.
 type slowRotating struct{ rotating }
 
-func (v *slowRotating) Refresh(ctx context.Context, rt string) (Refreshed, error) {
+func (v *slowRotating) Refresh(ctx context.Context, _ Record, rt string) (Refreshed, error) {
 	time.Sleep(50 * time.Millisecond)
 	if ctx.Err() != nil {
 		return Refreshed{}, ctx.Err()
 	}
-	return v.rotating.Refresh(ctx, rt)
+	return v.rotating.Refresh(ctx, Record{}, rt)
 }
 
 // A refresh is not cut by its caller's cancellation (a run ending

@@ -11,6 +11,12 @@
 //	model-signins/<vendor>.lock    held while a refresh writes back
 //	model-signins/<vendor>.secret  the refresh token, 0600, only where no
 //	                               keychain answers
+//	model-signins/<vendor>.registration.json
+//	                               the client the vendor issued this host and
+//	                               the account it is for, 0600, kept across a
+//	                               removal for the next sign-in (ChatGPT)
+//	model-signins/host-id          this host's stable, opaque id (ChatGPT's
+//	                               ext_agent_host_id), 0600
 //	model-signins/audit.ndjson     removals and their revocation outcome
 //
 // The secret half is kept in the OS keychain where one answers (account
@@ -122,6 +128,10 @@ type Record struct {
 	// ConfigDir is a Claude sign-in's directory (a host path, or a docker
 	// volume's name), which only Claude Code writes.
 	ConfigDir string `json:"configDir,omitempty"`
+	// ClientID is the client the vendor issued this host at its first
+	// sign-in, which every refresh and revocation presents (ChatGPT's
+	// oaiapp_…). Not a secret: it proves nothing without the grant.
+	ClientID string `json:"clientId,omitempty"`
 
 	CreatedAt   string `json:"createdAt"`
 	RefreshedAt string `json:"refreshedAt,omitempty"`
@@ -155,10 +165,11 @@ type Refreshed struct {
 }
 
 // Vendor is what a vendor's flow registers: how its grant is refreshed
-// and revoked. ErrRevoked from Refresh marks the sign-in broken.
+// and revoked. Each is given the sign-in's record (its issued client) with
+// the kept refresh token. ErrRevoked from Refresh marks the sign-in broken.
 type Vendor interface {
-	Refresh(ctx context.Context, refreshToken string) (Refreshed, error)
-	Revoke(ctx context.Context, refreshToken string) error
+	Refresh(ctx context.Context, rec Record, refreshToken string) (Refreshed, error)
+	Revoke(ctx context.Context, rec Record, refreshToken string) error
 }
 
 // ErrRevoked is a vendor's refusal of a refresh because the grant is gone.
@@ -223,6 +234,9 @@ func (s *Store) stamp() string                   { return s.now().UTC().Format(t
 func (s *Store) recordPath(vendor string) string { return filepath.Join(s.dir, vendor+".json") }
 func (s *Store) secretPath(vendor string) string { return filepath.Join(s.dir, vendor+".secret") }
 func (s *Store) lockPath(vendor string) string   { return filepath.Join(s.dir, vendor+".lock") }
+func (s *Store) registrationPath(vendor string) string {
+	return filepath.Join(s.dir, vendor+".registration.json")
+}
 
 func keychainAccount(vendor string) string { return "model-signin:" + vendor }
 
@@ -268,6 +282,82 @@ func (s *Store) Put(vendor string, rec Record, g Grant) (*Record, error) {
 		return nil, err
 	}
 	return &rec, nil
+}
+
+// Registration is what a host keeps of its registration with a vendor that
+// issues one per host and account (ChatGPT), across removals: OpenAI asks
+// that a later sign-in on the host reuse the issued client and that a
+// sign-out keep the mapping.
+type Registration struct {
+	ClientID string `json:"clientId"`
+	// Subject is the account the client was issued for (the ID token's
+	// subject): opaque, never shown, never in a run.
+	Subject string `json:"subject"`
+}
+
+// Registration is vendor's kept registration, nil when there is none.
+func (s *Store) Registration(vendor string) (*Registration, error) {
+	if err := checkVendor(vendor); err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(s.registrationPath(vendor)) //nolint:gosec // our store layout
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var r Registration
+	if err := json.Unmarshal(b, &r); err != nil || r.ClientID == "" {
+		return nil, fmt.Errorf("the %s registration on this computer is not readable", vendor)
+	}
+	return &r, nil
+}
+
+// PutRegistration keeps vendor's registration, replacing one kept before.
+func (s *Store) PutRegistration(vendor string, r Registration) error {
+	if err := checkVendor(vendor); err != nil {
+		return err
+	}
+	if r.ClientID == "" {
+		return errors.New("a registration needs its client id")
+	}
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return storefile.WriteAtomic(s.registrationPath(vendor), append(b, '\n'))
+}
+
+// DropRegistration forgets vendor's registration, so the next sign-in
+// registers anew (another account on this host).
+func (s *Store) DropRegistration(vendor string) error {
+	if err := checkVendor(vendor); err != nil {
+		return err
+	}
+	return storefile.RemoveIfThere(s.registrationPath(vendor))
+}
+
+// HostID is this host's stable id, made once: an opaque value a vendor
+// uses to tell one host's registrations from another's, never a secret.
+// newID makes one when none is kept.
+func (s *Store) HostID(newID func() (string, error)) (string, error) {
+	path := filepath.Join(s.dir, "host-id")
+	if b, err := os.ReadFile(path); err == nil { //nolint:gosec // our store layout
+		if id := strings.TrimSpace(string(b)); id != "" {
+			return id, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	id, err := newID()
+	if err != nil {
+		return "", err
+	}
+	if err := storefile.WriteAtomic(path, []byte(id+"\n")); err != nil {
+		return "", fmt.Errorf("keep this computer's host id: %w", err)
+	}
+	return id, nil
 }
 
 // Get is vendor's kept record, ErrNone when there is none.
@@ -345,7 +435,7 @@ func (s *Store) Use(ctx context.Context, vendor string) (Access, error) {
 	// its own deadline instead.
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
 	defer cancel()
-	got, err := v.Refresh(rctx, rt)
+	got, err := v.Refresh(rctx, *r, rt)
 	if errors.Is(err, ErrRevoked) {
 		r.Broken = err.Error()
 		if serr := s.save(r); serr != nil {
@@ -408,7 +498,7 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 		if v := vendorOf(vendor); v != nil {
 			if rt, err := s.readSecret(r, vendor); err != nil {
 				outcome = "not attempted: " + err.Error()
-			} else if err := v.Revoke(ctx, rt); err != nil {
+			} else if err := v.Revoke(ctx, *r, rt); err != nil {
 				outcome = "failed: " + err.Error()
 			} else {
 				outcome = RevokeDone

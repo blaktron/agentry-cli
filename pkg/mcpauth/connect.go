@@ -190,33 +190,8 @@ func clientWords(c Client) string {
 // pasted addresses; a pasted address that is not this sign-in's is said
 // and waited past.
 func (c Consent) wait(ctx context.Context, lb *Loopback, req *Request) (string, error) {
-	for {
-		select {
-		case o := <-lb.result:
-			return o.code, o.err
-		case line, ok := <-c.Pasted:
-			if !ok {
-				c.Pasted = nil
-				continue
-			}
-			u, err := url.Parse(strings.TrimSpace(line))
-			if err != nil || u.RawQuery == "" {
-				c.say("that is not the address the browser was sent to; paste the whole address from its address bar")
-				continue
-			}
-			code, err := req.Callback(u)
-			if errors.Is(err, ErrStateMismatch) {
-				c.say(err.Error())
-				continue
-			}
-			return code, err
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return "", errors.New("the sign-in timed out waiting for the browser; start it again")
-			}
-			return "", ctx.Err()
-		}
-	}
+	code, _, err := awaitRedirect(ctx, lb, req, c.Pasted, c.say)
+	return code, err
 }
 
 func (c Consent) say(s string) {
@@ -394,21 +369,28 @@ type Loopback struct {
 
 type outcome struct {
 	code string
-	err  error
+	// query is the whole redirect's query, for a vendor whose redirect
+	// carries more than the code (ChatGPT's issued client_id).
+	query url.Values
+	err   error
 }
 
 // Listen binds 127.0.0.1:0 and serves CallbackPath.
-func Listen() (*Loopback, error) {
+func Listen() (*Loopback, error) { return ListenAt(CallbackPath) }
+
+// ListenAt binds 127.0.0.1:0 and serves path, for a vendor that fixes the
+// redirect's path (ChatGPT's /auth/callback): only the port may vary.
+func ListenAt(path string) (*Loopback, error) {
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("bind the loopback listener: %w", err)
 	}
 	l := &Loopback{
-		RedirectURI: fmt.Sprintf("http://127.0.0.1:%d%s", ln.Addr().(*net.TCPAddr).Port, CallbackPath),
+		RedirectURI: fmt.Sprintf("http://127.0.0.1:%d%s", ln.Addr().(*net.TCPAddr).Port, path),
 		result:      make(chan outcome, 1),
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc(CallbackPath, l.handle)
+	mux.HandleFunc(path, l.handle)
 	l.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = l.srv.Serve(ln) }()
 	return l, nil
@@ -443,7 +425,7 @@ func (l *Loopback) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(donePage))
 	}
-	l.once.Do(func() { l.result <- outcome{code: code, err: err} })
+	l.once.Do(func() { l.result <- outcome{code: code, query: r.URL.Query(), err: err} })
 }
 
 // Close stops the listener.
