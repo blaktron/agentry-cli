@@ -850,9 +850,11 @@ The schedule lives in the runner home under `schedules/<id>/`:
 - `state.json`, what its fires did;
 - `fires.ndjson`, one line per occurrence: ran, failed with its exit code,
   or missed;
-- `task.txt`, the task, when given with `--task`.
+- `task.txt`, the task, when given with `--task`;
+- `keys.cred`, only for a schedule that runs while you are signed out: its
+  keys, encrypted (below).
 
-None of these files holds a credential. Each schedule has one entry in
+None of these files holds a credential in the clear. Each schedule has one entry in
 the system's own scheduler, which runs `agentry schedule fire <id>`. The
 entry holds this binary's absolute path and `PATH` and `AGENTRY_DOCKER`
 as they were when it was written:
@@ -882,6 +884,53 @@ the agent's run at sign-in on macOS, a logon trigger and "start when
 available" on Windows. `agentry schedule list` and `show` mark a schedule
 whose entry is missing, and `agentry schedule sync` rewrites every entry
 from the store and removes any entry that has no schedule.
+
+#### Running while signed out (Linux)
+
+On Linux with Docker Engine, `add --signed-out` (or `edit <id>
+--signed-out`) also runs a schedule while you are signed out (plan
+`quickagent-scheduling.md` §5a, DR-84):
+
+```bash
+agentry schedule add acme/digest --daily 06:00 --out ~/reports --signed-out
+agentry schedule edit <id> --signed-out=false   # signed in only again
+```
+
+- **Linger.** The first such schedule turns on `loginctl enable-linger`
+  for you, after you confirm on the terminal (or with `--yes`): your
+  schedules then start when the computer starts, even if nobody signs in.
+  Your distribution may ask for an administrator's password. agentry
+  records that it turned linger on, and turns it off again with the last
+  schedule that runs signed out. Linger you turned on yourself is never
+  turned off.
+- **The keys.** The keychain is locked while you are signed out, so the
+  keys a run reads from it are sealed when the schedule is made: the model
+  key, your own provider keys that the policy takes from the keychain (AI
+  Review, web search, Hybrid Analysis), and the registry token when the
+  keychain holds it. They go into an encrypted systemd credential,
+  `schedules/<id>/keys.cred`, made by `systemd-creds encrypt --user`, which
+  binds it to this computer (its TPM, where there is one) and to you. The
+  service unit loads it with `LoadCredentialEncrypted=` and turns the
+  keychain off (`AGENTRY_NO_KEYRING`), and the run reads its keys from
+  there. Any process running as you can decrypt it, as any process in your
+  unlocked session can read your keychain; another user cannot, and a copy
+  of the file on another computer does not decrypt.
+- **When a key changes.** `agentry setup`, `agentry login` and `agentry
+  logout` seal every signed-out schedule's keys again. The credential is
+  removed when the schedule is removed, ends, or stops running signed out.
+- **When it is refused.** On macOS and Windows, and with Docker Desktop for
+  Linux (Docker Desktop stops when you sign out); below systemd 256; for a
+  QuickAgent whose declared server signs in with an OAuth connection, or a
+  kept knowledge pack, whose keys stay in the keychain. There is no
+  plaintext fallback.
+
+A signed-out schedule rings on time whether or not anyone is signed in. If
+the computer was off, `Persistent=true` rings the missed occurrence once at
+boot, and fire's rule above decides whether it still runs.
+While linger is on, a schedule made without `--signed-out` still runs only
+while you are signed in: when it rings with nobody signed in it takes
+nothing, and the next ring while you are signed in deals with the
+occurrence by the rule above.
 
 ### Signing keys and `verify`
 

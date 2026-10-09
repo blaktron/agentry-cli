@@ -238,6 +238,9 @@ type calendarInterval struct{ month, day, weekday, hour, minute int }
 // plistDoc writes the agent: its label, program and environment, its
 // calendar (none for a nil cal), and RunAtLoad.
 func plistDoc(label, comment string, e Entry, cal []calendarInterval) ([]byte, error) {
+	if e.Credential != "" {
+		return nil, ErrSignedOutUnsupported
+	}
 	if !filepath.IsAbs(e.Binary) {
 		return nil, fmt.Errorf("the agentry binary %q is not an absolute path", e.Binary)
 	}

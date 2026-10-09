@@ -168,7 +168,8 @@ func keyringDisabled() bool {
 }
 
 // credentialFor resolves the PAT for a registry: AGENTRY_TOKEN, then a
-// config-file token, then the OS keychain. Empty means anonymous.
+// config-file token, then the OS keychain (a signed-out schedule's sealed
+// keys in its place). Empty means anonymous.
 func credentialFor(regURL string) string {
 	if t := strings.TrimSpace(os.Getenv(envToken)); t != "" {
 		return t
@@ -183,11 +184,16 @@ func credentialFor(regURL string) string {
 			}
 		}
 	}
-	if keyringDisabled() {
-		return ""
-	}
 	host, err := registryHost(regURL)
 	if err != nil {
+		return ""
+	}
+	// A signed-out schedule's fire reads the token sealed for it, and
+	// never the keychain (agentry-cli#749).
+	if token, sealed, _ := modelkey.SealedAccount(host); sealed {
+		return token
+	}
+	if keyringDisabled() {
 		return ""
 	}
 	token, err := keyring.Get(keyringService, host)

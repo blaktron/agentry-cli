@@ -64,6 +64,8 @@ func runLogout(cmd *cobra.Command, _ []string) error {
 	if err := saveCLIConfig(cfg); err != nil {
 		return fail("storage_unavailable")
 	}
+	// The token a signed-out schedule sealed goes with the sign-in.
+	resealSignedOut(cmd.ErrOrStderr())
 	override := strings.TrimSpace(os.Getenv(envToken)) != ""
 	if flags.jsonOut {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(authEvent{Format: 1, Status: "signed_out", Registry: reg, EnvironmentCredential: override})
