@@ -99,8 +99,14 @@ What the guide states is also checked after you answer, whatever you read.
    never copy a page's text. Use the six headings `## Role`, `## Inputs`,
    `## Steps`, `## Output`, `## Background` and `## Checks`, in that order,
    and **at most 32,768 bytes**. Carry the domain knowledge a run with no
-   network cannot look up. Pages: `draft/instructions.md`,
-   `draft/examples.md`.
+   network cannot look up. A result the person wants as a PDF is written
+   in Markdown with `write_report`, whose `path` is already inside
+   `reports/`, then made a PDF with `export_pdf`, whose `source` adds
+   `reports/` to that path;
+   never PDF syntax, a `.pdf` for `write_report`, or HTML to print. Every
+   run also has a scratch folder for notes and working files, which never
+   reaches the person. Pages: `draft/instructions.md`, `draft/examples.md`,
+   and `runtime/how-a-run-works.md` for the tools every run has.
 5. **Declare the least contract that does the task.** Only what the
    instructions use; commands only from the base commands, and never to
    read the inputs. A QuickAgent that takes files declares `inputs`: what
