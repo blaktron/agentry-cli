@@ -126,3 +126,31 @@ func TestTheConnectProvidersModelsAreNotListed(t *testing.T) {
 		}
 	}
 }
+
+// A key pasted into the keychain for a connect provider forgets the connect
+// kept for it; a key for another provider forgets nothing.
+func TestSetupForgetsAConnectAPastedKeyReplaces(t *testing.T) {
+	t.Setenv(modelkey.EnvNoKeyring, "")
+	var forgot []string
+	offer := ConnectOffer{
+		Connect: func(string) (string, error) { return "", nil },
+		Forget:  func(p string) (string, error) { forgot = append(forgot, p); return "forgotten", nil },
+	}
+	stored := map[string]string{}
+	store := func(p, k string) error { stored[p] = k; return nil }
+	pol := policy.Default()
+	p := &scriptPrompter{answers: []string{"poe", "key", "GPT-5.4", "POE_API_KEY", "the-pasted-key"}, confirm: true}
+	if err := ConfigureModel(p, pol, ModelOpts{Connect: offer, StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if stored["poe"] != "the-pasted-key" || len(forgot) != 1 || forgot[0] != "poe" {
+		t.Fatalf("stored %v, forgot %v", stored, forgot)
+	}
+	p = &scriptPrompter{answers: []string{"anthropic", "key", "", "", "sk-ant-api03-x"}, confirm: true}
+	if err := ConfigureModel(p, policy.Default(), ModelOpts{Connect: offer, StoreKey: store}); err != nil {
+		t.Fatal(err)
+	}
+	if len(forgot) != 1 {
+		t.Fatalf("forgot %v for an anthropic key", forgot)
+	}
+}

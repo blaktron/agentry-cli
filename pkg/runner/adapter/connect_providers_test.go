@@ -106,6 +106,8 @@ func TestDockerAgentErrorEventsCarryTheProvidersWords(t *testing.T) {
 		{`{"type":"error","error":"POST \"https://api.poe.com/v1/chat/completions\": 402 {\"error\":{\"code\":402,\"type\":\"insufficient_credits\",\"message\":\"balance is 0\"}}"}`, EventOutOfCredits, "insufficient_credits"},
 		{`{"type":"error","error":"402 Client Error: You have exceeded your monthly included credits for Inference Providers."}`, EventOutOfCredits, "monthly included credits"},
 		{`{"type":"error","error":"429 Too Many Requests"}`, EventError, "429"},
+		// A tool's words never end a run as out of credits.
+		{`{"type":"error","error":"the tool said: 402 Payment Required","code":"tool_failed"}`, EventError, "402"},
 		{`{"type":"error","message":{"content":"boom"}}`, EventError, "boom"},
 	}
 	for _, c := range cases {

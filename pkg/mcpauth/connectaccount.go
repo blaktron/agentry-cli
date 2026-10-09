@@ -363,6 +363,11 @@ func (h HuggingFace) discover(ctx context.Context) (*ServerMetadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reach Hugging Face: %w", err)
 	}
+	// The code, the verifier and the refresh token go to the token
+	// endpoint: Hugging Face's own host alone (I6).
+	if !sameHost(md.TokenEndpoint, md.Issuer) || !sameHost(md.AuthorizationEndpoint, md.Issuer) {
+		return nil, errors.New("reach Hugging Face: its discovery names an endpoint on another host: refused")
+	}
 	return md, nil
 }
 

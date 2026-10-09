@@ -198,3 +198,19 @@ func TestHuggingFaceRevokeOnlyWhereItsDiscoveryNamesAnEndpoint(t *testing.T) {
 		t.Fatalf("revoke (%v): the named endpoint must be used", err)
 	}
 }
+
+// Hugging Face's discovery is held to its own host for the endpoints the
+// code, the verifier and the refresh token go to (I6).
+func TestHuggingFaceRefusesATokenEndpointOnAnotherHost(t *testing.T) {
+	v := mcpauthtest.NewHuggingFace(t)
+	v.ForeignToken = true
+	if _, err := v.Flow().Connect(context.Background(), v.AppID); err == nil || !strings.Contains(err.Error(), "another host") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := v.Flow().Refresh(context.Background(), v.AppID, "rt"); err == nil || !strings.Contains(err.Error(), "another host") {
+		t.Fatalf("refresh err %v", err)
+	}
+	if len(v.Authorizations) != 0 || len(v.Requests) != 0 {
+		t.Fatal("a request went out before the discovery was refused")
+	}
+}

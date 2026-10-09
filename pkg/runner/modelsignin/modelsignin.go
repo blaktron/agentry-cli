@@ -511,6 +511,12 @@ const (
 // the outcome. A Claude sign-in's directories are ended by EndClaude
 // (Claude Code's own logout, then the deletion) before the record goes.
 func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) {
+	return s.remove(ctx, vendor, why, true)
+}
+
+// remove is Remove; deleteKey false leaves a connected key's keychain entry
+// alone, for a key pasted in its place (ForgetConnected).
+func (s *Store) remove(ctx context.Context, vendor, why string, deleteKey bool) (string, error) {
 	if err := checkVendor(vendor); err != nil {
 		return "", err
 	}
@@ -524,13 +530,15 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 		return "", err
 	}
 	outcome := RevokeNothing
-	if r.Connected {
+	if r.Connected && deleteKey {
 		// The key goes first: a keychain that will not let it go keeps the
 		// record, so nothing is forgotten while a run could still spend it.
 		if err := s.deleteKey(r.Provider); err != nil {
 			unlock()
 			return "", fmt.Errorf("the %s key would not leave the OS keychain, so nothing is removed: %w", ConnectName(vendor), err)
 		}
+	}
+	if r.Connected {
 		outcome = fmt.Sprintf(RevokeConnectedKey, ConnectName(vendor), ConnectPage(vendor))
 	}
 	if dirs := claudeDirs(*r); dirs != "" {
@@ -560,13 +568,13 @@ func (s *Store) Remove(ctx context.Context, vendor, why string) (string, error) 
 		}
 	}
 	s.dropSecret(vendor)
-	rmErr := removeRecord(s, vendor)
+	rmErr := s.removeRecord(vendor)
 	unlock()
 	s.audit(r, why, outcome)
 	return outcome, rmErr
 }
 
-func removeRecord(s *Store, vendor string) error {
+func (s *Store) removeRecord(vendor string) error {
 	return storefile.RemoveIfThere(s.recordPath(vendor))
 }
 

@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,39 +25,13 @@ var chatgptEndpoints func(*mcpauth.ChatGPT)
 // and, where the browser is on another machine, the redirect pasted back
 // (as runConsent does for a connection), and keeps the grant.
 func signInChatGPT(cmd *cobra.Command, in *bufio.Reader, home string, newAccount bool) (*modelsignin.ChatGPTSignedIn, error) {
-	errOut := cmd.ErrOrStderr()
-	pasted := make(chan string)
-	done := make(chan struct{})
-	var finished chan struct{}
-	flow := mcpauth.ChatGPT{
-		HTTP:   vendorHTTP(),
-		Pasted: pasted,
-		Say:    func(s string) { _, _ = fmt.Fprintln(errOut, s) },
-		Present: func(authURL string) {
-			_, _ = fmt.Fprintf(errOut, "Sign in with ChatGPT in your browser:\n  %s\n", authURL)
-			if os.Getenv("AGENTRY_NO_BROWSER") == "" {
-				if err := openBrowser(authURL); err != nil {
-					_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v; open the address above yourself)\n", err)
-				}
-			}
-			_, _ = fmt.Fprintln(errOut, "Waiting for the browser (up to 10 minutes). If it is on another machine and ends on a page that does not load, paste that page's address here and press Enter:")
-			finished = make(chan struct{})
-			go readPasted(in, pasted, done, finished)
-		},
-	}
+	bc := newBrowserConsent(cmd, in, "Sign in with ChatGPT in your browser:")
+	flow := mcpauth.ChatGPT{HTTP: vendorHTTP(), Pasted: bc.pasted, Say: bc.say, Present: bc.present}
 	if chatgptEndpoints != nil {
 		chatgptEndpoints(&flow)
 	}
 	got, err := modelsignin.Open(home, connectionKeys()).SignInChatGPT(cmd.Context(), flow, newAccount)
-	close(done)
-	if finished != nil {
-		select {
-		case <-finished:
-		default:
-			_, _ = fmt.Fprintln(errOut, "Press Enter to continue.")
-			<-finished
-		}
-	}
+	bc.finish()
 	return got, err
 }
 

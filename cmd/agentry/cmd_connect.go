@@ -10,7 +10,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -51,36 +50,9 @@ func connectAccount(cmd *cobra.Command, in *bufio.Reader, home, vendor string) (
 	if modelkey.Disabled() {
 		return nil, fmt.Errorf("%s keeps the key in the OS keychain, which is disabled here (%s is set): paste a key into the variable instead (agentry setup)", setup.ConnectLabel, modelkey.EnvNoKeyring)
 	}
-	errOut := cmd.ErrOrStderr()
-	pasted := make(chan string)
-	done := make(chan struct{})
-	var finished chan struct{}
-	kc := mcpauth.KeyConnect{
-		HTTP:   vendorHTTP(),
-		Pasted: pasted,
-		Say:    func(s string) { _, _ = fmt.Fprintln(errOut, s) },
-		Present: func(authURL string) {
-			_, _ = fmt.Fprintf(errOut, "Connect your %s account in your browser:\n  %s\n", name, authURL)
-			if os.Getenv("AGENTRY_NO_BROWSER") == "" {
-				if err := openBrowser(authURL); err != nil {
-					_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v; open the address above yourself)\n", err)
-				}
-			}
-			_, _ = fmt.Fprintln(errOut, "Waiting for the browser (up to 10 minutes). If it is on another machine and ends on a page that does not load, paste that page's address here and press Enter:")
-			finished = make(chan struct{})
-			go readPasted(in, pasted, done, finished)
-		},
-	}
-	got, err := runConnect(cmd.Context(), kc, vendor)
-	close(done)
-	if finished != nil {
-		select {
-		case <-finished:
-		default:
-			_, _ = fmt.Fprintln(errOut, "Press Enter to continue.")
-			<-finished
-		}
-	}
+	bc := newBrowserConsent(cmd, in, fmt.Sprintf("Connect your %s account in your browser:", name))
+	got, err := runConnect(cmd.Context(), mcpauth.KeyConnect{HTTP: vendorHTTP(), Pasted: bc.pasted, Say: bc.say, Present: bc.present}, vendor)
+	bc.finish()
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +100,9 @@ func connectOffer(cmd *cobra.Command, in *bufio.Reader, home string) setup.Conne
 				return "an account " + modelsignin.ConnectName(r.Vendor) + " did not name"
 			}
 			return r.Label
+		},
+		Forget: func(provider string) (string, error) {
+			return connectStore(home).ForgetConnected(cmd.Context(), modelsignin.ConnectedVendor(provider))
 		},
 		Connect: func(provider string) (string, error) {
 			r, err := connectAccount(cmd, in, home, modelsignin.ConnectedVendor(provider))

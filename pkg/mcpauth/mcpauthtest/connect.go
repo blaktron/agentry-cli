@@ -262,6 +262,8 @@ type HuggingFace struct {
 	// refuses every refresh; Revocation names a revocation endpoint;
 	// NoCIMD serves no metadata document.
 	NoInference, NoRefresh, Rotate, Refused, Revocation, NoCIMD bool
+	// ForeignToken names a token endpoint on another host.
+	ForeignToken bool
 	// Requests is every token request's form; Revocations every revocation's.
 	Requests, Revocations []url.Values
 	refresh               map[string]bool
@@ -322,6 +324,9 @@ func (v *HuggingFace) discovery(w http.ResponseWriter, _ *http.Request) {
 	}
 	if v.Revocation {
 		md["revocation_endpoint"] = v.URL + "/oauth/revoke"
+	}
+	if v.ForeignToken {
+		md["token_endpoint"] = "https://tokens.example.net/oauth/token"
 	}
 	writeJSON(w, md)
 }

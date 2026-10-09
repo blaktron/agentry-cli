@@ -238,3 +238,33 @@ func TestConnectedVendorIsTheConnectVendorsOnly(t *testing.T) {
 		t.Fatalf("no connect kept: %v", err)
 	}
 }
+
+// A key pasted in a connect's place forgets the connect and leaves the
+// pasted key in the keychain, so no run renews over it or refuses it.
+func TestAPastedKeyReplacesAConnect(t *testing.T) {
+	v := mcpauthtest.NewPoe(t)
+	v.ExpiresIn = 3600
+	s, _, mk := connectStore(t)
+	k, err := v.Flow().Connect(context.Background(), v.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.KeepConnected(Poe, k); err != nil {
+		t.Fatal(err)
+	}
+	mk.m["poe"] = "a-key-the-person-pasted"
+	out, err := s.ForgetConnected(context.Background(), Poe)
+	if err != nil || !strings.Contains(out, mcpauth.PoeKeysPage) {
+		t.Fatalf("forget: %q %v", out, err)
+	}
+	if mk.m["poe"] != "a-key-the-person-pasted" {
+		t.Fatal("the pasted key was removed")
+	}
+	s.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	if err := s.RefreshConnected(context.Background(), "poe"); err != nil {
+		t.Fatalf("the pasted key was refused: %v", err)
+	}
+	if out, err := s.ForgetConnected(context.Background(), Poe); err != nil || out != "" {
+		t.Fatalf("no connect kept: %q %v", out, err)
+	}
+}

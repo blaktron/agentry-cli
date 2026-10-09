@@ -114,7 +114,23 @@ func (s *Store) forget(vendor string) {
 	}
 	defer unlock()
 	s.dropSecret(vendor)
-	_ = removeRecord(s, vendor)
+	_ = s.removeRecord(vendor)
+}
+
+// ForgetConnected forgets vendor's connect because the person pasted a key
+// in its place: the record and any refresh token go, revoked as Remove
+// revokes them, and the keychain entry, which now holds the pasted key, is
+// left alone, so a run never renews or refuses a key no connect made. ""
+// when no connect is kept.
+func (s *Store) ForgetConnected(ctx context.Context, vendor string) (string, error) {
+	if !IsConnectVendor(vendor) {
+		return "", fmt.Errorf("%s is not an account a connect makes a key for", vendor)
+	}
+	out, err := s.remove(ctx, vendor, "replaced by a pasted key", false)
+	if errors.Is(err, ErrNone) {
+		return "", nil
+	}
+	return out, err
 }
 
 // ExpiredError is a connected key past the expiry its vendor gave.

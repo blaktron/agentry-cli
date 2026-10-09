@@ -947,7 +947,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		onPlanLimit: func() {
 			cancelCause(errPlanLimit)
 		},
-		onOrgPolicy: func() { cancelCause(errOrgPolicy) },
+		onOrgPolicy:    func() { cancelCause(errOrgPolicy) },
+		onOutOfCredits: func() { cancelCause(errOutOfCredits) },
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
@@ -1044,7 +1045,10 @@ var (
 	errBudget     = errors.New("turn budget exceeded")
 	errCostBudget = errors.New("cost budget exceeded")
 	errPlanLimit  = errors.New("plan limit reached")
-	errOrgPolicy  = errors.New("refused by an organization's policy")
+	// errOutOfCredits ends a run whose provider said the paying account has
+	// no credits left (agentry-cli#742).
+	errOutOfCredits = errors.New("out of credits")
+	errOrgPolicy    = errors.New("refused by an organization's policy")
 )
 
 // outputSchema loads and compiles the package's output.schema.json for a
@@ -1148,8 +1152,10 @@ type eventCollector struct {
 	// the person's organization refused it (D29), keeping the event.
 	onOrgPolicy func()
 	orgPolicy   *adapter.Event
-	// outOfCredits is the provider's first out-of-credits answer.
-	outOfCredits *adapter.Event
+	// outOfCredits is the provider's first out-of-credits answer, and
+	// onOutOfCredits what ends the run on it, as a plan's limit does.
+	outOfCredits   *adapter.Event
+	onOutOfCredits func()
 
 	turns         int
 	inTok, outTok int64
@@ -1291,6 +1297,9 @@ func (c *eventCollector) record(ev adapter.Event) {
 		c.harnessErrReported = ev.Text
 		if c.outOfCredits == nil {
 			c.outOfCredits = &ev
+			if c.onOutOfCredits != nil {
+				c.onOutOfCredits()
+			}
 		}
 	case adapter.EventOrgPolicy:
 		if c.orgPolicy == nil {

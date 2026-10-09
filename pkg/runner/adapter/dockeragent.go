@@ -462,7 +462,9 @@ func (d *dockerAgent) Events(line []byte) []Event {
 	case strings.Contains(typ, "error"):
 		text := errorText(obj)
 		kind := EventError
-		if OutOfCredits(text) {
+		// A model error alone: docker-agent codes a tool's failure apart
+		// (tool_failed), and a tool's words must not end the run as this.
+		if code, _ := obj["code"].(string); (code == "" || code == "model_error") && OutOfCredits(text) {
 			kind = EventOutOfCredits
 		}
 		events = append(events, Event{Kind: kind, Text: text, Raw: raw})

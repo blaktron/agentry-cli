@@ -199,6 +199,10 @@ type ConnectOffer struct {
 	// key it minted in the OS keychain, and returns how the account is
 	// named.
 	Connect func(provider string) (account string, err error)
+	// Forget forgets the connect kept for provider once a pasted key has
+	// replaced its key in the keychain, and says what became of it (""
+	// when none was kept).
+	Forget func(provider string) (outcome string, err error)
 }
 
 // connectNames are the connect providers, as a person knows them, with a
@@ -242,7 +246,7 @@ func configureConnect(p Prompter, pol *policy.Policy, opts ModelOpts, prov strin
 		fresh = !use
 	}
 	if fresh {
-		p.Say(fmt.Sprintf("%s: %s makes an API key for Agentry in your browser, billed to your %s account; it is kept in this computer's keychain, never in the policy file, and hosted runs never use it.", ConnectLabel, n.name, n.name))
+		p.Say(fmt.Sprintf("%s: %s makes an API key for Agentry in your browser, billed to your %s account; it is kept in this computer's keychain, never in the policy file, for the runs on this computer (a run In Agentry spends Agentry's own model access).", ConnectLabel, n.name, n.name))
 		var err error
 		if acct, err = opts.Connect.Connect(prov); err != nil {
 			return err
@@ -794,6 +798,15 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 				} else {
 					source = modelkey.SourceKeyring
 					p.Say(fmt.Sprintf("stored in the OS keychain as %s", modelkey.Account(prov)))
+					// The pasted key replaced a connected one: the connect
+					// is forgotten, so no run renews or refuses this key.
+					if IsConnectProvider(prov) && opts.Connect.Forget != nil {
+						if out, err := opts.Connect.Forget(prov); err != nil {
+							p.Say(fmt.Sprintf("warning: the %s account connected earlier is still marked connected (%v); remove it (agentry model-signins remove %s)", connectNames[prov].name, err, prov))
+						} else if out != "" {
+							p.Say(fmt.Sprintf("the key you pasted replaces the one your %s account connected: %s", connectNames[prov].name, out))
+						}
+					}
 					// The kind is read from the value at the one moment
 					// this flow holds it.
 					kind = policy.CredentialKindOf(prov, key)
