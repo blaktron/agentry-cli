@@ -10,7 +10,9 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -93,6 +95,29 @@ func playClaude(in io.Reader, out io.Writer) int {
 	return 0
 }
 
+// codexThreads records what the fake codex was asked of its threads.
+var codexThreads threadLog
+
+type threadLog struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (l *threadLog) add(s string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.log = append(l.log, s)
+}
+
+// take returns what was recorded and forgets it.
+func (l *threadLog) take() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := l.log
+	l.log = nil
+	return out
+}
+
 // playCodex is codex's app-server JSON-RPC: initialize, an ephemeral
 // thread, and per turn a gateway tool call whose approval the runner must
 // accept, the usage, the answer and turn/completed.
@@ -109,6 +134,8 @@ func playCodex(in io.Reader, out io.Writer) int {
 				Input []struct {
 					Text string `json:"text"`
 				} `json:"input"`
+				ThreadID  string `json:"threadId"`
+				Ephemeral *bool  `json:"ephemeral"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(sc.Bytes(), &m) != nil {
@@ -119,7 +146,21 @@ func playCodex(in io.Reader, out io.Writer) int {
 			sayLine(out, map[string]any{"id": m.ID, "result": map[string]any{"userAgent": "codex"}})
 		case "initialized":
 		case "thread/start":
+			if m.Params.Ephemeral != nil {
+				codexThreads.add("start ephemeral=" + strconv.FormatBool(*m.Params.Ephemeral))
+			}
 			sayLine(out, map[string]any{"id": m.ID, "result": map[string]any{"thread": map[string]any{"id": "t1"}, "approvalPolicy": "on-request"}})
+		case "thread/resume":
+			// The restart route resumes the conversation in a new process.
+			codexThreads.add("resume " + m.Params.ThreadID)
+			sayLine(out, map[string]any{"id": m.ID, "result": map[string]any{"thread": map[string]any{"id": m.Params.ThreadID}}})
+			// A host process says what it resumed on, for its parent test
+			// to read in the events receipt (it shares no memory with it).
+			on := "no token"
+			if strings.HasPrefix(os.Getenv("CODEX_ACCESS_TOKEN"), "plan-renewed-") {
+				on = "the renewed token"
+			}
+			sayLine(out, map[string]any{"method": "fixture/resumed", "params": map[string]any{"threadId": m.Params.ThreadID, "on": on}})
 		case "turn/start":
 			text := ""
 			if len(m.Params.Input) > 0 {

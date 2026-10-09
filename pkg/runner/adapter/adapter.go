@@ -178,6 +178,19 @@ type SessionOptions struct {
 	// model is then the plan's limit (EventPlanLimit), not a rate limit to
 	// wait out (invariant I9).
 	ModelSignIn bool
+	// Resumable asks for a conversation the driver can carry over to a new
+	// harness process (spec.SessionSpec.RestartOnRenewal): the engine may
+	// end the harness between turns and hand the driver a new one (Resumer).
+	Resumable bool
+}
+
+// Resumer is a SessionDriver that carries its conversation over to a new
+// harness process: after the engine has ended the old one between turns
+// (its stdin closed, the process gone), Resume performs the handshake on
+// rw and resumes the conversation, on the same event stream (the restart
+// token route, plan model-sign-ins.md D10).
+type Resumer interface {
+	Resume(ctx context.Context, rw io.ReadWriteCloser) error
 }
 
 // ModelSignInAdapter is implemented by an adapter that can spend a model

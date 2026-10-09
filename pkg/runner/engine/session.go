@@ -268,12 +268,22 @@ type liveSession struct {
 
 	budgets spec.SessionBudgets
 
-	drv        adapter.SessionDriver
-	agentCtx   context.Context
-	cancel     context.CancelCauseFunc
-	stdinW     io.Closer
-	exited     chan struct{} // closed when the harness container has exited
-	exitCode   int
+	drv      adapter.SessionDriver
+	agentCtx context.Context
+	cancel   context.CancelCauseFunc
+	// stdinW and exited are the running harness's (harness()); a restart
+	// replaces them, under mu.
+	stdinW   io.Closer
+	exited   chan struct{} // closed when the harness has exited
+	exitCode int
+	token    string
+	rep      *strings.Replacer
+	// signInSum is the model sign-in's token file's digest when the
+	// harness started; restarting is set while the restart route ends the
+	// harness on purpose, and restarts counts them (the receipt says so).
+	signInSum  string
+	restarting bool
+	restarts   int
 	eventsFile *os.File
 	stderrPath string
 
@@ -335,44 +345,12 @@ type rwPipe struct {
 
 func (s *liveSession) startHarness(ctx context.Context, token string, rep *strings.Replacer) error {
 	p := s.p
-	agentEnv, err := resolveEnv(p.Plan.Harness.Agent.Env, rep, token)
-	if err != nil {
-		return err
-	}
-	mounts := resolveMounts(p.Plan.Harness.Agent.Mounts, rep)
-	mounts = append(mounts, resolveMounts(p.Plan.Harness.Session.Mounts, rep)...)
-	name := containerName(s.runID, "agent")
-	hosts, err := sandboxHosts(ctx, s.d, p.Plan, s.runID)
-	if err != nil {
-		return Classify(ExitGateway, err)
-	}
-	runSpec := dockerx.RunSpec{
-		Name:        name,
-		Image:       p.Plan.Harness.Agent.Image,
-		Entrypoint:  p.Plan.Harness.Agent.Entrypoint,
-		Argv:        substituteAll(p.Plan.Harness.Agent.Argv, rep),
-		Env:         agentEnv,
-		Mounts:      mounts,
-		Network:     networkName(s.runID),
-		Labels:      runLabels(s.runID),
-		Interactive: true,
-		AutoRemove:  true,
-		Runtime:     p.Plan.Runtime(),
-		ExtraHosts:  hosts,
-	}
-	runSpec = hardenedAgent(runSpec, p)
-	s.td.add(func(c context.Context) { _ = s.d.RemoveForce(c, name) })
-
 	eventsFile, err := os.Create(filepath.Join(s.rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir
 	if err != nil {
 		return Classify(ExitCLI, fmt.Errorf("create events receipt: %w", err))
 	}
 	s.eventsFile = eventsFile
 	s.stderrPath = filepath.Join(s.rd.receiptsDir, "agent-stderr.log")
-	stderrFile, err := os.Create(s.stderrPath) //nolint:gosec // our receipts dir
-	if err != nil {
-		return Classify(ExitCLI, fmt.Errorf("create stderr receipt: %w", err))
-	}
 
 	agentCtx, cancel := context.WithCancelCause(ctx)
 	if s.budgets.MaxWallSeconds > 0 {
@@ -381,49 +359,25 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		s.td.add(func(context.Context) { cancelWall() })
 	}
 	s.agentCtx, s.cancel = agentCtx, cancel
-
-	stdinR, stdinW := io.Pipe()
-	stdoutR, stdoutW := io.Pipe()
-	s.stdinW = stdinW
-	s.exited = make(chan struct{})
-	run := func() (int, error) { return s.d.RunForeground(agentCtx, runSpec, stdinR, stdoutW, stderrFile) }
-	if p.Plan.Harness.Host != nil {
-		wait, started, herr := startHostProcess(agentCtx, p, s.rd, rep, token, stdinR, stdoutW, stderrFile)
-		info := started.info
-		if herr != nil {
-			// No harness process, so no goroutine to close the stderr
-			// receipt (agentry-cli#459).
-			_ = stderrFile.Close()
-			cancel(herr)
-			return herr
-		}
-		s.env.Harness.Host = info
-		if len(started.inherited) > 0 {
-			s.env.CapabilitiesEnforced["harness.env"] = hostEnvLine(started.inherited)
-		}
-		run = wait
+	s.token, s.rep = token, rep
+	if p.Plan.Harness.Host == nil {
+		name := containerName(s.runID, "agent")
+		s.td.add(func(c context.Context) { _ = s.d.RemoveForce(c, name) })
 	}
-	go func() {
-		code, rerr := run()
-		_ = stdoutW.Close()
-		_ = stderrFile.Close()
-		s.redact.File(s.stderrPath)
-		s.mu.Lock()
-		s.exitCode = code
-		if rerr != nil {
-			s.harnessErr = rerr.Error()
-		}
-		s.mu.Unlock()
-		close(s.exited)
-		s.endWith(session.EndHarness)
-	}()
+
+	rw, err := s.launch(false)
+	if err != nil {
+		cancel(err)
+		return err
+	}
+	_, exited := s.harness()
 	// A failure from here on has a harness process running and writing
-	// its stderr receipt; the goroutine above masks that receipt once the
-	// process has exited, so the failure waits for it (bounded — the
-	// cancel kills the process) before the receipt is handed over.
+	// its stderr receipt; the goroutine launch started masks that receipt
+	// once the process has exited, so the failure waits for it (bounded —
+	// the cancel kills the process) before the receipt is handed over.
 	awaitExit := func() {
 		select {
-		case <-s.exited:
+		case <-exited:
 		case <-time.After(15 * time.Second):
 			return
 		}
@@ -435,8 +389,9 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		case <-time.After(5 * time.Second):
 		}
 	}
-	drv, err := p.Adapter.Session(agentCtx, rwPipe{Reader: stdoutR, WriteCloser: stdinW},
-		adapter.SessionOptions{GatewayTools: s.granted, ModelSignIn: p.Plan.Harness.ModelSignIn != nil})
+	restart := p.Plan.Harness.Session.RestartOnRenewal
+	drv, err := p.Adapter.Session(agentCtx, rw, adapter.SessionOptions{
+		GatewayTools: s.granted, ModelSignIn: p.Plan.Harness.ModelSignIn != nil, Resumable: restart})
 	if err != nil {
 		cancel(err)
 		awaitExit()
@@ -450,7 +405,178 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		awaitExit()
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w%s", err, stderrTail(s.stderrPath)))
 	}
+	s.signInSum = s.signInTokenSum()
 	s.lastActivity = time.Now()
+	return nil
+}
+
+// harness is the running harness's stdin and the channel closed when it
+// exits; a restart replaces both.
+func (s *liveSession) harness() (io.Closer, chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stdinW, s.exited
+}
+
+// launch starts the harness — the agent container, or the person's own
+// installation — on fresh stdio pipes, and the goroutine that records its
+// exit and ends the session with it, unless the exit is a restart's. It
+// returns the harness's stdout and stdin for the driver. again is a
+// restart: the stderr receipt is appended to, and a container of the same
+// name is removed first (docker removes an exited --rm container on its
+// own time).
+func (s *liveSession) launch(again bool) (io.ReadWriteCloser, error) {
+	p, rep, token := s.p, s.rep, s.token
+	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	if again {
+		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	}
+	stderrFile, err := os.OpenFile(s.stderrPath, flags, 0o644) //nolint:gosec // our receipts dir
+	if err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("create stderr receipt: %w", err))
+	}
+	stdinR, stdinW := io.Pipe()
+	stdoutR, stdoutW := io.Pipe()
+	var run func() (int, error)
+	if p.Plan.Harness.Host != nil {
+		wait, started, herr := startHostProcess(s.agentCtx, p, s.rd, rep, token, stdinR, stdoutW, stderrFile)
+		if herr != nil {
+			// No harness process, so no goroutine to close the stderr
+			// receipt (agentry-cli#459).
+			_ = stderrFile.Close()
+			return nil, herr
+		}
+		s.env.Harness.Host = started.info
+		if len(started.inherited) > 0 {
+			s.env.CapabilitiesEnforced["harness.env"] = hostEnvLine(started.inherited)
+		}
+		run = wait
+	} else {
+		agentEnv, err := resolveEnv(p.Plan.Harness.Agent.Env, rep, token)
+		if err != nil {
+			_ = stderrFile.Close()
+			return nil, err
+		}
+		mounts := resolveMounts(p.Plan.Harness.Agent.Mounts, rep)
+		mounts = append(mounts, resolveMounts(p.Plan.Harness.Session.Mounts, rep)...)
+		name := containerName(s.runID, "agent")
+		hosts, err := sandboxHosts(s.agentCtx, s.d, p.Plan, s.runID)
+		if err != nil {
+			_ = stderrFile.Close()
+			return nil, Classify(ExitGateway, err)
+		}
+		runSpec := hardenedAgent(dockerx.RunSpec{
+			Name:        name,
+			Image:       p.Plan.Harness.Agent.Image,
+			Entrypoint:  p.Plan.Harness.Agent.Entrypoint,
+			Argv:        substituteAll(p.Plan.Harness.Agent.Argv, rep),
+			Env:         agentEnv,
+			Mounts:      mounts,
+			Network:     networkName(s.runID),
+			Labels:      runLabels(s.runID),
+			Interactive: true,
+			AutoRemove:  true,
+			Runtime:     p.Plan.Runtime(),
+			ExtraHosts:  hosts,
+		}, p)
+		if again {
+			_ = s.d.RemoveForce(s.agentCtx, name)
+		}
+		run = func() (int, error) { return s.d.RunForeground(s.agentCtx, runSpec, stdinR, stdoutW, stderrFile) }
+	}
+	exited := make(chan struct{})
+	s.mu.Lock()
+	s.stdinW, s.exited = stdinW, exited
+	s.mu.Unlock()
+	go func() {
+		code, rerr := run()
+		_ = stdoutW.Close()
+		_ = stdinR.Close()
+		_ = stderrFile.Close()
+		s.redact.File(s.stderrPath)
+		s.mu.Lock()
+		s.exitCode = code
+		if rerr != nil {
+			s.harnessErr = rerr.Error()
+		}
+		restarting := s.restarting
+		s.mu.Unlock()
+		close(exited)
+		if !restarting {
+			s.endWith(session.EndHarness)
+		}
+	}()
+	return rwPipe{Reader: stdoutR, WriteCloser: stdinW}, nil
+}
+
+// signInTokenSum is a digest of the model sign-in's token file as it is
+// now, "" when the run has none: how the restart route knows the runner
+// renewed the token since the harness started (the renewer rewrites the
+// file, connections.go).
+func (s *liveSession) signInTokenSum() string {
+	if s.p.Plan.Harness.ModelSignIn == nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(s.rd.modelSignInDir(), spec.ModelSignInTokenFile)) //nolint:gosec // the run's own folder
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// restartTimeout bounds a restart: the old harness's exit, the new one's
+// start and the driver's resume.
+var restartTimeout = 120 * time.Second
+
+// restartOnRenewal starts the harness again when the plan reads its token
+// once at start (spec.SessionSpec.RestartOnRenewal) and the runner has
+// renewed it since: the old harness is ended (stdin closed), a new one is
+// launched on the renewed token, and the driver resumes the conversation
+// (adapter.Resumer). Called before a turn, under turnMu.
+func (s *liveSession) restartOnRenewal(ctx context.Context) error {
+	if !s.p.Plan.Harness.Session.RestartOnRenewal {
+		return nil
+	}
+	now := s.signInTokenSum()
+	if now == "" || now == s.signInSum {
+		return nil
+	}
+	rs, ok := s.drv.(adapter.Resumer)
+	if !ok {
+		return fmt.Errorf("the %s adapter cannot resume a conversation, so its renewed token cannot reach it", s.p.Plan.Harness.Adapter)
+	}
+	rctx, cancel := context.WithTimeout(ctx, restartTimeout)
+	defer cancel()
+	s.mu.Lock()
+	s.restarting = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.restarting = false
+		s.mu.Unlock()
+	}()
+	stdin, exited := s.harness()
+	_ = stdin.Close()
+	select {
+	case <-exited:
+	case <-rctx.Done():
+		return fmt.Errorf("restart on the renewed token: the harness did not exit: %w", rctx.Err())
+	}
+	if ended, _ := s.Ended(); ended {
+		return session.ErrEnded
+	}
+	rw, err := s.launch(true)
+	if err != nil {
+		return fmt.Errorf("restart on the renewed token: %w", err)
+	}
+	if err := rs.Resume(rctx, rw); err != nil {
+		return fmt.Errorf("restart on the renewed token: %w%s", err, stderrTail(s.stderrPath))
+	}
+	s.signInSum = now
+	s.mu.Lock()
+	s.restarts++
+	s.mu.Unlock()
 	return nil
 }
 
@@ -659,14 +785,15 @@ func (s *liveSession) endWith(reason session.EndReason) {
 		s.mu.Unlock()
 		s.emit(session.Event{Kind: session.KindSessionEnd, Reason: reason})
 		close(s.done)
+		stdin, exited := s.harness()
 		if s.drv != nil {
 			// stdin EOF: the harness exits by itself; the context kill is
 			// the backstop.
-			_ = s.stdinW.Close()
+			_ = stdin.Close()
 		}
 		go func() {
 			select {
-			case <-s.exited:
+			case <-exited:
 			case <-time.After(15 * time.Second):
 				s.cancel(errors.New("session ended: " + string(reason)))
 			}
@@ -722,6 +849,14 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	s.emit(session.Event{Kind: session.KindUserTurn, Text: text, Synthetic: synthetic})
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if err := s.restartOnRenewal(turnCtx); err != nil {
+		if ended, _ := s.Ended(); ended {
+			return session.ErrEnded
+		}
+		s.emit(session.Event{Kind: session.KindError, Text: err.Error()})
+		s.endWith(session.EndHarness)
+		return err
+	}
 	go func() {
 		select {
 		case <-s.done:
@@ -845,11 +980,12 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 			s.endWith(session.EndQuit)
 		}
 	}
+	_, exited := s.harness()
 	select {
-	case <-s.exited:
+	case <-exited:
 	case <-time.After(20 * time.Second):
 		s.cancel(errors.New("harness did not exit"))
-		<-s.exited
+		<-exited
 	}
 	if s.drv != nil {
 		_ = s.drv.Close()
@@ -888,8 +1024,12 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	harnessErr := s.harnessErr
 	panicErr := s.panicErr
 	planLimit := s.planLimit
+	restarts := s.restarts
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
+	if restarts > 0 {
+		env.CapabilitiesEnforced["model.signIn"] += fmt.Sprintf("; on the restart token route the harness was started again %d time(s) on a renewed token, each resuming the conversation", restarts)
+	}
 	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
 	env.CapabilitiesEnforced["daemon"] = daemon
 	env.PDFs = pdfs

@@ -588,11 +588,12 @@ func (c *codexAdapter) Session(_ context.Context, rw io.ReadWriteCloser, opts Se
 		allowed[t] = true
 	}
 	s := &codexSession{
-		rw:       rw,
-		signIn:   opts.ModelSignIn,
-		pending:  map[int]chan rpcMessage{},
-		events:   make(chan Event, 256),
-		readDone: make(chan struct{}),
+		rw:        rw,
+		signIn:    opts.ModelSignIn,
+		resumable: opts.Resumable,
+		pending:   map[int]chan rpcMessage{},
+		events:    make(chan Event, 256),
+		readDone:  make(chan struct{}),
 		permit: func(server, tool string) bool {
 			if server != codexGatewayServer {
 				return false
@@ -604,6 +605,6 @@ func (c *codexAdapter) Session(_ context.Context, rw io.ReadWriteCloser, opts Se
 			return tool == "" || allowed[tool]
 		},
 	}
-	go s.readLoop()
+	go s.readLoop(rw, s.readDone)
 	return s, nil
 }

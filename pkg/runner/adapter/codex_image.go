@@ -130,6 +130,19 @@ func (c *codexImageAdapter) Compile(in Input) (Result, error) {
 	if cc.mode == manifest.ModeInteractive {
 		res.Session = codexSessionSpec()
 		res.Session.RestartOnRenewal = restart
+		if restart {
+			// A restart is a new container, whose tmpfs home starts empty:
+			// the conversation thread/resume needs is kept in the run's
+			// session store instead, a volume given to the image's user,
+			// which CODEX_HOME then is.
+			res.Session.Mounts = []spec.Mount{{Source: spec.PHSession, Target: spec.SessionMount}}
+			res.Session.StoreOwner = "codex"
+			for i := range res.Agent.Env {
+				if res.Agent.Env[i].Name == "CODEX_HOME" {
+					res.Agent.Env[i].Value = spec.SessionMount
+				}
+			}
+		}
 	} else {
 		res.OneTurn = codexSessionSpec()
 	}

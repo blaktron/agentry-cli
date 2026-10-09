@@ -46,6 +46,8 @@ type codexSession struct {
 	// 429 is then the plan's limit, said once (planLimited).
 	signIn      bool
 	planLimited bool
+	// resumable keeps the thread so Resume can carry it to a new process.
+	resumable bool
 }
 
 // codexTurn accumulates one Prompt's answer.
@@ -75,19 +77,13 @@ var codexElicitationDecline = map[string]any{"action": "decline"}
 // thread. The working directory is the process's, so the thread's cwd is
 // left to default to it — a plan carries no host path.
 func (s *codexSession) Start(ctx context.Context) error {
-	// The name is the request originator codex sends; OpenAI's plan usage
-	// asks that it match the app's registered name (agent_name_hint), and
-	// it is the same for a key run.
-	if _, err := s.call(ctx, "initialize", map[string]any{
-		"clientInfo":   map[string]any{"name": codexClientName, "title": codexClientName, "version": "runner"},
-		"capabilities": map[string]any{},
-	}); err != nil {
+	if err := s.handshake(ctx); err != nil {
 		return err
 	}
-	if err := s.send(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}); err != nil {
-		return fmt.Errorf("initialized: %w", err)
-	}
-	res, err := s.call(ctx, "thread/start", map[string]any{"ephemeral": true})
+	// A thread the restart route may resume is kept in CODEX_HOME, which is
+	// then the run's own (the session store, the run's folder); otherwise
+	// nothing of the conversation is persisted.
+	res, err := s.call(ctx, "thread/start", map[string]any{"ephemeral": !s.resumable})
 	if err != nil {
 		return err
 	}
@@ -100,6 +96,65 @@ func (s *codexSession) Start(ctx context.Context) error {
 		return fmt.Errorf("thread/start: no thread id in %s", string(res))
 	}
 	s.threadID = ts.Thread.ID
+	return nil
+}
+
+// handshake is initialize and initialized. The name is the request
+// originator codex sends; OpenAI's plan usage asks that it match the app's
+// registered name (agent_name_hint), and it is the same for a key run.
+func (s *codexSession) handshake(ctx context.Context) error {
+	if _, err := s.call(ctx, "initialize", map[string]any{
+		"clientInfo":   map[string]any{"name": codexClientName, "title": codexClientName, "version": "runner"},
+		"capabilities": map[string]any{},
+	}); err != nil {
+		return err
+	}
+	if err := s.send(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}); err != nil {
+		return fmt.Errorf("initialized: %w", err)
+	}
+	return nil
+}
+
+// Resume implements Resumer: the old process is gone (its stdout ended),
+// so its unanswered requests are dropped, and the conversation goes on
+// over rw — the handshake again, then thread/resume with the thread's id
+// (OpenAI's route for a renewed token: restart app-server, initialize,
+// thread/resume). Called between turns only.
+func (s *codexSession) Resume(ctx context.Context, rw io.ReadWriteCloser) error {
+	if !s.resumable || s.threadID == "" {
+		return errors.New("codex session: this conversation cannot be resumed")
+	}
+	select {
+	case <-s.readDone:
+	case <-ctx.Done():
+		return fmt.Errorf("codex session: the old harness did not end: %w", ctx.Err())
+	}
+	s.mu.Lock()
+	for id, ch := range s.pending {
+		close(ch)
+		delete(s.pending, id)
+	}
+	s.mu.Unlock()
+	s.writeMu.Lock()
+	s.rw = rw
+	s.writeMu.Unlock()
+	s.readDone = make(chan struct{})
+	go s.readLoop(rw, s.readDone)
+	if err := s.handshake(ctx); err != nil {
+		return err
+	}
+	res, err := s.call(ctx, "thread/resume", map[string]any{"threadId": s.threadID})
+	if err != nil {
+		return err
+	}
+	var tr struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(res, &tr); err != nil || tr.Thread.ID != s.threadID {
+		return fmt.Errorf("thread/resume: resumed %q, not the conversation %q", tr.Thread.ID, s.threadID)
+	}
 	return nil
 }
 
@@ -213,9 +268,9 @@ func (s *codexSession) call(ctx context.Context, method string, params any) (jso
 	}
 }
 
-func (s *codexSession) readLoop() {
-	defer close(s.readDone)
-	sc := bufio.NewScanner(s.rw)
+func (s *codexSession) readLoop(rw io.Reader, done chan struct{}) {
+	defer close(done)
+	sc := bufio.NewScanner(rw)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
 		line := sc.Bytes()

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -257,5 +258,214 @@ func TestTheInstalledCodexOnAChatGPTPlanIsOneAppServerTurn(t *testing.T) {
 				t.Fatalf("route %q: an agent container ran for a host harness", route)
 			}
 		}
+	}
+}
+
+// codexSessionOnAPlan is the session fixture recompiled for the Codex image
+// on a ChatGPT plan, on route, with an access token about to be renewed.
+// The agent handler plays codex and records the token each container read.
+func codexSessionOnAPlan(t *testing.T, route string) (Params, *dockerx.Fake, func() []string) {
+	t.Helper()
+	p, f := sessionFixture(t)
+	happyFake(f)
+	m, err := manifest.Parse([]byte(sessionManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := p.Policy
+	pol.Model = policy.Model{Provider: policy.ProviderOpenAI, Name: "gpt-fixture", APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"api.openai.com:443"}}
+	pol.Images.HarnessImages = map[string]policy.HarnessImage{adapter.CodexImageAdapterName: {Ref: codexImageRef}}
+	pol.Harness = map[string]policy.HarnessPolicy{adapter.CodexImageAdapterName: {SignInTokenRoute: route}}
+	planDir := filepath.Join(p.RunRoot, "plan", "codex-image")
+	plan, err := compile.Compile(compile.Inputs{
+		Manifest: m, Mode: manifest.ModeInteractive, Digest: "sha256:feedface", Source: "local", AdapterName: adapter.CodexImageAdapterName,
+		WorkspaceDir: p.WorkspaceSrc, Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test",
+	}, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad, _ := adapter.Get(adapter.CodexImageAdapterName)
+	p.Plan, p.PlanDir, p.Adapter, p.Policy = plan, planDir, ad, pol
+	p.ModelSignIn = &ModelSignInGrant{Kind: policy.KeyKindChatGPTPlan,
+		Token: ConnectionToken{AccessToken: signInAccessToken, ExpiresAt: time.Now().Add(2 * time.Second)}}
+	p.RenewModelSignIn = gatedRenewal(t)
+	var mu sync.Mutex
+	var seen []string
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: func(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+		for _, mt := range r.Mounts {
+			if mt.Target == spec.ModelSignInMount {
+				b, _ := os.ReadFile(filepath.Join(mt.Source, spec.ModelSignInTokenFile)) //nolint:gosec // the test's run dir
+				mu.Lock()
+				seen = append(seen, string(b))
+				mu.Unlock()
+			}
+		}
+		return playCodex(stdin, stdout), nil
+	}}
+	codexThreads.take()
+	return p, f, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), seen...)
+	}
+}
+
+// renewals holds each test's renewal until allowRenewal: on a slow
+// machine the renewer would otherwise rewrite the token before the first
+// harness starts, which is right, and leaves nothing to restart for.
+var renewals = struct {
+	sync.Mutex
+	allow chan struct{}
+}{}
+
+func gatedRenewal(t *testing.T) func(context.Context) (ConnectionToken, error) {
+	t.Helper()
+	allow := make(chan struct{})
+	renewals.Lock()
+	renewals.allow = allow
+	renewals.Unlock()
+	return func(ctx context.Context) (ConnectionToken, error) {
+		select {
+		case <-allow:
+		case <-ctx.Done():
+			return ConnectionToken{}, ctx.Err()
+		}
+		return ConnectionToken{AccessToken: signInRenewedToken, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+}
+
+// awaitRenewal lets the gated renewal run, and waits for the runner to
+// rewrite the token file.
+func awaitRenewal(t *testing.T, p Params) {
+	t.Helper()
+	renewals.Lock()
+	close(renewals.allow)
+	renewals.Unlock()
+	path := filepath.Join(p.RunRoot, "runs", p.RunID, "cfg", "model-signin", spec.ModelSignInTokenFile)
+	for range 200 {
+		if b, _ := os.ReadFile(path); string(b) == signInRenewedToken { //nolint:gosec // the test's run dir
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("the token was not renewed")
+}
+
+// The restart route (D10): codex reads its token once, so after the runner
+// renews it the next turn starts the harness again on the renewed token and
+// resumes the conversation by its thread; the session goes on, and the
+// receipt says how often. The default route never restarts: codex re-reads
+// the file itself.
+func TestTheRestartRouteResumesTheConversationOnARenewedToken(t *testing.T) {
+	ctx := context.Background()
+	p, f, seen := codexSessionOnAPlan(t, policy.TokenRouteRestart)
+	s, err := StartSession(ctx, f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	awaitRenewal(t, p)
+	if err := s.Send(ctx, "second"); err != nil {
+		t.Fatalf("the turn after the renewal: %v", err)
+	}
+	env, err := s.End(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seen(); len(got) != 2 || got[0] != signInAccessToken || got[1] != signInRenewedToken {
+		t.Fatalf("the containers read %q, want the first token then the renewed one", got)
+	}
+	if got := codexThreads.take(); strings.Join(got, ",") != "start ephemeral=false,resume t1" {
+		t.Fatalf("threads %v: a kept thread, resumed once", got)
+	}
+	if !strings.Contains(env.CapabilitiesEnforced["model.signIn"], "started again 1 time(s) on a renewed token") {
+		t.Fatalf("model.signIn %q", env.CapabilitiesEnforced["model.signIn"])
+	}
+	agents := 0
+	for _, c := range f.Calls {
+		if c.Op == "RunForeground" && strings.HasSuffix(c.Run.Name, "-agent") {
+			agents++
+			if c.Run.Env["CODEX_HOME"] != spec.SessionMount {
+				t.Errorf("CODEX_HOME %q: the restart route keeps the conversation in the session store", c.Run.Env["CODEX_HOME"])
+			}
+		}
+	}
+	if agents != 2 {
+		t.Fatalf("the agent ran %d times", agents)
+	}
+
+	p, f, seen = codexSessionOnAPlan(t, "")
+	s, err = StartSession(ctx, f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	awaitRenewal(t, p)
+	if err := s.Send(ctx, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.End(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := seen(); len(got) != 1 {
+		t.Fatalf("the default route started codex %d times", len(got))
+	}
+	if got := codexThreads.take(); strings.Join(got, ",") != "start ephemeral=true" {
+		t.Fatalf("threads %v", got)
+	}
+}
+
+// The installed Codex on the restart route: the process is started again
+// on the renewed token, from the run's own token file, and resumes.
+func TestTheInstalledCodexRestartsOnARenewedToken(t *testing.T) {
+	ctx := context.Background()
+	p, f := sessionFixture(t)
+	happyFake(f)
+	p = hostAdapterPlan(t, p, adapter.CodexAdapterName)
+	m, err := manifest.Parse([]byte(sessionManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := p.Policy
+	pol.Model = policy.Model{Provider: policy.ProviderOpenAI, Name: "gpt-fixture", APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"api.openai.com:443"}}
+	hp := pol.Harness[adapter.CodexAdapterName]
+	hp.SignInTokenRoute = policy.TokenRouteRestart
+	pol.Harness[adapter.CodexAdapterName] = hp
+	plan, err := compile.Compile(compile.Inputs{
+		Manifest: m, Mode: manifest.ModeInteractive, Digest: "sha256:feedface", Source: "local", AdapterName: adapter.CodexAdapterName,
+		WorkspaceDir: p.WorkspaceSrc, Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test",
+	}, p.PlanDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Plan, p.Policy = plan, pol
+	p.ModelSignIn = &ModelSignInGrant{Kind: policy.KeyKindChatGPTPlan,
+		Token: ConnectionToken{AccessToken: signInAccessToken, ExpiresAt: time.Now().Add(2 * time.Second)}}
+	p.RenewModelSignIn = gatedRenewal(t)
+	s, err := StartSession(ctx, f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	awaitRenewal(t, p)
+	if err := s.Send(ctx, "second"); err != nil {
+		t.Fatalf("the turn after the renewal: %v", err)
+	}
+	env, err := s.End(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, _ := os.ReadFile(filepath.Join(p.OutDir, "receipts", "events.ndjson"))
+	if !strings.Contains(string(events), `"on":"the renewed token"`) || strings.Contains(string(events), signInRenewedToken) {
+		t.Fatalf("the host process did not resume on the renewed token, or the token is in the receipt:\n%s", events)
+	}
+	if !strings.Contains(env.CapabilitiesEnforced["model.signIn"], "started again 1 time(s)") {
+		t.Fatalf("model.signIn %q", env.CapabilitiesEnforced["model.signIn"])
 	}
 }
