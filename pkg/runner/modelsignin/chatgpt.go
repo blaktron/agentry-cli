@@ -17,6 +17,13 @@ import (
 // the client each sign-in's record names.
 type ChatGPTVendor struct{ Flow mcpauth.ChatGPT }
 
+// The production ChatGPT vendor, on OpenAI through the egress guard, for
+// every program that keeps sign-ins (the CLI, the desktop); a test
+// registers its own over it.
+func init() {
+	RegisterVendor(ChatGPT, ChatGPTVendor{Flow: mcpauth.ChatGPT{HTTP: mcpauth.Guard{}.Client()}})
+}
+
 // Refresh implements Vendor. A refusal that means the grant is gone (OpenAI's
 // codes for it) is ErrRevoked, so the sign-in is marked broken.
 func (v ChatGPTVendor) Refresh(ctx context.Context, rec Record, refreshToken string) (Refreshed, error) {

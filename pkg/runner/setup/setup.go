@@ -12,6 +12,7 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -111,10 +112,103 @@ type ModelOpts struct {
 	// variable-only setup takes --api-key-kind.
 	APIKeyKind string
 	BaseURL    string
+	// ChatGPT offers Sign in with ChatGPT for provider openai (plan
+	// model-sign-ins.md §4.3; agentry-cli#739): nil offers none. APIKeyKind
+	// chatgpt-plan asks for it without the question.
+	ChatGPT ChatGPTOffer
 	// Yes suppresses prompting entirely: table defaults fill the gaps, the
 	// same provider's policy fills what it customized, and a custom
 	// provider with no BaseURL left is an error rather than a question.
 	Yes bool
+}
+
+// ChatGPTOffer is how setup reaches the ChatGPT sign-in, which the caller
+// owns (the store, the browser, the network).
+type ChatGPTOffer struct {
+	// Kept is the account of a kept ChatGPT sign-in that still works, ""
+	// when there is none.
+	Kept func() string
+	// SignIn signs in (fresh, or when none is kept) or refreshes the kept
+	// sign-in, and returns its account and the models its plan offers.
+	SignIn func(fresh bool) (account string, models []string, err error)
+}
+
+// configureChatGPT is the model setup for a ChatGPT plan: the sign-in, the
+// model from the plan's own list, and the policy's model block. No key
+// variable, no base URL: the plan's endpoint is OpenAI's, and the proxy
+// allows it alone (invariant I2).
+func configureChatGPT(p Prompter, pol *policy.Policy, opts ModelOpts) error {
+	if opts.ChatGPT.SignIn == nil {
+		return errors.New("this setup cannot sign in with ChatGPT")
+	}
+	fresh := true
+	if acct := keptChatGPT(opts); acct != "" {
+		fresh = false
+		if !opts.Yes {
+			use, err := p.Confirm(fmt.Sprintf("Use the ChatGPT sign-in kept on this computer (%s)?", acct), true)
+			if err != nil {
+				return err
+			}
+			fresh = !use
+		}
+	}
+	if fresh {
+		p.Say("Signing in with ChatGPT in your browser. Your ChatGPT plan pays for the runs on this computer; hosted runs never use it.")
+	}
+	acct, models, err := opts.ChatGPT.SignIn(fresh)
+	if err != nil {
+		return err
+	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		def := ""
+		switch {
+		case pol.Model.APIKeyKind == policy.KeyKindChatGPTPlan && slices.Contains(models, pol.Model.Name):
+			def = pol.Model.Name
+		case len(models) > 0:
+			def = models[0]
+		}
+		if opts.Yes {
+			model = def
+		} else {
+			q := "Model"
+			if len(models) > 0 {
+				q += " (your plan offers " + strings.Join(models, ", ") + ")"
+			}
+			ans, err := p.Ask(q, def)
+			if err != nil {
+				return err
+			}
+			model = strings.TrimSpace(ans)
+		}
+	}
+	if model == "" {
+		return errors.New("no model chosen for the ChatGPT plan (pass --model)")
+	}
+	if len(models) > 0 && !slices.Contains(models, model) {
+		p.Say(fmt.Sprintf("warning: your plan's model list does not name %q; runs will ask for it anyway", model))
+	}
+	d := DefaultsFor(policy.ProviderOpenAI)
+	pol.Model = policy.Model{
+		Provider:   policy.ProviderOpenAI,
+		Name:       model,
+		APIKeyKind: policy.KeyKindChatGPTPlan,
+		ProxyAllow: append([]string(nil), d.ProxyAllow...),
+	}
+	who := ""
+	if acct != "" {
+		who = " as " + acct
+	}
+	p.Say(fmt.Sprintf("model: openai/%s, paid by your ChatGPT plan (signed in%s; runs use Codex, and the agent container reaches %s alone)",
+		model, who, strings.Join(pol.Model.ProxyAllow, ", ")))
+	return nil
+}
+
+func keptChatGPT(opts ModelOpts) string {
+	if opts.ChatGPT.Kept == nil {
+		return ""
+	}
+	return opts.ChatGPT.Kept()
 }
 
 // ConfigureModel resolves the operator's LLM provider preference (req 5)
@@ -148,9 +242,40 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		p.Say(fmt.Sprintf("provider %q is not in the built-in table; the harness must know it by that name — for an OpenAI-compatible endpoint of your own, use custom with --base-url", prov))
 	}
 
+	// OpenAI is paid by a key or by the person's ChatGPT plan (D15, D16):
+	// asked when setup can sign in, unless the caller already said.
+	if prov == policy.ProviderOpenAI {
+		kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind))
+		if kind == "" && !opts.Yes && opts.ChatGPT.SignIn != nil {
+			def := "key"
+			if pol.Model.APIKeyKind == policy.KeyKindChatGPTPlan {
+				def = "chatgpt"
+			}
+			ans, err := p.Ask("Pay for OpenAI models with (chatgpt = sign in with ChatGPT and use your plan | key = an OpenAI API key)", def)
+			if err != nil {
+				return err
+			}
+			switch strings.ToLower(strings.TrimSpace(ans)) {
+			case "chatgpt", "chatgpt-plan", "plan":
+				kind = policy.KeyKindChatGPTPlan
+			case "key", "api", "":
+				kind = policy.KeyKindAPI
+				opts.APIKeyKind = kind
+			default:
+				return fmt.Errorf("%q is neither chatgpt nor key", ans)
+			}
+		}
+		if kind == policy.KeyKindChatGPTPlan {
+			return configureChatGPT(p, pol, opts)
+		}
+	} else if strings.EqualFold(strings.TrimSpace(opts.APIKeyKind), policy.KeyKindChatGPTPlan) {
+		return fmt.Errorf("api key kind chatgpt-plan needs provider openai (it is %q)", prov)
+	}
+
 	// A provider switch prefers the new provider's table defaults; staying
 	// on the same provider preserves whatever the operator had customized.
-	sameProvider := prov == pol.Model.Provider
+	// Leaving a ChatGPT plan for a key keeps none of the plan's setup.
+	sameProvider := prov == pol.Model.Provider && !policy.IsModelSignIn(pol.Model.APIKeyKind)
 
 	model := opts.Model
 	if model == "" {

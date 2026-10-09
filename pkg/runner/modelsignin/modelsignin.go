@@ -30,8 +30,9 @@
 // connected, for its Disconnect.
 //
 // The vendors' flows (M4–M7) register what refreshes and revokes their
-// grants (RegisterVendor); a vendor with none registered is kept and
-// listed, and Use and Remove say what this build cannot do with it.
+// grants (RegisterVendor; ChatGPT's is registered by this package, M4); a
+// vendor with none registered is kept and listed, and Use and Remove say
+// what this build cannot do with it.
 package modelsignin
 
 import (

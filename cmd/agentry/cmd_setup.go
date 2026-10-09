@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/blaktron/agentry-cli/runnerimage"
 
@@ -60,7 +61,7 @@ func newSetupCmd() *cobra.Command {
 	f.StringVar(&opts.model, "model", "", "model id (default: the provider's table default)")
 	f.StringVar(&opts.apiKeyEnv, "api-key-env", "", "env var NAME holding your api key (never the value)")
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
-	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what the Anthropic credential is: api (the default) | subscription (a `claude setup-token` token — Claude Code only; derived from the key when this setup stores it)")
+	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what pays for the model: api (an API key, the default) | subscription (an Anthropic `claude setup-token` token — Claude Code only; derived from the key when this setup stores it) | chatgpt-plan (provider openai: your ChatGPT plan, signed in with ChatGPT; interactive setup asks)")
 	f.StringVar(&opts.baseURL, "base-url", "", "custom endpoint base URL (derives the egress-proxy allowlist)")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&opts.yes, "yes", false, "non-interactive: fill gaps from the provider table instead of asking")
@@ -108,7 +109,10 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	}
 
 	interactive := !opts.yes && stdinIsTTY(cmd.InOrStdin())
-	prompter := setup.Prompter(&setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()})
+	// One buffered reader for the questions and a ChatGPT sign-in's pasted
+	// redirect: two would each keep what they read ahead of the other.
+	in := bufio.NewReader(cmd.InOrStdin())
+	prompter := setup.Prompter(&setup.TTYPrompter{In: in, Err: cmd.ErrOrStderr()})
 	if err := setup.ConfigureModel(prompter, pol, setup.ModelOpts{
 		Provider:     opts.provider,
 		Model:        opts.model,
@@ -116,6 +120,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		APIKeySource: opts.apiKeySource,
 		APIKeyKind:   opts.apiKeyKind,
 		BaseURL:      opts.baseURL,
+		ChatGPT:      chatgptOffer(cmd, in, home),
 		Yes:          !interactive,
 	}); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
