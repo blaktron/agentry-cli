@@ -47,8 +47,11 @@ const Version = "1"
 // move one, and a run would not be able to tell. Say so rather than claiming
 // immutability.
 //
-// The exception is DefaultGoBuilder, one of the two bases of the runner image,
-// which is pinned by digest (name:tag@sha256:…, the digest from images.tsv)
+// The exception is DefaultGoBuilder, one of the two bases of the runner image.
+// Its Go must be at least go.mod's go line, to the patch: the runner context's
+// go.mod names that line (runnerimage, agentry-cli#786) and an older builder
+// refuses it, so a go bump re-mirrors and re-pins this in the same change. It
+// is pinned by digest (name:tag@sha256:…, the digest from images.tsv)
 // since agentry-cli#269 closed DR-32's deferral: the image is built, not
 // pulled, so the ref only ever reaches a Dockerfile FROM, and a live build
 // proved the digest form there. The runtime base is pinned the same way in

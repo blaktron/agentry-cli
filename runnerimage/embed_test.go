@@ -212,14 +212,14 @@ func TestImageTag(t *testing.T) {
 	}
 }
 
-// TestContextGoModFollowsTheModule: the runner image builds with the Go of
-// the CLI's own go.mod, to the patch, so a builder older than it refuses
-// under the Go images' GOTOOLCHAIN=local instead of building the runner
-// with an older standard library (agentry-cli#786).
+// TestContextGoModFollowsTheModule: the runner context's go.mod names the
+// CLI's module path and its go line to the patch, so a builder older than
+// the CLI's Go refuses under the Go images' GOTOOLCHAIN=local instead of
+// building the runner with an older standard library (agentry-cli#786).
 func TestContextGoModFollowsTheModule(t *testing.T) {
-	goLine := func(gomod string) string {
+	directive := func(gomod, name string) string {
 		for _, line := range strings.Split(gomod, "\n") {
-			if f := strings.Fields(line); len(f) == 2 && f[0] == "go" {
+			if f := strings.Fields(line); len(f) == 2 && f[0] == name {
 				return f[1]
 			}
 		}
@@ -229,11 +229,13 @@ func TestContextGoModFollowsTheModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := goLine(string(mod))
-	if want == "" {
-		t.Fatal("the repository's go.mod has no go line")
-	}
-	if got := goLine(contextGoMod); got != want {
-		t.Errorf("the runner context's go.mod says go %s; the CLI's says go %s", got, want)
+	for _, name := range []string{"module", "go"} {
+		want := directive(string(mod), name)
+		if want == "" {
+			t.Fatalf("the repository's go.mod has no %s line", name)
+		}
+		if got := directive(contextGoMod, name); got != want {
+			t.Errorf("the runner context's go.mod says %s %s; the CLI's says %s %s", name, got, name, want)
+		}
 	}
 }
