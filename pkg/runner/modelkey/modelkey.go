@@ -107,12 +107,23 @@ func Store(provider, key string) error {
 	return nil
 }
 
-// Lookup reads provider's key. A missing entry is a named refusal.
+// Lookup reads provider's key. A missing entry is a named refusal. In a
+// signed-out schedule's fire, Lookup, LookupAccount, Present and Confirm
+// read the schedule's sealed credential instead of the keychain (sealed.go).
 func Lookup(provider string) (string, error) { return LookupAccount(Account(provider)) }
 
 // LookupAccount reads the key behind a keychain account, as a plan records
 // it (spec.EnvVar.FromKeyring).
 func LookupAccount(account string) (string, error) {
+	if val, sealed, err := SealedAccount(account); sealed || err != nil {
+		switch {
+		case err != nil:
+			return "", err
+		case val == "":
+			return "", notSealedErr(account)
+		}
+		return val, nil
+	}
 	if Disabled() {
 		return "", disabledErr("read " + account)
 	}
@@ -161,6 +172,9 @@ func Delete(provider string) error {
 // run refuses with the named fix, as it does for any missing key, until
 // setup stores a key again or Confirm is asked.
 func Present(provider string) (bool, error) {
+	if val, sealed, err := SealedAccount(Account(provider)); sealed || err != nil {
+		return val != "", err
+	}
 	if Disabled() {
 		return false, disabledErr("look for the model key for " + provider)
 	}
@@ -180,6 +194,9 @@ func Present(provider string) (bool, error) {
 // check that must not trust a marker (agentry doctor); the value is
 // dropped at once, and a settings page asks Present instead.
 func Confirm(provider string) (bool, error) {
+	if val, sealed, err := SealedAccount(Account(provider)); sealed || err != nil {
+		return val != "", err
+	}
 	if Disabled() {
 		return false, disabledErr("look for the model key for " + provider)
 	}

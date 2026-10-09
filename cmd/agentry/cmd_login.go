@@ -177,6 +177,7 @@ func completeLogin(cmd *cobra.Command, reg, token string) (authEvent, error) {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", pins.Note)
 	}
 	rewrapAfterLogin(cmd, reg)
+	resealSignedOut(cmd.ErrOrStderr())
 	result.Handle = strings.ReplaceAll(handle, token, "[redacted]")
 	result.Storage = entry.TokenRef
 	result.SigningKeys = pins.Status

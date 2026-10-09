@@ -276,6 +276,9 @@ func TaskXML(sc Schedule, e Entry, userSID, conhost string, loc *time.Location, 
 
 // taskDoc is a task document around its triggers.
 func taskDoc(desc string, e Entry, userSID, conhost string, triggers []byte) (string, error) {
+	if e.Credential != "" {
+		return "", ErrSignedOutUnsupported
+	}
 	if !filepath.IsAbs(e.Binary) && !isWindowsAbs(e.Binary) {
 		return "", fmt.Errorf("the agentry binary %q is not an absolute path", e.Binary)
 	}

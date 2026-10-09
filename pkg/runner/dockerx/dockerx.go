@@ -262,6 +262,15 @@ func (c *CLI) Available(ctx context.Context) error {
 	return nil
 }
 
+// OperatingSystem is what the daemon says it runs on (`docker info`'s
+// OperatingSystem): "Docker Desktop" for Docker Desktop, the host's
+// distribution for Docker Engine. A scheduled run that must go on after
+// its person signs out tells the two apart by it (agentry-cli#749).
+func (c *CLI) OperatingSystem(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "info", "--format", "{{.OperatingSystem}}")
+	return strings.TrimSpace(out), err
+}
+
 // Runtime is one entry of the daemon's runtime table: the binary it runs
 // and the arguments its registration adds (daemon.json's runtimes).
 type Runtime struct {

@@ -37,6 +37,12 @@ type Schedule struct {
 	Run  RunSpec    `yaml:"run" json:"run"`
 	When Recurrence `yaml:"when" json:"when"`
 
+	// SignedOut: the schedule also runs while its person is signed out
+	// (Linux only, D17–D19): its alarm is started by a lingering user
+	// manager and reads its keys from the encrypted credential beside it
+	// (signedout.go), never from the keychain.
+	SignedOut bool `yaml:"signedOut,omitempty" json:"signedOut,omitempty"`
+
 	Paused  bool      `yaml:"paused,omitempty" json:"paused,omitempty"`
 	Created time.Time `yaml:"created" json:"created"`
 }
