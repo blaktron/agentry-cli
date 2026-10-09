@@ -247,7 +247,8 @@ func inOrder(text string, headings []string) bool {
 }
 
 // postStepSections open the sections the post-step adds to the notes.
-var postStepSections = []string{"## Corrected after drafting", "## Repaired once", "## Not repaired", "## Withheld by AI Review"}
+var postStepSections = []string{"## Corrected after drafting", "## Repaired once", "## Not repaired", "## Withheld by AI Review",
+	serversToFixHeading, serversUncheckedHeading, serversToCheckHeading, serversAdmittedHeading}
 
 // noteBullets counts the list items of the notes the Drafter wrote, before
 // the post-step's own sections.

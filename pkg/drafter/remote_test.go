@@ -112,6 +112,9 @@ func TestAPackagesSignInIsHeldToTheListedOne(t *testing.T) {
 	if len(d.serverProblems) != 0 {
 		t.Fatalf("the listed sign-in, copied exactly, passes: %v", d.serverProblems)
 	}
+	if len(d.serversAdmitted) != 1 || strings.Contains(d.serversAdmitted[0], "on neither list") {
+		t.Errorf("a listed sign-in is its package's one admission, not \"on neither list\": %q", d.serversAdmitted)
+	}
 	if all := strings.Join(d.serversAdmitted, "\n"); !strings.Contains(all,
 		"pypi:workspace-mcp@2.0.1: signs in with OAuth at https://accounts.google.com with the sign-in the drafting guide lists (agentry-cli#665, agentry#937, 2026-10-06): the first run of this version asks whoever runs it to allow the scopes https://www.googleapis.com/auth/gmail.readonly, and the server gets an access token, never a refresh token. The vendor registers no client for Agentry") {
 		t.Errorf("the notes do not say what the listed sign-in asks:\n%s", all)
@@ -315,5 +318,20 @@ func TestARepairThatDropsARemoteServerIsCaught(t *testing.T) {
 	second := &Draft{Manifest: json.RawMessage(manifestWith("")), Validation: json.RawMessage(`{"passed":true}`)}
 	if got := droppedUnnamed(first, second, RepairReport{}); len(got) == 0 {
 		t.Fatal("a dropped remote server is not caught")
+	}
+}
+
+// The bench counts the Drafter's own bullets, not the server check's: a
+// draft of five bullets with a remote server's note is within the cap
+// (agentry-cli#667's live bench).
+func TestTheBenchCountsOnlyTheDraftersBullets(t *testing.T) {
+	d := checked(t, &fakeMeta{}, linearRemote)
+	d.ownNotes = strings.Repeat("- a bullet\n", MaxNoteBullets)
+	d.noteServerProblems()
+	if !strings.Contains(d.Notes, serversAdmittedHeading) {
+		t.Fatalf("the notes carry no server section: %q", d.Notes)
+	}
+	if n := noteBullets(d.Notes); n != MaxNoteBullets {
+		t.Fatalf("counted %d bullets, want the Drafter's %d", n, MaxNoteBullets)
 	}
 }

@@ -172,12 +172,26 @@ func (p PostStep) checkServers(ctx context.Context, d *Draft) {
 				}
 			}
 		}
-		d.admit(problems, pin, runs, runsListed, runsSeen)
+		// A listed sign-in is what admitted its package: its entry is the
+		// evidence that version was seen running, so the line that it is on
+		// neither server list would contradict it.
 		if signIn != nil && len(d.serverProblems) == problems {
 			d.serversAdmitted = append(d.serversAdmitted, listedSignInAdmitted(pin, *signIn))
+			continue
 		}
+		d.admit(problems, pin, runs, runsListed, runsSeen)
 	}
 }
+
+// The headings of the sections the server check adds to the notes. The
+// bench counts the Drafter's own bullets above them (fixture_test.go
+// postStepSections).
+const (
+	serversToFixHeading     = "## MCP servers to fix before a run"
+	serversUncheckedHeading = "## MCP servers not checked"
+	serversToCheckHeading   = "## MCP servers to check before a run"
+	serversAdmittedHeading  = "## What admitted each MCP server"
+)
 
 // What a repair turn is told of a package's oauth block the list does not
 // carry, and of one that departs from the listed block.
@@ -356,15 +370,15 @@ func (d *Draft) noteServerProblems() {
 			b.WriteString("- " + l + "\n")
 		}
 	}
-	section("## MCP servers to fix before a run\n\nThis draft declares a server version its runs cannot run:\n\n", d.serverProblems)
+	section(serversToFixHeading+"\n\nThis draft declares a server version its runs cannot run:\n\n", d.serverProblems)
 	if len(d.serversUnchecked) > 0 {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "## MCP servers not checked\n\nWhether these run on the runner's Node %s and Python %s was not checked, because their package registry could not be read from this computer: %s.\n",
+		fmt.Fprintf(&b, serversUncheckedHeading+"\n\nWhether these run on the runner's Node %s and Python %s was not checked, because their package registry could not be read from this computer: %s.\n",
 			policy.DefaultNodeVersion, policy.DefaultPythonVersion, strings.Join(d.serversUnchecked, ", "))
 	}
-	section("## MCP servers to check before a run\n\n", d.serverSigns)
-	section("## What admitted each MCP server\n\n", d.serversAdmitted)
+	section(serversToCheckHeading+"\n\n", d.serverSigns)
+	section(serversAdmittedHeading+"\n\n", d.serversAdmitted)
 	d.composeNotes(b.String())
 }
