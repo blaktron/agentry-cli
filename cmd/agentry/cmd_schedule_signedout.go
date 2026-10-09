@@ -74,21 +74,9 @@ func signedOutUnsupported() error {
 // out (D17, D18). It is asked once fireGaps found nothing, so the release
 // is installed and the model key is in the keychain.
 func signedOutGaps(ctx context.Context, sc schedule.Schedule) []string {
+	gaps := signedOutMachineGaps(ctx)
 	if scheduleGOOS != "linux" {
-		return []string{signedOutUnsupported().Error()}
-	}
-	var gaps []string
-	switch v, err := schedule.SystemdVersion(); {
-	case err != nil:
-		gaps = append(gaps, fmt.Sprintf("running while signed out needs systemd %d or later, and its version could not be read: %v", schedule.MinSystemd, err))
-	case v < schedule.MinSystemd:
-		gaps = append(gaps, fmt.Sprintf("running while signed out needs systemd %d or later, which keeps the key in an encrypted credential (this computer has systemd %d); a key is never kept in a plain file", schedule.MinSystemd, v))
-	}
-	switch osName, err := scheduleDockerOS(ctx); {
-	case err != nil:
-		gaps = append(gaps, fmt.Sprintf("running while signed out needs Docker Engine, and Docker could not be asked which engine it is: %v", err))
-	case strings.Contains(osName, "Docker Desktop"):
-		gaps = append(gaps, "running while signed out needs Docker Engine: Docker Desktop stops when you sign out")
+		return gaps
 	}
 	home, err := runnerHome()
 	if err != nil {
@@ -105,6 +93,29 @@ func signedOutGaps(ctx context.Context, sc schedule.Schedule) []string {
 		if !filepath.IsAbs(k) {
 			gaps = append(gaps, fmt.Sprintf("the kept knowledge pack %s opens with a key kept in the keychain, which is locked while you are signed out", k))
 		}
+	}
+	return gaps
+}
+
+// signedOutMachineGaps is every reason this computer cannot run any
+// schedule while its person is signed out: the system, systemd's version
+// and the Docker engine (D17, D18), whatever the QuickAgent.
+func signedOutMachineGaps(ctx context.Context) []string {
+	if scheduleGOOS != "linux" {
+		return []string{signedOutUnsupported().Error()}
+	}
+	var gaps []string
+	switch v, err := schedule.SystemdVersion(); {
+	case err != nil:
+		gaps = append(gaps, fmt.Sprintf("running while signed out needs systemd %d or later, and its version could not be read: %v", schedule.MinSystemd, err))
+	case v < schedule.MinSystemd:
+		gaps = append(gaps, fmt.Sprintf("running while signed out needs systemd %d or later, which keeps the key in an encrypted credential (this computer has systemd %d); a key is never kept in a plain file", schedule.MinSystemd, v))
+	}
+	switch osName, err := scheduleDockerOS(ctx); {
+	case err != nil:
+		gaps = append(gaps, fmt.Sprintf("running while signed out needs Docker Engine, and Docker could not be asked which engine it is: %v", err))
+	case strings.Contains(osName, "Docker Desktop"):
+		gaps = append(gaps, "running while signed out needs Docker Engine: Docker Desktop stops when you sign out")
 	}
 	return gaps
 }
@@ -248,19 +259,50 @@ func dropCredential(store schedule.Store, id string) error {
 	return nil
 }
 
+// resealFailure is one signed-out schedule whose keys were not sealed
+// again, and so were removed.
+type resealFailure struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Error string `json:"error"`
+}
+
+// resealReport is what `agentry schedule reseal --json` prints.
+type resealReport struct {
+	Sealed []string        `json:"sealed"`
+	Failed []resealFailure `json:"failed"`
+}
+
 // resealSignedOut seals every signed-out schedule's keys again from the
 // keychain, after a key or a sign-in changed (setup, login, logout). What
 // fails is said, not fatal: the change it follows is already made.
 func resealSignedOut(errOut io.Writer) {
-	store, err := scheduleStore()
+	rep, err := resealAll()
 	if err != nil {
 		return
+	}
+	for _, f := range rep.Failed {
+		_, _ = fmt.Fprintf(errOut, "warning: the keys of %s (%s), which runs while you are signed out, were not sealed again: %s; its old sealed keys were removed, so it does not run until `agentry schedule edit %s --signed-out` seals them again\n", f.Name, f.ID, f.Error, f.ID)
+	}
+	if n := len(rep.Sealed); n > 0 {
+		_, _ = fmt.Fprintf(errOut, "sealed the keys of %d schedule(s) that run while you are signed out again\n", n)
+	}
+}
+
+// resealAll seals the keys of every signed-out schedule that has not
+// ended again. One that fails loses the keys sealed before: they may be
+// the ones just changed or signed out of, so its runs fail, closed, until
+// they are sealed again.
+func resealAll() (resealReport, error) {
+	rep := resealReport{Sealed: []string{}, Failed: []resealFailure{}}
+	store, err := scheduleStore()
+	if err != nil {
+		return rep, err
 	}
 	list, _, err := store.List()
 	if err != nil {
-		return
+		return rep, err
 	}
-	n := 0
 	for _, sc := range list {
 		if !sc.SignedOut {
 			continue
@@ -273,16 +315,84 @@ func resealSignedOut(errOut io.Writer) {
 			err = sealScheduleKeys(sc, path)
 		}
 		if err != nil {
-			// The keys sealed before may be the ones just changed or
-			// signed out of: they go, and its runs fail, closed, until
-			// they are sealed again.
 			_ = dropCredential(store, sc.ID)
-			_, _ = fmt.Fprintf(errOut, "warning: the keys of %s (%s), which runs while you are signed out, were not sealed again: %v; its old sealed keys were removed, so it does not run until `agentry schedule edit %s --signed-out` seals them again\n", sc.Name, sc.ID, err, sc.ID)
+			rep.Failed = append(rep.Failed, resealFailure{ID: sc.ID, Name: sc.Name, Error: err.Error()})
 			continue
 		}
-		n++
+		rep.Sealed = append(rep.Sealed, sc.ID)
 	}
-	if n > 0 {
-		_, _ = fmt.Fprintf(errOut, "sealed the keys of %d schedule(s) that run while you are signed out again\n", n)
+	return rep, nil
+}
+
+func newScheduleResealCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reseal",
+		Short: "Seal the keys of every schedule that runs while you are signed out again, from the keychain",
+		Long: "Seal again, from the keychain, the keys of every schedule that runs while you\n" +
+			"are signed out: after the model key, one of your own provider keys or a\n" +
+			"registry sign-in changed outside `agentry setup`, `login` and `logout`\n" +
+			"(which do it themselves), for example in Agentry Desktop's Settings.\n" +
+			"A schedule whose keys cannot be sealed again loses the keys sealed\n" +
+			"before, and does not run until `agentry schedule edit <id> --signed-out`.\n" +
+			"Exits 1 when any failed; --json prints {sealed, failed}.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			rep, err := resealAll()
+			if err != nil {
+				return err
+			}
+			if flags.jsonOut {
+				if err := emitJSON(cmd.OutOrStdout(), rep); err != nil {
+					return err
+				}
+			} else {
+				for _, f := range rep.Failed {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "not sealed again: %s (%s): %s; its old sealed keys were removed, so it does not run until `agentry schedule edit %s --signed-out`\n", f.Name, f.ID, f.Error, f.ID)
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d schedule(s) sealed again, %d not\n", len(rep.Sealed), len(rep.Failed))
+			}
+			if len(rep.Failed) > 0 {
+				return engine.Classify(engine.ExitPolicy, fmt.Errorf("the keys of %d schedule(s) were not sealed again", len(rep.Failed)))
+			}
+			return nil
+		},
+	}
+}
+
+// signedOutAvailability is whether this computer can run a schedule while
+// its person is signed out, and why not.
+type signedOutAvailability struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+func signedOutHere(ctx context.Context) signedOutAvailability {
+	gaps := signedOutMachineGaps(ctx)
+	if len(gaps) == 0 {
+		return signedOutAvailability{Available: true}
+	}
+	return signedOutAvailability{Reason: strings.Join(gaps, "; ")}
+}
+
+func newScheduleCheckSignedOutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "check-signed-out",
+		Short: "Say whether this computer can run schedules while you are signed out",
+		Long: "Say whether this computer can run a schedule while you are signed out\n" +
+			"(--signed-out): Linux with Docker Engine and systemd 256 or later. It asks\n" +
+			"nothing and changes nothing; --json prints {available, reason}.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			a := signedOutHere(cmd.Context())
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), a)
+			}
+			if a.Available {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "available: schedules can run while you are signed out on this computer")
+				return nil
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "not available: "+a.Reason)
+			return nil
+		},
 	}
 }
