@@ -1,14 +1,16 @@
 ---
 title: Declared MCP servers
 type: guide
-summary: What a declared MCP server meets in the runner (how it is installed, started and reached, and what it can reach), what that rules out, and how to check a server before you pin it. Read it before you pin any server.
-sources: [doc:runtime-facts.md, doc:servers.yaml, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.npmjs.com/cli/v11/commands/npm-install, web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json, web:https://pip.pypa.io/en/stable/cli/pip_install/, web:https://peps.python.org/pep-0656/, web:https://packaging.python.org/en/latest/specifications/entry-points/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports]
-updated: 2026-10-06
+summary: What a declared MCP server meets in the runner (a package installed, started and reached, or a vendor's remote server reached at its address), what that rules out, how a server signs in, and how to check a server before you pin it. Read it before you declare any server.
+sources: [doc:runtime-facts.md, doc:servers.yaml, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization, web:https://docs.npmjs.com/cli/v11/commands/npm-install, web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json, web:https://pip.pypa.io/en/stable/cli/pip_install/, web:https://peps.python.org/pep-0656/, web:https://packaging.python.org/en/latest/specifications/entry-points/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports]
+updated: 2026-10-09
 ---
 
 # Declared MCP servers
 
-A declared MCP server is an npm or PyPI package, pinned at an exact version, that a QuickAgent lists under `capabilities.mcpServers` because its task needs the tools that server provides. The runner installs it for that exact release and runs it in a container of its own, behind the run's gateway, with only its own hosts, keys and configuration [src: web:https://docs.secureagentry.net/runner/; web:https://docs.secureagentry.net/quickagents/].
+A declared MCP server is listed under `capabilities.mcpServers` because the QuickAgent's task needs the tools it provides. It is one of two kinds. A **package server** is an npm or PyPI package, pinned at an exact version: the runner installs it for that exact release and runs it in a container of its own, behind the run's gateway, with only its own hosts, keys and configuration. A **remote server** is a vendor's own MCP server, declared by its `https://` address: it runs at the vendor, and the runner reaches it through one relay to that address's host ([Remote servers](#remote-servers)) [src: web:https://docs.secureagentry.net/runner/; web:https://docs.secureagentry.net/quickagents/].
+
+When a vendor has its own remote server and a package for the same service takes an API key instead, prefer the vendor's remote server, unless the task needs a tool only the package has. It is the vendor's own code, it reaches only the vendor's host, and it signs the person in on the vendor's own consent screen, so a run gets a short-lived access token rather than a long-lived key. [Remote servers and sign-ins](sign-ins.md) lists the vendors' servers and how each signs in.
 
 Most servers published on npm and PyPI were written for a person's laptop. The runner is not one, and a server that works on a laptop can fail here. Some fail at install. Others install, start, list their tools and then fail on every call. Each point below is how the runner works today. Pin a server only when it passes all of them; otherwise use no server, or `fetch` to exact hosts, or ask for the data as an input file.
 
@@ -26,14 +28,14 @@ First look the server up on the two lists, [Runs here](runs-here.md) and [Does n
 
 - **As exactly one program, with no arguments.** An npm server starts as its package's `bin` (the entry named after the unscoped package, else the first). A PyPI server starts as its console script (the one named after the project, else its only one, else the first). The runner passes no argument and no flag. A server that needs `stdio`, `--stdio`, `--transport stdio`, `serve`, a path or any other argument cannot be started. Only its `env` entries and its declared keys reach it [src: web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json; web:https://packaging.python.org/en/latest/specifications/entry-points/].
 - **An npm package with no `bin` cannot be declared**, and a PyPI package with no console script (one meant for `python -m`) does not start.
-- **Over stdio only.** The runner talks to a server on its standard input and output. A server that serves only HTTP or SSE, or a remote server at a URL, cannot be declared [src: web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports].
+- **Over stdio only.** The runner talks to a package server on its standard input and output. A package that serves only HTTP or SSE cannot be declared as a package. When it is a vendor's own hosted server, declare it by its address instead ([Remote servers](#remote-servers)) [src: web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports].
 
 ## What it can reach while it runs
 
 - **Its own files, read-only, and none of the run's.** The server runs as `root`, with HOME `/root`. Its installed files are read-only. Writes to HOME and to `/tmp` work but are discarded when the run ends, so a server that keeps a file (a memory, a cache, a log) must be pointed at `/tmp` through its `env`, and a server that writes into its own installed files fails. The survey's `runtimes` entries record this for both images [src: doc:servers.yaml]. The person's inputs, the workspace and the reports folder are not in its container at all. A server that works on local paths (a filesystem server, a git repository, a SQLite file, a folder of documents) sees nothing of the person's.
 - **Only the hosts its `egress` names, on port 443.** Each declared host is reached over TCP port 443, with TLS end to end. Plain HTTP, a database port, SMTP and any other port fail. A redirect to a host not in the list fails, and so does a login, CDN or storage host the server reaches behind the scenes, so name every host it talks to. `"*"` is refused for a server. With no `egress`, the server has no network at all [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/runner/].
 - **No other programs.** The container holds busybox (with its small `wget`) and the server's runtime (Node and npm, or Python and pip), nothing more: no git, no curl, no browser, no Docker. A server that runs another program to do its work fails when it calls it [src: doc:servers.yaml].
-- **Keys as environment variables.** Each name in the server's `secrets` reaches it as an environment variable of that name, and the model never sees the value. A server that signs in through a browser window (OAuth) cannot run. One that takes a token from an environment variable can [src: web:https://docs.secureagentry.net/runner/].
+- **Keys as environment variables.** Each name in the server's `secrets` reaches it as an environment variable of that name, and the model never sees the value. A package server that opens a browser window to sign in, or keeps a credentials file of its own, cannot run. One that takes a token from an environment variable can, and so can a package whose sign-in [Remote servers and sign-ins](sign-ins.md#package-sign-ins) lists ([A package's sign-in](#a-packages-sign-in)) [src: web:https://docs.secureagentry.net/runner/].
 - **Results that look like credentials are blocked.** The runner replaces a tool result that looks like it holds a key or a token with an error. A server whose results echo tokens or carry key-shaped strings fails on those calls.
 - **Limits.** Each container gets the memory and CPU limits in [the numbers](#the-numbers), by default, and on Linux the process limit too [src: doc:runtime-facts.md].
 
@@ -45,16 +47,38 @@ First look the server up on the two lists, [Runs here](runs-here.md) and [Does n
 - **Only the tools the task calls,** in `tools`, by their exact names from the server's documentation or its entry on [Runs here](runs-here.md).
 - **Its hosts, keys and settings on the server's own entry:** `egress` (exact hosts, never `"*"`), `secrets` (the names it reads its keys from) and `env` (plain settings, never a key). Prefer a server that needs no key, and one whose hosts you can name.
 
+## Remote servers
+
+A vendor's remote server is declared by its address, not a package:
+
+```yaml
+- url: https://mcp.linear.app/mcp
+  auth: oauth          # oauth | secret | none
+  scopes: [read]       # only with auth: oauth
+  tools: [list_issues, get_issue]
+```
+
+- **Its address.** `https://`, on a public host name, port 443, with no user name, query or fragment, at most 512 characters. Its host is the only host it reaches, so it takes no `egress`, no `version` and no `env`: it runs at the vendor, at the address you declare [src: web:https://docs.secureagentry.net/quickagents/].
+- **How it signs in** (`auth`). `oauth` signs the person in at the vendor; `secret` sends the server's one declared key as a bearer token (declare exactly one in its `secrets`); `none` sends nothing.
+- **With `oauth`, consent at the first run.** The first run of this version asks whoever runs the QuickAgent to sign in at the vendor and allow the `scopes` you declare, and keeps that sign-in for this version alone; a new version asks again. Declare in `scopes` only the ones the task needs, from those the vendor offers ([Remote servers and sign-ins](sign-ins.md#remote-servers) lists them), and prefer a read-only scope or the read-only address a vendor offers (GitHub's ends `/readonly`). A vendor that offers a single scope (`default`) needs none named; the check after you answer sends an OAuth server with no scopes, where its vendor offers several, to a repair turn. A run gets a short-lived access token, never a refresh token [src: web:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization; web:https://docs.secureagentry.net/quickagents/].
+- **Whose client.** Some vendors let Agentry register its own client; others need the person to make an OAuth client at the vendor once, and the run setup shows how. [Remote servers and sign-ins](sign-ins.md#remote-servers) says which, and when you declare one that needs the person's own client, say so in the guide's help for running it.
+- **What Agentry checks.** The address, how it signs in and the scopes, not the vendor's code: the registry's pipeline reports each remote server by its address and scopes when the version is submitted. A run In Agentry reaches only the vendors its deployment allows; another is refused with a sentence that names it.
+- **Only the tools the task calls,** in `tools`, by the names the vendor's documentation gives.
+
+## A package's sign-in
+
+A package server may sign the person in through an `oauth` block: the runner makes the connection with the block's issuer and writes the access token into the files and settings the block names, which the package reads. A token file the package does not read fails silently: the run starts, and the server never gets the token. So give a package an `oauth` block only by copying, exactly, a sign-in [Remote servers and sign-ins](sign-ins.md#package-sign-ins) lists for that version, with the `egress` and `env` it lists. The check after you answer sends any other `oauth` block to a repair turn. A package with no listed sign-in that needs the person's account is not declared: use the vendor's remote server, or a package that takes a key. A package the registry knows cannot run on an access token alone, `mcp-gsuite` first, is refused a sign-in by name, with the one to declare instead (`workspace-mcp`) [src: doc:servers.yaml; web:https://docs.secureagentry.net/quickagents/].
+
 ## Before a run
 
-At most eight servers. The registry looks every declared version up in OSV, and `registry_search` (with `ecosystem`, `package` and `version`) reads its answer. A version with an advisory the registry's gate rates high or critical is refused before a run starts, and a run In Agentry has no way past that. Prefer a version with no known advisories [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/runner/].
+At most eight servers, remote ones included. The registry looks every declared package version up in OSV (a remote server has no version to look up), and `registry_search` (with `ecosystem`, `package` and `version`) reads its answer. A version with an advisory the registry's gate rates high or critical is refused before a run starts, and a run In Agentry has no way past that. Prefer a version with no known advisories [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/runner/].
 
 ## Checking a server before you pin it
 
 Read the version's metadata from its registry (`https://registry.npmjs.org/<package>` lists every version with its `bin`, `engines`, `scripts` and `dependencies`; `https://pypi.org/pypi/<package>/<version>/json` has `requires_python`, `requires_dist` and the files with their wheel tags) and its README. Then check each point:
 
 1. **It starts with no arguments.** The README's start command is the bare package (`npx <package>`, `uvx <package>`) with nothing after it, or the arguments it shows are optional.
-2. **It speaks stdio.** Not "HTTP only", "SSE", "streamable HTTP only" or "remote server".
+2. **It speaks stdio.** Not "HTTP only", "SSE" or "streamable HTTP only". A vendor's own hosted server is declared by its address instead ([Remote servers](#remote-servers)).
 3. **It has a program to start.** An npm `bin`, or a PyPI console script.
 4. **Its runtime range admits Node 24.21.0 or Python 3.12.14.**
 5. **It needs nothing built or fetched at install.** No `install` or `postinstall` script it depends on. No dependency on a native module such as `sharp`, `better-sqlite3`, `canvas`, `node-pty`, `keytar`, `puppeteer`, `playwright` or `onnxruntime`. For PyPI, no dependency that publishes only `manylinux` wheels or only a source distribution.

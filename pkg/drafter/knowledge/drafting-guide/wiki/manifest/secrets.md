@@ -3,7 +3,7 @@ title: Keys
 type: guide
 summary: How a QuickAgent declares the keys it needs (its own for fetch, a server's on that server), how to mark each one optional or required, how a run gets them without the model seeing them, and what a run does without an optional one.
 sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/agentry/hosted-runs/, web:https://docs.secureagentry.net/agentry/builder/]
-updated: 2026-10-06
+updated: 2026-10-09
 ---
 
 # Keys
@@ -11,7 +11,7 @@ updated: 2026-10-06
 ## Declaring a key
 
 - A key is declared by the name of its environment variable, never by its value: `secrets: [GITHUB_TOKEN]` [src: web:https://docs.secureagentry.net/quickagents/].
-- The QuickAgent's own `capabilities.secrets` holds the keys its `fetch` sends (see [Network and fetch](egress-and-fetch.md)). A key an MCP server needs goes in that server's `secrets`, under the name its documentation reads it from.
+- The QuickAgent's own `capabilities.secrets` holds the keys its `fetch` sends (see [Network and fetch](egress-and-fetch.md)). A key an MCP server needs goes in that server's `secrets`, under the name its documentation reads it from. A remote server that signs in with a key (`auth: secret`) declares exactly one, which goes to the vendor as a bearer token; one that signs in with OAuth declares none, because the person signs in at the vendor instead.
 - One key per service at most, and only a key the task uses. Prefer a service or a server that needs none.
 - Each declared key gets its help in `guide.connect`: where to create it and the least permission the task needs (see [The intake and the guide](intake-and-guide.md)). For an optional key, the help also says what the key adds.
 - Never put a key, a token or a password in `env`, in the instructions or in an example. The registry scans every file for them [src: web:https://docs.secureagentry.net/quickagents/].
@@ -27,7 +27,7 @@ Mark every key you declare one way or the other. `capabilities.optionalSecrets` 
 - **Required** when the job cannot be done at all without the key. Examples:
   - posting to the person's Slack or sending from their mailbox;
   - an API that answers nothing without a key;
-  - a server that refuses to start without its key.
+  - a server that refuses to start without its key, or a remote server that signs in with it.
 - When in doubt, ask whether a run without the key would still hand the person something useful. If yes, the key is optional.
 - A name in `optionalSecrets` must be one you declared, in `capabilities.secrets` or a server's `secrets`. Never list a key there that you did not declare.
 - Write the instructions for both cases. Say what the QuickAgent does when an optional key was not given, and have its output name the key it went without and what that left out (for example, "If GITHUB_TOKEN was not given, read only public repositories and say so in the report"). Never tell it to stop because an optional key is missing.

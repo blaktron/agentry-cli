@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -64,6 +65,13 @@ type Expect struct {
 	// so each is in optionalSecrets, "required" when it cannot, so none is;
 	// not checked when empty (plan optional-secrets.md D3, agentry-cli#652).
 	Keys string `json:"keys,omitempty"`
+	// Remote maps the host of each vendor's remote MCP server the draft
+	// must declare by address to how it must sign in (oauth, secret or
+	// none), and SignIns are the package servers (ecosystem:package) that
+	// must carry the sign-in the guide lists for them (agentry-cli#667).
+	// Neither is checked when empty.
+	Remote  map[string]string `json:"remote,omitempty"`
+	SignIns []string          `json:"signIns,omitempty"`
 }
 
 // LoadFixtures reads the fixture set, sorted by id.
@@ -107,17 +115,33 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	c := m.Capabilities
 	hosts := append([]string(nil), c.Network.Egress.Hosts...)
 	keys := append([]string(nil), c.Secrets...)
+	remote := map[string]manifest.MCPAuth{}
+	signIns := map[string]bool{}
+	list, _ := serverList()
 	for _, s := range c.MCPServers {
 		hosts = append(hosts, s.Egress...)
 		keys = append(keys, s.Secrets...)
+		if s.IsRemote() {
+			// A remote server runs at its vendor: no version, and its one
+			// host is its address's.
+			hosts = append(hosts, s.RemoteHost())
+			remote[s.RemoteHost()] = s.Auth
+			continue
+		}
+		if list != nil && s.OAuth != nil {
+			eco, pkg := packageOf(s)
+			if si, ok := list.SignIn(eco, pkg, s.Version); ok && si.Differs(s) == "" {
+				signIns[s.SourceID()] = true
+			}
+		}
 		if s.Version == "" || strings.ContainsAny(s.Version, "^~*<> ") || s.Version == "latest" {
 			out = append(out, fmt.Sprintf("server %s is not pinned at an exact version (%q)", s.SourceID(), s.Version))
 		}
 		// The post-step's list check (agentry-cli#660) has had its say by
 		// now; a pin it covers that is still here is the bench's to count.
-		if l, err := serverList(); err == nil && !s.IsRemote() {
+		if list != nil {
 			eco, pkg := packageOf(s)
-			if e, ok := l.NotRunHere(eco, pkg, s.Version); ok {
+			if e, ok := list.NotRunHere(eco, pkg, s.Version); ok {
 				out = append(out, fmt.Sprintf("server %s@%s is on Does not run here (%s)", s.SourceID(), s.Version, e.Reason))
 			}
 		}
@@ -141,6 +165,16 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 			out = append(out, fmt.Sprintf("key %s is required; the QuickAgent can do its job without it", k))
 		case e.Keys == "required" && optional:
 			out = append(out, fmt.Sprintf("key %s is optional; the QuickAgent cannot do its job without it", k))
+		}
+	}
+	for _, h := range slices.Sorted(maps.Keys(e.Remote)) {
+		if got, ok := remote[h]; !ok || string(got) != e.Remote[h] {
+			out = append(out, fmt.Sprintf("no remote server at %s signed in with %s", h, e.Remote[h]))
+		}
+	}
+	for _, id := range e.SignIns {
+		if !signIns[id] {
+			out = append(out, fmt.Sprintf("%s does not carry the sign-in the drafting guide lists", id))
 		}
 	}
 	if n := len(c.MCPServers); n > e.MaxServers {
