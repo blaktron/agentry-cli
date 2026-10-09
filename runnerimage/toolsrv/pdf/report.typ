@@ -232,7 +232,10 @@
   let title = title-heading(size)
   if style == "band" {
     block(width: 100%, fill: accent, inset: (x: 14pt, y: 16pt), below: below, {
-      set text(fill: white)
+      // A show-set rule, not a set rule: the document's heading rule sets
+      // ink on the heading itself, and only a closer rule on the heading
+      // overrides it. The core's contrast check assumes white here.
+      show heading: set text(fill: white)
       title
     })
   } else if style == "bar" {

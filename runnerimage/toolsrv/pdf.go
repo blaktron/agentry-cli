@@ -116,7 +116,7 @@ type PDFEntry struct {
 func validatePDF(spec *Spec) error {
 	p := spec.PDF
 	if !p.Enabled && (p.Theme != nil || p.Ledger != "") {
-		return errors.New("pdf: a theme or a ledger without the export_pdf grant")
+		return errors.New("pdf: a report design or a ledger without the export_pdf grant")
 	}
 	if p.Theme != nil {
 		if _, err := p.Theme.check(); err != nil {
@@ -328,7 +328,7 @@ type pdfMeta struct {
 	// Agentry (D14).
 	Author string              `json:"author"`
 	Images map[string]pdfImage `json:"images"`
-	// Date is the day of the render (UTC, YYYY-MM-DD), for a theme's cover
+	// Date is the day of the render (UTC, YYYY-MM-DD), for a report's cover
 	// page: the same in every language.
 	Date string `json:"date"`
 	// Titled says the title is the report's own first heading, not its

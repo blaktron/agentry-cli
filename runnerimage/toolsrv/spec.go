@@ -115,8 +115,8 @@ type Spec struct {
 	// release's one-shot run alone, with end_blocked granted beside it.
 	Calls Calls `json:"calls,omitzero"`
 	// PDF is export_pdf's grant (pdf.go): Enabled by the compiler with the
-	// scratch folder, the theme, the author line and the ledger stamped by
-	// the engine.
+	// scratch folder, the report design, the author line and the ledger
+	// stamped by the engine.
 	PDF PDF `json:"pdf,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`

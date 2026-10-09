@@ -91,9 +91,9 @@ type Envelope struct {
 	// PDFs is what export_pdf wrote (plan scratch-and-pdf-reports.md §5,
 	// D15; agentry-cli#730): the report design every PDF of the run was laid
 	// out with (report-designs.md, agentry-cli#784), and each PDF in reports/
-	// whose bytes are the ones the tools server recorded, with its form. A reader opens in place only a PDF this names with a
-	// matching SHA-256; any other is download-only. Absent for a run that
-	// exported none.
+	// whose bytes are the ones the tools server recorded, with its form. A
+	// reader opens in place only a PDF this names with a matching SHA-256;
+	// any other is download-only. Absent for a run that exported none.
 	PDFs *PDFs `json:"pdfs,omitempty"`
 }
 

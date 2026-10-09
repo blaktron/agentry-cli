@@ -71,12 +71,16 @@ func chooseReportTheme(ctx context.Context, flags reportFlags, cfg cliConfig, ac
 	}
 	fallback := engine.ReportTheme{Name: toolsrv.DefaultTheme, From: engine.ThemeFromDefault}
 	name, file := strings.TrimSpace(cfg.Report.Theme), strings.TrimSpace(cfg.Report.Design)
-	path, _ := configPath()
+	path, pathErr := configPath()
 	switch {
 	case name != "" && file != "":
 		return usage("report.theme and report.design in %s both choose the report design; keep one", path)
 	case file != "":
 		if !filepath.IsAbs(file) {
+			// Relative to the config directory, never the working one.
+			if pathErr != nil {
+				return usage("report.design %q is relative, and the config directory is not known: %v", file, pathErr)
+			}
 			file = filepath.Join(filepath.Dir(path), file)
 		}
 		doc, err := readDesignFile(file)

@@ -15,18 +15,20 @@ package reportthumbs
 import (
 	"embed"
 	"slices"
+
+	"github.com/blaktron/agentry/pkg/reportdesign"
 )
 
 //go:embed *.png
 var files embed.FS
 
 // IDs are the built-in themes a thumbnail is kept for, in the order they
-// are offered: pkg/reportdesign's BuiltinIDs, which a test holds.
-var IDs = []string{"plain", "classic", "modern", "editorial", "technical"}
+// are offered: the core's.
+func IDs() []string { return reportdesign.BuiltinIDs() }
 
 // PNG is a built-in theme's thumbnail.
 func PNG(id string) ([]byte, bool) {
-	if !slices.Contains(IDs, id) {
+	if !slices.Contains(IDs(), id) {
 		return nil, false
 	}
 	b, err := files.ReadFile(id + ".png")

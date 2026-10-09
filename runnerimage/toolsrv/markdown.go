@@ -343,8 +343,8 @@ var (
 	mdHTMLStart = regexp.MustCompile(`^ {0,3}<`)
 )
 
-// hardLineBreaks keeps each line of a paragraph on a line of its own (a
-// theme's lineBreaks "hard"; agentry-cli#731): a letter's address block,
+// hardLineBreaks keeps each line of a paragraph on a line of its own (the
+// letter form; agentry-cli#731, #784): a letter's address block,
 // its To, From and Date lines and its signature are written one to a line,
 // and Markdown joins them. A short paragraph line (under shortLine runes)
 // followed by another gets a CommonMark hard break, a trailing backslash;

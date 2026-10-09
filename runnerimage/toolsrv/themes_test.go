@@ -589,3 +589,64 @@ func firstDifference(a, b image.Image) (int, int, bool) {
 	}
 	return 0, 0, false
 }
+
+// TestRealRenderABandTitleIsWhite (DEV-230's AccentOnText, invariant 7): a
+// band title block sets the title in white on the accent, the colour the
+// core's contrast check assumed; no pixel inside the band is darker than the
+// accent itself (the near-black body text drawn there by mistake would be).
+func TestRealRenderABandTitleIsWhite(t *testing.T) {
+	typst := realTypst(t)
+	for _, accent := range []string{"#1f6feb", "#0b3d2e"} {
+		d, _ := reportdesign.Builtin("modern")
+		d.Accent = accent
+		page := renderPNGsAt(t, typst, d.Canonical(), FormReport, "# A band title\n\nBody text.\n", thumbnailPPI, true)[0]
+		ar, ag, ab := hexRGB(t, accent)
+		rgb := func(x, y int) (uint32, uint32, uint32) {
+			r, g, bl, _ := page.At(x, y).RGBA()
+			return r >> 8, g >> 8, bl >> 8
+		}
+		isAccent := func(x, y int) bool { r, g, bl := rgb(x, y); return near(r, ar) && near(g, ag) && near(bl, ab) }
+		// The band is the box of accent pixels; its title is everything
+		// inside it that is not the accent.
+		b := page.Bounds()
+		x0, y0, x1, y1 := b.Max.X, b.Max.Y, -1, -1
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if isAccent(x, y) {
+					x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+				}
+			}
+		}
+		if x1 < 0 {
+			t.Fatalf("%s: no band drawn", accent)
+		}
+		white, dark := 0, 0
+		for y := y0 + 2; y < y1-1; y++ {
+			for x := x0 + 2; x < x1-1; x++ {
+				r, g, bl := rgb(x, y)
+				if r > 240 && g > 240 && bl > 240 {
+					white++
+				}
+				if luma(r, g, bl) < luma(ar, ag, ab)-8 {
+					dark++
+				}
+			}
+		}
+		if white == 0 || dark > 0 {
+			t.Errorf("%s: inside the band %d pixels are white and %d darker than the accent: the band's title is not white", accent, white, dark)
+		}
+	}
+}
+
+func hexRGB(t *testing.T, h string) (uint32, uint32, uint32) {
+	t.Helper()
+	var r, g, b uint32
+	if _, err := fmt.Sscanf(h, "#%02x%02x%02x", &r, &g, &b); err != nil {
+		t.Fatal(err)
+	}
+	return r, g, b
+}
+
+func near(a, b uint32) bool { return a+3 >= b && b+3 >= a }
+
+func luma(r, g, b uint32) uint32 { return (299*r + 587*g + 114*b) / 1000 }

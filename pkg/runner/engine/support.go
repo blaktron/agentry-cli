@@ -66,8 +66,8 @@ type runDirs struct {
 	// a reused output folder never stands for this one's.
 	callsLedger string
 	// pdfLedger is receipts/pdfs.ndjson for a run granted export_pdf
-	// (pdf.go), made as webLedger is, and pdfTheme the theme stamped into
-	// the run's tools spec, for the receipt.
+	// (pdf.go), made as webLedger is, and pdfTheme the report design
+	// stamped into the run's tools spec, for the receipt.
 	pdfLedger string
 	pdfTheme  *toolsrv.ThemeStamp
 	// pdfThemeFrom is what chose pdfTheme, for the receipt.
