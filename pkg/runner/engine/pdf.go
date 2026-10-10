@@ -139,7 +139,11 @@ func withReportTheme(enforced map[string]string, tools []string, theme ReportThe
 	if out == nil {
 		out = map[string]string{}
 	}
-	out["pdf.design"] = fmt.Sprintf("%q, based on %s, version %s (sha256:%s), chosen by %s; the model chooses only each PDF's form (%s), never the design", st.Name, st.BasedOn, st.Version, st.SHA256, theme.from(), strings.Join(toolsrv.Forms, ", "))
+	logo := ""
+	if st.HasLogo() {
+		logo = ", with the person's logo in the title block"
+	}
+	out["pdf.design"] = fmt.Sprintf("%q, based on %s, version %s (sha256:%s)%s, chosen by %s; the model chooses only each PDF's form (%s), never the design", st.Name, st.BasedOn, st.Version, st.SHA256, logo, theme.from(), strings.Join(toolsrv.Forms, ", "))
 	return out
 }
 
@@ -188,7 +192,7 @@ func pdfRecord(rd *runDirs) *receipt.PDFs {
 		if err != nil || sum != e.SHA256 {
 			continue
 		}
-		rec.Files = append(rec.Files, receipt.PDFFile{Path: p, SHA256: sum, Pages: e.Pages, Bytes: size, Form: e.Form})
+		rec.Files = append(rec.Files, receipt.PDFFile{Path: p, SHA256: sum, Pages: e.Pages, Bytes: size, Form: e.Form, Logo: e.Logo})
 	}
 	if len(rec.Files) == 0 {
 		return nil

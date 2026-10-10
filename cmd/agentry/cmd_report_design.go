@@ -7,6 +7,8 @@ package main
 // run asks (chooseReportTheme), so what it prints is what the next run
 // draws. Every document this command writes or sends is the design's
 // canonical form (pkg/reportdesign), so export then import is byte for byte.
+// The person's logo travels in the design (agentry-cli#816): export writes
+// it, import sends it, and show says whether there is one.
 
 import (
 	"bytes"
@@ -14,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"io/fs"
 	"net/http"
@@ -22,6 +25,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry/pkg/apiclient"
 	"github.com/blaktron/agentry/pkg/reportdesign"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -103,6 +107,7 @@ func runReportDesignShow(cmd *cobra.Command, _ []string) error {
 			"from":     string(choice.From),
 			"why":      why,
 			"sha256":   d.SHA256(),
+			"logo":     d.Logo != (reportdesign.Logo{}),
 			"design":   json.RawMessage(d.Canonical()),
 		})
 	}
@@ -122,7 +127,24 @@ func runReportDesignShow(cmd *cobra.Command, _ []string) error {
 		footer += fmt.Sprintf(", text %q", d.Footer.Text)
 	}
 	_, _ = fmt.Fprintf(out, "footer:   %s\n", footer)
+	_, _ = fmt.Fprintf(out, "logo:     %s\n", logoLabel(d.Logo))
 	return nil
+}
+
+// logoLabel says what a design's logo is, in the words show prints.
+func logoLabel(l reportdesign.Logo) string {
+	if l == (reportdesign.Logo{}) {
+		return "none"
+	}
+	b, err := l.Decode()
+	if err != nil {
+		return "unreadable"
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(b))
+	if err != nil {
+		return "unreadable"
+	}
+	return fmt.Sprintf("a PNG of %d×%d pixels, %d KB, drawn in the title block", cfg.Width, cfg.Height, (len(b)+1023)/1024)
 }
 
 // designOfChoice is the design a choice names: its document, or the
@@ -274,7 +296,11 @@ func runReportDesignExport(cmd *cobra.Command, file, theme string, force bool) e
 	if err := f.Close(); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s, %s (sha256 %s), to %s.\n", d.Name, from, d.SHA256(), file)
+	what := d.Name
+	if d.Logo != (reportdesign.Logo{}) {
+		what += " with its logo"
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s, %s (sha256 %s), to %s.\n", what, from, d.SHA256(), file)
 	return nil
 }
 
@@ -303,6 +329,11 @@ func runReportDesignImport(cmd *cobra.Command, file string) error {
 		in = f
 	}
 	d, _, err := readDesign(in)
+	if err == nil && d.Logo != (reportdesign.Logo{}) {
+		// The core stores a logo as NormalizeLogo writes it, so the
+		// design is sent that way and its hash is the one saved.
+		d.Logo, err = normalizeDesignLogo(d.Logo)
+	}
 	if err != nil {
 		// Refused here, before any sign-in is needed; the error names the
 		// field (pkg/reportdesign's FieldError).
@@ -317,11 +348,32 @@ func runReportDesignImport(cmd *cobra.Command, file string) error {
 	if err != nil {
 		return fmt.Errorf("the registry saved a report design this CLI cannot read (%w); update agentry", err)
 	}
-	if sd.SHA256() != d.SHA256() {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: the registry saved the design as sha256 %s, not the file's %s\n", sd.SHA256(), d.SHA256())
+	// A design sent without a logo keeps the one the account holds
+	// (agentry#1025), so the file is compared with the saved design less
+	// that logo, and the person is told it stayed.
+	kept := d.Logo == (reportdesign.Logo{}) && sd.Logo != (reportdesign.Logo{})
+	compare := sd
+	if kept {
+		compare.Logo = reportdesign.Logo{}
+	}
+	if compare.SHA256() != d.SHA256() {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: the registry saved the design as sha256 %s, not the file's %s\n", compare.SHA256(), d.SHA256())
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Saved %s (sha256 %s) as your account's report design at %s. Your runs' PDFs take it from the next run.\n", sd.Name, sd.SHA256(), reg)
+	if kept {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The file has no logo, so your account keeps the logo it has; remove it on the Report design page of your settings, or reset the design.\n")
+	}
 	return nil
+}
+
+// normalizeDesignLogo is a design's logo as the core would store it:
+// decoded and encoded again by pkg/reportdesign's NormalizeLogo.
+func normalizeDesignLogo(l reportdesign.Logo) (reportdesign.Logo, error) {
+	raw, err := l.Decode()
+	if err != nil {
+		return reportdesign.Logo{}, &reportdesign.FieldError{Field: "logo.png", Message: "must be a PNG in standard base64"}
+	}
+	return reportdesign.NormalizeLogo(raw)
 }
 
 func newReportDesignResetCmd() *cobra.Command {
@@ -353,7 +405,7 @@ func runReportDesignReset(cmd *cobra.Command, _ []string) error {
 }
 
 // putReportSettings writes the account's report settings and answers the
-// design the registry saved, nil when it holds none.
+// design the registry saved, its logo included, nil when it holds none.
 func putReportSettings(cmd *cobra.Command, reg string, body map[string]any) ([]byte, error) {
 	token := credentialFor(reg)
 	if token == "" {
@@ -367,7 +419,8 @@ func putReportSettings(cmd *cobra.Command, reg string, body map[string]any) ([]b
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.UpdateUserReportSettingsWithBodyWithResponse(cmd.Context(), "application/json", bytes.NewReader(b))
+	include := apiclient.ReportSettingsIncludeLogo
+	resp, err := client.UpdateUserReportSettingsWithBodyWithResponse(cmd.Context(), &apiclient.UpdateUserReportSettingsParams{Include: &include}, "application/json", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("save your report design at %s: %w", reg, err)
 	}

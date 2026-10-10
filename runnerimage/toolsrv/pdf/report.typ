@@ -30,6 +30,11 @@
 // puts the accent on rules, bars, tints and callout edges alone. A link is
 // near-black, underlined in the accent.
 //
+// The person's logo, when the design has one, is drawn in the title block
+// alone (D9, invariant 12; agentry-cli#816): from logo.png, which the server
+// wrote from the logo's decoded pixels (never the bytes the design carried),
+// sized here and never by the design, never on a later page or in the body.
+//
 // The form is the agent's (D1, D15): report (a title block, and a cover page
 // of its own for a titled report past a length, which the server decides),
 // letter (the title as a letterhead, the lines kept, no page numbers on a
@@ -218,16 +223,47 @@
 // that none escapes the renumbering.
 #let html-heading = (attrs, body) => block(strong(body))
 
+// --- The logo: at most `tall` high and three and a half times that wide,
+// its own proportions kept, with a text alternative for PDF/UA-1. None when
+// the design has no logo.
+#let logo-image(tall) = if meta.logo == none { none } else {
+  let ratio = meta.logo.width / meta.logo.height
+  let wide = tall * 3.5
+  let h = tall
+  if tall * ratio > wide { h = wide / ratio }
+  image(meta.logo.path, height: h, alt: "Logo")
+}
+
+// beside-logo sets the title with the logo at its right, both centred on
+// the same line. On a band (chip) the logo sits on a small white ground, so
+// a logo drawn for white paper keeps its own colours' contrast and is never
+// lost against the accent.
+#let beside-logo(title, tall, chip: false) = {
+  let logo = logo-image(tall)
+  if logo == none {
+    title
+  } else {
+    grid(
+      columns: (1fr, auto),
+      column-gutter: 14pt,
+      align: (left + horizon, right + horizon),
+      title,
+      if chip { box(fill: white, inset: 4pt, radius: 2pt, logo) } else { logo },
+    )
+  }
+}
+
 // --- The title block. The server takes a report's opening heading out of
 // report.md (meta.titleBlock) and the template draws it here, as the level 1
 // heading it was, never numbered, in the design's style: a band (white on
-// the accent), a bar beside it, rules above and below, or none.
+// the accent), a bar beside it, rules above and below, or none; with the
+// person's logo at its right in each.
 #let title-heading(size) = {
   set text(size: size)
   show heading: it => block(above: 0pt, below: 0pt, it.body)
   heading(level: 1, numbering: none, meta.title)
 }
-#let title-block(size, below: 1.4em) = {
+#let title-block(size, below: 1.4em, logo-tall: 14mm) = {
   let style = design.titleBlock
   let title = title-heading(size)
   if style == "band" {
@@ -236,36 +272,42 @@
       // ink on the heading itself, and only a closer rule on the heading
       // overrides it. The core's contrast check assumes white here.
       show heading: set text(fill: white)
-      title
+      beside-logo(title, logo-tall, chip: true)
     })
   } else if style == "bar" {
-    block(width: 100%, stroke: (left: 4pt + accent), inset: (left: 12pt, y: 4pt), below: below, title)
+    block(width: 100%, stroke: (left: 4pt + accent), inset: (left: 12pt, y: 4pt), below: below, beside-logo(title, logo-tall))
   } else if style == "ruled" {
     block(width: 100%, below: below, {
       line(length: 100%, stroke: 1pt + accent)
       v(0.5em)
-      title
+      beside-logo(title, logo-tall)
       v(0.5em)
       line(length: 100%, stroke: 0.5pt + accent)
     })
   } else {
-    block(width: 100%, below: below, title)
+    block(width: 100%, below: below, beside-logo(title, logo-tall))
   }
 }
 #let title-size = if form == "letter" { body-size * 1.5 } else { body-size * 2 }
 
 // --- The cover: a page of its own before a long titled report, holding the
 // title block and the day; the pages after it are numbered from 1.
+//
+// A document with no title of its own has no title block; its logo, when
+// there is one, is drawn alone at the top right of page 1, where a title
+// block's would be.
 #if meta.cover {
   page(header: none, footer: none, {
     v(1fr)
-    title-block(body-size * 2.4, below: 1.2em)
+    title-block(body-size * 2.4, below: 1.2em, logo-tall: 20mm)
     text(fill: muted, meta.date)
     v(2fr)
   })
   counter(page).update(1)
 } else if meta.titleBlock {
   title-block(title-size)
+} else if meta.logo != none {
+  block(width: 100%, below: 1.4em, align(right, logo-image(14mm)))
 }
 
 // --- A memo's header: the To / From / Cc / Date / Subject lines it opened

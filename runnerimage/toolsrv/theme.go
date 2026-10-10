@@ -81,6 +81,13 @@ func StampTheme(doc []byte) (*ThemeStamp, error) {
 	return &ThemeStamp{Name: d.Name, BasedOn: d.BasedOn, Version: strconv.Itoa(d.Version), SHA256: hex.EncodeToString(sum[:]), Document: string(canonical)}, nil
 }
 
+// HasLogo says the stamped design carries the person's logo
+// (agentry-cli#816).
+func (st *ThemeStamp) HasLogo() bool {
+	d, err := reportdesign.Parse([]byte(st.Document))
+	return err == nil && d.Logo != (reportdesign.Logo{})
+}
+
 // check holds a stamp to its own document: the hash, the design's rules, its
 // canonical form, and the name, theme and version the receipt will repeat.
 func (st *ThemeStamp) check() (reportdesign.Design, error) {

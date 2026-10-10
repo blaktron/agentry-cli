@@ -1098,10 +1098,26 @@ manifest + operator policy into a deterministic run plan → execute:
   and `import` sends is the design's canonical document, so a design
   exported, imported and exported again is the same bytes, and a design
   can be kept in a repository and put back.
+- **Your logo** (agentry-cli#816; the core's agentry#1025): a design may
+  carry your logo, a PNG of at most 512 KB and 1024 pixels each way, which
+  you upload on the site's or the desktop's *Report design* page. It is
+  drawn in the title block alone, at the right of the title (on a white
+  ground on a `band`, so its own colours keep their contrast; at the top of
+  page 1 when the document has no title), on no other page, and never from
+  the model. Before Typst reads it, `export_pdf` decodes the logo and
+  encodes it again from its pixels (`reportdesign.NormalizeLogo`), so a
+  design from a file holds no chunk or trailing byte that reaches the
+  renderer. A signed-in run reads the design with its logo; `export`
+  writes the logo into the file, `import` sends it (re-encoded, as the
+  registry stores it), an import of a file without a logo keeps the one
+  your account has, and `show` says whether there is one. The receipt's
+  `pdf.design` line says the design has a logo, the design's SHA-256
+  covers its bytes, and each PDF in the `pdfs` block says `"logo": true`
+  when it drew it.
 - **Everything the run produces** lands in the output folder: the
   QuickAgent's report files, `result.json` (the machine-readable envelope;
   its `pdfs` block names the design and each exported PDF's SHA-256 and
-  form),
+  form, and whether it drew your logo),
   and `receipts/` (event stream, gateway log, the exact run plan; for a
   one-shot run, `calls.ndjson`: each runner tool call's outcome, never its
   arguments, and the agent's `end_blocked` sentence, masked like the rest;

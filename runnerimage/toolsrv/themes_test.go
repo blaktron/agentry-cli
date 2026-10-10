@@ -236,7 +236,7 @@ func TestRenderMeta(t *testing.T) {
 		{"Preface\n\n" + long, FormReport, false},
 	} {
 		doc := reportMarkdown(c.src, c.form)
-		b, err := renderMeta(reportdesign.Default(), c.form, doc, doc.title, "", map[string]pdfImage{}, fixedNow)
+		b, err := renderMeta(reportdesign.Default(), c.form, doc, doc.title, "", map[string]pdfImage{}, nil, fixedNow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -249,7 +249,7 @@ func TestRenderMeta(t *testing.T) {
 		}
 	}
 	for _, d := range reportdesign.Builtins() {
-		b, err := renderMeta(d, FormReport, mdDoc{}, "t", "", nil, fixedNow)
+		b, err := renderMeta(d, FormReport, mdDoc{}, "t", "", nil, nil, fixedNow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -463,7 +463,11 @@ func renderPNGsAt(t *testing.T, typst typstFiles, designDoc []byte, form, src st
 		t.Fatal(err)
 	}
 	doc := reportMarkdown(src, form)
-	meta, err := renderMeta(d, form, doc, doc.title, "acme/demo@1.2.3", map[string]pdfImage{}, fixedNow)
+	logoPNG, logo, err := renderLogo(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := renderMeta(d, form, doc, doc.title, "acme/demo@1.2.3", map[string]pdfImage{}, logo, fixedNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +475,11 @@ func renderPNGsAt(t *testing.T, typst typstFiles, designDoc []byte, form, src st
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, b := range map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": d.Canonical(), "meta.json": meta} {
+	files := map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": renderDesign(d), "meta.json": meta}
+	if logo != nil {
+		files[logoFile] = logoPNG
+	}
+	for name, b := range files {
 		mustWrite(t, filepath.Join(root, name), b)
 	}
 	args := []string{"compile", "--root", root, "--ignore-system-fonts", "--font-path", typst.fonts,

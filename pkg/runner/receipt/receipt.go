@@ -123,6 +123,9 @@ type PDFFile struct {
 	Pages  int    `json:"pages"`
 	Bytes  int64  `json:"bytes"`
 	Form   string `json:"form,omitempty"`
+	// Logo says the person's logo was drawn in the PDF's title block
+	// (agentry-cli#816); the design's SHA-256 covers the logo's bytes.
+	Logo bool `json:"logo,omitempty"`
 }
 
 // Web is a run's count of the web tools' reads and AI Review's verdicts.

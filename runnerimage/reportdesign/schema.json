@@ -107,6 +107,20 @@
       ],
       "type": "string"
     },
+    "logo": {
+      "additionalProperties": false,
+      "properties": {
+        "png": {
+          "maxLength": 699052,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "png"
+      ],
+      "type": "object"
+    },
     "name": {
       "maxLength": 60,
       "minLength": 1,
