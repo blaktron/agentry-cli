@@ -178,7 +178,7 @@ works the same whether or not a site fronts the server.
 ## Commands
 
 `init` · `validate` · `login` · `logout` · `whoami` · `publish` · `install` · `list` ·
-`setup` · `doctor` · `files` · `run` · `schedule` · `knowledge` · `voice` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `model-signins` · `verify` ·
+`setup` · `doctor` · `files` · `run` · `schedule` · `knowledge` · `voice` · `report-design` · `draft` · `review` · `builtins` · `uninstall` · `profiles` · `connect` · `connections` · `model-signins` · `verify` ·
 `search` · `info` · `yank` — run `agentry --help` for the full surface. `whoami` prints
 the account the stored credential belongs to, the organizations it belongs
 to with its role in each (a membership an admin has yet to approve says so)
@@ -1087,6 +1087,15 @@ manifest + operator policy into a deterministic run plan → execute:
   `capabilities_enforced["pdf.design"]` names the design, the theme it is
   based on, its digest and what chose it. A thumbnail of each built-in,
   drawn by the same template, is in `pkg/reportthumbs`.
+  `agentry report-design` works the account's design from the command line
+  (agentry-cli#785): `show` prints the design a run would take now and what
+  chose it (`--json` adds the document); `export FILE` writes your
+  account's design, or with `--theme NAME` a built-in's, as its canonical
+  document (`-` for stdout; an existing file only with `--force`);
+  `import FILE` holds a file to every rule of the design, refusing it with
+  the field named (exit 2) before anything is sent, and saves it to your
+  account; `reset` clears it, back to never chosen. Export then import is
+  byte for byte, so a design can be kept in a repository and put back.
 - **Everything the run produces** lands in the output folder: the
   QuickAgent's report files, `result.json` (the machine-readable envelope;
   its `pdfs` block names the design and each exported PDF's SHA-256 and
