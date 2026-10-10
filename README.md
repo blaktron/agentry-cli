@@ -713,7 +713,8 @@ says where to add one.
 - `aiReview` (kind 2): whether it ran, the model, the rubric hash, the six
   questions' scores with the file that drew each, and the findings at score
   2 or more as stage S5 rates them (2 medium and 3 high; an attempted
-  injection or an undeclared capability high from 2). It is read from the
+  injection, an undeclared capability or deceiving the user high from 2;
+  exfiltration and destructive actions medium at any score). It is read from the
   run's own record (`receipts/review.ndjson`), never from what the model
   said, and only for a run whose receipt counted a review: the first
   answered call over the staged package counts.
@@ -1363,8 +1364,9 @@ sent to that registry's model-input scan as `input_file` before the agent
 starts, several small texts to a call. An input AI Review flags, or one it
 could not read, refuses the run with exit 11, naming the file (the
 reason's detail `ai-review` or `not-reviewed`); in a session, a file you
-add is refused alone. AI Review reads at most 16 MiB of text a run: a file
-past that is not refused but withheld, listed by `list_inputs` as not read
+add is refused alone. AI Review reads at most 16 MiB of text a run, in at
+most 400 calls, a session's added files included: a file past what is
+left is not refused but withheld, listed by `list_inputs` as not read
 with no view, and the run goes on with the rest. A binary original, which
 `read_input` serves as base64, is not sent. The receipt's `inputReview`
 line says how much was sent, in how many calls, with which question set,
