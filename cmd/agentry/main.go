@@ -83,7 +83,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&flags.registry, "registry", "",
 		"registry base URL (default: config defaultRegistry, else "+defaultRegistryURL+")")
 	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false,
-		"machine-readable JSON output on stdout (search, info, verify, doctor, install, uninstall, list, builtins, validate, setup, connections, logout, run --plan; login writes NDJSON lifecycle events); narration stays on stderr")
+		"machine-readable JSON output on stdout (search, info, verify, doctor, install, uninstall, list, builtins, validate, setup, connections, logout, report-design show, run --plan; login writes NDJSON lifecycle events); narration stays on stderr")
 
 	root.AddCommand(
 		newInitCmd(),
@@ -100,6 +100,7 @@ func newRootCmd() *cobra.Command {
 		newScheduleCmd(),
 		newKnowledgeCmd(),
 		newVoiceCmd(),
+		newReportDesignCmd(),
 		newDraftCmd(),
 		newReviewCmd(),
 		newBuiltinsCmd(),
