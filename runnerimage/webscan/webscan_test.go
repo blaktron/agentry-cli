@@ -137,7 +137,8 @@ func TestTheRegistryRouteNeverFollowsARedirect(t *testing.T) {
 }
 
 // TestRegistryFailuresAreClosedWords: what a failed call says is the
-// package's own vocabulary, never the registry's body.
+// package's own vocabulary, never the registry's body; the status is kept
+// beside it so a 429 can be told from a 401 (agentry-cli#806).
 func TestRegistryFailuresAreClosedWords(t *testing.T) {
 	for _, tc := range []struct {
 		status int
@@ -155,7 +156,7 @@ func TestRegistryFailuresAreClosedWords(t *testing.T) {
 		}))
 		res := (&Registry{Base: srv.URL, JobToken: "t"}).Scan(context.Background(), SourcePage, "x")
 		srv.Close()
-		if res.Verdict != NotScanned || res.Failure != tc.want {
+		if res.Verdict != NotScanned || res.Failure != tc.want || res.Status != tc.status {
 			t.Fatalf("%d: %+v", tc.status, res)
 		}
 	}

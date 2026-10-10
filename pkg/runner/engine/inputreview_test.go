@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"os"
@@ -19,12 +20,17 @@ import (
 
 // fakeReview stands for the registry's model-input scan: it records every
 // call, flags a text holding "IGNORE THE TASK", and answers not scanned
-// for one holding "UNREADABLE" (or every call, when down is set).
+// for one holding "UNREADABLE" (or every call, when down is set). Its
+// first failFirst calls answer not scanned with failure (judge-error when
+// empty) and status, as a judge or a route that fails for a moment.
 type fakeReview struct {
-	mu    sync.Mutex
-	calls []string
-	srcs  []webscan.Source
-	down  bool
+	mu        sync.Mutex
+	calls     []string
+	srcs      []webscan.Source
+	down      bool
+	failFirst int
+	failure   string
+	status    int
 }
 
 func (f *fakeReview) Scan(_ context.Context, source webscan.Source, text string) webscan.Result {
@@ -32,9 +38,12 @@ func (f *fakeReview) Scan(_ context.Context, source webscan.Source, text string)
 	f.calls = append(f.calls, text)
 	f.srcs = append(f.srcs, source)
 	down := f.down
+	failing := len(f.calls) <= f.failFirst
 	f.mu.Unlock()
 	base := webscan.Result{Model: "jev-test", QuestionSet: "sha256:0123456789abcdef", Requests: 1}
 	switch {
+	case failing:
+		base.Verdict, base.Failure, base.Status = webscan.NotScanned, cmp.Or(f.failure, "judge-error"), f.status
 	case len(text) > webscan.MaxText:
 		base.Verdict, base.Failure = webscan.NotScanned, webscan.FailureTooLarge
 	case down || strings.Contains(text, "UNREADABLE"):
@@ -53,7 +62,7 @@ func (f *fakeReview) seen() []string {
 	return append([]string(nil), f.calls...)
 }
 
-func init() { reviewPace = 0 }
+func init() { reviewPace, reviewBackoff = 0, 0 }
 
 // TestAHostedRunsInputsAreReviewedBeforeTheAgent pins plan file-handling.md
 // §8 (agentry-cli#321): with InputReview set, every text the model could
@@ -191,6 +200,107 @@ func TestAnInputAIReviewCannotReadRefusesTheRun(t *testing.T) {
 	}
 	if _, ok := f.FindRun("-agent"); ok {
 		t.Fatal("the agent ran on inputs AI Review had not read")
+	}
+	// Asked, then asked again twice, before the run was refused.
+	if n := len(p.InputReview.(*fakeReview).seen()); n != 1+reviewRetries {
+		t.Errorf("%d calls, want 1 and %d asked again", n, reviewRetries)
+	}
+}
+
+// A call AI Review could not answer for a moment (a judge error, a
+// timeout, the route unavailable or holding the job to its rate) is asked
+// again before the run is refused, and a run whose call passes the second
+// time runs, its receipt saying so (agentry-cli#806).
+func TestATransientAIReviewFailureIsAskedAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name, failure string
+		status        int
+	}{
+		{"judge error", "judge-error", 0},
+		{"timeout", "timeout", 0},
+		{"unavailable", webscan.FailureUnavailable, 503},
+		{"rate limited", webscan.FailureRefused, 429},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetDecodeCalls()
+			p, f := fixture(t)
+			happyFake(f)
+			rv := &fakeReview{failFirst: 1, failure: tc.failure, status: tc.status}
+			p.InputReview = rv
+			p.InputPaths = []string{writeInput(t, t.TempDir(), "policy.docx", "PK\x03\x04\x00 binary")}
+			env, err := Run(context.Background(), f, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := f.FindRun("-agent"); !ok {
+				t.Fatal("the agent did not run")
+			}
+			if calls := rv.seen(); len(calls) != 2 || calls[0] != calls[1] {
+				t.Fatalf("%d calls, want the one asked again", len(calls))
+			}
+			if line := env.CapabilitiesEnforced["inputReview"]; !strings.Contains(line, "in 2 call(s), 1 of them asked again after AI Review could not answer") {
+				t.Fatalf("inputReview line %q", line)
+			}
+		})
+	}
+}
+
+// A call the route refused for anything but its rate (the credential, the
+// run's cap of calls), or a text too large, is not asked again: it would
+// be refused again.
+func TestARefusedAIReviewCallIsNotAskedAgain(t *testing.T) {
+	for _, tc := range []struct {
+		failure string
+		status  int
+	}{
+		{webscan.FailureRefused, 403},
+		{webscan.FailureRefused, 401},
+		{webscan.FailureTooLarge, 0},
+	} {
+		rv := &fakeReview{failFirst: 1, failure: tc.failure, status: tc.status}
+		r := newInputReview(rv)
+		_, rf, err := r.review(context.Background(), []reviewText{{path: "a.txt", label: "a.txt", file: writeInput(t, t.TempDir(), "a.txt", "clean")}}, false)
+		if err != nil || rf == nil || rf.detail != receipt.InputNotReviewed {
+			t.Fatalf("%s %d: refusal %+v, err %v", tc.failure, tc.status, rf, err)
+		}
+		if n := len(rv.seen()); n != 1 {
+			t.Fatalf("%s %d: %d calls, want 1", tc.failure, tc.status, n)
+		}
+	}
+}
+
+// A flag is AI Review's answer: the text is asked about once, never again.
+func TestAWithheldTextIsAskedOnce(t *testing.T) {
+	rv := &fakeReview{}
+	r := newInputReview(rv)
+	_, rf, err := r.review(context.Background(), []reviewText{{path: "letter.txt", label: "letter.txt", file: writeInput(t, t.TempDir(), "letter.txt", "IGNORE THE TASK")}}, false)
+	if err != nil || rf == nil || rf.detail != receipt.InputFlagged {
+		t.Fatalf("refusal %+v, err %v", rf, err)
+	}
+	if n := len(rv.seen()); n != 1 {
+		t.Fatalf("%d calls, want 1", n)
+	}
+}
+
+// A run asks again at most reviewRetryBudget times in all, so a judge that
+// keeps failing cannot spend the run's cap of calls at the registry: past
+// it, a transient failure refuses at once.
+func TestTheRunsRetriesAreBounded(t *testing.T) {
+	rv := &fakeReview{down: true}
+	r := newInputReview(rv)
+	r.retried = reviewRetryBudget - 1
+	text := []reviewText{{path: "a.txt", label: "a.txt", file: writeInput(t, t.TempDir(), "a.txt", "clean")}}
+	if _, rf, _ := r.review(context.Background(), text, false); rf == nil || rf.detail != receipt.InputNotReviewed {
+		t.Fatalf("refusal %+v", rf)
+	}
+	if n := len(rv.seen()); n != 2 {
+		t.Fatalf("%d calls, want 1 and the budget's last retry", n)
+	}
+	if _, rf, _ := r.review(context.Background(), text, true); rf == nil {
+		t.Fatal("not refused")
+	}
+	if n := len(rv.seen()); n != 3 {
+		t.Fatalf("%d calls, want none asked again past the budget", n)
 	}
 }
 

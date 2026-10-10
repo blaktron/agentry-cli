@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/judge"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
@@ -58,6 +60,24 @@ const (
 // reviewPace is a variable so the engine's tests need not wait.
 var reviewPace = 550 * time.Millisecond
 
+// A call answered not scanned for a failure that may pass (transient) is
+// asked again, at most reviewRetries times, the nth after n times
+// reviewBackoff and then its turn under reviewPace, holding its place
+// among the reviewWorkers (agentry-cli#806; register DR-88). Only then is
+// the run refused as not reviewed: one judge error must not refuse a
+// person's run, and a text AI Review has not read still never reaches the
+// agent. A run asks again at most reviewRetryBudget times in all, a
+// session's added files included, so a judge that keeps failing cannot
+// spend the run's cap of calls at the registry (the runs extension's
+// runInputScans, 400) on asking again.
+const (
+	reviewRetries     = 2
+	reviewRetryBudget = 24
+)
+
+// reviewBackoff is a variable so the engine's tests need not wait.
+var reviewBackoff = 2 * time.Second
+
 // reviewLeft is how much text AI Review has left to read of the run, a
 // variable so a test can spend it without staging 16 MiB.
 var reviewLeft = func(r *inputReview) int64 {
@@ -88,12 +108,15 @@ type inputReview struct {
 	// what a session added.
 	before, added      reviewCounts
 	model, questionSet string
+	// retried is how many calls the run has asked again.
+	retried int
 }
 
 // reviewCounts is the record of what AI Review read.
 type reviewCounts struct {
-	texts, calls, requests int
-	bytes                  int64
+	// calls counts every call, retries counts those asked again.
+	texts, calls, retries, requests int
+	bytes                           int64
 	// withheld are the inputs past MaxInputReviewText, not asked about.
 	withheld []string
 }
@@ -263,6 +286,15 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 					b.WriteString(p.body)
 				}
 				res := call(run, b.String())
+				for n := 1; n <= reviewRetries && transient(res) && run.Err() == nil && r.takeRetry(); n++ {
+					if sleep(run, time.Duration(n)*reviewBackoff) != nil || pace(run) != nil {
+						break
+					}
+					mu.Lock()
+					counts.retries++
+					mu.Unlock()
+					res = call(run, b.String())
+				}
 				if res.Passed() {
 					continue
 				}
@@ -343,6 +375,49 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 	return withheld, nil, nil
 }
 
+// transient reports whether a call AI Review answered not scanned may pass
+// when asked again: the judge erred or timed out, the route was
+// unavailable, or it held the job to its rate (a 429, which reads as
+// refused). A text too large, or a call the route refused for anything
+// else (the credential, the run's cap of calls), would only be refused
+// again, and a flag is an answer, never asked again.
+func transient(res webscan.Result) bool {
+	if res.Verdict != webscan.NotScanned {
+		return false
+	}
+	switch res.Failure {
+	case judge.FailureTimeout, judge.FailureJudgeError, webscan.FailureUnavailable:
+		return true
+	case webscan.FailureRefused:
+		return res.Status == http.StatusTooManyRequests
+	}
+	return false
+}
+
+// takeRetry takes one of the run's reviewRetryBudget, or answers false
+// when they are spent.
+func (r *inputReview) takeRetry() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.retried >= reviewRetryBudget {
+		return false
+	}
+	r.retried++
+	return true
+}
+
+// sleep waits d, or answers the context's error.
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // record adds one review's counts to the run's, before the agent started
 // or for a session's added file.
 func (r *inputReview) record(c reviewCounts, model, set string, added bool) {
@@ -357,6 +432,7 @@ func (r *inputReview) record(c reviewCounts, model, set string, added bool) {
 	}
 	into.texts += c.texts
 	into.calls += c.calls
+	into.retries += c.retries
 	into.requests += c.requests
 	into.bytes += c.bytes
 	into.withheld = append(into.withheld, c.withheld...)
@@ -565,7 +641,11 @@ func (r *inputReview) line() string {
 }
 
 func (c reviewCounts) say() string {
-	out := fmt.Sprintf("%d text(s), %s, in %d call(s) and %d judge request(s), none flagged", c.texts, sizeWord(c.bytes), c.calls, c.requests)
+	calls := fmt.Sprintf("%d call(s)", c.calls)
+	if c.retries > 0 {
+		calls = fmt.Sprintf("%d call(s), %d of them asked again after AI Review could not answer", c.calls, c.retries)
+	}
+	out := fmt.Sprintf("%d text(s), %s, in %s and %d judge request(s), none flagged", c.texts, sizeWord(c.bytes), calls, c.requests)
 	if len(c.withheld) > 0 {
 		out += fmt.Sprintf("; %d file(s) withheld unread, past the %d MiB AI Review reads of a run: %s",
 			len(c.withheld), MaxInputReviewText>>20, joinNamed(c.withheld))
