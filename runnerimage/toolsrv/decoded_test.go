@@ -86,7 +86,7 @@ func TestReadInputServesTheDecodedText(t *testing.T) {
 		}
 	}
 	got, isErr := s.toolReadInput(rawArgs(t, map[string]any{"path": "report.docx", "offset": 10, "maxBytes": 7}))
-	if isErr || !strings.HasPrefix(got, "The qua") || !strings.Contains(got, "[truncated at 7 bytes of 45]") {
+	if isErr || !strings.HasPrefix(got, "The qua") || !strings.Contains(got, "[page: bytes 10–17 of 45; continue with offset 17]") {
 		t.Fatalf("a page of the decoded text (%q, %v)", got, isErr)
 	}
 	got, isErr = s.toolReadInput(rawArgs(t, map[string]any{"path": "blob.bin"}))

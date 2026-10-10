@@ -80,7 +80,7 @@ echo "$LINE9" | grep -q '"isError":true'          || fail "read_input traversal 
 # agentry-cli#113: a number sent as a JSON string is the number it encodes.
 LINE10=$(echo "$OUT" | grep '"id":10')
 echo "$LINE10" | grep -q '"isError":true' && fail "stringified maxBytes refused: $LINE10"
-echo "$LINE10" | grep -q 'truncated at 9 bytes' || fail "stringified maxBytes 9 did not cap the read: $LINE10"
+echo "$LINE10" | grep -q 'continue with offset 9]' || fail "stringified maxBytes 9 did not cap the read: $LINE10"
 
 # agentry-cli#246 (DR-34): a catalogued exec command must not read the tools
 # server's environment, which holds every granted secret. The server starts

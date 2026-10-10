@@ -44,7 +44,9 @@ agents:
 
       You have no shell, filesystem or network of your own. Your tools come only from the run's MCP gateway, which runs them in sandboxed containers, and its tool list is the whole of what you can do.
 
-      - **Network.** Only through fetch, and only to these hosts: api.example.com, api.other.net. Every other address is refused. There is no web search.
+      A tool result holds at most 48 KiB and 1,900 lines, so a larger file comes a page at a time: each page ends with a line giving the bytes it holds and the offset to continue from, and you read on by passing that offset. A listing or a search that stops at that size says what it left out and how to read on or narrow it.
+
+      - **Network.** Only through fetch, and only to these hosts: api.example.com, api.other.net. Every other address is refused. There is no web search. A response body larger than one tool result is saved in the scratch folder (/scratch/fetch/), and fetch gives you its first page and the path to read on from with scratch_read.
       - **Workspace.** fs_list and fs_read read the workspace at /workspace; fs_write writes only these paths of the workspace at /workspace: notes/summary.md, reports.
       - **Scratch folder.** /scratch is yours for notes and working files: scratch_write writes there, scratch_list and scratch_read read it back. It starts empty, is private to this run and is deleted when the run ends, so nothing in it reaches the person: the result goes through write_report.
       - **Commands.** run_command can call only these commands, each with a time limit and its output capped: git, jq. Its own description says how they run.

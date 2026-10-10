@@ -643,7 +643,9 @@ func (s *server) fetchPage(u *url.URL) (string, string, error) {
 		text = strings.ToValidUTF8(string(body), "\uFFFD")
 	}
 	// The whole answer, its head and the cut note included, is at most
-	// PageTextBytes: four of the judge's chunks (D24).
+	// PageTextBytes: four of the judge's chunks (D24), and within the run's
+	// result budget (page.go), so that the harness never cuts what AI
+	// Review read.
 	head := fmt.Sprintf("URL: %s\nStatus: %s\nContent-Type: %s\n\n", final, resp.Status, mt)
 	const noteRoom = 64
 	room := PageTextBytes - len(head) - noteRoom
@@ -652,6 +654,9 @@ func (s *server) fetchPage(u *url.URL) (string, string, error) {
 	}
 	full := len(text)
 	text, cut := cutText(text, room)
+	if b := s.spec.Limits.budget().less(head).room(); !b.fits(text) {
+		text, cut = string(b.cut([]byte(text), false)), true
+	}
 	out := head + text
 	if cut {
 		out += fmt.Sprintf("\n\n[cut at %d of %d bytes of text]", len(text), full)

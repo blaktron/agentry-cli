@@ -1,5 +1,5 @@
 {
-  "specVersion": "10",
+  "specVersion": "11",
   "workspaceDir": "/workspace",
   "outDir": "/out",
   "inputsDir": "/inputs",
@@ -19,5 +19,8 @@
   "pdf": {
     "enabled": true
   },
-  "limits": {}
+  "limits": {
+    "maxResultBytes": 49152,
+    "maxResultLines": 1900
+  }
 }

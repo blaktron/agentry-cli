@@ -149,7 +149,7 @@ func (s *server) toolKnowledgeList(raw json.RawMessage) (string, bool) {
 	wiki := filepath.Join(root, "wiki")
 	rel := path.Clean(a.Section)
 	if a.Section == "" || rel == "." {
-		text, isErr, err := readPaged(filepath.Join(wiki, "index.md"), 0, 0, s.spec.Limits.readCap())
+		text, isErr, err := readPaged(filepath.Join(wiki, "index.md"), 0, 0, s.spec.Limits.readCap(), s.spec.Limits.budget(), knowledgeReadOn(a.Pack, "index.md"))
 		if err != nil {
 			return "knowledge_list: " + name + " has no readable index: " + err.Error(), true
 		}
@@ -164,7 +164,7 @@ func (s *server) toolKnowledgeList(raw json.RawMessage) (string, bool) {
 		return fmt.Sprintf("knowledge_list: no section %q in %s", rel, name), true
 	}
 	if idx := filepath.Join(dir, "index.md"); isRegular(idx) {
-		text, isErr, err := readPaged(idx, 0, 0, s.spec.Limits.readCap())
+		text, isErr, err := readPaged(idx, 0, 0, s.spec.Limits.readCap(), s.spec.Limits.budget(), knowledgeReadOn(a.Pack, rel+"/index.md"))
 		if err != nil {
 			return "knowledge_list: " + err.Error(), true
 		}
@@ -201,6 +201,15 @@ func (s *server) toolKnowledgeList(raw json.RawMessage) (string, bool) {
 	}
 	sort.Strings(lines)
 	return strings.Join(lines, "\n"), false
+}
+
+// knowledgeReadOn is how a knowledge_list answer that is one page of an
+// index says to read on: knowledge_read of that index, from the offset.
+func knowledgeReadOn(pack, index string) string {
+	if pack != "" {
+		return fmt.Sprintf("knowledge_read pack %q, path %q, offset %%d", pack, index)
+	}
+	return fmt.Sprintf("knowledge_read path %q, offset %%d", index)
 }
 
 // listPacks names each attached pack with its page count, read from the
@@ -479,7 +488,7 @@ func (s *server) toolKnowledgeRead(raw json.RawMessage) (string, bool) {
 	if fi, err := os.Stat(abs); err == nil && fi.IsDir() {
 		return fmt.Sprintf("knowledge_read: %q is a directory (use knowledge_list)", path.Clean(a.Path)), true
 	}
-	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
+	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget(), "")
 	if err != nil {
 		return "knowledge_read: " + err.Error(), true
 	}
