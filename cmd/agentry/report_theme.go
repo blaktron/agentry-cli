@@ -122,14 +122,19 @@ func readDesignFile(file string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	doc, err := io.ReadAll(io.LimitReader(f, reportdesign.MaxDocumentBytes+1))
+	_, doc, err := readDesign(f)
+	return doc, err
+}
+
+// readDesign reads at most one document past the cap and parses it, so a
+// file of any size is refused by Parse's own limit.
+func readDesign(r io.Reader) (reportdesign.Design, []byte, error) {
+	doc, err := io.ReadAll(io.LimitReader(r, reportdesign.MaxDocumentBytes+1))
 	if err != nil {
-		return nil, err
+		return reportdesign.Design{}, nil, err
 	}
-	if _, err := reportdesign.Parse(doc); err != nil {
-		return nil, err
-	}
-	return doc, nil
+	d, err := reportdesign.Parse(doc)
+	return d, doc, err
 }
 
 // readAccountTheme is the account's report design at the registry the CLI
@@ -145,45 +150,57 @@ func readAccountTheme(regURL string) accountTheme {
 		return nil
 	}
 	return func(ctx context.Context) ([]byte, error) {
-		// A plain request, not the generated client: the route is the core's
-		// since agentry#989, and a local run is not refused over a design, so
-		// the minimum-version gate stays the run's own resolve's.
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(regURL, "/")+"/api/v1/user/report-settings", nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Accept", "application/json")
-		res, err := httpClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = res.Body.Close() }()
-		body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-		if err != nil {
-			return nil, err
-		}
-		switch res.StatusCode {
-		case http.StatusOK:
-			var settings struct {
-				Design json.RawMessage `json:"design"`
-			}
-			if err := json.Unmarshal(body, &settings); err != nil {
-				return nil, fmt.Errorf("read your report design: %w", err)
-			}
-			// {} is never chosen (DEV-227's rule, kept by DEV-230); so is
-			// an answer from a core before agentry#1024, which names a
-			// theme and no design.
-			if len(settings.Design) == 0 || bytes.Equal(bytes.TrimSpace(settings.Design), []byte("null")) {
-				return nil, nil
-			}
-			return settings.Design, nil
-		case http.StatusNotFound:
-			// A registry from before the setting: nothing was chosen there.
-			return nil, nil
-		}
-		return nil, apiProblem("read your report design", res.StatusCode, nil, body)
+		return getReportDesign(ctx, regURL, token)
 	}
+}
+
+// getReportDesign is the account's report design document as the registry
+// answers it, or nil when the account never chose one.
+func getReportDesign(ctx context.Context, regURL, token string) ([]byte, error) {
+	// A plain request, not the generated client: the route is the core's
+	// since agentry#989, and a local run is not refused over a design, so
+	// for a run the minimum-version gate stays the run's own resolve's
+	// (report-design export gates before it asks).
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(regURL, "/")+"/api/v1/user/report-settings", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if err != nil {
+		return nil, err
+	}
+	switch res.StatusCode {
+	case http.StatusOK:
+		return designOfSettings(body)
+	case http.StatusNotFound:
+		// A registry from before the setting: nothing was chosen there.
+		return nil, nil
+	}
+	return nil, apiProblem("read your report design", res.StatusCode, nil, body)
+}
+
+// designOfSettings is the design in a report-settings answer, or nil for
+// never chosen.
+func designOfSettings(body []byte) ([]byte, error) {
+	var settings struct {
+		Design json.RawMessage `json:"design"`
+	}
+	if err := json.Unmarshal(body, &settings); err != nil {
+		return nil, fmt.Errorf("read your report design: %w", err)
+	}
+	// {} is never chosen (DEV-227's rule, kept by DEV-230); so is an answer
+	// from a core before agentry#1024, which names a theme and no design.
+	if len(settings.Design) == 0 || bytes.Equal(bytes.TrimSpace(settings.Design), []byte("null")) {
+		return nil, nil
+	}
+	return settings.Design, nil
 }
 
 // describeTheme names a choice in a warning: a built-in theme's id, or the
