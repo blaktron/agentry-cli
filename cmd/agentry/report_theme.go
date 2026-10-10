@@ -122,14 +122,19 @@ func readDesignFile(file string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	doc, err := io.ReadAll(io.LimitReader(f, reportdesign.MaxDocumentBytes+1))
+	_, doc, err := readDesign(f)
+	return doc, err
+}
+
+// readDesign reads at most one document past the cap and parses it, so a
+// file of any size is refused by Parse's own limit.
+func readDesign(r io.Reader) (reportdesign.Design, []byte, error) {
+	doc, err := io.ReadAll(io.LimitReader(r, reportdesign.MaxDocumentBytes+1))
 	if err != nil {
-		return nil, err
+		return reportdesign.Design{}, nil, err
 	}
-	if _, err := reportdesign.Parse(doc); err != nil {
-		return nil, err
-	}
-	return doc, nil
+	d, err := reportdesign.Parse(doc)
+	return d, doc, err
 }
 
 // readAccountTheme is the account's report design at the registry the CLI
@@ -154,7 +159,8 @@ func readAccountTheme(regURL string) accountTheme {
 func getReportDesign(ctx context.Context, regURL, token string) ([]byte, error) {
 	// A plain request, not the generated client: the route is the core's
 	// since agentry#989, and a local run is not refused over a design, so
-	// the minimum-version gate stays the run's own resolve's.
+	// for a run the minimum-version gate stays the run's own resolve's
+	// (report-design export gates before it asks).
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(regURL, "/")+"/api/v1/user/report-settings", nil)
 	if err != nil {
 		return nil, err

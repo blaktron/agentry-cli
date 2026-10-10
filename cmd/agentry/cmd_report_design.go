@@ -10,6 +10,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,7 +63,28 @@ func runReportDesignShow(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; its report settings are not read\n", err)
 	}
-	account := readAccountTheme(reg)
+	// The account's answer is kept so the reason can tell an account that
+	// has no design from one that could not be read or holds a design this
+	// CLI refuses; the chooser warns on both and takes the next choice.
+	acct := accountNotAsked
+	if os.Getenv(envRunGrant) != "" {
+		acct = accountDriver
+	}
+	var account accountTheme
+	if read := readAccountTheme(reg); read != nil {
+		account = func(ctx context.Context) ([]byte, error) {
+			doc, err := read(ctx)
+			switch {
+			case err != nil:
+				acct = accountUnread
+			case doc == nil:
+				acct = accountNone
+			default:
+				acct = accountHasDesign
+			}
+			return doc, err
+		}
+	}
 	choice, err := chooseReportTheme(cmd.Context(), reportFlags{}, cfg, account, cmd.ErrOrStderr())
 	if err != nil {
 		return err
@@ -71,7 +93,7 @@ func runReportDesignShow(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	why := whyChosen(choice, reg, account != nil)
+	why := whyChosen(choice, reg, acct)
 	if flags.jsonOut {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -116,27 +138,47 @@ func designOfChoice(choice engine.ReportTheme) (reportdesign.Design, error) {
 	return d, nil
 }
 
+// accountState is what show learned of the account's report design.
+type accountState int
+
+const (
+	accountNotAsked  accountState = iota // not signed in at the registry
+	accountDriver                        // a driver's run, which asks no account
+	accountNone                          // signed in, never chosen
+	accountUnread                        // signed in, the read failed
+	accountHasDesign                     // signed in, a design (taken, or refused by this CLI)
+)
+
 // whyChosen says what chose a design, in the words show prints.
-func whyChosen(choice engine.ReportTheme, reg string, signedIn bool) string {
-	switch choice.From {
-	case engine.ThemeFromAccount:
+func whyChosen(choice engine.ReportTheme, reg string, acct accountState) string {
+	if choice.From == engine.ThemeFromAccount {
 		return "your account's report design at " + reg
+	}
+	var why string
+	switch choice.From {
 	case engine.ThemeFromConfig, engine.ThemeFromDesignConfig:
-		why := string(choice.From)
+		why = string(choice.From)
 		if path, err := configPath(); err == nil {
 			why += " (" + path + ")"
 		}
-		if signedIn {
-			why += "; your account at " + reg + " has none"
-		}
-		return why
 	case engine.ThemeFromDefault:
-		if signedIn {
-			return "the default: your account at " + reg + " has no report design and the config sets none"
-		}
-		return "the default: you are not signed in at " + reg + " and the config sets none"
+		why = "the default, as the config sets none"
+	default:
+		return string(choice.From)
 	}
-	return string(choice.From)
+	switch acct {
+	case accountNotAsked:
+		why += "; you are not signed in at " + reg
+	case accountDriver:
+		why += "; a driver's run asks no account"
+	case accountNone:
+		why += "; your account at " + reg + " has no report design"
+	case accountUnread:
+		why += "; your account's report design at " + reg + " could not be read"
+	case accountHasDesign:
+		why += "; your account's report design at " + reg + " is not one this CLI can draw"
+	}
+	return why
 }
 
 func paperLabel(p string) string {
@@ -251,17 +293,16 @@ func newReportDesignImportCmd() *cobra.Command {
 }
 
 func runReportDesignImport(cmd *cobra.Command, file string) error {
-	var doc []byte
-	var err error
-	if file == "-" {
-		doc, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), reportdesign.MaxDocumentBytes+1))
-	} else {
-		doc, err = readDesignFile(file)
+	in := cmd.InOrStdin()
+	if file != "-" {
+		f, err := os.Open(file) //nolint:gosec // a file the person named
+		if err != nil {
+			return &exitError{code: 2, err: err}
+		}
+		defer func() { _ = f.Close() }()
+		in = f
 	}
-	var d reportdesign.Design
-	if err == nil {
-		d, err = reportdesign.Parse(doc)
-	}
+	d, _, err := readDesign(in)
 	if err != nil {
 		// Refused here, before any sign-in is needed; the error names the
 		// field (pkg/reportdesign's FieldError).
@@ -275,6 +316,9 @@ func runReportDesignImport(cmd *cobra.Command, file string) error {
 	sd, err := reportdesign.Parse(saved)
 	if err != nil {
 		return fmt.Errorf("the registry saved a report design this CLI cannot read (%w); update agentry", err)
+	}
+	if sd.SHA256() != d.SHA256() {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: the registry saved the design as sha256 %s, not the file's %s\n", sd.SHA256(), d.SHA256())
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Saved %s (sha256 %s) as your account's report design at %s. Your runs' PDFs take it from the next run.\n", sd.Name, sd.SHA256(), reg)
 	return nil

@@ -1094,8 +1094,10 @@ manifest + operator policy into a deterministic run plan → execute:
   document (`-` for stdout; an existing file only with `--force`);
   `import FILE` holds a file to every rule of the design, refusing it with
   the field named (exit 2) before anything is sent, and saves it to your
-  account; `reset` clears it, back to never chosen. Export then import is
-  byte for byte, so a design can be kept in a repository and put back.
+  account; `reset` clears it, back to never chosen. What `export` writes
+  and `import` sends is the design's canonical document, so a design
+  exported, imported and exported again is the same bytes, and a design
+  can be kept in a repository and put back.
 - **Everything the run produces** lands in the output folder: the
   QuickAgent's report files, `result.json` (the machine-readable envelope;
   its `pdfs` block names the design and each exported PDF's SHA-256 and

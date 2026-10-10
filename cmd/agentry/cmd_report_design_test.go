@@ -31,6 +31,8 @@ type designRegistry struct {
 	puts   int
 	// refuse makes every PUT answer this field's 422.
 	refuse string
+	// broken makes every GET answer 500.
+	broken bool
 }
 
 func newDesignRegistry(t *testing.T) *designRegistry {
@@ -46,6 +48,10 @@ func newDesignRegistry(t *testing.T) *designRegistry {
 		defer dr.mu.Unlock()
 		switch r.Method {
 		case http.MethodGet:
+			if dr.broken {
+				writeProblem(w, http.StatusInternalServerError, "Internal error", "")
+				return
+			}
 		case http.MethodPut:
 			dr.puts++
 			var body struct {
@@ -230,6 +236,14 @@ func TestReportDesignImportRefusesAnInvalidFile(t *testing.T) {
 	if _, _, err := reportDesign(t, reg, "import", ok); exitOf(err) != 2 || !strings.Contains(err.Error(), "not signed in") {
 		t.Errorf("signed out = %v", err)
 	}
+	// The file is held to the rules before a sign-in is looked for.
+	pale := filepath.Join(dir, "an-accent-that-cannot-carry-its-text.json")
+	if _, _, err := reportDesign(t, reg, "import", pale); exitOf(err) != 2 || !strings.Contains(err.Error(), "accent") {
+		t.Errorf("an invalid file signed out = %v, want its field", err)
+	}
+	if _, _, err := reportDesign(t, reg, "import", filepath.Join(dir, "none.json")); exitOf(err) != 2 || !strings.Contains(err.Error(), "none.json") {
+		t.Errorf("a missing file = %v", err)
+	}
 }
 
 // show prints the design a run would take now and what chose it: the
@@ -247,7 +261,7 @@ func TestReportDesignShow(t *testing.T) {
 	}
 	t.Setenv(envToken, "agy_test")
 	out, _, err = reportDesign(t, reg, "show")
-	if err != nil || !strings.Contains(out, "design:   Classic") || !strings.Contains(out, "report.theme in the CLI's config") || !strings.Contains(out, "has none") {
+	if err != nil || !strings.Contains(out, "design:   Classic") || !strings.Contains(out, "report.theme in the CLI's config") || !strings.Contains(out, "your account at "+reg.URL+" has no report design") {
 		t.Fatalf("the config's theme: %q %v", out, err)
 	}
 
@@ -275,6 +289,22 @@ func TestReportDesignShow(t *testing.T) {
 	}
 	if got, err := reportdesign.Parse(doc.Design); err != nil || got != d || doc.SHA256 != d.SHA256() || doc.From != string(engine.ThemeFromAccount) {
 		t.Errorf("show --json = %+v (%v)", doc, err)
+	}
+
+	// An account that cannot be read, or holds a design this CLI refuses,
+	// is said to be so, never "has none".
+	reg.broken = true
+	out, errOut, err := reportDesign(t, reg, "show")
+	if err != nil || !strings.Contains(out, "design:   Classic") || !strings.Contains(out, "could not be read") || !strings.Contains(errOut, "warning") {
+		t.Errorf("an account that cannot be read: %q %q %v", out, errOut, err)
+	}
+	reg.broken = false
+	reg.mu.Lock()
+	reg.stored = bytes.Replace(house, []byte(`"agentryTheme": 2`), []byte(`"agentryTheme": 3`), 1)
+	reg.mu.Unlock()
+	out, _, err = reportDesign(t, reg, "show")
+	if err != nil || !strings.Contains(out, "design:   Classic") || !strings.Contains(out, "is not one this CLI can draw") {
+		t.Errorf("an account design this CLI refuses: %q %v", out, err)
 	}
 
 	if err := saveCLIConfig(cliConfig{Report: reportConfig{Theme: "fancy"}}); err != nil {
