@@ -11,7 +11,7 @@
   "policySha256": "policysha",
   "instruction": {
     "sourcePath": "SKILL.md",
-    "sha256": "5e26534ca3aeb0500ed309803335f88e102d81e1a477418cc8d4a61fd8ed751e",
+    "sha256": "a1ab9ba48e7d05510604f8c80ae43080582075e0ef96c386cf963be6889440d4",
     "bodySha256": "ab7eeb2d198a6e44757e77befdfde811a705e2556b46ea2398e5e13e0c4c95a1"
   },
   "capabilities": {
@@ -39,7 +39,8 @@
     "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
     "pdf": "the runner's grant, not the contract's: export_pdf renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst 0.15.1 in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under /tmp whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, 1 GiB of address space and 60 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
     "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read and scratch_write over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
-    "secrets": "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
+    "secrets": "declared servers' values resolved at run start (missing ⇒ refuse, exit 11), absent from plan and receipts; each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too",
+    "toolResults": "every result of the runner's own tools is held to 48 KiB and 1,900 lines, the docker-agent harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own"
   },
   "gateway": {
     "image": "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3",
@@ -206,7 +207,7 @@
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "cc21e4caab49d9b939989a497d4e1bf65dfcb9251550d5d95fd925fa82296a20",
     "gateway/tools.yaml": "18cb49d9bb392e8a48a933c59a202de853c25351759148f6f1c81d23dde59d2d",
-    "gateway/toolspec.json": "996ce63cb9e7b5acc43453dac31cd7815cc065c31f04951ce17adfa229baa1ba",
-    "harness/agent.yaml": "9c36ef6be9bd9db74a61dcb8cf6c19bf423e2ec2d34af631b045aab3fe137c44"
+    "gateway/toolspec.json": "a1f370ad1da468db42c4720324a6ac1726deefa887fb3a44ed17068bc903df18",
+    "harness/agent.yaml": "34e81b79fc0d83c85a3554366b8b4e8f1151a2ba52b73988ed0ef4e702baef27"
   }
 }

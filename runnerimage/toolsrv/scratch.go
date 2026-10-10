@@ -46,7 +46,8 @@ func scratchReadSchema() map[string]any {
 
 func scratchListSchema() map[string]any {
 	return objSchema(map[string]any{
-		"path": strProp("scratch-relative directory to list; empty or \".\" is the scratch folder itself"),
+		"path":   strProp("scratch-relative directory to list; empty or \".\" is the scratch folder itself"),
+		"offset": offsetEntriesProp(),
 	})
 }
 
@@ -105,15 +106,19 @@ func (s *server) toolScratchRead(raw json.RawMessage) (string, bool) {
 		return "scratch_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
-	return readText(fileTools{ToolScratchRead, ToolScratchList}, f, rel, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
+	return readText(fileTools{ToolScratchRead, ToolScratchList}, f, rel, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
 }
 
 func (s *server) toolScratchList(raw json.RawMessage) (string, bool) {
 	var a struct {
-		Path string `json:"path"`
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "scratch_list: " + err.Error(), true
+	}
+	if a.Offset < 0 {
+		return "scratch_list: offset must be >= 0", true
 	}
 	if a.Path == "" {
 		a.Path = "."
@@ -132,7 +137,7 @@ func (s *server) toolScratchList(raw json.RawMessage) (string, bool) {
 		return "scratch_list: " + err.Error(), true
 	}
 	defer func() { _ = d.Close() }()
-	return listDir(ToolScratchList, d)
+	return listDir(ToolScratchList, d, a.Offset, s.spec.Limits.budget())
 }
 
 func (s *server) toolScratchWrite(raw json.RawMessage) (string, bool) {

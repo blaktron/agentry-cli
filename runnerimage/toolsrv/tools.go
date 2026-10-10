@@ -111,33 +111,33 @@ func (s *server) buildTools() {
 	for _, name := range s.spec.GrantedTools() {
 		switch name {
 		case ToolFSRead:
-			add(name, "Read a file from the agent workspace. Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+			add(name, "Read a file from the agent workspace. Returns the file text, one page at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from.",
 				fsReadSchema(), s.toolFSRead)
 		case ToolFSList:
-			add(name, "List one directory level of the agent workspace: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for the workspace root.",
+			add(name, "List one directory level of the agent workspace: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for the workspace root. A long listing stops at the result limit and says the offset to continue from.",
 				fsListSchema(), s.toolFSList)
 		case ToolFSWrite:
 			add(name, "Write a file in the agent workspace, creating parent directories. Content larger than the server's byte limit is refused — split large writes.",
 				fsWriteSchema(), s.toolFSWrite)
 		case ToolScratchList:
-			add(name, "List one directory level of this run's scratch folder: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for its root. The folder starts empty.",
+			add(name, "List one directory level of this run's scratch folder: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for its root. The folder starts empty. A long listing stops at the result limit and says the offset to continue from.",
 				scratchListSchema(), s.toolScratchList)
 		case ToolScratchRead:
-			add(name, "Read a file from this run's scratch folder. Returns the file text, capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+			add(name, "Read a file from this run's scratch folder. Returns the file text, one page at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from.",
 				scratchReadSchema(), s.toolScratchRead)
 		case ToolScratchWrite:
 			add(name, "Write a file in this run's scratch folder, for notes and working files, creating parent directories; set append to extend a file. The folder is private to the run and deleted when it ends: nothing in it reaches the person, so write the result with write_report.",
 				scratchWriteSchema(), s.toolScratchWrite)
 		case ToolFetch:
-			add(name, "Make an HTTP(S) request to an allowlisted host. Credentials go via the auth parameter, which injects a granted secret server-side; Authorization/Cookie headers are refused.",
+			add(name, fetchDescription(s.spec.ScratchDir != ""),
 				fetchSchema(), s.toolFetch)
 		case ToolRunCommand:
 			add(name, s.runCommandDescription(), runCommandSchema(), s.toolRunCommand)
 		case ToolListInputs:
-			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided.",
+			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided. A long listing stops at the result limit and says the offset to continue from.",
 				listInputsSchema(), s.toolListInputs)
 		case ToolReadInput:
-			addInput(name, "Read one of the run's provided input files (read-only), in the view list_inputs marks as its default unless view says which: \"text\" is the text decoded from a document, PDF or image before the run (HTML as Markdown), \"original\" the file as uploaded (a binary file as a page of base64, with its size and type). Capped by the server's byte limit; use offset and maxBytes to page through larger files.",
+			addInput(name, "Read one of the run's provided input files (read-only), in the view list_inputs marks as its default unless view says which: \"text\" is the text decoded from a document, PDF or image before the run (HTML as Markdown), \"original\" the file as uploaded (a binary file as a page of base64, with its size and type). One page at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from.",
 				readInputSchema(), s.toolReadInput)
 		case ToolSearchInputs:
 			addInput(name, "Search the run's input files for a word or phrase, without regard to case, each in its default view (the one list_inputs marks) unless view says which; a document, PDF or image is searched in its text unless view is \"original\". Returns each matching line as path:line: excerpt; read the file with read_input for more.",
@@ -150,10 +150,10 @@ func (s *server) buildTools() {
 			add(name, "Search an attached knowledge pack for a word or phrase over its pages' titles, summaries and text (or its source documents). Returns the matching pages, best first, each with the line that matched.",
 				knowledgeSearchSchema(), s.toolKnowledgeSearch)
 		case ToolKnowledgeRead:
-			add(name, "Read a page of an attached knowledge pack (read-only), by the path its index gives, or a source document by a citation's doc:<path>. Capped by the server's byte limit; use offset and maxBytes to page through.",
+			add(name, "Read a page of an attached knowledge pack (read-only), by the path its index gives, or a source document by a citation's doc:<path>. One page of text at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from.",
 				knowledgeReadSchema(), s.toolKnowledgeRead)
 		case ToolVoiceRead:
-			add(name, voiceReadDescription, objSchema(map[string]any{}), s.toolVoiceRead)
+			add(name, voiceReadDescription, voiceReadSchema(), s.toolVoiceRead)
 		case ToolWebSearch:
 			add(name, "Search the web. AI Review reads every result before you see it; a result it flagged, or could not scan, is shown as withheld with its origin only.",
 				webSearchSchema(), s.toolWebSearch)
@@ -216,8 +216,15 @@ func fsReadSchema() map[string]any {
 
 func fsListSchema() map[string]any {
 	return objSchema(map[string]any{
-		"path": strProp("workspace-relative directory to list; empty or \".\" is the workspace root"),
+		"path":   strProp("workspace-relative directory to list; empty or \".\" is the workspace root"),
+		"offset": offsetEntriesProp(),
 	})
+}
+
+// offsetEntriesProp is the listings' offset: entries skipped, so that a
+// listing that stopped at the result budget can be read on (page.go).
+func offsetEntriesProp() map[string]any {
+	return intProp("number of entries to skip, to read on from where a listing that stopped at the result limit says to continue (default 0)")
 }
 
 func fsWriteSchema() map[string]any {
@@ -225,6 +232,16 @@ func fsWriteSchema() map[string]any {
 		"path":    strProp("workspace-relative slash path of the file to write"),
 		"content": strProp("full file content (text)"),
 	}, "path", "content")
+}
+
+// fetchDescription is fetch's description: with a scratch folder, a body
+// larger than one result is saved there (fetchedOverBudget).
+func fetchDescription(scratch bool) string {
+	d := "Make an HTTP(S) request to an allowlisted host. Credentials go via the auth parameter, which injects a granted secret server-side; Authorization/Cookie headers are refused."
+	if scratch {
+		d += " A response body larger than one tool result is saved in the scratch folder, and the answer gives its first page and the path to read on from with scratch_read."
+	}
+	return d
 }
 
 func fetchSchema() map[string]any {
@@ -265,7 +282,8 @@ func runCommandSchema() map[string]any {
 
 func listInputsSchema() map[string]any {
 	return objSchema(map[string]any{
-		"path": strProp("inputs-relative directory to list; empty or \".\" is the inputs root"),
+		"path":   strProp("inputs-relative directory to list; empty or \".\" is the inputs root"),
+		"offset": offsetEntriesProp(),
 	})
 }
 
@@ -425,7 +443,7 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 		return "fs_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
-	return readText(fileTools{ToolFSRead, ToolFSList}, f, path.Clean(a.Path), a.Offset, a.MaxBytes, s.spec.Limits.readCap())
+	return readText(fileTools{ToolFSRead, ToolFSList}, f, path.Clean(a.Path), a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
 }
 
 // fileTools names a root's read and list tools, for their messages.
@@ -433,8 +451,9 @@ type fileTools struct{ read, list string }
 
 // readText reads the open file f (rel as the model named it) for a root's
 // read tool: a directory points at its list tool, a binary file is named
-// rather than returned, and a capped read says where it stopped.
-func readText(t fileTools, f *os.File, rel string, offset, maxBytes, limit int64) (string, bool) {
+// rather than returned, and a page short of the whole file says where the
+// next begins (page.go).
+func readText(t fileTools, f *os.File, rel string, offset, maxBytes, limit int64, b budget) (string, bool) {
 	tool := t.read
 	fi, err := f.Stat()
 	if err != nil {
@@ -446,58 +465,28 @@ func readText(t fileTools, f *os.File, rel string, offset, maxBytes, limit int64
 	if maxBytes > 0 && maxBytes < limit {
 		limit = maxBytes
 	}
-	if offset > 0 {
-		if _, err := f.Seek(offset, io.SeekStart); err != nil {
-			return tool + ": " + err.Error(), true
-		}
-	}
-	data, err := io.ReadAll(io.LimitReader(f, limit))
+	data, err := b.readPage(f, offset, limit, fi.Size())
 	if err != nil {
 		return tool + ": " + err.Error(), true
 	}
-	total := fi.Size()
-	truncated := offset+int64(len(data)) < total
-	if truncated {
-		// The cap can split a multibyte rune; a split rune must not make
-		// a text file look binary, so shave at most an incomplete tail.
-		data = trimPartialRune(data)
-	}
-	if !utf8.Valid(data) {
-		// Feeding raw bytes to the model wastes context and invites
-		// mojibake loops; say what the file is instead.
-		return fmt.Sprintf("binary file; %d bytes", total), true
-	}
-	text := string(data)
-	if truncated {
-		text += fmt.Sprintf("\n[truncated at %d bytes of %d]", len(data), total)
-	}
-	return text, false
-}
-
-// trimPartialRune drops at most utf8.UTFMax-1 trailing bytes when they are
-// what stands between the buffer and UTF-8 validity — the signature of a
-// rune split by a byte cap, not of a binary file.
-func trimPartialRune(b []byte) []byte {
-	for i := 0; i < utf8.UTFMax-1 && len(b) > 0; i++ {
-		if utf8.Valid(b) {
-			return b
-		}
-		b = b[:len(b)-1]
-	}
-	return b
+	return textPage(data, offset, fi.Size(), "")
 }
 
 // ---- fs_list ----
 
 func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 	var a struct {
-		Path string `json:"path"`
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "fs_list: " + err.Error(), true
 	}
 	if !s.spec.FSRead.Enabled {
 		return "fs_list: filesystem read is not granted", true
+	}
+	if a.Offset < 0 {
+		return "fs_list: offset must be >= 0", true
 	}
 	rel := a.Path
 	if rel == "" {
@@ -508,11 +497,8 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 		// Paths mode: the workspace root itself is not granted, but the
 		// model still needs a way to discover what is — so listing the
 		// root lists the grant entries themselves (§R3).
-		var b strings.Builder
-		for i, entry := range s.spec.FSRead.Paths {
-			if i > 0 {
-				b.WriteByte('\n')
-			}
+		lines := make([]string, 0, len(s.spec.FSRead.Paths))
+		for _, entry := range s.spec.FSRead.Paths {
 			e := path.Clean(entry)
 			line := e
 			if abs, err := resolveUnder(s.spec.WorkspaceDir, e); err == nil {
@@ -524,9 +510,9 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 					}
 				}
 			}
-			b.WriteString(line)
+			lines = append(lines, line)
 		}
-		return b.String(), false
+		return s.spec.Limits.budget().listPage("", lines, a.Offset, ""), false
 	}
 	if rel != "." && !allowedByGrant(s.spec.FSRead.Paths, rel) {
 		return fmt.Sprintf("fs_list: %q is outside the granted paths", rel), true
@@ -540,12 +526,13 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 		return "fs_list: " + err.Error(), true
 	}
 	defer func() { _ = d.Close() }()
-	return listDir(ToolFSList, d)
+	return listDir(ToolFSList, d, a.Offset, s.spec.Limits.budget())
 }
 
 // listDir lists one directory level of the open directory d for the list
-// tool named tool: directories as "name/", files as "name<TAB>size".
-func listDir(tool string, d *os.File) (string, bool) {
+// tool named tool: directories as "name/", files as "name<TAB>size", from
+// the entry offset and within the result budget (page.go).
+func listDir(tool string, d *os.File, offset int, b budget) (string, bool) {
 	entries, err := d.ReadDir(-1)
 	if err != nil {
 		return tool + ": " + err.Error(), true
@@ -555,23 +542,25 @@ func listDir(tool string, d *os.File) (string, bool) {
 	if len(entries) == 0 {
 		return "(empty directory)", false
 	}
-	var b strings.Builder
-	for i, e := range entries {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
+	return b.listPage("", dirLines(entries), offset, ""), false
+}
+
+// dirLines is a directory's entries as the list tools say them.
+func dirLines(entries []os.DirEntry) []string {
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
 		if e.IsDir() {
-			b.WriteString(e.Name() + "/")
+			lines = append(lines, e.Name()+"/")
 			continue
 		}
 		fi, err := e.Info()
 		if err != nil {
-			b.WriteString(e.Name())
+			lines = append(lines, e.Name())
 			continue
 		}
-		b.WriteString(e.Name() + "\t" + strconv.FormatInt(fi.Size(), 10))
+		lines = append(lines, e.Name()+"\t"+strconv.FormatInt(fi.Size(), 10))
 	}
-	return b.String(), false
+	return lines
 }
 
 // ---- fs_write ----
@@ -739,17 +728,13 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 	if truncated {
 		data = data[:limit]
 	}
-	text := fmt.Sprintf("HTTP %s\ncontent-type: %s\n\n%s", resp.Status, resp.Header.Get("Content-Type"), data)
-	if truncated {
-		if resp.ContentLength >= 0 {
-			text += fmt.Sprintf("\n[truncated at %d bytes of %d]", limit, resp.ContentLength)
-		} else {
-			text += fmt.Sprintf("\n[truncated at %d bytes]", limit)
-		}
+	head := fmt.Sprintf("HTTP %s\ncontent-type: %s\n\n", clip(resp.Status, maxFetchHeadField), clip(resp.Header.Get("Content-Type"), maxFetchHeadField))
+	if b := s.spec.Limits.budget(); !truncated && b.fits(head+string(data)) {
+		// A 4xx/5xx status is a normal result — the agent must see it to
+		// react; only transport and policy failures are isError above.
+		return s.scrubSecrets(head + string(data)), false
 	}
-	// A 4xx/5xx status is a normal result — the agent must see it to
-	// react; only transport and policy failures are isError above.
-	return s.scrubSecrets(text), false
+	return s.fetchedOverBudget(u, head, data, truncated, resp.ContentLength)
 }
 
 // fetchHostAllowed is the server-side half of the egress control: exact,
@@ -1027,10 +1012,14 @@ func (w *capWriter) text() string {
 
 func (s *server) toolListInputs(raw json.RawMessage) (string, bool) {
 	var a struct {
-		Path string `json:"path"`
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return s.failed("list_inputs", err)
+	}
+	if a.Offset < 0 {
+		return "list_inputs: offset must be >= 0", true
 	}
 	if s.spec.InputsDir == "" {
 		return "list_inputs: no inputs channel configured", true
@@ -1048,7 +1037,7 @@ func (s *server) toolListInputs(raw json.RawMessage) (string, bool) {
 		return s.failed("list_inputs", err)
 	}
 	if idx != nil {
-		return listIndexed(idx, path.Clean(rel))
+		return listIndexed(idx, path.Clean(rel), a.Offset, s.spec.Limits.budget())
 	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
@@ -1057,23 +1046,7 @@ func (s *server) toolListInputs(raw json.RawMessage) (string, bool) {
 	if len(entries) == 0 {
 		return "(no input files provided for this run)", false
 	}
-	var b strings.Builder
-	for i, e := range entries {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		if e.IsDir() {
-			b.WriteString(e.Name() + "/")
-			continue
-		}
-		fi, err := e.Info()
-		if err != nil {
-			b.WriteString(e.Name())
-			continue
-		}
-		b.WriteString(e.Name() + "\t" + strconv.FormatInt(fi.Size(), 10))
-	}
-	return b.String(), false
+	return s.spec.Limits.budget().listPage("", dirLines(entries), a.Offset, ""), false
 }
 
 func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
@@ -1137,13 +1110,13 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 		if view == ViewOriginal && isBinary(abs) {
 			// A binary original is answered, not refused (D3), every page
 			// of it: the file decides, not a page that happens to decode.
-			text, err := readBase64Page(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), mime)
+			text, err := readBase64Page(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget(), mime)
 			if err != nil {
 				return s.failed("read_input", err)
 			}
 			return text, false
 		}
-		text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
+		text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget(), "")
 		if err != nil {
 			return s.failed("read_input", err)
 		}
@@ -1157,21 +1130,27 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	if instead, isErr, ok := s.reviewedInput(path.Clean(a.Path), view, abs, fi); !ok {
 		return s.scrubSecrets(instead), isErr
 	}
-	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap())
+	text, isErr, err := readPaged(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget(), "")
 	if err != nil {
 		return s.failed("read_input", err)
 	}
 	return s.scrubSecrets(text), isErr
 }
 
-// readPaged is the paging read_input and the knowledge tools share: up to
-// the server cap (or the caller's tighter maxBytes) from offset, cut at a
-// rune boundary with a note saying where, and a binary file refused by
-// size. A non-nil error is the caller's to prefix with its tool name; the
-// binary refusal is a tool error with no prefix, as read_input has always
-// said it.
-func readPaged(abs string, offset, maxBytes, serverCap int64) (string, bool, error) {
-	fi, err := os.Stat(abs)
+// readPaged is the paging read_input and the knowledge tools share: one
+// page from offset, within the result budget and the server cap (or the
+// caller's tighter maxBytes), cut on a line or rune boundary and ending with
+// where the next page begins (page.go; contFmt names the call that reads on,
+// "offset %d" when empty), and a binary file refused by size. A non-nil
+// error is the caller's to prefix with its tool name; the binary refusal is
+// a tool error with no prefix, as read_input has always said it.
+func readPaged(abs string, offset, maxBytes, serverCap int64, b budget, contFmt string) (string, bool, error) {
+	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
+	if err != nil {
+		return "", true, err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
 	if err != nil {
 		return "", true, err
 	}
@@ -1179,33 +1158,12 @@ func readPaged(abs string, offset, maxBytes, serverCap int64) (string, bool, err
 	if maxBytes > 0 && maxBytes < limit {
 		limit = maxBytes
 	}
-	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
+	data, err := b.readPage(f, offset, limit, fi.Size())
 	if err != nil {
 		return "", true, err
 	}
-	defer func() { _ = f.Close() }()
-	if offset > 0 {
-		if _, err := f.Seek(offset, io.SeekStart); err != nil {
-			return "", true, err
-		}
-	}
-	data, err := io.ReadAll(io.LimitReader(f, limit))
-	if err != nil {
-		return "", true, err
-	}
-	total := fi.Size()
-	truncated := offset+int64(len(data)) < total
-	if truncated {
-		data = trimPartialRune(data)
-	}
-	if !utf8.Valid(data) {
-		return fmt.Sprintf("binary file; %d bytes", total), true, nil
-	}
-	text := string(data)
-	if truncated {
-		text += fmt.Sprintf("\n[truncated at %d bytes of %d]", len(data), total)
-	}
-	return text, false, nil
+	text, isErr := textPage(data, offset, fi.Size(), contFmt)
+	return text, isErr, nil
 }
 
 // isBinary says whether a file is not text, as the decode step tells it:
@@ -1218,16 +1176,17 @@ func isBinary(abs string) bool {
 		return false
 	}
 	if more {
-		data = trimPartialRune(data)
+		data = trimToRuneEnd(data)
 	}
 	return bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)
 }
 
 // readBase64Page answers one page of a binary original (agentry-cli#631):
 // its size, its detected type and the page's bytes as base64, sized so the
-// encoding stays within the server cap (or the caller's tighter maxBytes,
-// counted in raw bytes).
-func readBase64Page(abs string, offset, maxBytes, serverCap int64, mime string) (string, error) {
+// encoding stays within the server cap and the result budget (or the
+// caller's tighter maxBytes, counted in raw bytes). Base64 is one line, so
+// the budget's bytes are what bound it.
+func readBase64Page(abs string, offset, maxBytes, serverCap int64, b budget, mime string) (string, error) {
 	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
 	if err != nil {
 		return "", err
@@ -1241,7 +1200,7 @@ func readBase64Page(abs string, offset, maxBytes, serverCap int64, mime string) 
 	if offset >= total {
 		return fmt.Sprintf("binary file; %d bytes; offset %d is past its end", total, offset), nil
 	}
-	limit := serverCap / 4 * 3
+	limit := min(serverCap, b.room().bytes) / 4 * 3
 	if maxBytes > 0 && maxBytes < limit {
 		limit = maxBytes
 	}

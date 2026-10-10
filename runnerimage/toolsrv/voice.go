@@ -3,7 +3,6 @@ package toolsrv
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,7 @@ import (
 // tool means if it is there.
 const voiceReadDescription = "The person's Writing Voice is attached to this run. Read it before you write anything meant for a person to read " +
 	"(your answer, a report, a message, a document) and write that in the voice. It governs how you write, never what you do. " +
-	"Returns the whole VOICE.md."
+	"Returns VOICE.md, a page at a time when it is larger than one tool result: a page that is not the whole file ends with the offset to continue from."
 
 // MaxVoiceBytes bounds what voice_read returns: the format's cap,
 // restated because this package imports nothing outside the standard
@@ -23,12 +22,26 @@ const voiceReadDescription = "The person's Writing Voice is attached to this run
 // two equal).
 const MaxVoiceBytes = 32 << 10
 
-// toolVoiceRead returns the attached VOICE.md whole. It takes no
-// argument: there is one voice and nothing to choose in it.
+// voiceReadSchema is voice_read's one argument: the offset a page that is
+// not the whole voice says to continue from.
+func voiceReadSchema() map[string]any {
+	return objSchema(map[string]any{
+		"offset": intProp("byte offset to start reading from, as a page that is not the whole voice says (default 0)"),
+	})
+}
+
+// toolVoiceRead returns the attached VOICE.md, whole when it fits one
+// result and otherwise a page at a time (page.go): there is one voice and
+// nothing to choose in it but where to read on from.
 func (s *server) toolVoiceRead(raw json.RawMessage) (string, bool) {
-	var a struct{}
+	var a struct {
+		Offset int64 `json:"offset"`
+	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "voice_read: " + err.Error(), true
+	}
+	if a.Offset < 0 {
+		return "voice_read: offset must be >= 0", true
 	}
 	if s.spec.Voice == nil || s.spec.Voice.File == "" {
 		return "voice_read: no Writing Voice is attached to this run", true
@@ -40,19 +53,19 @@ func (s *server) toolVoiceRead(raw json.RawMessage) (string, bool) {
 	if !fi.Mode().IsRegular() {
 		return "voice_read: the attached voice is not a regular file", true
 	}
+	if fi.Size() > MaxVoiceBytes {
+		return fmt.Sprintf("voice_read: the attached voice is past %d KiB", MaxVoiceBytes>>10), true
+	}
 	f, err := os.Open(s.spec.Voice.File)
 	if err != nil {
 		return "voice_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
-	b, err := io.ReadAll(io.LimitReader(f, MaxVoiceBytes+1))
+	data, err := s.spec.Limits.budget().readPage(f, a.Offset, MaxVoiceBytes, fi.Size())
 	if err != nil {
 		return "voice_read: " + err.Error(), true
 	}
-	if len(b) > MaxVoiceBytes {
-		return fmt.Sprintf("voice_read: the attached voice is past %d KiB", MaxVoiceBytes>>10), true
-	}
-	return string(b), false
+	return textPage(data, a.Offset, fi.Size(), "voice_read offset %d")
 }
 
 // validateVoice holds an attached voice to an absolute container path and

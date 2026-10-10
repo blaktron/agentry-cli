@@ -21,11 +21,13 @@ package toolsrv
 // (plan scratch-and-pdf-reports.md §4, agentry-cli#729); "9" export_pdf
 // (plan scratch-and-pdf-reports.md §5, agentry-cli#730); "10" the report
 // design, theme document version 2, and export_pdf's form (plan
-// report-designs.md §4, agentry-cli#784). The server
+// report-designs.md §4, agentry-cli#784); "11" the result budget
+// (Limits.MaxResultBytes and MaxResultLines; plan input-sources.md §4,
+// agentry-cli#831). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "10"
+const SpecVersion = "11"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -217,6 +219,15 @@ type Limits struct {
 	// ExecTimeoutSeconds caps one run_command invocation (default
 	// DefaultExecTimeoutSeconds).
 	ExecTimeoutSeconds int `json:"execTimeoutSeconds,omitempty"`
+	// MaxResultBytes and MaxResultLines are the result budget: the most
+	// one tool result may hold, so that the harness never cuts it (page.go;
+	// plan input-sources.md §4, agentry-cli#831). The compiler stamps them
+	// from the run's harness adapter, its measured limit less a margin
+	// (adapter.ResultBudget); zero takes docker-agent's
+	// (DefaultMaxResultBytes, DefaultMaxResultLines). The read tools page
+	// within it, and the caps above still apply beneath it.
+	MaxResultBytes int64 `json:"maxResultBytes,omitempty"`
+	MaxResultLines int   `json:"maxResultLines,omitempty"`
 }
 
 // Defaults for Limits zero values.

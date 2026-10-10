@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -72,6 +74,9 @@ type promptFacts struct {
 	// review is the review grant: inputs reach the model only through AI
 	// Review, so they are not served unchanged (agentry-cli#632).
 	review bool
+	// budget is the most one tool result holds under the run's harness
+	// (adapter.ResultBudget; agentry-cli#831), which the tools page within.
+	budget adapter.Budget
 }
 
 // inputViewOf is the plan's InputView for a manifest: its inputs.view when
@@ -140,12 +145,13 @@ func writeEnvironment(b *strings.Builder, f promptFacts) {
 
 You have no shell, filesystem or network of your own. Your tools come only from the run's MCP gateway, which runs them in sandboxed containers, and its tool list is the whole of what you can do.
 `)
+	fmt.Fprintf(b, "\nA tool result holds at most %s, so a larger file comes a page at a time: each page ends with a line giving the bytes it holds and the offset to continue from, and you read on by passing that offset. A listing or a search that stops at that size says what it left out and how to read on or narrow it.\n", budgetWords(f.budget))
 	c := f.caps
 	switch c.EgressMode {
 	case "hosts":
-		fmt.Fprintf(b, "\n- **Network.** Only through fetch, and only to these hosts: %s. Every other address is refused. There is no web search.\n", strings.Join(c.EgressHosts, ", "))
+		fmt.Fprintf(b, "\n- **Network.** Only through fetch, and only to these hosts: %s. Every other address is refused. There is no web search.%s\n", strings.Join(c.EgressHosts, ", "), fetchSaves(c))
 	case "all":
-		b.WriteString("\n- **Network.** fetch may reach any public host. There is no web search.\n")
+		fmt.Fprintf(b, "\n- **Network.** fetch may reach any public host. There is no web search.%s\n", fetchSaves(c))
 	default:
 		if c.WebTools && c.RegistrySearch {
 			b.WriteString("\n- **Network.** None of your own: the web reaches you only through web_search, web_read and registry_search, described below.\n")
@@ -190,6 +196,24 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		fmt.Fprintf(b, " Some declared secrets are optional, and a run may go without them: %s. Not given to this run: %s. Do the task without a secret this run was not given: the runner's own tools answer that it is not set, and an MCP server that needs it may refuse or work without it.", strings.Join(f.optional, ", "), spec.PHSecretsAbsent)
 	}
 	b.WriteString("\n")
+}
+
+// budgetWords says a result budget as the System Prompt does: "48 KiB and
+// 1,900 lines". No budget is docker-agent's, the default harness's.
+func budgetWords(b adapter.Budget) string {
+	if b.Bytes == 0 {
+		b = adapter.ResultBudget(adapter.DefaultName)
+	}
+	return toolsrv.BudgetWords(b.Bytes, b.Lines)
+}
+
+// fetchSaves is the Network line's sentence on a fetch reply larger than one
+// result: saved in the scratch folder, where the run has one.
+func fetchSaves(c spec.CapSummary) string {
+	if !c.Scratch {
+		return ""
+	}
+	return fmt.Sprintf(" A response body larger than one tool result is saved in the scratch folder (%s/fetch/), and fetch gives you its first page and the path to read on from with scratch_read.", spec.ScratchMount)
 }
 
 func writeInputs(b *strings.Builder, f promptFacts) {

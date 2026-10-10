@@ -302,13 +302,13 @@ func TestKnowledgeRead(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "a page as the index writes it", args: map[string]any{"path": "topics/iam.md", "maxBytes": 16},
-			want: "---\ntitle: IAM p\n[truncated at 16 bytes of 162]"},
+			want: "---\ntitle: IAM p\n[page: bytes 0–16 of 162; continue with offset 16]"},
 		{name: "the server cap pages", args: map[string]any{"path": "procedures/rotate-keys.md"},
-			want: "---\ntitle: Rotating access keys\nsummary:\n[truncated at 40 bytes of 145]"},
+			want: "---\ntitle: Rotating access keys\n\n[page: bytes 0–32 of 145; continue with offset 32]"},
 		{name: "offset pages forward", args: map[string]any{"path": "procedures/rotate-keys.md", "offset": 127},
-			want: "delete the first.\n"},
+			want: "delete the first.\n\n[page: bytes 127–145 of 145; end of file]"},
 		{name: "a source by its citation key", args: map[string]any{"path": "doc:s3-guide.txt", "maxBytes": 8},
-			want: "S3 GUIDE\n[truncated at 8 bytes of 80]"},
+			want: "S3 GUIDE\n[page: bytes 0–8 of 80; continue with offset 8]"},
 		{name: "a page out of the wiki", args: map[string]any{"path": "../manifest.json"},
 			want: "knowledge_read: path \"../manifest.json\" escapes the tool root", wantErr: true},
 		{name: "a source out of the sources", args: map[string]any{"path": "doc:../wiki/index.md"},
@@ -335,7 +335,7 @@ func TestKnowledgeRead(t *testing.T) {
 
 	t.Run("a page by the name alone a section index links it by", func(t *testing.T) {
 		got, isErr := s.toolKnowledgeRead(rawArgs(t, map[string]any{"path": "rotate-keys.md", "maxBytes": 4}))
-		if isErr || got != "---\n\n[truncated at 4 bytes of 145]" {
+		if isErr || got != "---\n\n[page: bytes 0–4 of 145; continue with offset 4]" {
 			t.Fatalf("(%q, %v)", got, isErr)
 		}
 	})
