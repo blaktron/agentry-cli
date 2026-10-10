@@ -299,9 +299,10 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		overCost:   func() { cancelCause(errCostBudget) },
 		// A run paid by a sign-in ends on its plan's limit, as in a
 		// container (I9).
-		signIn:      p.Plan.Harness.ModelSignIn != nil,
-		onPlanLimit: func() { cancelCause(errPlanLimit) },
-		onOrgPolicy: func() { cancelCause(errOrgPolicy) },
+		signIn:         p.Plan.Harness.ModelSignIn != nil,
+		onPlanLimit:    func() { cancelCause(errPlanLimit) },
+		onOrgPolicy:    func() { cancelCause(errOrgPolicy) },
+		onOutOfCredits: func() { cancelCause(errOutOfCredits) },
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
@@ -365,6 +366,8 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		out.err = planLimitError(collector.planLimit.Text, collector.planLimit.ResetsAt)
 	case collector.orgPolicy != nil:
 		out.err = orgPolicyError(collector.orgPolicy)
+	case collector.outOfCredits != nil:
+		out.err = outOfCreditsError(collector.outOfCredits.Text)
 	case errors.As(turnErr, &refused):
 		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:

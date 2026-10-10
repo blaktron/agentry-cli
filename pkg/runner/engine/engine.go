@@ -947,7 +947,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		onPlanLimit: func() {
 			cancelCause(errPlanLimit)
 		},
-		onOrgPolicy: func() { cancelCause(errOrgPolicy) },
+		onOrgPolicy:    func() { cancelCause(errOrgPolicy) },
+		onOutOfCredits: func() { cancelCause(errOutOfCredits) },
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
@@ -1005,6 +1006,9 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// So is an organization's policy: the vendor refused the run.
 	case collector.orgPolicy != nil:
 		out.err = orgPolicyError(collector.orgPolicy)
+	// And a provider out of credits: the account that pays refused.
+	case collector.outOfCredits != nil:
+		out.err = outOfCreditsError(collector.outOfCredits.Text)
 	case errors.As(turnErr, &refused):
 		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:
@@ -1041,7 +1045,10 @@ var (
 	errBudget     = errors.New("turn budget exceeded")
 	errCostBudget = errors.New("cost budget exceeded")
 	errPlanLimit  = errors.New("plan limit reached")
-	errOrgPolicy  = errors.New("refused by an organization's policy")
+	// errOutOfCredits ends a run whose provider said the paying account has
+	// no credits left (agentry-cli#742).
+	errOutOfCredits = errors.New("out of credits")
+	errOrgPolicy    = errors.New("refused by an organization's policy")
 )
 
 // outputSchema loads and compiles the package's output.schema.json for a
@@ -1145,6 +1152,10 @@ type eventCollector struct {
 	// the person's organization refused it (D29), keeping the event.
 	onOrgPolicy func()
 	orgPolicy   *adapter.Event
+	// outOfCredits is the provider's first out-of-credits answer, and
+	// onOutOfCredits what ends the run on it, as a plan's limit does.
+	outOfCredits   *adapter.Event
+	onOutOfCredits func()
 
 	turns         int
 	inTok, outTok int64
@@ -1280,6 +1291,14 @@ func (c *eventCollector) record(ev adapter.Event) {
 			c.planLimit = &ev
 			if c.onPlanLimit != nil {
 				c.onPlanLimit()
+			}
+		}
+	case adapter.EventOutOfCredits:
+		c.harnessErrReported = ev.Text
+		if c.outOfCredits == nil {
+			c.outOfCredits = &ev
+			if c.onOutOfCredits != nil {
+				c.onOutOfCredits()
 			}
 		}
 	case adapter.EventOrgPolicy:

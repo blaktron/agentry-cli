@@ -630,6 +630,10 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
+	// A connected account's key is readied in the keychain the run reads.
+	if err := refreshConnectedKey(cmd.Context(), home, plan, hostedRun(opts)); err != nil {
+		return err
+	}
 
 	// A driver metering a live run reads the harness's usage two ways, both
 	// beside the envelope rather than instead of it (agentry-cli#138).

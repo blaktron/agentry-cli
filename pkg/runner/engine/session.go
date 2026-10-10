@@ -327,6 +327,9 @@ type liveSession struct {
 	// orgPolicy is the harness's first organization-policy event
 	// (EndOrgPolicy).
 	orgPolicy *adapter.Event
+	// outOfCredits is the provider's first out-of-credits answer
+	// (EndOutOfCredits).
+	outOfCredits *adapter.Event
 	// panicErr is set when the pump or the watcher recovered a panic. It is
 	// the session's error whatever reason it then ended with, because that
 	// reason is a side effect of the recovery (agentry-cli#161).
@@ -702,6 +705,18 @@ func (s *liveSession) handle(ev adapter.Event) {
 		if first {
 			s.endWith(session.EndPlanLimit)
 		}
+	case adapter.EventOutOfCredits:
+		s.mu.Lock()
+		first := s.outOfCredits == nil
+		if first {
+			s.outOfCredits = &ev
+		}
+		s.harnessErr = ev.Text
+		s.mu.Unlock()
+		s.emit(session.Event{Kind: session.KindError, Text: "out of credits: " + ev.Text, Raw: ev.Raw})
+		if first {
+			s.endWith(session.EndOutOfCredits)
+		}
 	case adapter.EventOrgPolicy:
 		s.mu.Lock()
 		first := s.orgPolicy == nil
@@ -1046,6 +1061,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	panicErr := s.panicErr
 	planLimit := s.planLimit
 	orgPolicy := s.orgPolicy
+	outOfCredits := s.outOfCredits
 	restarts := s.restarts
 	s.mu.Unlock()
 	env.Usage.WallMS = time.Since(s.start).Milliseconds()
@@ -1084,6 +1100,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		outErr = planLimitError(planLimit.Text, planLimit.ResetsAt)
 	case session.EndOrgPolicy:
 		outErr = orgPolicyError(orgPolicy)
+	case session.EndOutOfCredits:
+		outErr = outOfCreditsError(outOfCredits.Text)
 	case session.EndIdle:
 		outErr = Classify(ExitTimeout, fmt.Errorf("session idle for more than %ds", s.budgets.IdleTimeoutSeconds))
 	case session.EndWall:

@@ -1250,6 +1250,34 @@ denied). A quota or rate-limit error ends it with the plan-limit outcome; an
 organization's policy that turns Copilot CLI off for your account, or
 requires a person to approve each tool call, ends it refused by that policy
 (exit 11, reason `org-policy`, the policy named).
+**Connect your account** (agentry-cli#742): for OpenRouter, Poe and Hugging
+Face, `agentry model-signins add openrouter|poe|huggingface` (or `agentry
+setup`, the provider, paying with `connect`; `--connect` without the
+question) has the vendor make a key for Agentry in your browser, billed to
+your account there, and keeps it in the OS keychain where a pasted key is
+(`provider:<provider>`); it is not a model sign-in, and a run spends it as it
+spends any key (its variable still wins when it is set). OpenRouter's PKCE
+flow mints an `sk-or-` key; Poe's Sign in with Poe (scope `apikey:create`,
+through Agentry's Poe client, which until agentry-cli#743 `AGENTRY_POE_CLIENT_ID`
+names) mints a key with the expiry you choose on Poe's page, after which a
+run is refused with the fix; Hugging Face grants an `inference-api` token to
+Agentry's client metadata document (agentry-web#1331; `AGENTRY_HF_CLIENT_ID`
+names a public app instead), renewed at each run's start from the refresh
+token kept beside the other sign-ins. You type the model id (no list is
+offered): an OpenRouter id such as `anthropic/claude-sonnet-4.5`, a Poe bot
+such as `Claude-Sonnet-4.6`, a Hugging Face id that may name its provider,
+such as `openai/gpt-oss-120b:groq`; a model without tool calling fails. Runs
+use docker-agent: OpenRouter's and Hugging Face's own providers, Poe as a
+named OpenAI-compatible provider pinned to Chat Completions; each reaches its
+vendor's API host alone (`openrouter.ai:443`, `api.poe.com:443`,
+`router.huggingface.co:443`). `remove` forgets the key and says where to
+delete it at the vendor (OpenRouter and Poe give apps no way to revoke one;
+Hugging Face's is revoked where its discovery names a revocation endpoint,
+none as of 2026-10-09). A provider that answers 402, out of credits, ends any
+run with that outcome (exit 16, reason `out-of-credits`) and the provider's
+words. A connect needs the OS keychain (not under `AGENTRY_NO_KEYRING`), and a
+signed-out schedule spends the copy of the key sealed for it, which is not
+renewed.
 Harness images are pinned per adapter: docker-agent's by digest
 (`images.harnessDockerAgent`), any other's in `images.harnessImages` by
 digest or by the vendor artifact it is built from, and the receipt names

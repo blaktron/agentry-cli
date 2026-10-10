@@ -187,6 +187,9 @@ func TestAVendorWithNoFlowIsKeptAndForgotten(t *testing.T) {
 	home := t.TempDir()
 	keys := &memKeys{m: map[string]string{}}
 	s := Open(home, keys)
+	s.DeleteKey = func(string) error { return nil }
+	// A build with no Hugging Face flow (connect.go registers one).
+	t.Cleanup(RegisterVendor(HuggingFace, nil))
 	if _, err := s.Put(HuggingFace, Record{Label: "hf-person"}, Grant{RefreshToken: "hf_refresh_x"}); err != nil {
 		t.Fatal(err)
 	}

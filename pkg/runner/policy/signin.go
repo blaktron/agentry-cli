@@ -31,6 +31,13 @@ const (
 
 	ProviderOpenAI  = "openai"
 	ProviderCopilot = "copilot"
+
+	// The providers whose account a person may connect (plan §4.6, D30):
+	// each is paid by an ordinary API key (or, Hugging Face, an inference
+	// token), pasted or minted by a connect.
+	ProviderOpenRouter  = "openrouter"
+	ProviderPoe         = "poe"
+	ProviderHuggingFace = "huggingface"
 )
 
 // DockerAgentAdapter is the default adapter's name, whose image is

@@ -297,41 +297,63 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 // the prompt; stdin is read only once the address is shown, and the line
 // being read is finished before returning, so nothing typed later is lost.
 func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, clients *connection.Clients, srv manifest.MCPServer) (*mcpauth.Grant, error) {
-	errOut := cmd.ErrOrStderr()
-	pasted := make(chan string)
-	done := make(chan struct{})
-	var finished chan struct{}
+	bc := newBrowserConsent(cmd, in, "Approve it in your browser:")
 	c := mcpauth.Consent{
 		HTTP: httpc, ServerURL: srv.URL, Scopes: connectionScopes(srv),
 		OwnClient: clients.Get, CIMDURL: nativeCIMD,
-		Pasted: pasted,
-		Say:    func(s string) { _, _ = fmt.Fprintln(errOut, s) },
-		Present: func(authURL string) {
-			_, _ = fmt.Fprintf(errOut, "Approve it in your browser:\n  %s\n", authURL)
-			if os.Getenv("AGENTRY_NO_BROWSER") == "" {
-				if err := openBrowser(authURL); err != nil {
-					_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v; open the address above yourself)\n", err)
-				}
-			}
-			_, _ = fmt.Fprintln(errOut, "Waiting for the browser (up to 10 minutes). If it is on another machine and ends on a page that does not load, paste that page's address here and press Enter:")
-			finished = make(chan struct{})
-			go readPasted(in, pasted, done, finished)
-		},
+		Pasted: bc.pasted, Say: bc.say, Present: bc.present,
 	}
 	if !srv.IsRemote() {
 		c.Issuer = srv.OAuth.Issuer
 	}
 	g, err := c.Run(cmd.Context())
-	close(done)
-	if finished != nil {
-		select {
-		case <-finished:
-		default:
-			_, _ = fmt.Fprintln(errOut, "Press Enter to continue.")
-			<-finished
+	bc.finish()
+	return g, err
+}
+
+// browserConsent is a consent shown in the person's browser whose redirect
+// may be pasted back from another machine (D21), for every flow the CLI
+// runs there (a connection's, Sign in with ChatGPT, a connect): present
+// prints the address under heading, opens it where it can and starts
+// reading pasted addresses; finish, once the flow has returned, waits for
+// that reader, so the next question reads its own answer.
+type browserConsent struct {
+	errOut   io.Writer
+	in       *bufio.Reader
+	heading  string
+	pasted   chan string
+	done     chan struct{}
+	finished chan struct{}
+}
+
+func newBrowserConsent(cmd *cobra.Command, in *bufio.Reader, heading string) *browserConsent {
+	return &browserConsent{errOut: cmd.ErrOrStderr(), in: in, heading: heading, pasted: make(chan string), done: make(chan struct{})}
+}
+
+func (b *browserConsent) say(s string) { _, _ = fmt.Fprintln(b.errOut, s) }
+
+func (b *browserConsent) present(authURL string) {
+	_, _ = fmt.Fprintf(b.errOut, "%s\n  %s\n", b.heading, authURL)
+	if os.Getenv("AGENTRY_NO_BROWSER") == "" {
+		if err := openBrowser(authURL); err != nil {
+			_, _ = fmt.Fprintf(b.errOut, "(could not open a browser: %v; open the address above yourself)\n", err)
 		}
 	}
-	return g, err
+	_, _ = fmt.Fprintln(b.errOut, "Waiting for the browser (up to 10 minutes). If it is on another machine and ends on a page that does not load, paste that page's address here and press Enter:")
+	b.finished = make(chan struct{})
+	go readPasted(b.in, b.pasted, b.done, b.finished)
+}
+
+func (b *browserConsent) finish() {
+	close(b.done)
+	if b.finished != nil {
+		select {
+		case <-b.finished:
+		default:
+			_, _ = fmt.Fprintln(b.errOut, "Press Enter to continue.")
+			<-b.finished
+		}
+	}
 }
 
 // readPasted sends each non-empty line until done; it returns once a line
