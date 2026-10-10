@@ -13,7 +13,8 @@ import (
 // The schema says what a document may hold, the families each role takes
 // included. Two rules it cannot say are Validate's alone: the accent's
 // contrast on white (MinContrast), and that a text is one line of plain text
-// (not only spaces, no control or bidirectional formatting characters).
+// (not only spaces, no control or bidirectional formatting characters). Nor
+// can it say what a logo's base64 must hold: a PNG within the pixel bounds.
 func Schema() []byte {
 	str := func(enum []string) map[string]any { return map[string]any{"type": "string", "enum": enum} }
 	object := func(required []string, props map[string]any) map[string]any {
@@ -48,6 +49,10 @@ func Schema() []byte {
 			"footer": object([]string{"pageNumbers", "text"}, map[string]any{
 				"pageNumbers": str(PageNumberStyles),
 				"text":        map[string]any{"type": "string", "maxLength": MaxFooterTextRunes},
+			}),
+			// Optional: a design without a logo has no logo key.
+			"logo": object([]string{"png"}, map[string]any{
+				"png": map[string]any{"type": "string", "minLength": 1, "maxLength": maxLogoField},
 			}),
 		})
 	doc["$schema"] = "https://json-schema.org/draft/2020-12/schema"

@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,12 @@ import (
 
 // accountThemeTimeout bounds the read of the account's report design.
 const accountThemeTimeout = 10 * time.Second
+
+// maxDesignBytes is the most a design document is read as: the 16 KB of
+// the design and, beside it, the base64 of the largest logo with room for
+// its key (agentry-cli#816). pkg/reportdesign's Parse holds the document to
+// its own exact bounds.
+var maxDesignBytes = reportdesign.MaxDocumentBytes + base64.StdEncoding.EncodedLen(reportdesign.MaxLogoBytes) + 1024
 
 // accountTheme reads the signed-in account's report design: its document,
 // or nil when the account never chose one.
@@ -129,7 +136,7 @@ func readDesignFile(file string) ([]byte, error) {
 // readDesign reads at most one document past the cap and parses it, so a
 // file of any size is refused by Parse's own limit.
 func readDesign(r io.Reader) (reportdesign.Design, []byte, error) {
-	doc, err := io.ReadAll(io.LimitReader(r, reportdesign.MaxDocumentBytes+1))
+	doc, err := io.ReadAll(io.LimitReader(r, int64(maxDesignBytes)+1))
 	if err != nil {
 		return reportdesign.Design{}, nil, err
 	}
@@ -155,13 +162,17 @@ func readAccountTheme(regURL string) accountTheme {
 }
 
 // getReportDesign is the account's report design document as the registry
-// answers it, or nil when the account never chose one.
+// answers it, with the person's logo when there is one, or nil when the
+// account never chose one.
 func getReportDesign(ctx context.Context, regURL, token string) ([]byte, error) {
 	// A plain request, not the generated client: the route is the core's
 	// since agentry#989, and a local run is not refused over a design, so
 	// for a run the minimum-version gate stays the run's own resolve's
-	// (report-design export gates before it asks).
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(regURL, "/")+"/api/v1/user/report-settings", nil)
+	// (report-design export gates before it asks). include=logo asks for
+	// the logo (agentry#1025), which the core answers only when asked so
+	// that a client built before logos still reads the design; a core
+	// before it ignores the parameter.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(regURL, "/")+"/api/v1/user/report-settings?include=logo", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +183,8 @@ func getReportDesign(ctx context.Context, regURL, token string) ([]byte, error) 
 		return nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	// The design and the answer's own wrapping, never much more.
+	body, err := io.ReadAll(io.LimitReader(res.Body, int64(maxDesignBytes)+(4<<10)))
 	if err != nil {
 		return nil, err
 	}

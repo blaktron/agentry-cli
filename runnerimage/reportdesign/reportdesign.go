@@ -10,7 +10,8 @@
 // fonts, title blocks, heading treatments, quote styles, paper and page
 // numbers are names from closed lists, and the two free texts (the design's
 // name and the footer line) are one line of plain text that the template sets
-// as content, never evaluates. There is no path, URL or file name in it.
+// as content, never evaluates. There is no path, URL or file name in it. A
+// logo, when the person has one, is the pixels themselves (logo.go).
 //
 // The look stays restrained (D2): one accent and its tint, which Tint derives;
 // body text is near-black whatever the design. Where the accent touches text
@@ -47,9 +48,9 @@ const DocumentVersion = 2
 
 // Bounds on a design.
 const (
-	// MaxDocumentBytes caps a design document as it is sent (D11). A
-	// canonical design is well under it; the cap bounds what a client may
-	// make the server parse.
+	// MaxDocumentBytes caps a design document as it is sent, not counting
+	// its logo's field (D11). A canonical design is well under it; the cap
+	// bounds what a client may make the server parse.
 	MaxDocumentBytes = 16 << 10
 	// MaxNameRunes caps the design's name, a label the person sees.
 	MaxNameRunes = 60
@@ -86,6 +87,9 @@ type Design struct {
 	// Quotes is a QuoteStyles value.
 	Quotes string `json:"quotes"`
 	Footer Footer `json:"footer"`
+	// Logo is the person's logo, drawn only in the title block; the zero
+	// Logo is none, and is not written (agentry#1025).
+	Logo Logo `json:"logo,omitzero"`
 }
 
 // Fonts names the three faces, each a family of Families.
@@ -205,7 +209,13 @@ func fontFits(role string, f Family) bool {
 type FieldError struct {
 	Field   string
 	Message string
+	// kind is ErrLogoTooLarge or ErrLogoFormat for a logo's refusal.
+	kind error
 }
+
+// Unwrap is the refusal's kind, where it has one (ErrLogoTooLarge,
+// ErrLogoFormat), for errors.Is.
+func (e *FieldError) Unwrap() error { return e.kind }
 
 func (e *FieldError) Error() string {
 	if e.Field == "" {
@@ -233,6 +243,11 @@ type wire struct {
 	Tables       *wireTables `json:"tables"`
 	Quotes       *string     `json:"quotes"`
 	Footer       *wireFooter `json:"footer"`
+	Logo         *wireLogo   `json:"logo"`
+}
+
+type wireLogo struct {
+	PNG *string `json:"png"`
 }
 
 type wireFonts struct {
@@ -253,12 +268,16 @@ type wireFooter struct {
 
 var unknownField = regexp.MustCompile(`unknown field "([^"]*)"`)
 
-// Parse reads a design document and validates it: every field present, no
-// other key, no second value after it, at most MaxDocumentBytes, and every
-// rule of Validate. A refusal is a *FieldError.
+// Parse reads a design document and validates it: every field present but
+// the optional logo, no other key, no second value after it, at most
+// MaxDocumentBytes besides the logo's field, and every rule of Validate. A
+// refusal is a *FieldError.
 func Parse(data []byte) (Design, error) {
-	if len(data) > MaxDocumentBytes {
-		return Design{}, fieldErr("", "the document is %d bytes, over the %d-byte limit", len(data), MaxDocumentBytes)
+	overLimit := func(n int) error {
+		return fieldErr("", "the document is %d bytes without its logo, over the %d-byte limit", n, MaxDocumentBytes)
+	}
+	if len(data) > MaxDocumentBytes+maxLogoField+len(`"logo":{"png":""}`) {
+		return Design{}, overLimit(len(data))
 	}
 	if !utf8.Valid(data) {
 		return Design{}, fieldErr("", "the document is not UTF-8")
@@ -272,12 +291,19 @@ func Parse(data []byte) (Design, error) {
 		}
 		var typeErr *json.UnmarshalTypeError
 		if errors.As(err, &typeErr) && typeErr.Field != "" {
-			return Design{}, fieldErr(typeErr.Field, "must be a %s", jsonType(typeErr.Type.Kind().String()))
+			return Design{}, fieldErr(typeErr.Field, "must be %s", jsonType(typeErr.Type.Kind().String()))
 		}
 		return Design{}, fieldErr("", "not a JSON object: %v", err)
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return Design{}, fieldErr("", "more than one JSON value")
+	}
+	if n := len(data); w.Logo == nil || w.Logo.PNG == nil {
+		if n > MaxDocumentBytes {
+			return Design{}, overLimit(n)
+		}
+	} else if n -= len(*w.Logo.PNG); n > MaxDocumentBytes {
+		return Design{}, overLimit(n)
 	}
 	d, err := w.design()
 	if err != nil {
@@ -301,13 +327,13 @@ func decodeOnly(data []byte) (Design, error) {
 func jsonType(kind string) string {
 	switch kind {
 	case "int", "int64":
-		return "number"
+		return "a number"
 	case "bool":
-		return "boolean"
+		return "a boolean"
 	case "struct", "ptr":
-		return "object"
+		return "an object"
 	}
-	return kind
+	return "a " + kind
 }
 
 func (w wire) design() (Design, error) {
@@ -351,6 +377,15 @@ func (w wire) design() (Design, error) {
 		return Design{}, missing("footer.pageNumbers")
 	case w.Footer.Text == nil:
 		return Design{}, missing("footer.text")
+	case w.Logo != nil && w.Logo.PNG == nil:
+		return Design{}, missing("logo.png")
+	}
+	var logo Logo
+	if w.Logo != nil {
+		logo.PNG = *w.Logo.PNG
+		if logo.PNG == "" {
+			return Design{}, fieldErr("logo.png", "must not be empty; a design without a logo has no logo key")
+		}
 	}
 	return Design{
 		AgentryTheme: *w.AgentryTheme,
@@ -365,12 +400,14 @@ func (w wire) design() (Design, error) {
 		Tables:       Tables{Tinted: *w.Tables.Tinted, Banded: *w.Tables.Banded},
 		Quotes:       *w.Quotes,
 		Footer:       Footer{PageNumbers: *w.Footer.PageNumbers, Text: *w.Footer.Text},
+		Logo:         logo,
 	}, nil
 }
 
 // Validate holds a design to every rule: the version, the closed lists, the
-// fonts' roles, the colour's form and contrast, and the two texts. A refusal
-// is a *FieldError naming the first field found wrong, in document order.
+// fonts' roles, the colour's form and contrast, the two texts, and the logo
+// when it has one. A refusal is a *FieldError naming the first field found
+// wrong, in document order.
 func (d Design) Validate() error {
 	if d.AgentryTheme != DocumentVersion {
 		return fieldErr("agentryTheme", "must be %d; an earlier theme document is not read", DocumentVersion)
@@ -422,7 +459,13 @@ func (d Design) Validate() error {
 	if err := oneOf("footer.pageNumbers", d.Footer.PageNumbers, PageNumberStyles); err != nil {
 		return err
 	}
-	return checkText("footer.text", d.Footer.Text, MaxFooterTextRunes, true)
+	if err := checkText("footer.text", d.Footer.Text, MaxFooterTextRunes, true); err != nil {
+		return err
+	}
+	if d.Logo != (Logo{}) {
+		return checkLogo(d.Logo)
+	}
+	return nil
 }
 
 func roleText(role string) string {
@@ -485,7 +528,8 @@ func (d Design) MinContrast() float64 {
 
 // Canonical is the design's canonical document: its JSON in field order,
 // indented by two spaces, with a final newline. A built-in's embedded
-// document is exactly its Canonical (invariant 8), and the receipt hashes it.
+// document is exactly its Canonical (invariant 8), and the receipt hashes it,
+// the logo's bytes included. A design with no logo has no "logo" key.
 // Characters such as "&" and "<" are written as they are, not escaped.
 func (d Design) Canonical() []byte {
 	var b bytes.Buffer
