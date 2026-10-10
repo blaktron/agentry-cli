@@ -504,9 +504,11 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 	}
 	eg := m.Capabilities.Network.Egress
 	switch {
-	case eg.IsZero() || eg.None:
+	case eg.IsZero() || eg.None || len(eg.Hosts) == 0:
 		// undeclared = none: the registry's own reading (§5.4 empty
-		// capabilities = pure text agent).
+		// capabilities = pure text agent). An empty list declares no host
+		// either (agentry-cli#801): read as hosts, it gave a fetch tool and
+		// a tools container on no network the gateway could start it on.
 	case len(eg.Hosts) == 1 && eg.Hosts[0] == "*":
 		if !pol.AllowWildcardEgress {
 			return caps, &PolicyRefusal{Reason: `manifest declares network.egress: "*" and this machine's policy has allowWildcardEgress: false`}

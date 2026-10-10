@@ -239,6 +239,17 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 			catalogNot: []string{"allowHosts", ":/workspace"},
 		},
 		{
+			// agentry-cli#801: an empty list declares no host, as the
+			// registry reads it (§5.4), so it is "none" here too; it was
+			// host mode with no hosts, a fetch tool and no disableNetwork,
+			// and every hosted run failed at the tools server.
+			name:       "egress empty list",
+			caps:       "capabilities:\n  network:\n    egress: []\n",
+			wantTools:  []string{"list_inputs", "read_input", "search_inputs", "scratch_list", "scratch_read", "scratch_write", "write_report", "export_pdf"},
+			catalogHas: []string{"disableNetwork: true"},
+			catalogNot: []string{"allowHosts"},
+		},
+		{
 			name: "read only workspace",
 			caps: "capabilities:\n  filesystem:\n    read: workspace\n",
 			wantTools: []string{
@@ -320,6 +331,29 @@ func TestGatewayAlwaysBlocksNetwork(t *testing.T) {
 		if !found {
 			t.Fatalf("gateway args lack --block-network: %v", plan.Gateway.Args)
 		}
+	}
+}
+
+// TestEmptyEgressListIsNone (agentry-cli#801): egress: [], egress: none
+// and no egress at all compile to the same plan line and receipt line.
+func TestEmptyEgressListIsNone(t *testing.T) {
+	for name, caps := range map[string]string{
+		"undeclared": "",
+		"none":       "capabilities:\n  network:\n    egress: none\n",
+		"empty list": "capabilities:\n  network:\n    egress: []\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			yaml := "schemaVersion: \"2\"\nname: quiet\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"q\"\n" +
+				caps + "publish:\n  include: [agent.yaml, AGENT.md]\n"
+			m := parseManifest(t, yaml)
+			plan, _ := compileFixture(t, m, workspaceFor(t, m, nil))
+			if plan.Capabilities.EgressMode != "none" || len(plan.Capabilities.EgressHosts) != 0 {
+				t.Fatalf("egress = %q %v, want none", plan.Capabilities.EgressMode, plan.Capabilities.EgressHosts)
+			}
+			if got := plan.Enforcement["network"]; !strings.HasPrefix(got, "no egress:") {
+				t.Fatalf("receipt network line = %q, want no egress", got)
+			}
+		})
 	}
 }
 
