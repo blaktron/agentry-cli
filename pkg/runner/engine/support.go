@@ -72,6 +72,9 @@ type runDirs struct {
 	pdfTheme  *toolsrv.ThemeStamp
 	// pdfThemeFrom is what chose pdfTheme, for the receipt.
 	pdfThemeFrom ThemeSource
+	// fetchLedger is receipts/fetches.ndjson for a run whose fetch can
+	// save into the scratch folder (fetchsave.go), made as webLedger is.
+	fetchLedger string
 	// web says the run has the web tools, and runID names it, for the
 	// receipt's daemon line.
 	web   bool
@@ -330,6 +333,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		}
 		_ = f.Close()
 	}
+	if savesFetches(p.Plan.Tools) {
+		rd.fetchLedger = filepath.Join(rd.receiptsDir, FetchLedgerFile)
+		_ = os.Remove(rd.fetchLedger)
+		f, err := os.OpenFile(rd.fetchLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the fetch ledger: %w", err))
+		}
+		_ = f.Close()
+	}
 	if err := stageInputs(p.InputPaths, rd.inputs); err != nil {
 		return nil, err
 	}
@@ -446,6 +458,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	}
 	if err := grantPDF(dir, p.Plan, p.ReportTheme, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure export_pdf: %w", err))
+	}
+	if err := grantFetchLedger(dir, rd); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the fetch ledger: %w", err))
 	}
 	if err := writeResolvConf(dir, p.Plan); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
@@ -957,8 +972,8 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 
 // relabelTargetsFor adds the ledgers a run has, the only files of the
 // receipts the tools server appends to: the web tools' (web.go), the
-// review's (review.go), the calls ledger (blocked.go) and the PDF ledger
-// (pdf.go).
+// review's (review.go), the calls ledger (blocked.go), the PDF ledger
+// (pdf.go) and the fetch ledger (fetchsave.go).
 func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	t := relabelTargets(rd)
 	if rd.callsLedger != "" {
@@ -966,6 +981,9 @@ func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	}
 	if rd.pdfLedger != "" {
 		t = append(t, relabelTarget{rd.pdfLedger, false})
+	}
+	if rd.fetchLedger != "" {
+		t = append(t, relabelTarget{rd.fetchLedger, false})
 	}
 	if rd.webLedger != "" {
 		t = append(t, relabelTarget{rd.webLedger, false})

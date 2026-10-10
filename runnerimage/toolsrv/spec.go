@@ -84,8 +84,8 @@ type Spec struct {
 	// ScratchDir is the container path of the run's scratch folder
 	// (conventionally /scratch; plan scratch-and-pdf-reports.md §4,
 	// agentry-cli#729): an empty tmpfs the docker filter mounts, private
-	// to the run and gone with the container. scratch_read, scratch_list
-	// and scratch_write are granted whenever it is set; the compiler sets
+	// to the run and gone with the container. scratch_read, scratch_list,
+	// scratch_write and scratch_search are granted whenever it is set; the compiler sets
 	// it for every package but a built-in. It is a grant of the runner,
 	// not a line of the contract, and never aliases the workspace, which
 	// FSRead and FSWrite govern.
@@ -185,6 +185,13 @@ type Fetch struct {
 	// values into this container only; the tool never returns them to the
 	// model (RUNNER-PLAN §R3).
 	SecretEnv []string `json:"secretEnv,omitempty"`
+	// Ledger is the container path each body fetch saves in the scratch
+	// folder is recorded in, one JSON line a file (SaveEntry), under
+	// OutDir: a body saved because the agent asked (saveTo) or because it
+	// was larger than one result (plan input-sources.md §6,
+	// agentry-cli#832). The engine stamps it into the run's own copy of
+	// this file, never into the compiled plan, and the receipt counts it.
+	Ledger string `json:"ledger,omitempty"`
 }
 
 // Exec configures run_command.
@@ -255,10 +262,12 @@ const (
 	ToolSearchInputs = "search_inputs"
 	ToolWriteReport  = "write_report"
 	// The scratch folder's tools (plan scratch-and-pdf-reports.md §4),
-	// granted with ScratchDir.
-	ToolScratchList  = "scratch_list"
-	ToolScratchRead  = "scratch_read"
-	ToolScratchWrite = "scratch_write"
+	// granted with ScratchDir; scratch_search since plan input-sources.md
+	// §6 (agentry-cli#832).
+	ToolScratchList   = "scratch_list"
+	ToolScratchRead   = "scratch_read"
+	ToolScratchWrite  = "scratch_write"
+	ToolScratchSearch = "scratch_search"
 	// The knowledge tools (plan knowledge.md §4.5), granted only while a
 	// pack is attached.
 	ToolKnowledgeList   = "knowledge_list"
@@ -304,7 +313,7 @@ func (s *Spec) GrantedTools() []string {
 		}
 	}
 	if s.ScratchDir != "" {
-		names = append(names, ToolScratchList, ToolScratchRead, ToolScratchWrite)
+		names = append(names, ToolScratchList, ToolScratchRead, ToolScratchWrite, ToolScratchSearch)
 	}
 	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {
 		names = append(names, ToolKnowledgeList, ToolKnowledgeSearch, ToolKnowledgeRead)

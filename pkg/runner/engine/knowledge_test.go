@@ -81,7 +81,7 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantTools := "agentry-tools:\n  - fs_read\n  - fs_list\n  - fs_write\n  - fetch\n  - run_command\n  - list_inputs\n  - read_input\n  - search_inputs\n  - scratch_list\n  - scratch_read\n  - scratch_write\n  - knowledge_list\n  - knowledge_search\n  - knowledge_read\n  - write_report\n  - export_pdf\n"
+	wantTools := "agentry-tools:\n  - fs_read\n  - fs_list\n  - fs_write\n  - fetch\n  - run_command\n  - list_inputs\n  - read_input\n  - search_inputs\n  - scratch_list\n  - scratch_read\n  - scratch_write\n  - scratch_search\n  - knowledge_list\n  - knowledge_search\n  - knowledge_read\n  - write_report\n  - export_pdf\n"
 	if !strings.HasSuffix(string(tools), wantTools) {
 		t.Fatalf("rendered tools.yaml =\n%s\nwant it to end\n%s", tools, wantTools)
 	}

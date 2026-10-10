@@ -12,7 +12,7 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "SKILL.md",
-    "sha256": "697223043d71f5b28cfb346a7703b7b9dd591718082eebfd5711c0a0ea47b0c7",
+    "sha256": "cbd35f2f4edbe2b173c63ca3c030e1cd441c26ad9b84eb765d484e8b826bcff4",
     "bodySha256": "8086e9508d39ffb5d93fe51fea7e272784044e1acb1118e77bd9d721441a3723"
   },
   "capabilities": {
@@ -48,6 +48,7 @@
     "scratch_list",
     "scratch_read",
     "scratch_write",
+    "scratch_search",
     "write_report",
     "export_pdf"
   ],
@@ -59,7 +60,7 @@
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
     "pdf": "the runner's grant, not the contract's: export_pdf renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst 0.15.1 in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under /tmp whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, 1 GiB of address space and 60 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
-    "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read and scratch_write over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
+    "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read, scratch_write and scratch_search over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded; fetch saves a response body there, of any type, when the agent names a path (saveTo) or the body is larger than one tool result: only from the declared egress above, with every redirect hop checked, refused when the body holds a granted secret's value byte for byte, never executable, and each save recorded in receipts/fetches.ndjson",
     "secrets": "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: EXAMPLE_TOKEN; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too",
     "toolResults": "every result of the runner's own tools is held to 48 KiB and 1,900 lines, the docker-agent harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own; a fetch response body larger than one result is saved to /scratch/fetch/ (never executable, refused when it holds a granted secret's value) and answered with its first page"
   },
@@ -229,8 +230,8 @@
     "gateway/catalog.yaml": "a71acc02135997b891298d866eb3fa0fc23fb4d49a19790633f802cedd842c0b",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
-    "gateway/tools.yaml": "7b1b7308bb9c827c4348bcd11b8c9a682edb337a8be0f5b85cee876888cd1089",
+    "gateway/tools.yaml": "1b7291938cf6da64b6adcc5a957b2a4e608c68b103de1998ba8416a2aa4b2346",
     "gateway/toolspec.json": "c291347ee0c730110d91bfd9b5d16c4196501a9670b1701311d37b6fe3e62d8b",
-    "harness/agent.yaml": "a77b9745a3bc7635a96f4e5e259e0b926834e2adf2bb304086cac2fff8953eff"
+    "harness/agent.yaml": "5b606500767deb971a23b6ff0b3a9970e595f3fa3bcb93e87dd8ccc17f7e44bc"
   }
 }
