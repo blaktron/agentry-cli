@@ -105,7 +105,7 @@ func TestEnvelopeCarriesTheReason(t *testing.T) {
 
 func TestReasonCodesAreTheClosedList(t *testing.T) {
 	want := []ReasonCode{
-		ReasonAgentBlocked, ReasonExecNotProvided, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
+		ReasonAgentBlocked, ReasonAnswerInReasoning, ReasonExecNotProvided, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
 		ReasonMCPNotResolved, ReasonMCPRuntimeExcluded, ReasonMCPStartFailed, ReasonMCPVulnerable,
 		ReasonOrgPolicy, ReasonOutOfCredits, ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing,
 	}

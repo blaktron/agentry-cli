@@ -40,6 +40,9 @@ func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
 	if c.turns != 1 {
 		t.Fatalf("turns = %d, want 1", c.turns)
 	}
+	if c.reasoningLast {
+		t.Fatal("reasoningLast set, though the answer came after the reasoning")
+	}
 	if c.inTok != 10 || c.outTok != 5 {
 		t.Fatalf("usage = %d/%d", c.inTok, c.outTok)
 	}
@@ -48,5 +51,64 @@ func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
 	c.consume(strings.NewReader(`{"type":"assistant_message","message":{"content":"whole"}}` + "\n"))
 	if c.lastText != "whole" {
 		t.Fatalf("whole message: %q", c.lastText)
+	}
+}
+
+// agentry-cli#825: two shapes of production's runtime-smoke on 2026-10-10.
+// Run d31be0ca called its tools, then streamed the answer as reasoning and
+// sent no message; run fecd9e18 reasoned, called nothing, and docker-agent
+// warned that it "produced only reasoning and no reply". Both end on
+// reasoning, both count their tool calls as turns, and neither keeps any of
+// the reasoning as text.
+func TestCollectorNotesAnswerInReasoning(t *testing.T) {
+	ad, err := adapter.Get("docker-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		turns int
+	}{
+		{"after its tools", []string{
+			`{"type":"stream_started"}`,
+			`{"type":"agent_choice_reasoning","content":"List the inputs"}`,
+			`{"type":"partial_tool_call","tool_call":{"id":"c1","function":{"name":"list_inputs","arguments":"{"}}}`,
+			`{"type":"message_added"}`,
+			`{"type":"token_usage","usage":{"input_tokens":7000,"output_tokens":40,"cost":0}}`,
+			`{"type":"tool_call","tool_call":{"id":"c1","function":{"name":"list_inputs","arguments":"{}"}}}`,
+			`{"type":"hook_started"}`,
+			`{"type":"hook_finished"}`,
+			`{"type":"tool_call_response","tool_call_id":"c1","response":"expenses.csv"}`,
+			`{"type":"tool_call","tool_call":{"id":"c2","function":{"name":"write_report","arguments":"{}"}}}`,
+			`{"type":"tool_call_response","tool_call_id":"c2","response":"ok"}`,
+			`{"type":"message_added"}`,
+			`{"type":"toolset_info","available_tools":13,"loading":false}`,
+			`{"type":"agent_choice_reasoning","content":"{\"checks\":{"}`,
+			`{"type":"agent_choice_reasoning","content":"\"base\":\"EUR\"}}"}`,
+			`{"type":"token_usage","usage":{"input_tokens":10812,"output_tokens":382,"context_length":11194,"context_limit":0,"cost":0}}`,
+			`{"type":"stream_stopped","reason":"normal"}`,
+		}, 2},
+		{"with no tool call", []string{
+			`{"type":"stream_started"}`,
+			`{"type":"agent_choice_reasoning","content":"I will list the inputs"}`,
+			`{"type":"token_usage","usage":{"input_tokens":7157,"output_tokens":11,"cost":0}}`,
+			`{"type":"warning","message":"Model openai/qwen3.8-flash-next produced only reasoning and no reply (stop reason: stop). Thinking-mode models can emit reasoning tokens without a final answer; the reasoning is not used as the response."}`,
+			`{"type":"stream_stopped","reason":"normal"}`,
+		}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &eventCollector{adapter: ad, events: io.Discard}
+			c.consume(strings.NewReader(strings.Join(tc.lines, "\n") + "\n"))
+			if !c.reasoningLast {
+				t.Fatal("reasoningLast unset after a stream that ended on reasoning")
+			}
+			if c.lastText != "" {
+				t.Fatalf("lastText = %q, want the reasoning kept out", c.lastText)
+			}
+			if got := c.usage().Turns; got != tc.turns {
+				t.Fatalf("turns = %d, want %d", got, tc.turns)
+			}
+		})
 	}
 }

@@ -125,6 +125,11 @@ const (
 	// outcome and the provider's reason, never retried, never a success.
 	// Text is the provider's words.
 	EventOutOfCredits EventKind = "out_of_credits"
+	// EventReasoning marks a chunk of the model's reasoning stream. It
+	// carries no text: reasoning is never the result (agentry-cli#53). The
+	// engine notes only that the model's last output was reasoning, to name
+	// why a schema-checked run has no answer (agentry-cli#825).
+	EventReasoning EventKind = "reasoning"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )

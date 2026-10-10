@@ -466,6 +466,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	result, rerr := finalResult(p.Plan.Harness.ResultKind, outcome.lastText, schema)
 	if rerr != nil {
 		env.Result = receipt.TextResult(outcome.lastText)
+		if outcome.answerInReasoning {
+			rerr = answerInReasoning()
+		}
 		return fail(env, redact, rerr)
 	}
 	env.Result = result
@@ -505,8 +508,11 @@ func fail(env *receipt.Envelope, r *redactor, err error) (*receipt.Envelope, err
 // agentOutcome is what the agent-container phase produced.
 type agentOutcome struct {
 	lastText string
-	usage    receipt.Usage
-	err      error // classified, nil on success
+	// answerInReasoning: the model's last output was reasoning, with no
+	// answer text or tool call after it (agentry-cli#825).
+	answerInReasoning bool
+	usage             receipt.Usage
+	err               error // classified, nil on success
 	// hostInfo names the executable (and version) a host-run harness
 	// ran, for the envelope; hostEnv the host variables it could inherit.
 	hostInfo string
@@ -992,7 +998,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	_ = d.RemoveForce(ctx, name)
 
 	var refused *adapter.OrgPolicyRefusal
-	out := agentOutcome{lastText: collector.lastText, usage: collector.usage()}
+	out := agentOutcome{lastText: collector.lastText, answerInReasoning: collector.reasoningLast, usage: collector.usage()}
 	switch {
 	// First, because a panic that stopped the reader is the reason anything
 	// else downstream looks wrong — the harness blocked on a pipe nobody was
@@ -1101,6 +1107,18 @@ func finalResult(kind, lastText string, schema *jsonschema.Schema) (json.RawMess
 	return json.RawMessage(candidate), nil
 }
 
+// answerInReasoning is the refusal of a schema-checked run whose model
+// ended on reasoning and sent no answer after it (agentry-cli#825). The
+// runner stays strict, as for leaked markup (agentry-cli#354): reasoning
+// is the model's working, not its answer, and docker-agent itself does not
+// use it as the response. The reason names the cause so the run explains
+// itself instead of reading "not valid JSON" over an empty message.
+func answerInReasoning() error {
+	return Classify(ExitOutputSchema, receipt.WithReason(
+		fmt.Errorf("package declares %s but the model sent no final message after its reasoning: an answer written only in the model's reasoning is not taken as the result (raw output preserved in receipts)", compile.OutputSchemaFile),
+		receipt.ReasonAnswerInReasoning, ""))
+}
+
 // JSONResult is the §R2 output convention for a json-kind result, as the
 // run itself applies it: a host post-step that recovers an answer from a
 // message the run refused holds it to exactly this (the Examiner's,
@@ -1164,8 +1182,13 @@ type eventCollector struct {
 	// progress; lastText is the complete text of the most recent message
 	// (a streaming provider's last delta alone was the result before
 	// agentry-cli#53). A tool call or a usage event ends a message.
-	curText            strings.Builder
-	lastText           string
+	curText  strings.Builder
+	lastText string
+	// reasoningLast is true while the model's latest output is reasoning:
+	// set by a reasoning chunk, cleared by answer text or a tool call. A
+	// run that ends with it set put whatever it meant to answer in its
+	// reasoning, which is never taken as the result (agentry-cli#825).
+	reasoningLast      bool
 	budgetTripped      bool
 	costTripped        bool
 	harnessErrReported string
@@ -1256,12 +1279,18 @@ func (c *eventCollector) record(ev adapter.Event) {
 	switch ev.Kind {
 	case adapter.EventToolCall:
 		c.curText.Reset() // text before a tool call is its own message
+		c.reasoningLast = false
 		c.turns++
 		if c.maxTurns > 0 && c.turns > c.maxTurns && !c.budgetTripped {
 			c.budgetTripped = true
 			c.overBudget()
 		}
+	case adapter.EventReasoning:
+		c.reasoningLast = true
 	case adapter.EventAssistantText:
+		if strings.TrimSpace(ev.Text) != "" {
+			c.reasoningLast = false
+		}
 		switch {
 		case ev.Text == "":
 		case ev.Delta:
