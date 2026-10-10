@@ -51,6 +51,9 @@ func saveToFixture(t *testing.T, secret string) (*httptest.Server, *Spec, *atomi
 			w.Header().Set("ETag", `"v1"`)
 			w.Header().Set("Last-Modified", "Sat, 10 Oct 2026 12:00:00 GMT")
 			_, _ = w.Write(png)
+		case "/huge.bin":
+			// Past fetch's 512 KiB reply cap: saveTo is not held to it.
+			_, _ = w.Write(bytes.Repeat([]byte{0, 1, 2, 3}, 300<<10))
 		case "/notes.txt":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte("first line\nthe Needle is here\nlast line\n"))
@@ -124,6 +127,17 @@ func TestFetchSaveTo(t *testing.T) {
 		t.Fatalf("the save left %d files beside the one asked", len(entries))
 	}
 
+	// A body past the reply cap is saved whole.
+	if text, isErr := s.callTool(s.tools[ToolFetch], rawArgs(t, map[string]any{"url": srv.URL + "/huge.bin", "saveTo": "huge.bin"})); isErr || !strings.Contains(text, fmt.Sprintf(", %d bytes, sha256 ", 1200<<10)) {
+		t.Fatalf("a body past the reply cap: (%q, %v)", text, isErr)
+	}
+	if fi, err := os.Stat(filepath.Join(spec.ScratchDir, "huge.bin")); err != nil || fi.Size() != 1200<<10 || int64(1200<<10) <= spec.Limits.fetchCap() {
+		t.Fatalf("the saved body: %v %v", fi, err)
+	}
+	if err := os.Remove(filepath.Join(spec.ScratchDir, "huge.bin")); err != nil {
+		t.Fatal(err)
+	}
+
 	// A 4xx is saved too; its status says what it is.
 	if text, isErr := s.callTool(s.tools[ToolFetch], rawArgs(t, map[string]any{"url": srv.URL + "/missing", "saveTo": "missing.html"})); isErr || !strings.HasPrefix(text, "HTTP 404 Not Found\n") {
 		t.Fatalf("a 404: (%q, %v)", text, isErr)
@@ -148,8 +162,8 @@ func TestFetchSaveTo(t *testing.T) {
 	}
 
 	saves := readSaves(t, spec)
-	if len(saves) != 3 || saves[0] != (SaveEntry{Path: "assets/logo.png", Host: "127.0.0.1", Bytes: int64(len(png)), SHA256: hex.EncodeToString(sum[:]), Asked: true}) || saves[1].Path != "missing.html" ||
-		saves[2] != (SaveEntry{Path: "fetch/1-logo.png", Host: "127.0.0.1", Bytes: int64(len(png)), SHA256: hex.EncodeToString(sum[:])}) {
+	if len(saves) != 4 || saves[0] != (SaveEntry{Path: "assets/logo.png", Host: "127.0.0.1", Bytes: int64(len(png)), SHA256: hex.EncodeToString(sum[:]), Asked: true}) || saves[1].Path != "huge.bin" || saves[2].Path != "missing.html" ||
+		saves[3] != (SaveEntry{Path: "fetch/1-logo.png", Host: "127.0.0.1", Bytes: int64(len(png)), SHA256: hex.EncodeToString(sum[:])}) {
 		t.Fatalf("ledger %+v", saves)
 	}
 }
@@ -368,5 +382,44 @@ func TestScratchSearch(t *testing.T) {
 	}
 	if !strings.Contains(spec.Fetch.Ledger, "receipts") {
 		t.Fatal("fixture")
+	}
+}
+
+// TestTheSecretWatchFindsASplitValue: a value the copy's parts split is
+// found, whatever the cut, and the write that completes it fails.
+func TestTheSecretWatchFindsASplitValue(t *testing.T) {
+	const secret = "split-secret-value-abcdef"
+	t.Setenv("SAVE_TEST_SECRET", secret)
+	spec := fetchSpecFor(t, httptest.NewServer(http.NotFoundHandler()), "SAVE_TEST_SECRET")
+	s := newTestServer(t, spec)
+	body := append(append(bytes.Repeat([]byte("x"), 1000), secret...), bytes.Repeat([]byte("y"), 1000)...)
+	for cut := 990; cut <= 1000+len(secret)+10; cut++ {
+		w := s.newSecretWatch()
+		_, err1 := w.Write(body[:cut])
+		if err1 != nil && cut < 1000+len(secret) {
+			t.Fatalf("cut %d: the first part, which holds no whole value, failed: %v", cut, err1)
+		}
+		_, err2 := w.Write(body[cut:])
+		if err1 == nil && err2 == nil {
+			t.Fatalf("cut %d: the value was not found", cut)
+		}
+	}
+	w := s.newSecretWatch()
+	if _, err := w.Write(bytes.Repeat([]byte("z"), 5000)); err != nil {
+		t.Fatalf("a clean body: %v", err)
+	}
+}
+
+// TestASaveTheLedgerCannotTakeIsNotKept: a body saved where the ledger
+// cannot be written is removed, so the receipt never undercounts.
+func TestASaveTheLedgerCannotTakeIsNotKept(t *testing.T) {
+	srv, spec, _ := saveToFixture(t, "unused-secret-value-0000")
+	mustWrite(t, spec.Fetch.Ledger+"/blocker", []byte("x")) // the ledger's path is a directory
+	s := newTestServer(t, spec)
+	if text, isErr := s.callTool(s.tools[ToolFetch], rawArgs(t, map[string]any{"url": srv.URL + "/notes.txt", "saveTo": "n.txt"})); !isErr {
+		t.Fatalf("a save the ledger refused answered %q", text)
+	}
+	if _, err := os.Stat(filepath.Join(spec.ScratchDir, "n.txt")); !os.IsNotExist(err) {
+		t.Fatalf("the unrecorded save was kept: %v", err)
 	}
 }

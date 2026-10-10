@@ -75,16 +75,16 @@ func (s *server) fetchedOverBudget(u *url.URL, head string, data []byte, truncat
 		return head + text + fmt.Sprintf("\n[shown: bytes 0–%d; the body: %s; this run has no scratch folder, so nothing past what is shown is kept]", len(page), size), false
 	}
 	if env := s.holdsRunSecret(string(data)); env != "" {
-		return "fetch: the response body holds the value of this run's secret " + env + ", so it was not saved; fetch what you need without it", true
+		return notSavedForSecret(env), true
 	}
 	rel, err := s.saveFetched(u, data)
 	if err == nil {
 		sum := sha256.Sum256(data)
-		err = s.appendSave(SaveEntry{Path: rel, Host: u.Hostname(), Bytes: int64(len(data)), SHA256: hex.EncodeToString(sum[:])})
+		err = s.recordSave(SaveEntry{Path: rel, Host: u.Hostname(), Bytes: int64(len(data)), SHA256: hex.EncodeToString(sum[:])})
 	}
 	if err != nil {
 		if errors.Is(err, syscall.ENOSPC) {
-			return ToolFetch + ": the response body did not fit in the scratch folder (" + err.Error() + "); remove what you no longer need from it, or fetch less", true
+			return didNotFit(err), true
 		}
 		return s.failed(ToolFetch, err)
 	}
@@ -175,6 +175,8 @@ type SaveEntry struct {
 	Asked  bool   `json:"asked,omitempty"`
 }
 
+// validateFetchLedger holds the fetch ledger to its grant and to the
+// output folder, as validatePDF holds the PDF ledger.
 func validateFetchLedger(spec *Spec) error {
 	l := spec.Fetch.Ledger
 	if l == "" {
@@ -211,6 +213,20 @@ func (s *server) appendSave(e SaveEntry) error {
 	return errors.Join(werr, f.Close())
 }
 
+// recordSave records a saved body in the fetch ledger, or removes it: a
+// file the ledger does not name is not kept, so the receipt never counts
+// fewer saves than the folder held.
+func (s *server) recordSave(e SaveEntry) error {
+	err := s.appendSave(e)
+	if err != nil {
+		if root, rerr := s.scratchRoot(); rerr == nil {
+			_ = root.Remove(e.Path)
+			_ = root.Close()
+		}
+	}
+	return err
+}
+
 // saveToPath checks a saveTo the model gave fetch before any request is
 // made: the run has a scratch folder, and the path is a file beneath it.
 func (s *server) saveToPath(saveTo string) (string, error) {
@@ -233,15 +249,15 @@ func (s *server) fetchedTo(u *url.URL, resp *http.Response, rel string) (string,
 	var held errHoldsSecret
 	switch {
 	case errors.As(err, &held):
-		return "fetch: the response body holds the value of this run's secret " + string(held) + ", so it was not saved; fetch what you need without it", true
+		return notSavedForSecret(string(held)), true
 	case errors.Is(err, syscall.ENOSPC):
-		return ToolFetch + ": the response body did not fit in the scratch folder (" + err.Error() + "); remove what you no longer need from it, or fetch less", true
+		return didNotFit(err), true
 	case errors.Is(err, errSaveRead):
 		return s.scrubSecrets("fetch: read response: " + err.Error()), true
 	case err != nil:
 		return s.failed(ToolFetch, err)
 	}
-	if err := s.appendSave(SaveEntry{Path: rel, Host: u.Hostname(), Bytes: n, SHA256: sum, Asked: true}); err != nil {
+	if err := s.recordSave(SaveEntry{Path: rel, Host: u.Hostname(), Bytes: n, SHA256: sum, Asked: true}); err != nil {
 		return s.failed(ToolFetch, err)
 	}
 	var b strings.Builder
@@ -261,6 +277,17 @@ func (s *server) fetchedTo(u *url.URL, resp *http.Response, rel string) (string,
 	return s.scrubSecrets(b.String()), false
 }
 
+// notSavedForSecret and didNotFit are the answers of a save refused for a
+// run secret's value and of one the scratch folder had no room for: the
+// agent's own doing, so never a fault of the run's machinery.
+func notSavedForSecret(env string) string {
+	return ToolFetch + ": the response body holds the value of this run's secret " + env + ", so it was not saved; fetch what you need without it"
+}
+
+func didNotFit(err error) string {
+	return ToolFetch + ": the response body did not fit in the scratch folder (" + err.Error() + "); remove what you no longer need from it, or fetch less"
+}
+
 // errHoldsSecret names the secret a body held, which saveStream refused.
 type errHoldsSecret string
 
@@ -274,8 +301,7 @@ var errSaveRead = errors.New("reading the body failed")
 // executable, then renamed over rel, so a file a declared command left at
 // rel (a link planted after saveToPath's check included) is replaced, never
 // written through, and a save that fails or holds a run secret leaves
-// nothing behind. It returns the bytes
-// written and their SHA-256.
+// nothing behind. It returns the bytes written and their SHA-256.
 func (s *server) saveStream(rel string, body io.Reader) (int64, string, error) {
 	root, err := s.scratchRoot()
 	if err != nil {
@@ -340,6 +366,8 @@ type secretWatch struct {
 	tail []byte
 }
 
+// newSecretWatch watches for the values of the server's own secrets, those
+// holdsRunSecret looks for.
 func (s *server) newSecretWatch() *secretWatch {
 	w := &secretWatch{vals: map[string]string{}}
 	for _, env := range s.grantedSecretEnv() {

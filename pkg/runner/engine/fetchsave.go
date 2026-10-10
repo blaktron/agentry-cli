@@ -94,8 +94,9 @@ func fetchSavesRecord(rd *runDirs) *receipt.FetchSaves {
 	if rd.fetchLedger == "" {
 		return nil
 	}
-	entries, err := ReadFetchLedger(rd.fetchLedger)
-	if err != nil || len(entries) == 0 {
+	// A ledger that stops reading part-way still counts what it holds.
+	entries, _ := ReadFetchLedger(rd.fetchLedger)
+	if len(entries) == 0 {
 		return nil
 	}
 	rec := &receipt.FetchSaves{Ledger: "receipts/" + FetchLedgerFile}

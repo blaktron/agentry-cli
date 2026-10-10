@@ -23,6 +23,7 @@ package toolsrv
 // itself (mode 1777).
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -183,6 +184,9 @@ func (s *server) toolScratchSearch(raw json.RawMessage) (string, bool) {
 		data, err := readRootPrefix(root, p, maxSearchFileBytes)
 		if err != nil {
 			return nil // a file a command removed mid-walk is not a failure
+		}
+		if bytes.IndexByte(data[:min(len(data), 64<<10)], 0) >= 0 {
+			return nil // binary, as scratch_read judges it: never searched
 		}
 		m.add(p, data, needle, limit)
 		return nil

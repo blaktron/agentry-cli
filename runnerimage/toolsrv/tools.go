@@ -1213,6 +1213,8 @@ type fileHead struct {
 	mime string
 }
 
+// binaryHead reads what isBinary judges by, and the type net/http detects
+// from the same bytes, for the page that names it.
 func binaryHead(f io.ReaderAt) (fileHead, error) {
 	const n = 64 << 10
 	buf := make([]byte, n+1)
@@ -1234,8 +1236,7 @@ func binaryHead(f io.ReaderAt) (fileHead, error) {
 // its size, its detected type and the page's bytes as base64, sized so the
 // encoding stays within the server cap and the result budget (or the
 // caller's tighter maxBytes, counted in raw bytes). Base64 is one line, so
-// the budget's bytes are what bound it. contFmt names the call that reads
-// on, as pageNote's does ("pass offset %d" when empty).
+// the budget's bytes are what bound it.
 func readBase64Page(abs string, offset, maxBytes, serverCap int64, b budget, mime string) (string, error) {
 	f, err := os.Open(abs) //nolint:gosec // resolved under a tool root by the caller
 	if err != nil {
@@ -1245,6 +1246,9 @@ func readBase64Page(abs string, offset, maxBytes, serverCap int64, b budget, mim
 	return base64Page(f, offset, maxBytes, serverCap, b, mime, "")
 }
 
+// base64Page is readBase64Page of a file already open (scratch_read opens
+// its files through the folder's os.Root). contFmt names the call that
+// reads on, as pageNote's does ("pass offset %d" when empty).
 func base64Page(f *os.File, offset, maxBytes, serverCap int64, b budget, mime, contFmt string) (string, error) {
 	fi, err := f.Stat()
 	if err != nil {

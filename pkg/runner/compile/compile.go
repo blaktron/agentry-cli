@@ -1523,7 +1523,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a %d MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
 			toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
 		if caps.EgressMode == "hosts" || caps.EgressMode == "all" {
-			e["scratch"] += fmt.Sprintf("; %s saves a response body there, of any type, when the agent names a path (saveTo) or the body is larger than one tool result: only from the declared egress above, with every redirect hop checked, never a body holding the value of one of the run's secrets, never executable, and each save recorded in receipts/fetches.ndjson", toolsrv.ToolFetch)
+			e["scratch"] += fmt.Sprintf("; %s saves a response body there, of any type, when the agent names a path (saveTo) or the body is larger than one tool result: only from the declared egress above, with every redirect hop checked, refused when the body holds a granted secret's value byte for byte, never executable, and each save recorded in receipts/fetches.ndjson", toolsrv.ToolFetch)
 		}
 	}
 	if len(caps.ExecCommands) == 0 {
