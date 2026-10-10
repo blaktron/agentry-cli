@@ -155,7 +155,7 @@ func TestExportPDFTakesAFormAndNothingElse(t *testing.T) {
 	spec.PDF.Theme = stamp
 	s := pdfServer(t, spec, fakeTypst(t, fakePDF+`; cat "$ROOT/design.json" "$ROOT/meta.json"`))
 	mustWrite(t, filepath.Join(spec.OutDir, "reports", "r.md"), []byte("# R\n\nTo: Dana\nFrom: Sam\n\nBody.\n"))
-	for _, extra := range []map[string]any{{"theme": "modern"}, {"accent": "#ff0000"}, {"design": map[string]any{}}, {"font": "Lora"}} {
+	for _, extra := range []map[string]any{{"theme": "modern"}, {"accent": "#ff0000"}, {"design": map[string]any{}}, {"font": "Lora"}, {"logo": "/scratch/logo.png"}} {
 		args := map[string]any{"source": "r.md"}
 		for k, v := range extra {
 			args[k] = v

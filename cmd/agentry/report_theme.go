@@ -183,7 +183,8 @@ func getReportDesign(ctx context.Context, regURL, token string) ([]byte, error) 
 		return nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(res.Body, int64(maxDesignBytes)+4<<10))
+	// The design and the answer's own wrapping, never much more.
+	body, err := io.ReadAll(io.LimitReader(res.Body, int64(maxDesignBytes)+(4<<10)))
 	if err != nil {
 		return nil, err
 	}

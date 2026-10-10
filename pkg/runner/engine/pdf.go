@@ -141,7 +141,7 @@ func withReportTheme(enforced map[string]string, tools []string, theme ReportThe
 	}
 	logo := ""
 	if st.HasLogo() {
-		logo = ", with the person's logo in the title block"
+		logo = ", carrying the person's logo for the top of each PDF's first page (each PDF's entry says whether it was drawn)"
 	}
 	out["pdf.design"] = fmt.Sprintf("%q, based on %s, version %s (sha256:%s)%s, chosen by %s; the model chooses only each PDF's form (%s), never the design", st.Name, st.BasedOn, st.Version, st.SHA256, logo, theme.from(), strings.Join(toolsrv.Forms, ", "))
 	return out

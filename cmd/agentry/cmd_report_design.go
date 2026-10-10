@@ -144,7 +144,7 @@ func logoLabel(l reportdesign.Logo) string {
 	if err != nil {
 		return "unreadable"
 	}
-	return fmt.Sprintf("a PNG of %d×%d pixels, %d KB, drawn in the title block", cfg.Width, cfg.Height, (len(b)+1023)/1024)
+	return fmt.Sprintf("a PNG of %d×%d pixels, %d KB, drawn at the top of each PDF's first page", cfg.Width, cfg.Height, (len(b)+1023)/1024)
 }
 
 // designOfChoice is the design a choice names: its document, or the

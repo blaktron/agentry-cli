@@ -191,7 +191,7 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 			t.Errorf("the tools spec's theme with a logo = %+v", ts.PDF.Theme)
 		}
 		line := env.CapabilitiesEnforced["pdf.design"]
-		if !strings.Contains(line, "(sha256:"+sha(withLogo)+"), with the person's logo in the title block, chosen by the account's report design") {
+		if !strings.Contains(line, "(sha256:"+sha(withLogo)+"), carrying the person's logo for the top of each PDF's first page (each PDF's entry says whether it was drawn), chosen by the account's report design") {
 			t.Errorf("the receipt's pdf.design line with a logo = %q", line)
 		}
 	}

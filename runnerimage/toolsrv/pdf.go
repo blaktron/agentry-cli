@@ -375,6 +375,9 @@ type pdfLogo struct {
 // logoFile is the name of the logo in the render root.
 const logoFile = "logo.png"
 
+// normalizeLogo is reportdesign.NormalizeLogo; a test makes it fail.
+var normalizeLogo = reportdesign.NormalizeLogo
+
 // renderLogo is a design's logo as the render root gets it (plan
 // report-designs.md §4 "The logo", D9, invariant 12; agentry-cli#816): the
 // PNG reportdesign.NormalizeLogo writes from its decoded pixels, never the
@@ -390,7 +393,7 @@ func renderLogo(d reportdesign.Design) ([]byte, *pdfLogo, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	n, err := reportdesign.NormalizeLogo(raw)
+	n, err := normalizeLogo(raw)
 	if err != nil {
 		return nil, nil, err
 	}

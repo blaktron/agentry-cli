@@ -165,6 +165,37 @@ grep -o '"logo":null' "$ROOT/meta.json"`))
 	}
 }
 
+// A logo that will not re-encode is the person's design to fix: the PDF is
+// drawn without it, the ledger says it was not drawn, and the answer says
+// why, never blaming the agent.
+func TestExportPDFWithALogoThatWillNotReencode(t *testing.T) {
+	saved := normalizeLogo
+	normalizeLogo = func([]byte) (reportdesign.Logo, error) {
+		return reportdesign.Logo{}, &reportdesign.FieldError{Field: "logo", Message: "over 512 KB as a PNG"}
+	}
+	t.Cleanup(func() { normalizeLogo = saved })
+	spec := pdfSpec(t)
+	stamp, err := StampTheme(logoDesign(t, "classic", "", craftedLogo(t, 200, 200)).Canonical())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.PDF.Theme = stamp
+	s := pdfServer(t, spec, fakeTypst(t, fakePDF+`
+if [ -e "$ROOT/logo.png" ]; then echo has-logo-png; fi
+grep -o '"logo":null' "$ROOT/meta.json"`))
+	mustWrite(t, filepath.Join(spec.OutDir, "reports", "r.md"), []byte("# Title\n\nText.\n"))
+	got, isErr := exportPDF(t, s, map[string]any{"source": "r.md"})
+	if isErr || !strings.Contains(got, "the person's logo could not be drawn, which is their design's to fix, not yours") {
+		t.Fatalf("export = (%q, %v)", got, isErr)
+	}
+	if pdf := string(readReport(t, spec, "r.pdf")); strings.Contains(pdf, "has-logo-png") || !strings.Contains(pdf, `"logo":null`) {
+		t.Errorf("the render root after a failed re-encode:\n%s", pdf)
+	}
+	if b, _ := os.ReadFile(spec.PDF.Ledger); strings.Contains(string(b), `"logo"`) {
+		t.Errorf("a PDF drawn without the logo is recorded with it: %s", b)
+	}
+}
+
 // magentaIn counts the magenta pixels of img inside r.
 func magentaIn(img image.Image, r image.Rectangle) int {
 	n := 0
