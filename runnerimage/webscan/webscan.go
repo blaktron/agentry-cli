@@ -77,6 +77,11 @@ type Result struct {
 	// (judge.FailureTimeout, judge.FailureJudgeError, or "too-large",
 	// "unavailable", "refused"); never a vendor's text.
 	Failure string `json:"failure,omitempty"`
+	// Status is the registry route's HTTP status when it answered the call
+	// with an error (a 429 and a 403 are both "refused"), so a caller can
+	// tell a rate limit it may ask again after from a refusal it may not;
+	// 0 otherwise. Never shown to a model.
+	Status int `json:"-"`
 	// Model and QuestionSet name what answered and what was asked.
 	Model       string `json:"model,omitempty"`
 	QuestionSet string `json:"questionSet,omitempty"`
@@ -105,6 +110,24 @@ func (r Result) Reason() string {
 		return "it could not be scanned (" + r.Failure + ")"
 	}
 	return "it could not be scanned"
+}
+
+// Transient reports whether a text not scanned may pass when asked again:
+// the judge erred or timed out, the route was unavailable, or it held the
+// job to its rate (a 429, which reads as refused). A text too large, or a
+// call the route refused for anything else (the credential, a run's cap
+// of calls), would only be refused again; a verdict is an answer.
+func (r Result) Transient() bool {
+	if r.Verdict != NotScanned {
+		return false
+	}
+	switch r.Failure {
+	case judge.FailureTimeout, judge.FailureJudgeError, FailureUnavailable:
+		return true
+	case FailureRefused:
+		return r.Status == http.StatusTooManyRequests
+	}
+	return false
 }
 
 // Failure words of this package's own, beside the judge's.
@@ -242,7 +265,7 @@ func (r *Registry) Scan(ctx context.Context, source Source, text string) Result 
 	var got routeScan
 	status, err := r.post(ctx, "/model-input/scan", map[string]string{"source": string(source), "text": text}, &got)
 	if err != nil {
-		return Result{Verdict: NotScanned, Failure: routeFailure(ctx, status, err)}
+		return Result{Verdict: NotScanned, Failure: routeFailure(ctx, status, err), Status: status}
 	}
 	res := Result{Verdict: Verdict(got.Verdict), Score: got.Score, Flagged: sortedCopy(got.Flagged), Model: got.Model,
 		QuestionSet: got.QuestionSet, Requests: got.Usage.Requests, InputTokens: got.Usage.InputTokens}
