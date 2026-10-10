@@ -101,6 +101,9 @@ const (
 	// EndOrgPolicy: a policy of the person's organization at the model
 	// vendor refused the run (plan model-sign-ins.md D29; agentry-cli#741).
 	EndOrgPolicy EndReason = "org_policy"
+	// EndOutOfCredits: the model's provider refused the calls because the
+	// paying account has no credits left (agentry-cli#742).
+	EndOutOfCredits EndReason = "out_of_credits"
 	// EndHarness: the harness exited on its own.
 	EndHarness EndReason = "harness_exit"
 	// EndCancelled: the caller's context ended.

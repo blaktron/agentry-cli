@@ -145,6 +145,11 @@ func modelsEndpoint(provider, baseURL string) (string, *pager, error) {
 	if d == nil {
 		return "", nil, fmt.Errorf("no such provider (%s)", strings.Join(Providers(), ", "))
 	}
+	if d.ModelsURL == "" {
+		// The big catalogues (OpenRouter, Poe, Hugging Face): the person
+		// types the model id (plan model-sign-ins.md D33).
+		return "", nil, fmt.Errorf("%s's models are not listed here: type the model id", provider)
+	}
 	switch provider {
 	case "anthropic":
 		return d.ModelsURL, anthropicPager(d.KeyHeader), nil

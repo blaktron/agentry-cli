@@ -156,6 +156,11 @@ func (s *acpSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 	s.turn = nil
 	s.mu.Unlock()
 	if err != nil {
+		// A provider out of credits fails the prompt with its own words
+		// (docker-agent's ACP error), which end the session as that.
+		if OutOfCredits(err.Error()) {
+			s.emit(Event{Kind: EventOutOfCredits, Text: err.Error()})
+		}
 		return nil, err
 	}
 	var pr struct {

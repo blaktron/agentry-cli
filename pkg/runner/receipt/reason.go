@@ -81,6 +81,12 @@ const (
 	// D29, agentry-cli#741). Detail: which policy (OrgPolicy*). The vendor's
 	// words are in the error and the receipts.
 	ReasonOrgPolicy ReasonCode = "org-policy"
+	// ReasonOutOfCredits: the model's provider refused the model's calls
+	// because the account that pays has no credits left, an HTTP 402 or its
+	// words for one (agent; plan model-sign-ins.md §4.6, agentry-cli#742).
+	// The run is not retried; the provider's words are in the error and the
+	// receipts.
+	ReasonOutOfCredits ReasonCode = "out-of-credits"
 )
 
 // The details of ReasonOrgPolicy: the organization's policy that refused.
@@ -197,6 +203,7 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonSignInMissing:    {},
 	ReasonPlanLimit:        {},
 	ReasonOrgPolicy:        {details: []string{OrgPolicyClient, OrgPolicyManagedApproval}},
+	ReasonOutOfCredits:     {},
 }
 
 // ReasonCodes returns the closed list of codes, sorted.
