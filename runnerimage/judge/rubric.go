@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // The rubric over a package: what stage S5 asks about a release, moved
@@ -45,7 +46,15 @@ const RunnerGrants = "Every run is given, whatever its manifest declares: the fi
 // about the contract's shape, not its prose.
 const DeclaredCapabilitiesCap = 4 << 10
 
-// truncatedMark ends a declared-capabilities field cut at the bound.
+// PurposeCap bounds the purpose that rides in the state: the release's
+// name, summary and guide overview, which C3 weighs a capability against.
+const PurposeCap = 2 << 10
+
+// noPurpose is the state's purpose when the manifest states none.
+const noPurpose = "(the manifest states no purpose)"
+
+// truncatedMark ends a declared-capabilities or purpose field cut at the
+// bound.
 const truncatedMark = "…(truncated)"
 
 // The request shapes the rubric can be asked in: how many requests carry
@@ -111,8 +120,7 @@ func (s *RubricScanner) Model() string { return s.asker.Model() }
 // Hash is the rubric hash a scan run records: everything that changes a
 // verdict — the model, the questions and their wording, the request shape,
 // the chunk size, the capability bound, the runner's grants, the
-// thresholds, the band and the
-// sample count.
+// thresholds, the band, the sample count and the purpose's bound.
 func (s *RubricScanner) Hash() string {
 	return rubricHashOf(s.asker.Model(), s.batch, RubricQuestions(), RunnerGrants)
 }
@@ -129,6 +137,7 @@ func rubricHashOf(model string, batch int, qs []Question, grants string) string 
 		"axes=C1..C6", "questions="+strings.Join(parts, "\n"),
 		fmt.Sprintf("batch=%d", batch), fmt.Sprintf("chunk=%d", ChunkSize),
 		fmt.Sprintf("declared-cap=%d", DeclaredCapabilitiesCap), "runner-grants="+grants,
+		fmt.Sprintf("purpose-cap=%d", PurposeCap),
 		"thresholds=0.5/0.7/0.9", fmt.Sprintf("band=%.2f/%.2f", BandLow, BandHigh),
 		fmt.Sprintf("samples=%d", Samples))
 }
@@ -138,10 +147,12 @@ func rubricHashOf(model string, batch int, qs []Question, grants string) string 
 // and returns each question's strongest evidence, keyed by the rubric id,
 // with the token use of every request. The manifest's capabilities block
 // and the knowledge packs it ships ride in the state beside each chunk
-// (DeclaredCapabilities). Any failure is an error, and the caller fails
+// (DeclaredCapabilities), and so does its stated purpose (Purpose). Any
+// failure is an error, and the caller fails
 // closed on it: a rubric half-asked is not a verdict.
 func (s *RubricScanner) Scan(ctx context.Context, manifestJSON []byte, ships []string, files []RubricFile) (map[string]AxisResult, Usage, error) {
 	declared := DeclaredCapabilities(manifestJSON, ships)
+	purpose := Purpose(manifestJSON)
 	axes := map[string]AxisResult{}
 	var usage Usage
 	inputs := append([]RubricFile{{Path: "agent.yaml", Content: string(manifestJSON)}}, files...)
@@ -150,7 +161,7 @@ func (s *RubricScanner) Scan(ctx context.Context, manifestJSON []byte, ships []s
 			if strings.TrimSpace(chunk) == "" {
 				continue
 			}
-			samples, err := s.askChunk(ctx, f.Path, chunk, declared, &usage)
+			samples, err := s.askChunk(ctx, f.Path, chunk, declared, purpose, &usage)
 			if err != nil {
 				return nil, Usage{}, err
 			}
@@ -173,10 +184,10 @@ func (s *RubricScanner) Scan(ctx context.Context, manifestJSON []byte, ships []s
 // askChunk asks every question about one chunk in the scanner's shape,
 // then asks the borderline ones twice more in the same shape (each group's
 // borderline members together). It returns every sample per question.
-func (s *RubricScanner) askChunk(ctx context.Context, path, chunk, declared string, usage *Usage) (map[string][]float64, error) {
+func (s *RubricScanner) askChunk(ctx context.Context, path, chunk, declared, purpose string, usage *Usage) (map[string][]float64, error) {
 	groups := s.groups()
 	out := map[string][]float64{}
-	state := RubricState(path, chunk, declared)
+	state := RubricState(path, chunk, declared, purpose)
 	for _, g := range groups {
 		probs, u, err := s.asker.Ask(ctx, state, g)
 		usage.Add(u)
@@ -212,11 +223,56 @@ func (s *RubricScanner) askChunk(ctx context.Context, path, chunk, declared stri
 }
 
 // RubricState is the state one rubric request is asked over: the chunk,
-// where it is, what the manifest declares (DeclaredCapabilities) and what
-// the runner grants every run (RunnerGrants). A bench that asks one
-// question by hand builds its state here, so it asks what S5 asks.
-func RubricState(path, chunk, declared string) map[string]string {
-	return map[string]string{"path": path, "content": chunk, "declared_capabilities": declared, "runner_grants": RunnerGrants}
+// where it is, what the manifest declares (DeclaredCapabilities), what
+// the runner grants every run (RunnerGrants) and what the release says it
+// is for (Purpose). A bench that asks one question by hand builds its
+// state here, so it asks what S5 asks.
+func RubricState(path, chunk, declared, purpose string) map[string]string {
+	return map[string]string{"path": path, "content": chunk, "declared_capabilities": declared,
+		"runner_grants": RunnerGrants, "purpose": purpose}
+}
+
+// Purpose is what the release says it is for, as a person reads it before
+// a run: the manifest's name, its summary and its guide's overview, one
+// per line, bounded at PurposeCap (agentry#1044). C3 weighs a capability
+// against it: an undeclared one that serves the stated purpose is not
+// held, because the runner holds every run to what is declared. A
+// manifest that states nothing, or cannot be read, gives noPurpose, so
+// nothing reads as in line with it.
+func Purpose(manifestJSON []byte) string {
+	var m struct {
+		Name    string `json:"name"`
+		Summary string `json:"summary"`
+		Guide   *struct {
+			Overview string `json:"overview"`
+		} `json:"guide"`
+	}
+	if json.Unmarshal(manifestJSON, &m) != nil {
+		return noPurpose
+	}
+	var lines []string
+	for _, kv := range [][2]string{{"name", m.Name}, {"summary", m.Summary}} {
+		if v := strings.TrimSpace(kv[1]); v != "" {
+			lines = append(lines, kv[0]+": "+v)
+		}
+	}
+	if m.Guide != nil {
+		if v := strings.TrimSpace(m.Guide.Overview); v != "" {
+			lines = append(lines, "overview: "+v)
+		}
+	}
+	if len(lines) == 0 || (len(lines) == 1 && strings.HasPrefix(lines[0], "name: ")) {
+		return noPurpose
+	}
+	out := strings.Join(lines, "\n")
+	if len(out) > PurposeCap {
+		cut := PurposeCap
+		for cut > 0 && !utf8.RuneStart(out[cut]) {
+			cut--
+		}
+		out = out[:cut] + truncatedMark
+	}
+	return out
 }
 
 // groups is the request shape: which questions travel together.

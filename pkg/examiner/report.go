@@ -377,7 +377,7 @@ func aiReviewOf(entries []toolsrv.ReviewEntry) AIReview {
 var axisTitle = map[string]string{
 	judge.RubricIDInjection:            "prompt-injection or instruction override",
 	judge.RubricIDExfiltration:         "data exfiltration",
-	judge.RubricIDUndeclaredCapability: "capability described but not declared",
+	judge.RubricIDUndeclaredCapability: "dangerous capability not declared and outside the stated purpose",
 	judge.RubricIDDeception:            "end-user deception",
 	judge.RubricIDObfuscation:          "obfuscation indicators",
 	judge.RubricIDDestructive:          "destructive actions without confirmation",

@@ -40,8 +40,10 @@ func TestTheGateRestatementMatchesTheCoresTable(t *testing.T) {
 }
 
 // TestAIReviewFindingRatesAsS5Does: score 2 medium and 3 high, with an
-// attempted injection and an undeclared capability high from 2 (DEV-186),
-// and nothing under 2.
+// attempted injection, an undeclared capability and deceiving the user high
+// from 2 (DEV-186; deception since ruleset 0.4.0), exfiltration and
+// destructive actions medium at any score (ruleset 0.4.0, agentry#893), and
+// nothing under 2.
 func TestAIReviewFindingRatesAsS5Does(t *testing.T) {
 	for _, tc := range []struct {
 		id    string
@@ -50,10 +52,13 @@ func TestAIReviewFindingRatesAsS5Does(t *testing.T) {
 	}{
 		{judge.RubricIDExfiltration, 1, ""},
 		{judge.RubricIDExfiltration, 2, "medium"},
-		{judge.RubricIDExfiltration, 3, "high"},
-		{judge.RubricIDDeception, 2, "medium"},
+		{judge.RubricIDExfiltration, 3, "medium"},
+		{judge.RubricIDDeception, 2, "high"},
+		{judge.RubricIDDeception, 3, "high"},
 		{judge.RubricIDObfuscation, 2, "medium"},
-		{judge.RubricIDDestructive, 3, "high"},
+		{judge.RubricIDObfuscation, 3, "high"},
+		{judge.RubricIDDestructive, 2, "medium"},
+		{judge.RubricIDDestructive, 3, "medium"},
 		{judge.RubricIDInjection, 2, "high"},
 		{judge.RubricIDUndeclaredCapability, 2, "high"},
 		{judge.RubricIDInjection, 1, ""},
