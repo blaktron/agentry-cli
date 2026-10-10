@@ -103,6 +103,8 @@ type server struct {
 	typst      typstFiles
 	render     renderConfinement
 	pdfTimeout time.Duration
+	// fetchSeq numbers the bodies fetch saves in the scratch folder.
+	fetchSeq int
 	// renderRootMade, when a test sets it, is called with each render
 	// root as soon as it exists: what a declared command racing an export
 	// could do to it.
@@ -323,9 +325,7 @@ func (s *server) handleToolsCall(req rpcRequest) {
 			s.writeError(req.ID, codeInternal, fmt.Sprintf("tool %s failed internally", p.Name))
 		}
 	}()
-	s.callFault = false
-	text, isErr := d.call(p.Arguments)
-	s.recordCall(p.Name, !isErr)
+	text, isErr := s.callTool(d, p.Arguments)
 	content := map[string]any{"type": "text", "text": text}
 	if d.personsInput && !isErr {
 		content = inputResult(text)
@@ -334,6 +334,16 @@ func (s *server) handleToolsCall(req rpcRequest) {
 		"content": []map[string]any{content},
 		"isError": isErr,
 	})
+}
+
+// callTool runs one granted tool and records the call. Every result fits
+// the harness's limit (page.go): the tools that page already do, and this
+// holds the rest, errors included.
+func (s *server) callTool(d toolDef, args json.RawMessage) (string, bool) {
+	s.callFault = false
+	text, isErr := d.call(args)
+	s.recordCall(d.name, !isErr)
+	return s.spec.Limits.budget().fitResult(d.name, text), isErr
 }
 
 // InputResourceURI names the embedded resource an input tool's answer

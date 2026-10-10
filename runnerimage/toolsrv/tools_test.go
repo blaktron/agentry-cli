@@ -73,14 +73,14 @@ func TestFSRead(t *testing.T) {
 	}{
 		{name: "whole file", args: map[string]any{"path": "small.txt"}, want: "hello"},
 		{name: "server cap with note", args: map[string]any{"path": "big.txt"},
-			want: "0123456789\n[truncated at 10 bytes of 20]"},
+			want: "0123456789\n[page: bytes 0–10 of 20; continue with offset 10]"},
 		{name: "caller cap tighter", args: map[string]any{"path": "big.txt", "maxBytes": 3},
-			want: "012\n[truncated at 3 bytes of 20]"},
+			want: "012\n[page: bytes 0–3 of 20; continue with offset 3]"},
 		{name: "caller cap looser than server", args: map[string]any{"path": "big.txt", "maxBytes": 9999},
-			want: "0123456789\n[truncated at 10 bytes of 20]"},
-		{name: "offset reads the tail", args: map[string]any{"path": "big.txt", "offset": 15}, want: "FGHIJ"},
+			want: "0123456789\n[page: bytes 0–10 of 20; continue with offset 10]"},
+		{name: "offset reads the tail", args: map[string]any{"path": "big.txt", "offset": 15}, want: "FGHIJ\n[page: bytes 15–20 of 20; end of file]"},
 		{name: "split rune trimmed not binary", args: map[string]any{"path": "utf8.txt", "maxBytes": 2},
-			want: "h\n[truncated at 1 bytes of 6]"},
+			want: "h\n[page: bytes 0–1 of 6; continue with offset 1]"},
 		{name: "binary refused", args: map[string]any{"path": "bin.dat"},
 			want: "binary file; 4 bytes", wantErr: true},
 		{name: "missing path", args: map[string]any{}, want: "path is required", wantErr: true, contains: true},
@@ -627,7 +627,7 @@ func TestFetch(t *testing.T) {
 		if isErr {
 			t.Fatalf("big fetch: %q", got)
 		}
-		if !strings.Contains(got, "\n\naaaaaaaaaa\n[truncated at 10 bytes of 100]") {
+		if !strings.Contains(got, "\n\naaaaaaaaaa\n[shown: bytes 0–10; the body: the first 10 bytes of 100; fetch reads no more of a body; this run has no scratch folder, so nothing past what is shown is kept]") {
 			t.Fatalf("truncated fetch = %q", got)
 		}
 	})

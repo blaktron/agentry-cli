@@ -197,6 +197,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	tspec := toolSpec(caps, m.Capabilities.Secrets)
+	// Every tool result fits the harness's own limit (plan input-sources.md
+	// §4, agentry-cli#831): the run's adapter's budget, stamped for the
+	// tools server to page within and stated by the System Prompt.
+	budget := adapter.ResultBudget(adapterName)
+	tspec.Limits.MaxResultBytes, tspec.Limits.MaxResultLines = budget.Bytes, budget.Lines
 	extraServers, extraEntries, err := dataAccessServers(caps.DataAccess, in.Policy)
 	if err != nil {
 		return nil, err
@@ -265,6 +270,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		intake:    len(m.Intake) > 0,
 		inputView: inputView,
 		review:    in.Review,
+		budget:    budget,
 	}, body)
 
 	files := map[string][]byte{}
@@ -378,6 +384,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if execImage != nil && execImage.Unsafe != nil {
 		plan.Enforcement["exec"] = unsafeExecEnforcement(execImage)
 	}
+	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, budget, caps)
 
 	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && (in.Web || in.Policy.Docker.Runtime != "") {
 		// The name servers are part of the plan too: a changed list
@@ -824,6 +831,18 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// run.
 		Review: toolsrv.Review{Enabled: caps.ReviewTools},
 	}
+}
+
+// toolResultsEnforcement is the receipt's line for the result budget
+// (agentry-cli#831, DR-89): every result of the runner's own tools is held
+// to the harness's measured limit, less a margin.
+func toolResultsEnforcement(adapterName string, b adapter.Budget, caps spec.CapSummary) string {
+	line := fmt.Sprintf("every result of the runner's own tools is held to %s, the %s harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own",
+		toolsrv.BudgetWords(b.Bytes, b.Lines), adapterName)
+	if caps.Fetches() && caps.Scratch {
+		line += "; a fetch response body larger than one result is saved to " + spec.ScratchMount + "/fetch/ (never executable, refused when it holds a granted secret's value) and answered with its first page"
+	}
+	return line
 }
 
 // scratchDir is the tools spec's scratch folder: the mount when the plan

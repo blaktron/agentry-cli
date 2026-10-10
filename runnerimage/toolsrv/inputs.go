@@ -286,8 +286,9 @@ func (idx *InputsIndex) under(clean string) []InputEntry {
 }
 
 // listIndexed is list_inputs from the index: one input a line, under a
-// header naming the columns.
-func listIndexed(idx *InputsIndex, clean string) (string, bool) {
+// header naming the columns, from the entry offset and within the result
+// budget (page.go).
+func listIndexed(idx *InputsIndex, clean string, offset int, bud budget) (string, bool) {
 	entries := idx.under(clean)
 	if len(entries) == 0 {
 		if clean == "." {
@@ -295,8 +296,7 @@ func listIndexed(idx *InputsIndex, clean string) (string, bool) {
 		}
 		return fmt.Sprintf("list_inputs: no input at %q", clean), true
 	}
-	var b strings.Builder
-	b.WriteString("path\ttype\tbytes\toutcome\ttext bytes\tviews")
+	lines := make([]string, 0, len(entries))
 	for _, e := range entries {
 		text := "-"
 		if e.hasText() {
@@ -305,9 +305,9 @@ func listIndexed(idx *InputsIndex, clean string) (string, bool) {
 				text = strconv.FormatInt(e.ConvertedBytes, 10)
 			}
 		}
-		fmt.Fprintf(&b, "\n%s\t%s\t%d\t%s\t%s\t%s", e.Path, e.Type, e.Bytes, e.Outcome(), text, e.views())
+		lines = append(lines, fmt.Sprintf("%s\t%s\t%d\t%s\t%s\t%s", e.Path, e.Type, e.Bytes, e.Outcome(), text, e.views()))
 	}
-	return b.String(), false
+	return bud.listPage("path\ttype\tbytes\toutcome\ttext bytes\tviews", lines, offset, "pass path to list one folder"), false
 }
 
 func searchInputsSchema() map[string]any {
@@ -384,11 +384,29 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 	if total == 0 {
 		return fmt.Sprintf("no input text matches %q", query), false
 	}
-	out := strings.Join(hits, "\n")
-	if total > len(hits) {
-		out += fmt.Sprintf("\n[%d more matching lines not shown; narrow the query or pass path]", total-len(hits))
+	return searchAnswer(hits, total, s.spec.Limits.budget()), false
+}
+
+// searchAnswer is a search's hits, one a line, as many as fit the result
+// budget (page.go), and a line saying how many matching lines it left out.
+func searchAnswer(hits []string, total int, b budget) string {
+	room := b.room()
+	var out strings.Builder
+	shown := 0
+	for _, h := range hits {
+		if int64(out.Len()+len(h)+1) > room.bytes || shown+1 > room.lines {
+			break
+		}
+		if shown > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(h)
+		shown++
 	}
-	return out, false
+	if total > shown {
+		fmt.Fprintf(&out, "\n[%d more matching lines not shown; narrow the query or pass path]", total-shown)
+	}
+	return out.String()
 }
 
 // searchTargets is the texts under a cleaned path, in the view asked for
@@ -450,7 +468,7 @@ func (s *server) searchTargets(clean, view string) ([]searchTarget, error) {
 func readPrefix(abs string, limit int64) ([]byte, error) {
 	data, more, err := readUpTo(abs, limit)
 	if more {
-		data = trimPartialRune(data)
+		data = trimToRuneEnd(data)
 	}
 	return data, err
 }

@@ -50,22 +50,23 @@ func TestToolArgumentDecodeRefusals(t *testing.T) {
 	}
 }
 
-func TestTrimPartialRune(t *testing.T) {
+func TestTrimToRuneEnd(t *testing.T) {
 	tests := []struct {
 		name string
 		in   []byte
 		want []byte
 	}{
 		{"valid stays whole", []byte("hello"), []byte("hello")},
-		{"split rune shaved", []byte{'h', 0xC3}, []byte("h")}, // "hé" cut mid-é
-		{"binary loses at most three bytes", []byte{0xff, 0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff}},
+		{"split rune shaved", []byte{'h', 0xC3}, []byte("h")},                     // "hé" cut mid-é
+		{"a three-byte rune cut after two", []byte{'a', 0xE2, 0x80}, []byte("a")}, // "a—" cut mid-—
+		{"binary stays as it is, for the caller to tell", []byte{0xff, 0xff, 0xff, 0xff, 0xff}, []byte{0xff, 0xff, 0xff, 0xff, 0xff}},
 		{"empty stays empty", []byte{}, []byte{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := trimPartialRune(append([]byte(nil), tc.in...))
+			got := trimToRuneEnd(append([]byte(nil), tc.in...))
 			if string(got) != string(tc.want) {
-				t.Errorf("trimPartialRune(%v) = %v, want %v", tc.in, got, tc.want)
+				t.Errorf("trimToRuneEnd(%v) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -296,7 +297,7 @@ func TestFetchEdges(t *testing.T) {
 		spec.Limits.MaxFetchBytes = 50
 		s := newTestServer(t, spec)
 		got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": srv.URL}))
-		if isErr || !strings.Contains(got, "[truncated at 50 bytes]") || strings.Contains(got, "bytes of") {
+		if isErr || !strings.Contains(got, "[shown: bytes 0–50; the body: the first 50 bytes of more; fetch reads no more of a body; this run has no scratch folder, so nothing past what is shown is kept]") {
 			t.Errorf("(%q, %v)", got, isErr)
 		}
 	})
@@ -463,15 +464,15 @@ func TestNewServerNilLog(t *testing.T) {
 	s.logf("must not %s", "panic")
 }
 
-// TestFSReadSeekPastEnd documents the offset-beyond-EOF behavior: an empty
-// read, no truncation note (nothing was cut — there was nothing there).
+// TestFSReadSeekPastEnd documents the offset-beyond-EOF behavior: no text,
+// and a line saying the offset is past the end, so the agent stops paging.
 func TestFSReadSeekPastEnd(t *testing.T) {
 	spec := baseSpec(t)
 	spec.FSRead = Access{Enabled: true}
 	mustWrite(t, filepath.Join(spec.WorkspaceDir, "f.txt"), []byte("abc"))
 	s := newTestServer(t, spec)
 	got, isErr := s.toolFSRead(rawArgs(t, map[string]any{"path": "f.txt", "offset": 3}))
-	if isErr || got != "" {
+	if isErr || got != "[offset 3 is at or past the end of the file, which is 3 bytes]" {
 		t.Errorf("(%q, %v)", got, isErr)
 	}
 }
