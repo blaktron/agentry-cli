@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -42,17 +43,46 @@ import (
 // that unpacks to much more, or a session that adds a great deal, meets it.
 const MaxInputReviewText = 16 << 20
 
+// MaxInputReviewCalls is the most calls AI Review makes of one run's
+// inputs, a session's added files, the calls asked again and those that
+// name a flagged file included: the registry's cap of scans a run (the
+// runs extension's runInputScans), which refuses a call past it and so
+// the run (agentry-cli#823, agentry-enterprise#499; register DR-88).
+// reviewRetryBudget of them are kept for asking again, and reviewCalls
+// read the texts and name a flagged file. A file whose texts would take
+// the calls past what is left, keeping room to name a flagged file, is
+// withheld, unasked, as a file past MaxInputReviewText is. Packed as
+// packer packs them, 16 MiB of text takes about 260 to 275 calls whatever
+// the sizes of its texts, so a run meets this only with very many small
+// texts (2,000 small HTML files, read as uploaded, as text and as
+// Markdown, are 375 calls) or a session that adds a great many files.
+const MaxInputReviewCalls = 400
+
+// reviewCalls is how many of MaxInputReviewCalls read the texts and name a
+// flagged file, and reviewNaming the most calls one review keeps for
+// naming: the texts of the flagged calls in flight, asked one at a time.
+const (
+	reviewCalls  = MaxInputReviewCalls - reviewRetryBudget
+	reviewNaming = reviewWorkers * reviewBatchTexts
+)
+
 // The shape of the review's calls. A call carries at most webscan.MaxText,
-// several small texts packed into one, each headed by its path, as the pack
-// scan does, at most reviewBatchTexts of them so a flagged call can be
-// asked again a text at a time to name the file. reviewWorkers calls are in
-// flight at once, started at least reviewPace apart, under the registry's
-// budget for one job (limits.modelInputPerMin, 120 a minute).
+// texts packed one after another, each headed by its path, as the pack scan
+// does, at most reviewBatchTexts of them so a flagged call can be asked
+// again a text at a time to name the file. A text that does not fit in
+// what is left of a call is cut to fill it, when at least reviewMinPiece
+// is left, and goes on in the next call, which starts reviewOverlap bytes
+// before the cut, so a phrase no longer than that is read whole in one
+// call wherever the cut falls (agentry-cli#823). reviewWorkers calls are
+// in flight at once, started at least reviewPace apart, under the
+// registry's budget for one job (limits.modelInputPerMin, 120 a minute).
 const (
 	reviewBatchTexts = 16
 	reviewWorkers    = 4
 	// reviewLabelMax bounds the path a text is headed by.
 	reviewLabelMax = 256
+	reviewMinPiece = 4 << 10
+	reviewOverlap  = 1 << 10
 )
 
 // reviewPace is a variable so the engine's tests need not wait.
@@ -66,8 +96,7 @@ var reviewPace = 550 * time.Millisecond
 // person's run, and a text AI Review has not read still never reaches the
 // agent. A run asks again at most reviewRetryBudget times in all, a
 // session's added files included, so a judge that keeps failing cannot
-// spend the run's cap of calls at the registry (the runs extension's
-// runInputScans, 400) on asking again.
+// spend the run's MaxInputReviewCalls on asking again.
 const (
 	reviewRetries     = 2
 	reviewRetryBudget = 24
@@ -107,8 +136,9 @@ type inputReview struct {
 	before, added      reviewCounts
 	model, questionSet string
 	// retriesUsed is how many calls the run has asked again, of
-	// reviewRetryBudget.
-	retriesUsed int
+	// reviewRetryBudget, and callsUsed how many it has made to read and to
+	// name, of reviewCalls.
+	retriesUsed, callsUsed int
 }
 
 // reviewCounts is the record of what AI Review read.
@@ -116,7 +146,8 @@ type reviewCounts struct {
 	// calls counts every call, retries counts those asked again.
 	texts, calls, retries, requests int
 	bytes                           int64
-	// withheld are the inputs past MaxInputReviewText, not asked about.
+	// withheld are the inputs past MaxInputReviewText or
+	// MaxInputReviewCalls, not asked about.
 	withheld []string
 }
 
@@ -127,8 +158,9 @@ type reviewRefusal struct {
 }
 
 // notReviewed is the unread reason list_inputs gives a file withheld past
-// MaxInputReviewText: fixed words, as every unread reason.
-const notReviewed = "not read by AI Review, past the 16 MiB of text it reads of a run, so it is not given to the agent"
+// MaxInputReviewText or MaxInputReviewCalls: fixed words, as every unread
+// reason.
+const notReviewed = "not read by AI Review, past what it reads of a run (at most 16 MiB of text, in at most 400 calls), so it is not given to the agent"
 
 func newInputReview(sc webscan.Scanner) *inputReview {
 	if sc == nil {
@@ -205,6 +237,7 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 	}
 	// An input's texts are read together or not at all, in path order.
 	sizes := map[string]int64{}
+	byPath := map[string][]reviewText{}
 	var order []string
 	for _, t := range all {
 		fi, err := os.Lstat(t.file)
@@ -215,37 +248,41 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 			order = append(order, t.path)
 		}
 		sizes[t.path] += fi.Size()
+		byPath[t.path] = append(byPath[t.path], t)
 	}
-	left := reviewLeft(r)
-	fits := map[string]bool{}
-	var size int64
+	left, callsLeft := reviewLeft(r), r.callsLeft()
+	var (
+		texts []reviewText
+		pk    packer
+		size  int64
+	)
 	for _, p := range order {
 		if size+sizes[p] > left {
 			withheld = append(withheld, p)
 			continue
 		}
-		fits[p] = true
-		size += sizes[p]
-	}
-	var texts []reviewText
-	for _, t := range all {
-		if fits[t.path] {
+		mark, n := pk.mark(), len(texts)
+		for _, t := range byPath[p] {
+			b, err := os.ReadFile(t.file)
+			if err != nil {
+				return nil, nil, fmt.Errorf("the staged text of %s: %w", t.path, err)
+			}
+			pk.add(len(texts), t.label, string(b))
 			texts = append(texts, t)
 		}
+		if pk.needs() > callsLeft {
+			pk.reset(mark)
+			texts = texts[:n]
+			withheld = append(withheld, p)
+			continue
+		}
+		size += sizes[p]
 	}
 	if len(texts) == 0 {
 		r.record(reviewCounts{withheld: withheld}, "", "", added)
 		return withheld, nil, nil
 	}
-	pieces := make([][]string, len(texts))
-	for i, t := range texts {
-		b, err := os.ReadFile(t.file)
-		if err != nil {
-			return nil, nil, fmt.Errorf("the staged text of %s: %w", t.path, err)
-		}
-		pieces[i] = headedPieces(t.label, string(b))
-	}
-	batches := packBatches(pieces)
+	batches := pk.done()
 
 	var (
 		mu       sync.Mutex
@@ -278,6 +315,18 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 			defer wg.Done()
 			for batch := range jobs {
 				if pace(run) != nil {
+					continue
+				}
+				if !r.takeCall() {
+					// review withholds a file whose texts do not fit in the
+					// run's calls, so this is not met; were it, the texts
+					// would go unread, and unread texts refuse the run.
+					mu.Lock()
+					for _, i := range textsOf(batch) {
+						unread[i] = "past the calls AI Review makes of a run"
+					}
+					mu.Unlock()
+					stop()
 					continue
 				}
 				var b strings.Builder
@@ -331,15 +380,15 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 	wg.Wait()
 
 	// A flagged call of several texts is asked again a text at a time, so
-	// the refusal names the file; if none fails alone, each is named, as
-	// they were read together.
+	// the refusal names the file; if none fails alone, or the run's calls
+	// are spent first, each is named, as they were read together.
 	for _, batch := range failedAt {
 		named := false
 		for _, p := range batch {
 			if _, done := flagged[p.text]; done {
 				continue // a text in several parts is named once
 			}
-			if pace(ctx) != nil {
+			if pace(ctx) != nil || !r.takeCall() {
 				break
 			}
 			if res := call(ctx, p.body); res.Verdict == webscan.Withheld {
@@ -388,6 +437,25 @@ func (r *inputReview) takeRetry() bool {
 	return true
 }
 
+// takeCall takes one of the run's reviewCalls, or answers false when they
+// are spent.
+func (r *inputReview) takeCall() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.callsUsed >= reviewCalls {
+		return false
+	}
+	r.callsUsed++
+	return true
+}
+
+// callsLeft is how many of the run's reviewCalls are left.
+func (r *inputReview) callsLeft() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return reviewCalls - r.callsUsed
+}
+
 // sleepCtx waits d, or answers the context's error.
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
@@ -420,52 +488,131 @@ func (r *inputReview) record(c reviewCounts, model, set string, added bool) {
 	into.withheld = append(into.withheld, c.withheld...)
 }
 
-// headedPieces cuts a text into the parts one call can carry, each headed
-// by its label (and its part's number, when there are several) on a line
-// of its own.
-func headedPieces(label, text string) []string {
+// packer packs texts, in order, into the review's calls of at most
+// webscan.MaxText bytes and reviewBatchTexts texts, each text headed by
+// its label (and its part's number, when it is cut) on a line of its own.
+// A text goes whole into the call when it fits in what is left of it.
+// When it does not, and at least reviewMinPiece is left, it is cut to fill
+// the call and goes on in the next, each part after the first starting
+// reviewOverlap bytes before the cut; with less left, the text starts the
+// next call. So a call that closed for size carries more than
+// webscan.MaxText less reviewMinPiece and a heading, and 16 MiB of text
+// packs into about ⌈16 MiB / 64 KiB⌉ calls, plus one for every
+// reviewBatchTexts small texts.
+type packer struct {
+	out         [][]reviewPiece
+	cur         []reviewPiece
+	size, texts int
+	// pieces counts the pieces packed, of every call.
+	pieces int
+}
+
+// packMark is a packer as it was, to take it back to.
+type packMark struct {
+	out                 int
+	cur                 []reviewPiece
+	size, texts, pieces int
+}
+
+func (p *packer) mark() packMark {
+	return packMark{out: len(p.out), cur: slices.Clone(p.cur), size: p.size, texts: p.texts, pieces: p.pieces}
+}
+
+func (p *packer) reset(m packMark) {
+	p.out, p.cur, p.size, p.texts, p.pieces = p.out[:m.out], m.cur, m.size, m.texts, m.pieces
+}
+
+// calls is how many calls what is packed takes.
+func (p *packer) calls() int {
+	if len(p.cur) > 0 {
+		return len(p.out) + 1
+	}
+	return len(p.out)
+}
+
+// needs is how many of the run's calls what is packed needs: its calls,
+// and those kept to name a flagged file.
+func (p *packer) needs() int { return p.calls() + min(reviewNaming, p.pieces) }
+
+// done answers the calls.
+func (p *packer) done() [][]reviewPiece {
+	p.flush()
+	return p.out
+}
+
+func (p *packer) flush() {
+	if len(p.cur) > 0 {
+		p.out = append(p.out, p.cur)
+		p.cur, p.size, p.texts = nil, 0, 0
+	}
+}
+
+func (p *packer) room() int { return webscan.MaxText - p.size }
+
+func (p *packer) put(text int, body string) {
+	if len(p.cur) == 0 || p.cur[len(p.cur)-1].text != text {
+		p.texts++
+	}
+	p.cur = append(p.cur, reviewPiece{text: text, body: body})
+	p.size += len(body)
+	p.pieces++
+}
+
+// add packs the text-th text, headed by label.
+func (p *packer) add(text int, label, body string) {
 	label = cutRunes(strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' {
 			return ' '
 		}
 		return r
 	}, label), reviewLabelMax)
-	// Room for the heading: "<label> (part n of m)\n".
-	parts := splitText(text, webscan.MaxText-len(label)-40)
-	out := make([]string, len(parts))
-	for i, p := range parts {
-		head := label
-		if len(parts) > 1 {
-			head = fmt.Sprintf("%s (part %d of %d)", label, i+1, len(parts))
-		}
-		out[i] = head + "\n" + p
+	whole := len(label) + 1 + len(body)
+	// Room for a part's heading: "<label> (part n of m)\n".
+	head := len(label) + 40
+	if len(p.cur) > 0 && (p.texts == reviewBatchTexts || whole > p.room() && p.room()-head < reviewMinPiece) {
+		p.flush()
 	}
-	return out
+	if whole <= p.room() {
+		p.put(text, label+"\n"+body)
+		return
+	}
+	var parts []string
+	for start, n := 0, p.room()-head; ; n = webscan.MaxText - head {
+		if len(body)-start <= n {
+			parts = append(parts, body[start:])
+			break
+		}
+		cut := cutAt(body, start+n)
+		parts = append(parts, body[start:cut])
+		start = runeStart(body, cut-reviewOverlap)
+	}
+	for i, part := range parts {
+		if i > 0 {
+			p.flush()
+		}
+		p.put(text, fmt.Sprintf("%s (part %d of %d)\n", label, i+1, len(parts))+part)
+	}
 }
 
-// splitText cuts s into parts of at most n bytes, at a line's end where
-// one falls in the second half of the part, and never inside a character.
-func splitText(s string, n int) []string {
-	if s == "" {
-		return []string{""}
+// cutAt is where a part that may run to end is cut: after the last line
+// in its last reviewOverlap bytes, or else at end, never inside a
+// character.
+func cutAt(s string, end int) int {
+	if i := strings.LastIndexByte(s[end-reviewOverlap:end], '\n'); i >= 0 {
+		return end - reviewOverlap + i + 1
 	}
-	var out []string
-	for len(s) > n {
-		cut := strings.LastIndexByte(s[:n], '\n') + 1
-		if cut < n/2 {
-			cut = n
-			for cut > 0 && !utf8.RuneStart(s[cut]) {
-				cut--
-			}
-			if cut == 0 {
-				// No character starts in the part: not UTF-8, cut as bytes.
-				cut = n
-			}
+	return runeStart(s, end)
+}
+
+// runeStart is i, or the start of the character i is inside; i as it is
+// when s is not UTF-8 there.
+func runeStart(s string, i int) int {
+	for j := i; j > i-utf8.UTFMax && j > 0; j-- {
+		if utf8.RuneStart(s[j]) {
+			return j
 		}
-		out = append(out, s[:cut])
-		s = s[cut:]
 	}
-	return append(out, s)
+	return i
 }
 
 // cutRunes cuts s to at most n bytes, never inside a character.
@@ -477,32 +624,6 @@ func cutRunes(s string, n int) string {
 		n--
 	}
 	return s[:n]
-}
-
-// packBatches packs the texts' pieces, in order, into calls of at most
-// webscan.MaxText bytes and reviewBatchTexts texts.
-func packBatches(pieces [][]string) [][]reviewPiece {
-	var out [][]reviewPiece
-	var cur []reviewPiece
-	size, texts := 0, 0
-	for i, ps := range pieces {
-		for j, body := range ps {
-			newText := j == 0
-			if len(cur) > 0 && (size+len(body) > webscan.MaxText || (newText && texts == reviewBatchTexts)) {
-				out = append(out, cur)
-				cur, size, texts = nil, 0, 0
-			}
-			if newText || len(cur) == 0 {
-				texts++
-			}
-			cur = append(cur, reviewPiece{text: i, body: body})
-			size += len(body)
-		}
-	}
-	if len(cur) > 0 {
-		out = append(out, cur)
-	}
-	return out
 }
 
 // textsOf is the texts a call carries, in order.
@@ -622,8 +743,8 @@ func (c reviewCounts) say() string {
 	}
 	out := fmt.Sprintf("%d text(s), %s, in %s and %d judge request(s), none flagged", c.texts, sizeWord(c.bytes), calls, c.requests)
 	if len(c.withheld) > 0 {
-		out += fmt.Sprintf("; %d file(s) withheld unread, past the %d MiB AI Review reads of a run: %s",
-			len(c.withheld), MaxInputReviewText>>20, joinNamed(c.withheld))
+		out += fmt.Sprintf("; %d file(s) withheld unread, past what AI Review reads of a run (at most %d MiB of text, in at most %d calls): %s",
+			len(c.withheld), MaxInputReviewText>>20, MaxInputReviewCalls, joinNamed(c.withheld))
 	}
 	return out
 }
