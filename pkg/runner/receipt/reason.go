@@ -87,6 +87,11 @@ const (
 	// The run is not retried; the provider's words are in the error and the
 	// receipts.
 	ReasonOutOfCredits ReasonCode = "out-of-credits"
+	// ReasonAnswerInReasoning: the release's output is schema-checked and
+	// the model ended the run on its reasoning, with no final message after
+	// it (output; exit 17; agentry-cli#825). Reasoning is never taken as
+	// the result; the events receipt keeps it.
+	ReasonAnswerInReasoning ReasonCode = "answer-in-reasoning"
 )
 
 // The details of ReasonOrgPolicy: the organization's policy that refused.
@@ -194,16 +199,17 @@ var reasonCodes = map[ReasonCode]struct {
 		InstallPinChanged, InstallStoreChanged, InstallImage, InstallProxy,
 		InstallBuilder, InstallRuntimeCheck, InstallRecord,
 	}},
-	ReasonMCPStartFailed:   {names: namesServer},
-	ReasonSecretMissing:    {names: namesSecret},
-	ReasonInputRefused:     {details: []string{InputMalware, InputNameClash, InputUnreadable, InputFlagged, InputNotReviewed}},
-	ReasonInputsNotDecoded: {details: []string{DecodeImage, DecodeRun}},
-	ReasonAgentBlocked:     {},
-	ReasonRunnerBlocked:    {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},
-	ReasonSignInMissing:    {},
-	ReasonPlanLimit:        {},
-	ReasonOrgPolicy:        {details: []string{OrgPolicyClient, OrgPolicyManagedApproval}},
-	ReasonOutOfCredits:     {},
+	ReasonMCPStartFailed:    {names: namesServer},
+	ReasonSecretMissing:     {names: namesSecret},
+	ReasonInputRefused:      {details: []string{InputMalware, InputNameClash, InputUnreadable, InputFlagged, InputNotReviewed}},
+	ReasonInputsNotDecoded:  {details: []string{DecodeImage, DecodeRun}},
+	ReasonAgentBlocked:      {},
+	ReasonRunnerBlocked:     {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},
+	ReasonSignInMissing:     {},
+	ReasonPlanLimit:         {},
+	ReasonOrgPolicy:         {details: []string{OrgPolicyClient, OrgPolicyManagedApproval}},
+	ReasonOutOfCredits:      {},
+	ReasonAnswerInReasoning: {},
 }
 
 // ReasonCodes returns the closed list of codes, sorted.
