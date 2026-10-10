@@ -169,6 +169,43 @@ func TestRegistryFailuresAreClosedWords(t *testing.T) {
 	}
 }
 
+// TestTransientFailuresAreTheOnesWorthAskingAgain: a judge error, a
+// timeout, the route unavailable and a 429 may pass when asked again; a
+// verdict, a text too large and any other refusal never (agentry-cli#806).
+func TestTransientFailuresAreTheOnesWorthAskingAgain(t *testing.T) {
+	for _, tc := range []struct {
+		res  Result
+		want bool
+	}{
+		{Result{Verdict: NotScanned, Failure: "judge-error"}, true},
+		{Result{Verdict: NotScanned, Failure: "timeout"}, true},
+		{Result{Verdict: NotScanned, Failure: FailureUnavailable, Status: 503}, true},
+		{Result{Verdict: NotScanned, Failure: FailureRefused, Status: 429}, true},
+		{Result{Verdict: NotScanned, Failure: FailureRefused, Status: 403}, false},
+		{Result{Verdict: NotScanned, Failure: FailureRefused, Status: 401}, false},
+		{Result{Verdict: NotScanned, Failure: FailureTooLarge}, false},
+		{Result{Verdict: NotScanned}, false},
+		{Result{Verdict: Withheld, Flagged: []string{"injection"}}, false},
+		{Result{Verdict: Pass}, false},
+	} {
+		if got := tc.res.Transient(); got != tc.want {
+			t.Errorf("%+v: Transient() = %v", tc.res, got)
+		}
+	}
+}
+
+// The route's status is the caller's alone: a hit shown to a model never
+// carries it.
+func TestTheStatusNeverReachesAModel(t *testing.T) {
+	b, err := json.Marshal(Hit{URL: "https://a.example", Result: Result{Verdict: NotScanned, Failure: FailureRefused, Status: 429}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "429") || strings.Contains(strings.ToLower(string(b)), "status") {
+		t.Fatalf("a hit carries the status: %s", b)
+	}
+}
+
 // TestProviderSearchScansInTheRegistrysForm: the local search asks the same
 // question of the same text as the registry's route.
 func TestProviderSearchScansInTheRegistrysForm(t *testing.T) {

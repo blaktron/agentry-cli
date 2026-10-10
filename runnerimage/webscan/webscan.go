@@ -112,6 +112,24 @@ func (r Result) Reason() string {
 	return "it could not be scanned"
 }
 
+// Transient reports whether a text not scanned may pass when asked again:
+// the judge erred or timed out, the route was unavailable, or it held the
+// job to its rate (a 429, which reads as refused). A text too large, or a
+// call the route refused for anything else (the credential, a run's cap
+// of calls), would only be refused again; a verdict is an answer.
+func (r Result) Transient() bool {
+	if r.Verdict != NotScanned {
+		return false
+	}
+	switch r.Failure {
+	case judge.FailureTimeout, judge.FailureJudgeError, FailureUnavailable:
+		return true
+	case FailureRefused:
+		return r.Status == http.StatusTooManyRequests
+	}
+	return false
+}
+
 // Failure words of this package's own, beside the judge's.
 const (
 	FailureTooLarge    = "too-large"

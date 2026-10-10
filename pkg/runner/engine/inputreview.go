@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
-	"github.com/blaktron/agentry-cli/runnerimage/judge"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
@@ -108,8 +106,9 @@ type inputReview struct {
 	// what a session added.
 	before, added      reviewCounts
 	model, questionSet string
-	// retried is how many calls the run has asked again.
-	retried int
+	// retriesUsed is how many calls the run has asked again, of
+	// reviewRetryBudget.
+	retriesUsed int
 }
 
 // reviewCounts is the record of what AI Review read.
@@ -286,8 +285,8 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 					b.WriteString(p.body)
 				}
 				res := call(run, b.String())
-				for n := 1; n <= reviewRetries && transient(res) && run.Err() == nil && r.takeRetry(); n++ {
-					if sleep(run, time.Duration(n)*reviewBackoff) != nil || pace(run) != nil {
+				for n := 1; n <= reviewRetries && res.Transient() && run.Err() == nil && r.takeRetry(); n++ {
+					if sleepCtx(run, time.Duration(n)*reviewBackoff) != nil || pace(run) != nil {
 						break
 					}
 					mu.Lock()
@@ -300,8 +299,10 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 				}
 				mu.Lock()
 				// A call this review stopped is not a text it could not
-				// read: the run is refused for the one that stopped it.
-				if res.Verdict != webscan.Withheld && run.Err() != nil && ctx.Err() == nil {
+				// read: the run is refused for the one that stopped it,
+				// or, when the run itself stopped (in a retry's wait,
+				// say), as stopped.
+				if res.Verdict != webscan.Withheld && run.Err() != nil {
 					mu.Unlock()
 					continue
 				}
@@ -375,39 +376,20 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 	return withheld, nil, nil
 }
 
-// transient reports whether a call AI Review answered not scanned may pass
-// when asked again: the judge erred or timed out, the route was
-// unavailable, or it held the job to its rate (a 429, which reads as
-// refused). A text too large, or a call the route refused for anything
-// else (the credential, the run's cap of calls), would only be refused
-// again, and a flag is an answer, never asked again.
-func transient(res webscan.Result) bool {
-	if res.Verdict != webscan.NotScanned {
-		return false
-	}
-	switch res.Failure {
-	case judge.FailureTimeout, judge.FailureJudgeError, webscan.FailureUnavailable:
-		return true
-	case webscan.FailureRefused:
-		return res.Status == http.StatusTooManyRequests
-	}
-	return false
-}
-
 // takeRetry takes one of the run's reviewRetryBudget, or answers false
 // when they are spent.
 func (r *inputReview) takeRetry() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.retried >= reviewRetryBudget {
+	if r.retriesUsed >= reviewRetryBudget {
 		return false
 	}
-	r.retried++
+	r.retriesUsed++
 	return true
 }
 
-// sleep waits d, or answers the context's error.
-func sleep(ctx context.Context, d time.Duration) error {
+// sleepCtx waits d, or answers the context's error.
+func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -600,14 +582,7 @@ func pacer(every time.Duration) func(context.Context) error {
 		}
 		next = at.Add(every)
 		mu.Unlock()
-		t := time.NewTimer(time.Until(at))
-		defer t.Stop()
-		select {
-		case <-t.C:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return sleepCtx(ctx, time.Until(at))
 	}
 }
 
