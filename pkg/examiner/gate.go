@@ -253,21 +253,21 @@ func WildcardEgress(manifestJSON []byte) bool {
 	return false
 }
 
-// AIReviewFinding is one rubric question's answer as stage S5 rates it: a
-// score of 2 is medium and 3 high, except that an attempted injection and
-// an undeclared capability are high from 2 (the core's verdictFindings,
-// DEV-186); below 2 it is no finding. The core's further finding for a
+// AIReviewFinding is one rubric question's answer as stage S5 rates it,
+// through the core's judge.RubricSeverity, so it is the table the gate reads
+// and not a copy of it: below 2 no finding; 2 medium and 3 high, except that
+// an attempted injection, an undeclared capability and deceiving the user are
+// high from 2, and exfiltration and destructive actions medium at any score
+// (ruleset 0.4.0, agentry#893; DEV-186). The core's further finding for a
 // verdict showing manipulation comes from its generative-model providers
-// alone; the Jev judge AI Review asks never sets it. The core publishes no
-// table of this mapping, so nothing but this restatement holds it to the
-// core's.
+// alone; the Jev judge AI Review asks never sets it.
 func AIReviewFinding(id string, score int) (gatecases.Finding, bool) {
 	if score < judge.WithholdScore {
 		return gatecases.Finding{}, false
 	}
-	sev := "medium"
-	if score >= 3 || id == judge.RubricIDInjection || id == judge.RubricIDUndeclaredCapability {
-		sev = "high"
+	sev := judge.RubricSeverity(id, score)
+	if sev == "" {
+		return gatecases.Finding{}, false
 	}
 	return gatecases.Finding{Scanner: "S5/" + id, Severity: sev, Confidence: "medium"}, true
 }

@@ -713,7 +713,8 @@ says where to add one.
 - `aiReview` (kind 2): whether it ran, the model, the rubric hash, the six
   questions' scores with the file that drew each, and the findings at score
   2 or more as stage S5 rates them (2 medium and 3 high; an attempted
-  injection or an undeclared capability high from 2). It is read from the
+  injection, an undeclared capability or deceiving the user high from 2;
+  exfiltration and destructive actions medium at any score). It is read from the
   run's own record (`receipts/review.ndjson`), never from what the model
   said, and only for a run whose receipt counted a review: the first
   answered call over the staged package counts.
