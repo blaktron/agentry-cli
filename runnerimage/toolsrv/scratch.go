@@ -1,6 +1,8 @@
 package toolsrv
 
-// The scratch folder (plan scratch-and-pdf-reports.md §4, agentry-cli#729):
+// The scratch folder (plan scratch-and-pdf-reports.md §4, agentry-cli#729;
+// plan input-sources.md §6, agentry-cli#832, for scratch_read's views,
+// scratch_search and the bodies fetch saves here):
 // every release's run and session may keep notes and working files in an
 // empty folder of its own, a size-capped tmpfs the docker filter mounts at
 // ScratchDir and that is gone with the container. Its tools are the
@@ -24,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -41,7 +44,17 @@ func scratchReadSchema() map[string]any {
 		"path":     strProp("scratch-relative slash path of the file"),
 		"offset":   intProp("byte offset to start reading from (default 0)"),
 		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
+		"view": map[string]any{"type": "string", "enum": []string{ViewText, ViewOriginal},
+			"description": "\"text\" reads a text file as text; \"original\" reads the file's bytes, a binary file as base64; default: text for a text file, original for a binary one"},
 	}, "path")
+}
+
+func scratchSearchSchema() map[string]any {
+	return objSchema(map[string]any{
+		"query":      strProp("the word or phrase to find, matched without regard to case"),
+		"path":       strProp("scratch-relative file or directory to search; empty or \".\" searches the whole folder"),
+		"maxResults": intProp(fmt.Sprintf("most matching lines to return (default %d, at most %d)", defaultSearchHits, maxSearchHits)),
+	}, "query")
 }
 
 func scratchListSchema() map[string]any {
@@ -82,6 +95,7 @@ func (s *server) toolScratchRead(raw json.RawMessage) (string, bool) {
 		Path     string `json:"path"`
 		Offset   int64  `json:"offset"`
 		MaxBytes int64  `json:"maxBytes"`
+		View     string `json:"view"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "scratch_read: " + err.Error(), true
@@ -91,6 +105,9 @@ func (s *server) toolScratchRead(raw json.RawMessage) (string, bool) {
 	}
 	if a.Offset < 0 {
 		return "scratch_read: offset must be >= 0", true
+	}
+	if err := validView(a.View); err != nil {
+		return "scratch_read: " + err.Error(), true
 	}
 	rel, err := s.scratchPath(a.Path)
 	if err != nil {
@@ -106,7 +123,97 @@ func (s *server) toolScratchRead(raw json.RawMessage) (string, bool) {
 		return "scratch_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
+	if fi, err := f.Stat(); err == nil && !fi.IsDir() {
+		head, err := binaryHead(f)
+		if err != nil {
+			return "scratch_read: " + err.Error(), true
+		}
+		// The file decides, unless the view says: a binary file is read as
+		// base64, never as text, and a text file's original is its text.
+		switch {
+		case head.binary && a.View == ViewText:
+			return fmt.Sprintf("scratch_read: %s is a binary file (%d bytes, detected as %s), which has no text view; read it with view %q", rel, fi.Size(), head.mime, ViewOriginal), true
+		case head.binary:
+			text, err := base64Page(f, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget(), head.mime, fmt.Sprintf("pass scratch_read path %q, view %q, offset %%d", rel, ViewOriginal))
+			if err != nil {
+				return "scratch_read: " + err.Error(), true
+			}
+			return text, false
+		}
+	}
 	return readText(fileTools{ToolScratchRead, ToolScratchList}, f, rel, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
+}
+
+// toolScratchSearch is search_inputs over the scratch folder: the same
+// matching, caps and answers, over every regular text file beneath the path
+// asked, each reached through the folder's os.Root and none by a link.
+func (s *server) toolScratchSearch(raw json.RawMessage) (string, bool) {
+	var a struct {
+		Query      string `json:"query"`
+		Path       string `json:"path"`
+		MaxResults int    `json:"maxResults"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return "scratch_search: " + err.Error(), true
+	}
+	needle, limit, refused := searchQuery(ToolScratchSearch, a.Query, a.MaxResults)
+	if refused != "" {
+		return refused, true
+	}
+	if a.Path == "" {
+		a.Path = "."
+	}
+	rel, err := s.scratchPath(a.Path)
+	if err != nil {
+		return "scratch_search: " + err.Error(), true
+	}
+	root, err := s.scratchRoot()
+	if err != nil {
+		return "scratch_search: " + err.Error(), true
+	}
+	defer func() { _ = root.Close() }()
+	var m matches
+	err = fs.WalkDir(root.FS(), rel, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		data, err := readRootPrefix(root, p, maxSearchFileBytes)
+		if err != nil {
+			return nil // a file a command removed mid-walk is not a failure
+		}
+		m.add(p, data, needle, limit)
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Sprintf("scratch_search: nothing in the scratch folder at %q", rel), true
+	}
+	if err != nil {
+		return "scratch_search: " + err.Error(), true
+	}
+	if m.total == 0 {
+		return fmt.Sprintf("no scratch text matches %q", strings.TrimSpace(a.Query)), false
+	}
+	return searchAnswer(m.hits, m.total, s.spec.Limits.budget()), false
+}
+
+// readRootPrefix is readPrefix of a file beneath root.
+func readRootPrefix(root *os.Root, name string, limit int64) ([]byte, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		data = trimToRuneEnd(data[:limit])
+	}
+	return data, nil
 }
 
 func (s *server) toolScratchList(raw json.RawMessage) (string, bool) {

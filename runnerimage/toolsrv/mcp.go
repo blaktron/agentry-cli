@@ -103,8 +103,10 @@ type server struct {
 	typst      typstFiles
 	render     renderConfinement
 	pdfTimeout time.Duration
-	// fetchSeq numbers the bodies fetch saves in the scratch folder.
-	fetchSeq int
+	// fetchSeq numbers the bodies fetch saves in the scratch folder
+	// unasked, and partSeq the files a saveTo is written to before it is
+	// renamed into place.
+	fetchSeq, partSeq int
 	// renderRootMade, when a test sets it, is called with each render
 	// root as soon as it exists: what a declared command racing an export
 	// could do to it.
@@ -218,6 +220,9 @@ func validateSpec(spec *Spec) error {
 		return err
 	}
 	if err := validateCalls(spec); err != nil {
+		return err
+	}
+	if err := validateFetchLedger(spec); err != nil {
 		return err
 	}
 	return validateVoice(spec)

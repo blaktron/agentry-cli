@@ -95,6 +95,23 @@ type Envelope struct {
 	// reader opens in place only a PDF this names with a matching SHA-256;
 	// any other is download-only. Absent for a run that exported none.
 	PDFs *PDFs `json:"pdfs,omitempty"`
+	// FetchSaves counts the response bodies fetch saved in the scratch
+	// folder (plan input-sources.md §6, agentry-cli#832): those the agent
+	// asked for with saveTo and those larger than one tool result. The
+	// folder is gone with the run; the ledger it names lists each file, the
+	// declared host it came from, its size and its SHA-256. Absent for a run
+	// that saved none.
+	FetchSaves *FetchSaves `json:"fetchSaves,omitempty"`
+}
+
+// FetchSaves is a run's count of the bodies fetch saved.
+type FetchSaves struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+	// Asked is how many of Files the agent named a path for (saveTo).
+	Asked int `json:"asked"`
+	// Ledger is the ledger's path in the output folder.
+	Ledger string `json:"ledger"`
 }
 
 // PDFs is a run's exported PDFs. The block keeps its key "theme" for the
