@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"io/fs"
 	"os"
@@ -111,6 +112,9 @@ type PDFEntry struct {
 	Bytes  int64  `json:"bytes"`
 	// Form is the form the agent chose for it (report-designs.md D15).
 	Form string `json:"form,omitempty"`
+	// Logo says the person's logo was drawn in its title block
+	// (agentry-cli#816).
+	Logo bool `json:"logo,omitempty"`
 }
 
 func validatePDF(spec *Spec) error {
@@ -354,6 +358,61 @@ type pdfMeta struct {
 	// headings faces.
 	NotoBody     string `json:"notoBody"`
 	NotoHeadings string `json:"notoHeadings"`
+	// Logo is the person's logo as the server wrote it into the render
+	// root, or nil when the design has none (agentry-cli#816).
+	Logo *pdfLogo `json:"logo"`
+}
+
+// pdfLogo is the logo the template draws: the file the server re-encoded it
+// into, and its size in pixels, whose ratio the template keeps when it sizes
+// it.
+type pdfLogo struct {
+	Path   string `json:"path"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+// logoFile is the name of the logo in the render root.
+const logoFile = "logo.png"
+
+// normalizeLogo is reportdesign.NormalizeLogo; a test makes it fail.
+var normalizeLogo = reportdesign.NormalizeLogo
+
+// renderLogo is a design's logo as the render root gets it (plan
+// report-designs.md §4 "The logo", D9, invariant 12; agentry-cli#816): the
+// PNG reportdesign.NormalizeLogo writes from its decoded pixels, never the
+// bytes the design carried. A design from a file or a flag may hold any PNG
+// within the bounds (the core's Validate does not require its own
+// encoding), so its chunks, profile and trailing bytes never reach Typst.
+// Nil when the design has no logo.
+func renderLogo(d reportdesign.Design) ([]byte, *pdfLogo, error) {
+	if d.Logo == (reportdesign.Logo{}) {
+		return nil, nil, nil
+	}
+	raw, err := d.Logo.Decode()
+	if err != nil {
+		return nil, nil, err
+	}
+	n, err := normalizeLogo(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := n.Decode()
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(b))
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, &pdfLogo{Path: logoFile, Width: cfg.Width, Height: cfg.Height}, nil
+}
+
+// renderDesign is the design's document as the render root holds it: the
+// canonical form without the logo, which the root holds as logoFile.
+func renderDesign(d reportdesign.Design) []byte {
+	d.Logo = reportdesign.Logo{}
+	return d.Canonical()
 }
 
 var (
@@ -604,9 +663,16 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if env := s.holdsRunSecret(src); env != "" {
 		return "export_pdf: " + from.name + "/" + rel + " holds the value of this run's secret " + env + "; take the value out and write what it is and where it was found", true
 	}
-	design, designDoc, err := s.pdfDesign()
+	design, err := s.pdfDesign()
 	if err != nil {
 		return s.failed(ToolExportPDF, err)
+	}
+	// The person's logo, re-encoded before the render root exists. One
+	// that will not re-encode is the person's design, not the agent's
+	// doing: the PDF is drawn without it, and the answer says so.
+	logoPNG, logo, logoErr := renderLogo(design)
+	if logoErr != nil {
+		s.logf("export_pdf: the report design's logo was not drawn: %v", logoErr)
 	}
 
 	// 2. A fresh render root under /tmp. A declared command may write /tmp
@@ -644,7 +710,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if title == "" {
 		title = strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 	}
-	meta, err := renderMeta(design, a.Form, doc, title, s.spec.PDF.Author, images, time.Now())
+	meta, err := renderMeta(design, a.Form, doc, title, s.spec.PDF.Author, images, logo, time.Now())
 	if err != nil {
 		return s.renderFailed(err)
 	}
@@ -652,7 +718,11 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return s.renderFailed(err)
 	}
-	for name, b := range map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": designDoc, "meta.json": meta} {
+	files := map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": renderDesign(design), "meta.json": meta}
+	if logo != nil {
+		files[logoFile] = logoPNG
+	}
+	for name, b := range files {
 		if err := createIn(root, name, bytes.NewReader(b)); err != nil {
 			return s.renderFailed(err)
 		}
@@ -676,7 +746,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	}
 	sum := sha256.Sum256(pdf)
 	pages := pdfPages(pdf)
-	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf)), Form: a.Form}); err != nil {
+	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf)), Form: a.Form, Logo: logo != nil}); err != nil {
 		s.logf("pdf ledger: %v", err)
 		return s.failed(ToolExportPDF, fmt.Errorf("the PDF was written to reports/%s, but the run could not record it, so it will not be shown as this run's export: %w", out, err))
 	}
@@ -686,7 +756,14 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	} else if pages > 1 {
 		count = strconv.Itoa(pages) + " pages"
 	}
-	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; the %s form, in the %s report design)", out, count, (len(pdf)+1023)/1024, a.Form, design.Name)
+	withLogo := ""
+	switch {
+	case logo != nil:
+		withLogo = ", with the person's logo"
+	case logoErr != nil:
+		withLogo = "; the person's logo could not be drawn, which is their design's to fix, not yours"
+	}
+	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; the %s form, in the %s report design%s)", out, count, (len(pdf)+1023)/1024, a.Form, design.Name, withLogo)
 	if len(skipped) > 0 {
 		answer += "\nDrawn as their alt text, not as images: " + strings.Join(skipped, "; ")
 	}
@@ -747,19 +824,17 @@ func readSource(from pdfRoot, rel string) (string, error) {
 	return string(b), nil
 }
 
-// pdfDesign is the run's report design and its canonical document: the one
-// the engine stamped, or the built-in default.
-func (s *server) pdfDesign() (reportdesign.Design, []byte, error) {
+// pdfDesign is the run's report design: the one the engine stamped, or the
+// built-in default.
+func (s *server) pdfDesign() (reportdesign.Design, error) {
 	if st := s.spec.PDF.Theme; st != nil {
-		d, err := st.check()
-		return d, []byte(st.Document), err
+		return st.check()
 	}
-	d := reportdesign.Default()
-	return d, d.Canonical(), nil
+	return reportdesign.Default(), nil
 }
 
 // renderMeta is meta.json: what the template is told besides the design.
-func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author string, images map[string]pdfImage, now time.Time) ([]byte, error) {
+func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author string, images map[string]pdfImage, logo *pdfLogo, now time.Time) ([]byte, error) {
 	tint, err := reportdesign.Tint(d.Accent)
 	if err != nil {
 		return nil, err
@@ -772,6 +847,7 @@ func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author str
 		Title: title, Author: author, Images: images, Date: now.UTC().Format(time.DateOnly), Titled: doc.title != "",
 		Form: form, TitleBlock: doc.titleBlock, Cover: form == FormReport && doc.titleBlock && doc.words >= coverWords,
 		Tint: tint, Memo: memo, NotoBody: notoFor(d.Fonts.Body), NotoHeadings: notoFor(d.Fonts.Headings),
+		Logo: logo,
 	})
 }
 

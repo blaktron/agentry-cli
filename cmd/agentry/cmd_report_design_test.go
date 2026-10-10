@@ -2,8 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"hash/crc32"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,12 +28,17 @@ import (
 // design or {}; PUT holds a design to pkg/reportdesign, refusing it 422 on
 // design.<field>, stores its canonical document, and a body without one
 // clears it. Like the core's writeJSON, the answer embeds the design
-// compacted, not as it was stored.
+// compacted, not as it was stored. The logo (agentry#1025) is stored beside
+// the design as NormalizeLogo writes it: a design PUT with one replaces it,
+// one without keeps it, and an answer carries it only with include=logo.
 type designRegistry struct {
 	*httptest.Server
 	mu     sync.Mutex
 	stored []byte
+	logo   reportdesign.Logo
 	puts   int
+	// asked is the include parameter of the last request.
+	asked string
 	// refuse makes every PUT answer this field's 422.
 	refuse string
 	// broken makes every GET answer 500.
@@ -46,6 +56,7 @@ func newDesignRegistry(t *testing.T) *designRegistry {
 		}
 		dr.mu.Lock()
 		defer dr.mu.Unlock()
+		dr.asked = r.URL.Query().Get("include")
 		switch r.Method {
 		case http.MethodGet:
 			if dr.broken {
@@ -63,7 +74,7 @@ func newDesignRegistry(t *testing.T) *designRegistry {
 				return
 			}
 			if len(body.Design) == 0 {
-				dr.stored = nil
+				dr.stored, dr.logo = nil, reportdesign.Logo{}
 				break
 			}
 			d, err := reportdesign.Parse(body.Design)
@@ -82,6 +93,13 @@ func newDesignRegistry(t *testing.T) *designRegistry {
 					"errors": []map[string]string{{"field": "design." + fe.Field, "message": fe.Message}}})
 				return
 			}
+			if d.Logo != (reportdesign.Logo{}) {
+				raw, _ := d.Logo.Decode()
+				if dr.logo, err = reportdesign.NormalizeLogo(raw); err != nil {
+					t.Fatalf("NormalizeLogo of a parsed logo: %v", err)
+				}
+				d.Logo = reportdesign.Logo{}
+			}
 			dr.stored = d.Canonical()
 		default:
 			http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -90,6 +108,14 @@ func newDesignRegistry(t *testing.T) *designRegistry {
 		answer := map[string]any{}
 		if dr.stored != nil {
 			answer["design"] = json.RawMessage(dr.stored)
+			if dr.asked == "logo" && dr.logo != (reportdesign.Logo{}) {
+				d, err := reportdesign.Parse(dr.stored)
+				if err != nil {
+					t.Fatal(err)
+				}
+				d.Logo = dr.logo
+				answer["design"] = json.RawMessage(d.Canonical())
+			}
 		}
 		writeJSON(w, http.StatusOK, answer)
 	})
@@ -373,5 +399,130 @@ func TestReportDesignReset(t *testing.T) {
 	}
 	if out, _, err := reportDesign(t, reg, "show"); err != nil || !strings.Contains(out, "your account at "+reg.URL+" has no report design") {
 		t.Errorf("show after reset: %q %v", out, err)
+	}
+}
+
+// testLogo is a w×h PNG with a text chunk after its header and bytes after
+// its end, both holding marker: a logo within the bounds that is not
+// NormalizeLogo's encoding.
+func testLogo(t *testing.T, w, h int, marker string) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i := range img.Pix {
+		img.Pix[i] = byte(i * 7)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	b := buf.Bytes()
+	data := []byte("Comment\x00" + marker)
+	chunk := binary.BigEndian.AppendUint32(nil, uint32(len(data))) //nolint:gosec // a short test chunk
+	chunk = append(chunk, "tEXt"...)
+	chunk = append(chunk, data...)
+	chunk = binary.BigEndian.AppendUint32(chunk, crc32.ChecksumIEEE(append([]byte("tEXt"), data...)))
+	return append(append(append(append([]byte{}, b[:33]...), chunk...), b[33:]...), marker...)
+}
+
+// withLogo is a design document with logo as its logo.
+func withLogo(t *testing.T, doc, logo []byte) []byte {
+	t.Helper()
+	d, err := reportdesign.Parse(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Logo = reportdesign.Logo{PNG: base64.StdEncoding.EncodeToString(logo)}
+	return d.Canonical()
+}
+
+// The logo travels in the design (agentry-cli#816): import sends a file's
+// logo as the core stores it (NormalizeLogo's encoding, so the hash the
+// CLI prints is the one saved), export asks for it and writes it, a round
+// trip is byte for byte, show says there is one, and a file without a logo
+// keeps the account's and says so. A run signed in takes the design with
+// its logo.
+func TestReportDesignLogo(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv(envToken, "agy_test")
+	reg := newDesignRegistry(t)
+	dir := t.TempDir()
+
+	crafted := testLogo(t, 300, 100, "agentry-816-marker")
+	house := filepath.Join(dir, "house.json")
+	mustWriteFile(t, house, withLogo(t, designOf(t, "modern", "House", "#0b5394"), crafted))
+	out, errOut, err := reportDesign(t, reg, "import", house)
+	if err != nil || errOut != "" || !strings.Contains(out, "Saved House") || strings.Contains(out, "keeps the logo") {
+		t.Fatalf("import with a logo: %q %q %v", out, errOut, err)
+	}
+	reg.mu.Lock()
+	logo := reg.logo
+	reg.mu.Unlock()
+	stored, _ := logo.Decode()
+	if len(stored) == 0 || bytes.Contains(stored, []byte("agentry-816-marker")) {
+		t.Fatalf("the registry stored the logo as %d bytes, marker kept: %v", len(stored), bytes.Contains(stored, []byte("agentry-816-marker")))
+	}
+
+	exported := filepath.Join(dir, "exported.json")
+	if out, _, err := reportDesign(t, reg, "export", exported); err != nil || !strings.Contains(out, "House with its logo") {
+		t.Fatalf("export: %q %v", out, err)
+	}
+	if reg.asked != "logo" {
+		t.Errorf("export asked include=%q, want logo", reg.asked)
+	}
+	d, err := reportdesign.Parse(readFile(t, exported))
+	if err != nil || d.Logo != logo {
+		t.Fatalf("the exported design's logo is not the stored one (%v)", err)
+	}
+	if out, errOut, err := reportDesign(t, reg, "import", exported); err != nil || errOut != "" {
+		t.Fatalf("import of the export: %q %q %v", out, errOut, err)
+	}
+	again := filepath.Join(dir, "again.json")
+	if _, _, err := reportDesign(t, reg, "export", again); err != nil || !bytes.Equal(readFile(t, again), readFile(t, exported)) {
+		t.Errorf("a round trip with a logo is not byte for byte (%v)", err)
+	}
+
+	out, _, err = reportDesign(t, reg, "show")
+	if err != nil || !strings.Contains(out, "logo:     a PNG of 300×100 pixels") || !strings.Contains(out, "sha256:   "+d.SHA256()) {
+		t.Errorf("show with a logo: %q %v", out, err)
+	}
+	out, _, err = reportDesign(t, reg, "show", "--json")
+	var shown struct {
+		Logo bool `json:"logo"`
+	}
+	if err != nil || json.Unmarshal([]byte(out), &shown) != nil || !shown.Logo {
+		t.Errorf("show --json with a logo: %q %v", out, err)
+	}
+	choice, err := chooseReportTheme(t.Context(), reportFlags{}, cliConfig{}, readAccountTheme(reg.URL), io.Discard)
+	got, perr := reportdesign.Parse(choice.Design)
+	if err != nil || perr != nil || choice.From != engine.ThemeFromAccount || got != d {
+		t.Errorf("a signed-in run's design = %+v (%v), want the account's with its logo", choice.From, err)
+	}
+
+	plain := filepath.Join(dir, "plain.json")
+	mustWriteFile(t, plain, designOf(t, "classic", "No logo", "#1f3a5f"))
+	out, errOut, err = reportDesign(t, reg, "import", plain)
+	if err != nil || errOut != "" || !strings.Contains(out, "The file has no logo, so your account keeps the logo it has") {
+		t.Errorf("import without a logo: %q %q %v", out, errOut, err)
+	}
+	if out, _, err := reportDesign(t, reg, "show"); err != nil || !strings.Contains(out, "design:   No logo") || !strings.Contains(out, "logo:     a PNG of 300×100") {
+		t.Errorf("show after a logo-less import: %q %v", out, err)
+	}
+
+	if _, _, err := reportDesign(t, reg, "reset"); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err := reportDesign(t, reg, "show"); err != nil || !strings.Contains(out, "logo:     none") {
+		t.Errorf("show after reset: %q %v", out, err)
+	}
+
+	// A logo that is not a PNG is refused before the registry is asked.
+	_, puts := reg.state()
+	bad := filepath.Join(dir, "bad.json")
+	mustWriteFile(t, bad, bytes.Replace(withLogo(t, designOf(t, "modern", "Bad", "#0b5394"), crafted), []byte(`"png": "iVBOR`), []byte(`"png": "/9j/4`), 1))
+	if _, _, err := reportDesign(t, reg, "import", bad); exitOf(err) != 2 || !strings.Contains(err.Error(), "logo") {
+		t.Errorf("a logo that is not a PNG = %v", err)
+	}
+	if _, after := reg.state(); after != puts {
+		t.Error("a refused logo reached the registry")
 	}
 }

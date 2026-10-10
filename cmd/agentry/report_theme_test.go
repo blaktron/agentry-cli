@@ -3,7 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
+	"image"
+	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -128,6 +132,9 @@ func TestReadAccountTheme(t *testing.T) {
 			return
 		}
 		auth = r.Header.Get("Authorization")
+		if r.URL.Query().Get("include") != "logo" {
+			t.Errorf("a run read the account's design without include=logo: %s", r.URL)
+		}
 		if status != http.StatusOK {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(status)
@@ -210,5 +217,30 @@ func TestReportThemeSurvivesAConfigRewrite(t *testing.T) {
 	}
 	if cfg, err = loadCLIConfig(); err != nil || cfg.Report.Theme != "classic" || cfg.Report.Design != "house.json" {
 		t.Errorf("report after a rewrite = %+v (%v)", cfg.Report, err)
+	}
+}
+
+// A design file with a logo near the largest one a design may carry is
+// read whole by --report-design (agentry-cli#816): the read is bounded by
+// the logo's size, not the 16 KB of the design alone.
+func TestReportDesignFileWithALargeLogo(t *testing.T) {
+	isolateEnv(t)
+	img := image.NewNRGBA(image.Rect(0, 0, 330, 330))
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() < 400<<10 || buf.Len() > reportdesign.MaxLogoBytes {
+		t.Fatalf("the test logo is %d bytes, want a large one within the bound", buf.Len())
+	}
+	doc := withLogo(t, designOf(t, "modern", "Large", "#0b5394"), buf.Bytes())
+	f := filepath.Join(t.TempDir(), "large.json")
+	mustWriteFile(t, f, doc)
+	choice, err := chooseReportTheme(t.Context(), reportFlags{design: f}, cliConfig{}, nil, io.Discard)
+	if err != nil || !bytes.Equal(choice.Design, doc) {
+		t.Fatalf("--report-design with a %d-byte logo: %v", buf.Len(), err)
 	}
 }
