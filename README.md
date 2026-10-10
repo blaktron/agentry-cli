@@ -1118,11 +1118,14 @@ manifest + operator policy into a deterministic run plan → execute:
 - **Everything the run produces** lands in the output folder: the
   QuickAgent's report files, `result.json` (the machine-readable envelope;
   its `pdfs` block names the design and each exported PDF's SHA-256 and
-  form, and whether it drew your logo),
+  form, and whether it drew your logo, and its `fetchSaves` block counts
+  the files `fetch` saved into the scratch folder),
   and `receipts/` (event stream, gateway log, the exact run plan; for a
   one-shot run, `calls.ndjson`: each runner tool call's outcome, never its
   arguments, and the agent's `end_blocked` sentence, masked like the rest;
-  `pdfs.ndjson`, the record of each export).
+  `pdfs.ndjson`, the record of each export; `fetches.ndjson`, each body
+  `fetch` saved into the scratch folder, with its host, size and SHA-256,
+  since the folder itself is gone with the run).
   The runner tears down containers, networks, and secret files on every
   exit path. Each teardown step is best effort: a docker call that fails
   is not retried and never replaces the run's own error, so something can

@@ -335,23 +335,16 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return s.failed("search_inputs", err)
 	}
-	query := strings.TrimSpace(a.Query)
+	needle, limit, refused := searchQuery(ToolSearchInputs, a.Query, a.MaxResults)
 	switch {
-	case query == "":
-		return "search_inputs: query is required", true
-	case len(query) > maxSearchQuery:
-		return fmt.Sprintf("search_inputs: query is longer than %d bytes", maxSearchQuery), true
+	case refused != "":
+		return refused, true
 	case s.spec.InputsDir == "":
 		return "search_inputs: no inputs channel configured", true
 	}
 	if err := validView(a.View); err != nil {
 		return "search_inputs: " + err.Error(), true
 	}
-	limit := a.MaxResults
-	if limit <= 0 {
-		limit = defaultSearchHits
-	}
-	limit = min(limit, maxSearchHits)
 	clean := "."
 	if a.Path != "" {
 		clean = path.Clean(a.Path)
@@ -363,28 +356,59 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return s.failed("search_inputs", err)
 	}
-	needle := strings.ToLower(query)
-	var hits []string
-	total := 0
+	var m matches
 	for _, t := range targets {
 		data, err := readPrefix(t.abs, maxSearchFileBytes)
-		if err != nil || !utf8.Valid(data) {
+		if err != nil {
 			continue
 		}
-		for i, line := range strings.Split(string(data), "\n") {
-			at := indexFold(line, needle)
-			if at < 0 {
-				continue
-			}
-			if total++; len(hits) < limit {
-				hits = append(hits, fmt.Sprintf("%s:%d: %s", t.path, i+1, excerpt(line, at)))
-			}
+		m.add(t.path, data, needle, limit)
+	}
+	if m.total == 0 {
+		return fmt.Sprintf("no input text matches %q", strings.TrimSpace(a.Query)), false
+	}
+	return searchAnswer(m.hits, m.total, s.spec.Limits.budget()), false
+}
+
+// searchQuery holds a search's query and count to their bounds: the
+// lower-cased query to match, the most hits to keep, or the refusal.
+func searchQuery(tool, query string, maxResults int) (needle string, limit int, refused string) {
+	query = strings.TrimSpace(query)
+	switch {
+	case query == "":
+		return "", 0, tool + ": query is required"
+	case len(query) > maxSearchQuery:
+		return "", 0, fmt.Sprintf("%s: query is longer than %d bytes", tool, maxSearchQuery)
+	}
+	limit = maxResults
+	if limit <= 0 {
+		limit = defaultSearchHits
+	}
+	return strings.ToLower(query), min(limit, maxSearchHits), ""
+}
+
+// matches is a search's matching lines: the first ones kept as
+// path:line: excerpt, and how many there were in all.
+type matches struct {
+	hits  []string
+	total int
+}
+
+// add matches each line of one file's text (a text that is not UTF-8 is
+// not searched), keeping at most limit hits in all.
+func (m *matches) add(name string, data []byte, needle string, limit int) {
+	if !utf8.Valid(data) {
+		return
+	}
+	for i, line := range strings.Split(string(data), "\n") {
+		at := indexFold(line, needle)
+		if at < 0 {
+			continue
+		}
+		if m.total++; len(m.hits) < limit {
+			m.hits = append(m.hits, fmt.Sprintf("%s:%d: %s", name, i+1, excerpt(line, at)))
 		}
 	}
-	if total == 0 {
-		return fmt.Sprintf("no input text matches %q", query), false
-	}
-	return searchAnswer(hits, total, s.spec.Limits.budget()), false
 }
 
 // searchAnswer is a search's hits, one a line, as many as fit the result

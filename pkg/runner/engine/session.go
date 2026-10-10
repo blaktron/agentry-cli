@@ -1049,7 +1049,11 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	if s.rd.pdfLedger != "" {
 		s.rd.redact.File(s.rd.pdfLedger)
 	}
+	if s.rd.fetchLedger != "" {
+		s.rd.redact.File(s.rd.fetchLedger)
+	}
 	pdfs := pdfRecord(s.rd)
+	fetchSaves := fetchSavesRecord(s.rd)
 
 	s.mu.Lock()
 	reason := s.reason
@@ -1071,6 +1075,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
 	env.CapabilitiesEnforced["daemon"] = daemon
 	env.PDFs = pdfs
+	env.FetchSaves = fetchSaves
 	// Every decode the session made, the files added mid-run included.
 	s.dec.lines(env.CapabilitiesEnforced)
 	_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "transcript.md"), []byte(transcript(env, log)), 0o644)

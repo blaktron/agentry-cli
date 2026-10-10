@@ -1520,8 +1520,11 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	if caps.Scratch {
 		e["pdf"] = fmt.Sprintf("the runner's grant, not the contract's: %s renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst %s in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under %s whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, %d GiB of address space and %d seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
 			toolsrv.ToolExportPDF, toolsrv.TypstVersion, spec.ToolsTmpMount, toolsrv.PDFRenderMemory>>30, int(toolsrv.PDFRenderTimeout.Seconds()))
-		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a %d MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
-			toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
+		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a %d MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
+			toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
+		if caps.EgressMode == "hosts" || caps.EgressMode == "all" {
+			e["scratch"] += fmt.Sprintf("; %s saves a response body there, of any type, when the agent names a path (saveTo) or the body is larger than one tool result: only from the declared egress above, with every redirect hop checked, refused when the body holds a granted secret's value byte for byte, never executable, and each save recorded in receipts/fetches.ndjson", toolsrv.ToolFetch)
+		}
 	}
 	if len(caps.ExecCommands) == 0 {
 		e["exec"] = "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled"

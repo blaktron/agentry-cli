@@ -6,5 +6,6 @@ agentry-tools:
   - scratch_list
   - scratch_read
   - scratch_write
+  - scratch_search
   - write_report
   - export_pdf
