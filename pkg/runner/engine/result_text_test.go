@@ -40,8 +40,8 @@ func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
 	if c.turns != 1 {
 		t.Fatalf("turns = %d, want 1", c.turns)
 	}
-	if c.reasoningLast {
-		t.Fatal("reasoningLast set, though the answer came after the reasoning")
+	if c.answerInReasoning() {
+		t.Fatal("answerInReasoning, though the answer came after the reasoning")
 	}
 	if c.inTok != 10 || c.outTok != 5 {
 		t.Fatalf("usage = %d/%d", c.inTok, c.outTok)
@@ -100,8 +100,8 @@ func TestCollectorNotesAnswerInReasoning(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &eventCollector{adapter: ad, events: io.Discard}
 			c.consume(strings.NewReader(strings.Join(tc.lines, "\n") + "\n"))
-			if !c.reasoningLast {
-				t.Fatal("reasoningLast unset after a stream that ended on reasoning")
+			if !c.answerInReasoning() {
+				t.Fatal("answerInReasoning unset after a stream that ended on reasoning")
 			}
 			if c.lastText != "" {
 				t.Fatalf("lastText = %q, want the reasoning kept out", c.lastText)
@@ -110,5 +110,30 @@ func TestCollectorNotesAnswerInReasoning(t *testing.T) {
 				t.Fatalf("turns = %d, want %d", got, tc.turns)
 			}
 		})
+	}
+}
+
+// Text, then trailing reasoning, is an answer: a failed check on it reads as
+// what it is, not as an answer left in the reasoning. Text before a tool
+// call is no answer to the reasoning after it.
+func TestCollectorTextThenReasoningIsAnAnswer(t *testing.T) {
+	ad, err := adapter.Get("docker-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &eventCollector{adapter: ad, events: io.Discard}
+	c.consume(strings.NewReader(strings.Join([]string{
+		`{"type":"agent_choice","content":"{\"answer\":\"x\"}"}`,
+		`{"type":"agent_choice_reasoning","content":"done"}`,
+	}, "\n") + "\n"))
+	if c.answerInReasoning() {
+		t.Fatal("text then reasoning read as an answer left in the reasoning")
+	}
+	c.consume(strings.NewReader(strings.Join([]string{
+		`{"type":"tool_call","tool_call":{"id":"c1","function":{"name":"list_inputs","arguments":"{}"}}}`,
+		`{"type":"agent_choice_reasoning","content":"{\"answer\":1}"}`,
+	}, "\n") + "\n"))
+	if !c.answerInReasoning() {
+		t.Fatal("reasoning after a tool call, with the earlier text, read as answered")
 	}
 }

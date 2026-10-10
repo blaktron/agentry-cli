@@ -699,6 +699,19 @@ func TestJSONResultKindEnforced(t *testing.T) {
 			t.Fatalf("reason = %+v, want none", env.Reason)
 		}
 	})
+	t.Run("a schema violation before trailing reasoning keeps its own error", func(t *testing.T) {
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: `{"type":"agent_choice","content":"{\"answer\":\"forty-two\"}"}` + "\n" +
+				`{"type":"agent_choice_reasoning","content":"done"}` + "\n"},
+		}}
+		q := p
+		q.OutDir = t.TempDir()
+		env, err := Run(context.Background(), f, q)
+		if err == nil || !strings.Contains(err.Error(), "does not satisfy") || env.Reason != nil {
+			t.Fatalf("want the schema violation and no reason, got %v (reason %+v)", err, env.Reason)
+		}
+	})
 	t.Run("fenced json accepted", func(t *testing.T) {
 		final := map[string]any{
 			"type":    "agent_choice",
