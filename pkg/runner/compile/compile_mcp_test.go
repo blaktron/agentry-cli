@@ -305,6 +305,25 @@ func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
 	}
 }
 
+// TestCompileDeclaredServerWithAnEmptyEgressListHasNoNetwork
+// (agentry-cli#801): a server's own egress: [] declares no host, so its
+// catalog entry disables its network, as for a server that declares none.
+func TestCompileDeclaredServerWithAnEmptyEgressListHasNoNetwork(t *testing.T) {
+	srv := githubServerSpec()
+	srv.Egress = []string{}
+	planDir := t.TempDir()
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), planDir); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "api.github.com:443/tcp") || strings.Count(string(b), "disableNetwork: true") < 2 {
+		t.Fatalf("a server with egress: [] keeps a network:\n%s", b)
+	}
+}
+
 // TestEnforcementNamesEverySecretWithWhereItGoes (agentry-cli#376): the
 // receipt's secrets line names a declared server's secrets beside the
 // release's own, each with the container it reaches, so a run that injected
