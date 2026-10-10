@@ -466,6 +466,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	result, rerr := finalResult(p.Plan.Harness.ResultKind, outcome.lastText, schema)
 	if rerr != nil {
 		env.Result = receipt.TextResult(outcome.lastText)
+		if outcome.answerInReasoning {
+			rerr = errAnswerInReasoning()
+		}
 		return fail(env, redact, rerr)
 	}
 	env.Result = result
@@ -505,8 +508,10 @@ func fail(env *receipt.Envelope, r *redactor, err error) (*receipt.Envelope, err
 // agentOutcome is what the agent-container phase produced.
 type agentOutcome struct {
 	lastText string
-	usage    receipt.Usage
-	err      error // classified, nil on success
+	// answerInReasoning: the collector's answerInReasoning at the end.
+	answerInReasoning bool
+	usage             receipt.Usage
+	err               error // classified, nil on success
 	// hostInfo names the executable (and version) a host-run harness
 	// ran, for the envelope; hostEnv the host variables it could inherit.
 	hostInfo string
@@ -992,7 +997,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	_ = d.RemoveForce(ctx, name)
 
 	var refused *adapter.OrgPolicyRefusal
-	out := agentOutcome{lastText: collector.lastText, usage: collector.usage()}
+	out := agentOutcome{lastText: collector.lastText, answerInReasoning: collector.answerInReasoning(), usage: collector.usage()}
 	switch {
 	// First, because a panic that stopped the reader is the reason anything
 	// else downstream looks wrong — the harness blocked on a pipe nobody was
@@ -1101,6 +1106,18 @@ func finalResult(kind, lastText string, schema *jsonschema.Schema) (json.RawMess
 	return json.RawMessage(candidate), nil
 }
 
+// errAnswerInReasoning refuses a schema-checked run whose model ended on
+// reasoning (agentry-cli#825). The runner stays strict, as for leaked
+// markup (agentry-cli#354): reasoning is the model's working, not its
+// answer, and docker-agent itself does not use it as the response. The
+// reason is there so the run does not read "not valid JSON" over an empty
+// message.
+func errAnswerInReasoning() error {
+	return Classify(ExitOutputSchema, receipt.WithReason(
+		fmt.Errorf("package declares %s but the model sent no final message after its reasoning: an answer written only in the model's reasoning is not taken as the result (raw output preserved in receipts)", compile.OutputSchemaFile),
+		receipt.ReasonAnswerInReasoning, ""))
+}
+
 // JSONResult is the §R2 output convention for a json-kind result, as the
 // run itself applies it: a host post-step that recovers an answer from a
 // message the run refused holds it to exactly this (the Examiner's,
@@ -1164,8 +1181,13 @@ type eventCollector struct {
 	// progress; lastText is the complete text of the most recent message
 	// (a streaming provider's last delta alone was the result before
 	// agentry-cli#53). A tool call or a usage event ends a message.
-	curText            strings.Builder
-	lastText           string
+	curText  strings.Builder
+	lastText string
+	// Since the last tool call, the model reasoned (reasoned) and wrote
+	// answer text (answered). A run that ends having reasoned and not
+	// answered put whatever it meant to answer in its reasoning, which is
+	// never the result (agentry-cli#825); text then reasoning is an answer.
+	reasoned, answered bool
 	budgetTripped      bool
 	costTripped        bool
 	harnessErrReported string
@@ -1256,12 +1278,19 @@ func (c *eventCollector) record(ev adapter.Event) {
 	switch ev.Kind {
 	case adapter.EventToolCall:
 		c.curText.Reset() // text before a tool call is its own message
+		c.reasoned, c.answered = false, false
 		c.turns++
 		if c.maxTurns > 0 && c.turns > c.maxTurns && !c.budgetTripped {
 			c.budgetTripped = true
 			c.overBudget()
 		}
+	case adapter.EventReasoning:
+		c.reasoned = true
 	case adapter.EventAssistantText:
+		// Whitespace alone is not an answer.
+		if strings.TrimSpace(ev.Text) != "" {
+			c.answered = true
+		}
 		switch {
 		case ev.Text == "":
 		case ev.Delta:
@@ -1329,6 +1358,10 @@ func (c *eventCollector) notifyUsage() {
 	}()
 	c.onUsage(c.usage())
 }
+
+// answerInReasoning: since the last tool call the model reasoned and wrote
+// no answer.
+func (c *eventCollector) answerInReasoning() bool { return c.reasoned && !c.answered }
 
 func (c *eventCollector) usage() receipt.Usage {
 	return receipt.Usage{

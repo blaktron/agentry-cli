@@ -356,7 +356,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	_ = stderrFile.Close()
 	rd.redact.File(stderrPath)
 	var refused *adapter.OrgPolicyRefusal
-	out := agentOutcome{lastText: collector.lastText, usage: collector.usage(), hostInfo: info, hostEnv: inherited}
+	out := agentOutcome{lastText: collector.lastText, answerInReasoning: collector.answerInReasoning(), usage: collector.usage(), hostInfo: info, hostEnv: inherited}
 	switch {
 	// First, as in the container path: a panic that stopped the reader is the
 	// reason anything downstream looks wrong (agentry-cli#161).

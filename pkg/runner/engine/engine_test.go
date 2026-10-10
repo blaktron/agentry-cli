@@ -647,6 +647,71 @@ func TestJSONResultKindEnforced(t *testing.T) {
 			t.Fatalf("want exit %d naming the violation, got %v", ExitOutputSchema, err)
 		}
 	})
+	// agentry-cli#825: the shape of production run 01a1266a (docker-agent
+	// 1.128.0, qwen3.8-flash-next): every tool ran, then the model streamed
+	// its whole answer as reasoning and sent no message. The run is still
+	// refused, and the reason says where the answer went.
+	t.Run("an answer only in reasoning is exit 17 with its reason", func(t *testing.T) {
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: strings.Join([]string{
+				`{"type":"stream_started"}`,
+				`{"type":"tool_call","tool_call":{"id":"c1","function":{"name":"list_inputs","arguments":"{}"}}}`,
+				`{"type":"tool_call_response","tool_call_id":"c1","response":"a.csv"}`,
+				`{"type":"message_added"}`,
+				`{"type":"agent_choice_reasoning","content":"{\"answer\""}`,
+				`{"type":"agent_choice_reasoning","content":":42}"}`,
+				`{"type":"token_usage","usage":{"input_tokens":10,"output_tokens":5,"cost":0}}`,
+				`{"type":"stream_stopped","reason":"normal"}`,
+			}, "\n") + "\n"},
+		}}
+		q := p
+		q.OutDir = t.TempDir()
+		env, err := Run(context.Background(), f, q)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitOutputSchema || !strings.Contains(err.Error(), "reasoning") {
+			t.Fatalf("want exit %d naming the reasoning, got %v", ExitOutputSchema, err)
+		}
+		if env == nil || env.Reason == nil || env.Reason.Code != receipt.ReasonAnswerInReasoning {
+			t.Fatalf("envelope reason = %+v, want %s", env, receipt.ReasonAnswerInReasoning)
+		}
+		if env.Stage != receipt.StageOutput || env.Usage.Turns != 1 {
+			t.Fatalf("stage %q, turns %d; want output, 1", env.Stage, env.Usage.Turns)
+		}
+		if string(env.Result) == `{"answer":42}` {
+			t.Fatal("the reasoning was taken as the result")
+		}
+	})
+	t.Run("a failed answer after reasoning carries no reasoning reason", func(t *testing.T) {
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: `{"type":"agent_choice_reasoning","content":"thinking"}` + "\n" +
+				`{"type":"agent_choice","content":"not json"}` + "\n"},
+		}}
+		q := p
+		q.OutDir = t.TempDir()
+		env, err := Run(context.Background(), f, q)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitOutputSchema {
+			t.Fatalf("want exit %d, got %v", ExitOutputSchema, err)
+		}
+		if env == nil || env.Reason != nil {
+			t.Fatalf("reason = %+v, want none", env.Reason)
+		}
+	})
+	t.Run("a schema violation before trailing reasoning keeps its own error", func(t *testing.T) {
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: `{"type":"agent_choice","content":"{\"answer\":\"forty-two\"}"}` + "\n" +
+				`{"type":"agent_choice_reasoning","content":"done"}` + "\n"},
+		}}
+		q := p
+		q.OutDir = t.TempDir()
+		env, err := Run(context.Background(), f, q)
+		if err == nil || !strings.Contains(err.Error(), "does not satisfy") || env.Reason != nil {
+			t.Fatalf("want the schema violation and no reason, got %v (reason %+v)", err, env.Reason)
+		}
+	})
 	t.Run("fenced json accepted", func(t *testing.T) {
 		final := map[string]any{
 			"type":    "agent_choice",

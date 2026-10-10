@@ -120,7 +120,7 @@ func TestDockerAgentEvents(t *testing.T) {
 		{"tool confirmation", `{"type":"tool_call_confirmation","tool_call":{"id":"call_1"}}`, []EventKind{EventOther}},
 		{"complete call", `{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"list_inputs","arguments":"{}"}}}`, []EventKind{EventToolCall}},
 		// The model's reasoning stream is not assistant output (agentry-cli#53).
-		{"reasoning", `{"type":"agent_choice_reasoning","content":"Let me"}`, []EventKind{EventOther}},
+		{"reasoning", `{"type":"agent_choice_reasoning","content":"Let me"}`, []EventKind{EventReasoning}},
 		{"choice text", `{"type":"agent_choice","message":{"content":"hello"}}`, []EventKind{EventAssistantText}},
 		{"content parts", `{"type":"agent_choice","message":{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`, []EventKind{EventAssistantText}},
 		{"top level text", `{"type":"delta","content":"chunk"}`, []EventKind{EventAssistantText}},

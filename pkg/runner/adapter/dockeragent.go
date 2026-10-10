@@ -470,7 +470,9 @@ func (d *dockerAgent) Events(line []byte) []Event {
 		events = append(events, Event{Kind: kind, Text: text, Raw: raw})
 	case strings.Contains(typ, "reasoning") || strings.Contains(typ, "thinking"):
 		// The model's reasoning stream (agent_choice_reasoning): receipts
-		// keep it, the result must not (agentry-cli#53).
+		// keep it, the result must not (agentry-cli#53). The event says
+		// only that the model reasoned, never what (agentry-cli#825).
+		events = append(events, Event{Kind: EventReasoning, Raw: raw})
 	default:
 		if txt := textField(obj); txt != "" {
 			events = append(events, Event{Kind: EventAssistantText, Text: txt, Delta: isTextDelta(typ), Raw: raw})
