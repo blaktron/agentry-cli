@@ -354,7 +354,7 @@ func TestATimedOutCommandIsEnded(t *testing.T) {
 func TestTheStartCheckNamesWhyAHostRefused(t *testing.T) {
 	for stderr, detail := range map[string]string{
 		"admin@agentry-target: Permission denied (publickey,password).":   RefusedAuth,
-		"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@":         RefusedHostKey,
+		"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@":        RefusedHostKey,
 		"ssh: connect to host 172.20.0.4 port 2222: Connection refused\n": RefusedReach,
 	} {
 		fx := newFixture(t, passwordTarget())
