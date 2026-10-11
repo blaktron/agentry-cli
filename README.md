@@ -1284,7 +1284,16 @@ individual|business|enterprise`; GitHub's telemetry and experiment hosts are
 denied). A quota or rate-limit error ends it with the plan-limit outcome; an
 organization's policy that turns Copilot CLI off for your account, or
 requires a person to approve each tool call, ends it refused by that policy
-(exit 11, reason `org-policy`, the policy named).
+(exit 11, reason `org-policy`, the policy named). `agentry setup` asks your
+Copilot plan before the model, then asks Copilot CLI which models that plan
+offers your account (agentry-cli#808) and offers them, `auto` first; a model
+the plan does not offer, one your organization disables among them, is not
+taken. The list runs Copilot CLI in a run's container: the same image,
+hardening and egress proxy, handed the token the same way, with no MCP
+server and no turn. Nothing of Agentry's calls the Copilot API. Setup lists
+only when it is about to ask for the model, so `--yes` and `--model` start
+no container, and `--skip-images` lists nothing; a list that fails is said,
+and you type the model id instead.
 **Connect your account** (agentry-cli#742): for OpenRouter, Poe and Hugging
 Face, `agentry model-signins add openrouter|poe|huggingface` (or `agentry
 setup`, the provider, paying with `connect`; `--connect` without the
