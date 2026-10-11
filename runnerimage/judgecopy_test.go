@@ -59,17 +59,18 @@ func TestTheImageJudgeIsTheCores(t *testing.T) {
 	}
 }
 
-// ruleset041RubricHash is the rubric hash of the shipped request shape under
-// ruleset 0.4.1 (agentry#1044, DEV-235): C3 holds only a dangerous capability
-// that is undeclared and out of line with the purpose in the state. It moves
-// only when the core's rubric does, and then so must this literal.
-const ruleset041RubricHash = "sha256:728496fa6d54ae1a3f244606631adda962c2a8a5bc248e454e73bc213aec7607"
+// ruleset045RubricHash is the rubric hash of the shipped request shape under
+// ruleset 0.4.5 (agentry#1092, DEV-242): C3 holds only a dangerous capability
+// that is undeclared and out of line with the purpose in the state, and the
+// runner grants name a declared target host. It moves only when the core's
+// rubric does, and then so must this literal.
+const ruleset045RubricHash = "sha256:82844f1983ce676ce036eb057e6e72bfe5e0d1ac539991cb51be86d89792bdeb"
 
 // TestTheImageRubricAsksWhatTheCoreAsks holds the image's copy of AI Review's
 // rubric to the core's by what it asks, beyond the byte comparison of the
 // sources: the six questions' wording, the state a request carries (with the
 // purpose C3 weighs a capability against), the severities a score is given and
-// the rubric hash a scan records, which is also the literal ruleset 0.4.1
+// the rubric hash a scan records, which is also the literal ruleset 0.4.5
 // shipped under.
 func TestTheImageRubricAsksWhatTheCoreAsks(t *testing.T) {
 	cq, iq := corejudge.RubricQuestions(), imagejudge.RubricQuestions()
@@ -131,8 +132,8 @@ func TestTheImageRubricAsksWhatTheCoreAsks(t *testing.T) {
 			t.Errorf("rubric hash of shape %d: image %s, core %s", shape, i, c)
 		}
 	}
-	if got := imagejudge.NewRubricScanner(ic).Hash(); got != ruleset041RubricHash {
-		t.Errorf("the image's rubric hash is %s, ruleset 0.4.1's is %s", got, ruleset041RubricHash)
+	if got := imagejudge.NewRubricScanner(ic).Hash(); got != ruleset045RubricHash {
+		t.Errorf("the image's rubric hash is %s, ruleset 0.4.5's is %s", got, ruleset045RubricHash)
 	}
 }
 
