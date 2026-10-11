@@ -20,9 +20,10 @@ import (
 // at a web address, fetched with one https GET through the same proxy as a
 // repository, its redirects followed only on the same host, and saved as
 // one file under Out, named from the host's Content-Disposition or the
-// address's last path segment with the name made safe. The host then
-// decodes it as it decodes an upload, so it gets every malware check and
-// every decoder, and an archive is unpacked under DR-39's rules.
+// address's last path segment, rewritten to a name every file system
+// takes. The host then decodes it as it decodes an upload, so it gets every
+// malware check and every decoder, and an archive is unpacked under DR-39's
+// rules.
 
 // KindURL is the url kind.
 const KindURL = "url"
@@ -151,30 +152,30 @@ func newClient(o Options, u *url.URL) *http.Client {
 }
 
 // fileName names the saved file: the host's Content-Disposition filename,
-// else the last segment of the address the body came from, made safe;
-// "download" when neither gives a name.
+// else the last segment of the address the body came from, made portable
+// (PortableFileName); "download" when neither gives a name.
 func fileName(disposition string, from *url.URL) string {
 	if _, params, err := mime.ParseMediaType(disposition); err == nil {
-		if n := SafeName(params["filename"]); n != "" {
+		if n := PortableFileName(params["filename"]); n != "" {
 			return n
 		}
 	}
 	if from != nil {
-		if n := SafeName(path.Base(from.Path)); n != "" {
+		if n := PortableFileName(path.Base(from.Path)); n != "" {
 			return n
 		}
 	}
 	return fallbackName
 }
 
-// SafeName makes a name the host or the address gave a plain file name on
-// Linux, macOS and Windows alike, or answers "" when nothing of it is
+// PortableFileName makes a name the host or the address gave a plain file
+// name on Linux, macOS and Windows alike, or answers "" when nothing of it is
 // left: its last path segment alone; controls, the marks that reorder or
 // hide text and Windows' reserved characters as "_"; no trailing dot or
 // space; a device name prefixed with "_"; not git's own folder; within
 // maxFileName bytes, its extension kept. The result passes portableName
 // and DR-39's member-name rule (decode.PlainMemberPath).
-func SafeName(raw string) string {
+func PortableFileName(raw string) string {
 	if i := strings.LastIndexAny(raw, `/\`); i >= 0 {
 		raw = raw[i+1:]
 	}

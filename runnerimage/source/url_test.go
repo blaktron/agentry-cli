@@ -62,7 +62,7 @@ func TestURLFetchNamesTheFileFromTheAddress(t *testing.T) {
 	}
 }
 
-func TestSafeName(t *testing.T) {
+func TestPortableFileName(t *testing.T) {
 	for raw, want := range map[string]string{
 		"../../etc/passwd": "passwd",
 		`C:\Windows\a.dll`: "a.dll",
@@ -79,8 +79,8 @@ func TestSafeName(t *testing.T) {
 		"résumé.pdf":       "résumé.pdf",
 		"bad\xffutf8.txt":  "bad_utf8.txt",
 	} {
-		if got := SafeName(raw); got != want {
-			t.Errorf("SafeName(%q) = %q, want %q", raw, got, want)
+		if got := PortableFileName(raw); got != want {
+			t.Errorf("PortableFileName(%q) = %q, want %q", raw, got, want)
 		}
 	}
 }
