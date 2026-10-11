@@ -16,6 +16,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -94,6 +95,33 @@ func signedOutGaps(ctx context.Context, sc schedule.Schedule) []string {
 	for _, k := range sc.Run.Knowledge {
 		if !filepath.IsAbs(k) {
 			gaps = append(gaps, fmt.Sprintf("the kept knowledge pack %s opens with a key kept in the keychain, which is locked while you are signed out", k))
+		}
+	}
+	pf, err := policy.Resolve(sc.Run.Policy)
+	if err != nil {
+		return append(gaps, err.Error())
+	}
+	pol, _, err := policy.EnsureDefault(pf.Path)
+	if err != nil {
+		return append(gaps, err.Error())
+	}
+	return append(gaps, signedOutKeyGaps(home, pol)...)
+}
+
+// signedOutKeyGaps is why a model key pol reads from the keychain cannot
+// be spent while its person is signed out, where the fire reads the copy
+// sealed for it and renews nothing (modelsignin.Store.CheckSealed,
+// agentry-cli#811): a connected Hugging Face token, which only a signed-in
+// run renews, or a connected key already past its expiry.
+func signedOutKeyGaps(home string, pol *policy.Policy) []string {
+	required, optional := schedule.SealAccounts(pol)
+	s := connectStore(home)
+	var gaps []string
+	for _, account := range append(required, optional...) {
+		if p := modelkey.ProviderOf(account); p != "" {
+			if err := s.CheckSealed(p); err != nil && !slices.Contains(gaps, err.Error()) {
+				gaps = append(gaps, err.Error())
+			}
 		}
 	}
 	return gaps
@@ -188,6 +216,15 @@ func sealScheduleKeys(sc schedule.Schedule, path string) error {
 	pol, _, err := policy.EnsureDefault(pf.Path)
 	if err != nil {
 		return err
+	}
+	home, err := runnerHome()
+	if err != nil {
+		return err
+	}
+	// A key no signed-out fire could spend is not sealed: the schedule
+	// then fails closed and the person is told now, not at its fire.
+	if gaps := signedOutKeyGaps(home, pol); len(gaps) > 0 {
+		return errors.New(strings.Join(gaps, "; "))
 	}
 	required, optional := schedule.SealAccounts(pol)
 	if sc.Local == "" {
@@ -306,8 +343,9 @@ type resealReport struct {
 }
 
 // resealSignedOut seals every signed-out schedule's keys again from the
-// keychain, after a key or a sign-in changed (setup, login, logout). What
-// fails is said, not fatal: the change it follows is already made.
+// keychain, after a key or a sign-in changed (setup, login, logout, and a
+// connect or disconnect since agentry-cli#811). What fails is said, not
+// fatal: the change it follows is already made.
 func resealSignedOut(errOut io.Writer) {
 	rep, err := resealAll()
 	if err != nil {
@@ -396,14 +434,33 @@ func newScheduleResealCmd() *cobra.Command {
 type signedOutAvailability struct {
 	Available bool   `json:"available"`
 	Reason    string `json:"reason,omitempty"`
+	// ModelKey is why a run on the default policy's model key is refused
+	// while signed out, on a computer that can otherwise run one: a
+	// connected Hugging Face token, which only a signed-in run renews, or
+	// a connected key past its expiry (agentry-cli#811).
+	ModelKey string `json:"modelKey,omitempty"`
 }
 
 func signedOutHere(ctx context.Context) signedOutAvailability {
 	gaps := signedOutMachineGaps(ctx)
-	if len(gaps) == 0 {
-		return signedOutAvailability{Available: true}
+	if len(gaps) > 0 {
+		return signedOutAvailability{Reason: strings.Join(gaps, "; ")}
 	}
-	return signedOutAvailability{Reason: strings.Join(gaps, "; ")}
+	a := signedOutAvailability{Available: true}
+	home, err := runnerHome()
+	if err != nil {
+		return a
+	}
+	pf, err := policy.Resolve("")
+	if err != nil {
+		return a
+	}
+	// Read, never written: this check changes nothing, and with no policy
+	// yet there is no key to refuse.
+	if pol, _, err := policy.Load(pf.Path); err == nil {
+		a.ModelKey = strings.Join(signedOutKeyGaps(home, pol), "; ")
+	}
+	return a
 }
 
 func newScheduleCheckSignedOutCmd() *cobra.Command {
@@ -411,13 +468,20 @@ func newScheduleCheckSignedOutCmd() *cobra.Command {
 		Use:   "check-signed-out",
 		Short: "Say whether this computer can run schedules while you are signed out",
 		Long: "Say whether this computer can run a schedule while you are signed out\n" +
-			"(--signed-out): Linux with Docker Engine and systemd 256 or later. It asks\n" +
-			"nothing and changes nothing; --json prints {available, reason}.",
+			"(--signed-out): Linux with Docker Engine and systemd 256 or later, and\n" +
+			"whether a run on your model setup's key is refused then (a connected\n" +
+			"Hugging Face token, which only a signed-in run renews, or a connected\n" +
+			"key past its expiry). It asks nothing and changes nothing; --json prints\n" +
+			"{available, reason, modelKey}.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a := signedOutHere(cmd.Context())
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), a)
+			}
+			if a.Available && a.ModelKey != "" {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "available on this computer, but a run on your model setup is refused while you are signed out: "+a.ModelKey)
+				return nil
 			}
 			if a.Available {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "available: schedules can run while you are signed out on this computer")

@@ -926,8 +926,10 @@ agentry schedule edit <id> --signed-out=false   # signed in only again
   there. Any process running as you can decrypt it, as any process in your
   unlocked session can read your keychain; another user cannot, and a copy
   of the file on another computer does not decrypt.
-- **When a key changes.** `agentry setup`, `agentry login` and `agentry
-  logout` seal every signed-out schedule's keys again; `agentry schedule
+- **When a key changes.** `agentry setup`, `agentry login`, `agentry
+  logout`, and a connect or disconnect (`agentry model-signins add|remove
+  openrouter|poe|huggingface`) seal every signed-out schedule's keys again;
+  `agentry schedule
   reseal` does it alone, for a key changed elsewhere (Agentry Desktop's
   Settings run it), and exits 1 if any schedule's keys could not be sealed
   again (`--json` prints `{sealed, failed}`). A schedule whose keys could
@@ -935,13 +937,23 @@ agentry schedule edit <id> --signed-out=false   # signed in only again
   --signed-out`. The credential is removed when the schedule is removed,
   ends, or stops running signed out.
 - **Whether this computer can.** `agentry schedule check-signed-out` says
-  whether it can run schedules while you are signed out, and why not
-  (`--json`: `{available, reason}`).
+  whether it can run schedules while you are signed out, and why not, and
+  whether a run on your model setup's key would be refused then (`--json`:
+  `{available, reason, modelKey}`).
 - **When it is refused.** On macOS and Windows, and with Docker Desktop for
   Linux (Docker Desktop stops when you sign out); below systemd 256; for a
   QuickAgent whose declared server signs in with an OAuth connection, or a
   kept knowledge pack, whose keys stay in the keychain. There is no
   plaintext fallback.
+- **A connected key.** A signed-out run reads the sealed copy of the key and
+  renews nothing. A Hugging Face token from Connect your account is renewed
+  at each run's start with a refresh token kept in the keychain, which is
+  locked while you are signed out, and that refresh token is never sealed.
+  So a schedule on it is refused `--signed-out`, its keys are not sealed
+  again, and a fire that finds one is refused before anything starts; paste
+  a Hugging Face token that does not expire (`agentry setup`) to run it
+  signed out. A Poe key runs signed out until the expiry you chose, and is
+  refused after it, as a signed-in run is (agentry-cli#811).
 
 A signed-out schedule rings on time whether or not anyone is signed in. If
 the computer was off, `Persistent=true` rings the missed occurrence once at
