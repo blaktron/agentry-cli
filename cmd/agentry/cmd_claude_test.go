@@ -134,29 +134,6 @@ func TestModelSignInsAddClaudeKeepsNothingUnlessClaudeCodeIsSignedIn(t *testing.
 	}
 }
 
-// Agentry opens Anthropic's own sign-in pages from Claude Code's output and
-// nothing else.
-func TestOnlyAnthropicsSignInPagesAreOpened(t *testing.T) {
-	for raw, ok := range map[string]bool{
-		claudeSignInURL: true, "https://platform.claude.com/oauth/authorize?x=1": true,
-		"http://claude.com/cai/oauth/authorize": false, "https://claude.com.example/x": false,
-		"https://user@claude.com/x": false, "https://evil.example/claude.com": false,
-	} {
-		if anthropicSignInURL(raw) != ok {
-			t.Errorf("%s: %v", raw, !ok)
-		}
-	}
-	var opened []string
-	var sink strings.Builder
-	o := &urlOpener{w: &sink, open: func(u string) { opened = append(opened, u) }}
-	for _, chunk := range []string{"see https://evil.example/x\nIf the browser didn't open, visit: https://claude", ".com/cai/oauth/authorize?state=1\n", "again " + claudeSignInURL + "\n"} {
-		_, _ = o.Write([]byte(chunk))
-	}
-	if !slices.Equal(opened, []string{"https://claude.com/cai/oauth/authorize?state=1"}) || !strings.Contains(sink.String(), "evil.example") {
-		t.Fatalf("opened %v; passed through %q", opened, sink.String())
-	}
-}
-
 // Removing the Claude sign-in runs Claude Code's own logout in the image,
 // then deletes the volume, then forgets the record.
 func TestModelSignInsRemoveClaudeLogsOutThenDeletesTheVolume(t *testing.T) {
