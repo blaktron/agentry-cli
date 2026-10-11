@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -49,6 +50,33 @@ type Answers struct {
 // SecretName is the declared capability secret a secret intake answer
 // becomes: the question id, upper-cased ("api_token" → API_TOKEN).
 func SecretName(id string) string { return strings.ToUpper(id) }
+
+// SourceHosts is the host of each input source the answers name for qs:
+// what a scheduled run will fetch, so the keys saved for those hosts can
+// be sealed beside a schedule that runs while its person is signed out
+// (agentry-cli#854). A type this CLI cannot fetch, or an answer it cannot
+// read, is an error, as it is to a run.
+func SourceHosts(qs []manifest.IntakeQuestion, answers map[string]string) ([]string, error) {
+	var hosts []string
+	for _, q := range qs {
+		val := strings.TrimSpace(answers[q.ID])
+		if !q.Type.IsSource() || val == "" {
+			continue
+		}
+		kind, ok := sources.Lookup(q.Type)
+		if !ok {
+			return nil, sources.Unfetched(q.ID, q.Type)
+		}
+		src, err := kind.Parse(val)
+		if err != nil {
+			return nil, fmt.Errorf("intake %s: %w", q.ID, err)
+		}
+		if !slices.Contains(hosts, src.Host) {
+			hosts = append(hosts, src.Host)
+		}
+	}
+	return hosts, nil
+}
 
 // ParsePreset reads --intake id=value flags.
 func ParsePreset(flags []string) (map[string]string, error) {

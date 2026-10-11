@@ -3,6 +3,7 @@ package intake
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -215,5 +216,31 @@ func TestASourceQuestionIsParsedAndNeverText(t *testing.T) {
 	odd := []manifest.IntakeQuestion{{ID: "x", Prompt: "X", Type: "sharepoint-library"}}
 	if _, err := Collect(nil, odd, map[string]string{"x": "anything"}, nil); err == nil {
 		t.Error("an unknown type was taken as text")
+	}
+}
+
+// TestSourceHosts (agentry-cli#854): the hosts a scheduled run's source
+// answers fetch from, each once; an unanswered question names none, and
+// an answer a run would refuse is refused here too.
+func TestSourceHosts(t *testing.T) {
+	qs := []manifest.IntakeQuestion{
+		{ID: "repo", Prompt: "Repository", Type: manifest.IntakeRepository},
+		{ID: "repo2", Prompt: "Another", Type: manifest.IntakeRepository},
+		{ID: "doc", Prompt: "Doc", Type: manifest.IntakeURL},
+		{ID: "skip", Prompt: "Unanswered", Type: manifest.IntakeURL},
+		{ID: "note", Prompt: "Note"},
+	}
+	hosts, err := SourceHosts(qs, map[string]string{
+		"repo": "https://GitHub.com/o/r", "repo2": "https://github.com/o/s#v1",
+		"doc": "https://files.example.com/a.pdf", "note": "https://text.example.com/not-a-source",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"github.com", "files.example.com"}; !slices.Equal(hosts, want) {
+		t.Fatalf("hosts = %q, want %q", hosts, want)
+	}
+	if _, err := SourceHosts(qs, map[string]string{"repo": "http://github.com/o/r"}); err == nil {
+		t.Error("an http repository passed")
 	}
 }
