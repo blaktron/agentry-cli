@@ -95,7 +95,7 @@ func TestChecksCountsOnlyTheSourcesFiles(t *testing.T) {
 		{Path: "repository-notes.txt", Check: runnerdecode.CheckClean},
 	}
 	got := Checks("repo", files)
-	if !strings.Contains(got, "2 executable or binary risky files went to the malware check (1 clean, 1 found)") || !strings.Contains(got, "1 others were not checked") {
+	if !strings.Contains(got, "2 executable or binary risky files went to the malware check (1 clean, 1 found)") || !strings.Contains(got, "1 other was not checked") {
 		t.Errorf("Checks = %q", got)
 	}
 }

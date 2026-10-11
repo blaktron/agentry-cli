@@ -80,6 +80,13 @@ func SourceRisky(mime, p string) bool {
 	return sourceRiskyNames[ext]
 }
 
+// WhySourceImage: an image in an input source is not read with OCR. A
+// codebase's screenshots and icons run to hundreds, tesseract takes
+// seconds each, and the whole decode has 30 minutes (measured
+// 2026-10-11: a desktop repository's 896 screenshots alone would take
+// about 40); the image stays readable as its original.
+const WhySourceImage Why = "source-image"
+
 // InSource says whether a report path is inside one of the sources'
 // folders.
 func InSource(rel string, sources []string) bool {

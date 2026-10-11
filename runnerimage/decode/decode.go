@@ -469,6 +469,11 @@ func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
 		d.files[p.idx] = checked
 		return
 	}
+	if p.detectErr == nil && p.kind.family == FamilyImage && InSource(p.rel, d.lim.Sources) {
+		checked.Outcome, checked.Why = OutcomeUndecodable, WhySourceImage
+		d.files[p.idx] = checked
+		return
+	}
 	fctx, cancel := context.WithTimeout(ctx, time.Duration(d.lim.PerFileSeconds)*time.Second)
 	f := decodeKind(fctx, p.kind, p.detectErr, p.src, p.rel, d.out, d.tools, d.lim, p.in != "")
 	cancel()

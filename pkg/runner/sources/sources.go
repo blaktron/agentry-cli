@@ -224,13 +224,13 @@ var knownSkip = map[string]bool{
 	source.SkipName: true, source.SkipCase: true, source.SkipDeep: true,
 }
 
-var skipWords = map[string]string{
-	source.SkipLink:      "links",
-	source.SkipSubmodule: "submodules",
-	source.SkipGit:       ".git folders",
-	source.SkipName:      "names no file system shares",
-	source.SkipCase:      "names differing only in case",
-	source.SkipDeep:      "folders nested too deep",
+var skipWords = map[string][2]string{
+	source.SkipLink:      {"link", "links"},
+	source.SkipSubmodule: {"submodule", "submodules"},
+	source.SkipGit:       {".git folder", ".git folders"},
+	source.SkipName:      {"name no file system shares", "names no file system shares"},
+	source.SkipCase:      {"name differing only in case", "names differing only in case"},
+	source.SkipDeep:      {"folder nested too deep", "folders nested too deep"},
 }
 
 // Document is the source's entry in intake.json:
@@ -265,7 +265,7 @@ func Line(s Source, f Fetched, checks string) string {
 	if f.Source.Ref != "" && f.Source.Ref != s.Ref {
 		fmt.Fprintf(&b, " (%s)", f.Source.Ref)
 	}
-	fmt.Fprintf(&b, ", commit %s: %d files, %d bytes, fetched in %s at depth 1 through a proxy to %s alone", f.Source.Commit, f.Source.Files, f.Source.Bytes, f.Took.Round(100*time.Millisecond), s.Host)
+	fmt.Fprintf(&b, ", commit %s: %d %s, %d bytes, fetched in %s at depth 1 through a proxy to %s alone", f.Source.Commit, f.Source.Files, plural(f.Source.Files, "file", "files"), f.Source.Bytes, f.Took.Round(100*time.Millisecond), s.Host)
 	switch s.TokenFrom {
 	case TokenFromFlag:
 		b.WriteString(", with an access token from the environment variable named by --intake-token")
@@ -299,7 +299,8 @@ func skippedWords(m map[string]int) string {
 	var parts []string
 	for why, n := range m {
 		if n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", n, skipWords[why]))
+			w := skipWords[why]
+			parts = append(parts, fmt.Sprintf("%d %s", n, plural(n, w[0], w[1])))
 		}
 	}
 	sort.Strings(parts)
@@ -329,14 +330,14 @@ func Checks(id string, files []runnerdecode.File) string {
 		}
 	}
 	risky := clean + found + other
-	s := fmt.Sprintf("%d executable or binary risky files went to the malware check (%d clean", risky, clean)
+	s := fmt.Sprintf("%d executable or binary risky %s went to the malware check (%d clean", risky, plural(risky, "file", "files"), clean)
 	if found > 0 {
 		s += fmt.Sprintf(", %d found", found)
 	}
 	if other > 0 {
 		s += fmt.Sprintf(", %d not checked", other)
 	}
-	s += fmt.Sprintf("), and %d others were not checked, as the source rule leaves code, text and data", notRisky)
+	s += fmt.Sprintf("), and %d %s not checked, as the source rule leaves code, text and data", notRisky, plural(notRisky, "other was", "others were"))
 	return s
 }
 
@@ -360,4 +361,11 @@ func printable(s string, n int) string {
 		}
 	}
 	return string(b)
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

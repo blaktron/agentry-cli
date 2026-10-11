@@ -104,3 +104,25 @@ func TestSourceRisky(t *testing.T) {
 		}
 	}
 }
+
+// TestASourcesImageIsNotReadWithOCR: an image in a source is listed and
+// kept as its original, never handed to tesseract; an uploaded image is.
+func TestASourcesImageIsNotReadWithOCR(t *testing.T) {
+	in, out := t.TempDir(), t.TempDir()
+	write(t, in, "repo/shots/scan.png", []byte("\x89PNG"))
+	write(t, in, "scan.png", []byte("\x89PNG"))
+	rep, err := Decode(context.Background(), in, out, fakeTools(t), Limits{Sources: []string{"repo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]File{}
+	for _, f := range rep.Files {
+		got[f.Path] = f
+	}
+	if f := got["repo/shots/scan.png"]; f.Outcome != OutcomeUndecodable || f.Why != WhySourceImage || f.Tool != "" || f.Family != FamilyImage {
+		t.Errorf("the source's image: %+v", f)
+	}
+	if f := got["scan.png"]; f.Outcome != OutcomeDecoded || f.Tool != "tesseract" {
+		t.Errorf("the uploaded image: %+v", f)
+	}
+}

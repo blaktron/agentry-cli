@@ -232,7 +232,7 @@ Files given for this run are under %s, read-only: list_inputs lists them, with t
 		fmt.Fprintf(b, "\nThe person's answers to this QuickAgent's questions are in %s/intake.json; read them before you start.\n", spec.InputsMount)
 	}
 	for _, id := range f.repositories {
-		fmt.Fprintf(b, "\nThe repository the person named for %q was downloaded before you started into %s/%s/: its files at one commit, read-only, listed, searched and read with list_inputs, search_inputs and read_input like any input. intake.json gives its address, the commit and the number of files. It has no history and no .git folder, and links and submodules were left out; a Git LFS file is its pointer, not its content. When the person gave no answer, the folder is not there.\n", id, spec.InputsMount, id)
+		fmt.Fprintf(b, "\nThe repository the person named for %q was downloaded before you started into %s/%s/: its files at one commit, read-only, listed, searched and read with list_inputs, search_inputs and read_input like any input. intake.json gives its address, the commit and the number of files. It has no history and no .git folder, and links and submodules were left out; a Git LFS file is its pointer, not its content, and an image in it is not turned into text (read its original when it matters). When the person gave no answer, the folder is not there.\n", id, spec.InputsMount, id)
 	}
 }
 

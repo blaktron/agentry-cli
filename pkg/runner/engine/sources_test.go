@@ -161,7 +161,7 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 		t.Errorf("intake.json's source entry: %v", doc["repo"])
 	}
 	line := env.CapabilitiesEnforced["source.repo"]
-	for _, want := range []string{"repository https://github.com/o/r at its default branch (refs/heads/main)", "commit " + testCommit, "2 files", "through a proxy to github.com alone", "with an access token from the environment variable named by --intake-token", "left out: 1 links", "0 executable or binary risky files went to the malware check", "2 others were not checked"} {
+	for _, want := range []string{"repository https://github.com/o/r at its default branch (refs/heads/main)", "commit " + testCommit, "2 files", "through a proxy to github.com alone", "with an access token from the environment variable named by --intake-token", "left out: 1 link", "0 executable or binary risky files went to the malware check", "2 others were not checked"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the source's receipt line %q does not say %q", line, want)
 		}

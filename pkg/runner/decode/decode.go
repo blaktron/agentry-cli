@@ -441,6 +441,9 @@ func checkReport(in, out string, checked bool, sources []string) (runnerdecode.R
 		if err := checkRepository(f); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
+		if f.Why == runnerdecode.WhySourceImage && (!runnerdecode.InSource(f.Path, sources) || f.Family != runnerdecode.FamilyImage || f.Outcome != runnerdecode.OutcomeUndecodable || f.Tool != "") {
+			return rep, fmt.Errorf("%s: %q is kept as a source's image but is not one", runnerdecode.ReportFile, f.Path)
+		}
 		byPath[f.Path] = f
 	}
 	members := map[string]int{}
@@ -693,19 +696,20 @@ var (
 	// whyWords are the fixed words for each reason an archive or a member
 	// was not read in full.
 	whyWords = map[runnerdecode.Why]string{
-		runnerdecode.WhyEncrypted:  "encrypted",
-		runnerdecode.WhyDamaged:    "damaged, or not the archive it appears to be",
-		runnerdecode.WhyUnreadable: "bsdtar could not read it: it is encrypted or damaged",
-		runnerdecode.WhyTooDeep:    fmt.Sprintf("an archive nested more than %d deep is not unpacked", runnerdecode.MaxDepth),
-		runnerdecode.WhyTooMany:    "unpacking stopped at the file cap",
-		runnerdecode.WhyTooLarge:   "unpacking stopped at the cap on unpacked bytes",
-		runnerdecode.WhyUnsafePath: "a member's path is absolute, climbs out with .., or is not a plain name, so nothing in it was unpacked",
-		runnerdecode.WhyLink:       "a link in an archive is never unpacked",
-		runnerdecode.WhySpecial:    "a device or FIFO in an archive is never unpacked",
-		runnerdecode.WhyConflict:   "the archive names this path twice, or as both a file and a folder",
-		runnerdecode.WhyMethod:     "compressed by a method the runner does not read",
-		runnerdecode.WhyFound:      "ClamAV found malware in it, so it was not read",
-		runnerdecode.WhyRepository: "it is inside a .git folder, a git repository's internals, which are kept as they are and never decoded",
+		runnerdecode.WhyEncrypted:   "encrypted",
+		runnerdecode.WhyDamaged:     "damaged, or not the archive it appears to be",
+		runnerdecode.WhyUnreadable:  "bsdtar could not read it: it is encrypted or damaged",
+		runnerdecode.WhyTooDeep:     fmt.Sprintf("an archive nested more than %d deep is not unpacked", runnerdecode.MaxDepth),
+		runnerdecode.WhyTooMany:     "unpacking stopped at the file cap",
+		runnerdecode.WhySourceImage: "an image in an input source is not read with OCR; read its original",
+		runnerdecode.WhyTooLarge:    "unpacking stopped at the cap on unpacked bytes",
+		runnerdecode.WhyUnsafePath:  "a member's path is absolute, climbs out with .., or is not a plain name, so nothing in it was unpacked",
+		runnerdecode.WhyLink:        "a link in an archive is never unpacked",
+		runnerdecode.WhySpecial:     "a device or FIFO in an archive is never unpacked",
+		runnerdecode.WhyConflict:    "the archive names this path twice, or as both a file and a folder",
+		runnerdecode.WhyMethod:      "compressed by a method the runner does not read",
+		runnerdecode.WhyFound:       "ClamAV found malware in it, so it was not read",
+		runnerdecode.WhyRepository:  "it is inside a .git folder, a git repository's internals, which are kept as they are and never decoded",
 	}
 	knownUnchecked = map[runnerdecode.Unchecked]bool{
 		runnerdecode.UncheckedNoSignatures: true, runnerdecode.UncheckedTooLarge: true, runnerdecode.UncheckedFailed: true, runnerdecode.UncheckedNotRisky: true,
