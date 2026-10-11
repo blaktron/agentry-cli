@@ -1143,7 +1143,8 @@ manifest + operator policy into a deterministic run plan → execute:
   is not retried and never replaces the run's own error, so something can
   be left behind. A sweep at the end of the run removes any container or
   volume still carrying the run's label, and on Linux the next run removes
-  the containers of a run whose process died.
+  the containers of a run whose process died, then its volume and every
+  network carrying its label (an input source's included).
 - **`agentry install ns/name`** lays the verified release down in the
   runner home, where `agentry run` reads it — no second fetch — with the
   Claude-skill or AGENTS.md shape beside it (the policy's coding agent or

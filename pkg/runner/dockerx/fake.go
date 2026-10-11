@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -82,6 +83,10 @@ type Fake struct {
 	// Containers is what PSLabels lists: each is returned when it carries
 	// the asked label ("k=v", or "k" for any value), with the asked keys.
 	Containers []Labeled
+	// Networks is the docker host's networks with their labels:
+	// NetworkCreate adds one, NetworkRemove takes it away, and
+	// NetworksByLabel lists them as PSLabels lists Containers.
+	Networks []Labeled
 	// OnDetached, when set, runs with the spec of every detached container
 	// as it starts — how a test gives a container side effects, such as
 	// the relays a gateway creates.
@@ -236,8 +241,11 @@ func (f *Fake) Build(_ context.Context, dir, tag string, args map[string]string)
 }
 
 // NetworkCreate implements Client.
-func (f *Fake) NetworkCreate(_ context.Context, name string, internal bool, _ map[string]string) error {
+func (f *Fake) NetworkCreate(_ context.Context, name string, internal bool, labels map[string]string) error {
 	f.record("NetworkCreate", fmt.Sprintf("%s(internal=%v)", name, internal), RunSpec{})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Networks = append(f.Networks, Labeled{Name: name, Labels: maps.Clone(labels)})
 	return nil
 }
 
@@ -250,7 +258,37 @@ func (f *Fake) NetworkConnect(_ context.Context, network, container string) erro
 // NetworkRemove implements Client.
 func (f *Fake) NetworkRemove(_ context.Context, name string) error {
 	f.record("NetworkRemove", name, RunSpec{})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Networks = slices.DeleteFunc(f.Networks, func(n Labeled) bool { return n.Name == name })
 	return nil
+}
+
+// NetworksByLabel implements Client.
+func (f *Fake) NetworksByLabel(_ context.Context, label string) ([]string, error) {
+	f.record("NetworksByLabel", label, RunSpec{})
+	k, v, exact := strings.Cut(label, "=")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var names []string
+	for _, n := range f.Networks {
+		if got, has := n.Labels[k]; has && (!exact || got == v) {
+			names = append(names, n.Name)
+		}
+	}
+	return names, nil
+}
+
+// NetworkState is a copy of the networks the fake holds now, each with
+// its labels.
+func (f *Fake) NetworkState() []Labeled {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]Labeled, len(f.Networks))
+	for i, n := range f.Networks {
+		out[i] = Labeled{Name: n.Name, Labels: maps.Clone(n.Labels)}
+	}
+	return out
 }
 
 // VolumeCreate implements Client.
