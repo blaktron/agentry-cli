@@ -262,15 +262,16 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	declared := mcpServerNames(extraServers, in.MCPServers)
 	inputView := inputViewOf(m)
 	instruction := renderInstruction(promptFacts{
-		caps:      caps,
-		secrets:   sortedCopy(m.Capabilities.Secrets),
-		optional:  sortedCopy(m.Capabilities.OptionalSecrets),
-		servers:   declared,
-		schema:    len(schemaJSON) > 0,
-		intake:    len(m.Intake) > 0,
-		inputView: inputView,
-		review:    in.Review,
-		budget:    budget,
+		caps:         caps,
+		secrets:      sortedCopy(m.Capabilities.Secrets),
+		optional:     sortedCopy(m.Capabilities.OptionalSecrets),
+		servers:      declared,
+		schema:       len(schemaJSON) > 0,
+		intake:       len(m.Intake) > 0,
+		repositories: repositoryQuestions(m),
+		inputView:    inputView,
+		review:       in.Review,
+		budget:       budget,
 	}, body)
 
 	files := map[string][]byte{}
@@ -1845,5 +1846,16 @@ func plainHTTPTargets(pol *policy.Policy) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// repositoryQuestions are the ids of a manifest's repository questions.
+func repositoryQuestions(m *manifest.Manifest) []string {
+	var out []string
+	for _, q := range m.Intake {
+		if q.Type == manifest.IntakeRepository {
+			out = append(out, q.ID)
+		}
+	}
 	return out
 }

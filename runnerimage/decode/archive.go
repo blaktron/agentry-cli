@@ -164,6 +164,8 @@ type unpacker struct {
 	named map[string]int
 	// stop is why unpacking stopped before the archive's end, if it did.
 	stop Why
+	// pool is the cap the archive's members count against (poolOf).
+	pool string
 }
 
 // record adds a member under its name, or marks the one already there a
@@ -192,11 +194,10 @@ func (u *unpacker) add(name string, why Why) bool {
 
 // count takes one member from the file cap, or stops at it.
 func (u *unpacker) count() bool {
-	if u.d.seen >= u.d.lim.MaxFiles {
+	if !u.d.take(u.pool) {
 		u.stop = WhyTooMany
 		return false
 	}
-	u.d.seen++
 	return true
 }
 
@@ -269,8 +270,11 @@ func (d *decoder) unpackInto(ctx context.Context, src, dir, rel string, kind con
 		return nil, WhyDamaged, false
 	}
 	defer func() { _ = root.Close() }()
-	u := &unpacker{d: d, root: root, named: map[string]int{}}
-	seen := d.seen
+	u := &unpacker{d: d, root: root, named: map[string]int{}, pool: d.poolOf(rel)}
+	if d.seen == nil {
+		d.seen = map[string]int{}
+	}
+	seen := d.seen[u.pool]
 	var why Why
 	switch kind.archive {
 	case formatZip:
@@ -283,7 +287,7 @@ func (d *decoder) unpackInto(ctx context.Context, src, dir, rel string, kind con
 		why = u.libarchive(ctx, src)
 	}
 	if why == WhyUnsafePath {
-		d.seen = seen
+		d.seen[u.pool] = seen
 		return nil, WhyUnsafePath, false
 	}
 	if u.stop != "" {
@@ -415,7 +419,7 @@ func (u *unpacker) stream(ctx context.Context, src, rel string) Why {
 	if lone && why != "" && u.stop == "" {
 		for _, m := range u.members {
 			_ = u.root.Remove(m.name)
-			u.d.seen--
+			u.d.seen[u.pool]--
 		}
 		u.members = nil
 	}

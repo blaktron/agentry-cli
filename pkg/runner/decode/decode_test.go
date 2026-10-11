@@ -17,6 +17,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
@@ -859,5 +860,80 @@ func TestCheckHoldsTheDigestsToTheFiles(t *testing.T) {
 				t.Fatalf("err %v, digest %q, want %q", err, res.Report.Files[0].SHA256, tc.want)
 			}
 		})
+	}
+}
+
+// TestNotRiskyIsASourcesWordAlone: only a file in an input source, of a
+// type the source rule leaves out, may go unchecked as not risky; a report
+// that says so of an upload or of a source's executable is refused (D8).
+func TestNotRiskyIsASourcesWordAlone(t *testing.T) {
+	src := []string{"repo"}
+	f := func(path, mime string) runnerdecode.File {
+		return runnerdecode.File{Path: path, MIME: mime, Outcome: runnerdecode.OutcomeText, Check: runnerdecode.CheckUnchecked, Unchecked: runnerdecode.UncheckedNotRisky}
+	}
+	if err := checkCheck(f("repo/main.go", "text/plain"), true, src); err != nil {
+		t.Errorf("a source's text file: %v", err)
+	}
+	for name, file := range map[string]runnerdecode.File{
+		"an upload":             f("main.go", "text/plain"),
+		"a source's executable": f("repo/tool.exe", "application/x-dosexec"),
+		"a source's pdf":        f("repo/doc.pdf", "application/pdf"),
+	} {
+		if err := checkCheck(file, true, src); err == nil {
+			t.Errorf("%s passed as not risky", name)
+		}
+	}
+}
+
+// TestSourceRiskyIsNarrower: every type the source rule checks by content
+// that the Hybrid Analysis table also knows is risky there too, so the
+// two tables cannot drift apart on the binaries they share; the source
+// rule leaves out scripts, which the upload table checks.
+func TestSourceRiskyIsNarrower(t *testing.T) {
+	for _, mime := range []string{"application/x-dosexec", "application/x-sharedlib", "application/x-mach-binary", "application/java-archive", "application/x-msi", "application/msword", "application/pdf", "application/vnd.ms-htmlhelp"} {
+		if !runnerdecode.SourceRisky(mime, "x") || !hybrid.Risky(mime, "x") {
+			t.Errorf("%s: source %v, upload %v", mime, runnerdecode.SourceRisky(mime, "x"), hybrid.Risky(mime, "x"))
+		}
+	}
+	for _, p := range []string{"a.js", "a.ps1", "a.bat", "a.vbs"} {
+		if runnerdecode.SourceRisky("text/plain", p) || !hybrid.Risky("text/plain", p) {
+			t.Errorf("%s: a script is the upload rule's alone", p)
+		}
+	}
+}
+
+// TestANotRiskyClaimIsHeldToTheFilesOwnBytes: a staged file in a source
+// the decode calls not risky is refused when it opens as an executable,
+// whatever type the decode says it detected (DR-90).
+func TestANotRiskyClaimIsHeldToTheFilesOwnBytes(t *testing.T) {
+	in := t.TempDir()
+	for name, body := range map[string]string{"repo/a.txt": "\x7fELF\x02\x01", "repo/b.txt": "MZ\x90\x00", "repo/c.txt": "%PDF-1.7", "repo/ok.txt": "plain text"} {
+		if err := os.MkdirAll(filepath.Join(in, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(in, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := os.OpenRoot(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	claim := func(p string) runnerdecode.File {
+		return runnerdecode.File{Path: p, MIME: "text/plain", Check: runnerdecode.CheckUnchecked, Unchecked: runnerdecode.UncheckedNotRisky}
+	}
+	for _, p := range []string{"repo/a.txt", "repo/b.txt", "repo/c.txt"} {
+		if err := checkNotRisky(claim(p), root); err == nil {
+			t.Errorf("%s: an executable passed as not risky", p)
+		}
+	}
+	if err := checkNotRisky(claim("repo/ok.txt"), root); err != nil {
+		t.Errorf("a text file: %v", err)
+	}
+	archive := claim("repo/x.zip")
+	archive.Family = runnerdecode.FamilyArchive
+	if err := checkCheck(archive, true, []string{"repo"}); err == nil {
+		t.Error("a source's archive passed as not risky")
 	}
 }

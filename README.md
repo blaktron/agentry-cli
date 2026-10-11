@@ -1389,6 +1389,24 @@ names each pack by digest and says whether it was scanned. Attaching a pack chan
 **`agentry install --provider claude|codex|openclaw`** installs for a
 host agent application instead of the gateway path.
 
+**Input sources** (agentry-cli#833): a QuickAgent that asks a `repository`
+intake question takes an https address, with `#branch`, `#tag` or
+`#commit` for another ref (`--intake codebase=https://github.com/o/r#v2`),
+and the run fetches that one commit at depth 1 into `/inputs/<id>/` before
+the agent starts: in the files image, through a proxy to that host alone on
+443 at public addresses, with no git binary. Links, submodules, `.git`
+folders and names no file system shares are left out and counted, Git LFS
+files stay as their pointers, and a repository past 20,000 files or 1 GiB is
+refused with its count. Its access token comes from the environment variable
+`--intake-token <id>=ENV_NAME` names, then the key saved for the host in the
+system keychain (account `source:<host>`), then a prompt on a terminal that
+offers to save it; it reaches only the fetch step, on its stdin, and no
+receipt. In a source only executable and binary risky files go to ClamAV and
+Hybrid Analysis, and images are not read with OCR. The receipt's
+`source.<id>` line says the commit, the counts, where the token came from and
+what was checked. A `url` question waits for agentry-cli#834, and a hosted
+run refuses a source until agentry-enterprise#516.
+
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
 

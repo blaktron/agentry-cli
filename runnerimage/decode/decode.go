@@ -189,6 +189,10 @@ func (t Tools) withDefaults() Tools {
 const (
 	MaxDepth        = 3
 	DefaultMaxFiles = 2000
+	// DefaultSourceMaxFiles is an input source's own cap, its archive
+	// members included (plan input-sources.md D7): the fetch step refused
+	// a larger source already.
+	DefaultSourceMaxFiles = 20000
 )
 
 // Limits bound a decode; zero values take the defaults.
@@ -219,6 +223,14 @@ type Limits struct {
 	// (the host's bundle, mounted read-only); empty, nothing is checked and
 	// every file says so.
 	ClamDB string
+	// Sources names the top-level folders that are input sources (plan
+	// input-sources.md §5; agentry-cli#833). A source's files count
+	// against SourceMaxFiles, apart from the uploads' MaxFiles, and only
+	// its executable and binary risky files are checked by ClamAV (D8,
+	// SourceRisky); the rest say so (UncheckedNotRisky).
+	Sources []string
+	// SourceMaxFiles is each source's cap (default 20,000).
+	SourceMaxFiles int
 }
 
 func (l Limits) withDefaults() Limits {
@@ -242,6 +254,9 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.MaxUnpackedBytes <= 0 {
 		l.MaxUnpackedBytes = 512 << 20
+	}
+	if l.SourceMaxFiles <= 0 {
+		l.SourceMaxFiles = DefaultSourceMaxFiles
 	}
 	return l
 }
@@ -268,7 +283,7 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 		return rep, fmt.Errorf("decode: the unpack directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(unpack) }()
-	d := &decoder{tools: tools, lim: lim, out: out, unpack: unpack, budget: lim.MaxUnpackedBytes}
+	d := &decoder{tools: tools, lim: lim, out: out, unpack: unpack, budget: lim.MaxUnpackedBytes, seen: map[string]int{}}
 	err = filepath.WalkDir(in, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -285,11 +300,11 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 			d.files = append(d.files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: "not a regular file; a link is never followed"})
 			return nil
 		}
-		if d.seen >= lim.MaxFiles {
-			d.files = append(d.files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: fmt.Sprintf("past the %d-file cap", lim.MaxFiles)})
+		pool := d.poolOf(rel)
+		if !d.take(pool) {
+			d.files = append(d.files, File{Path: rel, Family: FamilyUnknown, Outcome: OutcomeRefused, Reason: fmt.Sprintf("past the %d-file cap", d.capOf(pool))})
 			return nil
 		}
-		d.seen++
 		d.file(ctx, p, rel, "", 0, 0)
 		return nil
 	})
@@ -341,10 +356,10 @@ type decoder struct {
 	lim    Limits
 	out    string
 	unpack string
-	// seen counts the files and members taken against MaxFiles; budget
-	// is what archives may still unpack; seq names each archive's unpack
-	// directory.
-	seen   int
+	// seen counts the files and members taken against each pool's cap,
+	// by pool (poolOf); budget is what archives may still unpack; seq
+	// names each archive's unpack directory.
+	seen   map[string]int
 	budget int64
 	seq    int
 	files  []File
@@ -352,6 +367,53 @@ type decoder struct {
 	// left to decode once it has, each holding its place in files.
 	targets []scanTarget
 	pending []pendingDecode
+}
+
+// poolOf is the cap a file counts against: its input source's, by the
+// source's folder, or the uploads', "".
+func (d *decoder) poolOf(rel string) string {
+	if !InSource(rel, d.lim.Sources) {
+		return ""
+	}
+	first, _, _ := strings.Cut(rel, "/")
+	return first
+}
+
+// capOf is a pool's cap.
+func (d *decoder) capOf(pool string) int {
+	if pool == "" {
+		return d.lim.MaxFiles
+	}
+	if d.lim.SourceMaxFiles <= 0 {
+		return DefaultSourceMaxFiles
+	}
+	return d.lim.SourceMaxFiles
+}
+
+// take counts one file against its pool's cap, or answers false at it.
+func (d *decoder) take(pool string) bool {
+	if d.seen == nil {
+		d.seen = map[string]int{}
+	}
+	if d.seen[pool] >= d.capOf(pool) {
+		return false
+	}
+	d.seen[pool]++
+	return true
+}
+
+// target makes a file a target of the malware check: every upload, and in
+// an input source only an executable or binary risky file (D8), the rest
+// saying why they were not checked.
+func (d *decoder) target(idx int, src string) {
+	f := &d.files[idx]
+	// An archive is checked whole as before, so what it holds below the
+	// unpacking's depth and caps is not left unread by ClamAV.
+	if InSource(f.Path, d.lim.Sources) && f.Family != FamilyArchive && !SourceRisky(f.MIME, f.Path) {
+		f.Check, f.Unchecked = CheckUnchecked, UncheckedNotRisky
+		return
+	}
+	d.targets = append(d.targets, scanTarget{idx: idx, src: src})
 }
 
 // pendingDecode is a file detected and waiting for the check before it is
@@ -391,7 +453,7 @@ func (d *decoder) file(ctx context.Context, src, rel, in string, depth int, size
 	}
 	d.files = append(d.files, f)
 	idx := len(d.files) - 1
-	d.targets = append(d.targets, scanTarget{idx: idx, src: src})
+	d.target(idx, src)
 	d.pending = append(d.pending, pendingDecode{idx: idx, src: src, rel: rel, in: in, size: size, kind: kind, detectErr: err, repository: repository})
 }
 
@@ -406,6 +468,11 @@ func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
 	}
 	if p.repository {
 		checked.Outcome, checked.Why = OutcomeUndecodable, WhyRepository
+		d.files[p.idx] = checked
+		return
+	}
+	if p.detectErr == nil && p.kind.family == FamilyImage && InSource(p.rel, d.lim.Sources) {
+		checked.Outcome, checked.Why = OutcomeUndecodable, WhySourceImage
 		d.files[p.idx] = checked
 		return
 	}
@@ -434,7 +501,7 @@ func (d *decoder) archive(ctx context.Context, src, rel, in string, depth int, s
 	}
 	record := func(a File) {
 		d.files = append(d.files, a)
-		d.targets = append(d.targets, scanTarget{idx: len(d.files) - 1, src: src})
+		d.target(len(d.files)-1, src)
 	}
 	if depth >= MaxDepth {
 		a.Outcome, a.Why = OutcomeUndecodable, WhyTooDeep
