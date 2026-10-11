@@ -357,7 +357,8 @@ func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 			plan = strings.ToLower(strings.TrimSpace(ans))
 		}
 	}
-	if _, err := policy.CopilotProxyAllow(plan); err != nil {
+	allow, err := policy.CopilotProxyAllow(plan)
+	if err != nil {
 		return err
 	}
 	model := strings.TrimSpace(opts.Model)
@@ -394,10 +395,6 @@ func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	}
 	if model == "" {
 		return errors.New("no model chosen for the Copilot plan (pass --model)")
-	}
-	allow, err := policy.CopilotProxyAllow(plan)
-	if err != nil {
-		return err
 	}
 	pol.Model = policy.Model{
 		Provider:   policy.ProviderCopilot,

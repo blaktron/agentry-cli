@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -167,11 +169,19 @@ func ListCopilotModels(ctx context.Context, d dockerx.Client, p CopilotModelsPar
 	}, params)
 	td.add(func(c context.Context) { _ = d.RemoveForce(c, name) })
 
+	// Copilot CLI's stderr reaches the caller masked, after it ends, as a
+	// run's stderr receipt is (redactor.File).
+	var cliErr cappedBuffer
+	defer func() {
+		if out := rd.redact.String(cliErr.String()); out != "" {
+			_, _ = io.WriteString(stderr, out)
+		}
+	}()
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
 	exited := make(chan error, 1)
 	go func() {
-		code, rerr := d.RunForeground(ctx, runSpec, stdinR, stdoutW, stderr)
+		code, rerr := d.RunForeground(ctx, runSpec, stdinR, stdoutW, &cliErr)
 		_ = stdoutW.Close()
 		_ = stdinR.Close()
 		if rerr == nil && code != 0 {
@@ -180,14 +190,11 @@ func ListCopilotModels(ctx context.Context, d dockerx.Client, p CopilotModelsPar
 		exited <- rerr
 	}()
 	models, err = adapter.ListCopilotModels(ctx, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, toks.token)
-	// Its stdin closed, Copilot CLI ends; a list that failed is not waited
-	// on past its context.
-	select {
-	case rerr := <-exited:
-		if err != nil && rerr != nil {
-			err = fmt.Errorf("%w (%v)", err, rerr)
-		}
-	case <-ctx.Done():
+	// Its stdin closed, Copilot CLI ends, and the docker client with it; at
+	// the latest the list's context ends the client. Nothing of the list
+	// runs after it returns.
+	if rerr := <-exited; err != nil && rerr != nil {
+		err = fmt.Errorf("%w (%v)", err, rerr)
 	}
 	if err != nil {
 		var refused *adapter.OrgPolicyRefusal
@@ -208,4 +215,28 @@ func CopilotSignIn(ctx context.Context, store *modelsignin.Store) (*ModelSignInG
 	return ModelSignInFor(ctx, store, &spec.Plan{Harness: spec.HarnessSpec{ModelSignIn: &spec.ModelSignInSpec{
 		Kind: policy.KeyKindCopilotSignIn, Provider: policy.ProviderCopilot, Delivery: spec.ModelSignInCallback,
 	}}}, false)
+}
+
+// cappedBuffer keeps the first 64 KiB written to it, safe for the docker
+// client's writer and the reader after it.
+type cappedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+const cappedBufferMax = 64 << 10
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := cappedBufferMax - b.buf.Len(); room > 0 {
+		b.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

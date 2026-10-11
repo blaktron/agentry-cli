@@ -65,7 +65,7 @@ func TestACopilotPlansModelsAreListedThroughCopilotCLI(t *testing.T) {
 	if len(tokensGiven) != 1 || tokensGiven[0]["accessToken"] != "ghu_initialtoken0000" || len(k.asked) != 1 || k.asked[0] {
 		t.Fatalf("the token: given %v, asked %v", tokensGiven, k.asked)
 	}
-	if servers, _ := create["mcpServers"].(map[string]any); len(servers) != 0 {
+	if servers, ok := create["mcpServers"].(map[string]any); !ok || len(servers) != 0 {
 		t.Fatalf("a list session has MCP servers: %v", create["mcpServers"])
 	}
 	if strings.Join(anyStrings(create["availableTools"]), ",") != "mcp:*" || create["enableSessionTelemetry"] != false ||

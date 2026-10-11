@@ -24,7 +24,9 @@ func copilotModelsFixture(srv *copilottest.Server, life time.Duration, renewals 
 	f := &dockerx.Fake{
 		ExistingImages: map[string]bool{h.Ref: true},
 		Foreground: map[string]*dockerx.FakeForeground{
-			"-models": {Handler: func(_ context.Context, _ dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+			"-models": {Handler: func(_ context.Context, _ dockerx.RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+				// What Copilot CLI might say of the token it was handed.
+				_, _ = io.WriteString(stderr, "debug: token "+copilotToken+"\n")
 				if err := srv.Serve(stdin, stdout); err != nil {
 					return 1, err
 				}
@@ -55,9 +57,14 @@ func TestACopilotModelListRunsInARunsContainer(t *testing.T) {
 	}}
 	renewals := 0
 	p, f := copilotModelsFixture(srv, 8*time.Hour, &renewals)
+	var stderr strings.Builder
+	p.Stderr = &stderr
 	got, err := ListCopilotModels(context.Background(), f, p)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if out := stderr.String(); !strings.Contains(out, "debug: token") || strings.Contains(out, copilotToken) {
+		t.Fatalf("Copilot CLI's stderr is not passed on masked: %q", out)
 	}
 	if len(got) != 1 || got[0].ID != "gpt-5.5" || got[0].Multiplier != 1 {
 		t.Fatalf("models %+v", got)

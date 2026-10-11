@@ -10,7 +10,6 @@ package copilotmodels
 import (
 	"context"
 	"io"
-	"slices"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
@@ -20,10 +19,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
-
-// Auto is the model that lets Copilot choose, the only one a Copilot Free
-// plan has. Copilot CLI may not list it; it is always offered.
-const Auto = "auto"
 
 // Request is one list's.
 type Request struct {
@@ -70,16 +65,4 @@ func List(ctx context.Context, d dockerx.Client, r Request) ([]adapter.CopilotMo
 		Policy: r.Policy, CopilotPlan: r.CopilotPlan, RunnerImage: r.RunnerImage,
 		SignIn: grant, RenewSignIn: renew, Stderr: log,
 	})
-}
-
-// Offered is what setup offers of models: auto first, then each listed id
-// once.
-func Offered(models []adapter.CopilotModel) []string {
-	out := []string{Auto}
-	for _, m := range models {
-		if !slices.Contains(out, m.ID) {
-			out = append(out, m.ID)
-		}
-	}
-	return out
 }
