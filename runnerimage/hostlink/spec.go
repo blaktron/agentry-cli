@@ -118,9 +118,9 @@ type Target struct {
 	Address string `json:"address"`
 	Port    int    `json:"port"`
 	User    string `json:"user"`
-	// HostKeyAlgorithm is the type of the one key known_hosts holds
-	// (ssh-ed25519, ecdsa-sha2-nistp256, rsa-sha2-512, …), the only one
-	// ssh offers to accept.
+	// HostKeyAlgorithm is what ssh offers to accept for the one key
+	// known_hosts holds: its type (ssh-ed25519, ecdsa-sha2-nistp256), or
+	// for an RSA key "rsa-sha2-512,rsa-sha2-256".
 	HostKeyAlgorithm string `json:"hostKeyAlgorithm"`
 	// Auth is AuthKey or AuthPassword.
 	Auth string `json:"auth"`
@@ -133,7 +133,7 @@ type Target struct {
 var (
 	idRE       = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 	userRE     = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
-	hostAlgoRE = regexp.MustCompile(`^[a-z0-9@.-]{1,64}$`)
+	hostAlgoRE = regexp.MustCompile(`^[a-z0-9@.-]{1,64}(,[a-z0-9@.-]{1,64}){0,3}$`)
 )
 
 // ValidID says whether id is an intake question's id, the shape a target

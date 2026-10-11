@@ -101,6 +101,14 @@ const (
 	// CI holds this pin to that signature (scripts/verify-files-image.sh); a
 	// run pulls by digest only.
 	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.04.3@sha256:f8da034b365cd86c1498b041e87ee06faeb4264dfc6e25bd9c0d3013cf58a306"
+	// DefaultHostlinkImage is the host link's base, the OpenSSH client a run
+	// reaches a target host with (agentry-notes plans/runtime-hosts.md D5;
+	// agentry-dockerimages#71, DR-91): Alpine's ssh, sftp and ssh-keyscan,
+	// amd64 and arm64, uid 10001, pinned by digest and pulled; the CLI
+	// copies its runner binary in (agentry-cli#861). Signed keyless by
+	// agentry-dockerimages' hostlink workflow, and CI holds this pin to that
+	// signature (scripts/verify-hostlink-image.sh).
+	DefaultHostlinkImage = "ghcr.io/blaktron/agentry-hostlink:2026.10.11.1@sha256:66f9fc5ce5223278676faad73d9cde005784ea6a35a64258ca47d1c662c0b099"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against (plan file-handling.md §7, D15;
 	// agentry-cli#563): a tag agentry-dockerimages' clamav-db workflow moves
@@ -164,6 +172,10 @@ type Policy struct {
 	// comes from, for a local draft's web_search. Unset, a local draft
 	// has no web search (its web_read and registry_search still work).
 	WebSearch WebSearchKey `yaml:"webSearch,omitempty"`
+	// Hosts narrows the target hosts a run may reach (plan runtime-hosts.md
+	// D8; agentry-cli#861): any address the person names is reachable but
+	// loopback and link-local, and these lists narrow the rest.
+	Hosts HostsPolicy `yaml:"hosts,omitempty"`
 	// HybridAnalysis names where the Hybrid Analysis key comes from, with
 	// which the risky types among a run's inputs are looked up by SHA-256
 	// (plan file-handling.md §7, D7, D17; agentry-cli#564). Unset takes
@@ -460,6 +472,18 @@ type Images struct {
 	// ClamAVSignaturesRef). A mirror must carry the clamav-db workflow's
 	// signature, which is checked whatever the repository.
 	ClamAVSignatures string `yaml:"clamavSignatures,omitempty"`
+	// Hostlink is the host link's base image, pinned by digest ("" =
+	// DefaultHostlinkImage; see HostlinkImage).
+	Hostlink string `yaml:"hostlink,omitempty"`
+}
+
+// HostlinkImage is the host link's base this policy names: images.hostlink,
+// else the CLI's pinned default, resolved at use as FilesImage is.
+func (i Images) HostlinkImage() string {
+	if i.Hostlink != "" {
+		return i.Hostlink
+	}
+	return DefaultHostlinkImage
 }
 
 // ClamAVSignaturesRef is the signature bundle this policy names:
@@ -921,6 +945,12 @@ func (p *Policy) Validate() error {
 	if p.Images.Files != "" && !PinnedByDigest(p.Images.Files) {
 		return fmt.Errorf("images.files %q must be pinned by digest (<name>@sha256:<64 hex>): the files image is pulled by digest only", p.Images.Files)
 	}
+	if p.Images.Hostlink != "" && !PinnedByDigest(p.Images.Hostlink) {
+		return fmt.Errorf("images.hostlink %q must be pinned by digest (<name>@sha256:<64 hex>): the host link's image is pulled by digest only", p.Images.Hostlink)
+	}
+	if err := p.Hosts.validate(); err != nil {
+		return err
+	}
 	if c := p.Images.ClamAVSignatures; c != "" && !tagRefRE.MatchString(c) {
 		return fmt.Errorf("images.clamavSignatures %q must be <registry>/<repository>:<tag>: the bundle moves daily and its signature is what is checked", c)
 	}
@@ -1169,6 +1199,10 @@ images:
   # agentry-dockerimages' clamav-db workflow, whatever registry serves it.
   # Unset, the CLI's default is used.
   # clamavSignatures: ghcr.io/blaktron/agentry-clamav-db:latest
+  # The host link's image: the SSH client a run reaches a target host
+  # (a server the person names when the run starts) with. Pulled by
+  # digest; unset, the CLI's pinned default is used.
+  # hostlink: ghcr.io/blaktron/agentry-hostlink:<tag>@sha256:<digest>
 
 model:
   # anthropic | openai | google, or custom for an OpenAI-compatible
@@ -1288,6 +1322,15 @@ mcpRegistries:
 #     memory: 2g
 #     cpus: 1
 #     pids: 512
+
+# hosts:
+#   # The target hosts a run may reach: a QuickAgent that declares one
+#   # asks for a server when it runs and works it over SSH. Any address
+#   # the person names may be reached but loopback and link-local; these
+#   # lists of IPv4 networks narrow that. With allow set, an address must
+#   # be in one of its networks; one in deny is refused either way.
+#   allow: [192.168.1.0/24, 100.64.0.0/10]
+#   deny: [10.0.0.0/8]
 
 # judge:
 #   # Your own AI Review (TypeSafe Jev) key, for local work that needs a
