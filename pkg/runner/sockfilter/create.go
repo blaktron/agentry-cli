@@ -394,12 +394,19 @@ func (f *Filter) toolsTmpfs(ctx context.Context, c *containerCreateBody, imageID
 			return deny("the tools server's Volumes are a map of targets")
 		}
 	}
+	shared, err := f.toolsShared()
+	if err != nil {
+		return err
+	}
 	targets := make([]string, 0, len(declared)+len(hc.Binds)+len(hc.Mounts)+len(hc.Tmpfs))
 	for t := range declared {
 		targets = append(targets, t)
 	}
 	for _, b := range hc.Binds {
 		if parts := strings.Split(b, ":"); len(parts) >= 2 {
+			if src, ok := shared[path.Clean(parts[1])]; ok && parts[0] == src {
+				continue
+			}
 			targets = append(targets, parts[1])
 		}
 	}
@@ -423,6 +430,20 @@ func (f *Filter) toolsTmpfs(ctx context.Context, c *containerCreateBody, imageID
 		hc.Tmpfs[target] = opts
 	}
 	return nil
+}
+
+// toolsShared is Config.ToolsShared with each host folder resolved as the
+// storage check resolves a bind's source, so the two compare as equals.
+func (f *Filter) toolsShared() (map[string]string, error) {
+	out := map[string]string{}
+	for target, src := range f.cfg.ToolsShared {
+		resolved, err := f.hostPath(src, true)
+		if err != nil {
+			return nil, err
+		}
+		out[path.Clean(target)] = resolved
+	}
+	return out, nil
 }
 
 // pinLinks gives a container that will run under the run's runtime an

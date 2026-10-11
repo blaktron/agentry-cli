@@ -14,6 +14,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -144,7 +145,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		SharedNetworks:  shared,
 		EgressNetworks:  egress,
 		NetworkNames:    names,
-		RelayHosts:      relayHosts(plan),
+		RelayHosts:      append(relayHosts(plan), rd.hostRelays()...),
 		WebNetwork:      webNet,
 		WebImage:        webImage,
 		WebCmd:          webCmd,
@@ -155,6 +156,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		ToolsImage:      plan.ToolsImage(),
 		ToolsCmd:        spec.ToolsCmd(),
 		ToolsTmpfs:      toolsTmpfs(plan),
+		ToolsShared:     toolsShared(plan, rd),
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
@@ -181,6 +183,16 @@ func toolsTmpfs(plan *spec.Plan) map[string]string {
 		m[spec.ScratchMount] = opts
 	}
 	return m
+}
+
+// toolsShared is the one bind the tools server may have beneath its scratch
+// tmpfs: the host link's copy folder (agentry-cli#861), for a plan with a
+// host link.
+func toolsShared(plan *spec.Plan, rd *runDirs) map[string]string {
+	if plan.HostLink == nil || !plan.Capabilities.Scratch {
+		return nil
+	}
+	return map[string]string{hostlink.FilesPath: rd.hostFilesDir()}
 }
 
 // gatewayOwnerLabel marks what the gateway made through its filter, and so

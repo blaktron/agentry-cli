@@ -138,6 +138,12 @@ type Config struct {
 	ToolsImage string
 	ToolsCmd   []string
 	ToolsTmpfs map[string]string
+	// ToolsShared are the binds the tools server may have beneath one of
+	// its tmpfs targets, target to host folder: the host link's copy folder
+	// at /scratch/hosts, which the run made (agentry-cli#861). The request
+	// must name exactly that folder at exactly that target; anything else
+	// at or beneath a tmpfs target is still refused.
+	ToolsShared map[string]string
 	// Limits bound every container created through the filter: a request
 	// asking for more is refused, one asking for none gets these.
 	Limits Limits
