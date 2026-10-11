@@ -34,17 +34,30 @@ var (
 // SavedToken is the key saved for a host, "" when there is none or the
 // keychain is off (AGENTRY_NO_KEYRING).
 func SavedToken(host string) (string, error) {
-	if modelkey.Disabled() {
-		return "", nil
+	v, _, err := savedToken(host)
+	return v, err
+}
+
+// savedToken is SavedToken and where it was read: a signed-out schedule's
+// fire has its saved keys sealed beside it and no keychain (DR-84,
+// agentry-cli#854), and reads them from that credential alone, as
+// modelkey does; anywhere else, the keychain.
+func savedToken(host string) (val, from string, err error) {
+	v, sealed, err := modelkey.SealedAccount(KeyAccount(host))
+	if sealed {
+		return strings.TrimSpace(v), TokenFromSealed, err
 	}
-	v, err := keyringGet(modelkey.Service, KeyAccount(host))
+	if modelkey.Disabled() {
+		return "", "", nil
+	}
+	v, err = keyringGet(modelkey.Service, KeyAccount(host))
 	switch {
 	case errors.Is(err, keyring.ErrNotFound):
-		return "", nil
+		return "", "", nil
 	case err != nil:
-		return "", fmt.Errorf("read the saved key for %s from the system keychain: %w", host, err)
+		return "", "", fmt.Errorf("read the saved key for %s from the system keychain: %w", host, err)
 	}
-	return strings.TrimSpace(v), nil
+	return strings.TrimSpace(v), TokenFromKeychain, nil
 }
 
 // SaveToken saves a host's key in the system keychain.
@@ -106,7 +119,7 @@ func ResolveTokens(srcs []*Source, flags map[string]string, getenv func(string) 
 			s.Token, s.TokenFrom = v, TokenFromFlag
 			continue
 		}
-		saved, err := SavedToken(s.Host)
+		saved, from, err := savedToken(s.Host)
 		if err != nil {
 			// A keychain that cannot be read is said, and the run goes on
 			// to the prompt or anonymously.
@@ -115,7 +128,7 @@ func ResolveTokens(srcs []*Source, flags map[string]string, getenv func(string) 
 			}
 		}
 		if saved != "" {
-			s.Token, s.TokenFrom = saved, TokenFromKeychain
+			s.Token, s.TokenFrom = saved, from
 			continue
 		}
 		if ask == nil {
