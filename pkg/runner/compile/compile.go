@@ -886,10 +886,7 @@ func GatewayGuardFlags() []string {
 // depends on from a version's default.
 func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServers []spec.MCPServerSpec) spec.GatewaySpec {
 	withStore := spec.HasPackageServers(mcpServers)
-	writable := []string{spec.PHOut}
-	if caps.FSWriteMode != "none" {
-		writable = append(writable, spec.PHWorkspace)
-	}
+	writable := append([]string{spec.PHOut}, workspaceWritable(caps)...)
 	// A package server's token folder (agentry-cli#665, DR-77), each one
 	// by its exact path: never the run's cfg or its connections folder,
 	// which hold the gateway's own files and the other servers' folders.
@@ -1395,48 +1392,103 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	return e.node()
 }
 
-// workspaceVolumes maps the filesystem contract to bind mounts (§R4 mount
-// table): whole-workspace modes get one bind, paths mode gets per-path
-// binds; a write grant makes its bind rw (the tools server still refuses
-// reads the read grant doesn't cover).
-func workspaceVolumes(caps spec.CapSummary) []string {
-	ws, mnt := spec.PHWorkspace, spec.WorkspaceMount
+// workspaceBind is one workspace bind of the tools server: a path under
+// the workspace ("" for the workspace itself) and whether it is writable.
+type workspaceBind struct {
+	path string
+	rw   bool
+}
+
+// source is the bind's host path.
+func (b workspaceBind) source() string {
+	if b.path == "" {
+		return spec.PHWorkspace
+	}
+	return spec.PHWorkspace + "/" + b.path
+}
+
+// workspaceBinds maps the filesystem contract to binds (§R4 mount table):
+// whole-workspace modes get one bind, paths mode gets per-path binds; a
+// write grant makes its bind rw (the tools server still refuses reads the
+// read grant doesn't cover). A path inside a written path gets no bind of
+// its own: the outer rw bind already holds it, and the run's docker filter
+// refuses a bind inside a directory the run writes (agentry-cli#855).
+func workspaceBinds(caps spec.CapSummary) []workspaceBind {
 	wholeRead, wholeWrite := caps.FSReadMode == "workspace", caps.FSWriteMode == "workspace"
 	switch {
 	case wholeWrite:
-		return []string{ws + ":" + mnt + ":rw"}
+		return []workspaceBind{{rw: true}}
 	case wholeRead && caps.FSWriteMode == "none":
-		return []string{ws + ":" + mnt + ":ro"}
-	case wholeRead && caps.FSWriteMode == "paths":
-		vols := []string{ws + ":" + mnt + ":ro"}
-		for _, p := range caps.FSWritePaths {
-			vols = append(vols, ws+"/"+p+":"+mnt+"/"+p+":rw")
-		}
-		return vols
+		return []workspaceBind{{}}
 	}
-	// No whole-workspace grant: per-path binds only.
+	insideWritten := func(p string) bool {
+		for _, w := range caps.FSWritePaths {
+			if strings.HasPrefix(p, w+"/") {
+				return true
+			}
+		}
+		return false
+	}
 	rw := map[string]bool{}
 	for _, p := range caps.FSWritePaths {
 		rw[p] = true
 	}
 	set := map[string]bool{}
-	for _, p := range append(append([]string{}, caps.FSReadPaths...), caps.FSWritePaths...) {
+	for _, p := range caps.FSWritePaths {
 		set[p] = true
+	}
+	if !wholeRead {
+		for _, p := range caps.FSReadPaths {
+			set[p] = true
+		}
 	}
 	paths := make([]string, 0, len(set))
 	for p := range set {
-		paths = append(paths, p)
+		if !insideWritten(p) {
+			paths = append(paths, p)
+		}
 	}
 	sort.Strings(paths)
-	var vols []string
+	var binds []workspaceBind
+	if wholeRead {
+		binds = append(binds, workspaceBind{})
+	}
 	for _, p := range paths {
-		mode := ":ro"
-		if rw[p] {
+		binds = append(binds, workspaceBind{path: p, rw: rw[p]})
+	}
+	return binds
+}
+
+// workspaceVolumes spells workspaceBinds as the catalog's volumes.
+func workspaceVolumes(caps spec.CapSummary) []string {
+	var vols []string
+	for _, b := range workspaceBinds(caps) {
+		target, mode := spec.WorkspaceMount, ":ro"
+		if b.path != "" {
+			target += "/" + b.path
+		}
+		if b.rw {
 			mode = ":rw"
 		}
-		vols = append(vols, ws+"/"+p+":"+mnt+"/"+p+mode)
+		vols = append(vols, b.source()+":"+target+mode)
 	}
 	return vols
+}
+
+// workspaceWritable is the gateway's writable entry for each rw bind
+// workspaceBinds gives the tools server, read off the same binds so the
+// two cannot drift: the gateway allows a writable bind only by its exact
+// host path (agentry-cli#855). A paths grant never names the whole
+// workspace, which the run's docker filter would take for a writable root
+// and refuse every per-path bind inside it.
+func workspaceWritable(caps spec.CapSummary) []string {
+	var out []string
+	for _, b := range workspaceBinds(caps) {
+		if b.rw {
+			out = append(out, b.source())
+		}
+	}
+	return out
 }
 
 // SecretKey is the gateway secrets-file key for a declared env name. One

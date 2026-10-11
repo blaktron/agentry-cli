@@ -103,7 +103,7 @@
       },
       {
         "name": "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
-        "value": "@@RUN_OUT@@:@@RUN_WORKSPACE@@"
+        "value": "@@RUN_OUT@@:@@RUN_WORKSPACE@@/notes/summary.md:@@RUN_WORKSPACE@@/reports"
       }
     ],
     "mounts": [
