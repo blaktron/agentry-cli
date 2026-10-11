@@ -23,8 +23,10 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
@@ -174,8 +176,10 @@ func releaseLinger(in io.Reader, errOut io.Writer, store schedule.Store) {
 
 // sealScheduleKeys seals, into path, the keychain values a fire of sc
 // reads: the model key, the person's own provider keys the policy takes
-// from the keychain, and the registry token when the keychain holds it
-// (a private release resolves through the registry at every fire).
+// from the keychain, the registry token when the keychain holds it (a
+// private release resolves through the registry at every fire), and the
+// key saved for each input source's host when there is one (a private
+// source is fetched at every fire, agentry-cli#854).
 func sealScheduleKeys(sc schedule.Schedule, path string) error {
 	pf, err := policy.Resolve(sc.Run.Policy)
 	if err != nil {
@@ -191,11 +195,39 @@ func sealScheduleKeys(sc schedule.Schedule, path string) error {
 			optional = append(optional, a)
 		}
 	}
+	hosts, err := scheduleSourceHosts(sc)
+	if err != nil {
+		return err
+	}
+	for _, h := range hosts {
+		optional = append(optional, sources.KeyAccount(h))
+	}
 	values, err := scheduleCollectKeys(required, optional)
 	if err != nil {
 		return err
 	}
 	return schedule.SealCredential(path, values)
+}
+
+// scheduleSourceHosts is the host of each input source sc's answers
+// name, read with the release's own questions.
+func scheduleSourceHosts(sc schedule.Schedule) ([]string, error) {
+	if len(sc.Run.Intake) == 0 {
+		return nil, nil
+	}
+	home, err := runnerHome()
+	if err != nil {
+		return nil, err
+	}
+	m, _, _, err := scheduledManifest(home, sc)
+	if err != nil {
+		return nil, err
+	}
+	answers, err := intake.ParsePreset(sc.Run.Intake)
+	if err != nil {
+		return nil, err
+	}
+	return intake.SourceHosts(m.Intake, answers)
 }
 
 // keychainTokenAccount is the keychain account credentialFor reads reg's

@@ -2,6 +2,8 @@ package sources
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/source"
@@ -275,5 +278,44 @@ func TestAKeychainThatCannotBeReadIsSaid(t *testing.T) {
 	}
 	if len(warned) != 1 || !strings.Contains(warned[0], "no secret service") {
 		t.Errorf("warned %v", warned)
+	}
+}
+
+// TestASignedOutFireReadsItsSealedSourceKey (agentry-cli#854): a fire of a
+// schedule that runs while its person is signed out has no keychain
+// (AGENTRY_NO_KEYRING) and its saved keys sealed beside it. A source's
+// saved key is read from that credential and the receipt says so; a host
+// with no key sealed is fetched anonymously, and the keychain is never
+// asked.
+func TestASignedOutFireReadsItsSealedSourceKey(t *testing.T) {
+	withKeychain(t, map[string]string{KeyAccount("gitlab.com"): "keychain-only"})
+	asked := false
+	keyringGet = func(string, string) (string, error) { asked = true; return "", keyring.ErrNotFound }
+	plain, err := modelkey.SealPlaintext(map[string]string{KeyAccount("github.com"): "sealed-tok\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, modelkey.CredentialName), plain, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(modelkey.EnvCredentialsDirectory, dir)
+	t.Setenv("AGENTRY_NO_KEYRING", "1")
+
+	srcs := []*Source{{ID: "code", Host: "github.com"}, {ID: "other", Host: "gitlab.com"}}
+	if err := ResolveTokens(srcs, nil, func(string) string { return "" }, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if srcs[0].Token != "sealed-tok" || srcs[0].TokenFrom != TokenFromSealed {
+		t.Errorf("the sealed host: %q from %q", srcs[0].Token, srcs[0].TokenFrom)
+	}
+	if srcs[1].Token != "" || srcs[1].TokenFrom != "" {
+		t.Errorf("a host with nothing sealed: %q from %q", srcs[1].Token, srcs[1].TokenFrom)
+	}
+	if asked {
+		t.Error("the keychain was asked while sealed keys were present")
+	}
+	if w := tokenWords(*srcs[0]); !strings.Contains(w, "saved for github.com") || !strings.Contains(w, "sealed beside this schedule") {
+		t.Errorf("receipt words %q", w)
 	}
 }

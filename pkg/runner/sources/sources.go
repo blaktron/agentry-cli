@@ -101,7 +101,10 @@ type Source struct {
 const (
 	TokenFromFlag     = "flag"
 	TokenFromKeychain = "keychain"
-	TokenFromPrompt   = "prompt"
+	// TokenFromSealed is the saved key, read from the keys sealed beside
+	// a schedule that runs while its person is signed out (DR-84).
+	TokenFromSealed = "sealed"
+	TokenFromPrompt = "prompt"
 )
 
 var registry = map[manifest.IntakeType]Kind{
@@ -377,6 +380,8 @@ func tokenWords(s Source) string {
 		return ", with an access token from the environment variable named by --intake-token"
 	case TokenFromKeychain:
 		return ", with the access token saved in the system keychain for " + s.Host
+	case TokenFromSealed:
+		return ", with the access token saved for " + s.Host + ", from the keys sealed beside this schedule"
 	case TokenFromPrompt:
 		return ", with an access token given at the prompt"
 	}
