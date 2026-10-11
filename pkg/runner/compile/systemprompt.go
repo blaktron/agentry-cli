@@ -72,6 +72,9 @@ type promptFacts struct {
 	// each answer is fetched before the run into /inputs/<id>/ (plan
 	// input-sources.md §5; agentry-cli#833).
 	repositories []string
+	// files are the ids of its url questions: each answer is one file,
+	// downloaded before the run into /inputs/<id>/ (agentry-cli#834).
+	files []string
 	// inputView is the release's default view of its inputs (inputViewOf),
 	// empty when each input keeps its own.
 	inputView string
@@ -233,6 +236,9 @@ Files given for this run are under %s, read-only: list_inputs lists them, with t
 	}
 	for _, id := range f.repositories {
 		fmt.Fprintf(b, "\nThe repository the person named for %q was downloaded before you started into %s/%s/: its files at one commit, read-only, listed, searched and read with list_inputs, search_inputs and read_input like any input. intake.json gives its address, the commit and the number of files. It has no history and no .git folder, and links and submodules were left out; a Git LFS file is its pointer, not its content, and an image in it is not turned into text (read its original when it matters). When the person gave no answer, the folder is not there.\n", id, spec.InputsMount, id)
+	}
+	for _, id := range f.files {
+		fmt.Fprintf(b, "\nThe file the person named by its web address for %q was downloaded before you started into %s/%s/: one file, read-only, listed, searched and read with list_inputs, search_inputs and read_input like any input (an archive is unpacked as one given is). intake.json gives its address and the file's name. When the person gave no answer, the folder is not there.\n", id, spec.InputsMount, id)
 	}
 }
 

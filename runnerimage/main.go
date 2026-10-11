@@ -51,7 +51,7 @@ const usageText = `usage: agentry-runner <mode> [flags]
         serve one remote MCP server on stdio, forwarding each message to it
         over streamable HTTP (or HTTP+SSE); the bearer, when there is one,
         is read from --token-file at every request
-  source --kind repository --url <https address> [--ref <ref>] --out <dir> --work <dir> --proxy <url>
+  source --kind repository|url --url <https address> [--ref <ref>] --out <dir> --work <dir> --proxy <url>
         [--max-files N] [--max-bytes N] [--token-stdin]
         (the files container's fetch step) fetch an input source into --out as
         plain files, the report into --work; the access token, when there is
@@ -120,7 +120,7 @@ const maxTokenBytes = 16 << 10
 // be made, and zero with a refusal in the report when a cap refused it.
 func runSource(args []string) error {
 	fs := flag.NewFlagSet("source", flag.ContinueOnError)
-	kind := fs.String("kind", "", "the source kind (repository)")
+	kind := fs.String("kind", "", "the source kind (repository, url)")
 	u := fs.String("url", "", "the source's https address, with no credentials")
 	ref := fs.String("ref", "", "the branch, tag or full commit name (default: the default branch)")
 	out := fs.String("out", "", "the empty directory the files are written to")

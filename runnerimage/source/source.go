@@ -6,12 +6,14 @@
 // binary or a third-party library: the image builds with no module download
 // (DR-2), and no shell or git runs in the fetch container. The checkout
 // writes regular files only (tree.go): no link, no submodule, no .git, LFS
-// pointer files as they are.
+// pointer files as they are. The url kind (url.go) is one https GET of a
+// file, saved as one file under a portable name.
 //
 // The caller runs this in the files container on a network whose only
 // route is a CONNECT proxy to the source's host on port 443, with the
 // access token, when there is one, on stdin: never in the environment or an
-// argument. The token is sent to that host alone, as HTTP basic auth.
+// argument. The token is sent to that host alone: as HTTP basic auth to a
+// repository, as a bearer token for a file.
 //
 // This package is part of the embedded runner-image build context and so
 // imports nothing outside the standard library.
@@ -37,8 +39,14 @@ import (
 const (
 	Schema     = "source/v1"
 	ReportFile = "source.json"
-	// KindRepository is the one kind this role fetches today.
+	// KindRepository is a git repository at a ref (KindURL is the other).
 	KindRepository = "repository"
+)
+
+// The HTTP client's bounds on a host's handshake and on its first answer.
+const (
+	handshakeTimeout = 30 * time.Second
+	headerTimeout    = 2 * time.Minute
 )
 
 // The default caps (D7): a local repository.
@@ -53,15 +61,17 @@ const maxSkippedListed = 50
 
 // Options is one fetch.
 type Options struct {
-	// Kind is the source kind; only KindRepository is fetched.
+	// Kind is the source kind: KindRepository or KindURL.
 	Kind string
-	// URL is the repository's https address, with no credentials.
+	// URL is the repository's or the file's https address, with no
+	// credentials.
 	URL string
 	// Ref is the branch, tag or full commit name; empty is the default
-	// branch.
+	// branch. A url source has none.
 	Ref string
-	// Token is the access token, empty for anonymous. A token holding a
-	// colon is user:token; otherwise the user is x-access-token.
+	// Token is the access token, empty for anonymous. A repository sends
+	// it as basic auth (a token holding a colon is user:token; otherwise
+	// the user is x-access-token), a url source as a bearer token.
 	Token string
 	// Proxy is the CONNECT proxy every request goes through; nil is a
 	// direct connection (tests only).
@@ -90,6 +100,8 @@ type Report struct {
 	// Files and Bytes are what was written.
 	Files int   `json:"files"`
 	Bytes int64 `json:"bytes"`
+	// Name is the one file a url source saved, under Out.
+	Name string `json:"name,omitempty"`
 	// LFSPointers counts the files that are Git LFS pointers.
 	LFSPointers int `json:"lfsPointers,omitempty"`
 	// Skipped counts what was left out, by reason; SkippedPaths names the
@@ -123,9 +135,18 @@ func Fetch(ctx context.Context, o Options) (Report, error) {
 }
 
 func fetch(ctx context.Context, o Options, rep *Report) error {
-	if o.Kind != KindRepository {
-		return fmt.Errorf("the source kind %q is not fetched by this runner", printable(o.Kind, 40))
+	switch o.Kind {
+	case KindRepository:
+		return fetchRepository(ctx, o, rep)
+	case KindURL:
+		return fetchURL(ctx, o, rep)
 	}
+	return fmt.Errorf("the source kind %q is not fetched by this runner", printable(o.Kind, 40))
+}
+
+// fetchRepository is a depth-1 fetch of one commit, checked out as plain
+// files under Out.
+func fetchRepository(ctx context.Context, o Options, rep *Report) error {
 	if o.MaxFiles <= 0 {
 		o.MaxFiles = DefaultMaxFiles
 	}
@@ -136,30 +157,10 @@ func fetch(ctx context.Context, o Options, rep *Report) error {
 	if err != nil {
 		return err
 	}
-	tr := o.Transport
-	if tr == nil {
-		tr = &http.Transport{
-			Proxy:                 http.ProxyURL(o.Proxy),
-			TLSHandshakeTimeout:   30 * time.Second,
-			ResponseHeaderTimeout: 2 * time.Minute,
-			ForceAttemptHTTP2:     true,
-		}
-	}
 	r := &remote{
-		base: strings.TrimSuffix(u.String(), "/"),
-		client: &http.Client{Transport: tr, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// A redirect is followed only on the same host over https,
-			// the one host the proxy lets the step reach: the token is
-			// never sent anywhere else.
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, u.Host) {
-				return fmt.Errorf("the host redirected to another address (%s), which is not followed", printable(req.URL.Host, 100))
-			}
-			return nil
-		}},
-		auth: basicAuth(o.Token),
+		base:   strings.TrimSuffix(u.String(), "/"),
+		client: newClient(o, u),
+		auth:   basicAuth(o.Token),
 	}
 	l, err := r.discover(ctx, o.Ref)
 	if err != nil {
@@ -263,25 +264,38 @@ func fetch(ctx context.Context, o Options, rep *Report) error {
 func CheckURL(raw string) (*url.URL, error) { return checkURL(raw, false) }
 
 func checkURL(raw string, anyPort bool) (*url.URL, error) {
-	u, err := url.Parse(raw)
+	u, err := checkAddress(raw, "the repository address", anyPort)
 	if err != nil {
-		return nil, errors.New("the repository address is not a URL")
+		return nil, err
 	}
 	switch {
-	case u.Scheme != "https":
-		return nil, fmt.Errorf("the repository address must be https, not %q", printable(u.Scheme, 20))
-	case u.User != nil:
-		return nil, errors.New("the repository address carries credentials; give the token apart from the address")
-	case u.Hostname() == "" || u.Opaque != "":
-		return nil, errors.New("the repository address names no host")
-	case !plainHost(u.Hostname()):
-		return nil, errors.New("the repository address's host is not a plain host name (letters, digits, dots and hyphens)")
-	case u.Port() != "" && u.Port() != "443" && !anyPort:
-		return nil, errors.New("the repository address names a port other than 443")
 	case u.RawQuery != "" || u.Fragment != "":
 		return nil, errors.New("the repository address carries a query or a fragment")
 	case u.Path == "" || u.Path == "/":
 		return nil, errors.New("the repository address names no repository")
+	}
+	return u, nil
+}
+
+// checkAddress holds what every source's address must be: https, a plain
+// host, no credentials and no port but 443. what names the address in the
+// words of an error.
+func checkAddress(raw, what string, anyPort bool) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, errors.New(what + " is not a URL")
+	}
+	switch {
+	case u.Scheme != "https":
+		return nil, fmt.Errorf("%s must be https, not %q", what, printable(u.Scheme, 20))
+	case u.User != nil:
+		return nil, errors.New(what + " carries credentials; give the token apart from the address")
+	case u.Hostname() == "" || u.Opaque != "":
+		return nil, errors.New(what + " names no host")
+	case !plainHost(u.Hostname()):
+		return nil, errors.New(what + "'s host is not a plain host name (letters, digits, dots and hyphens)")
+	case u.Port() != "" && u.Port() != "443" && !anyPort:
+		return nil, errors.New(what + " names a port other than 443")
 	}
 	return u, nil
 }

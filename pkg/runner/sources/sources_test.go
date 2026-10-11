@@ -9,6 +9,8 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/decode"
+
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 )
@@ -34,11 +36,97 @@ func TestARepositoryAnswerIsParsed(t *testing.T) {
 			t.Errorf("Parse(%q) passed", bad)
 		}
 	}
-	if _, ok := Lookup(manifest.IntakeURL); ok {
-		t.Error("the url kind is fetched before agentry-cli#834")
+}
+
+func TestAURLAnswerIsParsed(t *testing.T) {
+	k, ok := Lookup(manifest.IntakeURL)
+	if !ok || !k.AsUpload || k.Caps != URLCaps {
+		t.Fatalf("the url kind: %+v %v", k, ok)
 	}
-	if err := Unfetched("doc", manifest.IntakeURL); err == nil || !strings.Contains(err.Error(), "agentry-cli#834") {
-		t.Errorf("Unfetched: %v", err)
+	s, err := k.Parse(" https://Files.Example.com/get?id=7&sig=s3cr3t#page=2 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.URL != "https://Files.Example.com/get?id=7&sig=s3cr3t" || s.Host != "files.example.com" || s.Ref != "" || s.Kind != manifest.IntakeURL {
+		t.Errorf("parsed %+v", s)
+	}
+	if s.Shown() != "https://Files.Example.com/get?…" {
+		t.Errorf("shown %q", s.Shown())
+	}
+	for _, bad := range []string{
+		"http://example.com/f.pdf", "ftp://example.com/f", "https://u:p@example.com/f", "https://example.com:8080/f", "file:///etc/passwd", "",
+	} {
+		if _, err := k.Parse(bad); err == nil {
+			t.Errorf("Parse(%q) passed", bad)
+		}
+	}
+	argv := strings.Join(k.Argv(Source{URL: s.URL, Token: "tok"}, URLCaps, "http://p:1"), " ")
+	if !strings.Contains(argv, "--kind url") || !strings.Contains(argv, "--max-files 1 --max-bytes 268435456") || !strings.Contains(argv, "--token-stdin") || strings.Contains(argv, "tok ") || strings.Contains(argv, "--ref") {
+		t.Errorf("argv %s", argv)
+	}
+}
+
+func TestAURLReportIsOneFile(t *testing.T) {
+	s := Source{Kind: manifest.IntakeURL, Token: "tok123"}
+	good := `{"schema":"source/v1","kind":"url","files":1,"bytes":10,"name":"report.pdf"}`
+	if rep, err := CheckReport([]byte(good), s, URLCaps); err != nil || rep.Name != "report.pdf" {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	if _, err := CheckReport([]byte(`{"schema":"source/v1","kind":"url","files":0,"bytes":0,"error":"the host answered 404"}`), s, URLCaps); err != nil {
+		t.Errorf("a failed fetch's report: %v", err)
+	}
+	for name, raw := range map[string]string{
+		"a repository's report": `{"schema":"source/v1","kind":"repository","files":1,"bytes":1}`,
+		"two files":             `{"schema":"source/v1","kind":"url","files":2,"bytes":10,"name":"a"}`,
+		"an unsafe name":        `{"schema":"source/v1","kind":"url","files":1,"bytes":10,"name":"../a"}`,
+		"a device name":         `{"schema":"source/v1","kind":"url","files":1,"bytes":10,"name":"CON"}`,
+		"a commit":              `{"schema":"source/v1","kind":"url","files":1,"bytes":10,"name":"a","commit":"0123456789abcdef0123456789abcdef01234567"}`,
+		"a file with no name":   `{"schema":"source/v1","kind":"url","files":1,"bytes":10}`,
+		"over the cap":          `{"schema":"source/v1","kind":"url","files":1,"bytes":268435457,"name":"a"}`,
+	} {
+		if _, err := CheckReport([]byte(raw), s, URLCaps); err == nil {
+			t.Errorf("%s: passed", name)
+		}
+	}
+	if _, err := CheckReport([]byte(`{"schema":"source/v1","kind":"repository","files":1,"bytes":1,"name":"a"}`), Source{Kind: manifest.IntakeRepository}, LocalCaps); err == nil {
+		t.Error("a repository's report naming a file passed")
+	}
+}
+
+func TestAURLDocumentAndLineHideTheQuery(t *testing.T) {
+	s := Source{ID: "doc", Kind: manifest.IntakeURL, URL: "https://example.com/f?sig=s3cr3t", Host: "example.com", Token: "tok_PLANTED", TokenFrom: TokenFromKeychain}
+	rep := source.Report{Kind: source.KindURL, Files: 1, Bytes: 42, Name: "f.pdf"}
+	doc := Document(s, rep, "/inputs")
+	r := doc["url"].(map[string]any)
+	if r["url"] != "https://example.com/f?…" || r["file"] != "/inputs/doc/f.pdf" || r["path"] != "/inputs/doc/" || r["files"] != 1 || r["bytes"] != int64(42) {
+		t.Errorf("document %v", doc)
+	}
+	files := []runnerdecode.File{
+		{Path: "doc/f.pdf", Check: runnerdecode.CheckClean},
+		{Path: "doc2/x.txt", Check: runnerdecode.CheckFound},
+	}
+	line := Line(s, Fetched{Source: rep}, ChecksFor(s, files))
+	for _, want := range []string{"file https://example.com/f?…: f.pdf, 42 bytes", "through a proxy to example.com alone", "saved in the system keychain for example.com", "decoded as an upload is: the malware check read 1 file (1 clean)"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("line %q does not say %q", line, want)
+		}
+	}
+	if strings.Contains(line, "s3cr3t") || strings.Contains(line, "tok_PLANTED") {
+		t.Errorf("line %q carries the query or the token", line)
+	}
+	// A file the check could not read is said apart, never counted as read.
+	files = append(files, runnerdecode.File{Path: "doc/f.pdf/inner.bin", Check: runnerdecode.CheckUnchecked})
+	if got := ChecksAsUpload("doc", files); got != "decoded as an upload is: the malware check read 1 file (1 clean), and 1 was not checked" {
+		t.Errorf("ChecksAsUpload = %q", got)
+	}
+}
+
+// TestAURLSourceFitsWhatTheDecodeReadsBack: a url source's byte cap is the
+// most of one document the host reads back from a decode, so a file within
+// it is never refused later by the read-back.
+func TestAURLSourceFitsWhatTheDecodeReadsBack(t *testing.T) {
+	if URLCaps.Bytes != decode.MaxDocumentBytes || URLCaps.Files != 1 {
+		t.Errorf("URLCaps %+v, decode.MaxDocumentBytes %d", URLCaps, decode.MaxDocumentBytes)
 	}
 }
 
@@ -55,7 +143,7 @@ func TestTheFetchStepsArgvCarriesNoToken(t *testing.T) {
 }
 
 func TestTheReportIsHeldToItsShape(t *testing.T) {
-	s := Source{Token: "tok123"}
+	s := Source{Kind: manifest.IntakeRepository, Token: "tok123"}
 	good := `{"schema":"source/v1","kind":"repository","commit":"0123456789abcdef0123456789abcdef01234567","files":3,"bytes":10,"skipped":{"link":1},"error":"refused tok123"}`
 	rep, err := CheckReport([]byte(good), s, LocalCaps)
 	if err != nil {

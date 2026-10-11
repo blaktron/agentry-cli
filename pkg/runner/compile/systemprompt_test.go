@@ -385,3 +385,15 @@ func TestARepositoryQuestionIsNamedInTheInputs(t *testing.T) {
 		t.Error("the data rule does not name input sources")
 	}
 }
+
+// TestAURLQuestionIsNamedInTheInputs: a url question's folder is named in
+// the inputs section, as one file (agentry-cli#834).
+func TestAURLQuestionIsNamedInTheInputs(t *testing.T) {
+	got := systemPrompt(promptFacts{caps: capsNone(false), intake: true, files: []string{"doc"}})
+	if !strings.Contains(got, `The file the person named by its web address for "doc" was downloaded before you started into /inputs/doc/: one file`) {
+		t.Errorf("the url paragraph is missing:\n%s", got)
+	}
+	if strings.Contains(got, "The repository the person named") {
+		t.Error("a url question is told as a repository")
+	}
+}

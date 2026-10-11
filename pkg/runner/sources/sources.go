@@ -1,7 +1,7 @@
 // Package sources is the input-source seam (plan input-sources.md §5,
-// D2–D8; agentry-cli#833). An input source is where a run's inputs come
-// from beyond what was uploaded: a repository today, a file at a web
-// address next (agentry-cli#834), a SharePoint library later. A QuickAgent
+// D2–D8, D12; agentry-cli#833, agentry-cli#834). An input source is where a
+// run's inputs come from beyond what was uploaded: a repository, a file at
+// a web address, a SharePoint library later. A QuickAgent
 // asks for one with an intake question of the kind's type; the answer is
 // fetched before the run, by the runner image's `source` role in the files
 // container behind a proxy to the source's host alone, into
@@ -10,9 +10,11 @@
 // Each kind is one entry in a registry and gives: how its answer is parsed
 // and checked, the host its fetch reaches, how it uses a credential, the
 // fetch step's argv (the fetch itself is the runner image's), its caps
-// (D7), its malware-check rule (D8) and its receipt line. The engine runs
-// every source through the same steps (engine/sources.go), so a new kind is
-// a new entry here and in the runner image, with nothing else changed.
+// (D7), its malware-check rule (D8: the source rule, or decoded as an
+// upload) and its receipt line. The engine runs every source through the
+// same steps (engine/sources.go). A new kind is a new entry here and in the
+// runner image, and a branch in Line, Document and CheckReport when its
+// report has a shape of its own, as a url source's one file does.
 //
 // A source is outside the contract (D4): giving it is the grant, and its
 // access token is used by the fetch step alone (D5). The token is never
@@ -41,8 +43,13 @@ type Caps struct {
 	Bytes int64
 }
 
-// LocalCaps are a local run's: 20,000 files and 1 GiB.
+// LocalCaps are a local repository's: 20,000 files and 1 GiB.
 var LocalCaps = Caps{Files: source.DefaultMaxFiles, Bytes: source.DefaultMaxBytes}
+
+// URLCaps are a local url source's: the uploads' caps, so one file within
+// the most of one document the host reads back from a decode (256 MiB),
+// its archive members counted against the uploads' 2,000 in the decode.
+var URLCaps = Caps{Files: 1, Bytes: source.DefaultURLMaxBytes}
 
 // Kind is one source kind on the seam.
 type Kind struct {
@@ -57,6 +64,17 @@ type Kind struct {
 	Argv func(s Source, caps Caps, proxy string) []string
 	// Prompt is what a terminal asks for it.
 	Prompt string
+	// Runner is the kind's word in the runner image's source role (its
+	// --kind) and in the role's report.
+	Runner string
+	// Caps are a local run's caps for it (D7).
+	Caps Caps
+	// AsUpload decodes it as an upload is decoded: every file checked by
+	// ClamAV, images read with OCR, and its files counted against the
+	// uploads' cap. Otherwise the source rule holds (D8): only executable
+	// and binary risky files are checked, images are not read with OCR,
+	// and the source has a cap of its own.
+	AsUpload bool
 }
 
 // Source is one source a run fetches: a question's answer, parsed.
@@ -88,6 +106,7 @@ const (
 
 var registry = map[manifest.IntakeType]Kind{
 	manifest.IntakeRepository: repository,
+	manifest.IntakeURL:        fileURL,
 }
 
 // Lookup answers the kind an intake type asks for, false for a type that
@@ -100,9 +119,6 @@ func Lookup(t manifest.IntakeType) (Kind, bool) {
 // Unfetched says why an intake type that asks for a source cannot be
 // answered by this CLI.
 func Unfetched(id string, t manifest.IntakeType) error {
-	if t == manifest.IntakeURL {
-		return fmt.Errorf("intake question %q asks for a file at a web address (a url source), which this version of agentry cannot fetch yet (agentry-cli#834)", id)
-	}
 	return fmt.Errorf("intake question %q asks for a %s source, which this version of agentry cannot fetch", id, t)
 }
 
@@ -113,19 +129,28 @@ var repository = Kind{
 	Type:   manifest.IntakeRepository,
 	Noun:   "repository",
 	Prompt: "(the repository's https address; add #branch, #tag or #commit for one other than the default branch)",
+	Runner: source.KindRepository,
+	Caps:   LocalCaps,
 	Parse:  parseRepository,
 	Argv: func(s Source, caps Caps, proxy string) []string {
-		argv := []string{"source", "--kind", source.KindRepository, "--url", s.URL,
-			"--out", "/out", "--work", "/work", "--proxy", proxy,
-			"--max-files", strconv.Itoa(caps.Files), "--max-bytes", strconv.FormatInt(caps.Bytes, 10)}
-		if s.Ref != "" {
-			argv = append(argv, "--ref", s.Ref)
-		}
-		if s.Token != "" {
-			argv = append(argv, "--token-stdin")
-		}
-		return argv
+		return fetchArgv(source.KindRepository, s, caps, proxy)
 	},
+}
+
+// fetchArgv is the source role's argv: the kind, the address and the ref,
+// where it writes, its proxy and caps, and --token-stdin when there is a
+// token (never the token itself).
+func fetchArgv(kind string, s Source, caps Caps, proxy string) []string {
+	argv := []string{"source", "--kind", kind, "--url", s.URL,
+		"--out", "/out", "--work", "/work", "--proxy", proxy,
+		"--max-files", strconv.Itoa(caps.Files), "--max-bytes", strconv.FormatInt(caps.Bytes, 10)}
+	if s.Ref != "" {
+		argv = append(argv, "--ref", s.Ref)
+	}
+	if s.Token != "" {
+		argv = append(argv, "--token-stdin")
+	}
+	return argv
 }
 
 func parseRepository(answer string) (Source, error) {
@@ -139,6 +164,42 @@ func parseRepository(answer string) (Source, error) {
 	}
 	host := strings.ToLower(u.Hostname())
 	return Source{Kind: manifest.IntakeRepository, URL: raw, Ref: ref, Host: host}, nil
+}
+
+// fileURL is the url kind (agentry-cli#834): one file at a web address,
+// fetched with one https GET and decoded as an upload (D8, D12).
+var fileURL = Kind{
+	Type:     manifest.IntakeURL,
+	Noun:     "file",
+	Prompt:   "(the file's https address)",
+	Runner:   source.KindURL,
+	Caps:     URLCaps,
+	AsUpload: true,
+	Parse:    parseFileURL,
+	Argv: func(s Source, caps Caps, proxy string) []string {
+		return fetchArgv(source.KindURL, s, caps, proxy)
+	},
+}
+
+// parseFileURL takes a file's https address. A fragment is never sent to a
+// host, so it is dropped (a PDF's #page=2); a query is kept.
+func parseFileURL(answer string) (Source, error) {
+	raw, _, _ := strings.Cut(strings.TrimSpace(answer), "#")
+	u, err := source.CheckFileURL(raw)
+	if err != nil {
+		return Source{}, err
+	}
+	return Source{Kind: manifest.IntakeURL, URL: raw, Host: strings.ToLower(u.Hostname())}, nil
+}
+
+// Shown is the address as a person and the agent read it: a query, which
+// can carry a signed download's credential, is shown as "?…" and never
+// written to intake.json, a receipt or an error.
+func (s Source) Shown() string {
+	if base, _, ok := strings.Cut(s.URL, "?"); ok {
+		return base + "?…"
+	}
+	return s.URL
 }
 
 // checkRef holds a ref to git's own rules for a ref name, as far as an
@@ -185,8 +246,23 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 	if err := jsonStrict(raw, &rep); err != nil {
 		return rep, fmt.Errorf("the fetch step's report: %w", err)
 	}
-	if rep.Schema != source.Schema || rep.Kind != source.KindRepository {
+	if want := registry[s.Kind].Runner; rep.Schema != source.Schema || rep.Kind != want || want == "" {
 		return rep, fmt.Errorf("the fetch step's report has the schema %q and kind %q", rep.Schema, rep.Kind)
+	}
+	// A url source is one file under a portable name, or a refusal or an error
+	// with none; nothing of a repository's.
+	if rep.Kind == source.KindURL {
+		ok := rep.Commit == "" && rep.Protocol == "" && rep.Ref == "" && rep.LFSPointers == 0 && len(rep.Skipped) == 0 && len(rep.SkippedPaths) == 0
+		if rep.Name == "" {
+			ok = ok && rep.Files == 0 && rep.Bytes == 0
+		} else {
+			ok = ok && rep.Files == 1 && source.PortableFileName(rep.Name) == rep.Name
+		}
+		if !ok {
+			return rep, errors.New("the fetch step's report is not one file's")
+		}
+	} else if rep.Name != "" {
+		return rep, errors.New("the fetch step's report names a file for a repository")
 	}
 	if rep.Files < 0 || rep.Bytes < 0 || rep.Files > caps.Files || rep.Bytes > caps.Bytes || rep.LFSPointers < 0 || rep.LFSPointers > rep.Files {
 		return rep, errors.New("the fetch step's report gives counts outside the source's caps")
@@ -238,8 +314,12 @@ var skipWords = map[string][2]string{
 // holds the token.
 func Document(s Source, rep source.Report, inputsMount string) map[string]any {
 	entry := map[string]any{
-		"url":  s.URL,
+		"url":  s.Shown(),
 		"path": inputsMount + "/" + s.ID + "/",
+	}
+	// A url source names its one file and its size once it is fetched.
+	if rep.Name != "" {
+		entry["file"], entry["files"], entry["bytes"] = inputsMount+"/"+s.ID+"/"+rep.Name, rep.Files, rep.Bytes
 	}
 	// The commit and the count once the fetch made them, never a blank.
 	if rep.Commit != "" {
@@ -257,6 +337,14 @@ func Document(s Source, rep source.Report, inputsMount string) map[string]any {
 // malware check of its files (checks, from the decode).
 func Line(s Source, f Fetched, checks string) string {
 	var b strings.Builder
+	if s.Kind == manifest.IntakeURL {
+		fmt.Fprintf(&b, "file %s: %s, %d bytes, fetched in %s with one GET (redirects followed on that host alone) through a proxy to %s alone", s.Shown(), f.Source.Name, f.Source.Bytes, f.Took.Round(100*time.Millisecond), s.Host)
+		b.WriteString(tokenWords(s))
+		if checks != "" {
+			b.WriteString("; " + checks)
+		}
+		return b.String()
+	}
 	fmt.Fprintf(&b, "%s %s", nounOf(s.Kind), s.URL)
 	switch {
 	case s.Ref != "":
@@ -268,16 +356,7 @@ func Line(s Source, f Fetched, checks string) string {
 		fmt.Fprintf(&b, " (%s)", f.Source.Ref)
 	}
 	fmt.Fprintf(&b, ", commit %s: %d %s, %d bytes, fetched in %s at depth 1 through a proxy to %s alone", f.Source.Commit, f.Source.Files, plural(f.Source.Files, "file", "files"), f.Source.Bytes, f.Took.Round(100*time.Millisecond), s.Host)
-	switch s.TokenFrom {
-	case TokenFromFlag:
-		b.WriteString(", with an access token from the environment variable named by --intake-token")
-	case TokenFromKeychain:
-		b.WriteString(", with the access token saved in the system keychain for " + s.Host)
-	case TokenFromPrompt:
-		b.WriteString(", with an access token given at the prompt")
-	default:
-		b.WriteString(", with no access token")
-	}
+	b.WriteString(tokenWords(s))
 	if left := skippedWords(f.Source.Skipped); left != "" {
 		b.WriteString("; left out: " + left)
 	}
@@ -288,6 +367,20 @@ func Line(s Source, f Fetched, checks string) string {
 		b.WriteString("; " + checks)
 	}
 	return b.String()
+}
+
+// tokenWords says whether a token was used and where it came from, never
+// its value.
+func tokenWords(s Source) string {
+	switch s.TokenFrom {
+	case TokenFromFlag:
+		return ", with an access token from the environment variable named by --intake-token"
+	case TokenFromKeychain:
+		return ", with the access token saved in the system keychain for " + s.Host
+	case TokenFromPrompt:
+		return ", with an access token given at the prompt"
+	}
+	return ", with no access token"
 }
 
 func nounOf(t manifest.IntakeType) string {
@@ -341,6 +434,46 @@ func Checks(id string, files []runnerdecode.File) string {
 	}
 	s += fmt.Sprintf("), and %d %s not checked, as the source rule leaves code, text and data", notRisky, plural(notRisky, "other was", "others were"))
 	return s
+}
+
+// ChecksAsUpload is the malware-check clause of a source decoded as an
+// upload (Kind.AsUpload): every file of it, an archive's members included,
+// was sent to the check as an upload's is; the clause counts those it
+// checked and, apart, those it could not.
+func ChecksAsUpload(id string, files []runnerdecode.File) string {
+	clean, found, other := 0, 0, 0
+	prefix := id + "/"
+	for _, f := range files {
+		if !strings.HasPrefix(f.Path, prefix) {
+			continue
+		}
+		switch f.Check {
+		case runnerdecode.CheckClean:
+			clean++
+		case runnerdecode.CheckFound:
+			found++
+		default:
+			other++
+		}
+	}
+	n := clean + found
+	s := fmt.Sprintf("decoded as an upload is: the malware check read %d %s (%d clean", n, plural(n, "file", "files"), clean)
+	if found > 0 {
+		s += fmt.Sprintf(", %d found", found)
+	}
+	s += ")"
+	if other > 0 {
+		s += fmt.Sprintf(", and %d %s not checked", other, plural(other, "was", "were"))
+	}
+	return s
+}
+
+// ChecksFor is the malware-check clause for a source by its kind's rule.
+func ChecksFor(s Source, files []runnerdecode.File) string {
+	if registry[s.Kind].AsUpload {
+		return ChecksAsUpload(s.ID, files)
+	}
+	return Checks(s.ID, files)
 }
 
 func validCommit(s string) bool {

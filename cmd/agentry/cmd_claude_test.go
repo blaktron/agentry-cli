@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,6 +24,11 @@ import (
 // browser cannot reach its callback (the paste-code page).
 const claudeSignInURL = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=abc"
 
+// claudeAutoURL is the address Claude Code 2.1.296 hands its browser
+// opener in the image: its own callback on the container's loopback, which
+// the sign-in relays (agentry-cli#848). claudeFixture sets it.
+var claudeAutoURL string
+
 // claudeFixture points the CLI's Claude sign-in at a fake daemon on which
 // the Claude Code image is already built from its pinned artifact, and
 // records what the browser was asked to open.
@@ -31,11 +38,19 @@ func claudeFixture(t *testing.T) (*dockerx.Fake, *[]string) {
 	t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
 	t.Setenv("AGENTRY_NO_BROWSER", "")
 	h, _ := policy.Default().Images.HarnessImageFor("claude-image")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	claudeAutoURL = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A" + strconv.Itoa(port) + "%2Fcallback&state=abc"
 	f := &dockerx.Fake{
 		ExistingImages: map[string]bool{h.Ref: true},
-		Labels:         map[string]map[string]string{h.Ref: {harnessbuild.LabelArtifact: h.Artifact}},
+		Labels:         map[string]map[string]string{h.Ref: {harnessbuild.LabelArtifact: h.Artifact, harnessbuild.LabelRecipe: harnessbuild.ClaudeRecipe}},
 		Foreground: map[string]*dockerx.FakeForeground{
-			"agentry-claude-login":  {Stdout: "Opening browser to sign in…\nIf the browser didn't open, visit: " + claudeSignInURL + "\nPaste code here if prompted > Login successful.\n"},
+			"agentry-claude-login": {Stdout: "Opening browser to sign in…\nIf the browser didn't open, visit: " + claudeSignInURL + "\nPaste code here if prompted > Login successful.\n",
+				Stderr: "agentry-open " + claudeAutoURL + "\n"},
 			"agentry-claude-status": {Stdout: `{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","email":"person@example.com","orgName":"Example","subscriptionType":"max"}`},
 			"agentry-claude-logout": {Stdout: "Successfully logged out from your Anthropic account.\n"},
 		},
@@ -50,8 +65,10 @@ func claudeFixture(t *testing.T) (*dockerx.Fake, *[]string) {
 }
 
 // `agentry model-signins add claude` runs the unmodified Claude Code's own
-// sign-in in the image, on its volume: Agentry opens the address Claude
-// Code prints, the person's pasted code goes to Claude Code's prompt, and
+// sign-in in the image, on its volume: Agentry opens, in the person's
+// browser, the address Claude Code hands its stand-in opener, whose answer
+// is relayed to Claude Code's callback (agentry-cli#848); the terminal still
+// reaches Claude Code's prompt, for the paste fallback; and
 // what is kept is the volume's name and the account Claude Code reports,
 // never a token. Nothing of the person's credentials reaches the container.
 func TestModelSignInsAddClaudeRunsClaudeCodesOwnSignIn(t *testing.T) {
@@ -65,10 +82,11 @@ func TestModelSignInsAddClaudeRunsClaudeCodesOwnSignIn(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Vendor != "claude" || got.Kind != policy.KeyKindClaudeSignIn || got.Account != "person@example.com (Example)" {
 		t.Fatalf("add = %s (%v)", out, err)
 	}
-	if !slices.Equal(*opened, []string{claudeSignInURL}) {
+	if !slices.Equal(*opened, []string{claudeAutoURL}) {
 		t.Fatalf("opened %v", *opened)
 	}
-	if !strings.Contains(errOut, "Use your Claude subscription (runs Claude Code)") || !strings.Contains(errOut, "Paste code here if prompted") {
+	if !strings.Contains(errOut, "Use your Claude subscription (runs Claude Code)") || !strings.Contains(errOut, "Approve the sign-in in your browser") ||
+		strings.Contains(errOut, "agentry-open") {
 		t.Fatalf("what the person saw:\n%s", errOut)
 	}
 	login, ok := f.FindRun("agentry-claude-login")
@@ -79,7 +97,8 @@ func TestModelSignInsAddClaudeRunsClaudeCodesOwnSignIn(t *testing.T) {
 		t.Fatalf("the sign-in container is not bounded: %+v", login)
 	}
 	if login.Entrypoint != "/usr/local/bin/claude" || !slices.Equal(login.Argv, []string{"auth", "login"}) || !login.ReadOnly || !login.Interactive ||
-		len(login.Mounts) != 1 || login.Mounts[0] != (dockerx.Mount{Source: claudeVolume, Target: "/claude"}) || login.Env["CLAUDE_CONFIG_DIR"] != "/claude" {
+		len(login.Mounts) != 1 || login.Mounts[0] != (dockerx.Mount{Source: claudeVolume, Target: "/claude"}) || login.Env["CLAUDE_CONFIG_DIR"] != "/claude" ||
+		login.Env["BROWSER"] != harnessbuild.ClaudeOpener {
 		t.Fatalf("the sign-in container %+v", login)
 	}
 	for k := range login.Env {
@@ -131,29 +150,6 @@ func TestModelSignInsAddClaudeKeepsNothingUnlessClaudeCodeIsSignedIn(t *testing.
 		if !strings.Contains(strings.Join(f.Ops(), " "), "VolumeRemove:"+claudeVolume) {
 			t.Fatalf("%s: the volume of a failed first sign-in was left: %v", name, f.Ops())
 		}
-	}
-}
-
-// Agentry opens Anthropic's own sign-in pages from Claude Code's output and
-// nothing else.
-func TestOnlyAnthropicsSignInPagesAreOpened(t *testing.T) {
-	for raw, ok := range map[string]bool{
-		claudeSignInURL: true, "https://platform.claude.com/oauth/authorize?x=1": true,
-		"http://claude.com/cai/oauth/authorize": false, "https://claude.com.example/x": false,
-		"https://user@claude.com/x": false, "https://evil.example/claude.com": false,
-	} {
-		if anthropicSignInURL(raw) != ok {
-			t.Errorf("%s: %v", raw, !ok)
-		}
-	}
-	var opened []string
-	var sink strings.Builder
-	o := &urlOpener{w: &sink, open: func(u string) { opened = append(opened, u) }}
-	for _, chunk := range []string{"see https://evil.example/x\nIf the browser didn't open, visit: https://claude", ".com/cai/oauth/authorize?state=1\n", "again " + claudeSignInURL + "\n"} {
-		_, _ = o.Write([]byte(chunk))
-	}
-	if !slices.Equal(opened, []string{"https://claude.com/cai/oauth/authorize?state=1"}) || !strings.Contains(sink.String(), "evil.example") {
-		t.Fatalf("opened %v; passed through %q", opened, sink.String())
 	}
 }
 

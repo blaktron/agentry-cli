@@ -74,7 +74,7 @@ func TestAnArtifactPinnedImageIsNeverPulled(t *testing.T) {
 
 	claude, _ := pol.Images.HarnessImageFor("claude-image")
 	f.ExistingImages[claude.Ref] = true
-	f.Labels = map[string]map[string]string{claude.Ref: {harnessbuild.LabelArtifact: claude.Artifact}}
+	f.Labels = map[string]map[string]string{claude.Ref: {harnessbuild.LabelArtifact: claude.Artifact, harnessbuild.LabelRecipe: harnessbuild.ClaudeRecipe}}
 	plan = &spec.Plan{Harness: spec.HarnessSpec{Adapter: "claude-image", Agent: spec.ContainerSpec{Image: claude.Ref},
 		ImagePin: &spec.ImagePin{By: policy.PinArtifact, Value: claude.Artifact}}}
 	if err := EnsureInstalledFor(context.Background(), f, pol, "agentry-runner:test", t.TempDir(), os.Stderr, plan); err != nil {

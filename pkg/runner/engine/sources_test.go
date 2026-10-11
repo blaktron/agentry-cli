@@ -321,3 +321,158 @@ func assertNoToken(t *testing.T, dir string) {
 		return nil
 	})
 }
+
+// withURLSource gives p one url source, "doc", with the planted token, and
+// scripts the fetch container to save one file and report it as the
+// runner's source role would. edit adjusts the file and the report.
+func withURLSource(t *testing.T, p *Params, f *dockerx.Fake, name, body string, edit func(rep *source.Report, out string)) *dockerx.FakeForeground {
+	t.Helper()
+	p.Intake = &intake.Answers{Sources: map[string]*sources.Source{"doc": {
+		ID: "doc", Kind: manifest.IntakeURL, URL: "https://files.example.com/get?sig=s3cr3tSIG", Host: "files.example.com",
+		Token: plantedToken, TokenFrom: sources.TokenFromFlag,
+	}}}
+	fg := &dockerx.FakeForeground{}
+	fg.Before = func(r dockerx.RunSpec) {
+		var out, work string
+		for _, m := range r.Mounts {
+			switch m.Target {
+			case "/out":
+				out = m.Source
+			case "/work":
+				work = m.Source
+			}
+		}
+		rep := source.Report{Schema: source.Schema, Kind: source.KindURL, Files: 1, Bytes: int64(len(body)), Name: name}
+		writeInput(t, out, name, body)
+		if edit != nil {
+			edit(&rep, out)
+		}
+		b, _ := json.Marshal(rep)
+		if err := os.WriteFile(filepath.Join(work, source.ReportFile), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.Foreground == nil {
+		f.Foreground = map[string]*dockerx.FakeForeground{}
+	}
+	f.Foreground["-source-doc"] = fg
+	return fg
+}
+
+// TestAURLSourceIsDecodedAsAnUpload: a url source is fetched by the same
+// step, behind a proxy to its host alone with the token on stdin, staged
+// at /inputs/doc/ and decoded as an upload is: its text file goes to the
+// malware check, which the source rule would have left unchecked
+// (agentry-cli#834, D8).
+func TestAURLSourceIsDecodedAsAnUpload(t *testing.T) {
+	resetDecodeCalls()
+	p, f := fixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	fg := withURLSource(t, &p, f, "notes.txt", "the minutes\n", nil)
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := filepath.Join(p.RunRoot, "runs", "cafe0000")
+	fetch, ok := f.FindRun("-source-doc")
+	if !ok {
+		t.Fatal("no fetch step ran")
+	}
+	if got := strings.Join(fetch.Argv, " "); !strings.Contains(got, "--kind url") || !strings.Contains(got, "--max-files 1 ") || strings.Contains(got, plantedToken) {
+		t.Errorf("the fetch step's argv: %s", got)
+	}
+	if fg.GotStdin != plantedToken+"\n" {
+		t.Errorf("the token did not reach the fetch step on stdin: %q", fg.GotStdin)
+	}
+	proxy, ok := f.FindRun("-source-proxy-doc")
+	if !ok || !strings.Contains(strings.Join(proxy.Argv, " "), "--allow files.example.com:443 --public-only") {
+		t.Errorf("the source proxy: %v %v", ok, proxy.Argv)
+	}
+	if b, err := os.ReadFile(filepath.Join(runDir, "inputs", "doc", "notes.txt")); err != nil || string(b) != "the minutes\n" {
+		t.Fatalf("the file was not staged at /inputs/doc/: %q %v", b, err)
+	}
+	idx := readIndex(t, runDir)
+	listed := false
+	for _, e := range idx.Files {
+		listed = listed || e.Path == "doc/notes.txt"
+	}
+	if !listed {
+		t.Errorf("the index does not list doc/notes.txt: %+v", idx.Files)
+	}
+	var doc map[string]map[string]map[string]any
+	b, err := os.ReadFile(filepath.Join(runDir, "inputs", intakeFile))
+	if err != nil || json.Unmarshal(b, &doc) != nil {
+		t.Fatalf("intake.json: %s %v", b, err)
+	}
+	if u := doc["doc"]["url"]; u["file"] != "/inputs/doc/notes.txt" || u["url"] != "https://files.example.com/get?…" || u["bytes"] != float64(12) {
+		t.Errorf("intake.json's source entry: %v", doc["doc"])
+	}
+	line := env.CapabilitiesEnforced["source.doc"]
+	for _, want := range []string{"file https://files.example.com/get?…: notes.txt, 12 bytes", "through a proxy to files.example.com alone", "decoded as an upload is: the malware check read 1 file (1 clean)"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the source's receipt line %q does not say %q", line, want)
+		}
+	}
+	for _, dir := range []string{p.OutDir, runDir} {
+		assertNoToken(t, dir)
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				if b, _ := os.ReadFile(path); strings.Contains(string(b), "s3cr3tSIG") {
+					t.Errorf("%s holds the address's query", path)
+				}
+			}
+			return nil
+		})
+	}
+}
+
+// TestAURLSourceHoldingEICARRefusesTheRun: a downloaded text file holding
+// EICAR refuses the run, where in a repository the source rule leaves a
+// text file unchecked.
+func TestAURLSourceHoldingEICARRefusesTheRun(t *testing.T) {
+	resetDecodeCalls()
+	p, f := fixture(t)
+	happyFake(f)
+	withURLSource(t, &p, f, "notes.txt", "X5O EICAR", nil)
+	_, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "doc/notes.txt") {
+		t.Fatalf("err %v, want the policy class naming doc/notes.txt", err)
+	}
+	if _, ok := f.FindRun("-agent"); ok {
+		t.Fatal("the agent ran on a refused file")
+	}
+}
+
+// TestAURLFetchStepThatBreaksItsReportIsNotStaged: a url step's tree must
+// hold the one file it names, and a refusal over the cap is the run's.
+func TestAURLFetchStepThatBreaksItsReportIsNotStaged(t *testing.T) {
+	for name, c := range map[string]struct {
+		edit func(*source.Report, string)
+		code int
+	}{
+		"another file": {func(rep *source.Report, _ string) { rep.Name = "other.txt" }, ExitGateway},
+		"two files":    {func(rep *source.Report, out string) { writeInput(t, out, "b.txt", "") }, ExitGateway},
+		"over its cap": {func(rep *source.Report, out string) {
+			*rep = source.Report{Schema: source.Schema, Kind: source.KindURL, Refusal: "the file at the address is 300.0 MiB, past the 256 MiB cap"}
+			_ = os.Remove(filepath.Join(out, "a.txt"))
+		}, ExitPolicy},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetDecodeCalls()
+			p, f := fixture(t)
+			happyFake(f)
+			p.KeepRunDir = true
+			withURLSource(t, &p, f, "a.txt", "a", c.edit)
+			_, err := Run(context.Background(), f, p)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != c.code {
+				t.Fatalf("err %v, want class %d", err, c.code)
+			}
+			if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "inputs", "doc")); !os.IsNotExist(err) {
+				t.Error("the step's tree was staged")
+			}
+		})
+	}
+}

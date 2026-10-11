@@ -508,6 +508,10 @@ type Run struct {
 	// Review is the person's own TypeSafe key, for a Builtin granted the
 	// review grant; Execute refuses to start one without it.
 	Review *engine.ReviewRun
+	// Hosted is a sandbox host's run (a hosted draft, build or review): it
+	// never spends a model sign-in (I5), and a plan that names one is
+	// refused (agentry-cli#845).
+	Hosted bool
 }
 
 // RepairRun is the Drafter's one repair turn after first (plan
@@ -614,8 +618,16 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	}
 	// A connected account's key is readied in the keychain the run reads
 	// (Hugging Face's token renewed; agentry-cli#742).
-	if err := modelsignin.Open(r.Home, connection.OSKeychain{}).ReadyForRun(ctx, plan); err != nil {
+	signIns := modelsignin.Open(r.Home, connection.OSKeychain{})
+	if err := signIns.ReadyForRun(ctx, plan); err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
+	}
+	// A built-in compiled onto a model sign-in's harness (adapter.DefaultFor)
+	// is handed the sign-in as `agentry run` hands it, or the engine refuses
+	// it as signed out (agentry-cli#845); a hosted run is refused (I5).
+	signIn, renewSignIn, err := engine.ModelSignInFor(ctx, signIns, plan, r.Hosted)
+	if err != nil {
+		return nil, err
 	}
 	runnerTag := r.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	ctxDir := filepath.Join(r.Home, "image")
@@ -644,5 +656,6 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
 		RunID:          r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
+		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
 	})
 }

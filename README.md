@@ -1236,10 +1236,14 @@ Code's own `claude auth login` in a config directory of Agentry's own, never
 your `~/.claude`, opens the address Claude Code prints, and keeps only where
 that directory is and the account Claude Code reports; Claude Code keeps and
 refreshes its sign-in there and Agentry never reads it. It signs in the
-Claude Code image (a docker volume, `agentry-claude-signin`; the browser
-cannot reach Claude Code's callback inside the container, so you paste the
-code Anthropic's page shows at Claude Code's prompt), the default for such a
-run; `--installed` signs in your installed Claude Code instead (a directory
+Claude Code image (a docker volume, `agentry-claude-signin`), the default for
+such a run, through your browser alone: the image's stand-in browser hands
+the CLI the address whose answer goes to Claude Code's own callback, the CLI
+opens it in your browser, listens on this computer's loopback at Claude
+Code's port and relays the answer into the container through `docker exec`,
+unread, so Claude Code receives it itself (agentry-cli#848). Only where that
+cannot work (the port in use here, a browser on another computer) does
+Anthropic's page show a code to paste at Claude Code's prompt; `--installed` signs in your installed Claude Code instead (a directory
 under `model-signins/`, with Claude Code's own browser and callback), for
 `--adapter claude`. The image is built at first use from
 `@anthropic-ai/claude-code` and its native package for your platform, each
@@ -1404,8 +1408,17 @@ offers to save it; it reaches only the fetch step, on its stdin, and no
 receipt. In a source only executable and binary risky files go to ClamAV and
 Hybrid Analysis, and images are not read with OCR. The receipt's
 `source.<id>` line says the commit, the counts, where the token came from and
-what was checked. A `url` question waits for agentry-cli#834, and a hosted
-run refuses a source until agentry-enterprise#516.
+what was checked. A `url` question (agentry-cli#834) takes one file's https
+address (`--intake doc=https://host/file.pdf`; a query is kept, a fragment
+dropped): one GET through the same proxy, redirects followed only on the same
+host, the token sent to it alone as a bearer token, and the body saved as one
+file under `/inputs/<id>/`, named from `Content-Disposition` or the address's
+last path segment and rewritten to a name every file system takes. It is decoded as an upload is (every file sent
+to the malware check, images read with OCR, an archive unpacked under DR-39's
+rules and its members counted against the uploads' 2,000), and a body past
+256 MiB is refused whole. Its query, which can carry a signed download's credential, is
+shown as `?…` in `intake.json` and the receipt. A hosted run refuses a source
+until agentry-enterprise#516.
 
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
