@@ -74,6 +74,13 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		}
 		lines = append(lines, line)
 	}
+	// Target hosts (plan runtime-hosts.md §8; agentry-cli#861): a machine
+	// the person names at the run's start, worked as the account they sign
+	// in with.
+	if len(c.TargetHosts) > 0 {
+		lines = append(lines, "targetHosts: "+renderList(c.TargetHosts)+
+			" (asks for a server when it runs, and can run any command on it as the account you sign in with)")
+	}
 	// Shipped knowledge (plan knowledge.md §4.6): packs inside the release
 	// the agent reads, part of what is consented to.
 	if len(c.Knowledge) > 0 {
@@ -94,7 +101,8 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 func capabilityNeedsConfirm(c manifest.Capabilities) bool {
 	// A remote server is network reach to its vendor, whatever the
 	// release's own egress says (agentry-cli#663).
-	return len(c.Network.Egress.Hosts) > 0 || len(c.Exec.Commands) > 0 ||
+	// So is a target host (agentry-cli#861).
+	return len(c.Network.Egress.Hosts) > 0 || len(c.Exec.Commands) > 0 || len(c.TargetHosts) > 0 ||
 		slices.ContainsFunc(c.MCPServers, manifest.MCPServer.IsRemote)
 }
 
@@ -104,7 +112,7 @@ func isZeroCapabilities(c manifest.Capabilities) bool {
 		c.Filesystem.Read.IsZero() && c.Filesystem.Write.IsZero() &&
 		c.Exec.IsZero() &&
 		len(c.Secrets) == 0 && len(c.DataAccess) == 0 &&
-		len(c.MCPServers) == 0 && len(c.Knowledge) == 0
+		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0
 }
 
 // renderEgress prints an egress declaration; "*" is flagged as policy-gated.

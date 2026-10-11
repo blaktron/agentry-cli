@@ -28,7 +28,7 @@ func TestTheRelayIsAskedOfTheNameServerAsAName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pc.Close()
+	defer func() { _ = pc.Close() }()
 	got := make(chan []byte, 1)
 	go func() {
 		buf := make([]byte, 512)
