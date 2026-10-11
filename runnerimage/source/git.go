@@ -439,18 +439,19 @@ func (r *remote) do(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 	_ = resp.Body.Close()
-	return nil, statusError(resp.StatusCode, r.auth != "")
+	return nil, statusError(resp.StatusCode, r.auth != "", "repository")
 }
 
-// statusError says what the host's refusal means for the person.
-func statusError(code int, token bool) error {
+// statusError says what the host's refusal of a source (noun: repository,
+// file) means for the person.
+func statusError(code int, token bool, noun string) error {
 	switch {
 	case (code == http.StatusUnauthorized || code == http.StatusForbidden || code == http.StatusNotFound) && !token:
-		return fmt.Errorf("the host answered %d %s: the repository does not exist, or it is private and needs an access token (no token was given)", code, http.StatusText(code))
+		return fmt.Errorf("the host answered %d %s: the %s does not exist, or it is private and needs an access token (no token was given)", code, http.StatusText(code), noun)
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:
-		return fmt.Errorf("the host answered %d %s: it refused the access token given for this repository", code, http.StatusText(code))
+		return fmt.Errorf("the host answered %d %s: it refused the access token given for this %s", code, http.StatusText(code), noun)
 	case code == http.StatusNotFound:
-		return fmt.Errorf("the host answered 404 Not Found: the repository does not exist, or the access token given cannot read it")
+		return fmt.Errorf("the host answered 404 Not Found: the %s does not exist, or the access token given cannot read it", noun)
 	default:
 		return fmt.Errorf("the host answered %d %s", code, http.StatusText(code))
 	}

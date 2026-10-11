@@ -205,8 +205,12 @@ func TestASourceQuestionIsParsedAndNeverText(t *testing.T) {
 		t.Error("an http repository passed")
 	}
 	url := []manifest.IntakeQuestion{{ID: "doc", Prompt: "Doc", Type: manifest.IntakeURL}}
-	if _, err := Collect(nil, url, map[string]string{"doc": "https://example.com/a.pdf"}, nil); err == nil || !strings.Contains(err.Error(), "agentry-cli#834") {
-		t.Errorf("a url question: %v", err)
+	a, err = Collect(nil, url, map[string]string{"doc": "https://example.com/a.pdf"}, nil)
+	if err != nil || a.Sources["doc"] == nil || a.Sources["doc"].Kind != manifest.IntakeURL || len(a.Values) != 0 {
+		t.Errorf("a url question: %+v %v", a, err)
+	}
+	if _, err := Collect(nil, url, map[string]string{"doc": "http://example.com/a.pdf"}, nil); err == nil {
+		t.Error("an http url passed")
 	}
 	odd := []manifest.IntakeQuestion{{ID: "x", Prompt: "X", Type: "sharepoint-library"}}
 	if _, err := Collect(nil, odd, map[string]string{"x": "anything"}, nil); err == nil {

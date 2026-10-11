@@ -1404,8 +1404,17 @@ offers to save it; it reaches only the fetch step, on its stdin, and no
 receipt. In a source only executable and binary risky files go to ClamAV and
 Hybrid Analysis, and images are not read with OCR. The receipt's
 `source.<id>` line says the commit, the counts, where the token came from and
-what was checked. A `url` question waits for agentry-cli#834, and a hosted
-run refuses a source until agentry-enterprise#516.
+what was checked. A `url` question (agentry-cli#834) takes one file's https
+address (`--intake doc=https://host/file.pdf`; a query is kept, a fragment
+dropped): one GET through the same proxy, redirects followed only on the same
+host, the token sent to it alone as a bearer token, and the body saved as one
+file under `/inputs/<id>/`, named from `Content-Disposition` or the address's
+last path segment and made safe. It is decoded as an upload is (every file sent
+to the malware check, images read with OCR, an archive unpacked under DR-39's
+rules and its members counted against the uploads' 2,000), and a body past
+256 MiB is refused whole. Its query, which can carry a signed download's credential, is
+shown as `?…` in `intake.json` and the receipt. A hosted run refuses a source
+until agentry-enterprise#516.
 
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
