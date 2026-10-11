@@ -51,6 +51,11 @@ func TestScheduleCheckReadyKeepsNothing(t *testing.T) {
 	if !res.Ready || len(res.Gaps) != 0 {
 		t.Fatalf("not ready: %q", res.Gaps)
 	}
+	// --allow-unsigned lifts the directory's refusal, so a run meets none
+	// (agentry-cli#856: the preview lists it, the check does not).
+	if len(res.Refusals) != 0 {
+		t.Errorf("refusals = %+v", res.Refusals)
+	}
 	if !strings.HasPrefix(res.Ref, "fixtures/pure-text") || res.Version != "1.0.0" || res.Digest == "" || res.Next == nil || res.Describe == "" {
 		t.Errorf("check = %+v", res)
 	}

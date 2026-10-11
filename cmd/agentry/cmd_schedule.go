@@ -427,7 +427,9 @@ func pinPreview(sc schedule.Schedule, preview *runPlanOutput) (schedule.Schedule
 		}
 		sc.Ref = parsed.Namespace + "/" + parsed.Name
 	} else {
-		sc.Ref = preview.Ref
+		// A directory's plan names it ns/name@version; the version is
+		// kept beside it, as a registry release's is.
+		sc.Ref = strings.TrimSuffix(preview.Ref, "@"+preview.Version)
 	}
 	sc.Version, sc.Digest = preview.Version, preview.Digest
 	if sc.Name == "" {
@@ -477,7 +479,11 @@ func liftGiven(lift string, r schedule.RunSpec) bool {
 }
 
 // schedulePreview is `run --plan --json` in this process: the version and
-// digest a schedule pins, its modes, and what a run would refuse.
+// digest a schedule pins, its modes, and what a run would refuse. It is
+// given none of the --allow-* flags, so it lists every refusal: given
+// them, a plan lists none of what they lift, and a flag that lifts no
+// listed refusal is dropped before the prepare step needs it
+// (agentry-cli#856).
 func schedulePreview(cmd *cobra.Command, sc schedule.Schedule, ref string) (*runPlanOutput, error) {
 	args := []string{"--plan"}
 	if sc.Local != "" {
@@ -488,7 +494,6 @@ func schedulePreview(cmd *cobra.Command, sc schedule.Schedule, ref string) (*run
 	if sc.Run.Policy != "" {
 		args = append(args, "--policy", sc.Run.Policy)
 	}
-	args = append(args, allowArgs(sc.Run)...)
 	var stdout bytes.Buffer
 	saved := flags.jsonOut
 	flags.jsonOut = true
