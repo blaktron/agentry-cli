@@ -249,14 +249,14 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 	if want := registry[s.Kind].Runner; rep.Schema != source.Schema || rep.Kind != want || want == "" {
 		return rep, fmt.Errorf("the fetch step's report has the schema %q and kind %q", rep.Schema, rep.Kind)
 	}
-	// A url source is one file under a safe name, or a refusal or an error
+	// A url source is one file under a portable name, or a refusal or an error
 	// with none; nothing of a repository's.
 	if rep.Kind == source.KindURL {
 		ok := rep.Commit == "" && rep.Protocol == "" && rep.Ref == "" && rep.LFSPointers == 0 && len(rep.Skipped) == 0 && len(rep.SkippedPaths) == 0
 		if rep.Name == "" {
 			ok = ok && rep.Files == 0 && rep.Bytes == 0
 		} else {
-			ok = ok && rep.Files == 1 && source.SafeName(rep.Name) == rep.Name
+			ok = ok && rep.Files == 1 && source.PortableFileName(rep.Name) == rep.Name
 		}
 		if !ok {
 			return rep, errors.New("the fetch step's report is not one file's")

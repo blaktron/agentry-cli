@@ -7,7 +7,7 @@
 // (DR-2), and no shell or git runs in the fetch container. The checkout
 // writes regular files only (tree.go): no link, no submodule, no .git, LFS
 // pointer files as they are. The url kind (url.go) is one https GET of a
-// file, saved as one file under a safe name.
+// file, saved as one file under a portable name.
 //
 // The caller runs this in the files container on a network whose only
 // route is a CONNECT proxy to the source's host on port 443, with the
