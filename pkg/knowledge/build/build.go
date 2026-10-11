@@ -98,6 +98,9 @@ type Options struct {
 	RunID    string
 	Stderr   io.Writer
 	OnUsage  func(receipt.Usage)
+	// Hosted is a sandbox host's build, which never spends a model sign-in
+	// (localrun.Run.Hosted; agentry-cli#845).
+	Hosted bool
 }
 
 // Result is what one build did.
@@ -278,7 +281,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		Builtin: creator, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
 		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(name, current, docs, brief, o.Web != nil, o.Now)),
 		Inputs: inputs, Knowledge: attached, Decoded: dec, OutDir: o.OutDir, Budgets: o.Budgets,
-		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web,
+		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web, Hosted: o.Hosted,
 	}.Execute(ctx, d)
 	res.Envelope = env
 

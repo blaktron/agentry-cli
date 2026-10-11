@@ -275,7 +275,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 		PackDir: dir, Name: name, Documents: o.files, Brief: brief, Web: web,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Now: time.Now(), OutDir: outDir, Budgets: &budgets,
-		RunID: runID, Stderr: errOut, OnUsage: o.onUsage, MaxBytes: limit,
+		RunID: runID, Stderr: errOut, OnUsage: o.onUsage, MaxBytes: limit, Hosted: o.hosted || hostedProcess(),
 	})
 	if err != nil {
 		if res != nil && len(res.Skipped) > 0 {
