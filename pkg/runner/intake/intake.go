@@ -19,6 +19,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 )
 
 // Answers is what the user said, by question id.
@@ -35,6 +36,14 @@ type Answers struct {
 	// engine resolves the declared capability secret SecretName(id) from
 	// that source itself; only the name is recorded.
 	FromSource map[string]bool
+	// Sources are input-source answers (plan input-sources.md §5): id →
+	// the source, fetched before the run into /inputs/<id>/. Its token,
+	// when it has one, is filled in after Collect (sources.ResolveTokens)
+	// and never written anywhere but the fetch step's stdin.
+	Sources map[string]*sources.Source
+	// Fetched is each source's fetch, set by the engine before it writes
+	// intake.json, so the document names the commit and the files.
+	Fetched map[string]sources.Fetched
 }
 
 // SecretName is the declared capability secret a secret intake answer
@@ -75,7 +84,7 @@ func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 // for (agentry-cli#402). A terminal still asks, so a person can mean
 // another value than the source holds.
 func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool) (*Answers, error) {
-	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}, FromSource: map[string]bool{}}
+	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}, FromSource: map[string]bool{}, Sources: map[string]*sources.Source{}}
 	known := map[string]bool{}
 	for _, q := range qs {
 		known[q.ID] = true
@@ -94,6 +103,18 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 		if typ == "" {
 			typ = manifest.IntakeText
 		}
+		// A source question is answered only when this CLI can fetch its
+		// kind: an unknown type is never taken as text (agentry-cli#833).
+		var kind sources.Kind
+		if typ.IsSource() {
+			k, ok := sources.Lookup(typ)
+			if !ok {
+				return nil, sources.Unfetched(q.ID, typ)
+			}
+			kind = k
+		} else if !knownType(typ) {
+			return nil, fmt.Errorf("intake question %q has the type %q, which this version of agentry does not know", q.ID, typ)
+		}
 		if typ == manifest.IntakeSecret && !declared[SecretName(q.ID)] {
 			return nil, fmt.Errorf("intake question %q is a secret but the manifest declares no capability secret named %s to carry it", q.ID, SecretName(q.ID))
 		}
@@ -104,7 +125,7 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 		}
 		if !given && p != nil {
 			var err error
-			if val, err = ask(p, q, typ); err != nil {
+			if val, err = ask(p, q, typ, kind); err != nil {
 				return nil, err
 			}
 		}
@@ -115,6 +136,15 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 			if q.Required {
 				return nil, fmt.Errorf("intake question %q is required (answer it on a terminal or pass --intake %s=...)", q.ID, q.ID)
 			}
+			continue
+		}
+		if typ.IsSource() {
+			src, err := kind.Parse(val)
+			if err != nil {
+				return nil, fmt.Errorf("intake %s: %w", q.ID, err)
+			}
+			src.ID = q.ID
+			a.Sources[q.ID] = &src
 			continue
 		}
 		if err := check(q, typ, val); err != nil {
@@ -136,7 +166,17 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 	return a, nil
 }
 
-func ask(p setup.Prompter, q manifest.IntakeQuestion, typ manifest.IntakeType) (string, error) {
+// knownType says whether this CLI answers an intake type that asks for no
+// source.
+func knownType(t manifest.IntakeType) bool {
+	switch t {
+	case manifest.IntakeText, manifest.IntakeSecret, manifest.IntakeChoice, manifest.IntakeFile:
+		return true
+	}
+	return false
+}
+
+func ask(p setup.Prompter, q manifest.IntakeQuestion, typ manifest.IntakeType, kind sources.Kind) (string, error) {
 	prompt := q.Prompt
 	if q.Required {
 		prompt += " (required)"
@@ -149,6 +189,9 @@ func ask(p setup.Prompter, q manifest.IntakeQuestion, typ manifest.IntakeType) (
 	case manifest.IntakeFile:
 		return p.Ask(prompt+" (path)", "")
 	default:
+		if typ.IsSource() {
+			return p.Ask(prompt+" "+kind.Prompt, "")
+		}
 		return p.Ask(prompt, "")
 	}
 }
@@ -176,7 +219,7 @@ func check(q manifest.IntakeQuestion, typ manifest.IntakeType, val string) error
 
 // Empty reports whether nothing was answered.
 func (a *Answers) Empty() bool {
-	return a == nil || (len(a.Values) == 0 && len(a.Files) == 0 && len(a.Secrets) == 0 && len(a.FromSource) == 0)
+	return a == nil || (len(a.Values) == 0 && len(a.Files) == 0 && len(a.Secrets) == 0 && len(a.FromSource) == 0 && len(a.Sources) == 0)
 }
 
 // Document is the agent-side /inputs/intake.json: values as given, files
@@ -198,7 +241,23 @@ func (a *Answers) Document(inputsMount string) map[string]any {
 	for id := range a.FromSource {
 		doc[id] = map[string]string{"secret": SecretName(id)}
 	}
+	for id, s := range a.Sources {
+		doc[id] = sources.Document(*s, a.Fetched[id].Source, inputsMount)
+	}
 	return doc
+}
+
+// SourceList answers the input sources by id, sorted.
+func (a *Answers) SourceList() []*sources.Source {
+	if a == nil {
+		return nil
+	}
+	out := make([]*sources.Source, 0, len(a.Sources))
+	for _, s := range a.Sources {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // Receipt is the receipts/intake.json content: the same as Document (it

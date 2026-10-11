@@ -188,3 +188,28 @@ func TestABlankSecretQuestionThatIsNotRequiredIsNoAnswer(t *testing.T) {
 		t.Fatalf("answers = %+v; want none", a)
 	}
 }
+
+func TestASourceQuestionIsParsedAndNeverText(t *testing.T) {
+	qs := []manifest.IntakeQuestion{
+		{ID: "repo", Prompt: "Repository", Type: manifest.IntakeRepository, Required: true},
+	}
+	a, err := Collect(nil, qs, map[string]string{"repo": "https://github.com/o/r#v2"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := a.Sources["repo"]
+	if s == nil || s.URL != "https://github.com/o/r" || s.Ref != "v2" || s.ID != "repo" || len(a.Values) != 0 {
+		t.Fatalf("answers %+v (source %+v)", a, s)
+	}
+	if _, err := Collect(nil, qs, map[string]string{"repo": "http://github.com/o/r"}, nil); err == nil {
+		t.Error("an http repository passed")
+	}
+	url := []manifest.IntakeQuestion{{ID: "doc", Prompt: "Doc", Type: manifest.IntakeURL}}
+	if _, err := Collect(nil, url, map[string]string{"doc": "https://example.com/a.pdf"}, nil); err == nil || !strings.Contains(err.Error(), "agentry-cli#834") {
+		t.Errorf("a url question: %v", err)
+	}
+	odd := []manifest.IntakeQuestion{{ID: "x", Prompt: "X", Type: "sharepoint-library"}}
+	if _, err := Collect(nil, odd, map[string]string{"x": "anything"}, nil); err == nil {
+		t.Error("an unknown type was taken as text")
+	}
+}

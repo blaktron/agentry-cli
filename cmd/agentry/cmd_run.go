@@ -48,6 +48,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/termtext"
 	"github.com/blaktron/agentry-cli/pkg/trust"
@@ -62,6 +63,7 @@ type runOpts struct {
 	consentHome  string
 	mode         string
 	intake       []string
+	intakeToken  []string
 	input        string
 	out          string
 	outputFormat string
@@ -219,7 +221,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.reportTheme, "report-theme", "", "the built-in report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's report design when signed in, else report.design or report.theme in the config, else plain)")
 	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: a FILE holding a report design (theme document version 2); instead of --report-theme")
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
-	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal)")
+	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal); a repository question takes its https address, with #branch, #tag or #commit for another ref")
+	f.StringArrayVar(&opts.intakeToken, "intake-token", nil, "the access token for an input source: id=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the source's host in the system keychain, then a prompt on a terminal, then none)")
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	f.BoolVar(&opts.sessionProtocol, "session-protocol", false, "drive an interactive session from JSON-line commands on stdin, with its events as JSON lines on descriptor 3 and no terminal (for a program such as a hosted run's host)")
@@ -601,6 +604,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return engine.SecretResolvable(name, profSecrets, pol.SecretSource)
 	})
 	if err != nil {
+		return engine.Classify(engine.ExitCLI, err)
+	}
+	if err := resolveSourceTokens(cmd, answers, opts); err != nil {
 		return engine.Classify(engine.ExitCLI, err)
 	}
 
@@ -1276,6 +1282,30 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 		}
 	}
 	return intake.CollectWithSource(p, m.Intake, preset, m.Capabilities.Secrets, fromSource)
+}
+
+// resolveSourceTokens gives each input source the run was given its
+// access token (plan input-sources.md D5): the variable --intake-token
+// names, the key saved for its host, a prompt on a terminal, or none.
+func resolveSourceTokens(cmd *cobra.Command, answers *intake.Answers, opts runOpts) error {
+	flags, err := sources.ParseTokenFlags(opts.intakeToken)
+	if err != nil {
+		return err
+	}
+	srcs := answers.SourceList()
+	if len(srcs) == 0 {
+		if len(flags) > 0 {
+			return errors.New("--intake-token given but the run was given no input source")
+		}
+		return nil
+	}
+	var ask sources.TokenAsker
+	if stdinIsTTY(cmd.InOrStdin()) {
+		ask = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+	}
+	return sources.ResolveTokens(srcs, flags, os.Getenv, ask, func(msg string) {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", msg)
+	})
 }
 
 // sayGuide prints the release guide's overview and its list of what to

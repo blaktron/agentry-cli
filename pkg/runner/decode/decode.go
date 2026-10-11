@@ -226,6 +226,9 @@ type Result struct {
 	// (LookUp; agentry-cli#564); nil until LookUp ran, and then the
 	// receipt says nothing of a lookup.
 	Lookups map[string]hybrid.Result
+	// Sources are the top-level folders that are input sources
+	// (agentry-cli#833): their files are held to the source rule (D8).
+	Sources []string
 }
 
 // LookUp asks Hybrid Analysis about each file of a risky type (D11),
@@ -240,7 +243,7 @@ func (r *Result) LookUp(ctx context.Context, c *hybrid.Client) {
 	byHash := map[string][]string{}
 	var hashes []string
 	for _, f := range r.Report.Files {
-		if f.Check == runnerdecode.CheckFound || f.Why == runnerdecode.WhyRepository || !hybrid.Risky(f.MIME, f.Path) {
+		if f.Check == runnerdecode.CheckFound || f.Why == runnerdecode.WhyRepository || !r.risky(f) {
 			continue
 		}
 		if f.SHA256 == "" {
@@ -260,6 +263,16 @@ func (r *Result) LookUp(ctx context.Context, c *hybrid.Client) {
 			r.Lookups[p] = res
 		}
 	}
+}
+
+// risky says whether a file is looked up: an upload of a risky type
+// (D11), or in an input source an executable or binary risky file alone
+// (input-sources D8), which is the rule ClamAV followed there.
+func (r *Result) risky(f runnerdecode.File) bool {
+	if runnerdecode.InSource(f.Path, r.Sources) {
+		return runnerdecode.SourceRisky(f.MIME, f.Path)
+	}
+	return hybrid.Risky(f.MIME, f.Path)
 }
 
 // Malicious is every file Hybrid Analysis gave a malicious verdict: the
@@ -283,8 +296,9 @@ const (
 	// MaxTextBytes is the most of one decoded text the host reads: the
 	// decoder's own cut, a whole knowledge pack.
 	MaxTextBytes = 10 << 20
-	// maxReportBytes bounds decode.json.
-	maxReportBytes = 4 << 20
+	// maxReportBytes bounds decode.json: the uploads' 2,000 files and
+	// members, and an input source's 20,000.
+	maxReportBytes = 64 << 20
 	// Timeout ends a whole decode.
 	Timeout = 30 * time.Minute
 )
@@ -295,12 +309,23 @@ const (
 // done to a directory a person owns — and in should hold copies of the
 // documents, not the originals.
 func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim policy.Limits, stderr io.Writer) (*Result, error) {
+	return RunSources(ctx, d, img, in, out, lim, nil, stderr)
+}
+
+// RunSources is Run over inputs that hold input sources, each a top-level
+// folder of in named in sources (agentry-cli#833): a source's files count
+// against its own cap, and only its executable and binary risky files are
+// checked (D8); the report is held to the same rule.
+func RunSources(ctx context.Context, d dockerx.Client, img Image, in, out string, lim policy.Limits, sources []string, stderr io.Writer) (*Result, error) {
 	suffix := make([]byte, 4)
 	if _, err := rand.Read(suffix); err != nil {
 		return nil, err
 	}
 	name := "agentry-decode-" + hex.EncodeToString(suffix)
 	argv := []string{"decode", "--in", "/in", "--out", "/out", "--unpack", "/unpack"}
+	for _, s := range sources {
+		argv = append(argv, "--source", s)
+	}
 	mounts := []dockerx.Mount{
 		{Source: in, Target: "/in", ReadOnly: true, Relabel: true},
 		{Source: out, Target: "/out", Relabel: true},
@@ -346,7 +371,7 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 	if code != 0 {
 		return nil, fmt.Errorf("the decode container failed (exit %d): %s", code, strings.TrimSpace(tail(errOut.String(), 400)))
 	}
-	return Check(img, in, out)
+	return CheckSources(img, in, out, sources)
 }
 
 // clamMount is where the decode container reads the signatures.
@@ -356,11 +381,16 @@ const clamMount = "/clamav"
 // staged under in (checkReport): Run's last step, and the one a caller
 // that decodes some other way must take before it reads a byte of out.
 func Check(img Image, in, out string) (*Result, error) {
-	rep, err := checkReport(in, out, img.Signatures.Held())
+	return CheckSources(img, in, out, nil)
+}
+
+// CheckSources is Check for a decode over input sources (RunSources).
+func CheckSources(img Image, in, out string, sources []string) (*Result, error) {
+	rep, err := checkReport(in, out, img.Signatures.Held(), sources)
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Report: rep, Image: img, In: in, Out: out}, nil
+	return &Result{Report: rep, Image: img, In: in, Out: out, Sources: sources}, nil
 }
 
 // checkReport reads the report the container wrote and holds it to what
@@ -369,7 +399,7 @@ func Check(img Image, in, out string) (*Result, error) {
 // under a cap; and every entry must name a document that was staged, with
 // its text, when there is one, at exactly <path>.txt. checked says the
 // decode was given signatures: without them no file may claim to be checked.
-func checkReport(in, out string, checked bool) (runnerdecode.Report, error) {
+func checkReport(in, out string, checked bool, sources []string) (runnerdecode.Report, error) {
 	var rep runnerdecode.Report
 	inRoot, err := os.OpenRoot(in)
 	if err != nil {
@@ -405,25 +435,38 @@ func checkReport(in, out string, checked bool) (runnerdecode.Report, error) {
 		if !knownFamilies[f.Family] || !knownTools[f.Tool] || !knownWhy[f.Why] {
 			return rep, fmt.Errorf("%s: %q has the unknown family %q, tool %q or reason %q", runnerdecode.ReportFile, f.Path, f.Family, f.Tool, f.Why)
 		}
-		if err := checkCheck(f, checked); err != nil {
+		if err := checkCheck(f, checked, sources); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if err := checkRepository(f); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
+		if f.Why == runnerdecode.WhySourceImage && (!runnerdecode.InSource(f.Path, sources) || f.Family != runnerdecode.FamilyImage || f.Outcome != runnerdecode.OutcomeUndecodable || f.Tool != "") {
+			return rep, fmt.Errorf("%s: %q is kept as a source's image but is not one", runnerdecode.ReportFile, f.Path)
+		}
 		byPath[f.Path] = f
 	}
-	members := 0
+	members := map[string]int{}
 	for i, f := range rep.Files {
 		if f.In != "" {
-			if members++; members > runnerdecode.DefaultMaxFiles {
-				return rep, fmt.Errorf("%s names more than %d archive members, past the decode's cap", runnerdecode.ReportFile, runnerdecode.DefaultMaxFiles)
+			// Each pool's members are held to its cap: the uploads', or
+			// an input source's own.
+			pool, limit := "", runnerdecode.DefaultMaxFiles
+			if runnerdecode.InSource(f.Path, sources) {
+				pool, _, _ = strings.Cut(f.Path, "/")
+				limit = runnerdecode.DefaultSourceMaxFiles
+			}
+			if members[pool]++; members[pool] > limit {
+				return rep, fmt.Errorf("%s names more than %d archive members, past the decode's cap", runnerdecode.ReportFile, limit)
 			}
 		}
 		if err := checkFile(f, byPath, inRoot, outRoot); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if err := checkIdentity(&rep.Files[i], inRoot); err != nil {
+			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
+		}
+		if err := checkNotRisky(f, inRoot); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if f.In == "" {
@@ -579,7 +622,7 @@ func hashIn(root *os.Root, rel string) (string, error) {
 // for a session's file, can reach the model), nothing checked when no
 // signatures were given, every file read for the run checked one way or
 // another, and a file found never read.
-func checkCheck(f runnerdecode.File, checked bool) error {
+func checkCheck(f runnerdecode.File, checked bool, sources []string) error {
 	switch f.Check {
 	case "":
 		if f.HasText() || f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeUnpacked {
@@ -596,7 +639,13 @@ func checkCheck(f runnerdecode.File, checked bool) error {
 	if (f.Check == runnerdecode.CheckUnchecked) != (f.Unchecked != "") || (f.Unchecked != "" && !knownUnchecked[f.Unchecked]) {
 		return fmt.Errorf("%q has the check %q with the reason %q", f.Path, f.Check, f.Unchecked)
 	}
-	if !checked && f.Check == runnerdecode.CheckUnchecked && f.Unchecked != runnerdecode.UncheckedNoSignatures {
+	// Only a file in an input source may go unchecked as not risky, and
+	// only one the source rule leaves out (D8): a report that says so of
+	// an upload, or of a source's executable, is refused.
+	if f.Unchecked == runnerdecode.UncheckedNotRisky && (!runnerdecode.InSource(f.Path, sources) || f.Family == runnerdecode.FamilyArchive || runnerdecode.SourceRisky(f.MIME, f.Path)) {
+		return fmt.Errorf("%q says it was not checked as not risky, which the source rule does not allow", f.Path)
+	}
+	if !checked && f.Check == runnerdecode.CheckUnchecked && f.Unchecked != runnerdecode.UncheckedNoSignatures && f.Unchecked != runnerdecode.UncheckedNotRisky {
 		return fmt.Errorf("%q says ClamAV failed on it, but the decode was given no signatures", f.Path)
 	}
 	if f.Signature != "" && (f.Check != runnerdecode.CheckFound || !runnerdecode.ValidSignature(f.Signature)) {
@@ -609,6 +658,44 @@ func checkCheck(f runnerdecode.File, checked bool) error {
 		return fmt.Errorf("%q was found by ClamAV but read", f.Path)
 	}
 	return nil
+}
+
+// checkNotRisky reads the head of a staged file the decode left unchecked
+// as not risky, and refuses the claim when the file opens as an
+// executable, a library, Java or WebAssembly code, an OLE container or a
+// PDF: the detected type is the container's word, and a file's own first
+// bytes are the host's (DR-90). A member stays in the container, so its
+// claim is the decode's word alone, as its digest is.
+func checkNotRisky(f runnerdecode.File, inRoot *os.Root) error {
+	if f.Unchecked != runnerdecode.UncheckedNotRisky || f.In != "" {
+		return nil
+	}
+	file, err := inRoot.Open(filepath.FromSlash(f.Path))
+	if err != nil {
+		return fmt.Errorf("%q: %w", f.Path, err)
+	}
+	defer func() { _ = file.Close() }()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(file, head)
+	if binaryMagic(head[:n]) {
+		return fmt.Errorf("%q says it was not checked as not risky, but it opens as an executable or binary risky file", f.Path)
+	}
+	return nil
+}
+
+// binaryMagic says whether a file's first bytes are an executable's,
+// a library's, Java's, WebAssembly's, an OLE container's or a PDF's.
+func binaryMagic(b []byte) bool {
+	for _, m := range [][]byte{
+		[]byte("MZ"), []byte("\x7fELF"), []byte("%PDF"), []byte("\x00asm"),
+		{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
+		{0xca, 0xfe, 0xba, 0xbe}, {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
+	} {
+		if bytes.HasPrefix(b, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkRepository holds the repository reason to its rule: only a file
@@ -650,22 +737,23 @@ var (
 	// whyWords are the fixed words for each reason an archive or a member
 	// was not read in full.
 	whyWords = map[runnerdecode.Why]string{
-		runnerdecode.WhyEncrypted:  "encrypted",
-		runnerdecode.WhyDamaged:    "damaged, or not the archive it appears to be",
-		runnerdecode.WhyUnreadable: "bsdtar could not read it: it is encrypted or damaged",
-		runnerdecode.WhyTooDeep:    fmt.Sprintf("an archive nested more than %d deep is not unpacked", runnerdecode.MaxDepth),
-		runnerdecode.WhyTooMany:    "unpacking stopped at the file cap",
-		runnerdecode.WhyTooLarge:   "unpacking stopped at the cap on unpacked bytes",
-		runnerdecode.WhyUnsafePath: "a member's path is absolute, climbs out with .., or is not a plain name, so nothing in it was unpacked",
-		runnerdecode.WhyLink:       "a link in an archive is never unpacked",
-		runnerdecode.WhySpecial:    "a device or FIFO in an archive is never unpacked",
-		runnerdecode.WhyConflict:   "the archive names this path twice, or as both a file and a folder",
-		runnerdecode.WhyMethod:     "compressed by a method the runner does not read",
-		runnerdecode.WhyFound:      "ClamAV found malware in it, so it was not read",
-		runnerdecode.WhyRepository: "it is inside a .git folder, a git repository's internals, which are kept as they are and never decoded",
+		runnerdecode.WhyEncrypted:   "encrypted",
+		runnerdecode.WhyDamaged:     "damaged, or not the archive it appears to be",
+		runnerdecode.WhyUnreadable:  "bsdtar could not read it: it is encrypted or damaged",
+		runnerdecode.WhyTooDeep:     fmt.Sprintf("an archive nested more than %d deep is not unpacked", runnerdecode.MaxDepth),
+		runnerdecode.WhyTooMany:     "unpacking stopped at the file cap",
+		runnerdecode.WhySourceImage: "an image in an input source is not read with OCR; read its original",
+		runnerdecode.WhyTooLarge:    "unpacking stopped at the cap on unpacked bytes",
+		runnerdecode.WhyUnsafePath:  "a member's path is absolute, climbs out with .., or is not a plain name, so nothing in it was unpacked",
+		runnerdecode.WhyLink:        "a link in an archive is never unpacked",
+		runnerdecode.WhySpecial:     "a device or FIFO in an archive is never unpacked",
+		runnerdecode.WhyConflict:    "the archive names this path twice, or as both a file and a folder",
+		runnerdecode.WhyMethod:      "compressed by a method the runner does not read",
+		runnerdecode.WhyFound:       "ClamAV found malware in it, so it was not read",
+		runnerdecode.WhyRepository:  "it is inside a .git folder, a git repository's internals, which are kept as they are and never decoded",
 	}
 	knownUnchecked = map[runnerdecode.Unchecked]bool{
-		runnerdecode.UncheckedNoSignatures: true, runnerdecode.UncheckedTooLarge: true, runnerdecode.UncheckedFailed: true,
+		runnerdecode.UncheckedNoSignatures: true, runnerdecode.UncheckedTooLarge: true, runnerdecode.UncheckedFailed: true, runnerdecode.UncheckedNotRisky: true,
 	}
 	knownWhy = func() map[runnerdecode.Why]bool {
 		m := map[runnerdecode.Why]bool{"": true}
@@ -872,7 +960,12 @@ func (r *Result) Checks() string {
 		}
 		return line
 	}
-	line := fmt.Sprintf("each file read and each archive unpacked was checked by ClamAV (clamscan, PUA off) before its text was extracted, against %s: %d clean", s.Describe(), clean)
+	lead := "each file read and each archive unpacked was checked"
+	if n := unchecked[runnerdecode.UncheckedNotRisky]; n > 0 {
+		// An input source's files are checked by the source rule (D8).
+		lead = fmt.Sprintf("each file read and each archive unpacked was checked, but for %d %s in an input source that %s not an executable or binary risky type (input sources check only those),", n, plural(n, "file", "files"), plural(n, "is", "are"))
+	}
+	line := fmt.Sprintf("%s by ClamAV (clamscan, PUA off) before its text was extracted, against %s: %d clean", lead, s.Describe(), clean)
 	if found > 0 {
 		line += fmt.Sprintf(", %d found", found)
 	}

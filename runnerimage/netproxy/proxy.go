@@ -44,6 +44,16 @@ type Proxy struct {
 	// value, and every run whose model endpoints are https — means no
 	// plaintext proxying at all.
 	PlainHTTP []string
+	// PublicOnly dials a permitted host only at a public address: the
+	// proxy resolves the name itself, refuses the tunnel when any address
+	// it resolves to is private, loopback, link-local, shared (CGNAT, the
+	// tailnet's range) or otherwise not on the public internet, and dials
+	// the address it checked, so a second answer cannot slip in between.
+	// An input source's fetch step runs behind such a proxy (plan
+	// input-sources.md §5, invariant 3; agentry-cli#833).
+	PublicOnly bool
+	// Resolver answers PublicOnly's lookups; nil is the system's.
+	Resolver Resolver
 	// Logw receives one line per decision (CONNECT, and plain http as
 	// "allow http" / "deny http"); nil discards. The
 	// engine points this at stderr, which lands in the run's receipts.
@@ -75,7 +85,7 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
 		// Plaintext proxying only toward an http model endpoint the
 		// operator named (DR-45); anything else is refused as before.
-		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 {
+		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 && !p.PublicOnly {
 			p.forwardPlain(w, r)
 			return
 		}
@@ -96,8 +106,18 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("forbidden: %s:%s is not in the egress allowlist", host, port), http.StatusForbidden)
 		return
 	}
+	dialHost := host
+	if p.PublicOnly {
+		ip, err := p.publicAddress(r.Context(), host)
+		if err != nil {
+			p.logf("deny %s:%s (%v)", host, port, err)
+			http.Error(w, fmt.Sprintf("forbidden: %s: %v", host, err), http.StatusForbidden)
+			return
+		}
+		dialHost = ip.String()
+	}
 	p.logf("allow %s:%s", host, port)
-	upstream, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 30*time.Second)
+	upstream, err := net.DialTimeout("tcp", net.JoinHostPort(dialHost, port), 30*time.Second)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("bad gateway: dial %s: %v", target, err), http.StatusBadGateway)
 		return
@@ -246,6 +266,80 @@ func (p *Proxy) plainTransport() *http.Transport {
 		}
 	})
 	return p.transport
+}
+
+// Resolver looks a name up; *net.Resolver is one.
+type Resolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
+// publicAddress resolves host and answers its first address, refusing the
+// host when any address is not public.
+func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if !Public(ip) {
+			return nil, fmt.Errorf("%s is not a public address", ip)
+		}
+		return ip, nil
+	}
+	var res Resolver = net.DefaultResolver
+	if p.Resolver != nil {
+		res = p.Resolver
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	addrs, err := res.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve: %w", err)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("it resolves to no address")
+	}
+	for _, a := range addrs {
+		if !Public(a.IP) {
+			return nil, fmt.Errorf("it resolves to %s, which is not a public address", a.IP)
+		}
+	}
+	return addrs[0].IP, nil
+}
+
+// notPublic are the ranges Go's net.IP methods leave out (the host's
+// egress guard keeps its own list, pkg/mcpauth/guard.go): this network,
+// shared address space (CGNAT, where a tailnet's addresses live), IETF
+// protocol assignments, the documentation and benchmarking ranges, the
+// reserved range, NAT64 and 6to4 (which embed an IPv4 address of any
+// kind), Teredo, and IPv6 documentation.
+var notPublic = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{
+		"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
+		"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
+		"64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32", "2001:db8::/32",
+	} {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, n)
+	}
+	return out
+}()
+
+// Public says whether an address is on the public internet.
+func Public(ip net.IP) bool {
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || !ip.IsGlobalUnicast() {
+		return false
+	}
+	for _, n := range notPublic {
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 // permits applies the allowlist to one host:port pair.

@@ -308,13 +308,20 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err != nil {
 		return fail(env, redact, err)
 	}
-	// The inputs are decoded before anything starts (plan
-	// file-handling.md §5, agentry-cli#560).
+	// The input sources are fetched first (plan input-sources.md §5,
+	// agentry-cli#833), then everything is decoded before anything starts
+	// (plan file-handling.md §5, agentry-cli#560).
+	srcRuns, err := fetchSources(ctx, d, p, rd, td, runID)
+	if err != nil {
+		return fail(env, redact, err)
+	}
+	rd.sources = sourceIDs(srcRuns)
 	dec, err := decodeInputs(ctx, d, p, rd)
 	if err != nil {
 		return fail(env, redact, err)
 	}
 	dec.lines(env.CapabilitiesEnforced)
+	sourceLines(env.CapabilitiesEnforced, srcRuns, dec)
 	secrets, err := secretValues(p)
 	if err != nil {
 		return fail(env, redact, err)
