@@ -87,7 +87,19 @@ const (
 	// rewrites before it expires (ModelSignInToken), or the Claude Code
 	// config directory the person's sign-in lives in (ModelSignInConfigDir).
 	PHModelSignIn = "@@RUN_MODEL_SIGNIN@@"
+	// PHHostLinkUser is the user the host link runs as (agentry-cli#861):
+	// the invoking uid:gid, as the files image runs, or "" where the
+	// machine has none (Windows), which leaves the image's own. The host
+	// link's passwd file names it (ssh refuses a uid it has no entry for,
+	// DR-91), and its credential files stay the person's own, 0600.
+	PHHostLinkUser = "@@RUN_HOSTLINK_USER@@"
 )
+
+// PHTargetHost is a target host's relay target, address:port, by its
+// question's id (agentry-cli#861): the address the person's machine
+// resolved the answer to, which only the run knows, so the plan carries
+// the placeholder and its hash is the release's, not the run's.
+func PHTargetHost(id string) string { return "@@RUN_HOST_" + id + "@@" }
 
 // The two ways a model sign-in reaches the agent container
 // (ModelSignInSpec.Delivery).
@@ -289,6 +301,10 @@ type Plan struct {
 	// exec: the runner image plus the operator's catalogued packages,
 	// minimized (agentry-cli#100). Nil when no exec is declared.
 	ExecImage *ExecImageSpec `json:"execImage,omitempty"`
+	// HostLink is the host link's image, where the release declares a
+	// target host (agentry-cli#861): built on this machine from the pinned
+	// base and the runner image, as the files image is.
+	HostLink *HostLinkSpec `json:"hostLink,omitempty"`
 	// Harness describes the adapter and the agent container.
 	Harness HarnessSpec `json:"harness"`
 	// Proxy describes the LLM egress proxy sidecar.
@@ -376,6 +392,11 @@ type CapSummary struct {
 	// built-in package the CLI grants it to, and refuses it to everything
 	// else.
 	ReviewTools bool `json:"reviewTools,omitempty"`
+	// TargetHosts are the release's target hosts, by the id of the host
+	// question that asks for each (capabilities.targetHosts; plan
+	// runtime-hosts.md §4, agentry-cli#861): the host link and its tools,
+	// reached through the gateway.
+	TargetHosts []string `json:"targetHosts,omitempty"`
 	// Scratch is the runner's grant of the scratch folder (scratch_list,
 	// scratch_read, scratch_write over ScratchMount; plan
 	// scratch-and-pdf-reports.md D1-D5, agentry-cli#729) to every
@@ -383,6 +404,27 @@ type CapSummary struct {
 	// sets it for every package but a built-in.
 	Scratch bool `json:"scratch,omitempty"`
 }
+
+// HostLinkSpec is the host link's image: the local tag the gateway's
+// catalog names, and the digest-pinned base it is built on.
+type HostLinkSpec struct {
+	Image string `json:"image"`
+	Base  string `json:"base"`
+}
+
+// The run folders the host link reads and writes, under the run's cfg.
+const (
+	// HostsDir holds one folder per target host (credential, known_hosts,
+	// target.json) and the passwd file, bound read-only into the host
+	// link alone.
+	HostsDir = "hosts"
+	// HostLogDir holds each target host's call log, which the engine
+	// copies into the receipts.
+	HostLogDir = "hostlog"
+	// HostFilesDir is the folder host_put and host_get copy through,
+	// shared with the tools server at /scratch/hosts.
+	HostFilesDir = "hostfiles"
+)
 
 // ToolsCmd is the one command the tools server runs with in its container:
 // the runner image's tools role reading its spec. The compiler writes it

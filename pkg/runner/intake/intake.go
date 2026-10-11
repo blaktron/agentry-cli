@@ -21,6 +21,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 )
 
 // Answers is what the user said, by question id.
@@ -45,6 +46,11 @@ type Answers struct {
 	// Fetched is each source's fetch, set by the engine before it writes
 	// intake.json, so the document names the commit and the files.
 	Fetched map[string]sources.Fetched
+	// Hosts are target-host answers (plan runtime-hosts.md §4;
+	// agentry-cli#861): id → the host, its answer read here; its address,
+	// key and sign-in are filled in after Collect (targethost.Prepare), and
+	// its sign-in is never written anywhere but the host link's files.
+	Hosts map[string]*targethost.Host
 }
 
 // SecretName is the declared capability secret a secret intake answer
@@ -112,7 +118,7 @@ func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 // for (agentry-cli#402). A terminal still asks, so a person can mean
 // another value than the source holds.
 func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool) (*Answers, error) {
-	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}, FromSource: map[string]bool{}, Sources: map[string]*sources.Source{}}
+	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}, FromSource: map[string]bool{}, Sources: map[string]*sources.Source{}, Hosts: map[string]*targethost.Host{}}
 	known := map[string]bool{}
 	for _, q := range qs {
 		known[q.ID] = true
@@ -175,6 +181,16 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 			a.Sources[q.ID] = &src
 			continue
 		}
+		if typ == manifest.IntakeHost {
+			// A target host is never text: read here, readied before the
+			// run (agentry-cli#861).
+			ans, err := targethost.ParseAnswer(val)
+			if err != nil {
+				return nil, fmt.Errorf("intake %s: %w", q.ID, err)
+			}
+			a.Hosts[q.ID] = &targethost.Host{ID: q.ID, Answer: ans}
+			continue
+		}
 		if err := check(q, typ, val); err != nil {
 			return nil, err
 		}
@@ -198,7 +214,7 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 // source.
 func knownType(t manifest.IntakeType) bool {
 	switch t {
-	case manifest.IntakeText, manifest.IntakeSecret, manifest.IntakeChoice, manifest.IntakeFile:
+	case manifest.IntakeText, manifest.IntakeSecret, manifest.IntakeChoice, manifest.IntakeFile, manifest.IntakeHost:
 		return true
 	}
 	return false
@@ -216,6 +232,8 @@ func ask(p setup.Prompter, q manifest.IntakeQuestion, typ manifest.IntakeType, k
 		return p.Ask(prompt+" ["+strings.Join(q.Choices, "/")+"]", "")
 	case manifest.IntakeFile:
 		return p.Ask(prompt+" (path)", "")
+	case manifest.IntakeHost:
+		return p.Ask(prompt+" ([user@]host[:port])", "")
 	default:
 		if typ.IsSource() {
 			return p.Ask(prompt+" "+kind.Prompt, "")
@@ -247,7 +265,7 @@ func check(q manifest.IntakeQuestion, typ manifest.IntakeType, val string) error
 
 // Empty reports whether nothing was answered.
 func (a *Answers) Empty() bool {
-	return a == nil || (len(a.Values) == 0 && len(a.Files) == 0 && len(a.Secrets) == 0 && len(a.FromSource) == 0 && len(a.Sources) == 0)
+	return a == nil || (len(a.Values) == 0 && len(a.Files) == 0 && len(a.Secrets) == 0 && len(a.FromSource) == 0 && len(a.Sources) == 0 && len(a.Hosts) == 0)
 }
 
 // Document is the agent-side /inputs/intake.json: values as given, files
@@ -272,7 +290,33 @@ func (a *Answers) Document(inputsMount string) map[string]any {
 	for id, s := range a.Sources {
 		doc[id] = sources.Document(*s, a.Fetched[id].Source, inputsMount)
 	}
+	for id, h := range a.Hosts {
+		doc[id] = hostDocument(h)
+	}
 	return doc
+}
+
+// hostDocument is a target host's intake.json entry: the host as named and
+// as whom, and once readied the address and the key the run trusted;
+// never its sign-in.
+func hostDocument(h *targethost.Host) map[string]any {
+	if h.Address.IsValid() {
+		return h.Document()
+	}
+	return map[string]any{"host": map[string]any{"named": h.Answer.Host, "port": h.Answer.Port, "user": h.Answer.User}}
+}
+
+// HostList answers the target hosts by id, sorted.
+func (a *Answers) HostList() []*targethost.Host {
+	if a == nil {
+		return nil
+	}
+	out := make([]*targethost.Host, 0, len(a.Hosts))
+	for _, h := range a.Hosts {
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // SourceList answers the input sources by id, sorted.

@@ -50,6 +50,12 @@ type Input struct {
 	// endpoint — which model and credential variable it is given (plan
 	// runner-m-r4-adapters §5). Zero for a containerised harness.
 	Harness policy.HarnessPolicy
+	// UnchangedTools are tools beyond the input tools whose results reach
+	// the model unchanged, past a harness's own scrub of tool output: the
+	// host link's, where the release declares a target host (plan
+	// runtime-hosts.md D9, agentry-cli#861). Empty for every other plan,
+	// whose harness files stay as they were.
+	UnchangedTools []string
 }
 
 // Result is what an adapter compiles.

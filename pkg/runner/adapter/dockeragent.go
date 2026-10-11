@@ -193,11 +193,15 @@ var InputTools = []string{"read_input", "search_inputs"}
 //   - outgoing chat is not scrubbed, since that leg reads the whole
 //     history before each model call and would scrub an input again.
 //     Every other tool's output is scrubbed before it enters the history.
-func redactSecretsHooks() *hooksYAML {
+//
+// unchanged are further tools whose output is left as it is: the host
+// link's, for a release that declares a target host (plan runtime-hosts.md
+// D9, agentry-cli#861), whose results are what the host prints.
+func redactSecretsHooks(unchanged ...string) *hooksYAML {
 	redact := []hookYAML{{Type: "builtin", Command: "redact_secrets"}}
 	return &hooksYAML{
 		PreToolUse:            []hookMatcherYAML{{Matcher: "*", Hooks: redact}},
-		ToolResponseTransform: []hookMatcherYAML{{Matcher: notExactly(InputTools...), Hooks: redact}},
+		ToolResponseTransform: []hookMatcherYAML{{Matcher: notExactly(append(slices.Clone(InputTools), unchanged...)...), Hooks: redact}},
 	}
 }
 
@@ -336,7 +340,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 					AllowPrivateIPs: true,
 				}},
 				RedactSecrets: &redactFlagOff,
-				Hooks:         redactSecretsHooks(),
+				Hooks:         redactSecretsHooks(in.UnchangedTools...),
 			},
 		},
 	}
