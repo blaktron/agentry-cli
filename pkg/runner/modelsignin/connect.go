@@ -161,12 +161,7 @@ func (s *Store) RefreshConnected(ctx context.Context, provider string) error {
 		return err
 	}
 	if r.SecretIn == "" {
-		if r.KeyExpiresAt != "" {
-			if at, err := time.Parse(time.RFC3339, r.KeyExpiresAt); err == nil && !s.now().Before(at) {
-				return &ExpiredError{Vendor: vendor, At: r.KeyExpiresAt}
-			}
-		}
-		return nil
+		return s.checkExpiry(r)
 	}
 	a, err := s.Use(ctx, vendor)
 	var be *BrokenError
@@ -182,11 +177,58 @@ func (s *Store) RefreshConnected(ctx context.Context, provider string) error {
 	return nil
 }
 
+// SignedOutError is a connected key a signed-out schedule's fire cannot
+// ready: a Hugging Face token is renewed at each run's start with the
+// refresh token kept in the keychain, which is locked while the person is
+// signed out, and the copy sealed for the schedule is never renewed
+// (agentry-cli#811). The refresh token is not sealed beside it: a rotated
+// one could not be written back, and the keychain's would stop working.
+type SignedOutError struct{ Vendor string }
+
+func (e *SignedOutError) Error() string {
+	name := ConnectName(e.Vendor)
+	return fmt.Sprintf("the %s token Agentry connected is renewed at each run's start from the OS keychain, which is locked while you are signed out, so a run cannot use it then: run it while you are signed in, or paste a %s token that does not expire (agentry setup), which seals it for your signed-out schedules", name, name)
+}
+
+// CheckSealed is RefreshConnected for a run that reads provider's key from
+// the copy sealed for a signed-out schedule, which nothing renews. A
+// connect that is renewed is refused (SignedOutError), a key past the
+// expiry its vendor gave is refused (ExpiredError), and a key no connect
+// made is left alone. It reads the record alone, never the keychain.
+func (s *Store) CheckSealed(provider string) error {
+	vendor := ConnectedVendor(provider)
+	if vendor == "" {
+		return nil
+	}
+	r, err := s.Get(vendor)
+	if errors.Is(err, ErrNone) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if r.SecretIn != "" {
+		return &SignedOutError{Vendor: vendor}
+	}
+	return s.checkExpiry(r)
+}
+
+// checkExpiry refuses r's key past the expiry its vendor gave.
+func (s *Store) checkExpiry(r *Record) error {
+	if r.KeyExpiresAt != "" {
+		if at, err := time.Parse(time.RFC3339, r.KeyExpiresAt); err == nil && !s.now().Before(at) {
+			return &ExpiredError{Vendor: r.Vendor, At: r.KeyExpiresAt}
+		}
+	}
+	return nil
+}
+
 // ReadyForRun readies, at a run's start, the connected key its plan reads
 // from the keychain (RefreshConnected), for every run of this computer:
 // `agentry run`, a built-in's, the desktop's. Nothing is done for a plan
-// that spends a model sign-in, a key whose variable is set (it wins), or a
-// signed-out schedule's fire, which reads the copy sealed for it.
+// that spends a model sign-in or a key whose variable is set (it wins). A
+// signed-out schedule's fire reads the copy sealed for it, which is
+// checked and never renewed (CheckSealed).
 func (s *Store) ReadyForRun(ctx context.Context, plan *spec.Plan) error {
 	if plan == nil || plan.Harness.ModelSignIn != nil {
 		return nil
@@ -199,10 +241,14 @@ func (s *Store) ReadyForRun(ctx context.Context, plan *spec.Plan) error {
 		if e.FromKeyring == "" || (e.FromHostEnv != "" && os.Getenv(e.FromHostEnv) != "") {
 			continue
 		}
+		provider := modelkey.ProviderOf(e.FromKeyring)
 		if _, sealed, _ := modelkey.SealedAccount(e.FromKeyring); sealed {
+			if err := s.CheckSealed(provider); err != nil {
+				return err
+			}
 			continue
 		}
-		if err := s.RefreshConnected(ctx, modelkey.ProviderOf(e.FromKeyring)); err != nil {
+		if err := s.RefreshConnected(ctx, provider); err != nil {
 			return err
 		}
 	}

@@ -11,7 +11,9 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/mcpauth/mcpauthtest"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // modelKeys is the model key's keychain entries, in memory: no test may
@@ -266,5 +268,92 @@ func TestAPastedKeyReplacesAConnect(t *testing.T) {
 	}
 	if out, err := s.ForgetConnected(context.Background(), Poe); err != nil || out != "" {
 		t.Fatalf("no connect kept: %q %v", out, err)
+	}
+}
+
+// sealedFor gives this process a signed-out schedule's sealed keys, as
+// systemd would: the folder in $CREDENTIALS_DIRECTORY.
+func sealedFor(t *testing.T, accounts map[string]string) {
+	t.Helper()
+	plain, err := modelkey.SealPlaintext(accounts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, modelkey.CredentialName), plain, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(modelkey.EnvCredentialsDirectory, dir)
+}
+
+// keyringPlan is a plan whose agent reads provider's key from the keychain.
+func keyringPlan(provider string) *spec.Plan {
+	p := &spec.Plan{}
+	p.Harness.Agent.Env = []spec.EnvVar{{Name: "MODEL_KEY", FromKeyring: modelkey.Account(provider)}}
+	return p
+}
+
+// A signed-out schedule's fire reads the copy of the key sealed for it,
+// which nothing renews, and the refresh token stays in the keychain,
+// locked while its person is signed out (agentry-cli#811). So a connected
+// Hugging Face token is refused at the run's start, naming the fix, and
+// Hugging Face is never asked; a Poe key past its expiry is refused as a
+// signed-in run refuses it; a pasted key is left alone.
+func TestASignedOutRunRefusesAConnectedKeyItCannotReady(t *testing.T) {
+	v := mcpauthtest.NewHuggingFace(t)
+	flow := v.Flow()
+	t.Cleanup(RegisterVendor(HuggingFace, HuggingFaceVendor{Flow: flow}))
+	s, _, mk := connectStore(t)
+	k, err := flow.Connect(context.Background(), v.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.KeepConnected(HuggingFace, k); err != nil {
+		t.Fatal(err)
+	}
+	sealedFor(t, map[string]string{modelkey.Account("huggingface"): k.Key, modelkey.Account("poe"): "poe-sealed"})
+
+	var so *SignedOutError
+	err = s.ReadyForRun(context.Background(), keyringPlan("huggingface"))
+	if !errors.As(err, &so) || so.Vendor != HuggingFace {
+		t.Fatalf("err = %v, want a SignedOutError", err)
+	}
+	for _, want := range []string{"locked while you are signed out", "paste", "agentry setup"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal lacks %q: %v", want, err)
+		}
+	}
+	if mk.m["huggingface"] != k.Key || !v.Live(k.RefreshToken) {
+		t.Fatal("a signed-out run refreshed the token")
+	}
+
+	// A pasted Hugging Face key: no connect, nothing to ready.
+	if _, err := s.ForgetConnected(context.Background(), HuggingFace); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReadyForRun(context.Background(), keyringPlan("huggingface")); err != nil {
+		t.Fatalf("a pasted key: %v", err)
+	}
+
+	// A Poe key with the expiry the person chose: run until it, refused after.
+	p := mcpauthtest.NewPoe(t)
+	p.ExpiresIn = 3600
+	pk, err := p.Flow().Connect(context.Background(), p.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.KeepConnected(Poe, pk); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReadyForRun(context.Background(), keyringPlan("poe")); err != nil {
+		t.Fatalf("a live Poe key: %v", err)
+	}
+	s.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	var ee *ExpiredError
+	if err := s.ReadyForRun(context.Background(), keyringPlan("poe")); !errors.As(err, &ee) {
+		t.Fatalf("an expired sealed Poe key: %v", err)
+	}
+	if err := s.CheckSealed("poe"); !errors.As(err, &ee) {
+		t.Fatalf("CheckSealed: %v", err)
 	}
 }

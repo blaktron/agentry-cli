@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -11,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
@@ -456,5 +460,148 @@ func TestSyncRetriesTheLingerRelease(t *testing.T) {
 	}
 	if h.lingerOn() {
 		t.Fatal("sync left the CLI's linger on with nothing signed out")
+	}
+}
+
+// keepConnect writes a connect's record into the sign-in store, as a
+// connect leaves it: renewed (a Hugging Face token with its refresh token
+// in the keychain) or expiring (a Poe key).
+func keepConnect(t *testing.T, vendor string, rec map[string]any) {
+	t.Helper()
+	home, _ := runnerHome()
+	base := map[string]any{"version": modelsignin.Version, "vendor": vendor, "kind": policy.KeyKindAPI,
+		"provider": modelsignin.ProviderOfVendor(vendor), "connected": true, "createdAt": "2026-10-08T11:00:00Z"}
+	for k, v := range rec {
+		base[k] = v
+	}
+	b, _ := json.Marshal(base)
+	dir := modelsignin.Dir(home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, vendor+".json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A connected Hugging Face token is renewed at each run's start from the
+// keychain, which is locked while its person is signed out, and its sealed
+// copy never is (agentry-cli#811). So --signed-out is refused for it, with
+// the fix named, the re-seal refuses to seal it, and check-signed-out says
+// so on a computer that can otherwise run signed out. A Poe key is
+// refused once past its expiry.
+func TestSignedOutRefusesAConnectedKeyItCannotRenew(t *testing.T) {
+	h := newSignedOutHarness(t)
+	pol, _, err := policy.Load(h.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model.Provider, pol.Model.Name = policy.ProviderHuggingFace, "openai/gpt-oss-120b:groq"
+	if err := policy.Save(h.policy, pol); err != nil {
+		t.Fatal(err)
+	}
+	sc := h.addLocal(t, schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: h.now})
+	if gaps := signedOutGaps(context.Background(), sc); len(gaps) != 0 {
+		t.Fatalf("a pasted Hugging Face key: gaps = %q", gaps)
+	}
+
+	keepConnect(t, modelsignin.HuggingFace, map[string]any{"secretIn": "keychain"})
+	gaps := strings.Join(signedOutGaps(context.Background(), sc), "\n")
+	for _, want := range []string{"Hugging Face token Agentry connected", "locked while you are signed out", "agentry setup"} {
+		if !strings.Contains(gaps, want) {
+			t.Errorf("gaps lack %q:\n%s", want, gaps)
+		}
+	}
+	_, _, err = runCLI(t, strings.NewReader(""), "schedule", "edit", sc.ID, "--signed-out", "--yes")
+	wantClassified(t, err, engine.ExitPolicy)
+	if got, _ := h.store.Get(sc.ID); got.SignedOut || len(h.sealed) != 0 || h.lingerOn() {
+		t.Fatal("a refused --signed-out changed something")
+	}
+	if err := sealScheduleKeys(sc, filepath.Join(t.TempDir(), "keys.cred")); err == nil || len(h.sealed) != 0 {
+		t.Fatalf("the re-seal sealed a token no signed-out fire can renew: %v", err)
+	}
+	stdout, _, err := runCLI(t, nil, "schedule", "check-signed-out", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a signedOutAvailability
+	if err := json.Unmarshal([]byte(stdout), &a); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Available || !strings.Contains(a.ModelKey, "Hugging Face token Agentry connected") {
+		t.Fatalf("check-signed-out = %+v", a)
+	}
+	stdout, _, _ = runCLI(t, nil, "schedule", "check-signed-out")
+	if !strings.Contains(stdout, "refused while you are signed out") {
+		t.Fatalf("check-signed-out said %q", stdout)
+	}
+
+	// Poe: until the expiry the person chose, and refused after it.
+	pol.Model.Provider, pol.Model.Name = policy.ProviderPoe, "Claude-Sonnet-4.6"
+	if err := policy.Save(h.policy, pol); err != nil {
+		t.Fatal(err)
+	}
+	keepConnect(t, modelsignin.Poe, map[string]any{"keyExpiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	if gaps := signedOutGaps(context.Background(), sc); len(gaps) != 0 {
+		t.Fatalf("a live Poe key: gaps = %q", gaps)
+	}
+	keepConnect(t, modelsignin.Poe, map[string]any{"keyExpiresAt": "2026-01-01T00:00:00Z"})
+	if gaps := strings.Join(signedOutGaps(context.Background(), sc), "\n"); !strings.Contains(gaps, "Poe key Agentry connected expired") {
+		t.Fatalf("an expired Poe key: gaps = %q", gaps)
+	}
+}
+
+// A connect changes the key in the model key's entry, so it seals a
+// signed-out schedule's keys again, as setup does; connecting Hugging Face
+// under one tells the person at once that it will not run signed out, and
+// removes its sealed keys, rather than letting its fire find out
+// (agentry-cli#811). A disconnect seals again too.
+func TestAConnectSealsSignedOutSchedulesAgain(t *testing.T) {
+	f := newConnectFixture(t)
+	h := newSignedOutHarness(t)
+	keyring.MockInit() // a connect needs the keychain on: never the person's
+	t.Setenv(modelkey.EnvNoKeyring, "")
+	pol, _, err := policy.Load(h.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model.Provider, pol.Model.Name = policy.ProviderOpenRouter, "anthropic/claude-sonnet-4.5"
+	if err := policy.Save(h.policy, pol); err != nil {
+		t.Fatal(err)
+	}
+	// fireGaps reads the model key from the harness's stand-in keychain.
+	keys := map[string]string{modelkey.Account(policy.ProviderOpenRouter): sealedTestKey, modelkey.Account(policy.ProviderHuggingFace): sealedTestKey}
+	plain, _ := modelkey.SealPlaintext(keys)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, modelkey.CredentialName), plain, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(modelkey.EnvCredentialsDirectory, dir)
+	h.collected = keys
+	sc := h.addLocal(t, schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: h.now})
+	if _, errOut, err := runCLI(t, strings.NewReader(""), "schedule", "edit", sc.ID, "--signed-out", "--yes"); err != nil {
+		t.Fatalf("edit: %v\n%s", err, errOut)
+	}
+	if !credentialKept(h.store, sc.ID) || len(h.sealed) != 1 {
+		t.Fatalf("not sealed: %d", len(h.sealed))
+	}
+	_, errOut, err := runCLI(t, strings.NewReader(""), "model-signins", "add", "openrouter")
+	if err != nil || len(h.sealed) != 2 || !strings.Contains(errOut, "sealed the keys of 1 schedule(s)") {
+		t.Fatalf("a connect did not seal again: %v, %d seals\n%s", err, len(h.sealed), errOut)
+	}
+	if _, errOut, err = runCLI(t, nil, "model-signins", "remove", "openrouter"); err != nil || len(h.sealed) != 3 {
+		t.Fatalf("a disconnect did not seal again: %v, %d seals\n%s", err, len(h.sealed), errOut)
+	}
+
+	pol.Model.Provider, pol.Model.Name = policy.ProviderHuggingFace, "openai/gpt-oss-120b:groq"
+	if err := policy.Save(h.policy, pol); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut, err = runCLI(t, strings.NewReader(""), "model-signins", "add", "huggingface")
+	if err != nil || f.key("huggingface") == "" {
+		t.Fatalf("add huggingface: %v\n%s", err, errOut)
+	}
+	if len(h.sealed) != 3 || credentialKept(h.store, sc.ID) || !strings.Contains(errOut, "were not sealed again: the Hugging Face token Agentry connected") {
+		t.Fatalf("a Hugging Face token was sealed, or the person not told: %d seals, kept %v\n%s", len(h.sealed), credentialKept(h.store, sc.ID), errOut)
 	}
 }

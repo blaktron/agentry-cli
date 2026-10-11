@@ -120,6 +120,9 @@ func addConnect(cmd *cobra.Command, in *bufio.Reader, home, vendor string) error
 	if err != nil {
 		return err
 	}
+	// The key in the model key's entry changed: a signed-out schedule's
+	// sealed copy follows it, as after setup (agentry-cli#811).
+	resealSignedOut(cmd.ErrOrStderr())
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), signedInJSON{Vendor: vendor, Kind: r.Kind, Connected: true, Account: r.Label, KeyExpiresAt: r.KeyExpiresAt, Models: []string{}})
 	}
