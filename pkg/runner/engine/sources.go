@@ -20,18 +20,19 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 )
 
-// The input sources' fetch step (plan input-sources.md §5, D4–D8;
-// agentry-cli#833), before the decode. Each source the intake answered is
-// fetched by the runner image's `source` role in the files container (the
-// decode image), on a network of its own whose only route out is a CONNECT
-// proxy to the source's host on port 443, at public addresses alone. The
+// The input sources' fetch step (plan input-sources.md §5, D4–D8, D12;
+// agentry-cli#833, agentry-cli#834), before the decode. Each source the
+// intake answered is fetched by the runner image's `source` role in the
+// files container (the decode image), on a network of its own whose only
+// route out is a CONNECT proxy to the source's host on port 443, at public
+// addresses alone. The
 // token, when there is one, reaches the step on its stdin: never in an
 // environment, an argument or a file. Then the proxy and the network are
 // removed, the tree the step wrote is held to the source's rules on the
 // host (regular files and folders only, no .git, within the caps, the
 // counts the report gives), and it moves to /inputs/<id>/, where the decode
-// treats it as it treats uploads, with the source's own cap and malware
-// rule. The agent container never sees a token, a source mount of its own
+// treats it as it treats uploads: a repository with its own cap and malware
+// rule, a url source's one file as an upload. The agent container never sees a token, a source mount of its own
 // or a route to the source's host.
 
 // sourceTimeout bounds one source's fetch step.
@@ -112,7 +113,7 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 		}
 	}
 	defer func() { _ = os.RemoveAll(base) }()
-	caps := sources.LocalCaps
+	caps := kind.Caps
 
 	// The network and the proxy are the step's own, removed as soon as it
 	// ends (and by the teardown if the run dies first).
@@ -209,9 +210,12 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 		if why == "" {
 			why = fmt.Sprintf("the fetch step failed (exit %d)", code)
 		}
-		return sources.Fetched{}, Classify(ExitCLI, inputRefused(receipt.InputSourceFetch, fmt.Errorf("the input source %s (%s) could not be fetched: %s", s.ID, s.URL, why)))
+		return sources.Fetched{}, Classify(ExitCLI, inputRefused(receipt.InputSourceFetch, fmt.Errorf("the input source %s (%s) could not be fetched: %s", s.ID, s.Shown(), why)))
 	}
 	if err := checkSourceTree(tree, rep, caps); err != nil {
+		return sources.Fetched{}, Classify(ExitGateway, fmt.Errorf("the input source %s: %w", s.ID, err))
+	}
+	if err := checkSourceFile(tree, rep); err != nil {
 		return sources.Fetched{}, Classify(ExitGateway, fmt.Errorf("the input source %s: %w", s.ID, err))
 	}
 	if err := os.Rename(tree, dest); err != nil {
@@ -304,6 +308,22 @@ func checkSourceTree(tree string, rep source.Report, caps sources.Caps) error {
 	return nil
 }
 
+// checkSourceFile holds a one-file source (a url source) to its report:
+// the one file the tree holds is the one the report names, at its top.
+func checkSourceFile(tree string, rep source.Report) error {
+	if rep.Name == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(tree)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 1 || entries[0].Name() != rep.Name || !entries[0].Type().IsRegular() {
+		return errors.New("the fetch step staged something other than the one file it reported")
+	}
+	return nil
+}
+
 // sourceLines puts each source's receipt line into enforced, under
 // source.<id>, with the malware check of its files from the decode.
 func sourceLines(enforced map[string]string, runs []sourceRun, dec *inputsDecoder) {
@@ -314,14 +334,20 @@ func sourceLines(enforced map[string]string, runs []sourceRun, dec *inputsDecode
 		dec.mu.Unlock()
 	}
 	for _, r := range runs {
-		enforced["source."+r.src.ID] = sources.Line(r.src, r.fetched, sources.Checks(r.src.ID, files))
+		enforced["source."+r.src.ID] = sources.Line(r.src, r.fetched, sources.ChecksFor(r.src, files))
 	}
 }
 
-// sourceIDs are the folders under /inputs that are input sources.
+// sourceIDs are the folders under /inputs that the decode holds to the
+// source rule (D8). A kind decoded as an upload (a url source) is not
+// among them: its file gets every check and every decoder, and counts
+// against the uploads' cap.
 func sourceIDs(runs []sourceRun) []string {
 	out := make([]string, 0, len(runs))
 	for _, r := range runs {
+		if k, ok := sources.Lookup(r.src.Kind); ok && k.AsUpload {
+			continue
+		}
 		out = append(out, r.src.ID)
 	}
 	return out

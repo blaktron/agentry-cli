@@ -268,7 +268,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		servers:      declared,
 		schema:       len(schemaJSON) > 0,
 		intake:       len(m.Intake) > 0,
-		repositories: repositoryQuestions(m),
+		repositories: questionsOf(m, manifest.IntakeRepository),
+		files:        questionsOf(m, manifest.IntakeURL),
 		inputView:    inputView,
 		review:       in.Review,
 		budget:       budget,
@@ -1849,11 +1850,11 @@ func plainHTTPTargets(pol *policy.Policy) []string {
 	return out
 }
 
-// repositoryQuestions are the ids of a manifest's repository questions.
-func repositoryQuestions(m *manifest.Manifest) []string {
+// questionsOf are the ids of a manifest's intake questions of one type.
+func questionsOf(m *manifest.Manifest, t manifest.IntakeType) []string {
 	var out []string
 	for _, q := range m.Intake {
-		if q.Type == manifest.IntakeRepository {
+		if q.Type == t {
 			out = append(out, q.ID)
 		}
 	}
