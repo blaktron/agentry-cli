@@ -32,6 +32,9 @@ type Fake struct {
 
 	// AvailableErr fails Available.
 	AvailableErr error
+	// Exec, when set, answers ExecStream (Execer) for a running
+	// container: the test plays the command's side of its stdio.
+	Exec func(ctx context.Context, container string, argv []string, stdin io.Reader, stdout io.Writer) (int, error)
 	// RuntimeNames is what Runtimes answers when RuntimeTable is nil, each
 	// name with an empty registration; nil answers the daemon's usual pair
 	// ("io.containerd.runc.v2", "runc").

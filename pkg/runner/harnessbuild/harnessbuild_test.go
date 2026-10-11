@@ -128,7 +128,7 @@ func TestTheImageIsBuiltFromItsCheckedPackagesForTheDaemonsPlatform(t *testing.T
 	}
 	args := d.BuildArgs[h.Ref]
 	if args["BASE"] != ClaudeBase || args["NATIVE"] != "claude-code-linux-arm64-musl" || args["ARTIFACT"] != h.Artifact ||
-		args["NATIVE_INTEGRITY"] != claudeReleases[0].native["arm64"] {
+		args["NATIVE_INTEGRITY"] != claudeReleases[0].native["arm64"] || args["RECIPE"] != ClaudeRecipe {
 		t.Fatalf("build args %v", args)
 	}
 	if !slices.Equal(reg.asked, []string{"/@anthropic-ai/claude-code/-/claude-code-9.9.9.tgz", "/@anthropic-ai/claude-code-linux-arm64-musl/-/claude-code-linux-arm64-musl-9.9.9.tgz"}) {
@@ -172,24 +172,33 @@ func TestAPackageWhoseIntegrityDiffersIsRefusedAndNothingIsBuilt(t *testing.T) {
 	}
 }
 
-// An image of the tag that carries the artifact is used as it is; one that
-// carries another, or none, is built again.
+// An image of the tag that carries the artifact and this build's recipe is
+// used as it is; one that carries another artifact, none, or an older
+// recipe (an image built before the stand-in browser, agentry-cli#848) is
+// built again.
 func TestAnImageIsBuiltAgainUnlessItCarriesItsArtifact(t *testing.T) {
-	for label, rebuild := range map[string]bool{"": true, "sha512-other": true, "match": false} {
+	for _, c := range []struct {
+		artifact, recipe string
+		rebuild          bool
+	}{
+		{"", ClaudeRecipe, true}, {"sha512-other", ClaudeRecipe, true},
+		{"match", "", true}, {"match", "1", true}, {"match", ClaudeRecipe, false},
+	} {
 		reg := newRegistry(t)
 		h := reg.release(t)
+		label := c.artifact
 		if label == "match" {
 			label = h.Artifact
 		}
-		d := &dockerx.Fake{ExistingImages: map[string]bool{h.Ref: true}, Labels: map[string]map[string]string{h.Ref: {LabelArtifact: label}}}
+		d := &dockerx.Fake{ExistingImages: map[string]bool{h.Ref: true}, Labels: map[string]map[string]string{h.Ref: {LabelArtifact: label, LabelRecipe: c.recipe}}}
 		if err := (Builder{Docker: d, Registry: reg.URL, Dir: t.TempDir()}).Ensure(context.Background(), ClaudeImageAdapter, h); err != nil {
 			t.Fatal(err)
 		}
-		if got := len(builds(d)) == 1; got != rebuild {
-			t.Errorf("label %q: rebuilt %v", label, got)
+		if got := len(builds(d)) == 1; got != c.rebuild {
+			t.Errorf("%+v: rebuilt %v", c, got)
 		}
-		if !rebuild && len(reg.asked) != 0 {
-			t.Errorf("label %q: fetched %v for an image already here", label, reg.asked)
+		if !c.rebuild && len(reg.asked) != 0 {
+			t.Errorf("%+v: fetched %v for an image already here", c, reg.asked)
 		}
 	}
 }
@@ -262,5 +271,24 @@ func TestTheDefaultPinIsAReleaseThisBuildCarries(t *testing.T) {
 	if !strings.Contains(claudeDockerfile, "mkdir -m 0700 "+ClaudeConfigDir+" && chown node:node "+ClaudeConfigDir) ||
 		!strings.Contains(claudeDockerfile, "node install.cjs") || !strings.Contains(claudeDockerfile, "USER node") {
 		t.Fatal("the Dockerfile lost its install, its config directory or its user")
+	}
+}
+
+// The Claude Code image's browser is the stand-in opener (agentry-cli#848):
+// the Dockerfile puts it where BROWSER names it and labels the recipe, and
+// the script only writes the address to PID 1's stderr, opening nothing.
+func TestTheClaudeImageCarriesItsStandInBrowser(t *testing.T) {
+	for _, want := range []string{"COPY agentry-open " + ClaudeOpener, "chmod 0755 " + ClaudeOpener, `org.agentry.harness.recipe="${RECIPE}"`} {
+		if !strings.Contains(claudeDockerfile, want) {
+			t.Errorf("the Dockerfile lacks %q", want)
+		}
+	}
+	if !strings.HasPrefix(claudeOpenerScript, "#!/bin/sh\n") || !strings.Contains(claudeOpenerScript, `printf 'agentry-open %s\n' "$1" > /proc/1/fd/2`) {
+		t.Fatalf("opener %q", claudeOpenerScript)
+	}
+	for _, never := range []string{"xdg-open", "curl", "wget", "http"} {
+		if strings.Contains(strings.SplitN(claudeOpenerScript, "\nprintf", 2)[1], never) {
+			t.Errorf("the opener does more than hand the address on: %q", never)
+		}
 	}
 }

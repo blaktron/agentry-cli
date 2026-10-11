@@ -26,7 +26,7 @@ func claudeSignInRun(t *testing.T, home string, hosted bool) (*dockerx.Fake, err
 	h, _ := pol.Images.HarnessImageFor("claude-image")
 	f := &dockerx.Fake{
 		ExistingImages: map[string]bool{h.Ref: true},
-		Labels:         map[string]map[string]string{h.Ref: {harnessbuild.LabelArtifact: h.Artifact}},
+		Labels:         map[string]map[string]string{h.Ref: {harnessbuild.LabelArtifact: h.Artifact, harnessbuild.LabelRecipe: harnessbuild.ClaudeRecipe}},
 		Foreground:     map[string]*dockerx.FakeForeground{"-probe": {ExitCode: 0}},
 	}
 	_, err := Run{

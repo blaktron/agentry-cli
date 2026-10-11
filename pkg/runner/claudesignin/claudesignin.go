@@ -11,10 +11,11 @@
 // against a config directory of Agentry's own, never the person's
 // ~/.claude, and Claude Code keeps and refreshes its credentials there.
 // Agentry never reads that directory. Each Claude Code signs in where it
-// runs: the image (the default) in its docker volume, where the person
-// pastes the code Anthropic's page shows into Claude Code's own prompt; the
-// installed Claude Code in a directory under the model sign-in store, with
-// its own browser and callback.
+// runs: the image (the default) in its docker volume, through the person's
+// browser with Claude Code's callback relayed into the container
+// (browser.go, agentry-cli#848), pasting the code Anthropic's page shows
+// only where that cannot work; the installed Claude Code in a directory
+// under the model sign-in store, with its own browser and callback.
 package claudesignin
 
 import (
@@ -32,6 +33,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -39,6 +41,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/harnessbuild"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -59,14 +62,17 @@ func HostDir(home string) string { return filepath.Join(modelsignin.Dir(home), "
 // Person is the person's side of a sign-in.
 type Person struct {
 	// In is what Claude Code's prompt reads: the code the person pastes
-	// from Anthropic's page, passed to Claude Code unread. nil gives it no
-	// input.
+	// from Anthropic's page, passed to Claude Code unread, where the
+	// browser cannot hand the sign-in back (the fallback). nil gives it no
+	// input, and a sign-in that would need a paste ends instead.
 	In io.Reader
 	// Out receives Claude Code's output and the sign-in's own sentences.
 	Out io.Writer
 	// Open opens an address in the person's browser. It is only ever
 	// handed one of Anthropic's own sign-in pages (AnthropicSignInURL);
 	// nil opens nothing, and the person opens the printed address.
+	// Through the image, the page's answer comes back to this computer and
+	// is relayed into the container (browser.go).
 	Open func(url string)
 }
 
@@ -169,42 +175,6 @@ func AnthropicSignInURL(raw string) bool {
 	return false
 }
 
-// urlOpener passes Claude Code's output through and opens the first
-// Anthropic sign-in address it prints, once its line is complete.
-type urlOpener struct {
-	w      io.Writer
-	open   func(string)
-	line   []byte
-	opened bool
-}
-
-func (o *urlOpener) Write(p []byte) (int, error) {
-	n, err := o.w.Write(p)
-	if o.opened {
-		return n, err
-	}
-	o.line = append(o.line, p...)
-	for {
-		i := bytes.IndexByte(o.line, '\n')
-		if i < 0 {
-			break
-		}
-		for _, m := range urlRE.FindAllString(string(o.line[:i]), -1) {
-			if AnthropicSignInURL(m) {
-				o.opened = true
-				o.open(m)
-				o.line = nil
-				return n, err
-			}
-		}
-		o.line = o.line[i+1:]
-	}
-	if len(o.line) > 64<<10 {
-		o.line = nil
-	}
-	return n, err
-}
-
 // containerRun is one Claude Code command in the image, on its volume: the
 // image's user, a read-only root, nothing of the person's, every
 // capability dropped and the policy's docker.limits. It is the one
@@ -262,15 +232,36 @@ func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy) (
 	if err := d.VolumeCreate(ctx, Volume, map[string]string{"org.agentry.model-signin": modelsignin.Claude}); err != nil {
 		return "", "", err
 	}
-	_, _ = fmt.Fprintf(errOut, "%s: Claude Code signs you in itself, in Anthropic's own pages, and keeps the sign-in in its docker volume %s, which Agentry never reads.\n", setup.ClaudeSignInLabel, Volume)
-	_, _ = fmt.Fprintln(errOut, "When the browser shows a code, copy it, paste it at Claude Code's prompt below and press Enter.")
+	_, _ = fmt.Fprintf(errOut, "%s: Claude Code signs you in itself, in Anthropic's own pages in your browser, and keeps the sign-in in its docker volume %s, which Agentry never reads.\n", setup.ClaudeSignInLabel, Volume)
 	open := p.Open
 	if open == nil {
 		open = func(string) {}
 	}
+	login := containerRun(pol, h.Ref, "login", "auth", "login")
+	login.Env["BROWSER"] = harnessbuild.ClaudeOpener
 	lctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	code, err := runContainer(lctx, d, containerRun(pol, h.Ref, "login", "auth", "login"), p.In, &urlOpener{w: errOut, open: open}, errOut)
+	var (
+		failMu sync.Mutex
+		failed error
+	)
+	w := &browserSignIn{out: errOut, open: open, canPaste: p.In != nil, fail: func(err error) {
+		failMu.Lock()
+		failed = err
+		failMu.Unlock()
+		cancel()
+	}}
+	if ex, ok := d.(dockerx.Execer); ok {
+		w.startRelay = func(port int) (func(), error) { return relay(lctx, ex, login.Name, port) }
+	}
+	code, err := runContainer(lctx, d, login, p.In, &stream{b: w}, &stream{b: w})
+	w.close()
+	failMu.Lock()
+	ferr := failed
+	failMu.Unlock()
+	if ferr != nil {
+		return "", "", ferr
+	}
 	if lctx.Err() != nil {
 		return "", "", fmt.Errorf("nothing kept: the sign-in was interrupted, or not finished within %s", Timeout)
 	}

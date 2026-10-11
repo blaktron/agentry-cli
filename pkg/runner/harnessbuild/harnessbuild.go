@@ -41,7 +41,32 @@ import (
 const (
 	LabelArtifact = "org.agentry.harness.artifact"
 	LabelNative   = "org.agentry.harness.native"
+	// LabelRecipe is the version of the Claude Code image's own recipe
+	// (what this package adds around the vendor's packages): an image
+	// built from the pinned artifact by an older recipe is built again.
+	LabelRecipe = "org.agentry.harness.recipe"
 )
+
+// ClaudeRecipe is the Claude Code image's recipe version: 2 adds the
+// stand-in browser opener, ClaudeOpener (agentry-cli#848).
+const ClaudeRecipe = "2"
+
+// ClaudeOpener is the Claude Code image's browser: the program its BROWSER
+// names for a sign-in. Claude Code (2.1.296) hands its opener the sign-in
+// address whose redirect is its own callback on the container's loopback;
+// the opener writes it to the container's stderr as one line,
+// "agentry-open <address>", for the agentry CLI, which opens it in the
+// person's browser and relays the callback in. It opens nothing itself.
+const ClaudeOpener = "/usr/local/bin/agentry-open"
+
+// claudeOpenerScript is ClaudeOpener. PID 1 is Claude Code (the image's
+// entrypoint for a sign-in), so its stderr is the container's.
+const claudeOpenerScript = `#!/bin/sh
+# Claude Code's browser in Agentry's Claude Code image (agentry-cli#848):
+# hands the sign-in address to the agentry CLI, which opens it in the
+# person's own browser. It opens nothing itself.
+printf 'agentry-open %s\n' "$1" > /proc/1/fd/2
+`
 
 // ClaudeImageAdapter is the adapter whose image this package builds (the
 // adapter package, which imports this one, names it too; a test there
@@ -167,10 +192,21 @@ func (b Builder) Ensure(ctx context.Context, adapterName string, h policy.Harnes
 		if err != nil {
 			return err
 		}
-		if got == h.Artifact {
+		switch {
+		case got != h.Artifact:
+			b.logf("%s is here but was not built from %s; building it again\n", h.Ref, h.Artifact)
+		case adapterName != ClaudeImageAdapter:
 			return nil
+		default:
+			recipe, err := b.Docker.ImageLabel(ctx, h.Ref, LabelRecipe)
+			if err != nil {
+				return err
+			}
+			if recipe == ClaudeRecipe {
+				return nil
+			}
+			b.logf("%s was built by an older recipe of this image; building it again\n", h.Ref)
 		}
-		b.logf("%s is here but was not built from %s; building it again\n", h.Ref, h.Artifact)
 	}
 	return build()
 }
@@ -226,6 +262,9 @@ func (b Builder) buildClaude(ctx context.Context, h policy.HarnessImage, rel cla
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(claudeDockerfile), 0o600); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(dir, "agentry-open"), []byte(claudeOpenerScript), 0o600); err != nil {
+		return err
+	}
 	b.logf("building %s from %s@%s and %s@%s, each checked against its npm integrity, on %s (first use)\n",
 		h.Ref, claudeWrapper, rel.version, nativePkg, rel.version, ClaudeBase)
 	err = b.Docker.Build(ctx, dir, h.Ref, map[string]string{
@@ -233,6 +272,7 @@ func (b Builder) buildClaude(ctx context.Context, h policy.HarnessImage, rel cla
 		"NATIVE":           strings.TrimPrefix(nativePkg, "@anthropic-ai/"),
 		"ARTIFACT":         h.Artifact,
 		"NATIVE_INTEGRITY": native,
+		"RECIPE":           ClaudeRecipe,
 	})
 	if err != nil {
 		return fmt.Errorf("build %s: %w", h.Ref, err)
@@ -260,9 +300,12 @@ RUN set -e; m=/usr/local/lib/node_modules/@anthropic-ai; \
 FROM ${BASE}
 ARG ARTIFACT
 ARG NATIVE_INTEGRITY
-LABEL org.agentry.harness.artifact="${ARTIFACT}" org.agentry.harness.native="${NATIVE_INTEGRITY}"
+ARG RECIPE
+LABEL org.agentry.harness.artifact="${ARTIFACT}" org.agentry.harness.native="${NATIVE_INTEGRITY}" org.agentry.harness.recipe="${RECIPE}"
 COPY --from=unpack /usr/local/lib/node_modules/@anthropic-ai/ /usr/local/lib/node_modules/@anthropic-ai/
+COPY agentry-open ` + ClaudeOpener + `
 RUN set -e; ln -s ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude; \
+    chmod 0755 ` + ClaudeOpener + `; \
     DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR=/tmp/claude-check claude --version; rm -rf /tmp/claude-check; \
     mkdir -m 0700 ` + ClaudeConfigDir + ` && chown node:node ` + ClaudeConfigDir + `
 ENV DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR=` + ClaudeConfigDir + `
