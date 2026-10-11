@@ -176,6 +176,8 @@ func newModelSignInsRemoveCmd() *cobra.Command {
 				return emitJSON(cmd.OutOrStdout(), removedModelSignIn{Vendor: args[0], Revocation: outcome})
 			}
 			if modelsignin.IsConnectVendor(args[0]) {
+				// The key is gone from the keychain: no sealed copy outlives it.
+				resealSignedOut(cmd.ErrOrStderr())
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "disconnected your %s account (revocation: %s)\n", modelsignin.ConnectName(args[0]), outcome)
 				return nil
 			}
