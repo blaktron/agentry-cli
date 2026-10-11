@@ -18,7 +18,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
-	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -28,6 +27,11 @@ import (
 func hostedRun(opts runOpts) bool {
 	return os.Getenv(envRunGrant) != "" || opts.connectionsFile != "" || opts.sessionProtocol
 }
+
+// hostedProcess says this process runs for a sandbox host: it holds a run
+// grant or a hosted job's credential, which only a host hands it. A
+// built-in run in it never spends a model sign-in (I5; agentry-cli#845).
+func hostedProcess() bool { return os.Getenv(envRunGrant) != "" || os.Getenv(envJobToken) != "" }
 
 // refuseSignInRun refuses a plan that spends a model sign-in where it
 // cannot run, before anything is installed for it: a hosted run (I5), and
@@ -46,39 +50,13 @@ func refuseSignInRun(plan *spec.Plan, opts runOpts) error {
 }
 
 // hostedSignInRefusal is the refusal of a model sign-in for a hosted run.
-func hostedSignInRefusal(kind string) error {
-	return engine.Classify(engine.ExitPolicy, fmt.Errorf("a hosted run never spends a model sign-in (%s, policy apiKeyKind %s): hosted runs use Agentry's own model access", policy.SignInSentence(kind), kind))
-}
+func hostedSignInRefusal(kind string) error { return engine.HostedSignInRefusal(kind) }
 
 // runModelSignIn is the model sign-in a plan spends, from the person's
-// store, for engine.Params: nil when the plan spends a key. A hosted run is
-// refused before the store is opened (I5): a sign-in is the person's own,
-// local only, permanently (D2).
+// store, for engine.Params (engine.ModelSignInFor): nil when the plan
+// spends a key; a hosted run is refused before the store is read (I5).
 func runModelSignIn(ctx context.Context, home string, plan *spec.Plan, hosted bool) (*engine.ModelSignInGrant, func(context.Context) (engine.ConnectionToken, error), error) {
-	msi := plan.Harness.ModelSignIn
-	if msi == nil {
-		return nil, nil, nil
-	}
-	if hosted {
-		return nil, nil, hostedSignInRefusal(msi.Kind)
-	}
-	g, err := modelsignin.Open(home, connectionKeys()).ForRun(ctx, msi.Kind, msi.Delivery, plan.Harness.Host != nil)
-	if errors.Is(err, modelsignin.ErrNoSignIn) {
-		return nil, nil, engine.Classify(engine.ExitPolicy, receipt.WithReason(err, receipt.ReasonSignInMissing, ""))
-	}
-	if err != nil {
-		return nil, nil, engine.Classify(engine.ExitPolicy, err)
-	}
-	grant := &engine.ModelSignInGrant{Kind: g.Kind, ConfigDir: g.ConfigDir,
-		Token: engine.ConnectionToken{AccessToken: g.Access.Token, ExpiresAt: g.Access.ExpiresAt}}
-	var renew func(context.Context) (engine.ConnectionToken, error)
-	if g.Renew != nil {
-		renew = func(ctx context.Context) (engine.ConnectionToken, error) {
-			a, err := g.Renew(ctx)
-			return engine.ConnectionToken{AccessToken: a.Token, ExpiresAt: a.ExpiresAt}, err
-		}
-	}
-	return grant, renew, nil
+	return engine.ModelSignInFor(ctx, modelsignin.Open(home, connectionKeys()), plan, hosted)
 }
 
 func newModelSignInsCmd() *cobra.Command {
