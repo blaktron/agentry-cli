@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessbuild"
@@ -25,7 +26,7 @@ func fixture(t *testing.T, login *dockerx.FakeForeground, statusJSON string) (Si
 	h, _ := pol.Images.HarnessImageFor("claude-image")
 	f := &dockerx.Fake{
 		ExistingImages: map[string]bool{h.Ref: true},
-		Labels:         map[string]map[string]string{h.Ref: {harnessbuild.LabelArtifact: h.Artifact}},
+		Labels:         map[string]map[string]string{h.Ref: {harnessbuild.LabelArtifact: h.Artifact, harnessbuild.LabelRecipe: harnessbuild.ClaudeRecipe}},
 		Foreground: map[string]*dockerx.FakeForeground{
 			"agentry-claude-login":  login,
 			"agentry-claude-status": {Stdout: statusJSON},
@@ -38,23 +39,28 @@ func fixture(t *testing.T, login *dockerx.FakeForeground, statusJSON string) (Si
 const signedIn = `{"loggedIn":true,"authMethod":"claude.ai","email":"person@example.com","orgName":"Example"}`
 
 // The image's sign-in is Claude Code's own, driven through the package's
-// seams alone: the person's input reaches Claude Code's prompt unread, only
-// Anthropic's printed page is opened, and the record keeps the volume and
-// the account, never a token.
+// seams alone: a Claude Code that hands its opener no address is signed in
+// by paste, and the person's input reaches its prompt unread and is not
+// echoed; the record keeps the volume and the account, never a token.
 func TestTheImageSignsInThroughThePersonsSide(t *testing.T) {
-	login := &dockerx.FakeForeground{Stdout: "see https://evil.example/x\nIf the browser didn't open, visit: " + signInURL + "\nPaste code here if prompted > Login successful.\n"}
-	s, f := fixture(t, login, signedIn)
-	var opened []string
+	prev := fallbackWait
+	fallbackWait = 20 * time.Millisecond
+	t.Cleanup(func() { fallbackWait = prev })
+	login := newClaudeLogin(0)
+	login.noOpener = true
+	s, f := browserFixture(t, login)
+	b := newBrowser()
+	in, open := b.pastes("the-code#the-state")
 	var out strings.Builder
-	rec, err := s.Run(context.Background(), Person{In: strings.NewReader("the-code#the-state\n"), Out: &out, Open: func(u string) { opened = append(opened, u) }}, false)
+	rec, err := s.Run(context.Background(), Person{In: in, Out: &out, Open: open}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if login.GotStdin != "the-code#the-state\n" {
-		t.Fatalf("Claude Code's prompt read %q", login.GotStdin)
+	if got := <-login.pasted; got != "the-code#the-state\n" {
+		t.Fatalf("Claude Code's prompt read %q", got)
 	}
-	if !slices.Equal(opened, []string{signInURL}) {
-		t.Fatalf("opened %v", opened)
+	if !slices.Equal(b.addresses(), []string{signInURL}) {
+		t.Fatalf("opened %v", b.addresses())
 	}
 	if rec.ConfigDir != Volume || rec.HostConfigDir != "" || rec.Label != "person@example.com (Example)" || rec.SecretIn != "" {
 		t.Fatalf("record %+v", rec)
@@ -102,28 +108,5 @@ func TestEndLogsOutThenDeletesOnlyItsOwn(t *testing.T) {
 	vi := slices.Index(ops, "VolumeRemove:"+Volume)
 	if li < 0 || vi < li || slices.Contains(ops, "VolumeRemove:someone-elses") {
 		t.Fatalf("ops %v", ops)
-	}
-}
-
-// Agentry opens Anthropic's own sign-in pages from Claude Code's output and
-// nothing else.
-func TestOnlyAnthropicsSignInPagesAreOpened(t *testing.T) {
-	for raw, ok := range map[string]bool{
-		signInURL: true, "https://platform.claude.com/oauth/authorize?x=1": true,
-		"http://claude.com/cai/oauth/authorize": false, "https://claude.com.example/x": false,
-		"https://user@claude.com/x": false, "https://evil.example/claude.com": false,
-	} {
-		if AnthropicSignInURL(raw) != ok {
-			t.Errorf("%s: %v", raw, !ok)
-		}
-	}
-	var opened []string
-	var sink strings.Builder
-	o := &urlOpener{w: &sink, open: func(u string) { opened = append(opened, u) }}
-	for _, chunk := range []string{"see https://evil.example/x\nIf the browser didn't open, visit: https://claude", ".com/cai/oauth/authorize?state=1\n", "again " + signInURL + "\n"} {
-		_, _ = o.Write([]byte(chunk))
-	}
-	if !slices.Equal(opened, []string{"https://claude.com/cai/oauth/authorize?state=1"}) || !strings.Contains(sink.String(), "evil.example") {
-		t.Fatalf("opened %v; passed through %q", opened, sink.String())
 	}
 }
