@@ -35,8 +35,8 @@ type scheduleCheckJSON struct {
 	// capabilities (or take --yes), for ConsentReason.
 	NeedsConsent  bool   `json:"needsConsent"`
 	ConsentReason string `json:"consentReason,omitempty"`
-	// Refusals is every refusal a run would meet, as `run --plan` names
-	// them; one the flags given do not lift is also a gap.
+	// Refusals is every refusal a run with the flags given would meet, as
+	// `run --plan` names them; each is also a gap.
 	Refusals []runPlanRefusal `json:"refusals"`
 	// Installed: the pinned version is laid down on this computer, so the
 	// inputs its fires read were checked. A version that is not is
@@ -80,13 +80,15 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out string, spec runSpecFlags,
 		return err
 	}
 	res.Modes = append(res.Modes, preview.Modes...)
-	res.Refusals = append(res.Refusals, preview.Refusals...)
 	res.NeedsConsent, res.ConsentReason = preview.NeedsConfirmation, preview.Reason
 	if !slices.Contains(preview.Modes, string(manifest.ModeAutonomous)) {
 		gap(fmt.Errorf("%s runs interactive only: a schedule runs with nobody there to answer, so it can only run an autonomous release", preview.Ref))
 	}
+	// The preview lists every refusal; a run meets those the flags given
+	// do not lift.
 	for _, r := range preview.Refusals {
 		if r.Lift == "" || !liftGiven(r.Lift, sc.Run) {
+			res.Refusals = append(res.Refusals, r)
 			gap(errors.New("a run would refuse: " + r.Message))
 		}
 	}
