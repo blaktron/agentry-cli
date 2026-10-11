@@ -58,6 +58,10 @@ type Client interface {
 	NetworkConnect(ctx context.Context, network, container string) error
 	// NetworkRemove removes a network.
 	NetworkRemove(ctx context.Context, name string) error
+	// NetworksByLabel lists the names of the networks carrying label
+	// ("k=v", or "k" for any value), for the sweep of a dead run's
+	// networks whose names its run id alone does not determine.
+	NetworksByLabel(ctx context.Context, label string) ([]string, error)
 	// VolumeCreate creates a named volume with labels; VolumeRemove
 	// removes one (absent is not an error); VolumesByLabel lists the
 	// names carrying a label, for the run's teardown sweep.
@@ -491,6 +495,21 @@ func (c *CLI) NetworkRemove(ctx context.Context, name string) error {
 		return nil
 	}
 	return err
+}
+
+// NetworksByLabel implements Client.
+func (c *CLI) NetworksByLabel(ctx context.Context, label string) ([]string, error) {
+	out, err := c.run(ctx, "network", "ls", "--filter", "label="+label, "--format", "{{.Name}}")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			names = append(names, s)
+		}
+	}
+	return names, nil
 }
 
 // VolumeCreate implements Client.
