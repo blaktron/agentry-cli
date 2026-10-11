@@ -44,8 +44,30 @@ func TestGatewayHostPath(t *testing.T) {
 // drive colon failed every run's tools server (agentry-cli#414). The run's
 // own wiring renders the config and the env, so a call site that went
 // back to the native paths fails here too.
+//
+// The workspace binds take the manifest's filesystem shape: a paths write
+// grant binds each path rw, and each needs its own exact entry
+// (agentry-cli#855).
 func TestGatewaySeesWindowsPathsItCanCheck(t *testing.T) {
-	p, _ := fixture(t)
+	shapes := map[string]func(*manifest.Manifest){
+		"whole workspace": nil,
+		"write paths": func(m *manifest.Manifest) {
+			m.Capabilities.Filesystem.Write = manifest.FSAccess{Mode: manifest.FSModePaths, Paths: []string{"out", "notes/summary.md"}}
+		},
+		"read and write paths": func(m *manifest.Manifest) {
+			m.Capabilities.Filesystem.Read = manifest.FSAccess{Mode: manifest.FSModePaths, Paths: []string{"docs"}}
+			m.Capabilities.Filesystem.Write = manifest.FSAccess{Mode: manifest.FSModePaths, Paths: []string{"out"}}
+		},
+	}
+	for name, edit := range shapes {
+		t.Run(name, func(t *testing.T) { gatewaySeesWindowsPaths(t, edit) })
+	}
+}
+
+// gatewaySeesWindowsPaths renders one filesystem shape's gateway config
+// as a Windows run would and checks every volume against the env.
+func gatewaySeesWindowsPaths(t *testing.T, editManifest func(*manifest.Manifest)) {
+	p, _ := fixtureEdited(t, nil, editManifest)
 	p.Knowledge = []AttachedPack{AttachPack(makePack(t, "voice"))}
 	setGatewayOS(t, "windows")
 

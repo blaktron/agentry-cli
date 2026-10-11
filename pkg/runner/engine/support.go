@@ -368,6 +368,11 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := stageVoice(p.Voice, rd.knowledge); err != nil {
 		return nil, err
 	}
+	// After the workspace check, so it sees only what the release ships:
+	// these folders are made for the run's binds, in the run's copy.
+	if err := makeGrantedPaths(rd.workspace, p.Plan.Capabilities); err != nil {
+		return nil, err
+	}
 	// Gateway files now; harness files once the infrastructure is up, so a
 	// host-run harness sees the published addresses (Run / StartSession).
 	if err := renderGatewayConfig(p, rd); err != nil {
