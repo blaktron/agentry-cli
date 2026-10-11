@@ -129,7 +129,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		BaseURL:        opts.baseURL,
 		ChatGPT:        chatgptOffer(cmd, in, home),
 		Claude:         claudeOffer(cmd, in, home),
-		Copilot:        copilotOffer(cmd, home, opts.oauthApp),
+		Copilot:        copilotOffer(cmd, home, opts.oauthApp, pol, !opts.skipImages),
 		Connect:        connectOffer(cmd, in, home),
 		ConnectAccount: opts.connect,
 		CopilotPlan:    opts.copilotPlan,

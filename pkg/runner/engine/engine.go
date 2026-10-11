@@ -546,83 +546,8 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	td.add(func(c context.Context) { _ = d.NetworkRemove(c, netName) })
 	td.networks = append(td.networks, netName)
 
-	// LLM egress proxy: the agent container's only route out (§R4). It is
-	// also the one run container with a bridge leg, so for a host-run
-	// harness it is the host's door to everything: its own CONNECT port
-	// and a plain TCP forward to the gateway, which never leaves the run
-	// network (a gateway on the bridge makes every MCP server it launches
-	// inherit that mix of networks, which docker refuses; agentry-cli#105).
-	proxyName := containerName(runID, "proxy")
-	proxyArgv := []string{"proxy",
-		"--allow", strings.Join(p.Plan.Proxy.Allow, ","),
-		"--addr", fmt.Sprintf(":%d", spec.ProxyPort)}
-	if len(p.Plan.Proxy.PlainHTTP) > 0 {
-		proxyArgv = append(proxyArgv, "--plain-http", strings.Join(p.Plan.Proxy.PlainHTTP, ","))
-	}
-	proxyPublish := hostPublish(p, spec.ProxyPort)
-	if p.Plan.Harness.Host != nil {
-		proxyArgv = append(proxyArgv, "--forward", fmt.Sprintf(":%d=%s:%d", spec.GatewayPort, spec.GatewayAlias, spec.GatewayPort))
-		proxyPublish = append(proxyPublish, hostPublish(p, spec.GatewayPort)...)
-	}
-	proxySpec := dockerx.RunSpec{
-		Name:    proxyName,
-		Image:   p.Plan.Proxy.Image,
-		Argv:    proxyArgv,
-		Network: netName,
-		Alias:   spec.ProxyAlias,
-		Labels:  labels,
-		Publish: proxyPublish,
-	}
-	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
-	// The model endpoints at the addresses this machine resolves for them
-	// (modelhosts.go, agentry-cli#592).
-	rd.modelHosts = modelHostPins(ctx, p.Plan.Proxy.Allow)
-	proxySpec.ExtraHosts = append(proxySpec.ExtraHosts, rd.modelHosts...)
-	// Under the run's runtime where the host's name servers are named
-	// (agentry-cli#337): it reads the run's own resolv.conf, and its egress
-	// leg is a network of the run's own joined at create, since a
-	// sandboxed runtime takes no network connected after start and docker
-	// refuses the default bridge beside the run network at create. A
-	// host-run harness's proxy publishes ports to the host and stays on
-	// the daemon's default, as measured.
-	sandboxed := proxySandboxed(p.Plan)
-	if sandboxed {
-		egress := proxyEgressNetwork(runID)
-		if err := d.NetworkCreate(ctx, egress, false, labels); err != nil {
-			return Classify(ExitGateway, fmt.Errorf("create the llm proxy's egress network: %w", err))
-		}
-		td.add(func(c context.Context) { _ = d.NetworkRemove(c, egress) })
-		td.networks = append(td.networks, egress)
-		proxySpec.ExtraNetworks = []string{egress}
-		proxySpec.Runtime = p.Plan.Runtime()
-		proxySpec.Mounts = append(proxySpec.Mounts, dockerx.Mount{
-			Source: filepath.Join(rd.cfg, "gateway", resolvConfFile), Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true,
-		})
-	}
-	if err := d.RunDetached(ctx, proxySpec); err != nil {
-		return Classify(ExitGateway, fmt.Errorf("start llm proxy: %w", err))
-	}
-	td.add(func(c context.Context) { _ = d.RemoveForce(c, proxyName) })
-	// The proxy needs a route to the model endpoint; the run network is
-	// internal by design, so it joins the default bridge as its second
-	// leg (or, sandboxed, took its own egress network at create). The
-	// agent container never does (§R11 invariant 2).
-	if !sandboxed {
-		if err := d.NetworkConnect(ctx, "bridge", proxyName); err != nil {
-			return Classify(ExitGateway, fmt.Errorf("connect proxy to bridge: %w", err))
-		}
-	}
-	if p.Plan.Harness.Host != nil {
-		port, perr := waitPublishedPort(ctx, d, proxyName, spec.ProxyPort)
-		if perr != nil {
-			return Classify(ExitGateway, fmt.Errorf("published proxy port: %w", perr))
-		}
-		rd.hostProxyURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-		gwPort, perr := waitPublishedPort(ctx, d, proxyName, spec.GatewayPort)
-		if perr != nil {
-			return Classify(ExitGateway, fmt.Errorf("published gateway forward: %w", perr))
-		}
-		rd.hostGatewayURL = fmt.Sprintf("http://127.0.0.1:%d/mcp", gwPort)
+	if err := startProxy(ctx, d, p, rd, td, runID, netName, labels); err != nil {
+		return err
 	}
 
 	gwName := containerName(runID, "gateway")
@@ -810,6 +735,90 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 	if err := checkDeclaredServersStarted(logs, p.Plan.MCPServers); err != nil {
 		return Classify(ExitGateway, withRefusals(err, rd))
+	}
+	return nil
+}
+
+// startProxy starts the run's llm egress proxy on netName, with its leg
+// out: a run's, and a Copilot model list's (copilotmodels.go).
+func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td *teardown, runID, netName string, labels map[string]string) error {
+	// LLM egress proxy: the agent container's only route out (§R4). It is
+	// also the one run container with a bridge leg, so for a host-run
+	// harness it is the host's door to everything: its own CONNECT port
+	// and a plain TCP forward to the gateway, which never leaves the run
+	// network (a gateway on the bridge makes every MCP server it launches
+	// inherit that mix of networks, which docker refuses; agentry-cli#105).
+	proxyName := containerName(runID, "proxy")
+	proxyArgv := []string{"proxy",
+		"--allow", strings.Join(p.Plan.Proxy.Allow, ","),
+		"--addr", fmt.Sprintf(":%d", spec.ProxyPort)}
+	if len(p.Plan.Proxy.PlainHTTP) > 0 {
+		proxyArgv = append(proxyArgv, "--plain-http", strings.Join(p.Plan.Proxy.PlainHTTP, ","))
+	}
+	proxyPublish := hostPublish(p, spec.ProxyPort)
+	if p.Plan.Harness.Host != nil {
+		proxyArgv = append(proxyArgv, "--forward", fmt.Sprintf(":%d=%s:%d", spec.GatewayPort, spec.GatewayAlias, spec.GatewayPort))
+		proxyPublish = append(proxyPublish, hostPublish(p, spec.GatewayPort)...)
+	}
+	proxySpec := dockerx.RunSpec{
+		Name:    proxyName,
+		Image:   p.Plan.Proxy.Image,
+		Argv:    proxyArgv,
+		Network: netName,
+		Alias:   spec.ProxyAlias,
+		Labels:  labels,
+		Publish: proxyPublish,
+	}
+	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
+	// The model endpoints at the addresses this machine resolves for them
+	// (modelhosts.go, agentry-cli#592).
+	rd.modelHosts = modelHostPins(ctx, p.Plan.Proxy.Allow)
+	proxySpec.ExtraHosts = append(proxySpec.ExtraHosts, rd.modelHosts...)
+	// Under the run's runtime where the host's name servers are named
+	// (agentry-cli#337): it reads the run's own resolv.conf, and its egress
+	// leg is a network of the run's own joined at create, since a
+	// sandboxed runtime takes no network connected after start and docker
+	// refuses the default bridge beside the run network at create. A
+	// host-run harness's proxy publishes ports to the host and stays on
+	// the daemon's default, as measured.
+	sandboxed := proxySandboxed(p.Plan)
+	if sandboxed {
+		egress := proxyEgressNetwork(runID)
+		if err := d.NetworkCreate(ctx, egress, false, labels); err != nil {
+			return Classify(ExitGateway, fmt.Errorf("create the llm proxy's egress network: %w", err))
+		}
+		td.add(func(c context.Context) { _ = d.NetworkRemove(c, egress) })
+		td.networks = append(td.networks, egress)
+		proxySpec.ExtraNetworks = []string{egress}
+		proxySpec.Runtime = p.Plan.Runtime()
+		proxySpec.Mounts = append(proxySpec.Mounts, dockerx.Mount{
+			Source: filepath.Join(rd.cfg, "gateway", resolvConfFile), Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true,
+		})
+	}
+	if err := d.RunDetached(ctx, proxySpec); err != nil {
+		return Classify(ExitGateway, fmt.Errorf("start llm proxy: %w", err))
+	}
+	td.add(func(c context.Context) { _ = d.RemoveForce(c, proxyName) })
+	// The proxy needs a route to the model endpoint; the run network is
+	// internal by design, so it joins the default bridge as its second
+	// leg (or, sandboxed, took its own egress network at create). The
+	// agent container never does (§R11 invariant 2).
+	if !sandboxed {
+		if err := d.NetworkConnect(ctx, "bridge", proxyName); err != nil {
+			return Classify(ExitGateway, fmt.Errorf("connect proxy to bridge: %w", err))
+		}
+	}
+	if p.Plan.Harness.Host != nil {
+		port, perr := waitPublishedPort(ctx, d, proxyName, spec.ProxyPort)
+		if perr != nil {
+			return Classify(ExitGateway, fmt.Errorf("published proxy port: %w", perr))
+		}
+		rd.hostProxyURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		gwPort, perr := waitPublishedPort(ctx, d, proxyName, spec.GatewayPort)
+		if perr != nil {
+			return Classify(ExitGateway, fmt.Errorf("published gateway forward: %w", perr))
+		}
+		rd.hostGatewayURL = fmt.Sprintf("http://127.0.0.1:%d/mcp", gwPort)
 	}
 	return nil
 }

@@ -4,7 +4,7 @@
 // answers with (recorded against the real binary with no account) and
 // copilot-sdk go/v1.0.19 names. It asks for the session's token at
 // session.create, as the real one does, then plays a scripted turn per
-// session.send.
+// session.send, and lists its Models to session.model.list.
 package copilottest
 
 import (
@@ -25,6 +25,10 @@ type Server struct {
 	CreateError string
 	// Turn plays one session.send on c; nil answers "Hello." and goes idle.
 	Turn func(c *Conn, prompt string)
+	// Models is session.model.list's list, each entry a model as Copilot
+	// CLI lists it (copilot-sdk go/rpc/zrpc.go Model: id, name, billing,
+	// policy); nil lists none.
+	Models []map[string]any
 
 	mu sync.Mutex
 	// Create is session.create's params, as the driver sent them.
@@ -138,6 +142,16 @@ func (c *Conn) handle(id json.RawMessage, method string, params map[string]any) 
 		s.Options = params
 		s.mu.Unlock()
 		c.reply(id, map[string]any{})
+	case "session.model.list":
+		if params["sessionId"] != c.sessionID || c.sessionID == "" {
+			c.fail(id, "Request session.model.list failed with message: Session not found for sessionId: "+fmt.Sprint(params["sessionId"]))
+			return
+		}
+		list := []any{}
+		for _, m := range s.Models {
+			list = append(list, m)
+		}
+		c.reply(id, map[string]any{"list": list, "auto": map[string]any{}})
 	case "session.send":
 		if params["sessionId"] != c.sessionID {
 			c.fail(id, "Session not found")
