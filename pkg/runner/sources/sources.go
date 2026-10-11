@@ -51,6 +51,16 @@ var LocalCaps = Caps{Files: source.DefaultMaxFiles, Bytes: source.DefaultMaxByte
 // its archive members counted against the uploads' 2,000 in the decode.
 var URLCaps = Caps{Files: 1, Bytes: source.DefaultURLMaxBytes}
 
+// HostedRepositoryCaps are a hosted run's repository caps (D7,
+// agentry-cli#872): 10,000 files and 256 MiB, on a run host shared by
+// every account.
+var HostedRepositoryCaps = Caps{Files: 10_000, Bytes: 256 << 20}
+
+// HostedURLCaps are a hosted run's url source caps: the hosted upload
+// cap, 10 MiB (agentry-enterprise's runs InputMaxBytes), since its file is
+// decoded as an upload is.
+var HostedURLCaps = Caps{Files: 1, Bytes: 10 << 20}
+
 // Kind is one source kind on the seam.
 type Kind struct {
 	// Type is the intake question type that asks for it.
@@ -67,8 +77,9 @@ type Kind struct {
 	// Runner is the kind's word in the runner image's source role (its
 	// --kind) and in the role's report.
 	Runner string
-	// Caps are a local run's caps for it (D7).
-	Caps Caps
+	// Caps are a local run's caps for it (D7); HostedCaps a hosted run's.
+	Caps       Caps
+	HostedCaps Caps
 	// AsUpload decodes it as an upload is decoded: every file checked by
 	// ClamAV, images read with OCR, and its files counted against the
 	// uploads' cap. Otherwise the source rule holds (D8): only executable
@@ -129,12 +140,13 @@ func Unfetched(id string, t manifest.IntakeType) error {
 // answer an https address with the ref after #, as Docker's build-context
 // addresses carry one.
 var repository = Kind{
-	Type:   manifest.IntakeRepository,
-	Noun:   "repository",
-	Prompt: "(the repository's https address; add #branch, #tag or #commit for one other than the default branch)",
-	Runner: source.KindRepository,
-	Caps:   LocalCaps,
-	Parse:  parseRepository,
+	Type:       manifest.IntakeRepository,
+	Noun:       "repository",
+	Prompt:     "(the repository's https address; add #branch, #tag or #commit for one other than the default branch)",
+	Runner:     source.KindRepository,
+	Caps:       LocalCaps,
+	HostedCaps: HostedRepositoryCaps,
+	Parse:      parseRepository,
 	Argv: func(s Source, caps Caps, proxy string) []string {
 		return fetchArgv(source.KindRepository, s, caps, proxy)
 	},
@@ -172,13 +184,14 @@ func parseRepository(answer string) (Source, error) {
 // fileURL is the url kind (agentry-cli#834): one file at a web address,
 // fetched with one https GET and decoded as an upload (D8, D12).
 var fileURL = Kind{
-	Type:     manifest.IntakeURL,
-	Noun:     "file",
-	Prompt:   "(the file's https address)",
-	Runner:   source.KindURL,
-	Caps:     URLCaps,
-	AsUpload: true,
-	Parse:    parseFileURL,
+	Type:       manifest.IntakeURL,
+	Noun:       "file",
+	Prompt:     "(the file's https address)",
+	Runner:     source.KindURL,
+	Caps:       URLCaps,
+	HostedCaps: HostedURLCaps,
+	AsUpload:   true,
+	Parse:      parseFileURL,
 	Argv: func(s Source, caps Caps, proxy string) []string {
 		return fetchArgv(source.KindURL, s, caps, proxy)
 	},

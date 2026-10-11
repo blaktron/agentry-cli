@@ -1438,8 +1438,15 @@ last path segment and rewritten to a name every file system takes. It is decoded
 to the malware check, images read with OCR, an archive unpacked under DR-39's
 rules and its members counted against the uploads' 2,000), and a body past
 256 MiB is refused whole. Its query, which can carry a signed download's credential, is
-shown as `?…` in `intake.json` and the receipt. A hosted run refuses a source
-until agentry-enterprise#516.
+shown as `?…` in `intake.json` and the receipt. On a hosted run (one given
+`--review-inputs`, agentry-cli#872) a repository is held to 10,000 files and
+256 MiB and a `url` source to the hosted upload cap of 10 MiB, and AI Review
+reads a repository's Markdown files only (`.md`, `.markdown`, `.mdx`, and a
+`README` or `CONTRIBUTING` with no extension), not its code, and a `url`
+source's file as it reads an upload. A repository whose Markdown does not all
+fit in what AI Review reads of a run is refused with the count, never
+reviewed in part, and the `source.<id>` line says how many Markdown files AI
+Review read.
 
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
