@@ -186,7 +186,7 @@ func TestAReleaseWithoutATargetHostHasNoHostLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	cat, _ := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
-	agent, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml"))  //nolint:gosec // test plan dir
+	agent, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
 	if plan.HostLink != nil || strings.Contains(string(cat), "hostlink") || strings.Contains(string(cat), "hostfiles") ||
 		strings.Contains(string(agent), "host_") || strings.Contains(string(agent), "Target hosts") || plan.Enforcement["targetHosts"] != "" {
 		t.Fatal("a release with no target host compiled a host link")

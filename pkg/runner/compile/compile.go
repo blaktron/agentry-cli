@@ -37,8 +37,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
-	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
+	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
