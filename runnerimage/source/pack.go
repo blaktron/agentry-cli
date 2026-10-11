@@ -43,6 +43,17 @@ const maxChain = 512
 
 var errPack = errors.New("the host sent a malformed pack")
 
+// tooManyObjects is a pack holding more objects than a source under its
+// caps can: a cap refusal, with the count.
+type tooManyObjects struct {
+	count uint32
+	max   int
+}
+
+func (e tooManyObjects) Error() string {
+	return fmt.Sprintf("the pack holds %d objects, past the %d this fetch reads", e.count, e.max)
+}
+
 // entry is one object's place in the pack.
 type entry struct {
 	off     int64 // where its header starts
@@ -134,7 +145,7 @@ func indexPack(f *os.File, maxObjects int) (*pack, error) {
 	}
 	count := binary.BigEndian.Uint32(hdr[8:12])
 	if int64(count) > int64(maxObjects) {
-		return nil, fmt.Errorf("the pack holds %d objects, past the %d this fetch reads", count, maxObjects)
+		return nil, tooManyObjects{count: count, max: maxObjects}
 	}
 	p := &pack{f: f, entries: make([]entry, 0, count), byOff: map[int64]int{}, byOID: map[string]int{}, cache: newBaseCache(64 << 20)}
 	for i := uint32(0); i < count; i++ {

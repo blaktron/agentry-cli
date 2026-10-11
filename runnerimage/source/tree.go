@@ -44,7 +44,14 @@ type plan struct {
 	dirs    []string
 	bytes   int64
 	skipped map[string][]string // reason → paths
+	// entries counts every tree entry walked, against maxEntries: a tree
+	// that names one subtree many times would otherwise enumerate without
+	// bound before any cap is checked.
+	entries, maxEntries int
 }
+
+// errTooManyEntries stops a walk past maxEntries.
+var errTooManyEntries = errors.New("too many entries")
 
 // treeOf reads a commit and answers its tree's name.
 func treeOf(p *pack, commit string) (string, error) {
@@ -63,9 +70,10 @@ func treeOf(p *pack, commit string) (string, error) {
 	return oid, nil
 }
 
-// planTree walks a tree into a plan.
-func planTree(p *pack, tree string) (*plan, error) {
-	pl := &plan{skipped: map[string][]string{}}
+// planTree walks a tree into a plan, stopping with errTooManyEntries once
+// it has walked maxEntries entries.
+func planTree(p *pack, tree string, maxEntries int) (*plan, error) {
+	pl := &plan{skipped: map[string][]string{}, maxEntries: maxEntries}
 	return pl, pl.walk(p, tree, "", 0)
 }
 
@@ -83,6 +91,9 @@ func (pl *plan) walk(p *pack, tree, dir string, depth int) error {
 		nul := bytes.IndexByte(data, 0)
 		if sp <= 0 || nul < sp || len(data) < nul+21 {
 			return errors.New("the host sent a malformed tree")
+		}
+		if pl.entries++; pl.entries > pl.maxEntries {
+			return errTooManyEntries
 		}
 		mode, name := string(data[:sp]), string(data[sp+1:nul])
 		oid := hex.EncodeToString(data[nul+1 : nul+21])

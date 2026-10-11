@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -125,7 +126,7 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 		if r.Name == fetch.Name || r.Name == proxy.Name {
 			continue
 		}
-		if r.Network == fetch.Network || containsString(r.ExtraNetworks, fetch.Network) {
+		if r.Network == fetch.Network || slices.Contains(r.ExtraNetworks, fetch.Network) {
 			t.Errorf("%s is on the source's network", r.Name)
 		}
 		for _, m := range r.Mounts {
@@ -148,7 +149,7 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 	for _, e := range idx.Files {
 		listed = append(listed, e.Path)
 	}
-	if !containsString(listed, "repo/src/main.go") || !containsString(listed, "repo/README.md") {
+	if !slices.Contains(listed, "repo/src/main.go") || !slices.Contains(listed, "repo/README.md") {
 		t.Errorf("the index does not list the source's files: %v", listed)
 	}
 	// intake.json names the commit and the folder, never the token.
@@ -284,8 +285,9 @@ func TestAFetchFailureSaysWhy(t *testing.T) {
 	assertNoToken(t, p.OutDir)
 }
 
-// TestAHostedRunTakesNoSourceYet: until M7, a hosted run (AI Review of its
-// inputs) refuses a source rather than fetching it with local caps.
+// TestAHostedRunTakesNoSourceYet: until agentry-enterprise#516, a hosted
+// run (AI Review of its inputs) refuses a source rather than fetching it
+// with local caps.
 func TestAHostedRunTakesNoSourceYet(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -313,13 +315,4 @@ func assertNoToken(t *testing.T, dir string) {
 		}
 		return nil
 	})
-}
-
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

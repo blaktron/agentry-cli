@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 )
 
 // The pkt-line framing of git's wire protocol (gitprotocol-common): four
@@ -92,7 +93,8 @@ func hostError(msg string) error {
 	return fmt.Errorf("the host said: %s", printable(msg, 300))
 }
 
-// printable keeps the printable ASCII of s, at most n bytes of it.
+// printable keeps the printable ASCII of s, at most n bytes of it (the host
+// keeps the same rule, pkg/runner/sources).
 func printable(s string, n int) string {
 	var b []byte
 	for i := 0; i < len(s) && len(b) < n; i++ {
@@ -103,9 +105,4 @@ func printable(s string, n int) string {
 	return string(b)
 }
 
-func cutPrefix(s, prefix string) (string, bool) {
-	if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
-		return s[len(prefix):], true
-	}
-	return s, false
-}
+func cutPrefix(s, prefix string) (string, bool) { return strings.CutPrefix(s, prefix) }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
@@ -880,6 +881,23 @@ func TestNotRiskyIsASourcesWordAlone(t *testing.T) {
 	} {
 		if err := checkCheck(file, true, src); err == nil {
 			t.Errorf("%s passed as not risky", name)
+		}
+	}
+}
+
+// TestSourceRiskyIsNarrower: every type the source rule checks by content
+// that the Hybrid Analysis table also knows is risky there too, so the
+// two tables cannot drift apart on the binaries they share; the source
+// rule leaves out scripts, which the upload table checks.
+func TestSourceRiskyIsNarrower(t *testing.T) {
+	for _, mime := range []string{"application/x-dosexec", "application/x-sharedlib", "application/x-mach-binary", "application/java-archive", "application/x-msi", "application/msword", "application/pdf", "application/vnd.ms-htmlhelp"} {
+		if !runnerdecode.SourceRisky(mime, "x") || !hybrid.Risky(mime, "x") {
+			t.Errorf("%s: source %v, upload %v", mime, runnerdecode.SourceRisky(mime, "x"), hybrid.Risky(mime, "x"))
+		}
+	}
+	for _, p := range []string{"a.js", "a.ps1", "a.bat", "a.vbs"} {
+		if runnerdecode.SourceRisky("text/plain", p) || !hybrid.Risky("text/plain", p) {
+			t.Errorf("%s: a script is the upload rule's alone", p)
 		}
 	}
 }

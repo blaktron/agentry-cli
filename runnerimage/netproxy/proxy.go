@@ -53,9 +53,7 @@ type Proxy struct {
 	// input-sources.md §5, invariant 3; agentry-cli#833).
 	PublicOnly bool
 	// Resolver answers PublicOnly's lookups; nil is the system's.
-	Resolver interface {
-		LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
-	}
+	Resolver Resolver
 	// Logw receives one line per decision (CONNECT, and plain http as
 	// "allow http" / "deny http"); nil discards. The
 	// engine points this at stderr, which lands in the run's receipts.
@@ -270,6 +268,11 @@ func (p *Proxy) plainTransport() *http.Transport {
 	return p.transport
 }
 
+// Resolver looks a name up; *net.Resolver is one.
+type Resolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
 // publicAddress resolves host and answers its first address, refusing the
 // host when any address is not public.
 func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) {
@@ -279,9 +282,7 @@ func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) 
 		}
 		return ip, nil
 	}
-	var res interface {
-		LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
-	} = net.DefaultResolver
+	var res Resolver = net.DefaultResolver
 	if p.Resolver != nil {
 		res = p.Resolver
 	}
@@ -302,7 +303,8 @@ func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) 
 	return addrs[0].IP, nil
 }
 
-// notPublic are the ranges Go's net.IP methods leave out: this network,
+// notPublic are the ranges Go's net.IP methods leave out (the host's
+// egress guard keeps its own list, pkg/mcpauth/guard.go): this network,
 // shared address space (CGNAT, where a tailnet's addresses live), IETF
 // protocol assignments, the documentation and benchmarking ranges, the
 // reserved range, NAT64 and 6to4 (which embed an IPv4 address of any

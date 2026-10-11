@@ -192,12 +192,17 @@ func fetch(ctx context.Context, o Options, rep *Report) error {
 	maxPack := o.MaxBytes + 64<<20
 	if err := r.fetch(ctx, l, want, pf, maxPack); err != nil {
 		if errors.Is(err, errPackTooLarge) {
-			rep.Refusal = fmt.Sprintf("the repository's pack at %s is larger than the %s cap", want, sizeWords(o.MaxBytes))
+			rep.Refusal = fmt.Sprintf("the repository's pack at %s is larger than %s, more than a repository within the %s cap can be", want, sizeWords(maxPack), sizeWords(o.MaxBytes))
 			return nil
 		}
 		return err
 	}
 	p, err := indexPack(pf, 4*o.MaxFiles+1000)
+	var many tooManyObjects
+	if errors.As(err, &many) {
+		rep.Refusal = fmt.Sprintf("the repository's pack at %s holds %d objects, more than a repository within the %d-file cap can", want, many.count, o.MaxFiles)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -206,7 +211,14 @@ func fetch(ctx context.Context, o Options, rep *Report) error {
 		return err
 	}
 	rep.Commit = want
-	pl, err := planTree(p, tree)
+	// Folders and what is left out count too, so the walk is bounded at
+	// a multiple of the file cap.
+	maxEntries := 2*o.MaxFiles + 10000
+	pl, err := planTree(p, tree, maxEntries)
+	if errors.Is(err, errTooManyEntries) {
+		rep.Refusal = fmt.Sprintf("the repository holds more than %d files, folders and links at %s, past what the %d-file cap allows", maxEntries, want, o.MaxFiles)
+		return nil
+	}
 	if err != nil {
 		return err
 	}

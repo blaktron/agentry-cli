@@ -59,7 +59,7 @@ func fetchSources(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, 
 		return nil, nil
 	}
 	// A hosted run's sources arrive with their own caps, job credentials
-	// and AI Review of a source's Markdown (M7, agentry-enterprise#516).
+	// and AI Review of a source's Markdown (agentry-enterprise#516).
 	if p.InputReview != nil {
 		return nil, Classify(ExitPolicy, errors.New("this run was given an input source, which a hosted run does not take yet (agentry-enterprise#516)"))
 	}

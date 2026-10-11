@@ -12,7 +12,10 @@ import (
 // the same files up on Hybrid Analysis. Uploads and a url source are
 // checked whole, as before.
 
-// sourceRiskyTypes are the detected types checked in a source: PE, ELF and
+// sourceRiskyTypes are the detected types checked in a source, the binary
+// half of the host's Hybrid Analysis table (pkg/runner/hybrid riskyTypes,
+// which this stdlib-only package cannot import; TestSourceRiskyIsNarrower
+// holds the two together): PE, ELF and
 // Mach-O executables, libraries and objects, Java and WebAssembly code,
 // installers and packages, legacy and macro Office and their container,
 // PDF and CHM. A type is matched without its parameters.
@@ -68,16 +71,11 @@ func SourceRisky(mime, p string) bool {
 	if sourceRiskyTypes[strings.ToLower(strings.TrimSpace(mime))] {
 		return true
 	}
-	ext := strings.TrimPrefix(path.Ext(strings.ToLower(p)), ".")
-	if strings.HasPrefix(ext, "so.") || ext == "so" {
+	// A versioned library, libfoo.so.1.2, has the version as its extension.
+	if strings.Contains(strings.ToLower(path.Base(p)), ".so.") {
 		return true
 	}
-	// libfoo.so.1.2: the extension is the last number.
-	base := strings.ToLower(path.Base(p))
-	if strings.Contains(base, ".so.") {
-		return true
-	}
-	return sourceRiskyNames[ext]
+	return sourceRiskyNames[strings.TrimPrefix(path.Ext(strings.ToLower(p)), ".")]
 }
 
 // WhySourceImage: an image in an input source is not read with OCR. A

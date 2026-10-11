@@ -238,10 +238,12 @@ var skipWords = map[string][2]string{
 // holds the token.
 func Document(s Source, rep source.Report, inputsMount string) map[string]any {
 	entry := map[string]any{
-		"url":    s.URL,
-		"commit": rep.Commit,
-		"path":   inputsMount + "/" + s.ID + "/",
-		"files":  rep.Files,
+		"url":  s.URL,
+		"path": inputsMount + "/" + s.ID + "/",
+	}
+	// The commit and the count once the fetch made them, never a blank.
+	if rep.Commit != "" {
+		entry["commit"], entry["files"] = rep.Commit, rep.Files
 	}
 	if s.Ref != "" {
 		entry["ref"] = s.Ref

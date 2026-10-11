@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -354,5 +355,50 @@ func TestPortableName(t *testing.T) {
 		if !isGitName(g) {
 			t.Errorf("isGitName(%q) = false", g)
 		}
+	}
+}
+
+// TestATreeBombIsRefusedBeforeItIsWalkedWhole: a tree that names one
+// subtree many times (a million files from a few hundred objects) is
+// stopped at the walk's bound and refused, never enumerated whole.
+func TestATreeBombIsRefusedBeforeItIsWalkedWhole(t *testing.T) {
+	f := newFixture(t, true)
+	g := gitBin(t)
+	git := func(stdin string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(g, args...)
+		cmd.Dir = f.bare
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	blob := git("x\n", "hash-object", "-w", "--stdin")
+	level := func(mode, typ, oid, prefix string) string {
+		var b strings.Builder
+		for i := 0; i < 100; i++ {
+			b.WriteString(mode + " " + typ + " " + oid + "\t" + prefix + strconv.Itoa(i) + "\n")
+		}
+		return git(b.String(), "mktree")
+	}
+	t1 := level("100644", "blob", blob, "f")
+	t2 := level("040000", "tree", t1, "d")
+	t3 := level("040000", "tree", t2, "e")
+	commit := git("", "commit-tree", t3, "-m", "bomb")
+	git("", "update-ref", "refs/heads/bomb", commit)
+	o := f.options(t)
+	o.Ref = "bomb"
+	rep, err := Fetch(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if !strings.Contains(rep.Refusal, "more than 50000 files, folders and links") {
+		t.Errorf("refusal %q", rep.Refusal)
+	}
+	if got := listFiles(t, o.Out); len(got) != 0 {
+		t.Errorf("a refused tree staged %d files", len(got))
 	}
 }
