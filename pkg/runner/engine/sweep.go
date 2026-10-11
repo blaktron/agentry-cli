@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ import (
 // however old; nor is anything created before the owner labels existed, by
 // another user, from another pid namespace, or anywhere off Linux (no
 // labels are written there). For each removed run container the run's
-// network and session volume go too, by name, after the containers.
+// networks and session volume go too, after the containers.
 //
 // Best effort and bounded: the sweep never fails a run, and it tells the
 // person what it removed and what it could not. Run and StartSession call
@@ -57,14 +58,9 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 		}
 	}
 	for r := range runs {
-		_ = d.NetworkRemove(ctx, networkName(r))
-		// The llm-proxy's egress network under a runtime (agentry-cli#337)
-		// and the web tools' network (agentry-cli#386) are the run's too.
-		_ = d.NetworkRemove(ctx, proxyEgressNetwork(r))
-		_ = d.NetworkRemove(ctx, webNetwork(r))
-		internal, out := relayNetworks(r)
-		_ = d.NetworkRemove(ctx, internal)
-		_ = d.NetworkRemove(ctx, out)
+		for _, n := range runNetworks(ctx, d, r) {
+			_ = d.NetworkRemove(ctx, n)
+		}
 		_ = d.VolumeRemove(ctx, sessionVolumeName(r))
 	}
 	if stderr == nil {
@@ -78,4 +74,24 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 		sort.Strings(failed)
 		_, _ = fmt.Fprintf(stderr, "warning: could not remove %d container(s) a run whose process had died left behind: %s (docker rm -f <name>)\n", len(failed), strings.Join(failed, ", "))
 	}
+}
+
+// runNetworks is every network of run r: those its id names (the run's own,
+// the llm-proxy's egress under a runtime, agentry-cli#337, the web tools',
+// agentry-cli#386, and the relays' pair), and every network carrying its
+// run label, which finds those a step names itself, such as an input
+// source's (agentry-cli#852). The names stand when docker cannot list.
+func runNetworks(ctx context.Context, d dockerx.Client, r string) []string {
+	internal, out := relayNetworks(r)
+	names := []string{networkName(r), proxyEgressNetwork(r), webNetwork(r), internal, out}
+	labelled, err := d.NetworksByLabel(ctx, runLabel+"="+r)
+	if err != nil {
+		return names
+	}
+	for _, n := range labelled {
+		if !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	return names
 }

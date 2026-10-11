@@ -1143,7 +1143,8 @@ manifest + operator policy into a deterministic run plan → execute:
   is not retried and never replaces the run's own error, so something can
   be left behind. A sweep at the end of the run removes any container or
   volume still carrying the run's label, and on Linux the next run removes
-  the containers of a run whose process died.
+  the containers of a run whose process died, then its volume and every
+  network carrying its label (an input source's included).
 - **`agentry install ns/name`** lays the verified release down in the
   runner home, where `agentry run` reads it — no second fetch — with the
   Claude-skill or AGENTS.md shape beside it (the policy's coding agent or
@@ -1438,8 +1439,15 @@ last path segment and rewritten to a name every file system takes. It is decoded
 to the malware check, images read with OCR, an archive unpacked under DR-39's
 rules and its members counted against the uploads' 2,000), and a body past
 256 MiB is refused whole. Its query, which can carry a signed download's credential, is
-shown as `?…` in `intake.json` and the receipt. A hosted run refuses a source
-until agentry-enterprise#516.
+shown as `?…` in `intake.json` and the receipt. On a hosted run (one given
+`--review-inputs`, agentry-cli#872) a repository is held to 10,000 files and
+256 MiB and a `url` source to the hosted upload cap of 10 MiB, and AI Review
+reads a repository's Markdown files only (`.md`, `.markdown`, `.mdx`, and a
+`README` or `CONTRIBUTING` with no extension), not its code, and a `url`
+source's file as it reads an upload. A repository whose Markdown does not all
+fit in what AI Review reads of a run is refused with the count, never
+reviewed in part, and the `source.<id>` line says how many Markdown files AI
+Review read.
 
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.

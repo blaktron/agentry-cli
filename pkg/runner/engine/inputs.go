@@ -60,6 +60,9 @@ type inputsDecoder struct {
 	// refused is each refusal of a session's added file, for the receipt.
 	refused []string
 	index   toolsrv.InputsIndex
+	// sourceReviewed is how many Markdown files of each source AI Review
+	// read (agentry-cli#872), for its receipt line.
+	sourceReviewed map[string]int
 }
 
 // ensureDecode, ensureSignatures and runDecode are the decode step's
@@ -131,9 +134,21 @@ func (x *inputsDecoder) reviewEntries(ctx context.Context, res *decode.Result, e
 		return entries, nil, nil
 	}
 	texts := reviewTexts(entries, res.In, x.textRoot(), x.convertedRoot())
+	texts, markdown := sourceReviewTexts(texts, x.rd.sources)
 	withheld, refusal, err := x.review.review(ctx, texts, added)
 	if err != nil {
 		return nil, nil, Classify(ExitCLI, err)
+	}
+	if refusal == nil {
+		if err := sourceNotReviewed(withheld, x.rd.sources, markdown); err != nil {
+			return nil, nil, Classify(ExitPolicy, inputRefused(receipt.InputNotReviewed, err))
+		}
+	}
+	for id, n := range markdown {
+		if x.sourceReviewed == nil {
+			x.sourceReviewed = map[string]int{}
+		}
+		x.sourceReviewed[id] = n
 	}
 	for i, e := range entries {
 		if !slices.Contains(withheld, e.Path) {

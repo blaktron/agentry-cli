@@ -158,6 +158,19 @@ func TestCLIVolumeOps(t *testing.T) {
 	}
 }
 
+// TestCLINetworksByLabel: a dead run's networks are listed by its run
+// label, one name a line (agentry-cli#852).
+func TestCLINetworksByLabel(t *testing.T) {
+	c, record := stub(t, `case "$*" in *"network ls"*) printf 'agentry-x-net\nagentry-x-src-repo\n\n';; esac; exit 0`)
+	names, err := c.NetworksByLabel(context.Background(), "agentry.run=x")
+	if err != nil || !reflect.DeepEqual(names, []string{"agentry-x-net", "agentry-x-src-repo"}) {
+		t.Fatalf("NetworksByLabel = %v, %v", names, err)
+	}
+	if got, want := recorded(t, record), []string{"network ls --filter label=agentry.run=x --format {{.Name}}"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("argv lines = %q\nwant %q", got, want)
+	}
+}
+
 func TestEnvPairsSorted(t *testing.T) {
 	r := RunSpec{Env: map[string]string{"Z": "26", "A": "1", "M": "13"}}
 	want := []string{"A=1", "M=13", "Z=26"}

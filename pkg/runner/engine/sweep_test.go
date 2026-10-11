@@ -141,3 +141,47 @@ func TestStartSessionSweepsBeforeItBuilds(t *testing.T) {
 		t.Errorf("sweep at %d, network at %d, want the sweep first: %v", swept, built, ops)
 	}
 }
+
+// TestSweepRemovesTheSourceNetworkOfARunKilledMidFetch: a run killed while
+// an input source is fetched leaves the step's proxy and its network, whose
+// name no run id alone determines. The network carries the run's labels, so
+// the next run's sweep lists it by the run's label and removes it after the
+// containers (agentry-cli#852).
+func TestSweepRemovesTheSourceNetworkOfARunKilledMidFetch(t *testing.T) {
+	dead := deadOwner(t)
+	p, f := fixture(t)
+	happyFake(f)
+	fg := withSource(t, &p, f, map[string]string{"README.md": "# r\n"}, nil)
+	// What the docker host holds at the moment of the kill: the networks
+	// the run had made while its fetch step ran.
+	var atKill []dockerx.Labeled
+	before := fg.Before
+	fg.Before = func(r dockerx.RunSpec) {
+		before(r)
+		atKill = f.NetworkState()
+	}
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	src := sourceNetworkName("cafe0000", "repo")
+	if !slices.ContainsFunc(atKill, func(n dockerx.Labeled) bool { return n.Name == src && n.Labels[runLabel] == "cafe0000" }) {
+		t.Fatalf("the fetch step's network is not labelled with its run: %v", atKill)
+	}
+
+	// The process died there: its proxy, detached, outlived it.
+	host := &dockerx.Fake{
+		Containers: []dockerx.Labeled{{Name: containerName("cafe0000", "source-proxy-repo"), Labels: withRun(dead, "cafe0000")}},
+		Networks:   atKill,
+	}
+	SweepAbandoned(context.Background(), host, nil)
+	ops := host.Ops()
+	proxyGone, netGone := slices.Index(ops, "RemoveForce:"+containerName("cafe0000", "source-proxy-repo")), slices.Index(ops, "NetworkRemove:"+src)
+	if proxyGone < 0 || netGone < 0 || netGone < proxyGone {
+		t.Fatalf("want the proxy removed, then its network: %v", ops)
+	}
+	for _, n := range host.NetworkState() {
+		if n.Labels[runLabel] == "cafe0000" {
+			t.Errorf("the dead run's network %s is still there", n.Name)
+		}
+	}
+}

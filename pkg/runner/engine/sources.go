@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,11 +60,6 @@ func fetchSources(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, 
 	if len(srcs) == 0 {
 		return nil, nil
 	}
-	// A hosted run's sources arrive with their own caps, job credentials
-	// and AI Review of a source's Markdown (agentry-enterprise#516).
-	if p.InputReview != nil {
-		return nil, Classify(ExitPolicy, errors.New("this run was given an input source, which a hosted run does not take yet (agentry-enterprise#516)"))
-	}
 	if p.Policy == nil {
 		return nil, Classify(ExitCLI, errors.New("the input sources cannot be fetched: no policy names the files image"))
 	}
@@ -114,6 +110,12 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 	}
 	defer func() { _ = os.RemoveAll(base) }()
 	caps := kind.Caps
+	if p.InputReview != nil {
+		// A hosted run (it is the one with AI Review): the hosted caps,
+		// and the source's Markdown read by AI Review in the decode
+		// (agentry-cli#872, D7, D9).
+		caps = kind.HostedCaps
+	}
 
 	// The network and the proxy are the step's own, removed as soon as it
 	// ends (and by the teardown if the run dies first).
@@ -327,15 +329,39 @@ func checkSourceFile(tree string, rep source.Report) error {
 // sourceLines puts each source's receipt line into enforced, under
 // source.<id>, with the malware check of its files from the decode.
 func sourceLines(enforced map[string]string, runs []sourceRun, dec *inputsDecoder) {
-	var files []runnerdecode.File
+	var (
+		files    []runnerdecode.File
+		reviewed map[string]int
+		hosted   bool
+	)
 	if dec != nil {
 		dec.mu.Lock()
 		files = dec.before.Report.Files
+		reviewed, hosted = maps.Clone(dec.sourceReviewed), dec.review != nil
 		dec.mu.Unlock()
 	}
 	for _, r := range runs {
-		enforced["source."+r.src.ID] = sources.Line(r.src, r.fetched, sources.ChecksFor(r.src, files))
+		line := sources.Line(r.src, r.fetched, sources.ChecksFor(r.src, files))
+		if hosted {
+			line += "; " + reviewedWords(r.src, reviewed[r.src.ID])
+		}
+		enforced["source."+r.src.ID] = line
 	}
+}
+
+// reviewedWords says what AI Review read of a source on a hosted run: a
+// repository's Markdown files, a url source's file whole.
+func reviewedWords(s sources.Source, markdown int) string {
+	if k, ok := sources.Lookup(s.Kind); ok && k.AsUpload {
+		return "AI Review reads it as it reads an upload"
+	}
+	switch markdown {
+	case 0:
+		return "AI Review read no file of it: it has no Markdown file"
+	case 1:
+		return "AI Review read its 1 Markdown file, not its code"
+	}
+	return fmt.Sprintf("AI Review read its %d Markdown files, not its code", markdown)
 }
 
 // sourceIDs are the folders under /inputs that the decode holds to the
