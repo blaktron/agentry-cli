@@ -54,6 +54,10 @@ const (
 	// UncheckedFailed: clamscan could not read it, failed or was stopped
 	// before it answered for it.
 	UncheckedFailed Unchecked = "failed"
+	// UncheckedNotRisky: a file in an input source that is not an
+	// executable or binary risky type, which only those are checked in a
+	// source (plan input-sources.md D8; SourceRisky).
+	UncheckedNotRisky Unchecked = "not-risky"
 )
 
 // WhyFound: a file clamscan found a signature in is never decoded.

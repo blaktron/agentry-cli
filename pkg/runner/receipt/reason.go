@@ -145,6 +145,12 @@ const (
 	// first), and no text it has not read reaches the agent: the
 	// platform's fault, refunded.
 	InputNotReviewed = "not-reviewed"
+	// InputSourceCap: an input source is over its cap (plan
+	// input-sources.md D7): refused with its count, never staged in part.
+	InputSourceCap = "source-cap"
+	// InputSourceFetch: an input source could not be fetched: the host
+	// refused it, has no such repository or ref, or could not be reached.
+	InputSourceFetch = "source-fetch"
 )
 
 // The details of ReasonInputsNotDecoded.
@@ -201,7 +207,7 @@ var reasonCodes = map[ReasonCode]struct {
 	}},
 	ReasonMCPStartFailed:    {names: namesServer},
 	ReasonSecretMissing:     {names: namesSecret},
-	ReasonInputRefused:      {details: []string{InputMalware, InputNameClash, InputUnreadable, InputFlagged, InputNotReviewed}},
+	ReasonInputRefused:      {details: []string{InputMalware, InputNameClash, InputUnreadable, InputFlagged, InputNotReviewed, InputSourceCap, InputSourceFetch}},
 	ReasonInputsNotDecoded:  {details: []string{DecodeImage, DecodeRun}},
 	ReasonAgentBlocked:      {},
 	ReasonRunnerBlocked:     {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},

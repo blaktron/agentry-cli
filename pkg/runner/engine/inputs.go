@@ -68,7 +68,7 @@ type inputsDecoder struct {
 var (
 	ensureDecode     = decode.Ensure
 	ensureSignatures = clamdb.Ensure
-	runDecode        = decode.Run
+	runDecode        = decode.RunSources
 	hybridClient     = hybrid.FromPolicy
 )
 
@@ -99,7 +99,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 		// lists them.
 		return x, x.indexIntake()
 	}
-	res, err := x.decode(ctx, rd.inputs)
+	res, err := x.decode(ctx, rd.inputs, rd.sources)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func (x *inputsDecoder) indexIntake() error {
 // the signatures are ensured on first use: the files image is pulled, and
 // the signature bundle refreshed, only for a run that has something to
 // decode. The caller holds x.mu.
-func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, error) {
+func (x *inputsDecoder) decode(ctx context.Context, in string, sources []string) (*decode.Result, error) {
 	if x.p.Policy == nil {
 		return nil, Classify(ExitCLI, errors.New("the inputs cannot be decoded: no policy names the files image"))
 	}
@@ -232,7 +232,7 @@ func (x *inputsDecoder) decode(ctx context.Context, in string) (*decode.Result, 
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("make the decode's output directory: %w", err))
 	}
-	res, err := runDecode(ctx, x.d, *x.img, in, out, x.p.limits(), x.p.Stderr)
+	res, err := runDecode(ctx, x.d, *x.img, in, out, x.p.limits(), sources, x.p.Stderr)
 	if err != nil {
 		return nil, Classify(ExitGateway, receipt.WithReason(fmt.Errorf("the inputs could not be decoded: %w", err), receipt.ReasonInputsNotDecoded, receipt.DecodeRun))
 	}
@@ -341,7 +341,7 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	if err := os.WriteFile(filepath.Join(in, base), data, 0o644); err != nil { //nolint:gosec // read by the decode container
 		return toolsrv.InputEntry{}, fmt.Errorf("stage %s for the decode: %w", base, err)
 	}
-	res, err := x.decode(ctx, in)
+	res, err := x.decode(ctx, in, nil)
 	if err != nil {
 		return toolsrv.InputEntry{}, err
 	}
@@ -388,6 +388,7 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 // merged adds one decode's files to an account of several.
 func merged(into decode.Result, res *decode.Result) decode.Result {
 	into.Image = res.Image
+	into.Sources = append(into.Sources, res.Sources...)
 	into.Report.Files = append(into.Report.Files, res.Report.Files...)
 	if res.Lookups != nil {
 		if into.Lookups == nil {

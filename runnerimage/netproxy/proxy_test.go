@@ -9,6 +9,7 @@ package netproxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -628,5 +629,48 @@ func TestPlainHTTPMustAlsoBeOnTheAllowlist(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden || hit {
 		t.Fatalf("status %d, upstream hit=%v", resp.StatusCode, hit)
+	}
+}
+
+// fakeResolver answers every lookup with its addresses.
+type fakeResolver []string
+
+func (f fakeResolver) LookupIPAddr(_ context.Context, _ string) ([]net.IPAddr, error) {
+	var out []net.IPAddr
+	for _, a := range f {
+		out = append(out, net.IPAddr{IP: net.ParseIP(a)})
+	}
+	return out, nil
+}
+
+// TestPublicOnlyRefusesAPrivateAnswer: an input source's proxy refuses a
+// permitted host that resolves to any address off the public internet,
+// even when another of its answers is public (invariant 3).
+func TestPublicOnlyRefusesAPrivateAnswer(t *testing.T) {
+	for _, answer := range [][]string{{"127.0.0.1"}, {"10.1.2.3"}, {"169.254.169.254"}, {"100.101.102.103"}, {"8.8.8.8", "192.168.1.1"}, {"::1"}, {"fd00::1"}, {"fe80::1"}, {"::ffff:127.0.0.1"}} {
+		logs := &lockedBuf{}
+		p := &Proxy{Allow: []string{"source.example:443"}, PublicOnly: true, Resolver: fakeResolver(answer), Logw: logs}
+		srv := httptest.NewServer(p.Handler())
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = fmt.Fprintf(conn, "CONNECT source.example:443 HTTP/1.1\r\nHost: source.example:443\r\n\r\n")
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%v: status %d, want 403", answer, resp.StatusCode)
+		}
+		if !strings.Contains(logs.String(), "not a public address") {
+			t.Errorf("%v: the denial does not say why: %s", answer, logs.String())
+		}
+		_ = conn.Close()
+		srv.Close()
+	}
+	// An IP literal is held to the same rule.
+	if Public(net.ParseIP("127.0.0.1")) || !Public(net.ParseIP("140.82.112.3")) || !Public(net.ParseIP("2606:4700::1")) {
+		t.Error("Public misjudges a literal")
 	}
 }

@@ -861,3 +861,25 @@ func TestCheckHoldsTheDigestsToTheFiles(t *testing.T) {
 		})
 	}
 }
+
+// TestNotRiskyIsASourcesWordAlone: only a file in an input source, of a
+// type the source rule leaves out, may go unchecked as not risky; a report
+// that says so of an upload or of a source's executable is refused (D8).
+func TestNotRiskyIsASourcesWordAlone(t *testing.T) {
+	src := []string{"repo"}
+	f := func(path, mime string) runnerdecode.File {
+		return runnerdecode.File{Path: path, MIME: mime, Outcome: runnerdecode.OutcomeText, Check: runnerdecode.CheckUnchecked, Unchecked: runnerdecode.UncheckedNotRisky}
+	}
+	if err := checkCheck(f("repo/main.go", "text/plain"), true, src); err != nil {
+		t.Errorf("a source's text file: %v", err)
+	}
+	for name, file := range map[string]runnerdecode.File{
+		"an upload":             f("main.go", "text/plain"),
+		"a source's executable": f("repo/tool.exe", "application/x-dosexec"),
+		"a source's pdf":        f("repo/doc.pdf", "application/pdf"),
+	} {
+		if err := checkCheck(file, true, src); err == nil {
+			t.Errorf("%s passed as not risky", name)
+		}
+	}
+}

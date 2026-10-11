@@ -139,10 +139,16 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	// The inputs are decoded before anything starts, and a file added
 	// later before it is announced (plan file-handling.md §5,
 	// agentry-cli#560).
+	srcRuns, err := fetchSources(ctx, d, p, rd, td, runID)
+	if err != nil {
+		return fail(err)
+	}
+	rd.sources = sourceIDs(srcRuns)
 	if s.dec, err = decodeInputs(ctx, d, p, rd); err != nil {
 		return fail(err)
 	}
 	s.dec.lines(env.CapabilitiesEnforced)
+	sourceLines(env.CapabilitiesEnforced, srcRuns, s.dec)
 	// The session store: a per-run named volume, labelled like every run
 	// object and removed with it (agentry-cli#90; DR-15 called the
 	// world-writable host directory it replaces "for now"). A fresh

@@ -32,6 +32,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -43,10 +44,13 @@ import (
 
 // runDirs are the per-run host locations.
 type runDirs struct {
-	root        string // <RunRoot>/runs/<id>
-	workspace   string // root/workspace — the rw copy tools may mount
-	inputs      string // root/inputs — the :ro operator-inputs channel (P2 §P4)
-	inputsText  string // root/inputs-text — the :ro decoded inputs, the host's alone to write (file-handling.md §5)
+	root       string // <RunRoot>/runs/<id>
+	workspace  string // root/workspace — the rw copy tools may mount
+	inputs     string // root/inputs — the :ro operator-inputs channel (P2 §P4)
+	inputsText string // root/inputs-text — the :ro decoded inputs, the host's alone to write (file-handling.md §5)
+	// sources are the folders under inputs that are input sources
+	// (fetchSources): decoded by the source rule.
+	sources     []string
 	knowledge   string // root/knowledge — the :ro knowledge packs, one directory each (knowledge.md §4.5)
 	session     string // the per-run volume an interactive session's harness store lives in (DR-15, agentry-cli#90)
 	cfg         string // root/cfg — rendered gateway+harness files
@@ -408,7 +412,14 @@ func stageIntake(p Params, rd *runDirs) error {
 	if _, err := os.Lstat(filepath.Join(rd.inputs, intakeFile)); err == nil {
 		return Classify(ExitCLI, inputRefused(receipt.InputNameClash, fmt.Errorf("an input named %s is reserved for the intake answers", intakeFile)))
 	}
-	doc, err := json.MarshalIndent(p.Intake.Document(spec.InputsMount), "", "  ")
+	return stageIntakeDoc(p.Intake, rd)
+}
+
+// stageIntakeDoc writes the intake document to /inputs and the receipts,
+// over what is there: once at staging, and again once the input sources
+// resolved to their commits (fetchSources).
+func stageIntakeDoc(a *intake.Answers, rd *runDirs) error {
+	doc, err := json.MarshalIndent(a.Document(spec.InputsMount), "", "  ")
 	if err != nil {
 		return Classify(ExitCLI, fmt.Errorf("encode intake: %w", err))
 	}
