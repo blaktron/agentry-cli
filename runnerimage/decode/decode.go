@@ -407,7 +407,9 @@ func (d *decoder) take(pool string) bool {
 // saying why they were not checked.
 func (d *decoder) target(idx int, src string) {
 	f := &d.files[idx]
-	if InSource(f.Path, d.lim.Sources) && !SourceRisky(f.MIME, f.Path) {
+	// An archive is checked whole as before, so what it holds below the
+	// unpacking's depth and caps is not left unread by ClamAV.
+	if InSource(f.Path, d.lim.Sources) && f.Family != FamilyArchive && !SourceRisky(f.MIME, f.Path) {
 		f.Check, f.Unchecked = CheckUnchecked, UncheckedNotRisky
 		return
 	}

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path"
 	"strings"
+
+	"github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
 // The checkout: the commit's tree walked into plain files. Only regular
@@ -115,7 +117,7 @@ func (pl *plan) walk(p *pack, tree, dir string, depth int) error {
 		case mode == "160000":
 			pl.skip(SkipSubmodule, rel)
 			continue
-		case !portableName(name):
+		case !portableName(name) || !decode.PlainMemberPath(rel):
 			pl.skip(SkipName, rel)
 			continue
 		}
@@ -162,7 +164,10 @@ func isGitName(name string) bool {
 
 // portableName says whether a name is a plain file name on Linux, macOS and
 // Windows alike: no control characters, none of Windows' reserved
-// characters, no trailing dot or space, and not a device name.
+// characters, no trailing dot or space, and not a device name. The whole
+// path is also held to the names an archive member may have (DR-39,
+// decode.PlainMemberPath): no C1 control, no mark that reorders or hides
+// text.
 func portableName(name string) bool {
 	if len(name) > 255 {
 		return false

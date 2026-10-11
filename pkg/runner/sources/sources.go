@@ -211,9 +211,9 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 	rep.Refusal = printable(rep.Refusal, 300)
 	rep.Error = printable(rep.Error, 600)
 	rep.Ref = printable(rep.Ref, 300)
-	if s.Token != "" {
+	for _, f := range source.TokenForms(s.Token) {
 		for _, p := range []*string{&rep.Refusal, &rep.Error, &rep.Ref} {
-			*p = strings.ReplaceAll(*p, s.Token, "[token]")
+			*p = strings.ReplaceAll(*p, f, "[token]")
 		}
 	}
 	return rep, nil

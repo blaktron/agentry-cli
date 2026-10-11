@@ -43,6 +43,10 @@ const maxChain = 512
 
 var errPack = errors.New("the host sent a malformed pack")
 
+// errInflatedTooLarge: the pack's objects inflate past what a source under
+// its caps can hold.
+var errInflatedTooLarge = errors.New("the pack inflates past the source's caps")
+
 // tooManyObjects is a pack holding more objects than a source under its
 // caps can: a cap refusal, with the count.
 type tooManyObjects struct {
@@ -126,7 +130,7 @@ func (c *countReader) ReadByte() (byte, error) {
 // indexPack reads every object header in the pack, inflating each stream
 // once to find where it ends and to check its size, and names every object
 // stored whole as it goes.
-func indexPack(f *os.File, maxObjects int) (*pack, error) {
+func indexPack(f *os.File, maxObjects int, maxInflated int64) (*pack, error) {
 	if err := checkTrailer(f); err != nil {
 		return nil, err
 	}
@@ -148,6 +152,9 @@ func indexPack(f *os.File, maxObjects int) (*pack, error) {
 		return nil, tooManyObjects{count: count, max: maxObjects}
 	}
 	p := &pack{f: f, entries: make([]entry, 0, count), byOff: map[int64]int{}, byOID: map[string]int{}, cache: newBaseCache(64 << 20)}
+	// What every stream inflates to, together: a zlib stream can expand
+	// a thousandfold, so the pack's own size does not bound the work.
+	var inflated int64
 	for i := uint32(0); i < count; i++ {
 		e := entry{off: cr.n}
 		c, err := cr.ReadByte()
@@ -192,6 +199,9 @@ func indexPack(f *os.File, maxObjects int) (*pack, error) {
 			return nil, errPack
 		}
 		e.dataOff = cr.n
+		if inflated += e.size; inflated > maxInflated {
+			return nil, errInflatedTooLarge
+		}
 		var h hash.Hash
 		if e.typ != objOfsDelta && e.typ != objRefDelta {
 			h = sha1.New() //nolint:gosec // git's object name

@@ -85,7 +85,7 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
 		// Plaintext proxying only toward an http model endpoint the
 		// operator named (DR-45); anything else is refused as before.
-		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 {
+		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 && !p.PublicOnly {
 			p.forwardPlain(w, r)
 			return
 		}

@@ -135,10 +135,15 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 			}
 		}
 	}
+	removedNet := false
 	for _, c := range f.Calls {
+		removedNet = removedNet || (c.Op == "NetworkRemove" && c.Arg == fetch.Network)
 		if c.Op == "NetworkConnect" && c.Arg == fetch.Network {
 			t.Errorf("a container was connected to the source's network: %+v", c)
 		}
+	}
+	if !removedNet {
+		t.Error("the source's network was not removed")
 	}
 	// Staged and decoded as inputs.
 	if b, err := os.ReadFile(filepath.Join(runDir, "inputs", "repo", "src", "main.go")); err != nil || string(b) != "package main\n" {

@@ -122,14 +122,21 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 	if err := d.NetworkCreate(ctx, netName, true, labels); err != nil {
 		return sources.Fetched{}, Classify(ExitGateway, fmt.Errorf("create the input source's network: %w", err))
 	}
+	// The teardown's sweep removes the network again after every container
+	// carrying the run's label is gone, should a step killed mid-way have
+	// held it here.
+	td.networks = append(td.networks, netName)
+	name := containerName(runID, "source-"+s.ID)
 	removed := false
 	cleanup := func(c context.Context) {
 		if removed {
 			return
 		}
-		removed = true
+		// The step first: a docker run killed on the timeout leaves its
+		// container holding the network.
+		_ = d.RemoveForce(c, name)
 		_ = d.RemoveForce(c, proxyName)
-		_ = d.NetworkRemove(c, netName)
+		removed = d.NetworkRemove(c, netName) == nil
 	}
 	td.add(cleanup)
 	defer cleanup(context.WithoutCancel(ctx))
@@ -150,7 +157,6 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 		return sources.Fetched{}, Classify(ExitGateway, fmt.Errorf("connect the input source's proxy to the bridge: %w", err))
 	}
 
-	name := containerName(runID, "source-"+s.ID)
 	fetchSpec := dockerx.RunSpec{
 		Name:    name,
 		Image:   image,
@@ -323,10 +329,10 @@ func sourceIDs(runs []sourceRun) []string {
 
 // scrubToken removes a token from text that may echo it.
 func scrubToken(s, token string) string {
-	if token == "" {
-		return s
+	for _, f := range source.TokenForms(token) {
+		s = strings.ReplaceAll(s, f, "[token]")
 	}
-	return strings.ReplaceAll(s, token, "[token]")
+	return s
 }
 
 func tailString(s string, n int) string {

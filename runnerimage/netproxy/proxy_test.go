@@ -674,3 +674,21 @@ func TestPublicOnlyRefusesAPrivateAnswer(t *testing.T) {
 		t.Error("Public misjudges a literal")
 	}
 }
+
+// TestPublicOnlyForwardsNoPlainHTTP: a source's proxy tunnels and nothing
+// else, even were a plain-http endpoint named.
+func TestPublicOnlyForwardsNoPlainHTTP(t *testing.T) {
+	p := &Proxy{Allow: []string{"source.example:80"}, PlainHTTP: []string{"source.example:80"}, PublicOnly: true, Resolver: fakeResolver{"8.8.8.8"}}
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+	resp, err := c.Get("http://source.example/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status %d, want 405", resp.StatusCode)
+	}
+}

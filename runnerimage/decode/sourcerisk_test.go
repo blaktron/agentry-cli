@@ -126,3 +126,28 @@ func TestASourcesImageIsNotReadWithOCR(t *testing.T) {
 		t.Errorf("the uploaded image: %+v", f)
 	}
 }
+
+// TestASourcesArchiveIsCheckedWhole: an archive in a source goes to ClamAV
+// itself, as an upload's does, so what it holds past the unpacking's depth
+// and caps is not left unchecked; its text members follow the source rule.
+func TestASourcesArchiveIsCheckedWhole(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	write(t, in, "repo/vendor/bundle.zip", zipOf(t, zipEntry{name: "notes.txt", body: "plain"}))
+	rep, err := Decode(context.Background(), in, out, tools, Limits{ClamDB: "/clamav", Sources: []string{"repo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Files {
+		switch f.Path {
+		case "repo/vendor/bundle.zip":
+			if f.Check != CheckClean {
+				t.Errorf("the source's archive: check %q (%q)", f.Check, f.Unchecked)
+			}
+		case "repo/vendor/bundle.zip/notes.txt":
+			if f.Unchecked != UncheckedNotRisky {
+				t.Errorf("the archive's text member: %q", f.Unchecked)
+			}
+		}
+	}
+}

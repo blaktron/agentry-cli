@@ -466,6 +466,9 @@ func checkReport(in, out string, checked bool, sources []string) (runnerdecode.R
 		if err := checkIdentity(&rep.Files[i], inRoot); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
+		if err := checkNotRisky(f, inRoot); err != nil {
+			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
+		}
 		if f.In == "" {
 			seen[f.Path] = true
 		}
@@ -639,7 +642,7 @@ func checkCheck(f runnerdecode.File, checked bool, sources []string) error {
 	// Only a file in an input source may go unchecked as not risky, and
 	// only one the source rule leaves out (D8): a report that says so of
 	// an upload, or of a source's executable, is refused.
-	if f.Unchecked == runnerdecode.UncheckedNotRisky && (!runnerdecode.InSource(f.Path, sources) || runnerdecode.SourceRisky(f.MIME, f.Path)) {
+	if f.Unchecked == runnerdecode.UncheckedNotRisky && (!runnerdecode.InSource(f.Path, sources) || f.Family == runnerdecode.FamilyArchive || runnerdecode.SourceRisky(f.MIME, f.Path)) {
 		return fmt.Errorf("%q says it was not checked as not risky, which the source rule does not allow", f.Path)
 	}
 	if !checked && f.Check == runnerdecode.CheckUnchecked && f.Unchecked != runnerdecode.UncheckedNoSignatures && f.Unchecked != runnerdecode.UncheckedNotRisky {
@@ -655,6 +658,44 @@ func checkCheck(f runnerdecode.File, checked bool, sources []string) error {
 		return fmt.Errorf("%q was found by ClamAV but read", f.Path)
 	}
 	return nil
+}
+
+// checkNotRisky reads the head of a staged file the decode left unchecked
+// as not risky, and refuses the claim when the file opens as an
+// executable, a library, Java or WebAssembly code, an OLE container or a
+// PDF: the detected type is the container's word, and a file's own first
+// bytes are the host's (DR-90). A member stays in the container, so its
+// claim is the decode's word alone, as its digest is.
+func checkNotRisky(f runnerdecode.File, inRoot *os.Root) error {
+	if f.Unchecked != runnerdecode.UncheckedNotRisky || f.In != "" {
+		return nil
+	}
+	file, err := inRoot.Open(filepath.FromSlash(f.Path))
+	if err != nil {
+		return fmt.Errorf("%q: %w", f.Path, err)
+	}
+	defer func() { _ = file.Close() }()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(file, head)
+	if binaryMagic(head[:n]) {
+		return fmt.Errorf("%q says it was not checked as not risky, but it opens as an executable or binary risky file", f.Path)
+	}
+	return nil
+}
+
+// binaryMagic says whether a file's first bytes are an executable's,
+// a library's, Java's, WebAssembly's, an OLE container's or a PDF's.
+func binaryMagic(b []byte) bool {
+	for _, m := range [][]byte{
+		[]byte("MZ"), []byte("\x7fELF"), []byte("%PDF"), []byte("\x00asm"),
+		{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
+		{0xca, 0xfe, 0xba, 0xbe}, {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
+	} {
+		if bytes.HasPrefix(b, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkRepository holds the repository reason to its rule: only a file

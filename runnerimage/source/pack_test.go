@@ -45,7 +45,7 @@ func TestIndexPackNamesEveryObjectAsGitDoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = pf.Close() }()
-	p, err := indexPack(pf, 100000)
+	p, err := indexPack(pf, 100000, 1<<30)
 	if err != nil {
 		t.Fatalf("indexPack: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestIndexPackNamesEveryObjectAsGitDoes(t *testing.T) {
 	}
 	bad, _ := os.Open(path)
 	defer func() { _ = bad.Close() }()
-	if _, err := indexPack(bad, 100000); err == nil {
+	if _, err := indexPack(bad, 100000, 1<<30); err == nil {
 		t.Error("a corrupted pack was read")
 	}
 }
@@ -125,7 +125,7 @@ func FuzzIndexPack(f *testing.F) {
 			t.Fatal(err)
 		}
 		defer func() { _ = pf.Close() }()
-		_, _ = indexPack(pf, 1000)
+		_, _ = indexPack(pf, 1000, 1<<20)
 	})
 }
 

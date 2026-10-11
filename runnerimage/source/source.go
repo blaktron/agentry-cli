@@ -112,8 +112,8 @@ func Fetch(ctx context.Context, o Options) (Report, error) {
 	err := fetch(ctx, o, &rep)
 	if err != nil {
 		rep.Error = printable(err.Error(), 600)
-		if o.Token != "" {
-			rep.Error = strings.ReplaceAll(rep.Error, o.Token, "[token]")
+		for _, f := range TokenForms(o.Token) {
+			rep.Error = strings.ReplaceAll(rep.Error, f, "[token]")
 		}
 	}
 	if werr := writeReport(o.Work, rep); werr != nil && err == nil {
@@ -197,10 +197,16 @@ func fetch(ctx context.Context, o Options, rep *Report) error {
 		}
 		return err
 	}
-	p, err := indexPack(pf, 4*o.MaxFiles+1000)
+	// Its objects inflate to the checkout plus its trees, and deltas
+	// against them: twice the byte cap and a margin bounds it.
+	p, err := indexPack(pf, 4*o.MaxFiles+1000, 2*o.MaxBytes+256<<20)
 	var many tooManyObjects
 	if errors.As(err, &many) {
 		rep.Refusal = fmt.Sprintf("the repository's pack at %s holds %d objects, more than a repository within the %d-file cap can", want, many.count, o.MaxFiles)
+		return nil
+	}
+	if errors.Is(err, errInflatedTooLarge) {
+		rep.Refusal = fmt.Sprintf("the repository's pack at %s inflates past %s, more than a repository within the %s cap can", want, sizeWords(2*o.MaxBytes+256<<20), sizeWords(o.MaxBytes))
 		return nil
 	}
 	if err != nil {
@@ -268,6 +274,8 @@ func checkURL(raw string, anyPort bool) (*url.URL, error) {
 		return nil, errors.New("the repository address carries credentials; give the token apart from the address")
 	case u.Hostname() == "" || u.Opaque != "":
 		return nil, errors.New("the repository address names no host")
+	case !plainHost(u.Hostname()):
+		return nil, errors.New("the repository address's host is not a plain host name (letters, digits, dots and hyphens)")
 	case u.Port() != "" && u.Port() != "443" && !anyPort:
 		return nil, errors.New("the repository address names a port other than 443")
 	case u.RawQuery != "" || u.Fragment != "":
@@ -276,6 +284,35 @@ func checkURL(raw string, anyPort bool) (*url.URL, error) {
 		return nil, errors.New("the repository address names no repository")
 	}
 	return u, nil
+}
+
+// plainHost says whether a host is a DNS name of letters, digits, dots and
+// hyphens (an IDN as its punycode): a host is also an entry in the proxy's
+// comma-separated allowlist, so nothing else may reach it.
+func plainHost(h string) bool {
+	if len(h) > 253 || strings.HasPrefix(h, ".") || strings.HasSuffix(h, ".") || strings.Contains(h, "..") {
+		return false
+	}
+	for _, c := range h {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '.' && c != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// TokenForms are the spellings of a token a host could echo back: the
+// token, its password half, and the basic-auth header's value. Each is
+// scrubbed from what the fetch reports.
+func TokenForms(token string) []string {
+	if token == "" {
+		return nil
+	}
+	forms := []string{token}
+	if _, pass, ok := strings.Cut(token, ":"); ok && len(pass) >= 8 {
+		forms = append(forms, pass)
+	}
+	return append(forms, strings.TrimPrefix(basicAuth(token), "Basic "))
 }
 
 // basicAuth is the Authorization header for a token.

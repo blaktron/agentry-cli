@@ -901,3 +901,39 @@ func TestSourceRiskyIsNarrower(t *testing.T) {
 		}
 	}
 }
+
+// TestANotRiskyClaimIsHeldToTheFilesOwnBytes: a staged file in a source
+// the decode calls not risky is refused when it opens as an executable,
+// whatever type the decode says it detected (DR-90).
+func TestANotRiskyClaimIsHeldToTheFilesOwnBytes(t *testing.T) {
+	in := t.TempDir()
+	for name, body := range map[string]string{"repo/a.txt": "\x7fELF\x02\x01", "repo/b.txt": "MZ\x90\x00", "repo/c.txt": "%PDF-1.7", "repo/ok.txt": "plain text"} {
+		if err := os.MkdirAll(filepath.Join(in, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(in, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := os.OpenRoot(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	claim := func(p string) runnerdecode.File {
+		return runnerdecode.File{Path: p, MIME: "text/plain", Check: runnerdecode.CheckUnchecked, Unchecked: runnerdecode.UncheckedNotRisky}
+	}
+	for _, p := range []string{"repo/a.txt", "repo/b.txt", "repo/c.txt"} {
+		if err := checkNotRisky(claim(p), root); err == nil {
+			t.Errorf("%s: an executable passed as not risky", p)
+		}
+	}
+	if err := checkNotRisky(claim("repo/ok.txt"), root); err != nil {
+		t.Errorf("a text file: %v", err)
+	}
+	archive := claim("repo/x.zip")
+	archive.Family = runnerdecode.FamilyArchive
+	if err := checkCheck(archive, true, []string{"repo"}); err == nil {
+		t.Error("a source's archive passed as not risky")
+	}
+}

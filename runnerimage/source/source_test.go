@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/cgi"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
 // fixture builds a bare repository served by git's own http-backend over
@@ -328,6 +331,7 @@ func TestCheckURL(t *testing.T) {
 		"http://github.com/o/r", "ssh://git@github.com/o/r", "git://github.com/o/r", "git@github.com:o/r",
 		"https://user:pass@github.com/o/r", "https://github.com:8443/o/r", "https://github.com/o/r?x=1",
 		"https://github.com/o/r#main", "https://github.com", "file:///etc",
+		"https://github.com,evil.example/o/r", "https://git_hub.com/o/r", "https://github.com./o/r",
 	} {
 		if _, err := CheckURL(bad); err == nil {
 			t.Errorf("CheckURL(%q) passed", bad)
@@ -350,6 +354,19 @@ func TestPortableName(t *testing.T) {
 		if !portableName(good) {
 			t.Errorf("portableName(%q) = false", good)
 		}
+	}
+	for _, bidi := range []string{"a\u202ebad", "x\u0085y", "zero\ufeffwidth"} {
+		if decode.PlainMemberPath("dir/" + bidi) {
+			t.Errorf("DR-39's rule passed %q", bidi)
+		}
+	}
+	tok := strings.Repeat("t", 16)
+	forms := TokenForms(tok)
+	if len(forms) != 2 || forms[1] != base64.StdEncoding.EncodeToString([]byte("x-access-token:"+tok)) {
+		t.Errorf("TokenForms = %q", forms)
+	}
+	if f := TokenForms("me:supersecretpass"); len(f) != 3 || f[1] != "supersecretpass" {
+		t.Errorf("TokenForms(user:pass) = %q", f)
 	}
 	for _, g := range []string{".git", ".GIT", ".git.", ".git ", "GIT~1"} {
 		if !isGitName(g) {
