@@ -200,6 +200,30 @@ func (c *copilotImageAdapter) Compile(in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	res := Result{
+		Files: map[string][]byte{
+			copilotInstructionFile: []byte(instruction),
+			copilotSessionFile:     append(cfg, '\n'),
+		},
+		Agent:      copilotContainer(in.HarnessImage),
+		Model:      "copilot/" + model,
+		ResultKind: resultKind,
+		ModelSignIn: &spec.ModelSignInSpec{
+			Kind: policy.KeyKindCopilotSignIn, Provider: policy.ProviderCopilot, Delivery: spec.ModelSignInCallback,
+		},
+	}
+	sess := &spec.SessionSpec{Transport: copilotTransport, ProtocolVersion: copilotProtocolVersion}
+	if in.Mode == manifest.ModeInteractive {
+		res.Session = sess
+	} else {
+		res.OneTurn = sess
+	}
+	return res, nil
+}
+
+// copilotContainer is Copilot CLI's container in image: a run's, and a
+// model list's (CopilotListContainer).
+func copilotContainer(image string) spec.ContainerSpec {
 	env := []spec.EnvVar{
 		{Name: "HOME", Value: harnessbuild.CopilotHome},
 		{Name: "COPILOT_HOME", Value: harnessbuild.CopilotHome + "/.copilot"},
@@ -216,32 +240,14 @@ func (c *copilotImageAdapter) Compile(in Input) (Result, error) {
 		{Name: "HTTP_PROXY", Value: spec.ProxyURL()},
 		{Name: "NO_PROXY", Value: spec.GatewayAlias + ",localhost,127.0.0.1"},
 	}
-	res := Result{
-		Files: map[string][]byte{
-			copilotInstructionFile: []byte(instruction),
-			copilotSessionFile:     append(cfg, '\n'),
-		},
-		Agent: spec.ContainerSpec{
-			Image:        in.HarnessImage,
-			Entrypoint:   harnessbuild.CopilotBinary,
-			Argv:         append([]string(nil), copilotArgv...),
-			Env:          env,
-			ReadOnlyRoot: true,
-			Tmpfs:        []string{"/tmp:mode=1777", harnessbuild.CopilotHome + ":mode=1777"},
-		},
-		Model:      "copilot/" + model,
-		ResultKind: resultKind,
-		ModelSignIn: &spec.ModelSignInSpec{
-			Kind: policy.KeyKindCopilotSignIn, Provider: policy.ProviderCopilot, Delivery: spec.ModelSignInCallback,
-		},
+	return spec.ContainerSpec{
+		Image:        image,
+		Entrypoint:   harnessbuild.CopilotBinary,
+		Argv:         append([]string(nil), copilotArgv...),
+		Env:          env,
+		ReadOnlyRoot: true,
+		Tmpfs:        []string{"/tmp:mode=1777", harnessbuild.CopilotHome + ":mode=1777"},
 	}
-	sess := &spec.SessionSpec{Transport: copilotTransport, ProtocolVersion: copilotProtocolVersion}
-	if in.Mode == manifest.ModeInteractive {
-		res.Session = sess
-	} else {
-		res.OneTurn = sess
-	}
-	return res, nil
 }
 
 // Events implements Adapter. Both modes are driven through the session

@@ -98,11 +98,17 @@ type copilotTurnEnd struct {
 }
 
 func newCopilotSession(rw io.ReadWriteCloser, opts SessionOptions) (*copilotSession, error) {
-	if rw == nil {
-		return nil, errors.New("copilot session: nil transport")
-	}
 	if opts.HarnessFile == nil {
 		return nil, errors.New("copilot session: the run gave the driver no plan files")
+	}
+	return newCopilotDriver(rw, opts)
+}
+
+// newCopilotDriver is the driver on rw, reading: a run's session
+// (newCopilotSession) or a model list (ListCopilotModels).
+func newCopilotDriver(rw io.ReadWriteCloser, opts SessionOptions) (*copilotSession, error) {
+	if rw == nil {
+		return nil, errors.New("copilot session: nil transport")
 	}
 	allowed := make(map[string]bool, len(opts.GatewayTools))
 	for _, t := range opts.GatewayTools {
@@ -131,18 +137,8 @@ func newCopilotSession(rw io.ReadWriteCloser, opts SessionOptions) (*copilotSess
 
 // Start implements SessionDriver: connect, then the session.
 func (s *copilotSession) Start(ctx context.Context) error {
-	res, err := s.call(ctx, "connect", map[string]any{
-		"clientInfo": map[string]any{"editorName": agentryClientName, "editorVersion": "runner"},
-	})
-	if err != nil {
+	if err := s.connect(ctx); err != nil {
 		return err
-	}
-	var cr struct {
-		ProtocolVersion int    `json:"protocolVersion"`
-		Version         string `json:"version"`
-	}
-	if err := json.Unmarshal(res, &cr); err != nil || cr.ProtocolVersion != copilotProtocolVersion {
-		return fmt.Errorf("copilot session: Copilot CLI %s speaks protocol %d, and this runner speaks %d", cr.Version, cr.ProtocolVersion, copilotProtocolVersion)
 	}
 	params, err := s.createParams()
 	if err != nil {
@@ -157,6 +153,24 @@ func (s *copilotSession) Start(ctx context.Context) error {
 		"installedPlugins": []any{}, "includedBuiltinSkills": []any{},
 	}); err != nil {
 		return err
+	}
+	return nil
+}
+
+// connect is the handshake, held to the protocol this driver speaks.
+func (s *copilotSession) connect(ctx context.Context) error {
+	res, err := s.call(ctx, "connect", map[string]any{
+		"clientInfo": map[string]any{"editorName": agentryClientName, "editorVersion": "runner"},
+	})
+	if err != nil {
+		return err
+	}
+	var cr struct {
+		ProtocolVersion int    `json:"protocolVersion"`
+		Version         string `json:"version"`
+	}
+	if err := json.Unmarshal(res, &cr); err != nil || cr.ProtocolVersion != copilotProtocolVersion {
+		return fmt.Errorf("copilot session: Copilot CLI %s speaks protocol %d, and this runner speaks %d", cr.Version, cr.ProtocolVersion, copilotProtocolVersion)
 	}
 	return nil
 }

@@ -11,8 +11,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
+	"github.com/blaktron/agentry-cli/pkg/runner/copilotmodels"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
+	"github.com/blaktron/agentry-cli/runnerimage"
 )
 
 // githubEndpoints points the flow somewhere else than GitHub: nil in
@@ -42,8 +46,9 @@ func signInCopilot(cmd *cobra.Command, home, app string) (*modelsignin.CopilotSi
 	return modelsignin.Open(home, connectionKeys()).SignInCopilot(cmd.Context(), flow, app)
 }
 
-// copilotOffer is what `agentry setup` offers of the Copilot sign-in.
-func copilotOffer(cmd *cobra.Command, home string, oauthApp bool) setup.CopilotOffer {
+// copilotOffer is what `agentry setup` offers of the Copilot sign-in, and
+// of its plan's models when pol's images may be built (listing needs them).
+func copilotOffer(cmd *cobra.Command, home string, oauthApp bool, pol *policy.Policy, images bool) setup.CopilotOffer {
 	app := mcpauth.GitHubApp
 	if oauthApp {
 		app = mcpauth.GitHubOAuthApp
@@ -66,6 +71,28 @@ func copilotOffer(cmd *cobra.Command, home string, oauthApp bool) setup.CopilotO
 			}
 			return got.Record.Label, nil
 		},
+		Models: copilotModels(cmd, home, pol, images),
+	}
+}
+
+// copilotModels asks Copilot CLI which models a plan offers the kept
+// sign-in (copilotmodels.List, agentry-cli#808): nil when setup builds no
+// images, which the list's containers need.
+func copilotModels(cmd *cobra.Command, home string, pol *policy.Policy, images bool) func(plan string) ([]string, error) {
+	if !images {
+		return nil
+	}
+	return func(plan string) ([]string, error) {
+		models, err := copilotmodels.List(cmd.Context(), dockerx.New(), copilotmodels.Request{
+			Home: home, Keys: connectionKeys(), Policy: pol, CopilotPlan: plan,
+			RunnerImage: pol.RunnerImageTag(runnerimage.ContentVersion()), ImageCtxDir: homeImageDir(home),
+			Log: cmd.ErrOrStderr(),
+		})
+		ids := make([]string, 0, len(models))
+		for _, m := range models {
+			ids = append(ids, m.ID)
+		}
+		return ids, err
 	}
 }
 

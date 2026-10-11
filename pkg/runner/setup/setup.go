@@ -184,6 +184,10 @@ type CopilotOffer struct {
 	Kept func() string
 	// SignIn signs in with GitHub and returns the account.
 	SignIn func() (account string, err error)
+	// Models lists the model ids the Copilot plan named offers the signed-in
+	// account, asked of Copilot CLI (agentry-cli#808), in its order; nil
+	// lists none. Setup asks it only when it is about to ask for the model.
+	Models func(plan string) ([]string, error)
 }
 
 // ConnectLabel is the connect choice's wording (plan §4.1).
@@ -333,25 +337,8 @@ func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		}
 	}
 	samePlan := pol.Model.APIKeyKind == policy.KeyKindCopilotSignIn
-	model := strings.TrimSpace(opts.Model)
-	if model == "" {
-		def := "auto"
-		if samePlan && pol.Model.Name != "" {
-			def = pol.Model.Name
-		}
-		if opts.Yes {
-			model = def
-		} else {
-			ans, err := p.Ask("Model (auto lets Copilot choose, the only choice on Copilot Free; or a Copilot model id such as claude-sonnet-5.5)", def)
-			if err != nil {
-				return err
-			}
-			model = strings.TrimSpace(ans)
-		}
-	}
-	if model == "" {
-		return errors.New("no model chosen for the Copilot plan (pass --model)")
-	}
+	// The plan first: it names the Copilot API host the model list, as a
+	// run, reaches.
 	plan := strings.ToLower(strings.TrimSpace(opts.CopilotPlan))
 	if plan == "" {
 		def := policy.CopilotPlanIndividual
@@ -374,6 +361,41 @@ func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if err != nil {
 		return err
 	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		def := CopilotAuto
+		if samePlan && pol.Model.Name != "" {
+			def = pol.Model.Name
+		}
+		if opts.Yes {
+			model = def
+		} else {
+			offered := copilotOffered(p, opts, plan)
+			q := "Model (auto lets Copilot choose, the only choice on Copilot Free; or a Copilot model id such as claude-sonnet-5.5)"
+			if offered != nil {
+				q = "Model (your plan offers " + strings.Join(offered, ", ") + "; auto lets Copilot choose)"
+				if !slices.Contains(offered, def) {
+					def = CopilotAuto
+				}
+			}
+			for {
+				ans, err := p.Ask(q, def)
+				if err != nil {
+					return err
+				}
+				model = strings.TrimSpace(ans)
+				if offered == nil || model == "" || slices.Contains(offered, model) {
+					break
+				}
+				// A model the plan does not offer, a disabled one among them,
+				// is not taken (agentry-cli#808).
+				p.Say(fmt.Sprintf("your Copilot plan does not offer %q: choose one of %s", model, strings.Join(offered, ", ")))
+			}
+		}
+	}
+	if model == "" {
+		return errors.New("no model chosen for the Copilot plan (pass --model)")
+	}
 	pol.Model = policy.Model{
 		Provider:   policy.ProviderCopilot,
 		Name:       model,
@@ -387,6 +409,35 @@ func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	p.Say(fmt.Sprintf("model: copilot/%s, paid by your Copilot plan (signed in with GitHub%s; runs use Copilot CLI, and the agent container reaches %s alone)",
 		model, who, strings.Join(pol.Model.ProxyAllow, ", ")))
 	return nil
+}
+
+// CopilotAuto is the Copilot model that lets Copilot choose, the only one
+// a Copilot Free plan has; it is always offered.
+const CopilotAuto = "auto"
+
+// copilotOffered is what setup offers for plan: auto, then the models
+// Copilot CLI lists, each once; nil when it lists none, or could not,
+// which is said and the model typed instead.
+func copilotOffered(p Prompter, opts ModelOpts, plan string) []string {
+	if opts.Copilot.Models == nil {
+		return nil
+	}
+	p.Say("Asking Copilot CLI which models your Copilot plan offers…")
+	ids, err := opts.Copilot.Models(plan)
+	if err != nil {
+		p.Say(fmt.Sprintf("warning: could not list your plan's models (%v); type a model id instead", err))
+		return nil
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	out := []string{CopilotAuto}
+	for _, id := range ids {
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // configureClaude is the model setup for a Claude subscription through
