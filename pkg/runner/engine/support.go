@@ -1291,6 +1291,12 @@ func networkName(runID string) string         { return "agentry-" + runID + "-ne
 func proxyEgressNetwork(runID string) string  { return "agentry-" + runID + "-egress" }
 
 func sessionVolumeName(runID string) string { return "agentry-" + runID + "-session" }
+
+// gatewayVolumeDir is the directory the pinned gateway image declares as a
+// VOLUME (docker/mcp-gateway's /misc), mounted as a labelled anonymous
+// volume of the run (agentry-cli#458).
+const gatewayVolumeDir = "/misc"
+
 func runLabels(runID string) map[string]string {
 	return owner.With(map[string]string{runLabel: runID})
 }

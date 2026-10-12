@@ -23,14 +23,17 @@ import (
 // however old; nor is anything created before the owner labels existed, by
 // another user, from another pid namespace, or anywhere off Linux (no
 // labels are written there). For each removed run container the run's
-// networks and session volume go too, after the containers.
+// networks and volumes go too, after the containers: its session volume by
+// name and every volume carrying its run label, the gateway's /misc among
+// them (agentry-cli#458).
 //
 // Best effort and bounded: the sweep never fails a run, and it tells the
 // person what it removed and what it could not. Run and StartSession call
 // it; exported so `agentry run` can sweep before its MCP server installs,
 // whose fixed container names a leftover installer would collide with.
-// Not covered: a run network or session volume whose containers were
-// already gone when the process died has nothing left to name it.
+// Not covered: a run network or volume whose containers were already gone
+// when the process died has nothing left to name it (a labelled volume's
+// owner labels are not read here).
 func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 	id, ok := owner.Identity()
 	if !ok {
@@ -61,7 +64,9 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 		for _, n := range runNetworks(ctx, d, r) {
 			_ = d.NetworkRemove(ctx, n)
 		}
-		_ = d.VolumeRemove(ctx, sessionVolumeName(r))
+		for _, v := range runVolumes(ctx, d, r) {
+			_ = d.VolumeRemove(ctx, v)
+		}
 	}
 	if stderr == nil {
 		return
@@ -72,8 +77,26 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 	}
 	if len(failed) > 0 {
 		sort.Strings(failed)
-		_, _ = fmt.Fprintf(stderr, "warning: could not remove %d container(s) a run whose process had died left behind: %s (docker rm -f <name>)\n", len(failed), strings.Join(failed, ", "))
+		_, _ = fmt.Fprintf(stderr, "warning: could not remove %d container(s) a run whose process had died left behind: %s (docker rm -fv <name>)\n", len(failed), strings.Join(failed, ", "))
 	}
+}
+
+// runVolumes is every volume of run r: its session volume by name, and
+// every volume carrying its run label, which finds the gateway's /misc
+// when its container went without -v (agentry-cli#458). The name stands
+// when docker cannot list.
+func runVolumes(ctx context.Context, d dockerx.Client, r string) []string {
+	names := []string{sessionVolumeName(r)}
+	labelled, err := d.VolumesByLabel(ctx, runLabel+"="+r)
+	if err != nil {
+		return names
+	}
+	for _, v := range labelled {
+		if !slices.Contains(names, v) {
+			names = append(names, v)
+		}
+	}
+	return names
 }
 
 // runNetworks is every network of run r: those its id names (the run's own,

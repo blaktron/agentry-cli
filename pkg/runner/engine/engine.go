@@ -569,11 +569,17 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return err
 	}
 	gwSpec := dockerx.RunSpec{
-		Name:    gwName,
-		Image:   p.Plan.Gateway.Image,
-		Argv:    append(substituteAll(p.Plan.Gateway.Args, rep), gatewayLimitArgs(p.limits())...),
-		Env:     gwEnv,
-		Mounts:  resolveMounts(p.Plan.Gateway.Mounts, rep),
+		Name:   gwName,
+		Image:  p.Plan.Gateway.Image,
+		Argv:   append(substituteAll(p.Plan.Gateway.Args, rep), gatewayLimitArgs(p.limits())...),
+		Env:    gwEnv,
+		Mounts: resolveMounts(p.Plan.Gateway.Mounts, rep),
+		// The pinned gateway image declares VOLUME /misc. Left to docker it
+		// is an unlabelled anonymous volume that outlived every run
+		// (agentry-cli#458); mounted here it carries the run's labels, goes
+		// with the container (RemoveForce's -v), and is found by teardown's
+		// and the sweeps' run label if the container went some other way.
+		Volumes: []dockerx.VolumeMount{{Target: gatewayVolumeDir, Labels: labels}},
 		Network: netName,
 		Alias:   spec.GatewayAlias,
 		// The gateway learns "its" networks by inspecting the container

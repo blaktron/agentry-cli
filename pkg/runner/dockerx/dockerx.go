@@ -78,7 +78,8 @@ type Client interface {
 	// Stop gracefully stops a container (SIGTERM, then kill after
 	// timeout). Not-found is not an error.
 	Stop(ctx context.Context, name string, timeoutSeconds int) error
-	// RemoveForce force-removes a container; not-found is not an error.
+	// RemoveForce force-removes a container and its anonymous volumes;
+	// not-found is not an error.
 	RemoveForce(ctx context.Context, name string) error
 	// PSByLabel lists container names carrying label (leak sweeps).
 	PSByLabel(ctx context.Context, label string) ([]string, error)
@@ -116,6 +117,13 @@ type RunSpec struct {
 	Env map[string]string
 	// Mounts are bind mounts.
 	Mounts []Mount
+	// Volumes are anonymous volumes mounted at these paths, each with its
+	// own labels (`--mount type=volume,dst=…,volume-label=k=v`), in place
+	// of the unlabelled anonymous volume an image's VOLUME would otherwise
+	// get (agentry-cli#458). Like any anonymous volume they go with their
+	// container (RemoveForce passes -v); the labels let teardown and the
+	// sweeps find one whose container went some other way.
+	Volumes []VolumeMount
 	// Network and Alias attach the container to the run network.
 	Network string
 	Alias   string
@@ -212,6 +220,21 @@ type Mount struct {
 	// SELinux support docker accepts the option and ignores it (measured:
 	// the source's label is untouched), so it costs nothing to carry.
 	Relabel bool
+}
+
+// VolumeMount is an anonymous volume at Target carrying Labels.
+type VolumeMount struct {
+	Target string
+	Labels map[string]string
+}
+
+// mountField renders one field of a --mount value, which docker reads as
+// CSV: a field holding a comma or a quote is quoted, its quotes doubled.
+func mountField(f string) string {
+	if !strings.ContainsAny(f, ",\"\n") {
+		return f
+	}
+	return `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
 }
 
 // CLI is the real client.
@@ -419,7 +442,9 @@ func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
 
 // ImageFile implements Client: `docker create` a container from the image
 // (never started — the exec image has no shell to start with), `docker cp`
-// the path out as a tar stream, `docker rm` the container.
+// the path out as a tar stream, `docker rm -fv` the container: -v, since
+// creating it gave each VOLUME the image declares an anonymous volume
+// (agentry-cli#458).
 func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
 	id, err := c.run(ctx, "create", ref)
 	if err != nil {
@@ -429,7 +454,7 @@ func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
 	defer func() {
 		// The removal must happen even when the caller's context is
 		// already done (a Ctrl-C mid-copy), or the created container leaks.
-		rm := c.command(context.WithoutCancel(ctx), "rm", "-f", id)
+		rm := c.command(context.WithoutCancel(ctx), "rm", "-fv", id)
 		rm.Stdout, rm.Stderr = io.Discard, io.Discard
 		_ = rm.Run()
 	}()
@@ -593,7 +618,11 @@ func (c *CLI) Stop(ctx context.Context, name string, timeoutSeconds int) error {
 
 // RemoveForce implements Client.
 func (c *CLI) RemoveForce(ctx context.Context, name string) error {
-	_, err := c.run(ctx, "rm", "-f", name)
+	// -v: the container's anonymous volumes go with it, an image's
+	// VOLUME (the gateway's /misc, agentry-cli#458) included. Docker never
+	// takes a named volume by -v (the session's among them) nor an
+	// anonymous one another container still uses.
+	_, err := c.run(ctx, "rm", "-fv", name)
 	if err != nil && isNotFound(err) {
 		return nil
 	}
@@ -780,6 +809,13 @@ func (r RunSpec) args(detach bool) []string {
 			spec += ":" + strings.Join(opts, ",")
 		}
 		args = append(args, "-v", spec)
+	}
+	for _, v := range r.Volumes {
+		fields := []string{"type=volume", mountField("dst=" + v.Target)}
+		for _, k := range sortedKeys(v.Labels) {
+			fields = append(fields, mountField("volume-label="+k+"="+v.Labels[k]))
+		}
+		args = append(args, "--mount", strings.Join(fields, ","))
 	}
 	args = append(args, r.Image)
 	return append(args, r.Argv...)
