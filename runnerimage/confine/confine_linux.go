@@ -140,10 +140,20 @@ func ExecWith(o Options, path string, argv, env []string) error {
 		_, _, errno := syscall.RawSyscall(syscall.SYS_EXECVE, uintptr(unsafe.Pointer(argv0p)), uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envvp[0])))
 		return fmt.Errorf("confine: exec %s: %w", path, errno)
 	}
-	// From here on, no allocation: no collection either.
+	// From here on, no allocation: no collection either, and no other
+	// goroutine running. The limit binds every thread of the process, and
+	// a goroutine on another P that needs memory between the limit and the
+	// execve gets none: the runtime dies of it ("fatal error: runtime:
+	// cannot allocate memory"), on the program's stderr when the execve
+	// wins and in its place when it does not (agentry-cli#887; one run in
+	// a hundred on a loaded machine). With one P, held by this goroutine
+	// through the raw syscalls below, which never give it up, nothing else
+	// runs until the program replaces the process.
 	debug.SetGCPercent(-1)
+	procs := runtime.GOMAXPROCS(1)
 	lim := syscall.Rlimit{Cur: o.MaxMemory, Max: o.MaxMemory}
 	if _, _, errno := syscall.RawSyscall6(syscall.SYS_PRLIMIT64, 0, syscall.RLIMIT_AS, uintptr(unsafe.Pointer(&lim)), 0, 0, 0); errno != 0 {
+		runtime.GOMAXPROCS(procs)
 		debug.SetGCPercent(100)
 		return fmt.Errorf("confine: limit the address space to %d bytes: %w", o.MaxMemory, errno)
 	}
