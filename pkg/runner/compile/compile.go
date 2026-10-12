@@ -37,7 +37,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
+	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -186,6 +188,15 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	// session, never a line of the contract; the built-ins keep their own
 	// fixed surfaces (plan scratch-and-pdf-reports.md D2, D5).
 	caps.Scratch = in.Source != "builtin"
+	// Target hosts (agentry-cli#861): the host link and its tools. A
+	// built-in never declares one, and the grants that hold a built-in's
+	// container to one network never sit beside it.
+	if len(m.Capabilities.TargetHosts) > 0 {
+		if in.Web || in.Review || in.Source == "builtin" {
+			return nil, &PolicyRefusal{Reason: "a built-in is never granted a target host, nor is one granted beside the web tools or the review grant"}
+		}
+		caps.TargetHosts = append([]string(nil), m.Capabilities.TargetHosts...)
+	}
 	instructionPath, body, err := deriveInstruction(m, in.WorkspaceDir)
 	if err != nil {
 		return nil, err
@@ -249,7 +260,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 					`declared MCP server %s requests egress "*": the runner gives a declared server no unrestricted network, only a relay per declared host; declare the hosts it needs`, srv.Name)}
 			}
 		}
-		if srv.Name == spec.ToolServerName {
+		if srv.Name == spec.ToolServerName || srv.Name == hostlink.ServerName {
 			return nil, fmt.Errorf("declared MCP server resolves to the reserved name %q", srv.Name)
 		}
 		if _, dup := extraEntries[srv.Name]; dup {
@@ -270,6 +281,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		intake:       len(m.Intake) > 0,
 		repositories: questionsOf(m, manifest.IntakeRepository),
 		files:        questionsOf(m, manifest.IntakeURL),
+		hosts:        caps.TargetHosts,
 		inputView:    inputView,
 		review:       in.Review,
 		budget:       budget,
@@ -293,7 +305,19 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		// runs with its PATH (the operator's decision of 2026-09-30).
 		tspec.Exec.ImagePath = execImage.Unsafe != nil
 	}
-	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, in.RunnerImage, extraServers, extraEntries, in.MCPServers); err != nil {
+	var hostLink *spec.HostLinkSpec
+	if len(caps.TargetHosts) > 0 {
+		base, err := targethost.BaseRef(in.Policy)
+		if err != nil {
+			return nil, &PolicyRefusal{Reason: err.Error()}
+		}
+		img := targethost.HostLinkImage(in.RunnerImage, base)
+		hostLink = &spec.HostLinkSpec{Image: img.Tag, Base: base}
+		if err := hostLinkFiles(files, caps.TargetHosts, budget); err != nil {
+			return nil, err
+		}
+	}
+	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, in.RunnerImage, extraServers, extraEntries, in.MCPServers, hostLink); err != nil {
 		return nil, err
 	}
 
@@ -311,6 +335,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		GatewayURL:   spec.GatewayURL(),
 		SchemaJSON:   schemaJSON,
 		Harness:      in.Policy.Harness[adapterName],
+		// The host link's results reach the model as the host printed
+		// them (plan runtime-hosts.md D9).
+		UnchangedTools: unchangedTools(caps),
 	})
 	if err != nil {
 		var refusal *adapter.Refusal
@@ -333,6 +360,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	servers := append([]string{spec.ToolServerName}, declared...)
+	if hostLink != nil {
+		servers = append(servers, hostlink.ServerName)
+	}
 	sort.Strings(servers)
 
 	plan := &spec.Plan{
@@ -356,6 +386,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		InputView:    inputView,
 		Enforcement:  enforcement(caps, m.Capabilities.Secrets, m.Capabilities.OptionalSecrets, extraServers, in.Policy, in.MCPServers),
 		ExecImage:    execImage,
+		HostLink:     hostLink,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, in.MCPServers),
 		Harness: spec.HarnessSpec{
 			Adapter:     adapterName,
@@ -387,6 +418,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["exec"] = unsafeExecEnforcement(execImage)
 	}
 	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, budget, caps)
+	if hostLink != nil {
+		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
+	}
 
 	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && (in.Web || in.Policy.Docker.Runtime != "") {
 		// The name servers are part of the plan too: a changed list
@@ -895,6 +929,9 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 			writable = append(writable, ConnectionFolder(srv.Name))
 		}
 	}
+	if len(caps.TargetHosts) > 0 {
+		writable = append(writable, hostLinkWritable()...)
+	}
 	return spec.GatewaySpec{
 		Image: image,
 		Args: append([]string{
@@ -937,7 +974,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 // the files map.
 func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.CapSummary,
 	secrets []string, toolsImage, runnerImage string, extraServers []string, extraEntries map[string]yaml.Node,
-	mcpServers []spec.MCPServerSpec,
+	mcpServers []spec.MCPServerSpec, hostLink *spec.HostLinkSpec,
 ) error {
 	tspecJSON, err := json.MarshalIndent(tspec, "", "  ")
 	if err != nil {
@@ -959,6 +996,9 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 		}
 		catalog.set(srv.Name, mcpServerEntry(srv))
 	}
+	if hostLink != nil {
+		catalog.set(hostlink.ServerName, hostLinkEntry(caps.TargetHosts, hostLink.Image))
+	}
 	catalogDoc := yamlMap{}
 	catalogDoc.set("registry", catalog.node())
 	b, err := marshalYAML("# generated by agentry run — gateway server catalog (RUNNER-PLAN §R4)\n", catalogDoc.node())
@@ -971,6 +1011,9 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	names := append([]string{spec.ToolServerName}, extraServers...)
 	for _, srv := range mcpServers {
 		names = append(names, srv.Name)
+	}
+	if hostLink != nil {
+		names = append(names, hostlink.ServerName)
 	}
 	sort.Strings(names)
 	for _, name := range names {
@@ -998,6 +1041,9 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 		if len(srv.Tools) > 0 {
 			tools.set(srv.Name, strListNode(sortedCopy(srv.Tools)))
 		}
+	}
+	if hostLink != nil {
+		tools.set(hostlink.ServerName, strListNode(hostlink.Tools))
 	}
 	if b, err = marshalYAML("# generated by agentry run — per-server tool allowlist\n", tools.node()); err != nil {
 		return err
@@ -1340,6 +1386,12 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// plan; the engine grants the tools only when it attaches one (DR-38).
 	vols = append(vols, spec.PHKnowledge+":"+spec.KnowledgeMount+":ro")
 	vols = append(vols, spec.PHOut+":"+spec.OutMount+":rw")
+	// The folder the host link copies through, inside the agent's scratch
+	// folder (agentry-cli#861): the docker filter admits this one bind
+	// beneath the scratch tmpfs.
+	if len(caps.TargetHosts) > 0 {
+		vols = append(vols, hostFilesVolume())
+	}
 	e.set("volumes", strListNode(vols))
 
 	if tspec.Fetch.Enabled && !tspec.Fetch.AllowAll {

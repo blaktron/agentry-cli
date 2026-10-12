@@ -43,3 +43,17 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^pkg/mcpauth/mcpauthtest/chatgpt\.go$''']
 regexes = ['''eyJhbGciOiJSUzI1NiJ9''']
+
+[[allowlists]]
+description = "the target host live test's planted AWS key id and GitHub token, printed on a throwaway sshd to prove a host's own keys reach the agent unchanged past the gateway's secret block (agentry-cli#861, plan runtime-hosts.md D9)"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^pkg/runner/engine/targethosts_live_test\.go$''']
+regexes = ['''AKIAQ3EGRQ5WJ2LZ7HXN''', '''ghp_R8mZq2LkVb1x9Nw4Ty7Pc3Ha6Sd0Fg5Jk2Lp''']
+
+[[allowlists]]
+description = "a fake private key header and body line in the host link's test, the shape its scrub masks (agentry-cli#861, plan runtime-hosts.md D19)"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^runnerimage/hostlink/server_test\.go$''']
+regexes = ['''b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW''']

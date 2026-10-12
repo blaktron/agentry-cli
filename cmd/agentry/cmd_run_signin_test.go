@@ -132,3 +132,41 @@ func TestAgentryRunHandsItsSignInsAccessTokenAlone(t *testing.T) {
 		})
 	}
 }
+
+// A hosted run's markers refuse a release that declares a target host
+// through `agentry run` itself (plan runtime-hosts.md D11, agentry-cli#861):
+// exit 11, host-refused, before any image is pulled or container started.
+func TestAgentryRunRefusesATargetHostForAHostedRun(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	if err := policy.Save(policyPath, policy.Default()); err != nil {
+		t.Fatal(err)
+	}
+	f := &dockerx.Fake{}
+	prev := newDockerClient
+	newDockerClient = func() dockerx.Client { return f }
+	t.Cleanup(func() { newDockerClient = prev })
+	conns := filepath.Join(t.TempDir(), "connections.json")
+	if err := os.WriteFile(conns, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/target-host"), "--allow-unsigned", "--yes",
+		"--policy", policyPath, "--connections-file", conns, "--intake", "server=admin@203.0.113.4")
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), "a hosted run never reaches a target host") {
+		t.Fatalf("%v", err)
+	}
+	// A hosted run's job token alone marks it too.
+	t.Setenv(envJobToken, "job-token")
+	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/target-host"), "--allow-unsigned", "--yes",
+		"--policy", policyPath, "--intake", "server=admin@203.0.113.4")
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), "a hosted run never reaches a target host") {
+		t.Fatalf("with the job token: %v", err)
+	}
+	for _, op := range f.Ops() {
+		if strings.HasPrefix(op, "Pull:") || strings.HasPrefix(op, "RunForeground") || strings.HasPrefix(op, "RunDetached") || strings.HasPrefix(op, "Build") {
+			t.Fatalf("a hosted target-host run reached the daemon: %v", f.Ops())
+		}
+	}
+}

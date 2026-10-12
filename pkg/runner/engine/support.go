@@ -39,6 +39,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -56,6 +57,10 @@ type runDirs struct {
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/secrets.env (0600, deleted on teardown)
 	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
+	// targets are the run's target hosts, readied by the caller, in the
+	// plan's order (targethosts.go, agentry-cli#861): the replacer gives
+	// each relay its address and port, and the host link its user.
+	targets     []*targethost.Host
 	outDir      string
 	receiptsDir string
 	// webLedger is receipts/web.ndjson for a run with the web tools: made
@@ -187,7 +192,7 @@ func (rd *runDirs) modeForPrompt() string {
 }
 
 func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer {
-	return strings.NewReplacer(
+	pairs := []string{
 		spec.PHWorkspace, hostPath(rd.workspace),
 		spec.PHOut, hostPath(rd.outDir),
 		spec.PHCfg, hostPath(rd.cfg),
@@ -203,7 +208,15 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHSecretsAbsent, rd.absentForPrompt(),
 		spec.PHRunMode, rd.modeForPrompt(),
 		spec.PHModelSignIn, hostPath(rd.modelSignIn),
-	)
+	}
+	// The host link's run-time values (agentry-cli#861): the user it runs
+	// as, and each target host's relay target.
+	user, _, _ := hostLinkUser()
+	pairs = append(pairs, spec.PHHostLinkUser, user)
+	for _, h := range rd.targets {
+		pairs = append(pairs, spec.PHTargetHost(h.ID), h.RelayHost())
+	}
+	return strings.NewReplacer(pairs...)
 }
 
 // gatewayHostPath spells a host path for the gateway, which runs in a
@@ -293,11 +306,13 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		td.removeSensitive(rd.connections(), true)
 		td.removeSensitive(rd.modelSignInDir(), true)
 		td.removeSensitive(rd.knowledge, true)
+		td.removeSensitive(rd.hostsDir(), true)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
 		}
 	})
 	rd.runID, rd.web = runID, p.Plan.Capabilities.WebTools
+	rd.targets = targetHostsOf(p)
 	if p.Web != nil {
 		// Made here, and only here, as a new regular file: whatever the
 		// output folder held under the name is removed first, so a link a

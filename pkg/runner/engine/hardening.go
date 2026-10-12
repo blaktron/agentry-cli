@@ -99,6 +99,13 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if spec.HasPackageServers(p.Plan.MCPServers) {
 		containers = append(containers, "the MCP server installer")
 	}
+	hostLink := ""
+	if p.Plan.HostLink != nil {
+		// The host link is one of the gateway's containers (below); it
+		// runs as the person's uid, its sign-ins read-only, and reaches
+		// nothing but its relays (agentry-cli#861).
+		hostLink = "; the host link (" + p.Plan.HostLink.Image + ") is one of those the gateway launches, run as the invoking user with no network but one relay a target host"
+	}
 	line := strings.Join(containers, ", ") +
 		fmt.Sprintf(": all capabilities dropped, no-new-privileges, memory %s, cpus %d, pids %d", lim.Memory, lim.CPUs, lim.Pids) +
 		"; the gateway keeps DAC_READ_SEARCH alone, to read the run's secrets file" +
@@ -106,7 +113,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if p.Plan.Mode == "interactive" {
 		line += "; the session store's one-shot chown keeps CHOWN alone"
 	}
-	line += "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them"
+	line += "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them" + hostLink
 	out["containers"] = line
 	if p.Plan.Runtime() != "" {
 		out["runtime"] = runtimeLine(p)

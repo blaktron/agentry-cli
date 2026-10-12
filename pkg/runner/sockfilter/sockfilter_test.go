@@ -1274,3 +1274,71 @@ func TestTheToolsServerGetsTheRunsBoundedTmpfs(t *testing.T) {
 		g.refused(t, name, "POST", "/containers/create", doc, "the run's own tmpfs")
 	}
 }
+
+// TestTheToolsServerTakesTheHostLinksCopyFolder (agentry-cli#861): the one
+// bind the tools server may have beneath its scratch tmpfs is the host
+// link's copy folder at /scratch/hosts, the run's own; another folder
+// there, or that folder anywhere else beneath the tmpfs, is refused.
+func TestTheToolsServerTakesTheHostLinksCopyFolder(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	opts := "size=268435456,mode=1777"
+	var shared string
+	g := newRig(t, Limits{}, func(c *Config) {
+		shared = filepath.Join(c.BindRoots[0], "hostfiles")
+		if err := os.MkdirAll(shared, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		c.WritableRoots = append(c.WritableRoots, shared)
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
+		c.ToolsTmpfs = map[string]string{"/tmp": opts, "/scratch": opts}
+		c.ToolsShared = map[string]string{"/scratch/hosts": shared}
+	})
+	tools := func(binds ...string) map[string]any {
+		return map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", target},
+			"HostConfig": map[string]any{"Binds": binds}}
+	}
+	binds := func(g *rig) []string {
+		hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+		var out []string
+		list, _ := hc["Binds"].([]any)
+		for _, b := range list {
+			out = append(out, b.(string))
+		}
+		return out
+	}
+	if code, body := g.do(t, "POST", "/containers/create", tools(shared+":/scratch/hosts:rw")); code != http.StatusCreated {
+		t.Fatalf("the tools server with the copy folder: %d %s", code, body)
+	}
+	if !slices.Contains(binds(g), shared+":/scratch/hosts:rw") {
+		t.Fatalf("binds %v", binds(g))
+	}
+	for name, doc := range map[string]map[string]any{
+		"another folder at /scratch/hosts": tools(g.writable + ":/scratch/hosts:rw"),
+		"the copy folder elsewhere":        tools(shared + ":/scratch/other:rw"),
+		"the copy folder over /scratch":    tools(shared + ":/scratch:rw"),
+	} {
+		g.refused(t, name, "POST", "/containers/create", doc, "the run's own tmpfs")
+	}
+}
+
+// TestATargetHostsRelayReachesItsOneAddressAndPort is invariant 3 of plan
+// runtime-hosts.md (agentry-cli#861): a target host's relay is admitted to
+// the address the person's machine resolved and the port they named, and a
+// relay to any other address or port is refused.
+func TestATargetHostsRelayReachesItsOneAddressAndPort(t *testing.T) {
+	g := newRig(t, Limits{}, func(c *Config) { c.RelayHosts = []string{"203.0.113.4:2222"} })
+	relay := func(env ...string) map[string]any {
+		return map[string]any{"Image": relayPin, "Env": env, "HostConfig": map[string]any{"NetworkMode": ext}}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", relay("PROXY_HOSTNAME=203.0.113.4", "PROXY_PORTS=2222")); code != http.StatusCreated {
+		t.Fatalf("the target host's relay: %d %s", code, body)
+	}
+	for name, doc := range map[string]map[string]any{
+		"another port":       relay("PROXY_HOSTNAME=203.0.113.4", "PROXY_PORTS=22"),
+		"a second port":      relay("PROXY_HOSTNAME=203.0.113.4", "PROXY_PORTS=2222,22"),
+		"another address":    relay("PROXY_HOSTNAME=203.0.113.5", "PROXY_PORTS=2222"),
+		"the address on 443": relay("PROXY_HOSTNAME=203.0.113.4", "PROXY_PORTS=443"),
+	} {
+		g.refused(t, name, "POST", "/containers/create", doc, "not one the run declared")
+	}
+}

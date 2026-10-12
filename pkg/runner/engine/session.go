@@ -123,6 +123,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := checkModelSignIn(p); err != nil {
 		return fail(err)
 	}
+	if err := checkTargetHosts(p); err != nil {
+		return fail(err)
+	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
@@ -193,6 +196,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(err)
 	}
 	if err := writeConnectionFiles(p, rd, secrets); err != nil {
+		return fail(err)
+	}
+	if err := prepareTargetHosts(ctx, d, p, rd, td, env); err != nil {
 		return fail(err)
 	}
 	// The optional secrets it goes without, before any replacer is built:
@@ -1050,6 +1056,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	if logs, lerr := s.d.Logs(ctx, containerName(s.runID, "proxy"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "proxy.log"), []byte(s.redact.String(logs)), 0o644)
 	}
+	copyHostLogs(s.rd, s.env)
 	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start, "")
 	daemon := daemonLine(s.rd)
 	if s.rd.pdfLedger != "" {
