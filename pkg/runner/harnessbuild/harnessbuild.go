@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/imagelabel"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
@@ -287,9 +288,9 @@ func (b Builder) buildClaude(ctx context.Context, h policy.HarnessImage, rel cla
 // so the image holds the packages and not their tarballs. Claude Code is
 // run once as a check that it starts on the base; its config directory is
 // made for the image's user.
-const claudeDockerfile = `ARG BASE
+var claudeDockerfile = `ARG BASE
 FROM ${BASE} AS unpack
-ARG NATIVE
+` + imagelabel.Line(imagelabel.ClaudeCode) + `ARG NATIVE
 COPY claude-code.tgz claude-code-native.tgz /tmp/
 RUN set -e; m=/usr/local/lib/node_modules/@anthropic-ai; \
     mkdir -p "$m/claude-code" "$m/$NATIVE"; \
@@ -302,7 +303,7 @@ ARG ARTIFACT
 ARG NATIVE_INTEGRITY
 ARG RECIPE
 LABEL org.agentry.harness.artifact="${ARTIFACT}" org.agentry.harness.native="${NATIVE_INTEGRITY}" org.agentry.harness.recipe="${RECIPE}"
-COPY --from=unpack /usr/local/lib/node_modules/@anthropic-ai/ /usr/local/lib/node_modules/@anthropic-ai/
+` + imagelabel.Line(imagelabel.ClaudeCode) + `COPY --from=unpack /usr/local/lib/node_modules/@anthropic-ai/ /usr/local/lib/node_modules/@anthropic-ai/
 COPY agentry-open ` + ClaudeOpener + `
 RUN set -e; ln -s ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude; \
     chmod 0755 ` + ClaudeOpener + `; \

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/imagelabel"
 )
 
 const (
@@ -1340,5 +1342,22 @@ func TestATargetHostsRelayReachesItsOneAddressAndPort(t *testing.T) {
 		"the address on 443": relay("PROXY_HOSTNAME=203.0.113.4", "PROXY_PORTS=443"),
 	} {
 		g.refused(t, name, "POST", "/containers/create", doc, "not one the run declared")
+	}
+}
+
+// A container inherits its image's labels: the image label (agentry-cli#892)
+// makes nothing the run's, even carrying the run's own id as its value.
+func TestTheImageLabelMakesNothingOurs(t *testing.T) {
+	f := &Filter{cfg: Config{RunID: "abcd1234", Label: lbl, OwnerLabel: own}}
+	labels := map[string]string{imagelabel.Key: "abcd1234", lbl: "abcd1234"}
+	if f.ours(labels) {
+		t.Error("ours: a container with the image label and the run label is the gateway's")
+	}
+	anyLabels := map[string]any{imagelabel.Key: "abcd1234", lbl: "abcd1234"}
+	if f.oursAny(anyLabels) {
+		t.Error("oursAny: a container with the image label and the run label is the gateway's")
+	}
+	if !f.ours(map[string]string{own: "abcd1234"}) {
+		t.Error("ours: the owner label no longer makes a container the gateway's")
 	}
 }
