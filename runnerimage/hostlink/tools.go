@@ -609,6 +609,11 @@ func (s *server) copyOut(rel, local string) (int64, error) {
 		return 0, fmt.Errorf("the shared folder %s is not there: %v", FilesPath, err)
 	}
 	defer func() { _ = root.Close() }()
+	// A regular file, before it is opened: a FIFO a command left there
+	// would block the open.
+	if fi, err := root.Lstat(filepath.FromSlash(rel)); err != nil || !fi.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a file", path.Join(FilesPath, rel))
+	}
 	src, err := root.Open(filepath.FromSlash(rel))
 	if err != nil {
 		return 0, fmt.Errorf("%s: %v", path.Join(FilesPath, rel), err)

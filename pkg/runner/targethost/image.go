@@ -32,8 +32,8 @@ const HostlinkPackagesFile = "/etc/agentry/hostlink/packages"
 // hostlinkUser is the image's own user (DR-91), restored after the build.
 const hostlinkUser = "10001:10001"
 
-// kept are the programs the host link runs.
-var kept = []string{"ssh", "sftp", filepath.Base(hostlink.AskpassProgram)}
+// hostLinkPrograms are the programs the minimized image keeps.
+var hostLinkPrograms = []string{"ssh", "sftp", filepath.Base(hostlink.AskpassProgram)}
 
 // ImageSpec is the host link's image for a runner image and a base.
 type ImageSpec struct {
@@ -51,8 +51,8 @@ func HostLinkImage(runnerImage, base string) ImageSpec {
 
 // Dockerfile is the build, every step in exec form.
 func (s ImageSpec) Dockerfile() string {
-	quoted := make([]string, 0, len(kept))
-	for _, k := range kept {
+	quoted := make([]string, 0, len(hostLinkPrograms))
+	for _, k := range hostLinkPrograms {
 		quoted = append(quoted, fmt.Sprintf("%q", k))
 	}
 	sort.Strings(quoted)

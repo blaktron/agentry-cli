@@ -156,6 +156,14 @@ func TestAgentryRunRefusesATargetHostForAHostedRun(t *testing.T) {
 	if !strings.Contains(err.Error(), "a hosted run never reaches a target host") {
 		t.Fatalf("%v", err)
 	}
+	// A hosted run's job token alone marks it too.
+	t.Setenv(envJobToken, "job-token")
+	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/target-host"), "--allow-unsigned", "--yes",
+		"--policy", policyPath, "--intake", "server=admin@203.0.113.4")
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), "a hosted run never reaches a target host") {
+		t.Fatalf("with the job token: %v", err)
+	}
 	for _, op := range f.Ops() {
 		if strings.HasPrefix(op, "Pull:") || strings.HasPrefix(op, "RunForeground") || strings.HasPrefix(op, "RunDetached") || strings.HasPrefix(op, "Build") {
 			t.Fatalf("a hosted target-host run reached the daemon: %v", f.Ops())

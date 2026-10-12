@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -473,5 +474,19 @@ func TestAskpassPrintsOnlyAHostsPasswordOrPassphrase(t *testing.T) {
 		if code := askpass(bad, hosts, &out, &errw); code == 0 || out.Len() != 0 {
 			t.Errorf("askpass printed %q for %q", out.String(), bad)
 		}
+	}
+}
+
+// TestTheScrubAndTheRedactorShareTheSpellings: every spelling Spellings
+// gives of a password, its line end's base64 included, is masked.
+func TestTheScrubMasksEverySpelling(t *testing.T) {
+	sc := newScrubber(testPassword)
+	for _, v := range Spellings(testPassword) {
+		if got := sc.String("x " + v + " y"); strings.Contains(got, v) {
+			t.Errorf("%q survived: %q", v, got)
+		}
+	}
+	if !slices.Contains(Spellings(testPassword), base64.StdEncoding.EncodeToString([]byte(testPassword+"\n"))) {
+		t.Error("the base64 of the password with its line end is not a spelling")
 	}
 }

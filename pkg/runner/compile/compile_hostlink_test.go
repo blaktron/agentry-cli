@@ -7,6 +7,7 @@ package compile
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -193,5 +194,14 @@ func TestAReleaseWithoutATargetHostHasNoHostLink(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(planDir, "gateway", "hostspec.json")); err == nil {
 		t.Fatal("hostspec.json was written")
+	}
+}
+
+func TestABuiltinIsNeverGrantedATargetHost(t *testing.T) {
+	in := hostInputs(t, hostManifest)
+	in.Source = "builtin"
+	var refusal *PolicyRefusal
+	if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) {
+		t.Fatalf("a built-in with a target host compiled: %v", err)
 	}
 }

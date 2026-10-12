@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // Refusal is a target host the run will not reach, with the receipt's
@@ -22,15 +23,13 @@ type Refusal struct {
 func (r *Refusal) Error() string { return fmt.Sprintf("target host %s: %v", r.ID, r.Err) }
 func (r *Refusal) Unwrap() error { return r.Err }
 
-// The details of a refusal, as the receipt names them.
+// The details of a refusal: the receipt's own words (receipt.Host*).
 const (
-	RefusedAddress    = "host-address"
-	RefusedKeyUnknown = "host-key-unknown"
-	RefusedKeyChanged = "host-key-changed"
-	RefusedAuth       = "host-auth"
-	RefusedCredential = "host-credential"
-	RefusedHosted     = "hosted"
-	RefusedUnreached  = "host-unreachable"
+	RefusedAddress    = receipt.HostAddress
+	RefusedKeyUnknown = receipt.HostKeyUnknown
+	RefusedKeyChanged = receipt.HostKeyChanged
+	RefusedCredential = receipt.HostCredential
+	RefusedUnreached  = receipt.HostUnreachable
 )
 
 func refuse(id, detail string, format string, args ...any) *Refusal {

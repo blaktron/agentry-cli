@@ -306,19 +306,6 @@ func hostDocument(h *targethost.Host) map[string]any {
 	return map[string]any{"host": map[string]any{"named": h.Answer.Host, "port": h.Answer.Port, "user": h.Answer.User}}
 }
 
-// HostList answers the target hosts by id, sorted.
-func (a *Answers) HostList() []*targethost.Host {
-	if a == nil {
-		return nil
-	}
-	out := make([]*targethost.Host, 0, len(a.Hosts))
-	for _, h := range a.Hosts {
-		out = append(out, h)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
-}
-
 // SourceList answers the input sources by id, sorted.
 func (a *Answers) SourceList() []*sources.Source {
 	if a == nil {

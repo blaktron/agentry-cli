@@ -41,12 +41,10 @@ func addTargetHostFlags(cmd *cobra.Command, f *targetHostFlags) {
 // run of a release that declares a target host (plan D11).
 func refuseHostedTargetHosts(plan *spec.Plan, opts runOpts) error {
 	ids := plan.Capabilities.TargetHosts
-	if len(ids) == 0 || (!hostedRun(opts) && opts.reviewInputs == "") {
+	if len(ids) == 0 || (!hostedRun(opts) && !hostedProcess() && opts.reviewInputs == "") {
 		return nil
 	}
-	return engine.Classify(engine.ExitPolicy, receipt.WithReason(
-		errors.New("a hosted run never reaches a target host: this QuickAgent works a machine over SSH, which only a run on your own computer does"),
-		receipt.ReasonHostRefused, receipt.HostHosted, ids...))
+	return engine.HostedTargetHostRefusal(ids)
 }
 
 // readyTargetHosts readies each target host the answers name, in the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
@@ -93,6 +94,22 @@ func ssh256(h *Host) string {
 // where its trust came from, the sign-in's kind and source, and what the
 // run's boundary does not cover.
 func (h *Host) ReceiptLine(calls int) string {
+	return h.receiptLine(calls) + h.shortNote()
+}
+
+// shortNote says when a sign-in is too short to mask: the host link's
+// scrub masks values of hostlink.MinScrub bytes and more, the run's files
+// eight and more (D19).
+func (h *Host) shortNote() string {
+	for _, v := range h.Credential.Values() {
+		if len(strings.TrimSpace(v)) < 8 {
+			return fmt.Sprintf("; a sign-in shorter than 8 characters is not masked in the run's files (nor, under %d, in tool results)", hostlink.MinScrub)
+		}
+	}
+	return ""
+}
+
+func (h *Host) receiptLine(calls int) string {
 	return fmt.Sprintf("%s at %s (%s resolved by this machine), port %d; host key %s (%s); signed in with %s; reached only through the host link and one relay to that address and port, by the host tools (%d calls, receipts/%s); the account can run any command it may on that machine, and the machine's own network is outside the run",
 		h.Answer.User, h.Answer.Host, h.Address, h.Answer.Port, ssh256(h), h.HostKey.From, h.Credential.Words(), calls, hostlink.LogFile(h.ID))
 }

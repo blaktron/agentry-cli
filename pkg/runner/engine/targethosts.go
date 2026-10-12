@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +28,15 @@ import (
 // writes (D19), says why when the host link would not start, and keeps each
 // host's call log as a receipt.
 
+// HostedTargetHostRefusal is a hosted run's refusal of a release that
+// declares target hosts (plan D11): exit 11, host-refused, hosted. The CLI
+// refuses with it before anything is installed, and the engine again.
+func HostedTargetHostRefusal(ids []string) error {
+	return Classify(ExitPolicy, receipt.WithReason(
+		errors.New("a hosted run never reaches a target host: this QuickAgent works a machine over SSH, which only a run on your own computer does"),
+		receipt.ReasonHostRefused, receipt.HostHosted, ids...))
+}
+
 // checkTargetHosts refuses, before anything is made, a run whose plan
 // declares target hosts the run cannot reach as declared: a hosted run
 // (plan D11), and a target host that was not readied (every declared one
@@ -42,9 +50,7 @@ func checkTargetHosts(p Params) error {
 		return nil
 	}
 	if p.InputReview != nil {
-		return Classify(ExitPolicy, receipt.WithReason(
-			errors.New("a hosted run never reaches a target host: this QuickAgent works a machine over SSH, which only a run on your own computer does (agentry run --local)"),
-			receipt.ReasonHostRefused, receipt.HostHosted, ids...))
+		return HostedTargetHostRefusal(ids)
 	}
 	if p.Plan.HostLink == nil {
 		return Classify(ExitCompile, errors.New("the plan declares target hosts but no host link; recompile it"))
@@ -66,6 +72,16 @@ func checkTargetHosts(p Params) error {
 		}
 		if err := h.Target().Check(); err != nil {
 			return Classify(ExitPolicy, receipt.WithReason(err, receipt.ReasonHostRefused, receipt.HostAddress, id))
+		}
+		// The caller resolved and checked the address; the engine holds
+		// it to the same rule, whoever the caller is (plan D8).
+		if err := targethost.CheckAddress(h.Address); err != nil {
+			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("target host %s: %s is %w", id, h.Address, err), receipt.ReasonHostRefused, receipt.HostAddress, id))
+		}
+		if p.Policy != nil {
+			if ok, why := p.Policy.Hosts.Admits(h.Address); !ok {
+				return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("target host %s: %s", id, why), receipt.ReasonHostRefused, receipt.HostAddress, id))
+			}
 		}
 	}
 	return nil
@@ -144,7 +160,8 @@ func prepareTargetHosts(ctx context.Context, d dockerx.Client, p Params, rd *run
 	}
 	env.CapabilitiesEnforced["hostLink.image"] = fmt.Sprintf("%s, built on this machine from %s with this CLI's runner and minimized to ssh and sftp (%s)",
 		img.Tag, img.Base, strings.Join(img.Packages, ", "))
-	for _, dir := range []string{rd.hostsDir(), rd.hostLogDir(), rd.hostFilesDir()} {
+	dirs := []string{rd.hostsDir(), rd.hostLogDir(), rd.hostFilesDir()}
+	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("the host link's folders: %w", err))
 		}
@@ -162,7 +179,7 @@ func prepareTargetHosts(ctx context.Context, d dockerx.Client, p Params, rd *run
 		}
 		env.CapabilitiesEnforced["host."+h.ID] = h.ReceiptLine(0)
 	}
-	for _, dir := range []string{rd.hostsDir(), rd.hostLogDir(), rd.hostFilesDir()} {
+	for _, dir := range dirs {
 		relabelShared(ctx, p.Stderr, dir)
 	}
 	return nil
@@ -203,25 +220,13 @@ func writeHostFolder(dir string, h *targethost.Host) error {
 }
 
 // hostCredentialValues are the run's target-host sign-ins in every spelling
-// the run's redactor masks: raw, trimmed and base64 (D19).
+// the host link's scrub masks (hostlink.Spellings), for the run's redactor
+// (D19).
 func hostCredentialValues(p Params) []string {
 	var out []string
 	for _, h := range targetHostsOf(p) {
 		for _, v := range h.Credential.Values() {
-			t := strings.TrimSpace(v)
-			out = append(out, v, t)
-			// A value printed by a command comes with its line end, which
-			// changes the end of its base64.
-			for _, s := range []string{v, t, t + "\n", t + "\r\n"} {
-				out = append(out, base64.StdEncoding.EncodeToString([]byte(s)), base64.RawStdEncoding.EncodeToString([]byte(s)))
-			}
-			if strings.Contains(v, "PRIVATE KEY-----") {
-				for _, line := range strings.Split(v, "\n") {
-					if line = strings.TrimSpace(line); len(line) >= 16 && !strings.HasPrefix(line, "-----") {
-						out = append(out, line)
-					}
-				}
-			}
+			out = append(out, hostlink.Spellings(v)...)
 		}
 	}
 	return out

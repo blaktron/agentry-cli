@@ -18,44 +18,58 @@ import (
 // Redacted is what a run credential is replaced by.
 const Redacted = "[redacted: a sign-in of this run's target host]"
 
-// minScrub is the shortest value the scrub masks: shorter, and it would
-// mask ordinary text (a password that short is the person's to change).
-const minScrub = 6
+// MinScrub is the shortest value the scrub masks: shorter, and it would
+// mask ordinary text (a password that short is the person's to change; the
+// receipt says when one is).
+const MinScrub = 6
 
 type scrubber struct{ values []string }
 
-// newScrubber masks each credential, its trimmed form, its base64
-// spellings, and for a private key each line of its body, longest first.
-func newScrubber(creds ...string) *scrubber {
-	var vals []string
+// Spellings are the ways a credential can appear in what a command
+// prints: as it is, trimmed, in base64 (with and without the line end a
+// command adds, standard, unpadded and URL-safe), and for a private key
+// each line of its body and the body whole. The host link's scrub and the
+// engine's redactor take the same list, so the two cannot drift.
+func Spellings(c string) []string {
+	var out []string
 	add := func(v string) {
-		if len(v) >= minScrub && !slices.Contains(vals, v) {
-			vals = append(vals, v)
+		if v != "" && !slices.Contains(out, v) {
+			out = append(out, v)
 		}
 	}
-	for _, c := range creds {
-		t := strings.TrimSpace(c)
-		for _, v := range []string{c, t, t + "\n", t + "\r\n"} {
-			if v == c || v == t {
-				add(v)
+	t := strings.TrimSpace(c)
+	add(c)
+	add(t)
+	for _, v := range []string{c, t, t + "\n", t + "\r\n"} {
+		add(base64.StdEncoding.EncodeToString([]byte(v)))
+		add(base64.RawStdEncoding.EncodeToString([]byte(v)))
+		add(base64.URLEncoding.EncodeToString([]byte(v)))
+	}
+	if strings.Contains(c, "PRIVATE KEY-----") {
+		var body []string
+		for _, line := range strings.Split(c, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "-----") {
+				continue
 			}
-			add(base64.StdEncoding.EncodeToString([]byte(v)))
-			add(base64.RawStdEncoding.EncodeToString([]byte(v)))
-			add(base64.URLEncoding.EncodeToString([]byte(v)))
+			body = append(body, line)
+			if len(line) >= 16 {
+				add(line)
+			}
 		}
-		if strings.Contains(c, "PRIVATE KEY-----") {
-			var body []string
-			for _, line := range strings.Split(c, "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" || strings.HasPrefix(line, "-----") {
-					continue
-				}
-				body = append(body, line)
-				if len(line) >= 16 {
-					add(line)
-				}
+		add(strings.Join(body, ""))
+	}
+	return out
+}
+
+// newScrubber masks every spelling of each credential, longest first.
+func newScrubber(creds ...string) *scrubber {
+	var vals []string
+	for _, c := range creds {
+		for _, v := range Spellings(c) {
+			if len(v) >= MinScrub && !slices.Contains(vals, v) {
+				vals = append(vals, v)
 			}
-			add(strings.Join(body, ""))
 		}
 	}
 	slices.SortFunc(vals, func(a, b string) int { return len(b) - len(a) })

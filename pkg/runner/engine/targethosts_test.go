@@ -293,3 +293,19 @@ func TestTheHostLinksPasswdNamesItsUser(t *testing.T) {
 		t.Error("a uid the image already names was added again")
 	}
 }
+
+// TestTheEngineHoldsTheAddressToTheRuleWhoeverReadiedIt (plan D8): a host
+// handed in at loopback, or at an address the policy denies, is refused
+// whatever readied it.
+func TestTheEngineHoldsTheAddressToTheRuleWhoeverReadiedIt(t *testing.T) {
+	p, f, h := targetHostFixture(t)
+	happyFake(f)
+	h.Address = netip.MustParseAddr("127.0.0.1")
+	env, err := Run(context.Background(), f, p)
+	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonHostRefused, Detail: receipt.HostAddress, Names: []string{"server"}})
+	p, f, _ = targetHostFixture(t)
+	happyFake(f)
+	p.Policy.Hosts.Deny = []string{"203.0.113.0/24"}
+	env, err = Run(context.Background(), f, p)
+	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonHostRefused, Detail: receipt.HostAddress, Names: []string{"server"}})
+}

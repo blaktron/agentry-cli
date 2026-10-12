@@ -88,7 +88,7 @@ func hostFilesVolume() string {
 // with a declared target host, before the run knows which.
 func targetHostsEnforcement(hosts []string) string {
 	return fmt.Sprintf("the target hosts %s, named by the person at the run's start, are reached only by the host link (%s, its own container) through one relay a host to the address and port the person's machine resolved; "+
-		"its sign-in is in files bound into the host link alone, and the agent works the host through %s, every call logged; a hosted run refuses a target host",
+		"its sign-in is in files bound into the host link alone, and the agent works the host through %s, every call logged; what the host prints reaches the agent unchanged, past the gateway's secret block and the harness's scrub, but for the run's own sign-in (D9, D19); a hosted run refuses a target host",
 		strings.Join(hosts, ", "), hostlink.ServerName, strings.Join(hostlink.Tools, ", "))
 }
 

@@ -192,8 +192,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	// built-in never declares one, and the grants that hold a built-in's
 	// container to one network never sit beside it.
 	if len(m.Capabilities.TargetHosts) > 0 {
-		if in.Web || in.Review {
-			return nil, &PolicyRefusal{Reason: "a target host is never granted beside the web tools or the review grant"}
+		if in.Web || in.Review || in.Source == "builtin" {
+			return nil, &PolicyRefusal{Reason: "a built-in is never granted a target host, nor is one granted beside the web tools or the review grant"}
 		}
 		caps.TargetHosts = append([]string(nil), m.Capabilities.TargetHosts...)
 	}
