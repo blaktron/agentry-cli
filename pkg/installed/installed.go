@@ -85,6 +85,14 @@ type CapSnapshot struct {
 	// consent gate re-asks about. Absent in records written before shipped
 	// knowledge existed, which reads as "ships none".
 	Knowledge []string `yaml:"knowledge,omitempty" json:"knowledge,omitempty"`
+	// TargetHosts lists the intake questions that ask for a target host
+	// (capabilities.targetHosts; plan runtime-hosts.md §8, agentry-cli#863):
+	// one more is one more machine the agent may run any command on, a
+	// widening the consent gate re-asks about. Absent in records written
+	// before target hosts were recorded (CLI v0.6.108 and older), which
+	// reads as "none", so a release that already declared one is asked
+	// about once more.
+	TargetHosts []string `yaml:"targetHosts,omitempty" json:"targetHosts,omitempty"`
 }
 
 // RemoteSnapshot is what a consent recorded of one remote server beside
@@ -140,6 +148,7 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 		s.DataAccess = append(s.DataAccess, string(d))
 	}
 	s.Knowledge = slices.Clone(c.Knowledge)
+	s.TargetHosts = slices.Clone(c.TargetHosts)
 	return s
 }
 
@@ -159,9 +168,10 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 			Read:  manifest.FSAccess{Mode: manifest.FSMode(s.FSRead), Paths: slices.Clone(s.FSReadPaths)},
 			Write: manifest.FSAccess{Mode: manifest.FSMode(s.FSWrite), Paths: slices.Clone(s.FSWritePaths)},
 		},
-		Exec:      manifest.ExecCapability{Commands: slices.Clone(s.ExecCommands)},
-		Secrets:   slices.Clone(s.Secrets),
-		Knowledge: slices.Clone(s.Knowledge),
+		Exec:        manifest.ExecCapability{Commands: slices.Clone(s.ExecCommands)},
+		Secrets:     slices.Clone(s.Secrets),
+		Knowledge:   slices.Clone(s.Knowledge),
+		TargetHosts: slices.Clone(s.TargetHosts),
 	}
 	for _, d := range s.DataAccess {
 		c.DataAccess = append(c.DataAccess, manifest.DataAccess(d))

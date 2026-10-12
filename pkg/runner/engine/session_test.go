@@ -44,9 +44,18 @@ publish:
 // sessionFixture compiles the interactive plan of a two-mode release.
 func sessionFixture(t *testing.T) (Params, *dockerx.Fake) {
 	t.Helper()
+	return sessionFixtureEdited(t, nil)
+}
+
+// sessionFixtureEdited is sessionFixture with the manifest edited first.
+func sessionFixtureEdited(t *testing.T, edit func(*manifest.Manifest)) (Params, *dockerx.Fake) {
+	t.Helper()
 	m, err := manifest.Parse([]byte(sessionManifest))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if edit != nil {
+		edit(m)
 	}
 	installDir := t.TempDir()
 	ws := filepath.Join(installDir, "workspace")
@@ -90,9 +99,13 @@ type fakeHarness struct {
 	denied  bool
 	// usage, when set, is written as one usage_update before the turn's
 	// reply — the wire shape a harness that prices the session sends. Nil
-	// keeps the stream as docker-agent 1.128.0's own, which reports no
-	// cost at all (agentry-cli#222).
+	// sends none, as docker-agent 1.150.0 does for a model whose context
+	// window it does not know (agentry-cli#836); either way it reports no
+	// cost (agentry-cli#222).
 	usage map[string]any
+	// bareResult answers a prompt with its stop reason alone, as
+	// docker-agent does: its prompt result never carries usage.
+	bareResult bool
 	// gate, when set, holds every prompt's answer until a value arrives (or
 	// the channel closes), so a turn stays in flight as long as a test needs.
 	gate chan struct{}
@@ -211,7 +224,11 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 			}
 			reply := "You said: " + text + ". The token is sekret-value-1234 and the key is sk-test-key-9876."
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": reply}}}})
-			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}}})
+			result := map[string]any{"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}}
+			if h.bareResult {
+				delete(result, "usage")
+			}
+			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": result})
 		default:
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32601, "message": "unknown"}})
 		}
@@ -491,8 +508,8 @@ func TestSessionBudgetsEndTheSession(t *testing.T) {
 
 // TestSessionCostBudgetNeedsACostTheHarnessReports: the ceiling fires on a
 // harness that prices the session, and the receipt says plainly that it
-// could not fire on one that does not. docker-agent 1.128.0 sends `used`
-// and no cost on its ACP usage_update, so a costUsd of 0 on the default
+// could not fire on one that does not. docker-agent sends `used` and no
+// cost on its ACP usage_update, so a costUsd of 0 on the default
 // adapter's interactive runs means "nothing was reported", not "the
 // session was free" (agentry-cli#222).
 func TestSessionCostBudgetNeedsACostTheHarnessReports(t *testing.T) {
@@ -554,6 +571,57 @@ func TestSessionCostBudgetNeedsACostTheHarnessReports(t *testing.T) {
 		line := env.CapabilitiesEnforced["budgets.cost"]
 		if !strings.Contains(line, "requested but not enforceable") || !strings.Contains(line, "not because the session cost nothing") {
 			t.Errorf("budgets.cost = %q", line)
+		}
+	})
+}
+
+// TestASessionWhoseHarnessReportsNoTokensSaysSo: docker-agent 1.150.0 sends
+// its ACP usage_update only for a model whose context window it knows
+// (agentry-cli#836), so a session on any other model reports no tokens at
+// all. Its receipt says the 0 is unreported rather than leaving it to read
+// as a session that used none; a harness that reports keeps no such line.
+func TestASessionWhoseHarnessReportsNoTokensSaysSo(t *testing.T) {
+	end := func(t *testing.T, usage map[string]any) *receipt.Envelope {
+		t.Helper()
+		p, f := sessionFixture(t)
+		happyFake(f)
+		h := &fakeHarness{usage: usage, bareResult: true}
+		f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+		s, err := StartSession(context.Background(), f, p)
+		if err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		_, done := collect(s)
+		ctx := context.Background()
+		if err := s.Send(ctx, "turn"); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		env, err := s.End(ctx, false)
+		<-done
+		if err != nil {
+			t.Fatalf("end: %v", err)
+		}
+		return env
+	}
+
+	t.Run("no usage_update", func(t *testing.T) {
+		env := end(t, nil)
+		if env.Usage.TotalTokens != 0 {
+			t.Errorf("usage.totalTokens = %d, want 0", env.Usage.TotalTokens)
+		}
+		line := env.CapabilitiesEnforced["usage.tokens"]
+		if !strings.Contains(line, "reported no token usage") || !strings.Contains(line, "not because the session used none") {
+			t.Errorf("usage.tokens = %q", line)
+		}
+	})
+
+	t.Run("a usage_update", func(t *testing.T) {
+		env := end(t, map[string]any{"used": 1262, "size": 262144})
+		if env.Usage.TotalTokens != 1262 {
+			t.Errorf("usage.totalTokens = %d, want 1262", env.Usage.TotalTokens)
+		}
+		if line, ok := env.CapabilitiesEnforced["usage.tokens"]; ok {
+			t.Errorf("usage.tokens = %q, want no line when the harness reported", line)
 		}
 	})
 }

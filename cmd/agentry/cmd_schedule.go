@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
@@ -197,6 +199,9 @@ type runSpecFlags struct {
 	adapter, policyPath                         string
 	allowUnsigned, allowUnscanned, allowVulnMCP bool
 	signedOut                                   bool
+	// hosts are the target hosts' sign-in flags, read once at add and
+	// kept in the keychain (agentry-cli#863).
+	hosts targetHostFlags
 }
 
 func newScheduleAddCmd() *cobra.Command {
@@ -220,11 +225,19 @@ func newScheduleAddCmd() *cobra.Command {
 			"and every secret in the MCP profile or the policy's envFile source.\n\n" +
 			"Only a release that can run autonomous can be scheduled: nobody is there\n" +
 			"to answer an interactive one.\n\n" +
+			"A release that asks for a server (a target host) is given it now, with\n" +
+			"--intake id=[user@]host[:port]: its host key is accepted now (at a terminal,\n" +
+			"when no known_hosts file holds it) and its sign-in, from --host-key,\n" +
+			"--host-password, the keychain or a prompt, is kept in the system keychain,\n" +
+			"where every run of the schedule reads it. The schedule keeps the keychain\n" +
+			"account and the key's fingerprint, never the sign-in; a run that finds the\n" +
+			"sign-in gone or the host offering another key refuses (exit 11).\n\n" +
 			"--signed-out (Linux with Docker Engine) also runs it while you are signed\n" +
 			"out. The first time, it turns on linger for you after a confirm (--yes\n" +
-			"gives it), and it seals the model key, your own provider keys and the\n" +
-			"registry token kept in the keychain into an encrypted systemd credential\n" +
-			"beside the schedule. It is refused below systemd 256, on Docker Desktop,\n" +
+			"gives it), and it seals the model key, your own provider keys, each target\n" +
+			"host's sign-in and the registry token kept in the keychain into an\n" +
+			"encrypted systemd credential beside the schedule. It is refused below\n" +
+			"systemd 256, on Docker Desktop,\n" +
 			"for a QuickAgent with an OAuth connection and for a kept knowledge pack,\n" +
 			"whose keys stay in the keychain.\n\n" +
 			"--check decides all of that and keeps nothing: no consent is asked, nothing\n" +
@@ -280,6 +293,7 @@ func newScheduleAddCmd() *cobra.Command {
 	f.BoolVar(&spec.allowUnsigned, "allow-unsigned", false, "allow a release with no registry attestation, at every run of this schedule")
 	f.BoolVar(&spec.allowUnscanned, "allow-unscanned", false, "allow a release the registry admitted without a scan, at every run of this schedule")
 	f.BoolVar(&spec.allowVulnMCP, "allow-vulnerable-mcp", false, "allow a declared MCP server the gate rates high or critical, at every run of this schedule")
+	addTargetHostFlags(cmd, &spec.hosts)
 	f.BoolVar(&spec.signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine; turns on linger, seals the keys in an encrypted systemd credential)")
 	f.BoolVar(&yes, "yes", false, "consent to the release's capabilities without the prompt (no terminal); with --signed-out, also confirms turning on linger")
 	f.BoolVar(&check, "check", false, "only check whether the schedule could be made, and what it would still need; nothing is asked, installed or kept")
@@ -309,6 +323,11 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	// The install step a run makes, with consent asked now on a terminal
 	// (or given by --yes) and recorded for this exact version.
 	if err := schedulePrepare(cmd, sc, yes); err != nil {
+		return err
+	}
+	// Its target hosts, now, with the person here (plan runtime-hosts.md
+	// D12): each key accepted, each sign-in kept in the keychain.
+	if sc.Run.Hosts, err = scheduleReadyHosts(cmd, sc, spec.hosts); err != nil {
 		return err
 	}
 	store, err := scheduleStore()
@@ -575,6 +594,9 @@ func baseRunArgs(sc schedule.Schedule) []string {
 	if r.Adapter != "" {
 		args = append(args, "--adapter", r.Adapter)
 	}
+	for _, h := range r.Hosts {
+		args = append(args, "--"+hostKeyPinFlag, h.ID+"="+h.HostKey)
+	}
 	return append(args, allowArgs(r)...)
 }
 
@@ -620,7 +642,101 @@ func fireGaps(sc schedule.Schedule) []string {
 	if prof != nil {
 		profSecrets = prof.Secrets
 	}
-	return checkFireInputs(m, pol, profSecrets, sc.Run.Intake, modelkey.Present, os.Getenv)
+	gaps := checkFireInputs(m, pol, profSecrets, sc.Run.Intake, modelkey.Present, os.Getenv)
+	return append(gaps, hostGaps(m.Capabilities.TargetHosts, sc, hostSignInSaved)...)
+}
+
+// hostSignInSaved is targethost.HasSavedSignIn; a variable so a test can
+// answer for the keychain.
+var hostSignInSaved = targethost.HasSavedSignIn
+
+// scheduleReadyHosts readies, when a schedule is made, each target host
+// the release asks for (plan runtime-hosts.md D12; agentry-cli#863): its
+// answer is the schedule's --intake, its key is accepted now (at a
+// terminal, when no known_hosts file holds it), and its sign-in, from a
+// --host-* flag, the keychain or a prompt, is kept in the keychain, where
+// the schedule's runs read it. What the schedule keeps is the keychain
+// account and the key's fingerprint, never a credential.
+func scheduleReadyHosts(cmd *cobra.Command, sc schedule.Schedule, f targetHostFlags) ([]schedule.Host, error) {
+	home, err := runnerHome()
+	if err != nil {
+		return nil, err
+	}
+	m, _, _, err := scheduledManifest(home, sc)
+	if err != nil {
+		return nil, err
+	}
+	ids := m.Capabilities.TargetHosts
+	if len(ids) == 0 {
+		flags, ferr := targethost.ParseFlags(f.key, f.passphrase, f.password, f.sudo)
+		if ferr == nil && len(flags.Unknown(nil)) > 0 {
+			return nil, engine.Classify(engine.ExitUsage, errors.New("a --host-* flag was given, and this QuickAgent asks for no target host"))
+		}
+		return nil, ferr
+	}
+	pf, err := policy.Resolve(sc.Run.Policy)
+	if err != nil {
+		return nil, err
+	}
+	pol, _, err := policy.EnsureDefault(pf.Path)
+	if err != nil {
+		return nil, err
+	}
+	preset, err := intake.ParsePreset(sc.Run.Intake)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	answers := &intake.Answers{Hosts: map[string]*targethost.Host{}}
+	for _, id := range ids {
+		v, ok := preset[id]
+		if !ok {
+			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("target host %s: a schedule is given its server when it is made: pass --intake %s=[user@]host[:port]", id, id))
+		}
+		a, err := targethost.ParseAnswer(v)
+		if err != nil {
+			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("--intake %s: %w", id, err))
+		}
+		answers.Hosts[id] = &targethost.Host{ID: id, Answer: a}
+	}
+	if err := readyHosts(cmd, answers, ids, pol, home, f, true); err != nil {
+		return nil, err
+	}
+	hosts := make([]schedule.Host, 0, len(ids))
+	for _, id := range ids {
+		h := answers.Hosts[id]
+		hosts = append(hosts, schedule.Host{ID: id, Account: h.Answer.Account(), HostKey: ssh.FingerprintSHA256(h.HostKey.Key)})
+	}
+	return hosts, nil
+}
+
+// hostGaps is what a fire would lack for its target hosts: a host the
+// schedule was not readied for (one made before agentry-cli#863), and a
+// sign-in no longer saved where the fire reads it. A schedule not yet made
+// (add's --check) has readied none, and is not told so.
+func hostGaps(ids []string, sc schedule.Schedule, saved func(targethost.Answer) (bool, error)) []string {
+	var gaps []string
+	preset, _ := intake.ParsePreset(sc.Run.Intake)
+	for _, id := range ids {
+		i := slices.IndexFunc(sc.Run.Hosts, func(h schedule.Host) bool { return h.ID == id })
+		if i < 0 {
+			if sc.ID != "" {
+				gaps = append(gaps, fmt.Sprintf("target host %s was not readied for this schedule: make it again with `agentry schedule add`, which accepts the host's key and keeps its sign-in", id))
+			}
+			continue
+		}
+		a, err := targethost.ParseAnswer(preset[id])
+		if err != nil {
+			gaps = append(gaps, fmt.Sprintf("target host %s: %v", id, err))
+			continue
+		}
+		switch ok, err := saved(a); {
+		case err != nil:
+			gaps = append(gaps, fmt.Sprintf("target host %s: %v", id, err))
+		case !ok:
+			gaps = append(gaps, fmt.Sprintf("target host %s: no sign-in for %s is saved in the system keychain (account %s), where a scheduled run reads it: run it once at a terminal and save the sign-in, or make the schedule again", id, a, sc.Run.Hosts[i].Account))
+		}
+	}
+	return gaps
 }
 
 // checkFireInputs is fireGaps' decision, with the keychain and the
@@ -1345,6 +1461,9 @@ func newScheduleShowCmd() *cobra.Command {
 				sc.Name, sc.ID, sc.Ref, sc.Version, sc.Digest, v.Describe, nextLabel(v), sc.Run.OutDir)
 			if sc.SignedOut {
 				_, _ = fmt.Fprintln(w, "runs while signed out: yes (its keys are sealed in an encrypted systemd credential)")
+			}
+			for _, h := range sc.Run.Hosts {
+				_, _ = fmt.Fprintf(w, "target host %s: sign-in saved as %s; reached only if it offers the host key %s\n", h.ID, h.Account, h.HostKey)
 			}
 			for _, u := range v.Upcoming {
 				_, _ = fmt.Fprintf(w, "  upcoming %s\n", fmtWhen(u, sc.When.Zone))

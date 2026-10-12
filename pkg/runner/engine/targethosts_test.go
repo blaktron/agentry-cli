@@ -35,10 +35,22 @@ const (
 // password and a sudo password.
 func targetHostFixture(t *testing.T) (Params, *dockerx.Fake, *targethost.Host) {
 	t.Helper()
-	p, f := fixtureEdited(t, nil, func(m *manifest.Manifest) {
-		m.Intake = append(m.Intake, manifest.IntakeQuestion{ID: "server", Prompt: "The server to set up", Type: manifest.IntakeHost, Required: true})
-		m.Capabilities.TargetHosts = []string{"server"}
-	})
+	p, f := fixtureEdited(t, nil, declareTargetHost)
+	h := readiedTargetHost(t)
+	p.Intake = &intake.Answers{Hosts: map[string]*targethost.Host{"server": h}}
+	return p, f, h
+}
+
+// declareTargetHost is the manifest edit that asks for one target host.
+func declareTargetHost(m *manifest.Manifest) {
+	m.Intake = append(m.Intake, manifest.IntakeQuestion{ID: "server", Prompt: "The server to set up", Type: manifest.IntakeHost, Required: true})
+	m.Capabilities.TargetHosts = []string{"server"}
+}
+
+// readiedTargetHost is a target host readied as the CLI readies it, and
+// the host link image stubbed.
+func readiedTargetHost(t *testing.T) *targethost.Host {
+	t.Helper()
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -55,13 +67,12 @@ func targetHostFixture(t *testing.T) (Params, *dockerx.Fake, *targethost.Host) {
 		Credential: targethost.Credential{Auth: hostlink.AuthPassword, Password: plantedHostPassword, From: targethost.FromFlag,
 			Sudo: plantedSudo, SudoFrom: targethost.FromPrompt},
 	}
-	p.Intake = &intake.Answers{Hosts: map[string]*targethost.Host{"server": h}}
 	prev := ensureHostLinkImage
 	ensureHostLinkImage = func(_ context.Context, _ dockerx.Client, s targethost.ImageSpec, _ string, _ io.Writer) (targethost.Image, error) {
 		return targethost.Image{Tag: s.Tag, Base: s.Base, Packages: []string{"openssh-client-default-10.0_p1-r10"}}, nil
 	}
 	t.Cleanup(func() { ensureHostLinkImage = prev })
-	return p, f, h
+	return h
 }
 
 func credentialForms() []string {
@@ -321,4 +332,65 @@ func TestTheEngineHoldsTheAddressToTheRuleWhoeverReadiedIt(t *testing.T) {
 	p.Policy.Hosts.Deny = []string{"203.0.113.0/24"}
 	env, err = Run(context.Background(), f, p)
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonHostRefused, Detail: receipt.HostAddress, Names: []string{"server"}})
+}
+
+// TestASessionTakesItsTargetHostAtStartAndKeepsItToItsEnd is plan
+// runtime-hosts.md D12 for a session (agentry-cli#863): the host is
+// readied before the session starts, as a run's is; the host link's
+// sign-in files are in place for as long as the session lasts, its turns
+// included, and gone when it ends; the host's calls and shell transcripts
+// become receipts and the receipt names the host.
+func TestASessionTakesItsTargetHostAtStartAndKeepsItToItsEnd(t *testing.T) {
+	p, f := sessionFixtureEdited(t, declareTargetHost)
+	h := readiedTargetHost(t)
+	p.Intake = &intake.Answers{Hosts: map[string]*targethost.Host{"server": h}}
+	happyFake(f)
+	harness := &fakeHarness{}
+	runDir := filepath.Join(p.RunRoot, "runs", "5e5510")
+	hostsDir := filepath.Join(runDir, "cfg", spec.HostsDir)
+	var duringTurn string
+	harness.onPrompt = func(string) {
+		b, _ := os.ReadFile(filepath.Join(hostsDir, "server", hostlink.PasswordFile))
+		duringTurn = string(b)
+		log := `{"time":"t","tool":"host_run","command":"uptime","exit":0}` + "\n"
+		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.LogFile("server")), []byte(log), 0o600)
+		shell := "── session 1: a login shell on server\n$ sudo -v\n" + plantedSudo + "\n── closed by the agent\n"
+		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.ShellLogFile("server", 1)), []byte(shell), 0o600)
+	}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: harness.handler}
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	cat, err := os.ReadFile(filepath.Join(runDir, "cfg", "gateway", "catalog.yaml"))
+	if err != nil || !strings.Contains(string(cat), "203.0.113.4:2222/tcp") || !strings.Contains(string(cat), hostsDir+":"+hostlink.HostsMount+":ro") {
+		t.Fatalf("the session's catalog has no host link to the host (%v):\n%s", err, cat)
+	}
+	get, done := collect(s)
+	if err := s.Send(context.Background(), "check the server"); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	env, err := s.End(context.Background(), false)
+	<-done
+	_ = get
+	if err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	if duringTurn != plantedHostPassword {
+		t.Fatalf("during a turn the host's sign-in file held %q", duringTurn)
+	}
+	if _, err := os.Stat(hostsDir); !os.IsNotExist(err) {
+		t.Errorf("the host folder outlived the session: %v", err)
+	}
+	line := env.CapabilitiesEnforced["host.server"]
+	for _, want := range []string{"admin at box.example (203.0.113.4 resolved by this machine), port 2222", "1 calls", "1 shell session"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("host.server line lacks %q: %s", want, line)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(env.Receipts.Dir, hostlink.LogFile("server"))); err != nil || !strings.Contains(string(b), "uptime") {
+		t.Errorf("receipts/host-server.log: %s (%v)", b, err)
+	}
+	assertNoHostCredential(t, p.OutDir)
+	assertNoHostCredential(t, runDir)
 }

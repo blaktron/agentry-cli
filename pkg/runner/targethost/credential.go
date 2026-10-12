@@ -176,16 +176,28 @@ var (
 	keyringSet = keyring.Set
 )
 
+// readSaved is the sign-in saved for a. A schedule that runs while its
+// person is signed out has its saved keys sealed beside it and no keychain
+// (agentry-cli#854), and reads the sign-in from that credential alone, as
+// the model key and a source's token are (agentry-cli#863); anywhere else,
+// the keychain.
 func readSaved(a Answer) (saved, bool, error) {
-	if modelkey.Disabled() {
-		return saved{}, false, nil
-	}
-	v, err := keyringGet(modelkey.Service, a.Account())
+	v, sealed, err := modelkey.SealedAccount(a.Account())
 	switch {
-	case errors.Is(err, keyring.ErrNotFound):
+	case sealed && err != nil:
+		return saved{}, false, err
+	case sealed && v == "":
 		return saved{}, false, nil
-	case err != nil:
-		return saved{}, false, fmt.Errorf("read the saved sign-in for %s from the system keychain: %w", a, err)
+	case !sealed && modelkey.Disabled():
+		return saved{}, false, nil
+	case !sealed:
+		v, err = keyringGet(modelkey.Service, a.Account())
+		switch {
+		case errors.Is(err, keyring.ErrNotFound):
+			return saved{}, false, nil
+		case err != nil:
+			return saved{}, false, fmt.Errorf("read the saved sign-in for %s from the system keychain: %w", a, err)
+		}
 	}
 	var s saved
 	if err := json.Unmarshal([]byte(v), &s); err != nil {
@@ -205,11 +217,42 @@ func writeSaved(a Answer, s saved) error {
 	return nil
 }
 
+// HasSavedSignIn reports whether a sign-in for a is saved (in the keychain,
+// or the sealed credential of a signed-out schedule's fire): what a
+// scheduled run, with no flag and no one to ask, signs in with.
+func HasSavedSignIn(a Answer) (bool, error) {
+	s, ok, err := readSaved(a)
+	return ok && (s.KeyFile != "" || s.Password != ""), err
+}
+
+// keepSignIn saves c for a in the keychain, whatever it came from: a
+// schedule's runs read nothing else (plan D12; agentry-cli#863). A key is
+// kept as its file's path, never its bytes.
+func keepSignIn(a Answer, c Credential) error {
+	if modelkey.Disabled() {
+		return errors.New("the system keychain is turned off here (AGENTRY_NO_KEYRING), and a schedule's runs read a target host's sign-in from it alone")
+	}
+	s := saved{KeyFile: c.KeyFile, Passphrase: c.Passphrase, Password: c.Password, SudoPassword: c.Sudo}
+	if c.Auth == hostlink.AuthKey {
+		s.Password = ""
+		if abs, err := filepath.Abs(c.KeyFile); err == nil {
+			s.KeyFile = abs
+		}
+	}
+	return writeSaved(a, s)
+}
+
 // ResolveCredential takes a target host's sign-in, in the order above. ask
 // nil is a run with no terminal: what no flag and no saved sign-in gives
 // is refused (the sign-in) or gone without (sudo). warn reports a keychain
 // that could not be read, which the run then looks past.
 func ResolveCredential(id string, a Answer, f Flags, getenv func(string) string, ask Asker, warn func(string)) (Credential, error) {
+	return resolveCredential(id, a, f, getenv, ask, warn, false)
+}
+
+// resolveCredential is ResolveCredential; keep saves what it took in the
+// keychain without asking, for a schedule (keepSignIn).
+func resolveCredential(id string, a Answer, f Flags, getenv func(string) string, ask Asker, warn func(string), keep bool) (Credential, error) {
 	var c Credential
 	// The keychain is read only when a flag leaves something to take from
 	// it: a machine with none (a headless host) is not warned about for
@@ -288,6 +331,16 @@ func ResolveCredential(id string, a Answer, f Flags, getenv func(string) string,
 		if s != "" {
 			c.Sudo, c.SudoFrom, prompted = s, FromPrompt, true
 		}
+	}
+	if keep {
+		if c.From == FromKeychain && (c.Sudo == "" || c.SudoFrom == FromKeychain) {
+			return c, nil
+		}
+		if err := keepSignIn(a, c); err != nil {
+			return c, refuse(id, RefusedCredential, "keep the sign-in for %s: %v", a, err)
+		}
+		warn(fmt.Sprintf("target host %s: the sign-in for %s is kept in the system keychain (account %s), where the schedule's runs read it", id, a, a.Account()))
+		return c, nil
 	}
 	if prompted && ask != nil && !modelkey.Disabled() {
 		ok, err := ask.Confirm(fmt.Sprintf("Save this sign-in for %s in the system keychain, for later runs?", a), false)

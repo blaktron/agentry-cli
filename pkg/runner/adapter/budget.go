@@ -18,8 +18,10 @@ type Budget struct {
 // the others nothing but a smaller page of very short lines. A harness bump
 // re-measures its row, as it re-records its conformance.
 var resultBudgets = map[string]Budget{
-	// docker-agent 1.128.0's always-on limit_large_tool_results hook: an
-	// MCP result over 50 KiB or 2,000 lines is replaced by its last 50 KiB.
+	// docker-agent's always-on limit_large_tool_results hook: an MCP result
+	// over 50 KiB or 2,000 lines is replaced by its last 50 KiB. Measured on
+	// 1.128.0 and re-measured on 1.150.0 (agentry-cli#836), whose history
+	// bounding (bound_tool_messages.go) cuts at the same 50 KiB.
 	DefaultName: {Bytes: toolsrv.DefaultMaxResultBytes, Lines: toolsrv.DefaultMaxResultLines},
 	// Claude Code 2.1.296 saves a tool result over 50,000 characters (UTF-16
 	// code units, never more than its UTF-8 bytes) to a file the agent has no

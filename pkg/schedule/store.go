@@ -69,11 +69,30 @@ type RunSpec struct {
 	Adapter  string  `yaml:"adapter,omitempty" json:"adapter,omitempty"`
 	Policy   string  `yaml:"policy,omitempty" json:"policy,omitempty"`
 
+	// Hosts are the target hosts the schedule was readied for, when it was
+	// made (plan runtime-hosts.md D12; agentry-cli#863): the answer is in
+	// Intake; each keeps where its sign-in is saved and the host key the
+	// person accepted. Never a credential.
+	Hosts []Host `yaml:"hosts,omitempty" json:"hosts,omitempty"`
+
 	// The consents a person gave, explicitly, when the schedule was made;
 	// a fire passes only these (plan §5).
 	AllowUnsigned      bool `yaml:"allowUnsigned,omitempty" json:"allowUnsigned,omitempty"`
 	AllowUnscanned     bool `yaml:"allowUnscanned,omitempty" json:"allowUnscanned,omitempty"`
 	AllowVulnerableMCP bool `yaml:"allowVulnerableMcp,omitempty" json:"allowVulnerableMcp,omitempty"`
+}
+
+// Host is a target host a schedule was made for. A fire reaches it only
+// with the sign-in saved under Account (service agentry) and only if it
+// offers the key HostKey names; anything else refuses the run (exit 11).
+type Host struct {
+	// ID is the intake question that asks for it.
+	ID string `yaml:"id" json:"id"`
+	// Account is the keychain account its sign-in is saved under
+	// (host:<user>@<host>:<port>): a name, not a secret.
+	Account string `yaml:"account" json:"account"`
+	// HostKey is the accepted host key's SHA256 fingerprint.
+	HostKey string `yaml:"hostKey" json:"hostKey"`
 }
 
 // State is what fires have done to a schedule; only fire writes it, so an
