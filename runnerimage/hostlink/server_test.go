@@ -353,7 +353,7 @@ func TestATimedOutCommandIsEnded(t *testing.T) {
 
 func TestTheStartCheckNamesWhyAHostRefused(t *testing.T) {
 	for stderr, detail := range map[string]string{
-		"admin@agentry-target: Permission denied (publickey,password).":   RefusedAuth,
+		"admin@172.20.0.4: Permission denied (publickey,password).":       RefusedAuth,
 		"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@":        RefusedHostKey,
 		"ssh: connect to host 172.20.0.4 port 2222: Connection refused\n": RefusedReach,
 	} {
@@ -365,7 +365,7 @@ func TestTheStartCheckNamesWhyAHostRefused(t *testing.T) {
 			continue
 		}
 		want := "target host server refused (" + detail + "): "
-		if !strings.Contains(logw, want) || strings.Contains(logw, testPassword) {
+		if !strings.Contains(logw, want) || strings.Contains(logw, testPassword) || strings.Contains(logw, "172.20.0.4") {
 			t.Errorf("%s: stderr %q", detail, logw)
 		}
 	}

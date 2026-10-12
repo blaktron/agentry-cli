@@ -249,6 +249,8 @@ func (s *server) checkHosts(ctx context.Context) error {
 			continue
 		}
 		detail, why := startRefusal(stderr.String(), code, err)
+		// ssh names the relay it dialled; the person knows the host.
+		why = strings.ReplaceAll(why, relay, h.t.Named)
 		s.refuse(id, detail, s.scrub.String(why))
 		return fmt.Errorf("target host %s: %s", id, detail)
 	}

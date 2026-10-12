@@ -270,7 +270,7 @@ func checkHostLinkStarted(logs string) error {
 		id, detail, why := m[1], m[2], m[3]
 		switch detail {
 		case hostlink.RefusedAuth:
-			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("target host %s did not accept the sign-in: %s", id, why), receipt.ReasonHostRefused, receipt.HostAuth, id))
+			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("target host %s: %s", id, why), receipt.ReasonHostRefused, receipt.HostAuth, id))
 		case hostlink.RefusedHostKey:
 			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("target host %s: %s", id, why), receipt.ReasonHostRefused, receipt.HostKeyChanged, id))
 		default:

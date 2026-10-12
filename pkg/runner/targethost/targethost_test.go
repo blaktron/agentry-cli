@@ -332,3 +332,26 @@ func TestCredentials(t *testing.T) {
 		t.Error("a key and a password for one host were both accepted")
 	}
 }
+
+// TestTheKeychainIsReadOnlyWhenAFlagLeavesSomethingToTake: a run whose
+// flags give the sign-in and the sudo password never reads the keychain,
+// so a machine without one is not warned about for nothing.
+func TestTheKeychainIsReadOnlyWhenAFlagLeavesSomethingToTake(t *testing.T) {
+	fakeKeychain(t)
+	reads := 0
+	g := keyringGet
+	keyringGet = func(svc, acct string) (string, error) { reads++; return g(svc, acct) }
+	env := map[string]string{"PW": "hunter2-hunter2", "SUDO": "root-pw"}
+	f, _ := ParseFlags(nil, nil, []string{"server=PW"}, []string{"server=SUDO"})
+	if _, err := ResolveCredential("server", Answer{User: "a", Host: "b", Port: 22}, f, func(k string) string { return env[k] }, nil, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 {
+		t.Errorf("the keychain was read %d times", reads)
+	}
+	f, _ = ParseFlags(nil, nil, []string{"server=PW"}, nil)
+	_, _ = ResolveCredential("server", Answer{User: "a", Host: "b", Port: 22}, f, func(k string) string { return env[k] }, nil, func(string) {})
+	if reads != 1 {
+		t.Errorf("with no sudo flag the keychain was read %d times, want once", reads)
+	}
+}

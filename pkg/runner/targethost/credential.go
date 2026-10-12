@@ -211,10 +211,18 @@ func writeSaved(a Answer, s saved) error {
 // that could not be read, which the run then looks past.
 func ResolveCredential(id string, a Answer, f Flags, getenv func(string) string, ask Asker, warn func(string)) (Credential, error) {
 	var c Credential
-	sv, haveSaved, err := readSaved(a)
-	if err != nil {
-		warn(err.Error())
+	// The keychain is read only when a flag leaves something to take from
+	// it: a machine with none (a headless host) is not warned about for
+	// nothing.
+	var sv saved
+	haveSaved := false
+	if f.Key[id] == "" && f.Password[id] == "" || f.Sudo[id] == "" {
+		var err error
+		if sv, haveSaved, err = readSaved(a); err != nil {
+			warn(err.Error())
+		}
 	}
+	var err error
 	prompted := false
 	envValue := func(flag, name string) (string, error) {
 		v := getenv(name)
