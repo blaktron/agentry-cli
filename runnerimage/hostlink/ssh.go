@@ -15,7 +15,7 @@ import (
 // in a file of that host's alone. ssh keeps the FIRST value it is given for
 // an option (measured at M2, DR-91), so each option is given exactly once,
 // here, before anything else on the line: a later -o can never undo one,
-// and the builders below never add a second (TestEachOptionIsGivenOnce).
+// and the builders below never add a second (TestTheHostLinkForwardsNothing).
 
 // sshOptions are the options every ssh and sftp call of a target host
 // carries, in a fixed order. dir is the host's folder (HostsMount/<id>).
