@@ -1,0 +1,24 @@
+schemaVersion: "2"
+name: target-host
+namespace: fixtures
+modes: [autonomous, interactive]
+version: 1.0.0
+summary: "Checks a Linux server the person names at run time, over SSH the runner makes"
+license: Apache-2.0
+tags: [fixture]
+
+# A target host (agentry-cli#861): the release takes a machine at run time,
+# never which one. The runner reaches it from the host link, and the agent
+# works it through host_run, host_read, host_write, host_put and host_get.
+
+intake:
+  - id: server
+    prompt: "The server to check"
+    type: host
+    required: true
+
+capabilities:
+  targetHosts: [server]
+
+publish:
+  include: [agent.yaml, AGENT.md]

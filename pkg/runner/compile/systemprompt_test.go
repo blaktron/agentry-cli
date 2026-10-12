@@ -205,6 +205,7 @@ func TestTheSystemPromptStaysWithinItsSize(t *testing.T) {
 		secrets: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"},
 		servers: []string{"github", "tickets", "slack"},
 		schema:  true,
+		hosts:   []string{"web", "db", "cache", "bastion"},
 	}
 	f.caps.EgressMode, f.caps.EgressHosts = "hosts", []string{"api.example.com", "api.other.net"}
 	f.caps.FSReadMode, f.caps.FSWriteMode = "workspace", "workspace"

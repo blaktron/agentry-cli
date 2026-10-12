@@ -105,7 +105,7 @@ func TestEnvelopeCarriesTheReason(t *testing.T) {
 
 func TestReasonCodesAreTheClosedList(t *testing.T) {
 	want := []ReasonCode{
-		ReasonAgentBlocked, ReasonAnswerInReasoning, ReasonExecNotProvided, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
+		ReasonAgentBlocked, ReasonAnswerInReasoning, ReasonExecNotProvided, ReasonHostRefused, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
 		ReasonMCPNotResolved, ReasonMCPRuntimeExcluded, ReasonMCPStartFailed, ReasonMCPVulnerable,
 		ReasonOrgPolicy, ReasonOutOfCredits, ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing,
 	}
@@ -145,5 +145,17 @@ func TestBlockedReasonsKeepNoText(t *testing.T) {
 	}
 	if ExitClassName(18) != "blocked" {
 		t.Fatalf("18 is %q", ExitClassName(18))
+	}
+}
+
+// A target host is named by its question's id and why by a word of the
+// closed list, never by the host's name or address (agentry-cli#861).
+func TestAHostRefusalKeepsTheQuestionAndItsWord(t *testing.T) {
+	r := (&Reason{Code: ReasonHostRefused, Detail: HostKeyChanged, Names: []string{"server", "box.example.com", "203.0.113.4", "admin@box"}}).Clean()
+	if r == nil || r.Detail != HostKeyChanged || !reflect.DeepEqual(r.Names, []string{"server"}) {
+		t.Fatalf("host-refused kept %+v", r)
+	}
+	if r := (&Reason{Code: ReasonHostRefused, Detail: "Permission denied (publickey)"}).Clean(); r == nil || r.Detail != "" {
+		t.Fatalf("host-refused kept a detail outside its list: %+v", r)
 	}
 }

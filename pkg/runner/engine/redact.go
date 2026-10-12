@@ -126,7 +126,8 @@ func (rd *runDirs) newRedactor(p Params, token string, secrets map[string]string
 	if p.Plan.Harness.Host != nil {
 		vars = append(vars, p.Plan.Harness.Host.Env...)
 	}
-	rd.redact = newRedactor(token, secrets, hostSecretValues(vars))
+	// A target host's sign-in is the run's own credential too (D19).
+	rd.redact = newRedactor(token, secrets, append(hostSecretValues(vars), hostCredentialValues(p)...))
 	return rd.redact
 }
 

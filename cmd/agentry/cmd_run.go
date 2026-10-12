@@ -50,6 +50,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/pkg/termtext"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/pkg/tui"
@@ -60,10 +61,12 @@ type runOpts struct {
 	// consentHome is the real runner home, where a local install lives
 	// (agentry-cli#491); --plan materializes into a temp home, and a
 	// local install is looked up here all the same. Empty: the home.
-	consentHome  string
-	mode         string
-	intake       []string
-	intakeToken  []string
+	consentHome string
+	mode        string
+	intake      []string
+	intakeToken []string
+	// hostFlags are the target hosts' sign-in flags (agentry-cli#861).
+	hostFlags    targetHostFlags
 	input        string
 	out          string
 	outputFormat string
@@ -223,6 +226,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal); a repository question takes its https address, with #branch, #tag or #commit for another ref; a url question takes one file's https address")
 	f.StringArrayVar(&opts.intakeToken, "intake-token", nil, "the access token for an input source: id=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the source's host in the system keychain, then a prompt on a terminal, then none)")
+	addTargetHostFlags(cmd, &opts.hostFlags)
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	f.BoolVar(&opts.sessionProtocol, "session-protocol", false, "drive an interactive session from JSON-line commands on stdin, with its events as JSON lines on descriptor 3 and no terminal (for a program such as a hosted run's host)")
@@ -532,6 +536,10 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err := refuseSignInRun(plan, opts); err != nil {
 		return err
 	}
+	// And so is a target host (agentry-cli#861, plan D11).
+	if err := refuseHostedTargetHosts(plan, opts); err != nil {
+		return err
+	}
 	if err := gateway.EnsureInstalledFor(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr(), plan); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
@@ -543,6 +551,14 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		var err error
 		execPackages, err = gateway.EnsureExecImage(cmd.Context(), docker, runnerTag, *plan.ExecImage, homeImageDir(home), cmd.ErrOrStderr())
 		if err != nil {
+			return engine.Classify(engine.ExitGateway, err)
+		}
+	}
+	// The host link's image, so a --prepare leaves nothing to build at
+	// the run (agentry-cli#861); the engine builds it otherwise.
+	if plan.HostLink != nil {
+		hl := targethost.HostLinkImage(runnerTag, plan.HostLink.Base)
+		if _, err := targethost.EnsureImage(cmd.Context(), docker, hl, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
 			return engine.Classify(engine.ExitGateway, err)
 		}
 	}
@@ -608,6 +624,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if err := resolveSourceTokens(cmd, answers, opts); err != nil {
 		return engine.Classify(engine.ExitCLI, err)
+	}
+	if err := readyTargetHosts(cmd, answers, plan, pol, home, opts); err != nil {
+		return err
 	}
 
 	opts.progress.at(receipt.StagePrepare)

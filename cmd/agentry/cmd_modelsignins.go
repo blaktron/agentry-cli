@@ -31,7 +31,14 @@ func hostedRun(opts runOpts) bool {
 // hostedProcess says this process runs for a sandbox host: it holds a run
 // grant or a hosted job's credential, which only a host hands it. A
 // built-in run in it never spends a model sign-in (I5; agentry-cli#845).
-func hostedProcess() bool { return os.Getenv(envRunGrant) != "" || os.Getenv(envJobToken) != "" }
+func hostedProcess() bool {
+	return os.Getenv(envRunGrant) != "" || os.Getenv(envJobToken) != "" || os.Getenv(envHosted) != ""
+}
+
+// envHosted marks a hosted run's CLI whatever else it was given: a public
+// release's run with no inputs carries neither a grant nor a job token
+// (agentry-enterprise#534), so its host says so outright.
+const envHosted = "AGENTRY_HOSTED"
 
 // refuseSignInRun refuses a plan that spends a model sign-in where it
 // cannot run, before anything is installed for it: a hosted run (I5), and

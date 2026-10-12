@@ -26,12 +26,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/blaktron/agentry-cli/runnerimage/bridge"
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
+	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 	"github.com/blaktron/agentry-cli/runnerimage/probe"
@@ -51,6 +53,10 @@ const usageText = `usage: agentry-runner <mode> [flags]
         serve one remote MCP server on stdio, forwarding each message to it
         over streamable HTTP (or HTTP+SSE); the bearer, when there is one,
         is read from --token-file at every request
+  hostlink
+        (the host link's container) serve the target-host tools on stdio,
+        from /run/agentry/hostspec.json and the run's /run/agentry/hosts;
+        every SSH session is the host link's own, through one relay a host
   source --kind repository|url --url <https address> [--ref <ref>] --out <dir> --work <dir> --proxy <url>
         [--max-files N] [--max-bytes N] [--token-stdin]
         (the files container's fetch step) fetch an input source into --out as
@@ -71,6 +77,12 @@ func usageExit() {
 }
 
 func main() {
+	// As OpenSSH's SSH_ASKPASS in the host link's image (a link named
+	// agentry-askpass, agentry-cli#861): print the one password or
+	// passphrase file the host link named, and nothing else.
+	if filepath.Base(os.Args[0]) == filepath.Base(hostlink.AskpassProgram) {
+		os.Exit(hostlink.Askpass(os.Stdout, os.Stderr))
+	}
 	if len(os.Args) < 2 {
 		usageExit()
 	}
@@ -86,6 +98,11 @@ func main() {
 		err = runDecode(os.Args[2:])
 	case "bridge":
 		err = runBridge(os.Args[2:])
+	case "hostlink":
+		if len(os.Args) != 2 {
+			usageExit()
+		}
+		err = hostlink.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr, hostlink.DefaultConfig())
 	case "source":
 		err = runSource(os.Args[2:])
 	case confine.Role:

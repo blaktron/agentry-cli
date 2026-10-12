@@ -92,6 +92,32 @@ const (
 	// it (output; exit 17; agentry-cli#825). Reasoning is never taken as
 	// the result; the events receipt keeps it.
 	ReasonAnswerInReasoning ReasonCode = "answer-in-reasoning"
+	// ReasonHostRefused: a target host the person named was not reached
+	// (prepare or infra; plan runtime-hosts.md §8, agentry-cli#861). Names:
+	// the host questions' ids; Detail: why (Host*). Never the host's name
+	// or address: those are the person's.
+	ReasonHostRefused ReasonCode = "host-refused"
+)
+
+// The details of ReasonHostRefused.
+const (
+	// HostAddress: the address is one a target host never is (loopback,
+	// link-local), the policy's hosts lists exclude it, or it did not
+	// resolve to an IPv4 address.
+	HostAddress = "host-address"
+	// HostKeyUnknown: the host's key is on no file and no one trusted it.
+	HostKeyUnknown = "host-key-unknown"
+	// HostKeyChanged: the host's key differs from the one on file.
+	HostKeyChanged = "host-key-changed"
+	// HostAuth: the host did not accept the sign-in.
+	HostAuth = "host-auth"
+	// HostCredential: no sign-in was given, or the one given could not be
+	// used (a key it cannot read, a passphrase that does not unlock it).
+	HostCredential = "host-credential"
+	// HostUnreachable: the host did not answer on its port.
+	HostUnreachable = "host-unreachable"
+	// HostHosted: a hosted run never reaches a target host (D11).
+	HostHosted = "hosted"
 )
 
 // The details of ReasonOrgPolicy: the organization's policy that refused.
@@ -190,6 +216,7 @@ const (
 	namesCommand
 	namesServer
 	namesSecret
+	namesQuestion
 )
 
 // reasonCodes is the closed list: each code's name grammar and details.
@@ -216,6 +243,9 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonOrgPolicy:         {details: []string{OrgPolicyClient, OrgPolicyManagedApproval}},
 	ReasonOutOfCredits:      {},
 	ReasonAnswerInReasoning: {},
+	ReasonHostRefused: {names: namesQuestion, details: []string{
+		HostAddress, HostKeyUnknown, HostKeyChanged, HostAuth, HostCredential, HostUnreachable, HostHosted,
+	}},
 }
 
 // ReasonCodes returns the closed list of codes, sorted.
@@ -238,6 +268,8 @@ var (
 	serverRE = regexp.MustCompile(`^(npm:(@[a-z0-9][a-z0-9-_.]*/)?[a-z0-9][a-z0-9-_.]*|pypi:[a-z0-9]([a-z0-9._-]*[a-z0-9])?)$`)
 	// A secret's environment name, in the core's rule.
 	secretRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+	// An intake question's id, in the core's rule.
+	questionRE = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 )
 
 // maxServerName bounds a server's id: npm caps a package name at 214
@@ -253,6 +285,8 @@ func (k nameKind) admits(name string) bool {
 		return len(name) <= maxServerName && serverRE.MatchString(name)
 	case namesSecret:
 		return secretRE.MatchString(name)
+	case namesQuestion:
+		return questionRE.MatchString(name)
 	}
 	return false
 }

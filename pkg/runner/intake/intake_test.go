@@ -244,3 +244,28 @@ func TestSourceHosts(t *testing.T) {
 		t.Error("an http repository passed")
 	}
 }
+
+// A host question's answer is a target host, never text, and its document
+// names the host and the account and never a sign-in (agentry-cli#861).
+func TestAHostQuestionIsATargetHostNeverText(t *testing.T) {
+	qs := []manifest.IntakeQuestion{{ID: "server", Prompt: "The server to set up", Type: manifest.IntakeHost, Required: true}}
+	a, err := Collect(nil, qs, map[string]string{"server": "admin@box.example:2222"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := a.Hosts["server"]
+	if h == nil || h.Answer.User != "admin" || h.Answer.Host != "box.example" || h.Answer.Port != 2222 || len(a.Values) != 0 || a.Empty() {
+		t.Fatalf("answers %+v, host %+v", a, h)
+	}
+	doc := a.Document("/inputs")["server"].(map[string]any)["host"].(map[string]any)
+	if doc["named"] != "box.example" || doc["user"] != "admin" || doc["port"] != 2222 {
+		t.Errorf("document %v", doc)
+	}
+	p := &scriptPrompter{answers: map[string]string{"server": "box"}}
+	if a, err = Collect(p, qs, nil, nil); err != nil || a.Hosts["server"] == nil || !strings.Contains(p.asked[0], "[user@]host[:port]") {
+		t.Fatalf("asked %q: %+v, %v", p.asked, a, err)
+	}
+	if _, err := Collect(nil, qs, map[string]string{"server": "admin:pw@box"}, nil); err == nil {
+		t.Error("an answer that holds a password was taken")
+	}
+}

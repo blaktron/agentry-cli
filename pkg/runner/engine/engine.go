@@ -286,6 +286,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkModelSignIn(p); err != nil {
 		return fail(env, redact, err)
 	}
+	// A target host is reached only as the plan declares it, and never
+	// by a hosted run (agentry-cli#861): refused before anything starts.
+	if err := checkTargetHosts(p); err != nil {
+		return fail(env, redact, err)
+	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 
 	// Everything below must tear down whatever it built, success or not
@@ -330,6 +335,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		return fail(env, redact, err)
 	}
 	if err := writeConnectionFiles(p, rd, secrets); err != nil {
+		return fail(env, redact, err)
+	}
+	if err := prepareTargetHosts(ctx, d, p, rd, td, env); err != nil {
 		return fail(env, redact, err)
 	}
 	// The optional secrets it goes without, before any replacer is built:
@@ -437,6 +445,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if rd.fetchLedger != "" {
 		rd.redact.File(rd.fetchLedger)
 	}
+	// Each target host's calls, the agent having ended (agentry-cli#861).
+	copyHostLogs(rd, env)
 	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.
@@ -735,6 +745,13 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 	if err := checkDeclaredServersStarted(logs, p.Plan.MCPServers); err != nil {
 		return Classify(ExitGateway, withRefusals(err, rd))
+	}
+	// The host link checks each target host's sign-in before it serves:
+	// a refusal stops the run here, with its reason (agentry-cli#861).
+	if p.Plan.HostLink != nil {
+		if err := checkHostLinkStarted(logs); err != nil {
+			return withRefusals(err, rd)
+		}
 	}
 	return nil
 }
