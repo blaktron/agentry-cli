@@ -2,12 +2,13 @@ package toolsrv
 
 // The result budget (plan input-sources.md §4, D1; agentry-cli#831). The
 // harness that receives a tool's result bounds it too, and its bound is the
-// smaller one: docker-agent 1.128.0 replaces any MCP result over 50 KiB, or
-// over 2,000 lines, with its last 50 KiB, and the other harnesses have
-// limits of their own. A result the harness cuts loses its head, and with
-// it what the agent needed first, without the agent being told where. So
-// every result this server returns fits the budget the compiler stamps for
-// the run's harness (Limits.MaxResultBytes, MaxResultLines): a file is read
+// smaller one: docker-agent (1.128.0, and 1.150.0 since agentry-cli#836)
+// replaces any MCP result over 50 KiB, or over 2,000 lines, with its last
+// 50 KiB, and the other harnesses have limits of their own. A result the
+// harness cuts loses its head, and with it what the agent needed first,
+// without the agent being told where. So every result this server returns
+// fits the budget the compiler stamps for the run's harness
+// (Limits.MaxResultBytes, MaxResultLines): a file is read
 // a page at a time from the offset asked, each page saying where the next
 // begins; a listing or a search stops at the budget and says what it left
 // out; and fitResult holds every other result, an error's included, to it.
