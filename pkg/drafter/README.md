@@ -129,8 +129,8 @@ fetches before the run, and never advises a `.zip` for a repository or
 declares egress or a key to clone one. It knows that a tool result comes a
 page at a time, that a large `fetch` body is saved in the scratch folder or
 kept whole with `saveTo`, and that `scratch_read` and `scratch_search` read
-it. A release that asks a `repository` or `url` question needs CLI v0.6.97 or
-later, and v0.6.104 or later to run it hosted.
+it. A release that asks a `repository` question needs CLI v0.6.97 or later, a
+`url` question v0.6.98 or later, and v0.6.104 or later to run either hosted.
 
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so

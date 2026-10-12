@@ -62,10 +62,10 @@ func runtimeFacts() []byte {
 	fmt.Fprintf(&b, "- A QuickAgent declares at most %d MCP servers.\n", manifest.MaxMCPServers)
 	b.WriteString("- A server's declared hosts are reached on TCP port 443 only; with none declared it has no network.\n\n")
 	b.WriteString("## Tool results\n\n")
-	fmt.Fprintf(&b, "- Every result of the runner's own tools is held to %d KiB and %s lines, the harness's limit less a margin: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out.\n\n", toolsrv.DefaultMaxResultBytes>>10, thousands(toolsrv.DefaultMaxResultLines))
+	fmt.Fprintf(&b, "- Every result of the runner's own tools is held to its harness's limit less a margin: %d KiB and %s lines under docker-agent, the default harness, and less under others. A file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at the limit and says what it left out.\n\n", toolsrv.DefaultMaxResultBytes>>10, thousands(toolsrv.DefaultMaxResultLines))
 	b.WriteString("## The fetch tool\n\n")
 	fmt.Fprintf(&b, "- `fetch` reads at most %d KiB of a response's body, and gives up on a request after %d seconds.\n", toolsrv.DefaultMaxFetchBytes>>10, int(toolsrv.FetchTimeout.Seconds()))
-	b.WriteString("- A body larger than one tool result is saved in the scratch folder, under `fetch/`, and answered with its first page and where it was saved.\n")
+	b.WriteString("- A body larger than one tool result, within that cap, is saved in the scratch folder, under `fetch/`, and answered with its first page and where it was saved; past the cap it is cut.\n")
 	b.WriteString("- `saveTo` saves the whole body at a path in the scratch folder, whatever its type, binary included, and the answer says what was saved instead of returning it.\n\n")
 	b.WriteString("## Input sources\n\n")
 	fmt.Fprintf(&b, "- A `repository` question's repository is fetched by the runner before the run: at most %s files and %s on the person's computer, %s files and %s In Agentry.\n",
@@ -670,20 +670,26 @@ func TestTheGuideTeachesInputSources(t *testing.T) {
 			"(`saveTo`)",
 			"`scratch_search`",
 			"Tool results come a page at a time",
+			"one that asks a `repository` question declares `inputs` with `code` too",
 		},
 		"manifest/inputs.md": {
 			"**A codebase is asked for by a `repository` question**, never as a `.zip`",
-			"**A file at a web address is asked for by a `url` question**",
+			"**A file the person names at a web address each run is asked for by a `url` question**",
+			"Ask for the files instead only when the runner cannot fetch them",
+			"a source is one commit",
 			"never declare `GITHUB_TOKEN` or any other key to clone it",
 			"under `/inputs/<id>/`",
 			"AI Review reads a repository's Markdown files",
 		},
 		"manifest/intake-and-guide.md": {
 			"`repository`: a git repository's https address",
+			"**never ask for the ref in a question of its own**",
 			"`url`: the https address of one file",
 		},
 		"manifest/egress-and-fetch.md": {
 			"**`saveTo` keeps the whole body.**",
+			"comes by a `url` question, which the runner decodes, not by `saveTo`",
+			"Without `saveTo` the body is still read only up to the cap",
 			"`scratch_search`",
 			"**A repository or a file the person gives at run time needs no host here.**",
 			"declares that database's API host (`api.osv.dev`) for its own `fetch`",
@@ -696,7 +702,7 @@ func TestTheGuideTeachesInputSources(t *testing.T) {
 	})
 	for _, p := range append(guidePages(t), instructionFile) {
 		text := heldText(t, p)
-		for _, stale := range []string{"repository as a .zip", "a codebase as it is (an archive"} {
+		for _, stale := range []string{"repository as a .zip", "a codebase as it is (an archive", "A large body is not lost", "a dataset, an export, a PDF"} {
 			if strings.Contains(text, stale) {
 				t.Errorf("%s still says %q", p, stale)
 			}

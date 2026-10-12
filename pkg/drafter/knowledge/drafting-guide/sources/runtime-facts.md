@@ -13,12 +13,12 @@ Generated from the Agentry CLI's code by its tests; do not edit by hand. These a
 
 ## Tool results
 
-- Every result of the runner's own tools is held to 48 KiB and 1,900 lines, the harness's limit less a margin: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out.
+- Every result of the runner's own tools is held to its harness's limit less a margin: 48 KiB and 1,900 lines under docker-agent, the default harness, and less under others. A file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at the limit and says what it left out.
 
 ## The fetch tool
 
 - `fetch` reads at most 512 KiB of a response's body, and gives up on a request after 60 seconds.
-- A body larger than one tool result is saved in the scratch folder, under `fetch/`, and answered with its first page and where it was saved.
+- A body larger than one tool result, within that cap, is saved in the scratch folder, under `fetch/`, and answered with its first page and where it was saved; past the cap it is cut.
 - `saveTo` saves the whole body at a path in the scratch folder, whatever its type, binary included, and the answer says what was saved instead of returning it.
 
 ## Input sources
