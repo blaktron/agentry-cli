@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
+	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
@@ -414,6 +415,39 @@ func TestShippedKnowledgeIsInTheSnapshot(t *testing.T) {
 	}
 	if got := Snapshot(after.capabilities()); !slices.Equal(got.Knowledge, after.Knowledge) {
 		t.Fatalf("round trip = %+v", got)
+	}
+}
+
+// TestTargetHostsAreInTheSnapshot (agentry-cli#863, plan runtime-hosts.md
+// §8): the target hosts a release asks for are part of the recorded
+// contract, so an update that adds one asks again, the record reads back
+// what was consented, and a record from before they were recorded asks
+// once more.
+func TestTargetHostsAreInTheSnapshot(t *testing.T) {
+	before := Snapshot(manifest.Capabilities{})
+	after := Snapshot(manifest.Capabilities{TargetHosts: []string{"server"}})
+	if !slices.Equal(after.TargetHosts, []string{"server"}) {
+		t.Fatalf("snapshot = %+v", after)
+	}
+	d := DiffCapabilities(before, after)
+	if !d.HasWidened() || !slices.ContainsFunc(d.Widened, func(w string) bool { return strings.Contains(w, "target host") && strings.Contains(w, "server") }) {
+		t.Fatalf("a new target host did not widen: %+v", d)
+	}
+	if d := DiffCapabilities(after, after); !d.Empty() {
+		t.Fatalf("the same target hosts changed the contract: %+v", d)
+	}
+	if d := DiffCapabilities(after, before); d.HasWidened() || len(d.Narrowed) == 0 {
+		t.Fatalf("dropping a target host = %+v, want a narrowing", d)
+	}
+	if got := Snapshot(after.capabilities()); !slices.Equal(got.TargetHosts, after.TargetHosts) {
+		t.Fatalf("round trip = %+v", got)
+	}
+	var st State
+	if err := yaml.Unmarshal([]byte("records:\n  - registry: r\n    namespace: n\n    name: a\n    target: runner\n    version: 1.0.0\n    capabilities:\n      egressNone: true\n"), &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Records) != 1 || !DiffCapabilities(st.Records[0].Capabilities, after).HasWidened() {
+		t.Fatalf("a record without targetHosts does not ask again for one: %+v", st)
 	}
 }
 

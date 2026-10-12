@@ -227,6 +227,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal); a repository question takes its https address, with #branch, #tag or #commit for another ref; a url question takes one file's https address")
 	f.StringArrayVar(&opts.intakeToken, "intake-token", nil, "the access token for an input source: id=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the source's host in the system keychain, then a prompt on a terminal, then none)")
 	addTargetHostFlags(cmd, &opts.hostFlags)
+	addHostKeyPinFlag(cmd, &opts.hostFlags)
 	f.StringVar(&opts.keepProfile, "keep-profile", "", "keep the QuickAgent's MCP profile after the run: true | false (default: the profile's own setting, else policy)")
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	f.BoolVar(&opts.sessionProtocol, "session-protocol", false, "drive an interactive session from JSON-line commands on stdin, with its events as JSON lines on descriptor 3 and no terminal (for a program such as a hosted run's host)")

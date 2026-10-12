@@ -44,9 +44,18 @@ publish:
 // sessionFixture compiles the interactive plan of a two-mode release.
 func sessionFixture(t *testing.T) (Params, *dockerx.Fake) {
 	t.Helper()
+	return sessionFixtureEdited(t, nil)
+}
+
+// sessionFixtureEdited is sessionFixture with the manifest edited first.
+func sessionFixtureEdited(t *testing.T, edit func(*manifest.Manifest)) (Params, *dockerx.Fake) {
+	t.Helper()
 	m, err := manifest.Parse([]byte(sessionManifest))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if edit != nil {
+		edit(m)
 	}
 	installDir := t.TempDir()
 	ws := filepath.Join(installDir, "workspace")
