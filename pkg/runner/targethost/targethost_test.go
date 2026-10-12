@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -132,12 +133,20 @@ func (f *fakeAsk) Confirm(p string, _ bool) (bool, error) {
 	return f.confirm, nil
 }
 
+// TestHostKeys runs on another port and on 22, which known_hosts writes
+// without a port: on 22 every host was refused before agentry-cli#898.
 func TestHostKeys(t *testing.T) {
+	for _, port := range []int{2222, 22} {
+		t.Run(fmt.Sprintf("port %d", port), func(t *testing.T) { testHostKeys(t, port) })
+	}
+}
+
+func testHostKeys(t *testing.T, port int) {
 	served, _ := newHostKey(t)
 	other, _ := newHostKey(t)
 	defer func(f func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error)) { fetchHostKey = f }(fetchHostKey)
 	fetchHostKey = func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error) { return served, nil }
-	a := Answer{User: "admin", Host: "box.example", Port: 2222}
+	a := Answer{User: "admin", Host: "box.example", Port: port}
 	addr := netip.MustParseAddr("203.0.113.4")
 	say := func(string) {}
 

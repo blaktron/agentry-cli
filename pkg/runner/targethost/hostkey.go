@@ -140,7 +140,12 @@ type Asker interface {
 // CheckHostKey reads the key the host offers at addr and decides whether
 // the run may trust it (plan D7).
 func CheckHostKey(ctx context.Context, id string, a Answer, addr netip.Addr, files KnownHostsFiles, ask Asker, say func(string)) (HostKey, error) {
+	// The callback takes host:port and normalizes it itself, dropping a
+	// port of 22; given KnownHostsName, already normalized, it could not
+	// split a port-22 name and refused every such host (agentry-cli#898).
+	// name is what a line written to the runner's file carries.
 	name := a.KnownHostsName()
+	hostPort := net.JoinHostPort(a.Host, strconv.Itoa(a.Port))
 	remote := &net.TCPAddr{IP: addr.AsSlice(), Port: a.Port}
 	offered, err := fetchHostKey(ctx, addr, a.Port, preferred)
 	if err != nil {
@@ -156,7 +161,7 @@ func CheckHostKey(ctx context.Context, id string, a Answer, addr netip.Addr, fil
 			continue
 		}
 		key := offered
-		err = check(name, remote, key)
+		err = check(hostPort, remote, key)
 		var keyErr *knownhosts.KeyError
 		var revoked *knownhosts.RevokedError
 		switch {
@@ -168,7 +173,7 @@ func CheckHostKey(ctx context.Context, id string, a Answer, addr netip.Addr, fil
 			// Keys of this host are on file. The host may hold several
 			// types and have offered another: ask for the known ones.
 			again, ferr := fetchHostKey(ctx, addr, a.Port, algorithmsOf(keyErr.Want))
-			if ferr == nil && check(name, remote, again) == nil {
+			if ferr == nil && check(hostPort, remote, again) == nil {
 				return HostKey{Key: again, From: src.from}, nil
 			}
 			if ferr == nil {
