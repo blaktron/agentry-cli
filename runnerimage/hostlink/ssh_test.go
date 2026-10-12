@@ -66,15 +66,27 @@ func TestTheHostLinkForwardsNothing(t *testing.T) {
 		"batchmode": "no", "requesttty": "no", "escapechar": "none", "user": "admin", "port": "2222",
 	}
 	for name, argv := range map[string][]string{
-		"ssh":  sshArgv(keyTarget(), "/run/agentry/hosts/server", "172.20.0.3", "uptime", false),
-		"sftp": sftpArgv(keyTarget(), "/run/agentry/hosts/server", "172.20.0.3"),
+		"ssh":   sshArgv(keyTarget(), "/run/agentry/hosts/server", "172.20.0.3", "uptime", false),
+		"sftp":  sftpArgv(keyTarget(), "/run/agentry/hosts/server", "172.20.0.3"),
+		"shell": shellArgv(keyTarget(), "/run/agentry/hosts/server", "172.20.0.3"),
 	} {
 		allowed := []string{"-T"}
-		if name == "sftp" {
+		switch name {
+		case "sftp":
 			allowed = []string{"-b", "-"}
+		case "shell":
+			// D18: the host's pseudo-terminal, asked for whatever this side
+			// has, and no command, so the account's login shell.
+			allowed = nil
+			if argv[len(argv)-2] != "--" || argv[len(argv)-1] != "172.20.0.3" {
+				t.Errorf("shell: argv ends %q", argv[len(argv)-2:])
+			}
 		}
 		opts := options(t, argv, allowed...)
 		for k, v := range want {
+			if k == "requesttty" && name == "shell" {
+				v = "force"
+			}
 			if opts[k] != v {
 				t.Errorf("%s: %s=%q, want %q", name, k, opts[k], v)
 			}

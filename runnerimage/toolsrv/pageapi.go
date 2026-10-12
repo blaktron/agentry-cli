@@ -66,6 +66,11 @@ func (l Limits) FitResult(tool, text string) string {
 	return l.budget().fitResult(tool, text)
 }
 
+// Head is the longest head of data a page may hold, the notice's room set
+// aside: data itself when it fits, else cut after a line end or on a rune
+// boundary, as a page is.
+func (l Limits) Head(data []byte) []byte { return l.budget().room().cut(data, false) }
+
 // Room is the bytes a page's text may take under the budget, the notice's
 // room set aside.
 func (l Limits) Room() int64 { return l.budget().room().bytes }

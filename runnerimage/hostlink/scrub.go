@@ -101,3 +101,24 @@ func (s *scrubber) Holds(t string) bool {
 	}
 	return false
 }
+
+// heldTail is how many bytes at b's end could begin a credential that the
+// bytes after them would finish: the longest end of b that is the head of
+// a value the scrub masks, and shorter than it. A shell session's output
+// arrives in pieces, so a read keeps that much back for the next, and no
+// read ever returns half of a sign-in that neither half shows.
+func (s *scrubber) heldTail(b []byte) int {
+	if s == nil {
+		return 0
+	}
+	held := 0
+	for _, v := range s.values {
+		for k := min(len(v)-1, len(b)); k > held; k-- {
+			if string(b[len(b)-k:]) == v[:k] {
+				held = k
+				break
+			}
+		}
+	}
+	return held
+}

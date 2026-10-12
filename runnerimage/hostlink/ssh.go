@@ -19,8 +19,14 @@ import (
 
 // sshOptions are the options every ssh and sftp call of a target host
 // carries, in a fixed order. dir is the host's folder (HostsMount/<id>).
-func sshOptions(t Target, dir string) []string {
+// tty asks the host for a pseudo-terminal whatever this side has (a shell
+// session, D18); every other call has none.
+func sshOptions(t Target, dir string, tty bool) []string {
 	key, pubkey, password, prefer := "none", "no", "yes", "keyboard-interactive,password"
+	requestTTY := "no"
+	if tty {
+		requestTTY = "force"
+	}
 	if t.Auth == AuthKey {
 		key, pubkey, password, prefer = path.Join(dir, KeyFile), "yes", "no", "publickey"
 	}
@@ -76,7 +82,7 @@ func sshOptions(t Target, dir string) []string {
 		{"PermitLocalCommand", "no"},
 		{"LocalCommand", "none"},
 		{"RemoteCommand", "none"},
-		{"RequestTTY", "no"},
+		{"RequestTTY", requestTTY},
 		{"EscapeChar", "none"},
 		{"LogLevel", "ERROR"},
 	}
@@ -95,8 +101,16 @@ func sshArgv(t Target, dir, relay, command string, sudo bool) []string {
 	if sudo {
 		command = "sudo -S -p '' -- sh -c " + shellQuote(command)
 	}
-	argv := append([]string{"ssh"}, sshOptions(t, dir)...)
+	argv := append([]string{"ssh"}, sshOptions(t, dir, false)...)
 	return append(argv, "-T", "--", relay, command)
+}
+
+// shellArgv opens the account's login shell on a pseudo-terminal on the
+// host behind relay: no command, and RequestTTY=force (ssh -tt), since the
+// host link's own side of the session is a pipe.
+func shellArgv(t Target, dir, relay string) []string {
+	argv := append([]string{"ssh"}, sshOptions(t, dir, true)...)
+	return append(argv, "--", relay)
 }
 
 // sftpArgv runs sftp in batch mode, its commands on standard input. sftp
@@ -104,7 +118,7 @@ func sshArgv(t Target, dir, relay, command string, sudo bool) []string {
 // password or a passphrase; the BatchMode=no in sshOptions comes first and
 // ssh keeps the first value (DR-91).
 func sftpArgv(t Target, dir, relay string) []string {
-	argv := append([]string{"sftp"}, sshOptions(t, dir)...)
+	argv := append([]string{"sftp"}, sshOptions(t, dir, false)...)
 	return append(argv, "-b", "-", "--", relay)
 }
 
@@ -118,6 +132,15 @@ func askpassFile(t Target, dir string) string {
 		return path.Join(dir, PassphraseFile)
 	}
 	return ""
+}
+
+// shellTerm is the terminal type a shell session tells the host it has.
+const shellTerm = "xterm-256color"
+
+// shellEnv is a shell session's ssh environment: sshEnv's, and the TERM ssh
+// sends with its pseudo-terminal request.
+func shellEnv(t Target, dir string) []string {
+	return append(sshEnv(t, dir), "TERM="+shellTerm)
 }
 
 // sshEnv is ssh's whole environment: nothing of this process's, a PATH,
