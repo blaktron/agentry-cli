@@ -35,7 +35,11 @@ const dockerFilterLog = "docker-filter.log"
 var filterSupported = runtime.GOOS == "linux"
 
 // The pinned gateway's two fixed relay network names (DR-22): the filter
-// gives it the run's own networks under them (agentry-cli#220).
+// gives it the run's own networks under them (agentry-cli#220). A gateway
+// outside the filter creates the shared networks of these names itself,
+// as Docker's own MCP Toolkit does; the runner did not create them, other
+// gateways use them, and so no teardown or sweep removes them
+// (agentry-cli#458).
 const (
 	relayNetwork       = "docker-mcp-proxies-int"
 	relayEgressNetwork = "docker-mcp-proxies-ext"
