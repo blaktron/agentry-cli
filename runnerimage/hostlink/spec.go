@@ -91,7 +91,10 @@ const (
 // results reach the agent unchanged (D9), past the gateway's secret block
 // and the harness's scrub, so a client that scrubs tool output by name
 // leaves these out.
-var Tools = []string{ToolRun, ToolRead, ToolWrite, ToolPut, ToolGet, ToolShellOpen, ToolShellSend, ToolShellRead, ToolShellClose}
+var Tools = append([]string{ToolRun, ToolRead, ToolWrite, ToolPut, ToolGet}, shellTools...)
+
+// shellTools are the shell's four, in the order the host link lists them.
+var shellTools = []string{ToolShellOpen, ToolShellSend, ToolShellRead, ToolShellClose}
 
 // ServerName is the host link's name in the gateway's catalog.
 const ServerName = "agentry-hostlink"
@@ -184,6 +187,10 @@ func LogFile(id string) string { return "host-" + id + ".log" }
 // LogMount: what was typed and what the shell printed, as text, masked of
 // the run's own sign-ins (plan runtime-hosts.md invariant 7, D19).
 func ShellLogFile(id string, n int) string { return fmt.Sprintf("host-%s-shell-%d.log", id, n) }
+
+// ShellLogPattern names every shell transcript of a target host, as a
+// receipt line says where they are.
+func ShellLogPattern(id string) string { return "host-" + id + "-shell-<n>.log" }
 
 // ShellLogRE matches a shell transcript's name, giving the host's id.
 var ShellLogRE = regexp.MustCompile(`^host-([a-z0-9_]{1,64})-shell-([1-9][0-9]{0,5})\.log$`)

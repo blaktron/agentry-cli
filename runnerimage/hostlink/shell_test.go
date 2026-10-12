@@ -401,6 +401,49 @@ func TestTheShellsOutputIsMaskedAndViewable(t *testing.T) {
 	}
 }
 
+// TestASudoPasswordTypedAtThePromptIsMasked: typed where no prompt hides
+// it, the terminal echoes the password and the shell reads it as a
+// command; neither reaches the agent or the transcript.
+func TestASudoPasswordTypedAtThePromptIsMasked(t *testing.T) {
+	fx := newFixture(t, sudoTarget())
+	ls := fx.serveLive(t)
+	ls.call(ToolShellOpen, map[string]any{})
+	out, _ := ls.call(ToolShellSend, map[string]any{"session": 1, "key": KeySudoPassword})
+	if strings.Contains(out, testSudo) || !strings.Contains(out, Redacted) {
+		t.Fatalf("the echoed sudo password: %q", out)
+	}
+	if out, isErr := ls.call(ToolShellSend, map[string]any{"session": 1, "text": "echo '" + testSudo + "'", "key": "enter"}); strings.Contains(out, testSudo) || isErr {
+		t.Fatalf("typed as text: %q", out)
+	}
+	ls.call(ToolShellClose, map[string]any{"session": 1})
+	b, _ := os.ReadFile(filepath.Join(fx.logs, ShellLogFile("server", 1)))
+	l, _ := os.ReadFile(filepath.Join(fx.logs, LogFile("server")))
+	if strings.Contains(string(b), testSudo) || strings.Contains(string(l), testSudo) || !strings.Contains(string(b), `sent "echo '`+Redacted+`'" enter`) {
+		t.Errorf("transcript:\n%s\nlog:\n%s", b, l)
+	}
+}
+
+// TestAShellErrorCarryingHostOutputIsAResource is D9: what the host
+// printed reaches the agent past the gateway's secret block even when the
+// answer is an error.
+func TestAShellErrorCarryingHostOutputIsAResource(t *testing.T) {
+	fx := newFixture(t, sudoTarget())
+	fx.cfg.Shell = func(argv, env []string) (Terminal, error) {
+		f := newFakeTerm(argv, env)
+		f.print("Permission denied (publickey,password).\r\n")
+		f.print(endOfOutput)
+		return f, nil
+	}
+	res, _, err := fx.session(t, call(ToolShellOpen, map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, isErr, typ := answer(t, res["1"])
+	if !isErr || typ != "resource" || !strings.Contains(text, "ended as it opened") || !strings.Contains(text, "Permission denied") {
+		t.Fatalf("%v %s %q", isErr, typ, text)
+	}
+}
+
 func TestSudoPasswordWithoutOneIsRefused(t *testing.T) {
 	tg := sudoTarget()
 	tg.Sudo = false

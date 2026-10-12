@@ -278,19 +278,14 @@ func copyShellTranscripts(rd *runDirs) map[string]int {
 		if m == nil || !e.Type().IsRegular() {
 			continue
 		}
-		// A kept run folder keeps every transcript masked; only this
-		// run's hosts' are receipts.
+		// Only this run's hosts' transcripts are receipts; a kept run
+		// folder keeps every one masked.
 		src := filepath.Join(rd.hostLogDir(), e.Name())
+		if b, err := os.ReadFile(src); err == nil && ours[m[1]] { //nolint:gosec // the run's own folder
+			_ = os.WriteFile(filepath.Join(rd.receiptsDir, e.Name()), []byte(rd.redact.String(string(b))), 0o644) //nolint:gosec // a receipt
+			counts[m[1]]++
+		}
 		rd.redact.File(src)
-		if !ours[m[1]] {
-			continue
-		}
-		b, err := os.ReadFile(src) //nolint:gosec // the run's own folder
-		if err != nil {
-			continue
-		}
-		_ = os.WriteFile(filepath.Join(rd.receiptsDir, e.Name()), []byte(rd.redact.String(string(b))), 0o644) //nolint:gosec // a receipt
-		counts[m[1]]++
 	}
 	return counts
 }

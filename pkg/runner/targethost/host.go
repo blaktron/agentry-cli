@@ -123,8 +123,11 @@ func (h *Host) shortNote() string {
 
 func (h *Host) receiptLine(calls, shells int) string {
 	sessions := ""
-	if shells > 0 {
-		sessions = fmt.Sprintf("; %d shell sessions, their transcripts in receipts/%s", shells, strings.Replace(hostlink.ShellLogFile(h.ID, 1), "-1.log", "-<n>.log", 1))
+	switch {
+	case shells == 1:
+		sessions = fmt.Sprintf("; 1 shell session, its transcript in receipts/%s", hostlink.ShellLogFile(h.ID, 1))
+	case shells > 1:
+		sessions = fmt.Sprintf("; %d shell sessions, their transcripts in receipts/%s", shells, hostlink.ShellLogPattern(h.ID))
 	}
 	return fmt.Sprintf("%s at %s (%s resolved by this machine), port %d; host key %s (%s); signed in with %s; reached only through the host link and one relay to that address and port, by the host tools (%d calls, receipts/%s%s); the account can run any command it may on that machine, and the machine's own network is outside the run",
 		h.Answer.User, h.Answer.Host, h.Address, h.Answer.Port, ssh256(h), h.HostKey.From, h.Credential.Words(), calls, hostlink.LogFile(h.ID), sessions)

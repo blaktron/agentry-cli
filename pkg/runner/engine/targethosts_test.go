@@ -195,7 +195,7 @@ func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 	line := env.CapabilitiesEnforced["host.server"]
 	for _, want := range []string{"admin at box.example (203.0.113.4 resolved by this machine), port 2222", ssh.FingerprintSHA256(h.HostKey.Key),
 		targethost.TrustedNow, "a password given by a flag", "a sudo password typed at the run's start", "2 calls", "outside the run",
-		"1 shell sessions, their transcripts in receipts/host-server-shell-<n>.log"} {
+		"1 shell session, its transcript in receipts/host-server-shell-1.log"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("host.server line lacks %q: %s", want, line)
 		}

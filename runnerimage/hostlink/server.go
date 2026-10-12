@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -398,8 +399,12 @@ func (s *server) handleCall(ctx context.Context, req rpcRequest) {
 	}()
 	text, isErr := call(ctx, p.Arguments)
 	text = s.limits.FitResult(p.Name, s.scrub.String(text))
+	// A shell tool's error can carry what the host printed (a shell that
+	// ended as it opened, the last output of one that is over), so every
+	// shell answer travels as the resource (D9), its isError kept.
+	asResource := !isErr || slices.Contains(shellTools, p.Name)
 	s.writeResult(req.ID, map[string]any{
-		"content": []map[string]any{content(text, isErr)},
+		"content": []map[string]any{content(text, !asResource)},
 		"isError": isErr,
 	})
 }

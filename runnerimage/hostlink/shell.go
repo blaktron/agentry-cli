@@ -1,6 +1,7 @@
 package hostlink
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,7 +68,6 @@ type shell struct {
 	pending  string // the rest of a result that did not fit, as it was given
 	lastOut  time.Time
 	ended    bool
-	exit     int
 	endWhy   string
 	closed   string // why the host link ended it, if it did
 	tlog     *transcript
@@ -92,6 +92,11 @@ func (sh *shell) pump() {
 			sh.mu.Lock()
 			sh.unread = append(sh.unread, buf[:n]...)
 			if over := len(sh.unread) - maxUnreadBytes; over > 0 {
+				// Cut at a line end, so that what is kept never begins
+				// with the end of a sign-in whose head was dropped.
+				if nl := bytes.IndexByte(sh.unread[over:], '\n'); nl >= 0 && nl < 64<<10 {
+					over += nl + 1
+				}
 				sh.unread = append(sh.unread[:0], sh.unread[over:]...)
 				sh.dropped += int64(over)
 			}
@@ -106,7 +111,10 @@ func (sh *shell) pump() {
 	}
 	code, err := sh.term.Wait()
 	sh.mu.Lock()
-	sh.ended, sh.exit = true, code
+	sh.ended = true
+	if sh.idle != nil {
+		sh.idle.Stop()
+	}
 	switch {
 	case sh.closed != "":
 		sh.endWhy = sh.closed
@@ -163,6 +171,7 @@ func minTime(a, b time.Time) time.Time {
 // --- the server's side ---
 
 type shells struct {
+	pumps  sync.WaitGroup // every session's pump, so the run's end waits on the transcripts
 	mu     sync.Mutex
 	open   map[int]*shell
 	gone   map[int]string
@@ -215,7 +224,8 @@ func (ss *shells) get(n int) (*shell, error) {
 	return nil, fmt.Errorf("there is no session %d", n)
 }
 
-// end stops session n for why and forgets it once its output is read.
+// end stops a session for why: its pump records why when the process is
+// gone.
 func (ss *shells) end(sh *shell, why string) {
 	sh.mu.Lock()
 	if sh.closed == "" && !sh.ended {
@@ -244,7 +254,8 @@ func (ss *shells) forget(sh *shell) {
 	ss.mu.Unlock()
 }
 
-// closeAll ends every session: the run is over.
+// closeAll ends every session, the run being over, and waits a moment for
+// each transcript's last lines.
 func (ss *shells) closeAll() {
 	ss.mu.Lock()
 	list := make([]*shell, 0, len(ss.open))
@@ -254,6 +265,15 @@ func (ss *shells) closeAll() {
 	ss.mu.Unlock()
 	for _, sh := range list {
 		ss.end(sh, "the run ended")
+	}
+	done := make(chan struct{})
+	go func() {
+		ss.pumps.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
 	}
 }
 
@@ -324,7 +344,11 @@ func (s *server) toolShellOpen(ctx context.Context, args json.RawMessage) (strin
 	ss.mu.Lock()
 	ss.open[n] = sh
 	ss.mu.Unlock()
-	go sh.pump()
+	ss.pumps.Add(1)
+	go func() {
+		defer ss.pumps.Done()
+		sh.pump()
+	}()
 	s.touch(sh)
 	sh.await(ctx, since, wait, ss.settle)
 	out := s.take(sh, a.Raw)
@@ -493,7 +517,7 @@ func (s *server) toolShellClose(_ context.Context, args json.RawMessage) (string
 		msg += " What it printed that was not read:\n" + out
 	}
 	if rest > 0 {
-		msg += fmt.Sprintf("\n[%d more bytes it printed were not kept; the run's receipts hold the whole transcript]", rest)
+		msg += fmt.Sprintf("\n[%d more bytes it printed were not returned; the session's transcript in the run's receipts holds its text]", rest)
 	}
 	return msg, false
 }
@@ -660,7 +684,8 @@ func (t *transcript) sent(text string, keys []string) {
 	}
 	var parts []string
 	if text != "" {
-		parts = append(parts, t.scrub.String(fmt.Sprintf("%q", text)))
+		// Masked before it is quoted: quoting would respell a sign-in.
+		parts = append(parts, fmt.Sprintf("%q", t.scrub.String(text)))
 	}
 	parts = append(parts, keys...)
 	t.mark("sent " + strings.Join(parts, " "))

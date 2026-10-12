@@ -15,7 +15,7 @@ type Terminal interface {
 	// Wait waits for the process to end, after a read has returned an
 	// error, and gives its exit status.
 	Wait() (int, error)
-	// Kill ends the process and anything it started.
+	// Kill ends the process, which ends the session on the host.
 	Kill()
 }
 
