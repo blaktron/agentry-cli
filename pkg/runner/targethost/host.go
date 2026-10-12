@@ -34,15 +34,26 @@ type Options struct {
 	Say func(string)
 }
 
-// Prepare readies one target host, in the order that asks the person for
+// Prepare readies one target host. With a person at a terminal it asks for
 // nothing a refusal would waste: the address (D8), the host key (D7), and
-// only then the sign-in (D6).
+// only then the sign-in (D6). With no one to ask it takes the sign-in
+// first: such a run has only its flags and its keychain, and one with
+// neither (a hosted run, whose host has no keychain and passes no host
+// flag) is refused before any name is resolved or any address dialled
+// (agentry-cli#861, found live on dev; agentry-enterprise#534).
 func Prepare(ctx context.Context, id string, a Answer, o Options) (*Host, error) {
 	if o.Say == nil {
 		o.Say = func(string) {}
 	}
 	if o.Getenv == nil {
 		o.Getenv = func(string) string { return "" }
+	}
+	var cred Credential
+	var err error
+	if o.Ask == nil {
+		if cred, err = ResolveCredential(id, a, o.Flags, o.Getenv, nil, o.Say); err != nil {
+			return nil, err
+		}
 	}
 	addr, err := ResolveAddress(ctx, id, a, o.Hosts)
 	if err != nil {
@@ -52,9 +63,10 @@ func Prepare(ctx context.Context, id string, a Answer, o Options) (*Host, error)
 	if err != nil {
 		return nil, err
 	}
-	cred, err := ResolveCredential(id, a, o.Flags, o.Getenv, o.Ask, o.Say)
-	if err != nil {
-		return nil, err
+	if o.Ask != nil {
+		if cred, err = ResolveCredential(id, a, o.Flags, o.Getenv, o.Ask, o.Say); err != nil {
+			return nil, err
+		}
 	}
 	return &Host{ID: id, Answer: a, Address: addr, HostKey: key, Credential: cred}, nil
 }

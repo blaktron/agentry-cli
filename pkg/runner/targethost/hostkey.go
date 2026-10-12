@@ -33,7 +33,7 @@ import (
 const (
 	TrustPersonsFile = "your known_hosts"
 	TrustRunnersFile = "Agentry's known hosts"
-	TrustedNow       = "trusted at this run's start"
+	TrustedNow       = "accepted at this run's start"
 )
 
 // KnownHostsFiles are the two files a host key is looked up in.
@@ -185,15 +185,15 @@ func CheckHostKey(ctx context.Context, id string, a Answer, addr netip.Addr, fil
 	}
 	if ask == nil {
 		return HostKey{}, refuse(id, RefusedKeyUnknown,
-			"%s's host key (%s) is in neither your known_hosts nor Agentry's, and no one is at a terminal to trust it: run once at a terminal, or add the key to your known_hosts",
+			"%s's host key (%s) is in neither your known_hosts nor Agentry's, and no one is at a terminal to accept it: run once at a terminal, or add the key to your known_hosts",
 			a.Host, Fingerprint(offered))
 	}
-	ok, err := ask.Confirm(fmt.Sprintf("The host key of %s (%s, port %d) is not known:\n  %s\nTrust it, and keep it in Agentry's known hosts for later runs?", a.String(), addr, a.Port, Fingerprint(offered)), false)
+	ok, err := ask.Confirm(fmt.Sprintf("The host key of %s (%s, port %d) is not known:\n  %s\nAccept it, and keep it in Agentry's known hosts for later runs?", a.String(), addr, a.Port, Fingerprint(offered)), false)
 	if err != nil {
 		return HostKey{}, err
 	}
 	if !ok {
-		return HostKey{}, refuse(id, RefusedKeyUnknown, "%s's host key (%s) was not trusted", a.Host, Fingerprint(offered))
+		return HostKey{}, refuse(id, RefusedKeyUnknown, "%s's host key (%s) was not accepted", a.Host, Fingerprint(offered))
 	}
 	if err := appendKnownHost(files.Runners, name, offered); err != nil {
 		say(fmt.Sprintf("warning: the key is trusted for this run, but could not be kept: %v", err))

@@ -355,3 +355,31 @@ func TestTheKeychainIsReadOnlyWhenAFlagLeavesSomethingToTake(t *testing.T) {
 		t.Errorf("with no sudo flag the keychain was read %d times, want once", reads)
 	}
 }
+
+// TestARunNoOneCanAskTakesTheSignInFirst: with no terminal, a host with no
+// sign-in is refused before any name is resolved or any address dialled
+// (found live on dev: a hosted run dialled the address to read its key).
+func TestARunNoOneCanAskTakesTheSignInFirst(t *testing.T) {
+	fakeKeychain(t)
+	defer func(l func(context.Context, string) ([]netip.Addr, error), f func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error)) {
+		lookupIP, fetchHostKey = l, f
+	}(lookupIP, fetchHostKey)
+	looked, fetched := 0, 0
+	lookupIP = func(context.Context, string) ([]netip.Addr, error) { looked++; return nil, errors.New("no") }
+	fetchHostKey = func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error) {
+		fetched++
+		return nil, errors.New("no")
+	}
+	_, err := Prepare(context.Background(), "server", Answer{User: "a", Host: "box.example", Port: 22}, Options{})
+	var r *Refusal
+	if !errors.As(err, &r) || r.Detail != RefusedCredential {
+		t.Fatalf("Prepare = %v", err)
+	}
+	if looked != 0 || fetched != 0 {
+		t.Errorf("a run with no sign-in resolved %d names and dialled %d addresses", looked, fetched)
+	}
+	_, err = Prepare(context.Background(), "server", Answer{User: "a", Host: "203.0.113.4", Port: 22}, Options{})
+	if !errors.As(err, &r) || r.Detail != RefusedCredential || fetched != 0 {
+		t.Fatalf("an address: %v, dialled %d", err, fetched)
+	}
+}
