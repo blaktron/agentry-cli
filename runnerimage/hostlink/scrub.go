@@ -34,8 +34,11 @@ func newScrubber(creds ...string) *scrubber {
 		}
 	}
 	for _, c := range creds {
-		for _, v := range []string{c, strings.TrimSpace(c)} {
-			add(v)
+		t := strings.TrimSpace(c)
+		for _, v := range []string{c, t, t + "\n", t + "\r\n"} {
+			if v == c || v == t {
+				add(v)
+			}
 			add(base64.StdEncoding.EncodeToString([]byte(v)))
 			add(base64.RawStdEncoding.EncodeToString([]byte(v)))
 			add(base64.URLEncoding.EncodeToString([]byte(v)))

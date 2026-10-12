@@ -208,8 +208,12 @@ func hostCredentialValues(p Params) []string {
 	var out []string
 	for _, h := range targetHostsOf(p) {
 		for _, v := range h.Credential.Values() {
-			for _, s := range []string{v, strings.TrimSpace(v)} {
-				out = append(out, s, base64.StdEncoding.EncodeToString([]byte(s)), base64.RawStdEncoding.EncodeToString([]byte(s)))
+			t := strings.TrimSpace(v)
+			out = append(out, v, t)
+			// A value printed by a command comes with its line end, which
+			// changes the end of its base64.
+			for _, s := range []string{v, t, t + "\n", t + "\r\n"} {
+				out = append(out, base64.StdEncoding.EncodeToString([]byte(s)), base64.RawStdEncoding.EncodeToString([]byte(s)))
 			}
 			if strings.Contains(v, "PRIVATE KEY-----") {
 				for _, line := range strings.Split(v, "\n") {
