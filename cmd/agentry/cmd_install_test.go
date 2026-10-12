@@ -212,6 +212,37 @@ func TestConfirmCapabilities(t *testing.T) {
 	}
 }
 
+// TestConfirmCapabilitiesNamesWhatIsDeclared (agentry-cli#888): the
+// question names what the release declares that needs a yes, and nothing
+// it does not: a release with only a target host is asked about a target
+// host, never "network egress and/or exec".
+func TestConfirmCapabilitiesNamesWhatIsDeclared(t *testing.T) {
+	hostOnly := manifest.Capabilities{TargetHosts: []string{"server"}}
+	err := confirmCapabilities(stubCmd(t), hostOnly, false)
+	if err == nil || err.Error() != "this QuickAgent declares a target host; re-run with --yes to accept in non-interactive mode" {
+		t.Errorf("non-TTY refusal for a target host only = %v", err)
+	}
+	for name, tc := range map[string]struct {
+		caps manifest.Capabilities
+		want string
+	}{
+		"target host":  {hostOnly, "a target host"},
+		"two hosts":    {manifest.Capabilities{TargetHosts: []string{"web", "db"}}, "target hosts"},
+		"egress":       {parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n"), "network egress"},
+		"exec":         {parseCaps(t, "capabilities:\n  exec:\n    commands: [git]\n"), "exec"},
+		"remote":       {parseCaps(t, "capabilities:\n  mcpServers:\n    - url: https://mcp.deepwiki.com/mcp\n      auth: none\n"), "a remote MCP server"},
+		"egress, host": {parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n  exec:\n    commands: [git]\n  targetHosts: [server]\nintake:\n  - id: server\n    prompt: The server\n    type: host\n"), "network egress, exec and a target host"},
+		"none":         {manifest.Capabilities{}, ""},
+	} {
+		if got := confirmedCapabilitiesWords(tc.caps); got != tc.want {
+			t.Errorf("%s: names %q, want %q", name, got, tc.want)
+		}
+		if needs := capabilityNeedsConfirm(tc.caps); needs != (tc.want != "") {
+			t.Errorf("%s: needs confirmation = %v", name, needs)
+		}
+	}
+}
+
 // TestCopyTreePreservesModes: reinstalling an agent with an executable
 // helper script must keep it executable (the archive normalizes modes,
 // D-15; the copy must not undo that).

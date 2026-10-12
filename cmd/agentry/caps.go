@@ -1,6 +1,7 @@
 // Capability-summary rendering (§5.4 install-time display): the declared
 // security contract is shown before anything is written to disk, and
-// network egress or exec declarations require confirmation (§11 install).
+// network egress, exec, a remote MCP server or a target host requires
+// confirmation (§11 install).
 package main
 
 import (
@@ -97,13 +98,47 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 }
 
 // capabilityNeedsConfirm reports whether install must ask before proceeding:
-// declared network egress or subprocess execution (§11 install row).
+// declared network egress or subprocess execution (§11 install row), a
+// remote MCP server, or a target host.
 func capabilityNeedsConfirm(c manifest.Capabilities) bool {
+	return len(confirmedCapabilities(c)) > 0
+}
+
+// confirmedCapabilities names what c declares that the install gate asks
+// about, in the words the prompt uses (agentry-cli#888): the question names
+// what the release has, never a capability it does not.
+func confirmedCapabilities(c manifest.Capabilities) []string {
+	var what []string
+	if len(c.Network.Egress.Hosts) > 0 {
+		what = append(what, "network egress")
+	}
+	if len(c.Exec.Commands) > 0 {
+		what = append(what, "exec")
+	}
 	// A remote server is network reach to its vendor, whatever the
 	// release's own egress says (agentry-cli#663).
-	// So is a target host (agentry-cli#861).
-	return len(c.Network.Egress.Hosts) > 0 || len(c.Exec.Commands) > 0 || len(c.TargetHosts) > 0 ||
-		slices.ContainsFunc(c.MCPServers, manifest.MCPServer.IsRemote)
+	if slices.ContainsFunc(c.MCPServers, manifest.MCPServer.IsRemote) {
+		what = append(what, "a remote MCP server")
+	}
+	// A target host is a machine the person names, worked as the account
+	// they sign in with (agentry-cli#861).
+	switch n := len(c.TargetHosts); {
+	case n == 1:
+		what = append(what, "a target host")
+	case n > 1:
+		what = append(what, "target hosts")
+	}
+	return what
+}
+
+// confirmedCapabilitiesWords is confirmedCapabilities as one phrase:
+// "network egress, exec and a target host".
+func confirmedCapabilitiesWords(c manifest.Capabilities) string {
+	what := confirmedCapabilities(c)
+	if len(what) < 2 {
+		return strings.Join(what, "")
+	}
+	return strings.Join(what[:len(what)-1], ", ") + " and " + what[len(what)-1]
 }
 
 // isZeroCapabilities reports a completely undeclared capability block.

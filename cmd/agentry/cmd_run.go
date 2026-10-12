@@ -1044,7 +1044,7 @@ func describeRunConsent(m *manifest.Manifest, meta *installdir.Meta, home string
 		}
 	} else if capabilityNeedsConfirm(m.Capabilities) {
 		c.NeedsConfirmation = true
-		c.Reason = "a first run of a QuickAgent that declares network egress or exec"
+		c.Reason = "a first run of a QuickAgent that declares " + confirmedCapabilitiesWords(m.Capabilities)
 	}
 	return c
 }
