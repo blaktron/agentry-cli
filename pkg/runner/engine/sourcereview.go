@@ -5,6 +5,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // AI Review of an input source on a hosted run (plan input-sources.md D9,
@@ -68,7 +70,8 @@ func sourceReviewTexts(texts []reviewText, sources []string) ([]reviewText, map[
 
 // sourceNotReviewed is the refusal of a source whose Markdown did not all
 // fit in what AI Review reads of a run: its id, how many of its Markdown
-// files there are, and how many did not fit.
+// files there are, and how many did not fit, with the reason input-refused
+// / not-reviewed.
 func sourceNotReviewed(withheld []string, sources []string, counts map[string]int) error {
 	missing := map[string]int{}
 	var ids []string
@@ -90,6 +93,10 @@ func sourceNotReviewed(withheld []string, sources []string, counts map[string]in
 	if counts[id] == 1 {
 		files = "file"
 	}
-	return fmt.Errorf("the input source %s has %d Markdown %s for AI Review, and %d of them do not fit in what AI Review reads of a run (%d calls, %d MiB of text): a source is refused rather than reviewed in part",
-		id, counts[id], files, missing[id], MaxInputReviewCalls, MaxInputReviewText>>20)
+	// The reason carries the source and its count (agentry-cli#884): its
+	// Markdown files, against how many of them fit.
+	return receipt.WithCount(fmt.Errorf("the input source %s has %d Markdown %s for AI Review, and %d of them do not fit in what AI Review reads of a run (%d calls, %d MiB of text): a source is refused rather than reviewed in part",
+		id, counts[id], files, missing[id], MaxInputReviewCalls, MaxInputReviewText>>20),
+		receipt.ReasonInputRefused, receipt.InputNotReviewed,
+		&receipt.ReasonCount{Cap: receipt.CapAIReview, Limit: int64(counts[id] - missing[id]), Of: receipt.OfMarkdownFiles, Count: int64(counts[id])}, id)
 }

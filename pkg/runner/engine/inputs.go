@@ -141,7 +141,7 @@ func (x *inputsDecoder) reviewEntries(ctx context.Context, res *decode.Result, e
 	}
 	if refusal == nil {
 		if err := sourceNotReviewed(withheld, x.rd.sources, markdown); err != nil {
-			return nil, nil, Classify(ExitPolicy, inputRefused(receipt.InputNotReviewed, err))
+			return nil, nil, Classify(ExitPolicy, err)
 		}
 	}
 	for id, n := range markdown {

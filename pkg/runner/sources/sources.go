@@ -283,6 +283,14 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 	if rep.Files < 0 || rep.Bytes < 0 || rep.Files > caps.Files || rep.Bytes > caps.Bytes || rep.LFSPointers < 0 || rep.LFSPointers > rep.Files {
 		return rep, errors.New("the fetch step's report gives counts outside the source's caps")
 	}
+	// A refusal's count is held to the closed words; its cap's value is
+	// the caller's, never the report's (agentry-cli#884).
+	if o := rep.Over; o != nil {
+		if rep.Refusal == "" || o.Count < 0 || !knownOver[[2]string{o.Cap, o.Of}] ||
+			(rep.Kind == source.KindURL && (o.Cap != source.CapBytes || o.Of != source.OfBytes)) {
+			return rep, errors.New("the fetch step's report gives a count that is not a refusal's")
+		}
+	}
 	if rep.Commit != "" && !validCommit(rep.Commit) {
 		return rep, errors.New("the fetch step's report names a commit that is not a SHA-1")
 	}
@@ -309,6 +317,12 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 		}
 	}
 	return rep, nil
+}
+
+// knownOver is each cap's closed list of what a refusal counts against it.
+var knownOver = map[[2]string]bool{
+	{source.CapFiles, source.OfFiles}: true, {source.CapFiles, source.OfObjects}: true, {source.CapFiles, source.OfEntries}: true,
+	{source.CapBytes, source.OfBytes}: true, {source.CapBytes, source.OfPackBytes}: true, {source.CapBytes, source.OfInflatedBytes}: true,
 }
 
 var knownSkip = map[string]bool{

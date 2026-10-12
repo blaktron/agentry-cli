@@ -260,9 +260,10 @@ func TestFetchOverACapStagesNothing(t *testing.T) {
 		files int
 		bytes int64
 		want  string
+		over  Over
 	}{
-		{"files", 3, 0, "holds 7 files"},
-		{"bytes", 0, 1000, "past the 1000 bytes cap"},
+		{"files", 3, 0, "holds 7 files", Over{Cap: CapFiles, Of: OfFiles, Count: 7}},
+		{"bytes", 0, 1000, "past the 1000 bytes cap", Over{Cap: CapBytes, Of: OfBytes}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := f.options(t)
@@ -273,6 +274,12 @@ func TestFetchOverACapStagesNothing(t *testing.T) {
 			}
 			if !strings.Contains(rep.Refusal, tc.want) {
 				t.Errorf("refusal %q, want it to say %q", rep.Refusal, tc.want)
+			}
+			// The same count, typed (agentry-cli#884); a byte count is
+			// the tree's, past the cap.
+			if o := rep.Over; o == nil || o.Cap != tc.over.Cap || o.Of != tc.over.Of || o.More ||
+				(tc.over.Count != 0 && o.Count != tc.over.Count) || (tc.over.Cap == CapBytes && o.Count <= tc.bytes) {
+				t.Errorf("over %+v, want %+v", rep.Over, tc.over)
 			}
 			if got := listFiles(t, o.Out); len(got) != 0 {
 				t.Errorf("a refused source staged %v", got)
@@ -414,6 +421,9 @@ func TestATreeBombIsRefusedBeforeItIsWalkedWhole(t *testing.T) {
 	}
 	if !strings.Contains(rep.Refusal, "more than 50000 files, folders and links") {
 		t.Errorf("refusal %q", rep.Refusal)
+	}
+	if want := (Over{Cap: CapFiles, Of: OfEntries, Count: 50000, More: true}); rep.Over == nil || *rep.Over != want {
+		t.Errorf("over %+v, want %+v", rep.Over, want)
 	}
 	if got := listFiles(t, o.Out); len(got) != 0 {
 		t.Errorf("a refused tree staged %d files", len(got))

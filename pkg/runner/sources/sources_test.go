@@ -169,6 +169,39 @@ func TestTheReportIsHeldToItsShape(t *testing.T) {
 	}
 }
 
+// TestARefusalsCountIsHeldToItsWords pins agentry-cli#884: a refusal's
+// typed count passes only with its refusal, in the closed words, and a
+// url source's only as bytes.
+func TestARefusalsCountIsHeldToItsWords(t *testing.T) {
+	repo := Source{Kind: manifest.IntakeRepository}
+	for _, raw := range []string{
+		`{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"refusal":"too many","over":{"cap":"files","of":"files","count":25000}}`,
+		`{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"refusal":"too big","over":{"cap":"bytes","of":"pack-bytes","count":1140850688,"more":true}}`,
+		`{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"refusal":"too many","over":{"cap":"files","of":"objects","count":90000}}`,
+	} {
+		if _, err := CheckReport([]byte(raw), repo, LocalCaps); err != nil {
+			t.Errorf("%s: %v", raw, err)
+		}
+	}
+	if _, err := CheckReport([]byte(`{"schema":"source/v1","kind":"url","files":0,"bytes":0,"refusal":"too big","over":{"cap":"bytes","of":"bytes","count":300}}`), Source{Kind: manifest.IntakeURL}, URLCaps); err != nil {
+		t.Errorf("a url source's byte count: %v", err)
+	}
+	for name, raw := range map[string]string{
+		"a count with no refusal": `{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"over":{"cap":"files","of":"files","count":1}}`,
+		"an unknown cap":          `{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"refusal":"x","over":{"cap":"lines","of":"files","count":1}}`,
+		"bytes against files":     `{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"refusal":"x","over":{"cap":"files","of":"bytes","count":1}}`,
+		"a negative count":        `{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"refusal":"x","over":{"cap":"files","of":"files","count":-1}}`,
+		"the cap's value":         `{"schema":"source/v1","kind":"repository","files":0,"bytes":0,"refusal":"x","over":{"cap":"files","of":"files","count":1,"limit":1}}`,
+	} {
+		if _, err := CheckReport([]byte(raw), repo, LocalCaps); err == nil {
+			t.Errorf("%s: passed", name)
+		}
+	}
+	if _, err := CheckReport([]byte(`{"schema":"source/v1","kind":"url","files":0,"bytes":0,"refusal":"x","over":{"cap":"files","of":"files","count":2}}`), Source{Kind: manifest.IntakeURL}, URLCaps); err == nil {
+		t.Error("a url source's file count passed")
+	}
+}
+
 func TestTheDocumentNamesNoToken(t *testing.T) {
 	s := Source{ID: "repo", Kind: manifest.IntakeRepository, URL: "https://github.com/o/r", Ref: "v1", Token: "tok"}
 	doc := Document(s, source.Report{Commit: "c0ffee", Files: 4}, "/inputs")

@@ -109,12 +109,43 @@ type Report struct {
 	Skipped      map[string]int      `json:"skipped,omitempty"`
 	SkippedPaths map[string][]string `json:"skippedPaths,omitempty"`
 	// Refusal says why nothing was written, when a cap refused the source:
-	// its count against the cap.
+	// its count against the cap. Over is the same count in typed fields,
+	// which a driver that keeps no text can keep (agentry-cli#884).
 	Refusal string `json:"refusal,omitempty"`
+	Over    *Over  `json:"over,omitempty"`
 	// Error says why the fetch failed, in words for the person.
 	Error string `json:"error,omitempty"`
 	// Protocol is the git protocol the host spoke.
 	Protocol string `json:"protocol,omitempty"`
+}
+
+// Over is a refusal's count: the cap that refused it (CapFiles or
+// CapBytes; its value is the caller's, who set it), what the step counted
+// (Of*) and how many, and More when it stopped counting there.
+type Over struct {
+	Cap   string `json:"cap"`
+	Of    string `json:"of"`
+	Count int64  `json:"count"`
+	More  bool   `json:"more,omitempty"`
+}
+
+// The caps an Over names, and what it counts: the words of agentry-cli's
+// receipt.ReasonCount, which this package cannot import.
+const (
+	CapFiles        = "files"
+	CapBytes        = "bytes"
+	OfFiles         = "files"
+	OfBytes         = "bytes"
+	OfObjects       = "objects"
+	OfEntries       = "entries"
+	OfPackBytes     = "pack-bytes"
+	OfInflatedBytes = "inflated-bytes"
+)
+
+// refuse records a refusal: its sentence and its count.
+func (r *Report) refuse(over Over, format string, args ...any) {
+	r.Refusal = fmt.Sprintf(format, args...)
+	r.Over = &over
 }
 
 // Fetch fetches one source and writes its report to Work. The error is
@@ -193,7 +224,7 @@ func fetchRepository(ctx context.Context, o Options, rep *Report) error {
 	maxPack := o.MaxBytes + 64<<20
 	if err := r.fetch(ctx, l, want, pf, maxPack); err != nil {
 		if errors.Is(err, errPackTooLarge) {
-			rep.Refusal = fmt.Sprintf("the repository's pack at %s is larger than %s, more than a repository within the %s cap can be", want, sizeWords(maxPack), sizeWords(o.MaxBytes))
+			rep.refuse(Over{Cap: CapBytes, Of: OfPackBytes, Count: maxPack, More: true}, "the repository's pack at %s is larger than %s, more than a repository within the %s cap can be", want, sizeWords(maxPack), sizeWords(o.MaxBytes))
 			return nil
 		}
 		return err
@@ -203,11 +234,11 @@ func fetchRepository(ctx context.Context, o Options, rep *Report) error {
 	p, err := indexPack(pf, 4*o.MaxFiles+1000, 2*o.MaxBytes+256<<20)
 	var many tooManyObjects
 	if errors.As(err, &many) {
-		rep.Refusal = fmt.Sprintf("the repository's pack at %s holds %d objects, more than a repository within the %d-file cap can", want, many.count, o.MaxFiles)
+		rep.refuse(Over{Cap: CapFiles, Of: OfObjects, Count: int64(many.count)}, "the repository's pack at %s holds %d objects, more than a repository within the %d-file cap can", want, many.count, o.MaxFiles)
 		return nil
 	}
 	if errors.Is(err, errInflatedTooLarge) {
-		rep.Refusal = fmt.Sprintf("the repository's pack at %s inflates past %s, more than a repository within the %s cap can", want, sizeWords(2*o.MaxBytes+256<<20), sizeWords(o.MaxBytes))
+		rep.refuse(Over{Cap: CapBytes, Of: OfInflatedBytes, Count: 2*o.MaxBytes + 256<<20, More: true}, "the repository's pack at %s inflates past %s, more than a repository within the %s cap can", want, sizeWords(2*o.MaxBytes+256<<20), sizeWords(o.MaxBytes))
 		return nil
 	}
 	if err != nil {
@@ -223,7 +254,7 @@ func fetchRepository(ctx context.Context, o Options, rep *Report) error {
 	maxEntries := 2*o.MaxFiles + 10000
 	pl, err := planTree(p, tree, maxEntries)
 	if errors.Is(err, errTooManyEntries) {
-		rep.Refusal = fmt.Sprintf("the repository holds more than %d files, folders and links at %s, past what the %d-file cap allows", maxEntries, want, o.MaxFiles)
+		rep.refuse(Over{Cap: CapFiles, Of: OfEntries, Count: int64(maxEntries), More: true}, "the repository holds more than %d files, folders and links at %s, past what the %d-file cap allows", maxEntries, want, o.MaxFiles)
 		return nil
 	}
 	if err != nil {
@@ -237,10 +268,10 @@ func fetchRepository(ctx context.Context, o Options, rep *Report) error {
 	}
 	switch {
 	case len(pl.files) > o.MaxFiles:
-		rep.Refusal = fmt.Sprintf("the repository holds %d files at %s, past the %d-file cap", len(pl.files), want, o.MaxFiles)
+		rep.refuse(Over{Cap: CapFiles, Of: OfFiles, Count: int64(len(pl.files))}, "the repository holds %d files at %s, past the %d-file cap", len(pl.files), want, o.MaxFiles)
 		return nil
 	case pl.bytes > o.MaxBytes:
-		rep.Refusal = fmt.Sprintf("the repository holds %s of files at %s, past the %s cap", sizeWords(pl.bytes), want, sizeWords(o.MaxBytes))
+		rep.refuse(Over{Cap: CapBytes, Of: OfBytes, Count: pl.bytes}, "the repository holds %s of files at %s, past the %s cap", sizeWords(pl.bytes), want, sizeWords(o.MaxBytes))
 		return nil
 	}
 	root, err := os.OpenRoot(o.Out)
