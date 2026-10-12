@@ -28,7 +28,10 @@ type Reason struct {
 
 // ReasonCount is a cap refusal's count: which cap refused and its value,
 // and what the step counted and how many. Numbers and closed words only,
-// so a driver that keeps nothing the run wrote can say it.
+// so a driver that keeps nothing the run wrote can say it. What was
+// counted need not be what the cap counts: a repository's pack is refused
+// by its objects against the file cap, or at a bound past the byte cap
+// (More), before its files are known.
 type ReasonCount struct {
 	// Cap is the cap that refused: CapFiles, CapBytes or CapAIReview.
 	Cap string `json:"cap"`
@@ -89,9 +92,16 @@ var (
 // maxCount bounds a count, within what a JSON number holds exactly.
 const maxCount = 1 << 53
 
+// CountsAgainst says whether of is a word a count against cap may count,
+// for the step that reports one (pkg/runner/sources holds the fetch
+// step's report to it).
+func CountsAgainst(cap, of string) bool {
+	return slices.Contains(countOf[cap], of)
+}
+
 // clean is c held to the closed lists, or nil.
 func (c *ReasonCount) clean() *ReasonCount {
-	if c == nil || !slices.Contains(countOf[c.Cap], c.Of) ||
+	if c == nil || !CountsAgainst(c.Cap, c.Of) ||
 		c.Count < 0 || c.Count > maxCount || c.Limit < 0 || c.Limit > maxCount {
 		return nil
 	}

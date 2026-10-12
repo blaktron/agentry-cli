@@ -205,30 +205,48 @@ func TestASourcesExecutableIsMalwareChecked(t *testing.T) {
 }
 
 // TestASourceOverItsCapRefusesTheRun: the fetch step's refusal is the
-// run's, with the count, before anything is staged (invariant 7, D7).
+// run's, with the count, before anything is staged (invariant 7, D7); the
+// reason names the source and the count in typed fields, against the
+// value of the cap the run fetched with (agentry-cli#884).
 func TestASourceOverItsCapRefusesTheRun(t *testing.T) {
-	resetDecodeCalls()
-	p, f := fixture(t)
-	happyFake(f)
-	p.KeepRunDir = true
-	withSource(t, &p, f, nil, func(rep *source.Report, _ string) {
-		rep.Refusal = "the repository holds 25000 files at " + testCommit + ", past the 20000-file cap"
-		rep.Over = &source.Over{Cap: source.CapFiles, Of: source.OfFiles, Count: 25000}
-	})
-	env, err := Run(context.Background(), f, p)
-	var ce *ClassifiedError
-	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "25000 files") {
-		t.Fatalf("err %v", err)
-	}
-	// The source and its count, typed (agentry-cli#884): the cap's value
-	// is the run's own.
-	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputSourceCap, Names: []string{"repo"},
-		Count: &receipt.ReasonCount{Cap: receipt.CapFiles, Limit: 20000, Of: receipt.OfFiles, Count: 25000}})
-	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "inputs", "repo")); !os.IsNotExist(err) {
-		t.Error("a refused source was staged")
-	}
-	if e, _ := decodeCounts(); e != 1 {
-		t.Errorf("ensured the files image %d times", e)
+	for name, c := range map[string]struct {
+		refusal string
+		over    source.Over
+		want    receipt.ReasonCount
+	}{
+		"the file cap": {"the repository holds 25000 files at " + testCommit + ", past the 20000-file cap",
+			source.Over{Cap: source.CapFiles, Of: source.OfFiles, Count: 25000},
+			receipt.ReasonCount{Cap: receipt.CapFiles, Limit: 20000, Of: receipt.OfFiles, Count: 25000}},
+		"the byte cap": {"the repository holds 1.5 GiB of files at " + testCommit + ", past the 1.0 GiB cap",
+			source.Over{Cap: source.CapBytes, Of: source.OfBytes, Count: 3 << 29},
+			receipt.ReasonCount{Cap: receipt.CapBytes, Limit: 1 << 30, Of: receipt.OfBytes, Count: 3 << 29}},
+		"the object bound": {"the repository's pack at " + testCommit + " holds 90000 objects, more than a repository within the 20000-file cap can",
+			source.Over{Cap: source.CapFiles, Of: source.OfObjects, Count: 90000},
+			receipt.ReasonCount{Cap: receipt.CapFiles, Limit: 20000, Of: receipt.OfObjects, Count: 90000}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetDecodeCalls()
+			p, f := fixture(t)
+			happyFake(f)
+			p.KeepRunDir = true
+			withSource(t, &p, f, nil, func(rep *source.Report, _ string) {
+				rep.Refusal = c.refusal
+				rep.Over = &c.over
+			})
+			env, err := Run(context.Background(), f, p)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), c.refusal) {
+				t.Fatalf("err %v", err)
+			}
+			want := c.want
+			wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputSourceCap, Names: []string{"repo"}, Count: &want})
+			if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "inputs", "repo")); !os.IsNotExist(err) {
+				t.Error("a refused source was staged")
+			}
+			if e, _ := decodeCounts(); e != 1 {
+				t.Errorf("ensured the files image %d times", e)
+			}
+		})
 	}
 }
 

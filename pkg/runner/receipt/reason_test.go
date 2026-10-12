@@ -101,7 +101,7 @@ func TestReasonCleanKeepsASourcesCount(t *testing.T) {
 	}
 }
 
-// The count's wire form, as a driver reads it.
+// TestReasonCountJSON pins the count's wire form, as a driver reads it.
 func TestReasonCountJSON(t *testing.T) {
 	b, err := json.Marshal(&Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Names: []string{"repo"},
 		Count: &ReasonCount{Cap: CapBytes, Limit: 268435456, Of: OfPackBytes, Count: 335544320, More: true}})

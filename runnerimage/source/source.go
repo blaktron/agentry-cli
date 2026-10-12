@@ -130,14 +130,24 @@ type Over struct {
 }
 
 // The caps an Over names, and what it counts: the words of agentry-cli's
-// receipt.ReasonCount, which this package cannot import.
+// receipt.ReasonCount, which this package cannot import (the engine's
+// TestTheFetchStepCountsInTheReceiptsWords holds them to it).
 const (
-	CapFiles        = "files"
-	CapBytes        = "bytes"
-	OfFiles         = "files"
-	OfBytes         = "bytes"
-	OfObjects       = "objects"
-	OfEntries       = "entries"
+	// CapFiles and CapBytes: Options.MaxFiles and Options.MaxBytes.
+	CapFiles = "files"
+	CapBytes = "bytes"
+	// OfFiles and OfBytes: the tree's files and their bytes, or a url
+	// source's one file.
+	OfFiles = "files"
+	OfBytes = "bytes"
+	// OfObjects: the objects a pack says it holds, more than a repository
+	// within the file cap can.
+	OfObjects = "objects"
+	// OfEntries: the tree's files, folders and links, bounded at a
+	// multiple of the file cap.
+	OfEntries = "entries"
+	// OfPackBytes and OfInflatedBytes: the pack as sent and as inflated,
+	// each bounded past what a repository within the byte cap makes.
 	OfPackBytes     = "pack-bytes"
 	OfInflatedBytes = "inflated-bytes"
 )
@@ -231,14 +241,15 @@ func fetchRepository(ctx context.Context, o Options, rep *Report) error {
 	}
 	// Its objects inflate to the checkout plus its trees, and deltas
 	// against them: twice the byte cap and a margin bounds it.
-	p, err := indexPack(pf, 4*o.MaxFiles+1000, 2*o.MaxBytes+256<<20)
+	maxInflated := 2*o.MaxBytes + 256<<20
+	p, err := indexPack(pf, 4*o.MaxFiles+1000, maxInflated)
 	var many tooManyObjects
 	if errors.As(err, &many) {
 		rep.refuse(Over{Cap: CapFiles, Of: OfObjects, Count: int64(many.count)}, "the repository's pack at %s holds %d objects, more than a repository within the %d-file cap can", want, many.count, o.MaxFiles)
 		return nil
 	}
 	if errors.Is(err, errInflatedTooLarge) {
-		rep.refuse(Over{Cap: CapBytes, Of: OfInflatedBytes, Count: 2*o.MaxBytes + 256<<20, More: true}, "the repository's pack at %s inflates past %s, more than a repository within the %s cap can", want, sizeWords(2*o.MaxBytes+256<<20), sizeWords(o.MaxBytes))
+		rep.refuse(Over{Cap: CapBytes, Of: OfInflatedBytes, Count: maxInflated, More: true}, "the repository's pack at %s inflates past %s, more than a repository within the %s cap can", want, sizeWords(maxInflated), sizeWords(o.MaxBytes))
 		return nil
 	}
 	if err != nil {
