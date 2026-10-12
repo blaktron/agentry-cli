@@ -127,7 +127,8 @@ func newInstallCmd() *cobra.Command {
 			"took off the pipeline — is unscanned: no findings, no report and no\n" +
 			"attestation stand behind it, and it requires --allow-unscanned, which is\n" +
 			"its own decision (--allow-unsigned does not give it).\n\n" +
-			"Capabilities: declared network egress or exec requires typed confirmation,\n" +
+			"Capabilities: declared network egress, exec, a remote MCP server or a\n" +
+			"target host requires typed confirmation (the prompt names which),\n" +
 			"and so does any capability WIDENED since the version currently installed\n" +
 			"here (a new egress host, new exec commands, escalated filesystem access,\n" +
 			"a new secret). Narrowed or unchanged contracts install without asking.\n" +
@@ -208,8 +209,9 @@ type installPlan struct {
 	// Diff is the capability diff against Installed (empty on a first install).
 	Diff installed.Diff `json:"diff"`
 	// NeedsConfirmation says whether an install would ask (or need --yes):
-	// a first install that declares network egress or exec, or an update
-	// that widens the contract. Reason says which.
+	// a first install that declares network egress, exec, a remote MCP
+	// server or a target host, or an update that widens the contract.
+	// Reason says which.
 	NeedsConfirmation bool   `json:"needsConfirmation"`
 	Reason            string `json:"reason,omitempty"`
 	// Target and Dir are where an install would write; Managed is true when
@@ -624,7 +626,7 @@ func writeInstallPlan(cmd *cobra.Command, res *apiclient.ResolveResult, m *manif
 		}
 	} else if capabilityNeedsConfirm(m.Capabilities) {
 		plan.NeedsConfirmation = true
-		plan.Reason = "a first install of a QuickAgent that declares network egress or exec"
+		plan.Reason = "a first install of a QuickAgent that declares " + confirmedCapabilitiesWords(m.Capabilities)
 	}
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), plan)
@@ -767,7 +769,8 @@ func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *a
 
 // confirmCapabilityChange applies the §11 install gate.
 //
-// A first install asks about network egress or exec, as before. A REINSTALL
+// A first install asks about network egress, exec, a remote MCP server or
+// a target host (confirmCapabilities). A REINSTALL
 // compares against what this machine last accepted for this exact target
 // directory: widened capabilities always ask (that is the case §11 names),
 // narrowed or unchanged ones say so and continue — re-asking an identical
@@ -815,16 +818,18 @@ func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed
 		"install aborted (widened capability contract not accepted)")
 }
 
-// confirmCapabilities enforces the §11 install gate: declared network egress
-// or exec needs typed confirmation, skipped by --yes; non-interactive runs
-// must pass --yes.
+// confirmCapabilities enforces the §11 install gate: declared network
+// egress, exec, a remote MCP server or a target host needs typed
+// confirmation, skipped by --yes; non-interactive runs must pass --yes. The
+// prompt names what the release declares (agentry-cli#888).
 func confirmCapabilities(cmd *cobra.Command, caps manifest.Capabilities, yes bool) error {
 	if yes || !capabilityNeedsConfirm(caps) {
 		return nil
 	}
+	what := confirmedCapabilitiesWords(caps)
 	return promptYes(cmd,
-		"this QuickAgent declares network egress and/or exec — type \"yes\" to continue: ",
-		"this QuickAgent declares network egress and/or exec; re-run with --yes to accept in non-interactive mode",
+		fmt.Sprintf("this QuickAgent declares %s — type \"yes\" to continue: ", what),
+		fmt.Sprintf("this QuickAgent declares %s; re-run with --yes to accept in non-interactive mode", what),
 		"install aborted (capability contract not accepted)")
 }
 
