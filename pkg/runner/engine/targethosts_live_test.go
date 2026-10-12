@@ -248,6 +248,24 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 		{"tool": hostlink.ToolPut, "args": map[string]any{"from": "/scratch/hosts/up.txt", "to": "/tmp/up.txt", "mode": "0600"}},
 		{"tool": hostlink.ToolRun, "args": map[string]any{"command": "cat /tmp/up.txt; stat -c %a /tmp/up.txt"}},
 		{"tool": hostlink.ToolRun, "args": map[string]any{"command": "sleep 30", "timeout": 2}},
+		// The shell (agentry-cli#862, D18): a sudo prompt answered with
+		// the run's sudo password, a package installed, ctrl-c, paging,
+		// the cap of four.
+		{"tool": hostlink.ToolShellOpen, "args": map[string]any{}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "cat ~/pw.txt", "key": "enter"}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "sudo apk add --no-cache jq", "key": "enter", "wait": 15}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "key": hostlink.KeySudoPassword, "wait": 180}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "jq --version", "key": "enter", "wait": 60}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "sleep 600", "key": "enter", "wait": 2}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "key": "ctrl-c"}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "echo after-$((6*7))", "key": "enter"}},
+		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "seq 1 3000", "key": "enter", "wait": 10}},
+		{"tool": hostlink.ToolShellRead, "args": map[string]any{"session": 1}},
+		{"tool": hostlink.ToolShellOpen, "args": map[string]any{"wait": 1}},
+		{"tool": hostlink.ToolShellOpen, "args": map[string]any{"wait": 1}},
+		{"tool": hostlink.ToolShellOpen, "args": map[string]any{"wait": 1}},
+		{"tool": hostlink.ToolShellOpen, "args": map[string]any{"wait": 1}},
+		{"tool": hostlink.ToolShellClose, "args": map[string]any{"session": 1}},
 	}
 	stepsJSON, _ := json.Marshal(steps)
 	var inspected []string
@@ -325,7 +343,7 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 	}
 	for i := range answer.Results {
 		got, isErr, typ := text(i)
-		t.Logf("step %d %s (%s, error %v): %.300s", i, answer.Results[i].Tool, typ, isErr, got)
+		t.Logf("step %d %s (%s, error %v): %.1200s", i, answer.Results[i].Tool, typ, isErr, got)
 	}
 	expect := func(i int, wants ...string) {
 		t.Helper()
@@ -358,6 +376,41 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 	expect(9, "copied /scratch/hosts/up.txt")
 	expect(10, "put from the scratch folder", "600")
 	expect(11, "ended after 2 seconds")
+	// The shell.
+	expect(12, "[session 1: a login shell on server as agent, 1 of 4 open]")
+	expect(13, "cat ~/pw.txt", hostlink.Redacted)
+	expect(14, "password for agent")
+	expect(15, "Installing jq", "OK:")
+	expect(16, "jq-1.")
+	expect(17, "sleep 600", "running")
+	expect(18, "^C")
+	expect(19, "after-42")
+	expect(20, "more output is kept")
+	expect(21, "\n3000")
+	expect(22, "[session 2:")
+	expect(23, "[session 3:")
+	expect(24, "[session 4:")
+	// Refused before any SSH session, as an argument is: not a call.
+	if got, isErr, _ := text(25); !isErr || !strings.Contains(got, "has 4 shell sessions open") {
+		t.Errorf("a fifth session: %v %q", isErr, got)
+	}
+	expect(26, "[session 1 on server is closed]")
+	for i := 12; i <= 26; i++ {
+		if got, _, _ := text(i); strings.Contains(got, liveSudo) || strings.Contains(got, "\x1b") {
+			t.Errorf("step %d: the sudo password or a control sequence reached the agent: %q", i, got)
+		}
+	}
+	transcript, err := os.ReadFile(filepath.Join(outDir, "receipts", hostlink.ShellLogFile("server", 1)))
+	if err != nil {
+		t.Fatalf("the shell's transcript: %v", err)
+	}
+	t.Logf("receipts/%s:\n%.3000s", hostlink.ShellLogFile("server", 1), transcript)
+	for _, want := range []string{`sent "sudo apk add --no-cache jq" enter`, "sent sudo-password", "jq-1.", "after-42", "closed by the agent"} {
+		if !strings.Contains(string(transcript), want) {
+			t.Errorf("the transcript lacks %q", want)
+		}
+	}
+
 	if answer.Dial == "connected" || answer.Dial == "" {
 		t.Errorf("the agent container reached the target host itself: %q", answer.Dial)
 	}
@@ -419,12 +472,12 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 		})
 	}
 	log, err := os.ReadFile(filepath.Join(outDir, "receipts", hostlink.LogFile("server")))
-	if err != nil || strings.Count(string(log), "\n") != 10 || !strings.Contains(string(log), `"tool":"host_get"`) {
+	if err != nil || strings.Count(string(log), "\n") != 24 || !strings.Contains(string(log), `"tool":"host_get"`) || !strings.Contains(string(log), `"keys":["sudo-password"]`) {
 		t.Errorf("receipts/host-server.log (%v):\n%s", err, log)
 	}
 	t.Logf("host.server: %s", env.CapabilitiesEnforced["host.server"])
 	t.Logf("hostLink.image: %s", env.CapabilitiesEnforced["hostLink.image"])
-	if !strings.Contains(env.CapabilitiesEnforced["host.server"], "10 calls") {
+	if !strings.Contains(env.CapabilitiesEnforced["host.server"], "24 calls") || !strings.Contains(env.CapabilitiesEnforced["host.server"], "4 shell sessions") {
 		t.Errorf("host.server line: %s", env.CapabilitiesEnforced["host.server"])
 	}
 }

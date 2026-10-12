@@ -124,6 +124,11 @@ func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 		log := `{"time":"t","tool":"host_run","command":"echo ` + plantedHostPassword + `","exit":0}` + "\n" +
 			`{"time":"t","tool":"host_read","path":"/etc/hostname","bytes":4}` + "\n"
 		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.LogFile("server")), []byte(log), 0o600)
+		// And a shell session's transcript, where the host printed it back
+		// (agentry-cli#862); another host's name is not this run's.
+		shell := "── session 1: a login shell on server\n$ cat pw.txt\n" + plantedHostPassword + "\n── closed by the agent\n"
+		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.ShellLogFile("server", 1)), []byte(shell), 0o600)
+		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.ShellLogFile("other", 1)), []byte(shell), 0o600)
 	}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
@@ -189,7 +194,8 @@ func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 
 	line := env.CapabilitiesEnforced["host.server"]
 	for _, want := range []string{"admin at box.example (203.0.113.4 resolved by this machine), port 2222", ssh.FingerprintSHA256(h.HostKey.Key),
-		targethost.TrustedNow, "a password given by a flag", "a sudo password typed at the run's start", "2 calls", "outside the run"} {
+		targethost.TrustedNow, "a password given by a flag", "a sudo password typed at the run's start", "2 calls", "outside the run",
+		"1 shell sessions, their transcripts in receipts/host-server-shell-<n>.log"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("host.server line lacks %q: %s", want, line)
 		}
@@ -206,6 +212,13 @@ func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 	log, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", hostlink.LogFile("server")))
 	if err != nil || !strings.Contains(string(log), "/etc/hostname") || strings.Contains(string(log), plantedHostPassword) {
 		t.Errorf("receipts/host-server.log: %s (%v)", log, err)
+	}
+	transcript, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", hostlink.ShellLogFile("server", 1)))
+	if err != nil || !strings.Contains(string(transcript), "$ cat pw.txt") || strings.Contains(string(transcript), plantedHostPassword) {
+		t.Errorf("receipts/host-server-shell-1.log: %s (%v)", transcript, err)
+	}
+	if _, err := os.Stat(filepath.Join(p.OutDir, "receipts", hostlink.ShellLogFile("other", 1))); !os.IsNotExist(err) {
+		t.Errorf("a transcript of a host the run does not have was kept: %v", err)
 	}
 	doc, _ := os.ReadFile(filepath.Join(runDir, "inputs", "intake.json"))
 	if !strings.Contains(string(doc), `"address": "203.0.113.4"`) && !strings.Contains(string(doc), `"address":"203.0.113.4"`) {

@@ -72,21 +72,26 @@ const (
 	AuthPassword = "password"
 )
 
-// The host link's tools (plan runtime-hosts.md §5; the shell's four are
-// agentry-cli#862).
+// The host link's tools (plan runtime-hosts.md §5): the one-shot five
+// (agentry-cli#861) and the shell's four (D18, agentry-cli#862).
 const (
 	ToolRun   = "host_run"
 	ToolRead  = "host_read"
 	ToolWrite = "host_write"
 	ToolPut   = "host_put"
 	ToolGet   = "host_get"
+
+	ToolShellOpen  = "host_shell_open"
+	ToolShellSend  = "host_shell_send"
+	ToolShellRead  = "host_shell_read"
+	ToolShellClose = "host_shell_close"
 )
 
 // Tools are the host link's tools, in the order it lists them. Their
 // results reach the agent unchanged (D9), past the gateway's secret block
 // and the harness's scrub, so a client that scrubs tool output by name
 // leaves these out.
-var Tools = []string{ToolRun, ToolRead, ToolWrite, ToolPut, ToolGet}
+var Tools = []string{ToolRun, ToolRead, ToolWrite, ToolPut, ToolGet, ToolShellOpen, ToolShellSend, ToolShellRead, ToolShellClose}
 
 // ServerName is the host link's name in the gateway's catalog.
 const ServerName = "agentry-hostlink"
@@ -175,6 +180,14 @@ func (t Target) Check() error {
 // LogFile is a target host's log under LogMount: one JSON line a call.
 func LogFile(id string) string { return "host-" + id + ".log" }
 
+// ShellLogFile is the transcript of a target host's shell session n under
+// LogMount: what was typed and what the shell printed, as text, masked of
+// the run's own sign-ins (plan runtime-hosts.md invariant 7, D19).
+func ShellLogFile(id string, n int) string { return fmt.Sprintf("host-%s-shell-%d.log", id, n) }
+
+// ShellLogRE matches a shell transcript's name, giving the host's id.
+var ShellLogRE = regexp.MustCompile(`^host-([a-z0-9_]{1,64})-shell-([1-9][0-9]{0,5})\.log$`)
+
 // LogEntry is one line of a target host's log (plan runtime-hosts.md
 // invariant 7): the tool, the command or the paths, the exit status and
 // the byte counts. The engine masks it with the run's redactor before it
@@ -190,7 +203,11 @@ type LogEntry struct {
 	Stdout  int64  `json:"stdoutBytes,omitempty"`
 	Stderr  int64  `json:"stderrBytes,omitempty"`
 	Bytes   int64  `json:"bytes,omitempty"`
-	Error   string `json:"error,omitempty"`
+	// Session is a shell call's session, and Keys the keys it typed after
+	// its text (Command), by name: the sudo password is "sudo-password".
+	Session int      `json:"session,omitempty"`
+	Keys    []string `json:"keys,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }
 
 // ParseSpec reads hostspec.json, refusing a version it does not implement,
