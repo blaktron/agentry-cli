@@ -44,9 +44,6 @@ const (
 	Copilot = "copilot"
 )
 
-// Kinds lists every kind, for a reader that wants to name them all.
-var Kinds = []string{Runner, Exec, UnsafeExec, Decode, HostLink, ClaudeCode, Copilot}
-
 // Filter is the `docker image ls --filter` argument that selects every
 // image the runner built, of any kind.
 const Filter = "label=" + Key
@@ -57,7 +54,10 @@ func Line(kind string) string { return "LABEL " + Key + "=" + kind + "\n" }
 
 // Check reports the first stage of dockerfile that runs an instruction and
 // does not carry Line(kind). A stage that is only a FROM (and ARGs) makes
-// no image of its own and needs no label. It is for the builders' tests.
+// no image of its own and needs no label. It reads the Dockerfiles the
+// runner generates line by line and is no Dockerfile parser: a heredoc, or
+// the label written any other way (lower case, with another label on the
+// line), reads as unlabelled, so it fails closed. The builders' tests run it.
 func Check(dockerfile, kind string) error {
 	want := strings.TrimSpace(Line(kind))
 	stage, from, work, labelled := 0, "", false, false
