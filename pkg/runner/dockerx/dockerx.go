@@ -442,7 +442,9 @@ func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
 
 // ImageFile implements Client: `docker create` a container from the image
 // (never started — the exec image has no shell to start with), `docker cp`
-// the path out as a tar stream, `docker rm` the container.
+// the path out as a tar stream, `docker rm -fv` the container: -v, since
+// creating it gave each VOLUME the image declares an anonymous volume
+// (agentry-cli#458).
 func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
 	id, err := c.run(ctx, "create", ref)
 	if err != nil {
@@ -617,8 +619,9 @@ func (c *CLI) Stop(ctx context.Context, name string, timeoutSeconds int) error {
 // RemoveForce implements Client.
 func (c *CLI) RemoveForce(ctx context.Context, name string) error {
 	// -v: the container's anonymous volumes go with it, an image's
-	// VOLUME (the gateway's /misc, agentry-cli#458) included. Named
-	// volumes, the session's among them, are never taken by -v.
+	// VOLUME (the gateway's /misc, agentry-cli#458) included. Docker never
+	// takes a named volume by -v (the session's among them) nor an
+	// anonymous one another container still uses.
 	_, err := c.run(ctx, "rm", "-fv", name)
 	if err != nil && isNotFound(err) {
 		return nil

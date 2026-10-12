@@ -34,7 +34,7 @@ func TestTheGatewaysVolumeIsTheRunsAndGoesWithIt(t *testing.T) {
 		t.Errorf("the gateway's volume labels %v lack the run label", labels)
 	}
 	if _, ok := owner.Identity(); ok && labels[owner.LabelHost] == "" {
-		t.Errorf("the gateway's volume labels %v lack the owner labels the sweep reads", labels)
+		t.Errorf("the gateway's volume labels %v lack the owner labels the run's other objects carry", labels)
 	}
 	ops := f.Ops()
 	removed, listed, gone := slices.Index(ops, "RemoveForce:agentry-cafe0000-gateway"), slices.Index(ops, "VolumesByLabel:agentry.run=cafe0000"), slices.Index(ops, "VolumeRemove:0a1b2c-misc")

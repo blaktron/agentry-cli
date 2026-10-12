@@ -7,6 +7,7 @@ package dockerx
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"os"
 	"os/exec"
@@ -629,5 +630,13 @@ func TestRunSpecMountsLabelledAnonymousVolumes(t *testing.T) {
 	want := []string{"run", "-d", "--name", "g", "--mount", `type=volume,dst=/misc,"volume-label=agentry.owner.start=1,2",volume-label=agentry.run=ab12cd34,"volume-label=q=a""b"`, "i"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args =\n %q\nwant\n %q", got, want)
+	}
+	// Read back as docker reads a --mount value: one CSV record.
+	fields, err := csv.NewReader(strings.NewReader(got[5])).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"type=volume", "dst=/misc", "volume-label=agentry.owner.start=1,2", "volume-label=agentry.run=ab12cd34", `volume-label=q=a"b`}; !reflect.DeepEqual(fields, want) {
+		t.Errorf("fields = %q, want %q", fields, want)
 	}
 }
