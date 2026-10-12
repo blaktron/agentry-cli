@@ -49,6 +49,71 @@ func TestReasonCleanKeepsOnlyTheClosedList(t *testing.T) {
 	}
 }
 
+// TestReasonCleanKeepsASourcesCount pins agentry-cli#884: a source's
+// refusal names its question id and its count in typed fields, held to the
+// closed lists, and no other input refusal names or counts anything.
+func TestReasonCleanKeepsASourcesCount(t *testing.T) {
+	files := &ReasonCount{Cap: CapFiles, Limit: 10000, Of: OfFiles, Count: 14203}
+	cases := []struct {
+		name string
+		in   *Reason
+		want *Reason
+	}{
+		{"a source over its file cap", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Names: []string{"repo"}, Count: files},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Names: []string{"repo"}, Count: files}},
+		{"a bound the step stopped at", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Count: &ReasonCount{Cap: CapBytes, Limit: 10 << 20, Of: OfBytes, Count: 10 << 20, More: true}},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Count: &ReasonCount{Cap: CapBytes, Limit: 10 << 20, Of: OfBytes, Count: 10 << 20, More: true}}},
+		{"a source's Markdown past AI Review", &Reason{Code: ReasonInputRefused, Detail: InputNotReviewed, Names: []string{"repo"}, Count: &ReasonCount{Cap: CapAIReview, Limit: 12, Of: OfMarkdownFiles, Count: 17}},
+			&Reason{Code: ReasonInputRefused, Detail: InputNotReviewed, Names: []string{"repo"}, Count: &ReasonCount{Cap: CapAIReview, Limit: 12, Of: OfMarkdownFiles, Count: 17}}},
+		{"a fetch names its source, counts nothing", &Reason{Code: ReasonInputRefused, Detail: InputSourceFetch, Names: []string{"repo"}, Count: files},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceFetch, Names: []string{"repo"}}},
+		{"malware names and counts nothing", &Reason{Code: ReasonInputRefused, Detail: InputMalware, Names: []string{"repo"}, Count: files},
+			&Reason{Code: ReasonInputRefused, Detail: InputMalware}},
+		{"no detail, no count", &Reason{Code: ReasonInputRefused, Detail: "too big", Names: []string{"repo"}, Count: files},
+			&Reason{Code: ReasonInputRefused}},
+		{"a count on another code", &Reason{Code: ReasonSecretMissing, Names: []string{"A"}, Count: files},
+			&Reason{Code: ReasonSecretMissing, Names: []string{"A"}}},
+		{"a file name is not a source", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Names: []string{"README.md", "src/main.go", "Repo"}},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap}},
+		{"an unknown cap", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Count: &ReasonCount{Cap: "lines", Limit: 1, Of: OfFiles, Count: 2}},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap}},
+		{"a count of something else", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Count: &ReasonCount{Cap: CapFiles, Limit: 1, Of: OfBytes, Count: 2}},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap}},
+		{"Markdown against the file cap", &Reason{Code: ReasonInputRefused, Detail: InputNotReviewed, Count: &ReasonCount{Cap: CapFiles, Limit: 1, Of: OfMarkdownFiles, Count: 2}},
+			&Reason{Code: ReasonInputRefused, Detail: InputNotReviewed}},
+		{"a negative count", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Count: &ReasonCount{Cap: CapFiles, Limit: 1, Of: OfFiles, Count: -1}},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap}},
+		{"a count past 2^53", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Count: &ReasonCount{Cap: CapBytes, Limit: 1, Of: OfBytes, Count: 1<<53 + 1}},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap}},
+		{"a negative cap", &Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Count: &ReasonCount{Cap: CapBytes, Limit: -1, Of: OfBytes, Count: 1}},
+			&Reason{Code: ReasonInputRefused, Detail: InputSourceCap}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := c.in.Clean()
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("Clean(%+v) = %+v, want %+v", c.in, got, c.want)
+			}
+			if got.Count != nil && got.Count == c.in.Count {
+				t.Error("Clean shares the count it was given")
+			}
+		})
+	}
+}
+
+// TestReasonCountJSON pins the count's wire form, as a driver reads it.
+func TestReasonCountJSON(t *testing.T) {
+	b, err := json.Marshal(&Reason{Code: ReasonInputRefused, Detail: InputSourceCap, Names: []string{"repo"},
+		Count: &ReasonCount{Cap: CapBytes, Limit: 268435456, Of: OfPackBytes, Count: 335544320, More: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"code":"input-refused","names":["repo"],"detail":"source-cap","count":{"cap":"bytes","limit":268435456,"of":"pack-bytes","count":335544320,"more":true}}`
+	if string(b) != want {
+		t.Fatalf("got %s\nwant %s", b, want)
+	}
+}
+
 func TestReasonCleanCapsNames(t *testing.T) {
 	r := &Reason{Code: ReasonExecNotProvided}
 	for i := range MaxReasonNames + 3 {

@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 )
@@ -202,25 +205,48 @@ func TestASourcesExecutableIsMalwareChecked(t *testing.T) {
 }
 
 // TestASourceOverItsCapRefusesTheRun: the fetch step's refusal is the
-// run's, with the count, before anything is staged (invariant 7, D7).
+// run's, with the count, before anything is staged (invariant 7, D7); the
+// reason names the source and the count in typed fields, against the
+// value of the cap the run fetched with (agentry-cli#884).
 func TestASourceOverItsCapRefusesTheRun(t *testing.T) {
-	resetDecodeCalls()
-	p, f := fixture(t)
-	happyFake(f)
-	p.KeepRunDir = true
-	withSource(t, &p, f, nil, func(rep *source.Report, _ string) {
-		rep.Refusal = "the repository holds 25000 files at " + testCommit + ", past the 20000-file cap"
-	})
-	_, err := Run(context.Background(), f, p)
-	var ce *ClassifiedError
-	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "25000 files") {
-		t.Fatalf("err %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "inputs", "repo")); !os.IsNotExist(err) {
-		t.Error("a refused source was staged")
-	}
-	if e, _ := decodeCounts(); e != 1 {
-		t.Errorf("ensured the files image %d times", e)
+	for name, c := range map[string]struct {
+		refusal string
+		over    source.Over
+		want    receipt.ReasonCount
+	}{
+		"the file cap": {"the repository holds 25000 files at " + testCommit + ", past the 20000-file cap",
+			source.Over{Cap: source.CapFiles, Of: source.OfFiles, Count: 25000},
+			receipt.ReasonCount{Cap: receipt.CapFiles, Limit: 20000, Of: receipt.OfFiles, Count: 25000}},
+		"the byte cap": {"the repository holds 1.5 GiB of files at " + testCommit + ", past the 1.0 GiB cap",
+			source.Over{Cap: source.CapBytes, Of: source.OfBytes, Count: 3 << 29},
+			receipt.ReasonCount{Cap: receipt.CapBytes, Limit: 1 << 30, Of: receipt.OfBytes, Count: 3 << 29}},
+		"the object bound": {"the repository's pack at " + testCommit + " holds 90000 objects, more than a repository within the 20000-file cap can",
+			source.Over{Cap: source.CapFiles, Of: source.OfObjects, Count: 90000},
+			receipt.ReasonCount{Cap: receipt.CapFiles, Limit: 20000, Of: receipt.OfObjects, Count: 90000}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetDecodeCalls()
+			p, f := fixture(t)
+			happyFake(f)
+			p.KeepRunDir = true
+			withSource(t, &p, f, nil, func(rep *source.Report, _ string) {
+				rep.Refusal = c.refusal
+				rep.Over = &c.over
+			})
+			env, err := Run(context.Background(), f, p)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), c.refusal) {
+				t.Fatalf("err %v", err)
+			}
+			want := c.want
+			wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputSourceCap, Names: []string{"repo"}, Count: &want})
+			if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "inputs", "repo")); !os.IsNotExist(err) {
+				t.Error("a refused source was staged")
+			}
+			if e, _ := decodeCounts(); e != 1 {
+				t.Errorf("ensured the files image %d times", e)
+			}
+		})
 	}
 }
 
@@ -285,6 +311,7 @@ func TestAFetchFailureSaysWhy(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "403 Forbidden") {
 		t.Fatalf("err %v", err)
 	}
+	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputSourceFetch, Names: []string{"repo"}})
 	if strings.Contains(err.Error(), plantedToken) || strings.Contains(env.Error, plantedToken) {
 		t.Error("the token reached the error")
 	}
@@ -386,11 +413,23 @@ func TestAHostedRunRefusesASourceTooBigToReview(t *testing.T) {
 	}
 	withSource(t, &p, f, files, nil)
 	p.InputReview = &fakeReview{}
-	_, err := Run(context.Background(), f, p)
+	env, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "has 17 Markdown files for AI Review") || !strings.Contains(err.Error(), "refused rather than reviewed in part") {
 		t.Fatalf("err %v", err)
 	}
+	// Typed (agentry-cli#884): the source, its 17 Markdown files, and how
+	// many fit, the ones the sentence does not say are withheld.
+	m := regexp.MustCompile(`, and (\d+) of them do not fit`).FindStringSubmatch(err.Error())
+	withheld := 0
+	if m != nil {
+		withheld, _ = strconv.Atoi(m[1])
+	}
+	if withheld < 1 || withheld > 17 {
+		t.Fatalf("withheld %d in %v", withheld, err)
+	}
+	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputNotReviewed, Names: []string{"repo"},
+		Count: &receipt.ReasonCount{Cap: receipt.CapAIReview, Limit: int64(17 - withheld), Of: receipt.OfMarkdownFiles, Count: 17}})
 	if _, ok := f.FindRun("-agent"); ok {
 		t.Error("the agent started")
 	}
@@ -558,7 +597,8 @@ func TestAURLFetchStepThatBreaksItsReportIsNotStaged(t *testing.T) {
 		"another file": {func(rep *source.Report, _ string) { rep.Name = "other.txt" }, ExitGateway},
 		"two files":    {func(rep *source.Report, out string) { writeInput(t, out, "b.txt", "") }, ExitGateway},
 		"over its cap": {func(rep *source.Report, out string) {
-			*rep = source.Report{Schema: source.Schema, Kind: source.KindURL, Refusal: "the file at the address is 300.0 MiB, past the 256 MiB cap"}
+			*rep = source.Report{Schema: source.Schema, Kind: source.KindURL, Refusal: "the file at the address is 300.0 MiB, past the 256 MiB cap",
+				Over: &source.Over{Cap: source.CapBytes, Of: source.OfBytes, Count: 300 << 20}}
 			_ = os.Remove(filepath.Join(out, "a.txt"))
 		}, ExitPolicy},
 	} {
@@ -568,10 +608,14 @@ func TestAURLFetchStepThatBreaksItsReportIsNotStaged(t *testing.T) {
 			happyFake(f)
 			p.KeepRunDir = true
 			withURLSource(t, &p, f, "a.txt", "a", c.edit)
-			_, err := Run(context.Background(), f, p)
+			env, err := Run(context.Background(), f, p)
 			var ce *ClassifiedError
 			if !errors.As(err, &ce) || ce.Code != c.code {
 				t.Fatalf("err %v, want class %d", err, c.code)
+			}
+			if c.code == ExitPolicy {
+				wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputSourceCap, Names: []string{"doc"},
+					Count: &receipt.ReasonCount{Cap: receipt.CapBytes, Limit: sources.URLCaps.Bytes, Of: receipt.OfBytes, Count: 300 << 20}})
 			}
 			if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "inputs", "doc")); !os.IsNotExist(err) {
 				t.Error("the step's tree was staged")
@@ -602,5 +646,25 @@ func TestAHostedURLSourceHasTheUploadCapAndIsReviewed(t *testing.T) {
 	}
 	if line := env.CapabilitiesEnforced["source.doc"]; !strings.Contains(line, "AI Review reads it as it reads an upload") {
 		t.Errorf("the source line: %q", line)
+	}
+}
+
+// TestTheFetchStepCountsInTheReceiptsWords: the fetch step's words are the
+// receipt's (it cannot import them), so every count it may report survives
+// the reason's Clean with its cap's value (agentry-cli#884).
+func TestTheFetchStepCountsInTheReceiptsWords(t *testing.T) {
+	for _, o := range []source.Over{
+		{Cap: source.CapFiles, Of: source.OfFiles}, {Cap: source.CapFiles, Of: source.OfObjects}, {Cap: source.CapFiles, Of: source.OfEntries, More: true},
+		{Cap: source.CapBytes, Of: source.OfBytes}, {Cap: source.CapBytes, Of: source.OfPackBytes, More: true}, {Cap: source.CapBytes, Of: source.OfInflatedBytes, More: true},
+	} {
+		o.Count = 7
+		r := &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputSourceCap, Count: overCount(&o, sources.LocalCaps)}
+		got := r.Clean()
+		if got.Count == nil || got.Count.Limit == 0 || got.Count.Of != o.Of || got.Count.Cap != o.Cap {
+			t.Errorf("%+v became %+v", o, got.Count)
+		}
+	}
+	if overCount(&source.Over{Cap: "lines", Of: source.OfFiles}, sources.LocalCaps) != nil || overCount(nil, sources.LocalCaps) != nil {
+		t.Error("a count with no known cap was kept")
 	}
 }

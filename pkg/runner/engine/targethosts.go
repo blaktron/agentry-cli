@@ -177,7 +177,7 @@ func prepareTargetHosts(ctx context.Context, d dockerx.Client, p Params, rd *run
 		if err := writeHostFolder(filepath.Join(rd.hostsDir(), h.ID), h); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("target host %s: %w", h.ID, err))
 		}
-		env.CapabilitiesEnforced["host."+h.ID] = h.ReceiptLine(0)
+		env.CapabilitiesEnforced["host."+h.ID] = h.ReceiptLine(0, 0)
 	}
 	for _, dir := range dirs {
 		relabelShared(ctx, p.Stderr, dir)
@@ -232,9 +232,12 @@ func hostCredentialValues(p Params) []string {
 	return out
 }
 
-// copyHostLogs keeps each target host's call log as receipts/host-<id>.log,
-// masked by the run's redactor, and counts its calls into the host's line.
+// copyHostLogs keeps each target host's call log as receipts/host-<id>.log
+// and each of its shell sessions' transcripts as
+// receipts/host-<id>-shell-<n>.log, masked by the run's redactor, and counts
+// the calls and the sessions into the host's line.
 func copyHostLogs(rd *runDirs, env *receipt.Envelope) {
+	shells := copyShellTranscripts(rd)
 	for _, h := range rd.targets {
 		b, err := os.ReadFile(filepath.Join(rd.hostLogDir(), hostlink.LogFile(h.ID))) //nolint:gosec // the run's own folder
 		if err != nil {
@@ -253,8 +256,38 @@ func copyHostLogs(rd *runDirs, env *receipt.Envelope) {
 				calls++
 			}
 		}
-		env.CapabilitiesEnforced["host."+h.ID] = h.ReceiptLine(calls)
+		env.CapabilitiesEnforced["host."+h.ID] = h.ReceiptLine(calls, shells[h.ID])
 	}
+}
+
+// copyShellTranscripts keeps the transcript of every shell session the
+// host link opened (plan runtime-hosts.md invariant 7, D18), masked by the
+// run's redactor as the call logs are, and counts them by target host.
+func copyShellTranscripts(rd *runDirs) map[string]int {
+	counts := map[string]int{}
+	entries, err := os.ReadDir(rd.hostLogDir())
+	if err != nil {
+		return counts
+	}
+	ours := map[string]bool{}
+	for _, h := range rd.targets {
+		ours[h.ID] = true
+	}
+	for _, e := range entries {
+		m := hostlink.ShellLogRE.FindStringSubmatch(e.Name())
+		if m == nil || !e.Type().IsRegular() {
+			continue
+		}
+		// Only this run's hosts' transcripts are receipts; a kept run
+		// folder keeps every one masked.
+		src := filepath.Join(rd.hostLogDir(), e.Name())
+		if b, err := os.ReadFile(src); err == nil && ours[m[1]] { //nolint:gosec // the run's own folder
+			_ = os.WriteFile(filepath.Join(rd.receiptsDir, e.Name()), []byte(rd.redact.String(string(b))), 0o644) //nolint:gosec // a receipt
+			counts[m[1]]++
+		}
+		rd.redact.File(src)
+	}
+	return counts
 }
 
 // hostRefusalRE is the host link's start refusal as the gateway relays its

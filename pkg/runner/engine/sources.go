@@ -206,13 +206,15 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 	}
 	switch {
 	case rep.Refusal != "":
-		return sources.Fetched{}, Classify(ExitPolicy, inputRefused(receipt.InputSourceCap, fmt.Errorf("the run was refused before the agent started: the input source %s: %s", s.ID, rep.Refusal)))
+		return sources.Fetched{}, Classify(ExitPolicy, receipt.WithCount(fmt.Errorf("the run was refused before the agent started: the input source %s: %s", s.ID, rep.Refusal),
+			receipt.ReasonInputRefused, receipt.InputSourceCap, overCount(rep.Over, caps), s.ID))
 	case code != 0 || rep.Error != "":
 		why := rep.Error
 		if why == "" {
 			why = fmt.Sprintf("the fetch step failed (exit %d)", code)
 		}
-		return sources.Fetched{}, Classify(ExitCLI, inputRefused(receipt.InputSourceFetch, fmt.Errorf("the input source %s (%s) could not be fetched: %s", s.ID, s.Shown(), why)))
+		return sources.Fetched{}, Classify(ExitCLI, receipt.WithReason(fmt.Errorf("the input source %s (%s) could not be fetched: %s", s.ID, s.Shown(), why),
+			receipt.ReasonInputRefused, receipt.InputSourceFetch, s.ID))
 	}
 	if err := checkSourceTree(tree, rep, caps); err != nil {
 		return sources.Fetched{}, Classify(ExitGateway, fmt.Errorf("the input source %s: %w", s.ID, err))
@@ -225,6 +227,26 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 	}
 	relabelForToolContainers(context.WithoutCancel(ctx), p.Stderr, relabelTarget{dir: dest, recursive: true})
 	return sources.Fetched{Source: rep, Took: took}, nil
+}
+
+// overCount is a cap refusal's count in the run's reason: the report's
+// words and count, against the value of the cap this run fetched with,
+// never one the report gives; nil when the report gave no count.
+func overCount(o *source.Over, caps sources.Caps) *receipt.ReasonCount {
+	if o == nil {
+		return nil
+	}
+	var limit int64
+	switch o.Cap {
+	case source.CapFiles:
+		limit = int64(caps.Files)
+	case source.CapBytes:
+		limit = caps.Bytes
+	default:
+		return nil
+	}
+	// The report's words are the receipt's (TestTheFetchStepCountsInTheReceiptsWords).
+	return &receipt.ReasonCount{Cap: o.Cap, Limit: limit, Of: o.Of, Count: o.Count, More: o.More}
 }
 
 // sourceNetworkName is one source's network.

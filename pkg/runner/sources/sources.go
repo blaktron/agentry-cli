@@ -32,6 +32,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 )
@@ -283,6 +284,12 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 	if rep.Files < 0 || rep.Bytes < 0 || rep.Files > caps.Files || rep.Bytes > caps.Bytes || rep.LFSPointers < 0 || rep.LFSPointers > rep.Files {
 		return rep, errors.New("the fetch step's report gives counts outside the source's caps")
 	}
+	// A refusal's count is held to the closed words and must be over the
+	// cap the caller fetched with, whose value is never the report's
+	// (agentry-cli#884).
+	if o := rep.Over; o != nil && !overTheCap(rep, caps) {
+		return rep, errors.New("the fetch step's report gives a count that is not a refusal's")
+	}
 	if rep.Commit != "" && !validCommit(rep.Commit) {
 		return rep, errors.New("the fetch step's report names a commit that is not a SHA-1")
 	}
@@ -309,6 +316,34 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 		}
 	}
 	return rep, nil
+}
+
+// overTheCap says whether a report's count is a refusal's: with its
+// sentence, in the closed words (a url source's in bytes alone), and over
+// the cap. A bound the step stopped counting at (entries, a pack's sizes)
+// says so with More, and may equal a url source's cap, past which it
+// stopped reading.
+func overTheCap(rep source.Report, caps Caps) bool {
+	o := rep.Over
+	var limit int64
+	switch o.Cap {
+	case source.CapFiles:
+		limit = int64(caps.Files)
+	case source.CapBytes:
+		limit = caps.Bytes
+	default:
+		return false
+	}
+	bound := o.Of == source.OfEntries || o.Of == source.OfPackBytes || o.Of == source.OfInflatedBytes
+	switch {
+	case rep.Refusal == "" || !receipt.CountsAgainst(o.Cap, o.Of) || (bound && !o.More):
+		return false
+	case rep.Kind == source.KindURL && (o.Cap != source.CapBytes || o.Of != source.OfBytes):
+		return false
+	case o.More:
+		return o.Count >= limit
+	}
+	return o.Count > limit
 }
 
 var knownSkip = map[string]bool{

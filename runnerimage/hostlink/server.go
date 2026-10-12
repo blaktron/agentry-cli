@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -64,13 +65,18 @@ type Config struct {
 	// Lookup finds the relay of a target host's address (relayLookup).
 	Lookup func(address string) (string, error)
 	Now    func() time.Time
+	// Shell starts a shell session's ssh (startTerminal); ShellIdle and
+	// ShellSettle are a session's idle time and the quiet that ends a
+	// wait for its output (defaultShellIdle, defaultSettle).
+	Shell                  func(argv, env []string) (Terminal, error)
+	ShellIdle, ShellSettle time.Duration
 }
 
 // DefaultConfig is the host link as its catalog entry mounts it.
 func DefaultConfig() Config {
 	return Config{
 		SpecPath: SpecMount, HostsDir: HostsMount, LogDir: LogMount, FilesDir: FilesMount,
-		TmpDir: os.TempDir(), Run: execRunner, Lookup: relayLookup, Now: time.Now,
+		TmpDir: os.TempDir(), Run: execRunner, Lookup: relayLookup, Now: time.Now, Shell: startTerminal,
 	}
 }
 
@@ -97,6 +103,7 @@ type server struct {
 	// outputs keeps host_run's last outputs for host_run's continue.
 	outputs map[int][]byte
 	calls   int
+	shells  *shells
 }
 
 // maxKeptOutputs is how many host_run outputs are kept for paging.
@@ -148,6 +155,7 @@ func newServer(cfg Config, out, logw io.Writer) (*server, error) {
 		cfg: cfg, spec: spec, hosts: map[string]*host{}, out: out, logw: logw,
 		limits:  toolsrv.Limits{MaxResultBytes: spec.MaxResultBytes, MaxResultLines: spec.MaxResultLines},
 		outputs: map[int][]byte{},
+		shells:  newShells(cfg),
 	}
 	var creds []string
 	for _, id := range spec.Hosts {
@@ -221,6 +229,9 @@ func loadHost(cfg Config, id string) (*host, []string, error) {
 }
 
 func (s *server) close() {
+	if s.shells != nil {
+		s.shells.closeAll()
+	}
 	for _, h := range s.hosts {
 		if h.log != nil {
 			_ = h.log.Close()
@@ -388,8 +399,12 @@ func (s *server) handleCall(ctx context.Context, req rpcRequest) {
 	}()
 	text, isErr := call(ctx, p.Arguments)
 	text = s.limits.FitResult(p.Name, s.scrub.String(text))
+	// A shell tool's error can carry what the host printed (a shell that
+	// ended as it opened, the last output of one that is over), so every
+	// shell answer travels as the resource (D9), its isError kept.
+	asResource := !isErr || slices.Contains(shellTools, p.Name)
 	s.writeResult(req.ID, map[string]any{
-		"content": []map[string]any{content(text, isErr)},
+		"content": []map[string]any{content(text, !asResource)},
 		"isError": isErr,
 	})
 }

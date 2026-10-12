@@ -19,6 +19,94 @@ type Reason struct {
 	Code   ReasonCode `json:"code"`
 	Names  []string   `json:"names,omitempty"`
 	Detail string     `json:"detail,omitempty"`
+	// Count is the count a refusal over a cap names, in typed fields
+	// (agentry-enterprise#530; plan input-sources.md D7): only on
+	// input-refused with source-cap, or not-reviewed for a source's
+	// Markdown.
+	Count *ReasonCount `json:"count,omitempty"`
+}
+
+// ReasonCount is a cap refusal's count: which cap refused and its value,
+// and what the step counted and how many. Numbers and closed words only,
+// so a driver that keeps nothing the run wrote can say it. What was
+// counted need not be what the cap counts: a repository's pack is refused
+// by its objects against the file cap, or at a bound past the byte cap
+// (More), before its files are known.
+type ReasonCount struct {
+	// Cap is the cap that refused: CapFiles, CapBytes or CapAIReview.
+	Cap string `json:"cap"`
+	// Limit is the cap's value; for CapAIReview, how many of the source's
+	// Markdown files fit in what AI Review reads of a run.
+	Limit int64 `json:"limit"`
+	// Of is what was counted (Of*), and Count how many.
+	Of    string `json:"of"`
+	Count int64  `json:"count"`
+	// More says the step stopped counting at Count: there are more.
+	More bool `json:"more,omitempty"`
+}
+
+// The caps a ReasonCount names.
+const (
+	// CapFiles: a source's file cap.
+	CapFiles = "files"
+	// CapBytes: a source's byte cap.
+	CapBytes = "bytes"
+	// CapAIReview: what AI Review reads of a run (its calls and its text),
+	// which a source's Markdown is read whole within or refused.
+	CapAIReview = "ai-review"
+)
+
+// What a ReasonCount counted.
+const (
+	// OfFiles and OfBytes: a repository's files, or a source's bytes.
+	OfFiles = "files"
+	OfBytes = "bytes"
+	// OfObjects: the objects in a repository's pack, more than a
+	// repository within the file cap holds.
+	OfObjects = "objects"
+	// OfEntries: a repository's files, folders and links together.
+	OfEntries = "entries"
+	// OfPackBytes and OfInflatedBytes: a repository's pack, as sent and
+	// as inflated, more than a repository within the byte cap makes.
+	OfPackBytes     = "pack-bytes"
+	OfInflatedBytes = "inflated-bytes"
+	// OfMarkdownFiles: a source's Markdown files, which AI Review reads.
+	OfMarkdownFiles = "markdown-files"
+)
+
+// countOf is each cap's closed list of what may be counted against it.
+var countOf = map[string][]string{
+	CapFiles:    {OfFiles, OfObjects, OfEntries},
+	CapBytes:    {OfBytes, OfPackBytes, OfInflatedBytes},
+	CapAIReview: {OfMarkdownFiles},
+}
+
+// countDetails are the details of ReasonInputRefused that carry a count,
+// and sourceDetails those that may name a source: no other input refusal
+// names anything, whatever its names look like.
+var (
+	countDetails  = []string{InputSourceCap, InputNotReviewed}
+	sourceDetails = []string{InputSourceCap, InputSourceFetch, InputNotReviewed}
+)
+
+// maxCount bounds a count, within what a JSON number holds exactly.
+const maxCount = 1 << 53
+
+// CountsAgainst says whether of is a word a count against cap may count,
+// for the step that reports one (pkg/runner/sources holds the fetch
+// step's report to it).
+func CountsAgainst(cap, of string) bool {
+	return slices.Contains(countOf[cap], of)
+}
+
+// clean is c held to the closed lists, or nil.
+func (c *ReasonCount) clean() *ReasonCount {
+	if c == nil || !CountsAgainst(c.Cap, c.Of) ||
+		c.Count < 0 || c.Count > maxCount || c.Limit < 0 || c.Limit > maxCount {
+		return nil
+	}
+	out := *c
+	return &out
 }
 
 // ReasonCode is one word of the closed list below.
@@ -52,8 +140,10 @@ const (
 	// secrets' names, never a value.
 	ReasonSecretMissing ReasonCode = "secret-missing"
 	// ReasonInputRefused: an input given to the run was refused before
-	// the agent started (prepare). Detail: why. Never a file name: those
-	// are the person's.
+	// the agent started (prepare). Detail: why. Names: an input source's
+	// question id, for a source's refusal (agentry-enterprise#530); never
+	// a file name: those are the person's. Count: a cap's, for source-cap
+	// and a source's not-reviewed.
 	ReasonInputRefused ReasonCode = "input-refused"
 	// ReasonInputsNotDecoded: the decode step could not run (prepare), a
 	// fault of this machine and not of the inputs. Detail: which part.
@@ -234,7 +324,7 @@ var reasonCodes = map[ReasonCode]struct {
 	}},
 	ReasonMCPStartFailed:    {names: namesServer},
 	ReasonSecretMissing:     {names: namesSecret},
-	ReasonInputRefused:      {details: []string{InputMalware, InputNameClash, InputUnreadable, InputFlagged, InputNotReviewed, InputSourceCap, InputSourceFetch}},
+	ReasonInputRefused:      {names: namesQuestion, details: []string{InputMalware, InputNameClash, InputUnreadable, InputFlagged, InputNotReviewed, InputSourceCap, InputSourceFetch}},
 	ReasonInputsNotDecoded:  {details: []string{DecodeImage, DecodeRun}},
 	ReasonAgentBlocked:      {},
 	ReasonRunnerBlocked:     {details: []string{BlockedToolsUnrecorded, BlockedInputsUnread, BlockedReportUnwritten}},
@@ -293,7 +383,8 @@ func (k nameKind) admits(name string) bool {
 
 // Clean holds r to the closed list: nil for an unknown code; a detail
 // outside the code's list is dropped, and so is each name outside the
-// code's grammar, a repeated name, and every name past MaxReasonNames. A
+// code's grammar, a repeated name, every name past MaxReasonNames, and a
+// count outside its lists or on a code and detail that carry none. A
 // driver that keeps a reason keeps what Clean answers, and nothing else.
 func (r *Reason) Clean() *Reason {
 	if r == nil {
@@ -306,6 +397,14 @@ func (r *Reason) Clean() *Reason {
 	out := &Reason{Code: r.Code}
 	if slices.Contains(spec.details, r.Detail) {
 		out.Detail = r.Detail
+	}
+	if r.Code == ReasonInputRefused {
+		if slices.Contains(countDetails, out.Detail) {
+			out.Count = r.Count.clean()
+		}
+		if !slices.Contains(sourceDetails, out.Detail) {
+			return out
+		}
 	}
 	for _, n := range r.Names {
 		if len(out.Names) == MaxReasonNames {
@@ -336,6 +435,14 @@ func WithReason(err error, code ReasonCode, detail string, names ...string) erro
 		return nil
 	}
 	return &reasonError{Reason: Reason{Code: code, Detail: detail, Names: names}, Err: err}
+}
+
+// WithCount attaches a reason with a cap's count to err; nil stays nil.
+func WithCount(err error, code ReasonCode, detail string, count *ReasonCount, names ...string) error {
+	if err == nil {
+		return nil
+	}
+	return &reasonError{Reason: Reason{Code: code, Detail: detail, Names: names, Count: count}, Err: err}
 }
 
 // ReasonOf is the reason err carries, held to the closed list by Clean;

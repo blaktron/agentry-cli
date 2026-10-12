@@ -93,7 +93,7 @@ func fetchURL(ctx context.Context, o Options, rep *Report) error {
 		return statusError(resp.StatusCode, o.Token != "", "file")
 	}
 	if resp.ContentLength > o.MaxBytes {
-		rep.Refusal = fmt.Sprintf("the file at the address is %s, past the %s cap", sizeWords(resp.ContentLength), sizeWords(o.MaxBytes))
+		rep.refuse(Over{Cap: CapBytes, Of: OfBytes, Count: resp.ContentLength}, "the file at the address is %s, past the %s cap", sizeWords(resp.ContentLength), sizeWords(o.MaxBytes))
 		return nil
 	}
 	name := fileName(resp.Header.Get("Content-Disposition"), resp.Request.URL)
@@ -120,7 +120,7 @@ func fetchURL(ctx context.Context, o Options, rep *Report) error {
 	case n > o.MaxBytes:
 		// Never staged in part.
 		_ = root.Remove(name)
-		rep.Refusal = fmt.Sprintf("the file at the address is larger than the %s cap", sizeWords(o.MaxBytes))
+		rep.refuse(Over{Cap: CapBytes, Of: OfBytes, Count: o.MaxBytes, More: true}, "the file at the address is larger than the %s cap", sizeWords(o.MaxBytes))
 		return nil
 	}
 	rep.Files, rep.Bytes, rep.Name = 1, n, name
