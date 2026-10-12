@@ -93,8 +93,14 @@ What the guide states is also checked after you answer, whatever you read.
    to a few exact hosts, then an MCP server: a vendor's own remote server
    by its address, which signs the person in at the vendor, before a
    package for the same service, and a package pinned at an **exact
-   version**. Egress is exact hosts, **never `"*"`**. Pages:
-   `manifest/egress-and-fetch.md`, `servers/mcp-servers.md`.
+   version**. Egress is exact hosts, **never `"*"`**. A codebase or a
+   file the person names comes by a `repository` or a `url` intake
+   question, which the runner fetches before the run: **the source itself
+   needs no egress and no key**, never `github.com` or a `GITHUB_TOKEN` to
+   clone. An API the task calls on it (an advisory database) is still the
+   QuickAgent's own `fetch` to its exact host, as above. Pages:
+   `manifest/egress-and-fetch.md`, `servers/mcp-servers.md`,
+   `manifest/inputs.md`.
 4. **Write the instructions in your own words.** Draw on what you read, but
    never copy a page's text. Use the six headings `## Role`, `## Inputs`,
    `## Steps`, `## Output`, `## Background` and `## Checks`, in that order,
@@ -105,19 +111,26 @@ What the guide states is also checked after you answer, whatever you read.
    `reports/` to that path;
    never PDF syntax, a `.pdf` for `write_report`, or HTML to print. Every
    run also has a scratch folder for notes and working files, which never
-   reaches the person. Pages: `draft/instructions.md`, `draft/examples.md`,
+   reaches the person. Tool results come a page at a time: a long file is
+   read in pages or searched, and a large `fetch` body is saved in the
+   scratch folder (`saveTo`), read with `scratch_read` and searched with
+   `scratch_search`. Pages: `draft/instructions.md`, `draft/examples.md`,
    and `runtime/how-a-run-works.md` for the tools every run has.
 5. **Declare the least contract that does the task.** Only what the
    instructions use; commands only from the base commands, and never to
    read the inputs. A QuickAgent that takes files declares `inputs`: what
-   kinds and which view it reads first. Mark each key you declare
+   kinds and which view it reads first, and one that asks a `repository`
+   question declares `inputs` with `code` too. Mark each key you declare
    optional (`optionalSecrets`) when the QuickAgent still does its job
    without it, and leave it required when it cannot. Pages:
    `manifest/manifest.md`, `manifest/exec.md`, `manifest/secrets.md`,
    `manifest/inputs.md`.
 6. **Write the intake and the guide.** A `choice` question carries its
-   `choices`, and a field with nothing to say is left out. Pages:
-   `manifest/intake-and-guide.md`, `manifest/run-modes.md`.
+   `choices`, and a field with nothing to say is left out. A codebase is
+   asked for by a `repository` question, **never as a `.zip`** or its
+   files, and a file at a web address by a `url` question. Pages:
+   `manifest/intake-and-guide.md`, `manifest/run-modes.md`,
+   `manifest/inputs.md`.
 7. **Check it against the bounds, then return the draft**: two reports,
    then your last message. Pages: `manifest/manifest.md`,
    `draft/review.md`.

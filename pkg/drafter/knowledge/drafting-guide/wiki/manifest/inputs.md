@@ -1,9 +1,9 @@
 ---
 title: Input files
 type: guide
-summary: How the person's files reach a run, the two views the input tools read them in, the manifest's inputs block that says what a QuickAgent takes and which view it reads first, the cases and what each declares, and how a draft asks for its files.
-sources: [web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/hosted-runs/]
-updated: 2026-10-06
+summary: How the person's files reach a run, a repository or a file at an address that the runner fetches for it, the two views the input tools read them in, the manifest's inputs block that says what a QuickAgent takes and which view it reads first, the cases and what each declares, and how a draft asks for its files.
+sources: [web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/hosted-runs/, doc:runtime-facts.md]
+updated: 2026-10-12
 ---
 
 # Input files
@@ -16,6 +16,16 @@ updated: 2026-10-06
 - The answers to the intake's questions arrive as an input too, and so does a file an intake question of type `file` asks for.
 - A run In Agentry takes at most twenty files of at most 10 MB each [src: web:https://docs.secureagentry.net/agentry/hosted-runs/].
 - A declared MCP server sees none of the input files: they are not in its container (see [Declared MCP servers](../servers/mcp-servers.md)).
+
+## A repository or a file at an address
+
+A QuickAgent that works on a codebase asks for its repository with an intake question of type `repository`, and one that reads a file on the web asks for its address with a question of type `url` (see [The intake and the guide](intake-and-guide.md)). The person gives the address when they start the run, and the runner fetches it before the run starts [src: web:https://docs.secureagentry.net/runner/; doc:runtime-facts.md]:
+
+- **Where it lands.** A repository is checked out at its default branch, or at the branch, tag or full commit the person adds, under `/inputs/<id>/`, the question's id, with no `.git` folder and no history: one commit, with links and submodules left out and large files stored in Git LFS as their pointers. Its files are inputs like any other, read with `list_inputs`, `read_input` and `search_inputs` by their path (`repository/src/main.py`). A `url` source is one file, read as an uploaded file is.
+- **No egress and no key for the source.** The fetch is the runner's, not the QuickAgent's. Never declare `github.com`, `api.github.com` or the repository's own host in `egress` to get it, never declare `GITHUB_TOKEN` or any other key to clone it, and never have the instructions download it. An API the task calls about it (an advisory database for its dependencies, or the issues and pull requests of a GitHub repository at `api.github.com`) is still declared for `fetch` as any host is (see [Network and fetch](egress-and-fetch.md)). For a private repository the person gives an access token when they start the run, and only the runner's fetch reads it: the run never sees it.
+- **Its bounds** are in [the runtime facts](../../sources/runtime-facts.md). A source over its cap refuses the run before it starts, saying by how much.
+- **What is checked before the run.** In Agentry, AI Review reads a repository's Markdown files (its README and docs), not its code. A repository's risky files (executables and other binaries, PDFs, Office files) are checked for malware, and its images are not read as text.
+- **The intake answer** in `/inputs/intake.json` names what each source resolved to: the commit of a repository, the file of an address.
 
 ## The two views
 
@@ -49,7 +59,7 @@ inputs:
 | The task | `kinds` | `view` | `exec` |
 | --- | --- | --- | --- |
 | summarise reports, contracts or papers | `[documents]` | `text` | `none` |
-| review a codebase, scan source for vulnerabilities | `[code]` | `original` | `none` |
+| review a codebase, scan source for vulnerabilities (a `repository` question) | `[code]` | `original` | `none` |
 | review a website's HTML, CSS and scripts | `[code]` | `original` | `none` |
 | audit a CSV, a log or a lockfile | `[data]` | `original` | `none` |
 | read receipts, scans or screenshots | `[images]` | `text` | `none` |
@@ -57,7 +67,9 @@ inputs:
 
 ## How a draft asks for them
 
-- Say what to bring in `guide.files`, one line naming the files and their formats, matching `kinds` ("Add the repository as a .zip, or its files").
+- **A codebase is asked for by a `repository` question**, never as a `.zip` to upload or as its files: the person gives its address and, for a private one, a token, and the runner fetches it. Declare `inputs` for it as for code (`kinds: [code]`, `view: original`), and name the question's folder in the instructions (`/inputs/repository/`). Ask for the files instead only when the runner cannot fetch them: code on a host the internet cannot reach (a company's own git server), code that is not in a repository, or a task that needs the history (a changelog, a blame), since a source is one commit.
+- **A file the person names at a web address each run is asked for by a `url` question**, and read as an uploaded file is (a PDF's text, a page as Markdown). A fixed address the instructions name, a feed, or an API is the QuickAgent's own `fetch` instead (see [Network and fetch](egress-and-fetch.md)).
+- Say what to bring in `guide.files`, one line naming the files and their formats, matching `kinds` ("Add the reports as PDF or Word files"). A QuickAgent whose only input is a source needs no `files` line: the question asks for it.
 - Use an intake question of type `file` only for one particular file the instructions must tell apart from the others (a contract and a playbook, a before and an after).
-- Ask for a document as it is (a Word file, a PDF, a spreadsheet), and a codebase as it is (an archive or its files). Never ask the person to convert anything to text first.
+- Ask for a document as it is (a Word file, a PDF, a spreadsheet). Never ask the person to convert anything to text first.
 - The instructions' `## Inputs` say what each file means, which view to read it in when that differs from the declared one ("ask read_input for view \"text\" when only a PDF's words matter"), and what to do when one is missing or in an unexpected format.

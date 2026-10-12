@@ -1,0 +1,27 @@
+{
+  "id": "repository-scanner",
+  "description": "Audit a GitHub repository's dependencies for reachable vulnerabilities: I'll give you the repository's address each time. Read its manifests and lockfiles (package.json and package-lock.json, go.mod, requirements.txt, pom.xml), look up each pinned version's known advisories, check whether the code actually calls the vulnerable functions, and write a report ranking each finding by whether it is reachable, with the file and line that reaches it and the version that fixes it.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.osv.dev"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "intakeTypes": [
+      "repository"
+    ],
+    "inputKinds": [
+      "code"
+    ],
+    "inputViews": [
+      "original",
+      "both"
+    ]
+  }
+}
