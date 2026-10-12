@@ -664,7 +664,8 @@ func TestTheGuideTeachesInputSources(t *testing.T) {
 	mustSay(t, map[string][]string{
 		instructionFile: {
 			"comes by a `repository` or a `url` intake question",
-			"**no egress and no key for it**",
+			"**the source itself needs no egress and no key**",
+			"is still the QuickAgent's own `fetch` to its exact host",
 			"**never as a `.zip`**",
 			"(`saveTo`)",
 			"`scratch_search`",
@@ -685,6 +686,7 @@ func TestTheGuideTeachesInputSources(t *testing.T) {
 			"**`saveTo` keeps the whole body.**",
 			"`scratch_search`",
 			"**A repository or a file the person gives at run time needs no host here.**",
+			"declares that database's API host (`api.osv.dev`) for its own `fetch`",
 		},
 		"runtime/how-a-run-works.md": {
 			"**Results come a page at a time.**",

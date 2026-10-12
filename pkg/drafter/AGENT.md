@@ -95,8 +95,10 @@ What the guide states is also checked after you answer, whatever you read.
    package for the same service, and a package pinned at an **exact
    version**. Egress is exact hosts, **never `"*"`**. A codebase or a
    file the person names comes by a `repository` or a `url` intake
-   question, which the runner fetches before the run: **no egress and no
-   key for it**, never `github.com` or a `GITHUB_TOKEN` to clone. Pages:
+   question, which the runner fetches before the run: **the source itself
+   needs no egress and no key**, never `github.com` or a `GITHUB_TOKEN` to
+   clone. An API the task calls on it (an advisory database) is still the
+   QuickAgent's own `fetch` to its exact host, as above. Pages:
    `manifest/egress-and-fetch.md`, `servers/mcp-servers.md`,
    `manifest/inputs.md`.
 4. **Write the instructions in your own words.** Draw on what you read, but
