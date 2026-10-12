@@ -20,7 +20,14 @@ func wantReason(t *testing.T, env *receipt.Envelope, err error, want *receipt.Re
 		t.Fatalf("err %v, envelope %+v: want a failed run", err, env)
 	}
 	if !reflect.DeepEqual(env.Reason, want) {
-		t.Fatalf("reason %+v, want %+v (err %v)", env.Reason, want, err)
+		var gotCount, wantCount any
+		if env.Reason != nil && env.Reason.Count != nil {
+			gotCount = *env.Reason.Count
+		}
+		if want != nil && want.Count != nil {
+			wantCount = *want.Count
+		}
+		t.Fatalf("reason %+v (count %+v), want %+v (count %+v) (err %v)", env.Reason, gotCount, want, wantCount, err)
 	}
 }
 

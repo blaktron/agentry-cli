@@ -141,7 +141,7 @@ func (x *inputsDecoder) reviewEntries(ctx context.Context, res *decode.Result, e
 	}
 	if refusal == nil {
 		if err := sourceNotReviewed(withheld, x.rd.sources, markdown); err != nil {
-			return nil, nil, Classify(ExitPolicy, inputRefused(receipt.InputNotReviewed, err))
+			return nil, nil, Classify(ExitPolicy, err)
 		}
 	}
 	for id, n := range markdown {
@@ -179,7 +179,9 @@ func (x *inputsDecoder) dropTexts(path string) {
 }
 
 // inputRefused names why an input was refused, in the run's reason; never
-// which input, since its name is the person's (agentry-cli#628).
+// which input, since its name is the person's (agentry-cli#628). A
+// source's refusals name the source by its question id, the release's
+// own word, and carry their count (receipt.WithCount; agentry-cli#884).
 func inputRefused(why string, err error) error {
 	return receipt.WithReason(err, receipt.ReasonInputRefused, why)
 }
