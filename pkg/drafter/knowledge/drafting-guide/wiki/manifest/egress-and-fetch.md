@@ -1,9 +1,9 @@
 ---
 title: Network and fetch
 type: guide
-summary: When a QuickAgent needs the network, how its own fetch tool works (methods, keys, redirects, the response cap), how to choose and name its hosts, and which hosts go on an MCP server instead.
+summary: When a QuickAgent needs the network, how its own fetch tool works (methods, keys, redirects, the response cap, saving a body to the scratch folder), how to choose and name its hosts, and which hosts go on an MCP server instead.
 sources: [doc:runtime-facts.md, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/trust/]
-updated: 2026-10-09
+updated: 2026-10-12
 ---
 
 # Network and fetch
@@ -24,11 +24,14 @@ A run has no network unless `network.egress` names hosts, and no web search ever
 - `url`, on a declared host; `method`: `GET` (the default), `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE`; `headers`; `body`.
 - **A key, without the model seeing it:** `auth` names a declared secret (`{"env": "GITHUB_TOKEN"}`). It is sent as `Authorization: Bearer <value>`, or, with `"scheme": "header"` and a `header` name, as that header's raw value (`X-Api-Key`). An `Authorization`, `Proxy-Authorization` or `Cookie` header written by hand is refused.
 - **Redirects** are followed up to ten times, and each one is checked against the declared hosts. A redirect to a host not declared fails, so declare the host an API redirects to (a download host, a storage host).
-- **The response** is cut at the size in [the runtime facts](../../sources/runtime-facts.md), and a request gives up after the time they give. An error status (404, 429, 500) comes back as a normal result for the run to act on.
+- **The response** is read up to the size in [the runtime facts](../../sources/runtime-facts.md), and a request gives up after the time they give. An error status (404, 429, 500) comes back as a normal result for the run to act on.
+- **A large body is not lost.** A body larger than one tool result is saved in the scratch folder, under `fetch/`, and the answer is its first page and where it was saved. The run reads on with `scratch_read` from the offset the page gives, or finds what it needs with `scratch_search`.
+- **`saveTo` keeps the whole body.** It names a path in the scratch folder (`data/advisories.json`) to save the body at, whatever its type, binary included, and the answer then says what was saved instead of returning the body. Use it for a download the run then reads or searches: a dataset, an export, a PDF. `scratch_read` reads a text file as text and a binary one as pages of base64.
 - **Keys stay out of results.** The value of a declared key is replaced in a response by `[redacted:<NAME>]`, and a result that looks like it holds any credential is replaced by an error before the model sees it [src: web:https://docs.secureagentry.net/runner/].
 
 ## Choosing the hosts
 
+- **A repository or a file the person gives at run time needs no host here.** Ask for it with a `repository` or a `url` question, and the runner fetches it before the run (see [Input files](inputs.md#a-repository-or-a-file-at-an-address)). Declaring `github.com` or a `GITHUB_TOKEN` to clone a repository is never needed.
 - Name the API host, not the product's site: `api.github.com`, not `github.com`; `api.openweathermap.org`, not `openweathermap.org`. Read the API's documentation for the exact host of each call the instructions make, including the host it serves files or exports from.
 - Declare every host the instructions tell the run to fetch, and only those. A host the instruction reaches but the manifest does not declare can be read by AI Review as an undeclared capability, which is a high finding that sends the release to review, and a run could not reach it anyway [src: web:https://docs.secureagentry.net/trust/].
 - Prefer an API that needs no key. When it needs one, declare the key's name in `secrets` and write its help in `guide.connect` (see [Keys](secrets.md) and [The intake and the guide](intake-and-guide.md)).

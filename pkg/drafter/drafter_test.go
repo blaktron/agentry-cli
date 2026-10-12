@@ -375,6 +375,15 @@ func TestTheFixtureSet(t *testing.T) {
 	if got := CheckShape(m2, d, inputs); len(got) != 0 {
 		t.Errorf("the expected inputs block was flagged: %v", got)
 	}
+	// A source question wanted (agentry-cli#835): absent, then present.
+	sourced := Expect{Modes: []string{"autonomous"}, IntakeTypes: []string{"repository"}}
+	if got := strings.Join(CheckShape(m2, d, sourced), "; "); !strings.Contains(got, "no intake question of type repository") {
+		t.Errorf("shape check missed the absent repository question: %s", got)
+	}
+	m2.Intake = []manifest.IntakeQuestion{{ID: "repository", Prompt: "The repository", Type: manifest.IntakeRepository, Required: true}}
+	if got := CheckShape(m2, d, sourced); len(got) != 0 {
+		t.Errorf("the expected repository question was flagged: %v", got)
+	}
 	// The Drafter's caps and the instruction's shape.
 	m.Intake = make([]manifest.IntakeQuestion, MaxIntake+1)
 	m.Guide.Prepare = make([]string, MaxPrepare+1)

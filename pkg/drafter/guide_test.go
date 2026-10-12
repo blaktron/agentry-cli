@@ -24,6 +24,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
@@ -60,13 +61,21 @@ func runtimeFacts() []byte {
 	b.WriteString("- npm installs run with `--ignore-scripts`; PyPI installs take wheels only (`--only-binary=:all:`), for the server and every dependency.\n")
 	fmt.Fprintf(&b, "- A QuickAgent declares at most %d MCP servers.\n", manifest.MaxMCPServers)
 	b.WriteString("- A server's declared hosts are reached on TCP port 443 only; with none declared it has no network.\n\n")
+	b.WriteString("## Tool results\n\n")
+	fmt.Fprintf(&b, "- Every result of the runner's own tools is held to %d KiB and %s lines, the harness's limit less a margin: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out.\n\n", toolsrv.DefaultMaxResultBytes>>10, thousands(toolsrv.DefaultMaxResultLines))
 	b.WriteString("## The fetch tool\n\n")
-	fmt.Fprintf(&b, "- `fetch` returns at most %d KiB of a response's body, and gives up on a request after %d seconds.\n\n", toolsrv.DefaultMaxFetchBytes>>10, int(toolsrv.FetchTimeout.Seconds()))
+	fmt.Fprintf(&b, "- `fetch` reads at most %d KiB of a response's body, and gives up on a request after %d seconds.\n", toolsrv.DefaultMaxFetchBytes>>10, int(toolsrv.FetchTimeout.Seconds()))
+	b.WriteString("- A body larger than one tool result is saved in the scratch folder, under `fetch/`, and answered with its first page and where it was saved.\n")
+	b.WriteString("- `saveTo` saves the whole body at a path in the scratch folder, whatever its type, binary included, and the answer says what was saved instead of returning it.\n\n")
+	b.WriteString("## Input sources\n\n")
+	fmt.Fprintf(&b, "- A `repository` question's repository is fetched by the runner before the run: at most %s files and %s on the person's computer, %s files and %s In Agentry.\n",
+		thousands(sources.LocalCaps.Files), binarySize(sources.LocalCaps.Bytes), thousands(sources.HostedRepositoryCaps.Files), binarySize(sources.HostedRepositoryCaps.Bytes))
+	fmt.Fprintf(&b, "- A `url` question's file is fetched the same way: one file of at most %s on the person's computer, %s In Agentry.\n\n", binarySize(sources.URLCaps.Bytes), binarySize(sources.HostedURLCaps.Bytes))
 	b.WriteString("## Reports, PDFs and the scratch folder\n\n")
 	b.WriteString("- `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.\n")
 	fmt.Fprintf(&b, "- `export_pdf` turns a Markdown file from `reports/` or the scratch folder, of at most %d KiB, into a PDF in `reports/`, rendered by Typst %s within %d seconds, at most %d MiB. It draws at most %d local PNG or JPEG images of up to %d MiB each; any other image is drawn as its alt text. The PDF's look is the person's report theme, which the run cannot choose.\n",
 		toolsrv.MaxPDFSourceBytes>>10, toolsrv.TypstVersion, int(toolsrv.PDFRenderTimeout.Seconds()), toolsrv.MaxPDFBytes>>20, toolsrv.MaxPDFImages, toolsrv.MaxPDFImageBytes>>20)
-	fmt.Fprintf(&b, "- The scratch folder, `%s`, is the run's own working space through `scratch_write`, `scratch_list` and `scratch_read`: empty at the start, at most %d MiB on Linux, never part of what the person receives, and deleted with the run.\n\n", spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
+	fmt.Fprintf(&b, "- The scratch folder, `%s`, is the run's own working space through `scratch_write`, `scratch_list`, `scratch_read` and `scratch_search`: empty at the start, at most %d MiB on Linux, never part of what the person receives, and deleted with the run.\n\n", spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
 	b.WriteString("## Each container's limits\n\n")
 	fmt.Fprintf(&b, "- Memory %s and %d CPU; on Linux, also at most %d processes.\n\n", policy.DefaultMemory, policy.DefaultCPUs, policy.DefaultPids)
 	b.WriteString("## The base commands\n\n")
@@ -476,6 +485,14 @@ func mustSay(t *testing.T, want map[string][]string) {
 	}
 }
 
+// binarySize is a cap in whole GiB where it is one, else in MiB.
+func binarySize(n int64) string {
+	if n >= 1<<30 && n%(1<<30) == 0 {
+		return fmt.Sprintf("%d GiB", n>>30)
+	}
+	return fmt.Sprintf("%d MiB", n>>20)
+}
+
 // numberWord is n as the guide writes a small number.
 func numberWord(n int) string {
 	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
@@ -635,4 +652,52 @@ func entriesWord(n int) string {
 		return "1 entry"
 	}
 	return fmt.Sprintf("%d entries", n)
+}
+
+// TestTheGuideTeachesInputSources (input sources M8, agentry-cli#835;
+// plan input-sources.md §5, §6): the instruction and the guide's pages ask
+// for a codebase by a repository question and a file at an address by a
+// url question, declare no egress and no key to fetch either, never advise
+// a .zip for a repository, and teach fetch's saveTo, the scratch tools and
+// that a tool result comes a page at a time.
+func TestTheGuideTeachesInputSources(t *testing.T) {
+	mustSay(t, map[string][]string{
+		instructionFile: {
+			"comes by a `repository` or a `url` intake question",
+			"**no egress and no key for it**",
+			"**never as a `.zip`**",
+			"(`saveTo`)",
+			"`scratch_search`",
+			"Tool results come a page at a time",
+		},
+		"manifest/inputs.md": {
+			"**A codebase is asked for by a `repository` question**, never as a `.zip`",
+			"**A file at a web address is asked for by a `url` question**",
+			"never declare `GITHUB_TOKEN` or any other key to clone it",
+			"under `/inputs/<id>/`",
+			"AI Review reads a repository's Markdown files",
+		},
+		"manifest/intake-and-guide.md": {
+			"`repository`: a git repository's https address",
+			"`url`: the https address of one file",
+		},
+		"manifest/egress-and-fetch.md": {
+			"**`saveTo` keeps the whole body.**",
+			"`scratch_search`",
+			"**A repository or a file the person gives at run time needs no host here.**",
+		},
+		"runtime/how-a-run-works.md": {
+			"**Results come a page at a time.**",
+			"`scratch_search`",
+			"`repository` or `url` question is fetched by the runner",
+		},
+	})
+	for _, p := range append(guidePages(t), instructionFile) {
+		text := heldText(t, p)
+		for _, stale := range []string{"repository as a .zip", "a codebase as it is (an archive"} {
+			if strings.Contains(text, stale) {
+				t.Errorf("%s still says %q", p, stale)
+			}
+		}
+	}
 }

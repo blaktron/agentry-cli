@@ -1,0 +1,17 @@
+{
+  "id": "url-summary",
+  "description": "Summarise the PDF at a URL I give you each time: its main findings, its numbers and its recommendations, in a one-page brief with a short list of what it leaves unanswered.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "intakeTypes": [
+      "url"
+    ]
+  }
+}
