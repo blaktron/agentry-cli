@@ -13,11 +13,18 @@ import (
 // fixture to the end, its prepare step included, against a fake daemon.
 func addLocalThroughPrepare(t *testing.T, h *signedOutHarness, extra ...string) (*dockerx.Fake, error) {
 	t.Helper()
+	return scheduleAddLocal(t, h, repoPath(t, "testdata/runner/pure-text"), extra...)
+}
+
+// scheduleAddLocal is addLocalThroughPrepare on the QuickAgent in dir.
+func scheduleAddLocal(t *testing.T, h *signedOutHarness, dir string, extra ...string) (*dockerx.Fake, error) {
+	t.Helper()
 	f := &dockerx.Fake{}
+	seedHostLinkImage(t, f, h.policy)
 	prev := newDockerClient
 	newDockerClient = func() dockerx.Client { return f }
 	t.Cleanup(func() { newDockerClient = prev })
-	args := append([]string{"schedule", "add", "--local", repoPath(t, "testdata/runner/pure-text"),
+	args := append([]string{"schedule", "add", "--local", dir,
 		"--once", "2026-10-09 09:00", "--zone", "UTC", "--out", t.TempDir(), "--policy", h.policy, "--yes"}, extra...)
 	_, _, err := runCLI(t, strings.NewReader(""), args...)
 	return f, err

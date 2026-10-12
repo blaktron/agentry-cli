@@ -239,6 +239,10 @@ func sealScheduleKeys(sc schedule.Schedule, path string) error {
 	for _, h := range hosts {
 		optional = append(optional, sources.KeyAccount(h))
 	}
+	// A target host's sign-in: its runs have no other (agentry-cli#863).
+	for _, h := range sc.Run.Hosts {
+		required = append(required, h.Account)
+	}
 	values, err := scheduleCollectKeys(required, optional)
 	if err != nil {
 		return err

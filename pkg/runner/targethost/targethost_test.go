@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -390,5 +391,86 @@ func TestARunNoOneCanAskTakesTheSignInFirst(t *testing.T) {
 	_, err = Prepare(context.Background(), "server", Answer{User: "a", Host: "203.0.113.4", Port: 22}, Options{})
 	if !errors.As(err, &r) || r.Detail != RefusedCredential || fetched != 0 {
 		t.Fatalf("an address: %v, dialled %d", err, fetched)
+	}
+}
+
+// TestAScheduleKeepsItsSignInAndPinsItsKey is plan runtime-hosts.md D12
+// (agentry-cli#863): a schedule is readied with Keep, which saves the
+// sign-in in the keychain whatever it came from and asks nothing; its runs,
+// with no flag and no one to ask, sign in from the keychain alone and
+// refuse a host key other than the one the schedule was made with.
+func TestAScheduleKeepsItsSignInAndPinsItsKey(t *testing.T) {
+	store := fakeKeychain(t)
+	served, _ := newHostKey(t)
+	other, _ := newHostKey(t)
+	defer func(f func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error)) { fetchHostKey = f }(fetchHostKey)
+	fetchHostKey = func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error) { return served, nil }
+	a := Answer{User: "admin", Host: "203.0.113.4", Port: 22}
+	dir := t.TempDir()
+	files := KnownHostsFiles{Persons: filepath.Join(dir, "person"), Runners: filepath.Join(dir, "runner")}
+	writeFile(t, files.Runners, knownhosts.Line([]string{a.KnownHostsName()}, served)+"\n")
+	env := map[string]string{"PW": "kept-password-0863", "SUDO": "kept-sudo-0863"}
+	f, err := ParseFlags(nil, nil, []string{"server=PW"}, []string{"server=SUDO"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var said []string
+	h, err := Prepare(context.Background(), "server", a, Options{KnownHosts: files, Flags: f,
+		Getenv: func(k string) string { return env[k] }, Keep: true, Say: func(s string) { said = append(said, s) }})
+	if err != nil || h.Credential.From != FromFlag {
+		t.Fatalf("Prepare with Keep = %+v, %v", h, err)
+	}
+	if ok, err := HasSavedSignIn(a); !ok || err != nil {
+		t.Fatalf("the sign-in was not kept: %v (keychain %v)", err, store)
+	}
+	if !slices.ContainsFunc(said, func(s string) bool { return strings.Contains(s, a.Account()) }) {
+		t.Errorf("the person was not told where the sign-in is kept: %q", said)
+	}
+
+	// A run of the schedule: no flag, no one to ask, the pin.
+	pin := ssh.FingerprintSHA256(served)
+	h, err = Prepare(context.Background(), "server", a, Options{KnownHosts: files, Pin: pin})
+	if err != nil || h.Credential.From != FromKeychain || h.Credential.Password != env["PW"] || h.Credential.Sudo != env["SUDO"] {
+		t.Fatalf("a scheduled run = %+v, %v", h, err)
+	}
+	// The host now offers another key, which a file was taught to trust:
+	// the schedule's pin still refuses it.
+	fetchHostKey = func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error) { return other, nil }
+	writeFile(t, files.Runners, knownhosts.Line([]string{a.KnownHostsName()}, other)+"\n")
+	_, err = Prepare(context.Background(), "server", a, Options{KnownHosts: files, Pin: pin})
+	var r *Refusal
+	if !errors.As(err, &r) || r.Detail != RefusedKeyChanged || !strings.Contains(err.Error(), pin) || !strings.Contains(err.Error(), ssh.FingerprintSHA256(other)) {
+		t.Fatalf("a key other than the pinned one: %v", err)
+	}
+	// With the sign-in gone from the keychain, the run refuses for it.
+	clear(store)
+	_, err = Prepare(context.Background(), "server", a, Options{KnownHosts: files, Pin: ssh.FingerprintSHA256(other)})
+	if !errors.As(err, &r) || r.Detail != RefusedCredential {
+		t.Fatalf("no saved sign-in: %v", err)
+	}
+}
+
+// TestASignedOutFireReadsTheSealedSignIn (agentry-cli#863): a schedule that
+// runs while its person is signed out reads the sign-in sealed beside it,
+// and nothing else: the keychain is not asked.
+func TestASignedOutFireReadsTheSealedSignIn(t *testing.T) {
+	store := fakeKeychain(t)
+	a := Answer{User: "admin", Host: "box", Port: 22}
+	other := Answer{User: "admin", Host: "elsewhere", Port: 22}
+	store[modelkey.Service+"/"+other.Account()] = `{"password":"in-the-keychain"}`
+	dir := t.TempDir()
+	b, err := modelkey.SealPlaintext(map[string]string{a.Account(): `{"password":"sealed-pw","sudoPassword":"sealed-sudo"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, modelkey.CredentialName), string(b))
+	t.Setenv(modelkey.EnvCredentialsDirectory, dir)
+	t.Setenv(modelkey.EnvNoKeyring, "1")
+	c, err := ResolveCredential("server", a, Flags{}, nil, nil, func(string) {})
+	if err != nil || c.Password != "sealed-pw" || c.Sudo != "sealed-sudo" || c.From != FromKeychain {
+		t.Fatalf("the sealed sign-in: %+v, %v", c, err)
+	}
+	if ok, _ := HasSavedSignIn(other); ok {
+		t.Error("a sign-in only in the keychain was read by a sealed fire")
 	}
 }

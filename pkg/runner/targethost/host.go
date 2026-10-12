@@ -6,6 +6,8 @@ import (
 	"net/netip"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 )
@@ -32,6 +34,13 @@ type Options struct {
 	Ask Asker
 	// Say reports a warning or a note to the person.
 	Say func(string)
+	// Pin is the SHA256 fingerprint (ssh.FingerprintSHA256) of the host
+	// key a schedule was made with: a run that finds another refuses, as a
+	// changed key does (plan D12; agentry-cli#863).
+	Pin string
+	// Keep saves the sign-in in the keychain, without asking, wherever it
+	// came from: a schedule's runs read it there (plan D12).
+	Keep bool
 }
 
 // Prepare readies one target host. With a person at a terminal it asks for
@@ -51,7 +60,7 @@ func Prepare(ctx context.Context, id string, a Answer, o Options) (*Host, error)
 	var cred Credential
 	var err error
 	if o.Ask == nil {
-		if cred, err = ResolveCredential(id, a, o.Flags, o.Getenv, nil, o.Say); err != nil {
+		if cred, err = resolveCredential(id, a, o.Flags, o.Getenv, nil, o.Say, o.Keep); err != nil {
 			return nil, err
 		}
 	}
@@ -63,8 +72,13 @@ func Prepare(ctx context.Context, id string, a Answer, o Options) (*Host, error)
 	if err != nil {
 		return nil, err
 	}
+	if got := ssh.FingerprintSHA256(key.Key); o.Pin != "" && got != o.Pin {
+		return nil, refuse(id, RefusedKeyChanged,
+			"%s offers the host key %s (%s), and the schedule was made with %s: the run will not reach it. If the host was reinstalled, make the schedule again",
+			a.Host, Fingerprint(key.Key), key.From, o.Pin)
+	}
 	if o.Ask != nil {
-		if cred, err = ResolveCredential(id, a, o.Flags, o.Getenv, o.Ask, o.Say); err != nil {
+		if cred, err = resolveCredential(id, a, o.Flags, o.Getenv, o.Ask, o.Say, o.Keep); err != nil {
 			return nil, err
 		}
 	}
