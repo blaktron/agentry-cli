@@ -61,7 +61,9 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 		for _, n := range runNetworks(ctx, d, r) {
 			_ = d.NetworkRemove(ctx, n)
 		}
-		_ = d.VolumeRemove(ctx, sessionVolumeName(r))
+		for _, v := range runVolumes(ctx, d, r) {
+			_ = d.VolumeRemove(ctx, v)
+		}
 	}
 	if stderr == nil {
 		return
@@ -74,6 +76,24 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 		sort.Strings(failed)
 		_, _ = fmt.Fprintf(stderr, "warning: could not remove %d container(s) a run whose process had died left behind: %s (docker rm -f <name>)\n", len(failed), strings.Join(failed, ", "))
 	}
+}
+
+// runVolumes is every volume of run r: its session volume by name, and
+// every volume carrying its run label, which finds the gateway's /misc
+// when its container went without -v (agentry-cli#458). The name stands
+// when docker cannot list.
+func runVolumes(ctx context.Context, d dockerx.Client, r string) []string {
+	names := []string{sessionVolumeName(r)}
+	labelled, err := d.VolumesByLabel(ctx, runLabel+"="+r)
+	if err != nil {
+		return names
+	}
+	for _, v := range labelled {
+		if !slices.Contains(names, v) {
+			names = append(names, v)
+		}
+	}
+	return names
 }
 
 // runNetworks is every network of run r: those its id names (the run's own,

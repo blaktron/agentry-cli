@@ -483,7 +483,7 @@ func TestCLIStopAndRemoveForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := recorded(t, record)
-	want := []string{"stop --timeout 10 agentry-x-gateway", "rm -f agentry-x-gateway"}
+	want := []string{"stop --timeout 10 agentry-x-gateway", "rm -fv agentry-x-gateway"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("argv lines = %q, want %q", got, want)
 	}
@@ -614,5 +614,20 @@ func TestRunSpecArgsHardening(t *testing.T) {
 		if strings.Contains(plain, flag) {
 			t.Errorf("a spec that set nothing emitted %s: %s", flag, plain)
 		}
+	}
+}
+
+// A labelled anonymous volume is a --mount of type volume with each label
+// as a volume-label field, sorted, and a field holding a comma or a quote
+// is quoted as docker's CSV reader wants it (agentry-cli#458).
+func TestRunSpecMountsLabelledAnonymousVolumes(t *testing.T) {
+	r := RunSpec{Name: "g", Image: "i", Volumes: []VolumeMount{{
+		Target: "/misc",
+		Labels: map[string]string{"agentry.run": "ab12cd34", "agentry.owner.start": "1,2", "q": `a"b`},
+	}}}
+	got := r.args(true)
+	want := []string{"run", "-d", "--name", "g", "--mount", `type=volume,dst=/misc,"volume-label=agentry.owner.start=1,2",volume-label=agentry.run=ab12cd34,"volume-label=q=a""b"`, "i"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args =\n %q\nwant\n %q", got, want)
 	}
 }
