@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -147,6 +148,37 @@ func TestMaxMemoryLimitsTheAddressSpace(t *testing.T) {
 		if got != "1048576\nheld\n" {
 			t.Errorf("%q: the program saw %q, want a 1048576 KiB address space it cannot raise", f, got)
 		}
+	}
+}
+
+// TestMaxMemoryNeverKillsTheTrampoline (agentry-cli#887): between the
+// address-space limit and the execve no goroutine of the trampoline may
+// need memory, or the Go runtime dies of the limit, on the program's stderr
+// or in its place. Many limited runs at once load the machine as a busy
+// tools server does; each must print the program's output and nothing else.
+// Under the race detector, as `make test` runs it, it failed about one run
+// in ten before the fix; a plain build needs a busier machine to show it.
+func TestMaxMemoryNeverKillsTheTrampoline(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh on this machine")
+	}
+	const runs = 96
+	var wg sync.WaitGroup
+	errs := make(chan string, runs)
+	for i := 0; i < runs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := trampoline(t, []string{"--limits-only", "--max-memory", "1073741824"}, `echo ran`)
+			if err != nil || got != "ran\n" {
+				errs <- fmt.Sprintf("%q (%v)", got, err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Errorf("a limited run printed %s, want only the program's \"ran\"", e)
 	}
 }
 

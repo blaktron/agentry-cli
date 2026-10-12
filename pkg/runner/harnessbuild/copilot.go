@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/imagelabel"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
@@ -160,9 +161,9 @@ func (b Builder) buildCopilot(ctx context.Context, h policy.HarnessImage, rel co
 // holds the binary and its unpacked package, not the tarball. Copilot CLI
 // is run once as a check that it starts on the base; a setuid or setgid
 // file in what it unpacked refuses the build.
-const copilotDockerfile = `ARG BASE
+var copilotDockerfile = `ARG BASE
 FROM ${BASE} AS unpack
-COPY copilot.tar.gz /tmp/
+` + imagelabel.Line(imagelabel.Copilot) + `COPY copilot.tar.gz /tmp/
 RUN set -e; mkdir -p /opt/copilot/bin ` + CopilotPkgCache + `; \
     tar -xzf /tmp/copilot.tar.gz -C /opt/copilot/bin copilot; \
     COPILOT_SEA_EXTRACT_ONLY=1 COPILOT_PKG_CACHE_HOME=` + CopilotPkgCache + ` HOME=/tmp /opt/copilot/bin/copilot --binary-version; \
@@ -173,7 +174,7 @@ FROM ${BASE}
 ARG ARTIFACT
 ARG DOWNLOAD
 LABEL org.agentry.harness.artifact="${ARTIFACT}" org.agentry.harness.download="${DOWNLOAD}"
-COPY --from=unpack /opt/copilot/ /opt/copilot/
+` + imagelabel.Line(imagelabel.Copilot) + `COPY --from=unpack /opt/copilot/ /opt/copilot/
 RUN set -e; adduser -D -u 10001 -h ` + CopilotHome + ` copilot; ln -s /opt/copilot/bin/copilot ` + CopilotBinary + `; \
     COPILOT_PKG_CACHE_HOME=` + CopilotPkgCache + ` COPILOT_HOME=/tmp/copilot-check HOME=/tmp/copilot-check copilot --version; rm -rf /tmp/copilot-check
 ENV COPILOT_PKG_CACHE_HOME=` + CopilotPkgCache + `

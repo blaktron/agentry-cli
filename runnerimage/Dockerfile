@@ -58,6 +58,10 @@ ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.09.2@sha256:da55b1dbe359c
 FROM ${TYPST_IMAGE} AS typst
 
 FROM ${GO_IMAGE} AS build
+# Every image the runner builds carries org.agentry.image=<kind>, in every
+# stage that runs, so a stage the classic builder leaves untagged is found
+# by label too (pkg/runner/imagelabel, agentry-cli#892).
+LABEL org.agentry.image=runner
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /agentry-runner ./runnerimage
@@ -74,6 +78,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /agentry-runner ./runne
 RUN test -x /agentry-runner && [ "$(head -c 4 /agentry-runner)" = "$(printf '\177ELF')" ] || { echo "agentry-runner: the build produced no executable ELF binary (a library archive?) - build from the context runnerimage.Materialize writes, not the repository root" >&2; exit 1; }
 
 FROM ${RUNTIME_IMAGE}
+LABEL org.agentry.image=runner
 # ca-certificates: fetch and probe speak TLS from inside this image; the
 # llm-proxy only tunnels, but the CA bundle costs nothing and removes a
 # whole class of "works on host, fails in container" reports.
