@@ -122,6 +122,16 @@ to the repair turn. A release whose instructions call
 (`resume.md`), and `export_pdf`'s `source` names it from the output folder
 (`reports/resume.md`), so a draft no longer writes into `reports/reports/`.
 
+Since 1.13.0 the Drafter knows input sources (plan input-sources.md, M8;
+agentry-cli#835). It asks for a codebase with a `repository` intake question
+and for a file at a web address with a `url` question, which the runner
+fetches before the run, and never advises a `.zip` for a repository or
+declares egress or a key to clone one. It knows that a tool result comes a
+page at a time, that a large `fetch` body is saved in the scratch folder or
+kept whole with `saveTo`, and that `scratch_read` and `scratch_search` read
+it. A release that asks a `repository` question needs CLI v0.6.97 or later, a
+`url` question v0.6.98 or later, and v0.6.104 or later to run either hosted.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

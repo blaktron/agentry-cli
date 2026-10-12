@@ -54,6 +54,10 @@ type Expect struct {
 	// something only the person knows.
 	Intake bool `json:"intake,omitempty"`
 	Open   bool `json:"open,omitempty"`
+	// IntakeTypes are question types the draft's intake must carry, each
+	// at least once: `repository` for a codebase, `url` for a file at an
+	// address (input sources M8, agentry-cli#835). Not checked when empty.
+	IntakeTypes []string `json:"intakeTypes,omitempty"`
 	// InputKinds are kinds the draft's inputs block must declare, so the
 	// block is required; InputViews are the views a declared block may
 	// choose, checked only when there is one (agentry-cli#634). Neither is
@@ -214,6 +218,11 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	}
 	if e.Intake && len(m.Intake) == 0 {
 		out = append(out, "no intake question")
+	}
+	for _, want := range e.IntakeTypes {
+		if !slices.ContainsFunc(m.Intake, func(q manifest.IntakeQuestion) bool { return string(q.Type) == want }) {
+			out = append(out, fmt.Sprintf("no intake question of type %s", want))
+		}
 	}
 	if e.Open && len(m.Intake) == 0 && len(d.OpenQuestions) == 0 {
 		out = append(out, "neither an intake question nor an open question")
