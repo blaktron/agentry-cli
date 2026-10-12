@@ -66,8 +66,9 @@ const (
 	// DefaultHarnessImage is pinned by digest since agentry-cli#738
 	// (agentry-cli#224's option A): the tag is a label, the digest the
 	// bytes, and the receipt names it. Pulled, inspected and run in that
-	// form on the workstation's daemon on 2026-10-09.
-	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.128.0@sha256:50bef17dfbc43c56f8c7c68eade9fc36cd4de5a2fc7ad0f28e34d0030002d5f1"
+	// form on the workstation's daemon on 2026-10-09; moved to 1.150.0 by
+	// agentry-cli#836 (input sources M9), pulled by digest 2026-10-12.
+	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1"
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// (RUNNER-PLAN-3 §P2). Node is 24 since agentry-cli#608: servers whose
@@ -1169,7 +1170,7 @@ images:
   # point these at any registry you prefer: a private one, or your own mirror.
   gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
   # The default harness, pinned by digest: the receipt names the digest.
-  harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.128.0@sha256:50bef17dfbc43c56f8c7c68eade9fc36cd4de5a2fc7ad0f28e34d0030002d5f1
+  harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1
   # Other adapters' harness images, by adapter name: pinned by digest
   # (ref: <name>@sha256:...) or, for one built on this machine from its
   # vendor's artifact, by that artifact's hash (artifact: sha256:<hex>, or

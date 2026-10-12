@@ -5,9 +5,10 @@ diff first), `events.ndjson` a recording of the harness's stdout, and
 `expect.json` the event shape the engine relies on.
 
 Each recording is the full `receipts/events.ndjson` of one real hello-report
-run on the dev host (2026-09-07), taken from the allowed run of
-`scripts/acceptance/runner-r4.sh`: docker-agent 1.128.0 for `docker-agent`,
-Claude Code 2.1.263 for `claude`, codex-cli 0.153.4 for `codex`. Re-record
+run on the dev host, taken from the allowed run of
+`scripts/acceptance/runner-r4.sh`: docker-agent 1.150.0 for `docker-agent`
+(re-recorded 2026-10-12, agentry-cli#836), Claude Code 2.1.263 for `claude`
+and codex-cli 0.153.4 for `codex` (2026-09-07). Re-record
 the same way when a harness release changes — `AGENTRY_R4_EVIDENCE=<dir>` on
 that script keeps each
 adapter's receipts for exactly this purpose. A recording is what keeps the

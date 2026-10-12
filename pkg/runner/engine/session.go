@@ -331,9 +331,12 @@ type liveSession struct {
 	toolCalls      int
 	inTok, outTok  int64
 	totTok         int64
-	costUSD        float64
-	lastText       string
-	harnessErr     string
+	// usageSeen says the harness reported usage at least once; without it
+	// the receipt says the session's 0 tokens were never reported.
+	usageSeen  bool
+	costUSD    float64
+	lastText   string
+	harnessErr string
 	// planLimit is the harness's first plan-limit event (EndPlanLimit).
 	planLimit *adapter.Event
 	// orgPolicy is the harness's first organization-policy event
@@ -687,6 +690,7 @@ func (s *liveSession) handle(ev adapter.Event) {
 		s.inTok += ev.InputTokens
 		s.outTok += ev.OutputTokens
 		s.totTok += ev.TotalTokens
+		s.usageSeen = true
 		// A plan run reports tokens, never dollars (D13).
 		if ev.CostUSD > s.costUSD && s.p.Plan.Harness.ModelSignIn == nil {
 			s.costUSD = ev.CostUSD
@@ -1074,6 +1078,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	lastText := s.lastText
 	env := s.env
 	env.Usage = receipt.Usage{InputTokens: s.inTok, OutputTokens: s.outTok, TotalTokens: s.totTok, CostUSD: s.costUSD, Turns: s.toolCalls, UserTurns: s.userTurns}
+	tokensUnreported := !s.usageSeen && s.userTurns > 0
 	harnessErr := s.harnessErr
 	panicErr := s.panicErr
 	planLimit := s.planLimit
@@ -1086,6 +1091,9 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		env.CapabilitiesEnforced["model.signIn"] += fmt.Sprintf("; on the restart token route the harness was started again %d time(s) on a renewed token, each resuming the conversation", restarts)
 	}
 	env.CapabilitiesEnforced = withCostBudget(env.CapabilitiesEnforced, s.p.Budgets.MaxCostUSD, env.Usage.CostUSD)
+	if tokensUnreported {
+		env.CapabilitiesEnforced["usage.tokens"] = tokensUnreportedLine
+	}
 	env.CapabilitiesEnforced["daemon"] = daemon
 	env.PDFs = pdfs
 	env.FetchSaves = fetchSaves
@@ -1211,13 +1219,21 @@ func hostSecretValues(vars []spec.EnvVar) []string {
 	return out
 }
 
+// tokensUnreportedLine is the receipt's line for a session whose harness
+// reported no usage at all. docker-agent 1.150.0 sends its ACP usage_update
+// only for a model whose context window it knows (its models.dev catalogue,
+// or a provider's context_size), so a session on any other model, an
+// operator's own endpoint among them, reports no tokens (agentry-cli#836).
+const tokensUnreportedLine = "the harness reported no token usage on its session stream, so usage.totalTokens is 0 because nothing was reported, not because the session used none"
+
 // withCostBudget adds the receipt's line about the session's cost budget.
 // A cost of 0 is ambiguous: the harness may have reported none, which is
 // not the same as a session that cost nothing. And a ceiling asked for
 // against such a harness could never have fired, so the line says that
 // rather than leaving the control looking enforced (agentry-cli#222).
-// docker-agent 1.128.0 sends `used` and no cost on its ACP usage_update,
-// which makes this the default adapter's normal case, not an edge.
+// docker-agent sends `used` and no cost on its ACP usage_update (1.128.0
+// and 1.150.0 alike), which makes this the default adapter's normal case,
+// not an edge.
 //
 // A copy: enforcedWithPackages hands back the plan's own map when the run
 // resolved no exec packages, and the plan's map is the plan's.
