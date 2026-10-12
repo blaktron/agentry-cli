@@ -156,7 +156,16 @@ func TestAgentryRunRefusesATargetHostForAHostedRun(t *testing.T) {
 	if !strings.Contains(err.Error(), "a hosted run never reaches a target host") {
 		t.Fatalf("%v", err)
 	}
-	// A hosted run's job token alone marks it too.
+	// A hosted run's job token alone marks it too, and so does the host's
+	// own marker (agentry-enterprise#534).
+	t.Setenv(envHosted, "1")
+	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/target-host"), "--allow-unsigned", "--yes",
+		"--policy", policyPath, "--intake", "server=admin@203.0.113.4")
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), "a hosted run never reaches a target host") {
+		t.Fatalf("with AGENTRY_HOSTED: %v", err)
+	}
+	t.Setenv(envHosted, "")
 	t.Setenv(envJobToken, "job-token")
 	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/target-host"), "--allow-unsigned", "--yes",
 		"--policy", policyPath, "--intake", "server=admin@203.0.113.4")
