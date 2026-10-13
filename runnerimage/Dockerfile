@@ -7,9 +7,9 @@
 #
 # The context is self-contained on purpose (RQ1): module sources plus a
 # generated go.mod, no third-party imports, so the build needs no module
-# proxy. What it does fetch: the two base images below and the Typst image,
-# which since DR-32 come from Agentry's registry (ghcr.io/blaktron), and
-# nothing else. The
+# proxy. What it does fetch: the two base images below, the Typst image and
+# the ripgrep image, which since DR-32 come from Agentry's registry
+# (ghcr.io/blaktron), and nothing else. The
 # file deliberately carries no `# syntax=` parser directive: one would make
 # BuildKit pull its frontend image (docker.io/docker/dockerfile:1, by a tag
 # that can move) before every build and let that image's code parse this
@@ -55,7 +55,14 @@ ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6e
 # RUNTIME_IMAGE it has no policy field: repointing it means building this
 # context yourself.
 ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.09.2@sha256:da55b1dbe359c01def900853b2e65803bf783d8098b4ddcea6164ca946d38dd1
+# grep and glob's search engine (plan ripgrep-search.md D1, D3, D9;
+# agentry-cli#912): agentry-dockerimages' files-only image of ripgrep 15.2.0
+# built from pinned source with its default features (no PCRE2), static,
+# signed by its ripgrep workflow on main (scripts/verify-ripgrep-image.sh
+# holds the pin to that signature). Like TYPST_IMAGE it has no policy field.
+ARG RIPGREP_IMAGE=ghcr.io/blaktron/agentry-ripgrep:2026.10.13.2@sha256:2891a3998ffa4877998ad7f167ea00971e09fa3c68dcafc128e609c8cabee718
 FROM ${TYPST_IMAGE} AS typst
+FROM ${RIPGREP_IMAGE} AS ripgrep
 
 FROM ${GO_IMAGE} AS build
 # Every image the runner builds carries org.agentry.image=<kind>, in every
@@ -91,4 +98,8 @@ COPY --from=typst /typst /opt/agentry/typst/typst
 COPY --from=typst /fonts /opt/agentry/typst/fonts
 COPY --from=typst /typst-packages /opt/agentry/typst/packages
 COPY --from=typst /licenses /opt/agentry/typst/licenses
+# Outside every bin directory too (toolsrv.RipgrepDir): only the tools
+# server runs it, for grep and glob, never a declared command.
+COPY --from=ripgrep /rg /opt/agentry/ripgrep/rg
+COPY --from=ripgrep /licenses /opt/agentry/ripgrep/licenses
 ENTRYPOINT ["/usr/local/bin/agentry-runner"]

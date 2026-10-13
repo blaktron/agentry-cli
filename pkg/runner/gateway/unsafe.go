@@ -167,6 +167,8 @@ func unsafeDockerfile(runnerImage string, img spec.ExecImageSpec) string {
 	b.WriteString("COPY --from=" + runnerImage + " /usr/local/bin/agentry-runner /usr/local/bin/agentry-runner\n")
 	// export_pdf's renderer, static like the runner (toolsrv.TypstDir).
 	b.WriteString("COPY --from=" + runnerImage + " " + toolsrv.TypstDir + " " + toolsrv.TypstDir + "\n")
+	// grep and glob's ripgrep, static as well (toolsrv.RipgrepDir).
+	b.WriteString("COPY --from=" + runnerImage + " " + toolsrv.RipgrepDir + " " + toolsrv.RipgrepDir + "\n")
 	b.WriteString("COPY . /agentry-build/\n")
 	b.WriteString("ARG AGENTRY_ATTEMPT=0\n")
 	b.WriteString("RUN [\"/bin/sh\", \"/agentry-build/install.sh\"]\n")

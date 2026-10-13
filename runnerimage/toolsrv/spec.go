@@ -23,11 +23,12 @@ package toolsrv
 // design, theme document version 2, and export_pdf's form (plan
 // report-designs.md §4, agentry-cli#784); "11" the result budget
 // (Limits.MaxResultBytes and MaxResultLines; plan input-sources.md §4,
-// agentry-cli#831). The server
+// agentry-cli#831); "12" grep and glob (Search; plan ripgrep-search.md
+// §4, agentry-cli#912). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "11"
+const SpecVersion = "12"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -120,6 +121,10 @@ type Spec struct {
 	// scratch folder, the report design, the author line and the ledger
 	// stamped by the engine.
 	PDF PDF `json:"pdf,omitzero"`
+	// Search is grep and glob's grant (search.go): Enabled by the compiler
+	// with the scratch folder; the tools exist only while the run has an
+	// area to search.
+	Search Search `json:"search,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
 	// Owner, when set, is the host user who ran the command: every file
@@ -314,6 +319,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.ScratchDir != "" {
 		names = append(names, ToolScratchList, ToolScratchRead, ToolScratchWrite, ToolScratchSearch)
+	}
+	if s.Search.Enabled && s.searchAreas() {
+		names = append(names, ToolGrep, ToolGlob)
 	}
 	if s.KnowledgeDir != "" && len(s.Knowledge) > 0 {
 		names = append(names, ToolKnowledgeList, ToolKnowledgeSearch, ToolKnowledgeRead)

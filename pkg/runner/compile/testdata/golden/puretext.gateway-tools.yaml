@@ -7,5 +7,7 @@ agentry-tools:
   - scratch_read
   - scratch_write
   - scratch_search
+  - grep
+  - glob
   - write_report
   - export_pdf
