@@ -280,6 +280,15 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	if in.HarnessImage == "" {
 		return Result{}, fmt.Errorf("docker-agent adapter: no harness image pinned")
 	}
+	// Load resolves former generated defaults, but a custom digest or a
+	// direct caller can still select the old harness. Refuse the known
+	// schema-15 release before it starts; an opaque custom image remains
+	// the operator's to make compatible with the adapter's schema (#924).
+	imageTag, _, _ := strings.Cut(in.HarnessImage, "@")
+	imageTag = strings.TrimPrefix(imageTag, "docker.io/")
+	if imageTag == "docker/docker-agent:1.128.0" || imageTag == "docker/docker-agent:v1.128.0" || imageTag == "ghcr.io/blaktron/agentry-docker-agent:1.128.0" {
+		return Result{}, &Refusal{Reason: fmt.Sprintf("images.harnessDockerAgent %q selects Docker agent 1.128.0, which cannot load config schema %s; update the custom image pin to a compatible image (current default: %s)", in.HarnessImage, HarnessConfigVersion, policy.DefaultHarnessImage)}
+	}
 	provider, err := harnessProvider(in.Model)
 	if err != nil {
 		return Result{}, err

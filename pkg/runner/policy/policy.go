@@ -441,8 +441,9 @@ type Images struct {
 	// Gateway is the docker/mcp-gateway image.
 	Gateway string `yaml:"gateway"`
 	// HarnessDockerAgent is the docker-agent harness image. The default is
-	// pinned by digest; a file written before it was may still name a tag,
-	// and the receipt then says the image was pinned by tag alone.
+	// pinned by digest. Former generated defaults resolve to the current
+	// pin on load so an updated adapter never runs the old default image.
+	// Other values are the operator's and are kept.
 	HarnessDockerAgent string `yaml:"harnessDockerAgent"`
 	// HarnessImages pins the harness image of each other adapter that runs
 	// in a container, by adapter name (agentry-cli#224 option A, plan
@@ -882,6 +883,11 @@ func Load(path string) (*Policy, string, error) {
 	// always has. Plans still recompile, because a new CLI build changes
 	// the plan's compiledBy. A goBuilder that is a former generated default
 	// resolves the same way (formerDefaultGoBuilders, agentry-cli#770).
+	// The harness follows too (#924): its config schema moves with the
+	// CLI, so keeping a former default image would fail at config load.
+	if slices.Contains(formerDefaultHarnessImages, p.Images.HarnessDockerAgent) {
+		p.Images.HarnessDockerAgent = DefaultHarnessImage
+	}
 	if p.Images.NodeRuntime == "" || slices.Contains(formerDefaultNodeRuntimes, p.Images.NodeRuntime) {
 		p.Images.NodeRuntime = DefaultNodeRuntime
 	}
@@ -1116,6 +1122,18 @@ func (p *Policy) RunnerImageTag(version string) string {
 		v = "dev"
 	}
 	return "agentry-runner:" + v
+}
+
+// formerDefaultHarnessImages are the exact values earlier CLIs generated.
+// Resolving them at load follows the Node and Go builder rule below: the
+// file and its hash stay unchanged, while a new CLI build recompiles plans.
+// Other refs, including another digest under the same tag, are kept. When
+// DefaultHarnessImage moves, add its previous value here with that change.
+var formerDefaultHarnessImages = []string{
+	"docker/docker-agent:v1.128.0",
+	"docker/docker-agent:1.128.0",
+	"ghcr.io/blaktron/agentry-docker-agent:1.128.0",
+	"ghcr.io/blaktron/agentry-docker-agent:1.128.0@sha256:50bef17dfbc43c56f8c7c68eade9fc36cd4de5a2fc7ad0f28e34d0030002d5f1",
 }
 
 // formerDefaultNodeRuntimes are the values earlier CLIs wrote into every
