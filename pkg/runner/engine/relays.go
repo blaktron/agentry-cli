@@ -26,7 +26,7 @@ import (
 // linger to refuse the next run (agentry-cli#106).
 //
 // Since agentry-cli#220 this is the path only where the gateway's docker
-// filter does not run (Docker Desktop, agentry-cli#322). On Linux the
+// filter does not run (a platform other than Linux and Docker Desktop). On Linux the
 // filter gives the gateway the run's own two relay networks under the
 // fixed names (dockerfilter.go): runs with relays share a host without
 // reaching each other's, and neither the lock nor the refusal is taken.

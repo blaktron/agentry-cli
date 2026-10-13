@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/blaktron/agentry-cli/pkg/runner/imagelabel"
 )
 
 const (
@@ -1406,13 +1404,18 @@ func TestATargetHostsRelayReachesItsOneAddressAndPort(t *testing.T) {
 
 // A container inherits its image's labels: the image label (agentry-cli#892)
 // makes nothing the run's, even carrying the run's own id as its value.
+// imageLabelKey is imagelabel.Key, spelled here because the runner image's
+// build context is stdlib-only (agentry-cli#322); pkg/runner/engine's
+// TestTheFiltersImageLabelIsTheRunners holds the two equal.
+const imageLabelKey = "org.agentry.image"
+
 func TestTheImageLabelMakesNothingOurs(t *testing.T) {
 	f := &Filter{cfg: Config{RunID: "abcd1234", Label: lbl, OwnerLabel: own}}
-	labels := map[string]string{imagelabel.Key: "abcd1234", lbl: "abcd1234"}
+	labels := map[string]string{imageLabelKey: "abcd1234", lbl: "abcd1234"}
 	if f.ours(labels) {
 		t.Error("ours: a container with the image label and the run label is the gateway's")
 	}
-	anyLabels := map[string]any{imagelabel.Key: "abcd1234", lbl: "abcd1234"}
+	anyLabels := map[string]any{imageLabelKey: "abcd1234", lbl: "abcd1234"}
 	if f.oursAny(anyLabels) {
 		t.Error("oursAny: a container with the image label and the run label is the gateway's")
 	}

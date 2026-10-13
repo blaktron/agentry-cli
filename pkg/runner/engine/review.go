@@ -180,5 +180,5 @@ func reviewLine(rec *receipt.Review) string {
 	if filterSupported {
 		return line + ", and the run's docker filter admits that proxy toward no other host"
 	}
-	return line + "; the per-run docker filter, which would also hold the proxy to that host at the daemon, runs on Linux only (Docker Desktop, agentry-cli#322)"
+	return line + "; the per-run docker filter, which would also hold the proxy to that host at the daemon, does not run on this platform"
 }

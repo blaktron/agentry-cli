@@ -656,7 +656,8 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// (dockerfilter.go, agentry-cli#219). Queued before the gateway's
 	// teardown, so it closes after the gateway has stopped and reaped the
 	// containers it launched through it.
-	if filterSupported {
+	switch {
+	case filterSupported && filterInProcess:
 		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome)
 		if err != nil {
 			return err
@@ -664,6 +665,18 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		rd.filter = filter
 		td.add(func(context.Context) { closeDaemonFilter(rd) })
 		gwSpec.Mounts = throughFilter(gwSpec.Mounts, sock)
+	case filterSupported:
+		// Docker Desktop: the same filter, in a container of the run's own
+		// (filtersidecar.go, agentry-cli#322).
+		cfg, err := filterConfig(rd, runID, gwEnv, p.limits(), p.Plan)
+		if err != nil {
+			return err
+		}
+		vol, err := startFilterSidecar(ctx, d, rd, runID, p.Plan.Proxy.Image, cfg, p.limits(), td)
+		if err != nil {
+			return err
+		}
+		gwSpec.Mounts = throughFilterVolume(gwSpec.Mounts, vol)
 	}
 	if err := d.RunDetached(ctx, gwSpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))
