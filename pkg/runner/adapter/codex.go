@@ -299,6 +299,16 @@ type codexModelInfo struct {
 	BaseInstructions string `json:"base_instructions"`
 }
 
+// codexToolResultBytes is the most of one tool result codex keeps for the
+// model: the run's catalog entry's truncation policy, which codex 0.162.0
+// applies to every MCP result (and which `tool_output_token_limit` would
+// otherwise override). It was codex's 10,000-byte fallback for an unknown
+// model, which held the runner's pages to 5 KiB and a run reading a
+// codebase to many times the calls (agentry-cli#911); 48,000 is what codex's
+// own catalog keeps for its models, and leaves the runner's 20 KiB pages
+// room to double as escaped JSON (codexBudget).
+const codexToolResultBytes = 48_000
+
 type codexTruncation struct {
 	Mode  string `json:"mode"`
 	Limit int64  `json:"limit"`
@@ -312,7 +322,8 @@ type codexTruncation struct {
 // verbosity rather than codex's tuned ones) except the tool fields,
 // which are pinned off: no apply_patch, no tool_search, no experimental
 // tools, no shell (also off by feature), and direct tools rather than code
-// mode. A catalog in the config replaces the bundled one and is
+// mode; and the truncation policy, which is the runner's
+// (codexToolResultBytes). A catalog in the config replaces the bundled one and is
 // authoritative: codex fetches no model list from the provider.
 func codexCatalog(model string) ([]byte, error) {
 	entry := codexModelInfo{
@@ -325,7 +336,7 @@ func codexCatalog(model string) ([]byte, error) {
 		Priority:                      99,
 		DefaultReasoningSummary:       "auto",
 		WebSearchToolType:             "text",
-		TruncationPolicy:              codexTruncation{Mode: "bytes", Limit: 10_000},
+		TruncationPolicy:              codexTruncation{Mode: "bytes", Limit: codexToolResultBytes},
 		ContextWindow:                 272_000,
 		MaxContextWindow:              272_000,
 		EffectiveContextWindowPercent: 95,
