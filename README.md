@@ -1205,7 +1205,10 @@ expires and rewrites the folder (a bridge, and a server that re-reads its
 file, pick it up; an env token is fixed for the run). With no
 terminal a run that lacks one exits 11 naming the server. `agentry
 connections list|remove` manages them (a removal, and an uninstall, revoke
-at the vendor where it offers that); `agentry connections client
+at the vendor where it offers that, and name the kept connections made with
+the same client, which a vendor that revokes the whole grant, Google, ends
+with it; `list` names them too; connecting again with the same client
+replaces the connection without revoking anything); `agentry connections client
 set|list|remove` keeps your own OAuth client per vendor, which a vendor that
 registers no app on the fly needs (Google), with Agentry's steps for making
 one shown when it is asked for. A hosted run's host passes

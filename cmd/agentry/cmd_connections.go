@@ -279,7 +279,16 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 		if err != nil {
 			return nil, fmt.Errorf("connect %s: %w", connectionServer(srv), err)
 		}
-		if old, gerr := store.Get(k); gerr == nil && old != nil {
+		switch old, gerr := store.Get(k); {
+		case gerr != nil || old == nil:
+		case old.MadeWith(g):
+			// Revoking the old refresh token would end the grant just made
+			// at a vendor that revokes a client's whole grant (Google), and
+			// every other connection made with the client: Put overwrites
+			// the record and its secret, and nothing is revoked.
+			store.RecordReplaced(old, "replaced by a new consent")
+			_, _ = fmt.Fprintln(errOut, "the previous connection is replaced; it was made with the same client, so it is not revoked at the vendor (at one that revokes a client's whole grant, such as Google, that would end the new one too); its refresh token is dropped from this machine")
+		default:
 			if outcome, rerr := store.Remove(cmd.Context(), k, httpc, clients, "replaced by a new consent"); rerr == nil {
 				_, _ = fmt.Fprintf(errOut, "the previous connection was removed (revocation: %s)\n", outcome)
 			}
@@ -567,6 +576,19 @@ type connectionOut struct {
 	CreatedAt string   `json:"createdAt"`
 	LastUsed  string   `json:"lastUsedAt,omitempty"`
 	KeptIn    string   `json:"keptIn"`
+	// SharesGrantWith names the other connections made with the same
+	// client at the same issuer, "ns/name@version → server": a vendor that
+	// revokes the whole grant ends them when this one is removed.
+	SharesGrantWith []string `json:"sharesGrantWith,omitempty"`
+}
+
+// grantNames names connections as "ns/name@version → server".
+func grantNames(cs []*connection.Connection) []string {
+	var out []string
+	for _, c := range cs {
+		out = append(out, c.Ref+" → "+c.Server)
+	}
+	return out
 }
 
 func newConnectionsCmd() *cobra.Command {
@@ -601,6 +623,7 @@ func newConnectionsListCmd() *cobra.Command {
 				rows = append(rows, connectionOut{
 					Ref: c.Ref, Digest: c.Digest, Server: c.Server, Issuer: c.Issuer, Client: c.Client.Kind,
 					Scopes: c.Scopes, State: state, CreatedAt: c.CreatedAt, LastUsed: c.LastUsedAt, KeptIn: c.SecretIn,
+					SharesGrantWith: grantNames(connection.SharesGrant(list, c)),
 				})
 			}
 			if flags.jsonOut {
@@ -618,6 +641,9 @@ func newConnectionsListCmd() *cobra.Command {
 				}
 				_, _ = fmt.Fprintf(out, "%s → %s\n  digest %s · issuer %s · %s client · scopes %s · %s · last used: %s · kept in the %s\n",
 					r.Ref, r.Server, installdir.DigestSuffix(r.Digest), r.Issuer, r.Client, scopeList(r.Scopes), r.State, last, r.KeptIn)
+				if len(r.SharesGrantWith) > 0 {
+					_, _ = fmt.Fprintf(out, "  made with the same client as: %s (removing one may end the others at a vendor that revokes the whole grant)\n", strings.Join(r.SharesGrantWith, ", "))
+				}
 			}
 			return nil
 		},
@@ -630,6 +656,38 @@ type removedConnection struct {
 	Server     string `json:"server"`
 	Revocation string `json:"revocation"`
 	Error      string `json:"error,omitempty"`
+	// SharesGrantWith names the connections this removal leaves, made with
+	// the same client at the same issuer, which a vendor that revokes the
+	// whole grant ends with this one (the operator, 2026-10-06: removal
+	// still revokes, and says so). Empty unless the revocation was done;
+	// with --plan, those it would end.
+	SharesGrantWith []string `json:"sharesGrantWith,omitempty"`
+}
+
+// line is the removal as the terminal says it.
+func (r removedConnection) line() string {
+	l := fmt.Sprintf("removed the connection of %s to %s (revocation: %s)", r.Ref, r.Server, r.Revocation)
+	return l + endsToo(r.SharesGrantWith)
+}
+
+// endsToo is a removal's warning about the connections it ends with it.
+func endsToo(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return "; at a vendor that revokes the whole grant, these, made with the same client, stop working too: " + strings.Join(names, ", ")
+}
+
+// sharedBeyond names the connections in all made with c's client that
+// going, the removal's own set, does not hold.
+func sharedBeyond(all []*connection.Connection, c *connection.Connection, going map[connection.Key]bool) []string {
+	var left []*connection.Connection
+	for _, o := range connection.SharesGrant(all, c) {
+		if !going[o.Key()] {
+			left = append(left, o)
+		}
+	}
+	return grantNames(left)
 }
 
 func newConnectionsRemoveCmd() *cobra.Command {
@@ -659,7 +717,7 @@ func newConnectionsRemoveCmd() *cobra.Command {
 				return err
 			}
 			for _, r := range removed {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed the connection of %s to %s (revocation: %s)\n", r.Ref, r.Server, r.Revocation)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), r.line())
 			}
 			if len(removed) == 0 && err == nil {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "nothing matched")
@@ -674,7 +732,8 @@ func newConnectionsRemoveCmd() *cobra.Command {
 
 // removeConnections removes the connections of the releases sel matches
 // ("" for all), to server where one is named, revoking each at the vendor
-// where it offers that (D17).
+// where it offers that (D17), and names, for each one revoked, the kept
+// connections it does not remove that were made with the same client.
 func removeConnections(ctx context.Context, home, sel, server, why string) ([]removedConnection, error) {
 	store := connection.Open(home, connectionKeys())
 	clients := connection.OpenClients(home, connectionKeys())
@@ -682,9 +741,8 @@ func removeConnections(ctx context.Context, home, sel, server, why string) ([]re
 	if err != nil {
 		return nil, err
 	}
-	out := []removedConnection{}
-	var errs []error
-	httpc := vendorHTTP()
+	var chosen []*connection.Connection
+	going := map[connection.Key]bool{}
 	for _, c := range list {
 		if sel != "" && !profile.RefMatches(c.Ref, sel) {
 			continue
@@ -692,10 +750,20 @@ func removeConnections(ctx context.Context, home, sel, server, why string) ([]re
 		if server != "" && c.Server != server {
 			continue
 		}
+		chosen = append(chosen, c)
+		going[c.Key()] = true
+	}
+	out := []removedConnection{}
+	var errs []error
+	httpc := vendorHTTP()
+	for _, c := range chosen {
 		rctx, cancel := context.WithTimeout(ctx, revokeTimeout)
 		outcome, rerr := store.Remove(rctx, c.Key(), httpc, clients, why)
 		cancel()
 		r := removedConnection{Ref: c.Ref, Server: c.Server, Revocation: outcome}
+		if outcome == connection.RevokeDone {
+			r.SharesGrantWith = sharedBeyond(list, c, going)
+		}
 		if rerr != nil {
 			r.Error = rerr.Error()
 			errs = append(errs, rerr)
