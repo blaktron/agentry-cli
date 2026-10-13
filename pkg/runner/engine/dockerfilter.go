@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -166,7 +167,8 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		SharedNetworks:  shared,
 		EgressNetworks:  egress,
 		NetworkNames:    names,
-		RelayHosts:      append(relayHosts(plan), rd.hostRelays()...),
+		RelayHosts:      slices.Concat(relayHosts(plan), rd.hostRelays(), rd.browseProxyRelay()),
+		RelayPins:       rd.browseProxyPin(),
 		WebNetwork:      webNet,
 		WebImage:        webImage,
 		WebCmd:          webCmd,
@@ -178,6 +180,9 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		ToolsCmd:        spec.ToolsCmd(),
 		ToolsTmpfs:      toolsTmpfs(plan),
 		ToolsShared:     toolsShared(plan, rd),
+		BrowserImage:    browserImageOf(plan),
+		BrowserUser:     browserUser(),
+		BrowserTmpfs:    browserTmpfsOf(plan),
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
@@ -208,6 +213,22 @@ func toolsShared(plan *spec.Plan, rd *runDirs) map[string]string {
 		return nil
 	}
 	return map[string]string{hostlink.FilesPath: rd.hostFilesDir()}
+}
+
+// browserImageOf and browserTmpfsOf are the docker filter's browser class
+// for a plan with a browser server (agentry-cli#915), and nothing without.
+func browserImageOf(plan *spec.Plan) string {
+	if plan.Browser == nil {
+		return ""
+	}
+	return plan.Browser.Image
+}
+
+func browserTmpfsOf(plan *spec.Plan) map[string]string {
+	if plan.Browser == nil {
+		return nil
+	}
+	return browserTmpfs()
 }
 
 // gatewayOwnerLabel marks what the gateway made through its filter, and so

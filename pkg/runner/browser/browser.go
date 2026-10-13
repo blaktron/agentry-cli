@@ -9,8 +9,13 @@
 package browser
 
 import (
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // ServerName is the browser server's name in the gateway's catalog. A
@@ -110,4 +115,62 @@ func Args(proxy string, secrets bool) []string {
 // seccomp profile lets run under runc (plan §7, M1).
 func Config() []byte {
 	return []byte(`{"browser":{"launchOptions":{"chromiumSandbox":true}}}` + "\n")
+}
+
+// Site is a site the person named for a run's browser (a url question in
+// capabilities.browser.sites): where the browser starts, and the host and
+// port the browse proxy admits for it.
+type Site struct {
+	// URL is the answer, as the agent reads it in intake.json.
+	URL string
+	// Host is its host, lower case, and Port its port where the answer
+	// gave one ("" for the scheme's own).
+	Host, Port string
+}
+
+// ProxyEntry is the site as the browse proxy's --browse-sites takes it:
+// host, or host:port where the answer named a port of its own.
+func (s Site) ProxyEntry() string {
+	if s.Port == "" {
+		return s.Host
+	}
+	return net.JoinHostPort(s.Host, s.Port)
+}
+
+// ParseSite reads a site answer: an http or https URL with a host, no user
+// information, no fragment, at most 2,048 bytes. http is allowed because a
+// site under test may be a staging server without TLS (plan D2).
+func ParseSite(answer string) (Site, error) {
+	answer = strings.TrimSpace(answer)
+	if len(answer) > 2048 {
+		return Site{}, errors.New("a site's address is at most 2,048 characters")
+	}
+	u, err := url.Parse(answer)
+	switch {
+	case err != nil:
+		return Site{}, fmt.Errorf("%q is not a web address: %v", answer, err)
+	case u.Scheme != "http" && u.Scheme != "https":
+		return Site{}, fmt.Errorf("%q is not an http or https address", answer)
+	case u.Hostname() == "":
+		return Site{}, fmt.Errorf("%q names no host", answer)
+	case u.User != nil:
+		return Site{}, fmt.Errorf("%q carries a user name or password: give the site's address alone, and a sign-in as the QuickAgent's declared secrets", answer)
+	case u.Fragment != "" || strings.Contains(answer, "#"):
+		return Site{}, fmt.Errorf("%q carries a fragment (#…)", answer)
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if strings.ContainsAny(host, " \t%") {
+		return Site{}, fmt.Errorf("%q has a host that is not a host name or an address", answer)
+	}
+	port := u.Port()
+	if port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return Site{}, fmt.Errorf("%q has a port that is not one", answer)
+		}
+		if (u.Scheme == "http" && n == 80) || (u.Scheme == "https" && n == 443) {
+			port = ""
+		}
+	}
+	return Site{URL: u.String(), Host: host, Port: port}, nil
 }

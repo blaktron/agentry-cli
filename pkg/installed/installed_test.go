@@ -563,3 +563,42 @@ publish:
 		}
 	}
 }
+
+// TestTheBrowserIsInTheSnapshot (agentry-cli#915, plan browser-testing.md
+// invariant 8): the browser line is part of the recorded contract, so an
+// update that adds one, a host, a secret it may type or site to public
+// asks again, the record reads back what was consented and survives YAML.
+func TestTheBrowserIsInTheSnapshot(t *testing.T) {
+	site := manifest.Capabilities{Browser: &manifest.Browser{Sites: []string{"site"}, Hosts: []string{"cdn.example.com"}}}
+	before, after := Snapshot(manifest.Capabilities{}), Snapshot(site)
+	if after.Browser == nil || !slices.Equal(after.Browser.Hosts, []string{"cdn.example.com"}) {
+		t.Fatalf("snapshot = %+v", after)
+	}
+	if d := DiffCapabilities(before, after); !d.HasWidened() {
+		t.Fatalf("a new browser did not widen: %+v", d)
+	}
+	if d := DiffCapabilities(after, after); !d.Empty() {
+		t.Fatalf("the same browser changed the contract: %+v", d)
+	}
+	for name, next := range map[string]*manifest.Browser{
+		"a host":   {Sites: []string{"site"}, Hosts: []string{"cdn.example.com", "*.stripe.com"}},
+		"a secret": {Sites: []string{"site"}, Hosts: []string{"cdn.example.com"}, Secrets: []string{"SITE_PASSWORD"}},
+		"public":   {Sites: []string{"site"}, Hosts: []string{"cdn.example.com"}, Scope: manifest.BrowserScopePublic},
+		"a site":   {Sites: []string{"site", "staging"}, Hosts: []string{"cdn.example.com"}},
+	} {
+		if d := DiffCapabilities(after, Snapshot(manifest.Capabilities{Browser: next})); !d.HasWidened() {
+			t.Errorf("%s did not widen: %+v", name, d)
+		}
+	}
+	b, err := yaml.Marshal(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back CapSnapshot
+	if err := yaml.Unmarshal(b, &back); err != nil || !DiffCapabilities(after, back).Empty() {
+		t.Fatalf("YAML round trip: %s %v %+v", b, err, back)
+	}
+	if got := Snapshot(after.capabilities()); !DiffCapabilities(after, got).Empty() {
+		t.Fatalf("round trip = %+v", got)
+	}
+}

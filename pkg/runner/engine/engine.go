@@ -291,6 +291,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkTargetHosts(p); err != nil {
 		return fail(env, redact, err)
 	}
+	// A browser is given only as the plan declares it, and not yet to a
+	// hosted run (agentry-cli#915).
+	if err := checkBrowser(p); err != nil {
+		return fail(env, redact, err)
+	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 
 	// Everything below must tear down whatever it built, success or not
@@ -338,6 +343,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		return fail(env, redact, err)
 	}
 	if err := prepareTargetHosts(ctx, d, p, rd, td, env); err != nil {
+		return fail(env, redact, err)
+	}
+	if err := prepareBrowser(ctx, d, p, rd, td, env, secrets); err != nil {
 		return fail(env, redact, err)
 	}
 	// The optional secrets it goes without, before any replacer is built:
@@ -447,6 +455,10 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	// Each target host's calls, the agent having ended (agentry-cli#861).
 	copyHostLogs(rd, env)
+	// The browse proxy's decisions and what the browser saved
+	// (agentry-cli#915).
+	collectBrowseProxyLog(keep, d, rd, env)
+	copyBrowserOut(rd, p.Stderr)
 	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.
@@ -629,6 +641,11 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		// (dockerfilter.go, agentry-cli#220). Runs with relays share a host
 		// without seeing each other's.
 		if err := makeRelayNetworks(ctx, d, runID, td); err != nil {
+			return err
+		}
+		// The browse proxy, on the relay egress network, before the
+		// filter that pins its address for the browser's relay.
+		if err := startBrowseProxy(ctx, d, p, rd, td, runID); err != nil {
 			return err
 		}
 	default:

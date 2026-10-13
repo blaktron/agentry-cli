@@ -93,6 +93,12 @@ type CapSnapshot struct {
 	// reads as "none", so a release that already declared one is asked
 	// about once more.
 	TargetHosts []string `yaml:"targetHosts,omitempty" json:"targetHosts,omitempty"`
+	// Browser is the release's browser line (capabilities.browser; plan
+	// browser-testing.md invariant 8, agentry-cli#915): a new site, host or
+	// secret it may type, or site scope to public, is a widening the
+	// consent gate re-asks about. Absent in records written before the
+	// browser existed, which reads as "no browser".
+	Browser *manifest.Browser `yaml:"browser,omitempty" json:"browser,omitempty"`
 }
 
 // RemoteSnapshot is what a consent recorded of one remote server beside
@@ -149,6 +155,9 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 	}
 	s.Knowledge = slices.Clone(c.Knowledge)
 	s.TargetHosts = slices.Clone(c.TargetHosts)
+	if b := c.Browser; b != nil {
+		s.Browser = &manifest.Browser{Sites: slices.Clone(b.Sites), Hosts: slices.Clone(b.Hosts), Scope: b.Scope, Secrets: slices.Clone(b.Secrets)}
+	}
 	return s
 }
 
@@ -172,6 +181,9 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 		Secrets:     slices.Clone(s.Secrets),
 		Knowledge:   slices.Clone(s.Knowledge),
 		TargetHosts: slices.Clone(s.TargetHosts),
+	}
+	if b := s.Browser; b != nil {
+		c.Browser = &manifest.Browser{Sites: slices.Clone(b.Sites), Hosts: slices.Clone(b.Hosts), Scope: b.Scope, Secrets: slices.Clone(b.Secrets)}
 	}
 	for _, d := range s.DataAccess {
 		c.DataAccess = append(c.DataAccess, manifest.DataAccess(d))

@@ -19,6 +19,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
@@ -118,6 +119,23 @@ func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 // for (agentry-cli#402). A terminal still asks, so a person can mean
 // another value than the source holds.
 func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool) (*Answers, error) {
+	return collect(p, qs, preset, declaredSecrets, fromSource, nil)
+}
+
+// CollectRun is CollectWithSource for a release's run, with its manifest in
+// view: a url question its browser names as a site (capabilities.browser.
+// sites, agentry-cli#915) is the browser's, not an input source. Its
+// answer is an http or https address (browser.ParseSite), kept in Values,
+// so intake.json gives it to the agent, and never downloaded.
+func CollectRun(p setup.Prompter, m *manifest.Manifest, preset map[string]string, fromSource func(name string) bool) (*Answers, error) {
+	var sites []string
+	if b := m.Capabilities.Browser; b != nil {
+		sites = b.Sites
+	}
+	return collect(p, m.Intake, preset, m.Capabilities.Secrets, fromSource, sites)
+}
+
+func collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool, sites []string) (*Answers, error) {
 	a := &Answers{Values: map[string]string{}, Files: map[string]string{}, Secrets: map[string]string{}, FromSource: map[string]bool{}, Sources: map[string]*sources.Source{}, Hosts: map[string]*targethost.Host{}}
 	known := map[string]bool{}
 	for _, q := range qs {
@@ -137,16 +155,19 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 		if typ == "" {
 			typ = manifest.IntakeText
 		}
+		site := typ == manifest.IntakeURL && slices.Contains(sites, q.ID)
 		// A source question is answered only when this CLI can fetch its
 		// kind: an unknown type is never taken as text (agentry-cli#833).
 		var kind sources.Kind
-		if typ.IsSource() {
+		// The browser's site is asked and answered as an address, never
+		// as a source.
+		if typ.IsSource() && !site {
 			k, ok := sources.Lookup(typ)
 			if !ok {
 				return nil, sources.Unfetched(q.ID, typ)
 			}
 			kind = k
-		} else if !knownType(typ) {
+		} else if !site && !knownType(typ) {
 			return nil, fmt.Errorf("intake question %q has the type %q, which this version of agentry does not know", q.ID, typ)
 		}
 		if typ == manifest.IntakeSecret && !declared[SecretName(q.ID)] {
@@ -159,7 +180,11 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 		}
 		if !given && p != nil {
 			var err error
-			if val, err = ask(p, q, typ, kind); err != nil {
+			askAs := typ
+			if site {
+				askAs = manifest.IntakeText
+			}
+			if val, err = ask(p, q, askAs, kind); err != nil {
 				return nil, err
 			}
 		}
@@ -170,6 +195,14 @@ func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset ma
 			if q.Required {
 				return nil, fmt.Errorf("intake question %q is required (answer it on a terminal or pass --intake %s=...)", q.ID, q.ID)
 			}
+			continue
+		}
+		if site {
+			s, err := browser.ParseSite(val)
+			if err != nil {
+				return nil, fmt.Errorf("intake %s: %w", q.ID, err)
+			}
+			a.Values[q.ID] = s.URL
 			continue
 		}
 		if typ.IsSource() {
