@@ -87,6 +87,29 @@ type Connection struct {
 // Key is the connection's key.
 func (c *Connection) Key() Key { return Key{Ref: c.Ref, Digest: c.Digest, Server: c.Server} }
 
+// MadeWith is whether g was made with the client c was made with, at the
+// same issuer. Such a grant replaces c by overwriting it, never by revoking
+// c's refresh token: a vendor that revokes an account's whole grant to a
+// client (Google) would end g, and every other connection made with that
+// client, with it (agentry-cli#702).
+func (c *Connection) MadeWith(g *mcpauth.Grant) bool {
+	return c.Client.ID != "" && c.Client.ID == g.Client.ID && c.Issuer == g.Discovery.Server.Issuer
+}
+
+// SharesGrant is every other connection in all made with c's client at c's
+// issuer: the connections a vendor that revokes the whole grant ends when
+// c is revoked. A grant shared across one vendor project's different
+// clients (Google's revocation is per project) is not seen here.
+func SharesGrant(all []*Connection, c *Connection) []*Connection {
+	var out []*Connection
+	for _, o := range all {
+		if o.Key() != c.Key() && c.Client.ID != "" && o.Client.ID == c.Client.ID && o.Issuer == c.Issuer {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
 // secrets is the half never written beside the record.
 type secrets struct {
 	RefreshToken string `json:"refreshToken,omitempty"`
@@ -157,7 +180,8 @@ func (s *Store) load(id string) (*Connection, error) {
 }
 
 // Put keeps a finished consent as k's connection, replacing any before it
-// (whose grant the caller revokes, if it wants to).
+// (whose grant the caller revokes, if it wants to, and only when the new
+// grant was not made with the same client: MadeWith).
 func (s *Store) Put(k Key, g *mcpauth.Grant, label string) (*Connection, error) {
 	if g.Token.RefreshToken == "" {
 		return nil, fmt.Errorf("%s gave no refresh token, so the connection cannot be kept for the next run", k.Server)
@@ -412,8 +436,20 @@ func (s *Store) Remove(ctx context.Context, k Key, httpc *http.Client, clients *
 	// would let a third lock a new file beside the old one.
 	rmErr := errors.Join(storefile.RemoveIfThere(s.secretPath(id)), storefile.RemoveIfThere(s.recordPath(id)))
 	unlock()
-	s.audit(c, why, outcome)
+	s.audit(c, "removed", why, outcome)
 	return outcome, rmErr
+}
+
+// RevokeSameClient is the outcome a replacement made with the same client
+// records: the old refresh token is dropped from the store, not revoked
+// (MadeWith).
+const RevokeSameClient = "not attempted: replaced by a grant made with the same client, which a vendor that revokes the whole grant would end too"
+
+// RecordReplaced writes old's replacement by a grant made with the same
+// client to the audit log, as a removal is, with RevokeSameClient as its
+// outcome: the caller then overwrites it with Put.
+func (s *Store) RecordReplaced(old *Connection, why string) {
+	s.audit(old, "replaced", why, RevokeSameClient)
 }
 
 func (s *Store) revoke(ctx context.Context, c *Connection, id string, httpc *http.Client, clients *Clients) string {
@@ -438,11 +474,11 @@ func (s *Store) revoke(ctx context.Context, c *Connection, id string, httpc *htt
 	return RevokeDone
 }
 
-// audit appends a removal to the store's log: what, why and the
-// revocation's outcome, never a token.
-func (s *Store) audit(c *Connection, why, outcome string) {
+// audit appends a removal or a replacement to the store's log: what, why
+// and the revocation's outcome, never a token.
+func (s *Store) audit(c *Connection, action, why, outcome string) {
 	line, _ := json.Marshal(map[string]string{
-		"at": s.stamp(), "action": "removed", "why": why,
+		"at": s.stamp(), "action": action, "why": why,
 		"ref": c.Ref, "digest": c.Digest, "server": c.Server, "issuer": c.Issuer, "revocation": outcome,
 	})
 	f, err := os.OpenFile(filepath.Join(s.dir, "audit.ndjson"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // our store layout

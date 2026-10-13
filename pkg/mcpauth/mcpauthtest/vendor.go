@@ -46,6 +46,10 @@ type Vendor struct {
 	// asked to be public included, and names no auth method in the answer
 	// (a vendor that makes every client confidential).
 	SecretAnyway bool
+	// WholeGrant revokes, with any one refresh token, every refresh token
+	// issued to the same client, as Google ends an account's whole grant to
+	// a client (agentry-cli#702).
+	WholeGrant bool
 
 	mu       sync.Mutex
 	codes    map[string]codeGrant
@@ -257,8 +261,16 @@ func (v *Vendor) register(w http.ResponseWriter, r *http.Request) {
 func (v *Vendor) revoke(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	v.mu.Lock()
-	v.Revoked = append(v.Revoked, r.PostForm.Get("token"))
-	delete(v.refresh, r.PostForm.Get("token"))
+	tok := r.PostForm.Get("token")
+	v.Revoked = append(v.Revoked, tok)
+	if owner, ok := v.refresh[tok]; ok && v.WholeGrant {
+		for rt, id := range v.refresh {
+			if id == owner {
+				delete(v.refresh, rt)
+			}
+		}
+	}
+	delete(v.refresh, tok)
 	v.mu.Unlock()
 	w.WriteHeader(http.StatusOK)
 }
