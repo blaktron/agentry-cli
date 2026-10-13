@@ -110,6 +110,15 @@ const (
 	// agentry-dockerimages' hostlink workflow, and CI holds this pin to that
 	// signature (scripts/verify-hostlink-image.sh).
 	DefaultHostlinkImage = "ghcr.io/blaktron/agentry-hostlink:2026.10.11.1@sha256:66f9fc5ce5223278676faad73d9cde005784ea6a35a64258ca47d1c662c0b099"
+	// DefaultBrowserImage is the browser server's image, for a release
+	// that declares capabilities.browser (agentry-notes
+	// plans/browser-testing.md D3, D5; agentry-dockerimages#82):
+	// Microsoft's @playwright/mcp 0.0.83 with the Chrome for Testing build
+	// of the Playwright it pins and a Chrome policy that turns ECH off, on
+	// the ubuntu:noble mirror, amd64 and arm64, pinned by digest and
+	// pulled. Signed keyless by agentry-dockerimages' browser workflow, and
+	// CI holds this pin to that signature (scripts/verify-browser-image.sh).
+	DefaultBrowserImage = "ghcr.io/blaktron/agentry-browser:2026.10.13.1@sha256:61bf9d5577ebf0aea1059bab30bd9e06a9c4011ba42792b06bd66f99c41b5af7"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against (plan file-handling.md §7, D15;
 	// agentry-cli#563): a tag agentry-dockerimages' clamav-db workflow moves
@@ -133,6 +142,9 @@ type Policy struct {
 	// AllowWildcardEgress gates manifest `network.egress: "*"` (§R4).
 	// Default false: a wildcard agent is refused at compile time.
 	AllowWildcardEgress bool `yaml:"allowWildcardEgress"`
+	// Browser governs a release's browser (capabilities.browser; plan
+	// browser-testing.md D12): whether one may reach any public site.
+	Browser BrowserPolicy `yaml:"browser,omitempty"`
 	// SecretSource is where declared secret values are resolved from.
 	SecretSource SecretSource `yaml:"secretSource"`
 	// DataAccessServers maps a manifest dataAccess category to operator
@@ -183,6 +195,17 @@ type Policy struct {
 	// $HYBRID_API_KEY from the environment, as a sandbox host hands the
 	// platform's; no key, no lookup, and the receipt says so (D8).
 	HybridAnalysis HybridAnalysisKey `yaml:"hybridAnalysis,omitempty"`
+}
+
+// BrowserPolicy is the operator's say over a release's browser (plan
+// browser-testing.md D1, D12). Its own key beside allowWildcardEgress: an
+// operator may let a site tester test any public site and still refuse
+// "*" egress to the tools container's fetch, or the reverse.
+type BrowserPolicy struct {
+	// AllowPublicWeb lets a browser whose scope is public reach any public
+	// site, on ports 80 and 443. Default false: such a release is refused
+	// at compile time, as "*" egress is.
+	AllowPublicWeb bool `yaml:"allowPublicWeb,omitempty"`
 }
 
 // ExecPolicy is the exec catalog (agentry-cli#100). The manifest keeps
@@ -477,6 +500,19 @@ type Images struct {
 	// Hostlink is the host link's base image, pinned by digest ("" =
 	// DefaultHostlinkImage; see HostlinkImage).
 	Hostlink string `yaml:"hostlink,omitempty"`
+	// Browser is the browser server's image, pinned by digest ("" =
+	// DefaultBrowserImage; see BrowserImage).
+	Browser string `yaml:"browser,omitempty"`
+}
+
+// BrowserImage is the browser server's image this policy names:
+// images.browser, else the CLI's pinned default, resolved at use as
+// HostlinkImage is.
+func (i Images) BrowserImage() string {
+	if i.Browser != "" {
+		return i.Browser
+	}
+	return DefaultBrowserImage
 }
 
 // HostlinkImage is the host link's base this policy names: images.hostlink,
@@ -952,6 +988,9 @@ func (p *Policy) Validate() error {
 	if p.Images.Files != "" && !PinnedByDigest(p.Images.Files) {
 		return fmt.Errorf("images.files %q must be pinned by digest (<name>@sha256:<64 hex>): the files image is pulled by digest only", p.Images.Files)
 	}
+	if p.Images.Browser != "" && !PinnedByDigest(p.Images.Browser) {
+		return fmt.Errorf("images.browser %q must be pinned by digest (<name>@sha256:<64 hex>): the browser server's image is pulled by digest only", p.Images.Browser)
+	}
 	if p.Images.Hostlink != "" && !PinnedByDigest(p.Images.Hostlink) {
 		return fmt.Errorf("images.hostlink %q must be pinned by digest (<name>@sha256:<64 hex>): the host link's image is pulled by digest only", p.Images.Hostlink)
 	}
@@ -1222,6 +1261,10 @@ images:
   # (a server the person names when the run starts) with. Pulled by
   # digest; unset, the CLI's pinned default is used.
   # hostlink: ghcr.io/blaktron/agentry-hostlink:<tag>@sha256:<digest>
+  # The browser server's image: a headless Chromium and Microsoft's
+  # Playwright MCP server, for a QuickAgent that declares a browser.
+  # Pulled by digest; unset, the CLI's pinned default is used.
+  # browser: ghcr.io/blaktron/agentry-browser:<tag>@sha256:<digest>
 
 model:
   # anthropic | openai | google, or custom for an OpenAI-compatible
@@ -1256,6 +1299,12 @@ model:
 
 # Manifest 'network.egress: "*"' is refused unless you set this true.
 allowWildcardEgress: false
+
+# A QuickAgent's browser (capabilities.browser) reaches the site you name
+# when the run starts and the hosts it declares. One whose scope is
+# public, any public site, is refused unless you set this true.
+# browser:
+#   allowPublicWeb: false
 
 secretSource:
   # env: declared secret names resolve from the invoking environment.

@@ -93,6 +93,15 @@ const (
 	// link's passwd file names it (ssh refuses a uid it has no entry for,
 	// DR-91), and its credential files stay the person's own, 0600.
 	PHHostLinkUser = "@@RUN_HOSTLINK_USER@@"
+	// PHBrowserUser is the user the browser server runs as (agentry-cli#915):
+	// the invoking uid:gid, as the host link runs, so its output folder and
+	// its secrets file stay the person's own, 0700 and 0600; the image's
+	// own user where the machine has none (Windows).
+	PHBrowserUser = "@@RUN_BROWSER_USER@@"
+	// PHBrowseProxy is the browse proxy's run-unique container name
+	// (agentry-cli#915): the browser server's one allowHosts entry and its
+	// --proxy-server, known only to the run.
+	PHBrowseProxy = "@@RUN_BROWSE_PROXY@@"
 )
 
 // PHTargetHost is a target host's relay target, address:port, by its
@@ -305,6 +314,9 @@ type Plan struct {
 	// target host (agentry-cli#861): built on this machine from the pinned
 	// base and the runner image, as the files image is.
 	HostLink *HostLinkSpec `json:"hostLink,omitempty"`
+	// Browser is the browser server's image, where the release declares
+	// capabilities.browser (agentry-cli#915): pulled by digest, never built.
+	Browser *BrowserSpec `json:"browser,omitempty"`
 	// Harness describes the adapter and the agent container.
 	Harness HarnessSpec `json:"harness"`
 	// Proxy describes the LLM egress proxy sidecar.
@@ -397,6 +409,10 @@ type CapSummary struct {
 	// runtime-hosts.md §4, agentry-cli#861): the host link and its tools,
 	// reached through the gateway.
 	TargetHosts []string `json:"targetHosts,omitempty"`
+	// Browser is the release's browser line (capabilities.browser; plan
+	// browser-testing.md §5, agentry-cli#915): the browser server and the
+	// browse proxy that holds its scope.
+	Browser *BrowserCap `json:"browser,omitempty"`
 	// Scratch is the runner's grant of the scratch folder (scratch_list,
 	// scratch_read, scratch_write over ScratchMount; plan
 	// scratch-and-pdf-reports.md D1-D5, agentry-cli#729) to every
@@ -404,6 +420,46 @@ type CapSummary struct {
 	// sets it for every package but a built-in.
 	Scratch bool `json:"scratch,omitempty"`
 }
+
+// BrowserCap is capabilities.browser, normalized: the site questions, the
+// fixed hosts (lower case), whether the scope is any public site, and the
+// declared secrets the browser may type.
+type BrowserCap struct {
+	Sites   []string `json:"sites,omitempty"`
+	Hosts   []string `json:"hosts,omitempty"`
+	Public  bool     `json:"public,omitempty"`
+	Secrets []string `json:"secrets,omitempty"`
+}
+
+// BrowserSpec is the browser server's image, a digest-pinned reference.
+type BrowserSpec struct {
+	Image string `json:"image"`
+}
+
+// The run folders the browser server reads and writes, under the run's cfg.
+const (
+	// BrowserOutDir is the browser server's output folder, bound
+	// read-write into it alone and read-only into the tools server at
+	// BrowserOutMount; the engine copies it into reports/browser/ when the
+	// run ends. It is a folder of its own, not reports/browser/ itself:
+	// the tools server writes reports/, and the docker filter binds no
+	// folder inside one a container writes (agentry-cli#855).
+	BrowserOutDir = "browserout"
+	// BrowserDir holds the server's config and, for a line that declares
+	// browser secrets, the --secrets file (0600), bound read-only into the
+	// browser server alone.
+	BrowserDir = "browser"
+	// BrowserSecretsFile is that file's name in BrowserDir.
+	BrowserSecretsFile = "secrets.env"
+	// BrowserReports is where the browser's files reach the person, under
+	// the run's output folder.
+	BrowserReports = "browser"
+)
+
+// BrowserOutMount is where the tools server reads the browser's files:
+// inside its output folder, as reports/browser/ is on the person's
+// machine, so a report can name them and export_pdf can draw them.
+const BrowserOutMount = OutMount + "/" + BrowserReports
 
 // HostLinkSpec is the host link's image: the local tag the gateway's
 // catalog names, and the digest-pinned base it is built on.

@@ -33,6 +33,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/dirpublish"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
+	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -197,6 +198,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.TargetHosts = append([]string(nil), m.Capabilities.TargetHosts...)
 	}
+	// The browser (agentry-cli#915): the browser server and the browse
+	// proxy that holds its scope.
+	if caps.Browser, err = browserCap(m.Capabilities.Browser, in); err != nil {
+		return nil, err
+	}
 	instructionPath, body, err := deriveInstruction(m, in.WorkspaceDir)
 	if err != nil {
 		return nil, err
@@ -260,7 +266,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 					`declared MCP server %s requests egress "*": the runner gives a declared server no unrestricted network, only a relay per declared host; declare the hosts it needs`, srv.Name)}
 			}
 		}
-		if srv.Name == spec.ToolServerName || srv.Name == hostlink.ServerName {
+		if srv.Name == spec.ToolServerName || srv.Name == hostlink.ServerName || srv.Name == browser.ServerName {
 			return nil, fmt.Errorf("declared MCP server resolves to the reserved name %q", srv.Name)
 		}
 		if _, dup := extraEntries[srv.Name]; dup {
@@ -280,8 +286,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		schema:       len(schemaJSON) > 0,
 		intake:       len(m.Intake) > 0,
 		repositories: questionsOf(m, manifest.IntakeRepository),
-		files:        questionsOf(m, manifest.IntakeURL),
+		files:        fileQuestions(m),
 		hosts:        caps.TargetHosts,
+		browser:      caps.Browser,
 		inputView:    inputView,
 		review:       in.Review,
 		budget:       budget,
@@ -317,7 +324,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, err
 		}
 	}
-	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, in.RunnerImage, extraServers, extraEntries, in.MCPServers, hostLink); err != nil {
+	var browserSpec *spec.BrowserSpec
+	if caps.Browser != nil {
+		browserSpec = &spec.BrowserSpec{Image: in.Policy.Images.BrowserImage()}
+		files[browserConfigFile] = browser.Config()
+	}
+	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, in.RunnerImage, extraServers, extraEntries, in.MCPServers, hostLink, browserSpec); err != nil {
 		return nil, err
 	}
 
@@ -363,6 +375,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if hostLink != nil {
 		servers = append(servers, hostlink.ServerName)
 	}
+	if browserSpec != nil {
+		servers = append(servers, browser.ServerName)
+	}
 	sort.Strings(servers)
 
 	plan := &spec.Plan{
@@ -387,6 +402,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Enforcement:  enforcement(caps, m.Capabilities.Secrets, m.Capabilities.OptionalSecrets, extraServers, in.Policy, in.MCPServers),
 		ExecImage:    execImage,
 		HostLink:     hostLink,
+		Browser:      browserSpec,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, in.MCPServers),
 		Harness: spec.HarnessSpec{
 			Adapter:     adapterName,
@@ -420,6 +436,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, budget, caps)
 	if hostLink != nil {
 		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
+	}
+	if caps.Browser != nil {
+		plan.Enforcement["browser"] = browserEnforcement(caps.Browser, in.Policy)
 	}
 
 	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && (in.Web || in.Policy.Docker.Runtime != "") {
@@ -934,6 +953,9 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 	if len(caps.TargetHosts) > 0 {
 		writable = append(writable, hostLinkWritable()...)
 	}
+	if caps.Browser != nil {
+		writable = append(writable, browserWritable()...)
+	}
 	return spec.GatewaySpec{
 		Image: image,
 		Args: append([]string{
@@ -976,7 +998,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 // the files map.
 func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.CapSummary,
 	secrets []string, toolsImage, runnerImage string, extraServers []string, extraEntries map[string]yaml.Node,
-	mcpServers []spec.MCPServerSpec, hostLink *spec.HostLinkSpec,
+	mcpServers []spec.MCPServerSpec, hostLink *spec.HostLinkSpec, browserSpec *spec.BrowserSpec,
 ) error {
 	tspecJSON, err := json.MarshalIndent(tspec, "", "  ")
 	if err != nil {
@@ -1001,6 +1023,9 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	if hostLink != nil {
 		catalog.set(hostlink.ServerName, hostLinkEntry(caps.TargetHosts, hostLink.Image))
 	}
+	if browserSpec != nil {
+		catalog.set(browser.ServerName, browserEntry(caps.Browser, browserSpec.Image))
+	}
 	catalogDoc := yamlMap{}
 	catalogDoc.set("registry", catalog.node())
 	b, err := marshalYAML("# generated by agentry run — gateway server catalog (RUNNER-PLAN §R4)\n", catalogDoc.node())
@@ -1016,6 +1041,9 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	}
 	if hostLink != nil {
 		names = append(names, hostlink.ServerName)
+	}
+	if browserSpec != nil {
+		names = append(names, browser.ServerName)
 	}
 	sort.Strings(names)
 	for _, name := range names {
@@ -1046,6 +1074,11 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	}
 	if hostLink != nil {
 		tools.set(hostlink.ServerName, strListNode(hostlink.Tools))
+	}
+	// The browser's filter is an allowlist (plan D7), without
+	// browser_evaluate where the line declares secrets (D9).
+	if browserSpec != nil {
+		tools.set(browser.ServerName, strListNode(browser.Tools(len(caps.Browser.Secrets) > 0)))
 	}
 	if b, err = marshalYAML("# generated by agentry run — per-server tool allowlist\n", tools.node()); err != nil {
 		return err
@@ -1393,6 +1426,11 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// beneath the scratch tmpfs.
 	if len(caps.TargetHosts) > 0 {
 		vols = append(vols, hostFilesVolume())
+	}
+	// The browser's output folder, read-only, inside the tools server's
+	// output folder (agentry-cli#915).
+	if caps.Browser != nil {
+		vols = append(vols, browserOutVolume())
 	}
 	e.set("volumes", strListNode(vols))
 
@@ -1959,6 +1997,17 @@ func plainHTTPTargets(pol *policy.Policy) []string {
 }
 
 // questionsOf are the ids of a manifest's intake questions of one type.
+// fileQuestions are the url questions whose answer is downloaded as an
+// input: every one but a browser's site, which the browser opens instead
+// (agentry-cli#915).
+func fileQuestions(m *manifest.Manifest) []string {
+	var sites []string
+	if b := m.Capabilities.Browser; b != nil {
+		sites = b.Sites
+	}
+	return slices.DeleteFunc(questionsOf(m, manifest.IntakeURL), func(id string) bool { return slices.Contains(sites, id) })
+}
+
 func questionsOf(m *manifest.Manifest, t manifest.IntakeType) []string {
 	var out []string
 	for _, q := range m.Intake {
