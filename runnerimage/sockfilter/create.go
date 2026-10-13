@@ -339,6 +339,16 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err := f.toolsTmpfs(ctx, &c, imageID); err != nil {
 		return nil, err
 	}
+	// The browser server's class (browser.go, agentry-cli#915).
+	browser, err := f.isBrowser(ctx, imageID)
+	if err != nil {
+		return nil, err
+	}
+	if browser {
+		if err := f.browserShape(&c); err != nil {
+			return nil, err
+		}
+	}
 	if err := f.bound(hc); err != nil {
 		return nil, err
 	}
@@ -350,6 +360,7 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		if err := f.relayShape(&c, relay); err != nil {
 			return nil, err
 		}
+		f.relayPinHosts(&c)
 		if f.cfg.RelayResolvConf != "" && f.cfg.Runtime != "" {
 			// Under the run's runtime, with the run's own name servers
 			// (agentry-cli#337): added after the shape check, which holds
@@ -365,7 +376,8 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		}
 		hc.Runtime = f.cfg.Runtime
 	}
-	capabilities(hc, web || tools, relay != "")
+	// A relay and the browser server get no capability back.
+	capabilities(hc, web || tools, relay != "" || browser)
 	c.Labels = f.label(c.Labels)
 	return c, nil
 }
