@@ -902,8 +902,8 @@ func resolveMounts(mounts []spec.Mount, rep *strings.Replacer) []dockerx.Mount {
 const selinuxRoot = "/sys/fs/selinux"
 
 // containerFileType is the SELinux type a container may read and write —
-// the same one docker's `z` mount option applies, and with no category, so
-// every container in the run shares it.
+// the same one docker's `z` mount option applies. With sharedLevel, no
+// category, every container in the run shares it.
 const containerFileType = "container_file_t"
 
 // relabelForToolContainers gives the directories the GATEWAY binds into the
@@ -915,6 +915,13 @@ const containerFileType = "container_file_t"
 // confined tool container is refused every read: the QuickAgent's fs_read
 // comes back denied, the model retries, and the run dies on the turn budget
 // instead of on anything that names the real cause (agentry-cli#85).
+//
+// Each gets the type and the level with no category, as docker's `z` labels
+// (chconArgs). The type alone kept the categories a folder inherits from its
+// parent: a runner home under a directory docker once bound with `Z` carried
+// that old container's pair, and every tool container, running under
+// categories of its own, was refused the run's inputs and output folder
+// (agentry-cli#680, agentry-cli#617).
 //
 // Best effort on purpose. A host without SELinux has nothing to do here,
 // and where the relabel cannot be done the run continues and fails with the
@@ -932,12 +939,7 @@ func relabelForToolContainers(ctx context.Context, stderr io.Writer, targets ...
 		if t.dir == "" {
 			continue
 		}
-		args := []string{"-t", containerFileType}
-		if t.recursive {
-			args = append(args, "-R")
-		}
-		args = append(args, t.dir)
-		out, cerr := exec.CommandContext(ctx, chcon, args...).CombinedOutput() //nolint:gosec // our own run directories
+		out, cerr := exec.CommandContext(ctx, chcon, chconArgs(t)...).CombinedOutput() //nolint:gosec // our own run directories
 		if cerr != nil {
 			_, _ = fmt.Fprintf(stderr, "note: could not label %s for the tool containers: %v %s\n", t.dir, cerr, bytes.TrimSpace(out))
 		}
@@ -959,7 +961,7 @@ func relabelShared(ctx context.Context, stderr io.Writer, dir string) {
 	if err != nil {
 		return // relabelForToolContainers has said so already
 	}
-	out, cerr := exec.CommandContext(ctx, chcon, "-R", "-t", containerFileType, "-l", sharedLevel, dir).CombinedOutput() //nolint:gosec // our own run directory
+	out, cerr := exec.CommandContext(ctx, chcon, chconArgs(relabelTarget{dir, true})...).CombinedOutput() //nolint:gosec // our own run directory
 	if cerr != nil {
 		_, _ = fmt.Fprintf(stderr, "note: could not label %s for its server's container: %v %s\n", dir, cerr, bytes.TrimSpace(out))
 	}
@@ -967,6 +969,17 @@ func relabelShared(ctx context.Context, stderr io.Writer, dir string) {
 
 // sharedLevel is the SELinux level with no category, docker's `z`.
 const sharedLevel = "s0"
+
+// chconArgs is chcon's arguments for one target: docker's `z` label, the
+// type and the level with no category, through what the folder holds when
+// the target says so.
+func chconArgs(t relabelTarget) []string {
+	args := []string{"-t", containerFileType, "-l", sharedLevel}
+	if t.recursive {
+		args = append(args, "-R")
+	}
+	return append(args, t.dir)
+}
 
 // relabelTarget is one directory to label, and whether its contents go with
 // it. Recursing is right for the directories the runner made under its own
@@ -1004,9 +1017,16 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 // relabelTargetsFor adds the ledgers a run has, the only files of the
 // receipts the tools server appends to: the web tools' (web.go), the
 // review's (review.go), the calls ledger (blocked.go), the PDF ledger
-// (pdf.go) and the fetch ledger (fetchsave.go).
+// (pdf.go) and the fetch ledger (fetchsave.go). The receipts folder itself
+// goes first, without its files: a tool container reaches a ledger through
+// it, and a folder that kept its parent's categories refused even that
+// (`mkdir /out/receipts: permission denied`, agentry-cli#617). The other
+// receipts stay as the runner wrote them.
 func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	t := relabelTargets(rd)
+	if rd.receiptsDir != "" {
+		t = append(t, relabelTarget{rd.receiptsDir, false})
+	}
 	if rd.callsLedger != "" {
 		t = append(t, relabelTarget{rd.callsLedger, false})
 	}
