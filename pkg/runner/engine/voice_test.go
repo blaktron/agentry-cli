@@ -75,7 +75,7 @@ func TestVoiceIsStagedGrantedAndNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(string(tools), "  - read_input\n  - search_inputs\n  - scratch_list\n  - scratch_read\n  - scratch_write\n  - scratch_search\n  - voice_read\n  - write_report\n  - export_pdf\n") {
+	if !strings.HasSuffix(string(tools), "  - read_input\n  - search_inputs\n  - scratch_list\n  - scratch_read\n  - scratch_write\n  - scratch_search\n  - grep\n  - glob\n  - voice_read\n  - write_report\n  - export_pdf\n") {
 		t.Fatalf("rendered tools.yaml =\n%s", tools)
 	}
 
