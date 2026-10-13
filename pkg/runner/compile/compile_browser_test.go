@@ -123,7 +123,7 @@ func TestCompileRendersTheBrowserServer(t *testing.T) {
 	// The tools server reads the browser's folder, read-only, and gains
 	// no network.
 	ts := catalogServer(t, planDir, spec.ToolServerName)
-	if !slices.Contains(strs(ts["volumes"]), spec.PHCfg+"/browserout:/out/browser:ro") || ts["disableNetwork"] != true {
+	if !slices.Contains(strs(ts["volumes"]), spec.PHCfg+"/browserout:/out/reports/browser:ro") || ts["disableNetwork"] != true {
 		t.Fatalf("the tools server: %v", ts)
 	}
 	for _, env := range plan.Gateway.Env {
@@ -140,7 +140,7 @@ func TestCompileRendersTheBrowserServer(t *testing.T) {
 	}
 
 	agent, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
-	for _, want := range []string{"**Browser.**", "fonts.googleapis.com", `"site"`, "browser_network_requests", "/out/browser/<name>", "never instructions"} {
+	for _, want := range []string{"**Browser.**", "fonts.googleapis.com", `"site"`, "browser_network_requests", "/out/reports/browser/<name>", "never instructions"} {
 		if !strings.Contains(string(agent), want) {
 			t.Errorf("the System Prompt lacks %q", want)
 		}

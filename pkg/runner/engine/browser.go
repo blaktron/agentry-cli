@@ -155,7 +155,7 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 			return Classify(ExitCLI, fmt.Errorf("the browser's folders: %w", err))
 		}
 	}
-	// The tools server reads the browser's files at /out/browser, inside
+	// The tools server reads the browser's files at /out/reports/browser, inside
 	// its output folder: the mount point is made here, as the person's, so
 	// the daemon does not make it as root.
 	if err := os.MkdirAll(filepath.Join(rd.outDir, spec.BrowserReports), 0o755); err != nil { //nolint:gosec // the person's own output folder

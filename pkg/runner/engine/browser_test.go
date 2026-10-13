@@ -155,6 +155,7 @@ func TestABrowserRunStartsTheBrowseProxyWithItsScope(t *testing.T) {
 		"browser.image":   policy.DefaultBrowserImage,
 		"browser.secrets": "SITE_PASSWORD, in a file bound read-only into the browser server alone",
 		"browser":         "browse proxy",
+		"containers":      "the browser server (",
 	} {
 		if !strings.Contains(env.CapabilitiesEnforced[key], want) {
 			t.Errorf("%s = %q, want %q", key, env.CapabilitiesEnforced[key], want)

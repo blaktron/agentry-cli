@@ -452,13 +452,13 @@ const (
 	// BrowserSecretsFile is that file's name in BrowserDir.
 	BrowserSecretsFile = "secrets.env"
 	// BrowserReports is where the browser's files reach the person, under
-	// the run's output folder.
-	BrowserReports = "browser"
+	// the run's output folder: reports/browser/ (plan D8).
+	BrowserReports = "reports/browser"
 )
 
 // BrowserOutMount is where the tools server reads the browser's files:
-// inside its output folder, as reports/browser/ is on the person's
-// machine, so a report can name them and export_pdf can draw them.
+// inside its output folder, where reports/browser/ is, so a report can name
+// them and export_pdf can draw them.
 const BrowserOutMount = OutMount + "/" + BrowserReports
 
 // HostLinkSpec is the host link's image: the local tag the gateway's
