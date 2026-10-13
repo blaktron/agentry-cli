@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -467,5 +468,37 @@ func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
 		if gotRec != recursive {
 			t.Errorf("%s recursive = %v, want %v", dir, gotRec, recursive)
 		}
+	}
+}
+
+// TestChconLabelsAtTheSharedLevel pins the label every run folder gets:
+// the type and the level with no category, docker's `z`. With the type
+// alone, chcon keeps the categories a folder inherits, and a runner home
+// under a parent once bound with `Z` (the workstation's ~/scratch was
+// s0:c121,c718) left every tool container, under categories of its own,
+// refused its inputs and output folder (agentry-cli#680, agentry-cli#617).
+func TestChconLabelsAtTheSharedLevel(t *testing.T) {
+	for _, tc := range []struct {
+		target relabelTarget
+		want   []string
+	}{
+		{relabelTarget{"/run/x/inputs-text", true}, []string{"-t", "container_file_t", "-l", "s0", "-R", "/run/x/inputs-text"}},
+		// The operator's output folder: the folder itself, never its files (agentry-cli#88).
+		{relabelTarget{"/home/me/out", false}, []string{"-t", "container_file_t", "-l", "s0", "/home/me/out"}},
+	} {
+		if got := chconArgs(tc.target); !slices.Equal(got, tc.want) {
+			t.Errorf("chconArgs(%v) = %q, want %q", tc.target, got, tc.want)
+		}
+	}
+}
+
+// TestRelabelTargetsReachTheReceiptsFolder: the tools server appends its
+// ledgers under /out/receipts, so the folder is labelled for the tool
+// containers, and only the folder: the runner's own receipts in it are
+// not (agentry-cli#617).
+func TestRelabelTargetsReachTheReceiptsFolder(t *testing.T) {
+	rd := &runDirs{outDir: "/home/me/out", receiptsDir: "/home/me/out/receipts"}
+	if !slices.Contains(relabelTargetsFor(rd), relabelTarget{"/home/me/out/receipts", false}) {
+		t.Fatalf("the receipts folder is not labelled, or is labelled through: %v", relabelTargetsFor(rd))
 	}
 }
