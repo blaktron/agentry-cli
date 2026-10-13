@@ -1467,6 +1467,13 @@ Review read.
 
 The operator policy (`~/.agentry/runner/policy.yaml`, created on first
 use) pins images, names the model endpoint, and gates wildcard egress.
+On upgrade, exact former generated Docker agent image defaults resolve to
+the current digest pin when the policy loads, so the image follows the
+adapter's config schema. This leaves the policy file and its hash unchanged.
+Other image references are kept as the operator's choice; a custom pin naming
+the known incompatible 1.128.0 release is refused before a run starts, with
+the policy field and current default named. An image under another name is
+the operator's to make compatible with the adapter's schema.
 
 The as-built architecture is [ARCHITECTURE.md](https://github.com/blaktron/agentry-notes/blob/main/ARCHITECTURE.md) §6
 in agentry-notes, where [RUNNER-DEVIATIONS.md](https://github.com/blaktron/agentry-notes/blob/main/agentry-cli/RUNNER-DEVIATIONS.md)
