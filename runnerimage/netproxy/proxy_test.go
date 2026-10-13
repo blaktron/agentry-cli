@@ -112,22 +112,15 @@ func dialProxy(t *testing.T, proxyAddr, method, target, host string) (net.Conn, 
 }
 
 func TestConnectTunnelEndToEnd(t *testing.T) {
-	echo := startEcho(t)
+	echo := startTLSEcho(t)
 	target := echo.Addr().String()
 	logs := &lockedBuf{}
 	addr := startProxy(t, &Proxy{Allow: []string{target}, Logw: logs})
 
-	c, br, status := dialProxy(t, addr, http.MethodConnect, target, target)
-	if status != "HTTP/1.1 200 Connection Established" {
-		t.Fatalf("status = %q", status)
-	}
-	// Bytes must round-trip through the tunnel in both directions.
-	if _, err := c.Write([]byte("ping through tunnel\n")); err != nil {
-		t.Fatal(err)
-	}
-	line, err := br.ReadString('\n')
-	if err != nil || line != "ping through tunnel\n" {
-		t.Fatalf("echoed line = %q, err %v", line, err)
+	// Bytes must round-trip through the tunnel in both directions, over
+	// TLS: a tunnel carries nothing but a ClientHello first (sni.go).
+	if err := tlsThrough(openTunnel(t, addr, target), "127.0.0.1"); err != nil {
+		t.Fatalf("TLS through the tunnel: %v", err)
 	}
 	if !strings.Contains(logs.String(), "allow "+target) {
 		t.Fatalf("log missing allow line: %q", logs.String())
@@ -201,7 +194,7 @@ func freePort(t *testing.T) string {
 // test-facing Handler) end to end: it must announce itself, bind the addr,
 // and carry a permitted tunnel.
 func TestListenAndServe(t *testing.T) {
-	echo := startEcho(t)
+	echo := startTLSEcho(t)
 	target := echo.Addr().String()
 	logs := &lockedBuf{}
 	p := &Proxy{Allow: []string{target}, Logw: logs}
@@ -240,11 +233,8 @@ func TestListenAndServe(t *testing.T) {
 			break
 		}
 	}
-	if _, err := conn.Write([]byte("ping\n")); err != nil {
-		t.Fatal(err)
-	}
-	if line, err := br.ReadString('\n'); err != nil || line != "ping\n" {
-		t.Fatalf("echo through ListenAndServe tunnel = (%q, %v)", line, err)
+	if err := tlsThrough(tunnelConn{Conn: conn, r: br}, "127.0.0.1"); err != nil {
+		t.Fatalf("TLS through the ListenAndServe tunnel: %v", err)
 	}
 	if !strings.Contains(logs.String(), "llm-proxy listening on "+addr) {
 		t.Errorf("startup line missing from receipts log: %q", logs.String())

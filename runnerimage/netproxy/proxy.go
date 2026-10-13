@@ -5,8 +5,11 @@
 // operator's model endpoints (policy.model.proxyAllow). Manifest egress
 // hosts never appear here; those are tool-plane grants served by fetch.
 //
-// The proxy deliberately does not inspect TLS (RUNNER-DEVIATIONS DR-6):
+// The proxy deliberately does not decrypt TLS (RUNNER-DEVIATIONS DR-6):
 // the control is which host:port a tunnel may reach, not what crosses it.
+// It reads one thing in clear, the ClientHello's server name, and refuses
+// a tunnel whose name is not the host it was opened to (agentry-cli#616,
+// sni.go), because a CDN front end routes by that name.
 // One exception to "tunnels only": a plain-http model endpoint the
 // operator chose (DR-45, agentry-cli#377) is served by forwarding the
 // harness's absolute-form request, for the host:ports in PlainHTTP and
@@ -139,9 +142,27 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = upstream.Close()
 		return
 	}
-	// Pure byte relay from here: no buffering beyond io.Copy, and the
-	// client side reads through bufrw because the hijacked buffer may
-	// already hold bytes the client pipelined behind its CONNECT. When
+	// The client side reads through bufrw because the hijacked buffer may
+	// already hold bytes the client pipelined behind its CONNECT. Before
+	// any of them goes upstream, the ClientHello's server name must be the
+	// tunnel's host (agentry-cli#616); a plain-http model endpoint the
+	// operator named (DR-45) is the one target that carries no TLS. The
+	// upstream was dialled first so that an unreachable host is still a
+	// 502, but it has been sent nothing.
+	if !p.plainTarget(host, port) {
+		hello, ok := p.checkClientHello(client, bufrw, host, port)
+		if !ok {
+			_ = client.Close()
+			_ = upstream.Close()
+			return
+		}
+		if _, err := upstream.Write(hello); err != nil {
+			_ = client.Close()
+			_ = upstream.Close()
+			return
+		}
+	}
+	// Pure byte relay from here: no buffering beyond io.Copy. When
 	// either half closes, both sides are torn down — a half-open tunnel
 	// serves no one and leaks two sockets.
 	done := make(chan struct{}, 2)
@@ -342,17 +363,25 @@ func Public(ip net.IP) bool {
 	return true
 }
 
+// plainTarget is true for a CONNECT to a plain-http model endpoint the
+// operator named (DR-45), the one tunnel whose first bytes are not TLS.
+// An input source's proxy (PublicOnly) has none.
+func (p *Proxy) plainTarget(host, port string) bool {
+	return !p.PublicOnly && permitsIn(p.PlainHTTP, "80", host, port)
+}
+
 // permits applies the allowlist to one host:port pair.
 func (p *Proxy) permits(host, port string) bool {
 	return permitsIn(p.Allow, "443", host, port)
 }
 
 // permitsIn is true when list names host:port exactly, an entry without
-// a port meaning defPort.
+// a port meaning defPort. Hosts compare case-insensitively in ASCII only
+// (asciiEqualFold), so no Unicode folding widens an entry.
 func permitsIn(list []string, defPort, host, port string) bool {
 	for _, entry := range list {
 		eh, ep := splitEntry(entry, defPort)
-		if strings.EqualFold(eh, host) && ep == port {
+		if asciiEqualFold(eh, host) && ep == port {
 			return true
 		}
 	}
