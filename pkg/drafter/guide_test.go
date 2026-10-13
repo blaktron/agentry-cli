@@ -26,6 +26,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -71,6 +72,13 @@ func runtimeFacts() []byte {
 	fmt.Fprintf(&b, "- A `repository` question's repository is fetched by the runner before the run: at most %s files and %s on the person's computer, %s files and %s In Agentry.\n",
 		thousands(sources.LocalCaps.Files), binarySize(sources.LocalCaps.Bytes), thousands(sources.HostedRepositoryCaps.Files), binarySize(sources.HostedRepositoryCaps.Bytes))
 	fmt.Fprintf(&b, "- A `url` question's file is fetched the same way: one file of at most %s on the person's computer, %s In Agentry.\n\n", binarySize(sources.URLCaps.Bytes), binarySize(sources.HostedURLCaps.Bytes))
+	b.WriteString("## Target hosts\n\n")
+	fmt.Fprintf(&b, "- A QuickAgent declares at most %d target hosts, each a `host` intake question listed in `capabilities.targetHosts`.\n", manifest.MaxTargetHosts)
+	fmt.Fprintf(&b, "- The host tools: %s for single calls, and %s for an interactive shell.\n", strings.Join(codeSpans([]string{hostlink.ToolRun, hostlink.ToolRead, hostlink.ToolWrite, hostlink.ToolPut, hostlink.ToolGet}), ", "),
+		strings.Join(codeSpans([]string{hostlink.ToolShellOpen, hostlink.ToolShellSend, hostlink.ToolShellRead, hostlink.ToolShellClose}), ", "))
+	fmt.Fprintf(&b, "- `%s` ends a command after %d seconds, or after its `timeout`, at most %d.\n", hostlink.ToolRun, hostlink.DefaultRunTimeout, hostlink.MaxRunTimeout)
+	fmt.Fprintf(&b, "- `%s` and `%s` copy files through `%s`, in the scratch folder.\n", hostlink.ToolPut, hostlink.ToolGet, hostlink.FilesPath)
+	fmt.Fprintf(&b, "- At most %d shell sessions are open on a host at once, and a session no call has used for %d minutes is closed. `%s`'s key `%s` types the person's sudo password.\n\n", hostlink.MaxShellsPerHost, int(hostlink.DefaultShellIdle.Minutes()), hostlink.ToolShellSend, hostlink.KeySudoPassword)
 	b.WriteString("## Reports, PDFs and the scratch folder\n\n")
 	b.WriteString("- `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.\n")
 	fmt.Fprintf(&b, "- `export_pdf` turns a Markdown file from `reports/` or the scratch folder, of at most %d KiB, into a PDF in `reports/`, rendered by Typst %s within %d seconds, at most %d MiB. It draws at most %d local PNG or JPEG images of up to %d MiB each; any other image is drawn as its alt text. The PDF's look is the person's report theme, which the run cannot choose.\n",

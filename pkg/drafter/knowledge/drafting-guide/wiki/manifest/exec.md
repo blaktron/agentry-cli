@@ -3,12 +3,14 @@ title: Commands
 type: guide
 summary: When a QuickAgent declares commands at all (computation the tools cannot do, never reading its inputs), the base commands every run provides, where a command can write, what a run In Agentry provides, and Unsafe Mode on the desktop.
 sources: [doc:runtime-facts.md, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/agentry/unsafe-mode/]
-updated: 2026-10-06
+updated: 2026-10-12
 ---
 
 # Commands
 
 `exec` is `none` unless the task needs a command. An agent reads a CSV, a log, a document, a codebase or a diff itself, through its input tools, in the file's text or as uploaded, so most QuickAgents declare no command. With `exec: none` the run has no `run_command` tool at all [src: web:https://docs.secureagentry.net/quickagents/].
+
+**Never `ssh`, `scp`, `sftp` or `rsync`.** A run reaches no machine with them, and none is a command every run provides. A QuickAgent that works on a server the person names declares a target host, and the run works it through the host tools ([Target hosts](target-hosts.md)).
 
 ## The base commands
 

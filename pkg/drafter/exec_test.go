@@ -44,6 +44,10 @@ func TestExecProblems(t *testing.T) {
 		{"tar without input files", execManifest(`{"commands": ["tar", "grep"]}`, false), []string{"capabilities.exec: tar: reads archives"}},
 		{"the operator's case", execManifest(`{"commands": ["tar", "trivy", "curl"]}`, true), []string{"capabilities.exec: trivy, curl: not a command every machine provides", "capabilities.exec: tar: reads archives"}},
 		{"both", execManifest(`{"commands": ["sh", "unzip"]}`, false), []string{"capabilities.exec: sh: not a command", "capabilities.exec: unzip: reads archives"}},
+		// An SSH client points at a target host (agentry-cli#864), apart
+		// from the other commands no machine provides, whatever its path.
+		{"ssh", execManifest(`{"commands": ["ssh"]}`, false), []string{"capabilities.exec: ssh: makes its own SSH session, which reaches no machine from a run; for a machine the person names, ask for it with an intake question of type host, list its id in capabilities.targetHosts"}},
+		{"ssh clients and others", execManifest(`{"commands": ["grep", "/usr/bin/scp", "rsync", "curl", "tar"]}`, false), []string{"capabilities.exec: /usr/bin/scp, rsync: makes its own SSH session", "capabilities.exec: curl: not a command every machine provides", "capabilities.exec: tar: reads archives"}},
 	} {
 		got := execProblems(tc.raw)
 		if len(got) != len(tc.want) {

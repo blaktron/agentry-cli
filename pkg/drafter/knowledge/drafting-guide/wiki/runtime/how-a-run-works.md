@@ -2,7 +2,7 @@
 title: How a QuickAgent run works
 type: concept
 summary: What a run of the QuickAgent you draft can and cannot do, what the System Prompt already tells it, and how a run on the person's computer, a run In Agentry and a desktop run in Unsafe Mode differ.
-sources: [web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/hosted-runs/, web:https://docs.secureagentry.net/agentry/unsafe-mode/, doc:runtime-facts.md]
+sources: [web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/hosted-runs/, web:https://docs.secureagentry.net/agentry/unsafe-mode/, doc:runtime-facts.md, web:https://docs.secureagentry.net/agentry/target-hosts/]
 updated: 2026-10-12
 ---
 
@@ -37,6 +37,7 @@ Do not repeat any of this in the instruction you write, and do not invent a conv
 - **Commands.** None, unless `exec` declares them. A declared command runs only if the machine provides it. Every runner provides a fixed set of base commands (listed in [the runtime facts](../servers/mcp-servers.md#the-numbers)); anything else needs the operator's catalogue, or Unsafe Mode on the desktop [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/agentry/unsafe-mode/].
 - **MCP servers.** Up to eight the manifest declares: npm or PyPI packages, each in its own container with its own hosts and keys, and vendors' remote servers, reached at their address through one relay to its host. A package meets a runtime with sharp limits, and a server that signs the person in asks for their consent at the first run of each version; read [Declared MCP servers](../servers/mcp-servers.md) before you declare one [src: doc:runtime-facts.md].
 - **Credentials.** Granted by name. The model never sees a value: `fetch` injects one into a request, and a declared server gets its own as environment variables [src: web:https://docs.secureagentry.net/runner/].
+- **Target hosts.** When the manifest declares one (`capabilities.targetHosts`), the person names a machine at the run's start and the run works it through the host tools: `host_run` for a command line, `host_read`, `host_write`, `host_put` and `host_get` for its files, and an interactive shell. The runner makes the SSH session; the run has no SSH of its own (see [Target hosts](../manifest/target-hosts.md)) [src: web:https://docs.secureagentry.net/agentry/target-hosts/].
 - **The person's knowledge.** When the manifest's `knowledge.accepts` asks for it, the person attaches a pack of their own at run time [src: web:https://docs.secureagentry.net/quickagents/].
 - **Limits.** Every run stops at its limits of turns, time and cost.
 
@@ -47,5 +48,5 @@ When the person wants a PDF (a resume, a letter, a report to send), the instruct
 ## Where it runs
 
 - **On the person's computer** (the CLI or the desktop app), on Docker. The operator's policy decides the images, the command catalogue and the limits. The person can accept some things on their own machine that a hosted run refuses [src: web:https://docs.secureagentry.net/runner/].
-- **In Agentry** (a hosted run), on Agentry's sandbox hosts, paid in credits. The same manifest runs under a sandboxed container runtime with no way to override a refusal. A declared secret the person has not set refuses the run before it starts. [src: web:https://docs.secureagentry.net/hosted-runs/].
+- **In Agentry** (a hosted run), on Agentry's sandbox hosts, paid in credits. The same manifest runs under a sandboxed container runtime with no way to override a refusal. A declared secret the person has not set refuses the run before it starts, and a QuickAgent that declares a target host does not run there at all [src: web:https://docs.secureagentry.net/hosted-runs/; web:https://docs.secureagentry.net/agentry/target-hosts/].
 - **In Unsafe Mode** (the desktop only, a switch the person turns on). Declared commands are installed from a larger image instead of the operator's catalogue. With the person's consent for the run, a declared server whose advisory the registry rates high or critical can also run. Unsafe Mode does not change how a declared MCP server installs or runs. A QuickAgent that needs Unsafe Mode cannot run In Agentry, and its notes must say so [src: web:https://docs.secureagentry.net/agentry/unsafe-mode/].

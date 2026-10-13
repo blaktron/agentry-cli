@@ -26,10 +26,11 @@ import (
 // the host link and never seen. Every session's transcript is kept,
 // ShellLogFile, and every call is a line of the host's log.
 
-// The bounds of §5.
+// The bounds of §5. The exported ones are stated in the Drafter's runtime
+// facts (agentry-cli#864), generated from these.
 const (
-	maxShellsPerHost  = 4
-	defaultShellIdle  = 30 * time.Minute
+	MaxShellsPerHost  = 4
+	DefaultShellIdle  = 30 * time.Minute
 	defaultShellWait  = 5
 	maxShellWait      = 600
 	defaultSettle     = 1500 * time.Millisecond
@@ -184,7 +185,7 @@ type shells struct {
 func newShells(cfg Config) *shells {
 	sh := &shells{open: map[int]*shell{}, gone: map[int]string{}, idle: cfg.ShellIdle, settle: cfg.ShellSettle, start: cfg.Shell}
 	if sh.idle <= 0 {
-		sh.idle = defaultShellIdle
+		sh.idle = DefaultShellIdle
 	}
 	if sh.settle <= 0 {
 		sh.settle = defaultSettle
@@ -322,9 +323,9 @@ func (s *server) toolShellOpen(ctx context.Context, args json.RawMessage) (strin
 	}
 	ss := s.shells
 	ss.mu.Lock()
-	if ss.count(h) >= maxShellsPerHost {
+	if ss.count(h) >= MaxShellsPerHost {
 		ss.mu.Unlock()
-		return fmt.Sprintf("%s has %d shell sessions open, the most a target host may have: close one with %s first", h.t.ID, maxShellsPerHost, ToolShellClose), true
+		return fmt.Sprintf("%s has %d shell sessions open, the most a target host may have: close one with %s first", h.t.ID, MaxShellsPerHost, ToolShellClose), true
 	}
 	ss.seq++
 	n := ss.seq
@@ -370,7 +371,7 @@ func (s *server) toolShellOpen(ctx context.Context, args json.RawMessage) (strin
 	ss.mu.Lock()
 	running := ss.count(h)
 	ss.mu.Unlock()
-	return fmt.Sprintf("[session %d: a login shell on %s as %s, %d of %d open]\n%s", n, h.t.ID, h.t.User, running, maxShellsPerHost, out), false
+	return fmt.Sprintf("[session %d: a login shell on %s as %s, %d of %d open]\n%s", n, h.t.ID, h.t.User, running, MaxShellsPerHost, out), false
 }
 
 func (s *server) toolShellSend(ctx context.Context, args json.RawMessage) (string, bool) {

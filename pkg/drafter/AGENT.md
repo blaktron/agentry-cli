@@ -20,7 +20,7 @@ two clicks, not a form to fill in.
   default in one line of the notes and never ask about it.
 - Intake questions: **at most 3**, and most drafts need 0 or 1. Ask only for
   what changes from run to run and cannot be found, such as a repository,
-  a date range or a file.
+  a date range, a file or a server.
 - `prepare`: **at most 5** short items.
 - `openQuestions`: **at most 2**, and only for a choice the person must make
   before the QuickAgent can work at all. Otherwise it is empty.
@@ -98,9 +98,14 @@ What the guide states is also checked after you answer, whatever you read.
    question, which the runner fetches before the run: **the source itself
    needs no egress and no key**, never `github.com` or a `GITHUB_TOKEN` to
    clone. An API the task calls on it (an advisory database) is still the
-   QuickAgent's own `fetch` to its exact host, as above. Pages:
+   QuickAgent's own `fetch` to its exact host, as above. A machine the
+   person names (a server to set up, manage or diagnose) is a **target
+   host**: a `host` intake question listed in `capabilities.targetHosts`.
+   The runner makes the SSH session, so **never `ssh`, `scp`, `sftp` or
+   `rsync` in `exec`**, and no egress and no key for the machine. It runs
+   only on the person's computer, which the notes say. Pages:
    `manifest/egress-and-fetch.md`, `servers/mcp-servers.md`,
-   `manifest/inputs.md`.
+   `manifest/inputs.md`, `manifest/target-hosts.md`.
 4. **Write the instructions in your own words.** Draw on what you read, but
    never copy a page's text. Use the six headings `## Role`, `## Inputs`,
    `## Steps`, `## Output`, `## Background` and `## Checks`, in that order,
@@ -114,8 +119,12 @@ What the guide states is also checked after you answer, whatever you read.
    reaches the person. Tool results come a page at a time: a long file is
    read in pages or searched, and a large `fetch` body is saved in the
    scratch folder (`saveTo`), read with `scratch_read` and searched with
-   `scratch_search`. Pages: `draft/instructions.md`, `draft/examples.md`,
-   and `runtime/how-a-run-works.md` for the tools every run has.
+   `scratch_search`. A QuickAgent with a target host works it through the
+   host tools by name (`host_run`, the shell only for a program that asks
+   as it runs), looks before it changes anything, never locks the person
+   out, and lists what it changed. Pages: `draft/instructions.md`,
+   `draft/examples.md`, `runtime/how-a-run-works.md` for the tools every
+   run has, and `manifest/target-hosts.md`.
 5. **Declare the least contract that does the task.** Only what the
    instructions use; commands only from the base commands, and never to
    read the inputs. A QuickAgent that takes files declares `inputs`: what
@@ -128,7 +137,8 @@ What the guide states is also checked after you answer, whatever you read.
 6. **Write the intake and the guide.** A `choice` question carries its
    `choices`, and a field with nothing to say is left out. A codebase is
    asked for by a `repository` question, **never as a `.zip`** or its
-   files, and a file at a web address by a `url` question. Pages:
+   files, a file at a web address by a `url` question, and a server by a
+   `host` question, whose sign-in the run setup asks for. Pages:
    `manifest/intake-and-guide.md`, `manifest/run-modes.md`,
    `manifest/inputs.md`.
 7. **Check it against the bounds, then return the draft**: two reports,

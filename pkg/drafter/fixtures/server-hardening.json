@@ -1,0 +1,17 @@
+{
+  "id": "server-hardening",
+  "description": "Help me set up and harden an Ubuntu server: I'll tell you which server each time and sign in to it myself. Bring its packages up to date, set up a firewall that only lets SSH and the ports I ask for through, make SSH accept keys only, turn on automatic security updates, and tell me everything you changed and how to undo it.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "intakeTypes": [
+      "host"
+    ]
+  }
+}
