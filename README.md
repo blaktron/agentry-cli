@@ -1054,6 +1054,19 @@ manifest + operator policy into a deterministic run plan → execute:
   A runtime the daemon has not registered stops the run (exit 13), and
   `agentry doctor` checks each. The receipt's runtime line names every
   container class and says why any is on the daemon's default.
+- **It can search what it reads** (agentry-cli#912). A release's run (not
+  a built-in's) has `grep`, which searches file contents by regular
+  expression, and `glob`, which lists files by path pattern, one area a
+  call: its inputs (each in the view `read_input` gives it), its attached
+  knowledge packs, its scratch folder, and its workspace when the manifest
+  grants `filesystem.read`. They are the runner's grant, not a line of the
+  contract, and run ripgrep 15.2.0, which the runner image copies by digest
+  from the signed `agentry-ripgrep` image. The tools server starts it with a
+  fixed argument list that never asks it to start another program or follow
+  a link, an empty environment, as a user of its own, with its reads held to
+  the area it searches and no writes where the kernel has Landlock, and
+  no TCP at Landlock ABI 4 and later (that user alone where there is no
+  Landlock, as under gVisor), 512 MiB and 30 seconds a call.
 - **A report can be a PDF.** A release's run (not a built-in's) has
   `export_pdf`, which turns a Markdown report the agent wrote into a PDF
   beside it in `reports/` (agentry-cli#730): when the person asks for one,

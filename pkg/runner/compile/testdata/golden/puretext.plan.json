@@ -11,7 +11,7 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "AGENT.md",
-    "sha256": "82da077ad114dd0daca73cf286223261eb3732b86d5f85fd115bcaa80b478d5b",
+    "sha256": "95a75a6c4ea80845771b4b59635c10c0a137326f04d977ee3a6444325f7167c4",
     "bodySha256": "ea04f9c2aced19c2b7daccfaf1beb2b5fd5e4301a18ecd1a922bf738ffd87b9a"
   },
   "capabilities": {
@@ -28,6 +28,8 @@
     "scratch_read",
     "scratch_write",
     "scratch_search",
+    "grep",
+    "glob",
     "write_report",
     "export_pdf"
   ],
@@ -39,6 +41,7 @@
     "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
     "pdf": "the runner's grant, not the contract's: export_pdf renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst 0.15.1 in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under /tmp whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, 1 GiB of address space and 60 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
     "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read, scratch_write and scratch_search over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a 256 MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
+    "search": "the runner's grant, not the contract's: grep and glob search and list, one area a call, only what the run's other tools read (its inputs unless under the review grant, attached knowledge packs, the scratch folder, the workspace only as filesystem.read grants it), with ripgrep 15.2.0 in the tools container (built from pinned source, no PCRE2), through the runner's confine role: an empty environment, a fixed argument list that never asks it to start another program or follow a link, reads held to the searched area and no write of its own (Landlock), TCP refused where Landlock is ABI 4 or later, 512 MiB of address space and 30 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds it. A search of the inputs answers as the person's own input, as search_inputs does",
     "secrets": "none declared",
     "toolResults": "every result of the runner's own tools is held to 48 KiB and 1,900 lines, the docker-agent harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own"
   },
@@ -179,8 +182,8 @@
     "gateway/catalog.yaml": "302d165fc42fca1ae946f1de4819f93e3560e585d5e5369a964ee94febff2df3",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
-    "gateway/tools.yaml": "4bb7f28fbb046adf2a095c35473bd6c607bf5b73dd48fa90e3d715bc0f32a085",
-    "gateway/toolspec.json": "a1f370ad1da468db42c4720324a6ac1726deefa887fb3a44ed17068bc903df18",
-    "harness/agent.yaml": "f10c3abd397d150104424325eaf260343ad51052b01b7a584744997312d94da6"
+    "gateway/tools.yaml": "46993c9ffdb687abec8b11549c7b0873941f0ec3127425a5e5c5e5cd1978b055",
+    "gateway/toolspec.json": "22334348ed32a4dafd0340b14dc4001b97fa794522d2c56b0feface2c46b5b4a",
+    "harness/agent.yaml": "e315711ea03d8ca32dde5c86e318053c4bd81c97e21193dc75b44565a9368a32"
   }
 }

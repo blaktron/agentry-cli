@@ -605,7 +605,9 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 			body, err = odpText(src, lim.MaxExpandedBytes)
 		}
 		if err == nil {
-			err = os.WriteFile(text, []byte(body), 0o600)
+			// 0644 like every other decoded text: the tools container's
+			// search runs as a user of its own (agentry-cli#912).
+			err = os.WriteFile(text, []byte(body), 0o644) //nolint:gosec // the decoded text, read by the run
 		}
 	case "tika":
 		err = tikaText(ctx, tools.Tika, src, text, lim.MaxOutputBytes)

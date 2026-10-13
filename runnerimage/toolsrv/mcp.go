@@ -97,6 +97,17 @@ type server struct {
 	// callFault says the call being handled failed on the run's own
 	// machinery (calls.go): set by failed, read and cleared by recordCall.
 	callFault bool
+	// callPersonsInput says the answer of the call being handled is the
+	// person's own input, served unchanged as a person's-input tool's is:
+	// set by grep for a search of the inputs (search.go), cleared before
+	// every call.
+	callPersonsInput bool
+	// search, rgBin and searchTimeout are grep and glob's ripgrep, how it
+	// is held, and how long a search may take (search.go); set when they
+	// are granted, and by a test.
+	search        searchConfinement
+	rgBin         string
+	searchTimeout time.Duration
 	// typst, render and pdfTimeout are export_pdf's renderer, how it is
 	// held, and how long a render may take (pdf.go); set when it is
 	// granted, and by a test.
@@ -131,6 +142,10 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 	if spec.PDF.Enabled {
 		s.typst, s.render, s.pdfTimeout = defaultTypst(), newRenderConfinement(), PDFRenderTimeout
 		_, _ = fmt.Fprintln(logw, "agentry-runner tools: export_pdf: "+s.render.describe())
+	}
+	if spec.Search.Enabled {
+		s.rgBin, s.search, s.searchTimeout = ripgrepPath(), newSearchConfinement(), SearchTimeout
+		_, _ = fmt.Fprintln(logw, "agentry-runner tools: grep and glob: "+s.search.describe())
 	}
 	s.buildTools()
 	if err := s.buildShims(); err != nil {
@@ -330,9 +345,10 @@ func (s *server) handleToolsCall(req rpcRequest) {
 			s.writeError(req.ID, codeInternal, fmt.Sprintf("tool %s failed internally", p.Name))
 		}
 	}()
+	s.callPersonsInput = false
 	text, isErr := s.callTool(d, p.Arguments)
 	content := map[string]any{"type": "text", "text": text}
-	if d.personsInput && !isErr {
+	if (d.personsInput || s.callPersonsInput) && !isErr {
 		content = inputResult(text)
 	}
 	s.writeResult(req.ID, map[string]any{

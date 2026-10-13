@@ -26,9 +26,15 @@ const (
 )
 
 // The filesystem access rights that write (LANDLOCK_ACCESS_FS_*), by the
-// ABI that introduced them. Reading and executing are left unhandled, so
-// Landlock does not restrict them.
+// ABI that introduced them. Reading and executing are handled only when the
+// caller names what may be read (Options.Readable); otherwise Landlock does
+// not restrict them.
 const (
+	accessExecute  = 1 << 0
+	accessReadFile = 1 << 2
+	accessReadDir  = 1 << 3
+	readsV1        = accessExecute | accessReadFile | accessReadDir
+
 	accessWriteFile  = 1 << 1
 	accessRemoveDir  = 1 << 4
 	accessRemoveFile = 1 << 5
@@ -131,6 +137,7 @@ func ExecWith(o Options, path string, argv, env []string) error {
 	if _, _, errno := syscall.RawSyscall6(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0, 0, 0, 0); errno != 0 {
 		return fmt.Errorf("confine: set no_new_privs: %w", errno)
 	}
+	o.program = path
 	if !o.LimitsOnly {
 		if err := restrict(o); err != nil {
 			return err
@@ -186,7 +193,11 @@ func restrict(o Options) error {
 		return err
 	}
 	all, file := writeRights(abi)
+	reads := len(o.Readable) > 0
 	attr := rulesetAttr{handledAccessFS: all}
+	if reads {
+		attr.handledAccessFS |= readsV1
+	}
 	size := unsafe.Sizeof(attr.handledAccessFS)
 	if o.NoNetwork && NetworkDenied(abi) {
 		attr.handledAccessNet = accessNetBindTCP | accessNetConnectTCP
@@ -197,11 +208,34 @@ func restrict(o Options) error {
 		return fmt.Errorf("landlock: create the ruleset: %w", errno)
 	}
 	defer func() { _ = syscall.Close(int(fd)) }()
-	if err := addRule(int(fd), devNull, file); err != nil {
+	// A ruleset that handles reading must let the program read /dev/null,
+	// read what it may write, and run itself.
+	var readFile, readTree uint64
+	if reads {
+		readFile, readTree = accessReadFile, readsV1
+	}
+	if err := addRule(int(fd), devNull, file|readFile); err != nil {
 		return err
 	}
 	for _, d := range o.Writable {
-		if err := addRule(int(fd), d, all); err != nil {
+		if err := addRule(int(fd), d, all|readTree); err != nil {
+			return err
+		}
+	}
+	if reads {
+		for _, d := range o.Readable {
+			// A file takes only a file's rights; a directory's read and
+			// list rights on it are refused by the kernel (EINVAL).
+			rights := uint64(readsV1)
+			var st syscall.Stat_t
+			if err := syscall.Stat(d, &st); err == nil && st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+				rights = accessExecute | accessReadFile
+			}
+			if err := addRule(int(fd), d, rights); err != nil {
+				return err
+			}
+		}
+		if err := addRule(int(fd), o.program, accessExecute|accessReadFile); err != nil {
 			return err
 		}
 	}
@@ -212,7 +246,7 @@ func restrict(o Options) error {
 	return nil
 }
 
-// addRule lets the ruleset's process write beneath path with rights.
+// addRule lets the ruleset's process use rights beneath path.
 func addRule(ruleset int, path string, rights uint64) error {
 	pfd, err := syscall.Open(path, oPath|syscall.O_CLOEXEC, 0)
 	if err != nil {
@@ -221,7 +255,7 @@ func addRule(ruleset int, path string, rights uint64) error {
 	defer func() { _ = syscall.Close(pfd) }()
 	rule := pathBeneathAttr{allowedAccess: rights, parentFd: int32(pfd)} //nolint:gosec // a descriptor fits in an int32
 	if _, _, errno := syscall.RawSyscall6(sysLandlockAddRule, uintptr(ruleset), rulePathBeneath, uintptr(unsafe.Pointer(&rule)), 0, 0, 0); errno != 0 {
-		return fmt.Errorf("landlock: allow writes beneath %s: %w", path, errno)
+		return fmt.Errorf("landlock: allow access beneath %s: %w", path, errno)
 	}
 	return nil
 }

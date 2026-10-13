@@ -125,6 +125,8 @@ func TestMainRefusesBadUsage(t *testing.T) {
 		"memory zero":         {"--max-memory", "0", "--", "/bin/true"},
 		"limits-only writes":  {"--limits-only", "--write", "/tmp", "--", "/bin/true"},
 		"limits-only network": {"--limits-only", "--no-network", "--", "/bin/true"},
+		"limits-only reads":   {"--limits-only", "--read", "/tmp", "--", "/bin/true"},
+		"relative read":       {"--read", "tmp", "--", "/bin/true"},
 	} {
 		if err := Main(args, nil); err == nil {
 			t.Errorf("%s: Main(%q) = nil, want a refusal", name, args)
@@ -239,4 +241,99 @@ func TestNoNetworkRefusesTCP(t *testing.T) {
 		t.Fatalf("the unconfined dial failed: %v", err)
 	}
 	_ = c.Close()
+}
+
+// TestReadConfinesReads is plan ripgrep-search.md §5 at the kernel: with
+// --read, a program reads and lists beneath the named directories and
+// nowhere else, so a link planted inside a readable directory cannot take
+// it out (grep and glob's ripgrep). Without --read, reading is unchanged
+// (TestExecConfinesWrites).
+func TestReadConfinesReads(t *testing.T) {
+	if _, err := ABI(); err != nil {
+		t.Skipf("this kernel or runtime has no Landlock (%v); the tools server's uid fallback covers it", err)
+	}
+	in, out := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(in, "a.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "secret.txt"), []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(out, "secret.txt"), filepath.Join(in, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// sh, its loader and its libraries live under the system directories,
+	// which the program must be let read and run.
+	flags := []string{"--read", in}
+	for _, d := range []string{"/usr", "/lib", "/lib64", "/bin", "/etc"} {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			flags = append(flags, "--read", d)
+		}
+	}
+	t.Setenv("I", in)
+	t.Setenv("O", out)
+	got, err := trampoline(t, flags, strings.Join([]string{
+		`cat "$I/a.txt"`,
+		`ls "$I" >/dev/null && echo in-list=ok`,
+		`cat "$O/secret.txt" 2>/dev/null || echo out-read=refused`,
+		`cat "$I/link" 2>/dev/null || echo link-read=refused`,
+		`ls "$O" >/dev/null 2>&1 || echo out-list=refused`,
+		`echo x > /dev/null && echo devnull=ok`,
+	}, "\n"))
+	if err != nil {
+		t.Fatalf("confined sh: %v\n%s", err, got)
+	}
+	for _, want := range []string{"inside", "in-list=ok", "out-read=refused", "link-read=refused", "out-list=refused", "devnull=ok"} {
+		if !strings.Contains(got, want+"\n") {
+			t.Errorf("confined output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "outside") {
+		t.Errorf("the program read a file outside the readable directories:\n%s", got)
+	}
+}
+
+// TestReadHoldsAStaticProgramToItsArea is grep and glob's own holding at
+// the kernel: the pinned ripgrep, a static program, started with --read on
+// one directory and nothing else, runs (the program's own EXECUTE rule),
+// finds what is beneath it, and neither reads a file outside it nor
+// follows a link out of it. AGENTRY_RIPGREP_BIN names the binary, as CI's
+// ripgrep-image job does.
+func TestReadHoldsAStaticProgramToItsArea(t *testing.T) {
+	if _, err := ABI(); err != nil {
+		t.Skipf("this kernel or runtime has no Landlock (%v)", err)
+	}
+	rg := os.Getenv("AGENTRY_RIPGREP_BIN")
+	if rg == "" {
+		if os.Getenv("AGENTRY_RIPGREP_REQUIRED") == "1" {
+			t.Fatal("AGENTRY_RIPGREP_BIN is not set, and this job must run the real ripgrep")
+		}
+		t.Skip("AGENTRY_RIPGREP_BIN is not set: the real ripgrep is the ripgrep-image CI job's")
+	}
+	area, out := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(area, "a.txt"), []byte("invoice inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "b.txt"), []byte("invoice outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(out, "b.txt"), filepath.Join(area, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], append([]string{"--read", area, "--no-network", "--", rg, "--no-config"}, args...)...) //nolint:gosec // the test binary as the trampoline
+		cmd.Env = []string{"AGENTRY_CONFINE_HELPER=1"}
+		got, _ := cmd.CombinedOutput()
+		return string(got)
+	}
+	if got := run("-e", "invoice", "--", area); !strings.Contains(got, "invoice inside") || strings.Contains(got, "outside") {
+		t.Errorf("the area: %q", got)
+	}
+	if got := run("-e", "invoice", "--", filepath.Join(out, "b.txt")); strings.Contains(got, "invoice outside") {
+		t.Errorf("a file outside the area was read: %q", got)
+	}
+	if got := run("-L", "-e", "invoice", "--", area); strings.Contains(got, "invoice outside") {
+		t.Errorf("a link out of the area was followed, even when asked: %q", got)
+	}
 }
