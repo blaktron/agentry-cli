@@ -132,6 +132,18 @@ kept whole with `saveTo`, and that `scratch_read` and `scratch_search` read
 it. A release that asks a `repository` question needs CLI v0.6.97 or later, a
 `url` question v0.6.98 or later, and v0.6.104 or later to run either hosted.
 
+Since 1.14.0 the Drafter knows target hosts (plan runtime-hosts.md, M8;
+agentry-cli#864). For a task on a machine the person names (a server to set
+up, manage or diagnose) it asks for the machine with an intake question of
+type `host` and lists its id in `capabilities.targetHosts`; it declares no
+SSH client, no egress and no key for the machine, writes the instructions
+for the host tools and the shell, and says in the notes that such a
+QuickAgent runs only on the person's computer. The checks after a draft send
+an `exec` that names `ssh`, `scp`, `sftp` or `rsync` to the repair turn with
+a line that points to a target host. A release that declares a target host
+needs CLI v0.6.105 or later to run, v0.6.106 for the shell and v0.6.109 for a
+host on port 22; it does not run In Agentry.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

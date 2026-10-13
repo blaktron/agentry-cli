@@ -3,7 +3,7 @@ title: Run modes
 type: guide
 summary: Autonomous and interactive runs, when a draft adds interactive, what a conversation can and cannot do, and the opening line.
 sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/hosted-runs/]
-updated: 2026-10-05
+updated: 2026-10-12
 ---
 
 # Run modes
@@ -16,7 +16,7 @@ updated: 2026-10-05
 
 ## When to add interactive
 
-Add `interactive` only when the description asks for a conversation, a chat or back-and-forth: practising an interview, a tutor, a helper the person talks a problem through with. What the person names or gives the QuickAgent ("a city I name", "the notes I paste", "the repository I choose") is the task or an input of an autonomous run, not a reason for a conversation.
+Add `interactive` only when the description asks for a conversation, a chat or back-and-forth: practising an interview, a tutor, a helper the person talks a problem through with. What the person names or gives the QuickAgent ("a city I name", "the notes I paste", "the repository I choose") is the task or an input of an autonomous run, not a reason for a conversation. A description that asks to approve each change before it is made (on a server, say) asks for one.
 
 ## What a conversation cannot do
 

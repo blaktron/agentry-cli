@@ -3,7 +3,7 @@ title: Start here
 type: guide
 summary: What this guide is, that it is yours and not the person's, and which page to read at each step of a draft.
 sources: [web:https://docs.secureagentry.net/runner/]
-updated: 2026-10-09
+updated: 2026-10-12
 ---
 
 # Start here
@@ -22,6 +22,7 @@ This is the Drafter's drafting guide, the knowledge pack `drafting-guide`. It sh
 | Choosing between no tool, `fetch` and a server | [Network and fetch](../manifest/egress-and-fetch.md) |
 | Before you pin any MCP server | [Declared MCP servers](../servers/mcp-servers.md), then the lists [Runs here](../servers/runs-here.md) and [Does not run here](../servers/does-not-run-here.md) |
 | Before you declare a vendor's remote server or a package's sign-in | [Remote servers and sign-ins](../servers/sign-ins.md) |
+| A task on a server the person names (set up, manage, diagnose) | [Target hosts](../manifest/target-hosts.md) |
 | Writing the instructions | [Writing the instructions](../draft/instructions.md), and [Worked drafts](../draft/examples.md) for whole examples |
 | Declaring the contract | [The manifest](../manifest/manifest.md), then [Commands](../manifest/exec.md), [Keys](../manifest/secrets.md) and [Input files](../manifest/inputs.md) as the task needs them |
 | Writing the intake and the guide | [The intake and the guide](../manifest/intake-and-guide.md); [Run modes](../manifest/run-modes.md) for a conversation; [The person's knowledge at run time](../manifest/knowledge-accepts.md) when a run needs the person's own pack |

@@ -384,6 +384,16 @@ func TestTheFixtureSet(t *testing.T) {
 	if got := CheckShape(m2, d, sourced); len(got) != 0 {
 		t.Errorf("the expected repository question was flagged: %v", got)
 	}
+	// A target host wanted (agentry-cli#864): absent, then present.
+	hosted := Expect{Modes: []string{"autonomous"}, IntakeTypes: []string{"host"}}
+	if got := strings.Join(CheckShape(m2, d, hosted), "; "); !strings.Contains(got, "no intake question of type host") {
+		t.Errorf("shape check missed the absent host question: %s", got)
+	}
+	m2.Intake = append(m2.Intake, manifest.IntakeQuestion{ID: "server", Prompt: "The server", Type: manifest.IntakeHost, Required: true})
+	m2.Capabilities.TargetHosts = []string{"server"}
+	if got := CheckShape(m2, d, hosted); len(got) != 0 {
+		t.Errorf("the expected host question was flagged: %v", got)
+	}
 	// The Drafter's caps and the instruction's shape.
 	m.Intake = make([]manifest.IntakeQuestion, MaxIntake+1)
 	m.Guide.Prepare = make([]string, MaxPrepare+1)
