@@ -1,5 +1,5 @@
 {
-  "specVersion": "11",
+  "specVersion": "12",
   "workspaceDir": "/workspace",
   "outDir": "/out",
   "inputsDir": "/inputs",
@@ -33,6 +33,9 @@
     ]
   },
   "pdf": {
+    "enabled": true
+  },
+  "search": {
     "enabled": true
   },
   "limits": {

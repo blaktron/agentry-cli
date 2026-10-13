@@ -845,6 +845,8 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// export_pdf goes with the scratch folder, to every release's run
 		// and session (plan scratch-and-pdf-reports.md D5, D6).
 		PDF: toolsrv.PDF{Enabled: caps.Scratch},
+		// grep and glob go with it too (plan ripgrep-search.md D4).
+		Search: toolsrv.Search{Enabled: caps.Scratch},
 		FSRead: toolsrv.Access{
 			Enabled: caps.FSReadMode != "none",
 			Paths:   caps.FSReadPaths,
@@ -1628,6 +1630,8 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			toolsrv.ToolExportPDF, toolsrv.TypstVersion, spec.ToolsTmpMount, toolsrv.PDFRenderMemory>>30, int(toolsrv.PDFRenderTimeout.Seconds()))
 		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; on Linux a %d MiB tmpfs the run's docker filter mounts, under Docker Desktop a folder in the container's own layer, unbounded",
 			toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
+		e["search"] = fmt.Sprintf("the runner's grant, not the contract's: %s and %s search and list, one area a call, only what the run's other tools read (its inputs unless under the review grant, attached knowledge packs, the scratch folder, the workspace only as filesystem.read grants it), with ripgrep %s in the tools container (built from pinned source, no PCRE2), through the runner's confine role: an empty environment, a fixed argument list that never asks it to start another program or follow a link, reads held to the searched area and no write of its own (Landlock), TCP refused where Landlock is ABI 4 or later, %d MiB of address space and %d seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds it. A search of the inputs answers as the person's own input, as %s does",
+			toolsrv.ToolGrep, toolsrv.ToolGlob, toolsrv.RipgrepVersion, toolsrv.SearchMemory>>20, int(toolsrv.SearchTimeout.Seconds()), toolsrv.ToolSearchInputs)
 		if caps.EgressMode == "hosts" || caps.EgressMode == "all" {
 			e["scratch"] += fmt.Sprintf("; %s saves a response body there, of any type, when the agent names a path (saveTo) or the body is larger than one tool result: only from the declared egress above, with every redirect hop checked, refused when the body holds a granted secret's value byte for byte, never executable, and each save recorded in receipts/fetches.ndjson", toolsrv.ToolFetch)
 		}

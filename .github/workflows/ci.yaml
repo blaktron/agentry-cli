@@ -258,6 +258,33 @@ jobs:
           AGENTRY_TYPST_REQUIRED: "1"
         run: AGENTRY_TYPST_DIR="$RUNNER_TEMP/typst" go test -count=1 ./runnerimage/toolsrv/ -run 'TestRawTypstIsText|TestLinksAreHttpOrMail|TestRealRender|TestTheImageCarriesEveryDesignFamily|TestThumbnailsAreTheTemplates' -v
 
+  # grep and glob's ripgrep (agentry-cli#912; plan ripgrep-search.md D3): the
+  # runner image copies it from agentry-ripgrep by digest, so the pin must
+  # name the image the ripgrep workflow signed on main, and the tests that
+  # search with the real binary (each output, context, paging, hidden and
+  # ignored files, a link never followed, the inputs as search_inputs reads
+  # them, a pack's citations, a pattern past the size limit) may not skip
+  # here.
+  ripgrep-image:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # The shared host module cache, as the `check` job says (agentry#225).
+          cache: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: The pinned ripgrep image is signed by the ripgrep workflow on main
+        run: OUT="$RUNNER_TEMP/ripgrep" ./scripts/verify-ripgrep-image.sh
+      - name: grep and glob search with the real ripgrep
+        env:
+          AGENTRY_RIPGREP_REQUIRED: "1"
+        run: AGENTRY_RIPGREP_BIN="$RUNNER_TEMP/ripgrep/rg" go test -count=1 ./runnerimage/toolsrv/ -run 'TestGrep|TestAGlob|TestAnInputsSearch' -v
+
   # Secret scanning (agentry-cli#165): gitleaks over the commits this event
   # brings — a pull request's own range, or a push's before..after — with the
   # repository's .gitleaks.toml, failing on any hit. The binary is the release
