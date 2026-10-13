@@ -332,6 +332,10 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		// gateway named.
 		hc.Binds = append(hc.Binds, f.cfg.WebResolvConf+":"+resolvConfTarget+":ro")
 	}
+	tools, err := f.isToolsServer(ctx, &c, imageID)
+	if err != nil {
+		return nil, err
+	}
 	if err := f.toolsTmpfs(ctx, &c, imageID); err != nil {
 		return nil, err
 	}
@@ -361,8 +365,95 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		}
 		hc.Runtime = f.cfg.Runtime
 	}
+	capabilities(hc, web || tools, relay != "")
 	c.Labels = f.label(c.Labels)
 	return c, nil
+}
+
+// The capabilities a gateway-launched container keeps (agentry-cli#227,
+// DR-95). The gateway asks for none of its own (checkHost refuses CapAdd)
+// and can drop none back: every container it creates drops them all, and
+// gets back only what its class needs, as the runner's own containers do
+// since agentry-cli#163.
+var (
+	// toolsCapabilities are the runner's tools servers' (the run's tools
+	// server and the web tools' server, both the runner image's toolsrv
+	// as root): CHOWN and FOWNER for what it writes and hands to the run's
+	// owner, DAC_OVERRIDE to write into binds that owner holds, SETUID and
+	// SETGID to start Typst and ripgrep as a user of their own, and KILL
+	// to end them.
+	toolsCapabilities = []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETUID"}
+	// serverReadCapabilities are a declared MCP server's: its package is
+	// a read-only bind of the run's server store, which the run's owner
+	// holds at 0700, and the server runs as its image's root, so it reads
+	// past the store's mode and writes nothing of the host's.
+	serverReadCapabilities = []string{"DAC_READ_SEARCH"}
+	// serverWriteCapabilities are a declared server's that is also given
+	// a writable host folder (its connection's token folder): it writes
+	// into a folder the run's owner holds.
+	serverWriteCapabilities = []string{"DAC_OVERRIDE"}
+)
+
+// ToolsCapabilities, ServerReadCapabilities and ServerWriteCapabilities
+// are what the filter gives back to each class, for the receipt to name.
+func ToolsCapabilities() []string       { return slices.Clone(toolsCapabilities) }
+func ServerReadCapabilities() []string  { return slices.Clone(serverReadCapabilities) }
+func ServerWriteCapabilities() []string { return slices.Clone(serverWriteCapabilities) }
+
+// capabilities drops every capability of a gateway-launched container
+// and adds back its class's: none for a relay, toolsCapabilities for the
+// runner's tools servers, and for a declared server read past the store's
+// mode, plus write where it has a writable host folder.
+func capabilities(hc *hostConfig, tools, relay bool) {
+	hc.CapDrop = []string{"ALL"}
+	switch {
+	case relay:
+		hc.CapAdd = nil
+	case tools:
+		hc.CapAdd = slices.Clone(toolsCapabilities)
+	case writesHost(hc):
+		hc.CapAdd = append(slices.Clone(serverReadCapabilities), serverWriteCapabilities...)
+	default:
+		hc.CapAdd = slices.Clone(serverReadCapabilities)
+	}
+}
+
+// writesHost says whether a container is given a host folder it may write:
+// a bind of an absolute path without "ro", or a bind mount not read-only.
+// A volume is docker's own, written as root without any capability.
+func writesHost(hc *hostConfig) bool {
+	for _, b := range hc.Binds {
+		parts := strings.Split(b, ":")
+		if !strings.HasPrefix(parts[0], "/") {
+			continue
+		}
+		if len(parts) < 3 || !slices.Contains(strings.Split(parts[2], ","), "ro") {
+			return true
+		}
+	}
+	for _, m := range hc.Mounts {
+		if m.Type == "bind" && !m.ReadOnly {
+			return true
+		}
+	}
+	return false
+}
+
+// isToolsServer says whether a create is the run's tools server: its one
+// command (Config.ToolsCmd) in its image (Config.ToolsImage, by id).
+func (f *Filter) isToolsServer(ctx context.Context, c *containerCreateBody, imageID string) (bool, error) {
+	if f.cfg.ToolsImage == "" || len(f.cfg.ToolsCmd) == 0 {
+		return false, nil
+	}
+	var cmd []string
+	if !present(c.Cmd) || json.Unmarshal(c.Cmd, &cmd) != nil || !slices.Equal(cmd, f.cfg.ToolsCmd) {
+		return false, nil
+	}
+	tools, err := f.toolsImage(ctx)
+	if err != nil {
+		return false, err
+	}
+	return imageID == tools, nil
 }
 
 // toolsTmpfs mounts Config.ToolsTmpfs into the run's tools server, the
@@ -376,16 +467,8 @@ func (f *Filter) toolsTmpfs(ctx context.Context, c *containerCreateBody, imageID
 	if len(f.cfg.ToolsTmpfs) == 0 {
 		return nil
 	}
-	var cmd []string
-	if !present(c.Cmd) || json.Unmarshal(c.Cmd, &cmd) != nil || !slices.Equal(cmd, f.cfg.ToolsCmd) {
-		return nil
-	}
-	tools, err := f.toolsImage(ctx)
-	if err != nil {
+	if tools, err := f.isToolsServer(ctx, c, imageID); err != nil || !tools {
 		return err
-	}
-	if imageID != tools {
-		return nil
 	}
 	hc := c.HostConfig
 	var declared map[string]json.RawMessage

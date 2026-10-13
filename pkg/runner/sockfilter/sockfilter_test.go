@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -923,6 +924,64 @@ func TestTheRunsLimitsBoundEveryContainer(t *testing.T) {
 	if hc["MemorySwap"] != float64(2<<30) {
 		t.Errorf("MemorySwap forwarded as %v, want the memory bound", hc["MemorySwap"])
 	}
+}
+
+// TestEveryGatewayContainerDropsItsCapabilities (agentry-cli#227, DR-95):
+// whatever the gateway asks, each container it creates drops every
+// capability and gets back only its class's: a relay none, the run's tools
+// server its toolsrv set, a declared server read past the store's mode, and
+// write too only where it is given a writable host folder.
+func TestEveryGatewayContainerDropsItsCapabilities(t *testing.T) {
+	const spec = "/etc/agentry/toolspec.json"
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", spec}
+	})
+	capsOf := func(name string, doc map[string]any) (drop, add []string) {
+		t.Helper()
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("%s: %d %s", name, code, body)
+		}
+		hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+		return asList(hc["CapDrop"]), asList(hc["CapAdd"])
+	}
+	store := filepath.Join(g.root, "servers")
+	if err := os.MkdirAll(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		doc  map[string]any
+		add  []string
+	}{
+		{"the tools server", map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", spec}}, toolsCapabilities},
+		{"the tools server asking to keep nothing dropped", map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", spec},
+			"HostConfig": map[string]any{"CapDrop": []string{"NET_RAW"}}}, toolsCapabilities},
+		{"a relay", map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}}, nil},
+		{"a declared server reading its store", map[string]any{"Image": "mcp/server", "HostConfig": map[string]any{"Binds": []string{store + ":/srv:ro"}}}, serverReadCapabilities},
+		{"a declared server with no bind", map[string]any{"Image": "mcp/server"}, serverReadCapabilities},
+		{"a declared server in the tools server's image, another command", map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"node", "server.js"}}, serverReadCapabilities},
+		{"a declared server writing its token folder", map[string]any{"Image": "mcp/server", "HostConfig": map[string]any{"Binds": []string{store + ":/srv:ro", g.writable + ":/tokens"}}},
+			append(slices.Clone(serverReadCapabilities), serverWriteCapabilities...)},
+		{"a declared server writing through a bind mount", map[string]any{"Image": "mcp/server", "HostConfig": map[string]any{"Mounts": []map[string]any{{"Type": "bind", "Source": g.writable, "Target": "/tokens"}}}},
+			append(slices.Clone(serverReadCapabilities), serverWriteCapabilities...)},
+	} {
+		drop, add := capsOf(c.name, c.doc)
+		if !slices.Equal(drop, []string{"ALL"}) || !slices.Equal(add, c.add) {
+			t.Errorf("%s: CapDrop %v CapAdd %v, want [ALL] and %v", c.name, drop, add, c.add)
+		}
+	}
+	// What a class gets back is the filter's to say, never the gateway's.
+	g.refused(t, "a capability the gateway adds", "POST", "/containers/create", map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", spec},
+		"HostConfig": map[string]any{"CapAdd": []string{"CHOWN"}}}, "CapAdd")
+}
+
+func asList(v any) []string {
+	l, _ := v.([]any)
+	out := make([]string, 0, len(l))
+	for _, x := range l {
+		out = append(out, fmt.Sprint(x))
+	}
+	return out
 }
 
 // A run whose servers need no relays gets no shared network at all.

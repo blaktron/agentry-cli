@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -71,6 +73,22 @@ func enforcedAtStart(p Params) map[string]string {
 	return withDecoded(e, p.Decoded)
 }
 
+// launchedLine is the containers line's part for the tool and MCP server
+// containers the gateway launches. Where the run's docker filter runs it
+// sets their capabilities (agentry-cli#227, DR-95: sockfilter's
+// capabilities); without it (Docker Desktop, agentry-cli#322) they keep
+// what the gateway leaves them.
+func launchedLine(filtered bool) string {
+	if !filtered {
+		return "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them"
+	}
+	return "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, " +
+		"and through this run's docker filter the run's pids bound and every capability dropped, a class keeping only its own: " +
+		"the runner's tools servers " + strings.Join(sockfilter.ToolsCapabilities(), ", ") +
+		"; a declared MCP server " + strings.Join(sockfilter.ServerReadCapabilities(), ", ") + " to read its package, and " +
+		strings.Join(sockfilter.ServerWriteCapabilities(), ", ") + " too where it writes a folder of the run's; a relay none; their root as their image leaves it"
+}
+
 // withContainers adds the receipt's line for the posture above, naming
 // what this run's containers were given and the two exceptions.
 func withContainers(enforced map[string]string, p Params) map[string]string {
@@ -113,7 +131,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if p.Plan.Mode == "interactive" {
 		line += "; the session store's one-shot chown keeps CHOWN alone"
 	}
-	line += "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them" + hostLink
+	line += launchedLine(filterSupported) + hostLink
 	out["containers"] = line
 	if p.Plan.Runtime() != "" {
 		out["runtime"] = runtimeLine(p)
