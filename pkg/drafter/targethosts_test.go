@@ -16,11 +16,11 @@ import (
 
 // hostDraftInstructions is an instruction file for the guide's worked
 // target-host draft, in the six headings, written for the host tools.
-const hostDraftInstructions = "# Ubuntu server hardening\n\n## Role\n\nHarden one Ubuntu server.\n\n" +
-	"## Inputs\n\nThe server the person named, and the task's extra ports.\n\n" +
-	"## Steps\n\n1. With host_run, read /etc/os-release.\n2. With host_run and sudo: true, update the packages.\n\n" +
-	"## Output\n\nreport.md: each change and how to undo it.\n\n## Background\n\nWhat each setting does.\n\n" +
-	"## Checks\n\nSSH is still reachable after every change.\n"
+const hostDraftInstructions = "# Linux server health check\n\n## Role\n\nReport one server's health; change nothing.\n\n" +
+	"## Inputs\n\nThe server the person named, and the task's period.\n\n" +
+	"## Steps\n\n1. With host_run, read /etc/os-release.\n2. With host_run, run df -h and free -m.\n\n" +
+	"## Output\n\nreport.md: what needs attention, worst first.\n\n## Background\n\nThe thresholds.\n\n" +
+	"## Checks\n\nNo command changes the server.\n"
 
 // workedHostDraft is the guide's worked draft that takes a target host.
 func workedHostDraft(t *testing.T) json.RawMessage {
@@ -38,7 +38,7 @@ func workedHostDraft(t *testing.T) json.RawMessage {
 // plan runtime-hosts.md D15): a draft with a host question listed in
 // capabilities.targetHosts goes through the post-step as any other. The
 // corrections leave both halves, the registry's rules and the local scans
-// pass it with no finding, the Drafter's rules add nothing, and the check
+// pass it with no finding, the Drafter's rules find nothing in it, and the check
 // reads the line among the declared capabilities, where the rubric's runner
 // grant names it. Without the line, the registry's rules refuse it.
 func TestADraftThatTakesATargetHostPasses(t *testing.T) {
@@ -70,7 +70,7 @@ func TestADraftThatTakesATargetHostPasses(t *testing.T) {
 		t.Fatalf("validate: %s", d.Validation)
 	}
 
-	pkg, err := CheckPackage("Help me set up and harden a fresh Ubuntu server.", p.pkg())
+	pkg, err := CheckPackage("Check the health of a Linux server I name.", p.pkg())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestTheGuideTeachesTargetHosts(t *testing.T) {
 			"[Target hosts](../manifest/target-hosts.md)",
 		},
 		"draft/examples.md": {
-			"## A target host: setting up and hardening a server",
+			"## A target host: checking a server's health",
 		},
 	})
 	if want := fmt.Sprintf("`capabilities.targetHosts`: at most %d,", manifest.MaxTargetHosts); !strings.Contains(heldText(t, "manifest/manifest.md"), want) {

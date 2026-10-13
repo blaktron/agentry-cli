@@ -1,7 +1,7 @@
 ---
 title: Worked drafts
 type: example
-summary: Four whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, and one with a target host.
+summary: Four whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, and one that checks a server the person names (a target host).
 sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/target-hosts/, doc:servers.yaml]
 updated: 2026-10-12
 ---
@@ -131,30 +131,30 @@ It asks nothing before a run: the lockfiles are the input, and the severity to r
 
 Its notes: the severity default, the server and what the registry's check said of its version, and the closest published QuickAgent, if `registry_search` found one.
 
-## A target host: setting up and hardening a server
+## A target host: checking a server's health
 
-The description: "Help me set up and harden a fresh Ubuntu server: updates, a firewall, SSH keys only, automatic security updates."
+The description: "Check the health of a Linux server I name: disk space, memory, failed services and recent errors in the logs, and tell me what needs attention."
 
-The server changes from run to run, so it is a target host: a `host` question, listed in `capabilities.targetHosts`. The run works it through the host tools, so the draft declares no command, no egress and no key: the server downloads its own packages, and the person's sign-in is asked for by the run setup, beside the address. The changes touch SSH and the firewall, so the steps are written never to lock the person out [src: web:https://docs.secureagentry.net/agentry/target-hosts/].
+The server changes from run to run, so it is a target host: a `host` question, listed in `capabilities.targetHosts`. The run works it through the host tools, so the draft declares no command, no egress and no key; the person's sign-in is asked for by the run setup, beside the address. The task only reads, so the run is autonomous and its steps change nothing [src: web:https://docs.secureagentry.net/agentry/target-hosts/].
 
 ```json
 {
   "schemaVersion": "2",
-  "name": "ubuntu-server-hardening",
+  "name": "linux-server-health-check",
   "namespace": "draft",
   "version": "0.1.0",
-  "summary": "Sets up and hardens an Ubuntu server you name: updates, a firewall, key-only SSH and automatic security updates.",
+  "summary": "Checks a Linux server you name for low disk space, memory pressure, failed services and recent log errors, and changes nothing.",
   "license": "Apache-2.0",
-  "tags": ["linux", "ubuntu", "server", "hardening"],
+  "tags": ["linux", "server", "monitoring"],
   "modes": ["autonomous"],
   "entrypoints": {"instruction": "AGENT.md"},
   "intake": [
-    {"id": "server", "prompt": "The Ubuntu server to harden (user@host, or user@host:port)", "type": "host", "required": true}
+    {"id": "server", "prompt": "The server to check (user@host, or user@host:port)", "type": "host", "required": true}
   ],
   "guide": {
-    "overview": "Signs in to the Ubuntu server you name as the account you choose, checks its state, then applies updates, a firewall that keeps SSH open, key-only SSH once a key sign-in works, and automatic security updates. Returns report.md: every change, how to undo it, and what it left alone.",
-    "prepare": ["An account on the server that can use sudo, and its sudo password if sudo asks for one.", "A key sign-in to that account, if SSH is to accept keys only."],
-    "task": "e.g. Also allow ports 80 and 443 in the firewall."
+    "overview": "Signs in to the Linux server you name as the account you choose and reads its state: disk and inode use, memory and swap, failed systemd units, and the errors its logs recorded in the last day. Returns report.md with what needs attention first. It changes nothing on the server.",
+    "prepare": ["An account on the server; one in the adm or systemd-journal group, or a sudo password, lets it read every log."],
+    "task": "e.g. Look at the last week of logs instead of the last day."
   },
   "capabilities": {
     "network": {"egress": "none"},
@@ -166,6 +166,6 @@ The server changes from run to run, so it is a target host: a `host` question, l
 }
 ```
 
-Its instructions: `## Role` (harden one Ubuntu server, changing only what the steps name); `## Inputs` (the server, and the task's extra ports or exceptions); `## Steps` (with `host_run`: read `/etc/os-release` and stop on a release it does not support; list what is listening and the current SSH and firewall settings; with `sudo: true`, update the packages non-interactively; allow SSH's port, then the task's ports, then enable the firewall; turn off password sign-in only when the run itself signed in with a key, after `sshd -t` passes, keeping a copy of the old file; enable unattended security upgrades; check each change after making it); `## Output` (a skeleton of `report.md`: the server's state before, each change with its undo, what it left alone and why); `## Background` (what each setting does, the Ubuntu releases it supports, what to do on one it does not); `## Checks` (SSH still reachable after every change, nothing removed it did not install, no credential printed).
+Its instructions: `## Role` (report a server's health, change nothing); `## Inputs` (the server, and the task's period or focus); `## Steps` (with `host_run`: read `/etc/os-release` and the uptime and load; `df -h` and `df -i`; `free -m`; `systemctl --failed --no-pager`; `journalctl -p err --since "-1 day" --no-pager`, with `sudo: true` when the account cannot read the journal, and, when that is refused because the person gave no sudo password, a note of what it could not read; a long log is read in pages, never whole); `## Output` (a skeleton of `report.md`: what needs attention, worst first, each with the command output that shows it and what to do about it, then what looked normal); `## Background` (the thresholds it uses, such as a filesystem above 90% or swap in steady use, and what a failed unit or a repeated error usually means); `## Checks` (no command that changes the server, every finding backed by output, a credential the logs print reported by kind and place only).
 
-Its notes: that it runs on the person's computer only, with the CLI or the desktop app, never In Agentry; that the account must be able to use sudo; and what it leaves alone by default.
+Its notes: that it runs on the person's computer only, with the CLI or the desktop app, never In Agentry; which account it needs to read every log; and the thresholds it picked.

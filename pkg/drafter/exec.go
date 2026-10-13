@@ -44,7 +44,7 @@ func execProblems(raw json.RawMessage) []string {
 	var foreign, archives []string
 	for _, c := range exec.Commands {
 		switch {
-		case slices.Contains(remote, c):
+		case slices.Contains(remote, c): // its own line, below
 		case !slices.Contains(base, c):
 			foreign = append(foreign, c)
 		case slices.Contains(archiveReaders, c):
