@@ -20,3 +20,13 @@ func TestTheSweepsNeverSelectByTheImageLabel(t *testing.T) {
 		}
 	}
 }
+
+// TestTheFiltersImageLabelIsTheRunners: the docker filter's own test spells
+// the image label as a literal, since the runner image's build context it
+// lives in is stdlib-only (agentry-cli#322); this holds it to
+// imagelabel.Key.
+func TestTheFiltersImageLabelIsTheRunners(t *testing.T) {
+	if imagelabel.Key != "org.agentry.image" {
+		t.Fatalf("imagelabel.Key is %q; runnerimage/sockfilter's imageLabelKey must follow it", imagelabel.Key)
+	}
+}

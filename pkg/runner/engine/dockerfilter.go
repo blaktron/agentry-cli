@@ -12,9 +12,9 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
-	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
+	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -26,13 +26,17 @@ import (
 // networks and volumes and nothing else on the host (package sockfilter
 // says exactly what passes). Elsewhere (Docker Desktop on macOS and
 // Windows) a host socket cannot be bind-mounted into the daemon's VM, so
-// the gateway keeps the daemon's socket and the receipt says so.
+// the same filter runs in a container beside the gateway instead
+// (filtersidecar.go, agentry-cli#322).
 
 // dockerFilterLog is the filter's decision log in the receipts.
 const dockerFilterLog = "docker-filter.log"
 
-// filterSupported says whether this platform runs the filter.
-var filterSupported = runtime.GOOS == "linux"
+// filterSupported says whether the gateway reaches the daemon through the
+// filter here: on Linux the CLI serves it (filterInProcess), and on Docker
+// Desktop (macOS, Windows) a container of the run's own does
+// (filtersidecar.go, agentry-cli#322).
+var filterSupported = runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // The pinned gateway's two fixed relay network names (DR-22): the filter
 // gives it the run's own networks under them (agentry-cli#220). A gateway
@@ -84,6 +88,10 @@ func filterSocketPath(rd *runDirs, runID, runnerHome string) (string, error) {
 // (MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS): the filter
 // enforces for a compromised gateway what the gateway enforces for itself.
 func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome string) (*sockfilter.Filter, string, error) {
+	cfg, err := filterConfig(rd, runID, gwEnv, lim, plan)
+	if err != nil {
+		return nil, "", err
+	}
 	sock, err := filterSocketPath(rd, runID, runnerHome)
 	if err != nil {
 		return nil, "", err
@@ -102,10 +110,21 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		return nil, "", Classify(ExitGateway, fmt.Errorf("docker filter log: %w", err))
 	}
 	rd.filterLog = logf
-	mem, err := memoryBytes(lim.Memory)
+	cfg.Listen, cfg.Upstream, cfg.Log = sock, DockerSocket, logf
+	f, err := sockfilter.Start(cfg)
 	if err != nil {
 		closeDaemonFilter(rd)
-		return nil, "", Classify(ExitPolicy, err)
+		return nil, "", Classify(ExitGateway, fmt.Errorf("start the gateway's docker filter: %w", err))
+	}
+	return f, sock, nil
+}
+
+// filterConfig is the run's filter policy, wherever it is served: in the
+// CLI (startDaemonFilter) or in the filter container (startFilterSidecar).
+func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan) (sockfilter.Config, error) {
+	mem, err := memoryBytes(lim.Memory)
+	if err != nil {
+		return sockfilter.Config{}, Classify(ExitPolicy, err)
 	}
 	// The relay networks are the run's own, and exist only for a run
 	// whose servers need relays; the gateway reaches them under the fixed
@@ -138,12 +157,10 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 	if relaysSandboxed(plan) {
 		relayResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
 	}
-	f, err := sockfilter.Start(sockfilter.Config{
+	return sockfilter.Config{
 		RunID:           runID,
 		Label:           runLabel,
 		OwnerLabel:      gatewayOwnerLabel,
-		Listen:          sock,
-		Upstream:        DockerSocket,
 		BindRoots:       pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]),
 		WritableRoots:   pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
 		SharedNetworks:  shared,
@@ -167,13 +184,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 			Pids:        int64(lim.Pids),
 		},
 		Runtime: plan.Runtime(),
-		Log:     logf,
-	})
-	if err != nil {
-		closeDaemonFilter(rd)
-		return nil, "", Classify(ExitGateway, fmt.Errorf("start the gateway's docker filter: %w", err))
-	}
-	return f, sock, nil
+	}, nil
 }
 
 // toolsTmpfs is what the docker filter mounts into the tools server: its
@@ -326,7 +337,7 @@ func throughFilter(mounts []dockerx.Mount, sock string) []dockerx.Mount {
 // daemon, with what the filter refused.
 func daemonLine(rd *runDirs) string {
 	if !filterSupported {
-		return "the gateway holds the docker daemon's own socket: the per-run filter runs on Linux only, where hosted runs execute; Docker Desktop is agentry-cli#322"
+		return "the gateway holds the docker daemon's own socket: the per-run filter runs on Linux and on Docker Desktop (macOS, Windows), not on this platform"
 	}
 	line := "the gateway reaches the docker daemon only through this run's filter: every container, network and volume it creates carries the run's label, " +
 		"it may touch no container, network, volume or exec without it (the pinned gateway's shared relay networks excepted, DR-22; only its digest-pinned relays join the one that leaves the host), " +
@@ -337,21 +348,37 @@ func daemonLine(rd *runDirs) string {
 		line += "; for the Drafter's web tools one more network leaves the host, the run's own " + webNetwork(rd.runID) +
 			", which only the run's tools server joins, in its one shape (its image's entrypoint, the tools role, the run's spec read-only, no other network, no link), and nothing execs into or writes into"
 	}
-	if rd != nil && rd.filter != nil {
-		if n := rd.filter.Refused(); n > 0 {
+	if rd != nil {
+		if n := refusedBy(rd); n > 0 {
 			line += fmt.Sprintf("; %d request(s) refused", n)
 		}
 	}
 	return line
 }
 
+// refusedBy is how many requests the run's filter refused, wherever it ran.
+func refusedBy(rd *runDirs) int {
+	switch {
+	case rd.filter != nil:
+		return rd.filter.Refused()
+	case rd.filterSidecar != "":
+		f, err := os.Open(rd.filterSidecar)
+		if err != nil {
+			return 0
+		}
+		defer func() { _ = f.Close() }()
+		return sockfilter.CountRefused(f)
+	}
+	return 0
+}
+
 // withRefusals names the filter's refusals in an error that ended a run,
 // since a refusal is the likeliest cause of a gateway that did not start.
 func withRefusals(err error, rd *runDirs) error {
-	if err == nil || rd == nil || rd.filter == nil {
+	if err == nil || rd == nil {
 		return err
 	}
-	n := rd.filter.Refused()
+	n := refusedBy(rd)
 	if n == 0 {
 		return err
 	}

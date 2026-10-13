@@ -157,7 +157,7 @@ type Config struct {
 	// default. The gateway never chooses a runtime itself.
 	Runtime string
 	// Log receives one line per request.
-	Log io.Writer
+	Log io.Writer `json:"-"`
 }
 
 // Limits are the resource ceilings for the containers a gateway creates.

@@ -37,9 +37,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
-	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
+	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -119,6 +119,10 @@ type runDirs struct {
 	filter    *sockfilter.Filter
 	filterLog *os.File
 	filterDir string // the short fallback directory, when the run's was too long
+	// filterSidecar is the decision log of a filter served by the run's
+	// filter container (filtersidecar.go, agentry-cli#322), whose
+	// refusals are counted from it; empty where the CLI serves the filter.
+	filterSidecar string
 	// redact masks the run's secret values out of every receipt and error
 	// (redact.go); set once the token and the secrets are known, nil-safe
 	// before.

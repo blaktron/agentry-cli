@@ -26,8 +26,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/blaktron/agentry-cli/runnerimage/bridge"
@@ -37,6 +39,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 	"github.com/blaktron/agentry-cli/runnerimage/probe"
+	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
@@ -67,6 +70,9 @@ const usageText = `usage: agentry-runner <mode> [flags]
         beneath the named directories
   minimize <command> [<command>...]
         (docker build only) delete every executable except the named commands
+  docker-filter --config <file> --listen <socket> --log <file>
+        (Docker Desktop's per-run filter container, agentry-cli#322) serve the
+        run's docker filter on --listen in front of /var/run/docker.sock
   probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60] [--list-tools]
         wait until the MCP gateway answers an authed initialize with a 2xx
 `
@@ -94,6 +100,8 @@ func main() {
 		err = runProxy(os.Args[2:])
 	case "probe":
 		err = runProbe(os.Args[2:])
+	case "docker-filter":
+		err = runDockerFilter(os.Args[2:])
 	case "decode":
 		err = runDecode(os.Args[2:])
 	case "bridge":
@@ -125,6 +133,48 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agentry-runner: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runDockerFilter is the filter container's role where the daemon runs in
+// a VM (Docker Desktop, agentry-cli#322): the run's docker filter, the
+// same package the CLI serves in process on Linux, read from the file the
+// engine wrote, in front of the daemon's socket, on a socket in the volume
+// the gateway mounts. It prints sockfilter.SidecarReady once it listens and
+// serves until it is stopped.
+func runDockerFilter(args []string) error {
+	fs := flag.NewFlagSet("docker-filter", flag.ContinueOnError)
+	cfgPath := fs.String("config", "", "the filter's configuration (sockfilter.MarshalConfig)")
+	listen := fs.String("listen", "", "the socket to serve the filter on")
+	logPath := fs.String("log", "", "the decision log")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *cfgPath == "" || *listen == "" || *logPath == "" || fs.NArg() != 0 {
+		return errors.New("docker-filter: --config, --listen and --log are required, and nothing else")
+	}
+	raw, err := os.ReadFile(*cfgPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := sockfilter.UnmarshalConfig(raw)
+	if err != nil {
+		return err
+	}
+	logf, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("docker-filter: the decision log: %w", err)
+	}
+	defer func() { _ = logf.Close() }()
+	cfg.Listen, cfg.Upstream, cfg.Log = *listen, "/var/run/docker.sock", logf
+	f, err := sockfilter.Start(cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Println(sockfilter.SidecarReady)
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	<-stop
+	return f.Close()
 }
 
 // maxTokenBytes bounds the access token read from stdin.
