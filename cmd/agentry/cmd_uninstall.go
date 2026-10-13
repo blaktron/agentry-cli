@@ -47,7 +47,9 @@ type uninstallOutput struct {
 	Profiles     []string `json:"profiles"`
 	KeptProfiles []string `json:"keptProfiles,omitempty"`
 	// Connections are the version's OAuth connections removed, each with
-	// its revocation's outcome (or, with --plan, would be: no outcome).
+	// its revocation's outcome (or, with --plan, would be: no outcome) and
+	// the kept connections made with the same client it ends at a vendor
+	// that revokes the whole grant (sharesGrantWith).
 	Connections     []removedConnection `json:"connections"`
 	KeptConnections []string            `json:"keptConnections,omitempty"`
 	// ConsentRecord is true when the runner's consent record in the shared
@@ -157,6 +159,12 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	// each revoked at the vendor where it offers that; kept with it under
 	// --keep-mcp.
 	if conns, err := connection.Open(home, nil).List(); err == nil {
+		going := map[connection.Key]bool{}
+		for _, c := range conns {
+			if profile.RefMatches(c.Ref, sel) {
+				going[c.Key()] = true
+			}
+		}
 		for _, c := range conns {
 			if !profile.RefMatches(c.Ref, sel) {
 				continue
@@ -166,15 +174,16 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 				_, _ = fmt.Fprintf(out, "kept the connection of %s to %s — locked to its release\n", c.Ref, c.Server)
 				result.KeptConnections = append(result.KeptConnections, c.Ref+" "+c.Server)
 			case plan:
-				_, _ = fmt.Fprintf(out, "would remove the connection of %s to %s (revoked at the vendor where it offers that)\n", c.Ref, c.Server)
-				result.Connections = append(result.Connections, removedConnection{Ref: c.Ref, Server: c.Server})
+				shared := sharedBeyond(conns, c, going)
+				_, _ = fmt.Fprintf(out, "would remove the connection of %s to %s (revoked at the vendor where it offers that)%s\n", c.Ref, c.Server, endsToo(shared))
+				result.Connections = append(result.Connections, removedConnection{Ref: c.Ref, Server: c.Server, SharesGrantWith: shared})
 			}
 		}
 	}
 	if !keepMCP && !plan {
 		removed, rerr := removeConnections(cmd.Context(), home, sel, "", "the version was uninstalled")
 		for _, r := range removed {
-			_, _ = fmt.Fprintf(out, "removed the connection of %s to %s (revocation: %s)\n", r.Ref, r.Server, r.Revocation)
+			_, _ = fmt.Fprintln(out, r.line())
 		}
 		result.Connections = append(result.Connections, removed...)
 		if rerr != nil {

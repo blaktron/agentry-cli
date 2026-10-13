@@ -439,3 +439,143 @@ func writeConnectionsFile(t *testing.T, mode os.FileMode, body string) string {
 	}
 	return p
 }
+
+// sharedClientFixture is connectionFixture at a vendor that revokes an
+// account's whole grant to a client, as Google does, with the person's own
+// client kept for its issuer: every connection there is made with it.
+func sharedClientFixture(t *testing.T) (*mcpauthtest.Vendor, *manifest.Manifest, *installdir.Meta, string) {
+	t.Helper()
+	v, m, meta, _ := connectionFixture(t)
+	v.DCR, v.WholeGrant = false, true
+	v.AddClient("own-client-702", "own-secret-702")
+	home, err := runnerHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.OpenClients(home, nil).Set(v.URL, "own-client-702", "own-secret-702"); err != nil {
+		t.Fatal(err)
+	}
+	return v, m, meta, home
+}
+
+// connectVersion makes ref's connection to the fixture's server.
+func connectVersion(t *testing.T, home string, meta *installdir.Meta, m *manifest.Manifest, ref string) *installdir.Meta {
+	t.Helper()
+	other := *meta
+	other.Ref = ref
+	if _, err := ensureConnections(testCmd(io.Discard), home, &other, m); err != nil {
+		t.Fatalf("connect %s: %v", ref, err)
+	}
+	return &other
+}
+
+// agentry-cli#702: connecting again with the same own client overwrites the
+// connection and revokes nothing, so at a vendor that revokes the whole
+// grant neither the new connection nor another made with the client ends.
+func TestConnectingAgainWithTheSameClientRevokesNothing(t *testing.T) {
+	v, m, meta, home := sharedClientFixture(t)
+	connectVersion(t, home, meta, m, meta.Ref)
+	connectVersion(t, home, meta, m, "acme/cal@1.0.0")
+
+	store, clients := connection.Open(home, nil), connection.OpenClients(home, nil)
+	k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: v.ServerURL()}
+	var stderr bytes.Buffer
+	if _, err := consentFor(testCmd(&stderr), store, clients, vendorHTTP(), k, m.Capabilities.MCPServers[0]); err != nil {
+		t.Fatalf("connect again: %v\n%s", err, stderr.String())
+	}
+	if len(v.Revoked) != 0 {
+		t.Fatalf("connecting again revoked %d token(s) at the vendor", len(v.Revoked))
+	}
+	if !strings.Contains(stderr.String(), "made with the same client, so it is not revoked") {
+		t.Errorf("stderr does not say why nothing was revoked:\n%s", stderr.String())
+	}
+	audit, _ := os.ReadFile(filepath.Join(connection.Dir(home), "audit.ndjson"))
+	if !strings.Contains(string(audit), `"action":"replaced"`) || !strings.Contains(string(audit), connection.RevokeSameClient) {
+		t.Errorf("the replacement is not in the audit log:\n%s", audit)
+	}
+	assertNoProbe(t, "the replacement's terminal and audit", stderr.String()+string(audit), append([]string{"own-secret-702"}, v.Issued...))
+	for _, ref := range []string{meta.Ref, "acme/cal@1.0.0"} {
+		key := connection.Key{Ref: ref, Digest: meta.Digest, Server: v.ServerURL()}
+		if _, _, err := store.Use(context.Background(), key, vendorHTTP(), clients); err != nil {
+			t.Errorf("%s no longer refreshes: %v", ref, err)
+		}
+	}
+}
+
+// A different client is still a removal of the old connection, revoked.
+func TestConnectingAgainWithAnotherClientRevokesTheOld(t *testing.T) {
+	v, m, meta, home := sharedClientFixture(t)
+	connectVersion(t, home, meta, m, meta.Ref)
+	v.AddClient("own-client-702b", "own-secret-702b")
+	clients := connection.OpenClients(home, nil)
+	if err := clients.Set(v.URL, "own-client-702b", "own-secret-702b"); err != nil {
+		t.Fatal(err)
+	}
+	k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: v.ServerURL()}
+	var stderr bytes.Buffer
+	if _, err := consentFor(testCmd(&stderr), connection.Open(home, nil), clients, vendorHTTP(), k, m.Capabilities.MCPServers[0]); err != nil {
+		t.Fatalf("%v\n%s", err, stderr.String())
+	}
+	if len(v.Revoked) != 1 || !strings.Contains(stderr.String(), "the previous connection was removed (revocation: revoked)") {
+		t.Fatalf("revoked %d, stderr:\n%s", len(v.Revoked), stderr.String())
+	}
+}
+
+// list names the connections that share a client's grant; remove and
+// uninstall still revoke (the operator, 2026-10-06) and name the kept ones
+// the vendor ended with it, which do stop refreshing there.
+func TestRemovalNamesTheConnectionsThatShareTheGrant(t *testing.T) {
+	v, m, meta, home := sharedClientFixture(t)
+	connectVersion(t, home, meta, m, meta.Ref)
+	connectVersion(t, home, meta, m, "acme/mail@1.0.1")
+	connectVersion(t, home, meta, m, "acme/cal@1.0.0")
+
+	out, _, err := runCLI(t, nil, "connections", "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []connectionOut
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 3 {
+		t.Fatalf("list = %s (%v)", out, err)
+	}
+	for _, r := range rows {
+		if len(r.SharesGrantWith) != 2 {
+			t.Errorf("%s shares its grant with %v, want the other two", r.Ref, r.SharesGrantWith)
+		}
+	}
+	if out, _, _ := runCLI(t, nil, "connections", "list"); !strings.Contains(out, "made with the same client as: acme/cal@1.0.0 → "+v.ServerURL()) {
+		t.Errorf("list does not name the shared grant:\n%s", out)
+	}
+
+	// Uninstalling acme/mail removes both its versions' connections and
+	// names acme/cal's, which it does not remove, as ended; --plan says so
+	// first.
+	cal := "acme/cal@1.0.0 → " + v.ServerURL()
+	out, _, err = runCLI(t, nil, "uninstall", "acme/mail", "--plan")
+	if err != nil || strings.Count(out, "stop working too: "+cal) != 2 {
+		t.Fatalf("uninstall --plan does not warn (%v):\n%s", err, out)
+	}
+	out, _, err = runCLI(t, nil, "uninstall", "acme/mail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out, "stop working too: "+cal) != 2 || strings.Contains(out, "too: acme/mail") {
+		t.Fatalf("uninstall did not name the one kept connection it ended:\n%s", out)
+	}
+	assertNoProbe(t, "uninstall", out, append([]string{"own-secret-702"}, v.Issued...))
+	_, _, err = connection.Open(home, nil).Use(context.Background(), connection.Key{Ref: "acme/cal@1.0.0", Digest: meta.Digest, Server: v.ServerURL()}, vendorHTTP(), connection.OpenClients(home, nil))
+	var broken *connection.BrokenError
+	if !errors.As(err, &broken) {
+		t.Fatalf("the named connection still refreshes at a whole-grant vendor (%v): the warning would be wrong", err)
+	}
+
+	// Removing the last one names nothing.
+	out, _, err = runCLI(t, nil, "connections", "remove", "--all", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var removed []removedConnection
+	if err := json.Unmarshal([]byte(out), &removed); err != nil || len(removed) != 1 || len(removed[0].SharesGrantWith) != 0 {
+		t.Fatalf("remove --all = %s (%v)", out, err)
+	}
+}

@@ -29,11 +29,13 @@ var resultBudgets = map[string]Budget{
 	// comes with a "[Resource from … at …]" prefix.
 	ClaudeAdapterName:      claudeBudget,
 	ClaudeImageAdapterName: claudeBudget,
-	// Codex 0.162.0 keeps 12,000 bytes of a tool result for a model its
-	// catalog does not list (48,000 for one it does; a person's own model is
-	// often not listed), cutting out the middle, and sends an input tool's
-	// resource as its whole JSON, escaped, which can double a page of short
-	// lines.
+	// Codex 0.162.0 holds an MCP result to its model's truncation policy,
+	// cutting out the middle, and the model's entry is the adapter's own
+	// catalog's (codexCatalog), which sets it: codexToolResultBytes, the
+	// runner's choice since agentry-cli#911 (it was codex's 10,000-byte
+	// fallback, and pages of 5 KiB). An input tool's resource is sent as its
+	// whole JSON, escaped, which can double a page of short lines, so the
+	// budget is under half the limit.
 	CodexAdapterName:      codexBudget,
 	CodexImageAdapterName: codexBudget,
 	// Copilot CLI 1.0.95 saves a tool result over 20,480 bytes to a file and
@@ -43,14 +45,26 @@ var resultBudgets = map[string]Budget{
 
 var (
 	claudeBudget = Budget{Bytes: 46 << 10, Lines: toolsrv.DefaultMaxResultLines}
-	codexBudget  = Budget{Bytes: 5 << 10, Lines: toolsrv.DefaultMaxResultLines}
+	codexBudget  = Budget{Bytes: 20 << 10, Lines: toolsrv.DefaultMaxResultLines}
 )
 
 // ResultBudget is the result budget of the adapter named name; an adapter
-// with no measured row gets the tightest measured, Codex's.
+// with no measured row gets the tightest measured.
 func ResultBudget(name string) Budget {
 	if b, ok := resultBudgets[name]; ok {
 		return b
 	}
-	return codexBudget
+	return tightestBudget()
+}
+
+// tightestBudget is the smallest measured budget, for an adapter with no
+// row of its own.
+func tightestBudget() Budget {
+	var t Budget
+	for _, b := range resultBudgets {
+		if t.Bytes == 0 || b.Bytes < t.Bytes {
+			t = b
+		}
+	}
+	return t
 }
