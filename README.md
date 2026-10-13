@@ -1064,9 +1064,9 @@ manifest + operator policy into a deterministic run plan → execute:
   from the signed `agentry-ripgrep` image. The tools server starts it with a
   fixed argument list that never asks it to start another program or follow
   a link, an empty environment, as a user of its own, with its reads held to
-  the area it searches, no writes and no TCP where the kernel has Landlock
-  (that user alone where it has not, as under gVisor), 512 MiB and 30
-  seconds.
+  the area it searches and no writes where the kernel has Landlock, and
+  no TCP at Landlock ABI 4 and later (that user alone where there is no
+  Landlock, as under gVisor), 512 MiB and 30 seconds a call.
 - **A report can be a PDF.** A release's run (not a built-in's) has
   `export_pdf`, which turns a Markdown report the agent wrote into a PDF
   beside it in `reports/` (agentry-cli#730): when the person asks for one,

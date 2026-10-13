@@ -100,17 +100,22 @@ type Search struct {
 	Enabled bool `json:"enabled"`
 }
 
-// rgFixedArgs are the flags every ripgrep run takes (plan §5): JSON or
-// NUL-separated output the server parses, no config file, ignore files not
-// read and hidden files searched so nothing the person gave is skipped,
-// .git never searched, caps on file size, line width, threads and what a
-// pattern may compile to, and a stable order so offset pages are the same
-// pages.
+// rgFixedArgs are the flags every ripgrep run takes (plan §5): no config
+// file, ignore files not read and hidden files searched so nothing the
+// person gave is skipped, caps on file size and on what a pattern may
+// compile to, and a stable order so offset pages are the same pages
+// (sorting also makes ripgrep search on one thread). The output flags are
+// each tool's: --json for grep's content, --null paths otherwise.
 var rgFixedArgs = []string{
-	"--no-config", "--no-ignore", "--hidden", "--glob=!.git",
-	"--max-filesize=8M", "--threads=2", "--sort=path",
+	"--no-config", "--no-ignore", "--hidden",
+	"--max-filesize=8M", "--sort=path",
 	"--regex-size-limit=16M", "--dfa-size-limit=64M",
 }
+
+// rgSkipGit keeps .git out of every search. ripgrep lets the last glob that
+// matches a path decide, so it goes after the call's own glob: a call's "*"
+// would otherwise bring .git back.
+const rgSkipGit = "--glob=!.git"
 
 // grepOutputs are grep's answer shapes.
 var grepOutputs = []string{"files", "content", "count"}
@@ -146,11 +151,12 @@ func globSchema() map[string]any {
 // searchAreas says whether spec gives grep and glob anything to search.
 func (s *Spec) searchAreas() bool {
 	return (s.InputsDir != "" && !s.Review.Enabled) || s.ScratchDir != "" ||
-		(s.KnowledgeDir != "" && len(s.Knowledge) > 0) || s.FSRead.Enabled
+		(s.KnowledgeDir != "" && len(s.Knowledge) > 0) || (s.FSRead.Enabled && s.WorkspaceDir != "")
 }
 
-// grepDescription and globDescription name the areas this run has, so
-// the model is never told of one it cannot search.
+// searchAreaNames names the areas this run has, for the tools'
+// descriptions and refusals, so the model is never told of one it cannot
+// search.
 func (s *server) searchAreaNames() string {
 	var areas []string
 	if s.spec.InputsDir != "" && !s.spec.Review.Enabled {
@@ -162,7 +168,7 @@ func (s *server) searchAreaNames() string {
 	if s.spec.ScratchDir != "" {
 		areas = append(areas, s.spec.ScratchDir+" (the scratch folder)")
 	}
-	if s.spec.FSRead.Enabled {
+	if s.spec.FSRead.Enabled && s.spec.WorkspaceDir != "" {
 		areas = append(areas, s.spec.WorkspaceDir+" (the workspace)")
 	}
 	return strings.Join(areas, ", ")
@@ -203,6 +209,10 @@ type searchScope struct {
 	// names are byName's paths as a glob is matched against them, each
 	// relative to the folder the call named.
 	names []string
+	// hidden are paths an answer leaves out: each pack's manifest.json,
+	// which is the runner's record of the pack, not a page knowledge_read
+	// opens.
+	hidden map[string]bool
 }
 
 // scope resolves where a call searches: an area the run has, and a path
@@ -246,7 +256,14 @@ func (s *server) scope(tool, p, view string) (searchScope, error) {
 		case a.name == "workspace":
 			return s.workspaceScope(rel)
 		}
-		return folderScope(a.name, a.dir, rel)
+		sc, err := folderScope(a.name, a.dir, rel)
+		if err == nil && a.name == "knowledge" {
+			sc.hidden = map[string]bool{}
+			for _, k := range s.spec.Knowledge {
+				sc.hidden[path.Join(a.dir, k.Name, "manifest.json")] = true
+			}
+		}
+		return sc, err
 	}
 	return searchScope{}, fmt.Errorf("%s is not an area this run can search; search one of %s", p, s.searchAreaNames())
 }
@@ -275,7 +292,14 @@ func (s *server) inputsScope(rel, view string) (searchScope, error) {
 	for _, t := range targets {
 		sc.paths = append(sc.paths, t.abs)
 		sc.display[t.abs] = path.Join(s.spec.InputsDir, t.path)
-		sc.names = append(sc.names, strings.TrimPrefix(strings.TrimPrefix(t.path, rel), "/"))
+		name := t.path
+		if rel != "." {
+			name = strings.TrimPrefix(t.path, rel+"/")
+			if t.path == rel {
+				name = path.Base(t.path)
+			}
+		}
+		sc.names = append(sc.names, name)
 	}
 	return sc, nil
 }
@@ -302,16 +326,20 @@ func folderScope(area, dir, rel string) (searchScope, error) {
 // workspace root under a paths grant is each granted path that exists.
 func (s *server) workspaceScope(rel string) (searchScope, error) {
 	grants := s.spec.FSRead.Paths
-	if rel == "." && len(grants) > 0 {
-		sc := searchScope{area: "workspace", dir: s.spec.WorkspaceDir, read: []string{s.spec.WorkspaceDir}}
-		for _, g := range grants {
-			abs, err := resolveUnder(s.spec.WorkspaceDir, g)
-			if err != nil {
-				continue
-			}
+	// Under a paths grant Landlock lets ripgrep read the granted paths
+	// alone, so a link inside the workspace cannot take it to the rest.
+	var granted []string
+	for _, g := range grants {
+		if abs, err := resolveUnder(s.spec.WorkspaceDir, g); err == nil {
 			if _, err := os.Stat(abs); err == nil {
-				sc.paths = append(sc.paths, path.Clean(g))
+				granted = append(granted, abs)
 			}
+		}
+	}
+	if rel == "." && len(grants) > 0 {
+		sc := searchScope{area: "workspace", dir: s.spec.WorkspaceDir, read: granted}
+		for _, abs := range granted {
+			sc.paths = append(sc.paths, strings.TrimPrefix(abs, s.spec.WorkspaceDir+"/"))
 		}
 		if len(sc.paths) == 0 {
 			return searchScope{}, errors.New("none of the workspace's granted paths exists")
@@ -321,7 +349,11 @@ func (s *server) workspaceScope(rel string) (searchScope, error) {
 	if !allowedByGrant(grants, rel) {
 		return searchScope{}, fmt.Errorf("%s is not in the workspace paths this QuickAgent may read", path.Join(s.spec.WorkspaceDir, rel))
 	}
-	return folderScope("workspace", s.spec.WorkspaceDir, rel)
+	sc, err := folderScope("workspace", s.spec.WorkspaceDir, rel)
+	if err == nil && len(grants) > 0 {
+		sc.read = granted
+	}
+	return sc, err
 }
 
 // searchConfinement is how ripgrep is held (plan §5), chosen once when the
@@ -435,13 +467,24 @@ func (s *server) runRipgrep(tool string, args []string, sc searchScope) (rgResul
 		s.callFault = true
 		return rgResult{}, fmt.Sprintf("%s: this runner image has no ripgrep (%v); the runner image must be rebuilt", tool, err)
 	}
+	if s.search.landlock > 0 && len(sc.read) == 0 {
+		// confine without --read restricts no read: never start it so.
+		s.callFault = true
+		return rgResult{}, tool + ": the search has no area to hold its reads to"
+	}
+	// One deadline for the whole call, however many runs its paths need.
+	ctx, cancel := context.WithTimeout(context.Background(), s.searchTimeout)
+	defer cancel()
 	var all rgResult
 	for start := 0; start < len(sc.paths); start += searchTargetsPerRun {
 		chunk := sc.paths[start:min(len(sc.paths), start+searchTargetsPerRun)]
-		r, failed := s.runRipgrepOnce(sc.dir, append(append(append([]string{}, args...), "--"), chunk...), sc.read)
+		r, failed := s.runRipgrepOnce(ctx, sc.dir, append(append(append([]string{}, args...), "--"), chunk...), sc.read)
 		if failed != "" {
 			s.callFault = true
 			return rgResult{}, tool + ": the search could not be started confined: " + failed
+		}
+		if room := maxSearchOutput - len(all.stdout); len(r.stdout) > room {
+			r.stdout, r.cut = r.stdout[:room], true
 		}
 		all.stdout = append(all.stdout, r.stdout...)
 		all.stderr += r.stderr
@@ -450,28 +493,22 @@ func (s *server) runRipgrep(tool string, args []string, sc searchScope) (rgResul
 		if r.exit > all.exit {
 			all.exit = r.exit
 		}
-		if all.timedOut || all.cut || r.exit == 2 && len(r.stdout) == 0 && rgRefusal(r.stderr) != "" {
+		if all.timedOut || all.cut || (r.exit == 2 && len(r.stdout) == 0) {
 			break
 		}
-	}
-	if all.exit == 0 && len(all.stdout) == 0 {
-		all.exit = 1
 	}
 	return all, ""
 }
 
-func (s *server) runRipgrepOnce(dir string, args, read []string) (rgResult, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.searchTimeout)
-	defer cancel()
-	name, argv := s.search.argv(s.rgBin, read, append(append([]string{}, rgFixedArgs...), args...))
-	cmd := exec.CommandContext(ctx, name, argv...)
-	// An empty environment, not this server's: it holds the run's secrets.
-	cmd.Env = []string{}
-	cmd.Dir = dir
-	if s.search.asSearch {
-		runAs(cmd, searchID)
-	}
-	stdout, stderr := &capWriter{max: maxSearchOutput}, &capWriter{max: 16 << 10}
+// maxSearchStderr is the most of ripgrep's stderr the server keeps: its
+// refusals and the files it could not read.
+const maxSearchStderr = 64 << 10
+
+func (s *server) runRipgrepOnce(ctx context.Context, dir string, args, read []string) (rgResult, string) {
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	cmd := s.ripgrepCommand(ctx, dir, args, read)
+	stdout, stderr := &stopWriter{capWriter: capWriter{max: maxSearchOutput}, stop: stop}, &capWriter{max: maxSearchStderr}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
 	failed, err := s.search.run(cmd)
@@ -479,6 +516,10 @@ func (s *server) runRipgrepOnce(dir string, args, read []string) (rgResult, stri
 		return rgResult{}, failed
 	}
 	r := rgResult{stdout: stdout.buf.Bytes(), stderr: stderr.text(), cut: stdout.total > int64(stdout.buf.Len())}
+	if r.cut {
+		// Stopped by stopWriter, not by its time limit.
+		return r, ""
+	}
 	var exitErr *exec.ExitError
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
@@ -493,6 +534,55 @@ func (s *server) runRipgrepOnce(dir string, args, read []string) (rgResult, stri
 		return rgResult{}, err.Error()
 	}
 	return r, ""
+}
+
+// ripgrepCommand is ripgrep with args in dir, held as s.search says: an
+// empty environment, not this server's, which holds the run's secrets, and
+// as searchID where the server is root.
+func (s *server) ripgrepCommand(ctx context.Context, dir string, args, read []string) *exec.Cmd {
+	name, argv := s.search.argv(s.rgBin, read, append(append([]string{}, rgFixedArgs...), args...))
+	cmd := exec.CommandContext(ctx, name, argv...)
+	cmd.Env = []string{}
+	cmd.Dir = dir
+	if s.search.asSearch {
+		runAs(cmd, searchID)
+	}
+	return cmd
+}
+
+// stopWriter is a capWriter that stops ripgrep once its output passes the
+// cap, rather than letting it run on to its time limit unread.
+type stopWriter struct {
+	capWriter
+	stop context.CancelFunc
+}
+
+func (w *stopWriter) Write(p []byte) (int, error) {
+	n, err := w.capWriter.Write(p)
+	if w.total > w.max {
+		w.stop()
+	}
+	return n, err
+}
+
+// rgFailed is a tool's answer when ripgrep ended in error with nothing to
+// show: its refusal of the call's pattern or option, the agent's own to
+// fix, or else a fault of the run's machinery (a search killed at its
+// memory limit, say), with ripgrep's first line. "" when there is output or
+// no error.
+func (s *server) rgFailed(tool string, r rgResult) string {
+	if r.exit != 2 || len(r.stdout) > 0 || r.timedOut {
+		return ""
+	}
+	if why := rgRefusal(r.stderr); why != "" {
+		return tool + ": ripgrep refused the search: " + strings.TrimSpace(why)
+	}
+	s.callFault = true
+	first, _, _ := strings.Cut(strings.TrimSpace(r.stderr), "\n")
+	if first == "" {
+		first = "no message (stopped at its memory limit?)"
+	}
+	return tool + ": the search failed: " + first
 }
 
 // rgRefusal is ripgrep's own refusal of a call's pattern or option, from
@@ -521,7 +611,7 @@ func unreadable(stderr string) int {
 	return n
 }
 
-// searchFlags is grep's own options as ripgrep flags, from the closed set
+// grepFlags is grep's own options as ripgrep flags, from the closed set
 // a call may ask for; each value travels in the same argument as its flag,
 // so none can be read as another flag.
 func grepFlags(glob, typ string, ignoreCase, fixed bool) []string {
@@ -538,7 +628,7 @@ func grepFlags(glob, typ string, ignoreCase, fixed bool) []string {
 	if fixed {
 		f = append(f, "--fixed-strings")
 	}
-	return f
+	return append(f, rgSkipGit)
 }
 
 // checkGlob holds a call's glob to its bounds.
@@ -577,16 +667,16 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 		return "grep: pattern is required", true
 	case len(a.Pattern) > maxGrepPattern:
 		return fmt.Sprintf("grep: pattern is longer than %d bytes", maxGrepPattern), true
-	case strings.ContainsRune(a.Pattern, 0):
-		return "grep: pattern holds a NUL", true
+	case strings.ContainsAny(a.Pattern, "\x00\n"):
+		return "grep: pattern holds a NUL or a newline; a match is one line (use \\n nowhere)", true
 	case !slices.Contains(grepOutputs, a.Output):
 		return fmt.Sprintf("grep: output %q is not one of %s", a.Output, strings.Join(grepOutputs, ", ")), true
 	case a.Context < 0 || a.Context > maxGrepContext:
 		return fmt.Sprintf("grep: context must be 0 to %d", maxGrepContext), true
 	case a.Context > 0 && a.Output != "content":
 		return `grep: context applies to output "content" alone`, true
-	case a.Offset < 0:
-		return "grep: offset must be >= 0", true
+	case a.Offset < 0 || a.MaxResults < 0:
+		return "grep: offset and maxResults must be >= 0", true
 	case a.Type != "" && !rgTypeName.MatchString(a.Type):
 		return fmt.Sprintf("grep: %q is not a file type name", a.Type), true
 	}
@@ -618,14 +708,15 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 		}
 	}
 	if len(sc.paths) == 0 {
-		return fmt.Sprintf("no file in %s to search", path.Clean("/"+strings.TrimPrefix(a.Path, "/"))), false
+		return "no file in " + sc.area + " to search", false
 	}
 	args := grepFlags(a.Glob, a.Type, a.IgnoreCase, a.FixedStrings)
 	switch a.Output {
 	case "files":
 		args = append(args, "--files-with-matches", "--null")
 	case "count":
-		args = append(args, "--count", "--null")
+		// --with-filename: given one file, ripgrep counts without its name.
+		args = append(args, "--count", "--with-filename", "--null")
 	case "content":
 		args = append(args, "--json")
 		if a.Context > 0 {
@@ -637,24 +728,24 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 	if failed != "" {
 		return failed, true
 	}
-	if r.exit == 2 && len(r.stdout) == 0 {
-		if why := rgRefusal(r.stderr); why != "" {
-			return "grep: ripgrep refused the search: " + strings.TrimSpace(why), true
-		}
+	if failed := s.rgFailed("grep", r); failed != "" {
+		return failed, true
 	}
 	var lines []string
 	switch a.Output {
 	case "files":
 		for _, p := range splitNul(r.stdout) {
-			lines = append(lines, sc.show(p))
+			if p = sc.show(p); !sc.hidden[p] {
+				lines = append(lines, p)
+			}
 		}
 	case "count":
 		lines = countLines(r.stdout, sc)
 	case "content":
 		lines = contentLines(r.stdout, sc, a.Context > 0)
 	}
-	s.callPersonsInput = sc.personsInput && !s.spec.Review.Enabled
-	return s.searchAnswer("grep", lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches", "narrow path, glob or type"), false
+	s.callPersonsInput = sc.personsInput
+	return s.searchAnswer(lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches", "narrow path, glob or type"), false
 }
 
 func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
@@ -670,8 +761,8 @@ func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
 	switch {
 	case a.Pattern == "":
 		return "glob: pattern is required", true
-	case a.Offset < 0:
-		return "glob: offset must be >= 0", true
+	case a.Offset < 0 || a.MaxResults < 0:
+		return "glob: offset and maxResults must be >= 0", true
 	}
 	if err := checkGlob("pattern", a.Pattern); err != nil {
 		return "glob: " + err.Error(), true
@@ -683,30 +774,30 @@ func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
 	if len(sc.paths) == 0 {
 		return "no file to list", false
 	}
-	args := []string{"--files", "--null", "--glob=" + a.Pattern}
+	args := []string{"--files", "--null", "--glob=" + a.Pattern, rgSkipGit}
 	r, failed := s.runRipgrep("glob", args, sc)
 	if failed != "" {
 		return failed, true
 	}
-	if r.exit == 2 && len(r.stdout) == 0 {
-		if why := rgRefusal(r.stderr); why != "" {
-			return "glob: ripgrep refused the pattern: " + strings.TrimSpace(why), true
-		}
+	if failed := s.rgFailed("glob", r); failed != "" {
+		return failed, true
 	}
 	var lines []string
 	for _, p := range splitNul(r.stdout) {
-		lines = append(lines, sc.show(p))
+		if p = sc.show(p); !sc.hidden[p] {
+			lines = append(lines, p)
+		}
 	}
-	return s.searchAnswer("glob", lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches the pattern", "narrow path or pattern"), false
+	return s.searchAnswer(lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches the pattern", "narrow path or pattern"), false
 }
 
-// searchAnswer is a search's result lines from offset, at most maxResults
-// of them and within the result budget, with what it could not read or
-// left out said after them.
-func (s *server) searchAnswer(tool string, lines []string, maxResults, offset int, r rgResult, none, narrow string) string {
+// searchAnswer is a search's result lines from offset: at most maxResults
+// of them, and no more than fit the result budget, with what it left out
+// and what it could not read said after them.
+func (s *server) searchAnswer(lines []string, maxResults, offset int, r rgResult, none, narrow string) string {
 	var notes []string
 	if n := unreadable(r.stderr); n > 0 {
-		notes = append(notes, fmt.Sprintf("%d files could not be read by the search (only their owner may read them)", n))
+		notes = append(notes, fmt.Sprintf("files the search could not read, as only their owner may: %d", n))
 	}
 	if r.timedOut {
 		notes = append(notes, fmt.Sprintf("the search stopped at its %s limit, so this is part of the answer; narrow it", s.searchTimeout))
@@ -721,7 +812,7 @@ func (s *server) searchAnswer(tool string, lines []string, maxResults, offset in
 	if len(lines) == 0 {
 		return none + tail
 	}
-	if maxResults <= 0 {
+	if maxResults == 0 {
 		maxResults = defaultGrepResults
 	}
 	maxResults = min(maxResults, maxGrepResults)
@@ -729,13 +820,31 @@ func (s *server) searchAnswer(tool string, lines []string, maxResults, offset in
 	if offset >= total {
 		return fmt.Sprintf("(offset %d is past the last of the %d results)", offset, total) + tail
 	}
-	end := min(total, offset+maxResults)
-	b := s.spec.Limits.budget().less(tail)
-	page := b.listPage("", lines[:end], offset, narrow)
-	if end < total && !strings.Contains(page, "continue with offset") {
-		page += fmt.Sprintf("\n[results %d–%d of %d; continue with offset %d, or %s]", offset+1, end, total, end, narrow)
+	room := s.spec.Limits.budget().less(tail).room()
+	var out strings.Builder
+	end := offset
+	for end < total && end-offset < maxResults {
+		add := len(lines[end])
+		if out.Len() > 0 {
+			add++
+		}
+		if int64(out.Len()+add) > room.bytes || end-offset+1 > room.lines {
+			break
+		}
+		if out.Len() > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(lines[end])
+		end++
 	}
-	return page + tail
+	if offset > 0 || end < total {
+		fmt.Fprintf(&out, "\n[results %d–%d of %d", offset+1, end, total)
+		if end < total {
+			fmt.Fprintf(&out, "; continue with offset %d, or %s", end, narrow)
+		}
+		out.WriteString("]")
+	}
+	return out.String() + tail
 }
 
 // show is the path an answer gives for p, a path ripgrep answered with.
@@ -769,7 +878,9 @@ func countLines(out []byte, sc searchScope) []string {
 		if !ok {
 			continue
 		}
-		lines = append(lines, sc.show(string(p))+": "+string(n))
+		if shown := sc.show(string(p)); !sc.hidden[shown] {
+			lines = append(lines, shown+": "+string(n))
+		}
 	}
 	return lines
 }
@@ -787,9 +898,10 @@ type rgEvent struct {
 	} `json:"data"`
 }
 
+// rgText is ripgrep's text; a path or line that is not UTF-8 comes as
+// base64 "bytes" instead, which the answer does not show.
 type rgText struct {
-	Text  *string `json:"text"`
-	Bytes *string `json:"bytes"`
+	Text *string `json:"text"`
 }
 
 // contentLines is --json's matches and context as grep lines: a match as
@@ -809,6 +921,9 @@ func contentLines(out []byte, sc searchScope, context bool) []string {
 		p := "?"
 		if ev.Data.Path.Text != nil {
 			p = sc.show(*ev.Data.Path.Text)
+		}
+		if sc.hidden[p] {
+			continue
 		}
 		if context && lastPath != "" && (p != lastPath || ev.Data.LineNumber > lastLine+1) {
 			lines = append(lines, "--")

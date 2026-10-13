@@ -59,8 +59,8 @@ type Options struct {
 	// Writable are the directories the program may write beneath (with
 	// /dev/null), by Landlock.
 	Writable []string
-	// Readable, when set, are the only directories the program may read,
-	// list and run anything beneath, besides the writable ones, the
+	// Readable, when set, are the only directories (or files) the program
+	// may read, list and run anything beneath, besides the writable ones, the
 	// program itself and /dev/null: Landlock then refuses every other
 	// read. Unset, reading is not restricted.
 	Readable []string

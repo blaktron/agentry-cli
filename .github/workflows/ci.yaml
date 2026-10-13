@@ -261,10 +261,11 @@ jobs:
   # grep and glob's ripgrep (agentry-cli#912; plan ripgrep-search.md D3): the
   # runner image copies it from agentry-ripgrep by digest, so the pin must
   # name the image the ripgrep workflow signed on main, and the tests that
-  # search with the real binary (each output, context, paging, hidden and
-  # ignored files, a link never followed, the inputs as search_inputs reads
-  # them, a pack's citations, a pattern past the size limit) may not skip
-  # here.
+  # search with the real binary (each output, context, paging within the
+  # budget, hidden and ignored files, .git kept out whatever the glob, a link
+  # never followed, the inputs as search_inputs reads them, a pack's
+  # citations, a pattern past the size limit, and ripgrep held by Landlock
+  # to the area alone where the runner's kernel has it) may not skip here.
   ripgrep-image:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
@@ -283,7 +284,7 @@ jobs:
       - name: grep and glob search with the real ripgrep
         env:
           AGENTRY_RIPGREP_REQUIRED: "1"
-        run: AGENTRY_RIPGREP_BIN="$RUNNER_TEMP/ripgrep/rg" go test -count=1 ./runnerimage/toolsrv/ -run 'TestGrep|TestAGlob|TestAnInputsSearch' -v
+        run: AGENTRY_RIPGREP_BIN="$RUNNER_TEMP/ripgrep/rg" go test -count=1 ./runnerimage/toolsrv/ ./runnerimage/confine/ -run 'TestGrep|TestAGlob|TestAnInputsSearch|TestACallsGlob|TestAPacksManifest|TestAnAnswerFits|TestTheReviewsFindings|TestReadHoldsAStaticProgram' -v
 
   # Secret scanning (agentry-cli#165): gitleaks over the commits this event
   # brings — a pull request's own range, or a push's before..after — with the

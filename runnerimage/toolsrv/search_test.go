@@ -164,7 +164,7 @@ func TestRipgrepsArgumentsAreFixed(t *testing.T) {
 	}
 	argv := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	want := append(append([]string{}, rgFixedArgs...),
-		"--glob=--search-zip", "--type=md", "--ignore-case", "--json", "--context=2", "-e", "--pre=sh", "--", ".")
+		"--glob=--search-zip", "--type=md", "--ignore-case", rgSkipGit, "--json", "--context=2", "-e", "--pre=sh", "--", ".")
 	if !slices.Equal(argv, want) {
 		t.Fatalf("ripgrep's arguments:\n got %q\nwant %q", argv, want)
 	}
@@ -412,5 +412,119 @@ func TestAnInputsSearchReachesTheAgentUnchanged(t *testing.T) {
 	}
 	if c := call(2, map[string]any{"pattern": "review", "path": spec.ScratchDir}); c["type"] != "text" {
 		t.Errorf("a grep of the scratch folder after it is %v, want a text item", c["type"])
+	}
+}
+
+// TestACallsGlobNeverBringsGitBack: ripgrep lets the last matching glob
+// decide, so .git stays out whatever glob a call passes.
+func TestACallsGlobNeverBringsGitBack(t *testing.T) {
+	s := searchServer(t, scratchSpec(t), realRipgrep(t))
+	d := s.spec.ScratchDir
+	mustWrite(t, filepath.Join(d, ".git", "config"), []byte("invoice\n"))
+	mustWrite(t, filepath.Join(d, "a.txt"), []byte("invoice\n"))
+	for _, g := range []string{"*", "**", "**/*", ".git/**"} {
+		if got, _ := grepCall(t, s, map[string]any{"pattern": "invoice", "path": d, "glob": g}); strings.Contains(got, ".git") {
+			t.Errorf("grep glob %q reached .git: %q", g, got)
+		}
+		if got, _ := s.toolGlob(rawArgs(t, map[string]any{"pattern": g, "path": d})); strings.Contains(got, ".git") {
+			t.Errorf("glob %q listed .git: %q", g, got)
+		}
+	}
+}
+
+// TestAPacksManifestIsNotAnAnswer: the runner's record of a pack is not a
+// page knowledge_read opens, so no search answers with it.
+func TestAPacksManifestIsNotAnAnswer(t *testing.T) {
+	spec := knowledgeSpec(t)
+	s := searchServer(t, spec, realRipgrep(t))
+	got, _ := s.toolGlob(rawArgs(t, map[string]any{"pattern": "*.json", "path": spec.KnowledgeDir}))
+	if got != "no file in knowledge matches the pattern" {
+		t.Errorf("glob listed the manifest: %q", got)
+	}
+	if got, _ := grepCall(t, s, map[string]any{"pattern": "knowledge/v1", "path": spec.KnowledgeDir + "/aws-docs", "output": "content"}); strings.Contains(got, "manifest.json") {
+		t.Errorf("grep answered with the manifest: %q", got)
+	}
+}
+
+// TestAnAnswerFitsTheResultBudget: when the budget is smaller than
+// maxResults' worth of lines, the page stops at it and says where to go on.
+func TestAnAnswerFitsTheResultBudget(t *testing.T) {
+	spec := scratchSpec(t)
+	spec.Limits.MaxResultBytes, spec.Limits.MaxResultLines = 1200, 40
+	s := searchServer(t, spec, realRipgrep(t))
+	for i := range 60 {
+		mustWrite(t, filepath.Join(spec.ScratchDir, "f"+strconv.Itoa(100+i)+".txt"), []byte("invoice\n"))
+	}
+	got, isErr := grepCall(t, s, map[string]any{"pattern": "invoice", "path": spec.ScratchDir, "maxResults": 60})
+	if isErr || !s.spec.Limits.budget().fits(got) || !strings.Contains(got, "continue with offset") {
+		t.Fatalf("a page past the budget (%d bytes, %d lines): %q", len(got), lineCount(got), got)
+	}
+}
+
+// TestTheReviewsFindingsStayFixed: a count of one file keeps its name; a
+// pattern with a newline is refused; a dotted input's name is matched as
+// it is; a ripgrep that fails with no refusal is a fault, not "no match".
+func TestTheReviewsFindingsStayFixed(t *testing.T) {
+	bin := realRipgrep(t)
+	s := searchServer(t, scratchSpec(t), bin)
+	mustWrite(t, filepath.Join(s.spec.ScratchDir, "one.md"), []byte("invoice\ninvoice\n"))
+	if got, _ := grepCall(t, s, map[string]any{"pattern": "invoice", "path": s.spec.ScratchDir + "/one.md", "output": "count"}); got != s.spec.ScratchDir+"/one.md: 2" {
+		t.Errorf("count of one file: %q", got)
+	}
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": "a\nb", "path": s.spec.ScratchDir}); !isErr || !strings.Contains(got, "newline") {
+		t.Errorf("a pattern with a newline: (%q, %v)", got, isErr)
+	}
+
+	in := inputsSpec(t)
+	mustWrite(t, filepath.Join(in.InputsDir, ".env.example"), []byte("TOKEN=\n"))
+	mustWrite(t, filepath.Join(in.InputsDir, "env.txt"), []byte("TOKEN=\n"))
+	si := searchServer(t, in, bin)
+	if got, _ := grepCall(t, si, map[string]any{"pattern": "TOKEN", "path": in.InputsDir, "glob": ".env*"}); got != in.InputsDir+"/.env.example" {
+		t.Errorf("a dotted input by glob: %q", got)
+	}
+	if got, _ := grepCall(t, si, map[string]any{"pattern": "TOKEN", "path": in.InputsDir + "/env.txt", "glob": "*.txt"}); got != in.InputsDir+"/env.txt" {
+		t.Errorf("one input by glob: %q", got)
+	}
+
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "rg")
+	mustWrite(t, fake, []byte("#!/bin/sh\necho 'rg: something broke' >&2\nexit 2\n"))
+	if err := os.Chmod(fake, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sf := searchServer(t, scratchSpec(t), fake)
+	sf.callFault = false
+	if got, isErr := grepCall(t, sf, map[string]any{"pattern": "x", "path": sf.spec.ScratchDir}); !isErr || !strings.Contains(got, "the search failed: rg: something broke") || !sf.callFault {
+		t.Errorf("a failed ripgrep: (%q, %v, fault %v)", got, isErr, sf.callFault)
+	}
+}
+
+// TestTheInputsAreNotSearchedUnderReview: under the review grant every
+// input reaches the model through AI Review, so grep never answers with
+// one, even when it is granted for the scratch folder; and a later call's
+// answer is a text item again.
+func TestTheInputsAreNotSearchedUnderReview(t *testing.T) {
+	spec := decodedSpec(t)
+	spec.ScratchDir = t.TempDir()
+	spec.Review = Review{Enabled: true, Ledger: filepath.Join(spec.OutDir, "receipts", "review.ndjson")}
+	s := searchServer(t, spec, "/nonexistent/rg")
+	if !slices.Contains(spec.GrantedTools(), ToolGrep) {
+		t.Fatal("grep is not granted beside the scratch folder")
+	}
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": "review", "path": spec.InputsDir}); !isErr || !strings.Contains(got, "not an area this run can search") {
+		t.Errorf("a grep of the inputs under review: (%q, %v)", got, isErr)
+	}
+	if s.callPersonsInput {
+		t.Error("a refused search set the person's-input flag")
+	}
+}
+
+// TestASearchWithNothingToReadBeneathNeverStarts: confine without --read
+// restricts no read, so a Landlock-held search with no area is refused.
+func TestASearchWithNothingToReadBeneathNeverStarts(t *testing.T) {
+	s := searchServer(t, scratchSpec(t), "/bin/true")
+	s.search = chooseSearchConfinement("linux", 4, nil, 0, "/r")
+	if _, failed := s.runRipgrep("grep", []string{"-e", "x"}, searchScope{dir: "/", paths: []string{"."}}); !strings.Contains(failed, "no area to hold its reads to") || !s.callFault {
+		t.Errorf("a search with no read set: %q (fault %v)", failed, s.callFault)
 	}
 }

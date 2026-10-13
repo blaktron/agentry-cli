@@ -224,7 +224,14 @@ func restrict(o Options) error {
 	}
 	if reads {
 		for _, d := range o.Readable {
-			if err := addRule(int(fd), d, readsV1); err != nil {
+			// A file takes only a file's rights; a directory's read and
+			// list rights on it are refused by the kernel (EINVAL).
+			rights := uint64(readsV1)
+			var st syscall.Stat_t
+			if err := syscall.Stat(d, &st); err == nil && st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+				rights = accessExecute | accessReadFile
+			}
+			if err := addRule(int(fd), d, rights); err != nil {
 				return err
 			}
 		}

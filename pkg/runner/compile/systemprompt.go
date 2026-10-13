@@ -308,16 +308,17 @@ func inputsDefault(view string) string {
 // knowledge-and-drafter.md D2). It names the knowledge tools whether or
 // not a pack is attached, because packs are a run-time fact; the tools
 // themselves exist only while one is (DR-38).
+// knowledgeSection is the guide to reading a pack; a run that has grep and
+// glob (every release's, not a built-in's) is told it may search a pack
+// with them too.
 func knowledgeSection(search bool) string {
-	reach, step := "reached only through knowledge_list, knowledge_search and knowledge_read, which exist", ""
+	reach := "reached only through knowledge_list, knowledge_search and knowledge_read, which exist only while at least one pack is attached"
+	grep := ""
 	if search {
 		reach = "reached through knowledge_list, knowledge_search and knowledge_read, which exist only while at least one pack is attached, and grep and glob, which search and list them under /knowledge/<pack>"
-		step = "\n   For an exact term, an identifier, a citation or a pattern, grep the pack (path /knowledge/<pack>, output \"content\"): it searches every page and source document by regular expression, and you read what it finds with knowledge_read, by the path after /knowledge/<pack>/wiki/ (or doc:<the path after sources/>)."
-		return knowledgeHead + reach + `. With none attached, work from your inputs and your instruction.
-` + knowledgeSteps(step)
+		grep = "\n   For an exact term, an identifier, a citation or a pattern, grep the pack (path /knowledge/<pack>, output \"content\"): it searches every page and source document by regular expression, and you read what it finds with knowledge_read, by the path after /knowledge/<pack>/wiki/ (or doc:<the path after sources/>)."
 	}
-	return knowledgeHead + reach + ` only while at least one pack is attached. With none attached, work from your inputs and your instruction.
-` + knowledgeSteps(step)
+	return knowledgeHead + reach + ". With none attached, work from your inputs and your instruction.\n" + knowledgeSteps(grep)
 }
 
 const knowledgeHead = `

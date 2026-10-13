@@ -292,3 +292,48 @@ func TestReadConfinesReads(t *testing.T) {
 		t.Errorf("the program read a file outside the readable directories:\n%s", got)
 	}
 }
+
+// TestReadHoldsAStaticProgramToItsArea is grep and glob's own holding at
+// the kernel: the pinned ripgrep, a static program, started with --read on
+// one directory and nothing else, runs (the program's own EXECUTE rule),
+// finds what is beneath it, and neither reads a file outside it nor
+// follows a link out of it. AGENTRY_RIPGREP_BIN names the binary, as CI's
+// ripgrep-image job does.
+func TestReadHoldsAStaticProgramToItsArea(t *testing.T) {
+	if _, err := ABI(); err != nil {
+		t.Skipf("this kernel or runtime has no Landlock (%v)", err)
+	}
+	rg := os.Getenv("AGENTRY_RIPGREP_BIN")
+	if rg == "" {
+		if os.Getenv("AGENTRY_RIPGREP_REQUIRED") == "1" {
+			t.Fatal("AGENTRY_RIPGREP_BIN is not set, and this job must run the real ripgrep")
+		}
+		t.Skip("AGENTRY_RIPGREP_BIN is not set: the real ripgrep is the ripgrep-image CI job's")
+	}
+	area, out := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(area, "a.txt"), []byte("invoice inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "b.txt"), []byte("invoice outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(out, "b.txt"), filepath.Join(area, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], append([]string{"--read", area, "--no-network", "--", rg, "--no-config"}, args...)...) //nolint:gosec // the test binary as the trampoline
+		cmd.Env = []string{"AGENTRY_CONFINE_HELPER=1"}
+		got, _ := cmd.CombinedOutput()
+		return string(got)
+	}
+	if got := run("-e", "invoice", "--", area); !strings.Contains(got, "invoice inside") || strings.Contains(got, "outside") {
+		t.Errorf("the area: %q", got)
+	}
+	if got := run("-e", "invoice", "--", filepath.Join(out, "b.txt")); strings.Contains(got, "invoice outside") {
+		t.Errorf("a file outside the area was read: %q", got)
+	}
+	if got := run("-L", "-e", "invoice", "--", area); strings.Contains(got, "invoice outside") {
+		t.Errorf("a link out of the area was followed, even when asked: %q", got)
+	}
+}
