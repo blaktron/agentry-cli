@@ -151,12 +151,10 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// 502, but it has been sent nothing.
 	if !p.plainTarget(host, port) {
 		hello, ok := p.checkClientHello(client, bufrw, host, port)
-		if !ok {
-			_ = client.Close()
-			_ = upstream.Close()
-			return
+		if ok {
+			_, err = upstream.Write(hello)
 		}
-		if _, err := upstream.Write(hello); err != nil {
+		if !ok || err != nil {
 			_ = client.Close()
 			_ = upstream.Close()
 			return
@@ -386,6 +384,28 @@ func permitsIn(list []string, defPort, host, port string) bool {
 		}
 	}
 	return false
+}
+
+// asciiEqualFold compares two names case-insensitively in ASCII alone.
+// strings.EqualFold applies Unicode folding, under which "ſ" (U+017F)
+// matches "s", so "api.oſv.dev" would pass for "api.osv.dev".
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
 
 // splitEntry parses one list entry, defaulting the port to defPort.

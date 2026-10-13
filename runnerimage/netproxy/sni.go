@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -48,6 +49,9 @@ type clientHello struct {
 
 // errNotHello marks bytes that are not a TLS ClientHello at all.
 var errNotHello = errors.New("not a TLS ClientHello")
+
+// errBadServerName is a server_name extension the parser cannot read.
+var errBadServerName = fmt.Errorf("%w: malformed server_name", errNotHello)
 
 // readClientHello reads the client's first handshake message from r,
 // across as many handshake records as it spans, and returns every byte it
@@ -101,13 +105,15 @@ func readClientHello(r io.Reader) ([]byte, clientHello, error) {
 func parseClientHello(b []byte) (clientHello, error) {
 	var h clientHello
 	s := helloReader(b)
-	if !s.skip(2+32) || !s.skipVec(1) || !s.skipVec(2) || !s.skipVec(1) {
+	// legacy_version and random, then session id, cipher suites and
+	// compression methods.
+	if !s.skip(2+32) || !s.skipVec8() || !s.skipVec16() || !s.skipVec8() {
 		return h, fmt.Errorf("%w: truncated", errNotHello)
 	}
 	if len(s) == 0 {
 		return h, nil // no extensions at all, so no server name
 	}
-	exts, ok := s.vec(2)
+	exts, ok := s.vec16()
 	if !ok || len(s) != 0 {
 		return h, fmt.Errorf("%w: malformed extensions", errNotHello)
 	}
@@ -117,7 +123,7 @@ func parseClientHello(b []byte) (clientHello, error) {
 		if !ok {
 			return h, fmt.Errorf("%w: malformed extension", errNotHello)
 		}
-		data, ok := exts.vec(2)
+		data, ok := exts.vec16()
 		if !ok {
 			return h, fmt.Errorf("%w: malformed extension %#04x", errNotHello, typ)
 		}
@@ -141,19 +147,19 @@ func parseClientHello(b []byte) (clientHello, error) {
 
 // parseServerName answers the one host_name of a server_name extension.
 func parseServerName(data helloReader) (string, error) {
-	list, ok := data.vec(2)
+	list, ok := data.vec16()
 	if !ok || len(data) != 0 {
-		return "", fmt.Errorf("%w: malformed server_name", errNotHello)
+		return "", errBadServerName
 	}
 	name := ""
 	for len(list) > 0 {
 		typ, ok := list.u8()
 		if !ok {
-			return "", fmt.Errorf("%w: malformed server_name", errNotHello)
+			return "", errBadServerName
 		}
-		v, ok := list.vec(2)
+		v, ok := list.vec16()
 		if !ok {
-			return "", fmt.Errorf("%w: malformed server_name", errNotHello)
+			return "", errBadServerName
 		}
 		if typ != serverNameHostName {
 			continue
@@ -197,23 +203,24 @@ func (s *helloReader) u16() (uint16, bool) {
 	return v, true
 }
 
-// vec reads a vector with a 1- or 2-byte length prefix.
-func (s *helloReader) vec(lenBytes int) (helloReader, bool) {
-	var n int
-	switch lenBytes {
-	case 1:
-		v, ok := s.u8()
-		if !ok {
-			return nil, false
-		}
-		n = int(v)
-	default:
-		v, ok := s.u16()
-		if !ok {
-			return nil, false
-		}
-		n = int(v)
+// vec8 and vec16 read a vector with a 1- or 2-byte length prefix.
+func (s *helloReader) vec8() (helloReader, bool) {
+	n, ok := s.u8()
+	if !ok {
+		return nil, false
 	}
+	return s.take(int(n))
+}
+
+func (s *helloReader) vec16() (helloReader, bool) {
+	n, ok := s.u16()
+	if !ok {
+		return nil, false
+	}
+	return s.take(int(n))
+}
+
+func (s *helloReader) take(n int) (helloReader, bool) {
 	if len(*s) < n {
 		return nil, false
 	}
@@ -222,13 +229,12 @@ func (s *helloReader) vec(lenBytes int) (helloReader, bool) {
 	return v, true
 }
 
-func (s *helloReader) skipVec(lenBytes int) bool {
-	_, ok := s.vec(lenBytes)
-	return ok
-}
+func (s *helloReader) skipVec8() bool  { _, ok := s.vec8(); return ok }
+func (s *helloReader) skipVec16() bool { _, ok := s.vec16(); return ok }
 
 // judgeHello says why a hello may not open a tunnel to host, or "" when it
-// may: its server name must be host, compared ASCII case-insensitively,
+// may: its server name must be host, compared ASCII case-insensitively
+// and without a trailing dot (a client strips it from the name it sends),
 // and a tunnel to an address literal carries no name (RFC 6066 §3 forbids
 // a literal there) unless it names that same address. A hello that offers
 // an encrypted hello is refused, since the name the front end would route
@@ -241,7 +247,7 @@ func judgeHello(h clientHello, host string) string {
 		return ""
 	case h.serverName == "":
 		return "it names no server"
-	case !asciiEqualFold(h.serverName, host):
+	case !asciiEqualFold(strings.TrimSuffix(h.serverName, "."), strings.TrimSuffix(host, ".")):
 		return "it names another host than the tunnel's"
 	}
 	return ""
@@ -249,7 +255,9 @@ func judgeHello(h clientHello, host string) string {
 
 // checkClientHello reads and judges the hello the client sends into a
 // tunnel to host:port, within helloTimeout. It answers the bytes read when
-// the tunnel may carry them, and logs the refusal otherwise.
+// the tunnel may carry them, and logs the refusal otherwise. Only the
+// first hello is judged: the one a HelloRetryRequest asks for crosses an
+// established relay, but the front end has routed the connection by then.
 func (p *Proxy) checkClientHello(client net.Conn, r io.Reader, host, port string) ([]byte, bool) {
 	_ = client.SetReadDeadline(time.Now().Add(helloTimeout))
 	raw, h, err := readClientHello(r)
@@ -263,26 +271,4 @@ func (p *Proxy) checkClientHello(client net.Conn, r io.Reader, host, port string
 		return nil, false
 	}
 	return raw, true
-}
-
-// asciiEqualFold compares two names case-insensitively in ASCII alone.
-// strings.EqualFold applies Unicode folding, under which "ſ" (U+017F)
-// matches "s", so "api.oſv.dev" would pass for "api.osv.dev".
-func asciiEqualFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		x, y := a[i], b[i]
-		if 'A' <= x && x <= 'Z' {
-			x += 'a' - 'A'
-		}
-		if 'A' <= y && y <= 'Z' {
-			y += 'a' - 'A'
-		}
-		if x != y {
-			return false
-		}
-	}
-	return true
 }

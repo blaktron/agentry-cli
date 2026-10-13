@@ -323,6 +323,9 @@ func TestJudgeHello(t *testing.T) {
 		{clientHello{serverName: "api.oſv.dev"}, "api.osv.dev", false},
 		{clientHello{serverName: "www.google.com"}, "api.osv.dev", false},
 		{clientHello{serverName: "osv.dev"}, "api.osv.dev", false},
+		{clientHello{serverName: "api.osv.dev"}, "api.osv.dev.", true}, // a client sends the name without its dot
+		{clientHello{serverName: "api.osv.dev."}, "api.osv.dev", true},
+		{clientHello{serverName: "api.osv.dev.."}, "api.osv.dev", false},
 		{clientHello{}, "api.osv.dev", false},
 		{clientHello{}, "203.0.113.7", true},
 		{clientHello{}, "2001:db8::1", true},
