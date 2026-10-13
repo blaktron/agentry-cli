@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/sockfilter"
+	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -76,7 +76,7 @@ func enforcedAtStart(p Params) map[string]string {
 // launchedLine is the containers line's part for the tool and MCP server
 // containers the gateway launches. Where the run's docker filter runs it
 // sets their capabilities (agentry-cli#227, DR-95: sockfilter's
-// capabilities); without it (Docker Desktop, agentry-cli#322) they keep
+// capabilities); without it (a platform the filter does not run on) they keep
 // what the gateway leaves them.
 func launchedLine(filtered bool) string {
 	if !filtered {
@@ -204,7 +204,7 @@ func runtimeLine(p Params) string {
 			line += "; the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own"
 		}
 	} else {
-		line += "; " + launched + ", which the gateway launches, " + takes + " the daemon's default: the docker filter that sets the runtime runs on Linux only (agentry-cli#322)"
+		line += "; " + launched + ", which the gateway launches, " + takes + " the daemon's default: the docker filter that sets the runtime does not run on this platform"
 	}
 	if p.Plan.Harness.Host != nil {
 		line += "; the harness is a host process, under no container runtime at all"

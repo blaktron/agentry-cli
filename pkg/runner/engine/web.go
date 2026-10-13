@@ -259,7 +259,7 @@ func writeResolvConf(gatewayDir string, plan *spec.Plan) error {
 // resolversLine is the receipt's account of how the web tools resolve.
 func resolversLine(rs []string) string {
 	if !filterSupported {
-		return "docker.resolvers names " + strings.Join(rs, ", ") + ", which only the per-run docker filter binds into the web tools' server; without it (Docker Desktop, agentry-cli#322) the server keeps docker's DNS"
+		return "docker.resolvers names " + strings.Join(rs, ", ") + ", which only the per-run docker filter binds into the web tools' server; without it (a platform the filter does not run on) the server keeps docker's DNS"
 	}
 	return "the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, whose embedded DNS a sandboxed runtime does not reach (DR-23)"
 }
