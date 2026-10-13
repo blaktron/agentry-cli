@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-//go:embed Dockerfile main.go bridge/*.go sockfilter/*.go hostlink/*.go toolsrv/*.go toolsrv/pdf/* netproxy/*.go minimize/*.go confine/*.go decode/*.go judge/*.go websearch/*.go reportdesign/*.go reportdesign/builtins/*.json webscan/*.go probe/*.go source/*.go
+//go:embed Dockerfile main.go bridge/*.go sockfilter/*.go hostlink/*.go toolsrv/*.go toolsrv/pdf/* netproxy/*.go minimize/*.go confine/*.go decode/*.go judge/*.go websearch/*.go reportdesign/*.go reportdesign/builtins/*.json webscan/*.go probe/*.go source/*.go netaddr/*.go
 var contextFS embed.FS
 
 // ImageTagPrefix names the locally built runner image; the engine derives

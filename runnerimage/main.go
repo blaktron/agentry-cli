@@ -329,6 +329,13 @@ func runProxy(args []string) error {
 	plain := fs.String("plain-http", "", "comma-separated host[:port] plain-http model endpoints (DR-45); each must also be on --allow")
 	addr := fs.String("addr", ":3128", "listen address")
 	publicOnly := fs.Bool("public-only", false, "dial a permitted host only at a public address, refusing one that resolves to any other (an input source's fetch step)")
+	// The browse proxy's scope (agentry-cli#915): any of these makes the
+	// proxy one, and --allow, --plain-http and --public-only are refused
+	// beside them.
+	sites := fs.String("browse-sites", "", "a browse proxy: comma-separated host[:port] sites, each with its subdomains")
+	browseHosts := fs.String("browse-hosts", "", "a browse proxy: comma-separated hosts, exact or *. suffix")
+	browsePublic := fs.Bool("browse-public", false, "a browse proxy: any public site")
+	browsePrivate := fs.String("browse-private", "", "a browse proxy: comma-separated sites the person typed that may resolve to a LAN's or a tailnet's address")
 	type forward struct{ listen, target string }
 	var forwards []forward
 	fs.Func("forward", "LISTEN=TARGET plain TCP pipe (repeatable)", func(v string) error {
@@ -354,12 +361,15 @@ func runProxy(args []string) error {
 			}
 		}()
 	}
-	var hosts []string
-	for _, h := range strings.Split(*allow, ",") {
-		if h = strings.TrimSpace(h); h != "" {
-			hosts = append(hosts, h)
+	if scope := (netproxy.Scope{Sites: splitList(*sites), Hosts: splitList(*browseHosts), Public: *browsePublic, Private: splitList(*browsePrivate)}); len(scope.Sites)+len(scope.Hosts) > 0 || scope.Public {
+		if *allow != "" || *plain != "" || *publicOnly || len(scope.Private) > 0 && len(scope.Sites) == 0 {
+			fmt.Fprintln(os.Stderr, "agentry-runner proxy: a browse proxy takes no --allow, --plain-http or --public-only, and --browse-private names sites")
+			os.Exit(2)
 		}
+		p := &netproxy.Proxy{Scope: &scope, Logw: os.Stderr}
+		return p.ListenAndServe(*addr)
 	}
+	hosts := splitList(*allow)
 	if len(hosts) == 0 {
 		fmt.Fprintln(os.Stderr, "agentry-runner proxy: --allow must list at least one host[:port]")
 		os.Exit(2)
@@ -372,6 +382,18 @@ func runProxy(args []string) error {
 	}
 	p := &netproxy.Proxy{Allow: hosts, PlainHTTP: plainHosts, PublicOnly: *publicOnly, Logw: os.Stderr}
 	return p.ListenAndServe(*addr)
+}
+
+// splitList is a comma-separated flag's entries, trimmed, empty ones left
+// out.
+func splitList(v string) []string {
+	var out []string
+	for _, h := range strings.Split(v, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // runProbe retries the initialize POST every 2s until the deadline. It
