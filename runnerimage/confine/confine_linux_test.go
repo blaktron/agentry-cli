@@ -125,6 +125,8 @@ func TestMainRefusesBadUsage(t *testing.T) {
 		"memory zero":         {"--max-memory", "0", "--", "/bin/true"},
 		"limits-only writes":  {"--limits-only", "--write", "/tmp", "--", "/bin/true"},
 		"limits-only network": {"--limits-only", "--no-network", "--", "/bin/true"},
+		"limits-only reads":   {"--limits-only", "--read", "/tmp", "--", "/bin/true"},
+		"relative read":       {"--read", "tmp", "--", "/bin/true"},
 	} {
 		if err := Main(args, nil); err == nil {
 			t.Errorf("%s: Main(%q) = nil, want a refusal", name, args)
@@ -239,4 +241,54 @@ func TestNoNetworkRefusesTCP(t *testing.T) {
 		t.Fatalf("the unconfined dial failed: %v", err)
 	}
 	_ = c.Close()
+}
+
+// TestReadConfinesReads is plan ripgrep-search.md §5 at the kernel: with
+// --read, a program reads and lists beneath the named directories and
+// nowhere else, so a link planted inside a readable directory cannot take
+// it out (grep and glob's ripgrep). Without --read, reading is unchanged
+// (TestExecConfinesWrites).
+func TestReadConfinesReads(t *testing.T) {
+	if _, err := ABI(); err != nil {
+		t.Skipf("this kernel or runtime has no Landlock (%v); the tools server's uid fallback covers it", err)
+	}
+	in, out := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(in, "a.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "secret.txt"), []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(out, "secret.txt"), filepath.Join(in, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// sh, its loader and its libraries live under the system directories,
+	// which the program must be let read and run.
+	flags := []string{"--read", in}
+	for _, d := range []string{"/usr", "/lib", "/lib64", "/bin", "/etc"} {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			flags = append(flags, "--read", d)
+		}
+	}
+	t.Setenv("I", in)
+	t.Setenv("O", out)
+	got, err := trampoline(t, flags, strings.Join([]string{
+		`cat "$I/a.txt"`,
+		`ls "$I" >/dev/null && echo in-list=ok`,
+		`cat "$O/secret.txt" 2>/dev/null || echo out-read=refused`,
+		`cat "$I/link" 2>/dev/null || echo link-read=refused`,
+		`ls "$O" >/dev/null 2>&1 || echo out-list=refused`,
+		`echo x > /dev/null && echo devnull=ok`,
+	}, "\n"))
+	if err != nil {
+		t.Fatalf("confined sh: %v\n%s", err, got)
+	}
+	for _, want := range []string{"inside", "in-list=ok", "out-read=refused", "link-read=refused", "out-list=refused", "devnull=ok"} {
+		if !strings.Contains(got, want+"\n") {
+			t.Errorf("confined output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "outside") {
+		t.Errorf("the program read a file outside the readable directories:\n%s", got)
+	}
 }

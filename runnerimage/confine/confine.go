@@ -4,7 +4,9 @@
 // to refuse every write outside the named directories and then replaces
 // itself with the command: the restriction is the kernel's, inherited
 // across execve, and nothing the command does can lift it. Reading is not
-// restricted. The tools server itself is never confined, so write_report
+// restricted unless the caller names what may be read (--read: grep and
+// glob's ripgrep, plan ripgrep-search.md §5). The tools server itself is
+// never confined, so write_report
 // and the receipts' ledgers under /out are written as before, while a
 // declared command can no longer write there.
 //
@@ -57,6 +59,11 @@ type Options struct {
 	// Writable are the directories the program may write beneath (with
 	// /dev/null), by Landlock.
 	Writable []string
+	// Readable, when set, are the only directories the program may read,
+	// list and run anything beneath, besides the writable ones, the
+	// program itself and /dev/null: Landlock then refuses every other
+	// read. Unset, reading is not restricted.
+	Readable []string
 	// MaxMemory, when set, is the program's address-space limit in bytes
 	// (RLIMIT_AS): an allocation past it fails.
 	MaxMemory uint64
@@ -69,16 +76,22 @@ type Options struct {
 	// user that owns nothing it must not write. For a machine without
 	// Landlock (gVisor).
 	LimitsOnly bool
+
+	// program is the file ExecWith runs, which a ruleset that handles
+	// reading must let it execute.
+	program string
 }
 
-// Main is the trampoline: `confine [--write DIR …] [--max-memory BYTES]
-// [--no-network] -- PROGRAM [ARG …]`, or `confine --limits-only
-// [--max-memory BYTES] -- PROGRAM [ARG …]`. It confines this process to
-// writing beneath each DIR, with the limits, and then execs PROGRAM with
+// Main is the trampoline: `confine [--write DIR …] [--read DIR …]
+// [--max-memory BYTES] [--no-network] -- PROGRAM [ARG …]`, or `confine
+// --limits-only [--max-memory BYTES] -- PROGRAM [ARG …]`. It confines this
+// process to writing beneath each --write DIR and, when any --read DIR is
+// named, to reading beneath those and the writable ones, with the limits,
+// and then execs PROGRAM with
 // ARGs and this process's environment. It returns only on failure, and
 // never runs PROGRAM with less than it was told.
 func Main(args []string, env []string) error {
-	const usage = "confine: usage: confine [--write DIR …] [--max-memory BYTES] [--no-network] -- PROGRAM [ARG …], or confine --limits-only [--max-memory BYTES] -- PROGRAM [ARG …]"
+	const usage = "confine: usage: confine [--write DIR …] [--read DIR …] [--max-memory BYTES] [--no-network] -- PROGRAM [ARG …], or confine --limits-only [--max-memory BYTES] -- PROGRAM [ARG …]"
 	var o Options
 	for len(args) > 0 && args[0] != "--" {
 		switch args[0] {
@@ -90,6 +103,15 @@ func Main(args []string, env []string) error {
 				return fmt.Errorf("confine: --write %q must be an absolute path", args[1])
 			}
 			o.Writable = append(o.Writable, args[1])
+			args = args[2:]
+		case "--read":
+			if len(args) < 2 {
+				return errors.New(usage)
+			}
+			if !filepath.IsAbs(args[1]) {
+				return fmt.Errorf("confine: --read %q must be an absolute path", args[1])
+			}
+			o.Readable = append(o.Readable, args[1])
 			args = args[2:]
 		case "--max-memory":
 			if len(args) < 2 {
@@ -111,8 +133,8 @@ func Main(args []string, env []string) error {
 			return errors.New(usage)
 		}
 	}
-	if o.LimitsOnly && (len(o.Writable) > 0 || o.NoNetwork) {
-		return errors.New("confine: --limits-only applies no Landlock, so it takes neither --write nor --no-network")
+	if o.LimitsOnly && (len(o.Writable) > 0 || len(o.Readable) > 0 || o.NoNetwork) {
+		return errors.New("confine: --limits-only applies no Landlock, so it takes no --write, --read or --no-network")
 	}
 	if len(args) < 2 {
 		return errors.New("confine: a program after -- is required")
