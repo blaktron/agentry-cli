@@ -1,8 +1,8 @@
 ---
 title: The intake and the guide
 type: guide
-summary: The questions a QuickAgent asks before each run (types, a repository or a file at an address among them, ids, when to ask at all) and the guide a person reads before a run (overview, prepare, files, task, connect), with their bounds and the fields to leave out.
-sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/hosted-runs/]
+summary: The questions a QuickAgent asks before each run (types, a repository, a file at an address and a target host among them, ids, when to ask at all) and the guide a person reads before a run (overview, prepare, files, task, connect), with their bounds and the fields to leave out.
+sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/hosted-runs/, web:https://docs.secureagentry.net/agentry/target-hosts/]
 updated: 2026-10-12
 ---
 
@@ -24,10 +24,11 @@ Each question is `{id, prompt, type, required}`:
   - `file`: a file the person adds, staged with the run's inputs. Name it in `guide.files` too, and its kind in `inputs.kinds` (see [Input files](inputs.md)).
   - `repository`: a git repository's https address, to which the person may add a branch, tag or commit in the same answer, so **never ask for the ref in a question of its own**. The runner fetches it into the run's inputs before the run starts, so it needs no `egress` and no key (see [Input files](inputs.md#a-repository-or-a-file-at-an-address)). Name the question for what it holds (`repository`, `codebase`) [src: web:https://docs.secureagentry.net/runner/].
   - `url`: the https address of one file (a PDF, a page, a dataset), fetched by the runner the same way and read as an uploaded file is [src: web:https://docs.secureagentry.net/runner/].
+  - `host`: a machine the person names when the run starts, as `ssh` takes it (`user@host`, with `:port` when it is not 22), for a QuickAgent that sets up, manages or diagnoses a server. **Its id is listed in `capabilities.targetHosts`**, it is always `required: true`, and the run setup asks for the sign-in beside it, so never ask for a password or a key in a question of its own (see [Target hosts](target-hosts.md)) [src: web:https://docs.secureagentry.net/agentry/target-hosts/].
   - `secret`: only for a name declared in `secrets`, upper-cased from the `id` (`id` `github_token` for `GITHUB_TOKEN`). It is injected as that secret and never recorded. A declared key needs no question to be asked for: the run setup asks for every declared key it does not hold. Its `required` matches the key: `true` for a required key, left out for an optional one (see [Keys](secrets.md)).
 - `required`: `true` when the run cannot go on without the answer.
 
-The answers to `text`, `choice`, `file`, `repository` and `url` questions are part of the run's receipts, so never ask for a password or a key in a `text` question. A private source's token is not an answer: the run setup asks for it beside the address and keeps it out of the receipts.
+The answers to `text`, `choice`, `file`, `repository`, `url` and `host` questions are part of the run's receipts, so never ask for a password or a key in a `text` question. A private source's token is not an answer, nor is a target host's sign-in: the run setup asks for each beside the address and keeps it out of the receipts.
 
 ## The guide
 

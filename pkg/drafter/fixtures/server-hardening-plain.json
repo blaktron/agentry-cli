@@ -1,0 +1,17 @@
+{
+  "id": "server-hardening-plain",
+  "description": "Help me set up and harden an Ubuntu server.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "intakeTypes": [
+      "host"
+    ]
+  }
+}

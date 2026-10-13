@@ -3,7 +3,7 @@ title: The manifest
 type: guide
 summary: Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.
 sources: [web:https://docs.secureagentry.net/quickagents/, doc:runtime-facts.md]
-updated: 2026-10-09
+updated: 2026-10-12
 ---
 
 # The manifest
@@ -34,6 +34,7 @@ Every capability is shown to the person, asked for at install and scanned. Decla
 - `network.egress`: `none`, or the exact DNS hosts the QuickAgent's own `fetch` calls. See [Network and fetch](egress-and-fetch.md).
 - `filesystem.read` and `filesystem.write`: `none`. Input files arrive under `/inputs` without a grant, and reports go out through `write_report` without one (see [Input files](inputs.md)). Use `workspace` or `{paths: [...]}` only when the instructions truly work on the person's workspace, which only a run on their computer has.
 - `exec`: `none`, or `{commands: [...]}` from the commands every run provides. See [Commands](exec.md).
+- `targetHosts`: the ids of the intake's `host` questions, for a QuickAgent that works on a machine the person names when the run starts; left out otherwise. See [Target hosts](target-hosts.md).
 - `secrets`: the environment variable names of the keys the QuickAgent's own `fetch` uses. A key an MCP server needs goes in that server's `secrets`. See [Keys](secrets.md).
 - `optionalSecrets`: the declared keys, its own or a server's, a run can start without. Every other declared key is required. See [Keys](secrets.md).
 - `dataAccess`: from `email`, `calendar`, `files`, `tickets`, `code`, `messages`, `payments`, `other`, only what the task touches.
@@ -53,6 +54,7 @@ The registry refuses a manifest past any of these. Count before you return [src:
 - `guide.connect`: each key's help at most 2,000 characters.
 - `interactive.opening`: at most 500 characters.
 - `knowledge.accepts.prompt`: one line of at most 300 characters.
+- `capabilities.targetHosts`: at most 4, each the id of a `host` question, and every `host` question listed, each once [src: doc:runtime-facts.md].
 - `capabilities.mcpServers`: at most 8 servers, remote ones included; each package pinned at an exact version. A remote server's address is `https://` on a public host name and port 443, with no user name, query or fragment, at most 512 characters, and it declares at most 32 scopes [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/quickagents/].
 
 Your own limits are tighter than the rules' on some of these (the intake, `prepare`, the notes) and are in your instruction, under *Decide, don't ask*.

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // archiveReaders are the base commands that read archives. A draft never
@@ -18,9 +19,13 @@ var archiveReaders = []string{"tar", "unzip", "gunzip", "bunzip2", "unxz", "zcat
 
 // execProblems is the Drafter's rule on exec, one line each: a declared
 // command that is not one every machine provides (policy.BaseExecCommands),
-// which a run would refuse at plan time, and an archive reader, which only
-// reads what the runner already unpacked. Nil when the draft declares no
-// commands, or its manifest does not parse (validate says so).
+// which a run would refuse at plan time; an SSH client (ssh, scp, sftp,
+// rsync, as manifest.RemoteShellCommands names them), which reaches no
+// machine from a run, where a declared target host has the runner make the
+// session (plan runtime-hosts.md M8, agentry-cli#864); and an archive
+// reader, which only reads what the runner already unpacked. Nil when the
+// draft declares no commands, or its manifest does not parse (validate
+// says so).
 func execProblems(raw json.RawMessage) []string {
 	var m struct {
 		Capabilities struct {
@@ -35,9 +40,11 @@ func execProblems(raw json.RawMessage) []string {
 		return nil
 	}
 	base := policy.BaseExecCommands()
+	remote := manifest.RemoteShellCommands(manifest.Capabilities{Exec: manifest.ExecCapability{Commands: exec.Commands}})
 	var foreign, archives []string
 	for _, c := range exec.Commands {
 		switch {
+		case slices.Contains(remote, c): // its own line, below
 		case !slices.Contains(base, c):
 			foreign = append(foreign, c)
 		case slices.Contains(archiveReaders, c):
@@ -45,6 +52,10 @@ func execProblems(raw json.RawMessage) []string {
 		}
 	}
 	var out []string
+	if len(remote) > 0 {
+		out = append(out, fmt.Sprintf("capabilities.exec: %s: makes its own SSH session, which reaches no machine from a run; for a machine the person names, ask for it with an intake question of type host, list its id in capabilities.targetHosts, and work it with the host tools; leave it out",
+			strings.Join(remote, ", ")))
+	}
 	if len(foreign) > 0 {
 		out = append(out, fmt.Sprintf("capabilities.exec: %s: not a command every machine provides, so a run would be refused before it starts; declare only %s, or exec none",
 			strings.Join(foreign, ", "), strings.Join(base, ", ")))

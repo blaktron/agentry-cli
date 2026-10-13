@@ -39,3 +39,10 @@ Input files rewritten from today's facts to the settled guide: the two views eve
 The Keys page is rewritten from today's facts to the settled guide: every declared key is marked optional (`optionalSecrets`) when the QuickAgent still does its job without it, and left required when it cannot, with examples of each, the instructions written for both cases, and a `secret` question's `required` matching its key (rule V10). It is no longer marked as today's facts. The manifest and intake pages name the field and the rule.
 
 - updated: manifest/secrets.md, manifest/manifest.md, manifest/intake-and-guide.md
+
+## [2026-10-12] ingest | target hosts (Drafter 1.14.0)
+
+A new page, Target hosts: when a task works on a machine the person names, the draft asks for it with a `host` question listed in `capabilities.targetHosts`, declares no SSH client, egress or key for it, and writes the instructions for the host tools and the shell (look before changing, never lock the person out, list every change). Such a QuickAgent runs only on the person's computer. The intake, manifest, commands, run-modes and how-a-run-works pages name the type, the line and the bound; the worked drafts gain a fourth; the runtime facts gain the host tools and their limits; the check after a draft sends an SSH client in `exec` to the repair turn.
+
+- wrote: manifest/target-hosts.md
+- updated: guide/start-here.md, manifest/intake-and-guide.md, manifest/manifest.md, manifest/exec.md, manifest/run-modes.md, runtime/how-a-run-works.md, draft/examples.md, draft/review.md, sources/runtime-facts.md

@@ -26,6 +26,14 @@ Generated from the Agentry CLI's code by its tests; do not edit by hand. These a
 - A `repository` question's repository is fetched by the runner before the run: at most 20,000 files and 1 GiB on the person's computer, 10,000 files and 256 MiB In Agentry.
 - A `url` question's file is fetched the same way: one file of at most 256 MiB on the person's computer, 10 MiB In Agentry.
 
+## Target hosts
+
+- A QuickAgent declares at most 4 target hosts, each a `host` intake question listed in `capabilities.targetHosts`.
+- The host tools: `host_run`, `host_read`, `host_write`, `host_put`, `host_get` for single calls, and `host_shell_open`, `host_shell_send`, `host_shell_read`, `host_shell_close` for an interactive shell.
+- `host_run` ends a command after 300 seconds, or after its `timeout`, at most 1800.
+- `host_put` and `host_get` copy files through `/scratch/hosts`, in the scratch folder.
+- At most 4 shell sessions are open on a host at once, and a session no call has used for 30 minutes is closed. `host_shell_send`'s key `sudo-password` types the person's sudo password.
+
 ## Reports, PDFs and the scratch folder
 
 - `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.

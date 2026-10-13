@@ -67,7 +67,7 @@ type Config struct {
 	Now    func() time.Time
 	// Shell starts a shell session's ssh (startTerminal); ShellIdle and
 	// ShellSettle are a session's idle time and the quiet that ends a
-	// wait for its output (defaultShellIdle, defaultSettle).
+	// wait for its output (DefaultShellIdle, defaultSettle).
 	Shell                  func(argv, env []string) (Terminal, error)
 	ShellIdle, ShellSettle time.Duration
 }
