@@ -269,3 +269,45 @@ func TestAHostQuestionIsATargetHostNeverText(t *testing.T) {
 		t.Error("an answer that holds a password was taken")
 	}
 }
+
+// TestABrowsersSiteIsAnAddressNeverASource (agentry-cli#915): a url
+// question the browser names as a site is answered as an http or https
+// address, kept in Values for intake.json, and never fetched; another url
+// question of the same release is still a source.
+func TestABrowsersSiteIsAnAddressNeverASource(t *testing.T) {
+	m := &manifest.Manifest{
+		Intake: []manifest.IntakeQuestion{
+			{ID: "site", Prompt: "Which site should I test?", Type: manifest.IntakeURL, Required: true},
+			{ID: "doc", Prompt: "A document", Type: manifest.IntakeURL},
+		},
+		Capabilities: manifest.Capabilities{Browser: &manifest.Browser{Sites: []string{"site"}}},
+	}
+	a, err := CollectRun(nil, m, map[string]string{"site": "http://staging.lan:8080/login", "doc": "https://example.com/a.pdf"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Values["site"] != "http://staging.lan:8080/login" || a.Sources["site"] != nil {
+		t.Fatalf("the site: values %v, sources %v", a.Values, a.Sources)
+	}
+	if a.Sources["doc"] == nil || a.Values["doc"] != "" {
+		t.Fatalf("the other url question is no longer a source: %+v", a)
+	}
+	for _, bad := range []string{"shop.example", "ftp://shop.example/", "https://u:p@shop.example/"} {
+		if _, err := CollectRun(nil, m, map[string]string{"site": bad}, nil); err == nil || !strings.Contains(err.Error(), "intake site") {
+			t.Errorf("site %q: %v", bad, err)
+		}
+	}
+	if _, err := CollectRun(nil, m, nil, nil); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Errorf("a required site unanswered: %v", err)
+	}
+	// Asked on a terminal, it is asked as an address.
+	p := &scriptPrompter{answers: map[string]string{"Which site": "https://shop.example/"}}
+	if a, err := CollectRun(p, m, nil, nil); err != nil || a.Values["site"] != "https://shop.example/" {
+		t.Fatalf("asked: %+v %v (asked %v)", a, err, p.asked)
+	}
+	// Without the browser line the same question is a source, as before.
+	m.Capabilities.Browser = nil
+	if a, err := CollectRun(nil, m, map[string]string{"site": "https://shop.example/"}, nil); err != nil || a.Sources["site"] == nil {
+		t.Fatalf("no browser: %+v %v", a, err)
+	}
+}

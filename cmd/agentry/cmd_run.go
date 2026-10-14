@@ -537,6 +537,10 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err := refuseSignInRun(plan, opts); err != nil {
 		return err
 	}
+	// And so is a browser, until hosted runs carry one (agentry-cli#915).
+	if err := refuseHostedBrowser(plan, opts); err != nil {
+		return err
+	}
 	// And so is a target host (agentry-cli#861, plan D11).
 	if err := refuseHostedTargetHosts(plan, opts); err != nil {
 		return err
@@ -1301,7 +1305,7 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 			sayGuide(cmd.ErrOrStderr(), m, opts)
 		}
 	}
-	return intake.CollectWithSource(p, m.Intake, preset, m.Capabilities.Secrets, fromSource)
+	return intake.CollectRun(p, m, preset, fromSource)
 }
 
 // resolveSourceTokens gives each input source the run was given its

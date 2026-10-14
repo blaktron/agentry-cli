@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -158,26 +159,33 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		relayResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
 	}
 	return sockfilter.Config{
-		RunID:           runID,
-		Label:           runLabel,
-		OwnerLabel:      gatewayOwnerLabel,
-		BindRoots:       pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]),
-		WritableRoots:   pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
-		SharedNetworks:  shared,
-		EgressNetworks:  egress,
-		NetworkNames:    names,
-		RelayHosts:      append(relayHosts(plan), rd.hostRelays()...),
-		WebNetwork:      webNet,
-		WebImage:        webImage,
-		WebCmd:          webCmd,
-		WebSpec:         webSpec,
-		WebSpecTarget:   spec.ToolSpecMount,
-		WebResolvConf:   webResolv,
-		RelayResolvConf: relayResolv,
-		ToolsImage:      plan.ToolsImage(),
-		ToolsCmd:        spec.ToolsCmd(),
-		ToolsTmpfs:      toolsTmpfs(plan),
-		ToolsShared:     toolsShared(plan, rd),
+		RunID:             runID,
+		Label:             runLabel,
+		OwnerLabel:        gatewayOwnerLabel,
+		BindRoots:         pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]),
+		WritableRoots:     pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
+		SharedNetworks:    shared,
+		EgressNetworks:    egress,
+		NetworkNames:      names,
+		RelayHosts:        slices.Concat(relayHosts(plan), rd.hostRelays(), rd.browseProxyRelay()),
+		RelayPins:         rd.browseProxyPin(),
+		WebNetwork:        webNet,
+		WebImage:          webImage,
+		WebCmd:            webCmd,
+		WebSpec:           webSpec,
+		WebSpecTarget:     spec.ToolSpecMount,
+		WebResolvConf:     webResolv,
+		RelayResolvConf:   relayResolv,
+		ToolsImage:        plan.ToolsImage(),
+		ToolsCmd:          spec.ToolsCmd(),
+		ToolsTmpfs:        toolsTmpfs(plan),
+		ToolsShared:       toolsShared(plan, rd),
+		BrowserImage:      browserImageOf(plan),
+		BrowserUser:       browserUser(),
+		BrowserTmpfs:      browserTmpfsOf(plan),
+		BrowserNetwork:    browserNetworkOf(plan, runID),
+		BrowserNetworkFor: browserNetworkForOf(plan, runID),
+		BrowseProxy:       rd.browseProxyName(),
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,
@@ -208,6 +216,37 @@ func toolsShared(plan *spec.Plan, rd *runDirs) map[string]string {
 		return nil
 	}
 	return map[string]string{hostlink.FilesPath: rd.hostFilesDir()}
+}
+
+// browserImageOf and browserTmpfsOf are the docker filter's browser class
+// for a plan with a browser server (agentry-cli#915), and nothing without.
+func browserImageOf(plan *spec.Plan) string {
+	if plan.Browser == nil {
+		return ""
+	}
+	return plan.Browser.Image
+}
+
+func browserNetworkOf(plan *spec.Plan, runID string) string {
+	if plan.Browser == nil {
+		return ""
+	}
+	return browserNetwork(runID)
+}
+
+func browserNetworkForOf(plan *spec.Plan, runID string) string {
+	if plan.Browser == nil {
+		return ""
+	}
+	internal, _ := relayNetworks(runID)
+	return internal
+}
+
+func browserTmpfsOf(plan *spec.Plan) map[string]string {
+	if plan.Browser == nil {
+		return nil
+	}
+	return browserTmpfs()
 }
 
 // gatewayOwnerLabel marks what the gateway made through its filter, and so

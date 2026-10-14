@@ -82,6 +82,11 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		lines = append(lines, "targetHosts: "+renderList(c.TargetHosts)+
 			" (asks for a server when it runs, and can run any command on it as the account you sign in with)")
 	}
+	// The browser (plan browser-testing.md §5; agentry-cli#915): where it
+	// may go, and the secrets it may type.
+	if b := c.Browser; b != nil {
+		lines = append(lines, "browser: "+browserLine(b))
+	}
 	// Shipped knowledge (plan knowledge.md §4.6): packs inside the release
 	// the agent reads, part of what is consented to.
 	if len(c.Knowledge) > 0 {
@@ -128,6 +133,11 @@ func confirmedCapabilities(c manifest.Capabilities) []string {
 	case n > 1:
 		what = append(what, "target hosts")
 	}
+	// A browser reaches the sites the person names and the declared hosts,
+	// or the public web (agentry-cli#915).
+	if c.Browser != nil {
+		what = append(what, "a web browser")
+	}
 	return what
 }
 
@@ -147,7 +157,27 @@ func isZeroCapabilities(c manifest.Capabilities) bool {
 		c.Filesystem.Read.IsZero() && c.Filesystem.Write.IsZero() &&
 		c.Exec.IsZero() &&
 		len(c.Secrets) == 0 && len(c.DataAccess) == 0 &&
-		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0
+		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0 && c.Browser == nil
+}
+
+// browserLine says what a browser line lets the release do, as the
+// install consent shows it.
+func browserLine(b *manifest.Browser) string {
+	var where []string
+	if len(b.Sites) > 0 {
+		where = append(where, "the site you name for "+renderList(b.Sites)+" and its subdomains")
+	}
+	if len(b.Hosts) > 0 {
+		where = append(where, renderList(b.Hosts))
+	}
+	if b.IsPublic() {
+		where = append(where, "ANY public site (policy-gated)")
+	}
+	line := "a web browser that can open " + strings.Join(where, ", and ")
+	if len(b.Secrets) > 0 {
+		line += "; it can type " + renderList(b.Secrets) + " into the site's sign-in forms (it never sees them)"
+	}
+	return line
 }
 
 // renderEgress prints an egress declaration; "*" is flagged as policy-gated.

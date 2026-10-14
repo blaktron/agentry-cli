@@ -213,6 +213,21 @@ jobs:
       - name: The pinned hostlink image is signed by the hostlink workflow on main
         run: ./scripts/verify-hostlink-image.sh
 
+  # The pinned browser image is the one agentry-dockerimages' browser
+  # workflow signed (agentry-cli#915): a run with a browser pulls it by
+  # digest only, so this holds the pin itself to the signature, on every
+  # pull request.
+  browser-image:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: The pinned browser image is signed by the browser workflow on main
+        run: ./scripts/verify-browser-image.sh
+
   # The pinned Codex harness image is the one agentry-dockerimages' codex
   # workflow signed (agentry-cli#739): the codex-image adapter's runs pull
   # it by digest only, so this holds the pin itself to the signature, on

@@ -317,7 +317,11 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		return nil, err
 	}
 	c.Image = imageID
-	if err := f.checkNetworks(ctx, &c); err != nil {
+	scope, err := f.browserScope(ctx, &c, imageID)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.checkNetworks(ctx, &c, scope); err != nil {
 		return nil, err
 	}
 	if err := f.checkStorage(ctx, hc); err != nil {
@@ -339,6 +343,16 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err := f.toolsTmpfs(ctx, &c, imageID); err != nil {
 		return nil, err
 	}
+	// The browser server's class (browser.go, agentry-cli#915).
+	browser, err := f.isBrowser(ctx, imageID)
+	if err != nil {
+		return nil, err
+	}
+	if browser {
+		if err := f.browserShape(&c); err != nil {
+			return nil, err
+		}
+	}
 	if err := f.bound(hc); err != nil {
 		return nil, err
 	}
@@ -350,6 +364,7 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		if err := f.relayShape(&c, relay); err != nil {
 			return nil, err
 		}
+		f.relayPinHosts(&c)
 		if f.cfg.RelayResolvConf != "" && f.cfg.Runtime != "" {
 			// Under the run's runtime, with the run's own name servers
 			// (agentry-cli#337): added after the shape check, which holds
@@ -365,7 +380,8 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		}
 		hc.Runtime = f.cfg.Runtime
 	}
-	capabilities(hc, web || tools, relay != "")
+	// A relay and the browser server get no capability back.
+	capabilities(hc, web || tools, relay != "" || browser)
 	c.Labels = f.label(c.Labels)
 	return c, nil
 }
@@ -940,7 +956,7 @@ func namespaceMode(field, mode string) error {
 // checkNetworks resolves every network the container joins and applies
 // the rules to its name: the run's or a shared one, and an egress network
 // only for a pinned relay.
-func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) error {
+func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody, scope browserScope) error {
 	// The web tools' server asks for the daemon's default network; it gets
 	// the run's web network (Config.WebNetwork), and nothing else does.
 	web := false
@@ -952,6 +968,9 @@ func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) erro
 		name = f.runNetwork(name)
 		if web && (name == "" || name == "default") {
 			return f.cfg.WebNetwork
+		}
+		if scope != notBrowser && name == f.cfg.BrowserNetworkFor {
+			return f.cfg.BrowserNetwork
 		}
 		return name
 	}
@@ -974,6 +993,9 @@ func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) erro
 		if err := f.egressAllowed(ctx, n.name, c.Image); err != nil {
 			return err
 		}
+		if err := f.browserNetworkAllowed(scope, n.name); err != nil {
+			return err
+		}
 		c.HostConfig.NetworkMode = n.id
 	}
 	if c.NetworkingConfig == nil {
@@ -986,6 +1008,9 @@ func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody) erro
 			return err
 		}
 		if err := f.egressAllowed(ctx, n.name, c.Image); err != nil {
+			return err
+		}
+		if err := f.browserNetworkAllowed(scope, n.name); err != nil {
 			return err
 		}
 		if ep != nil {
@@ -1284,6 +1309,14 @@ func (f *Filter) connect(r *http.Request, network string, joining bool) error {
 	if joining {
 		if err := f.egressAllowed(r.Context(), network, c.imageID); err != nil {
 			return err
+		}
+		// The browser's network takes no container after it is made, and
+		// the browser server joins no network (invariant 2).
+		if f.cfg.BrowserNetwork != "" && network == f.cfg.BrowserNetwork {
+			return deny("the browser's network takes no container after it is made")
+		}
+		if browser, err := f.isBrowser(r.Context(), c.imageID); err != nil || browser {
+			return deny("the browser server joins no network after it is made")
 		}
 		// A container under the run's runtime takes its networks before
 		// it starts: a sandboxed runtime's network stack takes none

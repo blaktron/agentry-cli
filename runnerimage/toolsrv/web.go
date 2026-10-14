@@ -42,6 +42,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/blaktron/agentry-cli/runnerimage/netaddr"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry-cli/runnerimage/websearch"
 )
@@ -283,27 +284,6 @@ func (s *server) web() *webState {
 
 // ---- the address rule ----
 
-// blockedPrefixes are the ranges web_read never connects to: this host and
-// its networks, private and shared address space (CGNAT), link-local (where
-// cloud metadata answers), documentation, benchmarking, multicast and
-// reserved space, and the IPv6 transition ranges that embed an IPv4 address
-// the rule would otherwise have to decode.
-var blockedPrefixes = func() []netip.Prefix {
-	var out []netip.Prefix
-	for _, p := range []string{
-		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
-		"192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15",
-		"198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
-		// Azure's wireserver and metadata host sits in public space.
-		"168.63.129.16/32",
-		"::/128", "::1/128", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32",
-		"2002::/16", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8",
-	} {
-		out = append(out, netip.MustParsePrefix(p))
-	}
-	return out
-}()
-
 // errNotPublic is the refusal of an address that is not public.
 var errNotPublic = errors.New("not a public address")
 
@@ -315,16 +295,11 @@ func publicAddrPort(ap netip.AddrPort) error {
 	return publicAddr(ap.Addr())
 }
 
+// publicAddr is the runner's one public-address rule (netaddr, shared
+// with the input-source and browse proxies; agentry-cli#915).
 func publicAddr(a netip.Addr) error {
-	a = a.Unmap()
-	if !a.IsValid() || a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() ||
-		a.IsInterfaceLocalMulticast() || a.IsMulticast() || a.IsUnspecified() {
-		return fmt.Errorf("%s is %w", a, errNotPublic)
-	}
-	for _, p := range blockedPrefixes {
-		if p.Contains(a) {
-			return fmt.Errorf("%s is %w", a, errNotPublic)
-		}
+	if !netaddr.Public(a) {
+		return fmt.Errorf("%s is %w", a.Unmap(), errNotPublic)
 	}
 	return nil
 }

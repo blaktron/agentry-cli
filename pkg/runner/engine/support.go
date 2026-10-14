@@ -60,7 +60,10 @@ type runDirs struct {
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go, agentry-cli#861): the replacer gives
 	// each relay its address and port, and the host link its user.
-	targets     []*targethost.Host
+	targets []*targethost.Host
+	// browser is the run's browser once readied (browser.go,
+	// agentry-cli#915): the browse proxy's name and address, its sites.
+	browser     *browserRun
 	outDir      string
 	receiptsDir string
 	// webLedger is receipts/web.ndjson for a run with the web tools: made
@@ -220,6 +223,9 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 	for _, h := range rd.targets {
 		pairs = append(pairs, spec.PHTargetHost(h.ID), h.RelayHost())
 	}
+	// The browser's (agentry-cli#915): the user it runs as, and the browse
+	// proxy its one relay and --proxy-server name.
+	pairs = append(pairs, spec.PHBrowserUser, browserUser(), spec.PHBrowseProxy, rd.browseProxyName())
 	return strings.NewReplacer(pairs...)
 }
 
@@ -311,6 +317,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		td.removeSensitive(rd.modelSignInDir(), true)
 		td.removeSensitive(rd.knowledge, true)
 		td.removeSensitive(rd.hostsDir(), true)
+		td.removeSensitive(rd.browserDir(), true)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
 		}

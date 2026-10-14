@@ -8,6 +8,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -117,6 +118,10 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if spec.HasPackageServers(p.Plan.MCPServers) {
 		containers = append(containers, "the MCP server installer")
 	}
+	if p.Plan.Browser != nil {
+		containers = append(containers, "the browse proxy")
+		readOnly = append(readOnly, "the browse proxy (tmpfs /tmp)")
+	}
 	hostLink := ""
 	if p.Plan.HostLink != nil {
 		// The host link is one of the gateway's containers (below); it
@@ -131,7 +136,17 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if p.Plan.Mode == "interactive" {
 		line += "; the session store's one-shot chown keeps CHOWN alone"
 	}
-	line += launchedLine(filterSupported) + hostLink
+	browserLine := ""
+	if p.Plan.Browser != nil {
+		// The browser server is one of the gateway's containers, held by
+		// the docker filter to its class (agentry-cli#915).
+		seccomp := "with the seccomp profile that lets Chromium's own sandbox run (moby's default plus clone, unshare, setns and chroot)"
+		if p.Plan.Runtime() != "" {
+			seccomp = "under " + p.Plan.Runtime() + " with Docker's default seccomp profile"
+		}
+		browserLine = "; the browser server (" + p.Plan.Browser.Image + ") is one of those the gateway launches, run as the invoking user with no capability, a read-only root (tmpfs " + browser.Home + ", /tmp) and no network but one relay to the browse proxy, " + seccomp
+	}
+	line += launchedLine(filterSupported) + hostLink + browserLine
 	out["containers"] = line
 	if p.Plan.Runtime() != "" {
 		out["runtime"] = runtimeLine(p)

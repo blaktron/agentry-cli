@@ -795,7 +795,7 @@ func checkFireInputs(m *manifest.Manifest, pol *policy.Policy, profSecrets map[s
 		}
 	}
 	if len(m.Intake) > 0 || len(preset) > 0 {
-		if _, err := intake.CollectWithSource(nil, m.Intake, preset, m.Capabilities.Secrets, held); err != nil {
+		if _, err := intake.CollectRun(nil, m, preset, held); err != nil {
 			gaps = append(gaps, err.Error())
 		}
 	}
