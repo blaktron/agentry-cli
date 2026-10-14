@@ -40,7 +40,9 @@ const RelayLabel = "docker-mcp-proxy=true"
 // plan: a declared server with egress hosts (the gateway's L4 relays), or
 // the agent's own declared egress hosts, which the tools server's fetch
 // reaches through the gateway's L7 relay (agentry-cli#346).
-func relaysNeeded(plan *spec.Plan) bool { return len(relayHosts(plan)) > 0 || plan.HostLink != nil }
+func relaysNeeded(plan *spec.Plan) bool {
+	return len(relayHosts(plan)) > 0 || plan.HostLink != nil || plan.Browser != nil
+}
 
 // refuseForeignRelays is the check before the gateway starts: relay
 // sidecars on the host now belong to another gateway (this run's has not

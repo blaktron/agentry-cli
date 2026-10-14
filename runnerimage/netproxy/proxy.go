@@ -27,9 +27,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blaktron/agentry-cli/runnerimage/netaddr"
 )
 
 // Proxy is an allowlisting CONNECT proxy. The zero value denies
@@ -55,12 +58,21 @@ type Proxy struct {
 	// An input source's fetch step runs behind such a proxy (plan
 	// input-sources.md §5, invariant 3; agentry-cli#833).
 	PublicOnly bool
-	// Resolver answers PublicOnly's lookups; nil is the system's.
+	// Scope, where set, makes this a browse proxy (browse.go,
+	// agentry-cli#915): CONNECT and plain http are judged by the scope,
+	// every name is resolved here and only the address checked is
+	// dialled, and Allow, PlainHTTP and PublicOnly are not read.
+	Scope *Scope
+	// Resolver answers PublicOnly's and Scope's lookups; nil is the system's.
 	Resolver Resolver
 	// Logw receives one line per decision (CONNECT, and plain http as
 	// "allow http" / "deny http"); nil discards. The
 	// engine points this at stderr, which lands in the run's receipts.
 	Logw io.Writer
+
+	// dial opens an upstream connection to the address judged; nil is a
+	// plain TCP dial. A test stands in for the internet with it.
+	dial func(ctx context.Context, address string) (net.Conn, error)
 
 	logMu     sync.Mutex
 	transport *http.Transport
@@ -70,6 +82,11 @@ type Proxy struct {
 // ListenAndServe runs the proxy on addr until the listener fails (the
 // container's lifetime — the engine tears the proxy down with the run).
 func (p *Proxy) ListenAndServe(addr string) error {
+	if p.Scope != nil {
+		p.logf("browse-proxy listening on %s (sites: %s; hosts: %s; public: %v; private sites: %s)", addr,
+			strings.Join(p.Scope.Sites, ", "), strings.Join(p.Scope.Hosts, ", "), p.Scope.Public, strings.Join(p.Scope.Private, ", "))
+		return (&http.Server{Addr: addr, Handler: p.Handler()}).ListenAndServe()
+	}
 	p.logf("llm-proxy listening on %s (allow: %s)", addr, strings.Join(p.Allow, ", "))
 	if len(p.PlainHTTP) > 0 {
 		p.logf("llm-proxy forwards plain http to: %s", strings.Join(p.PlainHTTP, ", "))
@@ -86,6 +103,15 @@ func (p *Proxy) Handler() http.Handler {
 
 func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
+		// A browse proxy forwards a page's plain http under its scope.
+		if p.Scope != nil {
+			if r.URL.IsAbs() && r.URL.Scheme == "http" {
+				p.forwardScoped(w, r)
+				return
+			}
+			p.denyBrowse(w, "", r.Host, "", "not a proxy request")
+			return
+		}
 		// Plaintext proxying only toward an http model endpoint the
 		// operator named (DR-45); anything else is refused as before.
 		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 && !p.PublicOnly {
@@ -104,13 +130,20 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("malformed CONNECT target %q (want host:port)", target), http.StatusBadRequest)
 		return
 	}
-	if !p.permits(host, port) {
+	dialHost := host
+	switch {
+	case p.Scope != nil:
+		a, why := p.scopedAddress(r.Context(), host, port)
+		if why != "" {
+			p.denyBrowse(w, "", host, port, why)
+			return
+		}
+		dialHost = a.String()
+	case !p.permits(host, port):
 		p.logf("deny %s:%s", host, port)
 		http.Error(w, fmt.Sprintf("forbidden: %s:%s is not in the egress allowlist", host, port), http.StatusForbidden)
 		return
-	}
-	dialHost := host
-	if p.PublicOnly {
+	case p.PublicOnly:
 		ip, err := p.publicAddress(r.Context(), host)
 		if err != nil {
 			p.logf("deny %s:%s (%v)", host, port, err)
@@ -120,7 +153,7 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		dialHost = ip.String()
 	}
 	p.logf("allow %s:%s", host, port)
-	upstream, err := net.DialTimeout("tcp", net.JoinHostPort(dialHost, port), 30*time.Second)
+	upstream, err := p.dialUpstream(r.Context(), net.JoinHostPort(dialHost, port))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("bad gateway: dial %s: %v", target, err), http.StatusBadGateway)
 		return
@@ -177,6 +210,14 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = upstream.Close()
 }
 
+// dialUpstream opens the connection to the address the proxy judged.
+func (p *Proxy) dialUpstream(ctx context.Context, address string) (net.Conn, error) {
+	if p.dial != nil {
+		return p.dial(ctx, address)
+	}
+	return (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, "tcp", address)
+}
+
 // hopHeaders are the connection-scoped headers a proxy must not pass on
 // (RFC 9110 §7.6.1), Proxy-Authorization and Proxy-Connection included.
 var hopHeaders = []string{
@@ -218,6 +259,12 @@ func (p *Proxy) forwardPlain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.logf("allow http %s:%s", host, port)
+	p.relayPlain(w, r, p.plainTransport(), host, port)
+}
+
+// relayPlain sends one absolute-form request upstream through t and
+// streams the answer back.
+func (p *Proxy) relayPlain(w http.ResponseWriter, r *http.Request, t *http.Transport, host, port string) {
 	// Full duplex: the upstream transport may still be reading the request
 	// body when the answer's first bytes are written back. Without it the
 	// server closes that body at the first write, the transport fails its
@@ -231,7 +278,7 @@ func (p *Proxy) forwardPlain(w http.ResponseWriter, r *http.Request) {
 	out.Host = r.URL.Host
 	out.Header = r.Header.Clone()
 	dropHopHeaders(out.Header)
-	resp, err := p.plainTransport().RoundTrip(out)
+	resp, err := t.RoundTrip(out)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("bad gateway: http://%s:%s: %v", host, port, err), http.StatusBadGateway)
 		return
@@ -322,50 +369,18 @@ func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) 
 	return addrs[0].IP, nil
 }
 
-// notPublic are the ranges Go's net.IP methods leave out (the host's
-// egress guard keeps its own list, pkg/mcpauth/guard.go): this network,
-// shared address space (CGNAT, where a tailnet's addresses live), IETF
-// protocol assignments, the documentation and benchmarking ranges, the
-// reserved range, NAT64 and 6to4 (which embed an IPv4 address of any
-// kind), Teredo, and IPv6 documentation.
-var notPublic = func() []*net.IPNet {
-	var out []*net.IPNet
-	for _, c := range []string{
-		"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
-		"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
-		"64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32", "2001:db8::/32",
-	} {
-		_, n, err := net.ParseCIDR(c)
-		if err != nil {
-			panic(err)
-		}
-		out = append(out, n)
-	}
-	return out
-}()
-
-// Public says whether an address is on the public internet.
+// Public says whether an address is on the public internet: the runner's
+// one list (netaddr, agentry-cli#915), shared with web_read.
 func Public(ip net.IP) bool {
-	if ip4 := ip.To4(); ip4 != nil {
-		ip = ip4
-	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || !ip.IsGlobalUnicast() {
-		return false
-	}
-	for _, n := range notPublic {
-		if n.Contains(ip) {
-			return false
-		}
-	}
-	return true
+	a, ok := netip.AddrFromSlice(ip)
+	return ok && netaddr.Public(a)
 }
 
 // plainTarget is true for a CONNECT to a plain-http model endpoint the
 // operator named (DR-45), the one tunnel whose first bytes are not TLS.
 // An input source's proxy (PublicOnly) has none.
 func (p *Proxy) plainTarget(host, port string) bool {
-	return !p.PublicOnly && permitsIn(p.PlainHTTP, "80", host, port)
+	return !p.PublicOnly && p.Scope == nil && permitsIn(p.PlainHTTP, "80", host, port)
 }
 
 // permits applies the allowlist to one host:port pair.

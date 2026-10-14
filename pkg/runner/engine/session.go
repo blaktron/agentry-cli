@@ -123,6 +123,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := checkModelSignIn(p); err != nil {
 		return fail(err)
 	}
+	if err := checkBrowser(p); err != nil {
+		return fail(err)
+	}
 	if err := checkTargetHosts(p); err != nil {
 		return fail(err)
 	}
@@ -196,6 +199,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(err)
 	}
 	if err := writeConnectionFiles(p, rd, secrets); err != nil {
+		return fail(err)
+	}
+	if err := prepareBrowser(ctx, d, p, rd, td, env, secrets); err != nil {
 		return fail(err)
 	}
 	if err := prepareTargetHosts(ctx, d, p, rd, td, env); err != nil {
@@ -1061,6 +1067,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "proxy.log"), []byte(s.redact.String(logs)), 0o644)
 	}
 	copyHostLogs(s.rd, s.env)
+	collectBrowseProxyLog(ctx, s.d, s.rd, s.env)
+	copyBrowserOut(s.rd, s.p.Stderr)
 	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start, "")
 	daemon := daemonLine(s.rd)
 	if s.rd.pdfLedger != "" {

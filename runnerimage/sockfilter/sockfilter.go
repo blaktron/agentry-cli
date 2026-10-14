@@ -144,6 +144,36 @@ type Config struct {
 	// must name exactly that folder at exactly that target; anything else
 	// at or beneath a tmpfs target is still refused.
 	ToolsShared map[string]string
+	// BrowserImage names the run's browser server (agentry-cli#915): the
+	// image a create must be of, by id (resolved when first needed, as
+	// ToolsImage is), to be held as the browser class: every capability
+	// dropped, a read-only root, BrowserTmpfs mounted, its user
+	// BrowserUser, and, with no Runtime, the seccomp profile that lets
+	// Chromium's own sandbox run (browser.go). Empty: no browser.
+	BrowserImage string
+	// BrowserUser is the user the browser server must run as, uid:gid,
+	// which owns its tmpfs home; empty is the image's own (10001:10001).
+	BrowserUser string
+	// BrowserTmpfs is what the filter mounts into the browser server, target
+	// to options without the owner, which BrowserUser decides: its home and
+	// its /tmp, where Chromium keeps its shared memory.
+	BrowserTmpfs map[string]string
+	// BrowserNetwork is the run's network for the browser server and the one
+	// relay it reaches the browse proxy through, alone (agentry-cli#915,
+	// plan browser-testing.md invariant 2): where the gateway names
+	// BrowserNetworkFor (the run's internal relay network) for either, the
+	// filter gives it this one, so a page that took the browser over
+	// reaches no other server's relay; no other container may join it, and
+	// the browser server may join nothing after it is made. BrowseProxy is
+	// the proxy's host name, the relay's PROXY_HOSTNAME.
+	BrowserNetwork    string
+	BrowserNetworkFor string
+	BrowseProxy       string
+	// RelayPins are run-time hosts the filter writes into the /etc/hosts of
+	// a relay pointed at one, host to IPv4 address: the run's browse proxy,
+	// a container of its own whose name a relay under a sandboxed runtime,
+	// on the host's name servers, could not resolve (agentry-cli#915).
+	RelayPins map[string]string
 	// Limits bound every container created through the filter: a request
 	// asking for more is refused, one asking for none gets these.
 	Limits Limits
@@ -181,8 +211,10 @@ type Filter struct {
 	// toolsImageID.
 	webImageID string
 	webMu      sync.Mutex
-	// toolsImageID is ToolsImage resolved the same way, under webMu too.
-	toolsImageID string
+	// toolsImageID is ToolsImage resolved the same way, under webMu too,
+	// and browserImageID BrowserImage.
+	toolsImageID   string
+	browserImageID string
 
 	mu      sync.Mutex
 	execs   map[string]bool
