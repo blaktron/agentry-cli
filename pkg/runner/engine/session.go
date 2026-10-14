@@ -123,7 +123,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := checkModelSignIn(p); err != nil {
 		return fail(err)
 	}
-	if err := checkBrowser(p); err != nil {
+	if err := checkBrowser(ctx, p); err != nil {
 		return fail(err)
 	}
 	if err := checkTargetHosts(p); err != nil {

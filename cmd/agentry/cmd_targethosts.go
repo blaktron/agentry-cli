@@ -68,16 +68,6 @@ func parseHostKeyPins(vals []string) (map[string]string, error) {
 // stand in for the network (agentry-cli#863).
 var prepareTargetHost = targethost.Prepare
 
-// refuseHostedBrowser refuses, before anything is installed, a hosted run
-// of a release that declares a browser, until hosted runs carry one (plan
-// M7; agentry-cli#915).
-func refuseHostedBrowser(plan *spec.Plan, opts runOpts) error {
-	if plan.Capabilities.Browser == nil || (!hostedRun(opts) && !hostedProcess() && opts.reviewInputs == "") {
-		return nil
-	}
-	return engine.HostedBrowserRefusal()
-}
-
 // refuseHostedTargetHosts refuses, before anything is installed, a hosted
 // run of a release that declares a target host (plan D11).
 func refuseHostedTargetHosts(plan *spec.Plan, opts runOpts) error {

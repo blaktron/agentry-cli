@@ -96,6 +96,7 @@ func newRootCmd() *cobra.Command {
 		newSetupCmd(),
 		newDoctorCmd(),
 		newFilesCmd(),
+		newBrowserCmd(),
 		newRunCmd(),
 		newScheduleCmd(),
 		newKnowledgeCmd(),

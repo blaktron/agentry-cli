@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -175,20 +177,105 @@ func TestABrowserRunStartsTheBrowseProxyWithItsScope(t *testing.T) {
 	}
 }
 
-// TestAHostedRunRefusesABrowser, until hosted runs carry one (M7): before
-// any container starts.
-func TestAHostedRunRefusesABrowser(t *testing.T) {
+// stubSiteDNS answers lookupSiteHost from a table for the test.
+func stubSiteDNS(t *testing.T, table map[string][]string) {
+	t.Helper()
+	prev := lookupSiteHost
+	lookupSiteHost = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		ips, ok := table[host]
+		if !ok {
+			return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		}
+		var out []net.IPAddr
+		for _, ip := range ips {
+			out = append(out, net.IPAddr{IP: net.ParseIP(ip)})
+		}
+		return out, nil
+	}
+	t.Cleanup(func() { lookupSiteHost = prev })
+}
+
+// TestAHostedRunGivesItsBrowserPublicSitesOnly (plan D2, M7;
+// agentry-cli#941): a hosted run's browser starts as a local run's does,
+// but the browse proxy is given no private site, and the receipt says the
+// sites are public.
+func TestAHostedRunGivesItsBrowserPublicSitesOnly(t *testing.T) {
+	stubSiteDNS(t, map[string][]string{"shop.example": {"93.184.215.14"}})
 	p, f := browserFixture(t)
 	happyFake(f)
-	p.InputReview = &fakeReview{}
+	p.Hosted = true
 	env, err := Run(context.Background(), f, p)
-	if env == nil || env.ExitCode != ExitPolicy || err == nil || !strings.Contains(err.Error(), "hosted run has no browser") {
-		t.Fatalf("hosted run: %v (%+v)", err, env)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	for _, op := range f.Ops() {
-		if strings.HasPrefix(op, "RunDetached") || strings.HasPrefix(op, "NetworkCreate") || strings.HasPrefix(op, "Pull") {
-			t.Errorf("a hosted run made %s before it refused", op)
+	r, ok := f.FindRun("-browse-proxy")
+	if !ok {
+		t.Fatal("no browse proxy was started")
+	}
+	argv := strings.Join(r.Argv, " ")
+	if !strings.Contains(argv, "--browse-sites shop.example") || strings.Contains(argv, "--browse-private") {
+		t.Errorf("a hosted run's proxy argv: %q", argv)
+	}
+	if got := env.CapabilitiesEnforced["browser.scope"]; !strings.Contains(got, "each a public address, on ports 80 and 443, in this hosted run") || strings.Contains(got, "LAN") {
+		t.Errorf("browser.scope = %q", got)
+	}
+}
+
+// TestAHostedRunRefusesASiteItCouldNotOpen before any container starts:
+// a private or loopback address, a name that resolves to one, a name that
+// does not resolve, and a port a sandbox host does not let out. A run that
+// reviews its inputs through the registry is hosted too.
+func TestAHostedRunRefusesASiteItCouldNotOpen(t *testing.T) {
+	for _, tc := range []struct{ name, site, want string }{
+		{"private address", "http://10.0.0.5/", "10.0.0.5 is not a public address"},
+		{"loopback v6", "http://[::1]:80/", "::1 is not a public address"},
+		{"name to a LAN", "https://intranet.corp.example/", "resolves to 192.168.1.4, which is not a public address"},
+		{"one address of two private", "https://split.example/", "resolves to 127.0.0.1"},
+		{"unresolvable", "https://nowhere.invalid/", "could not be found on the public internet"},
+		{"own port", "https://shop.example:8443/", "ports 80 and 443 only"},
+	} {
+		for _, review := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s review=%v", tc.name, review), func(t *testing.T) {
+				stubSiteDNS(t, map[string][]string{
+					"shop.example":          {"93.184.215.14"},
+					"intranet.corp.example": {"192.168.1.4"},
+					"split.example":         {"93.184.215.14", "127.0.0.1"},
+				})
+				p, f := browserFixture(t)
+				happyFake(f)
+				p.Intake.Values["site"] = tc.site
+				if review {
+					p.InputReview = &fakeReview{}
+				} else {
+					p.Hosted = true
+				}
+				env, err := Run(context.Background(), f, p)
+				if env == nil || env.ExitCode != ExitPolicy || err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "intake site:") {
+					t.Fatalf("hosted run of %s: %v (%+v)", tc.site, err, env)
+				}
+				for _, op := range f.Ops() {
+					if strings.HasPrefix(op, "RunDetached") || strings.HasPrefix(op, "NetworkCreate") || strings.HasPrefix(op, "Pull") {
+						t.Errorf("a hosted run made %s before it refused", op)
+					}
+				}
+			})
 		}
+	}
+}
+
+// TestALocalRunKeepsItsPrivateSite: the person's own LAN site is still a
+// local run's to test (D2), and no DNS is asked first.
+func TestALocalRunKeepsItsPrivateSite(t *testing.T) {
+	stubSiteDNS(t, nil)
+	p, f := browserFixture(t)
+	happyFake(f)
+	p.Intake.Values["site"] = "http://192.168.1.20:8080/"
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	r, _ := f.FindRun("-browse-proxy")
+	if argv := strings.Join(r.Argv, " "); !strings.Contains(argv, "--browse-private 192.168.1.20") {
+		t.Errorf("a local run's proxy argv: %q", argv)
 	}
 }
 
