@@ -581,7 +581,7 @@ func TestTheBrowserIsInTheSnapshot(t *testing.T) {
 		t.Fatalf("the same browser changed the contract: %+v", d)
 	}
 	for name, next := range map[string]*manifest.Browser{
-		"a host":   {Sites: []string{"site"}, Hosts: []string{"cdn.example.com", "*.stripe.com"}},
+		"a host":   {Sites: []string{"site"}, Hosts: []string{"cdn.example.com", "*.cdnhost.net"}},
 		"a secret": {Sites: []string{"site"}, Hosts: []string{"cdn.example.com"}, Secrets: []string{"SITE_PASSWORD"}},
 		"public":   {Sites: []string{"site"}, Hosts: []string{"cdn.example.com"}, Scope: manifest.BrowserScopePublic},
 		"a site":   {Sites: []string{"site", "staging"}, Hosts: []string{"cdn.example.com"}},

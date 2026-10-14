@@ -21,7 +21,7 @@ import (
 func TestScopeAdmits(t *testing.T) {
 	s := &Scope{
 		Sites: []string{"Shop.Example", "staging.lan:8080"},
-		Hosts: []string{"fonts.googleapis.com", "*.stripe.com"},
+		Hosts: []string{"fonts.googleapis.com", "*.cdnhost.net"},
 	}
 	for _, c := range []struct {
 		host, port string
@@ -40,9 +40,9 @@ func TestScopeAdmits(t *testing.T) {
 		{"staging.lan", "443", true, ""},
 		{"fonts.googleapis.com", "443", true, ""},
 		{"maps.googleapis.com", "443", false, "out of scope"},
-		{"js.stripe.com", "443", true, ""},
-		{"stripe.com", "443", false, "out of scope"},
-		{"evilstripe.com", "443", false, "out of scope"},
+		{"js.cdnhost.net", "443", true, ""},
+		{"cdnhost.net", "443", false, "out of scope"},
+		{"evilcdnhost.net", "443", false, "out of scope"},
 		{"accounts.google.com", "443", false, "out of scope"},
 	} {
 		got, why := s.inScope(c.host, c.port)

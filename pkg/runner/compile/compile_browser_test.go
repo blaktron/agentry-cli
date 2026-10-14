@@ -38,7 +38,7 @@ intake:
 capabilities:
   browser:
     sites: [site]
-    hosts: [fonts.googleapis.com, "*.Stripe.com"]
+    hosts: [fonts.googleapis.com, "*.Cdnhost.net"]
 entrypoints:
   instruction: SKILL.md
 publish:
@@ -48,8 +48,8 @@ publish:
 // withBrowserSecrets is browserManifest whose browser may type two
 // declared secrets.
 func withBrowserSecrets(doc string) string {
-	doc = strings.Replace(doc, "    hosts: [fonts.googleapis.com, \"*.Stripe.com\"]\n",
-		"    hosts: [fonts.googleapis.com, \"*.Stripe.com\"]\n    secrets: [SITE_USER, SITE_PASSWORD]\n  secrets: [SITE_USER, SITE_PASSWORD]\n", 1)
+	doc = strings.Replace(doc, "    hosts: [fonts.googleapis.com, \"*.Cdnhost.net\"]\n",
+		"    hosts: [fonts.googleapis.com, \"*.Cdnhost.net\"]\n    secrets: [SITE_USER, SITE_PASSWORD]\n  secrets: [SITE_USER, SITE_PASSWORD]\n", 1)
 	return doc
 }
 
@@ -76,7 +76,7 @@ func TestCompileRendersTheBrowserServer(t *testing.T) {
 		t.Fatalf("plan.Browser = %+v", plan.Browser)
 	}
 	if c := plan.Capabilities.Browser; c == nil || !slices.Equal(c.Sites, []string{"site"}) ||
-		!slices.Equal(c.Hosts, []string{"fonts.googleapis.com", "*.stripe.com"}) || c.Public || len(c.Secrets) != 0 {
+		!slices.Equal(c.Hosts, []string{"fonts.googleapis.com", "*.cdnhost.net"}) || c.Public || len(c.Secrets) != 0 {
 		t.Fatalf("capabilities.browser = %+v", c)
 	}
 
@@ -149,7 +149,7 @@ func TestCompileRendersTheBrowserServer(t *testing.T) {
 	if strings.Contains(string(agent), `person named for "site" was downloaded`) || !strings.Contains(string(agent), `"notes"`) {
 		t.Errorf("the System Prompt says the site is downloaded, or forgets the file question")
 	}
-	if line := plan.Enforcement["browser"]; !strings.Contains(line, "*.stripe.com") || !strings.Contains(line, "browse proxy") || strings.Contains(line, "--secrets") {
+	if line := plan.Enforcement["browser"]; !strings.Contains(line, "*.cdnhost.net") || !strings.Contains(line, "browse proxy") || strings.Contains(line, "--secrets") {
 		t.Errorf("enforcement line %q", line)
 	}
 }
