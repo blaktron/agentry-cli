@@ -133,6 +133,11 @@ type Params struct {
 	// flagged input refuses the run, and a session's added file alone.
 	// Nil reviews nothing, as every local run.
 	InputReview webscan.Scanner
+	// Hosted says the run is a sandbox host's (its driver marks it: a run
+	// grant, a job's credential, AGENTRY_HOSTED). A hosted run's browser
+	// opens public sites only (plan browser-testing.md D2; agentry-cli#941).
+	// A run with InputReview set is hosted whatever this says.
+	Hosted bool
 	// EndBlocked grants end_blocked and the calls ledger (blocked.go): the
 	// run ends blocked, not ok, when its agent says it could not do the task
 	// or the ledger shows the runner's tools failed it. A release's one-shot
@@ -291,9 +296,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkTargetHosts(p); err != nil {
 		return fail(env, redact, err)
 	}
-	// A browser is given only as the plan declares it, and not yet to a
-	// hosted run (agentry-cli#915).
-	if err := checkBrowser(p); err != nil {
+	// A browser is given only as the plan declares it, and a hosted run's
+	// only to public sites (agentry-cli#915, #941).
+	if err := checkBrowser(ctx, p); err != nil {
 		return fail(env, redact, err)
 	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
