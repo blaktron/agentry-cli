@@ -45,6 +45,7 @@ func TestParseSite(t *testing.T) {
 		{"http://staging.lan:8080", "staging.lan:8080", "http://staging.lan:8080"},
 		{"http://192.168.1.20/", "192.168.1.20", "http://192.168.1.20/"},
 		{"https://[2001:db8::1]:8443/", "[2001:db8::1]:8443", "https://[2001:db8::1]:8443/"},
+		{"https://bücher.example/", "xn--bcher-kva.example", "https://b%C3%BCcher.example/"},
 	} {
 		s, err := ParseSite(c.in)
 		if err != nil || s.ProxyEntry() != c.entry || s.URL != c.url {

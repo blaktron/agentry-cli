@@ -176,3 +176,69 @@ func TestTheBrowseProxysRelayResolvesThroughItsPin(t *testing.T) {
 	doc["HostConfig"].(map[string]any)["ExtraHosts"] = []string{"agentry-ab12-browse-proxy:203.0.113.9"}
 	g.refused(t, "a relay's own hosts entry", "POST", "/containers/create", doc, "resolves its host as the daemon does")
 }
+
+// TestTheBrowsersNetworkIsItsAndItsRelaysAlone is invariant 2 (plan
+// browser-testing.md): the browser server and the relay to the browse
+// proxy are given the run's browser network where the gateway names the
+// internal relay network; no other container joins it, the browser joins
+// no other, and nothing is connected to either afterwards.
+func TestTheBrowsersNetworkIsItsAndItsRelaysAlone(t *testing.T) {
+	const browserNet = "agentry-A-relays-browser"
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.SharedNetworks = []string{"agentry-A-relays"}
+		c.EgressNetworks = map[string][]string{"agentry-A-relays-out": {relayPin}}
+		c.NetworkNames = map[string]string{intNet: "agentry-A-relays", ext: "agentry-A-relays-out"}
+		c.BrowserImage = browserImageRef
+		c.BrowserUser = "1000:1000"
+		c.BrowserTmpfs = map[string]string{"/home/browser": "size=1", "/tmp": "size=1"}
+		c.BrowserNetwork = browserNet
+		c.BrowserNetworkFor = "agentry-A-relays"
+		c.BrowseProxy = "agentry-ab12-browse-proxy"
+		c.RelayHosts = []string{"agentry-ab12-browse-proxy:3128", "api.example.com:443"}
+	})
+	networks := func() (string, []string) {
+		doc := g.body("POST /containers/create")
+		hc, _ := doc["HostConfig"].(map[string]any)
+		mode, _ := hc["NetworkMode"].(string)
+		var eps []string
+		if nc, ok := doc["NetworkingConfig"].(map[string]any); ok {
+			for id := range nc["EndpointsConfig"].(map[string]any) {
+				eps = append(eps, id)
+			}
+		}
+		return mode, eps
+	}
+	if code, body := g.do(t, "POST", "/containers/create", browserCreate("1000:1000", map[string]any{"NetworkMode": intNet})); code != http.StatusCreated {
+		t.Fatalf("the browser server: %d %s", code, body)
+	}
+	if mode, _ := networks(); mode != "id-"+browserNet {
+		t.Fatalf("the browser server's network = %q, want the browser network", mode)
+	}
+	relay := func(host, ports string) map[string]any {
+		return map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=" + host, "PROXY_PORTS=" + ports},
+			"HostConfig":       map[string]any{"NetworkMode": ext},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{}}}}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", relay("agentry-ab12-browse-proxy", "3128")); code != http.StatusCreated {
+		t.Fatalf("the browse proxy's relay: %d %s", code, body)
+	}
+	if mode, eps := networks(); mode != "id-agentry-A-relays-out" || !slices.Equal(eps, []string{"id-" + browserNet}) {
+		t.Fatalf("the browse proxy's relay: %q %v, want the way out and the browser network", mode, eps)
+	}
+	// Another relay stays on the internal network, and may not take the
+	// browser's.
+	if code, body := g.do(t, "POST", "/containers/create", relay("api.example.com", "443")); code != http.StatusCreated {
+		t.Fatalf("another relay: %d %s", code, body)
+	}
+	if _, eps := networks(); !slices.Equal(eps, []string{"id-agentry-A-relays"}) {
+		t.Fatalf("another relay: %v", eps)
+	}
+	other := relay("api.example.com", "443")
+	other["NetworkingConfig"] = map[string]any{"EndpointsConfig": map[string]any{browserNet: map[string]any{}}}
+	g.refused(t, "another relay on the browser network", "POST", "/containers/create", other, "browser server's and its relay's alone")
+	g.refused(t, "a declared server on the browser network", "POST", "/containers/create",
+		map[string]any{"Image": "node:24", "HostConfig": map[string]any{"NetworkMode": browserNet}}, "browser server's and its relay's alone")
+	g.refused(t, "the browser server on another network", "POST", "/containers/create",
+		browserCreate("1000:1000", map[string]any{"NetworkMode": "runa-net"}), "joins its own network alone")
+	g.refused(t, "a container joining the browser network", "POST", "/networks/"+browserNet+"/connect", map[string]any{"Container": "runa-1"}, "takes no container after it is made")
+}

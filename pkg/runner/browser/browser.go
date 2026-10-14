@@ -16,6 +16,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
 
 // ServerName is the browser server's name in the gateway's catalog. A
@@ -161,6 +163,15 @@ func ParseSite(answer string) (Site, error) {
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	if strings.ContainsAny(host, " \t%") {
 		return Site{}, fmt.Errorf("%q has a host that is not a host name or an address", answer)
+	}
+	// An internationalized name is held in the form the browser sends, so
+	// the browse proxy's scope matches it.
+	if net.ParseIP(host) == nil {
+		ascii, err := idna.Lookup.ToASCII(host)
+		if err != nil {
+			return Site{}, fmt.Errorf("%q has a host that is not a valid name: %v", answer, err)
+		}
+		host = ascii
 	}
 	port := u.Port()
 	if port != "" {

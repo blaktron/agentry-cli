@@ -177,6 +177,9 @@ func (f *Filter) shared(name string) bool {
 	if f.cfg.WebNetwork != "" && name == f.cfg.WebNetwork {
 		return true
 	}
+	if f.cfg.BrowserNetwork != "" && name == f.cfg.BrowserNetwork {
+		return true
+	}
 	_, egress := f.cfg.EgressNetworks[name]
 	return egress
 }

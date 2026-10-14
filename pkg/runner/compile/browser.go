@@ -119,7 +119,7 @@ func browserEnforcement(b *spec.BrowserCap, pol *policy.Policy) string {
 		"the server writes only reports/browser/",
 		browser.ServerName, pol.Images.BrowserImage(), browserScope(b))
 	if len(b.Secrets) > 0 {
-		line += fmt.Sprintf("; the secrets %s reach it alone, as its --secrets file: the agent passes a name and the server types the value and masks it in what it returns, and %s is not granted",
+		line += fmt.Sprintf("; the secrets %s reach it alone, as its --secrets file: the agent passes a name and the server types the value, replacing the exact value with the name in what it returns (its own masking, which a transformed value would pass, so %s is not granted)",
 			strings.Join(b.Secrets, ", "), browser.ToolEvaluate)
 	}
 	return line

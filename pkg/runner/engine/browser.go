@@ -16,6 +16,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 )
 
 // The browser (agentry-notes plans/browser-testing.md §6, §7, §7.1, D1,
@@ -166,10 +167,10 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 		if err != nil {
 			return Classify(ExitPolicy, err)
 		}
-		path := filepath.Join(rd.browserDir(), spec.BrowserSecretsFile)
-		// The secrets die with the run, kept run folder or not.
-		td.add(func(context.Context) { _ = os.Remove(path) })
-		if err := os.WriteFile(path, f, 0o600); err != nil {
+		// The folder dies with the run, kept run folder or not, through the
+		// teardown's own sensitive removal (prepareRunDirs), which reports a
+		// file it could not delete.
+		if err := os.WriteFile(filepath.Join(rd.browserDir(), spec.BrowserSecretsFile), f, 0o600); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("the browser's secrets file: %w", err))
 		}
 	}
@@ -182,7 +183,7 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 	env.CapabilitiesEnforced["browser.image"] = p.Plan.Browser.Image + ", pulled by digest"
 	env.CapabilitiesEnforced["browser.scope"] = browserScopeLine(c, b)
 	if len(c.Secrets) > 0 {
-		env.CapabilitiesEnforced["browser.secrets"] = fmt.Sprintf("%s, in a file bound read-only into the browser server alone, typed by the server where the agent passes a name and masked in what it returns; %s not granted",
+		env.CapabilitiesEnforced["browser.secrets"] = fmt.Sprintf("%s, in a file bound read-only into the browser server alone and removed with the run; the server types a value where the agent passes its name, and replaces the exact value with the name in what it returns (its own masking, which a transformed value would pass, so %s is not granted); the runner masks the values again in the transcript, the receipts and the browser's text files",
 			strings.Join(c.Secrets, ", "), browser.ToolEvaluate)
 	}
 	return nil
@@ -266,6 +267,25 @@ func browseProxyArgs(c *spec.BrowserCap, b *browserRun) []string {
 	return a
 }
 
+// browserNetwork is the run's network for the browser server and its one
+// relay, alone (sockfilter.Config.BrowserNetwork; invariant 2).
+func browserNetwork(runID string) string { return "agentry-" + runID + "-browser" }
+
+// makeBrowserNetwork makes the browser's network, internal, and queues its
+// removal, which runs after the gateway and its relays are gone.
+func makeBrowserNetwork(ctx context.Context, d dockerx.Client, p Params, runID string, td *teardown) error {
+	if p.Plan.Browser == nil {
+		return nil
+	}
+	name := browserNetwork(runID)
+	if err := d.NetworkCreate(ctx, name, true, runLabels(runID)); err != nil {
+		return Classify(ExitGateway, fmt.Errorf("create the browser's network %s: %w", name, err))
+	}
+	td.add(func(c context.Context) { _ = d.NetworkRemove(c, name) })
+	td.networks = append(td.networks, name)
+	return nil
+}
+
 // startBrowseProxy starts the browse proxy on the run's relay egress
 // network, where the browser's relay reaches it, on the daemon's default
 // runtime (it resolves names through Docker's DNS, which a sandboxed
@@ -345,7 +365,7 @@ func browseProxyLine(logs string) string {
 		if !strings.HasPrefix(l, "deny ") {
 			continue
 		}
-		if strings.HasSuffix(l, "[chrome service]") {
+		if strings.HasSuffix(l, netproxy.ChromeServiceMark) {
 			chrome++
 		} else {
 			page++
@@ -354,15 +374,26 @@ func browseProxyLine(logs string) string {
 	return fmt.Sprintf("%d connections refused (%d more of Chrome's own services); each with its host and reason in receipts/browser-proxy.log", page, chrome)
 }
 
+// The browser's files that reach the person: each at most
+// browserFileMax, all of them at most browserTotalMax.
+const (
+	browserFileMax  = 64 << 20
+	browserTotalMax = 512 << 20
+)
+
 // copyBrowserOut copies the browser's output folder into reports/browser/,
-// once: regular files only, each under 64 MiB, through an os.Root at the
-// destination so a name cannot lead out of it.
+// once: regular files only, through an os.Root at each end so a name cannot
+// lead out, each held to browserFileMax as it is copied (the browser may
+// still be writing) and all to browserTotalMax. A text file the server
+// wrote (a snapshot, a console log) is then masked like every receipt,
+// behind the server's own exact-match masking of a typed secret.
 func copyBrowserOut(rd *runDirs, stderr io.Writer) {
 	if rd.browser == nil || rd.browser.copied {
 		return
 	}
 	rd.browser.copied = true
-	dst, err := os.OpenRoot(filepath.Join(rd.outDir, spec.BrowserReports))
+	dstDir := filepath.Join(rd.outDir, spec.BrowserReports)
+	dst, err := os.OpenRoot(dstDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "agentry run: reports/browser: %v\n", err)
 		return
@@ -373,6 +404,7 @@ func copyBrowserOut(rd *runDirs, stderr io.Writer) {
 		return
 	}
 	defer func() { _ = src.Close() }()
+	var total int64
 	_ = fs.WalkDir(src.FS(), ".", func(name string, de fs.DirEntry, err error) error {
 		if err != nil || name == "." {
 			return nil
@@ -384,26 +416,52 @@ func copyBrowserOut(rd *runDirs, stderr io.Writer) {
 		if !de.Type().IsRegular() {
 			return nil
 		}
-		info, err := de.Info()
-		if err != nil || info.Size() > 64<<20 {
-			return nil
-		}
-		in, err := src.Open(name)
+		n, err := copyBrowserFile(src, dst, name, browserTotalMax-total)
+		total += n
 		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "agentry run: reports/browser/%s: %v\n", name, err)
 			return nil
 		}
-		defer func() { _ = in.Close() }()
-		w, err := dst.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err != nil {
-			return nil
-		}
-		_, cerr := io.Copy(w, in)
-		if err := w.Close(); cerr == nil {
-			cerr = err
-		}
-		if cerr != nil {
-			_, _ = fmt.Fprintf(stderr, "agentry run: reports/browser/%s: %v\n", name, cerr)
+		if rd.redact != nil && browserTextFile(name) {
+			rd.redact.File(filepath.Join(dstDir, filepath.FromSlash(name)))
 		}
 		return nil
 	})
+}
+
+// copyBrowserFile copies one file, at most browserFileMax and room bytes;
+// one that is larger is left out.
+func copyBrowserFile(src, dst *os.Root, name string, room int64) (int64, error) {
+	limit := min(int64(browserFileMax), room)
+	in, err := src.Open(name)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = in.Close() }()
+	w, err := dst.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	n, cerr := io.Copy(w, io.LimitReader(in, limit+1))
+	if err := w.Close(); cerr == nil {
+		cerr = err
+	}
+	if cerr == nil && n > limit {
+		cerr = fmt.Errorf("larger than %d bytes, left out", limit)
+	}
+	if cerr != nil {
+		_ = dst.Remove(name)
+		return 0, cerr
+	}
+	return n, nil
+}
+
+// browserTextFile says whether a file the server wrote is text the runner
+// masks: its snapshots, console and network logs, saved pages.
+func browserTextFile(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".yml", ".yaml", ".log", ".md", ".txt", ".json", ".html", ".htm":
+		return true
+	}
+	return false
 }

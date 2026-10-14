@@ -55,6 +55,18 @@ var browserOwn = []string{
 	"redirector.gvt1.com", "edgedl.me.gvt1.com",
 }
 
+// ChromeServiceMark ends a refusal of one of Chrome's own service hosts in
+// the log, which the receipt counts apart.
+const ChromeServiceMark = "[chrome service]"
+
+// chromeService is the mark, with its space, for a host that is one.
+func chromeService(host string) string {
+	if slices.Contains(browserOwn, lower(host)) {
+		return " " + ChromeServiceMark
+	}
+	return ""
+}
+
 // lower is ASCII lower case, as host names compare (asciiEqualFold).
 func lower(s string) string {
 	b := []byte(s)
@@ -108,12 +120,15 @@ func (s *Scope) private(host string) bool {
 	return slices.ContainsFunc(s.Private, func(h string) bool { return lower(h) == host })
 }
 
+// sharedSpace is CGNAT, where a tailnet's addresses live.
+var sharedSpace = netip.MustParsePrefix("100.64.0.0/10")
+
 // lanAddress is an address a person-typed private site may have (plan D2):
 // a private range's (RFC 1918, IPv6 ULA) or shared space's (CGNAT, where a
 // tailnet lives), never loopback, link-local, multicast or unspecified.
 func lanAddress(a netip.Addr) bool {
 	a = a.Unmap()
-	return a.IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(a)
+	return a.IsPrivate() || sharedSpace.Contains(a)
 }
 
 // scopedAddress judges one connection the browser asks for: the host in
@@ -162,11 +177,7 @@ func (p *Proxy) scopedAddress(ctx context.Context, host, port string) (netip.Add
 // denyBrowse logs a refusal with its host, port and reason, marking one of
 // Chrome's own service hosts, and answers the browser with it.
 func (p *Proxy) denyBrowse(w http.ResponseWriter, kind, host, port, why string) {
-	mark := ""
-	if slices.Contains(browserOwn, lower(host)) {
-		mark = " [chrome service]"
-	}
-	p.logf("deny %s%s:%s (%s)%s", kind, host, port, why, mark)
+	p.logf("deny %s%s:%s (%s)%s", kind, host, port, why, chromeService(host))
 	http.Error(w, fmt.Sprintf("forbidden: %s:%s: %s", host, port, why), http.StatusForbidden)
 }
 
@@ -215,4 +226,13 @@ func (p *Proxy) browseTransport() *http.Transport {
 		}
 	})
 	return p.transport
+}
+
+// serviceMark is chromeService for a browse proxy's log, and nothing for
+// another proxy's.
+func (p *Proxy) serviceMark(host string) string {
+	if p.Scope == nil {
+		return ""
+	}
+	return chromeService(host)
 }

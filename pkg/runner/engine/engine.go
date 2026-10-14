@@ -643,8 +643,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		if err := makeRelayNetworks(ctx, d, runID, td); err != nil {
 			return err
 		}
-		// The browse proxy, on the relay egress network, before the
-		// filter that pins its address for the browser's relay.
+		// The browser's own network and the browse proxy, on the relay
+		// egress network, before the filter that holds the browser to the
+		// one and pins the other's address for its relay.
+		if err := makeBrowserNetwork(ctx, d, p, runID, td); err != nil {
+			return err
+		}
 		if err := startBrowseProxy(ctx, d, p, rd, td, runID); err != nil {
 			return err
 		}

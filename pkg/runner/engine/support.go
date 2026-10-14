@@ -317,6 +317,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		td.removeSensitive(rd.modelSignInDir(), true)
 		td.removeSensitive(rd.knowledge, true)
 		td.removeSensitive(rd.hostsDir(), true)
+		td.removeSensitive(rd.browserDir(), true)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
 		}

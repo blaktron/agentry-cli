@@ -40,6 +40,9 @@ func BrowserSeccomp() (string, error) {
 	return b.String(), nil
 }
 
+// relayHostSetting is an L4 relay's target host, as relayShape reads it.
+const relayHostSetting = "PROXY_HOSTNAME"
+
 // defaultBrowserUser is the agentry-browser image's own user.
 const defaultBrowserUser = "10001:10001"
 
@@ -82,16 +85,24 @@ func (f *Filter) browserShape(c *containerCreateBody) error {
 	if user == "" {
 		user = defaultBrowserUser
 	}
-	if c.User != f.cfg.BrowserUser && !(f.cfg.BrowserUser == "" && c.User == defaultBrowserUser) {
-		return deny("the browser server runs as %q, not the run's %q", c.User, f.cfg.BrowserUser)
+	// The run's user; where the run gives none, the image's own, which the
+	// gateway may also leave unnamed.
+	if ok := c.User == f.cfg.BrowserUser || (f.cfg.BrowserUser == "" && c.User == defaultBrowserUser); !ok {
+		return deny("the browser server runs as %q, not the run's %q", c.User, user)
 	}
 	uid, gid, ok := strings.Cut(user, ":")
 	if !ok || uid == "" || gid == "" || strings.Trim(uid+gid, "0123456789") != "" {
 		return deny("the browser server's user %q is not uid:gid", user)
 	}
+	var declared map[string]json.RawMessage
+	if present(c.Volumes) {
+		if err := json.Unmarshal(c.Volumes, &declared); err != nil {
+			return deny("the browser server's Volumes are a map of targets")
+		}
+	}
 	targets := slices.Sorted(maps.Keys(f.cfg.BrowserTmpfs))
 	for _, t := range targets {
-		if beneath(hc, t) {
+		if beneath(hc, slices.Collect(maps.Keys(declared)), t) {
 			return deny("the browser server's request names something at or beneath %s", t)
 		}
 	}
@@ -102,6 +113,11 @@ func (f *Filter) browserShape(c *containerCreateBody) error {
 		hc.Tmpfs[t] = f.cfg.BrowserTmpfs[t] + ",uid=" + uid + ",gid=" + gid
 	}
 	hc.ReadonlyRootfs = true
+	// No new privileges, whatever the gateway asked: the class's seccomp
+	// profile lets it make namespaces, and nothing in them may gain more.
+	if !slices.ContainsFunc(hc.SecurityOpt, strengthens) {
+		hc.SecurityOpt = append(hc.SecurityOpt, "no-new-privileges")
+	}
 	if f.cfg.Runtime == "" {
 		profile, err := BrowserSeccomp()
 		if err != nil {
@@ -113,11 +129,16 @@ func (f *Filter) browserShape(c *containerCreateBody) error {
 }
 
 // beneath says whether a container's request mounts anything at or beneath
-// target: a bind, a mount or a tmpfs of the gateway's.
-func beneath(hc *hostConfig, target string) bool {
+// target: a declared volume, a bind, a mount or a tmpfs of the gateway's.
+func beneath(hc *hostConfig, volumes []string, target string) bool {
 	under := func(p string) bool {
 		p = path.Clean(p)
 		return p == target || strings.HasPrefix(p, target+"/")
+	}
+	for _, v := range volumes {
+		if under(v) {
+			return true
+		}
 	}
 	for _, b := range hc.Binds {
 		if parts := strings.Split(b, ":"); len(parts) >= 2 && under(parts[1]) {
@@ -142,11 +163,63 @@ func beneath(hc *hostConfig, target string) bool {
 func (f *Filter) relayPinHosts(c *containerCreateBody) {
 	for _, kv := range c.Env {
 		k, v, _ := strings.Cut(kv, "=")
-		if k != "PROXY_HOSTNAME" {
+		if k != relayHostSetting {
 			continue
 		}
 		if ip, ok := f.cfg.RelayPins[v]; ok {
 			c.HostConfig.ExtraHosts = append(c.HostConfig.ExtraHosts, v+":"+ip)
 		}
 	}
+}
+
+// browserScope is which side of the browser's network a create is.
+type browserScope int
+
+const (
+	notBrowser browserScope = iota
+	// browserServer is the browser server itself.
+	browserServer
+	// browserRelay is the one relay to the browse proxy.
+	browserRelay
+)
+
+// browserScope says whether a create is the browser server or the relay to
+// the browse proxy: an L4 relay of a pinned image whose PROXY_HOSTNAME is
+// the proxy's name.
+func (f *Filter) browserScope(ctx context.Context, c *containerCreateBody, imageID string) (browserScope, error) {
+	if f.cfg.BrowserNetwork == "" {
+		return notBrowser, nil
+	}
+	if browser, err := f.isBrowser(ctx, imageID); err != nil || browser {
+		if browser {
+			return browserServer, nil
+		}
+		return notBrowser, err
+	}
+	pin, err := f.relayPin(ctx, imageID)
+	if err != nil || pin == "" {
+		return notBrowser, err
+	}
+	for _, kv := range c.Env {
+		if k, v, _ := strings.Cut(kv, "="); k == relayHostSetting && v == f.cfg.BrowseProxy {
+			return browserRelay, nil
+		}
+	}
+	return notBrowser, nil
+}
+
+// browserNetworkAllowed holds the browser's network to its two: the browser
+// server joins it alone, its relay it and the way out, and no other
+// container joins it.
+func (f *Filter) browserNetworkAllowed(scope browserScope, network string) error {
+	if f.cfg.BrowserNetwork == "" {
+		return nil
+	}
+	switch {
+	case network == f.cfg.BrowserNetwork && scope == notBrowser:
+		return deny("network %s is the browser server's and its relay's alone", network)
+	case scope == browserServer && network != f.cfg.BrowserNetwork:
+		return deny("the browser server joins its own network alone, not %s", network)
+	}
+	return nil
 }

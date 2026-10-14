@@ -1996,7 +1996,6 @@ func plainHTTPTargets(pol *policy.Policy) []string {
 	return out
 }
 
-// questionsOf are the ids of a manifest's intake questions of one type.
 // fileQuestions are the url questions whose answer is downloaded as an
 // input: every one but a browser's site, which the browser opens instead
 // (agentry-cli#915).
@@ -2008,6 +2007,7 @@ func fileQuestions(m *manifest.Manifest) []string {
 	return slices.DeleteFunc(questionsOf(m, manifest.IntakeURL), func(id string) bool { return slices.Contains(sites, id) })
 }
 
+// questionsOf are the ids of a manifest's intake questions of one type.
 func questionsOf(m *manifest.Manifest, t manifest.IntakeType) []string {
 	var out []string
 	for _, q := range m.Intake {

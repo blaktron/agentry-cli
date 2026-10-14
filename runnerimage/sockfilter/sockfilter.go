@@ -158,6 +158,17 @@ type Config struct {
 	// to options without the owner, which BrowserUser decides: its home and
 	// its /tmp, where Chromium keeps its shared memory.
 	BrowserTmpfs map[string]string
+	// BrowserNetwork is the run's network for the browser server and the one
+	// relay it reaches the browse proxy through, alone (agentry-cli#915,
+	// plan browser-testing.md invariant 2): where the gateway names
+	// BrowserNetworkFor (the run's internal relay network) for either, the
+	// filter gives it this one, so a page that took the browser over
+	// reaches no other server's relay; no other container may join it, and
+	// the browser server may join nothing after it is made. BrowseProxy is
+	// the proxy's host name, the relay's PROXY_HOSTNAME.
+	BrowserNetwork    string
+	BrowserNetworkFor string
+	BrowseProxy       string
 	// RelayPins are run-time hosts the filter writes into the /etc/hosts of
 	// a relay pointed at one, host to IPv4 address: the run's browse proxy,
 	// a container of its own whose name a relay under a sandboxed runtime,

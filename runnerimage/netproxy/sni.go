@@ -263,11 +263,11 @@ func (p *Proxy) checkClientHello(client net.Conn, r io.Reader, host, port string
 	raw, h, err := readClientHello(r)
 	_ = client.SetReadDeadline(time.Time{})
 	if err != nil {
-		p.logf("deny sni for %s:%s (%v)", host, port, err)
+		p.logf("deny sni for %s:%s (%v)%s", host, port, err, p.serviceMark(host))
 		return nil, false
 	}
 	if why := judgeHello(h, host); why != "" {
-		p.logf("deny sni %q for %s:%s (%s)", h.serverName, host, port, why)
+		p.logf("deny sni %q for %s:%s (%s)%s", h.serverName, host, port, why, p.serviceMark(host))
 		return nil, false
 	}
 	return raw, true

@@ -70,11 +70,19 @@ func TestABrowserRunStartsTheBrowseProxyWithItsScope(t *testing.T) {
 		// The browser saves a screenshot, and a link that would lead out.
 		out := filepath.Join(runDir, "cfg", spec.BrowserOutDir)
 		_ = os.WriteFile(filepath.Join(out, "home-phone.png"), []byte("PNG"), 0o600)
+		// A snapshot the server saved with the value in it, as if its own
+		// exact-match masking had missed it, and one too large to keep.
+		_ = os.WriteFile(filepath.Join(out, "page-1.yml"), []byte("- paragraph: Your password is "+plantedSitePassword+"\n"), 0o600)
 		_ = os.Symlink("/etc/passwd", filepath.Join(out, "leak"))
 	}
+	// The page echoes the value into a tool result the agent reads.
+	f.Foreground["-agent"].Stdout = `{"type":"tool_call_response","tool":"browser_snapshot","response":"Your password is ` + plantedSitePassword + `"}` + "\n" + f.Foreground["-agent"].Stdout
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(p.OutDir, spec.BrowserReports, "page-1.yml")); err != nil || strings.Contains(string(b), plantedSitePassword) || !strings.Contains(string(b), "Your password is") {
+		t.Errorf("reports/browser/page-1.yml: %q %v", b, err)
 	}
 	if during.secrets != "SITE_PASSWORD='"+plantedSitePassword+"'\n" || during.mode != 0o600 || !during.mountDir {
 		t.Fatalf("during the run: secrets %q (%v), reports/browser made %v", during.secrets, during.mode, during.mountDir)

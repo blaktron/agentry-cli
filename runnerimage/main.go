@@ -362,8 +362,12 @@ func runProxy(args []string) error {
 		}()
 	}
 	if scope := (netproxy.Scope{Sites: splitList(*sites), Hosts: splitList(*browseHosts), Public: *browsePublic, Private: splitList(*browsePrivate)}); len(scope.Sites)+len(scope.Hosts) > 0 || scope.Public {
-		if *allow != "" || *plain != "" || *publicOnly || len(scope.Private) > 0 && len(scope.Sites) == 0 {
-			fmt.Fprintln(os.Stderr, "agentry-runner proxy: a browse proxy takes no --allow, --plain-http or --public-only, and --browse-private names sites")
+		if *allow != "" || *plain != "" || *publicOnly {
+			fmt.Fprintln(os.Stderr, "agentry-runner proxy: a browse proxy takes no --allow, --plain-http or --public-only")
+			os.Exit(2)
+		}
+		if len(scope.Private) > 0 && len(scope.Sites) == 0 {
+			fmt.Fprintln(os.Stderr, "agentry-runner proxy: --browse-private names sites, so it needs --browse-sites")
 			os.Exit(2)
 		}
 		p := &netproxy.Proxy{Scope: &scope, Logw: os.Stderr}
