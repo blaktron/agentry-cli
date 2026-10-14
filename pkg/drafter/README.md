@@ -144,6 +144,22 @@ a line that points to a target host. A release that declares a target host
 needs CLI v0.6.105 or later to run, v0.6.106 for the shell and v0.6.109 for a
 host on port 22; it does not run In Agentry.
 
+Since 1.15.0 the Drafter knows the browser (plan browser-testing.md, M8;
+agentry-cli#916). For a task that tests a website the person names as a
+person sees it (pages, forms, links, a phone's width) it asks for the site
+with an intake question of type `url` and lists its id in
+`capabilities.browser.sites`, adds `hosts` only for what the site's pages
+load, keeps the site scope, and declares a key the browser types into a
+sign-in form in `capabilities.secrets` and `capabilities.browser.secrets`,
+never with `scope: public`. It writes the instructions for the browser
+tools, with screenshots saved by bare file names into `reports/browser/`,
+and brings no browser of its own: the checks after a draft send an `exec`
+that names a browser or a driver (Chromium, Chrome, Firefox, Playwright,
+Puppeteer, Selenium, a WebDriver), or an MCP server that is one, to the
+repair turn with a line that points to the browser line. A release that
+declares a browser needs CLI v0.6.117 or later, or Agentry Desktop 0.6.111;
+In Agentry it runs since CLI v0.6.118 and opens public sites only.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

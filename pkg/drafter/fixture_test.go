@@ -58,6 +58,14 @@ type Expect struct {
 	// at least once: `repository` for a codebase, `url` for a file at an
 	// address (input sources M8, agentry-cli#835). Not checked when empty.
 	IntakeTypes []string `json:"intakeTypes,omitempty"`
+	// Browser wants a browser line (browser testing M8, agentry-cli#916):
+	// at least one site, each a url question, and the site scope.
+	// BrowserKeys is the fewest keys the line may type, each also in
+	// capabilities.secrets; a draft with fewer typed keys than that, or a
+	// line with keys where BrowserKeys is 0 and the description signs in to
+	// nothing, is off its shape. Neither is checked when Browser is false.
+	Browser     bool `json:"browser,omitempty"`
+	BrowserKeys int  `json:"browserKeys,omitempty"`
 	// InputKinds are kinds the draft's inputs block must declare, so the
 	// block is required; InputViews are the views a declared block may
 	// choose, checked only when there is one (agentry-cli#634). Neither is
@@ -218,6 +226,21 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	}
 	if e.Intake && len(m.Intake) == 0 {
 		out = append(out, "no intake question")
+	}
+	if e.Browser {
+		b := c.Browser
+		switch {
+		case b == nil:
+			out = append(out, "no browser line")
+		case len(b.Sites) == 0:
+			out = append(out, "a browser line with no site")
+		case b.Scope == manifest.BrowserScopePublic:
+			out = append(out, "a browser with the public scope, want the site scope")
+		case len(b.Secrets) < e.BrowserKeys:
+			out = append(out, fmt.Sprintf("a browser that types %d keys, want at least %d", len(b.Secrets), e.BrowserKeys))
+		case e.BrowserKeys == 0 && len(b.Secrets) > 0:
+			out = append(out, fmt.Sprintf("a browser that types %v, for a test that signs in to nothing", b.Secrets))
+		}
 	}
 	for _, want := range e.IntakeTypes {
 		if !slices.ContainsFunc(m.Intake, func(q manifest.IntakeQuestion) bool { return string(q.Type) == want }) {

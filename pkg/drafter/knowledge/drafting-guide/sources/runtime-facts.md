@@ -34,6 +34,13 @@ Generated from the Agentry CLI's code by its tests; do not edit by hand. These a
 - `host_put` and `host_get` copy files through `/scratch/hosts`, in the scratch folder.
 - At most 4 shell sessions are open on a host at once, and a session no call has used for 30 minutes is closed. `host_shell_send`'s key `sudo-password` types the person's sudo password.
 
+## A browser
+
+- A QuickAgent's `capabilities.browser` names at most 4 sites, each a `url` intake question, and at most 32 hosts.
+- The browser tools: `browser_click`, `browser_close`, `browser_console_messages`, `browser_drag`, `browser_drop`, `browser_emulate_media`, `browser_evaluate`, `browser_fill_form`, `browser_find`, `browser_generate_locator`, `browser_handle_dialog`, `browser_hover`, `browser_navigate`, `browser_navigate_back`, `browser_network_request`, `browser_network_requests`, `browser_pdf_save`, `browser_press_key`, `browser_resize`, `browser_select_option`, `browser_snapshot`, `browser_tabs`, `browser_take_screenshot`, `browser_type`, `browser_verify_element_visible`, `browser_verify_list_visible`, `browser_verify_text_visible`, `browser_verify_value`, `browser_wait_for`. A QuickAgent whose browser types keys has every one but `browser_evaluate`.
+- The browser reaches only the sites and hosts its line allows, through the run's proxy, on ports 80 and 443; a site on the person's own network, and a site's own port, only in a run on their computer.
+- It saves screenshots and PDFs in `reports/browser/`, and a file name the run gives is resolved inside that folder.
+
 ## Reports, PDFs and the scratch folder
 
 - `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.

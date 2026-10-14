@@ -1,0 +1,18 @@
+{
+  "id": "site-signup-test",
+  "description": "Test my website's sign-up page: try signing up the way a new customer would, check what happens when fields are missing or wrong, and look at it on a phone. Tell me what is broken.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "intakeTypes": [
+      "url"
+    ],
+    "browser": true
+  }
+}

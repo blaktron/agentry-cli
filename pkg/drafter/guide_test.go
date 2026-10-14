@@ -21,6 +21,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
+	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -79,6 +80,11 @@ func runtimeFacts() []byte {
 	fmt.Fprintf(&b, "- `%s` ends a command after %d seconds, or after its `timeout`, at most %d.\n", hostlink.ToolRun, hostlink.DefaultRunTimeout, hostlink.MaxRunTimeout)
 	fmt.Fprintf(&b, "- `%s` and `%s` copy files through `%s`, in the scratch folder.\n", hostlink.ToolPut, hostlink.ToolGet, hostlink.FilesPath)
 	fmt.Fprintf(&b, "- At most %d shell sessions are open on a host at once, and a session no call has used for %d minutes is closed. `%s`'s key `%s` types the person's sudo password.\n\n", hostlink.MaxShellsPerHost, int(hostlink.DefaultShellIdle.Minutes()), hostlink.ToolShellSend, hostlink.KeySudoPassword)
+	b.WriteString("## A browser\n\n")
+	fmt.Fprintf(&b, "- A QuickAgent's `capabilities.browser` names at most %d sites, each a `url` intake question, and at most %d hosts.\n", manifest.MaxBrowserSites, manifest.MaxBrowserHosts)
+	fmt.Fprintf(&b, "- The browser tools: %s. A QuickAgent whose browser types keys has every one but `%s`.\n", strings.Join(codeSpans(browser.Tools(false)), ", "), browser.ToolEvaluate)
+	b.WriteString("- The browser reaches only the sites and hosts its line allows, through the run's proxy, on ports 80 and 443; a site on the person's own network, and a site's own port, only in a run on their computer.\n")
+	fmt.Fprintf(&b, "- It saves screenshots and PDFs in `%s/`, and a file name the run gives is resolved inside that folder.\n\n", spec.BrowserReports)
 	b.WriteString("## Reports, PDFs and the scratch folder\n\n")
 	b.WriteString("- `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.\n")
 	fmt.Fprintf(&b, "- `export_pdf` turns a Markdown file from `reports/` or the scratch folder, of at most %d KiB, into a PDF in `reports/`, rendered by Typst %s within %d seconds, at most %d MiB. It draws at most %d local PNG or JPEG images of up to %d MiB each; any other image is drawn as its alt text. The PDF's look is the person's report theme, which the run cannot choose.\n",
