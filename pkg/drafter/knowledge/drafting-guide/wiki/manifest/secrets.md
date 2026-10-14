@@ -15,6 +15,7 @@ updated: 2026-10-09
 - One key per service at most, and only a key the task uses. Prefer a service or a server that needs none.
 - Each declared key gets its help in `guide.connect`: where to create it and the least permission the task needs (see [The intake and the guide](intake-and-guide.md)). For an optional key, the help also says what the key adds.
 - Never put a key, a token or a password in `env`, in the instructions or in an example. The registry scans every file for them [src: web:https://docs.secureagentry.net/quickagents/].
+- A key a browser types into a site's sign-in form is declared here **and** in `capabilities.browser.secrets`; the browser types it where the agent passes its name, and the agent never reads it ([A browser](browser.md)).
 
 ## Optional or required
 

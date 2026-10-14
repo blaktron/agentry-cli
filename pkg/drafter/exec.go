@@ -22,7 +22,9 @@ var archiveReaders = []string{"tar", "unzip", "gunzip", "bunzip2", "unxz", "zcat
 // which a run would refuse at plan time; an SSH client (ssh, scp, sftp,
 // rsync, as manifest.RemoteShellCommands names them), which reaches no
 // machine from a run, where a declared target host has the runner make the
-// session (plan runtime-hosts.md M8, agentry-cli#864); and an archive
+// session (plan runtime-hosts.md M8, agentry-cli#864); a browser of its own
+// (drivesABrowser), where a declared browser has the runner give one (plan
+// browser-testing.md M8, agentry-cli#916); and an archive
 // reader, which only reads what the runner already unpacked. Nil when the
 // draft declares no commands, or its manifest does not parse (validate
 // says so).
@@ -41,10 +43,12 @@ func execProblems(raw json.RawMessage) []string {
 	}
 	base := policy.BaseExecCommands()
 	remote := manifest.RemoteShellCommands(manifest.Capabilities{Exec: manifest.ExecCapability{Commands: exec.Commands}})
-	var foreign, archives []string
+	var foreign, archives, browsers []string
 	for _, c := range exec.Commands {
 		switch {
 		case slices.Contains(remote, c): // its own line, below
+		case drivesABrowser(c):
+			browsers = append(browsers, c)
 		case !slices.Contains(base, c):
 			foreign = append(foreign, c)
 		case slices.Contains(archiveReaders, c):
@@ -55,6 +59,10 @@ func execProblems(raw json.RawMessage) []string {
 	if len(remote) > 0 {
 		out = append(out, fmt.Sprintf("capabilities.exec: %s: makes its own SSH session, which reaches no machine from a run; for a machine the person names, ask for it with an intake question of type host, list its id in capabilities.targetHosts, and work it with the host tools; leave it out",
 			strings.Join(remote, ", ")))
+	}
+	if len(browsers) > 0 {
+		out = append(out, fmt.Sprintf("capabilities.exec: %s: drives a browser of its own, which no run provides; for a site the person names, ask for it with an intake question of type url, list its id in capabilities.browser.sites, and work it with the browser tools; leave it out",
+			strings.Join(browsers, ", ")))
 	}
 	if len(foreign) > 0 {
 		out = append(out, fmt.Sprintf("capabilities.exec: %s: not a command every machine provides, so a run would be refused before it starts; declare only %s, or exec none",

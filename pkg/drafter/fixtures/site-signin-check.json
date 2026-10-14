@@ -1,0 +1,20 @@
+{
+  "id": "site-signin-check",
+  "description": "Every morning, sign in to my web app with the test account I give you and check that the dashboard and the billing page load without errors. Send me a screenshot of anything that looks broken.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "maxSecrets": 2,
+    "minSecrets": 1,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "intakeTypes": [
+      "url"
+    ],
+    "browser": true,
+    "browserKeys": 1
+  }
+}

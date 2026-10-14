@@ -103,9 +103,16 @@ What the guide states is also checked after you answer, whatever you read.
    host**: a `host` intake question listed in `capabilities.targetHosts`.
    The runner makes the SSH session, so **never `ssh`, `scp`, `sftp` or
    `rsync` in `exec`**, and no egress and no key for the machine. It runs
-   only on the person's computer, which the notes say. Pages:
-   `manifest/egress-and-fetch.md`, `servers/mcp-servers.md`,
-   `manifest/inputs.md`, `manifest/target-hosts.md`.
+   only on the person's computer, which the notes say. A website the person
+   names, to test as a person sees it (pages, forms, links, a phone's
+   width), takes a **browser**: a `url` intake question listed in
+   `capabilities.browser.sites`, with `hosts` only for the other hosts its
+   pages need. The runner gives the browser, so **no egress for the site,
+   never a browser, Playwright or `curl` in `exec`, and no MCP server for
+   one**. A test that signs in declares its keys in `capabilities.secrets`
+   and in `capabilities.browser.secrets`, and then never `scope: public`.
+   Pages: `manifest/egress-and-fetch.md`, `servers/mcp-servers.md`,
+   `manifest/inputs.md`, `manifest/target-hosts.md`, `manifest/browser.md`.
 4. **Write the instructions in your own words.** Draw on what you read, but
    never copy a page's text. Use the six headings `## Role`, `## Inputs`,
    `## Steps`, `## Output`, `## Background` and `## Checks`, in that order,
@@ -122,9 +129,13 @@ What the guide states is also checked after you answer, whatever you read.
    `scratch_search`. A QuickAgent with a target host works it through the
    host tools by name (`host_run`, the shell only for a program that asks
    as it runs), looks before it changes anything, never locks the person
-   out, and lists what it changed. Pages: `draft/instructions.md`,
-   `draft/examples.md`, `runtime/how-a-run-works.md` for the tools every
-   run has, and `manifest/target-hosts.md`.
+   out, and lists what it changed. A QuickAgent with a browser works it
+   through the browser tools by name, saves each screenshot by a **bare
+   file name** (`home.png`; it lands in `reports/browser/`), types a key by
+   passing its name, and changes nothing real on the site. Pages:
+   `draft/instructions.md`, `draft/examples.md`,
+   `runtime/how-a-run-works.md` for the tools every run has,
+   `manifest/target-hosts.md` and `manifest/browser.md`.
 5. **Declare the least contract that does the task.** Only what the
    instructions use; commands only from the base commands, and never to
    read the inputs. A QuickAgent that takes files declares `inputs`: what
@@ -137,8 +148,9 @@ What the guide states is also checked after you answer, whatever you read.
 6. **Write the intake and the guide.** A `choice` question carries its
    `choices`, and a field with nothing to say is left out. A codebase is
    asked for by a `repository` question, **never as a `.zip`** or its
-   files, a file at a web address by a `url` question, and a server by a
-   `host` question, whose sign-in the run setup asks for. Pages:
+   files, a file at a web address by a `url` question, a site to test by
+   a `url` question its browser names, and a server by a `host` question,
+   whose sign-in the run setup asks for. Pages:
    `manifest/intake-and-guide.md`, `manifest/run-modes.md`,
    `manifest/inputs.md`.
 7. **Check it against the bounds, then return the draft**: two reports,

@@ -16,6 +16,7 @@ A run has no network unless `network.egress` names hosts, and no web search ever
 - **Never `"*"`.** It sends a release to review, and a run refuses it unless the operator's policy allows it [src: web:https://docs.secureagentry.net/quickagents/].
 - A host an MCP server reaches goes in that server's `egress`, not here. A server with no `egress` has no network.
 - Every host is reached on TCP port 443 only, so over `https://`. A plain `http://` address, a database port or any other port fails [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/runner/].
+- **A website to test in a browser is not egress.** Its address is a `url` question the browser line names, and the browser reaches it through a proxy of its own ([A browser](browser.md)): the site never goes in `egress`.
 
 ## What fetch does
 
