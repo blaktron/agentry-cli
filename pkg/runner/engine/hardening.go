@@ -273,6 +273,11 @@ func runtimeLine(p Params) string {
 	default:
 		gaps = append(gaps, "the gateway (it reaches the daemon through a host Unix socket, which "+rt+" does not open; docker.gatewayRuntime names no registration with --host-uds=open)")
 	}
+	if p.Plan.Browser != nil {
+		// Started by the engine, not the gateway, for every browser run
+		// (DR-96): it resolves the browser's names itself.
+		gaps = append(gaps, "the browse proxy (it resolves every name the browser asks for through docker's embedded DNS, which "+rt+" does not reach; it holds no secret and runs none of the run's code)")
+	}
 	if len(gaps) == 0 {
 		return line + "; no container class of the run is on the daemon's default runtime"
 	}

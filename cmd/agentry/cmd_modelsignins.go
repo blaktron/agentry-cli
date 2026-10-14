@@ -35,6 +35,14 @@ func hostedProcess() bool {
 	return os.Getenv(envRunGrant) != "" || os.Getenv(envJobToken) != "" || os.Getenv(envHosted) != ""
 }
 
+// hostedFor says a run is a sandbox host's by any of its signs: a hosted
+// driver's (hostedRun), the process's (hostedProcess), or input review
+// through the registry, which only a host asks for. A target host is
+// refused and a browser held to public sites by it (agentry-cli#941).
+func hostedFor(opts runOpts) bool {
+	return hostedRun(opts) || hostedProcess() || opts.reviewInputs != ""
+}
+
 // envHosted marks a hosted run's CLI whatever else it was given: a public
 // release's run with no inputs carries neither a grant nor a job token
 // (agentry-enterprise#534), so its host says so outright.

@@ -6,16 +6,20 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/netaddr"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 )
 
@@ -37,8 +41,10 @@ type browserRun struct {
 	proxy, proxyIP string
 	// sites are the run's sites as the proxy takes them, and private the
 	// ones the person typed whose address may be a LAN's (D2): every site
-	// of a local run.
+	// of a local run, and none of a hosted run's.
 	sites, private []string
+	// hosted is a hosted run's browser, whose sites are public only.
+	hosted bool
 	// copied is set once the output folder reached reports/browser/.
 	copied bool
 }
@@ -57,24 +63,14 @@ func browserTmpfs() map[string]string {
 	return map[string]string{browser.Home: browserHomeTmpfs, "/tmp": browserTmpTmpfs}
 }
 
-// HostedBrowserRefusal is a hosted run's refusal of a release that
-// declares a browser, until hosted runs carry one (plan M7,
-// agentry-enterprise#565): exit 11.
-func HostedBrowserRefusal() error {
-	return Classify(ExitPolicy, errors.New("a hosted run has no browser yet: run this QuickAgent on your own computer"))
-}
-
 // checkBrowser refuses, before anything is made, a run whose plan declares
-// a browser the run cannot give as declared: a hosted run, a plan without
-// the browser server, a site answer that is not one, and a browser with
-// nowhere to go.
-func checkBrowser(p Params) error {
+// a browser the run cannot give as declared: a plan without the browser
+// server, a site answer that is not one, a hosted run's site that is not
+// public (checkHostedSites), and a browser with nowhere to go.
+func checkBrowser(ctx context.Context, p Params) error {
 	c := p.Plan.Capabilities.Browser
 	if c == nil {
 		return nil
-	}
-	if p.InputReview != nil {
-		return HostedBrowserRefusal()
 	}
 	if p.Plan.Browser == nil {
 		return Classify(ExitCompile, errors.New("the plan declares a browser but no browser server; recompile it"))
@@ -83,10 +79,78 @@ func checkBrowser(p Params) error {
 	if err != nil {
 		return err
 	}
+	if p.hosted() {
+		if err := checkHostedSites(ctx, p); err != nil {
+			return err
+		}
+	}
 	if len(sites) == 0 && len(c.Hosts) == 0 && !c.Public {
 		return Classify(ExitCLI, fmt.Errorf("the browser has nowhere to go: answer its site question (--intake %s=https://…)", strings.Join(c.Sites, "=…, --intake ")))
 	}
 	return nil
+}
+
+// hosted says the run is a hosted run's: its driver said so, or it reviews
+// its inputs through the registry, which only a sandbox host does.
+func (p Params) hosted() bool { return p.Hosted || p.InputReview != nil }
+
+// lookupSiteHost resolves a hosted run's site; a variable so a test can
+// stand in for DNS.
+var lookupSiteHost = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(ctx, host)
+}
+
+// siteLookupTimeout bounds a hosted run's lookup of one site.
+const siteLookupTimeout = 15 * time.Second
+
+// checkHostedSites refuses, before anything starts, a hosted run's site
+// that the run could never open (plan browser-testing.md D2: a private
+// address is a local run's alone; agentry-cli#941): one on a port other
+// than 80 and 443, which is all a sandbox host lets out; an address that
+// is not public; and a name that does not resolve, or resolves to any
+// address that is not public, as the browse proxy reads it. The proxy
+// still checks each connection, so a name that changes its answer later
+// is refused there.
+func checkHostedSites(ctx context.Context, p Params) error {
+	for _, id := range p.Plan.Capabilities.Browser.Sites {
+		if p.Intake == nil || p.Intake.Values[id] == "" {
+			continue
+		}
+		// browserSites has parsed every answer already.
+		s, err := browser.ParseSite(p.Intake.Values[id])
+		if err != nil {
+			return Classify(ExitCLI, fmt.Errorf("intake %s: %w", id, err))
+		}
+		if why := hostedSiteProblem(ctx, s); why != "" {
+			return Classify(ExitPolicy, fmt.Errorf("intake %s: %s, and a run in Agentry opens public sites on ports 80 and 443 only: check the address, or run this QuickAgent on your own computer to test a site on your own network", id, why))
+		}
+	}
+	return nil
+}
+
+// hostedSiteProblem says why a hosted run could not open a site, or "".
+func hostedSiteProblem(ctx context.Context, s browser.Site) string {
+	if s.Port != "" && s.Port != "80" && s.Port != "443" {
+		return fmt.Sprintf("%s names port %s", s.URL, s.Port)
+	}
+	if ip, err := netip.ParseAddr(s.Host); err == nil {
+		if !netaddr.Public(ip.Unmap()) {
+			return s.Host + " is not a public address"
+		}
+		return ""
+	}
+	rc, cancel := context.WithTimeout(ctx, siteLookupTimeout)
+	defer cancel()
+	addrs, err := lookupSiteHost(rc, s.Host)
+	if err != nil || len(addrs) == 0 {
+		return s.Host + " could not be found on the public internet"
+	}
+	for _, a := range addrs {
+		if ip, ok := netip.AddrFromSlice(a.IP); !ok || !netaddr.Public(ip.Unmap()) {
+			return fmt.Sprintf("%s resolves to %s, which is not a public address", s.Host, a.IP)
+		}
+	}
+	return ""
 }
 
 // browserSites are the run's sites, from the answers to the site
@@ -142,12 +206,13 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 	if err != nil {
 		return err
 	}
-	b := &browserRun{proxy: rd.browseProxyName()}
+	b := &browserRun{proxy: rd.browseProxyName(), hosted: p.hosted()}
 	for _, s := range sites {
 		b.sites = append(b.sites, s.ProxyEntry())
 		// Every site of a local run is one the person typed (D2); the
-		// proxy still dials a public or LAN address only.
-		if !slices.Contains(b.private, s.Host) {
+		// proxy still dials a public or LAN address only. A hosted run's
+		// sites are public only, whatever they resolve to later.
+		if !b.hosted && !slices.Contains(b.private, s.Host) {
 			b.private = append(b.private, s.Host)
 		}
 	}
@@ -162,8 +227,15 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 	if err := os.MkdirAll(filepath.Join(rd.outDir, spec.BrowserReports), 0o755); err != nil { //nolint:gosec // the person's own output folder
 		return Classify(ExitCLI, fmt.Errorf("reports/browser: %w", err))
 	}
+	var given []string
 	if len(c.Secrets) > 0 {
-		f, err := browserSecretsFile(c.Secrets, browserSecretValues(p.Plan, c.Secrets, secrets))
+		values := browserSecretValues(p.Plan, c.Secrets, secrets)
+		for _, n := range c.Secrets {
+			if values[n] != "" {
+				given = append(given, n)
+			}
+		}
+		f, err := browserSecretsFile(c.Secrets, values)
 		if err != nil {
 			return Classify(ExitPolicy, err)
 		}
@@ -183,8 +255,7 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 	env.CapabilitiesEnforced["browser.image"] = p.Plan.Browser.Image + ", pulled by digest"
 	env.CapabilitiesEnforced["browser.scope"] = browserScopeLine(c, b)
 	if len(c.Secrets) > 0 {
-		env.CapabilitiesEnforced["browser.secrets"] = fmt.Sprintf("%s, in a file bound read-only into the browser server alone and removed with the run; the server types a value where the agent passes its name, and replaces the exact value with the name in what it returns (its own masking, which a transformed value would pass, so %s is not granted); the runner masks the values again in the transcript, the receipts and the browser's text files",
-			strings.Join(c.Secrets, ", "), browser.ToolEvaluate)
+		env.CapabilitiesEnforced["browser.secrets"] = browserSecretsLine(c.Secrets, given)
 	}
 	return nil
 }
@@ -193,7 +264,11 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 func browserScopeLine(c *spec.BrowserCap, b *browserRun) string {
 	var parts []string
 	if len(b.sites) > 0 {
-		parts = append(parts, "the sites "+strings.Join(b.sites, ", ")+" and their subdomains, as the person named them (each may be a LAN's or a tailnet's address in this local run)")
+		where := " (each may be a LAN's or a tailnet's address in this local run)"
+		if b.hosted {
+			where = " (each a public address, on ports 80 and 443, in this hosted run)"
+		}
+		parts = append(parts, "the sites "+strings.Join(b.sites, ", ")+" and their subdomains, as the person named them"+where)
 	}
 	if len(c.Hosts) > 0 {
 		parts = append(parts, "the hosts "+strings.Join(c.Hosts, ", "))
@@ -202,6 +277,27 @@ func browserScopeLine(c *spec.BrowserCap, b *browserRun) string {
 		parts = append(parts, "any public site on ports 80 and 443 (the policy's browser.allowPublicWeb)")
 	}
 	return "the browse proxy " + b.proxy + " admits " + strings.Join(parts, "; ") + ", resolving every name itself; nothing else, and no loopback, link-local or metadata address"
+}
+
+// browserSecretsLine says which declared browser secrets this run's file
+// carries, and which it was not given (an optional one the person never
+// set), so the receipt names no secret the browser could not type.
+func browserSecretsLine(declared, given []string) string {
+	var missing []string
+	for _, n := range declared {
+		if !slices.Contains(given, n) {
+			missing = append(missing, n)
+		}
+	}
+	if len(given) == 0 {
+		return "none of " + strings.Join(declared, ", ") + " was given to this run, so the browser has no secret to type (its secrets file is empty)"
+	}
+	line := fmt.Sprintf("%s, in a file bound read-only into the browser server alone and removed with the run; the server types a value where the agent passes its name, and replaces the exact value with the name in what it returns (its own masking, which a transformed value would pass, so %s is not granted); the runner masks the values again in the transcript, the receipts and the browser's text files",
+		strings.Join(given, ", "), browser.ToolEvaluate)
+	if len(missing) > 0 {
+		line += "; not given to this run: " + strings.Join(missing, ", ")
+	}
+	return line
 }
 
 // browserSecretValues are the browser secrets' values by name, from the
@@ -256,7 +352,11 @@ func browserSecretsFile(names []string, values map[string]string) ([]byte, error
 func browseProxyArgs(c *spec.BrowserCap, b *browserRun) []string {
 	a := []string{"proxy", "--addr", fmt.Sprintf(":%d", browser.ProxyPort)}
 	if len(b.sites) > 0 {
-		a = append(a, "--browse-sites", strings.Join(b.sites, ","), "--browse-private", strings.Join(b.private, ","))
+		a = append(a, "--browse-sites", strings.Join(b.sites, ","))
+	}
+	// A hosted run has no private site (D2), so its proxy is given none.
+	if len(b.private) > 0 {
+		a = append(a, "--browse-private", strings.Join(b.private, ","))
 	}
 	if len(c.Hosts) > 0 {
 		a = append(a, "--browse-hosts", strings.Join(c.Hosts, ","))

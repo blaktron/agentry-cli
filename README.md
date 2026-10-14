@@ -201,7 +201,9 @@ first. `files ensure` pulls the files image the runner policy names (the one
 the decode step turns a run's documents into text in), by digest, and prints
 its reference, then refreshes the ClamAV signatures every input is checked
 against, so no run has to download either; a sandbox host runs it at each
-update. Server-side end-to-end coverage
+update. `browser ensure` does the same for the browser image a QuickAgent
+that declares `capabilities.browser` runs (`images.browser`, else this CLI's
+pin), so a sandbox host holds it before a hosted run needs it. Server-side end-to-end coverage
 lives in the main repo's `scripts/acceptance/m3-cli.sh`, which builds this
 CLI against a live registry.
 
