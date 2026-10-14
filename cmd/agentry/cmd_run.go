@@ -676,7 +676,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	params := engine.Params{
 		InputReview:      review,
-		Hosted:           hostedRun(opts) || hostedProcess() || opts.reviewInputs != "",
+		Hosted:           hostedFor(opts),
 		Plan:             plan,
 		ExecPackages:     execPackages,
 		PlanDir:          planDir,

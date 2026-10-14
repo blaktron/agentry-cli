@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,8 +20,12 @@ import (
 // replace it).
 var browserDocker = func() dockerx.Client { return dockerx.New() }
 
-// browserPullAttempts is how often ensure tries a pull before it gives up.
-const browserPullAttempts = 3
+// browserPullAttempts is how often ensure tries a pull before it gives
+// up, waiting browserPullBackoff times the attempt between tries.
+const (
+	browserPullAttempts = 3
+	browserPullBackoff  = 5 * time.Second
+)
 
 func newBrowserCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -65,9 +70,14 @@ func newBrowserEnsureCmd() *cobra.Command {
 						break
 					}
 					if i == browserPullAttempts {
-						return engine.Classify(engine.ExitGateway, fmt.Errorf("could not pull the browser image %s after %d attempts: %w", ref, browserPullAttempts, err))
+						return engine.Classify(engine.ExitGateway, fmt.Errorf("could not pull the browser image %s, in which a QuickAgent that tests websites runs its browser, after %d attempts: %w", ref, browserPullAttempts, err))
 					}
 					_, _ = fmt.Fprintf(stderr, "pull failed (%v); trying again\n", err)
+					select {
+					case <-cmd.Context().Done():
+						return cmd.Context().Err()
+					case <-time.After(browserPullBackoff * time.Duration(i)):
+					}
 				}
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), ref)

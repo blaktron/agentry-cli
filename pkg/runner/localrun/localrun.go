@@ -656,6 +656,6 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
 		RunID:          r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
-		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
+		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Hosted: r.Hosted,
 	})
 }

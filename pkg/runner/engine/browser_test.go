@@ -232,7 +232,7 @@ func TestAHostedRunRefusesASiteItCouldNotOpen(t *testing.T) {
 		{"name to a LAN", "https://intranet.corp.example/", "resolves to 192.168.1.4, which is not a public address"},
 		{"one address of two private", "https://split.example/", "resolves to 127.0.0.1"},
 		{"unresolvable", "https://nowhere.invalid/", "could not be found on the public internet"},
-		{"own port", "https://shop.example:8443/", "ports 80 and 443 only"},
+		{"own port", "https://shop.example:8443/", "names port 8443"},
 	} {
 		for _, review := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s review=%v", tc.name, review), func(t *testing.T) {
@@ -259,6 +259,21 @@ func TestAHostedRunRefusesASiteItCouldNotOpen(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// TestAHostedRunTakesEitherWebPortWhateverTheScheme: a sandbox host lets
+// 80 and 443 out, so http on 443 and https on 80 are not refused.
+func TestAHostedRunTakesEitherWebPortWhateverTheScheme(t *testing.T) {
+	stubSiteDNS(t, map[string][]string{"shop.example": {"93.184.215.14"}})
+	for _, site := range []string{"http://shop.example:443/", "https://shop.example:80/"} {
+		p, f := browserFixture(t)
+		happyFake(f)
+		p.Hosted = true
+		p.Intake.Values["site"] = site
+		if _, err := Run(context.Background(), f, p); err != nil {
+			t.Errorf("hosted run of %s: %v", site, err)
 		}
 	}
 }

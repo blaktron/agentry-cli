@@ -17,7 +17,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
-	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/netaddr"
@@ -81,7 +80,7 @@ func checkBrowser(ctx context.Context, p Params) error {
 		return err
 	}
 	if p.hosted() {
-		if err := checkHostedSites(ctx, p.Plan.Capabilities.Browser.Sites, p.Intake, sites); err != nil {
+		if err := checkHostedSites(ctx, p); err != nil {
 			return err
 		}
 	}
@@ -101,6 +100,9 @@ var lookupSiteHost = func(ctx context.Context, host string) ([]net.IPAddr, error
 	return net.DefaultResolver.LookupIPAddr(ctx, host)
 }
 
+// siteLookupTimeout bounds a hosted run's lookup of one site.
+const siteLookupTimeout = 15 * time.Second
+
 // checkHostedSites refuses, before anything starts, a hosted run's site
 // that the run could never open (plan browser-testing.md D2: a private
 // address is a local run's alone; agentry-cli#941): one on a port other
@@ -109,40 +111,46 @@ var lookupSiteHost = func(ctx context.Context, host string) ([]net.IPAddr, error
 // address that is not public, as the browse proxy reads it. The proxy
 // still checks each connection, so a name that changes its answer later
 // is refused there.
-func checkHostedSites(ctx context.Context, ids []string, answers *intake.Answers, sites []browser.Site) error {
-	// sites holds the answered ones, in ids' order: pair each with its
-	// question again for the refusal.
-	var answered []string
-	for _, id := range ids {
-		if answers != nil && answers.Values[id] != "" {
-			answered = append(answered, id)
-		}
-	}
-	for i, s := range sites {
-		id := answered[i]
-		if s.Port != "" {
-			return Classify(ExitPolicy, fmt.Errorf("intake %s: a run in Agentry reaches a site on ports 80 and 443 only, and %s names port %s: run this QuickAgent on your own computer to test it", id, s.URL, s.Port))
-		}
-		if ip, err := netip.ParseAddr(s.Host); err == nil {
-			if !netaddr.Public(ip.Unmap()) {
-				return Classify(ExitPolicy, fmt.Errorf("intake %s: %s is not a public address, and a run in Agentry opens public sites only: run this QuickAgent on your own computer to test a site on your own network", id, s.Host))
-			}
+func checkHostedSites(ctx context.Context, p Params) error {
+	for _, id := range p.Plan.Capabilities.Browser.Sites {
+		if p.Intake == nil || p.Intake.Values[id] == "" {
 			continue
 		}
-		rc, cancel := context.WithTimeout(ctx, 15*time.Second)
-		addrs, err := lookupSiteHost(rc, s.Host)
-		cancel()
-		if err != nil || len(addrs) == 0 {
-			return Classify(ExitPolicy, fmt.Errorf("intake %s: %s could not be found on the public internet, so a run in Agentry cannot open it: check the address, or run this QuickAgent on your own computer to test a site on your own network", id, s.Host))
+		// browserSites has parsed every answer already.
+		s, err := browser.ParseSite(p.Intake.Values[id])
+		if err != nil {
+			return Classify(ExitCLI, fmt.Errorf("intake %s: %w", id, err))
 		}
-		for _, a := range addrs {
-			ip, ok := netip.AddrFromSlice(a.IP)
-			if !ok || !netaddr.Public(ip.Unmap()) {
-				return Classify(ExitPolicy, fmt.Errorf("intake %s: %s resolves to %s, which is not a public address, and a run in Agentry opens public sites only: run this QuickAgent on your own computer to test a site on your own network", id, s.Host, a.IP))
-			}
+		if why := hostedSiteProblem(ctx, s); why != "" {
+			return Classify(ExitPolicy, fmt.Errorf("intake %s: %s, and a run in Agentry opens public sites on ports 80 and 443 only: check the address, or run this QuickAgent on your own computer to test a site on your own network", id, why))
 		}
 	}
 	return nil
+}
+
+// hostedSiteProblem says why a hosted run could not open a site, or "".
+func hostedSiteProblem(ctx context.Context, s browser.Site) string {
+	if s.Port != "" && s.Port != "80" && s.Port != "443" {
+		return fmt.Sprintf("%s names port %s", s.URL, s.Port)
+	}
+	if ip, err := netip.ParseAddr(s.Host); err == nil {
+		if !netaddr.Public(ip.Unmap()) {
+			return s.Host + " is not a public address"
+		}
+		return ""
+	}
+	rc, cancel := context.WithTimeout(ctx, siteLookupTimeout)
+	defer cancel()
+	addrs, err := lookupSiteHost(rc, s.Host)
+	if err != nil || len(addrs) == 0 {
+		return s.Host + " could not be found on the public internet"
+	}
+	for _, a := range addrs {
+		if ip, ok := netip.AddrFromSlice(a.IP); !ok || !netaddr.Public(ip.Unmap()) {
+			return fmt.Sprintf("%s resolves to %s, which is not a public address", s.Host, a.IP)
+		}
+	}
+	return ""
 }
 
 // browserSites are the run's sites, from the answers to the site
@@ -319,6 +327,7 @@ func browseProxyArgs(c *spec.BrowserCap, b *browserRun) []string {
 	if len(b.sites) > 0 {
 		a = append(a, "--browse-sites", strings.Join(b.sites, ","))
 	}
+	// A hosted run has no private site (D2), so its proxy is given none.
 	if len(b.private) > 0 {
 		a = append(a, "--browse-private", strings.Join(b.private, ","))
 	}

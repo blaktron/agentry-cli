@@ -72,7 +72,7 @@ var prepareTargetHost = targethost.Prepare
 // run of a release that declares a target host (plan D11).
 func refuseHostedTargetHosts(plan *spec.Plan, opts runOpts) error {
 	ids := plan.Capabilities.TargetHosts
-	if len(ids) == 0 || (!hostedRun(opts) && !hostedProcess() && opts.reviewInputs == "") {
+	if len(ids) == 0 || !hostedFor(opts) {
 		return nil
 	}
 	return engine.HostedTargetHostRefusal(ids)

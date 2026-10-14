@@ -83,3 +83,35 @@ func TestBrowserEnsureFollowsThePolicysImageAndRefusesAnUnpinnedOne(t *testing.T
 		t.Fatalf("an unpinned image: err %v, docker calls %v", err, f3.Calls)
 	}
 }
+
+// TestHostedForReadsEverySign: `agentry run` marks the engine's run hosted
+// (Params.Hosted, which holds a browser to public sites, agentry-cli#941)
+// by any sign a sandbox host gives it, and a local run by none.
+func TestHostedForReadsEverySign(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+		opts runOpts
+		want bool
+	}{
+		{name: "local", want: false},
+		{name: "run grant", env: envRunGrant, want: true},
+		{name: "job token", env: envJobToken, want: true},
+		{name: "AGENTRY_HOSTED", env: envHosted, want: true},
+		{name: "connections file", opts: runOpts{connectionsFile: "/x"}, want: true},
+		{name: "session protocol", opts: runOpts{sessionProtocol: true}, want: true},
+		{name: "input review", opts: runOpts{reviewInputs: "https://registry.example"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, e := range []string{envRunGrant, envJobToken, envHosted} {
+				t.Setenv(e, "")
+			}
+			if tc.env != "" {
+				t.Setenv(tc.env, "1")
+			}
+			if got := hostedFor(tc.opts); got != tc.want {
+				t.Errorf("hostedFor = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
