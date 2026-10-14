@@ -1,9 +1,9 @@
 ---
 title: Worked drafts
 type: example
-summary: Four whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, and one that checks a server the person names (a target host).
-sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/target-hosts/, doc:servers.yaml]
-updated: 2026-10-12
+summary: Five whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, one that checks a server the person names (a target host), and one that checks a website the person names in a browser.
+sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/target-hosts/, web:https://docs.secureagentry.net/agentry/browser/, doc:servers.yaml]
+updated: 2026-10-14
 ---
 
 # Worked drafts
@@ -169,3 +169,41 @@ The server changes from run to run, so it is a target host: a `host` question, l
 Its instructions: `## Role` (report a server's health, change nothing); `## Inputs` (the server, and the task's period or focus); `## Steps` (with `host_run`: read `/etc/os-release` and the uptime and load; `df -h` and `df -i`; `free -m`; `systemctl --failed --no-pager`; `journalctl -p err --since "-1 day" --no-pager`, with `sudo: true` when the account cannot read the journal, and, when that is refused because the person gave no sudo password, a note of what it could not read; a long log is read in pages, never whole); `## Output` (a skeleton of `report.md`: what needs attention, worst first, each with the command output that shows it and what to do about it, then what looked normal); `## Background` (the thresholds it uses, such as a filesystem above 90% or swap in steady use, and what a failed unit or a repeated error usually means); `## Checks` (no command that changes the server, every finding backed by output, a credential the logs print reported by kind and place only).
 
 Its notes: that it runs on the person's computer only, with the CLI or the desktop app, never In Agentry; which account it needs to read every log; and the thresholds it picked.
+
+## A browser: checking a site's links and layout
+
+The description: "Check my website for broken links and pages that look wrong on a phone, and tell me what to fix."
+
+The site changes from run to run, and only a browser shows how a page renders, so the draft takes a browser: a `url` question listed in `capabilities.browser.sites`. The browser reaches the site through the runner's proxy, so the draft declares no egress, no command and no MCP server for it. It signs in to nothing, so it declares no key. The task only reads, so the run is autonomous and changes nothing on the site [src: web:https://docs.secureagentry.net/agentry/browser/].
+
+```json
+{
+  "schemaVersion": "2",
+  "name": "site-link-and-layout-check",
+  "namespace": "draft",
+  "version": "0.1.0",
+  "summary": "Opens the website you name in a browser, follows its links within the site, and reports broken links and pages that break on a phone.",
+  "license": "Apache-2.0",
+  "tags": ["website", "testing", "links", "mobile"],
+  "modes": ["autonomous"],
+  "entrypoints": {"instruction": "AGENT.md"},
+  "intake": [
+    {"id": "site", "prompt": "The site to check (https://…)", "type": "url", "required": true}
+  ],
+  "guide": {
+    "overview": "Opens the site you name in a headless browser and follows its links within the site, up to the number of pages the task names (20 by default). For each page it records broken links, console errors and failed requests, and how the page looks at a desktop width and at a phone's. Returns report.md with what to fix first and a screenshot of each problem. It changes nothing on the site.",
+    "task": "e.g. Check only the pages under /blog, up to 50 of them."
+  },
+  "capabilities": {
+    "network": {"egress": "none"},
+    "filesystem": {"read": "none", "write": "none"},
+    "exec": "none",
+    "browser": {"sites": ["site"]}
+  },
+  "publish": {"include": ["agent.yaml", "AGENT.md", "README.md", "LICENSE"]}
+}
+```
+
+Its instructions: `## Role` (check a site's links and phone layout, change nothing); `## Inputs` (the site, and the task's page limit or section); `## Steps` (with `browser_navigate` open the site; `browser_snapshot` to list its links; open each link within the site and its subdomains, up to the limit, noting a link to another site rather than opening it; for each page read `browser_console_messages` and the failed requests in `browser_network_requests`; `browser_resize` to 1280 by 800 and to 390 by 844 and `browser_take_screenshot` of each page that breaks, by a bare file name such as `pricing-phone.png`); `## Output` (a skeleton of `report.md`: broken links with the page they are on, layout problems with their screenshot, console errors, worst first, then the pages that passed); `## Background` (what a broken link is: a 404, a 5xx or a page that never loads; what breaks on a phone: text cut off, a horizontal scroll, a button off screen); `## Checks` (no form submitted, nothing bought or posted, every finding backed by a screenshot or a request, a failed request to another host reported as a finding and not followed).
+
+Its notes: that a site on the person's own network can be checked only with the CLI or the desktop app on their computer, since a run in Agentry opens public sites only; and the page limit it picked.

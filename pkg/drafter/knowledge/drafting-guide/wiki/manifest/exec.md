@@ -12,6 +12,8 @@ updated: 2026-10-12
 
 **Never `ssh`, `scp`, `sftp` or `rsync`.** A run reaches no machine with them, and none is a command every run provides. A QuickAgent that works on a server the person names declares a target host, and the run works it through the host tools ([Target hosts](target-hosts.md)).
 
+**Never a browser of its own** (Chromium, Chrome, Firefox, Playwright, Puppeteer, Selenium, a WebDriver), as a command or as an MCP server. A QuickAgent that tests a website declares a browser, which the runner gives the run, and the run works it through the browser tools ([A browser](browser.md)). The check after you answer sends either to a repair turn.
+
 ## The base commands
 
 Use `{commands: [...]}`, single command names, only for what reading cannot do, and only these, which every run provides (a run refuses any other): `base64`, `basename`, `bunzip2`, `bzcat`, `cat`, `cksum`, `cmp`, `comm`, `cut`, `diff`, `dirname`, `du`, `fold`, `grep`, `gunzip`, `head`, `hexdump`, `ls`, `md5sum`, `nl`, `od`, `paste`, `realpath`, `rev`, `sha1sum`, `sha256sum`, `sha512sum`, `sort`, `stat`, `strings`, `tac`, `tail`, `tar`, `tr`, `tree`, `uniq`, `unxz`, `unzip`, `wc`, `xzcat`, `zcat`. No shell, `awk`, `sed`, `find`, `curl` or `git` [src: doc:runtime-facts.md].

@@ -449,6 +449,10 @@ func rulesReport(d *Draft) (lines []string, refused bool) {
 		lines = append(lines, probs...)
 		refused = true
 	}
+	if probs := browserServerProblems(d.Manifest); len(probs) > 0 {
+		lines = append(lines, probs...)
+		refused = true
+	}
 	if len(d.serverProblems) > 0 {
 		lines = append(lines, d.serverProblems...)
 		refused = true

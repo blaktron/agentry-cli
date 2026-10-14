@@ -46,3 +46,10 @@ A new page, Target hosts: when a task works on a machine the person names, the d
 
 - wrote: manifest/target-hosts.md
 - updated: guide/start-here.md, manifest/intake-and-guide.md, manifest/manifest.md, manifest/exec.md, manifest/run-modes.md, runtime/how-a-run-works.md, draft/examples.md, draft/review.md, sources/runtime-facts.md
+
+## [2026-10-14] ingest | a browser (Drafter 1.15.0)
+
+A new page, A browser: when a task tests a website the person names as a person sees it (pages, forms, links, a phone's width), the draft asks for the site with a `url` question listed in `capabilities.browser.sites`, adds `hosts` only for what its pages load, keeps `scope` at `site`, declares a key the browser types in `capabilities.secrets` and `capabilities.browser.secrets` (never with `scope: public`), brings no browser of its own, and writes the instructions for the browser tools (bare screenshot file names, nothing real changed on the site). It runs on the person's computer and In Agentry for a public site. The intake, manifest, commands, network, keys, how-a-run-works, start-here and review pages name the line; the worked drafts gain a fifth; the runtime facts gain the browser's tools and bounds; the check after a draft sends a browser of its own, as a command or an MCP server, to the repair turn.
+
+- wrote: manifest/browser.md
+- updated: guide/start-here.md, manifest/intake-and-guide.md, manifest/manifest.md, manifest/exec.md, manifest/egress-and-fetch.md, manifest/secrets.md, runtime/how-a-run-works.md, draft/examples.md, draft/review.md, sources/runtime-facts.md
