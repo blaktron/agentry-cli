@@ -12,7 +12,10 @@ import (
 // never brings a browser of its own, as a command or as an MCP server.
 
 // browserWords are the names, or parts of a package's name, that bring a
-// browser of their own.
+// browser of their own. The match is by name alone: a browser server whose
+// name carries none of them (browser-use, a vendor's remote server by its
+// address) is not caught here, and the guide is what steers the Drafter
+// away from one.
 var browserWords = []string{"chromium", "chrome", "firefox", "playwright", "puppeteer", "selenium", "webdriver", "chromedriver", "geckodriver"}
 
 // drivesABrowser says a declared command or a package, by its whole name

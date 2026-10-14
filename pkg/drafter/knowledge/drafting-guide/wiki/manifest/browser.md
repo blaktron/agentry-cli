@@ -10,7 +10,7 @@ updated: 2026-10-14
 
 A QuickAgent can declare a **browser**: a headless Chromium its run drives, for testing a website in the real world. The agent opens pages, clicks, fills forms, reads the console and the network requests, resizes the window to a phone's width, and takes screenshots and PDFs. The QuickAgent says that it tests a site, never which one: the person names the site when the run starts, so one QuickAgent serves every site its users have [src: web:https://docs.secureagentry.net/agentry/browser/].
 
-The browser runs in a container of its own beside the run, and its only way out is a proxy the runner starts for that run, which holds it to the sites the QuickAgent may open. The agent works the browser through the browser's tools and never reaches the network itself [src: web:https://docs.secureagentry.net/runner/].
+The browser runs in a container of its own beside the run. Its network route is a proxy the runner starts for that run, which admits the sites and hosts the QuickAgent declares and refuses the rest. The agent works the browser through the browser's tools and never reaches the network itself [src: web:https://docs.secureagentry.net/runner/].
 
 ## When a draft takes one
 
@@ -52,7 +52,7 @@ A test of the signed-in parts of a site (an account page, a checkout as a signed
 ```
 
 - **The agent never reads a value.** It passes the key's name as the text of `browser_type` or a field of `browser_fill_form`, and the browser types the value. What the agent reads back shows `<secret>SITE_PASSWORD</secret>` in the value's place, and a password field shows dots in a screenshot [src: web:https://docs.secureagentry.net/agentry/browser/].
-- **A QuickAgent that types keys never has `scope: public`**: the registry refuses the pair, so a key reaches only the person's site, its subdomains and the declared hosts.
+- **A QuickAgent that types keys never has `scope: public`**: the registry refuses the pair, so the pages a key can be typed into are on the person's site, its subdomains and the declared hosts.
 - **Such a QuickAgent has no `browser_evaluate`**: a script in the page could read a value back changed.
 - **A sign-up test needs no key.** Creating a new account uses made-up details the run writes itself (a test address the person names in the task, or one the instructions describe); declare keys only when the test signs in to an account that already exists. Mark them as [Keys](secrets.md) says: required when the test is of the signed-in pages, optional when signing in is one part among others.
 - **Never ask for a password in a question**, and never put one in the task: it is a key the person keeps.
