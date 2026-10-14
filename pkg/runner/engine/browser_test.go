@@ -338,3 +338,36 @@ func TestTheBrowserImageIsPulledWhenMissing(t *testing.T) {
 		}
 	}
 }
+
+// TestABrowserRunsRuntimeLineNamesTheBrowseProxy (agentry-cli#943): the
+// browse proxy is on the daemon's default runtime by design, so even a run
+// whose every other class is sandboxed does not say none is.
+func TestABrowserRunsRuntimeLineNamesTheBrowseProxy(t *testing.T) {
+	withFilter(t, true)
+	t.Setenv("SITE_PASSWORD", plantedSitePassword)
+	p, _ := fixtureEdited(t, func(pol *policy.Policy) {
+		pol.Docker.Runtime = "runsc"
+		pol.Docker.Resolvers = []string{"192.0.2.53"}
+		pol.Docker.GatewayRuntime = "runsc-uds"
+	}, declareBrowser)
+	line := runtimeLine(p)
+	if strings.Contains(line, "no container class of the run is on the daemon's default runtime") ||
+		!strings.Contains(line, "on the daemon's default runtime, as measured under runsc (DR-23): the browse proxy (it resolves every name the browser asks for through docker's embedded DNS") {
+		t.Errorf("runtime line: %q", line)
+	}
+}
+
+// TestTheSecretsLineNamesOnlyWhatTheRunWasGiven (agentry-cli#943).
+func TestTheSecretsLineNamesOnlyWhatTheRunWasGiven(t *testing.T) {
+	declared := []string{"SITE_USER", "SITE_PASSWORD"}
+	if got := browserSecretsLine(declared, nil); got != "none of SITE_USER, SITE_PASSWORD was given to this run, so the browser has no secret to type (its secrets file is empty)" {
+		t.Errorf("none given: %q", got)
+	}
+	got := browserSecretsLine(declared, []string{"SITE_PASSWORD"})
+	if !strings.HasPrefix(got, "SITE_PASSWORD, in a file bound read-only into the browser server alone") || !strings.HasSuffix(got, "; not given to this run: SITE_USER") {
+		t.Errorf("one given: %q", got)
+	}
+	if got := browserSecretsLine(declared, declared); strings.Contains(got, "not given") || !strings.HasPrefix(got, "SITE_USER, SITE_PASSWORD, in a file") {
+		t.Errorf("both given: %q", got)
+	}
+}

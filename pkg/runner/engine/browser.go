@@ -227,8 +227,15 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 	if err := os.MkdirAll(filepath.Join(rd.outDir, spec.BrowserReports), 0o755); err != nil { //nolint:gosec // the person's own output folder
 		return Classify(ExitCLI, fmt.Errorf("reports/browser: %w", err))
 	}
+	var given []string
 	if len(c.Secrets) > 0 {
-		f, err := browserSecretsFile(c.Secrets, browserSecretValues(p.Plan, c.Secrets, secrets))
+		values := browserSecretValues(p.Plan, c.Secrets, secrets)
+		for _, n := range c.Secrets {
+			if values[n] != "" {
+				given = append(given, n)
+			}
+		}
+		f, err := browserSecretsFile(c.Secrets, values)
 		if err != nil {
 			return Classify(ExitPolicy, err)
 		}
@@ -248,8 +255,7 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 	env.CapabilitiesEnforced["browser.image"] = p.Plan.Browser.Image + ", pulled by digest"
 	env.CapabilitiesEnforced["browser.scope"] = browserScopeLine(c, b)
 	if len(c.Secrets) > 0 {
-		env.CapabilitiesEnforced["browser.secrets"] = fmt.Sprintf("%s, in a file bound read-only into the browser server alone and removed with the run; the server types a value where the agent passes its name, and replaces the exact value with the name in what it returns (its own masking, which a transformed value would pass, so %s is not granted); the runner masks the values again in the transcript, the receipts and the browser's text files",
-			strings.Join(c.Secrets, ", "), browser.ToolEvaluate)
+		env.CapabilitiesEnforced["browser.secrets"] = browserSecretsLine(c.Secrets, given)
 	}
 	return nil
 }
@@ -271,6 +277,27 @@ func browserScopeLine(c *spec.BrowserCap, b *browserRun) string {
 		parts = append(parts, "any public site on ports 80 and 443 (the policy's browser.allowPublicWeb)")
 	}
 	return "the browse proxy " + b.proxy + " admits " + strings.Join(parts, "; ") + ", resolving every name itself; nothing else, and no loopback, link-local or metadata address"
+}
+
+// browserSecretsLine says which declared browser secrets this run's file
+// carries, and which it was not given (an optional one the person never
+// set), so the receipt names no secret the browser could not type.
+func browserSecretsLine(declared, given []string) string {
+	var missing []string
+	for _, n := range declared {
+		if !slices.Contains(given, n) {
+			missing = append(missing, n)
+		}
+	}
+	if len(given) == 0 {
+		return "none of " + strings.Join(declared, ", ") + " was given to this run, so the browser has no secret to type (its secrets file is empty)"
+	}
+	line := fmt.Sprintf("%s, in a file bound read-only into the browser server alone and removed with the run; the server types a value where the agent passes its name, and replaces the exact value with the name in what it returns (its own masking, which a transformed value would pass, so %s is not granted); the runner masks the values again in the transcript, the receipts and the browser's text files",
+		strings.Join(given, ", "), browser.ToolEvaluate)
+	if len(missing) > 0 {
+		line += "; not given to this run: " + strings.Join(missing, ", ")
+	}
+	return line
 }
 
 // browserSecretValues are the browser secrets' values by name, from the
