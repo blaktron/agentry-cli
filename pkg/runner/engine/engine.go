@@ -464,7 +464,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		env.CapabilitiesEnforced["web.aiReview"] = webLine(env.Web)
 	}
 	if rs := p.Plan.WebResolvers(); len(rs) > 0 {
-		env.CapabilitiesEnforced["web.resolvers"] = resolversLine(rs)
+		env.CapabilitiesEnforced["web.resolvers"] = resolversLine(p.Plan, rs)
 	}
 	if env.Review = reviewRecord(rd.receiptsDir, p.Review); env.Review != nil {
 		env.CapabilitiesEnforced["review.aiReview"] = reviewLine(env.Review)

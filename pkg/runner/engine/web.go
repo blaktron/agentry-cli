@@ -255,9 +255,19 @@ func writeResolvConf(gatewayDir string, plan *spec.Plan) error {
 }
 
 // resolversLine is the receipt's account of how the web tools resolve.
-func resolversLine(rs []string) string {
+func resolversLine(plan *spec.Plan, rs []string) string {
+	who := pastHostServer(plan)
 	if !filterSupported {
-		return "docker.resolvers names " + strings.Join(rs, ", ") + ", which only the per-run docker filter binds into the web tools' server; without it (a platform the filter does not run on) the server keeps docker's DNS"
+		return "docker.resolvers names " + strings.Join(rs, ", ") + ", which only the per-run docker filter binds into " + who + "; without it (a platform the filter does not run on) the server keeps docker's DNS"
 	}
-	return "the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, whose embedded DNS a sandboxed runtime does not reach"
+	return who + " resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, whose embedded DNS a sandboxed runtime does not reach"
+}
+
+// pastHostServer names, for the receipt, the tools server that reaches
+// past the host (spec.CapSummary.ToolsReachPastHost).
+func pastHostServer(plan *spec.Plan) string {
+	if plan.Capabilities.WebTools {
+		return "the web tools' server"
+	}
+	return "the tools server"
 }

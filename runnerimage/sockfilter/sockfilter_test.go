@@ -1147,12 +1147,52 @@ func TestTheWebNetworkTakesOnlyTheWebToolsServer(t *testing.T) {
 	}
 }
 
+// A tools server with unrestricted egress, in the run's exec image, joins
+// the run's web network as the web tools' server does, in the same shape;
+// the runner image, no longer the one the network takes, is given the
+// daemon's default by no name.
+func TestTheWebNetworkTakesAnExecImagesToolsServer(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	var specPath string
+	g := newRig(t, Limits{}, func(c *Config) {
+		specPath = filepath.Join(c.BindRoots[0], "cfg", "toolspec.json")
+		if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(specPath, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c.WebNetwork, c.WebImage = "agentry-A-web", "agentry-exec:abc"
+		c.WebCmd, c.WebSpec, c.WebSpecTarget = []string{"tools", "--spec", target}, specPath, target
+	})
+	create := func(image string) map[string]any {
+		return map[string]any{
+			"Image": image, "Cmd": []string{"tools", "--spec", target},
+			"HostConfig":       map[string]any{"NetworkMode": "default", "Binds": []string{specPath + ":" + target + ":ro"}},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"default": map[string]any{}}},
+		}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", create("agentry-exec:abc")); code != http.StatusCreated {
+		t.Fatalf("the exec image's tools server: %d %s", code, body)
+	}
+	hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+	if hc["NetworkMode"] != "id-agentry-A-web" {
+		t.Fatalf("forwarded on %v, want the run's web network", hc["NetworkMode"])
+	}
+	g.refused(t, "the runner image by the default network", "POST", "/containers/create", create("agentry-runner:test"), "default bridge")
+	g.refused(t, "the exec image in another shape", "POST", "/containers/create", func() map[string]any {
+		d := create("agentry-exec:abc")
+		d["Cmd"] = []string{"sh", "-c", "curl 169.254.169.254"}
+		return d
+	}(), "web tools' server")
+}
+
 // The daemon puts a container that names no network, or "default", on its
 // default bridge, beside every other container there and with a way to the
 // host. The filter forwards such a create on no network at all, or on the
 // one network of the run's it names as an endpoint, and refuses the bridge
 // by any of its names.
-func TestNoNetworkNamedIsNoNetwork(t *testing.T) {
+func TestACreateNamingNoNetworkNeverReachesTheDefaultBridge(t *testing.T) {
 	g := newRig(t, Limits{})
 	for name, doc := range map[string]map[string]any{
 		"no HostConfig":          {},
@@ -1188,7 +1228,7 @@ func TestNoNetworkNamedIsNoNetwork(t *testing.T) {
 	}
 	g.refused(t, "two endpoints and no network mode", "POST", "/containers/create", map[string]any{
 		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"runa-net": map[string]any{}, intNet: map[string]any{}}}},
-		"names its first network in HostConfig.NetworkMode")
+		"names which one is its own")
 	for _, key := range []string{"default", "bridge"} {
 		g.refused(t, "an endpoint named "+key, "POST", "/containers/create", map[string]any{
 			"HostConfig":       map[string]any{"NetworkMode": "none"},

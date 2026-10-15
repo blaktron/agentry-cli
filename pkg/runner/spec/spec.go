@@ -491,9 +491,9 @@ const ToolsTmpfsBytes = 256 << 20
 func (c CapSummary) Fetches() bool { return c.EgressMode == "hosts" || c.EgressMode == "all" }
 
 // ToolsReachPastHost reports whether the tools server reaches past the
-// host on a network of the run's own, with no allowlist of the gateway's:
-// for the web tools, whose tools hold their own address rule, or for
-// unrestricted egress, which the operator's policy permitted.
+// host on a network of the run's own, with no host list for the gateway to
+// hold it to: for the web tools, whose tools hold their own address rule,
+// or for unrestricted egress, which the operator's policy permitted.
 func (c CapSummary) ToolsReachPastHost() bool { return c.WebTools || c.EgressMode == "all" }
 
 // GatewaySpec is the gateway container launch description. Flags are
