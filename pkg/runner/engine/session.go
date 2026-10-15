@@ -304,9 +304,13 @@ type liveSession struct {
 	eventsFile *os.File
 	stderrPath string
 
-	events   chan session.Event
-	done     chan struct{} // closed once (ended)
-	pumpDone chan struct{} // closed when pump has drained the driver's events
+	events chan session.Event
+	// eventsMu orders emit's send against End's close(events);
+	// eventsClosed is set under it when the channel closes.
+	eventsMu     sync.RWMutex
+	eventsClosed bool
+	done         chan struct{} // closed once (ended)
+	pumpDone     chan struct{} // closed when pump has drained the driver's events
 	// pumpSync asks the pump to record everything the driver has queued so
 	// far, then close the channel it was sent.
 	pumpSync chan chan struct{}
@@ -825,9 +829,28 @@ func (s *liveSession) emit(ev session.Event) {
 		}
 	}
 	s.mu.Unlock()
+	// Ordered against End's close of the channel: a send that loses the
+	// race is dropped, never made on a closed channel. A blocked send
+	// leaves when done closes, which End does before it closes events.
+	s.eventsMu.RLock()
+	defer s.eventsMu.RUnlock()
+	if s.eventsClosed {
+		return
+	}
 	select {
 	case s.events <- ev:
 	case <-s.done:
+	}
+}
+
+// closeEvents closes the consumer's event channel once; an emit after it
+// is dropped.
+func (s *liveSession) closeEvents() {
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	if !s.eventsClosed {
+		s.eventsClosed = true
+		close(s.events)
 	}
 }
 
@@ -1053,7 +1076,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		case <-time.After(10 * time.Second):
 		}
 	}
-	close(s.events)
+	s.closeEvents()
 	if s.eventsFile != nil {
 		_ = s.eventsFile.Close()
 	}

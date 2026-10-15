@@ -37,6 +37,7 @@ type codexSession struct {
 
 	threadID  string
 	events    chan Event
+	eventGate eventGate // orders sends against close(events)
 	readDone  chan struct{}
 	closeOnce sync.Once
 
@@ -233,7 +234,7 @@ func (s *codexSession) Close() error {
 			delete(s.pending, id)
 		}
 		s.mu.Unlock()
-		close(s.events)
+		s.eventGate.close(s.events)
 	})
 	return err
 }
@@ -539,4 +540,4 @@ func (s *codexSession) handleRequest(m rpcMessage, line []byte) {
 	}
 }
 
-func (s *codexSession) emit(ev Event) { s.events <- ev }
+func (s *codexSession) emit(ev Event) { s.eventGate.send(s.events, ev) }
