@@ -31,7 +31,7 @@ import (
 // ReportFile is the report's name in the output folder.
 const ReportFile = "report.json"
 
-// ReportSchemaVersion is the report's shape (README, "The report").
+// ReportSchemaVersion is the version of the report's shape.
 const ReportSchemaVersion = "1"
 
 // The three kinds of finding, as the report labels them.
