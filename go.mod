@@ -4,7 +4,7 @@ go 1.27.2
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/blaktron/agentry v0.6.15-dev.94.0.20261015171057-9ee20469427d
+	github.com/blaktron/agentry v0.6.15-dev.99.0.20261015221205-2b59bb8a7d04
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.19.2
 	github.com/oapi-codegen/runtime v1.7.0
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
 	github.com/theupdateframework/go-tuf/v2 v2.4.2

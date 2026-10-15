@@ -281,7 +281,7 @@ publish:
 	}
 
 	fresh := DiffCapabilities(CapSnapshot{}, snap)
-	if !strings.Contains(strings.Join(fresh.Widened, "|"), "adds MCP server: npm:github-mcp-server-js@0.1.7 (env GITHUB_PERMISSION=read-only, LOGS_DIR=/tmp/logs)") {
+	if !strings.Contains(strings.Join(fresh.Widened, "|"), "adds MCP server: npm:github-mcp-server-js@0.1.7 (env GITHUB_PERMISSION=read-only, LOGS_DIR=/tmp/logs; secrets GITHUB_TOKEN; every tool it serves)") {
 		t.Fatalf("a new server's env is not part of its consent line: %+v", fresh)
 	}
 

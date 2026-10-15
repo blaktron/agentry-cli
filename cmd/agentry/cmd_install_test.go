@@ -233,6 +233,11 @@ func TestConfirmCapabilitiesNamesWhatIsDeclared(t *testing.T) {
 		"remote":       {parseCaps(t, "capabilities:\n  mcpServers:\n    - url: https://mcp.deepwiki.com/mcp\n      auth: none\n"), "a remote MCP server"},
 		"egress, host": {parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n  exec:\n    commands: [git]\n  targetHosts: [server]\nintake:\n  - id: server\n    prompt: The server\n    type: host\n"), "network egress, exec and a target host"},
 		"none":         {manifest.Capabilities{}, ""},
+		"server egress": {parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n      egress: [api.osv.dev]\n"),
+			"network egress for MCP server npm:@acme/osv-mcp@1.2.3"},
+		"server any host": {parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n      egress: [\"*\"]\n"),
+			"UNRESTRICTED network egress for MCP server npm:@acme/osv-mcp@1.2.3"},
+		"server without egress": {parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n"), ""},
 	} {
 		if got := confirmedCapabilitiesWords(tc.caps); got != tc.want {
 			t.Errorf("%s: names %q, want %q", name, got, tc.want)
@@ -240,6 +245,27 @@ func TestConfirmCapabilitiesNamesWhatIsDeclared(t *testing.T) {
 		if needs := capabilityNeedsConfirm(tc.caps); needs != (tc.want != "") {
 			t.Errorf("%s: needs confirmation = %v", name, needs)
 		}
+	}
+}
+
+// TestAFirstInstallAsksAboutAPackageServersOwnEgress: a release whose only
+// network use is a package MCP server that may reach a host is refused off
+// a terminal without --yes, as a release declaring egress itself is, and
+// the refusal names the server; the same release whose server reaches
+// nothing installs without the question.
+func TestAFirstInstallAsksAboutAPackageServersOwnEgress(t *testing.T) {
+	reaches := parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n      egress: [\"*\"]\n")
+	err := confirmCapabilities(stubCmd(t), reaches, false)
+	want := "this QuickAgent declares UNRESTRICTED network egress for MCP server npm:@acme/osv-mcp@1.2.3; re-run with --yes to accept in non-interactive mode"
+	if err == nil || err.Error() != want {
+		t.Fatalf("a server that may reach any host, off a terminal: %v, want %q", err, want)
+	}
+	if err := confirmCapabilities(stubCmd(t), reaches, true); err != nil {
+		t.Errorf("--yes must accept it: %v", err)
+	}
+	quiet := parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n")
+	if err := confirmCapabilities(stubCmd(t), quiet, false); err != nil {
+		t.Errorf("a server that reaches nothing must not be asked about: %v", err)
 	}
 }
 
