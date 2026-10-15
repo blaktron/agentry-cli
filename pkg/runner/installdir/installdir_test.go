@@ -78,7 +78,7 @@ func TestWriteAndLoad(t *testing.T) {
 	if _, ok := Load(dir, "sha256:other"); ok {
 		t.Fatal("Load answered for another digest")
 	}
-	// The JSON shape is the one runs have read since the cache existed.
+	// The JSON shape holds the fields runs read.
 	raw, _ := os.ReadFile(filepath.Join(dir, "install.json"))
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -113,8 +113,8 @@ func TestWriteAndLoad(t *testing.T) {
 	}
 }
 
-// The export style (plan desktop-one-click-install.md D2): the coding
-// agent the policy names, else the provider, else AGENTS.md.
+// The export style: the coding agent the policy names, else the provider, else
+// AGENTS.md.
 func TestStyleFor(t *testing.T) {
 	cases := []struct {
 		name string
@@ -180,9 +180,9 @@ func TestInstallWritesTheExport(t *testing.T) {
 }
 
 // An instruction-only release (a prompt agent: AGENT.md, no SKILL.md — the
-// shape of the catalogue on dev) exports as a Claude skill too, its
-// SKILL.md made from the instruction (agentry-cli#193): a chosen Claude
-// Code no longer fails the runner-home install of such a release.
+// shape of many catalogue entries) exports as a Claude skill too, its SKILL.md
+// made from the instruction: a chosen Claude Code no longer fails the
+// runner-home install of such a release.
 func TestInstallExportInstructionOnlyClaudeSkill(t *testing.T) {
 	m := &manifest.Manifest{SchemaVersion: "2", Name: "changelog-from-git", Namespace: "agentry", Version: "1.2.1", Summary: "Drafts a changelog from git history."}
 	m.Entrypoints.Instruction = "AGENT.md"
@@ -238,7 +238,7 @@ func TestRemoveOtherVersions(t *testing.T) {
 }
 
 // ReleaseName is the one spelling of a release's directory name, the one
-// ReleaseDir and every client use (agentry-cli#192).
+// ReleaseDir and every client use.
 func TestReleaseName(t *testing.T) {
 	if got := ReleaseName("1.2.0", "sha256:0123456789abcdefXYZ"); got != "1.2.0-0123456789ab" {
 		t.Fatalf("ReleaseName = %q", got)
@@ -249,7 +249,7 @@ func TestReleaseName(t *testing.T) {
 }
 
 // StyleForHome reads the runner home's policy for the export style with
-// its one honest outcome for each case (agentry-cli#192): no policy is the
+// its one honest outcome for each case: no policy is the
 // generic shape and nothing to say; a policy is StyleFor's answer; a
 // policy that cannot be read is the generic shape and a warning naming it.
 func TestStyleForHome(t *testing.T) {
@@ -329,7 +329,7 @@ func TestRemoveOtherVersionsRefusalIsErrNotARelease(t *testing.T) {
 // Two first installs of one release at once (a CLI run and a desktop run
 // started together on a fresh runner home) each build aside in their own
 // staging directory and publish by rename: neither fails, and the tree
-// left behind is one writer's whole tree (agentry-cli#294).
+// left behind is one writer's whole tree.
 func TestWriteConcurrentFirstInstalls(t *testing.T) {
 	files := map[string]string{"agent.yaml": "name: demo\n", "SKILL.md": "# Demo\n"}
 	for i := range 40 {
@@ -384,7 +384,7 @@ func TestWriteConcurrentFirstInstalls(t *testing.T) {
 // A run that finds its release freshly laid down starts using the tree at
 // once (its plan dir goes inside it). A concurrent first install of the
 // same release that publishes later must not sweep that away: once one
-// writer has published, the others keep its tree (agentry-cli#294).
+// writer has published, the others keep its tree.
 func TestWriteKeepsTheFirstPublishedTree(t *testing.T) {
 	src := stageTree(t, map[string]string{"agent.yaml": "name: demo\n", "SKILL.md": "# Demo\n"})
 	meta := &Meta{Ref: "acme/demo@1.0.0", Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: "sha256:abc", Source: "local"}

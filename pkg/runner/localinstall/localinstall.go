@@ -1,6 +1,6 @@
 // Package localinstall installs a QuickAgent from a folder on this machine
 // that was never published, into the runner home, where it lists among the
-// installed QuickAgents and runs by name (agentry-cli#491). It is how the
+// installed QuickAgents and runs by name. It is how the
 // desktop's Drafter "Install" puts a draft on this computer without a
 // registry, a pipeline or a credit, and `agentry install --local DIR` is
 // the CLI's form of it.
@@ -150,7 +150,7 @@ func (s *Staged) layDown(home, style string, repair bool) (string, error) {
 	m := s.Manifest
 	// The staged tree is this user's alone, but what is laid down is held
 	// to what was shown all the same: a manifest that now asks for more
-	// than the person consented to is refused (§9, the consented contract).
+	// than the person consented to is refused (the consented contract).
 	now, err := localrun.ManifestFrom(s.Tree)
 	if err != nil {
 		return "", err

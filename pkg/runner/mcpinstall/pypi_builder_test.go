@@ -19,13 +19,12 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// TestPypiBuilderRunsUnderPython runs pypi_builder.py with the host's
-// python3 against a local PEP 503 index serving one generated wheel, the
-// way the runtime image runs it: it installs the pinned wheel, records the
-// dist's console scripts, refuses a file the registry did not advertise
-// (exit 3) and one whose digest differs (exit 4), and passes a value with
-// shell syntax to pip as a literal (agentry-cli#162). Skipped where the
-// host has no python3 with venv.
+// TestPypiBuilderRunsUnderPython runs pypi_builder.py with the host's python3
+// against a local PEP 503 index serving one generated wheel, the way the
+// runtime image runs it: it installs the pinned wheel, records the dist's
+// console scripts, refuses a file the registry did not advertise (exit 3) and
+// one whose digest differs (exit 4), and passes a value with shell syntax to
+// pip as a literal. Skipped where the host has no python3 with venv.
 func TestPypiBuilderRunsUnderPython(t *testing.T) {
 	if testing.Short() {
 		t.Skip("creates Python virtual environments")

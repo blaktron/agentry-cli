@@ -6,11 +6,10 @@
 // executes nothing but the harness's own version flag; it writes nothing.
 //
 // `agentry doctor --adapter <name>` renders these facts as checks, and the
-// desktop's first-run wizard reads them for its Coding agent step
-// (agentry-cli#147, plan desktop-installers.md §9): one probe, two callers,
-// the way the two clients already share the policy and install code. The
-// wording of a warning lives here for the same reason: two renderings of
-// one fact would drift.
+// desktop's first-run wizard reads them for its Coding agent step: one probe,
+// two callers, the way the two clients already share the policy and install
+// code. The wording of a warning lives here for the same reason: two renderings
+// of one fact would drift.
 package harnessprobe
 
 import (
@@ -71,8 +70,7 @@ type Result struct {
 	// desktop reads Source.
 	PathFromPolicy bool `json:"pathFromPolicy,omitempty"`
 	// Source says where Path was found: the policy, PATH, or one of the
-	// adapter's well-known install locations (agentry-cli#167). "" when
-	// Found is false.
+	// adapter's well-known install locations. "" when Found is false.
 	Source Source `json:"source,omitempty"`
 	// Found is true when an executable resolved.
 	Found bool `json:"found"`

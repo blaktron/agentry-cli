@@ -1,12 +1,11 @@
-// Package targethost readies a run's target hosts before anything starts
-// (agentry-notes plans/runtime-hosts.md §4, §6, D6–D8; agentry-cli#861): a
-// target host is a machine the person names when a run starts, as the
-// answer to an intake question of type host, and the runner reaches it
-// over SSH from the host link (runnerimage/hostlink), never from the
-// agent's containers. Here the answer is read, its address resolved and
-// checked, its host key checked against the person's known_hosts and the
-// runner's own, and its credential taken from a flag, the keychain or a
-// prompt. Nothing here connects to the host but to read its key.
+// Package targethost readies a run's target hosts before anything starts: a
+// target host is a machine the person names when a run starts, as the answer to
+// an intake question of type host, and the runner reaches it over SSH from the
+// host link (runnerimage/hostlink), never from the agent's containers. Here the
+// answer is read, its address resolved and checked, its host key checked
+// against the person's known_hosts and the runner's own, and its credential
+// taken from a flag, the keychain or a prompt. Nothing here connects to the
+// host but to read its key.
 package targethost
 
 import (

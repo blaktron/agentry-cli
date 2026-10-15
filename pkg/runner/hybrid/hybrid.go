@@ -1,12 +1,11 @@
 // Package hybrid looks up a run's risky inputs on CrowdStrike's Hybrid
-// Analysis by SHA-256 alone (plan file-handling.md §7, D6, D17;
-// agentry-cli#564). The CLI process asks, never a container (invariant 2),
-// and nothing of a file but its hash leaves the machine (invariant 5): the
+// Analysis by SHA-256 alone. The CLI process asks, never a container,
+// and nothing of a file but its hash leaves the machine: the
 // one call is GET /api/v2/overview/{sha256}, and no submission route is
-// ever called. What the service answers is reduced to a fixed vocabulary
-// (D14): malicious refuses the run, suspicious is noted with its threat
+// ever called. What the service answers is reduced to a fixed vocabulary:
+// malicious refuses the run, suspicious is noted with its threat
 // score, anything else and an unseen hash are clean. A lookup that cannot
-// answer is recorded and does not stop the run (D13).
+// answer is recorded and does not stop the run.
 package hybrid
 
 import (
@@ -31,7 +30,7 @@ const userAgent = "Falcon Sandbox"
 // The bounds on one lookup.
 const (
 	// MaxWait is the most a run waits in all on rate limits before the
-	// rest of its lookups are not checked, quota (D13).
+	// rest of its lookups are not checked, quota.
 	MaxWait = time.Minute
 	// requestTimeout bounds one request; maxAnswer one answer's body.
 	requestTimeout = 20 * time.Second
@@ -45,7 +44,7 @@ const (
 // Outcome is what the lookup made of one hash, in the receipt's words.
 type Outcome string
 
-// The outcomes (plan §3 invariant 7).
+// The outcomes.
 const (
 	Clean      Outcome = "clean"
 	Noted      Outcome = "noted"
@@ -116,7 +115,7 @@ func (r Result) score() string {
 }
 
 // Client asks Hybrid Analysis with one key. A nil Client, or one with no
-// key, asks nothing and answers every hash not checked, no key (D8).
+// key, asks nothing and answers every hash not checked, no key.
 type Client struct {
 	Key  string
 	Base string
@@ -263,7 +262,7 @@ func (c *Client) wait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// verdict reduces an overview to the outcome D14 gives its verdict. Only
+// verdict reduces an overview to the outcome its verdict gives. Only
 // the verdict and the threat score are read; nothing of the answer's text
 // goes further.
 func verdict(body []byte) (Result, error) {

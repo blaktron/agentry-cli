@@ -14,7 +14,7 @@ import (
 )
 
 // DocumentsFile is the list of what a run was given, at the root of what it
-// reads (the Knowledge Creator's inputs; a hosted run's, agentry-cli#321).
+// reads (the Knowledge Creator's inputs; a hosted run's).
 const DocumentsFile = "documents.json"
 
 // Document is one line of documents.json.
@@ -37,7 +37,7 @@ type Document struct {
 
 // archiveNotRead is why a built-in's build lists an archive as unread: it
 // keeps each document as given, and an archive's members never leave the
-// decode container (agentry-cli#619).
+// decode container.
 const archiveNotRead = "an archive: this build reads files as given, not what an archive holds"
 
 // Stage lays out what a run reads from this decode, in dst (a directory the
@@ -47,7 +47,7 @@ const archiveNotRead = "an archive: this build reads files as given, not what an
 // Two documents that would be read as one file are refused rather than one
 // hiding the other. Stage is the built-ins' layout (the Knowledge Creator,
 // the Voice Writer), which keep each document as given: an archive is
-// listed as unread and its members are left out (agentry-cli#619).
+// listed as unread and its members are left out.
 func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []string, error) {
 	claimed := map[string]string{}
 	claim := func(name, by string) error {
@@ -162,7 +162,7 @@ func (r *Result) CopyText(path, dst string) error {
 }
 
 // CopyMarkdown copies the Markdown view of the file read as text at path
-// (HTML, converted by pandoc; agentry-cli#631) to dst.
+// (HTML, converted by pandoc) to dst.
 func (r *Result) CopyMarkdown(path, dst string) error {
 	for _, f := range r.Report.Files {
 		if f.Path == path && f.Markdown != "" {
@@ -181,7 +181,7 @@ func copyOut(root, rel, dst string, limit int64) error {
 	}
 	defer func() { _ = r.Close() }()
 	name := filepath.FromSlash(rel)
-	// Every part of the path, not only the last (agentry-cli#421).
+	// Every part of the path, not only the last.
 	fi, err := plainpath.File(r, rel)
 	if err != nil || fi.Size() > limit {
 		return fmt.Errorf("%s is not a regular file within %d bytes", rel, limit)

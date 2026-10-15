@@ -1,8 +1,8 @@
-"""Record what a pip install put in the Unsafe Mode venv (agentry-cli#490).
+"""Record what a pip install put in the Unsafe Mode venv.
 
 Reads the JSON report `pip install --report` wrote and prints one line per
 installed distribution, "pip <name>==<version> sha256:<hash of the archive
-pip downloaded>", for the receipt (plan unsafe-mode.md invariant 8). A
+pip downloaded>", for the receipt. A
 distribution whose report carries no hash is printed without one.
 """
 

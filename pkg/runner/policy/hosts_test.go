@@ -8,7 +8,7 @@ import (
 
 // TestTheHostlinkImageIsPinnedByDigest holds the host link's base to the
 // files image's rule: the default is pinned and resolved at use, and an
-// operator's value must be pinned too (agentry-cli#861).
+// operator's value must be pinned too.
 func TestTheHostlinkImageIsPinnedByDigest(t *testing.T) {
 	if !PinnedByDigest(DefaultHostlinkImage) {
 		t.Fatalf("DefaultHostlinkImage %q is not pinned by digest", DefaultHostlinkImage)

@@ -7,22 +7,20 @@ import (
 	"slices"
 )
 
-// Reason says why a failed run stopped, in fixed words (agentry-cli#628):
+// Reason says why a failed run stopped, in fixed words:
 // a code from a closed list, the release's own declared names it concerns
 // (the commands, MCP servers or secrets its manifest declares), and for
 // some codes a detail from that code's own closed list. It carries no text
 // the run, the model, the package's author or the person wrote, and no
 // path, so a driver that may keep nothing else (a hosted run's host keeps
-// no log, DEV-130) can keep it and still say why. Stage says where a run
+// no log) can keep it and still say why. Stage says where a run
 // stopped; Reason, when the step that decided it knows, says why.
 type Reason struct {
 	Code   ReasonCode `json:"code"`
 	Names  []string   `json:"names,omitempty"`
 	Detail string     `json:"detail,omitempty"`
-	// Count is the count a refusal over a cap names, in typed fields
-	// (agentry-enterprise#530; plan input-sources.md D7): only on
-	// input-refused with source-cap, or not-reviewed for a source's
-	// Markdown.
+	// Count is the count a refusal over a cap names, in typed fields: only on
+	// input-refused with source-cap, or not-reviewed for a source's Markdown.
 	Count *ReasonCount `json:"count,omitempty"`
 }
 
@@ -139,53 +137,48 @@ const (
 	// profile or the policy's secret source (prepare). Names: the
 	// secrets' names, never a value.
 	ReasonSecretMissing ReasonCode = "secret-missing"
-	// ReasonInputRefused: an input given to the run was refused before
-	// the agent started (prepare). Detail: why. Names: an input source's
-	// question id, for a source's refusal (agentry-enterprise#530); never
-	// a file name: those are the person's. Count: a cap's, for source-cap
-	// and a source's not-reviewed.
+	// ReasonInputRefused: an input given to the run was refused before the
+	// agent started (prepare). Detail: why. Names: an input source's question
+	// id, for a source's refusal; never a file name: those are the person's.
+	// Count: a cap's, for source-cap and a source's not-reviewed.
 	ReasonInputRefused ReasonCode = "input-refused"
 	// ReasonInputsNotDecoded: the decode step could not run (prepare), a
 	// fault of this machine and not of the inputs. Detail: which part.
 	ReasonInputsNotDecoded ReasonCode = "inputs-not-decoded"
 	// ReasonAgentBlocked: the agent ended the run as blocked with the
-	// runner's end_blocked tool (agent; agentry-cli#629): the task could
+	// runner's end_blocked tool (agent): the task could
 	// not be done with what the run had. Its own sentence is in the error
 	// and the receipts, never here: the model wrote it.
 	ReasonAgentBlocked ReasonCode = "agent-blocked"
 	// ReasonRunnerBlocked: the runner ended the run as blocked on its own
-	// evidence (agent; agentry-cli#629): the runner's tools failed the
-	// agent. Detail: what the evidence was.
+	// evidence (agent): the runner's tools failed the agent. Detail: what the
+	// evidence was.
 	ReasonRunnerBlocked ReasonCode = "runner-blocked"
-	// ReasonSignInMissing: the run spends a model sign-in and was given
-	// none, or none it could use (prepare; agentry-cli#738). Never on a
-	// hosted run, which never spends one.
+	// ReasonSignInMissing: the run spends a model sign-in and was given none,
+	// or none it could use (prepare). Never on a hosted run, which never spends
+	// one.
 	ReasonSignInMissing ReasonCode = "signin-missing"
 	// ReasonPlanLimit: the person's plan refused the model's calls for its
-	// usage limit (agent; plan model-sign-ins.md D12, invariant I9). The
-	// run is not retried; the vendor's words, and its reset time when it
-	// gave one, are in the error and the receipts.
+	// usage limit (agent). The run is not retried; the vendor's words, and its
+	// reset time when it gave one, are in the error and the receipts.
 	ReasonPlanLimit ReasonCode = "plan-limit"
-	// ReasonOrgPolicy: a policy of the person's organization or enterprise
-	// at the model vendor refused the run (agent; plan model-sign-ins.md
-	// D29, agentry-cli#741). Detail: which policy (OrgPolicy*). The vendor's
-	// words are in the error and the receipts.
+	// ReasonOrgPolicy: a policy of the person's organization or enterprise at
+	// the model vendor refused the run (agent). Detail: which policy
+	// (OrgPolicy*). The vendor's words are in the error and the receipts.
 	ReasonOrgPolicy ReasonCode = "org-policy"
 	// ReasonOutOfCredits: the model's provider refused the model's calls
 	// because the account that pays has no credits left, an HTTP 402 or its
-	// words for one (agent; plan model-sign-ins.md §4.6, agentry-cli#742).
-	// The run is not retried; the provider's words are in the error and the
-	// receipts.
+	// words for one (agent). The run is not retried; the provider's words are
+	// in the error and the receipts.
 	ReasonOutOfCredits ReasonCode = "out-of-credits"
 	// ReasonAnswerInReasoning: the release's output is schema-checked and
 	// the model ended the run on its reasoning, with no final message after
-	// it (output; exit 17; agentry-cli#825). Reasoning is never taken as
+	// it (output; exit 17). Reasoning is never taken as
 	// the result; the events receipt keeps it.
 	ReasonAnswerInReasoning ReasonCode = "answer-in-reasoning"
 	// ReasonHostRefused: a target host the person named was not reached
-	// (prepare or infra; plan runtime-hosts.md §8, agentry-cli#861). Names:
-	// the host questions' ids; Detail: why (Host*). Never the host's name
-	// or address: those are the person's.
+	// (prepare or infra). Names: the host questions' ids; Detail: why (Host*).
+	// Never the host's name or address: those are the person's.
 	ReasonHostRefused ReasonCode = "host-refused"
 )
 
@@ -206,7 +199,7 @@ const (
 	HostCredential = "host-credential"
 	// HostUnreachable: the host did not answer on its port.
 	HostUnreachable = "host-unreachable"
-	// HostHosted: a hosted run never reaches a target host (D11).
+	// HostHosted: a hosted run never reaches a target host.
 	HostHosted = "hosted"
 )
 
@@ -253,16 +246,16 @@ const (
 	// InputUnreadable: an input could not be read or staged.
 	InputUnreadable = "unreadable"
 	// InputFlagged: AI Review flagged an input's text as trying to steer
-	// the agent (a hosted run's review, agentry-cli#321). The review ran,
-	// so a hosted run settles AI Review's credit alone (DEV-150).
+	// the agent (a hosted run's review). The review ran,
+	// so a hosted run settles AI Review's credit alone.
 	InputFlagged = "ai-review"
 	// InputNotReviewed: AI Review could not read an input's text (the
 	// registry did not answer, refused the call, or the run stopped
 	// first), and no text it has not read reaches the agent: the
 	// platform's fault, refunded.
 	InputNotReviewed = "not-reviewed"
-	// InputSourceCap: an input source is over its cap (plan
-	// input-sources.md D7): refused with its count, never staged in part.
+	// InputSourceCap: an input source is over its cap: refused with its count,
+	// never staged in part.
 	InputSourceCap = "source-cap"
 	// InputSourceFetch: an input source could not be fetched: the host
 	// refused it, has no such repository or ref, or could not be reached.
@@ -277,9 +270,9 @@ const (
 	DecodeRun = "run"
 )
 
-// The details of ReasonRunnerBlocked: the runner's evidence, each a fault
-// of the run's machinery rather than of the agent (plan
-// quickagents-that-run.md D5: such a run is refunded hosted).
+// The details of ReasonRunnerBlocked: the runner's evidence, each a fault of
+// the run's machinery rather than of the agent (such a run is refunded when
+// hosted).
 const (
 	// BlockedToolsUnrecorded: the runner's tools could not write the run's
 	// output folder at all, not even their own ledger, so neither an input
@@ -295,7 +288,7 @@ const (
 
 // MaxReasonNames is how many names a reason keeps; the error's text, where
 // it is kept, names the rest. Exported, with ReasonCodes, for a driver that
-// holds a reason to the same list (agentry-enterprise's hostapi.ReceiptOf).
+// holds a reason to the same list.
 const MaxReasonNames = 8
 
 // nameKind is the grammar a code's names are held to.

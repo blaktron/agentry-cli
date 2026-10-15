@@ -82,10 +82,10 @@ func TestPlaceholdersDoNotCollideWithGatewayTemplates(t *testing.T) {
 	}
 }
 
-// TestExecImageTagMovesWithTheCatalog (agentry-cli#100): the exec image
-// is named by the runner image, the commands, the catalogued packages and
-// the mirror, so a changed catalog entry or mirror is a new image; the
-// same inputs in another order name the same image.
+// TestExecImageTagMovesWithTheCatalog: the exec image is named by the runner
+// image, the commands, the catalogued packages and the mirror, so a changed
+// catalog entry or mirror is a new image; the same inputs in another order name
+// the same image.
 func TestExecImageTagMovesWithTheCatalog(t *testing.T) {
 	a := ExecImageTag("agentry-runner:v1", []string{"git", "jq"}, []string{"git", "jq"}, "")
 	if a == "" || !strings.HasPrefix(a, "agentry-runner-exec:v1-") {
@@ -106,10 +106,10 @@ func TestExecImageTagMovesWithTheCatalog(t *testing.T) {
 }
 
 // An Unsafe Mode exec image's tag covers the base (pinned by digest), the
-// runner image, the sorted commands, the resolved packages and the extras
-// (plan unsafe-mode.md invariant 9), so a re-pin or a changed index is a
-// new image; it stays in the runner's -exec repository, where the
-// desktop's image removal finds it, and never equals a catalogue tag.
+// runner image, the sorted commands, the resolved packages and the extras, so a
+// re-pin or a changed index is a new image; it stays in the runner's -exec
+// repository, where the desktop's image removal finds it, and never equals a
+// catalogue tag.
 func TestUnsafeExecImageTagCoversWhatBuildsIt(t *testing.T) {
 	base := "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.2@sha256:87fa4ae406a9621cef3a4cffcdccf2a512da03141ca21727ce663ca715a191da"
 	u := UnsafeExecSpec{Base: base, Extras: []UnsafeExtra{{Command: "decompyle3", Kind: "pip", Spec: "decompyle3==3.9.3"}}}

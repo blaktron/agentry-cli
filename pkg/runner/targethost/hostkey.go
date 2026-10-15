@@ -20,14 +20,13 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 )
 
-// Host keys (plan runtime-hosts.md §6, D7). The key a target host offers
-// is read at run start and looked up under the host as the person named
-// it: in their own ~/.ssh/known_hosts, which is read and never written,
-// then in the runner home's own file. A match is trusted, and the host
-// link holds ssh to that one key. A key that differs from the one on file
-// refuses the run, whatever the mode, naming both. A key on no file is
-// shown to the person, and trusted only by them, at a terminal, then kept
-// in the runner's file; a run with no one to ask refuses it.
+// Host keys. The key a target host offers is read at run start and looked up
+// under the host as the person named it: in their own ~/.ssh/known_hosts, which
+// is read and never written, then in the runner home's own file. A match is
+// trusted, and the host link holds ssh to that one key. A key that differs from
+// the one on file refuses the run, whatever the mode, naming both. A key on no
+// file is shown to the person, and trusted only by them, at a terminal, then
+// kept in the runner's file; a run with no one to ask refuses it.
 
 // Where a host key's trust came from, as the receipt says it.
 const (
@@ -138,11 +137,11 @@ type Asker interface {
 }
 
 // CheckHostKey reads the key the host offers at addr and decides whether
-// the run may trust it (plan D7).
+// the run may trust it.
 func CheckHostKey(ctx context.Context, id string, a Answer, addr netip.Addr, files KnownHostsFiles, ask Asker, say func(string)) (HostKey, error) {
 	// The callback takes host:port and normalizes it itself, dropping a
 	// port of 22; given KnownHostsName, already normalized, it could not
-	// split a port-22 name and refused every such host (agentry-cli#898).
+	// split a port-22 name and refused every such host.
 	// name is what a line written to the runner's file carries.
 	name := a.KnownHostsName()
 	hostPort := net.JoinHostPort(a.Host, strconv.Itoa(a.Port))

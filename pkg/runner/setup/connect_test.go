@@ -27,7 +27,7 @@ func (f *fakeConnect) offer() ConnectOffer {
 // Choosing connect for each provider connects the account and writes a
 // policy whose key is the provider's keychain entry (where the connect kept
 // it), the variable docker-agent reads, no base URL, the provider's host
-// the only egress, and the model id the person typed (D33): never a value.
+// the only egress, and the model id the person typed: never a value.
 func TestSetupConnectsEachProvidersAccount(t *testing.T) {
 	t.Setenv(modelkey.EnvNoKeyring, "")
 	cases := []struct{ provider, model, env, allow string }{
@@ -118,7 +118,7 @@ func TestSetupPastesAKeyForAConnectProvider(t *testing.T) {
 	}
 }
 
-// The big catalogues are not listed (D33).
+// The big catalogues are not listed.
 func TestTheConnectProvidersModelsAreNotListed(t *testing.T) {
 	for _, p := range []string{"openrouter", "poe", "huggingface"} {
 		if _, _, err := modelsEndpoint(p, ""); err == nil || !strings.Contains(err.Error(), "type the model id") {

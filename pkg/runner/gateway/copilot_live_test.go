@@ -18,14 +18,13 @@ import (
 )
 
 // TestLiveCopilotImage builds the Copilot CLI image this build pins, from
-// GitHub's real release (plan model-sign-ins.md D27; agentry-cli#741), and
-// drives the real Copilot CLI in it with the runner's own driver, in the
-// container the plan compiles, hardened as the engine runs an agent (read
-// only root, every capability dropped, no new privileges, the home a
-// noexec tmpfs) and on no network. With no network and no account, the
-// session cannot be created: the test holds that Copilot CLI answered
-// connect, asked the driver for the token through its callback, and then
-// failed to reach GitHub to check it, which only a token handed over can
+// GitHub's real release, and drives the real Copilot CLI in it with the
+// runner's own driver, in the container the plan compiles, hardened as the
+// engine runs an agent (read only root, every capability dropped, no new
+// privileges, the home a noexec tmpfs) and on no network. With no network and
+// no account, the session cannot be created: the test holds that Copilot CLI
+// answered connect, asked the driver for the token through its callback, and
+// then failed to reach GitHub to check it, which only a token handed over can
 // lead to. It downloads about 120 MB, so it runs only when asked:
 // AGENTRY_LIVE_COPILOT=1 on a host with docker.
 func TestLiveCopilotImage(t *testing.T) {

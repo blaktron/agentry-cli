@@ -17,12 +17,11 @@ import (
 // every engine (SHA-256 275a021b…).
 const eicarTest = `X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*`
 
-// TestHybridAnalysisForReal decodes with the real decoders and looks the
-// risky files up on Hybrid Analysis with a real key (agentry-cli#564's
-// acceptance): EICAR's hash refuses, a clean PDF passes, a .txt is never
-// asked about. It decodes with no ClamAV signatures, so EICAR reaches the
-// lookup instead of being found first. It runs only with
-// AGENTRY_HYBRID_E2E=1 and a key in $HYBRID_API_KEY.
+// TestHybridAnalysisForReal decodes with the real decoders and looks the risky
+// files up on Hybrid Analysis with a real key: EICAR's hash refuses, a clean
+// PDF passes, a .txt is never asked about. It decodes with no ClamAV
+// signatures, so EICAR reaches the lookup instead of being found first. It runs
+// only with AGENTRY_HYBRID_E2E=1 and a key in $HYBRID_API_KEY.
 func TestHybridAnalysisForReal(t *testing.T) {
 	if os.Getenv("AGENTRY_HYBRID_E2E") != "1" || os.Getenv("HYBRID_API_KEY") == "" {
 		t.Skip("set AGENTRY_HYBRID_E2E=1 and HYBRID_API_KEY to look up on Hybrid Analysis for real")

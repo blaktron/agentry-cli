@@ -197,12 +197,11 @@ func TestProbePolicyPathWinsOverAWellKnownLocation(t *testing.T) {
 	}
 }
 
-// The Claude desktop app keeps the builds it downloaded side by side
-// under ~/.claude/remote/ccd-cli/<version>; the newest is the one it
-// runs, so it is the one reported — by version, not by name order ("2.1.9"
-// is older than "2.1.10"), and reading "2.1.275" as the file "2.1" with
-// extension ".275" would make every build the same version (the live
-// check on this workstation caught exactly that: 2.1.271 chosen over
+// The Claude desktop app keeps the builds it downloaded side by side under
+// ~/.claude/remote/ccd-cli/<version>; the newest is the one it runs, so it is
+// the one reported — by version, not by name order ("2.1.9" is older than
+// "2.1.10"), and reading "2.1.275" as the file "2.1" with extension ".275"
+// would make every build the same version (2.1.271 would be chosen over
 // 2.1.275).
 func TestProbePicksTheNewestDesktopBuild(t *testing.T) {
 	noHarness(t)
@@ -423,13 +422,12 @@ func TestProbeLeavesThePolicyFileAlone(t *testing.T) {
 	}
 }
 
-// The template rule, pinned where it is applied (agentry-cli#176): "~"
-// is the home directory only as a whole first element, so "~user/x" is
-// somebody else's convention and is left alone; "${VAR}" with braces is
-// the one variable form, a bare "$VAR" is a literal, an unset or empty
-// variable skips the template; and a "$" inside the home path is a
-// character in a path, not an expansion, because variables are expanded
-// before the home directory is substituted.
+// The template rule, pinned where it is applied: "~" is the home directory only
+// as a whole first element, so "~user/x" is somebody else's convention and is
+// left alone; "${VAR}" with braces is the one variable form, a bare "$VAR" is a
+// literal, an unset or empty variable skips the template; and a "$" inside the
+// home path is a character in a path, not an expansion, because variables are
+// expanded before the home directory is substituted.
 func TestExpandFollowsTheTemplateRule(t *testing.T) {
 	home := isolateHome(t)
 	t.Setenv("HP_TEST_DIR", "roaming")

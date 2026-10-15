@@ -1,9 +1,8 @@
 // Fake is the test double for Client: it records every call in order and
 // lets tests script failures and the agent container's behavior. The
 // engine's whole lifecycle — ordering, teardown-on-every-path, env/mount
-// resolution — is asserted against this recorder (RUNNER-DEVIATIONS DR-7:
-// no docker on the framework author's machine, so this coverage is the
-// execute path's proof until the acceptance scripts run on a real engine).
+// resolution — is asserted against this recorder, so the
+// execute path is proven without a docker daemon.
 package dockerx
 
 import (

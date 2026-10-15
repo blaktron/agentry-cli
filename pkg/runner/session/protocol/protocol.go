@@ -1,10 +1,9 @@
-// Package protocol is the session protocol (hosted sessions plan D4,
-// agentry-cli#477, DR-51): an interactive session driven by a program
-// rather than a person, over pipes and with no terminal. Commands arrive as
-// JSON lines on one stream, the session's events leave as JSON lines on
-// another, and the session itself is the unchanged session.Session every
-// other surface drives — the TUI, the desktop, agentry-mcp — so the
-// protocol can say nothing a chat could not.
+// Package protocol is the session protocol: an interactive session driven by a
+// program rather than a person, over pipes and with no terminal. Commands
+// arrive as JSON lines on one stream, the session's events leave as JSON lines
+// on another, and the session itself is the unchanged session.Session every
+// other surface drives — the TUI, the desktop, agentry-mcp — so the protocol
+// can say nothing a chat could not.
 //
 // The commands, one JSON object per line, each exactly one of:
 //

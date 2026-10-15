@@ -9,7 +9,7 @@ import (
 
 // Concurrent first runs on one fresh runner home (a CLI run and a desktop
 // run started together) each get the parsed default and one digest: no
-// caller reads the file half-written (agentry-cli#299).
+// caller reads the file half-written.
 func TestEnsureDefaultConcurrentFirstRuns(t *testing.T) {
 	for round := range 100 {
 		path := filepath.Join(t.TempDir(), "policy.yaml")

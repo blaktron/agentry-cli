@@ -93,8 +93,8 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
-// The runner weighs the gate's rating where the registry serves it
-// (agentry-cli#501): a High below CVSS 8.5 is medium and runs, a High from
+// The runner weighs the gate's rating where the registry serves it:
+// a High below CVSS 8.5 is medium and runs, a High from
 // 8.5 and a Critical refuse. A registry that serves no rating is weighed
 // by the advisory's own severity, as before.
 func TestVulnRefusalReadsTheGatesRating(t *testing.T) {
@@ -180,7 +180,7 @@ func TestCheckVulnerabilitiesReadsGateSeverity(t *testing.T) {
 	}
 }
 
-// A remote server (agentry-cli#663) is never looked up: it is its vendor's
+// A remote server is never looked up: it is its vendor's
 // running service, with no package version, and the registry records none
 // (S7/remote-server). It never refuses a run.
 func TestRemoteServerIsNotLookedUp(t *testing.T) {

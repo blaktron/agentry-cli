@@ -1,9 +1,9 @@
-// Package spec defines the run plan — the deterministic artifact the
-// capability compiler produces at install time and the engine executes
-// (RUNNER-PLAN §R4, RQ5). A plan is pure data: no secret values, no
-// machine-specific paths (run-scoped locations appear as placeholders,
-// §R6), no timestamps. Same package digest + same policy ⇒ byte-identical
-// plan.json, which is what makes the plan hash in every receipt meaningful.
+// Package spec defines the run plan — the deterministic artifact the capability
+// compiler produces at install time and the engine executes. A plan is pure
+// data: no secret values, no machine-specific paths (run-scoped locations
+// appear as placeholders), no timestamps. Same package digest + same policy ⇒
+// byte-identical plan.json, which is what makes the plan hash in every receipt
+// meaningful.
 package spec
 
 import (
@@ -21,18 +21,18 @@ import (
 // with a different version (recompile instead of guessing).
 // PlanVersion changes whenever plan.json's shape changes; installed plans
 // with another version are recompiled. "2": run modes (Modes/Mode replace
-// the v1 kind) and the interactive Session block (DR-15).
+// the v1 kind) and the interactive Session block.
 const PlanVersion = "2"
 
 // Run-scoped placeholders. Plans and the generated gateway files must not
 // bake in per-run host paths or secrets, or they would stop being
 // deterministic and start being sensitive; the engine substitutes these at
-// execute time (§R6). The @@…@@ shape is chosen not to collide with the
+// execute time. The @@…@@ shape is chosen not to collide with the
 // gateway's own {{server.key}} templating or docker-agent's ${env.VAR}.
 const (
 	// PHWorkspace is the host path of the per-run writable workspace copy.
 	PHWorkspace = "@@RUN_WORKSPACE@@"
-	// PHOut is the host path of the run's output folder (RQ3).
+	// PHOut is the host path of the run's output folder.
 	PHOut = "@@RUN_OUT@@"
 	// PHCfg is the host path of the per-run rendered gateway config dir.
 	PHCfg = "@@RUN_CFG@@"
@@ -42,72 +42,69 @@ const (
 	PHRunID = "@@RUN_ID@@"
 	// PHSecretsAbsent is the list of optional secrets this run was not
 	// given, by name ("none" when it was given them all), for the System
-	// Prompt (DR-70): only the run knows which it holds, and the plan stays
+	// Prompt: only the run knows which it holds, and the plan stays
 	// the same bytes whichever they are. Unlike the others it stands for
 	// text, never a path, an id or an address.
 	PHSecretsAbsent = "@@RUN_SECRETS_ABSENT@@"
 	// PHRunMode is the run's mode, "autonomous" or "interactive", for the
-	// System Prompt (agentry-cli#717): a release's two plans carry one
-	// instruction (DR-15), so the text guides both modes and only the run
-	// says which one it is. Text, like PHSecretsAbsent.
+	// System Prompt: a release's two plans carry one instruction, so the text
+	// guides both modes and only the run says which one it is. Text, like
+	// PHSecretsAbsent.
 	PHRunMode = "@@RUN_MODE@@"
-	// PHInputs is the host path of the per-run read-only inputs dir
-	// (RUNNER-PLAN-2 §P4) — operator-provided files, mounted :ro into the
-	// tools container, empty when the run got no --file.
+	// PHInputs is the host path of the per-run read-only inputs dir —
+	// operator-provided files, mounted :ro into the tools container, empty when
+	// the run got no --file.
 	PHInputs = "@@RUN_INPUTS@@"
-	// PHInputsText is the host path of the per-run read-only decoded
-	// inputs dir (plan file-handling.md §5, agentry-cli#560): the decode
-	// step's index and texts, mounted :ro into the tools container, empty
-	// when the run's inputs were not decoded. Always compiled in, like the
-	// inputs.
+	// PHInputsText is the host path of the per-run read-only decoded inputs
+	// dir: the decode step's index and texts, mounted :ro into the tools
+	// container, empty when the run's inputs were not decoded. Always compiled
+	// in, like the inputs.
 	PHInputsText = "@@RUN_INPUTS_TEXT@@"
-	// PHKnowledge is the host path of the per-run read-only knowledge dir
-	// (plan knowledge.md §4.5): one subdirectory per attached pack,
-	// mounted :ro into the tools container, empty when the run got no
-	// --knowledge. Always compiled in, so attaching a pack never moves the
-	// plan (DR-38).
+	// PHKnowledge is the host path of the per-run read-only knowledge dir: one
+	// subdirectory per attached pack, mounted :ro into the tools container,
+	// empty when the run got no --knowledge. Always compiled in, so attaching a
+	// pack never moves the plan.
 	PHKnowledge = "@@RUN_KNOWLEDGE@@"
-	// PHServers is the host path of the signature's installed MCP-server
-	// store (RUNNER-PLAN-3): profile/servers/, one subdirectory per
-	// declared server, mounted :ro into that server's runtime container.
+	// PHServers is the host path of the signature's installed MCP-server store:
+	// profile/servers/, one subdirectory per declared server, mounted :ro into
+	// that server's runtime container.
 	PHServers = "@@RUN_SERVERS@@"
-	// PHSession is the per-run named volume an interactive session's
-	// harness store lives in (DR-15; a volume since agentry-cli#90);
-	// mounted only by interactive plans.
+	// PHSession is the per-run named volume an interactive session's harness
+	// store lives in; mounted only by interactive plans.
 	PHSession = "@@RUN_SESSION@@"
-	// PHHostGatewayURL / PHHostProxyURL are the published 127.0.0.1
-	// addresses a host-run harness reaches the gateway and the proxy at
-	// (plan runner-m-r4-adapters §5); known only once the run's containers
-	// are up, so they are rendered into harness files and argv per run.
+	// PHHostGatewayURL / PHHostProxyURL are the published 127.0.0.1 addresses a
+	// host-run harness reaches the gateway and the proxy at; known only once
+	// the run's containers are up, so they are rendered into harness files and
+	// argv per run.
 	PHHostGatewayURL = "@@HOST_GATEWAY_URL@@"
 	PHHostProxyURL   = "@@HOST_PROXY_URL@@"
-	// PHModelSignIn is the host path of what a model sign-in hands the
-	// agent container (plan model-sign-ins.md §4.2, agentry-cli#738): the
-	// run's own folder holding the one token file the engine writes and
-	// rewrites before it expires (ModelSignInToken), or the Claude Code
-	// config directory the person's sign-in lives in (ModelSignInConfigDir).
+	// PHModelSignIn is the host path of what a model sign-in hands the agent
+	// container: the run's own folder holding the one token file the engine
+	// writes and rewrites before it expires (ModelSignInToken), or the Claude
+	// Code config directory the person's sign-in lives in
+	// (ModelSignInConfigDir).
 	PHModelSignIn = "@@RUN_MODEL_SIGNIN@@"
-	// PHHostLinkUser is the user the host link runs as (agentry-cli#861):
+	// PHHostLinkUser is the user the host link runs as:
 	// the invoking uid:gid, as the files image runs, or "" where the
 	// machine has none (Windows), which leaves the image's own. The host
-	// link's passwd file names it (ssh refuses a uid it has no entry for,
-	// DR-91), and its credential files stay the person's own, 0600.
+	// link's passwd file names it (ssh refuses a uid it has no entry for),
+	// and its credential files stay the person's own, 0600.
 	PHHostLinkUser = "@@RUN_HOSTLINK_USER@@"
-	// PHBrowserUser is the user the browser server runs as (agentry-cli#915):
+	// PHBrowserUser is the user the browser server runs as:
 	// the invoking uid:gid, as the host link runs, so its output folder and
 	// its secrets file stay the person's own, 0700 and 0600; the image's
 	// own user where the machine has none (Windows).
 	PHBrowserUser = "@@RUN_BROWSER_USER@@"
-	// PHBrowseProxy is the browse proxy's run-unique container name
-	// (agentry-cli#915): the browser server's one allowHosts entry and its
+	// PHBrowseProxy is the browse proxy's run-unique container name:
+	// the browser server's one allowHosts entry and its
 	// --proxy-server, known only to the run.
 	PHBrowseProxy = "@@RUN_BROWSE_PROXY@@"
 )
 
-// PHTargetHost is a target host's relay target, address:port, by its
-// question's id (agentry-cli#861): the address the person's machine
-// resolved the answer to, which only the run knows, so the plan carries
-// the placeholder and its hash is the release's, not the run's.
+// PHTargetHost is a target host's relay target, address:port, by its question's
+// id: the address the person's machine resolved the answer to, which only the
+// run knows, so the plan carries the placeholder and its hash is the release's,
+// not the run's.
 func PHTargetHost(id string) string { return "@@RUN_HOST_" + id + "@@" }
 
 // The two ways a model sign-in reaches the agent container
@@ -116,18 +113,17 @@ const (
 	// ModelSignInToken: a short-lived access token in one file, in a
 	// folder of the run's own mounted read-only at ModelSignInMount, so a
 	// token rewritten by a rename is seen (a single-file bind would keep
-	// the old inode). No refresh token ever enters the run (invariant I3).
+	// the old inode). No refresh token ever enters the run.
 	ModelSignInToken = "token-file"
 	// ModelSignInConfigDir: the harness's own config directory, which only
-	// the harness writes (Claude Code, plan D20), mounted read-write. The
-	// one exception to "no refresh token in a run" (I3).
+	// the harness writes (Claude Code), mounted read-write. The
+	// one exception to "no refresh token in a run".
 	ModelSignInConfigDir = "config-dir"
-	// ModelSignInCallback: the harness asks the session's driver for a
-	// token over its own protocol, at the session's start and before the
-	// token expires (Copilot CLI's token callback, plan model-sign-ins.md
-	// D25). Nothing is mounted and nothing is in the environment: the
-	// access token passes the harness's stdio alone, and no refresh token
-	// enters the run (I3).
+	// ModelSignInCallback: the harness asks the session's driver for a token
+	// over its own protocol, at the session's start and before the token
+	// expires (Copilot CLI's token callback). Nothing is mounted and nothing is
+	// in the environment: the access token passes the harness's stdio alone,
+	// and no refresh token enters the run.
 	ModelSignInCallback = "session-callback"
 	// ModelSignInMount is the container folder a token file is in, and
 	// ModelSignInTokenFile its name there.
@@ -135,11 +131,10 @@ const (
 	ModelSignInTokenFile = "token"
 )
 
-// ModelSignInSpec says how a run spends a person's plan instead of a key
-// (plan model-sign-ins.md §4.2): which kind of sign-in the plan was
-// compiled for, which the engine holds the caller's grant to at run start
-// (invariant I7), and how it reaches the agent container. The plan never
-// carries the token, the account or a host path.
+// ModelSignInSpec says how a run spends a person's plan instead of a key: which
+// kind of sign-in the plan was compiled for, which the engine holds the
+// caller's grant to at run start, and how it reaches the agent container. The
+// plan never carries the token, the account or a host path.
 type ModelSignInSpec struct {
 	// Kind is the policy's apiKeyKind, a model sign-in kind
 	// (policy.IsModelSignIn), and Provider the provider it spends.
@@ -158,8 +153,8 @@ type ModelSignInSpec struct {
 	Env string `json:"env,omitempty"`
 }
 
-// ImagePin says how the harness image that ran was pinned (invariant I8):
-// By "digest" (a published image, Value its sha256 digest), "artifact" (an
+// ImagePin says how the harness image that ran was pinned:
+// by "digest" (a published image, Value its sha256 digest), "artifact" (an
 // image built on the machine, Value the vendor artifact's sha256) or "tag"
 // (a policy naming images.harnessDockerAgent by tag alone, Value empty).
 type ImagePin struct {
@@ -167,7 +162,7 @@ type ImagePin struct {
 	Value string `json:"value,omitempty"`
 	// Note is what the pin does not prove, when the build knows: an image
 	// built from a download its vendor publishes a checksum of and does
-	// not sign is "pinned by checksum, not signed" (plan D27).
+	// not sign is "pinned by checksum, not signed".
 	Note string `json:"note,omitempty"`
 }
 
@@ -185,15 +180,13 @@ func (p *ImagePin) String() string {
 	return p.By + " " + p.Value
 }
 
-// A remote server's credential reaches its bridge as a file (plan
-// mcp-oauth-connections.md §5, agentry-cli#663): the engine writes it into
-// ConnectionsDir/<server name>/BearerFile under the run's cfg directory, and
-// the compiler mounts that folder, a folder and never the file alone so a
-// value rewritten mid-run is seen, read-only at ConnectionMount. The
+// A remote server's credential reaches its bridge as a file: the engine writes
+// it into ConnectionsDir/<server name>/BearerFile under the run's cfg
+// directory, and the compiler mounts that folder, a folder and never the file
+// alone so a value rewritten mid-run is seen, read-only at ConnectionMount. The
 // gateway never holds it: it is not in the gateway's secrets file. A package
-// server's OAuth sign-in (agentry-cli#665) uses the same folder at the same
-// mount, holding the files its oauth block declares instead of BearerFile,
-// mounted writable (DR-77).
+// server's OAuth sign-in uses the same folder at the same mount, holding the
+// files its oauth block declares instead of BearerFile, mounted writable.
 const (
 	ConnectionsDir  = "connections"
 	ConnectionMount = "/run/agentry/connection"
@@ -213,24 +206,22 @@ const MCPStorePrefix = "/opt/agentry-mcp"
 // Fixed container-side paths and network names shared by the compiler, the
 // adapters, and the tools server configuration.
 const (
-	// WorkspaceMount is where tools see the workspace (§R2 contract text).
+	// WorkspaceMount is where tools see the workspace.
 	WorkspaceMount = "/workspace"
 	// OutMount is where tools see the output folder.
 	OutMount = "/out"
-	// InputsMount is where tools see the run-inputs channel (P2 §P4).
+	// InputsMount is where tools see the run-inputs channel.
 	InputsMount = "/inputs"
-	// InputsTextMount is where tools see the decoded inputs (plan
-	// file-handling.md §5).
+	// InputsTextMount is where tools see the decoded inputs.
 	InputsTextMount = "/inputs-text"
 	// KnowledgeMount is where tools see the attached knowledge packs, each
-	// at KnowledgeMount/<name> (plan knowledge.md §4.5).
+	// at KnowledgeMount/<name>.
 	KnowledgeMount = "/knowledge"
-	// ScratchMount is the run's scratch folder in the tools container
-	// (plan scratch-and-pdf-reports.md §4, agentry-cli#729): empty at the
-	// start, a tmpfs of ToolsTmpfsBytes, gone with the container.
+	// ScratchMount is the run's scratch folder in the tools container: empty at
+	// the start, a tmpfs of ToolsTmpfsBytes, gone with the container.
 	ScratchMount = "/scratch"
 	// ToolsTmpMount is the tools container's /tmp, a tmpfs of the same
-	// size (agentry-cli#599): the place a declared command may write.
+	// size: the place a declared command may write.
 	ToolsTmpMount = "/tmp"
 	// PlanMount is where the agent container sees its harness files.
 	PlanMount = "/plan"
@@ -266,7 +257,7 @@ func ProxyURL() string {
 	return fmt.Sprintf("http://%s:%d", ProxyAlias, ProxyPort)
 }
 
-// Plan is the whole compiled run plan (§R4). Every field is exported and
+// Plan is the whole compiled run plan. Every field is exported and
 // JSON-stable; Hash() covers the canonical encoding.
 type Plan struct {
 	// PlanVersion pins the schema.
@@ -280,7 +271,7 @@ type Plan struct {
 	// Digest is the verified archive digest (sha256:…), or the computed
 	// digest of a --local package tree.
 	Digest string `json:"digest"`
-	// Source is "registry" or "local" (§R5).
+	// Source is "registry" or "local".
 	Source string `json:"source"`
 	// Modes are the run modes the release declares (manifest v2 modes; a
 	// v1 skill or prompt-agent is [autonomous]).
@@ -288,12 +279,12 @@ type Plan struct {
 	// Mode is the run mode this plan was compiled for, one of Modes. A
 	// release compiles to one plan per mode (plan/<mode>/); the plans are
 	// identical except Harness.Agent.Argv/StdinTask and Harness.Session
-	// (plan §6.10 line 1, pinned by a golden test).
+	// (pinned by a golden test).
 	Mode string `json:"mode"`
 	// Summary is the manifest one-liner (harness description field).
 	Summary string `json:"summary"`
 	// PolicySHA256 fingerprints the operator policy the plan was compiled
-	// under; a policy change invalidates installed plans (§R9).
+	// under; a policy change invalidates installed plans.
 	PolicySHA256 string `json:"policySha256"`
 	// Instruction records where the harness instruction came from.
 	Instruction InstructionSpec `json:"instruction"`
@@ -302,20 +293,20 @@ type Plan struct {
 	// Tools are the companion-server tools this agent is granted.
 	Tools []string `json:"tools"`
 	// Enforcement maps each contract line to the mechanism string that
-	// lands verbatim in the result envelope (§R8, honest-posture rule).
+	// lands verbatim in the result envelope (honest-posture rule).
 	Enforcement map[string]string `json:"enforcement"`
 	// Gateway describes the gateway container launch.
 	Gateway GatewaySpec `json:"gateway"`
 	// ExecImage is the tools container's image when the manifest declares
 	// exec: the runner image plus the operator's catalogued packages,
-	// minimized (agentry-cli#100). Nil when no exec is declared.
+	// minimized. Nil when no exec is declared.
 	ExecImage *ExecImageSpec `json:"execImage,omitempty"`
 	// HostLink is the host link's image, where the release declares a
-	// target host (agentry-cli#861): built on this machine from the pinned
+	// target host: built on this machine from the pinned
 	// base and the runner image, as the files image is.
 	HostLink *HostLinkSpec `json:"hostLink,omitempty"`
 	// Browser is the browser server's image, where the release declares
-	// capabilities.browser (agentry-cli#915): pulled by digest, never built.
+	// capabilities.browser: pulled by digest, never built.
 	Browser *BrowserSpec `json:"browser,omitempty"`
 	// Harness describes the adapter and the agent container.
 	Harness HarnessSpec `json:"harness"`
@@ -323,33 +314,32 @@ type Plan struct {
 	Proxy ProxySpec `json:"proxy"`
 	// Docker is the daemon-facing part of the policy the plan was compiled
 	// under; absent when the policy set none, so a plan compiled before the
-	// knob and one compiled without it are the same bytes (DR-23).
+	// knob and one compiled without it are the same bytes.
 	Docker *DockerSpec `json:"docker,omitempty"`
 	// Secrets lists the manifest secret env names (values are resolved at
-	// run time and never stored, §R4).
+	// run time and never stored).
 	Secrets []string `json:"secrets,omitempty"`
 	// OptionalSecrets are the declared secrets, the release's own or a
 	// declared server's, that its manifest marks optional
-	// (capabilities.optionalSecrets, DEV-212, DR-70): a run starts without
+	// (capabilities.optionalSecrets): a run starts without
 	// one it has no value for and the gateway sets it empty. Absent when the
-	// manifest marks none, so such a plan is the same bytes as before.
+	// manifest marks none, so such a plan carries no trace of the field.
 	OptionalSecrets []string `json:"optionalSecrets,omitempty"`
-	// InputView is the view the input tools serve an input in when the
-	// model asks for none, from the manifest's inputs.view (DEV-218,
-	// agentry-cli#693): "text" or "original". Absent for a release that
-	// declares neither, whose inputs keep their own defaults (DR-76), so
-	// such a plan is the same bytes as before.
+	// InputView is the view the input tools serve an input in when the model
+	// asks for none, from the manifest's inputs.view: "text" or "original".
+	// Absent for a release that declares neither, whose inputs keep their own
+	// defaults, so such a plan carries no trace of the field.
 	InputView string `json:"inputView,omitempty"`
 	// MCPServers are the declared, resolved MCP servers this plan loads
-	// alongside the tools server (RUNNER-PLAN-3). Empty for agents that
-	// declare none — such plans are byte-identical to pre-PLAN-3 output.
+	// alongside the tools server. Empty for agents that
+	// declare none, whose plans carry no trace of the field.
 	MCPServers []MCPServerSpec `json:"mcpServers,omitempty"`
 	// Budgets are the compiled defaults; run flags replace them, a
 	// built-in package's run on this computer starts from its own
 	// (localrun.Builtin.LocalBudgets), and the receipt records what
 	// actually applied.
 	Budgets Budgets `json:"budgets"`
-	// Output describes the optional structured-output convention (§R2).
+	// Output describes the optional structured-output convention.
 	Output OutputSpec `json:"output"`
 	// Files maps plan-dir-relative generated file paths to their sha256,
 	// so a tampered installed plan is detectable before execution.
@@ -365,8 +355,7 @@ type InstructionSpec struct {
 	// Prompt, then the body), for receipts.
 	SHA256 string `json:"sha256"`
 	// BodySHA256 is the hash of the package's own instruction text alone,
-	// frontmatter stripped: what ReadInstruction holds the file to
-	// (agentry-cli#520).
+	// frontmatter stripped: what ReadInstruction holds the file to.
 	BodySHA256 string `json:"bodySha256,omitempty"`
 }
 
@@ -386,36 +375,30 @@ type CapSummary struct {
 	ExecCommands []string `json:"execCommands,omitempty"`
 	// DataAccess is the declared semantic category list.
 	DataAccess []string `json:"dataAccess,omitempty"`
-	// WebTools is a built-in's grant of the web tools (web_search,
-	// web_read; plan builder-rework.md §7.3), the Drafter's and, since
-	// agentry-cli#523, the Knowledge Creator's. It is never the manifest's:
+	// WebTools is a built-in's grant of the web tools (web_search, web_read),
+	// the Drafter's and the Knowledge Creator's. It is never the manifest's:
 	// the compiler sets it for a built-in package the CLI grants it to, and
 	// refuses it to everything else.
 	WebTools bool `json:"webTools,omitempty"`
 	// RegistrySearch adds registry_search to WebTools: the Drafter's alone.
 	RegistrySearch bool `json:"registrySearch,omitempty"`
 	// WebSearchedOnly holds web_read to the addresses a web_search of the
-	// run returned: the Knowledge Creator's (agentry-cli#523).
+	// run returned: the Knowledge Creator's.
 	WebSearchedOnly bool `json:"webSearchedOnly,omitempty"`
 	// ReviewTools is a built-in's review grant (ai_review, and read_input
-	// answering only what AI Review passed; plan
-	// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503). Like
-	// WebTools it is never the manifest's: the compiler sets it for a
-	// built-in package the CLI grants it to, and refuses it to everything
-	// else.
+	// answering only what AI Review passed). Like WebTools it is never the
+	// manifest's: the compiler sets it for a built-in package the CLI grants it
+	// to, and refuses it to everything else.
 	ReviewTools bool `json:"reviewTools,omitempty"`
 	// TargetHosts are the release's target hosts, by the id of the host
-	// question that asks for each (capabilities.targetHosts; plan
-	// runtime-hosts.md §4, agentry-cli#861): the host link and its tools,
-	// reached through the gateway.
+	// question that asks for each (capabilities.targetHosts): the host link and
+	// its tools, reached through the gateway.
 	TargetHosts []string `json:"targetHosts,omitempty"`
-	// Browser is the release's browser line (capabilities.browser; plan
-	// browser-testing.md §5, agentry-cli#915): the browser server and the
-	// browse proxy that holds its scope.
+	// Browser is the release's browser line (capabilities.browser): the browser
+	// server and the browse proxy that holds its scope.
 	Browser *BrowserCap `json:"browser,omitempty"`
 	// Scratch is the runner's grant of the scratch folder (scratch_list,
-	// scratch_read, scratch_write over ScratchMount; plan
-	// scratch-and-pdf-reports.md D1-D5, agentry-cli#729) to every
+	// scratch_read, scratch_write over ScratchMount) to every
 	// release's run and session. It is never the manifest's: the compiler
 	// sets it for every package but a built-in.
 	Scratch bool `json:"scratch,omitempty"`
@@ -443,7 +426,7 @@ const (
 	// BrowserOutMount; the engine copies it into reports/browser/ when the
 	// run ends. It is a folder of its own, not reports/browser/ itself:
 	// the tools server writes reports/, and the docker filter binds no
-	// folder inside one a container writes (agentry-cli#855).
+	// folder inside one a container writes.
 	BrowserOutDir = "browserout"
 	// BrowserDir holds the server's config and, for a line that declares
 	// browser secrets, the --secrets file (0600), bound read-only into the
@@ -452,7 +435,7 @@ const (
 	// BrowserSecretsFile is that file's name in BrowserDir.
 	BrowserSecretsFile = "secrets.env"
 	// BrowserReports is where the browser's files reach the person, under
-	// the run's output folder: reports/browser/ (plan D8).
+	// the run's output folder: reports/browser/.
 	BrowserReports = "reports/browser"
 )
 
@@ -489,7 +472,7 @@ const (
 func ToolsCmd() []string { return []string{"tools", "--spec", ToolSpecMount} }
 
 // ToolsImage is the image the plan's tools server runs in: the
-// QuickAgent's exec image when it declares commands (DR-1, DR-64), the
+// QuickAgent's exec image when it declares commands, the
 // runner image otherwise. The compiler chooses it; the engine reads it here.
 func (p *Plan) ToolsImage() string {
 	if p.ExecImage != nil && p.ExecImage.Tag != "" {
@@ -498,18 +481,18 @@ func (p *Plan) ToolsImage() string {
 	return p.Proxy.Image
 }
 
-// ToolsTmpfsBytes bounds each of the tools container's two tmpfs mounts,
-// /tmp and the scratch folder (agentry-cli#599, #729). Each counts against
-// the container's memory limit, and a write past it fails with ENOSPC.
+// ToolsTmpfsBytes bounds each of the tools container's two tmpfs mounts, /tmp
+// and the scratch folder. Each counts against the container's memory limit, and
+// a write past it fails with ENOSPC.
 const ToolsTmpfsBytes = 256 << 20
 
 // Fetches reports whether the contract grants fetch: egress to named
 // hosts, or to any.
 func (c CapSummary) Fetches() bool { return c.EgressMode == "hosts" || c.EgressMode == "all" }
 
-// GatewaySpec is the gateway container launch description (§R4). Flags are
+// GatewaySpec is the gateway container launch description. Flags are
 // compiled, not chosen at run time, so tests can assert --block-network is
-// always present (§R11 invariant 1).
+// always present.
 type GatewaySpec struct {
 	// Image is the pinned gateway image from policy.
 	Image string `json:"image"`
@@ -524,22 +507,22 @@ type GatewaySpec struct {
 }
 
 // IsOptionalSecret reports whether the plan's manifest marks the declared
-// secret name optional (DR-70): a run starts without it.
+// secret name optional: a run starts without it.
 func (p *Plan) IsOptionalSecret(name string) bool {
 	return slices.Contains(p.OptionalSecrets, name)
 }
 
 // HarnessSpec names the adapter and carries the agent container spec.
 type HarnessSpec struct {
-	// Adapter is the harness adapter name (§R10).
+	// Adapter is the harness adapter name.
 	Adapter string `json:"adapter"`
 	// Model is the provider/model string for receipts.
 	Model string `json:"model"`
 	// Agent is the agent container. Empty (no image) when Host is set.
 	Agent ContainerSpec `json:"agent"`
-	// Host runs the harness as a process on this machine from the person's
-	// own installation instead of a container (plan runner-m-r4-adapters
-	// §5, decision D2). Exactly one of Agent.Image and Host is set.
+	// Host runs the harness as a process on this machine from the person's own
+	// installation instead of a container. Exactly one of Agent.Image and Host
+	// is set.
 	Host *HostProcessSpec `json:"host,omitempty"`
 	// ResultKind hints how the final result is extracted: "text" or
 	// "json" (when Output.SchemaFile is set).
@@ -547,14 +530,14 @@ type HarnessSpec struct {
 	// Session says how the harness is driven when Mode is interactive;
 	// nil for an autonomous plan.
 	Session *SessionSpec `json:"session,omitempty"`
-	// OneTurn, on an autonomous plan, says the harness is driven as one
-	// turn of this session protocol rather than read from its stdout: the
-	// engine opens the session, sends the task as its one user turn and
-	// ends it (the codex adapters on a model sign-in, whose vendor serves
-	// app-server's requests and not exec's; agentry-cli#739). Nil for a
-	// harness whose autonomous run prints its events.
+	// OneTurn, on an autonomous plan, says the harness is driven as one turn of
+	// this session protocol rather than read from its stdout: the engine opens
+	// the session, sends the task as its one user turn and ends it (the codex
+	// adapters on a model sign-in, whose vendor serves app-server's requests
+	// and not exec's). Nil for a harness whose autonomous run prints its
+	// events.
 	OneTurn *SessionSpec `json:"oneTurn,omitempty"`
-	// ImagePin is how Agent.Image is pinned (invariant I8); nil for a host
+	// ImagePin is how Agent.Image is pinned; nil for a host
 	// harness, which runs no image.
 	ImagePin *ImagePin `json:"imagePin,omitempty"`
 	// ModelSignIn is set when the run spends a person's plan through a
@@ -562,10 +545,9 @@ type HarnessSpec struct {
 	ModelSignIn *ModelSignInSpec `json:"modelSignIn,omitempty"`
 }
 
-// SessionSpec is the interactive drive of the harness (DR-15, plan §6.3):
-// the runner is the Agent Client Protocol client on the agent container's
-// attached stdio. Everything else about the container is the autonomous
-// plan's.
+// SessionSpec is the interactive drive of the harness: the runner is the Agent
+// Client Protocol client on the agent container's attached stdio. Everything
+// else about the container is the autonomous plan's.
 type SessionSpec struct {
 	// Transport is "acp-stdio".
 	Transport string `json:"transport"`
@@ -575,7 +557,7 @@ type SessionSpec struct {
 	SessionDB string `json:"sessionDb"`
 	// Mounts are added to the agent container for a session only: the
 	// writable session store under PHSession, which the engine resolves to
-	// a per-run named volume (agentry-cli#90).
+	// a per-run named volume.
 	Mounts []Mount `json:"mounts,omitempty"`
 	// StoreOwner is the user, as the harness image knows it, that must
 	// own the session store: a fresh volume is root-owned wherever it is
@@ -589,14 +571,13 @@ type SessionSpec struct {
 	// not in-harness prompting, is the boundary, and the runner answers
 	// any permission request with a denial.
 	Safety string `json:"safety"`
-	// Budgets are the session caps the engine enforces (policy §6.7,
-	// tightened by the manifest's interactive hints).
+	// Budgets are the session caps the engine enforces (tightened by the
+	// manifest's interactive hints).
 	Budgets SessionBudgets `json:"budgets"`
 	// RestartOnRenewal says the harness reads its model sign-in's access
 	// token once, when it starts: before a turn, when the runner has
 	// renewed the token since, the engine starts the harness again and the
-	// driver resumes the conversation (policy signInTokenRoute restart,
-	// plan model-sign-ins.md D10).
+	// driver resumes the conversation (policy signInTokenRoute restart).
 	RestartOnRenewal bool `json:"restartOnRenewal,omitempty"`
 }
 
@@ -614,14 +595,14 @@ type SessionBudgets struct {
 // SessionMount is the container path of the interactive session store.
 const SessionMount = "/session"
 
-// ProxySpec is the LLM egress proxy sidecar (§R4 agent topology).
+// ProxySpec is the LLM egress proxy sidecar.
 type ProxySpec struct {
 	// Image is the locally built runner image tag.
 	Image string `json:"image"`
 	// Allow is the host:port allowlist (policy model endpoints only).
 	Allow []string `json:"allow"`
 	// PlainHTTP is the subset of Allow the proxy may forward plain http
-	// to: the http model endpoints the operator chose (DR-45). Empty for
+	// to: the http model endpoints the operator's policy names. Empty for
 	// a run whose model endpoints are all https.
 	PlainHTTP []string `json:"plainHttp,omitempty"`
 }
@@ -631,13 +612,11 @@ type ProxySpec struct {
 type DockerSpec struct {
 	Runtime string `json:"runtime"`
 	// GatewayRuntime is the gateway's own runtime (policy
-	// docker.gatewayRuntime, agentry-cli#337); absent, the daemon's
-	// default.
+	// docker.gatewayRuntime); absent, the daemon's default.
 	GatewayRuntime string `json:"gatewayRuntime,omitempty"`
-	// Resolvers are the name servers the web tools resolve through
-	// (policy docker.resolvers, agentry-cli#386), and under Runtime the
-	// classes that resolve host names (agentry-cli#337); absent, docker's
-	// DNS.
+	// Resolvers are the name servers the web tools resolve through (policy
+	// docker.resolvers), and under Runtime the classes that resolve host names;
+	// absent, docker's DNS.
 	Resolvers []string `json:"resolvers,omitempty"`
 }
 
@@ -659,10 +638,10 @@ func (p *Plan) GatewayRuntime() string {
 	return p.Docker.GatewayRuntime
 }
 
-// SandboxResolvers are the name servers the run's containers under its
-// runtime that resolve host names read (agentry-cli#337): the llm-proxy,
-// the MCP server install proxy and the relays. None without a runtime, or
-// without resolvers, and those classes then stay on the daemon's default.
+// SandboxResolvers are the name servers the run's containers under its runtime
+// that resolve host names read: the llm-proxy, the MCP server install proxy and
+// the relays. None without a runtime, or without resolvers, and those classes
+// then stay on the daemon's default.
 func (p *Plan) SandboxResolvers() []string {
 	if p.Runtime() == "" {
 		return nil
@@ -694,12 +673,11 @@ type ContainerSpec struct {
 	Env  []EnvVar `json:"env,omitempty"`
 	// Mounts are bind mounts (host source may hold placeholders).
 	Mounts []Mount `json:"mounts,omitempty"`
-	// StdinTask: the engine pipes the task text into stdin (§R2).
+	// StdinTask: the engine pipes the task text into stdin.
 	StdinTask bool `json:"stdinTask,omitempty"`
-	// ReadOnlyRoot runs the container with a read-only root filesystem
-	// and Tmpfs as its only writable paths besides its mounts
-	// (agentry-cli#163). The adapter sets both, since where a harness
-	// writes is the image's to say.
+	// ReadOnlyRoot runs the container with a read-only root filesystem and
+	// Tmpfs as its only writable paths besides its mounts. The adapter sets
+	// both, since where a harness writes is the image's to say.
 	ReadOnlyRoot bool     `json:"readOnlyRoot,omitempty"`
 	Tmpfs        []string `json:"tmpfs,omitempty"`
 }
@@ -713,28 +691,27 @@ type EnvVar struct {
 	// Value is a literal (may contain PH* placeholders).
 	Value string `json:"value,omitempty"`
 	// FromHostEnv resolves from the invoking host's environment at run
-	// time (e.g. the operator's model API key, §R4).
+	// time (e.g. the operator's model API key).
 	FromHostEnv string `json:"fromHostEnv,omitempty"`
 	// FromKeyring, beside FromHostEnv, names the OS keychain account read
-	// when that variable is not set (policy apiKeySource keyring,
-	// agentry-cli#148): the account, never the value.
+	// when that variable is not set (policy apiKeySource keyring):
+	// the account, never the value.
 	FromKeyring string `json:"fromKeyring,omitempty"`
 	// FromRunToken injects the per-run gateway Bearer token.
 	FromRunToken bool `json:"fromRunToken,omitempty"`
 	// FromModelSignIn injects the run's model sign-in access token as it
 	// is when the process starts (a host harness on the restart token
 	// route, which reads its token from the environment): the access token
-	// alone, never the sign-in (I3).
+	// alone, never the sign-in.
 	FromModelSignIn bool `json:"fromModelSignIn,omitempty"`
-	// ExpectedKind, beside FromHostEnv, is the credential kind the plan
-	// was compiled for (policy apiKeyKind, agentry-cli#171): the engine
-	// checks the value it resolves against it and refuses a mismatch by
-	// name, so a plan rendered for a subscription token never runs with
-	// an API key and the reverse — the kind decides the harness's argv
-	// and the variable it reads, which the plan fixed at compile time. A
-	// consistency check between the policy and the key, not a boundary:
-	// plan.json is the operator's own file. Nil when the provider has one
-	// kind of key.
+	// ExpectedKind, beside FromHostEnv, is the credential kind the plan was
+	// compiled for (policy apiKeyKind): the engine checks the value it resolves
+	// against it and refuses a mismatch by name, so a plan rendered for a
+	// subscription token never runs with an API key and the reverse — the kind
+	// decides the harness's argv and the variable it reads, which the plan
+	// fixed at compile time. A consistency check between the policy and the
+	// key, not a boundary: plan.json is the operator's own file. Nil when the
+	// provider has one kind of key.
 	ExpectedKind *CredentialKind `json:"expectedKind,omitempty"`
 }
 
@@ -754,7 +731,7 @@ type Mount struct {
 	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
-// Budgets are the hard stops (§R8; DR-4 for cost).
+// Budgets are the hard stops.
 type Budgets struct {
 	// TimeoutSeconds kills the run (exit 15).
 	TimeoutSeconds int `json:"timeoutSeconds"`
@@ -766,18 +743,18 @@ type Budgets struct {
 	MaxCostUSD float64 `json:"maxCostUsd,omitempty"`
 }
 
-// MCPServerSpec is one declared MCP server, resolved to its exact
-// artifacts (RUNNER-PLAN-3). The store contents live under the
-// signature's profile — per-machine — so the plan carries the RESOLUTION
-// (source, version, digest, launch argv), which is deterministic given
-// the manifest pins, and mounts the store via the PHServers placeholder.
+// MCPServerSpec is one declared MCP server, resolved to its exact artifacts.
+// The store contents live under the signature's profile — per-machine — so the
+// plan carries the RESOLUTION (source, version, digest, launch argv), which is
+// deterministic given the manifest pins, and mounts the store via the PHServers
+// placeholder.
 type MCPServerSpec struct {
 	// Name is the gateway catalog name ("mcp-" + sanitized package id).
 	Name string `json:"name"`
-	// Source is "npm" or "pypi"; Package and Version are the manifest pin.
-	// For a remote server (agentry-cli#663) Source is SourceURL, Package
-	// the server's address, and Version, Integrity, Image, Command and
-	// StoreSubdir are empty: the compiler runs the runner image's bridge.
+	// Source is "npm" or "pypi"; Package and Version are the manifest pin. For
+	// a remote server Source is SourceURL, Package the server's address, and
+	// Version, Integrity, Image, Command and StoreSubdir are empty: the
+	// compiler runs the runner image's bridge.
 	Source  string `json:"source"`
 	Package string `json:"package"`
 	Version string `json:"version"`
@@ -803,15 +780,15 @@ type MCPServerSpec struct {
 	// literal value), rendered into its catalog entry beside — never
 	// through — its secrets. Receipts name the keys only.
 	Env map[string]string `json:"env,omitempty"`
-	// Auth is a remote server's auth kind: "none"; "secret", its one
-	// Secrets name sent as the bearer (agentry-cli#663); or "oauth", the
-	// person's connection, whose access token the runner hands its bridge
-	// at each start (agentry-cli#664). Empty for a package server.
+	// Auth is a remote server's auth kind: "none"; "secret", its one Secrets
+	// name sent as the bearer; or "oauth", the person's connection, whose
+	// access token the runner hands its bridge at each start. Empty for a
+	// package server.
 	Auth string `json:"auth,omitempty"`
-	// OAuth is a package server's OAuth sign-in (agentry-cli#665): the
-	// issuer and scopes its connection is made with, and the files and env
-	// the runner renders the connection's access token into. Nil for a
-	// remote server and for a package server without one.
+	// OAuth is a package server's OAuth sign-in: the issuer and scopes its
+	// connection is made with, and the files and env the runner renders the
+	// connection's access token into. Nil for a remote server and for a package
+	// server without one.
 	OAuth *OAuthSpec `json:"oauth,omitempty"`
 }
 
@@ -834,7 +811,7 @@ type OAuthFile struct {
 }
 
 // OAuthTokenPlaceholder is the placeholder an oauth template or env value
-// names the access token with (the manifest's grammar, DEV-215).
+// names the access token with (the manifest's grammar).
 const OAuthTokenPlaceholder = "{access_token}"
 
 // TokenEnv reports whether an oauth env entry carries the access token,
@@ -859,7 +836,7 @@ func (s MCPServerSpec) SendsBearer() bool {
 
 // SignsIn reports whether a run of the server needs the person's OAuth
 // connection: a remote server signed in to by OAuth (manifest.AuthOAuth),
-// or a package server with an oauth block (agentry-cli#665).
+// or a package server with an oauth block.
 func (s MCPServerSpec) SignsIn() bool {
 	if s.Remote() {
 		return s.Auth == "oauth"
@@ -910,7 +887,7 @@ func HasPackageServers(servers []MCPServerSpec) bool {
 	return false
 }
 
-// OutputSpec is the optional structured-output convention (§R2).
+// OutputSpec is the optional structured-output convention.
 type OutputSpec struct {
 	// SchemaFile is the archive-relative schema path ("" = none).
 	SchemaFile string `json:"schemaFile,omitempty"`
@@ -930,7 +907,7 @@ func (p *Plan) MarshalCanonical() ([]byte, error) {
 }
 
 // Hash returns the sha256 hex of the canonical encoding — the
-// run_plan_sha256 every receipt carries (§R8).
+// run_plan_sha256 every receipt carries.
 func (p *Plan) Hash() (string, error) {
 	b, err := p.MarshalCanonical()
 	if err != nil {
@@ -952,10 +929,10 @@ func ParsePlan(b []byte) (*Plan, error) {
 	return &p, nil
 }
 
-// ExecImageSpec is the per-QuickAgent exec image a plan runs its tools
-// server in when the manifest declares exec (agentry-cli#9, #100): the
-// runner image with the operator's catalogued packages installed, then
-// minimized to exactly the declared commands.
+// ExecImageSpec is the per-QuickAgent exec image a plan runs its tools server
+// in when the manifest declares exec: the runner image with the operator's
+// catalogued packages installed, then minimized to exactly the declared
+// commands.
 type ExecImageSpec struct {
 	// Tag is the image name (ExecImageTag).
 	Tag string `json:"tag"`
@@ -967,23 +944,22 @@ type ExecImageSpec struct {
 	// APKMirror replaces the image's Alpine repositories at build time;
 	// empty means the image's own.
 	APKMirror string `json:"apkMirror,omitempty"`
-	// Unsafe is set for an Unsafe Mode exec image (agentry-notes
-	// plans/unsafe-mode.md §4.3; agentry-cli#490): built FROM the unsafe
+	// Unsafe is set for an Unsafe Mode exec image: built FROM the unsafe
 	// base rather than the runner image, with Packages as Kali packages
-	// installed one at a time, the extras applied, and no minimize (D4).
+	// installed one at a time, the extras applied, and no minimize.
 	// Nil for the catalogue's exec image, whose plan bytes it leaves
 	// unchanged.
 	Unsafe *UnsafeExecSpec `json:"unsafe,omitempty"`
 }
 
 // ExecNotInstalledPrefix marks an entry of an exec image build's result
-// that did not install (an Unsafe Mode build goes on without it, D8), so
+// that did not install (an Unsafe Mode build goes on without it), so
 // the receipt names it apart from what did.
 const ExecNotInstalledPrefix = "not installed: "
 
 // UnsafeExecSpec is what an Unsafe Mode exec image adds to the catalogue's:
 // the base it is built from and how each declared command was placed.
-// This machine's exec catalogue was not consulted (D1).
+// This machine's exec catalogue was not consulted.
 type UnsafeExecSpec struct {
 	// Base is the unsafe base image, pinned by digest (policy
 	// images.unsafe), whose command index and extras list placed the
@@ -997,7 +973,7 @@ type UnsafeExecSpec struct {
 	// sorted by command.
 	Extras []UnsafeExtra `json:"extras,omitempty"`
 	// Unplaced are the declared commands neither the extras list nor the
-	// index could place (D8): the run goes ahead without them, and the
+	// index could place: the run goes ahead without them, and the
 	// plan, the consent and the receipt name them. Sorted by command.
 	Unplaced []UnplacedCommand `json:"unplaced,omitempty"`
 }
@@ -1050,12 +1026,11 @@ type UnplacedCommand struct {
 	Candidates []string `json:"candidates,omitempty"`
 }
 
-// ExecImageTag names the per-QuickAgent exec image (agentry-cli#9, DR-1
-// closure; #100): the runner image with the catalogued packages installed
-// and minimized to exactly the declared commands. Deterministic in
-// (runner image, sorted commands, sorted packages, mirror) so the compiler
-// can reference it before the install step builds it, and so a changed
-// catalog entry or mirror is a new image. "" when no exec is declared —
+// ExecImageTag names the per-QuickAgent exec image: the runner image with the
+// catalogued packages installed and minimized to exactly the declared commands.
+// Deterministic in (runner image, sorted commands, sorted packages, mirror) so
+// the compiler can reference it before the install step builds it, and so a
+// changed catalog entry or mirror is a new image. "" when no exec is declared —
 // the shared runner image serves.
 func ExecImageTag(runnerImage string, commands, packages []string, apkMirror string) string {
 	if len(commands) == 0 {
@@ -1069,14 +1044,13 @@ func ExecImageTag(runnerImage string, commands, packages []string, apkMirror str
 	return execImageName(runnerImage, "", sum)
 }
 
-// UnsafeExecImageTag names an Unsafe Mode exec image (plan unsafe-mode.md
-// invariant 9): deterministic in the base (pinned by digest), the runner
-// image whose binary it copies, the sorted commands, the sorted packages
-// and the extras, so a re-pin of the base or a changed index or extras
-// list is a new image. It lives in the same repository as the catalogue's
-// exec images (<runner>-exec), under a "u" tag, so the desktop's image
-// removal (agentry-desktop#424, internal/dockerimages.Select) takes it
-// with them.
+// UnsafeExecImageTag names an Unsafe Mode exec image: deterministic in the base
+// (pinned by digest), the runner image whose binary it copies, the sorted
+// commands, the sorted packages and the extras, so a re-pin of the base or a
+// changed index or extras list is a new image. It lives in the same repository
+// as the catalogue's exec images (<runner>-exec), under a "u" tag, so the
+// desktop's image removal (internal/dockerimages.Select in agentry-desktop)
+// takes it with them.
 func UnsafeExecImageTag(runnerImage string, u UnsafeExecSpec, commands, packages []string) string {
 	if len(commands) == 0 {
 		return ""
@@ -1104,14 +1078,13 @@ func execImageName(runnerImage, prefix string, sum [32]byte) string {
 	return name + "-exec:" + prefix + hex.EncodeToString(sum[:6])
 }
 
-// HostProcessSpec runs the harness as a process of this user from the
-// person's own installation of it (plan runner-m-r4-adapters §5, decision
-// D2). The gateway and the proxy are published on 127.0.0.1 for it; their
-// addresses reach it as HostGatewayURLEnv / HostProxyURLEnv and, in plan
-// files and argv, through the PHHostGatewayURL / PHHostProxyURL
-// placeholders. The process is not inside the run's network boundary: the
-// proxy variables and the gateway's catalog are what bound it, which the
-// plan's Enforcement map says in so many words.
+// HostProcessSpec runs the harness as a process of this user from the person's
+// own installation of it. The gateway and the proxy are published on 127.0.0.1
+// for it; their addresses reach it as HostGatewayURLEnv / HostProxyURLEnv and,
+// in plan files and argv, through the PHHostGatewayURL / PHHostProxyURL
+// placeholders. The process is not inside the run's network boundary: the proxy
+// variables and the gateway's catalog are what bound it, which the plan's
+// Enforcement map says in so many words.
 type HostProcessSpec struct {
 	// Command is the executable name, resolved on PATH at run time (the
 	// operator policy's harness.<adapter>.path overrides the lookup); a
@@ -1137,6 +1110,6 @@ type HostProcessSpec struct {
 	// refuses the run by name if one is there. A harness that reads
 	// context from its ancestors (Claude Code without --bare reads
 	// CLAUDE.md up the tree) names them here, so "no ambient context" is
-	// measured rather than assumed (agentry-cli#171, DR-26).
+	// measured rather than assumed.
 	RefuseAncestorFiles []string `json:"refuseAncestorFiles,omitempty"`
 }

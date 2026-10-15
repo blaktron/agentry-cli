@@ -142,7 +142,7 @@ func countReads(t *testing.T) map[string]int {
 
 // Present answers from the presence marker and never reads the key
 // itself: a settings page that asks on every mount does not pull the
-// secret into memory, or prompt for it (agentry-cli#156).
+// secret into memory, or prompt for it.
 func TestPresentNeverReadsTheKey(t *testing.T) {
 	fakeKeychain(t)
 	if err := Store("anthropic", "sk-test-1"); err != nil {

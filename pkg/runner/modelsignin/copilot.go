@@ -1,9 +1,8 @@
 package modelsignin
 
-// The Copilot sign-in (plan model-sign-ins.md §4.5, D26; agentry-cli#741):
-// GitHub's device flow is mcpauth.GitHub; this keeps what it hands back,
-// and refreshes and revokes through it. SignInCopilot is the one entry
-// point: the CLI's, and the desktop's when it signs in (M9).
+// The Copilot sign-in: GitHub's device flow is mcpauth.GitHub; this keeps what
+// it hands back, and refreshes and revokes through it. SignInCopilot is the one
+// entry point: the CLI's, and the desktop's when it signs in.
 
 import (
 	"context"

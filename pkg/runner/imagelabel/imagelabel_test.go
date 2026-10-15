@@ -26,7 +26,7 @@ func TestCheckWantsTheLabelInEveryStageThatRuns(t *testing.T) {
 }
 
 // The key must never be one the run's sweep or the socket filter reads: a
-// container inherits its image's labels (agentry-cli#892).
+// container inherits its image's labels.
 func TestKeyIsNoneOfTheRunsOwn(t *testing.T) {
 	for _, own := range []string{"agentry.run", "agentry.gateway.run", "agentry.owner.", "org.agentry.harness."} {
 		if Key == own || strings.HasPrefix(Key, own) {

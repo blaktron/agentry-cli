@@ -14,7 +14,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// TestTheBuiltinsLockHoldsEveryBuiltin (agentry-cli#470): every built-in is
+// TestTheBuiltinsLockHoldsEveryBuiltin: every built-in is
 // published to the registry from its embedded tree, and a registry version
 // is never rebuilt, so a built-in whose tree changed must take a new
 // version. builtins.lock records each version's archive digest; a tree that

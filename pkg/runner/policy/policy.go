@@ -1,10 +1,9 @@
-// Package policy loads the operator policy (RUNNER-PLAN §R9) — the
-// machine-side half of every run plan. The manifest says what an agent
-// wants; the policy says what this operator's machine will provide: image
-// pins, the model endpoint and its egress allowlist, whether wildcard
-// egress is ever runnable, and where secret values come from. The policy
-// participates in the plan hash, so changing it invalidates installed
-// plans instead of silently changing what they mean.
+// Package policy loads the operator policy — the machine-side half of every run
+// plan. The manifest says what an agent wants; the policy says what this
+// operator's machine will provide: image pins, the model endpoint and its
+// egress allowlist, whether wildcard egress is ever runnable, and where secret
+// values come from. The policy participates in the plan hash, so changing it
+// invalidates installed plans instead of silently changing what they mean.
 package policy
 
 import (
@@ -49,81 +48,65 @@ const Version = "1"
 //
 // The exception is DefaultGoBuilder, one of the two bases of the runner image.
 // Its Go must be at least go.mod's go line, to the patch: the runner context's
-// go.mod names that line (runnerimage, agentry-cli#786) and an older builder
-// refuses it, so a go bump re-mirrors and re-pins this in the same change. It
-// is pinned by digest (name:tag@sha256:…, the digest from images.tsv)
-// since agentry-cli#269 closed DR-32's deferral: the image is built, not
-// pulled, so the ref only ever reaches a Dockerfile FROM, and a live build
-// proved the digest form there. The runtime base is pinned the same way in
-// runnerimage/Dockerfile. The pulled images (the gateway, the harness, the
-// two MCP runtimes) are still tags: every digest is in images.tsv, but the
-// digest form changes the ref the runner hands the daemon to pull and to
-// probe, and that wants its own live acceptance run (agentry-cli#236).
-//
-// Versions match the survey of 2026-08-30, re-verified 2026-09-23.
+// go.mod names that line (runnerimage) and an older builder refuses it, so a go
+// bump re-mirrors and re-pins this in the same change. It is pinned by digest
+// (name:tag@sha256:…, the digest from images.tsv): the image is built, not
+// pulled, so the ref only ever reaches a Dockerfile FROM. The runtime base is
+// pinned the same way in runnerimage/Dockerfile. The pulled images (the
+// gateway, the two MCP runtimes) are still tags: every digest is in images.tsv,
+// but the digest form changes the ref the runner hands the daemon to pull and
+// to probe, and that wants its own live acceptance run.
 const (
 	DefaultGatewayImage = "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3"
-	// DefaultHarnessImage is pinned by digest since agentry-cli#738
-	// (agentry-cli#224's option A): the tag is a label, the digest the
-	// bytes, and the receipt names it. Pulled, inspected and run in that
-	// form on the workstation's daemon on 2026-10-09; moved to 1.150.0 by
-	// agentry-cli#836 (input sources M9), pulled by digest 2026-10-12.
+	// DefaultHarnessImage is pinned by digest: the tag is a label, the
+	// digest the bytes, and the receipt names it.
 	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1"
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa"
 	// Runtime images that install and run declared npm/PyPI MCP servers
-	// (RUNNER-PLAN-3 §P2). Node is 24 since agentry-cli#608: servers whose
-	// engines.node needs 24 fail every tool call on 22. The OSV advisory
-	// server declares >=24.0.0 in every version, and 0.1.14 and later do
-	// fail on 22 (Promise.try; 0.1.7 to 0.1.13 answered on 22.23.2,
-	// measured 2026-10-05, agentry-cli#658).
+	// Node is 24: servers whose engines.node needs 24 fail every tool
+	// call on 22. The OSV advisory server declares >=24.0.0 in every
+	// version, and 0.1.14 and later do fail on 22 (Promise.try).
 	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:24-alpine"
 	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-alpine:3.12-alpine"
 	// The Node and Python the two default runtimes run, as `node --version`
-	// and `python3 --version` print them in the digests images.tsv pins
-	// (agentry-cli#609): the versions a declared server's own engines.node
+	// and `python3 --version` print them in the digests images.tsv pins:
+	// the versions a declared server's own engines.node
 	// or requires_python must admit for its runs to work, which the Drafter
 	// is told and its post-step holds. A test holds each to its image's tag.
 	DefaultNodeVersion   = "24.21.0"
 	DefaultPythonVersion = "3.12.14"
-	// DefaultUnsafeImage is the Unsafe Mode base (agentry-notes
-	// plans/unsafe-mode.md §4.1; agentry-dockerimages#15): Kali with a
+	// DefaultUnsafeImage is the Unsafe Mode base: Kali with a
 	// command index and an extras list, pinned by digest, amd64 and arm64.
-	// It moves with a CLI release, re-pinned monthly (D10). Since
-	// 2026.09.30.3 the index also holds the programs the base itself carries
-	// through alternatives links or that Contents left ambiguous
-	// (agentry-dockerimages#23; agentry-cli#516).
+	// It moves with a CLI release, re-pinned monthly. The index also holds
+	// the programs the base itself carries through alternatives links or
+	// that Contents left ambiguous.
 	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.3@sha256:7c3da264fd0e8420f0367fa179e6b89110fa2f86bef8850f48d5f89ae21ab869"
-	// DefaultFilesImage is the files image, the decoders and the malware
-	// check the decode step runs (agentry-notes plans/file-handling.md §4,
-	// §7, D4; agentry-dockerimages#28, #30): pandoc, pdftotext, tesseract,
-	// Tika, libarchive and clamscan on Alpine, amd64 and arm64, pinned by
-	// digest and pulled, never built at run time (agentry-cli#559). The
-	// digest is signed keyless by agentry-dockerimages' files workflow, and
-	// CI holds this pin to that signature (scripts/verify-files-image.sh); a
-	// run pulls by digest only.
+	// DefaultFilesImage is the files image, the decoders and the malware check
+	// the decode step runs: pandoc, pdftotext, tesseract, Tika, libarchive and
+	// clamscan on Alpine, amd64 and arm64, pinned by digest and pulled, never
+	// built at run time. The digest is signed keyless by agentry-dockerimages'
+	// files workflow, and CI holds this pin to that signature
+	// (scripts/verify-files-image.sh); a run pulls by digest only.
 	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.04.3@sha256:f8da034b365cd86c1498b041e87ee06faeb4264dfc6e25bd9c0d3013cf58a306"
 	// DefaultHostlinkImage is the host link's base, the OpenSSH client a run
-	// reaches a target host with (agentry-notes plans/runtime-hosts.md D5;
-	// agentry-dockerimages#71, DR-91): Alpine's ssh, sftp and ssh-keyscan,
-	// amd64 and arm64, uid 10001, pinned by digest and pulled; the CLI
-	// copies its runner binary in (agentry-cli#861). Signed keyless by
-	// agentry-dockerimages' hostlink workflow, and CI holds this pin to that
-	// signature (scripts/verify-hostlink-image.sh).
+	// reaches a target host with: Alpine's ssh, sftp and ssh-keyscan, amd64 and
+	// arm64, uid 10001, pinned by digest and pulled; the CLI copies its runner
+	// binary in. Signed keyless by agentry-dockerimages' hostlink workflow, and
+	// CI holds this pin to that signature (scripts/verify-hostlink-image.sh).
 	DefaultHostlinkImage = "ghcr.io/blaktron/agentry-hostlink:2026.10.11.1@sha256:66f9fc5ce5223278676faad73d9cde005784ea6a35a64258ca47d1c662c0b099"
-	// DefaultBrowserImage is the browser server's image, for a release
-	// that declares capabilities.browser (agentry-notes
-	// plans/browser-testing.md D3, D5; agentry-dockerimages#82):
-	// Microsoft's @playwright/mcp 0.0.83 with the Chrome for Testing build
-	// of the Playwright it pins and a Chrome policy that turns ECH off, on
-	// the ubuntu:noble mirror, amd64 and arm64, pinned by digest and
-	// pulled. Signed keyless by agentry-dockerimages' browser workflow, and
-	// CI holds this pin to that signature (scripts/verify-browser-image.sh).
+	// DefaultBrowserImage is the browser server's image, for a release that
+	// declares capabilities.browser: Microsoft's @playwright/mcp 0.0.83 with
+	// the Chrome for Testing build of the Playwright it pins and a Chrome
+	// policy that turns ECH off, on the ubuntu:noble mirror, amd64 and arm64,
+	// pinned by digest and pulled. Signed keyless by agentry-dockerimages'
+	// browser workflow, and CI holds this pin to that signature
+	// (scripts/verify-browser-image.sh).
 	DefaultBrowserImage = "ghcr.io/blaktron/agentry-browser:2026.10.13.1@sha256:61bf9d5577ebf0aea1059bab30bd9e06a9c4011ba42792b06bd66f99c41b5af7"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
-	// checks every input against (plan file-handling.md §7, D15;
-	// agentry-cli#563): a tag agentry-dockerimages' clamav-db workflow moves
-	// daily, only ever to a digest it has signed. It is not pinned, by
-	// design; the CLI verifies that signature at each refresh (pkg/runner/clamdb).
+	// checks every input against: a tag agentry-dockerimages' clamav-db
+	// workflow moves daily, only ever to a digest it has signed. It is not
+	// pinned, by design; the CLI verifies that signature at each refresh
+	// (pkg/runner/clamdb).
 	DefaultClamAVSignatures = "ghcr.io/blaktron/agentry-clamav-db:latest"
 	// Default trusted repositories for capabilities.mcpServers.
 	DefaultNPMRegistry  = "https://registry.npmjs.org"
@@ -139,68 +122,65 @@ type Policy struct {
 	Images Images `yaml:"images"`
 	// Model configures the LLM the default adapter drives.
 	Model Model `yaml:"model"`
-	// AllowWildcardEgress gates manifest `network.egress: "*"` (§R4).
+	// AllowWildcardEgress gates manifest `network.egress: "*"`.
 	// Default false: a wildcard agent is refused at compile time.
 	AllowWildcardEgress bool `yaml:"allowWildcardEgress"`
-	// Browser governs a release's browser (capabilities.browser; plan
-	// browser-testing.md D12): whether one may reach any public site.
+	// Browser governs a release's browser (capabilities.browser):
+	// whether one may reach any public site.
 	Browser BrowserPolicy `yaml:"browser,omitempty"`
 	// SecretSource is where declared secret values are resolved from.
 	SecretSource SecretSource `yaml:"secretSource"`
 	// DataAccessServers maps a manifest dataAccess category to operator
 	// catalog server-entry YAML files to attach for agents declaring it
-	// (RUNNER-PLAN §R3; default empty).
+	// (default empty).
 	DataAccessServers map[string][]string `yaml:"dataAccessServers,omitempty"`
 	// Budgets are the default hard stops. A run's flags override them, and
 	// a built-in package run on this computer starts from a longer timeout
-	// of its own (localrun.Builtin.LocalBudgets, DR-54).
+	// of its own (localrun.Builtin.LocalBudgets).
 	Budgets Budgets `yaml:"budgets"`
-	// Sessions caps interactive sessions (plan §6.7).
+	// Sessions caps interactive sessions.
 	Sessions Sessions `yaml:"sessions"`
-	// Profiles configures MCP-profile behavior (RUNNER-PLAN-2 §P2).
+	// Profiles configures MCP-profile behavior.
 	Profiles Profiles `yaml:"profiles,omitempty"`
-	// MCPRegistries is where declared capabilities.mcpServers resolve
-	// (RUNNER-PLAN-3 §P2): npm and PyPI by default, private mirrors here.
+	// MCPRegistries is where declared capabilities.mcpServers resolve:
+	// npm and PyPI by default, private mirrors here.
 	MCPRegistries MCPRegistries `yaml:"mcpRegistries,omitempty"`
 	// MCPServers governs the registry's vulnerability verdict on declared
-	// servers (agentry#177, DR-16).
+	// servers.
 	MCPServers MCPServersPolicy `yaml:"mcpServers,omitempty"`
 	// Harness holds per-adapter settings for the adapters that run the
-	// person's own installation of a harness (plan runner-m-r4-adapters
-	// §5), keyed by adapter name.
+	// person's own installation of a harness, keyed by adapter name.
 	Harness map[string]HarnessPolicy `yaml:"harness,omitempty"`
 	// Exec is the operator's exec catalog: which binaries this machine
 	// provides to a QuickAgent that declares `exec: {commands}`, and from
-	// where (plan examples-declared-servers §5.2, D1).
+	// where.
 	Exec ExecPolicy `yaml:"exec,omitempty"`
 	// Docker is how the runner drives the daemon beyond the images: the
-	// OCI runtime a run's containers are created with (DR-23).
+	// OCI runtime a run's containers are created with.
 	Docker DockerPolicy `yaml:"docker,omitempty"`
-	// Judge names where the person's own AI Review (TypeSafe Jev) key
-	// comes from, for local work that needs a scan: a draft made on this
-	// computer (plan builder-rework.md D25; agentry-cli#345). Unset takes
-	// $TYPESAFE_API_KEY from the environment.
+	// Judge names where the person's own AI Review (TypeSafe Jev) key comes
+	// from, for local work that needs a scan: a draft made on this computer.
+	// Unset takes $TYPESAFE_API_KEY from the environment.
 	Judge JudgeKey `yaml:"judge,omitempty"`
 	// WebSearch names the person's own search provider and where its key
 	// comes from, for a local draft's web_search. Unset, a local draft
 	// has no web search (its web_read and registry_search still work).
 	WebSearch WebSearchKey `yaml:"webSearch,omitempty"`
-	// Hosts narrows the target hosts a run may reach (plan runtime-hosts.md
-	// D8; agentry-cli#861): any address the person names is reachable but
-	// loopback and link-local, and these lists narrow the rest.
+	// Hosts narrows the target hosts a run may reach: any address the person
+	// names is reachable but loopback and link-local, and these lists narrow
+	// the rest.
 	Hosts HostsPolicy `yaml:"hosts,omitempty"`
-	// HybridAnalysis names where the Hybrid Analysis key comes from, with
-	// which the risky types among a run's inputs are looked up by SHA-256
-	// (plan file-handling.md §7, D7, D17; agentry-cli#564). Unset takes
+	// HybridAnalysis names where the Hybrid Analysis key comes from, with which
+	// the risky types among a run's inputs are looked up by SHA-256 Unset takes
 	// $HYBRID_API_KEY from the environment, as a sandbox host hands the
-	// platform's; no key, no lookup, and the receipt says so (D8).
+	// platform's; no key, no lookup, and the receipt says so.
 	HybridAnalysis HybridAnalysisKey `yaml:"hybridAnalysis,omitempty"`
 }
 
-// BrowserPolicy is the operator's say over a release's browser (plan
-// browser-testing.md D1, D12). Its own key beside allowWildcardEgress: an
-// operator may let a site tester test any public site and still refuse
-// "*" egress to the tools container's fetch, or the reverse.
+// BrowserPolicy is the operator's say over a release's browser. Its own key
+// beside allowWildcardEgress: an operator may let a site tester test any public
+// site and still refuse "*" egress to the tools container's fetch, or the
+// reverse.
 type BrowserPolicy struct {
 	// AllowPublicWeb lets a browser whose scope is public reach any public
 	// site, on ports 80 and 443. Default false: such a release is refused
@@ -208,74 +188,64 @@ type BrowserPolicy struct {
 	AllowPublicWeb bool `yaml:"allowPublicWeb,omitempty"`
 }
 
-// ExecPolicy is the exec catalog (agentry-cli#100). The manifest keeps
-// declaring bare command names; the operator, not the manifest, says
-// which apk package provides each on this machine — the same stance as
-// mcpRegistries. A declared command the catalog does not carry is a
-// plan-time refusal, never a run-time "absent". Busybox applets the runner
-// image already has (sh, sed, sort, …) are catalogued as `busybox`, and
-// BaseExecCommands are catalogued on every machine without an entry.
-// DockerPolicy is the daemon-facing part of the policy.
+// ExecPolicy is the exec catalog. The manifest keeps declaring bare command
+// names; the operator, not the manifest, says which apk package provides each
+// on this machine — the same stance as mcpRegistries. A declared command the
+// catalog does not carry is a plan-time refusal, never a run-time "absent".
+// Busybox applets the runner image already has (sh, sed, sort, …) are
+// catalogued as `busybox`, and BaseExecCommands are catalogued on every machine
+// without an entry. DockerPolicy is the daemon-facing part of the policy.
 type DockerPolicy struct {
-	// Runtime names the daemon's OCI runtime (`docker run --runtime`) for
-	// a run's containers: gVisor's "runsc" on a host that has it
-	// registered. With Resolvers named it also holds the llm-proxy, the
-	// MCP server install proxy and the relays (agentry-cli#337), save a
-	// host-run harness's proxy and, where the docker filter does not run,
-	// the relays; without them those three stay on the daemon's default,
-	// because they resolve hosts through docker's embedded DNS, which a
-	// sandbox does not reach (DR-23, agentry-cli#221). The gateway takes
-	// GatewayRuntime. The receipt's runtime line names each class. Empty
-	// means the daemon's default —
-	// every run before the knob existed. A set value is enforced, not
-	// preferred: a daemon without it refuses the run at the ensure step
-	// (exit 13) rather than falling back, so the receipt's runtime line
-	// is never a claim the run did not have.
+	// Runtime names the daemon's OCI runtime (`docker run --runtime`) for a
+	// run's containers: gVisor's "runsc" on a host that has it registered. With
+	// Resolvers named it also holds the llm-proxy, the MCP server install proxy
+	// and the relays, save a host-run harness's proxy and, where the docker
+	// filter does not run, the relays; without them those three stay on the
+	// daemon's default, because they resolve hosts through docker's embedded
+	// DNS, which a sandbox does not reach. The gateway takes GatewayRuntime.
+	// The receipt's runtime line names each class. Empty means the daemon's
+	// default. A set value is enforced, not preferred: a daemon without it
+	// refuses the run at the ensure step (exit 13) rather than falling back, so
+	// the receipt's runtime line is never a claim the run did not have.
 	Runtime string `yaml:"runtime,omitempty"`
-	// GatewayRuntime names the runtime the gateway is created with: a
-	// second registration of gVisor with `--host-uds=open` (agentry-cli
-	// #337), since the gateway reaches the run's docker filter through a
-	// bind-mounted host Unix socket, which runsc without that flag does
-	// not open (measured on dev, DR-23). It needs Runtime: the gateway is
+	// GatewayRuntime names the runtime the gateway is created with: a second
+	// registration of gVisor with `--host-uds=open`, since the gateway reaches
+	// the run's docker filter through a bind-mounted host Unix socket, which
+	// runsc without that flag does not open. It needs Runtime: the gateway is
 	// never sandboxed while the QuickAgent's code is not. Empty leaves the
 	// gateway on the daemon's default. Enforced like Runtime (exit 13).
 	GatewayRuntime string `yaml:"gatewayRuntime,omitempty"`
-	// Resolvers are the name servers the built-in Drafter's web tools
-	// resolve through, by address (agentry-cli#386), and, under Runtime,
-	// the llm-proxy, the MCP server install proxy and the relays too
-	// (agentry-cli#337): at most three, as a resolv.conf reads them. A
-	// sandboxed runtime's own network stack does not reach docker's
-	// embedded DNS on a user-defined network (DR-23,
-	// measured under gVisor), and `--dns` only sets that server's upstream,
-	// so the runner writes these into a resolv.conf of the run's own that
-	// the tools server reads in place of docker's. They are the host's to
-	// name: the host's upstream resolvers, never a loopback stub. Empty
-	// keeps docker's DNS, which a run on the daemon's default reaches; a
-	// run of the web tools under a runtime with none is refused (exit 11)
-	// rather than left to read nothing.
+	// Resolvers are the name servers the built-in Drafter's web tools resolve
+	// through, by address, and, under Runtime, the llm-proxy, the MCP server
+	// install proxy and the relays too: at most three, as a resolv.conf reads
+	// them. A sandboxed runtime's own network stack does not reach docker's
+	// embedded DNS on a user-defined network (as under gVisor), and `--dns`
+	// only sets that server's upstream, so the runner writes these into a
+	// resolv.conf of the run's own that the tools server reads in place of
+	// docker's. They are the host's to name: the host's upstream resolvers,
+	// never a loopback stub. Empty keeps docker's DNS, which a run on the
+	// daemon's default reaches; a run of the web tools under a runtime with
+	// none is refused (exit 11) rather than left to read nothing.
 	Resolvers []string `yaml:"resolvers,omitempty"`
-	// Limits bound every container the runner starts for a run
-	// (agentry-cli#163). The engine also drops every capability and sets
-	// no-new-privileges on each. A zero field takes its default
-	// (Limits.WithDefaults), so a policy written before the field exists
-	// is bounded all the same. The gateway passes memory and CPUs on to
-	// the tool and server containers it launches.
+	// Limits bound every container the runner starts for a run. The engine also
+	// drops every capability and sets no-new-privileges on each. A zero field
+	// takes its default (Limits.WithDefaults). The gateway passes memory and
+	// CPUs on to the tool and server containers it launches.
 	Limits Limits `yaml:"limits,omitempty"`
 }
 
-// Limits are the per-container resource bounds of a run (agentry-cli#163,
-// DR-30): memory in docker's notation (`2g`), whole CPUs, and processes.
+// Limits are the per-container resource bounds of a run: memory in docker's
+// notation (`2g`), whole CPUs, and processes.
 type Limits struct {
 	Memory string `yaml:"memory,omitempty"`
 	CPUs   int    `yaml:"cpus,omitempty"`
 	Pids   int    `yaml:"pids,omitempty"`
 }
 
-// The defaults: enough for the docker-agent harness and a declared
-// server's install; not a sizing for several runs on one host, which is
-// the hosted plan's to choose (hosted-runs-production D7). One CPU because
-// docker refuses more than the host has, and because it is what the
-// gateway already gave the containers it launches.
+// The defaults: enough for the docker-agent harness and a declared server's
+// install; not a sizing for several runs on one host, which is the hosted
+// plan's to choose. One CPU because docker refuses more than the host has, and
+// because it is what the gateway already gave the containers it launches.
 const (
 	DefaultMemory = "2g"
 	DefaultCPUs   = 1
@@ -305,7 +275,7 @@ type ExecPolicy struct {
 	// optionally pinned: `git` or `git=2.49.1-r0`. Alpine's index drops a
 	// version once a security update replaces it, so a pin can turn an
 	// example's every run into a failed image build; the build records
-	// the resolved versions into the receipt either way (D11).
+	// the resolved versions into the receipt either way.
 	Packages map[string]string `yaml:"packages,omitempty"`
 	// APKMirror replaces the runner image's Alpine repositories at exec
 	// image build time (`<mirror>/v<release>/main` and `/community`), for
@@ -323,15 +293,14 @@ var (
 	apkPackageRE  = regexp.MustCompile(`^[A-Za-z0-9._+-]+(=[A-Za-z0-9._+~-]+)?$`)
 )
 
-// baseExecCommands are the commands every machine provides to a
-// QuickAgent that declares them, whatever its catalog says
-// (agentry-cli#595, DR-64): busybox applets the runner image already
-// carries, so nothing is installed for them, and none of them runs another
-// program. They read and compare text, take checksums, and read archives.
-// A declared command writes only beneath the scratch /tmp and a granted
-// workspace (DR-63), so the archive readers unpack there and nowhere else.
-// Left out on purpose: sh, awk, sed, find, xargs and env, which run other
-// programs. The Drafter is held to this list (pkg/drafter).
+// baseExecCommands are the commands every machine provides to a QuickAgent that
+// declares them, whatever its catalog says: busybox applets the runner image
+// already carries, so nothing is installed for them, and none of them runs
+// another program. They read and compare text, take checksums, and read
+// archives. A declared command writes only beneath the scratch /tmp and a
+// granted workspace, so the archive readers unpack there and nowhere else. Left
+// out on purpose: sh, awk, sed, find, xargs and env, which run other programs.
+// The Drafter is held to this list (pkg/drafter).
 var baseExecCommands = []string{
 	// reading and comparing text
 	"cat", "head", "tail", "wc", "cut", "tr", "sort", "uniq", "grep", "comm", "diff", "cmp",
@@ -366,14 +335,13 @@ func (e ExecPolicy) Package(command string) string {
 
 // HarnessPolicy configures one host-run harness adapter — an adapter that
 // drives the person's own installation of a harness rather than an image
-// the runner pins (plan runner-m-r4-adapters §5).
+// the runner pins.
 type HarnessPolicy struct {
-	// Path is the executable to run instead of looking the harness up —
-	// on PATH, then in its usual install locations (the native
-	// installer's directory, a desktop app's bundled build; the
-	// adapter's WellKnownPaths, agentry-cli#167). A path set here wins
-	// over both, and one that does not exist is a refusal, not a
-	// fallback.
+	// Path is the executable to run instead of looking the harness up — on
+	// PATH, then in its usual install locations (the native installer's
+	// directory, a desktop app's bundled build; the adapter's WellKnownPaths).
+	// A path set here wins over both, and one that does not exist is a refusal,
+	// not a fallback.
 	Path string `yaml:"path,omitempty"`
 	// Model is the model id this harness is asked for (empty: model.name).
 	// A harness that speaks its own vendor's API needs a model named in
@@ -395,14 +363,13 @@ type HarnessPolicy struct {
 	// (empty: model.apiKeySource); the keychain entry is the model
 	// provider's.
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
-	// SignInTokenRoute is how a harness that spends a token-file model
-	// sign-in reads its access token (plan model-sign-ins.md D9, D10;
-	// agentry-cli#739): auth-command (the default) has the harness read the
-	// token file itself whenever it needs a token, so a renewal reaches it
+	// SignInTokenRoute is how a harness that spends a token-file model sign-in
+	// reads its access token: auth-command (the default) has the harness read
+	// the token file itself whenever it needs a token, so a renewal reaches it
 	// mid-turn; restart starts the harness on the token of the moment and,
 	// between turns, starts it again on a renewed one and resumes the
-	// conversation (OpenAI's documented route for Codex's app-server). Only
-	// the codex adapters read it.
+	// conversation (OpenAI's documented route for Codex's app-server). Only the
+	// codex adapters read it.
 	SignInTokenRoute string `yaml:"signInTokenRoute,omitempty"`
 }
 
@@ -410,11 +377,10 @@ type HarnessPolicy struct {
 // registry knows to be vulnerable.
 type MCPServersPolicy struct {
 	// AllowVulnerable lets a run proceed when the registry's gate rates an
-	// advisory for a declared server version high or critical (the
-	// advisory's own severity from a registry that serves no rating;
-	// agentry-cli#501). Off by default:
-	// such a run is refused (exit 11) unless --allow-vulnerable-mcp is
-	// given; either override is recorded in the receipt.
+	// advisory for a declared server version high or critical (the advisory's
+	// own severity from a registry that serves no rating; ). Off by default:
+	// such a run is refused (exit 11) unless --allow-vulnerable-mcp is given;
+	// either override is recorded in the receipt.
 	AllowVulnerable bool `yaml:"allowVulnerable,omitempty"`
 }
 
@@ -423,8 +389,7 @@ type MCPServersPolicy struct {
 // file written before this block existed keeps working unchanged. They
 // must be https: the install builder reaches them only through the
 // install proxy, which tunnels TLS, with the registry's host (and the
-// artifact hosts its metadata names for the pin) as its whole allowlist
-// (agentry-cli#92).
+// artifact hosts its metadata names for the pin) as its whole allowlist.
 type MCPRegistries struct {
 	// NPM is the npm registry base URL (metadata + tarballs).
 	NPM string `yaml:"npm,omitempty"`
@@ -433,8 +398,8 @@ type MCPRegistries struct {
 	// PyPIAllowSourceDists lets the builder fall back to source
 	// distributions (which run the package's own build code inside the
 	// runtime image at install time). Off by default: only wheels are
-	// installed, for the declared server and its dependencies alike
-	// (agentry-cli#4). Turn on for a server that ships no wheel, knowing
+	// installed, for the declared server and its dependencies alike.
+	// Turn on for a server that ships no wheel, knowing
 	// what it costs.
 	PyPIAllowSourceDists bool `yaml:"pypiAllowSourceDists,omitempty"`
 }
@@ -450,7 +415,7 @@ type Profiles struct {
 
 // KeepProfilesByDefault resolves the default keep choice (unset → true:
 // authenticated resources are the point of profiles; discarding is the
-// explicit choice, P2 §P8).
+// explicit choice).
 func (p *Policy) KeepProfilesByDefault() bool {
 	if p.Profiles.KeepByDefault == nil {
 		return true
@@ -458,8 +423,8 @@ func (p *Policy) KeepProfilesByDefault() bool {
 	return *p.Profiles.KeepByDefault
 }
 
-// Images pins the container images (§R9). Digest-pinned refs
-// (repo@sha256:…) are recommended in the generated default file.
+// Images pins the container images. Digest-pinned refs (repo@sha256:…) are
+// recommended in the generated default file.
 type Images struct {
 	// Gateway is the docker/mcp-gateway image.
 	Gateway string `yaml:"gateway"`
@@ -469,25 +434,24 @@ type Images struct {
 	// Other values are the operator's and are kept.
 	HarnessDockerAgent string `yaml:"harnessDockerAgent"`
 	// HarnessImages pins the harness image of each other adapter that runs
-	// in a container, by adapter name (agentry-cli#224 option A, plan
-	// model-sign-ins.md D5): by digest when published, by the vendor
+	// in a container, by adapter name: by digest when published, by the vendor
 	// artifact's hash when built on this machine, never by a tag. Unset
 	// entries take the CLI's DefaultHarnessImages.
 	HarnessImages map[string]HarnessImage `yaml:"harnessImages,omitempty"`
-	// GoBuilder builds the local runner image (§R7).
+	// GoBuilder builds the local runner image.
 	GoBuilder string `yaml:"goBuilder"`
 	// Runner overrides the local runner image tag ("" = derived from the
 	// CLI version).
 	Runner string `yaml:"runner,omitempty"`
 	// NodeRuntime / PythonRuntime install and run declared npm/PyPI MCP
-	// servers (RUNNER-PLAN-3). Empty resolves to the pinned defaults.
+	// servers. Empty resolves to the pinned defaults.
 	NodeRuntime   string `yaml:"nodeRuntime,omitempty"`
 	PythonRuntime string `yaml:"pythonRuntime,omitempty"`
 	// Unsafe is the base Unsafe Mode builds a QuickAgent's exec image on,
 	// pinned by digest ("" = DefaultUnsafeImage; see UnsafeImage). It
 	// names an image and turns nothing on: only a client that passes
 	// compile.Inputs.Unsafe uses Unsafe Mode, and no policy key or
-	// `agentry run` flag does (plan unsafe-mode.md D5).
+	// `agentry run` flag does.
 	Unsafe string `yaml:"unsafe,omitempty"`
 	// Files is the files image the decode step builds its image on,
 	// pinned by digest ("" = DefaultFilesImage; see FilesImage).
@@ -579,14 +543,14 @@ func (i Images) UnsafeImage() string {
 	return DefaultUnsafeImage
 }
 
-// Model configures the operator-owned model endpoint (annex Q-R2: the key
+// Model configures the operator-owned model endpoint (the key
 // is always the operator's; packages never carry or suggest credentials).
 type Model struct {
 	// Provider is the provider name: one of the setup table's
 	// (anthropic, openai, google), "custom" for an OpenAI-compatible
 	// endpoint of the operator's own (BaseURL required; the docker-agent
 	// adapter renders it as the harness's openai client pointed at that
-	// URL, agentry-cli#169), or a provider name the harness itself knows.
+	// URL), or a provider name the harness itself knows.
 	Provider string `yaml:"provider"`
 	// Name is the model id.
 	Name string `yaml:"name"`
@@ -596,23 +560,23 @@ type Model struct {
 	// APIKeySource is where the key comes from when the variable is not
 	// set: "" or "env" (the environment only) or "keyring" (the OS
 	// keychain entry provider:<provider>, written by `agentry setup` or
-	// the desktop; agentry-cli#148). The variable wins whenever it is set;
+	// the desktop). The variable wins whenever it is set;
 	// the value is never in this file.
 	APIKeySource string `yaml:"apiKeySource,omitempty"`
-	// APIKeyKind is what the credential is, for the one provider whose
-	// keys come in two kinds (agentry-cli#171): "" or "api" (an API key,
-	// any harness) or "subscription" (an Anthropic subscription OAuth
-	// token, which Anthropic admits from Claude Code alone — the claude
-	// adapter passes it as CLAUDE_CODE_OAUTH_TOKEN, the container harness
-	// refuses it). Written by `agentry setup` or the desktop from the
-	// value's shape at store time; a run checks the value it resolves
-	// against this and refuses a mismatch by name.
+	// APIKeyKind is what the credential is, for the one provider whose keys
+	// come in two kinds: "" or "api" (an API key, any harness) or
+	// "subscription" (an Anthropic subscription OAuth token, which Anthropic
+	// admits from Claude Code alone — the claude adapter passes it as
+	// CLAUDE_CODE_OAUTH_TOKEN, the container harness refuses it). Written by
+	// `agentry setup` or the desktop from the value's shape at store time; a
+	// run checks the value it resolves against this and refuses a mismatch by
+	// name.
 	APIKeyKind string `yaml:"apiKeyKind,omitempty"`
 	// BaseURL points provider-compatible adapters at a custom endpoint
 	// (e.g. a local OpenAI-compatible server); empty = provider default.
 	BaseURL string `yaml:"baseUrl,omitempty"`
 	// ProxyAllow is the llm-proxy CONNECT allowlist (host:port). This is
-	// the ONLY egress the agent container has (§R4); it must cover the
+	// the ONLY egress the agent container has; it must cover the
 	// model endpoint and nothing else.
 	ProxyAllow []string `yaml:"proxyAllow"`
 }
@@ -668,8 +632,8 @@ const (
 	PerplexitySearchKeyEnv = "PERPLEXITY_API_KEY"
 	JudgeKeyProvider       = "typesafe"
 	// DefaultHybridKeyEnv is the Hybrid Analysis key's variable, the one a
-	// sandbox host hands the CLI the platform's key in
-	// (agentry-enterprise#332); HybridKeyProvider its keychain entry's.
+	// sandbox host hands the CLI the platform's key in;
+	// HybridKeyProvider its keychain entry's.
 	DefaultHybridKeyEnv = "HYBRID_API_KEY"
 	HybridKeyProvider   = "hybrid-analysis"
 )
@@ -678,9 +642,8 @@ const (
 // runner image's copy of the core's pkg/websearch builds, the variable its
 // key is read from by default (each provider's own, the name its own
 // tools document), and its name as a person knows it. Brave's LLM Context
-// API joined You.com with agentry#631 (DEV-157); Tavily, Exa and Perplexity
-// joined for a person's own key with agentry-cli#513 (DEV-185, whose terms
-// question is the person's to weigh).
+// API, Tavily, Exa and Perplexity are keyed by a person's own key; whether
+// a provider's terms allow the use is the person's to weigh.
 var webSearchProviders = map[string]struct{ keyEnv, name string }{
 	websearch.YouComName:     {DefaultWebSearchKeyEnv, "You.com"},
 	websearch.BraveName:      {BraveSearchKeyEnv, "Brave"},
@@ -734,7 +697,7 @@ func (w WebSearchKey) ProviderName() string {
 // envVarRE is an environment variable name.
 var envVarRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// SecretSource resolves declared secret names to values (§R9, Q-R3).
+// SecretSource resolves declared secret names to values.
 type SecretSource struct {
 	// Mode is "env" (host environment) or "envFile".
 	Mode string `yaml:"mode"`
@@ -742,7 +705,7 @@ type SecretSource struct {
 	EnvFile string `yaml:"envFile,omitempty"`
 }
 
-// Sessions are the interactive-session caps (plan §6.7). A manifest's
+// Sessions are the interactive-session caps. A manifest's
 // interactive.idleTimeoutSeconds may ask for less idle time, never more.
 type Sessions struct {
 	// IdleTimeoutSeconds ends a session after this much silence from the
@@ -762,7 +725,7 @@ type Budgets struct {
 	MaxTurns int `yaml:"maxTurns"`
 	// MaxCostUSD kills the run once the harness's reported running cost
 	// exceeds this many US dollars (exit 16); 0 = unlimited. Enforcement
-	// is only as good as the harness's usage events (DR-4).
+	// is only as good as the harness's usage events.
 	MaxCostUSD float64 `yaml:"maxCostUsd"`
 }
 
@@ -794,14 +757,14 @@ func Default() *Policy {
 func boolPtr(b bool) *bool { return &b }
 
 // Save writes the policy back to path as generated YAML. Used by
-// `agentry setup` (P2 §P1); hand-written comments in an existing file are
+// `agentry setup`; hand-written comments in an existing file are
 // not preserved, and the header says so.
 func Save(path string, p *Policy) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
 	var buf bytes.Buffer
-	buf.WriteString("# Agentry Runner operator policy (RUNNER-PLAN §R9, RUNNER-PLAN-2 §P1).\n")
+	buf.WriteString("# Agentry Runner operator policy.\n")
 	buf.WriteString("# Written by `agentry setup` — regenerated as a whole; comments are not preserved.\n")
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -816,7 +779,7 @@ func Save(path string, p *Policy) error {
 	}
 	// Staged beside the file and renamed over it: a run loading the policy
 	// while setup writes it reads the old file or the new one, never a
-	// truncated one (agentry-cli#299).
+	// truncated one.
 	if err := dirpublish.ReplaceFile(path, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("write policy: %w", err)
 	}
@@ -838,9 +801,9 @@ func DefaultPath() (string, error) {
 	return PathIn(home), nil
 }
 
-// File is the operator policy file a run reads and how its path was
-// chosen: what the receipt records beside the digest (agentry-cli#152).
-// Source is one of the receipt's values (receipt.PolicySource*).
+// File is the operator policy file a run reads and how its path was chosen:
+// what the receipt records beside the digest. Source is one of the receipt's
+// values (receipt.PolicySource*).
 type File struct {
 	Path   string
 	Source string
@@ -875,9 +838,7 @@ func PathIn(home string) string { return filepath.Join(home, "policy.yaml") }
 // Home is the runner home: $AGENTRY_RUNNER_HOME when set, else
 // ~/.agentry/runner. Every path under the runner home derives from here,
 // the policy's included: a caller that relocates the home relocates the
-// policy with it (agentry-cli#149 — before this, DefaultPath read the
-// user's home regardless, so an isolated test wrote the operator's own
-// policy).
+// policy with it.
 func Home() (string, error) {
 	if h := os.Getenv(HomeEnv); h != "" {
 		return h, nil
@@ -909,18 +870,17 @@ func Load(path string) (*Policy, string, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, "", fmt.Errorf("parse %s: trailing YAML document", path)
 	}
-	// Fields added after a policy file was written resolve to their
-	// defaults rather than failing validation — additions must not brick
-	// existing machines (the file's sha still changes only when the
-	// OPERATOR edits it, so plan invalidation semantics are unchanged).
-	// A nodeRuntime that is a former generated default resolves to today's
-	// (formerDefaultNodeRuntimes, DR-66): the file's sha stays the same
-	// while the image it means moves with the CLI, as an absent key's
-	// always has. Plans still recompile, because a new CLI build changes
-	// the plan's compiledBy. A goBuilder that is a former generated default
-	// resolves the same way (formerDefaultGoBuilders, agentry-cli#770).
-	// The harness follows too (#924): its config schema moves with the
-	// CLI, so keeping a former default image would fail at config load.
+	// Fields added after a policy file was written resolve to their defaults
+	// rather than failing validation — additions must not brick existing
+	// machines (the file's sha still changes only when the OPERATOR edits it,
+	// so plan invalidation semantics are unchanged). A nodeRuntime that is a
+	// former generated default resolves to today's (formerDefaultNodeRuntimes):
+	// the file's sha stays the same while the image it means moves with the
+	// CLI, as an absent key's always has. Plans still recompile, because a new
+	// CLI build changes the plan's compiledBy. A goBuilder that is a former
+	// generated default resolves the same way (formerDefaultGoBuilders). The
+	// harness follows too: its config schema moves with the CLI, so keeping a
+	// former default image would fail at config load.
 	if slices.Contains(formerDefaultHarnessImages, p.Images.HarnessDockerAgent) {
 		p.Images.HarnessDockerAgent = DefaultHarnessImage
 	}
@@ -954,7 +914,7 @@ func Load(path string) (*Policy, string, error) {
 // started together) both come here: the default is staged beside path and
 // linked into place only if no file is there yet, so neither ever reads
 // it half-written and a policy the operator wrote meanwhile is never
-// replaced (agentry-cli#299).
+// replaced.
 func EnsureDefault(path string) (*Policy, string, error) {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1141,7 +1101,7 @@ func (p *Policy) Validate() error {
 
 // RunnerImageTag returns the local runner image tag: the policy override,
 // or a tag derived from version — which every client passes as
-// runnerimage.ContentVersion() (agentry-cli#6), so the CLI and the desktop
+// runnerimage.ContentVersion(), so the CLI and the desktop
 // app share one image for one embedded build context.
 func (p *Policy) RunnerImageTag(version string) string {
 	if p.Images.Runner != "" {
@@ -1176,9 +1136,8 @@ var formerDefaultHarnessImages = []string{
 }
 
 // formerDefaultNodeRuntimes are the values earlier CLIs wrote into every
-// generated policy file as nodeRuntime: Docker Hub's node:22-alpine until
-// DR-32 moved the defaults to our registry, then our 22-alpine mirror until
-// agentry-cli#608 moved them to Node 24. A file still naming one carries the
+// generated policy file as nodeRuntime: Docker Hub's node:22-alpine, then our
+// 22-alpine mirror. A file still naming one carries the
 // default of the day it was written, not an operator's choice, so it loads as
 // the current default, or the move would reach no machine set up before it.
 // Any other value is the operator's and is kept.
@@ -1188,16 +1147,14 @@ var formerDefaultNodeRuntimes = []string{
 }
 
 // formerDefaultGoBuilders are the values earlier CLIs wrote into every
-// generated policy file as goBuilder: Docker Hub's golang:1.27-alpine until
-// DR-32, our 1.27-alpine mirror by tag until agentry-cli#269, then that
-// mirror pinned by digest at go1.27.1 until agentry-cli#770 re-pinned it at
-// go1.27.2 for the 2026-10-08 net/http advisories. A file still naming one
-// carries the builder of the day it was written, not an operator's choice,
-// so it loads as the current default (DR-66's rule for nodeRuntime), or a
-// re-pinned builder would compile no runner image on a machine set up
-// before it. Any other value, another digest of the same mirror included,
-// is the operator's and is kept. When DefaultGoBuilder moves, its old value
-// joins this list.
+// generated policy file as goBuilder: Docker Hub's golang:1.27-alpine, our
+// 1.27-alpine mirror by tag, and that mirror pinned by digest at go1.27.1. A
+// file still naming one carries the builder of the day it was written, not an
+// operator's choice, so it loads as the current default (as for nodeRuntime),
+// or a re-pinned builder would compile no runner image on a machine set up
+// before it. Any other value, another digest of the same mirror included, is
+// the operator's and is kept. When DefaultGoBuilder moves, its old value joins
+// this list.
 var formerDefaultGoBuilders = []string{
 	"golang:1.27-alpine",
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine",
@@ -1207,7 +1164,7 @@ var formerDefaultGoBuilders = []string{
 // defaultFileText is the generated first-use policy. It must parse to
 // exactly Default() (a unit test holds it to that) and carry the warnings
 // an operator needs at the moment they edit it.
-const defaultFileText = `# Agentry Runner operator policy (RUNNER-PLAN §R9).
+const defaultFileText = `# Agentry Runner operator policy.
 # This file is machine policy, not agent configuration: it pins the images
 # the runner may pull or build, names the model endpoint (and the ONLY
 # egress the agent container gets), and decides what declared capabilities
@@ -1318,7 +1275,7 @@ budgets:
   # on the harness's reported running cost. Must be 0 beside a model
   # sign-in, which spends your plan and has no dollars to measure.
   maxCostUsd: 0
-# Interactive sessions (DR-15): silence, wall clock and user-turn caps. A
+# Interactive sessions: silence, wall clock and user-turn caps. A
 # manifest may ask for a shorter idle timeout, never a longer one.
 sessions:
   idleTimeoutSeconds: 900
@@ -1353,7 +1310,7 @@ profiles:
   keepByDefault: true
 
 mcpRegistries:
-  # Where capabilities.mcpServers resolve (RUNNER-PLAN-3). Point these at
+  # Where capabilities.mcpServers resolve. Point these at
   # private mirrors to control the supply chain; the manifest pins exact
   # versions and the install records resolved artifact digests either way.
   npm: https://registry.npmjs.org
@@ -1366,7 +1323,7 @@ mcpRegistries:
 #   # with resolvers below (never a host-run harness's proxy, and the relays
 #   # only where the per-run docker filter runs, on Linux), and the gateway
 #   # only with gatewayRuntime; each other stays on the daemon's default
-#   # (DR-23). Unset, the daemon's default
+#   # Unset, the daemon's default
 #   # applies and the receipt says nothing about it. Set, it is enforced,
 #   # not preferred: a daemon that does not have the runtime refuses the run
 #   # at the ensure step (exit 13) and never falls back to runc; the receipt
@@ -1374,13 +1331,13 @@ mcpRegistries:
 #   runtime: runsc
 #   # The gateway's runtime: runsc registered again with --host-uds=open,
 #   # since the gateway reaches the run's docker filter through a host
-#   # Unix socket (agentry-cli#337). Needs runtime.
+#   # Unix socket. Needs runtime.
 #   gatewayRuntime: runsc-uds
 #   # The host's upstream name servers (at most three IPv4 addresses): the
 #   # run's own resolv.conf for the classes under the runtime that resolve
 #   # host names, since a sandbox does not reach docker's embedded DNS.
 #   resolvers: [192.0.2.53]
-#   # The bounds of every container a run starts (agentry-cli#163): memory
+#   # The bounds of every container a run starts: memory
 #   # (at least 6m, as 512m or 2g), whole CPUs (never more than this host
 #   # has: docker refuses them), and processes. Unset fields take these
 #   # defaults. The gateway passes memory and cpus on to the tool and server
@@ -1454,9 +1411,8 @@ mcpRegistries:
 // validKeySource admits the apiKeySource values: unset, env, keyring.
 func validKeySource(v string) bool { return v == "" || v == "env" || v == "keyring" }
 
-// The apiKeyKind values: what an Anthropic credential is, read from its
-// shape (agentry-cli#171). ProviderAnthropic is the one provider whose
-// keys come in two kinds.
+// The apiKeyKind values: what an Anthropic credential is, read from its shape.
+// ProviderAnthropic is the one provider whose keys come in two kinds.
 const (
 	KeyKindAPI          = "api"
 	KeyKindSubscription = "subscription"
@@ -1503,7 +1459,7 @@ func validKeyKind(v string) bool {
 
 // KeyKind is what the credential a run resolves is expected to be: the
 // harness block's apiKeyKind, else the model's; unset is api. One rule,
-// beside KeyEnv and KeySource (agentry-cli#171).
+// beside KeyEnv and KeySource.
 func KeyKind(hp HarnessPolicy, m Model) string {
 	k := hp.APIKeyKind
 	if k == "" {
@@ -1527,7 +1483,7 @@ func KeyEnv(hp HarnessPolicy, m Model) string {
 // KeySource is where that key comes from when the variable is unset: the
 // harness block's apiKeySource, else the model's; "" and "env" both mean
 // the environment only. One rule, so the adapters, the compiler's receipt
-// line and doctor cannot disagree (agentry-cli#148).
+// line and doctor cannot disagree.
 func KeySource(hp HarnessPolicy, m Model) string {
 	src := hp.APIKeySource
 	if src == "" {
@@ -1547,10 +1503,10 @@ const ResolvConfTarget = "/etc/resolv.conf"
 
 // ResolvConf is the resolv.conf naming rs, the policy's docker.resolvers:
 // the one the runner binds over docker's wherever a container under a
-// sandboxed runtime resolves host names (agentry-cli#386, #337).
+// sandboxed runtime resolves host names.
 func ResolvConf(rs []string) []byte {
 	var b strings.Builder
-	b.WriteString("# The runner policy's docker.resolvers (agentry-cli#386, #337).\n")
+	b.WriteString("# The runner policy's docker.resolvers.\n")
 	for _, r := range rs {
 		b.WriteString("nameserver " + r + "\n")
 	}
@@ -1558,8 +1514,7 @@ func ResolvConf(rs []string) []byte {
 }
 
 // SandboxesProxies says whether the proxies run under the policy's
-// runtime: only where the host's name servers are named for them to read
-// (agentry-cli#337).
+// runtime: only where the host's name servers are named for them to read.
 func (d DockerPolicy) SandboxesProxies() bool {
 	return d.Runtime != "" && len(d.Resolvers) > 0
 }

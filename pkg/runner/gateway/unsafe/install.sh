@@ -1,9 +1,8 @@
 #!/bin/sh
-# The install step of an Unsafe Mode exec image (agentry-cli#490; agentry-notes
-# plans/unsafe-mode.md §4.3, D4, D8). Generated contexts copy it unchanged:
-# every value it acts on is a line of a data file beside it, read into a
-# variable and quoted, never spelled into a shell line, and each was held to
-# a grammar by the CLI before it was written (invariant 3).
+# The install step of an Unsafe Mode exec image. Generated contexts copy it
+# unchanged: every value it acts on is a line of a data file beside it, read
+# into a variable and quoted, never spelled into a shell line, and each was held
+# to a grammar by the CLI before it was written.
 #
 #   packages.txt  one Kali package a line
 #   pip.txt       command<TAB>name==version
@@ -11,8 +10,8 @@
 #   git-safe-directories  when git is declared: the run's mounts git trusts
 #
 # Each package and each extra is installed on its own, and one that fails is
-# recorded and skipped: the build goes on and the run goes without that tool
-# (D8). The records are read back into the run's receipt:
+# recorded and skipped: the build goes on and the run goes without that tool.
+# The records are read back into the run's receipt:
 #
 #   /etc/agentry/exec-packages  every package the build added, dependencies
 #                               included (package=version), and each pip

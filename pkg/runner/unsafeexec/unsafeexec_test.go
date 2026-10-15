@@ -39,7 +39,7 @@ func parsed(t *testing.T) *Data {
 
 // The index's rows are held to the grammar the image's generator applies:
 // a row whose package or command is not a plain name is dropped and
-// counted, never placed (plan unsafe-mode.md invariant 3).
+// counted, never placed.
 func TestParseDropsWhatTheGrammarRefuses(t *testing.T) {
 	d := parsed(t)
 	if d.Dropped != 3 {
@@ -75,7 +75,7 @@ func TestParseRefusesAnExtrasListOutsideTheRecipes(t *testing.T) {
 	}
 }
 
-// The base is pinned by digest (invariant 9): a tag alone could move under
+// The base is pinned by digest: a tag alone could move under
 // the same exec image tag.
 func TestTheBaseIsPinnedByDigest(t *testing.T) {
 	if _, err := Parse("ghcr.io/blaktron/agentry-unsafe-kali:2026.09.30.2", nil, nil, nil); err == nil {
@@ -87,7 +87,7 @@ func TestTheBaseIsPinnedByDigest(t *testing.T) {
 }
 
 // Placement is the plan's order: the extras list, then the index. It never
-// refuses: what neither places is unplaced (D8), with the packages that
+// refuses: what neither places is unplaced, with the packages that
 // ship it when the index left it ambiguous. A declared command that is not
 // a plain name is unplaced and never looked up.
 func TestPlaceExtrasFirstThenTheIndexAndNeverRefuses(t *testing.T) {
@@ -174,7 +174,7 @@ func TestTheGrammarsCloseWhatAShellOrAptWouldRead(t *testing.T) {
 	}
 }
 
-// Declared commands are looked up as literal names (invariant 3): a shell
+// Declared commands are looked up as literal names: a shell
 // expression is unplaced, and a name that happens to be a real package's
 // command, such as apt, is placed as that command, never run.
 func TestDeclaredCommandsAreLiteralNames(t *testing.T) {

@@ -15,15 +15,14 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 )
 
-// Credentials (plan runtime-hosts.md §6, D6). A target host is signed in
-// to with a key file (and its passphrase, when it has one) or a password,
-// and sudo may be given its own password. Each is taken, in order, from a
-// flag, from the person's saved sign-in for that account and host in the
-// system keychain, and from a prompt at a terminal that offers to save
-// it. A flag names a file or an environment variable, never a value. A
-// run with no one to ask and no sign-in refuses. The values reach the
-// host link alone, as files bound into it (the engine's), and are masked
-// wherever the run writes (D19).
+// Credentials. A target host is signed in to with a key file (and its
+// passphrase, when it has one) or a password, and sudo may be given its own
+// password. Each is taken, in order, from a flag, from the person's saved
+// sign-in for that account and host in the system keychain, and from a prompt
+// at a terminal that offers to save it. A flag names a file or an environment
+// variable, never a value. A run with no one to ask and no sign-in refuses. The
+// values reach the host link alone, as files bound into it (the engine's), and
+// are masked wherever the run writes.
 
 // Where a credential came from, as the receipt says it.
 const (
@@ -176,11 +175,10 @@ var (
 	keyringSet = keyring.Set
 )
 
-// readSaved is the sign-in saved for a. A schedule that runs while its
-// person is signed out has its saved keys sealed beside it and no keychain
-// (agentry-cli#854), and reads the sign-in from that credential alone, as
-// the model key and a source's token are (agentry-cli#863); anywhere else,
-// the keychain.
+// readSaved is the sign-in saved for a. A schedule that runs while its person
+// is signed out has its saved keys sealed beside it and no keychain, and reads
+// the sign-in from that credential alone, as the model key and a source's token
+// are; anywhere else, the keychain.
 func readSaved(a Answer) (saved, bool, error) {
 	v, sealed, err := modelkey.SealedAccount(a.Account())
 	switch {
@@ -225,9 +223,8 @@ func HasSavedSignIn(a Answer) (bool, error) {
 	return ok && (s.KeyFile != "" || s.Password != ""), err
 }
 
-// keepSignIn saves c for a in the keychain, whatever it came from: a
-// schedule's runs read nothing else (plan D12; agentry-cli#863). A key is
-// kept as its file's path, never its bytes.
+// keepSignIn saves c for a in the keychain, whatever it came from: a schedule's
+// runs read nothing else. A key is kept as its file's path, never its bytes.
 func keepSignIn(a Answer, c Credential) error {
 	if modelkey.Disabled() {
 		return errors.New("the system keychain is turned off here (AGENTRY_NO_KEYRING), and a schedule's runs read a target host's sign-in from it alone")

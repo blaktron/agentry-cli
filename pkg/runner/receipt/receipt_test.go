@@ -1,4 +1,4 @@
-// Envelope tests: the §R8 result envelope is the runner's public output
+// Envelope tests: the result envelope is the runner's public output
 // contract (pipelines parse it), so its field names, the TextResult
 // quoting, and the write-to-out-dir behavior are pinned here.
 package receipt

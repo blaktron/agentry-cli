@@ -1,8 +1,7 @@
 package claudesignin
 
-// The image's sign-in through the browser alone (agentry-cli#848; operator,
-// 2026-10-11: "i dont people to have to paste a code in, i want a browser
-// pop up from the container to authorize it").
+// The image's sign-in through the browser alone: nobody pastes a code; a
+// browser opens from the container to authorize it.
 //
 // Claude Code's `auth login` (2.1.296) builds two addresses: it prints the
 // paste-code one (redirect_uri Anthropic's own code page) and hands the
@@ -16,7 +15,7 @@ package claudesignin
 // connection byte for byte through `docker exec` into the container's
 // loopback, as `kubectl port-forward` does. Claude Code receives the code
 // on its own callback and exchanges it itself; Agentry never parses, logs
-// or keeps what it relays (plan D19). Where that cannot work (no exec, the
+// or keeps what it relays. Where that cannot work (no exec, the
 // port taken here), the paste-code page is the fallback, for a person who
 // can paste.
 

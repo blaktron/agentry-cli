@@ -1,10 +1,9 @@
-// Package session is the interactive run API (DR-15, plan §6.3): what a
-// chat surface — the CLI's TUI, the desktop app — talks to. It sees a
-// text channel and a read-only file drop, both recorded as receipts, and
-// nothing that could widen the plan's capabilities: turns are prompts to
-// the harness, inputs land under the staged /inputs directory, and the
-// engine ends the session on the operator's budgets whatever the surface
-// does.
+// Package session is the interactive run API: what a chat surface — the CLI's
+// TUI, the desktop app — talks to. It sees a text channel and a read-only file
+// drop, both recorded as receipts, and nothing that could widen the plan's
+// capabilities: turns are prompts to the harness, inputs land under the staged
+// /inputs directory, and the engine ends the session on the operator's budgets
+// whatever the surface does.
 package session
 
 import (
@@ -32,11 +31,10 @@ const (
 	// harness that reports only context tokens, one usage update).
 	KindUsage Kind = "usage"
 	// KindPermissionGranted records an in-harness permission request the
-	// runner allowed — a gateway tool (DR-15, agentry-cli#61).
+	// runner allowed — a gateway tool.
 	KindPermissionGranted Kind = "permission_granted"
 	// KindPermissionDenied records an in-harness permission request the
-	// runner refused — a tool outside the gateway's catalog (plan §6.10
-	// line 4).
+	// runner refused — a tool outside the gateway's catalog.
 	KindPermissionDenied Kind = "permission_denied"
 	// KindInputAdded records a file added to /inputs mid-run.
 	KindInputAdded Kind = "input_added"
@@ -96,13 +94,13 @@ const (
 	// EndCostBudget: the cost budget.
 	EndCostBudget EndReason = "cost_budget"
 	// EndPlanLimit: the person's plan refused the model's calls for its
-	// usage limit (plan model-sign-ins.md D12; agentry-cli#738).
+	// usage limit.
 	EndPlanLimit EndReason = "plan_limit"
 	// EndOrgPolicy: a policy of the person's organization at the model
-	// vendor refused the run (plan model-sign-ins.md D29; agentry-cli#741).
+	// vendor refused the run.
 	EndOrgPolicy EndReason = "org_policy"
 	// EndOutOfCredits: the model's provider refused the calls because the
-	// paying account has no credits left (agentry-cli#742).
+	// paying account has no credits left.
 	EndOutOfCredits EndReason = "out_of_credits"
 	// EndHarness: the harness exited on its own.
 	EndHarness EndReason = "harness_exit"
@@ -121,7 +119,7 @@ type Session interface {
 	// (the assistant_turn event). One turn at a time.
 	Send(ctx context.Context, text string) error
 	// AddInput copies a regular host file into the run's read-only inputs
-	// and tells the agent (plan §6.4).
+	// and tells the agent.
 	AddInput(ctx context.Context, hostPath string) error
 	// End finishes the session: with finish, the agent is asked for its
 	// final result first (only when the release declares an output

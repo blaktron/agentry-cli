@@ -1,4 +1,4 @@
-// First-use install tests (RQ2): images pulled only when absent, the
+// First-use install tests: images pulled only when absent, the
 // runner image built from the embedded context only when absent.
 package gateway
 
@@ -54,7 +54,7 @@ func TestEnsureInstalledSkipsPresent(t *testing.T) {
 	}
 }
 
-// docker.runtime is enforced at ensure, never preferred (DR-23): a daemon
+// docker.runtime is enforced at ensure, never preferred: a daemon
 // without it refuses before anything is pulled, naming both sides; one
 // with it proceeds; an unset runtime asks the daemon nothing.
 func TestEnsureRuntime(t *testing.T) {
@@ -91,15 +91,15 @@ func TestEnsureRuntime(t *testing.T) {
 		t.Error("an unset runtime queried the daemon's runtimes")
 	}
 
-	// The gateway's own runtime is held to the same rule (agentry-cli#337).
+	// The gateway's own runtime is held to the same rule.
 	pol.Docker.GatewayRuntime = "runsc-uds"
 	f = &dockerx.Fake{RuntimeNames: []string{"runc", "runsc"}}
 	err = EnsureRuntime(context.Background(), f, pol)
 	if err == nil || !strings.Contains(err.Error(), `docker.gatewayRuntime "runsc-uds"`) || !strings.Contains(err.Error(), "--host-uds=open") {
 		t.Errorf("an unregistered gateway runtime: %v", err)
 	}
-	// It is held to what it runs, not its name (agentry-cli#396): the
-	// runtime's binary registered again with --host-uds=open alone.
+	// It is held to what it runs, not its name: the runtime's binary registered
+	// again with --host-uds=open alone.
 	runsc := dockerx.Runtime{Path: "/usr/bin/runsc"}
 	f = &dockerx.Fake{RuntimeTable: map[string]dockerx.Runtime{"runc": {Path: "runc"}, "runsc": runsc,
 		"runsc-uds": {Path: "/usr/bin/runsc", Args: []string{dockerx.HostUDSOpen}}}}
@@ -121,7 +121,7 @@ func TestEnsureRuntime(t *testing.T) {
 
 // TestEnsureInstalledNamesAStaleGoBuilder: a builder older than the runner
 // context's go line refuses inside docker's output; the error names the
-// policy setting to change (agentry-cli#786).
+// policy setting to change.
 func TestEnsureInstalledNamesAStaleGoBuilder(t *testing.T) {
 	pol := policy.Default()
 	pol.Images.GoBuilder = "registry.example/golang:1.27.1-alpine"

@@ -1,5 +1,5 @@
 // TTYPrompter tests over in-memory streams: prompt text and answers ride
-// Err/In so the flows stay pipeline-clean (§R8), one buffered reader must
+// Err/In so the flows stay pipeline-clean, one buffered reader must
 // survive across questions, and AskSecret must WARN when echo cannot be
 // disabled rather than silently exposing input. The disableEcho happy path
 // needs a real controlling terminal, so tests adapt to whichever world

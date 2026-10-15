@@ -1,15 +1,13 @@
-// Package harnessbuild makes the harness images that are built on this
-// machine from a vendor artifact and never published (plan
-// model-sign-ins.md D5, D22, D27). Claude Code's licence grants no
-// redistribution, so each person's machine builds its own from Anthropic's
-// npm packages, as `npm install -g` would lay them out, on
-// agentry-dockerimages' Node base (agentry-cli#740). Copilot CLI's allows
-// redistribution only inside an application, so it is built the same way,
-// from GitHub's release download, on agentry-dockerimages' Alpine base
-// (copilot.go; agentry-cli#741).
+// Package harnessbuild makes the harness images that are built on this machine
+// from a vendor artifact and never published. Claude Code's licence grants no
+// redistribution, so each person's machine builds its own from Anthropic's npm
+// packages, as `npm install -g` would lay them out, on agentry-dockerimages'
+// Node base. Copilot CLI's allows redistribution only inside an application, so
+// it is built the same way, from GitHub's release download, on
+// agentry-dockerimages' Alpine base (copilot.go).
 //
 // Every download is held to the hash this build carries before anything
-// reaches the daemon (invariant I8): one whose bytes do not hash to it is
+// reaches the daemon: one whose bytes do not hash to it is
 // refused and nothing is built. The image is labelled with the artifact it
 // was built from, and an image of the tag without that label, or with
 // another, is built again, so the receipt's pin is true of the image that
@@ -49,7 +47,7 @@ const (
 )
 
 // ClaudeRecipe is the Claude Code image's recipe version: 2 adds the
-// stand-in browser opener, ClaudeOpener (agentry-cli#848).
+// stand-in browser opener, ClaudeOpener.
 const ClaudeRecipe = "2"
 
 // ClaudeOpener is the Claude Code image's browser: the program its BROWSER
@@ -63,7 +61,7 @@ const ClaudeOpener = "/usr/local/bin/agentry-open"
 // claudeOpenerScript is ClaudeOpener. PID 1 is Claude Code (the image's
 // entrypoint for a sign-in), so its stderr is the container's.
 const claudeOpenerScript = `#!/bin/sh
-# Claude Code's browser in Agentry's Claude Code image (agentry-cli#848):
+# Claude Code's browser in Agentry's Claude Code image:
 # hands the sign-in address to the agentry CLI, which opens it in the
 # person's own browser. It opens nothing itself.
 printf 'agentry-open %s\n' "$1" > /proc/1/fd/2
@@ -100,9 +98,8 @@ type claudeRelease struct {
 	native  map[string]string
 }
 
-// claudeReleases are read from the npm registry's packuments
-// (dist.integrity) on 2026-10-09 and checked against the downloaded
-// tarballs: 2.1.296 was the latest tag that day. A bump adds a release here,
+// claudeReleases are read from the npm registry's packuments (dist.integrity)
+// and checked against the downloaded tarballs. A bump adds a release here,
 // moves policy.DefaultHarnessImages["claude-image"], and re-records the
 // adapter's conformance.
 var claudeReleases = []claudeRelease{{

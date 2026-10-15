@@ -1,10 +1,10 @@
-// Package profile stores a QuickAgent's MCP profile (RUNNER-PLAN-2 §P2):
-// the persistent, credentialed half of its gateway configuration, keyed by
-// signature — ns/name@version plus the archive digest, the same identity
-// the install cache uses. A profile holds the application keys and
-// identities the declared contract needs so a later run of the same
-// release "just uses the authenticated resources"; whether it survives the
-// run is the operator's keep/remove choice.
+// Package profile stores a QuickAgent's MCP profile: the persistent,
+// credentialed half of its gateway configuration, keyed by signature —
+// ns/name@version plus the archive digest, the same identity the install cache
+// uses. A profile holds the application keys and identities the declared
+// contract needs so a later run of the same release "just uses the
+// authenticated resources"; whether it survives the run is the operator's
+// keep/remove choice.
 //
 // Values live only here (dir 0700, file 0600) and in the per-run gateway
 // secrets file the engine deletes at teardown; they never enter plans,
@@ -31,7 +31,7 @@ type Profile struct {
 	ProfileVersion string `json:"profileVersion"`
 	// Ref is ns/name@version; Digest is the verified archive digest. A
 	// different digest is a different trust decision and gets a fresh
-	// guided setup (P2 §P8).
+	// guided setup.
 	Ref    string `json:"ref"`
 	Digest string `json:"digest"`
 	// Keep records the operator's completion choice: true → the profile

@@ -38,8 +38,8 @@ func claudeSignInRun(t *testing.T, home string, hosted bool) (*dockerx.Fake, err
 
 // A built-in on a Claude subscription follows adapter.DefaultFor onto the
 // Claude Code image and is handed the person's sign-in as `agentry run` is:
-// its agent container mounts the sign-in's own volume. Before
-// agentry-cli#845 the engine refused every such run as signed out.
+// its agent container mounts the sign-in's own volume. The engine does
+// not refuse such a run as signed out.
 func TestABuiltinIsHandedTheModelSignIn(t *testing.T) {
 	home := t.TempDir()
 	if _, err := modelsignin.Open(home, nil).Put(modelsignin.Claude, modelsignin.Record{ConfigDir: "agentry-claude-signin"}, modelsignin.Grant{}); err != nil {
@@ -59,7 +59,7 @@ func TestABuiltinIsHandedTheModelSignIn(t *testing.T) {
 }
 
 // With no sign-in kept, the built-in stops before any container with the
-// reason that says so; a hosted built-in never spends one (I5), even when
+// reason that says so; a hosted built-in never spends one, even when
 // the machine keeps one.
 func TestABuiltinWithoutTheSignInOrHostedIsRefused(t *testing.T) {
 	f, err := claudeSignInRun(t, t.TempDir(), false)
