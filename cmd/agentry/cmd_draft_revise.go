@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
@@ -13,6 +12,7 @@ import (
 
 	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 
+	"github.com/blaktron/agentry-cli/internal/origin"
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -28,7 +28,7 @@ func checkReviseFlags(args []string, o draftOpts) error {
 		if o.reviseRef == "" {
 			return errors.New("--revise-registry names where --revise-ref is fetched from: name the release with --revise-ref")
 		}
-		if !sameOrigin(o.reviseRegistry, registryURL()) {
+		if !origin.Same(o.reviseRegistry, registryURL()) {
 			return fmt.Errorf("--revise-registry must be on --registry's origin (%s)", registryURL())
 		}
 	}
@@ -163,13 +163,4 @@ func fetchRevision(cmd *cobra.Command, reg, ref, dest string) (*drafter.Revision
 		return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("digest mismatch: registry says %s, archive is %s — refusing to revise it", res.Digest, computed))
 	}
 	return releaseFromArchive(archive, dest, ref, res.Digest, engine.ExitVerify)
-}
-
-// sameOrigin is whether two registry URLs share a scheme and host: a
-// revision's fetch base may be a path of the registry the draft talks to,
-// where the run's grant travels, and never another host.
-func sameOrigin(a, b string) bool {
-	ua, err1 := url.Parse(a)
-	ub, err2 := url.Parse(b)
-	return err1 == nil && err2 == nil && ua.Host != "" && ua.Scheme == ub.Scheme && ua.Host == ub.Host
 }

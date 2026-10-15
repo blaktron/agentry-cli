@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/net/idna"
+	"github.com/blaktron/agentry-cli/internal/origin"
 )
 
 // Environment tokens. A personal access token is a bearer credential:
@@ -53,60 +53,11 @@ func isSecureAgentry(regURL string) bool {
 	if err != nil {
 		return false
 	}
-	h, ok := lookupHost(u.Hostname())
+	h, ok := origin.Host(u.Hostname())
 	if !ok {
 		return true
 	}
 	return h == secureAgentryDomain || strings.HasSuffix(h, "."+secureAgentryDomain)
-}
-
-// lookupHost is host as a request resolves it: lower-cased, without
-// trailing dots, and a non-ASCII name in its ASCII (punycode) form, so
-// that two spellings of one host compare equal. ok is false for a name
-// that has no such form.
-func lookupHost(host string) (string, bool) {
-	h := strings.TrimRight(strings.ToLower(host), ".")
-	for i := 0; i < len(h); i++ {
-		if h[i] >= 0x80 {
-			a, err := idna.Lookup.ToASCII(h)
-			if err != nil {
-				return "", false
-			}
-			return strings.TrimRight(a, "."), true
-		}
-	}
-	return h, true
-}
-
-// registryOrigin is regURL's scheme, host and port, lower-cased, with the
-// scheme's default port dropped; "" for a URL with no host.
-func registryOrigin(regURL string) string {
-	u, err := url.Parse(strings.TrimSpace(regURL))
-	if err != nil || u.Host == "" {
-		return ""
-	}
-	scheme := strings.ToLower(u.Scheme)
-	host, ok := lookupHost(u.Hostname())
-	if !ok {
-		return ""
-	}
-	port := u.Port()
-	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
-		port = ""
-	}
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-	if port != "" {
-		host += ":" + port
-	}
-	return scheme + "://" + host
-}
-
-// sameRegistry reports whether a and b share an origin.
-func sameRegistry(a, b string) bool {
-	oa := registryOrigin(a)
-	return oa != "" && oa == registryOrigin(b)
 }
 
 // secureAgentryRegistry is the SecureAgentry registry this build is for,
@@ -166,7 +117,7 @@ func envTokenFor(regURL string) (name, token string, notes []string, err error) 
 				return "", "", nil, fmt.Errorf("%w (%s is %s, a SecureAgentry address, which is not a self-hosted registry)", errNoSelfHostedRegistry, envRegistry, displayOrigin(v))
 			}
 			return "", "", nil, errNoSelfHostedRegistry
-		case sameRegistry(regURL, self):
+		case origin.Same(regURL, self):
 			name, token = envToken, t
 		default:
 			notes = append(notes, fmt.Sprintf("%s is not sent to %s: it authenticates only to %s, the self-hosted registry %s names",
@@ -179,7 +130,7 @@ func envTokenFor(regURL string) (name, token string, notes []string, err error) 
 		case home == "":
 			notes = append(notes, fmt.Sprintf("%s is not sent to %s: this build is for no SecureAgentry registry (its default registry is %s); sign in with `agentry login`",
 				envSecureAgentryToken, displayOrigin(regURL), displayOrigin(defaultRegistryURL)))
-		case sameRegistry(regURL, home):
+		case origin.Same(regURL, home):
 			name, token = envSecureAgentryToken, t
 		default:
 			notes = append(notes, fmt.Sprintf("%s is not sent to %s: it authenticates only to %s",
@@ -192,7 +143,7 @@ func envTokenFor(regURL string) (name, token string, notes []string, err error) 
 // displayOrigin names a target in a note: its origin, never a path that
 // could carry more than the host.
 func displayOrigin(regURL string) string {
-	if o := registryOrigin(regURL); o != "" {
+	if o := origin.Of(regURL); o != "" {
 		return o
 	}
 	return "this registry"
@@ -201,7 +152,7 @@ func displayOrigin(regURL string) string {
 // envTokenHint names the variable a script would set for regURL, for a
 // "no credential" message: "" when neither may go there.
 func envTokenHint(regURL string) string {
-	if home := secureAgentryRegistry(); home != "" && sameRegistry(regURL, home) {
+	if home := secureAgentryRegistry(); home != "" && origin.Same(regURL, home) {
 		return envSecureAgentryToken
 	}
 	if isSecureAgentry(regURL) {
