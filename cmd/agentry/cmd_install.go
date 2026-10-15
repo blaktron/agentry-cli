@@ -1,8 +1,8 @@
-// `agentry install` (§11): resolve → download → verify digest AND the DSSE
-// attestation signature (§8.8) → show the declared capability contract,
-// diffed against whatever this machine last installed → extract → lay the
-// release down for one target: the runner home (the default, DR-28), or
-// one of the two §5.6 coding-agent exports (claude-skill, agents-md).
+// `agentry install`: resolve → download → verify digest AND the DSSE
+// attestation signature → show the declared capability contract, diffed
+// against whatever this machine last installed → extract → lay the
+// release down for one target: the runner home (the default), or one of
+// the two coding-agent exports (claude-skill, agents-md).
 package main
 
 import (
@@ -41,7 +41,7 @@ import (
 // installOpts carries the install command's flags.
 type installOpts struct {
 	// local is a folder to install from instead of a registry ref
-	// (agentry-cli#491, cmd_install_local.go).
+	// (cmd_install_local.go).
 	local         string
 	target        string
 	provider      string
@@ -49,26 +49,24 @@ type installOpts struct {
 	yes           bool
 	allowUnsigned bool
 	// allowUnscanned admits a version the registry published without a
-	// scan (M22, agentry-cli#146): its own consent, which --allow-unsigned
-	// does not give.
+	// scan: its own consent, which --allow-unsigned does not give.
 	allowUnscanned bool
-	// plan stops after the consent preview and writes nothing (agentry-cli#102):
-	// the same resolve, download, digest and attestation checks, then the
-	// contract, its diff against what this machine accepted, the target and
-	// the directory, as JSON with --json — so a client can show the person
+	// plan stops after the consent preview and writes nothing: the same
+	// resolve, download, digest and attestation checks, then the contract,
+	// its diff against what this machine accepted, the target and the
+	// directory, as JSON with --json — so a client can show the person
 	// exactly what an install would do and confirm it against a digest.
 	plan bool
 	// repair lays the release down again in place of an installed copy
-	// that changed after it was installed (agentry-cli#326), which an
-	// install and a run otherwise refuse. The release is fetched and
-	// verified as every install's is.
+	// that changed after it was installed, which an install and a run
+	// otherwise refuse. The release is fetched and verified as every
+	// install's is.
 	repair bool
 }
 
-// providerTargets maps the per-provider install entry points
-// (RUNNER-PLAN-2 §P5) onto the §5.6 targets: the QuickAgent then runs on
-// that application's own MCP servers and built-in tools, never through the
-// docker gateway path.
+// providerTargets maps the per-provider install entry points onto the
+// coding-agent targets: the QuickAgent then runs on that application's own
+// MCP servers and built-in tools, never through the docker gateway path.
 var providerTargets = map[string]string{
 	"claude":   manifest.InterfaceClaudeSkill,
 	"codex":    manifest.InterfaceAgentsMD,
@@ -108,10 +106,10 @@ func newInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install <ns/name[@range]> | install --local DIR --allow-unsigned",
 		Short: "Resolve, download, verify, and install a QuickAgent on this machine",
-		Long: "Resolve ns/name[@range] (§9.4), download the release archive, verify its\n" +
-			"sha256 digest AND its DSSE attestation signature (§8.8), show the declared\n" +
-			"capability contract (§5.4) diffed against the installed version, and lay\n" +
-			"it down for one install target (§5.6):\n\n" +
+		Long: "Resolve ns/name[@range], download the release archive, verify its\n" +
+			"sha256 digest AND its DSSE attestation signature, show the declared\n" +
+			"capability contract diffed against the installed version, and lay\n" +
+			"it down for one install target:\n\n" +
 			"  runner        (the default) the runner home, where `agentry run` reads it:\n" +
 			"                ~/.agentry/runner/agents/<ns>/<name>/<version>-<digest>/, with\n" +
 			"                the coding-agent shape beside it (a Claude skill when the\n" +
@@ -164,7 +162,7 @@ func newInstallCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.local, "local", "", "install this QuickAgent folder, never published, into the runner home (unsigned: needs --allow-unsigned)")
 	cmd.Flags().StringVar(&opts.target, "target", "", "install target: runner | claude-skill | agents-md (default runner: the runner home, where `agentry run` reads it)")
-	cmd.Flags().StringVar(&opts.provider, "provider", "", "install for an agent application: claude | codex | openclaw (picks the target; RUNNER-PLAN-2 §P5)")
+	cmd.Flags().StringVar(&opts.provider, "provider", "", "install for an agent application: claude | codex | openclaw (picks the target)")
 	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory for claude-skill and agents-md (see help for per-target defaults); the runner target has one home")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false,
@@ -178,11 +176,11 @@ func newInstallCmd() *cobra.Command {
 	return cmd
 }
 
-// installPlan is the `install --plan --json` shape (agentry-cli#102): what an
-// install would do, with nothing written. `contract` is the manifest's
-// capabilities as canonical JSON (sorted keys), and `contractDigest` its
-// sha256, so a client can show the contract, hand the digest to the person,
-// and confirm an install against the digest of exactly what was shown.
+// installPlan is the `install --plan --json` shape: what an install would
+// do, with nothing written. `contract` is the manifest's capabilities as
+// canonical JSON (sorted keys), and `contractDigest` its sha256, so a
+// client can show the contract, hand the digest to the person, and confirm
+// an install against the digest of exactly what was shown.
 type installPlan struct {
 	Ref       string   `json:"ref"`
 	Namespace string   `json:"namespace"`
@@ -304,9 +302,8 @@ func pruneEmptyJSON(v any) any {
 	}
 }
 
-// validTargets is the §5.6 closed set plus the runner home (agentry-cli#190,
-// DR-28): the directory a run reads, and the two coding-agent exports. The
-// mcp target left with the withdrawn v1 tool-server package kind (DEV-088).
+// validTargets is the closed set of install targets: the runner home, the
+// directory a run reads, and the two coding-agent exports.
 var validTargets = []string{installdir.Target, manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD}
 
 // validateTarget checks an explicitly requested target. It runs BEFORE any
@@ -343,7 +340,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	}
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 	if flags.jsonOut {
-		// §R8: stdout carries the result; the narration moves to stderr.
+		// stdout carries the result; the narration moves to stderr.
 		out = errOut
 	}
 
@@ -362,8 +359,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// The resolve response's manifest is covered by neither the digest nor
 	// the attestation (both are over the archive), and the install directory
 	// and the skill file are derived from it: hold it to the publish rules
-	// before any path is, and require it to name the resolved release
-	// (security review 2026-09-20 §4.7).
+	// before any path is, and require it to name the resolved release.
 	if err := requireValidManifest(cmd, m, fmt.Sprintf("the registry's manifest for %s/%s@%s", res.Namespace, res.Name, res.Version)); err != nil {
 		return err
 	}
@@ -380,10 +376,10 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		return fmt.Errorf("digest mismatch: registry says %s, archive is %s — refusing to install", res.Digest, computed)
 	}
 
-	// Provenance (§8.8, §11 "verify digest+signature"). The digest above only
-	// says the bytes match what the registry SAID; the attestation says who
-	// vouched for them. Verified against the digest we just computed, so a
-	// valid signature over some other archive proves nothing here.
+	// Provenance. The digest above only says the bytes match what the
+	// registry SAID; the attestation says who vouched for them. Verified
+	// against the digest we just computed, so a valid signature over some
+	// other archive proves nothing here.
 	att := installAttestation(cmd, reg, token, res, computed)
 	attErr := judgeAttestation(out, errOut, att, res, opts.allowUnsigned, opts.allowUnscanned, opts.plan)
 	if attErr != nil && !opts.plan {
@@ -403,9 +399,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		paths          installPaths
 		key            installed.Key
 		lay            func(staging string, m *manifest.Manifest) error
-		// after runs once the record is saved: the runner target's
-		// replace of the older version (D9) waits for the record, so a
-		// failed save never leaves a directory gone and a record naming it.
+		// after runs once the record is saved: the runner target's replace
+		// of the older version waits for the record, so a failed save never
+		// leaves a directory gone and a record naming it.
 		after func() error
 	)
 	switch target {
@@ -424,7 +420,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		releaseDir := installdir.ReleaseDir(home, res.Namespace, m.Name, res.Version, computed)
 		// The same release installed here and changed since is refused
 		// before anything is asked or written, as a run refuses it; the
-		// person's --repair lays it down again instead (agentry-cli#326).
+		// person's --repair lays it down again instead.
 		var changed *installdir.ChangedError
 		if _, ierr := installdir.Inspect(releaseDir, computed); errors.As(ierr, &changed) && !opts.repair {
 			changed.Ref = fmt.Sprintf("%s/%s@%s", res.Namespace, m.Name, res.Version)
@@ -545,8 +541,8 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	// The consent above was on the resolve manifest's contract; the export
 	// compiles its grants from the archive's. Hold the archive to what was
 	// consented before anything is written, and record its contract: never
-	// wider, possibly narrower (agentry-cli#252). A legacy archive without
-	// agent.yaml hands back m itself, which has nothing to be held to.
+	// wider, possibly narrower. An archive without agent.yaml hands back m
+	// itself, which has nothing to be held to.
 	if am != m {
 		if widened := installed.ArchiveWidenings(m.Contract(), am.Contract()); len(widened) > 0 {
 			return fmt.Errorf("the archive of %s/%s@%s declares more than the registry said it would — refusing to install: its agent.yaml %s",
@@ -571,9 +567,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	if after != nil && recorded {
 		// The release and its record landed: an older version's directory
 		// that will not go is said on a completed install, not an error
-		// that reads as a failed one (agentry-cli#192, the desktop's way).
-		// A path built wrong (ErrNotARelease) is a bug, not an older
-		// version, and still stops.
+		// that reads as a failed one (the desktop's way). A path built
+		// wrong (ErrNotARelease) is a bug, not an older version, and
+		// still stops.
 		if err := after(); errors.Is(err, installdir.ErrNotARelease) {
 			return err
 		} else if err != nil {
@@ -665,8 +661,8 @@ func emitJSON(w io.Writer, v any) error {
 }
 
 // installExtractLimits bounds what the CLI unpacks. Looser than the server's
-// §19 publish quotas (which the archive already passed) because the client's
-// job here is only to refuse a bomb, not to re-adjudicate the release.
+// publish quotas (which the archive already passed) because the client's job
+// here is only to refuse a bomb, not to re-adjudicate the release.
 func installExtractLimits() pkgarchive.ExtractLimits {
 	return pkgarchive.ExtractLimits{
 		MaxFileBytes:  extractMaxFileBytes,
@@ -676,7 +672,7 @@ func installExtractLimits() pkgarchive.ExtractLimits {
 	}
 }
 
-// verifyInstallAttestation enforces the §11 install-time signature check.
+// verifyInstallAttestation enforces the install-time signature check.
 //
 // Three outcomes, and the difference between them is the whole point:
 //   - verified   → proceed, naming the key
@@ -761,24 +757,24 @@ func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *a
 		return nil
 
 	default: // "mismatch", "unverifiable"
-		// Detail names any key change itself (agentry-cli#139).
+		// Detail names any key change itself.
 		return fmt.Errorf("attestation %s for %s/%s@%s: %s — refusing to install",
 			att.State, res.Namespace, res.Name, res.Version, att.Detail)
 	}
 }
 
-// confirmCapabilityChange applies the §11 install gate.
+// confirmCapabilityChange applies the install gate.
 //
-// A first install asks about network egress, exec, a remote MCP server or
-// a target host (confirmCapabilities). A REINSTALL
-// compares against what this machine last accepted for this exact target
-// directory: widened capabilities always ask (that is the case §11 names),
-// narrowed or unchanged ones say so and continue — re-asking an identical
-// question every upgrade is how a security prompt becomes a reflex.
+// A first install asks about network egress, exec, a remote MCP server or a
+// target host (confirmCapabilities). A REINSTALL compares against what this
+// machine last accepted for this exact target directory: widened capabilities
+// always ask (the case the install gate exists for), narrowed or unchanged ones
+// say so and continue — re-asking an identical question every upgrade is how a
+// security prompt becomes a reflex.
 //
 // The banner writer is explicit because callers disagree about stdout:
 // install narrates there, but `agentry run` reserves stdout for the result
-// (RUNNER-PLAN §R8) and sends this to stderr.
+// and sends this to stderr.
 func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed.State, key installed.Key,
 	version string, next installed.CapSnapshot, caps manifest.Capabilities, yes bool,
 ) error {
@@ -818,10 +814,10 @@ func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed
 		"install aborted (widened capability contract not accepted)")
 }
 
-// confirmCapabilities enforces the §11 install gate: declared network
-// egress, exec, a remote MCP server or a target host needs typed
-// confirmation, skipped by --yes; non-interactive runs must pass --yes. The
-// prompt names what the release declares (agentry-cli#888).
+// confirmCapabilities enforces the install gate: declared network egress,
+// exec, a remote MCP server or a target host needs typed confirmation,
+// skipped by --yes; non-interactive runs must pass --yes. The prompt names
+// what the release declares.
 func confirmCapabilities(cmd *cobra.Command, caps manifest.Capabilities, yes bool) error {
 	if yes || !capabilityNeedsConfirm(caps) {
 		return nil
@@ -897,7 +893,7 @@ func resolveInstallPaths(target, dir, name string) (installPaths, error) {
 
 // manifestFromInstallArchive reads agent.yaml out of the extracted archive
 // when it is there, validates it, and requires it to name the resolved
-// release; absent (a legacy v1 release), the resolve manifest stands.
+// release; absent, the resolve manifest stands.
 func manifestFromInstallArchive(staging string, fromResolve *manifest.Manifest, res *apiclient.ResolveResult) (*manifest.Manifest, error) {
 	if _, err := os.Stat(filepath.Join(staging, "agent.yaml")); errors.Is(err, os.ErrNotExist) {
 		return fromResolve, nil
@@ -926,8 +922,7 @@ func prepareDest(p installPaths) error {
 	// root and nothing else: never a root, never the home directory or an
 	// ancestor of it, never a directory a traversing name resolved to.
 	// The agents-md default is relative to the working directory, so both
-	// are made absolute before the judgement (security review 2026-09-20
-	// §4.7).
+	// are made absolute before the judgement.
 	dest, err := filepath.Abs(p.dest)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", p.dest, err)
@@ -966,7 +961,7 @@ func stdinIsTTY(in io.Reader) bool {
 }
 
 // warnUndeclaredTarget warns when runtime.interfaces exists but omits the
-// chosen target (§5.2: interfaces lists what §5.6 may emit).
+// chosen target (runtime.interfaces lists the targets a release may emit).
 func warnUndeclaredTarget(w io.Writer, m *manifest.Manifest, target string) {
 	if len(m.Runtime.Interfaces) == 0 {
 		return
@@ -979,12 +974,12 @@ func warnUndeclaredTarget(w io.Writer, m *manifest.Manifest, target string) {
 	_, _ = fmt.Fprintf(w, "warning: manifest runtime.interfaces %v does not list target %q\n", m.Runtime.Interfaces, target)
 }
 
-// removeOtherVersions is the runner target's replace (D9), a variable so a
+// removeOtherVersions is the runner target's replace, a variable so a
 // test can make it fail after the record is saved.
 var removeOtherVersions = installdir.RemoveOtherVersions
 
-// exportClaudeSkill writes the archive into {dir/<name>|~/.claude/skills/<name>},
-// guaranteeing SKILL.md frontmatter (§5.6 claude-skill row).
+// exportClaudeSkill writes the archive into
+// {dir/<name>|~/.claude/skills/<name>}, guaranteeing SKILL.md frontmatter.
 func exportClaudeSkill(out io.Writer, staging string, p installPaths, m *manifest.Manifest, ns, version string) error {
 	if err := prepareDest(p); err != nil {
 		return err
@@ -997,7 +992,7 @@ func exportClaudeSkill(out io.Writer, staging string, p installPaths, m *manifes
 }
 
 // exportAgentsMD extracts to {dir|./agents/<name>} and upserts the agent's
-// section in ./AGENTS.md (§5.6 agents-md row).
+// section in ./AGENTS.md.
 func exportAgentsMD(out io.Writer, staging string, p installPaths, m *manifest.Manifest, ns, version string) error {
 	if err := prepareDest(p); err != nil {
 		return err

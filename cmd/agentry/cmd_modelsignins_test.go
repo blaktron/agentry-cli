@@ -47,9 +47,9 @@ func signInPlan(kind, delivery string) *spec.Plan {
 	}}}
 }
 
-// A hosted run never spends a model sign-in (I5): each hosted driver's
-// marker refuses the plan by policy, naming the kind, before the person's
-// store or keychain is opened.
+// A hosted run never spends a model sign-in: each hosted driver's marker
+// refuses the plan by policy, naming the kind, before the person's store
+// or keychain is opened.
 func TestAModelSignInNeverReachesAHostedRun(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
@@ -86,7 +86,7 @@ func TestAModelSignInNeverReachesAHostedRun(t *testing.T) {
 
 // On this computer, a plan's sign-in is the person's kept grant, refreshed
 // now: the run is handed the access token alone, and renews through the
-// same store (I3). With none kept the run is refused by policy with the
+// same store. With none kept the run is refused by policy with the
 // signin-missing reason.
 func TestARunIsHandedItsSignInsAccessTokenAlone(t *testing.T) {
 	isolateEnv(t)

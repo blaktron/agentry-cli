@@ -1,9 +1,9 @@
-// `agentry setup` (RUNNER-PLAN-2 §P1): prepare a machine for QuickAgent
-// runs before any agent is involved — configure the operator's preferred
-// LLM provider into the policy, then stand up the docker-mcp-gateway plane
-// (pull pinned images, build the runner image) right away instead of
-// lazily at first agent use. Idempotent; `agentry run` still self-heals,
-// so setup is a convenience, not a gate.
+// `agentry setup`: prepare a machine for QuickAgent runs before any agent
+// is involved — configure the operator's preferred LLM provider into the
+// policy, then stand up the docker-mcp-gateway plane (pull pinned images,
+// build the runner image) right away instead of lazily at first agent use.
+// Idempotent; `agentry run` still self-heals, so setup is a convenience,
+// not a gate.
 package main
 
 import (
@@ -43,8 +43,7 @@ func newSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Prepare this machine for QuickAgent runs (LLM provider + docker MCP gateway)",
-		Long: "One-time (and re-runnable) machine setup for the QuickAgent runner\n" +
-			"(RUNNER-PLAN-2 §P1):\n\n" +
+		Long: "One-time (and re-runnable) machine setup for the QuickAgent runner:\n\n" +
 			"  1. Configure your preferred LLM provider for agent runs into the operator\n" +
 			"     policy — interactively on a terminal, or from --provider/--model/\n" +
 			"     --api-key-env/--base-url with --yes. The key itself is never stored;\n" +
@@ -67,7 +66,7 @@ func newSetupCmd() *cobra.Command {
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
 	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what pays for the model: api (an API key, the default) | subscription (an Anthropic `claude setup-token` token — Claude Code only; derived from the key when this setup stores it) | chatgpt-plan (provider openai: your ChatGPT plan, signed in with ChatGPT; interactive setup asks) | claude-signin (provider anthropic: Use your Claude subscription (runs Claude Code): Claude Code signs you in itself; interactive setup asks) | copilot-signin (provider copilot, its only one: Sign in with GitHub)")
 	f.StringVar(&opts.baseURL, "base-url", "", "custom endpoint base URL (derives the egress-proxy allowlist)")
-	f.BoolVar(&opts.oauthApp, "oauth-app", false, "provider copilot: sign in through Agentry's OAuth App rather than its GitHub App (the fallback, plan D26)")
+	f.BoolVar(&opts.oauthApp, "oauth-app", false, "provider copilot: sign in through Agentry's OAuth App rather than its GitHub App (the fallback)")
 	f.BoolVar(&opts.connect, "connect", false, "provider openrouter, poe or huggingface: "+setup.ConnectLabel+" (the vendor makes a key for Agentry in your browser, kept in the OS keychain) rather than a key you paste; interactive setup asks")
 	f.StringVar(&opts.copilotPlan, "copilot-plan", "", "provider copilot: your Copilot plan, which names the Copilot API host runs reach: individual (Free, Pro, Pro+, Max; the default) | business | enterprise")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
@@ -76,9 +75,9 @@ func newSetupCmd() *cobra.Command {
 	return cmd
 }
 
-// setupOutput is the `setup --json` shape (agentry-cli#102): the policy as
-// configured — the model provider and the NAME of its key variable, never a
-// value — and whether the images were prepared.
+// setupOutput is the `setup --json` shape: the policy as configured — the
+// model provider and the NAME of its key variable, never a value — and
+// whether the images were prepared.
 type setupOutput struct {
 	PolicyPath string `json:"policyPath"`
 	Provider   string `json:"provider"`
@@ -89,8 +88,8 @@ type setupOutput struct {
 	// APIKeySource is "keyring" when the OS keychain is the fallback for
 	// an unset variable; "" when the environment is the only source.
 	APIKeySource string `json:"apiKeySource,omitempty"`
-	// APIKeyKind is "subscription" for an Anthropic subscription token
-	// (agentry-cli#171); absent for an API key.
+	// APIKeyKind is "subscription" for an Anthropic subscription
+	// token; absent for an API key.
 	APIKeyKind string `json:"apiKeyKind,omitempty"`
 	BaseURL    string `json:"baseUrl,omitempty"`
 	// Images is "ready" when the gateway, harness and runner images were
@@ -98,7 +97,7 @@ type setupOutput struct {
 	Images string `json:"images"`
 }
 
-// runSetup executes both §P1 halves.
+// runSetup executes both halves of setup.
 func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	home, err := runnerHome()
 	if err != nil {
@@ -142,7 +141,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "policy written: %s\n", policyPath)
 	// A schedule that runs signed out holds its own sealed copy of the
-	// keys: a changed key or provider is sealed again now (D18).
+	// keys: a changed key or provider is sealed again now.
 	resealSignedOut(cmd.ErrOrStderr())
 	result := setupOutput{PolicyPath: policyPath, Provider: pol.Model.Provider, Model: pol.Model.Name,
 		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, APIKeyKind: pol.Model.APIKeyKind, BaseURL: pol.Model.BaseURL, Images: "skipped"}
@@ -157,10 +156,9 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	docker := dockerx.New()
 	imageCtx := homeImageDir(home)
 	// The harness image prepared is the default adapter's for this model
-	// setup, and no other (plan model-sign-ins.md D7): docker-agent for a
-	// key, the Codex image for a ChatGPT plan, the Claude Code image (built
-	// here) for a Claude subscription, the Copilot CLI image (built here)
-	// for a Copilot plan.
+	// setup, and no other: docker-agent for a key, the Codex image for a
+	// ChatGPT plan, the Claude Code image (built here) for a Claude
+	// subscription, the Copilot CLI image (built here) for a Copilot plan.
 	runsOn := adapter.DefaultFor(pol)
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
 		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), runsOn == adapter.DefaultName); err != nil {

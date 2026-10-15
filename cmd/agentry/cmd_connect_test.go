@@ -87,7 +87,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 }
 
 // Each connect keeps the key it minted in the model key's keychain entry,
-// says where, and prints it nowhere (I6); list shows it connected; remove
+// says where, and prints it nowhere; list shows it connected; remove
 // forgets it and names the vendor's page (OpenRouter, Poe), or says Hugging
 // Face offers no revocation.
 func TestModelSignInsConnectEachAccountThenDisconnect(t *testing.T) {
@@ -197,11 +197,11 @@ func TestSetupConnectWritesThePolicy(t *testing.T) {
 	}
 }
 
-// Poe needs Agentry's client id, which this build carries none of until M8.
+// Poe needs Agentry's client id, which this build carries none of yet.
 func TestModelSignInsConnectPoeNamesTheMissingClient(t *testing.T) {
 	newConnectFixture(t)
 	t.Setenv(mcpauth.PoeClientIDEnv, "")
-	if _, _, err := runCLI(t, strings.NewReader(""), "model-signins", "add", "poe"); err == nil || !strings.Contains(err.Error(), "agentry-cli#743") {
+	if _, _, err := runCLI(t, strings.NewReader(""), "model-signins", "add", "poe"); err == nil || !strings.Contains(err.Error(), mcpauth.PoeClientIDEnv) {
 		t.Fatalf("err %v", err)
 	}
 }

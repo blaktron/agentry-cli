@@ -1,10 +1,10 @@
-// `agentry schedule`: runs on this computer for later and on repeat (plan
-// quickagent-scheduling.md, agentry-cli#747). The store under the runner
-// home is the truth about every schedule; the operating system's own
-// scheduler only wakes `agentry schedule fire <id>`, which re-reads the
-// store and decides (D4). A fire runs the exact version consented to when
-// the schedule was made, autonomous, never with a blanket --yes (D3), and
-// everything it needs is checked when the schedule is made (D8).
+// `agentry schedule`: runs on this computer for later and on repeat. The
+// store under the runner home is the truth about every schedule; the
+// operating system's own scheduler only wakes `agentry schedule fire
+// <id>`, which re-reads the store and decides. A fire runs the exact
+// version consented to when the schedule was made, autonomous, never with
+// a blanket --yes, and everything it needs is checked when the schedule
+// is made.
 package main
 
 import (
@@ -200,7 +200,7 @@ type runSpecFlags struct {
 	allowUnsigned, allowUnscanned, allowVulnMCP bool
 	signedOut                                   bool
 	// hosts are the target hosts' sign-in flags, read once at add and
-	// kept in the keychain (agentry-cli#863).
+	// kept in the keychain.
 	hosts targetHostFlags
 }
 
@@ -300,8 +300,8 @@ func newScheduleAddCmd() *cobra.Command {
 	return cmd
 }
 
-// scheduleAdd makes one schedule: resolve and pin (D3), consent and
-// install through `run --prepare`, check every input a fire needs (D8),
+// scheduleAdd makes one schedule: resolve and pin, consent and
+// install through `run --prepare`, check every input a fire needs,
 // keep it, and write its alarm.
 func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, when schedule.Recurrence, now time.Time, yes bool) error {
 	sc, err := scheduleFromFlags(name, out, spec, when, now)
@@ -325,8 +325,8 @@ func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w
 	if err := schedulePrepare(cmd, sc, yes); err != nil {
 		return err
 	}
-	// Its target hosts, now, with the person here (plan runtime-hosts.md
-	// D12): each key accepted, each sign-in kept in the keychain.
+	// Its target hosts, now, with the person here: each key accepted,
+	// each sign-in kept in the keychain.
 	if sc.Run.Hosts, err = scheduleReadyHosts(cmd, sc, spec.hosts); err != nil {
 		return err
 	}
@@ -436,7 +436,7 @@ func scheduleFromFlags(name, out string, spec runSpecFlags, when schedule.Recurr
 	return sc, errors.Join(errs...)
 }
 
-// pinPreview pins sc to the version and digest the run plan resolved (D3)
+// pinPreview pins sc to the version and digest the run plan resolved
 // and names it.
 func pinPreview(sc schedule.Schedule, preview *runPlanOutput) (schedule.Schedule, error) {
 	if sc.Local == "" {
@@ -501,8 +501,7 @@ func liftGiven(lift string, r schedule.RunSpec) bool {
 // digest a schedule pins, its modes, and what a run would refuse. It is
 // given none of the --allow-* flags, so it lists every refusal: given
 // them, a plan lists none of what they lift, and a flag that lifts no
-// listed refusal is dropped before the prepare step needs it
-// (agentry-cli#856).
+// listed refusal is dropped before the prepare step needs it.
 func schedulePreview(cmd *cobra.Command, sc schedule.Schedule, ref string) (*runPlanOutput, error) {
 	args := []string{"--plan"}
 	if sc.Local != "" {
@@ -614,7 +613,7 @@ func allowArgs(r schedule.RunSpec) []string {
 	return args
 }
 
-// fireGaps is every input a fire would lack (D8). A fire runs under the
+// fireGaps is every input a fire would lack. A fire runs under the
 // system's scheduler, not this shell: an environment variable set here is
 // not there, so a key or a secret only in the environment is a gap.
 func fireGaps(sc schedule.Schedule) []string {
@@ -651,7 +650,7 @@ func fireGaps(sc schedule.Schedule) []string {
 var hostSignInSaved = targethost.HasSavedSignIn
 
 // scheduleReadyHosts readies, when a schedule is made, each target host
-// the release asks for (plan runtime-hosts.md D12; agentry-cli#863): its
+// the release asks for: its
 // answer is the schedule's --intake, its key is accepted now (at a
 // terminal, when no known_hosts file holds it), and its sign-in, from a
 // --host-* flag, the keychain or a prompt, is kept in the keychain, where
@@ -710,7 +709,7 @@ func scheduleReadyHosts(cmd *cobra.Command, sc schedule.Schedule, f targetHostFl
 }
 
 // hostGaps is what a fire would lack for its target hosts: a host the
-// schedule was not readied for (one made before agentry-cli#863), and a
+// schedule was not readied for (one made by an older version), and a
 // sign-in no longer saved where the fire reads it. A schedule not yet made
 // (add's --check) has readied none, and is not told so.
 func hostGaps(ids []string, sc schedule.Schedule, saved func(targethost.Answer) (bool, error)) []string {
@@ -995,7 +994,7 @@ func schedulerContextGaps(cmd *cobra.Command, policyPath string) []string {
 
 // scheduleEntry is fireEntry for sc: a signed-out schedule's also loads
 // its sealed keys (credential, else its own in the store) and turns the
-// keychain off, so nothing waits on a keychain that cannot unlock (D18).
+// keychain off, so nothing waits on a keychain that cannot unlock.
 func scheduleEntry(sc schedule.Schedule, credential string) (schedule.Entry, error) {
 	e, err := fireEntry(sc.ID)
 	if err != nil || !sc.SignedOut {
@@ -1114,7 +1113,7 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 	if !sc.SignedOut && !scheduleSignedIn() {
 		// Linger, on for another schedule, rang this one with nobody signed
 		// in: it runs only while its person is, so it takes nothing, and
-		// the next ring signed in records it as D5 says.
+		// the next ring signed in records it.
 		_, _ = fmt.Fprintf(errOut, "schedule %s runs only while you are signed in, and nobody is\n", id)
 		return nil
 	}

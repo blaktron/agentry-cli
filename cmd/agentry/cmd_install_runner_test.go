@@ -14,12 +14,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// TestInstallRunnerTargetIsTheDefault (agentry-cli#190, DR-28): `install`
-// with no --target lays the release down in the runner home — the
-// directory a run reads, with install.json and the pristine workspace —
-// writes the coding-agent shape beside it in the style the policy implies
-// (no policy: AGENTS.md), and records it in installed.yaml under the run's
-// own consent key, managed.
+// TestInstallRunnerTargetIsTheDefault: `install` with no --target lays the
+// release down in the runner home — the directory a run reads, with
+// install.json and the pristine workspace — writes the coding-agent shape
+// beside it in the style the policy implies (no policy: AGENTS.md), and
+// records it in installed.yaml under the run's own consent key, managed.
 func TestInstallRunnerTargetIsTheDefault(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
@@ -60,7 +59,7 @@ func TestInstallRunnerTargetIsTheDefault(t *testing.T) {
 }
 
 // TestInstallRunnerTargetStyleFollowsThePolicy: the policy's coding agent,
-// then its provider, decide the export written beside the release (D2).
+// then its provider, decide the export written beside the release.
 func TestInstallRunnerTargetStyleFollowsThePolicy(t *testing.T) {
 	isolateEnv(t)
 	home, policyPath := isolateRunnerHome(t)
@@ -138,7 +137,7 @@ func TestInstallRunnerTargetThenRunFetchesNothing(t *testing.T) {
 }
 
 // TestInstallRunnerTargetReplacesAndUninstalls: a newer version replaces
-// the older directory (D9) and keeps one record; widened capabilities are
+// the older directory and keeps one record; widened capabilities are
 // asked about against the installed snapshot; uninstall removes the
 // agent's directory and the record.
 func TestInstallRunnerTargetReplacesAndUninstalls(t *testing.T) {
@@ -190,10 +189,10 @@ func TestInstallRunnerTargetReplacesAndUninstalls(t *testing.T) {
 	}
 }
 
-// TestListCheckMarksUpdates (agentry-cli#190): --check asks the registry
-// for the newest version per record — the configured registry for a
-// runner record — and marks the ones an install would update; a registry
-// that cannot be reached is that record's line, not the listing's failure.
+// TestListCheckMarksUpdates: --check asks the registry for the newest
+// version per record — the configured registry for a runner record — and
+// marks the ones an install would update; a registry that cannot be
+// reached is that record's line, not the listing's failure.
 func TestListCheckMarksUpdates(t *testing.T) {
 	isolateEnv(t)
 	isolateRunnerHome(t)
@@ -256,7 +255,7 @@ func TestListCheckMarksUpdates(t *testing.T) {
 // TestInstallRunnerTargetWritesNothingBeforeTheGates: a refused
 // attestation, a refused consent, and a --plan each leave the runner home
 // without an agents directory — nothing lands before the digest, the
-// signature and the consent (ARCHITECTURE §9).
+// signature and the consent.
 func TestInstallRunnerTargetWritesNothingBeforeTheGates(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
@@ -334,13 +333,12 @@ func TestListCheckAsksTheRecordsOwnRegistry(t *testing.T) {
 	}
 }
 
-// TestInstallRunnerTargetOfAnInstructionOnlyReleaseWithClaudeChosen
-// (agentry-cli#193): a prompt agent — AGENT.md, no SKILL.md, the shape of
-// the catalogue on dev — installs into the runner home with Claude Code
-// chosen, its export a Claude skill whose SKILL.md is made from the
-// instruction; and `--target claude-skill` on the same release writes the
-// same skill into ~/.claude/skills. Before this, both failed on the
-// SKILL.md the release does not carry.
+// TestInstallRunnerTargetOfAnInstructionOnlyReleaseWithClaudeChosen: a prompt
+// agent — AGENT.md, no SKILL.md, the shape of a typical catalogue entry —
+// installs into the runner home with Claude Code chosen, its export a Claude
+// skill whose SKILL.md is made from the instruction; and `--target
+// claude-skill` on the same release writes the same skill into
+// ~/.claude/skills.
 func TestInstallRunnerTargetOfAnInstructionOnlyReleaseWithClaudeChosen(t *testing.T) {
 	isolateEnv(t)
 	home, policyPath := isolateRunnerHome(t)
@@ -387,9 +385,9 @@ func TestInstallRunnerTargetOfAnInstructionOnlyReleaseWithClaudeChosen(t *testin
 	}
 }
 
-// TestInstallRunnerTargetWarnsOnAnUnreadablePolicy (agentry-cli#192): a
-// policy that cannot be read is said on stderr, and the install goes on
-// with the generic AGENTS.md shape.
+// TestInstallRunnerTargetWarnsOnAnUnreadablePolicy: a policy that
+// cannot be read is said on stderr, and the install goes on with the
+// generic AGENTS.md shape.
 func TestInstallRunnerTargetWarnsOnAnUnreadablePolicy(t *testing.T) {
 	isolateEnv(t)
 	home, policyPath := isolateRunnerHome(t)
@@ -410,11 +408,11 @@ func TestInstallRunnerTargetWarnsOnAnUnreadablePolicy(t *testing.T) {
 	}
 }
 
-// TestInstallRunnerTargetReplaceFailureIsAWarning (agentry-cli#192): once
-// the new release and its record have landed, an older version's
-// directory that will not go is said as a warning on a completed install
-// (exit 0, the record saved), the desktop's way, not an error that reads
-// as a failed install.
+// TestInstallRunnerTargetReplaceFailureIsAWarning: once the new release
+// and its record have landed, an older version's directory that will not
+// go is said as a warning on a completed install (exit 0, the record
+// saved), the desktop's way, not an error that reads as a failed
+// install.
 func TestInstallRunnerTargetReplaceFailureIsAWarning(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)

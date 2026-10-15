@@ -1,5 +1,5 @@
-// Minimum-CLI-version enforcement (§11 distribution note: "CLI checks
-// registry `meta` for min-supported-version").
+// Minimum-CLI-version enforcement (the CLI checks the registry's `meta` for
+// its min-supported-version).
 package main
 
 import (

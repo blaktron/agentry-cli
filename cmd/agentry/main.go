@@ -1,4 +1,4 @@
-// agentry is the developer CLI (§11): init, validate, login, publish,
+// agentry is the developer CLI: init, validate, login, publish,
 // install, verify, search, info, and yank against an Agentry registry.
 package main
 
@@ -25,7 +25,7 @@ import (
 //	go build -ldflags "-X main.defaultRegistryURL=https://registry.example.test" ./cmd/agentry
 var defaultRegistryURL = "http://localhost:8080"
 
-// globalFlags carries the §11 global flags shared by every subcommand.
+// globalFlags carries the global flags shared by every subcommand.
 type globalFlags struct {
 	// registry is the --registry override; empty falls back to the config
 	// file default and then defaultRegistryURL.
@@ -39,12 +39,12 @@ var flags globalFlags
 
 func main() {
 	installRunGrant()
-	// SIGINT and SIGTERM cancel the command's context (agentry-cli#124): a
-	// run's docker calls take it, the engine's teardown runs on every path,
-	// and the result envelope is written with the failure — an interrupted
-	// run leaves its receipts, where a process killed by the signal left
-	// nothing. Once the context is cancelled the handler is removed, so a
-	// second signal kills the process the ordinary way.
+	// SIGINT and SIGTERM cancel the command's context: a run's docker calls
+	// take it, the engine's teardown runs on every path, and the result
+	// envelope is written with the failure — an interrupted run leaves its
+	// receipts, where a process killed by the signal left nothing. Once the
+	// context is cancelled the handler is removed, so a second signal kills
+	// the process the ordinary way.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ctx.Done()
@@ -52,9 +52,9 @@ func main() {
 	}()
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "agentry: "+err.Error())
-		// `agentry run` classifies its failures (RUNNER-PLAN §R8) so
-		// pipelines and cron can branch on the exit code; everything
-		// else keeps the traditional 1.
+		// `agentry run` classifies its failures so pipelines and
+		// cron can branch on the exit code; everything else keeps
+		// the traditional 1.
 		var classified *engine.ClassifiedError
 		if errors.As(err, &classified) {
 			os.Exit(classified.Code)
@@ -76,9 +76,8 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	// The second line names the registry this binary falls back to when
-	// nothing is configured: a release bakes production's or dev's by the
-	// branch it was cut from (agentry-cli#240), and this is where a person
-	// sees which.
+	// nothing is configured: a release bakes in its default registry, and
+	// this is where a person sees which.
 	root.SetVersionTemplate("agentry version {{.Version}}\ndefault registry: " + defaultRegistryURL + "\n")
 	root.PersistentFlags().StringVar(&flags.registry, "registry", "",
 		"registry base URL (default: config defaultRegistry, else "+defaultRegistryURL+")")

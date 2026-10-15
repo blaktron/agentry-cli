@@ -45,7 +45,7 @@ func TestResolveInstallPathsManagedFlag(t *testing.T) {
 }
 
 // TestValidateTargetTable: a typo in --target must fail before any network
-// call, naming the closed §5.6 set.
+// call, naming the closed set.
 func TestValidateTargetTable(t *testing.T) {
 	if err := validateTarget(""); err != nil {
 		t.Errorf("empty target (resolve from kind later) errored: %v", err)
@@ -61,8 +61,8 @@ func TestValidateTargetTable(t *testing.T) {
 	}
 }
 
-// TestResolveProviderTarget: --provider is sugar for --target (RUNNER-PLAN-2
-// §P5) and must stay mutually exclusive with it.
+// TestResolveProviderTarget: --provider is sugar for --target and must stay
+// mutually exclusive with it.
 func TestResolveProviderTarget(t *testing.T) {
 	tests := []struct {
 		provider, target string
@@ -131,8 +131,8 @@ func TestPrepareDest(t *testing.T) {
 	}
 }
 
-// TestWarnUndeclaredTarget: runtime.interfaces, when present, is the §5.2
-// declaration of what §5.6 may emit — installing outside it warns.
+// TestWarnUndeclaredTarget: runtime.interfaces, when present, is the
+// declaration of what a release may emit — installing outside it warns.
 func TestWarnUndeclaredTarget(t *testing.T) {
 	var buf bytes.Buffer
 	m := &manifest.Manifest{}
@@ -195,7 +195,7 @@ func TestPromptYes(t *testing.T) {
 	}
 }
 
-// TestConfirmCapabilities: the §11 gate — egress/exec asks, --yes skips,
+// TestConfirmCapabilities: the install gate — egress/exec asks, --yes skips,
 // and a non-interactive run without --yes refuses with the flag named.
 func TestConfirmCapabilities(t *testing.T) {
 	egress := parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n")
@@ -212,10 +212,10 @@ func TestConfirmCapabilities(t *testing.T) {
 	}
 }
 
-// TestConfirmCapabilitiesNamesWhatIsDeclared (agentry-cli#888): the
-// question names what the release declares that needs a yes, and nothing
-// it does not: a release with only a target host is asked about a target
-// host, never "network egress and/or exec".
+// TestConfirmCapabilitiesNamesWhatIsDeclared: the question names what
+// the release declares that needs a yes, and nothing it does not: a
+// release with only a target host is asked about a target host, never
+// "network egress and/or exec".
 func TestConfirmCapabilitiesNamesWhatIsDeclared(t *testing.T) {
 	hostOnly := manifest.Capabilities{TargetHosts: []string{"server"}}
 	err := confirmCapabilities(stubCmd(t), hostOnly, false)
@@ -244,8 +244,8 @@ func TestConfirmCapabilitiesNamesWhatIsDeclared(t *testing.T) {
 }
 
 // TestCopyTreePreservesModes: reinstalling an agent with an executable
-// helper script must keep it executable (the archive normalizes modes,
-// D-15; the copy must not undo that).
+// helper script must keep it executable (the archive normalizes modes;
+// the copy must not undo that).
 func TestCopyTreePreservesModes(t *testing.T) {
 	src := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
@@ -274,9 +274,9 @@ func TestCopyTreePreservesModes(t *testing.T) {
 	}
 }
 
-// TestInstallClaudeSkillEndToEnd: the full §9.4 flow against the fake
+// TestInstallClaudeSkillEndToEnd: the full flow against the fake
 // registry with the coding-agent target named (the default is the runner
-// home since DR-28) — resolve, download, digest check, unsigned gate, export with
+// home) — resolve, download, digest check, unsigned gate, export with
 // embedded-mode allowed-tools, install-state record, and the
 // reinstall-clears-managed-dir rule with an "unchanged" diff.
 func TestInstallClaudeSkillEndToEnd(t *testing.T) {
@@ -301,7 +301,7 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Embedded mode (RUNNER-PLAN §R5): fs.read compiles to the host's
+	// Embedded mode: fs.read compiles to the host's
 	// Read/Grep/Glob grants inside the frontmatter.
 	if !strings.Contains(string(skill), "allowed-tools: Read, Grep, Glob") {
 		t.Errorf("SKILL.md lacks the compiled allowed-tools line:\n%s", skill)
@@ -326,10 +326,10 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 	}
 }
 
-// TestInstallReplacesAnAuthorsAllowedTools (agentry-cli#195): a release
-// whose SKILL.md grants Bash while its contract declares no exec installs
-// with the compiled grants only, as a Claude skill and as the runner
-// home's export alike. The author's line is not the contract.
+// TestInstallReplacesAnAuthorsAllowedTools: a release whose SKILL.md
+// grants Bash while its contract declares no exec installs with the
+// compiled grants only, as a Claude skill and as the runner home's export
+// alike. The author's line is not the contract.
 func TestInstallReplacesAnAuthorsAllowedTools(t *testing.T) {
 	isolateEnv(t)
 	home, policyPath := isolateRunnerHome(t)
@@ -442,8 +442,8 @@ publish:
 }
 
 // TestInstallAgentsMDTarget: the agents-md target extracts and upserts a
-// section in ./AGENTS.md carrying the host-tools note (RUNNER-PLAN §R5).
-// exec needs consent, so the non-interactive run must pass --yes.
+// section in ./AGENTS.md carrying the host-tools note. exec needs
+// consent, so the non-interactive run must pass --yes.
 func TestInstallAgentsMDTarget(t *testing.T) {
 	isolateEnv(t)
 	t.Chdir(t.TempDir())
@@ -476,7 +476,7 @@ func TestInstallAgentsMDTarget(t *testing.T) {
 }
 
 // TestInstallDigestMismatchAborts: the registry's advertised digest is the
-// identity (D-15); bytes that hash differently must never reach disk.
+// identity; bytes that hash differently must never reach disk.
 func TestInstallDigestMismatchAborts(t *testing.T) {
 	isolateEnv(t)
 	runnerHome, _ := isolateRunnerHome(t)
@@ -502,7 +502,7 @@ func TestInstallDigestMismatchAborts(t *testing.T) {
 }
 
 // TestInstallUnsignedGate: no attestation published → refuse without
-// --allow-unsigned (in CI too), proceed with it under a warning (§8.8).
+// --allow-unsigned (in CI too), proceed with it under a warning.
 // The fixture omits attestationUrl entirely, so this also proves the
 // canonical-path fallback probe concludes "unsigned" via the 404.
 func TestInstallUnsignedGate(t *testing.T) {
@@ -526,7 +526,7 @@ func TestInstallUnsignedGate(t *testing.T) {
 
 // TestInstallVerifiedAttestation: a real DSSE envelope over the real
 // archive digest verifies against the registry's published key, TOFU-pinned
-// on first use — the full §8.8 happy path, no seams.
+// on first use — the full happy path, no seams.
 func TestInstallVerifiedAttestation(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -568,7 +568,7 @@ func TestInstallAttestationMismatchAborts(t *testing.T) {
 
 // TestInstallCapabilityDiffOnUpgrade: reinstalls compare against what this
 // machine last accepted — a widened contract re-asks (or needs --yes), a
-// narrowed one reports and proceeds (§11).
+// narrowed one reports and proceeds.
 func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -608,10 +608,10 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 
 	// 2.0.0 twice, the second time with its egress contract unchanged: a
 	// piped install without --yes goes through, since nothing widened
-	// against the record read back from disk (agentry-cli#201: the
-	// snapshot is compared by the core's rule after the round trip through
-	// installed.yaml, and a contract that declares something is the one a
-	// lossy round trip would re-ask on).
+	// against the record read back from disk (the snapshot is compared by
+	// the core's rule after the round trip through installed.yaml, and a
+	// contract that declares something is the one a lossy round trip would
+	// re-ask on).
 	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@2.0.0", "--allow-unsigned", "--yes"); err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 	}
 }
 
-// TestInstallYankedWarns: an exact pin of a yanked version installs (§5.5)
+// TestInstallYankedWarns: an exact pin of a yanked version installs
 // but the warning must reach stderr.
 func TestInstallYankedWarns(t *testing.T) {
 	isolateEnv(t)
@@ -642,7 +642,7 @@ func TestInstallYankedWarns(t *testing.T) {
 }
 
 // TestInstallProviderPicksTarget: --provider openclaw rides the
-// claude-skill path end to end (RUNNER-PLAN-2 §P5).
+// claude-skill path end to end.
 func TestInstallProviderPicksTarget(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -668,8 +668,8 @@ func TestInstallProviderPicksTarget(t *testing.T) {
 	}
 }
 
-// TestStdinIsTTYRejectsDevNull (agentry-cli#118): /dev/null is a character
-// device but not a terminal; a run with stdin from it must take the
+// TestStdinIsTTYRejectsDevNull: /dev/null is a character device but
+// not a terminal; a run with stdin from it must take the
 // non-interactive path. A pipe is not a terminal either.
 func TestStdinIsTTYRejectsDevNull(t *testing.T) {
 	null, err := os.Open(os.DevNull)
@@ -693,11 +693,11 @@ func TestStdinIsTTYRejectsDevNull(t *testing.T) {
 	}
 }
 
-// TestInstallPlanJSONWritesNothing (agentry-cli#102): --plan --json shows
-// what an install would do — the contract as canonical JSON with a stable
-// digest, the attestation verdict, the refusal an install would meet, the
-// target and directory — and touches neither the directory nor the shared
-// install state. A second call digests the contract identically.
+// TestInstallPlanJSONWritesNothing: --plan --json shows what an install
+// would do — the contract as canonical JSON with a stable digest, the
+// attestation verdict, the refusal an install would meet, the target and
+// directory — and touches neither the directory nor the shared install
+// state. A second call digests the contract identically.
 func TestInstallPlanJSONWritesNothing(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -798,11 +798,11 @@ func TestInstallJSONResult(t *testing.T) {
 	}
 }
 
-// The install takes its destination and its skill entrypoint from the
-// resolve response's manifest, which neither the archive digest nor the
-// attestation covers. Security review 2026-09-20 §4.7: a registry naming
-// "../../.." got $HOME cleared; an entrypoint of "../../.bashrc" was an
-// arbitrary-file overwrite. Three guards now, tested with a canary home.
+// The install takes its destination and its skill entrypoint from the resolve
+// response's manifest, which neither the archive digest nor the attestation
+// covers. A registry naming "../../.." must not get $HOME cleared, and an
+// entrypoint of "../../.bashrc" must not overwrite an arbitrary file. Three
+// guards hold both off, tested with a canary home.
 
 func plantCanaryHome(t *testing.T) string {
 	t.Helper()
@@ -911,9 +911,9 @@ func TestPrepareDestRefusesWhatItMustNeverClear(t *testing.T) {
 }
 
 // TestInstallUnscannedGate: a version the registry admitted without a scan
-// (M22, plan organization-subscriptions §8; the core's M21) is its own outcome — not
-// unsigned — and needs its own consent: --allow-unsigned does not give it,
-// --allow-unscanned does, and the warning says what is being accepted.
+// is its own outcome — not unsigned — and needs its own consent:
+// --allow-unsigned does not give it, --allow-unscanned does, and the
+// warning says what is being accepted.
 func TestInstallUnscannedGate(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -957,13 +957,12 @@ func TestInstallUnscannedGate(t *testing.T) {
 	}
 }
 
-// TestInstallHoldsTheArchiveToTheConsentedContract (agentry-cli#252): the
-// prompt and --yes consent to the resolve manifest's contract, and the
-// export is compiled from the archive's own agent.yaml. An archive that
-// declares more is refused on every target, under --yes, with the
-// widening named and nothing written: no destination, no release
-// directory, no record. One that narrows installs, and the record carries
-// the archive's contract.
+// TestInstallHoldsTheArchiveToTheConsentedContract: the prompt and --yes
+// consent to the resolve manifest's contract, and the export is compiled
+// from the archive's own agent.yaml. An archive that declares more is
+// refused on every target, under --yes, with the widening named and
+// nothing written: no destination, no release directory, no record. One
+// that narrows installs, and the record carries the archive's contract.
 func TestInstallHoldsTheArchiveToTheConsentedContract(t *testing.T) {
 	resolveManifest := func(t *testing.T, files map[string]string) *manifest.Manifest {
 		t.Helper()

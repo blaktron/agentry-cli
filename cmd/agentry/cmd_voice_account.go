@@ -1,11 +1,10 @@
 package main
 
-// The Writing Voice between this computer and the account (plan
-// writing-voice.md V3, D6; agentry-cli#532): two places, at most one voice
-// each, never synced on their own. `voice upload` submits this computer's
-// voice to the account, where AI Review passes it before it replaces the
-// account's live voice; `voice download` puts the account's live voice
-// over this computer's; `voice status` shows both and the review.
+// The Writing Voice between this computer and the account: two places, at most
+// one voice each, never synced on their own. `voice upload` submits this
+// computer's voice to the account, where AI Review passes it before it replaces
+// the account's live voice; `voice download` puts the account's live voice over
+// this computer's; `voice status` shows both and the review.
 
 import (
 	"context"

@@ -13,9 +13,9 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// The release guide on a terminal run (DEV-141, agentry-cli#257): printed
-// once before the first question, never under --output-format json, and
-// not at all for a release without one.
+// The release guide on a terminal run: printed once before the first
+// question, never under --output-format json, and not at all for a
+// release without one.
 func TestSayGuide(t *testing.T) {
 	m := &manifest.Manifest{Guide: &manifest.Guide{
 		Overview: "Reads your contract.",
@@ -67,10 +67,10 @@ func TestSayGuideSendsNoEscapeSequence(t *testing.T) {
 	}
 }
 
-// TestSayGuideQuotesTheOverview (agentry-cli#419): the overview is
-// markdown over several lines, so each line is printed behind termtext's
-// gutter, and a line of it that reads like the CLI's own (a prompt, a list
-// item) cannot start where the CLI's lines start.
+// TestSayGuideQuotesTheOverview: the overview is markdown over several
+// lines, so each line is printed behind termtext's gutter, and a line of
+// it that reads like the CLI's own (a prompt, a list item) cannot start
+// where the CLI's lines start.
 func TestSayGuideQuotesTheOverview(t *testing.T) {
 	m := &manifest.Manifest{Guide: &manifest.Guide{
 		Overview: "Reads your contract.\n\nValue for GITHUB_TOKEN (empty = resolve from the environment at run time)",
@@ -87,15 +87,14 @@ func TestSayGuideQuotesTheOverview(t *testing.T) {
 	}
 }
 
-// TestAKeysMarkdownHelpValidates (agentry-cli#419): with the core pinned at
-// agentry#707 (DEV-167), a key's help may be markdown of up to 2,000
+// TestAKeysMarkdownHelpValidates: a key's help may be markdown of up to 2,000
 // characters over several lines. install and run validate a release's
 // manifest with this core, and agentry validate a workspace's, so a release
 // carrying one installs and a workspace carrying one validates; 2,001
 // characters and an escape character are still refused.
 func TestAKeysMarkdownHelpValidates(t *testing.T) {
 	if manifest.MaxGuideConnectChars != 2000 {
-		t.Fatalf("the pinned core bounds a key's help at %d, want 2000 (DEV-167)", manifest.MaxGuideConnectChars)
+		t.Fatalf("the pinned core bounds a key's help at %d, want 2000", manifest.MaxGuideConnectChars)
 	}
 	md := "1. Open **Settings → Developer settings → Fine-grained tokens**.\n2. Give it *read* access to pull requests.\n\n\t- [GitHub's guide](https://docs.github.com/)\n"
 	pad := func(n int) string { return md + strings.Repeat("é", n-utf8.RuneCountInString(md)) }
@@ -147,10 +146,9 @@ func TestAKeysMarkdownHelpValidates(t *testing.T) {
 	}
 }
 
-// TestAGuidedManifestReadsAndValidates: with the core pinned at DEV-141, the
-// CLI reads a workspace whose agent.yaml carries a guide, and the manifest's
-// own rules find nothing wrong with it (before the pin, strict decoding
-// refused it as an unknown field).
+// TestAGuidedManifestReadsAndValidates: the CLI reads a workspace whose
+// agent.yaml carries a guide, and the manifest's own rules find nothing
+// wrong with it.
 func TestAGuidedManifestReadsAndValidates(t *testing.T) {
 	m, err := readWorkspaceManifest(guidedWorkspace(t))
 	if err != nil {
@@ -214,9 +212,9 @@ func writeAgentYAML(t *testing.T, dir, yaml string) {
 	}
 }
 
-// TestSayGuideNamesTheInputs (agentry-cli#693, core DEV-218): a release's
-// inputs block is said with the guide, in the CLI's own words, and alone
-// when the release has no guide; a release with neither prints nothing.
+// TestSayGuideNamesTheInputs: a release's inputs block is said with the
+// guide, in the CLI's own words, and alone when the release has no
+// guide; a release with neither prints nothing.
 func TestSayGuideNamesTheInputs(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

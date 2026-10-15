@@ -1,6 +1,6 @@
-// `agentry init` (§11): every scaffold must be a workspace `agentry
-// validate` PASSES as-is — a template that fails its own toolchain teaches
-// authors to ignore the tool — plus the guard rails: never overwrite an
+// `agentry init`: every scaffold must be a workspace `agentry validate`
+// PASSES as-is — a template that fails its own toolchain teaches authors
+// to ignore the tool — plus the guard rails: never overwrite an
 // agent.yaml, keep existing files, refuse invalid handles.
 package main
 

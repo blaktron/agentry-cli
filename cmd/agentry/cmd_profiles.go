@@ -1,6 +1,6 @@
-// `agentry profiles` (RUNNER-PLAN-2 §P2): list and remove the MCP profiles
-// guided setup created — the persistent keys/identities per QuickAgent
-// signature. Secret VALUES are never printed by any subcommand.
+// `agentry profiles`: list and remove the MCP profiles guided setup
+// created — the persistent keys/identities per QuickAgent signature.
+// Secret VALUES are never printed by any subcommand.
 package main
 
 import (

@@ -20,8 +20,8 @@ func fakeBrowserDocker(t *testing.T, f *dockerx.Fake) {
 }
 
 // browser ensure pulls the CLI's pin once, prints its reference alone, and
-// writes nothing under the runner home (agentry-cli#941): a sandbox host's
-// bootstrap reads stdout and verifies the signature of what it names.
+// writes nothing under the runner home: a sandbox host's bootstrap reads
+// stdout and verifies the signature of what it names.
 func TestBrowserEnsurePullsTheCLIsPinOnce(t *testing.T) {
 	isolateEnv(t)
 	home := t.TempDir()
@@ -85,8 +85,8 @@ func TestBrowserEnsureFollowsThePolicysImageAndRefusesAnUnpinnedOne(t *testing.T
 }
 
 // TestHostedForReadsEverySign: `agentry run` marks the engine's run hosted
-// (Params.Hosted, which holds a browser to public sites, agentry-cli#941)
-// by any sign a sandbox host gives it, and a local run by none.
+// (Params.Hosted, which holds a browser to public sites) by any sign a
+// sandbox host gives it, and a local run by none.
 func TestHostedForReadsEverySign(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -12,14 +12,13 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// attachKnowledge loads and verifies each pack --knowledge names (plan
-// knowledge.md §4.5), before anything is resolved or downloaded, and says
-// on stderr what will be mounted — a pack made on a machine says it is not
-// scanned. A value is a pack directory, or the name of a pack kept sealed
-// in the local store (agentry-cli#319), which is opened into a private
-// directory that done removes at teardown. A bare name is the store's
-// first; a directory of that name in the working directory is taken only
-// when the store keeps no such pack.
+// attachKnowledge loads and verifies each pack --knowledge names, before
+// anything is resolved or downloaded, and says on stderr what will be
+// mounted — a pack made on a machine says it is not scanned. A value is a
+// pack directory, or the name of a pack kept sealed in the local store,
+// which is opened into a private directory that done removes at teardown.
+// A bare name is the store's first; a directory of that name in the
+// working directory is taken only when the store keeps no such pack.
 //
 // For a directory, files that no longer match its digest are the verify
 // class and anything else wrong is a usage error. A kept pack that is not

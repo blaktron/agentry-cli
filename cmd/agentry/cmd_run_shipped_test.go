@@ -14,10 +14,10 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// A release that ships a knowledge pack (plan knowledge.md §4.6,
-// agentry-cli#320): the pack is loaded from the release's own files and
-// mounted as an attached one is, its name is in the contract the consent
-// shows with its size, and publish refuses a release that leaves it out.
+// A release that ships a knowledge pack: the pack is loaded from the
+// release's own files and mounted as an attached one is, its name is in
+// the contract the consent shows with its size, and publish refuses a
+// release that leaves it out.
 
 // shippingPackage is the pure-text fixture shipping the pack name, in a
 // fresh directory.

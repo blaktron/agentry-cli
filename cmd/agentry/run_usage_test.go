@@ -9,8 +9,8 @@ import (
 )
 
 // The line a driver parses. Its shape is a contract with the hosted run
-// worker, which meters a live run from it (agentry-cli#138), so the format
-// is pinned here rather than left to whoever edits the narration next.
+// worker, which meters a live run from it, so the format is pinned here
+// rather than left to whoever edits the narration next.
 func TestUsageNarrationLine(t *testing.T) {
 	for _, tc := range []struct {
 		name string

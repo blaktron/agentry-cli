@@ -65,7 +65,7 @@ func interactiveFixture() (*cobra.Command, engine.Params, *manifest.Manifest, *s
 // TestRunInteractiveTearsDownWhenTheChatPanics: a panic in the terminal
 // chat still ends the session — the deferred End runs while the panic
 // unwinds, so the sandbox, the gateway and the model key do not outlive
-// the process (agentry-cli#161).
+// the process.
 func TestRunInteractiveTearsDownWhenTheChatPanics(t *testing.T) {
 	rec := &endRecorder{}
 	withInteractiveSeams(t, rec, func(context.Context, session.Session, tui.Options, io.Reader, io.Writer) (tui.Outcome, error) {

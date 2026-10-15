@@ -1,6 +1,6 @@
-// client.go behavior: digest identity (D-15), RFC 9457 problem rendering,
-// token scoping to the registry host (§9.4), download re-rooting, resolve
-// error classes, and the min-version gate wiring every API command shares.
+// client.go behavior: digest identity, RFC 9457 problem rendering, token
+// scoping to the registry host, download re-rooting, resolve error
+// classes, and the min-version gate wiring every API command shares.
 package main
 
 import (
@@ -118,8 +118,8 @@ func TestResolveRefStates(t *testing.T) {
 	if err != nil || res.Version != "1.0.0" || res.Namespace != "acme" {
 		t.Fatalf("resolve happy path: %+v, %v", res, err)
 	}
-	// The install-intent hint must reach the wire (§9.4 step 4 counts
-	// installs without a second round-trip).
+	// The install-intent hint must reach the wire (it counts installs
+	// without a second round-trip).
 	if len(fr.installIntents) != 1 || fr.installIntents[0] != "acme/demo@1.0.0" {
 		t.Errorf("install intents seen = %v", fr.installIntents)
 	}
@@ -148,7 +148,7 @@ func TestDownloadArchiveRelativeURLAndTokenScoping(t *testing.T) {
 	res := resolveResultOf(t, fr, "acme/demo@1.0.0")
 
 	// Relative archiveUrl (self-host): resolves against the registry and
-	// carries the bearer token because the hosts match (§9.4).
+	// carries the bearer token because the hosts match.
 	data, err := downloadArchive(context.Background(), fr.url(), "agy_tok", res)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestDownloadArchiveRelativeURLAndTokenScoping(t *testing.T) {
 	}
 
 	// Absolute archiveUrl on a DIFFERENT host (CDN): the token must NOT
-	// travel — leaking a registry PAT to a CDN is the §9.4 failure mode.
+	// travel — leaking a registry PAT to a CDN is the failure mode.
 	var cdnAuth string
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cdnAuth = r.Header.Get("Authorization")
@@ -212,7 +212,7 @@ func TestNewAPIClientCheckedGate(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envSkipVersionCheck, "")
 	fr := newFakeRegistry(t)
-	fr.metaMinCLI = "99.0.0" // a full major beyond 0.0.0-dev: refuse (§11)
+	fr.metaMinCLI = "99.0.0" // a full major beyond 0.0.0-dev: refuse
 
 	if _, err := newAPIClientChecked(stubCmd(t), fr.url(), ""); err == nil ||
 		!strings.Contains(err.Error(), "requires at least 99.0.0") {
@@ -244,7 +244,7 @@ func TestMajorOfUnparseable(t *testing.T) {
 }
 
 // TestRegistryURLPrecedence: --registry flag beats the config default beats
-// the local-dev fallback (§11 global flags).
+// the local-dev fallback.
 func TestRegistryURLPrecedence(t *testing.T) {
 	isolateEnv(t)
 
@@ -270,7 +270,7 @@ func TestRegistryURLPrecedence(t *testing.T) {
 	}
 }
 
-// TestNewRootCmdCommandSet: every §11 command (plus the runner surface) is
+// TestNewRootCmdCommandSet: every command (plus the runner surface) is
 // registered; a missing AddCommand line should fail here, not in a user's
 // shell.
 func TestNewRootCmdCommandSet(t *testing.T) {
@@ -291,8 +291,8 @@ func TestNewRootCmdCommandSet(t *testing.T) {
 }
 
 // TestVersionShowsBakedRegistry: --version names the registry the binary
-// falls back to when nothing is configured (agentry-cli#240), so a person
-// (and the release workflow) can see which site a download talks to.
+// falls back to when nothing is configured, so a person (and the release
+// workflow) can see which site a download talks to.
 func TestVersionShowsBakedRegistry(t *testing.T) {
 	saved := defaultRegistryURL
 	t.Cleanup(func() { defaultRegistryURL = saved })

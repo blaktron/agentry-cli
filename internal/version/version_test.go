@@ -20,9 +20,9 @@ func TestBuildIDOfAStampedReleaseIsItsVersion(t *testing.T) {
 }
 
 // An unstamped or dirty build carries the same version string across code
-// changes (the hosted worker's CLI reported 0.0.0-dev for every build,
-// agentry-cli#144), so its identity adds a digest of the binary: another
-// binary is another build, the same binary is the same build.
+// changes (the hosted worker's CLI reported 0.0.0-dev for every build),
+// so its identity adds a digest of the binary: another binary is another
+// build, the same binary is the same build.
 func TestBuildIDOfAnUnstampedOrDirtyBuildNamesTheBinary(t *testing.T) {
 	one, two := writeExe(t, "binary one"), writeExe(t, "binary two")
 	for _, v := range []string{devVersion, "v0.4.0-3-gabc1234-dirty"} {

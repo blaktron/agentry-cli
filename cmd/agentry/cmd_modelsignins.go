@@ -1,9 +1,8 @@
-// Model sign-ins (plan model-sign-ins.md §4.1, §4.2; agentry-cli#738): a
-// person's own grant that lets their local runs spend a model vendor's
-// plan. `agentry model-signins` lists and removes them, apart from
-// `agentry connections` (MCP servers' grants). A run whose plan spends one
-// is handed the access token alone, refreshed now and before it expires;
-// a hosted run never spends one (D2).
+// Model sign-ins: a person's own grant that lets their local runs spend a
+// model vendor's plan. `agentry model-signins` lists and removes them,
+// apart from `agentry connections` (MCP servers' grants). A run whose plan
+// spends one is handed the access token alone, refreshed now and before it
+// expires; a hosted run never spends one.
 package main
 
 import (
@@ -23,14 +22,14 @@ import (
 
 // hostedRun says this invocation is a hosted run's: a host hands it a run
 // grant, the connections it fetched, or drives a session by protocol. Each
-// is a hosted driver's alone (agentry-enterprise's runexec and runhost).
+// is a hosted driver's alone.
 func hostedRun(opts runOpts) bool {
 	return os.Getenv(envRunGrant) != "" || opts.connectionsFile != "" || opts.sessionProtocol
 }
 
 // hostedProcess says this process runs for a sandbox host: it holds a run
 // grant or a hosted job's credential, which only a host hands it. A
-// built-in run in it never spends a model sign-in (I5; agentry-cli#845).
+// built-in run in it never spends a model sign-in.
 func hostedProcess() bool {
 	return os.Getenv(envRunGrant) != "" || os.Getenv(envJobToken) != "" || os.Getenv(envHosted) != ""
 }
@@ -38,19 +37,19 @@ func hostedProcess() bool {
 // hostedFor says a run is a sandbox host's by any of its signs: a hosted
 // driver's (hostedRun), the process's (hostedProcess), or input review
 // through the registry, which only a host asks for. A target host is
-// refused and a browser held to public sites by it (agentry-cli#941).
+// refused and a browser held to public sites by it.
 func hostedFor(opts runOpts) bool {
 	return hostedRun(opts) || hostedProcess() || opts.reviewInputs != ""
 }
 
 // envHosted marks a hosted run's CLI whatever else it was given: a public
-// release's run with no inputs carries neither a grant nor a job token
-// (agentry-enterprise#534), so its host says so outright.
+// release's run with no inputs carries neither a grant nor a job token,
+// so its host says so outright.
 const envHosted = "AGENTRY_HOSTED"
 
 // refuseSignInRun refuses a plan that spends a model sign-in where it
-// cannot run, before anything is installed for it: a hosted run (I5), and
-// a --max-cost the run could not measure (D13). Nil for a key plan.
+// cannot run, before anything is installed for it: a hosted run, and
+// a --max-cost the run could not measure. Nil for a key plan.
 func refuseSignInRun(plan *spec.Plan, opts runOpts) error {
 	msi := plan.Harness.ModelSignIn
 	switch {
@@ -69,7 +68,7 @@ func hostedSignInRefusal(kind string) error { return engine.HostedSignInRefusal(
 
 // runModelSignIn is the model sign-in a plan spends, from the person's
 // store, for engine.Params (engine.ModelSignInFor): nil when the plan
-// spends a key; a hosted run is refused before the store is read (I5).
+// spends a key; a hosted run is refused before the store is read.
 func runModelSignIn(ctx context.Context, home string, plan *spec.Plan, hosted bool) (*engine.ModelSignInGrant, func(context.Context) (engine.ConnectionToken, error), error) {
 	return engine.ModelSignInFor(ctx, modelsignin.Open(home, connectionKeys()), plan, hosted)
 }

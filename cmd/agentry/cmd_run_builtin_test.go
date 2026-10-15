@@ -14,9 +14,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
-// The CLI's half of TestOnlyTheEmbeddedPackagesRunAsBuiltin (plan
-// knowledge.md §3; agentry-cli#318): no record on disk can make a release
-// or a directory run as built in.
+// The CLI's half of TestOnlyTheEmbeddedPackagesRunAsBuiltin: no record on
+// disk can make a release or a directory run as built in.
 func TestNoCachedRecordRunsAsBuiltin(t *testing.T) {
 	t.Run("a cached release claiming builtin is refused", func(t *testing.T) {
 		meta := &installdir.Meta{Ref: "acme/x@1.0.0", Namespace: "acme", Name: "x", Attestation: receipt.Attestation{State: trust.StateBuiltin}}
@@ -49,12 +48,12 @@ func TestNoCachedRecordRunsAsBuiltin(t *testing.T) {
 	})
 }
 
-// TestARegistryInstallOfABuiltinIsAnOrdinaryRelease (agentry-cli#470): the
-// built-ins are published in the registry under their own names, so a
-// person can install agentry/drafter from it. That install is an ordinary
-// release: the registry's archive digest, its own directory in the runner
-// home, never the attestation state builtin. The built-in still runs from
-// the copy the binary embeds, beside it and unaffected by it.
+// TestARegistryInstallOfABuiltinIsAnOrdinaryRelease: the built-ins are
+// published in the registry under their own names, so a person can
+// install agentry/drafter from it. That install is an ordinary release:
+// the registry's archive digest, its own directory in the runner home,
+// never the attestation state builtin. The built-in still runs from the
+// copy the binary embeds, beside it and unaffected by it.
 func TestARegistryInstallOfABuiltinIsAnOrdinaryRelease(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
@@ -64,7 +63,7 @@ func TestARegistryInstallOfABuiltinIsAnOrdinaryRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Every file of the tree, the Drafter's shipped pack under knowledge/
-	// among them (agentry-cli#657).
+	// among them.
 	files := map[string]string{}
 	if err := filepath.WalkDir(stage, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {

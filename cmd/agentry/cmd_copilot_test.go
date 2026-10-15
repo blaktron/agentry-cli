@@ -104,10 +104,10 @@ func TestModelSignInsAddCopilotThroughTheOAuthApp(t *testing.T) {
 
 // On this computer `agentry run` on a Copilot plan runs the Copilot image,
 // the default for the kind, and hands Copilot CLI its sign-in's access
-// token through the session callback alone (I3, I4): the agent container
-// mounts nothing and carries no token in its environment, and a probe
-// search of the output, the run folders and every docker call finds
-// neither the refresh token nor the access token.
+// token through the session callback alone: the agent container mounts
+// nothing and carries no token in its environment, and a probe search of
+// the output, the run folders and every docker call finds neither the
+// refresh token nor the access token.
 func TestAgentryRunHandsCopilotItsAccessTokenThroughTheCallbackAlone(t *testing.T) {
 	isolateEnv(t)
 	v := copilotFixture(t)

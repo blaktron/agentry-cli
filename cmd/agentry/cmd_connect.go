@@ -1,9 +1,9 @@
-// Connect your account (plan model-sign-ins.md §4.6, D30–D34;
-// agentry-cli#742): `agentry model-signins add openrouter|poe|huggingface`
-// and the offer in `agentry setup`. The flows are mcpauth's OpenRouter, Poe
-// and HuggingFace; the store is modelsignin.KeepConnected, which keeps the
-// key in the model key's keychain entry; this is the terminal around them.
-// The key is never printed, logged or written outside the keychain (I6).
+// Connect your account: `agentry model-signins add
+// openrouter|poe|huggingface` and the offer in `agentry setup`. The flows
+// are mcpauth's OpenRouter, Poe and HuggingFace; the store is
+// modelsignin.KeepConnected, which keeps the key in the model key's
+// keychain entry; this is the terminal around them. The key is never
+// printed, logged or written outside the keychain.
 package main
 
 import (
@@ -121,7 +121,7 @@ func addConnect(cmd *cobra.Command, in *bufio.Reader, home, vendor string) error
 		return err
 	}
 	// The key in the model key's entry changed: a signed-out schedule's
-	// sealed copy follows it, as after setup (agentry-cli#811).
+	// sealed copy follows it, as after setup.
 	resealSignedOut(cmd.ErrOrStderr())
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), signedInJSON{Vendor: vendor, Kind: r.Kind, Connected: true, Account: r.Label, KeyExpiresAt: r.KeyExpiresAt, Models: []string{}})
@@ -140,7 +140,7 @@ func addConnect(cmd *cobra.Command, in *bufio.Reader, home, vendor string) error
 
 // refreshConnectedKey readies a connected key for a run that reads one from
 // the keychain, at its start (modelsignin.Store.ReadyForRun): Hugging
-// Face's token is refreshed into the entry (D32), a Poe key past its expiry
+// Face's token is refreshed into the entry, a Poe key past its expiry
 // refused. A hosted run never reads this computer's keys.
 func refreshConnectedKey(ctx context.Context, home string, plan *spec.Plan, hosted bool) error {
 	if hosted {

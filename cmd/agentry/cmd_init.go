@@ -1,5 +1,5 @@
-// `agentry init` (§11): scaffold a new agent workspace with a per-kind
-// agent.yaml matching PLAN §5.2, README.md, a LICENSE placeholder, and the
+// `agentry init`: scaffold a new agent workspace with a per-kind agent.yaml
+// matching the manifest schema, README.md, a LICENSE placeholder, and the
 // kind's entrypoint file. --from imports an existing SKILL.md or MCP
 // server.json instead (cmd_init_from.go).
 package main
@@ -149,7 +149,7 @@ type scaffoldFile struct {
 	content string
 }
 
-// scaffoldFiles returns the scaffold set (PLAN §5.1/§5.2 layout, manifest
+// scaffoldFiles returns the scaffold set (package layout, manifest
 // schema v2): the manifest, the README, the LICENSE note, and AGENT.md.
 func scaffoldFiles(modes []manifest.Mode, name, namespace string) []scaffoldFile {
 	return []scaffoldFile{
@@ -164,8 +164,8 @@ func scaffoldFiles(modes []manifest.Mode, name, namespace string) []scaffoldFile
 // so V9 (frontmatter vs manifest) is quiet until the author edits both.
 const todoSummary = "TODO one line (at most 140 chars) saying what this QuickAgent does"
 
-// agentYAML renders the schema v2 manifest template (PLAN §5.2): every mode
-// field is present, commented out where the chosen modes do not use it.
+// agentYAML renders the schema v2 manifest template: every mode field
+// is present, commented out where the chosen modes do not use it.
 func agentYAML(modes []manifest.Mode, name, namespace string) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, `schemaVersion: "2"

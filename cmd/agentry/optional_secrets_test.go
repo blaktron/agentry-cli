@@ -9,7 +9,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/installed"
 )
 
-// Optional secrets in the CLI's own surfaces (DR-70, agentry-cli#651).
+// Optional secrets in the CLI's own surfaces.
 
 // TestDoctorAnOptionalSecretUnsetIsANote: doctor fails only on a required
 // secret that would not resolve; an optional one is a note in an ok check.
@@ -44,10 +44,9 @@ func TestDoctorAnOptionalSecretUnsetIsANote(t *testing.T) {
 	}
 }
 
-// TestTheConsentNamesEveryDeclaredSecret is the condition DEV-212 puts on
-// plan D6: the consent lines and the install snapshot name every declared
-// secret whatever its marking, so a later flip between optional and
-// required asks nothing for a name the person never saw.
+// TestTheConsentNamesEveryDeclaredSecret: the consent lines and the install
+// snapshot name every declared secret whatever its marking, so a later flip
+// between optional and required asks nothing for a name the person never saw.
 func TestTheConsentNamesEveryDeclaredSecret(t *testing.T) {
 	caps := parseCaps(t, `capabilities:
   secrets: [REQUIRED_PAT, GITHUB_PAT]
