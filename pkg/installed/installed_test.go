@@ -681,8 +681,8 @@ func TestAServersOwnGrantsAreInTheSnapshot(t *testing.T) {
 	}
 }
 
-// TestARecordWithoutAServersGrantsAsksOnce: a record written before a
-// server's own grants were kept does not know them. It reads as neither
+// TestARecordWithoutAServersGrantsAsksOnce: a record that names a server
+// without its own grants does not know them. It reads as neither
 // narrower nor equal: the update asks once, naming what the server is
 // given, and the record the consent writes then compares as equal.
 func TestARecordWithoutAServersGrantsAsksOnce(t *testing.T) {
@@ -695,7 +695,7 @@ func TestARecordWithoutAServersGrantsAsksOnce(t *testing.T) {
 		{"declares grants", "      egress: [a.example]\n      secrets: [OSV_TOKEN]\n      tools: [query]\n",
 			"asks again for MCP server " + osvID + ", whose own grants your last consent did not record: network egress to a.example; secrets OSV_TOKEN; tools query"},
 		{"declares none", "",
-			"asks again for MCP server " + osvID + ", whose own grants your last consent did not record: network egress to no host; secrets none; tools all it serves"},
+			"asks again for MCP server " + osvID + ", whose own grants your last consent did not record: network egress to no host; secrets none; tools every tool it serves"},
 		{"any host", "      egress: [\"*\"]\n", "network egress to any host (UNRESTRICTED)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -712,8 +712,8 @@ func TestARecordWithoutAServersGrantsAsksOnce(t *testing.T) {
 			}
 		})
 	}
-	// A remote server has kept its grants since remote servers existed;
-	// its record is not unknown.
+	// A remote server's grants are recorded beside its address, so its
+	// record is never unknown.
 	remote := CapSnapshot{MCPServers: []string{"url:https://mcp.example/sse"}, MCPRemote: map[string]RemoteSnapshot{"url:https://mcp.example/sse": {Auth: "none"}}}
 	if d := DiffCapabilities(remote, remote); !d.Empty() {
 		t.Fatalf("a remote server read as unrecorded: %+v", d)

@@ -85,9 +85,8 @@ type CapSnapshot struct {
 	// it receives and the tools the model may call on it. The runner builds
 	// the server's grants from these, so the core's diff compares them for
 	// a server kept at the same pin. Every package server has an entry,
-	// empty when it declares none of them; a server with no entry was
-	// recorded before these were kept, and reads as unknown (see
-	// DiffCapabilities).
+	// empty when it declares none of them; a server the record names with
+	// no entry has unknown grants (see DiffCapabilities).
 	MCPServerCaps map[string]ServerCapsSnapshot `yaml:"mcpServerCaps,omitempty" json:"mcpServerCaps,omitempty"`
 	// Knowledge lists the knowledge packs the release ships in its archive
 	// (the manifest's knowledge.ships, as manifest.Contract carries them):
@@ -127,6 +126,15 @@ type ServerCapsSnapshot struct {
 	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
 }
 
+func serverCaps(srv manifest.MCPServer) ServerCapsSnapshot {
+	return ServerCapsSnapshot{Egress: slices.Clone(srv.Egress), Secrets: slices.Clone(srv.Secrets), Tools: slices.Clone(srv.Tools)}
+}
+
+// grant sets a server's own grants to the recorded ones.
+func (c ServerCapsSnapshot) grant(srv *manifest.MCPServer) {
+	srv.Egress, srv.Secrets, srv.Tools = slices.Clone(c.Egress), slices.Clone(c.Secrets), slices.Clone(c.Tools)
+}
+
 // Snapshot flattens a manifest capability block for storage.
 func Snapshot(c manifest.Capabilities) CapSnapshot {
 	s := CapSnapshot{
@@ -162,11 +170,7 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 			if s.MCPServerCaps == nil {
 				s.MCPServerCaps = map[string]ServerCapsSnapshot{}
 			}
-			s.MCPServerCaps[id] = ServerCapsSnapshot{
-				Egress:  slices.Clone(srv.Egress),
-				Secrets: slices.Clone(srv.Secrets),
-				Tools:   slices.Clone(srv.Tools),
-			}
+			s.MCPServerCaps[id] = serverCaps(srv)
 		}
 		if srv.OAuth != nil {
 			if s.MCPServerOAuth == nil {
@@ -224,9 +228,7 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 			srv.Secrets = slices.Clone(r.Secrets)
 		}
 		if own, ok := s.MCPServerCaps[id]; ok && !srv.IsRemote() {
-			srv.Egress = slices.Clone(own.Egress)
-			srv.Secrets = slices.Clone(own.Secrets)
-			srv.Tools = slices.Clone(own.Tools)
+			own.grant(&srv)
 		}
 		if o := s.MCPServerOAuth[id]; o != nil {
 			cp := *o
@@ -466,8 +468,8 @@ type Diff = manifest.CapabilityDiff
 // is phrased as a plain statement of the change: "this update adds network
 // egress to evil.example".
 //
-// A package server the old record names but whose own grants it did not
-// keep (a record written before they were) is unknown, not empty: reading
+// A package server the old record names without its own grants (an older
+// record) has unknown grants, not empty ones: reading
 // it as empty would let a same-pin server's tool allowlist be lifted
 // unasked, and reading it as the new release's would accept whatever it
 // now declares. It widens once, with a line that says what the server is
@@ -477,16 +479,15 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 	var unrecorded []string
 	for i, srv := range prev.MCPServers {
 		id := serverID(srv)
-		own, ok := next.MCPServerCaps[id]
-		if _, recorded := old.MCPServerCaps[id]; recorded || !ok || srv.IsRemote() {
+		_, recorded := old.MCPServerCaps[id]
+		own, declared := next.MCPServerCaps[id]
+		if recorded || !declared || srv.IsRemote() {
 			continue
 		}
-		// The line below says what the server is given; the core's rule
-		// then compares nothing for these fields rather than reporting
-		// each as added.
-		prev.MCPServers[i].Egress = slices.Clone(own.Egress)
-		prev.MCPServers[i].Secrets = slices.Clone(own.Secrets)
-		prev.MCPServers[i].Tools = slices.Clone(own.Tools)
+		// One line says what the server is given, so the core's rule
+		// compares nothing for these fields rather than reporting each
+		// as added.
+		own.grant(&prev.MCPServers[i])
 		unrecorded = append(unrecorded, unrecordedServerLine(id, own))
 	}
 	d := manifest.DiffCapabilities(prev, next.capabilities())
@@ -508,7 +509,7 @@ func unrecordedServerLine(id string, own ServerCapsSnapshot) string {
 		egress = "any host (UNRESTRICTED)"
 	}
 	return fmt.Sprintf("asks again for MCP server %s, whose own grants your last consent did not record: network egress to %s; secrets %s; tools %s",
-		id, egress, list(own.Secrets, "none"), list(own.Tools, "all it serves"))
+		id, egress, list(own.Secrets, "none"), list(own.Tools, "every tool it serves"))
 }
 
 // ArchiveWidenings reports what an archive's own manifest declares beyond the
