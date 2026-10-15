@@ -724,7 +724,7 @@ type Sessions struct {
 type Budgets struct {
 	// TimeoutSeconds is the whole-run deadline (default 900).
 	TimeoutSeconds int `yaml:"timeoutSeconds"`
-	// MaxTurns caps tool-call events (default 60; 0 = unlimited).
+	// MaxTurns caps tool-call events (default 100; 0 = unlimited).
 	MaxTurns int `yaml:"maxTurns"`
 	// MaxCostUSD kills the run once the harness's reported running cost
 	// exceeds this many US dollars (exit 16); 0 = unlimited. Enforcement
@@ -751,7 +751,7 @@ func Default() *Policy {
 			ProxyAllow: []string{"api.anthropic.com:443"},
 		},
 		SecretSource: SecretSource{Mode: "env"},
-		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 60},
+		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 100},
 		Sessions:     Sessions{IdleTimeoutSeconds: 900, MaxWallSeconds: 7200, MaxUserTurns: 200},
 		Profiles:     Profiles{KeepByDefault: boolPtr(true)},
 	}
@@ -1283,7 +1283,7 @@ secretSource:
 
 budgets:
   timeoutSeconds: 900
-  maxTurns: 60
+  maxTurns: 100
   # maxCostUsd: 0 = unlimited; a positive value is a hard stop (exit 16)
   # on the harness's reported running cost. Must be 0 beside a model
   # sign-in, which spends your plan and has no dollars to measure.

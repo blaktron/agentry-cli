@@ -44,6 +44,16 @@ var update = flag.Bool("update", false, "rewrite the drafting guide's generated 
 // updateGuide is the command that rewrites the guide's generated files.
 const updateGuide = "go test ./pkg/drafter -run TestTheDraftingGuideIsCurrent -update"
 
+// The hosted runs' budgets by tier, as Agentry's hosted service sets them by
+// default (Pro's, which the tiers above share, and Standard's), typed by hand
+// because this module cannot import them. A change there must change these.
+const (
+	hostedProTurns        = 100
+	hostedProSeconds      = 900
+	hostedStandardTurns   = 20
+	hostedStandardSeconds = 300
+)
+
 // runtimeFacts is sources/runtime-facts.md: the defaults the guide's pages
 // state. The values the code holds as exported constants (the runtime
 // images and versions, the server cap, the container limits, the base
@@ -92,6 +102,13 @@ func runtimeFacts() []byte {
 	fmt.Fprintf(&b, "- `export_pdf` turns a Markdown file from `reports/` or the scratch folder, of at most %d KiB, into a PDF in `reports/`, rendered by Typst %s within %d seconds, at most %d MiB. It draws at most %d local PNG or JPEG images of up to %d MiB each; any other image is drawn as its alt text. The PDF's look is the person's report theme, which the run cannot choose.\n",
 		toolsrv.MaxPDFSourceBytes>>10, toolsrv.TypstVersion, int(toolsrv.PDFRenderTimeout.Seconds()), toolsrv.MaxPDFBytes>>20, toolsrv.MaxPDFImages, toolsrv.MaxPDFImageBytes>>20)
 	fmt.Fprintf(&b, "- The scratch folder, `%s`, is the run's own working space through `scratch_write`, `scratch_list`, `scratch_read` and `scratch_search`: empty at the start, at most %d MiB on Linux, never part of what the person receives, and deleted with the run.\n\n", spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
+	b.WriteString("## A run's budget\n\n")
+	local := policy.Default().Budgets
+	fmt.Fprintf(&b, "- A run on the person's computer stops after %d tool calls or %d seconds, whichever comes first.\n", local.MaxTurns, local.TimeoutSeconds)
+	fmt.Fprintf(&b, "- A run In Agentry stops after %d tool calls or %d seconds on Pro and above, and after %d tool calls or %d seconds on Standard.\n",
+		hostedProTurns, hostedProSeconds, hostedStandardTurns, hostedStandardSeconds)
+	fmt.Fprintf(&b, "- docker-agent, the default harness, ends a run that makes the same tool call %d times in a row.\n", sameCallLimit)
+	b.WriteString("- The run is not told its budget.\n\n")
 	b.WriteString("## Each container's limits\n\n")
 	fmt.Fprintf(&b, "- Memory %s and %d CPU; on Linux, also at most %d processes.\n\n", policy.DefaultMemory, policy.DefaultCPUs, policy.DefaultPids)
 	b.WriteString("## The base commands\n\n")

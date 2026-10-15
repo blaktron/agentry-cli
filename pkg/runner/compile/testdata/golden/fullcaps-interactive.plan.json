@@ -226,7 +226,7 @@
   ],
   "budgets": {
     "timeoutSeconds": 900,
-    "maxTurns": 60
+    "maxTurns": 100
   },
   "output": {},
   "files": {

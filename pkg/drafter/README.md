@@ -160,6 +160,15 @@ includes a hosted browser service (Browserless, Browserbase, browser-use,
 Hyperbrowser, Steel), by its package or by its remote address. A release that
 declares a browser needs CLI v0.6.117 or later, or Agentry Desktop 0.6.111;
 In Agentry it runs since CLI v0.6.118 and opens public sites only.
+Since 1.15.5 it teaches the run's budget: 100 tool calls and 900
+seconds on the person's computer (the CLI's default policy, raised
+from 60 in the same release) and In Agentry on Pro and above, 20 and 300 seconds on Standard,
+which the run is not told. A browser draft does
+each page's checks in one `browser_evaluate`, bounds every fetch in a page
+script, never makes the same call five times running, writes its report
+early and rewrites it after each step, and opens only the site. The checks
+after a draft send instructions that fetch in a page script with no
+timeout, or press a key five or more times running, to the repair turn.
 
 Since 1.15.2 the Drafter prefers what needs no key and no account: the
 run's own tools, the browser the runner gives, `fetch` to an API that

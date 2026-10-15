@@ -49,13 +49,13 @@ func TestADraftOnThisComputerGetsThirtyMinutes(t *testing.T) {
 		args   []string
 		want   spec.Budgets
 	}{
-		{"the default policy's 900 seconds", policy.Default().Budgets, false, nil, spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 60}},
+		{"the default policy's 900 seconds", policy.Default().Budgets, false, nil, spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 100}},
 		{"a policy that allows more keeps its own", policy.Budgets{TimeoutSeconds: 2400, MaxTurns: 40, MaxCostUSD: 3}, false, nil,
 			spec.Budgets{TimeoutSeconds: 2400, MaxTurns: 40, MaxCostUSD: 3}},
-		{"a shorter --timeout wins", policy.Default().Budgets, false, []string{"--timeout", "600"}, spec.Budgets{TimeoutSeconds: 600, MaxTurns: 60}},
+		{"a shorter --timeout wins", policy.Default().Budgets, false, []string{"--timeout", "600"}, spec.Budgets{TimeoutSeconds: 600, MaxTurns: 100}},
 		{"a longer --timeout wins", policy.Default().Budgets, false, []string{"--timeout", "5400", "--max-turns", "0", "--max-cost", "1.5"},
 			spec.Budgets{TimeoutSeconds: 5400, MaxTurns: 0, MaxCostUSD: 1.5}},
-		{"a hosted draft with no --timeout has the policy's", policy.Default().Budgets, true, nil, spec.Budgets{TimeoutSeconds: 900, MaxTurns: 60}},
+		{"a hosted draft with no --timeout has the policy's", policy.Default().Budgets, true, nil, spec.Budgets{TimeoutSeconds: 900, MaxTurns: 100}},
 		{"a hosted draft runs under its job's caps", policy.Default().Budgets, true, []string{"--timeout", "1200", "--max-turns", "300"},
 			spec.Budgets{TimeoutSeconds: 1200, MaxTurns: 300}},
 	} {
@@ -169,11 +169,11 @@ func TestAKnowledgeBuildOnThisComputerGetsSixtyMinutes(t *testing.T) {
 		args   []string
 		want   spec.Budgets
 	}{
-		{"the default policy's 900 seconds", policy.Default().Budgets, nil, spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 60}},
+		{"the default policy's 900 seconds", policy.Default().Budgets, nil, spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 100}},
 		{"a policy at the old 1,800 seconds", policy.Budgets{TimeoutSeconds: 1800, MaxTurns: 60}, nil, spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 60}},
 		{"a policy that allows more keeps its own", policy.Budgets{TimeoutSeconds: 7200, MaxTurns: 0, MaxCostUSD: 4}, nil,
 			spec.Budgets{TimeoutSeconds: 7200, MaxTurns: 0, MaxCostUSD: 4}},
-		{"a shorter --timeout wins", policy.Default().Budgets, []string{"--timeout", "900"}, spec.Budgets{TimeoutSeconds: 900, MaxTurns: 60}},
+		{"a shorter --timeout wins", policy.Default().Budgets, []string{"--timeout", "900"}, spec.Budgets{TimeoutSeconds: 900, MaxTurns: 100}},
 		{"a sandbox host's caps for a Standard build", policy.Default().Budgets, []string{"--timeout", "900", "--max-turns", "300", "--output-format", "json"},
 			spec.Budgets{TimeoutSeconds: 900, MaxTurns: 300}},
 	} {

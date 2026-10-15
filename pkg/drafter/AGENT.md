@@ -141,7 +141,10 @@ What the guide states is also checked after you answer, whatever you read.
    out, and lists what it changed. A QuickAgent with a browser works it
    through the browser tools by name, saves each screenshot by a **bare
    file name** (`home.png`; it lands in `reports/browser/`), types a key by
-   passing its name, and changes nothing real on the site. Pages:
+   passing its name, changes nothing real on the site, and **fits the
+   run's budget**: one `browser_evaluate` a page, every fetch in a page
+   script given a timeout, never the same call five times running, and
+   `report.md` written early and rewritten after each step. Pages:
    `draft/instructions.md`, `draft/examples.md`,
    `runtime/how-a-run-works.md` for the tools every run has,
    `manifest/target-hosts.md` and `manifest/browser.md`.

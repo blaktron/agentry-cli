@@ -42,7 +42,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.2.0,agentry/drafter@1.15.4,agentry/voice-writer@1.1.0,agentry/examiner@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.2.0,agentry/drafter@1.15.5,agentry/voice-writer@1.1.0,agentry/examiner@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
@@ -98,7 +98,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.15.4" {
+		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.15.5" {
 			t.Fatalf("meta %+v", meta)
 		}
 		for _, name := range []string{"agent.yaml", "AGENT.md", "output.schema.json"} {
@@ -590,12 +590,12 @@ func TestABuiltinsBudgetsOnThisComputer(t *testing.T) {
 		policy  policy.Budgets
 		want    spec.Budgets
 	}{
-		{"a draft under the default policy", Drafter(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 60}},
+		{"a draft under the default policy", Drafter(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 100}},
 		{"a draft under a policy that allows more", Drafter(), policy.Budgets{TimeoutSeconds: 2400, MaxTurns: 0, MaxCostUSD: 2.5},
 			spec.Budgets{TimeoutSeconds: 2400, MaxTurns: 0, MaxCostUSD: 2.5}},
 		{"a draft's repair turn is the same package", Drafter().WithoutWebTools(), policy.Budgets{TimeoutSeconds: 60, MaxTurns: 5},
 			spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 5}},
-		{"a build under the default policy", KnowledgeCreator(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 60}},
+		{"a build under the default policy", KnowledgeCreator(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 100}},
 		{"a build under a policy that allowed the draft's 30 minutes", KnowledgeCreator(), policy.Budgets{TimeoutSeconds: 1800, MaxTurns: 300, MaxCostUSD: 9},
 			spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 300, MaxCostUSD: 9}},
 		{"a build under a policy that allows more", KnowledgeCreator(), policy.Budgets{TimeoutSeconds: 7200, MaxTurns: 60},

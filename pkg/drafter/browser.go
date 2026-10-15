@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -95,4 +97,88 @@ func hostsABrowser(address string) bool {
 		return false
 	}
 	return drivesABrowser(u.Hostname() + u.EscapedPath())
+}
+
+// sameCallLimit is how many identical tool calls in a row docker-agent, the
+// default harness, takes before it ends the run as a degenerate loop: "press
+// Tab ten times" in a browser QuickAgent's instructions ends its run.
+const sameCallLimit = 5
+
+// pageFetch is a fetch inside a page script, as instructions write one for
+// browser_evaluate.
+var pageFetch = regexp.MustCompile(`\bfetch\(`)
+
+// fetchTimeout is a page fetch given a deadline.
+var fetchTimeout = regexp.MustCompile(`AbortSignal|AbortController`)
+
+// pressTimes is an instruction to press a key, or tab, a number of times.
+var pressTimes = regexp.MustCompile(`(?i)\b(press(es|ing)?|tab(s|bing)?)\b[^.\n]{0,60}?\b(\d+|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+times\b`)
+
+// readsBetween is a sentence that has the run read the page as it presses,
+// so its presses are not identical calls in a row.
+var readsBetween = regexp.MustCompile(`(?i)\bread|browser_evaluate|browser_snapshot|activeElement`)
+
+// spelled are the counts pressTimes reads in words.
+var spelled = map[string]int{"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20}
+
+// takesABrowser says the manifest declares a browser line.
+func takesABrowser(raw json.RawMessage) bool {
+	var m struct {
+		Capabilities struct {
+			Browser *json.RawMessage `json:"browser"`
+		} `json:"capabilities"`
+	}
+	return json.Unmarshal(raw, &m) == nil && m.Capabilities.Browser != nil
+}
+
+// browserBudgetProblems is the Drafter's rule on a browser QuickAgent's
+// tool-call budget, one line each: the two ways a browser run runs out that
+// the words of its instructions show. A fetch in a page script with no deadline can hold
+// one browser_evaluate until the run's time is gone, and a key pressed
+// sameCallLimit times or more in a row is that many identical calls, which
+// ends the run; a sentence that also has the run read the page between
+// presses is not. The guide's other budget rules (one evaluate a page, the
+// report written early, only the site opened) are judgement, not words, and
+// stay in the guide. Nil for a QuickAgent with no browser, or instructions
+// that do neither.
+func browserBudgetProblems(raw json.RawMessage, instructions string) []string {
+	if !takesABrowser(raw) {
+		return nil
+	}
+	var out []string
+	if pageFetch.MatchString(instructions) && !fetchTimeout.MatchString(instructions) {
+		out = append(out, `the instructions: a page script fetches with no timeout, which can hold browser_evaluate until the run's time runs out; give each request signal: AbortSignal.timeout(8000) and credentials: "omit", send a few at a time, cap how many, and report one with no answer as slow (manifest/browser.md, "Fitting the run's budget")`)
+	}
+	for _, s := range instructionSentences(instructions) {
+		m := pressTimes.FindStringSubmatchIndex(s)
+		if m == nil || negated.MatchString(s[:m[0]]) || readsBetween.MatchString(s) {
+			continue
+		}
+		word := strings.ToLower(s[m[8]:m[9]])
+		n, err := strconv.Atoi(word)
+		if err != nil {
+			n = spelled[word]
+		}
+		if n >= sameCallLimit {
+			out = append(out, fmt.Sprintf("the instructions: %q is %d identical calls, and the run ends at %d in a row; have the run read the focus with browser_evaluate after each key press (manifest/browser.md, \"Fitting the run's budget\")",
+				strings.TrimSpace(s[m[0]:m[1]]), n, sameCallLimit))
+			break
+		}
+	}
+	return out
+}
+
+// noteBrowserBudgetProblems says in the notes that the finished draft's
+// instructions still risk running out before the report.
+func (d *Draft) noteBrowserBudgetProblems() {
+	probs := browserBudgetProblems(d.Manifest, d.Instructions)
+	if len(probs) == 0 {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("## Browser steps to fix before a run\n\nThis draft's instructions can end a run before it writes its report:\n\n")
+	for _, p := range probs {
+		b.WriteString("- " + p + "\n")
+	}
+	d.composeNotes(b.String())
 }
