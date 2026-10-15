@@ -24,7 +24,10 @@ import (
 // has its secrets file, its connections' tokens and its other sensitive
 // files removed by the next run of the same install. Unlike the owner
 // labels the container sweep judges by, the lock needs no process record,
-// so it holds on every platform and across pid namespaces.
+// so it holds on every platform and across pid namespaces. It is a lock on
+// the open file (flock, LockFileEx), so two runs of one process exclude
+// each other as two processes do; the runner home is taken to be on a
+// local file system, where that holds.
 const RunLockFile = "run.lock"
 
 // runLockRecord is what a run writes into its lock once it holds it. A
@@ -58,10 +61,10 @@ func holdRunLock(root, runID string, keep bool) (*runLock, error) {
 	path := filepath.Join(root, RunLockFile)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600) //nolint:gosec // fixed name in the run's own directory
 	if err != nil {
-		return nil, fmt.Errorf("run lock: %w", err)
+		return nil, fmt.Errorf("lock the run directory %s: %w", root, err)
 	}
 	for i := 0; ; i++ {
-		if err = tryLockFile(f); err == nil || i+1 >= runLockTries || !errors.Is(err, errRelayLockHeld) {
+		if err = tryLockFile(f); err == nil || i+1 >= runLockTries || !errors.Is(err, errLockHeld) {
 			break
 		}
 		time.Sleep(runLockDelay)
@@ -69,14 +72,17 @@ func holdRunLock(root, runID string, keep bool) (*runLock, error) {
 	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(path)
-		return nil, fmt.Errorf("run lock %s: %w", path, err)
+		if errors.Is(err, errLockHeld) {
+			err = errors.New("another process holds its lock")
+		}
+		return nil, fmt.Errorf("lock the run directory %s: %w", root, err)
 	}
 	b, _ := json.Marshal(runLockRecord{RunID: runID, Keep: keep})
 	if _, err := f.Write(b); err != nil {
 		_ = unlockFile(f)
 		_ = f.Close()
 		_ = os.Remove(path)
-		return nil, fmt.Errorf("run lock %s: %w", path, err)
+		return nil, fmt.Errorf("lock the run directory %s: %w", root, err)
 	}
 	_ = f.Sync()
 	return &runLock{f: f, path: path}, nil
@@ -121,7 +127,8 @@ func (rd *runDirs) sensitive() []sensitivePath {
 }
 
 // runDirsAt is the paths of run directory root, as prepareRunDirs lays
-// them out, for what is found there after its run.
+// them out, for what is found there after its run. Only the fields that
+// derive from root are set.
 func runDirsAt(root string) *runDirs {
 	return &runDirs{
 		root:        root,
@@ -139,8 +146,7 @@ func runDirsAt(root string) *runDirs {
 // the whole directory unless the run kept it. A directory is a dead run's
 // when its lock can be taken and holds a run's record: a live run, in this
 // process or any other, holds its lock, and is never touched. A directory
-// with no lock file (a CLI from before the lock) is a dead run's only when
-// deadRuns names it, the runs whose containers the container sweep found
+// with no lock file is a dead run's only when deadRuns names it, the runs whose containers the container sweep found
 // with a dead owner; only its sensitive files go then, since whether it was
 // kept is not recorded.
 //
@@ -177,7 +183,7 @@ func sweepRunDirs(runRoot string, deadRuns map[string]bool, stderr io.Writer) {
 	}
 	if len(swept) > 0 {
 		sort.Strings(swept)
-		_, _ = fmt.Fprintf(stderr, "removed the secrets and run files %d run(s) whose process had died left behind: %s\n", len(swept), strings.Join(swept, ", "))
+		_, _ = fmt.Fprintf(stderr, "removed what %d run(s) whose process had died left in their run directories: %s\n", len(swept), strings.Join(swept, ", "))
 	}
 	if len(left) > 0 {
 		_, _ = fmt.Fprintf(stderr, "warning: could not delete %s, left by a run whose process had died: it may hold secret values in the clear; delete it by hand\n", strings.Join(left, "; "))
@@ -221,9 +227,13 @@ func sweepRunDir(dir string, deadByContainers bool) (bool, []string) {
 	// same dead run, and removes the same files.
 	_ = unlockFile(f)
 	_ = f.Close()
-	if rec.Keep {
+	switch {
+	case len(left) > 0:
+		// What stands keeps the lock and its record, so the next sweep
+		// tries it again.
+	case rec.Keep:
 		_ = removal.Remove(lockPath, false)
-	} else if len(left) == 0 {
+	default:
 		_ = removal.Remove(dir, true)
 	}
 	return true, left

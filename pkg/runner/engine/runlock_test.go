@@ -7,9 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 )
 
 // holdRunLockEnv makes this test binary a run that takes its directory's
@@ -77,8 +80,8 @@ func startLockedRun(t *testing.T, root string, keep bool) *exec.Cmd {
 	return cmd
 }
 
-// kill ends a run the way no teardown sees, and waits until it is gone.
-func kill(t *testing.T, cmd *exec.Cmd) {
+// killRun ends a run the way no teardown sees, and waits until it is gone.
+func killRun(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
@@ -86,7 +89,7 @@ func kill(t *testing.T, cmd *exec.Cmd) {
 	_ = cmd.Wait()
 }
 
-func exists(path string) bool { _, err := os.Lstat(path); return err == nil }
+func pathExists(path string) bool { _, err := os.Lstat(path); return err == nil }
 
 // TestSweepRemovesTheSecretsOfAKilledRunAndNeverALiveOnes: a run killed
 // after its secrets are written leaves its run directory; while it is
@@ -101,16 +104,16 @@ func TestSweepRemovesTheSecretsOfAKilledRunAndNeverALiveOnes(t *testing.T) {
 
 	var out bytes.Buffer
 	sweepRunDirs(home, nil, &out)
-	if !exists(rd.secretsPath) || !exists(rd.connections()) || !exists(rd.modelSignInDir()) {
+	if !pathExists(rd.secretsPath) || !pathExists(rd.connections()) || !pathExists(rd.modelSignInDir()) {
 		t.Fatalf("the sweep removed a live run's files: %s", out.String())
 	}
 	if out.Len() != 0 {
 		t.Errorf("the sweep reported something for a live run: %q", out.String())
 	}
 
-	kill(t, cmd)
+	killRun(t, cmd)
 	sweepRunDirs(home, nil, &out)
-	if exists(root) {
+	if pathExists(root) {
 		t.Errorf("the killed run's directory is still there")
 	}
 	if !strings.Contains(out.String(), "dead0001") {
@@ -125,16 +128,16 @@ func TestSweepRemovesTheSecretsOfAKilledRunAndNeverALiveOnes(t *testing.T) {
 func TestSweepKeepsAKilledKeptRunsDirectoryButNotItsSecrets(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "runs", "dead0002")
-	kill(t, startLockedRun(t, root, true))
+	killRun(t, startLockedRun(t, root, true))
 	rd := runDirsAt(root)
 
 	sweepRunDirs(home, nil, nil)
 	for _, gone := range []string{rd.secretsPath, rd.connections(), rd.modelSignInDir(), filepath.Join(root, RunLockFile)} {
-		if exists(gone) {
+		if pathExists(gone) {
 			t.Errorf("%s survived the sweep of a killed kept run", gone)
 		}
 	}
-	if !exists(filepath.Join(rd.workspace, "SKILL.md")) {
+	if !pathExists(filepath.Join(rd.workspace, "SKILL.md")) {
 		t.Error("the sweep removed a kept run's workspace")
 	}
 }
@@ -149,8 +152,8 @@ func TestSweepLeavesARunDirectoryItCannotJudge(t *testing.T) {
 	home := t.TempDir()
 	starting := filepath.Join(home, "runs", "abcd0001")
 	unknown := filepath.Join(home, "runs", "abcd0002")
-	deadOld := filepath.Join(home, "runs", "abcd0003")
-	for _, root := range []string{starting, unknown, deadOld} {
+	noLockDead := filepath.Join(home, "runs", "abcd0003")
+	for _, root := range []string{starting, unknown, noLockDead} {
 		writeRunSecrets(root)
 	}
 	if err := os.WriteFile(filepath.Join(starting, RunLockFile), nil, 0o600); err != nil {
@@ -158,14 +161,14 @@ func TestSweepLeavesARunDirectoryItCannotJudge(t *testing.T) {
 	}
 	sweepRunDirs(home, map[string]bool{"abcd0003": true}, nil)
 	for _, root := range []string{starting, unknown} {
-		if !exists(runDirsAt(root).secretsPath) {
+		if !pathExists(runDirsAt(root).secretsPath) {
 			t.Errorf("%s: the sweep removed a run's secrets it could not prove dead", root)
 		}
 	}
-	if exists(runDirsAt(deadOld).secretsPath) || exists(runDirsAt(deadOld).connections()) {
+	if pathExists(runDirsAt(noLockDead).secretsPath) || pathExists(runDirsAt(noLockDead).connections()) {
 		t.Error("a run the container sweep proved dead kept its secrets")
 	}
-	if !exists(filepath.Join(runDirsAt(deadOld).workspace, "SKILL.md")) {
+	if !pathExists(filepath.Join(runDirsAt(noLockDead).workspace, "SKILL.md")) {
 		t.Error("a run directory whose keep is unknown lost more than its secrets")
 	}
 }
@@ -180,19 +183,101 @@ func TestRunSweepsAKilledRunsFilesAndLeavesNoLock(t *testing.T) {
 		happyFake(f)
 		p.KeepRunDir = keep
 		dead := filepath.Join(p.RunRoot, "runs", "dead0003")
-		kill(t, startLockedRun(t, dead, false))
+		killRun(t, startLockedRun(t, dead, false))
 		if _, err := Run(context.Background(), f, p); err != nil {
 			t.Fatalf("keep=%v: Run: %v", keep, err)
 		}
-		if exists(dead) {
+		if pathExists(dead) {
 			t.Errorf("keep=%v: the killed run's directory survived the next run", keep)
 		}
 		own := filepath.Join(p.RunRoot, "runs", "cafe0000")
-		if exists(filepath.Join(own, RunLockFile)) {
+		if pathExists(filepath.Join(own, RunLockFile)) {
 			t.Errorf("keep=%v: the run left its lock behind", keep)
 		}
-		if exists(own) != keep {
-			t.Errorf("keep=%v: the run's directory exists = %v", keep, exists(own))
+		if pathExists(own) != keep {
+			t.Errorf("keep=%v: the run's directory exists = %v", keep, pathExists(own))
 		}
+	}
+}
+
+// TestSweepLeavesALiveRunOfThisProcessAlone: a run that this same process
+// holds (two runs of one desktop, one MCP server) is as live to the sweep
+// as another process's, and a second lock on its directory is refused.
+func TestSweepLeavesALiveRunOfThisProcessAlone(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "runs", "live0001")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := holdRunLock(root, "live0001", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.release(false)
+	writeRunSecrets(root)
+	sweepRunDirs(home, map[string]bool{"live0001": true}, nil)
+	if !pathExists(runDirsAt(root).secretsPath) {
+		t.Fatal("the sweep removed the secrets of a run this process holds")
+	}
+	if err := os.Remove(filepath.Join(root, RunLockFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, RunLockFile), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := holdRunLock(root, "live0001", false); err == nil {
+		t.Error("a run directory whose lock file exists was locked again")
+	}
+}
+
+// TestSweepRetriesAKeptRunsSecretItCouldNotDelete: a kept run's secret the
+// sweep cannot delete leaves the lock and its record in place, so the next
+// sweep tries again, and the one after that finds nothing to do.
+func TestSweepRetriesAKeptRunsSecretItCouldNotDelete(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("a read-only directory keeps its files only off Windows, and not from root")
+	}
+	home := t.TempDir()
+	root := filepath.Join(home, "runs", "dead0004")
+	killRun(t, startLockedRun(t, root, true))
+	gw := filepath.Dir(runDirsAt(root).secretsPath)
+	if err := os.Chmod(gw, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(gw, 0o755) })
+	var out bytes.Buffer
+	sweepRunDirs(home, nil, &out)
+	if !strings.Contains(out.String(), "secrets.env") || !pathExists(filepath.Join(root, RunLockFile)) {
+		t.Fatalf("a secret the sweep could not delete was not named, or its lock went: %q", out.String())
+	}
+	if err := os.Chmod(gw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sweepRunDirs(home, nil, nil)
+	if pathExists(runDirsAt(root).secretsPath) || pathExists(filepath.Join(root, RunLockFile)) {
+		t.Error("the next sweep did not finish the kept run's secrets and lock")
+	}
+}
+
+// TestStartSessionSweepsAKilledRunsFiles: an interactive session sweeps the
+// install's run directories as a run does.
+func TestStartSessionSweepsAKilledRunsFiles(t *testing.T) {
+	p, f := sessionFixture(t)
+	happyFake(f)
+	h := &fakeHarness{}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+	dead := filepath.Join(p.RunRoot, "runs", "dead0005")
+	killRun(t, startLockedRun(t, dead, false))
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_, done := collect(s)
+	if _, err := s.End(context.Background(), false); err != nil {
+		t.Logf("end: %v", err)
+	}
+	<-done
+	if pathExists(dead) {
+		t.Error("the killed run's directory survived the session's start")
 	}
 }

@@ -55,7 +55,7 @@ type runDirs struct {
 	knowledge   string // root/knowledge — the :ro knowledge packs, one directory each
 	session     string // the per-run volume an interactive session's harness store lives in
 	cfg         string // root/cfg — rendered gateway+harness files
-	secretsPath string // root/secrets.env (0600, deleted on teardown)
+	secretsPath string // root/cfg/gateway/secrets.env (0600, deleted on teardown)
 	serversDir  string // the signature's server store, :ro
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its

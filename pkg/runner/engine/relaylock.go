@@ -13,8 +13,8 @@ import (
 // the desktop, runhost's runner home).
 const RelayLockFile = "relays.lock"
 
-// errRelayLockHeld is the lock being held by another process.
-var errRelayLockHeld = errors.New("relay lock held")
+// errLockHeld is a lock file being held by another process (tryLockFile).
+var errLockHeld = errors.New("lock held")
 
 // holdRelayLock takes the runner home's relay lock without waiting, or
 // refuses the run. refuseForeignRelays alone lists the relay network and
@@ -45,7 +45,7 @@ func holdRelayLock(home string) (release func(), err error) {
 	}
 	if err := tryLockFile(f); err != nil {
 		_ = f.Close()
-		if errors.Is(err, errRelayLockHeld) {
+		if errors.Is(err, errLockHeld) {
 			return nil, Classify(ExitGateway, fmt.Errorf(
 				"another run on this host whose declared servers reach their hosts through relays is starting or running (it holds %s). Relays share one network on the host (docker-mcp-proxies-int), so this run does not start beside it. Wait for that run to end", path))
 		}

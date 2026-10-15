@@ -41,8 +41,8 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 // sweepAbandonedRun is the sweep a run or a session starts with: the
 // containers, networks and volumes of runs whose process died
 // (SweepAbandoned), then the files they left in this install's run
-// directories (sweepRunDirs), which a dead run's containers also name when
-// its directory predates the run lock.
+// directories (sweepRunDirs), which also takes the dead runs' ids for a
+// directory that holds no lock file.
 func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot string, stderr io.Writer) {
 	sweepRunDirs(runRoot, sweepAbandoned(ctx, d, stderr), stderr)
 }
