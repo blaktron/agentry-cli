@@ -6,13 +6,15 @@
     "modes": [
       "autonomous"
     ],
-    "maxSecrets": 0,
+    "maxSecrets": 2,
     "maxServers": 0,
     "exec": false,
     "write": false,
     "intakeTypes": [
       "url"
     ],
-    "browser": true
+    "browser": true,
+    "keys": "optional",
+    "pdf": true
   }
 }
