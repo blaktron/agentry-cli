@@ -263,8 +263,7 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 }
 
 // A build on this computer takes documents past Agentry's 10 MB when its
-// caller names this computer's cap, and makes a pack past it
-// (agentry-cli#429).
+// caller names this computer's cap, and makes a pack past it.
 func TestABuildOnThisComputerTakesMoreThanAgentry(t *testing.T) {
 	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
 	writeFile(t, filepath.Join(fx.docs, "runbook.md"), "# Runbook\n"+strings.Repeat("A long runbook line.\n", (knowledge.MaxBytes+(1<<20))/21))
@@ -331,8 +330,8 @@ func TestBuildStoppedAtABudgetKeepsWhatItWrote(t *testing.T) {
 
 // A page the Creator writes and then lists under its changes.json's delete,
 // leaving the file in its reports, is deleted: the build does not name it
-// twice and fail as a whole (agentry-cli#575). A delete the Creator lists
-// twice is one delete.
+// twice and fail as a whole. A delete the Creator lists twice is one
+// delete.
 func TestAPageWrittenAndDeletedInOneRunIsDeleted(t *testing.T) {
 	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
 	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
@@ -380,10 +379,10 @@ func TestAPageWrittenAndDeletedInOneRunIsDeleted(t *testing.T) {
 	})
 }
 
-// TestABuildFromABriefAlone (agentry-cli#523; plan knowledge-and-drafter.md
-// D15, D17): a build with no document and a brief makes a pack whose pages
-// cite the brief, the web and the model, and pass the lint; the brief is
-// kept as sources/brief.md, and a later brief beside it as brief-2.md.
+// TestABuildFromABriefAlone: a build with no document and a brief makes a
+// pack whose pages cite the brief, the web and the model, and pass the lint;
+// the brief is kept as sources/brief.md, and a later brief beside it as
+// brief-2.md.
 func TestABuildFromABriefAlone(t *testing.T) {
 	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
 	fx.opts.Documents = nil
@@ -564,8 +563,8 @@ func TestBuildRefusals(t *testing.T) {
 // The Creator's reports are written by the run, so a link among them is
 // refused, never followed: a wiki/ that is a link to a directory outside,
 // or a changes.json that is a link to a file outside, contributes nothing.
-// os.Root refuses such escapes on Linux; under Wine it followed one, so
-// the build checks each part itself (agentry-cli#421).
+// os.Root refuses such escapes on Linux; where it does not, the build
+// checks each part itself.
 func TestCollectRefusesLinksInTheReports(t *testing.T) {
 	outside := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(outside, "wiki"), 0o755); err != nil {
@@ -616,8 +615,7 @@ func TestCollectRefusesLinksInTheReports(t *testing.T) {
 
 // A work directory the build could not delete (Windows keeps a handle for
 // a moment after the decode container) is named to the person, never
-// passed over: it holds the documents and the pages in the clear
-// (agentry-cli#422).
+// passed over: it holds the documents and the pages in the clear.
 func TestBuildNamesAWorkDirectoryItCouldNotDelete(t *testing.T) {
 	old := removeWork
 	removeWork = func(string, bool) error { return errors.New("in use by another process") }
@@ -637,7 +635,7 @@ func TestBuildNamesAWorkDirectoryItCouldNotDelete(t *testing.T) {
 }
 
 // A document ClamAV finds refuses the build before the Creator starts,
-// with the policy class, naming it (plan file-handling.md §7, D9).
+// with the policy class, naming it.
 func TestADocumentClamAVFindsRefusesTheBuild(t *testing.T) {
 	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
 	writeFile(t, filepath.Join(fx.docs, "eicar.com"), "X5O EICAR")
@@ -668,7 +666,7 @@ func maliciousHA(t *testing.T) {
 }
 
 // A risky document Hybrid Analysis calls malicious refuses the build with
-// the policy class, before the Creator starts (agentry-cli#564).
+// the policy class, before the Creator starts.
 func TestADocumentHybridAnalysisCallsMaliciousRefusesTheBuild(t *testing.T) {
 	maliciousHA(t)
 	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})

@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// TestAHeldWorkingCopyIsKeptFreshForOtherProcesses (agentry-cli#507):
-// another process on the same store (the desktop beside the CLI) knows a
-// live working copy only by its modification time, so the process that
-// holds one touches it as it goes; one given back is touched no more.
+// TestAHeldWorkingCopyIsKeptFreshForOtherProcesses: another process on
+// the same store (the desktop beside the CLI) knows a live working copy
+// only by its modification time, so the process that holds one touches
+// it as it goes; one given back is touched no more.
 func TestAHeldWorkingCopyIsKeptFreshForOtherProcesses(t *testing.T) {
 	prev := scratchTouchEvery
 	t.Cleanup(func() { scratchTouchEvery = prev })

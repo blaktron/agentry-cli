@@ -53,12 +53,11 @@ func HostToolGrants(c manifest.Capabilities) []string {
 
 // SetSkillAllowedTools makes a SKILL.md frontmatter's top-level
 // allowed-tools line the compiled grants: the declared capability
-// contract, never the author's (agentry-cli#195, RUNNER-PLAN §R5). An
-// author's own line (or list) that differs is replaced and kept as a
-// comment naming what was dropped; with no grants it is removed, so the
-// host pre-approves nothing the manifest did not declare. Content without
-// frontmatter is returned unchanged (EnsureSkillFrontmatter runs first and
-// owns that case).
+// contract, never the author's. An author's own line (or list) that
+// differs is replaced and kept as a comment naming what was dropped; with
+// no grants it is removed, so the host pre-approves nothing the manifest
+// did not declare. Content without frontmatter is returned unchanged
+// (EnsureSkillFrontmatter runs first and owns that case).
 func SetSkillAllowedTools(content []byte, tools []string) []byte {
 	nl := "\n"
 	switch {

@@ -1,19 +1,16 @@
-// Package creator is the Knowledge Creator (plan knowledge.md §4.2, D6;
-// agentry-cli#318): the QuickAgent package that compiles documents into a
-// knowledge pack, embedded in the CLI and run by the runner as a built-in
-// package — part of the application, never a release a person installs.
-// Its contract declares no egress, no filesystem, no exec and the files
-// data category: the runner decodes the documents before the run
-// (pkg/runner/decode), the agent reads their text through the inputs
-// channel and the pack as it stands through the knowledge tools, and
-// writes pages through write_report; pkg/knowledge applies them. Since
-// 1.2.0 (agentry-cli#523; plan knowledge-and-drafter.md D6, D15–D17) a
-// build may be given a brief instead of documents, and the application may
-// grant it web_search and web_read, which its manifest does not declare
-// (they ride on the built-in, pkg/runner/localrun): it researches what the
-// documents and the pack do not hold, every result read by AI Review
-// first, and cites web pages as [src: web:<url>] and its model's own
-// knowledge as [src: model].
+// Package creator is the Knowledge Creator: the QuickAgent package that
+// compiles documents into a knowledge pack, embedded in the CLI and run by
+// the runner as a built-in package — part of the application, never a release
+// a person installs. Its contract declares no egress, no filesystem, no exec
+// and the files data category: the runner decodes the documents before the
+// run (pkg/runner/decode), the agent reads their text through the inputs
+// channel and the pack as it stands through the knowledge tools, and writes
+// pages through write_report; pkg/knowledge applies them. From 1.2.0 a build
+// may be given a brief instead of documents, and the application may grant it
+// web_search and web_read, which its manifest does not declare (they ride on
+// the built-in, pkg/runner/localrun): it researches what the documents and
+// the pack do not hold, every result read by AI Review first, and cites web
+// pages as [src: web:<url>] and its model's own knowledge as [src: model].
 package creator
 
 import (
@@ -36,10 +33,9 @@ const (
 )
 
 // LocalTimeoutFloorSeconds is the least a knowledge build on this computer
-// is given (plan scan-and-run-tweaks.md §6.2, D13; agentry-cli#500, DR-54):
-// 60 minutes, what a build in Agentry gets on the tiers that can build,
-// where the runner policy's run timeout defaults to 15. A policy that
+// is given: 60 minutes, what a build in Agentry gets on the tiers that can
+// build, where the runner policy's run timeout defaults to 15. A policy that
 // allows more keeps its own, and a timeout named for the build wins either
-// way (localrun.Builtin.LocalBudgets). It is a timeout alone: a build on
-// this computer has no token limit, and its tool-call cap is the policy's.
+// way (localrun.Builtin.LocalBudgets). It is a timeout alone: a build on this
+// computer has no token limit, and its tool-call cap is the policy's.
 const LocalTimeoutFloorSeconds = 3600

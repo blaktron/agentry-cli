@@ -1,11 +1,10 @@
 package mcpauth
 
-// Sign in with ChatGPT, plan usage (plan model-sign-ins.md §4.3, D8–D16;
-// agentry-cli#739): a person's ChatGPT plan pays for their local runs.
-// The protocol is OpenAI's, as its pages under
-// developers.openai.com/siwc/token-sharing-open-source state it (read
-// 2026-10-09: sign-in, profiles-and-sessions, token-reference,
-// errors-and-recovery, models-and-inference):
+// Sign in with ChatGPT, plan usage: a person's ChatGPT plan pays for their
+// local runs. The protocol is OpenAI's, as its pages under
+// developers.openai.com/siwc/token-sharing-open-source state it (sign-in,
+// profiles-and-sessions, token-reference, errors-and-recovery,
+// models-and-inference):
 //
 //   - The first authorization registers the app: client_id
 //     dynamic_agent_client with agent_name_hint, and a stable per-host
@@ -26,8 +25,8 @@ package mcpauth
 //     revocation_endpoint; an empty 200 is success, an invalid token too.
 //
 // Nothing here reaches a run: the CLI is the only refresher, and a run is
-// handed an access token alone (invariant I3). Every request goes through
-// the caller's HTTP client, the egress Guard in production.
+// handed an access token alone. Every request goes through the caller's
+// HTTP client, the egress Guard in production.
 
 import (
 	"context"
@@ -494,7 +493,7 @@ func (g ChatGPT) Revoke(ctx context.Context, clientID, refreshToken string) erro
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return errors.New("ChatGPT's discovery document names no usable revocation endpoint")
 	}
-	// The refresh token goes to OpenAI and nowhere else (invariant I6): the
+	// The refresh token goes to OpenAI and nowhere else: the
 	// endpoint must be the issuer's host or under its domain.
 	if !sameVendor(u.Hostname(), g.issuer()) {
 		return fmt.Errorf("ChatGPT's discovery document names a revocation endpoint off OpenAI's domain (%s): refused", u.Hostname())

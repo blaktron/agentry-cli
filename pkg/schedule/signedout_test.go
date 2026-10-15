@@ -23,7 +23,7 @@ func signedOutEntry() Entry {
 }
 
 // Golden: a signed-out schedule's service loads its encrypted credential
-// and turns the keychain off; it holds a path, never a key (invariant 7).
+// and turns the keychain off; it holds a path, never a key.
 func TestSystemdUnitsSignedOutGolden(t *testing.T) {
 	unixAlarm(t)
 	sc := sample(t)
@@ -48,7 +48,7 @@ ExecStart="/usr/bin/agentry" "schedule" "fire" "abcdefghij"
 		t.Errorf("service:\n%s\nwant:\n%s", service, wantService)
 	}
 	// The timer is the signed-in one's: Persistent=true catches up once at
-	// boot after the computer was off (D19).
+	// boot after the computer was off.
 	_, plainTimer, _ := SystemdUnits(sc, goldenEntry())
 	if timer != plainTimer || !strings.Contains(timer, "Persistent=true") {
 		t.Errorf("timer differs from a signed-in schedule's:\n%s", timer)
@@ -90,7 +90,7 @@ func TestSystemdProbeLoadsTheCredential(t *testing.T) {
 }
 
 // launchd and Task Scheduler never take a signed-out entry: Docker
-// Desktop stops at sign-out there (D17).
+// Desktop stops at sign-out there.
 func TestOtherAlarmsRefuseACredential(t *testing.T) {
 	sc := sample(t)
 	sc.ID = "abcdefghij"
@@ -167,7 +167,7 @@ func TestSealCredentialWritesOnlyCiphertext(t *testing.T) {
 	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("credential %v %v, want 0600", fi, err)
 	}
-	// Invariant 7: nothing in the store holds the key in the clear.
+	// Nothing in the store holds the key in the clear.
 	_ = filepath.WalkDir(s.Dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err

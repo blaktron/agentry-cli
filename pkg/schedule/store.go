@@ -19,15 +19,15 @@ import (
 )
 
 // Schedule is one calendar entry for a run on this computer: what to run,
-// how, and when (plan §4). It never holds a credential (invariant 7): the
-// model key stays in the keychain and secrets in the policy's source.
+// how, and when. It never holds a credential: the model key stays in the
+// keychain and secrets in the policy's source.
 type Schedule struct {
 	ID   string `yaml:"id" json:"id"`
 	Name string `yaml:"name" json:"name"`
 
-	// Ref is ns/name of a registry release, pinned to Version and Digest
-	// (D3): a fire runs exactly the version consented to when the schedule
-	// was made. Local is a QuickAgent directory instead of a ref.
+	// Ref is ns/name of a registry release, pinned to Version and Digest:
+	// a fire runs exactly the version consented to when the schedule was
+	// made. Local is a QuickAgent directory instead of a ref.
 	Ref      string `yaml:"ref,omitempty" json:"ref,omitempty"`
 	Version  string `yaml:"version,omitempty" json:"version,omitempty"`
 	Digest   string `yaml:"digest,omitempty" json:"digest,omitempty"`
@@ -38,8 +38,8 @@ type Schedule struct {
 	When Recurrence `yaml:"when" json:"when"`
 
 	// SignedOut: the schedule also runs while its person is signed out
-	// (Linux only, D17–D19): its alarm is started by a lingering user
-	// manager and reads its keys from the encrypted credential beside it
+	// (Linux only): its alarm is started by a lingering user manager and
+	// reads its keys from the encrypted credential beside it
 	// (signedout.go), never from the keychain.
 	SignedOut bool `yaml:"signedOut,omitempty" json:"signedOut,omitempty"`
 
@@ -70,13 +70,12 @@ type RunSpec struct {
 	Policy   string  `yaml:"policy,omitempty" json:"policy,omitempty"`
 
 	// Hosts are the target hosts the schedule was readied for, when it was
-	// made (plan runtime-hosts.md D12; agentry-cli#863): the answer is in
-	// Intake; each keeps where its sign-in is saved and the host key the
-	// person accepted. Never a credential.
+	// made: the answer is in Intake; each keeps where its sign-in is saved
+	// and the host key the person accepted. Never a credential.
 	Hosts []Host `yaml:"hosts,omitempty" json:"hosts,omitempty"`
 
 	// The consents a person gave, explicitly, when the schedule was made;
-	// a fire passes only these (plan §5).
+	// a fire passes only these.
 	AllowUnsigned      bool `yaml:"allowUnsigned,omitempty" json:"allowUnsigned,omitempty"`
 	AllowUnscanned     bool `yaml:"allowUnscanned,omitempty" json:"allowUnscanned,omitempty"`
 	AllowVulnerableMCP bool `yaml:"allowVulnerableMcp,omitempty" json:"allowVulnerableMcp,omitempty"`
@@ -136,7 +135,7 @@ type Fire struct {
 }
 
 // Store is the folder of schedules under the runner home. It is the truth
-// about them; the operating system's entries are only alarms (D4).
+// about them; the operating system's entries are only alarms.
 type Store struct{ Dir string }
 
 // StoreIn is the store under a runner home.
@@ -310,8 +309,7 @@ func (s Store) SaveState(id string, st State) error {
 }
 
 // Claim takes one occurrence for this process: true once, false for every
-// later caller, so two triggers for one occurrence run it once
-// (invariant 3).
+// later caller, so two triggers for one occurrence run it once.
 func (s Store) Claim(id string, occurrence time.Time) (bool, error) {
 	d, err := s.dir(id)
 	if err != nil {
@@ -430,8 +428,8 @@ func writeAtomic(path string, b []byte, mode os.FileMode) error {
 
 // Due is what a fire at now should do: run the latest occurrence that fell
 // due since the last one handled, and record every earlier one as missed
-// (D5: a missed occurrence runs once at the next chance, if that comes
-// before the following occurrence). run is zero when nothing is due.
+// (a missed occurrence runs once at the next chance, if that comes before
+// the following occurrence). run is zero when nothing is due.
 func Due(r Recurrence, st State, now time.Time) (run time.Time, missed []time.Time) {
 	from := st.Last
 	if from.IsZero() || from.Before(r.Start) {

@@ -14,10 +14,10 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// Correct is the post-step's first step (plan builder-simplify.md §5.2 step
-// 1, D6; agentry-cli#417): the Drafter's mechanical slips corrected without
-// the model, before the draft is checked. Each correction is a data edit of
-// the manifest the draft already holds, never a value invented for it:
+// Correct is the post-step's first step: the Drafter's mechanical slips
+// corrected without the model, before the draft is checked. Each correction
+// is a data edit of the manifest the draft already holds, never a value
+// invented for it:
 //
 //   - a value named twice where the rules take it once (a mode, a tag, an
 //     intake question's choice): the second dropped;
@@ -30,7 +30,7 @@ import (
 //     ending with "…";
 //   - a knowledge block under capabilities: moved to the top level, where
 //     the manifest takes it; knowledge.ships: removed, since a draft never
-//     ships a pack (agentry-cli#522).
+//     ships a pack.
 //
 // The bounds are pkg/manifest's own. It returns what it corrected, one plain
 // sentence each, which Finish names in the draft's notes; the rules then
@@ -172,9 +172,8 @@ func (c *corrector) dropEmptyItems(l *yaml.Node, where, what string) {
 }
 
 // lift moves a block written under capabilities to the manifest's top
-// level, where the manifest takes it: knowledge (the Drafter's first live
-// draft with a pack put it there, agentry-cli#522) and inputs (DEV-218,
-// agentry-cli#634), neither of which is a capability. A manifest that
+// level, where the manifest takes it: knowledge (a draft with a pack can put
+// it there) and inputs, neither of which is a capability. A manifest that
 // already has one keeps its own, and the misplaced one is removed.
 func (c *corrector) lift(root *yaml.Node, key string) {
 	caps := value(root, "capabilities")
@@ -204,10 +203,10 @@ var inputKindNames = map[string]manifest.InputKind{
 	"image":    manifest.InputKindImages,
 }
 
-// inputs corrects the slips of the inputs block (DEV-218): a kind written
-// in the singular or another case, a kind named twice, and any beside the
-// kinds the draft names, which the rules refuse since any stands alone.
-// A kind outside the set is left for the rules to refuse.
+// inputs corrects the slips of the inputs block: a kind written in the
+// singular or another case, a kind named twice, and any beside the kinds
+// the draft names, which the rules refuse since any stands alone. A kind
+// outside the set is left for the rules to refuse.
 func (c *corrector) inputs(in *yaml.Node) {
 	l := value(in, "kinds")
 	if l == nil || l.Kind != yaml.SequenceNode {
@@ -241,10 +240,9 @@ func (c *corrector) inputs(in *yaml.Node) {
 	c.dropIfEmpty(in, "kinds", "inputs")
 }
 
-// noShips removes knowledge.ships: a draft never ships a pack (plan
-// knowledge-and-drafter.md §6, D4). The person's own packs stay theirs;
-// a QuickAgent that needs one at run time asks for it with
-// knowledge.accepts, and the person attaches it to the run.
+// noShips removes knowledge.ships: a draft never ships a pack. The person's
+// own packs stay theirs; a QuickAgent that needs one at run time asks for it
+// with knowledge.accepts, and the person attaches it to the run.
 func (c *corrector) noShips(k *yaml.Node) {
 	for i := 0; i+1 < len(k.Content); i += 2 {
 		if k.Content[i].Value != "ships" {

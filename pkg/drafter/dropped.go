@@ -26,11 +26,11 @@ const (
 )
 
 // declaredCapabilities is what a manifest declares that a repair turn must
-// not drop without the report naming it (agentry-cli#633): each MCP
-// server (by its package, whatever its version), each egress host (the
-// QuickAgent's or a server's), each exec command and each secret (the
-// QuickAgent's or a server's), in the manifest's order. Nil when the
-// manifest does not parse, which validate reports.
+// not drop without the report naming it: each MCP server (by its package,
+// whatever its version), each egress host (the QuickAgent's or a
+// server's), each exec command and each secret (the QuickAgent's or a
+// server's), in the manifest's order. Nil when the manifest does not
+// parse, which validate reports.
 func declaredCapabilities(raw json.RawMessage) []declared {
 	var m struct {
 		Capabilities struct {
@@ -89,7 +89,7 @@ func declaredCapabilities(raw json.RawMessage) []declared {
 		name := srv.NPM
 		switch {
 		case srv.URL != "":
-			name = srv.URL // a remote server (agentry-cli#663)
+			name = srv.URL // a remote server
 		case name == "":
 			name = srv.PyPI
 		}

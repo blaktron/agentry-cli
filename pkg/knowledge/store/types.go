@@ -1,7 +1,7 @@
-// Package store is the local knowledge store (plan knowledge.md §4.3;
-// agentry-cli#319): the knowledge packs a person keeps on this machine,
-// sealed, under the runner home the CLI and the desktop share, so that
-// both clients list, open, attach and export the same packs.
+// Package store is the local knowledge store: the knowledge packs a person
+// keeps on this machine, sealed, under the runner home the CLI and the
+// desktop share, so that both clients list, open, attach and export the same
+// packs.
 //
 // Each pack is one directory, <runner home>/knowledge/<pack id>/:
 //
@@ -9,8 +9,8 @@
 //	pack.sealed    the canonical tree tar (wiki/ and sources/), sealed with
 //	               the core's pkg/packseal under a random data key per pack
 //	key.json       that data key as it is wrapped: by the registry the
-//	               person is signed in to (plan D4, D22), or, signed out, by
-//	               this machine's key in the OS keychain (D20); and, once
+//	               person is signed in to, or, signed out, by
+//	               this machine's key in the OS keychain; and, once
 //	               the pack is kept in Agentry, the registry's copy
 //
 // No page rests in a pack's directory in the clear. A pack is opened into
@@ -20,18 +20,16 @@
 // before it is kept. Such directories are dot-named, so List skips them,
 // and one a process that died left behind is swept after an hour. A data key
 // the registry unwrapped is cached in the OS keychain (the modelkey
-// pattern, DR-24's exposure noted), so a pack opens offline after its
-// first opening on a machine. The registry holds what wraps the key, so a
-// pack kept on one install opens on a fresh one after sign-in, with
-// nothing carried between the two (D4).
+// pattern), so a pack opens offline after its first opening on a machine. The
+// registry holds what wraps the key, so a pack kept on one install opens on a
+// fresh one after sign-in, with nothing carried between the two.
 //
-// An organization's shared pack (Knowledge M8, agentry-cli#380; plan §4.7,
-// D13) is kept the same way, its key.json naming the organization, with
-// one difference: its data key is never cached. It is unwrapped through
-// the organization's route every time the pack is opened, which the
-// registry answers only while the person is an active member, so a member
-// who is removed keeps sealed bytes they can no longer open, and a shared
-// pack does not open offline.
+// An organization's shared pack is kept the same way, its key.json naming the
+// organization, with one difference: its data key is never cached. It is
+// unwrapped through the organization's route every time the pack is opened,
+// which the registry answers only while the person is an active member, so a
+// member who is removed keeps sealed bytes they can no longer open, and a
+// shared pack does not open offline.
 package store
 
 import (
@@ -82,10 +80,9 @@ type KeyRecord struct {
 	// Registry is the registry that wrapped the key (WrapperRegistry): the
 	// one that can unwrap it, for the account signed in when it did.
 	Registry string `json:"registry,omitempty"`
-	// Org is the organization whose shared pack this is (Knowledge M8),
-	// by its handle: its key is the organization's, unwrapped through the
-	// organization's route at every open and never cached. Empty for the
-	// person's own.
+	// Org is the organization whose shared pack this is, by its handle:
+	// its key is the organization's, unwrapped through the organization's
+	// route at every open and never cached. Empty for the person's own.
 	Org        string     `json:"org,omitempty"`
 	WrappedKey WrappedKey `json:"wrappedKey"`
 	// Agentry is the registry's copy, once the pack is uploaded.
@@ -117,8 +114,8 @@ type Remote struct {
 	Created time.Time
 	Updated time.Time
 	// Shared, Org and Exportable describe an organization's shared pack
-	// (Knowledge M8): the organization's handle, and whether its admins
-	// marked it exportable by members (D26).
+	// the organization's handle, and whether its admins marked it
+	// exportable by members.
 	Shared     bool
 	Org        string
 	Exportable bool
@@ -151,8 +148,7 @@ type Registries func(url string) (Registry, error)
 
 // Shared is a registry's routes for one organization's shared packs, for
 // the account signed in, which the registry answers only while it is an
-// active member of the organization (Knowledge M8; the core's
-// /orgs/{org}/knowledge/, agentry#646).
+// active member of the organization (the core's /orgs/{org}/knowledge/).
 type Shared interface {
 	URL() string
 	Unwrap(ctx context.Context, wk WrappedKey) ([]byte, error)
@@ -160,7 +156,7 @@ type Shared interface {
 	GetTree(ctx context.Context, id string) (sealed []byte, digest string, err error)
 	// Export is the pack's tree decrypted by the registry, the canonical
 	// tar, and its digest: an admin's always, a member's only once the
-	// pack is marked exportable (ErrNotExportable otherwise, D26).
+	// pack is marked exportable (ErrNotExportable otherwise).
 	Export(ctx context.Context, id string) (tree []byte, digest string, err error)
 }
 
@@ -205,13 +201,13 @@ var (
 	ErrNoEntry = errors.New("no such keychain entry")
 	// ErrNotExportable is a member's export of an organization's shared
 	// pack its admins have not marked exportable (403
-	// knowledge-not-exportable, D26).
+	// knowledge-not-exportable).
 	ErrNotExportable = errors.New("only the organization's admins export this pack unencrypted, unless one of them marks it exportable")
 	// ErrShared is a change to an organization's shared pack from this
 	// computer: its admins write it in Agentry.
 	ErrShared = errors.New("it is an organization's shared pack, which its admins change in Agentry, not from this computer")
 	// ErrPastAgentryCap is a pack kept here that is larger than Agentry
 	// keeps (knowledge.MaxBytes): a local build may make one up to
-	// knowledge.MaxLocalBytes, and it stays on this computer (agentry-cli#429).
+	// knowledge.MaxLocalBytes, and it stays on this computer.
 	ErrPastAgentryCap = errors.New("the pack is larger than Agentry keeps")
 )

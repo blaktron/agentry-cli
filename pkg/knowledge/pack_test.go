@@ -27,7 +27,7 @@ func write(t *testing.T, root string, files map[string]string) {
 
 // digestFixture is the tree whose digest is pinned below. The literal was
 // computed independently of archive/tar, by a POSIX ustar encoder written
-// by hand from the field table TreeDigest documents (Python, 2026-09-25):
+// by hand from the field table TreeDigest documents (Python):
 // each header's fields set one by one, the checksum summed, the data
 // padded to 512, two zero blocks at the end. Python's own tarfile differs
 // in one field — it leaves devmajor/devminor NUL for a regular file — which
@@ -304,8 +304,8 @@ func lowerLocalCap(t *testing.T) {
 	t.Cleanup(func() { localCap = prev })
 }
 
-// A pack past Agentry's 10 MB is a pack on this computer (agentry-cli#429):
-// it loads, copies, and goes through the canonical tree and back.
+// A pack past Agentry's 10 MB is a pack on this computer: it loads,
+// copies, and goes through the canonical tree and back.
 func TestAPackPastAgentrysCapIsALocalPack(t *testing.T) {
 	root := validPack(t, "aws-docs")
 	write(t, root, map[string]string{"sources/big.bin": strings.Repeat("x", MaxBytes+1<<20)})

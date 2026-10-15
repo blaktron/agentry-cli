@@ -21,16 +21,15 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// Running while signed out (plan quickagent-scheduling.md §5a, D17–D19;
-// agentry-cli#749). On Linux with Docker Engine a schedule can also run
-// while its person is signed out: linger starts their systemd user
-// manager at boot and keeps it after sign-out, so the same user timer
-// rings with nobody signed in. The keychain is locked then, so the keys a
-// fire reads are sealed, when the schedule is made, into an encrypted
-// systemd credential beside it (`systemd-creds encrypt --user`, bound to
-// this machine, its TPM where there is one, and this user), which the
-// unit loads with LoadCredentialEncrypted=. There is no plaintext copy
-// and no fallback: below systemd 256 the option is refused.
+// Running while signed out. On Linux with Docker Engine a schedule can also
+// run while its person is signed out: linger starts their systemd user
+// manager at boot and keeps it after sign-out, so the same user timer rings
+// with nobody signed in. The keychain is locked then, so the keys a fire
+// reads are sealed, when the schedule is made, into an encrypted systemd
+// credential beside it (`systemd-creds encrypt --user`, bound to this
+// machine, its TPM where there is one, and this user), which the unit loads
+// with LoadCredentialEncrypted=. There is no plaintext copy and no fallback:
+// below systemd 256 the option is refused.
 
 // ErrSignedOutUnsupported is the system's reason a schedule cannot run
 // while its person is signed out.
@@ -215,7 +214,7 @@ func (l *Linger) On() (bool, error) {
 }
 
 // lingerRecord is the store's note that the CLI turned linger on, so it
-// turns it off again only then (D17).
+// turns it off again only then.
 type lingerRecord struct {
 	Ours  bool      `json:"ours"`
 	Since time.Time `json:"since"`

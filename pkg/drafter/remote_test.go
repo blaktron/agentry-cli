@@ -14,11 +14,10 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// A remote MCP server and a package server's OAuth sign-in in a draft
-// (OAuth connections M11, agentry-cli#667; DR-67's addendum). A remote
-// server is held by the core's V5 and noted with what its first run asks;
-// a package's oauth block must be a sign-in the guide lists, copied
-// exactly (the operator's decision of 2026-10-09).
+// A remote MCP server and a package server's OAuth sign-in in a draft. A
+// remote server is held by the core's V5 and noted with what its first
+// run asks; a package's oauth block must be a sign-in the guide lists,
+// copied exactly.
 
 const (
 	linearRemote = `{"url": "https://mcp.linear.app/mcp", "auth": "oauth", "scopes": ["read"], "tools": ["list_issues"]}`
@@ -98,8 +97,9 @@ func TestARemoteServerIsNotedWithWhatItsFirstRunAsks(t *testing.T) {
 	}
 }
 
-// Before agentry-cli#667 the line indexed the package-only list, so a
-// remote server declared first sent the repair turn to the wrong entry.
+// The line indexes the manifest's own server list, not the package-only
+// list, so a remote server declared first does not send the repair turn to
+// the wrong entry.
 func TestARulesLineNamesAServerByItsOwnIndex(t *testing.T) {
 	d := checked(t, &fakeMeta{}, linearRemote+", "+markitdown)
 	if len(d.serverProblems) != 1 || !strings.HasPrefix(d.serverProblems[0], "capabilities.mcpServers[1]: pypi:markitdown-mcp@0.0.1a7: does not run here") {
@@ -239,9 +239,9 @@ func TestTheListRefusesABadRemoteOrSignInEntry(t *testing.T) {
 	}
 }
 
-// The bench (agentry-cli#667): a fixture can expect a remote server at a
-// host and a package carrying the listed sign-in; a remote server counts
-// its address's host and is never "not pinned".
+// The bench: a fixture can expect a remote server at a host and a
+// package carrying the listed sign-in; a remote server counts its
+// address's host and is never "not pinned".
 func TestTheBenchHoldsADraftToItsRemoteServersAndSignIns(t *testing.T) {
 	shape := func(servers string, e Expect) string {
 		t.Helper()
@@ -279,7 +279,7 @@ func TestTheBenchHoldsADraftToItsRemoteServersAndSignIns(t *testing.T) {
 }
 
 // A remote server signed in to by OAuth names the scopes its task needs,
-// where the vendor offers more than one (agentry-cli#667's acceptance).
+// where the vendor offers more than one.
 func TestARemoteServerNamesItsScopes(t *testing.T) {
 	d := checked(t, &fakeMeta{}, otherRemote+", "+`{"url": "https://api.githubcopilot.com/mcp/readonly", "auth": "oauth"}`)
 	if len(d.serverProblems) != 1 || !strings.HasPrefix(d.serverProblems[0], "capabilities.mcpServers[1]: https://api.githubcopilot.com/mcp/readonly: it signs in with OAuth and names no scopes") ||
@@ -294,8 +294,8 @@ func TestARemoteServerNamesItsScopes(t *testing.T) {
 	}
 }
 
-// A package on the core's unsupported list (plan D25) is refused whatever
-// its block: it has no listed sign-in, and the core's V5 names it too.
+// A package on the core's unsupported list is refused whatever its
+// block: it has no listed sign-in, and the core's V5 names it too.
 func TestAnUnsupportedPackageCannotSignIn(t *testing.T) {
 	gsuite := `{"pypi": "mcp-gsuite", "version": "0.4.1", "egress": ["gmail.googleapis.com"], "oauth": {"issuer": "https://accounts.google.com", "env": {"TOKEN": "{access_token}"}}}`
 	d := checked(t, &fakeMeta{}, gsuite)
@@ -311,8 +311,8 @@ func TestAnUnsupportedPackageCannotSignIn(t *testing.T) {
 	}
 }
 
-// A repair that drops a remote server the report does not name is a drop
-// (DR-69): a remote server's identity is its address.
+// A repair that drops a remote server the report does not name is a drop:
+// a remote server's identity is its address.
 func TestARepairThatDropsARemoteServerIsCaught(t *testing.T) {
 	first := &Draft{Manifest: json.RawMessage(manifestWith(linearRemote))}
 	second := &Draft{Manifest: json.RawMessage(manifestWith("")), Validation: json.RawMessage(`{"passed":true}`)}
@@ -322,8 +322,7 @@ func TestARepairThatDropsARemoteServerIsCaught(t *testing.T) {
 }
 
 // The bench counts the Drafter's own bullets, not the server check's: a
-// draft of five bullets with a remote server's note is within the cap
-// (agentry-cli#667's live bench).
+// draft of five bullets with a remote server's note is within the cap.
 func TestTheBenchCountsOnlyTheDraftersBullets(t *testing.T) {
 	d := checked(t, &fakeMeta{}, linearRemote)
 	d.ownNotes = strings.Repeat("- a bullet\n", MaxNoteBullets)

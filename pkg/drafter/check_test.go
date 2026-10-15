@@ -205,7 +205,7 @@ func (fakeJev) Model() string { return "jev-test" }
 // core's own pkg/draftcheck with the person's key, and records the same
 // shape the registry answers, the core's severity with each finding; what a
 // repair turn acts on is the draft question's flag alone, never a rubric
-// finding (agentry-cli#633).
+// finding.
 func TestTheLocalCheckAsksAsTheRegistryDoes(t *testing.T) {
 	p, err := CheckPackage("Turn meeting notes into action items.", checkPackageDir(t))
 	if err != nil {

@@ -31,16 +31,16 @@ type Vendor struct {
 	// documents; NoISS leaves the iss parameter off the redirect.
 	DCR, CIMD, NoISS bool
 	// RefreshPrefix starts every refresh token issued, so a test can
-	// search for it (D8's probe); ClientSecret is what a registration
-	// issues when the server takes no public client.
+	// search for it; ClientSecret is what a registration issues when
+	// the server takes no public client.
 	RefreshPrefix string
 	ClientSecret  string
 	// NoPublic leaves "none" out of the token endpoint's auth methods.
 	NoPublic bool
 	// Scope, when set, is the WWW-Authenticate scope.
 	Scope string
-	// IssuerOnly is a sign-in at the issuer for a package server
-	// (agentry-cli#665): the authorization request must carry no resource.
+	// IssuerOnly is a sign-in at the issuer for a package server:
+	// the authorization request must carry no resource.
 	IssuerOnly bool
 	// SecretAnyway issues ClientSecret to every registration, one that
 	// asked to be public included, and names no auth method in the answer
@@ -48,7 +48,7 @@ type Vendor struct {
 	SecretAnyway bool
 	// WholeGrant revokes, with any one refresh token, every refresh token
 	// issued to the same client, as Google ends an account's whole grant to
-	// a client (agentry-cli#702).
+	// a client.
 	WholeGrant bool
 
 	mu       sync.Mutex

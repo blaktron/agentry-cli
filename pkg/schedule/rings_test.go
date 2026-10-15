@@ -9,7 +9,7 @@ import (
 
 // Every occurrence in the window has a ring at its own local minute, in
 // the schedule's own zone and in another whose daylight-saving changes
-// fall on other days (the superset fire narrows, D4).
+// fall on other days (the superset fire narrows).
 func TestLocalRingsCoverEveryOccurrence(t *testing.T) {
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	schedules := []Recurrence{
@@ -93,7 +93,7 @@ func TestLocalRingsSkippedTimeIsAOneOff(t *testing.T) {
 	if !reflect.DeepEqual(got.Repeat, []LocalRing{{Hour: 2, Minute: 30}}) {
 		t.Fatalf("repeat %+v", got.Repeat)
 	}
-	// Three years of them, as the systemd timer carries (DR-83).
+	// Three years of them, as the systemd timer carries.
 	want := []time.Time{time.Date(2027, 3, 14, 3, 0, 0, 0, ny), time.Date(2028, 3, 12, 3, 0, 0, 0, ny), time.Date(2029, 3, 11, 3, 0, 0, 0, ny)}
 	if !slices.EqualFunc(got.Once, want, time.Time.Equal) {
 		t.Fatalf("once %v, want %v", got.Once, want)
@@ -119,7 +119,7 @@ func TestLocalRingsAcrossZones(t *testing.T) {
 }
 
 // A once schedule rings at its occurrence even when the computer only
-// comes back after it: fire then decides (D5).
+// comes back after it: fire then decides.
 func TestLocalRingsOncePast(t *testing.T) {
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	r := Recurrence{Kind: Once, Date: "2026-10-09", Time: "08:00", Zone: "UTC", Start: start}

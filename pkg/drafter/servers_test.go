@@ -53,11 +53,10 @@ func fakeServers(ranges map[string]string) ServerResolver {
 	}
 }
 
-// TestADraftPinningAServerItsRunsCannotRunGetsTheRepairTurn
-// (agentry-cli#609): a draft pinning a release whose own runtime range
-// excludes the run's goes to the repair turn with the rule's line, and a
-// second answer pinning one it admits is kept, with nothing to fix in its
-// notes.
+// TestADraftPinningAServerItsRunsCannotRunGetsTheRepairTurn: a draft
+// pinning a release whose own runtime range excludes the run's goes to
+// the repair turn with the rule's line, and a second answer pinning one
+// it admits is kept, with nothing to fix in its notes.
 func TestADraftPinningAServerItsRunsCannotRunGetsTheRepairTurn(t *testing.T) {
 	out := t.TempDir()
 	passing := strings.Replace(postDraft, `"intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, "", 1)
@@ -128,8 +127,7 @@ func TestKeepFirstHoldsTheServerRule(t *testing.T) {
 }
 
 // The Drafter is told the runtimes' versions the rule checks against, by
-// its guide's servers page since the rule moved there (agentry-cli#659),
-// so the page and the code cannot drift apart.
+// its guide's servers page, so the page and the code cannot drift apart.
 func TestTheGuideNamesTheRuntimeVersions(t *testing.T) {
 	mustSay(t, map[string][]string{
 		"servers/mcp-servers.md": {"npm servers run on Node " + policy.DefaultNodeVersion + " and PyPI servers on Python " + policy.DefaultPythonVersion + "."},
@@ -197,9 +195,9 @@ func TestCheckServersReadsTheRunsRegistries(t *testing.T) {
 	}
 }
 
-// A draft that declares a remote server (agentry-cli#663) is not looked up
-// in any registry: it has no package and no runtime range, and its
-// address is not a pin a registry could answer.
+// A draft that declares a remote server is not looked up in any
+// registry: it has no package and no runtime range, and its address
+// is not a pin a registry could answer.
 func TestCheckServersLeavesARemoteServerAlone(t *testing.T) {
 	calls := 0
 	p := PostStep{serverChecks: map[string]serverCheck{}, Servers: func(_ context.Context, srv manifest.MCPServer) (mcpinstall.Resolved, error) {

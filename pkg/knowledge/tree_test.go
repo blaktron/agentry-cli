@@ -179,10 +179,10 @@ func TestExtractTreeIntoANonEmptyDirectoryIsRefused(t *testing.T) {
 	}
 }
 
-// TestUnpackMakesAPackFromATree (agentry-cli#364): a registry's tree tar
-// becomes a pack directory the Creator and the runner load, its manifest's
-// counts and digest the tree's own whatever the caller said; a tree that
-// is not its digest leaves nothing.
+// TestUnpackMakesAPackFromATree: a registry's tree tar becomes a pack
+// directory the Creator and the runner load, its manifest's counts and
+// digest the tree's own whatever the caller said; a tree that is not its
+// digest leaves nothing.
 func TestUnpackMakesAPackFromATree(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, map[string]string{

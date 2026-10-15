@@ -18,8 +18,7 @@ import (
 
 // ServerListFile is the drafting guide's two soft lists of declared MCP
 // servers, Runs here and Does not run here, as one file in the pack's
-// sources (plan drafter-knowledge.md §4.4, D3, D9; agentry-cli#658). The
-// two pages that show them are rendered from it
+// sources. The two pages that show them are rendered from it
 // (TestTheDraftingGuideIsCurrent). A list is one thing for the Drafter to
 // look at, never a gate in the registry or the runner, and no entry says a
 // server is safe or good: each says what was observed, on which runtime, on
@@ -33,8 +32,8 @@ const (
 )
 
 // notRunReasons is the closed set of reasons a server or a dependency does
-// not run here, each with the clause the pages give it after "it" (plan
-// §4.4). NotRunReason reads it.
+// not run here, each with the clause the pages give it after "it".
+// NotRunReason reads it.
 var notRunReasons = map[string]string{
 	"musl-native":           "needs a native binary built for glibc, and the runtime images are Alpine (musl)",
 	"needs-install-scripts": "needs an install script, and npm installs run with --ignore-scripts",
@@ -47,8 +46,7 @@ var notRunReasons = map[string]string{
 	"runtime-excluded":      "declares a runtime range that excludes the runtime's version",
 	"writes-own-tree":       "writes into its own installed files, which are read-only",
 	"secret-shaped-output":  "returns results that look like credentials, which the runner blocks",
-	// Three the survey added to the plan's set (agentry-cli#658; DR-43's
-	// addendum): a package that is not a server, a server whose tool list
+	// Three more: a package that is not a server, a server whose tool list
 	// stops the runner's gateway, and one that fails at start on any
 	// machine.
 	"not-a-server":        "is not an MCP server: it has no program to start",
@@ -64,24 +62,24 @@ func NotRunReason(class string) (string, bool) {
 }
 
 // ServerList is ServerListFile decoded: the servers on the two lists, the
-// dependencies that mean a server does not run here, and what the survey
-// saw of the runtime images a server runs in.
+// dependencies that mean a server does not run here, and what was
+// seen of the runtime images a server runs in.
 type ServerList struct {
 	Servers      []ServerEntry     `yaml:"servers"`
 	Dependencies []DependencyEntry `yaml:"dependencies"`
 	Runtimes     []RuntimeEntry    `yaml:"runtimes"`
 	// Remote are vendors' own remote MCP servers, by address and sign-in,
-	// and SignIns the package servers' OAuth sign-ins seen working
-	// (agentry-cli#667; DR-67's addendum). A draft may give a package an
-	// oauth block only by copying one listed here.
+	// and SignIns the package servers' OAuth sign-ins seen working.
+	// A draft may give a package an oauth block only by copying one listed
+	// here.
 	Remote  []RemoteEntry `yaml:"remote"`
 	SignIns []SignInEntry `yaml:"signins"`
 }
 
 // RemoteEntry is one vendor's remote MCP server, as an address and a way
-// of signing in (agentry-cli#667). Seen says it answered a tool call
-// through Agentry; otherwise the entry is what the vendor's own metadata
-// said on its date, read anonymously.
+// of signing in. Seen says it answered a tool call through Agentry;
+// otherwise the entry is what the vendor's own metadata said on its
+// date, read anonymously.
 type RemoteEntry struct {
 	Vendor string `yaml:"vendor"`
 	URL    string `yaml:"url"`
@@ -101,7 +99,7 @@ type RemoteEntry struct {
 
 // SignInEntry is a package server's OAuth sign-in seen working: the
 // package and version, the hosts and plain settings the block needs beside
-// it, and the block itself, which a draft copies exactly (agentry-cli#667).
+// it, and the block itself, which a draft copies exactly.
 type SignInEntry struct {
 	Ecosystem string `yaml:"ecosystem"`
 	Package   string `yaml:"package"`
@@ -159,7 +157,7 @@ type ServerEntry struct {
 	// Conditions are what a QuickAgent must declare or know for it to
 	// run: its keys, its egress hosts, an env switch.
 	Conditions []string `yaml:"conditions,omitempty"`
-	// Evidence is where it was seen: "survey 2026-10-05", an issue.
+	// Evidence is where it was seen.
 	Evidence string    `yaml:"evidence"`
 	Date     time.Time `yaml:"date"`
 }
@@ -289,9 +287,9 @@ const versionRangeChars = " <>=^~*|,!"
 // is the server's design (a glibc binary, launch arguments, a browser it
 // spawns, a port), so a Does not run here entry with an exact version
 // speaks for every version of its package unless its reason is one of
-// these (agentry-cli#660; DR-67's addendum). A Runs here entry speaks for
-// its own version only: another version is judged with the guide. The
-// Does not run here page names them (VersionBoundReasons).
+// these. A Runs here entry speaks for its own version only: another
+// version is judged with the guide. The Does not run here page names them
+// (VersionBoundReasons).
 var versionBound = map[string]bool{"runtime-excluded": true, "invalid-tool-schema": true, "broken-upstream": true}
 
 // VersionBoundReasons are versionBound's classes, sorted.
@@ -381,7 +379,7 @@ func (l *ServerList) SignIn(ecosystem, pkg, version string) (SignInEntry, bool) 
 // egress names and the server's lacks, a listed setting missing or
 // changed. "" when it is the listed sign-in. Every word is the entry's or
 // a field's name, never the draft's, so nothing the model wrote reaches
-// the repair turn through it (DR-43, DR-44).
+// the repair turn through it.
 func (si SignInEntry) Differs(srv manifest.MCPServer) string {
 	var out []string
 	o := srv.OAuth

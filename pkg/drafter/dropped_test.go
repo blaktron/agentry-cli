@@ -16,8 +16,8 @@ import (
 	corejudge "github.com/blaktron/agentry/pkg/judge"
 )
 
-// scanDraft is a vulnerability scanner's manifest, as the operator's drafts
-// on dev declared one: hosts, base commands, a secret and an MCP server
+// scanDraft is a vulnerability scanner's manifest, as a draft
+// of one declares it: hosts, base commands, a secret and an MCP server
 // with its own host and secret.
 func scanDraft(egress, exec, secrets, servers string) *Draft {
 	return &Draft{Validation: json.RawMessage(`{"passed":true}`), Instructions: "# Scan\n",
@@ -32,11 +32,11 @@ const (
 	scanServers = `[{"npm": "@cyanheads/osv-advisory-mcp-server", "version": "0.1.13", "egress": ["api.osv.dev"], "secrets": ["OSV_KEY"]}]`
 )
 
-// TestARepairNeverDropsWhatTheReportDoesNotName (agentry-cli#633): a
-// second answer that no longer declares a server, a host, a command or a
-// secret of the first's, which the report did not name, is not kept, even
-// when it passes rules the first broke; one that drops only what the report
-// named, or moves or re-pins what it keeps, is.
+// TestARepairNeverDropsWhatTheReportDoesNotName: a second answer that no
+// longer declares a server, a host, a command or a secret of the first's,
+// which the report did not name, is not kept, even when it passes rules the
+// first broke; one that drops only what the report named, or moves or
+// re-pins what it keeps, is.
 func TestARepairNeverDropsWhatTheReportDoesNotName(t *testing.T) {
 	first := scanDraft(scanHosts, scanExec, scanSecrets, scanServers)
 	offTask := RepairReport{Flagged: []string{"AI Review off_task, score 3: an agent that follows the instructions would not do the task the description asks for."}}
@@ -146,11 +146,10 @@ func (c *rubricChecker) Check(ctx context.Context, p draftcheck.Package) (*Check
 	return ch, err
 }
 
-// TestARubricFindingOnADraftIsAdvisory (agentry-cli#633; plan
-// quickagents-that-run.md D6): a draft the rules pass and the release
-// rubric flags is not sent to the repair turn; the findings are recorded in
-// draft.json and named in the notes as advisory, and AI Review still read
-// the finished draft.
+// TestARubricFindingOnADraftIsAdvisory: a draft the rules pass and the
+// release rubric flags is not sent to the repair turn; the findings are
+// recorded in draft.json and named in the notes as advisory, and AI Review
+// still read the finished draft.
 func TestARubricFindingOnADraftIsAdvisory(t *testing.T) {
 	out := t.TempDir()
 	passing := withServer(strings.Replace(postDraft, `"intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, "", 1), "0.1.13")

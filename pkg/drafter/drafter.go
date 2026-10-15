@@ -1,18 +1,17 @@
-// Package drafter is the Drafter (plan builder-rework.md §7.2, D6;
-// agentry-cli#345): the QuickAgent package that turns a person's
-// description into a draft for the Builder, embedded in the CLI beside the
-// Knowledge Creator and run by the runner as the second built-in package.
-// Its manifest declares no egress, no filesystem, no exec and no secret; its
-// reach is the three web tools the runner grants to it alone
+// Package drafter is the Drafter: the QuickAgent package that turns a
+// person's description into a draft for the Builder, embedded in the CLI
+// beside the Knowledge Creator and run by the runner as the second built-in
+// package. Its manifest declares no egress, no filesystem, no exec and no
+// secret; its reach is the three web tools the runner grants to it alone
 // (runnerimage/toolsrv/web.go), every result of which AI Review reads before
 // its model does.
 //
 // Around the run this package holds the task the Drafter is given, the
 // description's scan before the run starts (Prescan), the person's own keys
 // for a draft on this computer (LocalWeb), the draft it returns (Draft,
-// draft.json's shape, plan §7.5) with AI Review's record (Finish), and the
-// package a draft renders into, which the CLI's post-step validates. The
-// CLI's `agentry draft` and the desktop's Describe it both drive it.
+// draft.json's shape) with AI Review's record (Finish), and the package a
+// draft renders into, which the CLI's post-step validates. The CLI's `agentry
+// draft` and the desktop's Describe it both drive it.
 package drafter
 
 import (
@@ -29,13 +28,13 @@ var files embed.FS
 func FS() fs.FS { return files }
 
 // GuideName is the knowledge pack the Drafter ships in its own release, its
-// drafting guide (plan drafter-knowledge.md D1; agentry-cli#657): how a run
-// works, what a declared MCP server meets in the runner, and the guide to
-// the rest of a draft. The runner gives it to every run of the package,
-// the repair turn included (localrun's withShippedPacks), apart from the
-// person's packs, so it counts against none of a draft's caps; a person's
-// pack of this name is refused (CheckKnowledgeSize). Its manifest.json,
-// index and runtime facts are generated (TestTheDraftingGuideIsCurrent).
+// drafting guide: how a run works, what a declared MCP server meets in the
+// runner, and the guide to the rest of a draft. The runner gives it to
+// every run of the package, the repair turn included (localrun's
+// withShippedPacks), apart from the person's packs, so it counts against
+// none of a draft's caps; a person's pack of this name is refused
+// (CheckKnowledgeSize). Its manifest.json, index and runtime facts are
+// generated (TestTheDraftingGuideIsCurrent).
 const GuideName = "drafting-guide"
 
 // The package's identity, as its manifest declares it.
@@ -46,19 +45,18 @@ const (
 )
 
 // LocalTimeoutFloorSeconds is the least a draft made on this computer is
-// given (plan scan-and-run-tweaks.md §6.1, D14; agentry-cli#500, DR-54): 30
-// minutes, where the runner policy's run timeout defaults to 15. A policy
-// that allows more keeps its own, and a timeout the person names for the
-// draft wins either way (localrun.Builtin.LocalBudgets). It is a timeout
-// alone: a draft on this computer has no token limit, and its tool-call
-// cap is the policy's. A draft made in Agentry runs under the caps its job
-// carries.
+// given: 30 minutes, where the runner policy's run timeout defaults to 15.
+// A policy that allows more keeps its own, and a timeout the person names
+// for the draft wins either way (localrun.Builtin.LocalBudgets). It is a
+// timeout alone: a draft on this computer has no token limit, and its
+// tool-call cap is the policy's. A draft made in Agentry runs under the
+// caps its job carries.
 const LocalTimeoutFloorSeconds = 1800
 
-// The Drafter's own caps (plan builder-simplify.md §5.1, D8): tighter than
-// the manifest's bounds, which stay as they are for a QuickAgent written by
-// hand. AGENT.md states each by value (TestTheInstructionStatesItsBoundsByValue)
-// and the fixtures' shape check holds a draft to them (CheckShape).
+// The Drafter's own caps: tighter than the manifest's bounds, which stay as
+// they are for a QuickAgent written by hand. AGENT.md states each by value
+// (TestTheInstructionStatesItsBoundsByValue) and the fixtures' shape check
+// holds a draft to them (CheckShape).
 const (
 	MaxIntake        = 3
 	MaxPrepare       = 5
@@ -67,13 +65,13 @@ const (
 )
 
 // MaxInstructionBytes is the most the instruction file the Drafter writes
-// may hold (plan knowledge-and-drafter.md D5, D13; agentry-cli#521): most
-// QuickAgents run with no network, so a drafted instruction carries the
-// domain knowledge the run cannot look up, 20–30 KB for a big task. It is
-// held equal to the core's draft-check bound (judge.DraftMaxInstruction,
-// agentry#789), so no instruction it returns is past what the check reads.
-// The check also holds the description, the manifest and the instruction to
-// 48 KiB together (judge.DraftMaxState) and reads a draft past that as
-// not scanned, which the post-step records and never counts as a pass. A
-// longer instruction goes to the repair turn to be shortened.
+// may hold: most QuickAgents run with no network, so a drafted instruction
+// carries the domain knowledge the run cannot look up, 20–30 KB for a big
+// task. It is held equal to the core's draft-check bound
+// (judge.DraftMaxInstruction), so no instruction it returns is past what
+// the check reads. The check also holds the description, the manifest and
+// the instruction to 48 KiB together (judge.DraftMaxState) and reads a
+// draft past that as not scanned, which the post-step records and never
+// counts as a pass. A longer instruction goes to the repair turn to be
+// shortened.
 const MaxInstructionBytes = 32 << 10
