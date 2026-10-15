@@ -6,21 +6,21 @@ import (
 	"strings"
 )
 
-// The ssh and sftp arguments (plan runtime-hosts.md invariant 5; DR-91).
+// The ssh and sftp arguments.
 // The host link reaches a target host with OpenSSH's own client and no
 // configuration of anyone's: no ~/.ssh/config and no system file (-F
 // /dev/null), no agent, no forwarding of any kind (agent, X11, TCP, stream
 // local, tunnel), no ProxyJump or ProxyCommand, no connection sharing, no
 // local command, and the one host key the engine checked, under an alias,
 // in a file of that host's alone. ssh keeps the FIRST value it is given for
-// an option (measured at M2, DR-91), so each option is given exactly once,
+// an option, so each option is given exactly once,
 // here, before anything else on the line: a later -o can never undo one,
 // and the builders below never add a second (TestTheHostLinkForwardsNothing).
 
 // sshOptions are the options every ssh and sftp call of a target host
 // carries, in a fixed order. dir is the host's folder (HostsMount/<id>).
 // tty asks the host for a pseudo-terminal whatever this side has (a shell
-// session, D18); every other call has none.
+// session); every other call has none.
 func sshOptions(t Target, dir string, tty bool) []string {
 	key, pubkey, password, prefer := "none", "no", "yes", "keyboard-interactive,password"
 	requestTTY := "no"
@@ -40,7 +40,7 @@ func sshOptions(t Target, dir string, tty bool) []string {
 		{"ConnectTimeout", "20"},
 		{"ServerAliveInterval", "30"},
 		{"ServerAliveCountMax", "3"},
-		// The host key: the one the engine checked (D7), under the alias,
+		// The host key: the one the engine checked, under the alias,
 		// in the host's own file; nothing is learned or written.
 		{"HostKeyAlias", HostKeyAlias},
 		{"UserKnownHostsFile", path.Join(dir, KnownHostsFile)},
@@ -52,7 +52,7 @@ func sshOptions(t Target, dir string, tty bool) []string {
 		{"HostKeyAlgorithms", t.HostKeyAlgorithm},
 		{"VerifyHostKeyDNS", "no"},
 		{"VisualHostKey", "no"},
-		// Sign-in: one way, the person's (D6), and nothing of an agent's.
+		// Sign-in: one way, the person's, and nothing of an agent's.
 		{"BatchMode", "no"},
 		{"IdentityAgent", "none"},
 		{"AddKeysToAgent", "no"},
@@ -65,7 +65,7 @@ func sshOptions(t Target, dir string, tty bool) []string {
 		{"HostbasedAuthentication", "no"},
 		{"PreferredAuthentications", prefer},
 		{"NumberOfPasswordPrompts", "1"},
-		// No forwarding of any kind (invariant 5).
+		// No forwarding of any kind.
 		{"ForwardAgent", "no"},
 		{"ForwardX11", "no"},
 		{"ForwardX11Trusted", "no"},
@@ -116,7 +116,7 @@ func shellArgv(t Target, dir, relay string) []string {
 // sftpArgv runs sftp in batch mode, its commands on standard input. sftp
 // -b turns on BatchMode, which would switch off SSH_ASKPASS and so a
 // password or a passphrase; the BatchMode=no in sshOptions comes first and
-// ssh keeps the first value (DR-91).
+// ssh keeps the first value.
 func sftpArgv(t Target, dir, relay string) []string {
 	argv := append([]string{"sftp"}, sshOptions(t, dir, false)...)
 	return append(argv, "-b", "-", "--", relay)

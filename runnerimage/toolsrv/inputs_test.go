@@ -1,4 +1,4 @@
-// Run-inputs channel tests (RUNNER-PLAN-2 §P4): list_inputs/read_input
+// Run-inputs channel tests: list_inputs/read_input
 // exist exactly when the spec configures an inputs dir, stay read-only,
 // and hold the same path-safety and byte-cap lines as the fs tools — plus
 // the wire-plumbing edges (argument decoding, response write failures)
@@ -155,7 +155,7 @@ func TestReadInput(t *testing.T) {
 	})
 }
 
-// TestInputsToolsOnTheWire pins the §P4 surface rule end to end: the two
+// TestInputsToolsOnTheWire pins the surface rule end to end: the two
 // inputs tools (schemas included) are advertised exactly when the channel
 // is configured, and read_input works over tools/call.
 func TestInputsToolsOnTheWire(t *testing.T) {
@@ -198,7 +198,7 @@ func TestInputsToolsOnTheWire(t *testing.T) {
 			t.Fatalf("read_input over the wire errored: %v", res)
 		}
 		// The person's input travels as an embedded text resource, past the
-		// gateway's secret block (agentry-cli#632).
+		// gateway's secret block.
 		content := res["content"].([]any)[0].(map[string]any)
 		resource, _ := content["resource"].(map[string]any)
 		if content["type"] != "resource" || resource["text"] != "payload" || resource["uri"] != InputResourceURI || resource["mimeType"] != "text/plain" {
@@ -236,7 +236,7 @@ func TestUnmarshalArgs(t *testing.T) {
 	}
 }
 
-// TestUnmarshalArgsCoercesJSONStrings (agentry-cli#113): a model that
+// TestUnmarshalArgsCoercesJSONStrings: a model that
 // sends a non-string parameter as a JSON-encoded string — "[\"a\"]" for
 // an array, "200" for a number, "true" for a bool, or the whole
 // arguments object as one string — gets the value it meant; a string
@@ -298,9 +298,9 @@ func TestWriteMsgFailuresAreLoggedNotFatal(t *testing.T) {
 	})
 }
 
-// TestInputsReachTheAgentUnchanged pins plan quickagents-that-run.md D4
-// (agentry-cli#632, DR-78): a person's input that holds a credential is
-// served byte for byte, as an embedded text resource, which the gateway's
+// TestInputsReachTheAgentUnchanged pins that a person's input that holds a
+// credential is served byte for byte, as an embedded text resource, which the
+// gateway's
 // --block-secrets does not scan. Everything else the server answers stays
 // a text item, which it does: the listing, and an input tool's error.
 func TestInputsReachTheAgentUnchanged(t *testing.T) {
@@ -364,7 +364,7 @@ func TestInputsReachTheAgentUnchanged(t *testing.T) {
 // unchanged and may hold a value of the run's own secrets; the gateway's
 // block matches only secret-shaped text, so write_report and fs_write
 // refuse content that holds one of the server's granted secret values,
-// whatever its shape (agentry-cli#632).
+// whatever its shape.
 func TestAReportNeverHoldsARunSecret(t *testing.T) {
 	const env = "AGENTRY_T632_TOKEN"
 	value := "plain" + "words-no-shape-" + "7f3a"
@@ -389,7 +389,7 @@ func TestAReportNeverHoldsARunSecret(t *testing.T) {
 	}
 	// export_pdf reads a file the agent could have written some other way
 	// (a declared command in the scratch folder): it renders none that
-	// holds a run secret's value, and Typst never sees it (agentry-cli#730).
+	// holds a run secret's value, and Typst never sees it.
 	spec.ScratchDir = t.TempDir()
 	spec.PDF = PDF{Enabled: true}
 	s = newTestServer(t, spec)

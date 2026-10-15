@@ -1,11 +1,11 @@
 // Package confine holds a declared exec command to the places it may
-// write (agentry-cli#596). run_command starts each declared command
+// write. run_command starts each declared command
 // through this binary's `confine` role, which asks the kernel's Landlock
 // to refuse every write outside the named directories and then replaces
 // itself with the command: the restriction is the kernel's, inherited
 // across execve, and nothing the command does can lift it. Reading is not
 // restricted unless the caller names what may be read (--read: grep and
-// glob's ripgrep, plan ripgrep-search.md §5). The tools server itself is
+// glob's ripgrep). The tools server itself is
 // never confined, so write_report
 // and the receipts' ledgers under /out are written as before, while a
 // declared command can no longer write there.
@@ -15,7 +15,7 @@
 // falls back to running the command as an unprivileged user
 // (runnerimage/toolsrv).
 //
-// Stdlib only, like the rest of the runner image (RQ1): the syscalls and
+// Stdlib only, like the rest of the runner image: the syscalls and
 // constants of include/uapi/linux/landlock.h are spelled here.
 package confine
 

@@ -203,7 +203,7 @@ func TestTokenIsReadAtEveryRequest(t *testing.T) {
 	go func() { done <- b.Serve(context.Background(), inR) }()
 	_, _ = fmt.Fprintln(inW, initLine)
 	waitFor(t, &out, `"id":1`)
-	// The runner renews the token mid-run: an atomic rename, as M3 will.
+	// The runner renews the token mid-run: an atomic rename.
 	next := tok + ".new"
 	writeToken(t, next, "token-after-renewal")
 	if err := os.Rename(next, tok); err != nil {
@@ -247,8 +247,8 @@ func TestRefusalsEndTheCallWithASentenceNamingTheServer(t *testing.T) {
 		want      string
 	}{
 		{http.StatusUnauthorized, true, false, "did not accept the credential the run sent (HTTP 401)"},
-		// An OAuth connection's token that expired during a hosted run
-		// (plan D13): the sentence names the connection, not a secret.
+		// An OAuth connection's token that expired during a hosted run:
+		// the sentence names the connection, not a secret.
 		{http.StatusUnauthorized, true, true, "did not accept the access token of this run's connection to it (HTTP 401)"},
 		{http.StatusUnauthorized, false, false, "asks for a sign-in (HTTP 401), and this QuickAgent declares it with auth: none"},
 		{http.StatusForbidden, true, false, "refused the call with the credential the run sent (HTTP 403)"},

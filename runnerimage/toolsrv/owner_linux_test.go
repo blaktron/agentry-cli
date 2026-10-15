@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// write_report and fs_write hand what they create to the spec's Owner
-// (agentry-cli#55). Chowning to one's own uid/gid is allowed without
+// write_report and fs_write hand what they create to the spec's Owner.
+// Chowning to one's own uid/gid is allowed without
 // privileges, so the test proves the path is taken, not the privilege.
 func TestWritesAreOwnedBySpecOwner(t *testing.T) {
 	out := t.TempDir()

@@ -210,7 +210,7 @@ func TestValidSignature(t *testing.T) {
 
 // A repository's .git internals are listed and checked by ClamAV, but no
 // detector or decoder is ever started on them, whether staged or unpacked
-// from an archive (agentry-cli#642): a loose-object clone cost two Tika
+// from an archive: a loose-object clone cost two Tika
 // starts per object. A finding inside .git still refuses the file, and a
 // file merely named .git, or a folder like .github, is decoded as before.
 func TestARepositorysInternalsAreCheckedButNeverDetected(t *testing.T) {

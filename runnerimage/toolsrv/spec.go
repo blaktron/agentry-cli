@@ -1,30 +1,22 @@
-// Package toolsrv implements the Agentry companion tools server
-// (RUNNER-PLAN §R3): one MCP stdio server whose tool surface is constructed
-// from the manifest's capability contract. An undeclared capability means
-// the tool is ABSENT from tools/list, not present-but-refusing — the model
-// never sees a tool it was not granted (RUNNER-PLAN §R11 invariant 4).
+// Package toolsrv implements the Agentry companion tools server: one MCP
+// stdio server whose tool surface is constructed from the manifest's
+// capability contract. An undeclared capability means the tool is ABSENT
+// from tools/list, not present-but-refusing: the model never sees a tool
+// it was not granted.
 //
-// This package is part of the embedded runner-image build context
-// (RUNNER-PLAN §R7) and therefore MUST remain stdlib-only; a unit test in
-// the parent package enforces that.
+// This package is part of the embedded runner-image build context and
+// therefore MUST remain stdlib-only; a unit test in the parent package
+// enforces that.
 package toolsrv
 
 // SpecVersion is the current tool-server spec schema version. "2" added
-// the run-inputs channel (RUNNER-PLAN-2 §P4); "3" the knowledge packs a
-// run may search (plan knowledge.md §4.5, agentry-cli#317); "4" the
-// built-in Drafter's web tools (plan builder-rework.md §7.3,
-// agentry-cli#345); "5" the review grant (plan
-// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503); "6" the
-// decoded inputs and search_inputs (plan file-handling.md §5,
-// agentry-cli#560); "7" the calls ledger and end_blocked (plan
-// quickagents-that-run.md M9, agentry-cli#629); "8" the scratch folder
-// (plan scratch-and-pdf-reports.md §4, agentry-cli#729); "9" export_pdf
-// (plan scratch-and-pdf-reports.md §5, agentry-cli#730); "10" the report
-// design, theme document version 2, and export_pdf's form (plan
-// report-designs.md §4, agentry-cli#784); "11" the result budget
-// (Limits.MaxResultBytes and MaxResultLines; plan input-sources.md §4,
-// agentry-cli#831); "12" grep and glob (Search; plan ripgrep-search.md
-// §4, agentry-cli#912). The server
+// the run-inputs channel; "3" the knowledge packs a
+// run may search; "4" the built-in Drafter's web tools; "5" the review
+// grant; "6" the decoded inputs and search_inputs; "7" the calls ledger
+// and end_blocked; "8" the scratch folder; "9" export_pdf; "10" the report
+// design, theme document version 2, and export_pdf's form; "11" the result
+// budget (Limits.MaxResultBytes and MaxResultLines); "12" grep and glob
+// (Search). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
@@ -51,7 +43,7 @@ type Spec struct {
 	// (conventionally /out). write_report is rooted at OutDir/reports.
 	OutDir string `json:"outDir"`
 	// InputsDir is the container path of the read-only run-inputs mount
-	// (conventionally /inputs; RUNNER-PLAN-2 §P4). Inputs are
+	// (conventionally /inputs). Inputs are
 	// operator-provided task material — a channel like stdin, not a
 	// manifest capability — so list_inputs/read_input are granted
 	// whenever the dir is configured, and the mount's :ro flag plus the
@@ -59,37 +51,34 @@ type Spec struct {
 	// channel is not configured and its tools are absent.
 	InputsDir string `json:"inputsDir,omitempty"`
 	// InputsTextDir is the container path of the read-only decoded-inputs
-	// mount (conventionally /inputs-text; plan file-handling.md §5,
-	// agentry-cli#560): the engine's decode step writes the index of every
-	// input there and the text decoded from each (inputs.go).
-	// search_inputs is granted with it beside the inputs channel, except
-	// under the review grant, where every text reaches the model only
-	// through read_input's scan.
+	// mount (conventionally /inputs-text): the engine's decode step writes
+	// the index of every input there and the text decoded from each
+	// (inputs.go). search_inputs is granted with it beside the inputs
+	// channel, except under the review grant, where every text reaches the
+	// model only through read_input's scan.
 	InputsTextDir string `json:"inputsTextDir,omitempty"`
 	// KnowledgeDir is the container path of the read-only knowledge mount
-	// (conventionally /knowledge; plan knowledge.md §4.5), one directory
+	// (conventionally /knowledge), one directory
 	// per attached pack. Knowledge names those packs. Like the inputs, a
 	// pack the person attaches is task material and not a manifest
 	// capability, so the compiled plan never carries either field: the
 	// engine stamps both into the run's own copy of this file when packs
-	// are attached (DR-38), and the three knowledge tools exist only then.
+	// are attached, and the three knowledge tools exist only then.
 	KnowledgeDir string          `json:"knowledgeDir,omitempty"`
 	Knowledge    []KnowledgePack `json:"knowledge,omitempty"`
-	// Voice is the person's Writing Voice when one is attached (plan
-	// writing-voice.md §5, D4; agentry-cli#531): its VOICE.md's container
-	// path, under the knowledge mount, and its digest. Like a pack it is
-	// chosen at run time and never in the compiled plan: the engine stamps
-	// it into the run's own copy of this file, and voice_read exists only
-	// then.
+	// Voice is the person's Writing Voice when one is attached: its
+	// VOICE.md's container path, under the knowledge mount, and its digest.
+	// Like a pack it is chosen at run time and never in the compiled plan:
+	// the engine stamps it into the run's own copy of this file, and
+	// voice_read exists only then.
 	Voice *VoiceFile `json:"voice,omitempty"`
 	// ScratchDir is the container path of the run's scratch folder
-	// (conventionally /scratch; plan scratch-and-pdf-reports.md §4,
-	// agentry-cli#729): an empty tmpfs the docker filter mounts, private
-	// to the run and gone with the container. scratch_read, scratch_list,
-	// scratch_write and scratch_search are granted whenever it is set; the compiler sets
-	// it for every package but a built-in. It is a grant of the runner,
-	// not a line of the contract, and never aliases the workspace, which
-	// FSRead and FSWrite govern.
+	// (conventionally /scratch): an empty tmpfs the docker filter mounts,
+	// private to the run and gone with the container. scratch_read,
+	// scratch_list, scratch_write and scratch_search are granted whenever it
+	// is set; the compiler sets it for every package but a built-in. It is a
+	// grant of the runner, not a line of the contract, and never aliases the
+	// workspace, which FSRead and FSWrite govern.
 	ScratchDir string `json:"scratchDir,omitempty"`
 	// TmpfsBytes, when set, is the size the run's docker filter caps the
 	// tools container's /tmp and ScratchDir at, each a tmpfs (Linux; the
@@ -132,7 +121,7 @@ type Spec struct {
 	// The tools container runs as root (see runnerimage/Dockerfile) and
 	// writes into bind mounts the host user owns, so without this the
 	// reports come out root-owned and the user cannot delete their own
-	// output folder (agentry-cli#55). The engine stamps it into the
+	// output folder. The engine stamps it into the
 	// per-run copy of this file, never into the compiled plan; absent on
 	// hosts without POSIX ids.
 	Owner *Owner `json:"owner,omitempty"`
@@ -188,14 +177,13 @@ type Fetch struct {
 	// SecretEnv lists the environment variable NAMES (manifest secrets:)
 	// the fetch tool may inject as auth headers. The gateway injects the
 	// values into this container only; the tool never returns them to the
-	// model (RUNNER-PLAN §R3).
+	// model.
 	SecretEnv []string `json:"secretEnv,omitempty"`
 	// Ledger is the container path each body fetch saves in the scratch
-	// folder is recorded in, one JSON line a file (SaveEntry), under
-	// OutDir: a body saved because the agent asked (saveTo) or because it
-	// was larger than one result (plan input-sources.md §6,
-	// agentry-cli#832). The engine stamps it into the run's own copy of
-	// this file, never into the compiled plan, and the receipt counts it.
+	// folder is recorded in, one JSON line a file (SaveEntry), under OutDir:
+	// a body saved because the agent asked (saveTo) or because it was larger
+	// than one result. The engine stamps it into the run's own copy of this
+	// file, never into the compiled plan, and the receipt counts it.
 	Ledger string `json:"ledger,omitempty"`
 }
 
@@ -203,10 +191,9 @@ type Fetch struct {
 type Exec struct {
 	// Commands is the manifest exec allowlist; empty disables the tool.
 	// Enforcement is argv[0] membership plus a shim PATH containing only
-	// these commands (RUNNER-DEVIATIONS DR-1 discloses the residual).
+	// these commands.
 	Commands []string `json:"commands,omitempty"`
-	// ImagePath is Unsafe Mode's (agentry-notes plans/unsafe-mode.md;
-	// agentry-cli#490, the operator's decision of 2026-09-30): a declared
+	// ImagePath is Unsafe Mode's: a declared
 	// command runs with the image's own PATH after the shim directory,
 	// so a declared script finds its interpreter and the programs it
 	// calls (Ghidra's analyzeHeadless is a `#!/usr/bin/env bash` script
@@ -232,8 +219,8 @@ type Limits struct {
 	// DefaultExecTimeoutSeconds).
 	ExecTimeoutSeconds int `json:"execTimeoutSeconds,omitempty"`
 	// MaxResultBytes and MaxResultLines are the result budget: the most
-	// one tool result may hold, so that the harness never cuts it (page.go;
-	// plan input-sources.md §4, agentry-cli#831). The compiler stamps them
+	// one tool result may hold, so that the harness never cuts it (page.go).
+	// The compiler stamps them
 	// from the run's harness adapter, its measured limit less a margin
 	// (adapter.ResultBudget); zero takes docker-agent's
 	// (DefaultMaxResultBytes, DefaultMaxResultLines). The read tools page
@@ -251,7 +238,7 @@ const (
 	DefaultExecTimeoutSeconds = 120
 )
 
-// Tool names — the closed surface of RUNNER-PLAN §R3. The compiler writes
+// Tool names, the closed surface of the server. The compiler writes
 // these into the plan's tool-grant list and the gateway tools.yaml
 // allowlist; the server registers exactly the granted subset.
 const (
@@ -262,32 +249,29 @@ const (
 	ToolRunCommand = "run_command"
 	ToolListInputs = "list_inputs"
 	ToolReadInput  = "read_input"
-	// ToolSearchInputs searches the inputs' text (plan file-handling.md
-	// §5), granted with InputsTextDir.
+	// ToolSearchInputs searches the inputs' text, granted with
+	// InputsTextDir.
 	ToolSearchInputs = "search_inputs"
 	ToolWriteReport  = "write_report"
-	// The scratch folder's tools (plan scratch-and-pdf-reports.md §4),
-	// granted with ScratchDir; scratch_search since plan input-sources.md
-	// §6 (agentry-cli#832).
+	// The scratch folder's tools, granted with ScratchDir.
 	ToolScratchList   = "scratch_list"
 	ToolScratchRead   = "scratch_read"
 	ToolScratchWrite  = "scratch_write"
 	ToolScratchSearch = "scratch_search"
-	// The knowledge tools (plan knowledge.md §4.5), granted only while a
+	// The knowledge tools, granted only while a
 	// pack is attached.
 	ToolKnowledgeList   = "knowledge_list"
 	ToolKnowledgeSearch = "knowledge_search"
 	ToolKnowledgeRead   = "knowledge_read"
-	// The Writing Voice's one tool (plan writing-voice.md D4), granted
+	// The Writing Voice's one tool, granted
 	// only while a voice is attached.
 	ToolVoiceRead = "voice_read"
-	// The web tools (plan builder-rework.md §7.3), the built-in Drafter's
+	// The web tools, the built-in Drafter's
 	// alone: web_search only when the run has a search to use.
 	ToolWebSearch      = "web_search"
 	ToolWebRead        = "web_read"
 	ToolRegistrySearch = "registry_search"
-	// The review grant's tool (plan desktop-review-key-and-run-cards.md
-	// §6.2): a built-in granted review alone.
+	// The review grant's tool: a built-in granted review alone.
 	ToolAIReview = "ai_review"
 )
 

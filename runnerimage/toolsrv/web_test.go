@@ -1,8 +1,7 @@
-// The web tools' tests (agentry-cli#345; plan builder-rework.md §3's
-// invariants): the address rule on every connection and every redirect hop,
-// GET only with no credential, the 32 KiB text cap, and AI Review before the
-// model — a fake scan route that flags, errors or times out means withheld,
-// and a withheld text never reaches the tool's answer.
+// The web tools' tests: the address rule on every connection and every
+// redirect hop, GET only with no credential, the 32 KiB text cap, and AI
+// Review before the model — a fake scan route that flags, errors or times out
+// means withheld, and a withheld text never reaches the tool's answer.
 
 package toolsrv
 
@@ -301,7 +300,7 @@ func TestWebReadIsGETOnlyWithNoCredential(t *testing.T) {
 
 // TestWebReadCapsTheTextAt32KiB: a long page gives the model at most
 // 32 KiB, its head and the cut note included, cut at a character, with the
-// cut said: four of the judge's chunks (D24). The scan reads exactly what
+// cut said: four of the judge's chunks. The scan reads exactly what
 // the model would.
 func TestWebReadCapsTheTextAt32KiB(t *testing.T) {
 	long := strings.Repeat("é", 50<<10) // 100 KiB of two-byte characters
@@ -676,7 +675,7 @@ func TestWebSearchWithThePersonsKey(t *testing.T) {
 }
 
 // TestWebSearchWithThePersonsBraveKey: a spec naming brave builds Brave's
-// LLM Context client from the person's key (agentry-cli#369), and its
+// LLM Context client from the person's key, and its
 // results are scanned and withheld exactly as You.com's are.
 func TestWebSearchWithThePersonsBraveKey(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -722,7 +721,7 @@ func TestWebSearchWithThePersonsBraveKey(t *testing.T) {
 // provider the policy names (it admits exactly websearch.Providers), the
 // tools server builds that provider's client from the key in its own
 // environment, and a searcher never comes without the scanner
-// (agentry-cli#513: Tavily, Exa and Perplexity beside Brave and You.com).
+// (Tavily, Exa and Perplexity beside Brave and You.com).
 func TestEveryProviderTheImageBuildsSearchesWithThePersonsKey(t *testing.T) {
 	for _, name := range websearch.Providers() {
 		if name == "none" {
@@ -849,7 +848,7 @@ func TestTheWebToolsAreGrantedOnlyWithWeb(t *testing.T) {
 	if got := spec.GrantedTools(); !slices.Contains(got, ToolWebRead) || slices.Contains(got, ToolWebSearch) || slices.Contains(got, ToolRegistrySearch) {
 		t.Fatalf("%v", got)
 	}
-	// The Knowledge Creator's spec (agentry-cli#523): the web tools with a
+	// The Knowledge Creator's spec: the web tools with a
 	// registry for the scans, as a hosted build has, and no registry_search,
 	// which is compiled, the Drafter's alone.
 	spec.Web.Search, spec.Web.Registry = WebScanRegistry, "https://r.example"
@@ -874,7 +873,7 @@ func (f fixedSearch) Search(context.Context, string, int) ([]webscan.Hit, error)
 	return f.hits, nil
 }
 
-// TestASearchedOnlyRunReadsOnlyWhatItsSearchesReturned (agentry-cli#523):
+// TestASearchedOnlyRunReadsOnlyWhatItsSearchesReturned:
 // the Knowledge Creator's model reads documents no one scanned, so its
 // web_read opens only an address a search of the run returned and AI Review
 // passed, exactly as given; any other address, one carrying a query of the

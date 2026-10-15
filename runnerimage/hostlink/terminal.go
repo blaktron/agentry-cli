@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Terminal is a shell session's process (D18): what is written to it is
+// Terminal is a shell session's process: what is written to it is
 // typed into the shell, and what it reads is everything the shell and ssh
 // print, io.EOF once it has ended.
 type Terminal interface {

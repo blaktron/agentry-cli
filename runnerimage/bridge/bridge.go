@@ -1,11 +1,10 @@
-// Package bridge is the runner image's bridge role (plan
-// mcp-oauth-connections.md §5, D3; agentry-cli#663): a stdio MCP server
+// Package bridge is the runner image's bridge role: a stdio MCP server
 // the gateway launches like any declared server, which forwards each
 // message to one remote MCP server over streamable HTTP, or over the older
 // HTTP+SSE transport where that is all the server speaks.
 //
 // It exists because the pinned gateway would dial a remote server from its
-// own process, and since DR-20 the gateway has no network leg. The bridge
+// own process, and the gateway has no network leg. The bridge
 // runs in its own container on the gateway's relay network, so the remote
 // host is reached through that host's digest-pinned relay and nothing else,
 // under the run's docker filter and the policy's runtime.
@@ -63,7 +62,7 @@ type Config struct {
 	TokenFile string
 	// OAuth says the token is a connection's OAuth access token (auth:
 	// oauth), not a secret the person set: a 401 then names the connection
-	// and says a new run is given a fresh token (plan D13, agentry-cli#722).
+	// and says a new run is given a fresh token.
 	OAuth bool
 	// Client is the HTTP client; nil builds one that takes no proxy from
 	// the environment and follows no redirect.

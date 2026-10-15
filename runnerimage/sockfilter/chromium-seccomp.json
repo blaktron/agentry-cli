@@ -1230,7 +1230,7 @@
     "chroot"
    ],
    "action": "SCMP_ACT_ALLOW",
-   "comment": "agentry-cli#915: Chromium's namespace sandbox (user, PID and network namespaces for each renderer), beyond moby's default profile"
+   "comment": "Chromium's namespace sandbox (user, PID and network namespaces for each renderer), beyond moby's default profile"
   }
  ]
 }

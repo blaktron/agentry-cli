@@ -8,10 +8,9 @@ import (
 )
 
 // The paging budget for another of the runner's MCP servers, the host link
-// (runnerimage/hostlink, agentry-cli#861): its results are held to the same
-// harness limit as this server's (plan runtime-hosts.md §5; plan
-// input-sources.md D1), and they page the same way, so the one set of rules
-// is exported here rather than copied.
+// (runnerimage/hostlink): its results are held to the same harness limit as
+// this server's, and they page the same way, so the one set of rules is
+// exported here rather than copied.
 
 // PageText is one page of the text data from offset, within the budget l
 // stamps (and within limit, when it is positive), followed, when data is

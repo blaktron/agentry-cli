@@ -18,14 +18,14 @@ import (
 	"unicode/utf8"
 )
 
-// The one-shot tools (plan runtime-hosts.md §5). Every call is its own SSH
+// The one-shot tools. Every call is its own SSH
 // session through the host's relay: host_run one command line in the
 // account's login shell, the four file tools one sftp batch each. There is
-// no approval per call (D4): the account the person signed in with is the
+// no approval per call: the account the person signed in with is the
 // boundary, and every call is in the host's log.
 
-// The bounds of §5. The exported ones are stated in the Drafter's runtime
-// facts (agentry-cli#864), generated from these.
+// The bounds. The exported ones are stated in the Drafter's runtime
+// facts, generated from these.
 const (
 	DefaultRunTimeout = 300
 	MaxRunTimeout     = 1800

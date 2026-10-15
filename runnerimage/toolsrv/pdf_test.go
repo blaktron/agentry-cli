@@ -1,7 +1,6 @@
 package toolsrv
 
-// export_pdf's tests (plan scratch-and-pdf-reports.md §3 invariants 3-6, 8,
-// 9; agentry-cli#730). Most run the tool against a fake renderer, a shell
+// export_pdf's tests. Most run the tool against a fake renderer, a shell
 // script in Typst's place started the way Typst is (through this test
 // binary as the confine trampoline, TestMain in confinement_test.go), so
 // they hold the server's half on any Linux machine. The ones named for
@@ -268,7 +267,7 @@ func TestExportPDFWritesAndRecords(t *testing.T) {
 	}
 }
 
-// TestWriteReportRefusesAPDF (invariant 3): write_report writes no file
+// TestWriteReportRefusesAPDF: write_report writes no file
 // named .pdf, and no content that would open as a PDF, appended or not;
 // a report that mentions a PDF header past the first KiB is still text.
 func TestWriteReportRefusesAPDF(t *testing.T) {
@@ -305,7 +304,7 @@ func TestWriteReportRefusesAPDF(t *testing.T) {
 	}
 }
 
-// TestTypstCannotWriteOutsideItsRenderRoot (invariant 3): the renderer
+// TestTypstCannotWriteOutsideItsRenderRoot: the renderer
 // writes nothing at all, its render root included (the PDF comes back on
 // its stdout), so neither the reports folder nor the ledger.
 func TestTypstCannotWriteOutsideItsRenderRoot(t *testing.T) {
@@ -343,7 +342,7 @@ func TestTypstCannotWriteOutsideItsRenderRoot(t *testing.T) {
 	}
 }
 
-// TestTypstGetsNoEnvironment (invariant 4): the renderer starts with an
+// TestTypstGetsNoEnvironment: the renderer starts with an
 // empty environment, so none of the server's secrets.
 func TestTypstGetsNoEnvironment(t *testing.T) {
 	t.Setenv("AGENTRY_T730_SECRET", "the-value")
@@ -359,7 +358,7 @@ func TestTypstGetsNoEnvironment(t *testing.T) {
 	}
 }
 
-// TestASymlinkNeverReachesTheRenderRoot (invariant 5): a source reached
+// TestASymlinkNeverReachesTheRenderRoot: a source reached
 // through a link is refused, and an image reached through one, at the end
 // or in a folder on its way, is drawn as its alt text and never copied.
 func TestASymlinkNeverReachesTheRenderRoot(t *testing.T) {
@@ -409,7 +408,7 @@ func TestASymlinkNeverReachesTheRenderRoot(t *testing.T) {
 	}
 }
 
-// TestARenderRootRaceNeverWritesOutside (invariants 3 and 10): a declared
+// TestARenderRootRaceNeverWritesOutside: a declared
 // command may write /tmp and may leave a process running, so it can plant
 // a link in a render root while an export is under way. The server makes
 // every name there new through an os.Root, so the export fails and
@@ -451,7 +450,7 @@ func TestARenderRootRaceNeverWritesOutside(t *testing.T) {
 	}
 }
 
-// TestARemoteImageIsItsAltText (invariant 5, the server's half): an image
+// TestARemoteImageIsItsAltText: an image
 // with a scheme, or outside the run's folders, is never fetched or copied,
 // and the answer says it was drawn as its alt text. TestRealRenderDrawsOnly
 // LocalImages holds the template's half.
@@ -481,7 +480,7 @@ func TestARemoteImageIsItsAltText(t *testing.T) {
 	}
 }
 
-// TestExportPDFTimesOut (invariant 6): a render past its time is stopped,
+// TestExportPDFTimesOut: a render past its time is stopped,
 // and the error names the limit.
 func TestExportPDFTimesOut(t *testing.T) {
 	spec := pdfSpec(t)
@@ -501,7 +500,7 @@ func TestExportPDFTimesOut(t *testing.T) {
 	}
 }
 
-// TestExportPDFMemoryCap (invariant 6): the renderer starts in a 1 GiB
+// TestExportPDFMemoryCap: the renderer starts in a 1 GiB
 // address space, and a render that runs out says so, naming the limit.
 func TestExportPDFMemoryCap(t *testing.T) {
 	spec := pdfSpec(t)
@@ -520,7 +519,7 @@ func TestExportPDFMemoryCap(t *testing.T) {
 	}
 }
 
-// TestExportPDFInputCaps (invariant 6): a source over 1 MiB, more than 20
+// TestExportPDFInputCaps: a source over 1 MiB, more than 20
 // images and an image over 10 MiB are each refused, naming the limit.
 func TestExportPDFInputCaps(t *testing.T) {
 	spec := pdfSpec(t)
@@ -726,12 +725,12 @@ func uris(pdf []byte) []string {
 	return out
 }
 
-// TestRawTypstIsText (invariant 5): Typst markup in the Markdown, in its
+// TestRawTypstIsText: Typst markup in the Markdown, in its
 // text or in a raw-typst comment, an @preview import included, is never
 // run. Each line would stop the render if it ran (#panic, a package the
 // renderer cannot download, a file outside the render root), so the render
 // succeeding is the proof; and none of the links it would make is there.
-// Under every theme and in every form (agentry-cli#731, #784): the first
+// Under every theme and in every form: the first
 // heading, markup included, is the title block, a letter's letterhead and a
 // long report's cover, and a letter's kept lines put a backslash after short
 // ones.
@@ -766,9 +765,9 @@ func rawTypstIsText(t *testing.T, theme, form string) {
 	}
 }
 
-// TestLinksAreHttpOrMail (invariant 5): http, https and mailto stay links;
+// TestLinksAreHttpOrMail: http, https and mailto stay links;
 // every other scheme, an anchor and a link in raw HTML are text, under
-// every theme (agentry-cli#731).
+// every theme.
 func TestLinksAreHttpOrMail(t *testing.T) {
 	for _, theme := range BuiltinThemes() {
 		t.Run(theme, func(t *testing.T) { linksAreHttpOrMail(t, theme) })
@@ -788,7 +787,7 @@ func linksAreHttpOrMail(t *testing.T, theme string) {
 	}
 }
 
-// TestRealRenderDrawsOnlyLocalImages (invariant 5, the template's half): a
+// TestRealRenderDrawsOnlyLocalImages: a
 // remote image is its alt text in the PDF, and a local one is drawn.
 func TestRealRenderDrawsOnlyLocalImages(t *testing.T) {
 	png, err := os.ReadFile(filepath.Join("testdata", "pdf", "pixel.png"))
@@ -801,7 +800,7 @@ func TestRealRenderDrawsOnlyLocalImages(t *testing.T) {
 	}
 }
 
-// TestRealRenderIsTaggedAndEveryScript (D25, D27): the PDF is tagged
+// TestRealRenderIsTaggedAndEveryScript: the PDF is tagged
 // PDF/UA-1 with the document's title and the QuickAgent as its author, and
 // Chinese, Arabic, Hindi and emoji draw from the bundled fonts.
 func TestRealRenderIsTaggedAndEveryScript(t *testing.T) {

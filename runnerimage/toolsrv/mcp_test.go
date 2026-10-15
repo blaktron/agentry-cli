@@ -1,5 +1,5 @@
 // Wire-level tests for the MCP loop: the tool surface must equal the
-// grant exactly (RUNNER-PLAN §R11 invariant 4), and malformed traffic
+// grant exactly, and malformed traffic
 // must cost one error line, never the server.
 
 package toolsrv
@@ -90,7 +90,7 @@ func toolNames(t *testing.T, listResp map[string]any) []string {
 const initLine = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`
 const listLine = `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
 
-// TestToolSurfaceMatchesGrant is invariant 4 at the wire: the granted
+// TestToolSurfaceMatchesGrant: the granted
 // capability set and ONLY the granted capability set shows up.
 func TestToolSurfaceMatchesGrant(t *testing.T) {
 	tests := []struct {
@@ -280,8 +280,8 @@ func TestValidateSpec(t *testing.T) {
 			wantErr: "not supported",
 		},
 		{
-			// A plan compiled for export_pdf meets an image built before it
-			// (agentry-cli#730): the server refuses, the probe fails and the
+			// A plan compiled for export_pdf meets an image built before it:
+			// the server refuses, the probe fails and the
 			// run stops (exit 13), never runs with export_pdf missing.
 			name:    "the version before export_pdf",
 			spec:    &Spec{SpecVersion: "8", WorkspaceDir: abs, OutDir: abs},

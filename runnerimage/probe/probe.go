@@ -1,7 +1,7 @@
 // Package probe is the runner image's gateway probe: the health check
 // every run makes before its agent starts (an authenticated MCP initialize
-// from inside the run network, §R6), and, for a session, the listing of
-// the tools the gateway serves (agentry-cli#578). A session's driver
+// from inside the run network), and, for a session, the listing of
+// the tools the gateway serves. A session's driver
 // grants a harness's permission request only for a tool the run's gateway
 // serves, and a declared MCP server names its tools itself, at run time,
 // unless its manifest filters them; so the probe, already in the network
@@ -23,7 +23,7 @@ import (
 )
 
 // InitBody is a spec-shaped MCP initialize request. A 2xx answer is
-// proof the gateway is up and accepted the Bearer token (§R6 health probe).
+// proof the gateway is up and accepted the Bearer token.
 const InitBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agentry-probe","version":"1"}}}`
 
 // Listing is the one line `probe --list-tools` prints and the engine

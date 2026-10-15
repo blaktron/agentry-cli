@@ -17,8 +17,8 @@ type contentKind struct {
 	text         bool
 	archive      archiveFormat
 	// mime is the type the file was detected as, without parameters: the
-	// report carries it so the host can tell a risky type to look up
-	// (agentry-cli#564). It never selects a command line.
+	// report carries it so the host can tell a risky type to look up.
+	// It never selects a command line.
 	mime string
 }
 
@@ -30,7 +30,7 @@ type contentKind struct {
 // (detect). Code, markup,
 // configuration and data text (HTML, XML, SVG, CSV, JSON, YAML, scripts,
 // source) are not documents and never converted: they are read as
-// uploaded (agentry-cli#630).
+// uploaded.
 var contentKinds = map[string]contentKind{
 	"application/pdf": {family: FamilyPDF, tool: "pdftotext"},
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {family: FamilyDocument, tool: "pandoc", format: "docx"},
@@ -97,8 +97,8 @@ func detect(ctx context.Context, src string, tools Tools) (contentKind, error) {
 	// The text fast path: content that is UTF-8 text and no document
 	// above is code, markup, configuration or data, read as uploaded
 	// whatever a detector calls it (Tika names a .ts file video/mp2t by
-	// its name), and told without a JVM. A repository's working tree
-	// took one Tika start per text file before (agentry-cli#630). A file
+	// its name), and told without a JVM. Without that, a repository's
+	// working tree would take one Tika start per text file. A file
 	// libmagic calls a zip (the case above lets through) has a zip's
 	// signature, and goes to Tika even when the bytes after it happen to
 	// be text.

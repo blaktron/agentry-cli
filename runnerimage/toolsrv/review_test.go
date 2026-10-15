@@ -1,5 +1,4 @@
-// The review grant's tests (agentry-cli#503; plan
-// desktop-review-key-and-run-cards.md §6.2, D27): ai_review asks the rubric
+// The review grant's tests: ai_review asks the rubric
 // over the package as S5 does and never answers with its text; read_input
 // answers a file only after AI Review passed it; every answer is scrubbed of
 // the key.
@@ -294,7 +293,7 @@ func TestAIReviewAsksTheRubricAsS5AndNeverAnswersWithTheText(t *testing.T) {
 		t.Fatalf("ledger %+v", led)
 	}
 	// The ledger records what was read and the six scores the model was
-	// given, so a host post-step reads the review from it (agentry-cli#504).
+	// given, so a host post-step reads the review from it.
 	if led[0].Dir != "pkg" || led[0].Manifest != "agent.json" || !reflect.DeepEqual(led[0].Axes, ans.Axes) {
 		t.Fatalf("ledger read %q %q, axes %+v, want %+v", led[0].Path, led[0].Manifest, led[0].Axes, ans.Axes)
 	}
@@ -367,7 +366,7 @@ func TestReviewAnswersAreScrubbedOfTheKey(t *testing.T) {
 
 // TestReadInputViewsUnderReview: under the review grant each view of a file
 // is reviewed as its own text before the model reads it, and a binary
-// original stays refused, since no review can read it (agentry-cli#631).
+// original stays refused, since no review can read it.
 func TestReadInputViewsUnderReview(t *testing.T) {
 	sc := &fakeScanner{verdict: passAll}
 	s, spec := reviewServer(t, sc, &fakeAsker{})
@@ -413,7 +412,7 @@ func TestReadInputViewsUnderReview(t *testing.T) {
 	}
 }
 
-// TestAReleaseDefaultViewUnderReview (agentry-cli#693): under the review
+// TestAReleaseDefaultViewUnderReview: under the review
 // grant a release's default view is reviewed as any asked-for view is: an
 // original default reads a text original only after it is scanned, under
 // its own (path, original) ledger line, and a binary original stays

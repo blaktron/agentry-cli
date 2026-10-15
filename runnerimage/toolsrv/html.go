@@ -7,7 +7,7 @@ import (
 )
 
 // HTMLText is the text of an HTML page as web_read gives it: what a reader
-// sees, with the markup stripped (plan builder-rework.md §7.3). Scripts,
+// sees, with the markup stripped. Scripts,
 // styles, templates, embedded documents and elements marked hidden
 // (the hidden attribute, aria-hidden="true", an inline display:none or
 // visibility:hidden) are left out; headings, list items, paragraphs and

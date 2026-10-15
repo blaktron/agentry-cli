@@ -1,13 +1,11 @@
-// The export_pdf template (plan scratch-and-pdf-reports.md §5, D23-D27,
-// agentry-cli#730; theme document version 2 since report-designs.md §4,
-// agentry-cli#784, DR-83). The tools server writes it into a fresh render
-// root beside the agent's Markdown (report.md), the run's report design
-// (design.json, pkg/reportdesign's canonical document) and what the server
-// worked out (meta.json: the form, the title, the author line, the images it
-// copied, the accent's tint, whether a cover is drawn, a memo's header), and
-// Typst renders it with the bundled fonts and the vendored cmarker only.
-// Nothing in it comes from the model but report.md, which is read as
-// Markdown and never as Typst:
+// The export_pdf template (theme document version 2). The tools server writes
+// it into a fresh render root beside the agent's Markdown (report.md), the
+// run's report design (design.json, pkg/reportdesign's canonical document)
+// and what the server worked out (meta.json: the form, the title, the author
+// line, the images it copied, the accent's tint, whether a cover is drawn, a
+// memo's header), and Typst renders it with the bundled fonts and the
+// vendored cmarker only. Nothing in it comes from the model but report.md,
+// which is read as Markdown and never as Typst:
 //
 // - raw-typst is false, so a `<!--raw-typst …-->` block is not run; cmarker
 //   defaults it to true.
@@ -20,10 +18,10 @@
 //   (the title, a memo's lines) are drawn as text.
 // - Heading levels never skip (below), so that PDF/UA-1 can hold.
 //
-// The look is the design's and nothing else (plan D2): one accent and its
+// The look is the design's and nothing else: one accent and its
 // tint, body text near-black, a title block, a heading treatment, tinted
 // tables and quote callouts, coloured rules. The accent touches text only
-// where pkg/reportdesign's AccentOnText says it may (DEV-230), which its
+// where pkg/reportdesign's AccentOnText says it may, which its
 // contrast rule was checked for: a band title block sets the title in white
 // on the accent, and smallcaps and numbered headings set the top two
 // section levels in the accent. Every other choice keeps text near-black and
@@ -31,11 +29,11 @@
 // near-black, underlined in the accent.
 //
 // The person's logo, when the design has one, is drawn in the title block
-// alone (D9, invariant 12; agentry-cli#816): from logo.png, which the server
+// alone: from logo.png, which the server
 // wrote from the logo's decoded pixels (never the bytes the design carried),
 // sized here and never by the design, never on a later page or in the body.
 //
-// The form is the agent's (D1, D15): report (a title block, and a cover page
+// The form is the agent's: report (a title block, and a cover page
 // of its own for a titled report past a length, which the server decides),
 // letter (the title as a letterhead, the lines kept, no page numbers on a
 // one-page letter) or memo (a To / From / Date / Subject block under the

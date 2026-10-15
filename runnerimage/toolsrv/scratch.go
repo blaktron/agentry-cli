@@ -1,8 +1,7 @@
 package toolsrv
 
-// The scratch folder (plan scratch-and-pdf-reports.md §4, agentry-cli#729;
-// plan input-sources.md §6, agentry-cli#832, for scratch_read's views,
-// scratch_search and the bodies fetch saves here):
+// The scratch folder (with scratch_read's views, scratch_search and the
+// bodies fetch saves here):
 // every release's run and session may keep notes and working files in an
 // empty folder of its own, a size-capped tmpfs the docker filter mounts at
 // ScratchDir and that is gone with the container. Its tools are the
@@ -10,7 +9,7 @@ package toolsrv
 // their own: fs_read, fs_list and fs_write keep meaning the workspace the
 // contract grants, and the two roots never alias.
 //
-// A declared command may write the folder too (DR-63 extended), so what it
+// A declared command may write the folder too, so what it
 // holds is not the server's: a command can plant a link there, or swap a
 // path for one while a call is under way. Every scratch tool therefore
 // works through an os.Root opened on the folder, which resolves each name
@@ -312,7 +311,7 @@ func (s *server) toolScratchWrite(raw json.RawMessage) (string, bool) {
 // scratchFailed is scratch_write's failure. A full scratch folder (ENOSPC
 // past its cap) is the agent's own doing, so unlike failed it is no fault
 // of the run's channel in the calls ledger, which an agent could otherwise
-// bring about (DR-72's lesson); any other I/O error is one, as for the
+// bring about; any other I/O error is one, as for the
 // other file tools.
 func (s *server) scratchFailed(err error) (string, bool) {
 	if errors.Is(err, syscall.ENOSPC) {

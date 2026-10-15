@@ -1,6 +1,6 @@
 package toolsrv
 
-// grep and glob (plan ripgrep-search.md §4–§6, agentry-cli#912): search
+// grep and glob: search
 // the files a run can already read by regular expression, and list them
 // by path pattern, with ripgrep. Like the scratch folder they are a grant
 // of the runner, never a line of the contract: they read only the areas
@@ -9,7 +9,7 @@ package toolsrv
 // knowledge packs, its scratch folder, and its workspace when the
 // contract grants filesystem.read — one area a call, so each answer keeps
 // its area's rules: a search of the inputs answers as search_inputs does,
-// the person's own files unchanged (DR-78), and every other area as a text
+// the person's own files unchanged, and every other area as a text
 // the gateway scans.
 //
 // ripgrep is the runner image's copy of agentry-ripgrep (copied by digest
@@ -46,14 +46,14 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 )
 
-// The search tools (plan ripgrep-search.md §4), granted with Search.
+// The search tools, granted with Search.
 const (
 	ToolGrep = "grep"
 	ToolGlob = "glob"
 )
 
 // RipgrepDir is where the runner image holds ripgrep and its licences,
-// copied by digest from agentry-ripgrep (agentry-dockerimages#81). It is
+// copied by digest from agentry-ripgrep. It is
 // outside every bin directory, so an exec image's minimize keeps it and no
 // declared command finds it on a PATH.
 const RipgrepDir = "/opt/agentry/ripgrep"
@@ -93,14 +93,14 @@ const (
 	searchTargetsPerRun = 2000
 )
 
-// Search is grep and glob's grant: Enabled by the compiler with the
-// scratch folder, for every package but a built-in (plan ripgrep-search.md
-// D4). The tools exist only when the run also has an area to search.
+// Search is grep and glob's grant: Enabled by the compiler with the scratch
+// folder, for every package but a built-in. The tools exist only when the run
+// also has an area to search.
 type Search struct {
 	Enabled bool `json:"enabled"`
 }
 
-// rgFixedArgs are the flags every ripgrep run takes (plan §5): no config
+// rgFixedArgs are the flags every ripgrep run takes: no config
 // file, ignore files not read and hidden files searched so nothing the
 // person gave is skipped, caps on file size and on what a pattern may
 // compile to, and a stable order so offset pages are the same pages
@@ -204,7 +204,7 @@ type searchScope struct {
 	// display maps a path ripgrep answers with to the path the answer
 	// shows; a path it does not hold is shown as it is.
 	display map[string]string
-	// personsInput: the answer is the person's own input (DR-78).
+	// personsInput: the answer is the person's own input.
 	personsInput bool
 	// names are byName's paths as a glob is matched against them, each
 	// relative to the folder the call named.
@@ -356,7 +356,7 @@ func (s *server) workspaceScope(rel string) (searchScope, error) {
 	return sc, err
 }
 
-// searchConfinement is how ripgrep is held (plan §5), chosen once when the
+// searchConfinement is how ripgrep is held, chosen once when the
 // server starts, as export_pdf's renderer is.
 type searchConfinement struct {
 	// landlock is the ABI when Landlock holds ripgrep's reads and writes,

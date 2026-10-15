@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// The scrub (plan runtime-hosts.md D9, D19): what a target host prints
+// The scrub: what a target host prints
 // reaches the agent unchanged, keys and tokens read there included, since
 // the agent is there to manage the machine. The one thing taken out is the
 // run's own credentials for its target hosts (a key, its passphrase, a

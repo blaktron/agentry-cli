@@ -255,7 +255,7 @@ func call(tool string, args any) string {
 	return string(b)
 }
 
-// TestAHostsOutputReachesTheAgentUnchanged is D9 and D19: a key printed on
+// TestAHostsOutputReachesTheAgentUnchanged: a key printed on
 // the host comes back as it is, in a resource the gateway's secret block
 // does not read; the run's own password does not.
 func TestAHostsOutputReachesTheAgentUnchanged(t *testing.T) {

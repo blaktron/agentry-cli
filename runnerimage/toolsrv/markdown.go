@@ -1,12 +1,11 @@
 package toolsrv
 
-// What export_pdf reads of a Markdown file before Typst sees it (plan
-// scratch-and-pdf-reports.md §5; agentry-cli#730): its headings, renumbered
-// so that PDF/UA-1 holds; its title; and the local image sources it names,
-// so the server can copy those into the render root. This is a line scanner,
-// not a Markdown parser: cmarker parses the file in the render, and what the
-// scanner misses only costs a heading's number or an image drawn as its
-// alt text, never a file outside the run's folders.
+// What export_pdf reads of a Markdown file before Typst sees it: its
+// headings, renumbered so that PDF/UA-1 holds; its title; and the local image
+// sources it names, so the server can copy those into the render root. This
+// is a line scanner, not a Markdown parser: cmarker parses the file in the
+// render, and what the scanner misses only costs a heading's number or an
+// image drawn as its alt text, never a file outside the run's folders.
 
 import (
 	"net/url"
@@ -229,7 +228,7 @@ func hasScheme(src string) bool {
 	return true
 }
 
-// The forms of a PDF (plan report-designs.md D1, D15): the document's
+// The forms of a PDF: the document's
 // shape, which the agent chooses per export.
 const (
 	FormReport = "report"
@@ -241,8 +240,7 @@ const (
 var Forms = []string{FormReport, FormLetter, FormMemo}
 
 // coverWords is the length past which a titled report gets a cover page of
-// its own: about three pages of prose (plan report-designs.md D15; M3 picks
-// the threshold).
+// its own: about three pages of prose.
 const coverWords = 1500
 
 // reportMarkdown is the Markdown export_pdf hands Typst for src in a form:
@@ -344,7 +342,7 @@ var (
 )
 
 // hardLineBreaks keeps each line of a paragraph on a line of its own (the
-// letter form; agentry-cli#731, #784): a letter's address block,
+// letter form): a letter's address block,
 // its To, From and Date lines and its signature are written one to a line,
 // and Markdown joins them. A short paragraph line (under shortLine runes)
 // followed by another gets a CommonMark hard break, a trailing backslash;
