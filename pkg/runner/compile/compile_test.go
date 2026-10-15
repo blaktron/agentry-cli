@@ -1,8 +1,8 @@
-// Compiler tests: the §R4 capability matrix, plan determinism (golden
-// bytes, compile-twice hash equality), the policy gates, and the §R2
-// instruction rules. The golden files are the framework's compatibility
-// contract with itself — regenerate with `go test ./pkg/runner/compile
-// -update` and review the diff like an API change, because it is one.
+// Compiler tests: the capability matrix, plan determinism (golden bytes,
+// compile-twice hash equality), the policy gates, and the instruction
+// rules. The golden files are the framework's compatibility contract with
+// itself — regenerate with `go test ./pkg/runner/compile -update` and
+// review the diff like an API change, because it is one.
 package compile
 
 import (
@@ -30,8 +30,8 @@ var update = flag.Bool("update", false, "rewrite golden files")
 func testPolicy() *policy.Policy {
 	p := policy.Default()
 	p.Images.Runner = "agentry-runner:test"
-	// The fixtures declare jq and git; the catalog carries them
-	// (agentry-cli#100: an uncatalogued command is a plan-time refusal).
+	// The fixtures declare jq and git; the catalog carries them (an
+	// uncatalogued command is a plan-time refusal).
 	p.Exec.Packages = map[string]string{"jq": "jq", "git": "git"}
 	return p
 }
@@ -160,7 +160,7 @@ func TestCompileGolden(t *testing.T) {
 		{"fullcaps", fullCapsYAML, manifest.ModeAutonomous, nil},
 		{"fullcaps-interactive", fullCapsYAML, manifest.ModeInteractive, nil},
 		// docker.runtime is in the plan and its hash, and the enforcement
-		// map says what it covers (DR-23).
+		// map says what it covers.
 		{"fullcaps-runsc", fullCapsYAML, manifest.ModeAutonomous, func(p *policy.Policy) { p.Docker.Runtime = "runsc" }},
 	}
 	for _, tc := range cases {
@@ -221,8 +221,8 @@ func TestCompileDeterministic(t *testing.T) {
 	}
 }
 
-// TestCompileCapabilityMatrix pins the §R4 mapping: which tools exist,
-// which mounts and network settings the catalog entry gets.
+// TestCompileCapabilityMatrix pins the mapping: which tools exist, which
+// mounts and network settings the catalog entry gets.
 func TestCompileCapabilityMatrix(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -239,10 +239,10 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 			catalogNot: []string{"allowHosts", ":/workspace"},
 		},
 		{
-			// agentry-cli#801: an empty list declares no host, as the
-			// registry reads it (§5.4), so it is "none" here too; it was
-			// host mode with no hosts, a fetch tool and no disableNetwork,
-			// and every hosted run failed at the tools server.
+			// An empty list declares no host, as the registry reads it, so
+			// it is "none" here too; read as host mode with no hosts it
+			// gave a fetch tool and no disableNetwork, and every hosted run
+			// failed at the tools server.
 			name:       "egress empty list",
 			caps:       "capabilities:\n  network:\n    egress: []\n",
 			wantTools:  []string{"list_inputs", "read_input", "search_inputs", "scratch_list", "scratch_read", "scratch_write", "scratch_search", "grep", "glob", "write_report", "export_pdf"},
@@ -314,9 +314,9 @@ func TestCompileCapabilityMatrix(t *testing.T) {
 	}
 }
 
-// TestGatewayAlwaysBlocksNetwork pins §R11 invariant 1: without
-// --block-network the gateway's allowHosts is advisory, so its absence is
-// a security regression, not a style choice.
+// TestGatewayAlwaysBlocksNetwork pins that without --block-network the
+// gateway's allowHosts is advisory, so its absence is a security
+// regression, not a style choice.
 func TestGatewayAlwaysBlocksNetwork(t *testing.T) {
 	for _, yaml := range []string{pureTextYAML, fullCapsYAML} {
 		m := parseManifest(t, yaml)
@@ -334,8 +334,8 @@ func TestGatewayAlwaysBlocksNetwork(t *testing.T) {
 	}
 }
 
-// TestEmptyEgressListIsNone (agentry-cli#801): egress: [], egress: none
-// and no egress at all compile to the same plan line and receipt line.
+// TestEmptyEgressListIsNone: egress: [], egress: none and no egress at all
+// compile to the same plan line and receipt line.
 func TestEmptyEgressListIsNone(t *testing.T) {
 	for name, caps := range map[string]string{
 		"undeclared": "",
@@ -486,8 +486,8 @@ publish:
 	})
 }
 
-// TestOutputSchemaConvention pins §R2: output.schema.json flips the result
-// kind and lands in the instruction.
+// TestOutputSchemaConvention pins the convention: output.schema.json flips
+// the result kind and lands in the instruction.
 func TestOutputSchemaConvention(t *testing.T) {
 	m := parseManifest(t, fullCapsYAML)
 	ws := workspaceFor(t, m, map[string]string{
@@ -506,7 +506,7 @@ func TestOutputSchemaConvention(t *testing.T) {
 	}
 }
 
-// TestVerifyFilesDetectsTamper pins the §R6 integrity check.
+// TestVerifyFilesDetectsTamper pins the integrity check.
 func TestVerifyFilesDetectsTamper(t *testing.T) {
 	m := parseManifest(t, fullCapsYAML)
 	ws := workspaceFor(t, m, nil)
@@ -523,9 +523,9 @@ func TestVerifyFilesDetectsTamper(t *testing.T) {
 	}
 }
 
-// TestNoSecretValuesInPlan pins §R11 invariant 3 at the compile layer: a
-// secret VALUE present in the compiling process's environment must never
-// reach plan bytes (only the NAME may).
+// TestNoSecretValuesInPlan pins at the compile layer that a secret VALUE
+// present in the compiling process's environment must never reach plan
+// bytes (only the NAME may).
 func TestNoSecretValuesInPlan(t *testing.T) {
 	t.Setenv("EXAMPLE_TOKEN", "super-secret-value-xyzzy")
 	m := parseManifest(t, fullCapsYAML)
@@ -549,7 +549,7 @@ func TestNoSecretValuesInPlan(t *testing.T) {
 	}
 }
 
-// ---- dataAccess → operator-cataloged servers (§R3) ----
+// ---- dataAccess → operator-cataloged servers ----
 
 const dataAccessYAML = `schemaVersion: "2"
 name: data-access
@@ -637,7 +637,7 @@ func TestDataAccessServersAttached(t *testing.T) {
 		}
 	}
 
-	// The §R8 disclosure names the attached servers (plan-level check).
+	// The disclosure names the attached servers (plan-level check).
 	if got := plan.Enforcement["dataAccess"]; !strings.Contains(got, "declared email, tickets") ||
 		!strings.Contains(got, "operator-cataloged servers attached: jira-mcp, mail-mcp") {
 		t.Errorf("enforcement disclosure = %q", got)
@@ -751,8 +751,8 @@ func TestPolicyRefusalError(t *testing.T) {
 }
 
 // A package whose output.schema.json is JSON but not a JSON Schema is
-// refused at compile time (DR-8 closed, agentry-cli#11): the engine will
-// validate the final message against it, so it must compile.
+// refused at compile time: the engine will validate the final message
+// against it, so it must compile.
 func TestOutputSchemaMustBeAValidSchema(t *testing.T) {
 	if _, err := CompileOutputSchema([]byte(`{"type":"object","required":["a"]}`)); err != nil {
 		t.Fatalf("valid schema refused: %v", err)
@@ -765,10 +765,9 @@ func TestOutputSchemaMustBeAValidSchema(t *testing.T) {
 	}
 }
 
-// TestGatewayConfigInsideCatalogsDir pins agentry-cli#41: the gateway
-// (v0.43+) refuses a --catalog outside its own catalogs directory, so the
-// rendered files must be mounted there and every file flag must point
-// inside that mount.
+// TestGatewayConfigInsideCatalogsDir pins that the gateway (v0.43+) refuses
+// a --catalog outside its own catalogs directory, so the rendered files
+// must be mounted there and every file flag must point inside that mount.
 func TestGatewayConfigInsideCatalogsDir(t *testing.T) {
 	m := parseManifest(t, fullCapsYAML)
 	ws := workspaceFor(t, m, nil)
@@ -802,11 +801,10 @@ func TestGatewayConfigInsideCatalogsDir(t *testing.T) {
 	}
 }
 
-// TestModePlansIdenticalExceptSession pins plan §6.10 line 1: for one
-// release and policy, the interactive plan's gateway file set, egress
-// allowlist, mounts, secrets and instruction are byte-identical to the
-// autonomous plan's; only the harness argv/stdin and the Session block
-// differ.
+// TestModePlansIdenticalExceptSession pins that, for one release and
+// policy, the interactive plan's gateway file set, egress allowlist,
+// mounts, secrets and instruction are byte-identical to the autonomous
+// plan's; only the harness argv/stdin and the Session block differ.
 func TestModePlansIdenticalExceptSession(t *testing.T) {
 	m := parseManifest(t, fullCapsYAML)
 	ws := workspaceFor(t, m, nil)
@@ -884,12 +882,12 @@ func TestSessionBudgetsFollowPolicyAndManifestHint(t *testing.T) {
 	}
 }
 
-// TestCompileExecCatalog (agentry-cli#100): a declared command the
-// operator's exec catalog does not carry is a plan-time policy refusal
-// naming the command and the key; a catalogued one compiles into an exec
-// image whose plan entry names the packages, whose tag moves with the
-// catalog entry or the mirror, and whose enforcement line names the
-// packages and, for git, the safe.directory setting.
+// TestCompileExecCatalog: a declared command the operator's exec catalog
+// does not carry is a plan-time policy refusal naming the command and the
+// key; a catalogued one compiles into an exec image whose plan entry names
+// the packages, whose tag moves with the catalog entry or the mirror, and
+// whose enforcement line names the packages and, for git, the
+// safe.directory setting.
 func TestCompileExecCatalog(t *testing.T) {
 	m := parseManifest(t, "schemaVersion: \"2\"\nname: gitter\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"g\"\n"+
 		"capabilities:\n  exec: { commands: [git, sort] }\npublish:\n  include: [agent.yaml, AGENT.md]\n")
@@ -978,9 +976,9 @@ func TestRuntimeIsPartOfThePlanHash(t *testing.T) {
 }
 
 // Under a runtime, the host's name servers and the gateway's runtime are
-// part of any plan, not only a draft's (agentry-cli#337): the classes that
-// resolve host names read them. Without a runtime a plain run carries
-// neither, so its bytes are what they were.
+// part of any plan, not only a draft's: the classes that resolve host names
+// read them. Without a runtime a plain run carries neither, so its bytes
+// are what they were.
 func TestTheSandboxSettingsArePartOfThePlan(t *testing.T) {
 	m := parseManifest(t, fullCapsYAML)
 	ws := workspaceFor(t, m, nil)
@@ -1001,9 +999,9 @@ func TestTheSandboxSettingsArePartOfThePlan(t *testing.T) {
 	}
 }
 
-// TestModelKeySource (agentry-cli#148): the receipt's model.apiKey line
-// names the variable, and the keychain account only when the policy says
-// keyring — the harness's source over the model's.
+// TestModelKeySource: the receipt's model.apiKey line names the variable,
+// and the keychain account only when the policy says keyring — the
+// harness's source over the model's.
 func TestModelKeySource(t *testing.T) {
 	pol := policy.Default()
 	if env, acct := modelKeySource(pol, "docker-agent"); env != "ANTHROPIC_API_KEY" || acct != "" {
@@ -1023,7 +1021,7 @@ func TestModelKeySource(t *testing.T) {
 // manifest becomes a bind-mount specification by concatenation, so the
 // compiler judges every path itself — whatever the manifest layer promised
 // — and refuses one that would leave the run workspace or break the volume
-// string (security review 2026-09-20 §4.2, C3).
+// string.
 func TestCompileRefusesAPathOutsideTheWorkspace(t *testing.T) {
 	base := "schemaVersion: \"2\"\nname: paths\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"p\"\nentrypoints:\n  instruction: SKILL.md\npublish:\n  include: [agent.yaml, SKILL.md]\n"
 	refused := map[string]string{
@@ -1063,10 +1061,10 @@ func TestCompileRefusesAPathOutsideTheWorkspace(t *testing.T) {
 	}
 }
 
-// TestCompileIgnoresTheGuide: the manifest's guide (DEV-141,
-// agentry-cli#257) is text for people before a run. It is not part of the
-// plan, so a release that differs only in its guide compiles to the same
-// plan hash, and the plan's bytes never carry the guide's words.
+// TestCompileIgnoresTheGuide: the manifest's guide is text for people
+// before a run. It is not part of the plan, so a release that differs only
+// in its guide compiles to the same plan hash, and the plan's bytes never
+// carry the guide's words.
 func TestCompileIgnoresTheGuide(t *testing.T) {
 	m := parseManifest(t, fullCapsYAML)
 	ws := workspaceFor(t, m, nil)
@@ -1118,7 +1116,7 @@ func TestCompileIgnoresTheGuide(t *testing.T) {
 }
 
 // Plain-http targets are the http model base URLs the CONNECT allowlist
-// already names, nothing else (DR-45, agentry-cli#377).
+// already names, nothing else.
 func TestPlainHTTPTargetsAreHTTPEndpointsOnTheAllowlist(t *testing.T) {
 	pol := policy.Default()
 	pol.Model.BaseURL = "http://gpu-box.lan:8000/v1"
@@ -1139,10 +1137,10 @@ func TestPlainHTTPTargetsAreHTTPEndpointsOnTheAllowlist(t *testing.T) {
 	}
 }
 
-// TestCompileBaseExecCommands (agentry-cli#595, DR-64): a command every
-// machine provides compiles against a policy with no exec catalog at all —
-// a fresh install's, the desktop's — as busybox; one that is not still
-// refuses, and the refusal names what every machine does provide.
+// TestCompileBaseExecCommands: a command every machine provides compiles
+// against a policy with no exec catalog at all — a fresh install's, the
+// desktop's — as busybox; one that is not still refuses, and the refusal
+// names what every machine does provide.
 func TestCompileBaseExecCommands(t *testing.T) {
 	compileCmds := func(cmds string, pol *policy.Policy) (*spec.Plan, error) {
 		m := parseManifest(t, "schemaVersion: \"2\"\nname: unpacker\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"u\"\n"+
@@ -1170,7 +1168,7 @@ func TestCompileBaseExecCommands(t *testing.T) {
 		t.Fatalf("an uncatalogued command beside a base one = %v, want a refusal naming curl alone and the base list", err)
 	}
 	// The refusal's reason names the command in fixed words, for a driver
-	// that keeps no text (agentry-cli#628).
+	// that keeps no text.
 	if got, want := receipt.ReasonOf(err), (&receipt.Reason{Code: receipt.ReasonExecNotProvided, Names: []string{"curl"}}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("reason = %+v, want %+v", got, want)
 	}

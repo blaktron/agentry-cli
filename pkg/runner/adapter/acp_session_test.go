@@ -78,7 +78,7 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 }
 
 // The driver grants permission requests for the gateway's tools and denies
-// the rest, and both appear in the event stream (DR-15, agentry-cli#61).
+// the rest, and both appear in the event stream.
 func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 	toHarnessR, toHarnessW := io.Pipe()
 	fromHarnessR, fromHarnessW := io.Pipe()
@@ -278,13 +278,11 @@ func usageOnlyACP(in io.Reader, out io.WriteCloser, updates []map[string]any) {
 // TestACPSessionCostComesFromTheWire drives the real driver over recorded
 // wire shapes. The session's cost ceiling can only fire on a cost the
 // harness reports, and docker-agent 1.128.0 reports none: its ACP
-// usage_update carries `used` and `size` and nothing else, as recorded on
-// the dev host on 2026-09-14 (run 01cac818, fixtures/hello-chat@1.0.0),
-// whose envelope then reported costUsd 0 after three turns of real model
-// calls. A harness that does price the session reaches the engine's
-// high-water mark; one that does not leaves CostUSD at zero, which the
-// envelope explains rather than reporting as a free session
-// (agentry-cli#222).
+// usage_update carries `used` and `size` and nothing else, as recorded from
+// a real run, whose envelope then reported costUsd 0 after three turns of
+// real model calls. A harness that does price the session reaches the
+// engine's high-water mark; one that does not leaves CostUSD at zero, which
+// the envelope explains rather than reporting as a free session.
 func TestACPSessionCostComesFromTheWire(t *testing.T) {
 	cases := []struct {
 		name     string

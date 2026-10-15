@@ -36,9 +36,9 @@ func compileReview(t *testing.T, yaml, source string, review, web bool) (*spec.P
 	return plan, dir, err
 }
 
-// TestCompileRefusesTheReviewGrantBeyondABuiltin (agentry-cli#503): the
-// review grant is a built-in's alone, never beside the web tools, and never
-// to a built-in whose contract would run beside the person's key.
+// TestCompileRefusesTheReviewGrantBeyondABuiltin: the review grant is a
+// built-in's alone, never beside the web tools, and never to a built-in
+// whose contract would run beside the person's key.
 func TestCompileRefusesTheReviewGrantBeyondABuiltin(t *testing.T) {
 	for _, source := range []string{"registry", "local", ""} {
 		_, _, err := compileReview(t, webTextAgent, source, true, false)

@@ -93,10 +93,10 @@ func TestCodexCompileGatewayOnly(t *testing.T) {
 
 // TestCodexCompileRendersModelCatalog: codex's bundled catalog switches on
 // apply_patch, deferred tool_search, code mode and experimental tools for
-// real OpenAI models (agentry-cli#737). The adapter renders its own
-// one-model catalog instead, and keeps the gateway's tools out of the
-// deferred surface, so the model's tools are the gateway's and nothing else
-// whatever the model id.
+// real OpenAI models. The adapter renders its own one-model catalog
+// instead, and keeps the gateway's tools out of the deferred surface, so
+// the model's tools are the gateway's and nothing else whatever the model
+// id.
 func TestCodexCompileRendersModelCatalog(t *testing.T) {
 	for _, model := range []string{"gpt-5.5", "gpt-6-astra", "some-model"} {
 		in := codexInput()
@@ -160,8 +160,7 @@ func TestCodexCompileRendersModelCatalog(t *testing.T) {
 }
 
 // TestCodexCompileSwitchesOffSkills: the model has no tool to use codex's
-// bundled skills, so the config installs none and lists none
-// (agentry-cli#762).
+// bundled skills, so the config installs none and lists none.
 func TestCodexCompileSwitchesOffSkills(t *testing.T) {
 	cfg := string(codexCompile(t, codexInput()).Files[codexConfigFile])
 	for _, want := range []string{

@@ -15,7 +15,7 @@ import (
 )
 
 // An update must move the image an existing installation runs with the
-// adapter's schema, without rewriting the operator's file (#924).
+// adapter's schema, without rewriting the operator's file.
 func TestASavedFormerHarnessDefaultCompilesWithTheCurrentImage(t *testing.T) {
 	for _, ref := range []string{
 		"docker/docker-agent:v1.128.0",

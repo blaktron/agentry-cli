@@ -16,11 +16,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/integritykey"
 )
 
-// An installed plan is reused across runs (§R6/§R9), so plan.json sits on
-// disk between the compile that wrote it and the run that reads it. Its
-// Files map guards the generated files (VerifyFiles), but nothing guarded
+// An installed plan is reused across runs, so plan.json sits on disk
+// between the compile that wrote it and the run that reads it. Its Files
+// map guards the generated files (VerifyFiles), but nothing guarded
 // plan.json itself: an edit to it (a writable install dir, a copy from
-// elsewhere) was used as though compiled (agentry-cli#266).
+// elsewhere) was used as though compiled.
 //
 // The integrity record closes that. Every compile given the runner home's
 // key writes planDir/plan.json.hmac — an HMAC-SHA256 of plan.json's exact
@@ -68,8 +68,8 @@ func (e *TamperedPlanError) Error() string {
 }
 
 // IntegrityKey returns the runner home's integrity key, creating it on
-// first use (integritykey.Load; the installed-release record uses the
-// same key, agentry-cli#326).
+// first use (integritykey.Load; the installed-release record uses the same
+// key).
 func IntegrityKey(home string) ([]byte, error) { return integritykey.Load(home) }
 
 // integrityRecord is "hmac-sha256 <key id> <mac>\n" for plan.json's bytes.
@@ -107,7 +107,7 @@ func Seal(key []byte, planDir string) error {
 
 // readHook is a test seam: called with the name of each file
 // ReadInstalledPlan has just read, so a test can interleave a concurrent
-// recompile between the reads (agentry-cli#289). Nil outside tests.
+// recompile between the reads. Nil outside tests.
 var readHook func(read string)
 
 // readAttempts bounds how often ReadInstalledPlan re-reads a pair that
@@ -127,19 +127,18 @@ const (
 // through here.
 //
 // Another process may recompile the same plan directory while this one
-// reads it (two runs of one release and mode started together; the CLI
-// and the desktop recompile each other's plans). A plan read from one
-// compile and a record from the next disagree although nothing was
-// edited, and were refused as tampering (agentry-cli#289). Compile now
-// publishes a whole directory in one rename and the reads go through one
-// handle on the directory, so they see one compile; a client built before
-// that still writes the files in place. So the record is also read on
-// both sides of the plan, and a pair is judged only when the two record
-// reads agree: a record that changed, vanished or appeared meanwhile
-// means a recompile was in flight, and the reads are taken again. A
-// mismatch between a steady record and the plan is re-read too, after a
-// pause, and only a mismatch that persists through every attempt is
-// reported as tampering.
+// reads it (two runs of one release and mode started together; the CLI and
+// the desktop recompile each other's plans). A plan read from one compile
+// and a record from the next disagree although nothing was edited, and
+// would be refused as tampering. Compile publishes a whole directory in one
+// rename and the reads go through one handle on the directory, so they see
+// one compile; an older client may still write the files in place. So the
+// record is also read on both sides of the plan, and a pair is judged only
+// when the two record reads agree: a record that changed, vanished or
+// appeared meanwhile means a recompile was in flight, and the reads are
+// taken again. A mismatch between a steady record and the plan is re-read
+// too, after a pause, and only a mismatch that persists through every
+// attempt is reported as tampering.
 func ReadInstalledPlan(key []byte, planDir string) ([]byte, error) {
 	wait := readBackoff
 	var last error
@@ -169,11 +168,11 @@ func ReadInstalledPlan(key []byte, planDir string) ([]byte, error) {
 // (steady). An unsteady read returns ErrNoIntegrityRecord with steady
 // false, so a caller that stops retrying recompiles rather than refuses.
 //
-// All three reads go through one handle on the directory (os.Root), so
-// they read one directory even if a compile publishes a new one under the
-// same name meanwhile (dirpublish.Replace); the record comparison still
-// catches a writer that rewrites files in place, as a client built before
-// agentry-cli#289 does.
+// All three reads go through one handle on the directory (os.Root), so they
+// read one directory even if a compile publishes a new one under the same
+// name meanwhile (dirpublish.Replace); the record comparison still catches
+// a writer that rewrites files in place, as a client built before the
+// whole-directory publish does.
 func readPlanPair(key []byte, planDir string) (plan []byte, steady bool, err error) {
 	root, err := os.OpenRoot(planDir)
 	if err != nil {

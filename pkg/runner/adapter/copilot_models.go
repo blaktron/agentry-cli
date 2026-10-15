@@ -1,11 +1,10 @@
 package adapter
 
-// The models a Copilot plan offers, listed by Copilot CLI itself (plan
-// model-sign-ins.md §4.1, research copilot-cli.md R8; agentry-cli#808):
-// setup and the desktop offer what the person's plan allows rather than a
-// model id typed by hand. The list comes through Copilot CLI, never from a
-// call of Agentry's own to the Copilot API, in a short-lived container that
-// is a run's in all but the gateway (engine.ListCopilotModels).
+// The models a Copilot plan offers, listed by Copilot CLI itself: setup and
+// the desktop offer what the person's plan allows rather than a model id
+// typed by hand. The list comes through Copilot CLI, never from a call of
+// Agentry's own to the Copilot API, in a short-lived container that is a
+// run's in all but the gateway (engine.ListCopilotModels).
 //
 // The order: connect; session.create with no MCP server at all, the token
 // reaching Copilot CLI through the session's token callback as a run's does

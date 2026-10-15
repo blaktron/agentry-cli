@@ -12,13 +12,12 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 )
 
-// The host link (plan runtime-hosts.md §4, D3; agentry-cli#861). A release
-// that declares target hosts gets one more server in the gateway's catalog,
-// the host link, on its own image: the runner's hostlink role behind one
-// relay a target host, holding each host's sign-in in files bound into it
-// alone. Its run-time values are placeholders (the relay targets, the user
-// it runs as), so the plan is the release's and a run without a target
-// host compiles exactly as before.
+// The host link. A release that declares target hosts gets one more server
+// in the gateway's catalog, the host link, on its own image: the runner's
+// hostlink role behind one relay a target host, holding each host's sign-in
+// in files bound into it alone. Its run-time values are placeholders (the
+// relay targets, the user it runs as), so the plan is the release's and a
+// run without a target host compiles without it.
 
 // hostSpecFile is the plan's gateway/hostspec.json.
 const hostSpecFile = "gateway/hostspec.json"
@@ -45,8 +44,8 @@ func hostFolder(name string) string { return spec.PHCfg + "/" + name }
 // resolved (allowHosts, a placeholder a host), and no other network; the
 // gateway links each relay under that address, which the host link asks
 // docker's DNS for (hostlink/relay.go). It runs as the person's uid, with a
-// passwd line for it (ssh refuses a uid it cannot name, DR-91), so the
-// sign-in files stay theirs, 0600 in a 0700 folder.
+// passwd line for it (ssh refuses a uid it cannot name), so the sign-in
+// files stay theirs, 0600 in a 0700 folder.
 func hostLinkEntry(hosts []string, image string) *yaml.Node {
 	e := yamlMap{}
 	e.set("description", strNode("Agentry's host link: the run's target hosts, over SSH the runner makes (generated per run)"))
@@ -88,7 +87,7 @@ func hostFilesVolume() string {
 // with a declared target host, before the run knows which.
 func targetHostsEnforcement(hosts []string) string {
 	return fmt.Sprintf("the target hosts %s, named by the person at the run's start, are reached only by the host link (%s, its own container) through one relay a host to the address and port the person's machine resolved; "+
-		"its sign-in is in files bound into the host link alone, and the agent works the host through %s, every call logged; what the host prints reaches the agent unchanged, past the gateway's secret block and the harness's scrub, but for the run's own sign-in (D9, D19); a hosted run refuses a target host",
+		"its sign-in is in files bound into the host link alone, and the agent works the host through %s, every call logged; what the host prints reaches the agent unchanged, past the gateway's secret block and the harness's scrub, but for the run's own sign-in; a hosted run refuses a target host",
 		strings.Join(hosts, ", "), hostlink.ServerName, strings.Join(hostlink.Tools, ", "))
 }
 

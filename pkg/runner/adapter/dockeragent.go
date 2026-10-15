@@ -1,10 +1,9 @@
-// The docker-agent adapter (RUNNER-PLAN §R10; annex §4.1) — the v1
-// default: Apache-2.0 static binary, verified `--exec` one-shot semantics,
-// remote-MCP toolsets with header auth, and the widest provider matrix.
-// The adapter renders one agent.yaml whose ONLY toolset is the run's MCP
-// gateway: docker-agent's built-in shell/filesystem/fetch toolsets are
-// never enabled, whatever the manifest says — tools come from the gateway
-// or not at all (RQ1/RQ2).
+// The docker-agent adapter, the default: Apache-2.0 static binary, verified
+// `--exec` one-shot semantics, remote-MCP toolsets with header auth, and
+// the widest provider matrix. The adapter renders one agent.yaml whose ONLY
+// toolset is the run's MCP gateway: docker-agent's built-in
+// shell/filesystem/fetch toolsets are never enabled, whatever the manifest
+// says — tools come from the gateway or not at all.
 package adapter
 
 import (
@@ -25,8 +24,8 @@ import (
 
 func init() { Register(&dockerAgent{}) }
 
-// harnessSafety is the docker-agent safety mode for every plan: the
-// gateway is the boundary, so nothing in-harness may prompt (§R4).
+// harnessSafety is the docker-agent safety mode for every plan: the gateway
+// is the boundary, so nothing in-harness may prompt.
 const harnessSafety = "autonomous"
 
 // acpProtocolVersion is the Agent Client Protocol version negotiated with
@@ -44,10 +43,9 @@ type dockerAgent struct{}
 func (d *dockerAgent) Name() string { return DefaultName }
 
 // agentYAML mirrors the docker-agent config fields we emit (schema is
-// theirs and pre-1.0-volatile — annex risk register; the conformance
-// suite, not this struct, is what pins compatibility). Structs, not
-// map[string]any, so field order and therefore plan bytes stay
-// deterministic.
+// theirs and pre-1.0-volatile; the conformance suite, not this struct, is
+// what pins compatibility). Structs, not map[string]any, so field order and
+// therefore plan bytes stay deterministic.
 type agentYAML struct {
 	Version   string                  `yaml:"version"`
 	Providers map[string]providerYAML `yaml:"providers,omitempty"`
@@ -64,7 +62,7 @@ type providerYAML struct {
 	TokenKey string `yaml:"token_key"`
 }
 
-// poeBaseURL is Poe's OpenAI-compatible API (plan §4.6).
+// poeBaseURL is Poe's OpenAI-compatible API
 const poeBaseURL = "https://api.poe.com/v1"
 
 // poeProvider is Poe as docker-agent 1.128.0 needs it, which has no alias
@@ -87,11 +85,11 @@ type modelYAML struct {
 	BaseURL string `yaml:"base_url,omitempty"`
 }
 
-// customProvider is the policy's name for an OpenAI-compatible endpoint
-// of the operator's own (setup's "custom"); docker-agent has no provider
-// of that name — 1.128.0 refuses it as `unknown provider type "custom"` —
-// and reaches such an endpoint through its openai client with a base
-// URL, which is what the rendered config names (agentry-cli#169).
+// customProvider is the policy's name for an OpenAI-compatible endpoint of
+// the operator's own (setup's "custom"); docker-agent has no provider of
+// that name — 1.128.0 refuses it as `unknown provider type "custom"` — and
+// reaches such an endpoint through its openai client with a base URL, which
+// is what the rendered config names.
 const customProvider = "custom"
 
 // harnessProvider maps the policy's provider name to docker-agent's.
@@ -105,21 +103,19 @@ func harnessProvider(m policy.Model) (string, error) {
 	return "openai", nil
 }
 
-// harnessKeyVar is the variable docker-agent's client for a provider
-// reads its credential from, measured on 1.128.0 (agentry-cli#169): the
-// anthropic client requires ANTHROPIC_API_KEY, the google client
-// GOOGLE_API_KEY or GEMINI_API_KEY, the openai client OPENAI_API_KEY —
-// and only the openai client honours a config-level token_key, so a
-// variable named in the config is not a mechanism the others have. The
-// connect providers (agentry-cli#742) read theirs by docker-agent's
-// aliases (openrouter OPENROUTER_API_KEY, huggingface HF_TOKEN; its
-// aliases.go at v1.128.0), and Poe by the token_key its named provider
-// sets (poeProvider). The
-// container therefore carries the key under the client's own name, and
-// the policy's apiKeyEnv (whatever it is called) is only where the value
-// comes FROM on the host. A provider docker-agent knows that this table
-// does not (mistral, azure, …) keeps the policy's name, which is then
-// the operator's to get right.
+// harnessKeyVar is the variable docker-agent's client for a provider reads
+// its credential from, measured on 1.128.0: the anthropic client requires
+// ANTHROPIC_API_KEY, the google client GOOGLE_API_KEY or GEMINI_API_KEY,
+// the openai client OPENAI_API_KEY — and only the openai client honours a
+// config-level token_key, so a variable named in the config is not a
+// mechanism the others have. The connect providers read theirs by
+// docker-agent's aliases (openrouter OPENROUTER_API_KEY, huggingface
+// HF_TOKEN; its aliases.go at v1.128.0), and Poe by the token_key its named
+// provider sets (poeProvider). The container therefore carries the key
+// under the client's own name, and the policy's apiKeyEnv (whatever it is
+// called) is only where the value comes FROM on the host. A provider
+// docker-agent knows that this table does not (mistral, azure, …) keeps the
+// policy's name, which is then the operator's to get right.
 func harnessKeyVar(harnessProvider, policyVar string) string {
 	switch harnessProvider {
 	case "anthropic":
@@ -150,12 +146,12 @@ type agntYAML struct {
 	// Safety is docker-agent's declarative safety mode. The ACP server
 	// (serve acp) has no --safety flag, so the interactive plan needs it
 	// here; it is written for both modes so the config is identical, and
-	// the exec path's explicit --safety flag still wins (DR-15).
+	// the exec path's explicit --safety flag still wins.
 	Safety   string        `yaml:"safety,omitempty"`
 	Toolsets []toolsetYAML `yaml:"toolsets"`
 	// RedactSecrets is docker-agent's redact_secrets flag, on unless set.
 	// It is written false and its builtin wired by hand in Hooks, so the
-	// person's inputs reach the model unchanged (agentry-cli#632).
+	// person's inputs reach the model unchanged.
 	RedactSecrets *bool      `yaml:"redact_secrets,omitempty"`
 	Hooks         *hooksYAML `yaml:"hooks,omitempty"`
 }
@@ -177,16 +173,16 @@ type hookYAML struct {
 }
 
 // InputTools are the runner's tools that answer with the person's own
-// inputs, served unchanged (plan quickagents-that-run.md D4, DR-78).
+// inputs, served unchanged.
 var InputTools = []string{"read_input", "search_inputs"}
 
-// redactSecretsHooks wires docker-agent's redact_secrets builtin, which
-// its redact_secrets flag puts under three events: tool arguments
+// redactSecretsHooks wires docker-agent's redact_secrets builtin, which its
+// redact_secrets flag puts under three events: tool arguments
 // (pre_tool_use), outgoing chat (before_llm_call) and tool output
-// (tool_response_transform), each scrubbing anything secret-shaped
-// (agentry-cli#632). The runner keeps two legs and drops one:
+// (tool_response_transform), each scrubbing anything secret-shaped. The
+// runner keeps two legs and drops one:
 //
-//   - every call's arguments are scrubbed, as before;
+//   - every call's arguments are scrubbed;
 //   - every tool's output is scrubbed but the input tools': a person's
 //     input reaches the model unchanged, credentials included, which the
 //     flag's blanket scrub undid even after the gateway passed it;
@@ -195,8 +191,8 @@ var InputTools = []string{"read_input", "search_inputs"}
 //     Every other tool's output is scrubbed before it enters the history.
 //
 // unchanged are further tools whose output is left as it is: the host
-// link's, for a release that declares a target host (plan runtime-hosts.md
-// D9, agentry-cli#861), whose results are what the host prints.
+// link's, for a release that declares a target host, whose results are what
+// the host prints.
 func redactSecretsHooks(unchanged ...string) *hooksYAML {
 	redact := []hookYAML{{Type: "builtin", Command: "redact_secrets"}}
 	return &hooksYAML{
@@ -283,7 +279,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	// Load resolves former generated defaults, but a custom digest or a
 	// direct caller can still select the old harness. Refuse the known
 	// schema-15 release before it starts; an opaque custom image remains
-	// the operator's to make compatible with the adapter's schema (#924).
+	// the operator's to make compatible with the adapter's schema.
 	imageTag, _, _ := strings.Cut(in.HarnessImage, "@")
 	imageTag = strings.TrimPrefix(imageTag, "docker.io/")
 	if imageTag == "docker/docker-agent:1.128.0" || imageTag == "docker/docker-agent:v1.128.0" || imageTag == "ghcr.io/blaktron/agentry-docker-agent:1.128.0" {
@@ -296,29 +292,27 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	var keyExpect *spec.CredentialKind
 	if provider == policy.ProviderAnthropic {
 		// A plan-time refusal, so `agentry run --plan` and a run meet it
-		// before any container starts (agentry-cli#171).
+		// before any container starts.
 		if policy.KeyKind(in.Harness, in.Model) == policy.KeyKindSubscription {
 			// Named by its policy field, then the shared sentence as it
-			// stands (agentry-cli#183).
+			// stands.
 			return Result{}, &Refusal{Reason: "apiKeyKind subscription: " + policy.SubscriptionTokenSentence}
 		}
 		keyExpect = anthropicKeyExpectation(in)
 	}
 	keyEnv := policy.KeyEnv(in.Harness, in.Model)
 
-	// Schema-shaped output is requested through the prompt and validated
-	// by the engine before exit (§R2, DR-8 in the deviations register
-	// records why the harness-native structured_output block is not
-	// emitted in v1). The wording is shared with every other adapter.
+	// Schema-shaped output is requested through the prompt and validated by
+	// the engine before exit (the harness-native structured_output block is
+	// not emitted). The wording is shared with every other adapter.
 	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
 
 	doc := agentYAML{
 		// The config schema version of the pinned harness: docker-agent
-		// parses a document with the strict schema of the version it
-		// names and upgrades afterwards, so an old number selects an old
-		// schema — "2" has no allow_private_ips and the harness refused
-		// every plan (agentry-cli#43). Bump together with
-		// policy.DefaultHarnessImage (1.150.0 → 16).
+		// parses a document with the strict schema of the version it names
+		// and upgrades afterwards, so an old number selects an old schema —
+		// "2" has no allow_private_ips and the harness refused every plan.
+		// Bump together with policy.DefaultHarnessImage (1.150.0 → 16).
 		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
@@ -339,7 +333,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 						URL:           in.GatewayURL,
 						TransportType: "streamable",
 						// ${env.VAR} is docker-agent's own expansion; the
-						// token never appears in plan bytes (§R11 inv. 7).
+						// token never appears in plan bytes.
 						Headers: map[string]string{
 							"Authorization": "Bearer ${env." + spec.GatewayTokenEnv + "}",
 						},
@@ -361,7 +355,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		doc.Models["main"] = m
 	}
 	var buf bytes.Buffer
-	buf.WriteString("# generated by agentry run — do not edit (RUNNER-PLAN §R10, docker-agent adapter)\n")
+	buf.WriteString("# generated by agentry run — do not edit (docker-agent adapter)\n")
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(doc); err != nil {
@@ -379,18 +373,18 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	var session *spec.SessionSpec
 	switch mode {
 	case manifest.ModeAutonomous:
-		// --exec with no unattended policy auto-rejects every tool call
-		// (annex §4.1). --safety autonomous is deliberate and safe HERE
-		// because in-harness permission patterns are not the boundary:
-		// the tool surface is gateway-only and the container is on an
-		// internal network — the enforcement lives a layer down (§R4).
+		// --exec with no unattended policy auto-rejects every tool call.
+		// --safety autonomous is deliberate and safe HERE because
+		// in-harness permission patterns are not the boundary: the tool
+		// surface is gateway-only and the container is on an internal
+		// network — the enforcement lives a layer down.
 		argv = []string{"run", "--exec", "--json", "--safety", harnessSafety,
 			spec.PlanMount + "/agent.yaml", "-"}
 	case manifest.ModeInteractive:
-		// The ACP server on the container's stdio (DR-15; spike on
-		// agentry-cli#33). Same config, same toolset, same network; the
-		// session store is the one writable mount, added for sessions
-		// only. Safety comes from the config (no flag on serve acp).
+		// The ACP server on the container's stdio. Same config, same
+		// toolset, same network; the session store is the one writable
+		// mount, added for sessions only. Safety comes from the config (no
+		// flag on serve acp).
 		argv = []string{"serve", "acp", spec.PlanMount + "/agent.yaml",
 			"--session-db", spec.SessionMount + "/session.db"}
 		session = &spec.SessionSpec{
@@ -415,8 +409,8 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			// from the variable the policy names (the harness block's
 			// override first, as the receipt's line says: policy.KeyEnv).
 			{Name: harnessKeyVar(provider, keyEnv), FromHostEnv: keyEnv, FromKeyring: keyringAccount(in), ExpectedKind: keyExpect},
-			// The proxy is the agent container's only route out (§R4);
-			// NO_PROXY keeps MCP traffic direct on the run network.
+			// The proxy is the agent container's only route out; NO_PROXY
+			// keeps MCP traffic direct on the run network.
 			{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},
 			{Name: "HTTP_PROXY", Value: spec.ProxyURL()},
 			{Name: "NO_PROXY", Value: spec.GatewayAlias + ",localhost,127.0.0.1"},
@@ -428,12 +422,12 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			ReadOnly: true,
 		}},
 		StdinTask: session == nil, // the task rides stdin only on the exec path
-		// A read-only root (agentry-cli#163): the image's user (uid 100,
-		// not root) writes its scratch, its working directory and its home
-		// (its session database under ~/.cagent), each a tmpfs that goes
-		// with the container. A tmpfs is root's 0755 unless told
-		// otherwise, which the harness cannot write, hence the mode. The
-		// plan and the session store are mounts of their own.
+		// A read-only root: the image's user (uid 100, not root) writes its
+		// scratch, its working directory and its home (its session database
+		// under ~/.cagent), each a tmpfs that goes with the container. A
+		// tmpfs is root's 0755 unless told otherwise, which the harness
+		// cannot write, hence the mode. The plan and the session store are
+		// mounts of their own.
 		ReadOnlyRoot: true,
 		Tmpfs:        []string{"/tmp:mode=1777", "/work:mode=1777", "/home/docker-agent:mode=1777"},
 	}
@@ -450,9 +444,9 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 // Events maps docker-agent --json NDJSON lines to normalized events.
 // Best-effort by design: the NDJSON schema is not a stable contract, so
 // this recognizes shapes (a "type" discriminator; content/usage fields in
-// the places the survey observed them) and passes everything else through
-// as EventOther. Receipts always keep the raw line; M-R4's conformance
-// suite is where the mapping gets empirically pinned.
+// the places they have been observed) and passes everything else through as
+// EventOther. Receipts always keep the raw line; the conformance suite is
+// where the mapping gets empirically pinned.
 func (d *dockerAgent) Events(line []byte) []Event {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
@@ -483,8 +477,8 @@ func (d *dockerAgent) Events(line []byte) []Event {
 		events = append(events, Event{Kind: kind, Text: text, Raw: raw})
 	case strings.Contains(typ, "reasoning") || strings.Contains(typ, "thinking"):
 		// The model's reasoning stream (agent_choice_reasoning): receipts
-		// keep it, the result must not (agentry-cli#53). The event says
-		// only that the model reasoned, never what (agentry-cli#825).
+		// keep it, the result must not. The event says only that the model
+		// reasoned, never what.
 		events = append(events, Event{Kind: EventReasoning, Raw: raw})
 	default:
 		if txt := textField(obj); txt != "" {
@@ -504,7 +498,7 @@ func (d *dockerAgent) Events(line []byte) []Event {
 // harness's `tool_call` (or a `tool_use*` variant). A streaming provider
 // delivers the call's arguments as many `partial_tool_call` chunks first,
 // and every call is followed by a `tool_call_response`; neither is a turn,
-// and counting them burned a 60-call budget on four calls (agentry-cli#51).
+// and counting them would burn a 60-call budget on four calls.
 func isToolCallStart(typ string) bool {
 	if !strings.Contains(typ, "tool") {
 		return false
@@ -522,8 +516,8 @@ func isToolCallStart(typ string) bool {
 
 // isTextDelta is true for the shapes that stream one chunk of the assistant
 // message at a time — docker-agent 1.128.0 emits agent_choice with a
-// content delta per token group; a whole message arrives in one event
-// only for the non-streaming shapes (agentry-cli#53).
+// content delta per token group; a whole message arrives in one event only
+// for the non-streaming shapes.
 func isTextDelta(typ string) bool {
 	for _, s := range []string{"choice", "delta", "chunk", "partial"} {
 		if strings.Contains(typ, s) {
@@ -592,7 +586,7 @@ func textField(obj map[string]any) string {
 // "usage" object. On docker-agent's token_usage event input_tokens and
 // output_tokens are that model request's own (input fresh plus cached), so
 // the engine sums them; cost is the session's running total, so it keeps
-// the high-water mark (agentry-cli#141).
+// the high-water mark.
 func usageFields(obj map[string]any) (in, out int64, cost float64, ok bool) {
 	u := obj
 	if nested, isMap := obj["usage"].(map[string]any); isMap {

@@ -8,14 +8,14 @@ import (
 
 // TestEveryAdapterHasAMeasuredResultBudget: a registered adapter without a
 // measured row would run under a guess; each row sits under its harness's
-// measured limit (DR-89).
+// measured limit.
 func TestEveryAdapterHasAMeasuredResultBudget(t *testing.T) {
 	limits := map[string]int64{
 		DefaultName:            50 << 10,
 		ClaudeAdapterName:      50000,
 		ClaudeImageAdapterName: 50000,
 		// Half the limit the adapter's own catalog sets (codexCatalog): a
-		// resource is sent to the model as escaped JSON (agentry-cli#911).
+		// resource is sent to the model as escaped JSON.
 		CodexAdapterName:        codexToolResultBytes / 2,
 		CodexImageAdapterName:   codexToolResultBytes / 2,
 		CopilotImageAdapterName: 20480,
@@ -49,7 +49,7 @@ func TestEveryAdapterHasAMeasuredResultBudget(t *testing.T) {
 // TestTheCodexCatalogKeepsAWholePage: the catalog the codex adapters render
 // sets the limit codex holds an MCP result to, and a page at the codex
 // budget fits it even as a resource of short lines, which codex sends as
-// escaped JSON and which doubles in it (agentry-cli#911).
+// escaped JSON and which doubles in it.
 func TestTheCodexCatalogKeepsAWholePage(t *testing.T) {
 	raw, err := codexCatalog("gpt-6.1-sol")
 	if err != nil {

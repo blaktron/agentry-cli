@@ -18,13 +18,13 @@ import (
 // turn/completed notification closing each turn. Closing stdin ends the
 // process (verified on codex-cli 0.153.4).
 //
-// The runner is the approval authority here. A thread does not inherit
-// the config file's approval policy; it asks the client for every MCP call
-// with an mcpServer/elicitation/request, and the driver accepts it for a
-// gateway tool and declines anything else (DR-15). Every other request
-// the server can make — shell approvals, file-change approvals, dynamic
-// tool calls, credential refreshes — is refused, because nothing in the
-// plan grants what they ask for.
+// The runner is the approval authority here. A thread does not inherit the
+// config file's approval policy; it asks the client for every MCP call with
+// an mcpServer/elicitation/request, and the driver accepts it for a gateway
+// tool and declines anything else. Every other request the server can make
+// — shell approvals, file-change approvals, dynamic tool calls, credential
+// refreshes — is refused, because nothing in the plan grants what they ask
+// for.
 type codexSession struct {
 	rw io.ReadWriteCloser
 

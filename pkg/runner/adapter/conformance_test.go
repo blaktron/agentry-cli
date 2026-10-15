@@ -18,11 +18,11 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the conformance goldens")
 
-// Conformance (plan runner-m-r4-adapters §7): every registered adapter,
-// given the same Input, compiles deterministically into a spec that keeps
-// the §3 invariants, matches its golden, and turns its recorded harness
-// output into the normalized events the engine needs. A new adapter is a
-// member the moment it registers.
+// Conformance: every registered adapter, given the same Input, compiles
+// deterministically into a spec that keeps the adapter invariants, matches
+// its golden, and turns its recorded harness output into the normalized
+// events the engine needs. A new adapter is a member the moment it
+// registers.
 
 func conformanceInput(mode manifest.Mode, schema bool) Input {
 	in := Input{
@@ -72,11 +72,10 @@ var signInOnly = map[string]string{ClaudeImageAdapterName: policy.KeyKindClaudeS
 // carries the bearer and nothing is mounted.
 var gatewayBySession = map[string]bool{CopilotImageAdapterName: true}
 
-// recordingOf names the adapter whose recorded harness output an adapter
-// is held to, when it reads the same harness's stream with the same
-// Events: the Claude Code image is Claude Code, read as the host claude
-// adapter reads it; its own recording waits for the live test (M11,
-// agentry-cli#744).
+// recordingOf names the adapter whose recorded harness output an adapter is
+// held to, when it reads the same harness's stream with the same Events:
+// the Claude Code image is Claude Code, read as the host claude adapter
+// reads it.
 var recordingOf = map[string]string{ClaudeImageAdapterName: ClaudeAdapterName}
 
 // goldenView is what the golden records: plan content, not Go pointers.
@@ -157,7 +156,7 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 		}
 		return spec.EnvVar{}, false
 	}
-	// §3 invariant 3: the proxy is the route; NO_PROXY keeps the gateway direct.
+	// The proxy is the route; NO_PROXY keeps the gateway direct.
 	wantProxy := spec.ProxyURL()
 	wantNoProxy := spec.GatewayAlias
 	if host {
@@ -172,8 +171,8 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	if v, ok := find("NO_PROXY"); !ok || !strings.Contains(v.Value, wantNoProxy) {
 		t.Errorf("NO_PROXY = %+v, want it to name %q", v, wantNoProxy)
 	}
-	// §3 invariant 2: the token and the model key travel by name, or over
-	// the session alone.
+	// The token and the model key travel by name, or over the session
+	// alone.
 	if v, ok := find(spec.GatewayTokenEnv); gatewayBySession[ad.Name()] {
 		for _, e := range env {
 			if e.FromRunToken {
@@ -222,8 +221,9 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 			t.Errorf("env %s carries a literal that looks like a secret", v.Name)
 		}
 	}
-	// §3 invariant 1 (the part a compile can show): the gateway is named
-	// somewhere the harness reads, and no plan file carries a host path.
+	// Gateway-only tools (the part a compile can show): the gateway is
+	// named somewhere the harness reads, and no plan file carries a host
+	// path.
 	sawGateway := false
 	for name, b := range r.Files {
 		s := string(b)

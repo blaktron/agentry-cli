@@ -15,12 +15,12 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// The connect providers render as docker-agent reads them (agentry-cli#742):
-// OpenRouter and Hugging Face through docker-agent's aliases, which supply
-// the endpoint, the key under the variable each alias reads; Poe as a
-// named provider with Chat Completions set explicitly, its endpoint and
-// its key variable (token_key) on the provider. Each agent.yaml is held to
-// a golden (testdata/providers; -update rewrites them).
+// The connect providers render as docker-agent reads them: OpenRouter and
+// Hugging Face through docker-agent's aliases, which supply the endpoint,
+// the key under the variable each alias reads; Poe as a named provider with
+// Chat Completions set explicitly, its endpoint and its key variable
+// (token_key) on the provider. Each agent.yaml is held to a golden
+// (testdata/providers; -update rewrites them).
 func TestDockerAgentRendersTheConnectProviders(t *testing.T) {
 	ad, err := Get(DefaultName)
 	if err != nil {

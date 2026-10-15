@@ -1,12 +1,10 @@
 package compile
 
-// Declared remote MCP servers (plan mcp-oauth-connections.md §5, D3;
-// agentry-cli#663): each is an ordinary `type: server` catalog entry on the
-// runner image's bridge, whose one allowed host is the address's host, so
-// it runs behind one relay like a package server, and the gateway keeps
-// --block-network and dials nothing itself (ARCHITECTURE.md §9, the
-// runner's row). These pin the rendered gateway files and the receipt
-// lines.
+// Declared remote MCP servers: each is an ordinary `type: server` catalog
+// entry on the runner image's bridge, whose one allowed host is the
+// address's host, so it runs behind one relay like a package server, and
+// the gateway keeps --block-network and dials nothing itself. These pin the
+// rendered gateway files and the receipt lines.
 
 import (
 	"errors"
@@ -221,10 +219,10 @@ func remoteOAuthSpec() spec.MCPServerSpec {
 	}
 }
 
-// A remote server signed in to by OAuth (agentry-cli#664) runs on the
-// bridge exactly as an auth: secret one does: its access token in its own
-// connection folder, read-only, never the gateway's; the receipt says the
-// run is given an access token alone.
+// A remote server signed in to by OAuth runs on the bridge exactly as an
+// auth: secret one does: its access token in its own connection folder,
+// read-only, never the gateway's; the receipt says the run is given an
+// access token alone.
 func TestCompileRendersAnOAuthServerOnTheBridge(t *testing.T) {
 	planDir := t.TempDir()
 	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{remoteOAuthSpec()}, policy.Default()), planDir)
@@ -278,12 +276,12 @@ func workspaceMCPSpec() spec.MCPServerSpec {
 	}
 }
 
-// A package server's OAuth sign-in (agentry-cli#665, plan D15): its token
-// folder is mounted writable (DR-77; a bridge's stays read-only), an env entry naming only the folder is
-// plain env with the folder's mount filled in, and one carrying the access
-// token is a server-scoped secret the engine fills per run. The plan keeps
-// the templates, never a token, and the receipt says where the token goes
-// and that nothing else of the connection enters the run.
+// A package server's OAuth sign-in: its token folder is mounted writable (a
+// bridge's stays read-only), an env entry naming only the folder is plain
+// env with the folder's mount filled in, and one carrying the access token
+// is a server-scoped secret the engine fills per run. The plan keeps the
+// templates, never a token, and the receipt says where the token goes and
+// that nothing else of the connection enters the run.
 func TestCompileRendersAPackageServerOAuthSignIn(t *testing.T) {
 	planDir := t.TempDir()
 	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{workspaceMCPSpec()}, policy.Default()), planDir)
@@ -377,9 +375,9 @@ func TestCompileRefusesAnOAuthEnvValueItCannotHandOver(t *testing.T) {
 	}
 }
 
-// The unsupported list (plan D25) holds at plan time as well as at
-// validation: a release published before its package was listed is
-// refused by name, with the alternative.
+// The unsupported list holds at plan time as well as at validation: a
+// release published before its package was listed is refused by name, with
+// the alternative.
 func TestCompileRefusesAnUnsupportedOAuthPackage(t *testing.T) {
 	in := mcpFixtureInputs(t, nil, policy.Default())
 	in.Manifest.SchemaVersion = "2"

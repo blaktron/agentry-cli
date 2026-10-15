@@ -13,22 +13,21 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// The browser (agentry-notes plans/browser-testing.md §6, §7, D1, D3, D7,
-// D8, D9, D12; agentry-cli#915). A release that declares
-// capabilities.browser gets one more server in the gateway's catalog, the
-// browser server, on its own pulled image: a headless Chromium whose only
-// route out is the run's browse proxy, reached through one relay, and
-// which holds the scope. Its run-time values are placeholders (the proxy's
-// name, the user it runs as), so the plan is the release's.
+// The browser. A release that declares capabilities.browser gets one more
+// server in the gateway's catalog, the browser server, on its own pulled
+// image: a headless Chromium whose only route out is the run's browse
+// proxy, reached through one relay, and which holds the scope. Its run-time
+// values are placeholders (the proxy's name, the user it runs as), so the
+// plan is the release's.
 
 // browserConfigFile is the plan's gateway/browser.json, the server's
 // --config.
 const browserConfigFile = "gateway/browser.json"
 
-// browserCap normalizes the manifest's browser line, refusing it where
-// the run cannot hold it: beside a built-in's grants, and with public
-// scope unless the operator's policy allows any public site (D12), as "*"
-// egress is refused.
+// browserCap normalizes the manifest's browser line, refusing it where the
+// run cannot hold it: beside a built-in's grants, and with public scope
+// unless the operator's policy allows any public site, as "*" egress is
+// refused.
 func browserCap(b *manifest.Browser, in Inputs) (*spec.BrowserCap, error) {
 	if b == nil {
 		return nil, nil
@@ -54,13 +53,13 @@ func browserCap(b *manifest.Browser, in Inputs) (*spec.BrowserCap, error) {
 // placeholders.
 func browserFolder(name string) string { return spec.PHCfg + "/" + name }
 
-// browserEntry is the browser server's catalog entry. It reaches the
-// browse proxy through one L4 relay (allowHosts, the proxy's run-unique
-// name) and no other network; Chromium's --proxy-server names the same
-// host, which the gateway links to the relay. It runs as the person's
-// uid, so its output folder and secrets file stay theirs. Its one
-// read-write bind is its output folder (invariant 6); its config and its
-// secrets file are read-only, and no other container is given the latter.
+// browserEntry is the browser server's catalog entry. It reaches the browse
+// proxy through one L4 relay (allowHosts, the proxy's run-unique name) and
+// no other network; Chromium's --proxy-server names the same host, which
+// the gateway links to the relay. It runs as the person's uid, so its
+// output folder and secrets file stay theirs. Its one read-write bind is
+// its output folder; its config and its secrets file are read-only, and no
+// other container is given the latter.
 func browserEntry(b *spec.BrowserCap, image string) *yaml.Node {
 	secrets := len(b.Secrets) > 0
 	e := yamlMap{}
@@ -89,7 +88,7 @@ func browserWritable() []string { return []string{browserFolder(spec.BrowserOutD
 
 // browserOutVolume shares the browser's output folder with the tools
 // server, read-only, inside its output folder: the agent's report can name
-// a screenshot, and export_pdf can draw one (plan D8).
+// a screenshot, and export_pdf can draw one.
 func browserOutVolume() string {
 	return browserFolder(spec.BrowserOutDir) + ":" + spec.BrowserOutMount + ":ro"
 }
