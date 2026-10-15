@@ -2,7 +2,7 @@
 // — one place, so a new spawn site has one call to make rather than a flag
 // to remember (nothing enforces the call). Today that is one thing: on
 // Windows, a child of a GUI application must not be given a console of
-// its own (agentry-cli#166).
+// its own.
 package procx
 
 import "os/exec"

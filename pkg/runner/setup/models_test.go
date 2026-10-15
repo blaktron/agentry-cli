@@ -174,9 +174,9 @@ func TestListModelsCustomIsTheOpenAIShapeAtTheBaseURL(t *testing.T) {
 	}
 }
 
-// Plain http off loopback is the operator's choice for a custom endpoint
-// (agentry-cli#377): the listing is made, and the Catalog carries the
-// warning. A stub transport stands in for the remote host.
+// Plain http off loopback is the operator's choice for a custom endpoint: the
+// listing is made, and the Catalog carries the warning. A stub transport stands
+// in for the remote host.
 func TestListModelsAllowsPlainHTTPOffLoopbackWithAWarning(t *testing.T) {
 	old := httpClient.Transport
 	var asked string

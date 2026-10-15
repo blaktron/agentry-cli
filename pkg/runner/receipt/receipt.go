@@ -1,8 +1,8 @@
-// Package receipt defines the run result envelope (RUNNER-PLAN §R8) — the
+// Package receipt defines the run result envelope — the
 // runtime counterpart of the registry's public scan report. Every claim in
 // it is either verified upstream (ref, digest, attestation), compiled
 // (capabilities_enforced, run plan hash), or measured (usage); nothing in
-// it is ever a secret value or a gateway token (§R11 invariant 7).
+// it is ever a secret value or a gateway token.
 package receipt
 
 import (
@@ -18,31 +18,30 @@ const EnvelopeVersion = "run/v1"
 // Envelope is the machine-readable result of one run. With
 // --output-format json it IS stdout; in text mode it is written to
 // <out>/result.json and stdout carries only the result text — either way
-// the output folder keeps the full record (RQ3).
+// the output folder keeps the full record.
 type Envelope struct {
 	// Agentry is EnvelopeVersion.
 	Agentry string `json:"agentry"`
-	// Status is "ok" or "error"; ExitCode is the §R8 class the process
+	// Status is "ok" or "error"; ExitCode is the class the process
 	// exits with; Error carries the failure detail for status error.
 	Status   string `json:"status"`
 	ExitCode int    `json:"exitCode"`
 	// ExitClass names ExitCode (ok, usage, verify, policy, compile, gateway,
 	// harness, timeout, budget, outputSchema, blocked, cli): a client acts
-	// on the name, never on the number (agentry-cli#102). Set by Marshal.
+	// on the name, never on the number. Set by Marshal.
 	ExitClass string `json:"exitClass"`
 	Error     string `json:"error,omitempty"`
-	// Stage names the step a failed run stopped in, one word from a fixed
-	// list (the Stage constants), so a driver that may not keep the
-	// error's text (a hosted run's host keeps nothing the run could have
-	// written) can still say where it failed (agentry-cli#332). It says
-	// where; ExitClass says what: a policy refusal while the declared MCP
-	// servers are checked is class policy in stage mcp-servers. Empty on
-	// success.
+	// Stage names the step a failed run stopped in, one word from a fixed list
+	// (the Stage constants), so a driver that may not keep the error's text (a
+	// hosted run's host keeps nothing the run could have written) can still say
+	// where it failed. It says where; ExitClass says what: a policy refusal
+	// while the declared MCP servers are checked is class policy in stage
+	// mcp-servers. Empty on success.
 	Stage string `json:"stage,omitempty"`
 	// Reason says why, in fixed words, when the step that stopped the run
-	// decided it (agentry-cli#628): a code from a closed list and the
-	// release's own declared names it concerns, never text (Reason).
-	// Absent on success and on a failure no step named.
+	// decided it: a code from a closed list and the release's own declared
+	// names it concerns, never text (Reason). Absent on success and on a
+	// failure no step named.
 	Reason *Reason `json:"reason,omitempty"`
 	// RunID names the run (container labels, run dirs).
 	RunID string `json:"runId"`
@@ -51,17 +50,17 @@ type Envelope struct {
 	Digest string `json:"digest"`
 	// Attestation reports the install-gate outcome the run inherited.
 	Attestation Attestation `json:"attestation"`
-	// CapabilitiesEnforced names each contract line's mechanism (§R4).
+	// CapabilitiesEnforced names each contract line's mechanism.
 	CapabilitiesEnforced map[string]string `json:"capabilities_enforced"`
 	// Harness identifies the adapter, image, and model that ran.
 	Harness Harness `json:"harness"`
 	// Policy names the operator policy file the run enforced: its path,
 	// how that path was chosen, and the digest the plan was compiled
-	// against (agentry-cli#152). Absent in envelopes from clients that do
+	// against. Absent in envelopes from clients that do
 	// not say, and in those written before it existed.
 	Policy *Policy `json:"policy,omitempty"`
 	// Usage is measured from the harness event stream, best-effort where
-	// the stream is (RUNNER-DEVIATIONS DR-4).
+	// the stream is.
 	Usage Usage `json:"usage"`
 	// Result is the agent's final output: parsed JSON when the package
 	// declared an output schema and the output parsed, else plain text.
@@ -75,32 +74,28 @@ type Envelope struct {
 	Receipts Receipts `json:"receipts"`
 	// InstalledChanges names what changed in an installed release a run
 	// refused because it no longer matches what was laid down (exit 10,
-	// class verify; agentry-cli#326), so a client can show the files and
+	// class verify), so a client can show the files and
 	// offer the repair without parsing Error. Absent otherwise.
 	InstalledChanges *InstalledChanges `json:"installedChanges,omitempty"`
-	// Web counts what the built-in Drafter's web tools read and what AI
-	// Review withheld (plan builder-rework.md §7.3; agentry-cli#345), from
-	// the run's web ledger (receipts/web.ndjson, which names each address
-	// and verdict). Absent for a run without the web tools.
+	// Web counts what the built-in Drafter's web tools read and what AI Review
+	// withheld, from the run's web ledger (receipts/web.ndjson, which names
+	// each address and verdict). Absent for a run without the web tools.
 	Web *Web `json:"web,omitempty"`
-	// Review is AI Review's record of a run with the review grant (plan
-	// desktop-review-key-and-run-cards.md §6.2, agentry-cli#503): what of
+	// Review is AI Review's record of a run with the review grant: what of
 	// the inputs it scanned before the model, and the rubric calls; absent
 	// for any other run.
 	Review *Review `json:"review,omitempty"`
-	// PDFs is what export_pdf wrote (plan scratch-and-pdf-reports.md §5,
-	// D15; agentry-cli#730): the report design every PDF of the run was laid
-	// out with (report-designs.md, agentry-cli#784), and each PDF in reports/
-	// whose bytes are the ones the tools server recorded, with its form. A
-	// reader opens in place only a PDF this names with a matching SHA-256;
-	// any other is download-only. Absent for a run that exported none.
+	// PDFs is what export_pdf wrote: the report design every PDF of the run was
+	// laid out with, and each PDF in reports/ whose bytes are the ones the
+	// tools server recorded, with its form. A reader opens in place only a PDF
+	// this names with a matching SHA-256; any other is download-only. Absent
+	// for a run that exported none.
 	PDFs *PDFs `json:"pdfs,omitempty"`
-	// FetchSaves counts the response bodies fetch saved in the scratch
-	// folder (plan input-sources.md §6, agentry-cli#832): those the agent
-	// asked for with saveTo and those larger than one tool result. The
-	// folder is gone with the run; the ledger it names lists each file, the
-	// declared host it came from, its size and its SHA-256. Absent for a run
-	// that saved none.
+	// FetchSaves counts the response bodies fetch saved in the scratch folder:
+	// those the agent asked for with saveTo and those larger than one tool
+	// result. The folder is gone with the run; the ledger it names lists each
+	// file, the declared host it came from, its size and its SHA-256. Absent
+	// for a run that saved none.
 	FetchSaves *FetchSaves `json:"fetchSaves,omitempty"`
 }
 
@@ -140,8 +135,8 @@ type PDFFile struct {
 	Pages  int    `json:"pages"`
 	Bytes  int64  `json:"bytes"`
 	Form   string `json:"form,omitempty"`
-	// Logo says the person's logo was drawn in the PDF's title block
-	// (agentry-cli#816); the design's SHA-256 covers the logo's bytes.
+	// Logo says the person's logo was drawn in the PDF's title block;
+	// the design's SHA-256 covers the logo's bytes.
 	Logo bool `json:"logo,omitempty"`
 }
 
@@ -171,7 +166,7 @@ type Web struct {
 	// address that is not public, a spent budget, a type that is not text.
 	Refused int `json:"refused"`
 	// ScanRequests and ScanInputTokens are what the scans cost the judge,
-	// for the record; AI Review is 1 credit an operation (DEV-150).
+	// for the record; AI Review is 1 credit an operation.
 	ScanRequests    int   `json:"scanRequests"`
 	ScanInputTokens int64 `json:"scanInputTokens"`
 	// Model and QuestionSet name the judge and what it was asked, when a
@@ -199,8 +194,7 @@ type Review struct {
 	Failed   int `json:"failed"`
 	Findings int `json:"findings"`
 	// ScanRequests and ScanInputTokens are what the scans and the rubric
-	// cost the judge, for the record; AI Review is 1 credit an operation
-	// (DEV-150).
+	// cost the judge, for the record; AI Review is 1 credit an operation.
 	ScanRequests    int   `json:"scanRequests"`
 	ScanInputTokens int64 `json:"scanInputTokens"`
 	// Model, QuestionSet and RubricHash name the judge and what it was
@@ -224,7 +218,7 @@ type InstalledChanges struct {
 	Repair string `json:"repair"`
 }
 
-// Attestation is the verify-gate outcome (§R1).
+// Attestation is the verify-gate outcome.
 type Attestation struct {
 	// State is verified | unsigned | local | unscanned | builtin.
 	State string `json:"state"`
@@ -238,9 +232,9 @@ type Attestation struct {
 	// says not only what the verdict was but who accepted it. Empty for a
 	// verified release, which needed none.
 	Consent string `json:"consent,omitempty"`
-	// Build is, for state builtin, the build of the application that
-	// carried the package (agentry-cli#318): a built-in has no registry
-	// digest to name its provenance, so the receipt names the binary.
+	// Build is, for state builtin, the build of the application that carried
+	// the package: a built-in has no registry digest to name its provenance, so
+	// the receipt names the binary.
 	Build string `json:"build,omitempty"`
 }
 
@@ -281,13 +275,12 @@ type Harness struct {
 	Host string `json:"host,omitempty"`
 	// ImagePin is how Image was pinned: "digest sha256:…" for a published
 	// image, "artifact sha256:…" for one built on the machine from its
-	// vendor's artifact, or "tag (not pinned: …)" (agentry-cli#738,
-	// invariant I8). Empty for a host harness.
+	// vendor's artifact, or "tag (not pinned: …)". Empty for a host harness.
 	ImagePin string `json:"imagePin,omitempty"`
 	// CredentialKind is the kind of credential that paid for the model:
 	// api, subscription, or a model sign-in's kind (chatgpt-plan,
 	// claude-signin, copilot-signin). A word of that closed list, never an
-	// account or a token (I6).
+	// account or a token.
 	CredentialKind string `json:"credentialKind,omitempty"`
 	Model          string `json:"model"`
 	// Mode is the run mode (autonomous or interactive); empty in
@@ -301,7 +294,7 @@ type Usage struct {
 	OutputTokens int64 `json:"outputTokens"`
 	// TotalTokens is set when the harness reports context tokens without an
 	// input/output split (docker-agent's ACP usage_update); input and output
-	// are then zero, not estimates (agentry-cli#71).
+	// are then zero, not estimates.
 	TotalTokens int64   `json:"totalTokens,omitempty"`
 	CostUSD     float64 `json:"costUsd"`
 	WallMS      int64   `json:"wallMs"`
@@ -316,7 +309,7 @@ type Usage struct {
 // shapes are exclusive — a harness that splits input and output leaves
 // TotalTokens zero, and one that reports only context tokens leaves the
 // split zero — so this is the single rule for anything counting a run's
-// tokens, live or at settlement (agentry-cli#138).
+// tokens, live or at settlement.
 func (u Usage) Total() int64 {
 	if u.TotalTokens > 0 {
 		return u.TotalTokens
@@ -328,7 +321,7 @@ func (u Usage) Total() int64 {
 type Receipts struct {
 	// Dir is <out>/receipts.
 	Dir string `json:"dir"`
-	// RunPlanSHA256 is the §R4 plan hash — the receipt's link back to
+	// RunPlanSHA256 is the plan hash — the receipt's link back to
 	// exactly what was compiled and enforced.
 	RunPlanSHA256 string `json:"runPlanSha256"`
 }
@@ -343,7 +336,7 @@ func TextResult(s string) json.RawMessage {
 	return b
 }
 
-// ExitClassName names a §R8 exit code; the table mirrors engine's constants
+// ExitClassName names an exit code; the table mirrors engine's constants
 // (engine imports this package, so the names live here), and engine's tests
 // hold the two together.
 func ExitClassName(code int) string {
@@ -376,15 +369,14 @@ func ExitClassName(code int) string {
 	return fmt.Sprintf("exit-%d", code)
 }
 
-// The steps of a run as Stage names them, in about the order a run meets
-// them: the policy read; the release verified and installed; its
-// manifest read, the adapter chosen and the plan compiled (compile); its
-// capabilities consented to; the declared MCP servers checked, resolved
-// and installed (mcp-servers, on both sides of the compile); the images
-// installed; the profile loaded; the intake answered; the run's
-// directories and secrets prepared; the proxy, gateway and probe started;
-// the agent run; and its output checked. A draft adds one step after
-// the policy: its description read by AI Review (agentry-cli#384), which
+// The steps of a run as Stage names them, in about the order a run meets them:
+// the policy read; the release verified and installed; its manifest read, the
+// adapter chosen and the plan compiled (compile); its capabilities consented
+// to; the declared MCP servers checked, resolved and installed (mcp-servers, on
+// both sides of the compile); the images installed; the profile loaded; the
+// intake answered; the run's directories and secrets prepared; the proxy,
+// gateway and probe started; the agent run; and its output checked. A draft
+// adds one step after the policy: its description read by AI Review, which
 // stops the Drafter before anything else runs when it does not pass.
 const (
 	StagePolicy      = "policy"

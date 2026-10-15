@@ -14,9 +14,9 @@ import (
 
 const codexImage = "ghcr.io/blaktron/agentry-codex:0.162.0@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 
-// Image preparation pulls the harness image the plan's adapter runs and
-// no other (plan model-sign-ins.md D7): docker-agent's for its plans, the
-// other adapter's alone for its, none for a host harness.
+// Image preparation pulls the harness image the plan's adapter runs and no
+// other: docker-agent's for its plans, the other adapter's alone for its, none
+// for a host harness.
 func TestPreparationPullsOnlyThePlansHarnessImage(t *testing.T) {
 	pol := policy.Default()
 	for _, c := range []struct {

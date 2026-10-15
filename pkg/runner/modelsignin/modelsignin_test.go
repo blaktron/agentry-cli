@@ -93,7 +93,7 @@ func TestVendorsAndKinds(t *testing.T) {
 	}
 }
 
-// Use hands a run the access token alone (I3): the refresh token stays in
+// Use hands a run the access token alone: the refresh token stays in
 // the keychain, a rotated one is written back before Use returns, and two
 // runs at once never spend the same rotating token. Nothing in the
 // record, on disk, holds a token.
@@ -238,7 +238,7 @@ func TestOnlyAClaudeSignInNamesADirectory(t *testing.T) {
 
 // A Claude run is handed the directory of the Claude Code that runs it:
 // the image's volume, or the installed Claude Code's directory, each signed
-// in apart (agentry-cli#740); a run on one that is not signed in says how
+// in apart; a run on one that is not signed in says how
 // to sign it in.
 func TestAClaudeRunIsHandedItsOwnHarnesssDirectory(t *testing.T) {
 	home := t.TempDir()

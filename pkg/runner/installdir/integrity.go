@@ -17,16 +17,15 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/integritykey"
 )
 
-// A release is checked once, when it is laid down (the digest, the
-// attestation, the consent), and then run from workspace/ for as long as
-// it stays installed. Nothing checked the tree again, so an edit to an
-// installed QuickAgent's prompt, tool config or schema (by the person or
-// another program) ran under the signature and review of a release it no
-// longer matched, and the receipt named a release whose bytes did not
-// run. install.json, which says how the
-// release was admitted, was plain JSON anything with write access to the
-// runner home could rewrite (agentry-cli#326; the operator, 2026-09-25: "a
-// signed QuickAgent should only run if it has not been altered locally").
+// A release is checked once, when it is laid down (the digest, the attestation,
+// the consent), and then run from workspace/ for as long as it stays installed.
+// Nothing checked the tree again, so an edit to an installed QuickAgent's
+// prompt, tool config or schema (by the person or another program) ran under
+// the signature and review of a release it no longer matched, and the receipt
+// named a release whose bytes did not run. install.json, which says how the
+// release was admitted, was plain JSON anything with write access to the runner
+// home could rewrite, though a signed QuickAgent should only run if it has not
+// been altered locally.
 //
 // The integrity record closes that. Every lay-down writes
 // <release>/integrity.json inside the tree it publishes: a digest of every
@@ -107,10 +106,9 @@ type ChangedError struct {
 	Changed, Added, Removed []string
 	// Record is set when the record or install.json itself failed.
 	Record RecordFailure
-	// Repair, when set, is the command that lays the release down again
-	// in place of `agentry install --repair <ref>`: a local install
-	// (agentry-cli#491) is laid down again from its folder, since no
-	// registry holds it.
+	// Repair, when set, is the command that lays the release down again in
+	// place of `agentry install --repair <ref>`: a local install is laid down
+	// again from its folder, since no registry holds it.
 	Repair string
 }
 

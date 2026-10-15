@@ -28,7 +28,7 @@ func copilotFixture(t *testing.T) (*mcpauthtest.GitHub, mcpauth.GitHub) {
 // A Copilot sign-in keeps the refresh token in the keychain and the account
 // and the app on the record; a run is handed a fresh access token through
 // the session callback's delivery, with a renewal, and never the refresh
-// token (I3).
+// token.
 func TestACopilotSignInIsKeptAndARunIsHandedItsAccessTokenAlone(t *testing.T) {
 	v, flow := copilotFixture(t)
 	keys := &memKeys{m: map[string]string{}}

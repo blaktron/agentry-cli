@@ -47,7 +47,7 @@ func grep(t *testing.T, dir, secret string) bool {
 
 // An OpenRouter connect keeps its key in the model key's keychain entry,
 // where runs read a pasted key, and only marks the record connected; the
-// key is in no file of the store (I6). Disconnect forgets it and names
+// key is in no file of the store. Disconnect forgets it and names
 // where to delete it at OpenRouter, which no app can revoke.
 func TestAnOpenRouterConnectIsAKeyMarkedConnected(t *testing.T) {
 	v := mcpauthtest.NewOpenRouter(t)
@@ -113,8 +113,8 @@ func TestAPoeKeyPastItsExpiryIsRefusedAtRunStart(t *testing.T) {
 
 // A Hugging Face connect keeps the token in the model key's entry and the
 // refresh token as a sign-in's; each run start refreshes it and writes the
-// new token into the entry (D32). The refresh token never reaches the
-// model key's entry (I3).
+// new token into the entry. The refresh token never reaches the
+// model key's entry.
 func TestAHuggingFaceTokenIsRefreshedAtRunStart(t *testing.T) {
 	v := mcpauthtest.NewHuggingFace(t)
 	v.Rotate = true
@@ -295,7 +295,7 @@ func keyringPlan(provider string) *spec.Plan {
 
 // A signed-out schedule's fire reads the copy of the key sealed for it,
 // which nothing renews, and the refresh token stays in the keychain,
-// locked while its person is signed out (agentry-cli#811). So a connected
+// locked while its person is signed out. So a connected
 // Hugging Face token is refused at the run's start, naming the fix, and
 // Hugging Face is never asked; a Poe key past its expiry is refused as a
 // signed-in run refuses it; a pasted key is left alone.

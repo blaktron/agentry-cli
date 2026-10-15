@@ -1,13 +1,12 @@
 package modelsignin
 
-// Connect your account (plan model-sign-ins.md §4.6, D30–D34;
-// agentry-cli#742): OpenRouter, Poe and Hugging Face hand the person's
+// Connect your account: OpenRouter, Poe and Hugging Face hand the person's
 // computer an ordinary API key (or, Hugging Face, an inference token) over
 // OAuth. It is kept where a pasted key is, the OS keychain entry
 // provider:<provider> that runs read (pkg/runner/modelkey), so a run spends
 // it exactly as it spends a key; the record here only marks it connected,
 // for its Disconnect, says when a Poe key expires, and holds Hugging Face's
-// refresh token, which the CLI alone spends, at each run's start (D32).
+// refresh token, which the CLI alone spends, at each run's start.
 
 import (
 	"context"
@@ -145,7 +144,7 @@ func (e *ExpiredError) Error() string {
 
 // RefreshConnected readies a connected key for a run that reads provider's
 // keychain entry, at the run's start: a Hugging Face token is refreshed
-// and the new one written into the entry (D32); a Poe key past its expiry
+// and the new one written into the entry; a Poe key past its expiry
 // is refused, naming the fix. A provider with no connected key, or a key
 // the person pasted, is left as it is.
 func (s *Store) RefreshConnected(ctx context.Context, provider string) error {
@@ -177,12 +176,12 @@ func (s *Store) RefreshConnected(ctx context.Context, provider string) error {
 	return nil
 }
 
-// SignedOutError is a connected key a signed-out schedule's fire cannot
-// ready: a Hugging Face token is renewed at each run's start with the
-// refresh token kept in the keychain, which is locked while the person is
-// signed out, and the copy sealed for the schedule is never renewed
-// (agentry-cli#811). The refresh token is not sealed beside it: a rotated
-// one could not be written back, and the keychain's would stop working.
+// SignedOutError is a connected key a signed-out schedule's fire cannot ready:
+// a Hugging Face token is renewed at each run's start with the refresh token
+// kept in the keychain, which is locked while the person is signed out, and the
+// copy sealed for the schedule is never renewed. The refresh token is not
+// sealed beside it: a rotated one could not be written back, and the keychain's
+// would stop working.
 type SignedOutError struct{ Vendor string }
 
 func (e *SignedOutError) Error() string {

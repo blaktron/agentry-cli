@@ -57,7 +57,7 @@ func riskyFile(path, mime, sum string, check runnerdecode.Check) runnerdecode.Fi
 // Only the risky files are looked up, by hash, archive members included;
 // a file ClamAV found and a .git internal are not asked about; malicious
 // refuses, suspicious is noted, unseen is clean, and the receipt names
-// each outcome (plan §3 invariant 7).
+// each outcome.
 func TestLookUpAsksOnlyForRiskyFilesAndRefusesOnMalicious(t *testing.T) {
 	c, asked := overviewServer(t)
 	res := lookupResult(

@@ -9,18 +9,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The sentence a person reads when the policy will not parse
-// (agentry-cli#98). The decoder is strict on purpose — an unknown key
-// silently ignored is a control not applied — but yaml.v3's own words for
-// that ("line 32: field harness not found in type policy.Policy") name a
-// Go type and cannot tell a mistyped key from a file written by a newer
-// Agentry than the one reading it, which is the case a person cannot act
-// on without being told. So each of the decoder's errors is put in the
-// reader's terms: an unknown key names both causes and the action for
-// each, a value of the wrong kind says what was found and what belongs
-// there, and anything else — malformed YAML — keeps the decoder's own
-// detail, which for those is exact. Strictness is unchanged: nothing is
-// ignored, and every error the decoder raised is still an error.
+// The sentence a person reads when the policy will not parse. The decoder is
+// strict on purpose — an unknown key silently ignored is a control not applied
+// — but yaml.v3's own words for that ("line 32: field harness not found in type
+// policy.Policy") name a Go type and cannot tell a mistyped key from a file
+// written by a newer Agentry than the one reading it, which is the case a
+// person cannot act on without being told. So each of the decoder's errors is
+// put in the reader's terms: an unknown key names both causes and the action
+// for each, a value of the wrong kind says what was found and what belongs
+// there, and anything else — malformed YAML — keeps the decoder's own detail,
+// which for those is exact. Strictness is unchanged: nothing is ignored, and
+// every error the decoder raised is still an error.
 
 var (
 	unknownFieldRE = regexp.MustCompile(`^line (\d+): field (\S+) not found in type \S+$`)

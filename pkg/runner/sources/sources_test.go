@@ -169,7 +169,7 @@ func TestTheReportIsHeldToItsShape(t *testing.T) {
 	}
 }
 
-// TestARefusalsCountIsHeldToItsWords pins agentry-cli#884: a refusal's
+// TestARefusalsCountIsHeldToItsWords pins that a refusal's
 // typed count passes only with its refusal, in the closed words, and a
 // url source's only as bytes.
 func TestARefusalsCountIsHeldToItsWords(t *testing.T) {
@@ -321,7 +321,7 @@ func TestAKeychainThatCannotBeReadIsSaid(t *testing.T) {
 	}
 }
 
-// TestASignedOutFireReadsItsSealedSourceKey (agentry-cli#854): a fire of a
+// TestASignedOutFireReadsItsSealedSourceKey: a fire of a
 // schedule that runs while its person is signed out has no keychain
 // (AGENTRY_NO_KEYRING) and its saved keys sealed beside it. A source's
 // saved key is read from that credential and the receipt says so; a host

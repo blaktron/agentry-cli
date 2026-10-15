@@ -12,16 +12,15 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-// The sealed source (agentry-cli#749, plan quickagent-scheduling.md D18):
-// a schedule that runs while its person is signed out finds the keychain
-// locked, so the keychain values its fire reads are sealed, when it is
-// made, into an encrypted systemd credential (`systemd-creds encrypt
+// The sealed source: a schedule that runs while its person is signed out finds
+// the keychain locked, so the keychain values its fire reads are sealed, when
+// it is made, into an encrypted systemd credential (`systemd-creds encrypt
 // --user`). Its service unit loads the credential with
-// LoadCredentialEncrypted=, and systemd decrypts it, for as long as the
-// service runs, into $CREDENTIALS_DIRECTORY: a folder in memory under the
-// user's runtime directory, which processes of the same user can read, as
-// they can read an unlocked keychain. The unit also sets AGENTRY_NO_KEYRING,
-// so nothing waits on a keychain that cannot unlock.
+// LoadCredentialEncrypted=, and systemd decrypts it, for as long as the service
+// runs, into $CREDENTIALS_DIRECTORY: a folder in memory under the user's
+// runtime directory, which processes of the same user can read, as they can
+// read an unlocked keychain. The unit also sets AGENTRY_NO_KEYRING, so nothing
+// waits on a keychain that cannot unlock.
 //
 // While a sealed credential is present, every read of a keychain account
 // here (a model key, a person's own provider key, a registry token) is

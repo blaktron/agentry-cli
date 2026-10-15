@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// riskyTypes are the detected types looked up (plan §7, D11): executables
+// riskyTypes are the detected types looked up: executables
 // and libraries, installers and packages, legacy and macro Office, RTF,
 // PDF, CHM, disk images and shortcuts. A type is matched without its
 // parameters.
@@ -59,13 +59,12 @@ var riskyTypes = map[string]bool{
 	"application/x-chm":           true,
 }
 
-// riskyNames are the extensions looked up whatever the content was
-// detected as: the scripts and shortcuts a detector reads as plain text or
-// data, and each risky type's own extension, so a file whose detection
-// failed is still looked up. A text file's type is libmagic's since
-// agentry-cli#630, and libmagic calls a plain .mjs text/plain where Tika's
-// name globs said text/javascript. Over-asking costs a lookup of a hash,
-// never a file.
+// riskyNames are the extensions looked up whatever the content was detected as:
+// the scripts and shortcuts a detector reads as plain text or data, and each
+// risky type's own extension, so a file whose detection failed is still looked
+// up. A text file's type is libmagic's, and libmagic calls a plain .mjs
+// text/plain where Tika's name globs said text/javascript. Over-asking costs a
+// lookup of a hash, never a file.
 var riskyNames = map[string]bool{
 	"exe": true, "dll": true, "scr": true, "com": true, "sys": true, "msi": true, "apk": true, "jar": true,
 	"js": true, "mjs": true, "cjs": true, "jse": true, "vbs": true, "vbe": true, "ps1": true, "psm1": true, "bat": true, "cmd": true, "hta": true, "wsf": true,
@@ -75,7 +74,7 @@ var riskyNames = map[string]bool{
 }
 
 // Risky says whether a file of this detected type, at this report path,
-// is looked up (D11). Everything else is never sent.
+// is looked up. Everything else is never sent.
 func Risky(mime, p string) bool {
 	mime, _, _ = strings.Cut(mime, ";")
 	if riskyTypes[strings.ToLower(strings.TrimSpace(mime))] {

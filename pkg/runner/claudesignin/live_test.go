@@ -34,13 +34,13 @@ func (w *syncWriter) String() string {
 	return w.b.String()
 }
 
-// The real Claude Code image signs in through the browser alone
-// (agentry-cli#848), on a real daemon, with no account: the test is the
-// browser and answers Claude Code's callback with a code Anthropic will
-// refuse. That the refusal comes back as Claude Code's own "Login failed"
-// proves the address reached the opener, the relay reached Claude Code's
-// callback in the container, and Claude Code exchanged the code itself.
-// It builds the image when it is not here (network: npm and the base).
+// The real Claude Code image signs in through the browser alone, on a real
+// daemon, with no account: the test is the browser and answers Claude Code's
+// callback with a code Anthropic will refuse. That the refusal comes back as
+// Claude Code's own "Login failed" proves the address reached the opener, the
+// relay reached Claude Code's callback in the container, and Claude Code
+// exchanged the code itself. It builds the image when it is not here (network:
+// npm and the base).
 //
 //	AGENTRY_LIVE_CLAUDE_SIGNIN=1 go test -run TestLiveClaudeImageBrowserSignIn ./pkg/runner/claudesignin
 func TestLiveClaudeImageBrowserSignIn(t *testing.T) {

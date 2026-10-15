@@ -7,13 +7,12 @@ import (
 	"testing"
 )
 
-// TestNoReceiptFieldIsNamedInCredits (plan scan-and-run-tweaks.md invariant
-// 10; agentry-cli#500): the envelope is the CLI's record of a run on the
-// person's own model provider, and it states the run's usage in tokens and
-// dollars. No field of it, at any depth, is named for credits: those are
-// what a hosted run reports, and the registry works them out from the
-// token counts here. (The files a run writes beside it are read by the
-// engine's TestALocalRunsOutputIsInTokens.)
+// TestNoReceiptFieldIsNamedInCredits: the envelope is the CLI's record of a run
+// on the person's own model provider, and it states the run's usage in tokens
+// and dollars. No field of it, at any depth, is named for credits: those are
+// what a hosted run reports, and the registry works them out from the token
+// counts here. (The files a run writes beside it are read by the engine's
+// TestALocalRunsOutputIsInTokens.)
 func TestNoReceiptFieldIsNamedInCredits(t *testing.T) {
 	seen := map[reflect.Type]bool{}
 	var walk func(path string, ty reflect.Type)

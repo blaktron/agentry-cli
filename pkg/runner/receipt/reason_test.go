@@ -49,7 +49,7 @@ func TestReasonCleanKeepsOnlyTheClosedList(t *testing.T) {
 	}
 }
 
-// TestReasonCleanKeepsASourcesCount pins agentry-cli#884: a source's
+// TestReasonCleanKeepsASourcesCount pins that a source's
 // refusal names its question id and its count in typed fields, held to the
 // closed lists, and no other input refusal names or counts anything.
 func TestReasonCleanKeepsASourcesCount(t *testing.T) {
@@ -180,7 +180,7 @@ func TestReasonCodesAreTheClosedList(t *testing.T) {
 }
 
 // An organization's policy is named by a word of its closed list, never by
-// the vendor's text (agentry-cli#741).
+// the vendor's text.
 func TestAnOrgPolicyReasonKeepsOnlyItsWord(t *testing.T) {
 	for _, d := range []string{OrgPolicyClient, OrgPolicyManagedApproval} {
 		if r := (&Reason{Code: ReasonOrgPolicy, Detail: d}).Clean(); r == nil || r.Detail != d {
@@ -192,7 +192,7 @@ func TestAnOrgPolicyReasonKeepsOnlyItsWord(t *testing.T) {
 	}
 }
 
-// A blocked run's reasons (agentry-cli#629): the agent's carries no names
+// A blocked run's reasons: the agent's carries no names
 // and no detail, whatever was attached to it, since its sentence is the
 // model's; the runner's keeps only its evidence's word.
 func TestBlockedReasonsKeepNoText(t *testing.T) {
@@ -214,7 +214,7 @@ func TestBlockedReasonsKeepNoText(t *testing.T) {
 }
 
 // A target host is named by its question's id and why by a word of the
-// closed list, never by the host's name or address (agentry-cli#861).
+// closed list, never by the host's name or address.
 func TestAHostRefusalKeepsTheQuestionAndItsWord(t *testing.T) {
 	r := (&Reason{Code: ReasonHostRefused, Detail: HostKeyChanged, Names: []string{"server", "box.example.com", "203.0.113.4", "admin@box"}}).Clean()
 	if r == nil || r.Detail != HostKeyChanged || !reflect.DeepEqual(r.Names, []string{"server"}) {

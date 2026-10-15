@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// devRuntimes is agentry-dev-web's `docker info --format '{{json .Runtimes}}'`
-// on 2026-09-27, each runtime's status trimmed: the table a registration
+// devRuntimes is a gVisor host's `docker info --format '{{json .Runtimes}}'`,
+// each runtime's status trimmed: the table a registration
 // is checked against, parsed through the same struct tags Runtimes uses.
 func devRuntimes(t *testing.T) map[string]Runtime {
 	t.Helper()
@@ -25,7 +25,7 @@ func devRuntimes(t *testing.T) map[string]Runtime {
 	return table
 }
 
-// TestCheckHostUDSRegistration (agentry-cli#396): the gateway's runtime is
+// TestCheckHostUDSRegistration: the gateway's runtime is
 // held to what it runs, not its name. It must be the runtime's own binary
 // with the runtime's own arguments plus --host-uds=open and nothing else;
 // a registration named for gVisor that runs runc, plain runsc, another

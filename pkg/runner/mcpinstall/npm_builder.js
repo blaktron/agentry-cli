@@ -1,22 +1,21 @@
-// The npm MCP-server builder (agentry-cli#91). It runs in the policy's Node
+// The npm MCP-server builder. It runs in the policy's Node
 // runtime image as
 //
 //   node -e <this file> PREFIX PACKAGE VERSION REGISTRY INTEGRITY
 //
-// so every value arrives as its own argv element and reaches npm as one,
-// never through a shell. The pinned package's tarball is fetched with
-// `npm pack` (which keeps the registry's bytes), hashed here against the
-// integrity the runner recorded when it resolved the pin, and only then
-// installed — from that verified file, never from a second fetch. This is
-// the npm half of what the PyPI builder does for wheels (agentry-cli#4,
-// DR-13). The dependency closure is still fetched and checked by npm itself
-// against the registry's own metadata: nothing Agentry publishes pins it yet
-// (agentry#471, agentry-cli#92).
+// so every value arrives as its own argv element and reaches npm as one, never
+// through a shell. The pinned package's tarball is fetched with `npm pack`
+// (which keeps the registry's bytes), hashed here against the integrity the
+// runner recorded when it resolved the pin, and only then installed — from that
+// verified file, never from a second fetch. This is the npm half of what the
+// PyPI builder does for wheels. The dependency closure is still fetched and
+// checked by npm itself against the registry's own metadata: nothing Agentry
+// publishes pins it yet.
 //
-// Since agentry-cli#608 the verified tarball's own `engines.node` is
-// checked against this runtime's Node before the install: npm only warns
-// (EBADENGINE), and a server built for a newer Node installs, starts and
-// then fails every tool call (`Promise.try is not a function` on Node 22).
+// The verified tarball's own `engines.node` is checked against this runtime's
+// Node before the install: npm only warns (EBADENGINE), and a server built for
+// a newer Node installs, starts and then fails every tool call (`Promise.try is
+// not a function` on Node 22).
 //
 // Exit 3: nothing to verify against (no recorded integrity, or not exactly
 // one tarball); exit 4: the tarball does not match; exit 5: its

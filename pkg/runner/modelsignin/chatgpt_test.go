@@ -58,7 +58,7 @@ func TestSignInChatGPTKeepsTheGrantAndTheRegistration(t *testing.T) {
 		t.Fatalf("host id %q, sent %q", host, v.Authorizations[0].Get("ext_agent_host_id"))
 	}
 	// No token is on disk: the refresh token is in the keychain, and no
-	// access token is kept at all (I3).
+	// access token is kept at all.
 	if files := storeFiles(t, home); strings.Contains(files, "PROBE-") {
 		t.Fatal("a token was written into the store's files")
 	}

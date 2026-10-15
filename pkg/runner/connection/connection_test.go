@@ -60,7 +60,7 @@ func grant(t *testing.T, v *mcpauthtest.Vendor) *mcpauth.Grant {
 
 var release = connection.Key{Ref: "acme/mail@1.0.0", Digest: "sha256:aaaa", Server: "https://mcp.example/mcp"}
 
-// D4/D10: a connection opens for the release that made it alone.
+// A connection opens for the release that made it alone.
 func TestAConnectionOpensForItsReleaseAlone(t *testing.T) {
 	v := mcpauthtest.New(t)
 	v.DCR = true

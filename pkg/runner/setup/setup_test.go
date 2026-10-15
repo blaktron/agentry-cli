@@ -1,5 +1,5 @@
-// Setup-flow tests through a scripted Prompter: the §P1 provider table,
-// custom endpoints deriving the proxy allowlist, and the §P3 guided
+// Setup-flow tests through a scripted Prompter: the provider table,
+// custom endpoints deriving the proxy allowlist, and the guided
 // profile conversation.
 package setup
 
@@ -83,7 +83,7 @@ func TestConfigureModelCustomNeedsBaseURLInYesMode(t *testing.T) {
 	}
 }
 
-// TestConfigureModelYesKeepsTheSameProvidersBaseURL (agentry-cli#188): the
+// TestConfigureModelYesKeepsTheSameProvidersBaseURL: the
 // same-provider rule — keep what the operator customized — covers the base
 // URL as it covers the model and the variable, so an unattended re-run on
 // a custom policy needs no --base-url and derives the allowlist from the
@@ -373,9 +373,9 @@ func TestHostPortOf(t *testing.T) {
 	}
 }
 
-// TestConfigureModelStoresTheKeyInTheKeychain (agentry-cli#148): on a
-// terminal the flow offers to store the key; the secret goes to the store
-// seam and the policy records only the source.
+// TestConfigureModelStoresTheKeyInTheKeychain: on a terminal the flow offers to
+// store the key; the secret goes to the store seam and the policy records only
+// the source.
 func TestConfigureModelStoresTheKeyInTheKeychain(t *testing.T) {
 	var stored []string
 	p := &scriptPrompter{answers: []string{"anthropic", "", "", "sk-live-secret"}, confirm: true}
@@ -456,9 +456,9 @@ func TestConfigureModelYesKeepsAndSetsTheSource(t *testing.T) {
 	}
 }
 
-// TestConfigureModelStoreFailureDegradesToEnv (agentry-cli#148): a
-// keychain that cannot be reached leaves the policy on the variable path,
-// written, with the reason said and no secret in the transcript.
+// TestConfigureModelStoreFailureDegradesToEnv: a keychain that cannot be
+// reached leaves the policy on the variable path, written, with the reason said
+// and no secret in the transcript.
 func TestConfigureModelStoreFailureDegradesToEnv(t *testing.T) {
 	p := &scriptPrompter{answers: []string{"anthropic", "", "", "sk-live-secret"}, confirm: true}
 	pol := policy.Default()
@@ -521,12 +521,11 @@ type failingConfirmingPrompter struct{ failingPrompter }
 
 func (f *failingConfirmingPrompter) Confirm(string, bool) (bool, error) { return true, f.step() }
 
-// The credential's kind (agentry-cli#171) is read from the key at the
-// one moment the flow holds it: a subscription token stored for
-// anthropic records apiKeyKind subscription and says what it drives; an
-// API key records nothing (api is the default, unwritten); a
-// variable-only setup takes the kind as an option; a switch of provider
-// drops a kind that was the old provider's; a bad kind is refused.
+// The credential's kind is read from the key at the one moment the flow holds
+// it: a subscription token stored for anthropic records apiKeyKind subscription
+// and says what it drives; an API key records nothing (api is the default,
+// unwritten); a variable-only setup takes the kind as an option; a switch of
+// provider drops a kind that was the old provider's; a bad kind is refused.
 func TestConfigureModelRecordsTheCredentialKind(t *testing.T) {
 	store := func(string, string) error { return nil }
 	p := &scriptPrompter{answers: []string{"anthropic", "", "", "sk-ant-oat01-secret"}, confirm: true}
@@ -542,7 +541,7 @@ func TestConfigureModelRecordsTheCredentialKind(t *testing.T) {
 		t.Fatalf("said = %q", p.said)
 	}
 	// The shared sentence is said as it stands, never after a prefix that
-	// breaks its grammar (agentry-cli#183).
+	// breaks its grammar.
 	if !slices.Contains(p.said, policy.SubscriptionTokenSentence) || strings.Contains(said, "the key is an Anthropic") {
 		t.Fatalf("the sentence is not said on its own line: %q", p.said)
 	}
@@ -575,9 +574,8 @@ func TestConfigureModelRecordsTheCredentialKind(t *testing.T) {
 	}
 }
 
-// TestGuidedProfileSaysEachKeysHelp: the release guide's connect help
-// (DEV-141, agentry-cli#257) is printed before the question for that key,
-// and a key without help gets none.
+// TestGuidedProfileSaysEachKeysHelp: the release guide's connect help is
+// printed before the question for that key, and a key without help gets none.
 func TestGuidedProfileSaysEachKeysHelp(t *testing.T) {
 	p := &scriptPrompter{confirm: true}
 	_, err := GuidedProfile(p, GuidedProfileOpts{
@@ -600,7 +598,7 @@ func TestGuidedProfileSaysEachKeysHelp(t *testing.T) {
 }
 
 // A custom endpoint over plain http off this machine is configured, with
-// the warning said (agentry-cli#377); https and loopback say nothing.
+// the warning said; https and loopback say nothing.
 func TestConfigureModelCustomPlainHTTPIsAllowedWithAWarning(t *testing.T) {
 	for _, tc := range []struct {
 		url  string
@@ -629,7 +627,7 @@ func TestConfigureModelCustomPlainHTTPIsAllowedWithAWarning(t *testing.T) {
 }
 
 // An IPv6 endpoint's allowlist entry is bracketed, the form the proxy
-// parses (agentry-cli#377 review).
+// parses.
 func TestHostPortOfBracketsIPv6(t *testing.T) {
 	for in, want := range map[string]string{
 		"http://[fe80::1]:8000/v1": "[fe80::1]:8000",
@@ -642,13 +640,12 @@ func TestHostPortOfBracketsIPv6(t *testing.T) {
 	}
 }
 
-// TestGuidedProfileQuotesAMultiLineHelp (agentry-cli#419, DEV-167): a
-// key's help is markdown that may span lines, so it is said beneath the
-// key's name with every line behind termtext's gutter. A help line that
-// reads like the CLI's own (a prompt for another key, a contract line)
-// cannot start where the CLI's lines start, and what reaches the terminal
-// is cleaned: the core refuses control characters, and this is the second
-// defence.
+// TestGuidedProfileQuotesAMultiLineHelp: a key's help is markdown that may span
+// lines, so it is said beneath the key's name with every line behind termtext's
+// gutter. A help line that reads like the CLI's own (a prompt for another key,
+// a contract line) cannot start where the CLI's lines start, and what reaches
+// the terminal is cleaned: the core refuses control characters, and this is the
+// second defence.
 func TestGuidedProfileQuotesAMultiLineHelp(t *testing.T) {
 	p := &scriptPrompter{confirm: true}
 	_, err := GuidedProfile(p, GuidedProfileOpts{
@@ -698,7 +695,7 @@ func (a *askRecorder) AskSecret(q string) (string, error) {
 	return a.next(), nil
 }
 
-// TestGuidedProfileSaysWhichSecretsAreOptional (DR-70): an optional secret
+// TestGuidedProfileSaysWhichSecretsAreOptional: an optional secret
 // is asked like the others, said to be optional, and its empty answer is
 // recorded as absent, so the run goes without it.
 func TestGuidedProfileSaysWhichSecretsAreOptional(t *testing.T) {

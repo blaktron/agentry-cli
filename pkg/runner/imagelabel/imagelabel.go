@@ -1,10 +1,9 @@
-// Package imagelabel names the label every image the runner builds
-// carries (agentry-cli#892): org.agentry.image=<kind>. A build's tag is
-// content-keyed, so a new CLI, runner content, exec catalogue or pin
-// builds a new tag and leaves the old image behind, and the classic
-// builder leaves a multi-stage build's earlier stages behind untagged.
-// Neither can be found by name; both can by this label, which is what the
-// desktop's Docker images list and removal select by.
+// Package imagelabel names the label every image the runner builds carries:
+// org.agentry.image=<kind>. A build's tag is content-keyed, so a new CLI,
+// runner content, exec catalogue or pin builds a new tag and leaves the old
+// image behind, and the classic builder leaves a multi-stage build's earlier
+// stages behind untagged. Neither can be found by name; both can by this label,
+// which is what the desktop's Docker images list and removal select by.
 //
 // The label is written into each Dockerfile, in every stage that runs an
 // instruction, rather than passed as `docker build --label`: the flag

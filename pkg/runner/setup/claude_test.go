@@ -34,9 +34,9 @@ func (a *askingPrompter) Ask(q, def string) (string, error) {
 
 // Choosing the Claude subscription starts Claude Code's own sign-in and
 // writes the policy's model block: no key variable, no base URL, Anthropic's
-// API and the host Claude Code refreshes at the only egress (I2). The
-// choice is worded as the plan says, and the key choice names the Max and
-// Team plans' monthly API credits (D24).
+// API and the host Claude Code refreshes at the only egress. The
+// choice is worded with ClaudeSignInLabel, and the key choice names the Max and
+// Team plans' monthly API credits.
 func TestSetupChoosesTheClaudeSubscriptionThroughClaudeCode(t *testing.T) {
 	pol := policy.Default()
 	f := &fakeClaude{}

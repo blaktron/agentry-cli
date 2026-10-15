@@ -11,17 +11,15 @@ import (
 
 // RuntimeMismatch says why a resolved server's own declared runtime range
 // (Resolved.DeclaredRuntime: npm's engines.node, PyPI's requires_python)
-// excludes the runtime it would run on, node or python being that
-// runtime's version (policy.DefaultNodeVersion, policy.DefaultPythonVersion),
-// or "" when the range admits it or the release declares none
-// (agentry-cli#609). An npm range that cannot be read admits nothing, as
-// npm's engine-strict treats one; a requires_python that cannot be read
-// admits everything, as pip ignores one ("Ignoring invalid
-// Requires-Python"). The reason quotes the declared range only when it is
-// a plain range (plainRange): the text is the package author's, and the
-// reason reaches the Drafter's model. It reads the registry's metadata,
-// not the artifact: the npm builder's check at install reads the tarball
-// itself (agentry-cli#608).
+// excludes the runtime it would run on, node or python being that runtime's
+// version (policy.DefaultNodeVersion, policy.DefaultPythonVersion), or "" when
+// the range admits it or the release declares none. An npm range that cannot be
+// read admits nothing, as npm's engine-strict treats one; a requires_python
+// that cannot be read admits everything, as pip ignores one ("Ignoring invalid
+// Requires-Python"). The reason quotes the declared range only when it is a
+// plain range (plainRange): the text is the package author's, and the reason
+// reaches the Drafter's model. It reads the registry's metadata, not the
+// artifact: the npm builder's check at install reads the tarball itself.
 func RuntimeMismatch(r Resolved, node, python string) string {
 	if r.DeclaredRuntime == "" {
 		return ""

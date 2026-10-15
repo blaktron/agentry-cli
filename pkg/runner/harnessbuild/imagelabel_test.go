@@ -7,8 +7,7 @@ import (
 )
 
 // Both harness builds label the unpack stage as well as the image, so the
-// stage the classic builder leaves untagged is found by label
-// (agentry-cli#892).
+// stage the classic builder leaves untagged is found by label.
 func TestHarnessBuildsLabelEveryStage(t *testing.T) {
 	if err := imagelabel.Check(claudeDockerfile, imagelabel.ClaudeCode); err != nil {
 		t.Errorf("claude code: %v", err)

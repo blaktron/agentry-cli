@@ -1,9 +1,7 @@
-// Package dockerx wraps the docker CLI behind the smallest interface the
-// engine needs. The CLI, not an SDK: the runner targets "plain docker CE
-// on a server" (RUNNER-PLAN R14 heritage), the CLI is the one interface
-// guaranteed present there, and an interface this small stays fakeable —
-// the whole execute path is unit-tested against Fake (RUNNER-DEVIATIONS
-// DR-7 records why that matters on this machine).
+// Package dockerx wraps the docker CLI behind the smallest interface the engine
+// needs. The CLI, not an SDK: the runner targets "plain docker CE on a server",
+// the CLI is the one interface guaranteed present there, and an interface this
+// small stays fakeable — the whole execute path is unit-tested against Fake.
 package dockerx
 
 import (
@@ -47,12 +45,12 @@ type Client interface {
 	// ImageFile reads one file out of an image without running it (a
 	// stopped container is created, copied from, removed).
 	ImageFile(ctx context.Context, ref, path string) ([]byte, error)
-	// Pull pulls ref (first-use install of pinned images, RQ2).
+	// Pull pulls ref (first-use install of pinned images).
 	Pull(ctx context.Context, ref string) error
 	// Build builds dir into tag with the given build args.
 	Build(ctx context.Context, dir, tag string, buildArgs map[string]string) error
 	// NetworkCreate creates a bridge network; internal networks have no
-	// route out (§R4 agent topology).
+	// route out.
 	NetworkCreate(ctx context.Context, name string, internal bool, labels map[string]string) error
 	// NetworkConnect attaches an existing container to another network.
 	NetworkConnect(ctx context.Context, network, container string) error
@@ -113,26 +111,25 @@ type RunSpec struct {
 	// The exception is a name the docker client reads itself (clientReads:
 	// HOME, PATH, USERPROFILE, DOCKER_*): set in the client's environment
 	// it would reconfigure the client, so it goes as `-e NAME=value` and
-	// must never carry a secret (agentry-cli#589).
+	// must never carry a secret.
 	Env map[string]string
 	// Mounts are bind mounts.
 	Mounts []Mount
 	// Volumes are anonymous volumes mounted at these paths, each with its
 	// own labels (`--mount type=volume,dst=…,volume-label=k=v`), in place
 	// of the unlabelled anonymous volume an image's VOLUME would otherwise
-	// get (agentry-cli#458). Like any anonymous volume they go with their
+	// get. Like any anonymous volume they go with their
 	// container (RemoveForce passes -v); the labels let teardown and the
 	// sweeps find one whose container went some other way.
 	Volumes []VolumeMount
 	// Network and Alias attach the container to the run network.
 	Network string
 	Alias   string
-	// ExtraNetworks are the container's other networks, joined at create
-	// rather than by a connect after start: a sandboxed runtime's network
-	// stack takes no network connected once it runs (measured under gVisor
-	// on dev, agentry-cli#337), and docker refuses the default bridge
-	// beside a user-defined network at create, so each is user-defined.
-	// Alias, if any, is Network's alone.
+	// ExtraNetworks are the container's other networks, joined at create rather
+	// than by a connect after start: a sandboxed runtime's network stack takes
+	// no network connected once it runs (as under gVisor), and docker refuses
+	// the default bridge beside a user-defined network at create, so each is
+	// user-defined. Alias, if any, is Network's alone.
 	ExtraNetworks []string
 	// Hostname sets the container's hostname when it must differ from
 	// the container name (the gateway looks itself up by hostname).
@@ -141,23 +138,22 @@ type RunSpec struct {
 	Labels map[string]string
 	// User runs the container's process as this uid:gid (`--user`), for a
 	// container that writes into a directory the invoking user owns and
-	// must be able to remove afterwards (the MCP server installer,
-	// agentry-cli#112). Empty leaves the image's own user.
+	// must be able to remove afterwards (the MCP server installer).
+	// Empty leaves the image's own user.
 	User string
 	// Runtime names the daemon's OCI runtime for this container
 	// (`--runtime`): a policy's docker.runtime, so the container that runs
-	// the QuickAgent's code can sit behind gVisor on a host that has it
-	// (DR-23). Empty leaves the daemon's default, which is what every local
-	// run had before the knob.
+	// the QuickAgent's code can sit behind gVisor on a host that has it.
+	// Empty leaves the daemon's default.
 	Runtime string
 	// ExtraHosts pins names to addresses in the container's /etc/hosts
 	// (`--add-host name:ip`). A sandboxed runtime's network stack does not
 	// reach docker's embedded DNS, so the run network's aliases travel
-	// this way when a runtime is set (DR-23).
+	// this way when a runtime is set.
 	ExtraHosts []string
 	// Entrypoint replaces the image's entrypoint (`--entrypoint`): for a
 	// one-shot that borrows an image for a shell command, such as the
-	// session store's ownership step (agentry-cli#90). Empty keeps it.
+	// session store's ownership step. Empty keeps it.
 	Entrypoint string
 	// Interactive attaches stdin (foreground runs).
 	Interactive bool
@@ -172,17 +168,16 @@ type RunSpec struct {
 	// drives the host's docker daemon: an SELinux-enabled daemon confines
 	// container processes so they cannot open the docker socket at all, and
 	// the alternative — relabeling the socket itself — would hand that
-	// access to every container on the machine instead of this one
-	// (agentry-cli#85). Every other container in a run stays confined. On a
+	// access to every container on the machine instead of this one.
+	// Every other container in a run stays confined. On a
 	// daemon built without SELinux support the option is accepted and does
 	// nothing.
 	DisableSELinuxLabel bool
 	// CapDrop and CapAdd are the container's capabilities (`--cap-drop`,
-	// `--cap-add`); NoNewPrivileges sets `--security-opt
-	// no-new-privileges`; ReadOnly makes the root filesystem read-only
-	// with Tmpfs as its writable scratch; PidsLimit, Memory and CPUs are
-	// its resource bounds (agentry-cli#163). Zero values leave docker's
-	// defaults.
+	// `--cap-add`); NoNewPrivileges sets `--security-opt no-new-privileges`;
+	// ReadOnly makes the root filesystem read-only with Tmpfs as its writable
+	// scratch; PidsLimit, Memory and CPUs are its resource bounds. Zero values
+	// leave docker's defaults.
 	CapDrop         []string
 	CapAdd          []string
 	NoNewPrivileges bool
@@ -193,10 +188,10 @@ type RunSpec struct {
 	CPUs            int
 }
 
-// WithPosture is r with the posture every run container takes
-// (agentry-cli#163, DR-30): every capability dropped, no privilege gained
-// through a setuid binary, and memory, CPUs and processes bounded. A
-// container that needs one capability back adds it to CapAdd afterwards.
+// WithPosture is r with the posture every run container takes: every capability
+// dropped, no privilege gained through a setuid binary, and memory, CPUs and
+// processes bounded. A container that needs one capability back adds it to
+// CapAdd afterwards.
 func (r RunSpec) WithPosture(memory string, cpus, pids int) RunSpec {
 	r.CapDrop = []string{"ALL"}
 	r.NoNewPrivileges = true
@@ -211,14 +206,14 @@ type Mount struct {
 	Source   string
 	Target   string
 	ReadOnly bool
-	// Relabel asks docker to give the source an SELinux label the
-	// container can read (the `z` option, agentry-cli#85). Set it for
-	// directories THIS RUN created and nothing else: relabeling is a write
-	// to the host's file labels, so pointing it at a path that belongs to
-	// the machine — the docker socket above all — would change what every
-	// other container on that host may touch. On a daemon built without
-	// SELinux support docker accepts the option and ignores it (measured:
-	// the source's label is untouched), so it costs nothing to carry.
+	// Relabel asks docker to give the source an SELinux label the container can
+	// read (the `z` option). Set it for directories THIS RUN created and
+	// nothing else: relabeling is a write to the host's file labels, so
+	// pointing it at a path that belongs to the machine — the docker socket
+	// above all — would change what every other container on that host may
+	// touch. On a daemon built without SELinux support docker accepts the
+	// option and ignores it (the source's label is untouched), so it costs
+	// nothing to carry.
 	Relabel bool
 }
 
@@ -271,15 +266,14 @@ func (c *CLI) run(ctx context.Context, args ...string) (string, error) {
 	return out.String(), nil
 }
 
-// Available implements Client. It asks the daemon for its version with
-// `docker version`, not `docker info`: info also fills in its client
-// section, which runs every CLI plugin for its metadata before the daemon
-// is asked. A current Docker Desktop ships about thirty, and on Windows
-// that took 2–6 s against about 0.1 s for version, answered or not. That
-// cost came out of the time a caller allows for an idle engine to wake
-// (agentry-cli#622). Both commands exit non-zero with the daemon's error
-// on stderr when nothing answers; a server version that comes back empty
-// is treated the same way.
+// Available implements Client. It asks the daemon for its version with `docker
+// version`, not `docker info`: info also fills in its client section, which
+// runs every CLI plugin for its metadata before the daemon is asked. A current
+// Docker Desktop ships about thirty, and on Windows that took 2–6 s against
+// about 0.1 s for version, answered or not. That cost would come out of the
+// time a caller allows for an idle engine to wake. Both commands exit non-zero
+// with the daemon's error on stderr when nothing answers; a server version that
+// comes back empty is treated the same way.
 func (c *CLI) Available(ctx context.Context) error {
 	if _, err := exec.LookPath(c.Bin); err != nil {
 		return fmt.Errorf("docker CLI not found (%s): the runner needs a docker engine — install docker or set AGENTRY_DOCKER", c.Bin)
@@ -297,7 +291,7 @@ func (c *CLI) Available(ctx context.Context) error {
 // OperatingSystem is what the daemon says it runs on (`docker info`'s
 // OperatingSystem): "Docker Desktop" for Docker Desktop, the host's
 // distribution for Docker Engine. A scheduled run that must go on after
-// its person signs out tells the two apart by it (agentry-cli#749).
+// its person signs out tells the two apart by it.
 func (c *CLI) OperatingSystem(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "info", "--format", "{{.OperatingSystem}}")
 	return strings.TrimSpace(out), err
@@ -312,7 +306,7 @@ type Runtime struct {
 
 // HostUDSOpen is the gVisor flag that lets a sandboxed container open a
 // Unix socket bind-mounted from the host: the gateway's way to its run's
-// docker filter (docker.gatewayRuntime, agentry-cli#337).
+// docker filter (docker.gatewayRuntime).
 const HostUDSOpen = "--host-uds=open"
 
 // Runtimes implements Client from `docker info`: the daemon's runtime
@@ -339,13 +333,13 @@ func SortedRuntimeNames(table map[string]Runtime) []string {
 	return names
 }
 
-// CheckHostUDSRegistration says why the registration named gateway is not
-// the one named runtime plus HostUDSOpen: the same binary, the runtime's
-// own arguments and that flag, nothing more. The receipt says the gateway
-// ran under that runtime, so a registration that runs runc, or adds a flag
-// such as --network=host or --host-uds=all, would make the claim false
-// (DR-23; agentry-cli#396). A name missing from the table, or a
-// registration with no binary, is refused too. nil when it is right.
+// CheckHostUDSRegistration says why the registration named gateway is not the
+// one named runtime plus HostUDSOpen: the same binary, the runtime's own
+// arguments and that flag, nothing more. The receipt says the gateway ran under
+// that runtime, so a registration that runs runc, or adds a flag such as
+// --network=host or --host-uds=all, would make the claim false. A name missing
+// from the table, or a registration with no binary, is refused too. nil when it
+// is right.
 func CheckHostUDSRegistration(table map[string]Runtime, runtime, gateway string) error {
 	rt, ok := table[runtime]
 	if !ok {
@@ -443,8 +437,7 @@ func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
 // ImageFile implements Client: `docker create` a container from the image
 // (never started — the exec image has no shell to start with), `docker cp`
 // the path out as a tar stream, `docker rm -fv` the container: -v, since
-// creating it gave each VOLUME the image declares an anonymous volume
-// (agentry-cli#458).
+// creating it gave each VOLUME the image declares an anonymous volume.
 func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
 	id, err := c.run(ctx, "create", ref)
 	if err != nil {
@@ -619,7 +612,7 @@ func (c *CLI) Stop(ctx context.Context, name string, timeoutSeconds int) error {
 // RemoveForce implements Client.
 func (c *CLI) RemoveForce(ctx context.Context, name string) error {
 	// -v: the container's anonymous volumes go with it, an image's
-	// VOLUME (the gateway's /misc, agentry-cli#458) included. Docker never
+	// VOLUME (the gateway's /misc) included. Docker never
 	// takes a named volume by -v (the session's among them) nor an
 	// anonymous one another container still uses.
 	_, err := c.run(ctx, "rm", "-fv", name)
@@ -680,8 +673,7 @@ func (c *CLI) PSLabels(ctx context.Context, label string, keys []string) ([]Labe
 
 // Logs implements Client. Both streams are returned: a container's stderr
 // (where the gateway writes its startup errors) comes out of `docker logs`
-// on stderr, and a diagnostic that dropped it explained nothing
-// (agentry-cli#41).
+// on stderr, and a diagnostic that dropped it explained nothing.
 func (c *CLI) Logs(ctx context.Context, name string, tail int) (string, error) {
 	// docker's --tail 0 prints nothing; a non-positive tail here means the
 	// whole log, which a startup check over the gateway's output needs.
@@ -839,7 +831,7 @@ func (r RunSpec) envPairs() []string {
 // and with it the current context, so the gateway's HOME=/root, passed by
 // name, sent `docker run` to the default socket; on Docker Desktop for
 // macOS, which reaches its engine only through its context, there is none
-// and every run failed at the gateway (agentry-cli#589). PATH is where the
+// and every run failed at the gateway. PATH is where the
 // client finds its credential helpers, and DOCKER_* is its own namespace.
 // Windows' names are case-insensitive, so the match is too.
 func clientReads(name string) bool {

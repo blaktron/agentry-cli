@@ -1,5 +1,5 @@
 // Package mcpinstall resolves and installs the MCP servers a QuickAgent
-// declares (RUNNER-PLAN-3): resolution turns each manifest pin into the
+// declares: resolution turns each manifest pin into the
 // exact registry artifact (npm / PyPI metadata, integrity recorded);
 // installation materializes the dependency closure into the signature's
 // server store inside a pinned runtime container. The store lives under
@@ -50,48 +50,44 @@ type Resolved struct {
 	// ID is the store subdirectory and catalog-name stem: source plus the
 	// sanitized package name.
 	ID string `json:"id"`
-	// BinName is the launchable entry: the npm bin name, or the PyPI
-	// console script. For PyPI the JSON API does not expose entry points,
-	// so resolution starts from the normalized project name and
-	// EnsureInstalled replaces it with the console script the installed
-	// distribution actually declares (entry_points.txt, agentry-cli#13 /
-	// DR-11); the recorded resolution carries the resolved name.
+	// BinName is the launchable entry: the npm bin name, or the PyPI console
+	// script. For PyPI the JSON API does not expose entry points, so resolution
+	// starts from the normalized project name and EnsureInstalled replaces it
+	// with the console script the installed distribution actually declares
+	// (entry_points.txt); the recorded resolution carries the resolved name.
 	BinName string `json:"binName"`
 	// Integrity is what the registry advertised for the artifact (npm SRI
 	// or "sha256:<hex>" for PyPI — the pure-Python wheel when one exists).
 	Integrity string `json:"integrity,omitempty"`
 	// Artifacts (PyPI) maps every advertised filename to its sha256 hex,
 	// so the builder can verify whichever wheel pip picks for its platform
-	// against what the registry's metadata said (agentry-cli#4).
+	// against what the registry's metadata said.
 	Artifacts map[string]string `json:"artifacts,omitempty"`
 	// InstalledAt is stamped by EnsureInstalled.
 	InstalledAt string `json:"installedAt,omitempty"`
 	// StoreDigest is the server store's tree as the install left it
-	// (storeDigest); a reuse that finds anything else refuses
-	// (agentry-cli#162). The runs mount the store read-only, so nothing
-	// legitimate changes it after the install.
+	// (storeDigest); a reuse that finds anything else refuses. The runs mount
+	// the store read-only, so nothing legitimate changes it after the install.
 	StoreDigest string `json:"storeDigest,omitempty"`
 	// FetchHosts are the hosts, other than the registry's own, that the
 	// registry's metadata said the pinned artifact is downloaded from (the
 	// npm tarball's host; PyPI's file host, files.pythonhosted.org for
-	// pypi.org). They join the install proxy's allowlist
-	// (agentry-cli#92).
+	// pypi.org). They join the install proxy's allowlist.
 	FetchHosts []string `json:"fetchHosts,omitempty"`
 	// InstallEgress is the allowlist the install's proxy enforced, as
 	// host:port, stamped by EnsureInstalled; the proxy's own decisions are
-	// in <id>.install-proxy.log beside this record (agentry-cli#92).
+	// in <id>.install-proxy.log beside this record.
 	InstallEgress []string `json:"installEgress,omitempty"`
 	// DeclaredRuntime is the language range the release declares for
 	// itself, as the registry's metadata gives it: npm's engines.node,
-	// PyPI's requires_python; "" when it declares none (RuntimeMismatch,
-	// agentry-cli#609).
+	// PyPI's requires_python; "" when it declares none (RuntimeMismatch).
 	DeclaredRuntime string `json:"declaredRuntime,omitempty"`
 	// Dependencies are the release's direct dependencies, by name, as the
 	// metadata the resolution already fetched gives them: npm's
 	// dependencies, PyPI's requires_dist less the extras' (normalized,
 	// PEP 503). InstallScripts are the npm lifecycle scripts an install
 	// would run (preinstall, install, postinstall), which a run's install
-	// skips. Both are read by the Drafter's server check (agentry-cli#660)
+	// skips. Both are read by the Drafter's server check
 	// and are not part of the recorded resolution.
 	Dependencies   []string `json:"-"`
 	InstallScripts []string `json:"-"`
@@ -156,7 +152,7 @@ func IDFor(srv manifest.MCPServer) string {
 
 // Packages is the declared servers that are packages: what is resolved
 // against the registries and installed into the store. A remote server
-// (agentry-cli#663) has neither; Specs renders it as it is declared.
+// has neither; Specs renders it as it is declared.
 func Packages(servers []manifest.MCPServer) []manifest.MCPServer {
 	out := make([]manifest.MCPServer, 0, len(servers))
 	for _, srv := range servers {
@@ -200,13 +196,13 @@ func ResolveAll(ctx context.Context, client *http.Client, regs policy.MCPRegistr
 }
 
 // notResolved names the declared server a resolution failed for, in the
-// run's reason (agentry-cli#628).
+// run's reason.
 func notResolved(srv manifest.MCPServer, err error) error {
 	return receipt.WithReason(err, receipt.ReasonMCPNotResolved, "", srv.SourceID())
 }
 
 // installFailed names the declared server and the install's step that
-// failed, in the run's reason (agentry-cli#628).
+// failed, in the run's reason.
 func installFailed(r *Resolved, step string, err error) error {
 	return receipt.WithReason(err, receipt.ReasonMCPInstallFailed, step, r.SourceID())
 }
@@ -215,7 +211,7 @@ func installFailed(r *Resolved, step string, err error) error {
 // the network or the registry's health: the release is not there, has no
 // launchable entry or nothing to download, or its name or version is not
 // one the builder passes on. A Drafter's rule refuses a draft for one;
-// any other resolution error is the computer's (agentry-cli#609).
+// any other resolution error is the computer's.
 type PinError struct{ Err error }
 
 func (e *PinError) Error() string { return e.Err.Error() }
@@ -433,7 +429,7 @@ func resolvePyPI(ctx context.Context, client *http.Client, registry, pkg, versio
 	return Resolved{
 		Source: "pypi", Package: pkg, Version: version,
 		ID: sanitizeID("pypi", pkg),
-		// Provisional (DR-11): the JSON API does not expose entry points,
+		// Provisional: the JSON API does not expose entry points,
 		// so start from the normalized project name; the builder reads
 		// the real console script from the installed dist (below).
 		BinName:         NormalizePyPIName(pkg),
@@ -507,11 +503,10 @@ func LoadMeta(storeDir, id string) (*Resolved, error) {
 	return &r, nil
 }
 
-// EnsureInstalled materializes every resolved server into the store. A
-// server whose recorded resolution matches is reused without network or
-// docker; a recorded resolution that DISAGREES with the fresh one refuses
-// — the pin is the trust decision, drift is the attack (RUNNER-PLAN-3
-// §P2). Builder output streams to logw.
+// EnsureInstalled materializes every resolved server into the store. A server
+// whose recorded resolution matches is reused without network or docker; a
+// recorded resolution that DISAGREES with the fresh one refuses — the pin is
+// the trust decision, drift is the attack. Builder output streams to logw.
 func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 	storeDir string, regs policy.MCPRegistries, images policy.Images, docker policy.DockerPolicy, logw io.Writer,
 ) error {
@@ -561,19 +556,18 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			image = images.NodeRuntime
 			// The pinned tarball verified against the integrity recorded at
 			// resolution before anything is installed, then installed from
-			// that verified file (agentry-cli#91, DR-13): npm_builder.js.
+			// that verified file: npm_builder.js.
 			argv = npmArgv(r, regs)
 		case "pypi":
 			image = images.PythonRuntime
 			// Wheels only, and the pinned artifact verified against the
-			// registry's advertised digest before anything is installed
-			// (agentry-cli#4, DR-12/DR-13): `pip download --no-deps` fetches
-			// exactly the declared package; the file it picked for this
-			// platform must be one the JSON API listed, with that digest;
-			// then the install runs from that verified file plus wheels
-			// for the dependency closure. A source distribution would run
-			// the package's own build code in the builder — refused unless
-			// policy pypiAllowSourceDists says so.
+			// registry's advertised digest before anything is installed: `pip
+			// download --no-deps` fetches exactly the declared package; the
+			// file it picked for this platform must be one the JSON API listed,
+			// with that digest; then the install runs from that verified file
+			// plus wheels for the dependency closure. A source distribution
+			// would run the package's own build code in the builder — refused
+			// unless policy pypiAllowSourceDists says so.
 			if err := writeArtifactSums(hostDir, r.Artifacts); err != nil {
 				return installFailed(r, receipt.InstallRecord, err)
 			}
@@ -604,44 +598,41 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			Name:  "agentry-mcpinstall-" + r.ID,
 			Image: image,
 			Argv:  argv,
-			// The builder's only route out is the install proxy
-			// (agentry-cli#92): npm, pip and the builders' own fetches
-			// honour these, and the network has no other way off it.
+			// The builder's only route out is the install proxy: npm, pip and
+			// the builders' own fetches honour these, and the network has no
+			// other way off it.
 			Env: egress.env(),
-			// The store is the user's: the builder runs as the invoking
-			// uid:gid so every file it writes is theirs and `rm -rf` of the
-			// profile — what the drift refusal asks for — works
-			// (agentry-cli#112). Hosts without POSIX ids leave it to the
-			// image's own user.
+			// The store is the user's: the builder runs as the invoking uid:gid
+			// so every file it writes is theirs and `rm -rf` of the profile —
+			// what the drift refusal asks for — works. Hosts without POSIX ids
+			// leave it to the image's own user.
 			User: invokingUser(),
 			// The install runs under the policy's runtime like every
-			// container of a run (DR-23); "" is the daemon's default. The
+			// container of a run; "" is the daemon's default. The
 			// proxy's alias is pinned for it (egress.hosts).
 			Runtime:    docker.Runtime,
 			ExtraHosts: hosts,
 
 			// The name is fixed per server, so the container must go when
 			// the build ends or the next agent declaring the same server
-			// fails at install with a name conflict (agentry-cli#106).
+			// fails at install with a name conflict.
 			AutoRemove: true,
-			// The install's own internal network (agentry-cli#92), where
-			// the only other container is the proxy, whose allowlist is
-			// the configured registry and the artifact hosts its metadata
-			// named. It replaced the default bridge (agentry-cli#162),
-			// which reached every host there is.
+			// The install's own internal network, where the only other
+			// container is the proxy, whose allowlist is the configured
+			// registry and the artifact hosts its metadata named. It replaced
+			// the default bridge, which reached every host there is.
 			Network: egress.network,
 			// Who started it (package owner): the builder precedes any run
 			// id, so it carries no agentry.run label, but a CLI killed
 			// mid-install leaves it building with nobody waiting, and the
-			// next run's sweep removes it by its dead owner
-			// (agentry-cli#161).
+			// next run's sweep removes it by its dead owner.
 			Labels: installLabels(r.ID),
 			Mounts: []dockerx.Mount{
 				// The server store is the runner's own directory under the
-				// signature profile, so it may be relabeled (agentry-cli#85).
+				// signature profile, so it may be relabeled.
 				{Source: hostDir, Target: r.prefix(), Relabel: true},
 			},
-			// The run's container posture (agentry-cli#163); its root stays
+			// The run's container posture; its root stays
 			// writable, since npm and pip write where they please.
 		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), nil, logw, logw)
 		// The proxy's allow/deny lines are the evidence of what the
@@ -699,8 +690,7 @@ func invokingUser() string {
 
 // Specs turns resolutions into the plan's server specs, and each declared
 // remote server into its own: an address, its auth, its tools and its one
-// host, which the compiler runs the runner image's bridge for
-// (agentry-cli#663).
+// host, which the compiler runs the runner image's bridge for.
 func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Images) []spec.MCPServerSpec {
 	bySource := map[string]manifest.MCPServer{}
 	for _, srv := range servers {
@@ -743,8 +733,8 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 	return out
 }
 
-// oauthSpec is a package server's oauth block as the plan carries it
-// (agentry-cli#665): the templates, which the engine renders per run.
+// oauthSpec is a package server's oauth block as the plan carries it:
+// the templates, which the engine renders per run.
 func oauthSpec(o *manifest.MCPOAuth) *spec.OAuthSpec {
 	if o == nil {
 		return nil
@@ -840,9 +830,9 @@ func chooseConsoleScript(pkg string, names []string) (name string, ok bool) {
 }
 
 // adoptConsoleScript reads the console scripts the builder recorded for the
-// installed distribution and sets r.BinName to the launchable one. A dist
-// with no console script keeps the DR-11 guess (it will fail at gateway
-// health, as before) but says so in the log.
+// installed distribution and sets r.BinName to the launchable one. A dist with
+// no console script keeps the normalized-name guess (it will fail at gateway
+// health) but says so in the log.
 func adoptConsoleScript(hostDir string, r *Resolved, logw io.Writer) error {
 	b, err := os.ReadFile(filepath.Join(hostDir, consoleScriptsFile)) //nolint:gosec // our store layout
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -863,7 +853,7 @@ func adoptConsoleScript(hostDir string, r *Resolved, logw io.Writer) error {
 
 // pypiBuilder is the PyPI builder's program (pypi_builder.py), run as
 // `python -c` with every value a separate argument: nothing a manifest
-// says passes through a shell (agentry-cli#162).
+// says passes through a shell.
 //
 //go:embed pypi_builder.py
 var pypiBuilder string
@@ -879,10 +869,10 @@ func pipArgv(r *Resolved, regs policy.MCPRegistries) []string {
 		r.prefix(), r.Package, r.Version, strings.TrimRight(regs.PyPI, "/") + "/simple", onlyBinary}
 }
 
-// npm_builder.js's exits for the engines check (agentry-cli#608): the
-// pinned package's engines.node excludes the runtime image's Node (or is
-// no range at all), or the check could not run (an unreadable tarball, or
-// an image whose npm carries no semver).
+// npm_builder.js's exits for the engines check: the pinned package's
+// engines.node excludes the runtime image's Node (or is no range at all), or
+// the check could not run (an unreadable tarball, or an image whose npm carries
+// no semver).
 const (
 	npmEnginesRefused   = 5
 	npmEnginesUnchecked = 6
@@ -914,7 +904,7 @@ func npmArgv(r *Resolved, regs policy.MCPRegistries) []string {
 // URL forms of an npm spec, which would install something other than the
 // pinned registry artifact. The manifest's own grammar (V5) is the
 // registry's check at publish; this one holds at the builder whatever the
-// manifest came through (agentry-cli#162).
+// manifest came through.
 func builderArgs(pkg, version string) error {
 	if !builderValue(pkg, "@/._-") {
 		return fmt.Errorf("package %q is not a name the MCP-server builder will pass on", pkg)
@@ -941,7 +931,7 @@ func builderValue(v, punct string) bool {
 // storeDigest hashes a server's store tree: every path in lexical order,
 // with a regular file's executable bits and content digest and a
 // symlink's target (a venv links its interpreter). A reuse recomputes it
-// and refuses any difference (agentry-cli#162).
+// and refuses any difference.
 func storeDigest(dir string) (string, error) {
 	h := sha256.New()
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {

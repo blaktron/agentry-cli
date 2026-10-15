@@ -1,19 +1,17 @@
 // Package modelkey keeps a model provider's API key in the OS keychain —
-// Keychain on macOS, Credential Manager on Windows, the Secret Service on
-// Linux — for the runs a person launches from somewhere with no shell
-// environment of its own: a desktop app opened from the dock or the Start
-// Menu (plan desktop-installers.md §9, D12; agentry-cli#148). The policy
-// records only that the keychain is the source (apiKeySource: keyring);
-// the value is never written to disk in clear, and the named environment
-// variable still wins whenever it is set.
+// Keychain on macOS, Credential Manager on Windows, the Secret Service on Linux
+// — for the runs a person launches from somewhere with no shell environment of
+// its own: a desktop app opened from the dock or the Start Menu. The policy
+// records only that the keychain is the source (apiKeySource: keyring); the
+// value is never written to disk in clear, and the named environment variable
+// still wins whenever it is set.
 //
 // The service name is the one the CLI's sign-in uses for registry tokens
 // (cmd/agentry's keyringService is this constant); the account
 // distinguishes a model key from a token by prefix. A keychain entry is
 // readable by any process of the same OS user's unlocked session, where a
 // process environment is readable by the process tree alone — the wider
-// boundary is the price of a key that survives a GUI launch, and DR-24
-// says so.
+// boundary is the price of a key that survives a GUI launch.
 package modelkey
 
 import (
@@ -45,10 +43,10 @@ const (
 const accountPrefix = "provider:"
 
 // markerPrefix names the presence marker stored beside each model key
-// (stored:provider:<name>), so Present can answer "is a key stored"
-// without reading the key (agentry-cli#156). The keychain APIs the
-// clients use offer no metadata-only lookup. The marker's value is
-// markerValue, never anything derived from the key.
+// (stored:provider:<name>), so Present can answer "is a key stored" without
+// reading the key. The keychain APIs the clients use offer no metadata-only
+// lookup. The marker's value is markerValue, never anything derived from the
+// key.
 const (
 	markerPrefix = "stored:"
 	markerValue  = "stored"
@@ -156,16 +154,15 @@ func Delete(provider string) error {
 	return nil
 }
 
-// Present reports whether a key is stored for provider without reading
-// it — what a settings page shows, on every mount. It reads the presence
-// marker Store writes beside the key, so the key's value never enters
-// this process and a per-application keychain ACL is not asked for it
-// (agentry-cli#156). A key stored before the marker existed, by an older
-// CLI or desktop, has none: then the key's entry is read once, the marker
-// written, and the value dropped; with no key there, the read returns
-// nothing. "No entry" is (false, nil); a keychain that cannot be reached,
-// or is disabled, is an error, so a page never says "not stored" about a
-// key it could not look for.
+// Present reports whether a key is stored for provider without reading it —
+// what a settings page shows, on every mount. It reads the presence marker
+// Store writes beside the key, so the key's value never enters this process and
+// a per-application keychain ACL is not asked for it. A key stored before the
+// marker existed, by an older CLI or desktop, has none: then the key's entry is
+// read once, the marker written, and the value dropped; with no key there, the
+// read returns nothing. "No entry" is (false, nil); a keychain that cannot be
+// reached, or is disabled, is an error, so a page never says "not stored" about
+// a key it could not look for.
 //
 // A marker outlives a key removed some other way (an older client's
 // Delete, the OS's own keychain app): Present then says "stored" and the

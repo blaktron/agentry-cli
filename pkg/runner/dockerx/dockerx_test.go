@@ -2,7 +2,7 @@
 // the exec-facing methods run hermetically against a stub `docker` binary
 // (a shell script recording its argv) so every classification rule — env
 // values via process env and never argv, not-found tolerance, the 125+
-// docker-failure band — is proven without a docker daemon (DR-7).
+// docker-failure band — is proven without a docker daemon.
 package dockerx
 
 import (
@@ -94,9 +94,8 @@ func TestRunSpecArgs(t *testing.T) {
 		}
 	}
 
-	// A container joining several networks at create (agentry-cli#337):
-	// the alias rides the first network's long form, never a flag that
-	// would apply to every one.
+	// A container joining several networks at create: the alias rides the first
+	// network's long form, never a flag that would apply to every one.
 	multi := RunSpec{Name: "p", Image: "i", Network: "run-net", Alias: "llm-proxy", ExtraNetworks: []string{"run-egress"}}
 	if got, want := multi.args(true), []string{"run", "-d", "--name", "p", "--network", "name=run-net,alias=llm-proxy", "--network", "run-egress", "i"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("several networks: %q, want %q", got, want)
@@ -110,7 +109,7 @@ func TestRunSpecArgs(t *testing.T) {
 	}
 
 	// A container that writes into the user's directory runs as the user
-	// (the MCP server installer, agentry-cli#112).
+	// (the MCP server installer).
 	asUser := RunSpec{Name: "n", Image: "i", User: "1000:1000"}
 	if got := asUser.args(false); !reflect.DeepEqual(got, []string{"run", "--name", "n", "--user", "1000:1000", "i"}) {
 		t.Errorf("user args = %q", got)
@@ -118,7 +117,7 @@ func TestRunSpecArgs(t *testing.T) {
 
 	// A one-shot that borrows an image for a shell command replaces its
 	// entrypoint and runs as root on no network (the session store's
-	// ownership step, agentry-cli#90); a volume mounts by name like a path.
+	// ownership step); a volume mounts by name like a path.
 	oneShot := RunSpec{Name: "n", Image: "i", Entrypoint: "sh", User: "0:0", Network: "none",
 		Argv:   []string{"-c", `chown -- "$1" "$2"`, "sh", "docker-agent", "/session"},
 		Mounts: []Mount{{Source: "agentry-x-session", Target: "/session"}}}
@@ -134,7 +133,7 @@ func TestRunSpecArgs(t *testing.T) {
 }
 
 // TestCLIVolumeOps: the session store's volume is created with the run
-// label, listed by it and removed with force (agentry-cli#90).
+// label, listed by it and removed with force.
 func TestCLIVolumeOps(t *testing.T) {
 	c, record := stub(t, `case "$*" in *"volume ls"*) printf 'agentry-x-session\n';; esac; exit 0`)
 	ctx := context.Background()
@@ -160,7 +159,7 @@ func TestCLIVolumeOps(t *testing.T) {
 }
 
 // TestCLINetworksByLabel: a dead run's networks are listed by its run
-// label, one name a line (agentry-cli#852).
+// label, one name a line.
 func TestCLINetworksByLabel(t *testing.T) {
 	c, record := stub(t, `case "$*" in *"network ls"*) printf 'agentry-x-net\nagentry-x-src-repo\n\n';; esac; exit 0`)
 	names, err := c.NetworksByLabel(context.Background(), "agentry.run=x")
@@ -229,7 +228,7 @@ func TestCLIAvailable(t *testing.T) {
 			t.Fatalf("Available: %v", err)
 		}
 		// version, never info: info runs every CLI plugin before it asks
-		// the daemon (agentry-cli#622).
+		// the daemon.
 		if got := recorded(t, record); len(got) != 1 || got[0] != "version --format {{.Server.Version}}" {
 			t.Errorf("argv = %q", got)
 		}
@@ -376,13 +375,12 @@ func TestCLIRunDetachedEnvNeverInArgv(t *testing.T) {
 	}
 }
 
-// The docker client reads some of the names a container is given — HOME
-// above all, which locates ~/.docker/config.json and with it the current
-// context. Passed by name, the gateway's HOME=/root became the client's, and
-// on Docker Desktop for macOS, whose context is the only way to its socket,
-// every run failed at the gateway with /var/run/docker.sock not found
-// (agentry-cli#589). Those names go to the container in argv; the client
-// keeps the caller's.
+// The docker client reads some of the names a container is given — HOME above
+// all, which locates ~/.docker/config.json and with it the current context.
+// Passed by name, the gateway's HOME=/root became the client's, and on Docker
+// Desktop for macOS, whose context is the only way to its socket, every run
+// failed at the gateway with /var/run/docker.sock not found. Those names go to
+// the container in argv; the client keeps the caller's.
 func TestCLIRunDetachedKeepsTheClientsOwnEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	envDump := filepath.Join(dir, "env.txt")
@@ -571,7 +569,7 @@ func TestCLILogs(t *testing.T) {
 // A run's own directories are relabeled so an SELinux-enabled daemon lets
 // the container read them; anything else — the docker socket above all —
 // is mounted untouched, because relabeling it would change a system-wide
-// file's label for every container on the host (agentry-cli#85).
+// file's label for every container on the host.
 func TestRunSpecArgsRelabel(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -598,7 +596,7 @@ func TestRunSpecArgsRelabel(t *testing.T) {
 	}
 }
 
-// The hardening fields (agentry-cli#163) reach docker as their own flags,
+// The hardening fields reach docker as their own flags,
 // and a zero value adds none.
 func TestRunSpecArgsHardening(t *testing.T) {
 	hard := RunSpec{Name: "n", Image: "img:1", CapDrop: []string{"ALL"}, CapAdd: []string{"CHOWN"}, NoNewPrivileges: true,
@@ -620,7 +618,7 @@ func TestRunSpecArgsHardening(t *testing.T) {
 
 // A labelled anonymous volume is a --mount of type volume with each label
 // as a volume-label field, sorted, and a field holding a comma or a quote
-// is quoted as docker's CSV reader wants it (agentry-cli#458).
+// is quoted as docker's CSV reader wants it.
 func TestRunSpecMountsLabelledAnonymousVolumes(t *testing.T) {
 	r := RunSpec{Name: "g", Image: "i", Volumes: []VolumeMount{{
 		Target: "/misc",

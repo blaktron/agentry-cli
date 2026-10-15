@@ -15,10 +15,9 @@ import (
 	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
 )
 
-// The identity the bundle must be signed by: agentry-dockerimages'
-// clamav-db workflow on main, keyless through GitHub's OIDC issuer
-// (agentry-dockerimages#30). A bundle signed by anything else, the files
-// workflow included, is refused.
+// The identity the bundle must be signed by: agentry-dockerimages' clamav-db
+// workflow on main, keyless through GitHub's OIDC issuer. A bundle signed by
+// anything else, the files workflow included, is refused.
 const (
 	SignerIdentity = "https://github.com/blaktron/agentry-dockerimages/.github/workflows/clamav-db.yaml@refs/heads/main"
 	SignerIssuer   = "https://token.actions.githubusercontent.com"

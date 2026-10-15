@@ -2,7 +2,7 @@ package hybrid
 
 import "testing"
 
-// The risky types (D11), by detected content, archive members included,
+// The risky types, by detected content, archive members included,
 // and by name for the scripts and shortcuts whose content a detector
 // reads as text: these are looked up; nothing else is sent.
 func TestRiskyTypes(t *testing.T) {
