@@ -43,6 +43,9 @@ func authFailure(cmd *cobra.Command, reg, status, reason string) error {
 func authRegistry() (string, error) {
 	reg := flags.registry
 	if reg == "" {
+		reg = envRegistryURL()
+	}
+	if reg == "" {
 		cfg, err := loadCLIConfig()
 		if err != nil {
 			return "", err
@@ -78,7 +81,9 @@ func runMachineLogin(cmd *cobra.Command) error {
 	if paste || timeout <= 0 || timeout > authflow.Timeout {
 		return authFailure(cmd, reg, "failed", "invalid_options")
 	}
-	if strings.TrimSpace(os.Getenv(envToken)) != "" {
+	// An environment token that would be sent here, or a refused one,
+	// would shadow the sign-in this flow stores.
+	if name, _, _, err := envTokenFor(reg); name != "" || err != nil {
 		return authFailure(cmd, reg, "failed", "environment_credential")
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)

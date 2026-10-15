@@ -69,8 +69,25 @@ func main() {
 // newRootCmd assembles the CLI command tree.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "agentry",
-		Short:         "Agentry CLI — develop, validate, publish, install, and run QuickAgents (single-purpose AI agents)",
+		Use:   "agentry",
+		Short: "Agentry CLI — develop, validate, publish, install, and run QuickAgents (single-purpose AI agents)",
+		Long: "Agentry CLI — develop, validate, publish, install, and run QuickAgents (single-purpose AI agents).\n\n" +
+			"Registry and credentials from the environment:\n" +
+			"  " + envRegistry + "         the registry to use when --registry is not passed (ahead\n" +
+			"                           of the config file's defaultRegistry), and the self-hosted\n" +
+			"                           registry " + envToken + " is for.\n" +
+			"  " + envSecureAgentryToken + "      a personal access token sent only to the SecureAgentry\n" +
+			"                           registry this build is for (agentry --version names it);\n" +
+			"                           to any other registry it is not sent, and a build whose\n" +
+			"                           default is not SecureAgentry sends it nowhere.\n" +
+			"  " + envToken + "            a personal access token sent only to the self-hosted\n" +
+			"                           registry " + envRegistry + " names, else the config file's\n" +
+			"                           defaultRegistry. It is never sent to SecureAgentry, even\n" +
+			"                           when --registry names it; set with no self-hosted registry\n" +
+			"                           configured, it is refused.\n" +
+			"An environment token is used in place of the stored sign-in for its own\n" +
+			"registry; for any other, the CLI says why it is not sent and uses that\n" +
+			"registry's stored sign-in, if any. Sign in with `agentry login`.",
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -80,7 +97,7 @@ func newRootCmd() *cobra.Command {
 	// this is where a person sees which.
 	root.SetVersionTemplate("agentry version {{.Version}}\ndefault registry: " + defaultRegistryURL + "\n")
 	root.PersistentFlags().StringVar(&flags.registry, "registry", "",
-		"registry base URL (default: config defaultRegistry, else "+defaultRegistryURL+")")
+		"registry base URL (default: "+envRegistry+", else config defaultRegistry, else "+defaultRegistryURL+")")
 	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false,
 		"machine-readable JSON output on stdout (search, info, verify, doctor, install, uninstall, list, builtins, validate, setup, connections, logout, report-design show, run --plan; login writes NDJSON lifecycle events); narration stays on stderr")
 
@@ -122,11 +139,14 @@ func newRootCmd() *cobra.Command {
 }
 
 // registryURL resolves the effective registry base URL: --registry flag,
-// then the config file's defaultRegistry, then the local dev default.
-// The returned URL never has a trailing slash.
+// then AGENTRY_REGISTRY, then the config file's defaultRegistry, then the
+// build's default. The returned URL never has a trailing slash.
 func registryURL() string {
 	if flags.registry != "" {
 		return strings.TrimRight(flags.registry, "/")
+	}
+	if v := envRegistryURL(); v != "" {
+		return v
 	}
 	if cfg, err := loadCLIConfig(); err == nil && cfg.DefaultRegistry != "" {
 		return strings.TrimRight(cfg.DefaultRegistry, "/")

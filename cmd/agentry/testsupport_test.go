@@ -502,6 +502,9 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 
 	fr.srv = httptest.NewServer(mux)
 	t.Cleanup(fr.srv.Close)
+	// The fake is the self-hosted registry an AGENTRY_TOKEN a test sets
+	// authenticates to.
+	t.Setenv(envRegistry, fr.srv.URL)
 	return fr
 }
 

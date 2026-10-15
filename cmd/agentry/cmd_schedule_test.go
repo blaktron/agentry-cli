@@ -319,6 +319,7 @@ func TestFireEntryCarriesNoCredential(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-should-never-appear")
 	t.Setenv("GITHUB_TOKEN", "ghp_should_never_appear")
 	t.Setenv("AGENTRY_TOKEN", "agt_should_never_appear")
+	t.Setenv("SECUREAGENTRY_TOKEN", "agt_should_never_appear")
 	t.Setenv("DOCKER_HOST", "tcp://admin:never@docker.internal:2376")
 	e, err := fireEntry("abcdefghij")
 	if err != nil {

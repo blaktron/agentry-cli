@@ -61,7 +61,11 @@ func newLoginCmd() *cobra.Command {
 			"belongs — not at whichever download happens to come first. A registry that\n" +
 			"advertises key ids differing from the pinned set is reported, never\n" +
 			"silently re-pinned.\n\n" +
-			"Scripts may instead set " + envToken + " to bypass stored credentials.",
+			"Scripts may instead set an environment token, which is sent in place of\n" +
+			"a stored sign-in to one registry only: " + envSecureAgentryToken + " to the\n" +
+			"SecureAgentry registry this build is for, " + envToken + " to the self-hosted\n" +
+			"registry " + envRegistry + " (else the config file's defaultRegistry) names,\n" +
+			"never to SecureAgentry. Run `agentry --help` for the details.",
 		Args: cobra.NoArgs,
 		RunE: runLogin,
 	}
@@ -71,7 +75,8 @@ func newLoginCmd() *cobra.Command {
 	cmd.Long += "\n\nWith --json, sign-in always uses the browser and writes a pending NDJSON\n" +
 		"event followed by a typed final result. No token is accepted on stdin.\n" +
 		"The host may send {\"action\":\"cancel\"} or {\"action\":\"decline\"} on stdin;\n" +
-		"SIGINT/SIGTERM also cancel. AGENTRY_TOKEN must be unset for this flow."
+		"SIGINT/SIGTERM also cancel. No environment token may apply to the\n" +
+		"registry (" + envSecureAgentryToken + ", " + envToken + ") during this flow."
 	return cmd
 }
 

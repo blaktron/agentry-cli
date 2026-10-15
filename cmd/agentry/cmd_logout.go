@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -67,13 +66,14 @@ func runLogout(cmd *cobra.Command, _ []string) error {
 	}
 	// The token a signed-out schedule sealed goes with the sign-in.
 	resealSignedOut(cmd.ErrOrStderr())
-	override := strings.TrimSpace(os.Getenv(envToken)) != ""
+	overrideName, _, _, _ := envTokenFor(reg)
+	override := overrideName != ""
 	if flags.jsonOut {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(authEvent{Format: 1, Status: "signed_out", Registry: reg, EnvironmentCredential: override})
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed local login for %s (the registry token was not revoked)\n", reg)
 	if override {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "AGENTRY_TOKEN is still set and overrides local sign-out; unset it separately")
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), overrideName+" is still set and is sent to this registry in place of a sign-in; unset it separately")
 	}
 	return nil
 }

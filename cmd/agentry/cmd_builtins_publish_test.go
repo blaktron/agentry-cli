@@ -142,6 +142,9 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 	})
 	br.srv = httptest.NewServer(mux)
 	t.Cleanup(br.srv.Close)
+	// The fake is the self-hosted registry an AGENTRY_TOKEN a test sets
+	// authenticates to.
+	t.Setenv(envRegistry, br.srv.URL)
 	return br
 }
 

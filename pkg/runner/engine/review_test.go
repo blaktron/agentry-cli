@@ -55,6 +55,7 @@ func reviewFixture(t *testing.T) (Params, *dockerx.Fake) {
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-key")
 	t.Setenv("AGENTRY_TOKEN", testRegToken)
+	t.Setenv("SECUREAGENTRY_TOKEN", testRegToken)
 	inputs := t.TempDir()
 	if err := os.WriteFile(filepath.Join(inputs, "agent.json"), []byte(`{"name":"x"}`), 0o644); err != nil {
 		t.Fatal(err)

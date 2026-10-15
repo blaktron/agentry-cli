@@ -71,7 +71,10 @@ func knowledgeClient(cmd *cobra.Command, u string) (*remote.Client, error) {
 // signedInToken is the credential for the registry at u, past the
 // registry's minimum-version gate; store.ErrSignedOut when there is none.
 func signedInToken(cmd *cobra.Command, u string) (string, error) {
-	token := credentialFor(u)
+	token, err := credentialFor(u)
+	if err != nil {
+		return "", err
+	}
 	if token == "" {
 		return "", fmt.Errorf("%s: %w (sign in with `agentry login --registry %s`)", u, store.ErrSignedOut, u)
 	}

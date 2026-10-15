@@ -84,7 +84,11 @@ func runInfo(cmd *cobra.Command, ref string) error {
 	ns, name := parts[0], parts[1]
 
 	reg := registryURL()
-	client, err := newAPIClientChecked(cmd, reg, credentialFor(reg))
+	token, err := credentialFor(reg)
+	if err != nil {
+		return err
+	}
+	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		return err
 	}
@@ -189,7 +193,11 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 	}
 
 	reg := registryURL()
-	client, err := newAPIClientChecked(cmd, reg, credentialFor(reg))
+	token, err := credentialFor(reg)
+	if err != nil {
+		return err
+	}
+	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		return err
 	}

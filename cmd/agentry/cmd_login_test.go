@@ -48,7 +48,7 @@ func TestLoginStoresTokenInConfigFallback(t *testing.T) {
 		t.Errorf("stored entry = %+v", entry)
 	}
 	// The stored credential now authenticates subsequent commands.
-	if got := credentialFor(fr.url()); got != "agy_newtoken" {
+	if got := mustCredential(t, fr.url()); got != "agy_newtoken" {
 		t.Errorf("credentialFor after login = %q", got)
 	}
 }

@@ -15,6 +15,8 @@ func isolateConfig(t *testing.T) string {
 	t.Setenv(envConfigDir, dir)
 	t.Setenv(envNoKeyring, "1")
 	t.Setenv(envToken, "")
+	t.Setenv(envSecureAgentryToken, "")
+	t.Setenv(envRegistry, "")
 	return dir
 }
 
@@ -89,9 +91,10 @@ func TestUpsertAndFindRegistry(t *testing.T) {
 
 func TestCredentialForEnvOverrideWins(t *testing.T) {
 	isolateConfig(t)
+	t.Setenv(envRegistry, "http://localhost:8080")
 	t.Setenv(envToken, "  agy_envtoken \n")
-	if got := credentialFor("http://localhost:8080"); got != "agy_envtoken" {
-		t.Errorf("credentialFor = %q, want trimmed env token", got)
+	if got, err := credentialFor("http://localhost:8080"); err != nil || got != "agy_envtoken" {
+		t.Errorf("credentialFor = %q, %v, want trimmed env token", got, err)
 	}
 }
 
@@ -103,10 +106,10 @@ func TestCredentialForFileToken(t *testing.T) {
 	if err := saveCLIConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got := credentialFor("http://localhost:9999/"); got != "agy_stored" {
+	if got, _ := credentialFor("http://localhost:9999/"); got != "agy_stored" {
 		t.Errorf("credentialFor = %q, want config-file token", got)
 	}
-	if got := credentialFor("http://unknown.example"); got != "" {
+	if got, _ := credentialFor("http://unknown.example"); got != "" {
 		t.Errorf("credentialFor unknown registry = %q, want empty (keyring disabled)", got)
 	}
 }

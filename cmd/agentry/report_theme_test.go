@@ -148,6 +148,7 @@ func TestReadAccountTheme(t *testing.T) {
 	if readAccountTheme(srv.URL) != nil {
 		t.Fatal("an account was asked with no sign-in")
 	}
+	t.Setenv(envRegistry, srv.URL)
 	t.Setenv(envToken, "agy_test")
 	read := readAccountTheme(srv.URL)
 	if read == nil {

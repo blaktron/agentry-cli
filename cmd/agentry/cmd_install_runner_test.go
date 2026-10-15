@@ -302,6 +302,7 @@ func TestListCheckAsksTheRecordsOwnRegistry(t *testing.T) {
 	if _, stderr, err := runCLI(t, nil, "--registry", other.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--target", "claude-skill"); err != nil {
 		t.Fatalf("coding-agent install: %v (stderr %q)", err, stderr)
 	}
+	t.Setenv(envRegistry, configured.url())
 	t.Setenv("AGENTRY_TOKEN", "configured-secret")
 	stdout, _, err := runCLI(t, nil, "--registry", configured.url(), "--json", "list", "--check")
 	if err != nil {

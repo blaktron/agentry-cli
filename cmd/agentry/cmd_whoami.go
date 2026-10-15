@@ -24,15 +24,17 @@ func newWhoamiCmd() *cobra.Command {
 		Use:   "whoami",
 		Short: "Show the account the stored credential belongs to, and its subscription where the registry has tiers",
 		Long: "Prints the registry, the handle and the email of the credential agentry\n" +
-			"would use (the --registry flag, else the default registry; " + envToken + "\n" +
-			"overrides the stored one), and the organizations the account belongs\n" +
-			"to with its role in each — a membership an admin has yet to approve\n" +
-			"says so. A registry with subscription tiers (its /meta lists the\n" +
-			"billing extension) adds the tier, the balance out of the allowance and\n" +
-			"when the allowance resets; for a member of an organization the tier is\n" +
-			"the organization's, the balance is its pool's, and its seats and\n" +
-			"standing come with them. --json prints the same as one document.\n" +
-			"Without a stored credential the command says so and exits 2.",
+			"would use (the --registry flag, else the default registry; an\n" +
+			"environment token scoped to that registry, " + envSecureAgentryToken + " or\n" +
+			envToken + ", is used in place of the stored one), and the organizations\n" +
+			"the account belongs to with its role in each — a membership an admin\n" +
+			"has yet to approve says so. A registry with subscription tiers (its\n" +
+			"/meta lists the billing extension) adds the tier, the balance out of\n" +
+			"the allowance and when the allowance resets; for a member of an\n" +
+			"organization the tier is the organization's, the balance is its\n" +
+			"pool's, and its seats and standing come with them. --json prints the\n" +
+			"same as one document. Without a stored credential the command says\n" +
+			"so and exits 2.",
 		Args: cobra.NoArgs,
 		RunE: runWhoami,
 	}
@@ -98,7 +100,10 @@ type seatsView struct {
 
 func runWhoami(cmd *cobra.Command, _ []string) error {
 	reg := registryURL()
-	token := credentialFor(reg)
+	token, err := credentialFor(reg)
+	if err != nil {
+		return err
+	}
 	if token == "" {
 		return &exitError{code: 2, err: fmt.Errorf("no credential stored for %s; public agents only — run `agentry login`", reg)}
 	}

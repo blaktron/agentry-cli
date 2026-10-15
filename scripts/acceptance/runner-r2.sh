@@ -104,9 +104,10 @@ if [ -n "$AGENT" ]; then
   echo "$PORTS" | grep -q 'HostPort' && { echo "FAIL: agent container publishes a port: $PORTS"; exit 1; }
   # The agent holds the model key under the provider's name by necessity
   # and the gateway token it calls the gateway with; what it must never hold
-  # is the registry credential (nothing in pkg/runner reads AGENTRY_TOKEN) or
-  # the daemon's socket (the gateway alone has one, through the filter).
-  docker inspect "$AGENT" --format '{{join .Config.Env "\n"}}' | grep -q '^AGENTRY_TOKEN=' && { echo "FAIL: the registry token is in the agent container's environment"; exit 1; }
+  # is a registry credential (nothing in pkg/runner reads AGENTRY_TOKEN or
+  # SECUREAGENTRY_TOKEN) or the daemon's socket (the gateway alone has one,
+  # through the filter).
+  docker inspect "$AGENT" --format '{{join .Config.Env "\n"}}' | grep -qE '^(SECURE)?AGENTRY_TOKEN=' && { echo "FAIL: a registry token is in the agent container's environment"; exit 1; }
   docker inspect "$AGENT" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q 'docker.sock' && { echo "FAIL: the agent container mounts the docker socket"; exit 1; }
   # The container posture: every capability dropped and
   # no-new-privileges on the agent and the gateway, a read-only root and a
