@@ -321,6 +321,10 @@ func TestCapabilitiesInvertsSnapshot(t *testing.T) {
 		DataAccess:   []string{"code", "tickets"},
 		MCPServers:   []string{"npm:@scope/server@1.2.3", "pypi:mcp-thing@0.4.0"},
 		MCPServerEnv: map[string]map[string]string{"npm:@scope/server@1.2.3": {"MODE": "ro"}},
+		MCPServerCaps: map[string]ServerCapsSnapshot{
+			"npm:@scope/server@1.2.3": {Egress: []string{"api.scope.example"}, Secrets: []string{"SCOPE_TOKEN"}, Tools: []string{"query"}},
+			"pypi:mcp-thing@0.4.0":    {},
+		},
 	}
 	if got := Snapshot(snap.capabilities()); !reflect.DeepEqual(got, snap) {
 		t.Errorf("Snapshot(snap.capabilities()) =\n  %+v\nwant\n  %+v", got, snap)
@@ -355,8 +359,8 @@ func TestMalformedServerIDStillReasks(t *testing.T) {
 
 // TestArchiveWideningsHoldTheArchiveToTheConsentedContract: what an archive's
 // own agent.yaml declares beyond the resolve manifest the person consented to
-// — the core rule's widenings, plus a same-pin server's own egress, secrets
-// and tools, which that rule does not compare. Matching and narrowing report
+// — the core rule's widenings, a same-pin server's own egress, secrets and
+// tools among them, each reported once. Matching and narrowing report
 // nothing.
 func TestArchiveWideningsHoldTheArchiveToTheConsentedContract(t *testing.T) {
 	caps := func(t *testing.T, y string) manifest.Capabilities {
@@ -376,15 +380,19 @@ func TestArchiveWideningsHoldTheArchiveToTheConsentedContract(t *testing.T) {
 		{"egress added", "", "capabilities:\n  network:\n    egress: [evil.example]\n", "adds network egress to evil.example"},
 		{"exec added", "", "capabilities:\n  exec:\n    commands: [curl]\n", "curl"},
 		{"server egress", osv(""), osv("      egress: [evil.example]\n"), "adds network egress to evil.example for MCP server npm:@acme/osv-mcp@1.2.3"},
-		{"server secret", osv(""), osv("      secrets: [OSV_TOKEN]\n"), "asks for a new secret OSV_TOKEN for MCP server npm:@acme/osv-mcp@1.2.3"},
-		{"server tools lifted", osv("      tools: [query]\n"), osv(""), "grants MCP server npm:@acme/osv-mcp@1.2.3 its full tool set"},
+		{"server secret", osv(""), osv("      secrets: [OSV_TOKEN]\n"), "gives MCP server npm:@acme/osv-mcp@1.2.3 the secret OSV_TOKEN"},
+		{"server tools lifted", osv("      tools: [query]\n"), osv(""), "lifts the tool allowlist of MCP server npm:@acme/osv-mcp@1.2.3"},
 		{"server tool added", osv("      tools: [query]\n"), osv("      tools: [query, delete]\n"), "adds tool delete to MCP server npm:@acme/osv-mcp@1.2.3"},
 		{"matches", osv("      egress: [api.osv.dev]\n      tools: [query]\n"), osv("      egress: [api.osv.dev]\n      tools: [query]\n"), ""},
 		{"narrows", osv("      egress: [api.osv.dev, b.example]\n      secrets: [OSV_TOKEN]\n"), osv("      egress: [api.osv.dev]\n      tools: [query]\n"), ""},
 		{"top-level narrows", "capabilities:\n  network:\n    egress: [api.example]\n", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := strings.Join(ArchiveWidenings(caps(t, tc.consented), caps(t, tc.archive)), "; ")
+			widened := ArchiveWidenings(caps(t, tc.consented), caps(t, tc.archive))
+			if len(widened) > 1 {
+				t.Fatalf("one widening reported as %d lines: %q", len(widened), widened)
+			}
+			got := strings.Join(widened, "; ")
 			if tc.want == "" {
 				if got != "" {
 					t.Fatalf("reported a widening for an archive within the contract: %s", got)
@@ -599,5 +607,115 @@ func TestTheBrowserIsInTheSnapshot(t *testing.T) {
 	}
 	if got := Snapshot(after.capabilities()); !DiffCapabilities(after, got).Empty() {
 		t.Fatalf("round trip = %+v", got)
+	}
+}
+
+// osvServerCaps parses a contract declaring one package server, with the
+// given extra lines of that server's declaration.
+func osvServerCaps(t *testing.T, extra string) manifest.Capabilities {
+	t.Helper()
+	m, err := manifest.Parse([]byte("schemaVersion: \"2\"\nname: w\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: s\n" +
+		"capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n" + extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m.Capabilities
+}
+
+const osvID = "npm:@acme/osv-mcp@1.2.3"
+
+// TestAServersOwnGrantsAreInTheSnapshot: a package server's own egress,
+// secrets and tools are recorded and read back through installed.yaml, so
+// an update that keeps the server's pin and widens them asks again.
+func TestAServersOwnGrantsAreInTheSnapshot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(configdir.EnvVar, filepath.Join(home, "config"))
+
+	consented := Snapshot(osvServerCaps(t, "      egress: [a.example]\n      secrets: [OSV_TOKEN]\n      tools: [query]\n"))
+	want := ServerCapsSnapshot{Egress: []string{"a.example"}, Secrets: []string{"OSV_TOKEN"}, Tools: []string{"query"}}
+	if got := consented.MCPServerCaps[osvID]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("snapshot of the server's grants = %+v, want %+v", got, want)
+	}
+	bare := Snapshot(osvServerCaps(t, ""))
+	if got, ok := bare.MCPServerCaps[osvID]; !ok || !reflect.DeepEqual(got, ServerCapsSnapshot{}) {
+		t.Fatalf("a server declaring no grants has no recorded entry: %+v", bare.MCPServerCaps)
+	}
+
+	key := Key{Registry: "https://reg.example", Namespace: "demo", Name: "w", Target: "runner", Dir: "/x"}
+	var st State
+	st.Upsert(key, "1.0.0", consented, true)
+	st.Upsert(Key{Registry: key.Registry, Namespace: "demo", Name: "bare", Target: "runner", Dir: "/y"}, "1.0.0", bare, true)
+	if err := Save(st); err != nil {
+		t.Fatal(err)
+	}
+	back, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := back.Find(key)
+	if rec == nil || !reflect.DeepEqual(rec.Capabilities.MCPServerCaps, consented.MCPServerCaps) {
+		t.Fatalf("the server's grants did not survive installed.yaml: %+v", rec)
+	}
+	if b := back.Find(Key{Registry: key.Registry, Namespace: "demo", Name: "bare", Target: "runner", Dir: "/y"}); b == nil || !DiffCapabilities(b.Capabilities, bare).Empty() {
+		t.Fatalf("a server with no grants read back as a different contract: %+v", b)
+	}
+	if d := DiffCapabilities(rec.Capabilities, consented); !d.Empty() {
+		t.Fatalf("the same contract after a reload is a diff: %+v", d)
+	}
+
+	for _, tc := range []struct{ name, next, want string }{
+		{"egress", "      egress: [a.example, b.example]\n      secrets: [OSV_TOKEN]\n      tools: [query]\n", "adds network egress to b.example for MCP server " + osvID},
+		{"secret", "      egress: [a.example]\n      secrets: [OSV_TOKEN, DB_URL]\n      tools: [query]\n", "gives MCP server " + osvID + " the secret DB_URL"},
+		{"tool", "      egress: [a.example]\n      secrets: [OSV_TOKEN]\n      tools: [query, delete]\n", "adds tool delete to MCP server " + osvID},
+		{"allowlist lifted", "      egress: [a.example]\n      secrets: [OSV_TOKEN]\n", "lifts the tool allowlist of MCP server " + osvID + " (every tool it serves)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := DiffCapabilities(rec.Capabilities, Snapshot(osvServerCaps(t, tc.next)))
+			if !d.HasWidened() || !slices.Contains(d.Widened, tc.want) {
+				t.Fatalf("a same-pin widening was not asked about as %q: %+v", tc.want, d)
+			}
+		})
+	}
+	if d := DiffCapabilities(rec.Capabilities, Snapshot(osvServerCaps(t, "      tools: [query]\n"))); d.HasWidened() {
+		t.Fatalf("a narrower server widened: %+v", d)
+	}
+}
+
+// TestARecordWithoutAServersGrantsAsksOnce: a record written before a
+// server's own grants were kept does not know them. It reads as neither
+// narrower nor equal: the update asks once, naming what the server is
+// given, and the record the consent writes then compares as equal.
+func TestARecordWithoutAServersGrantsAsksOnce(t *testing.T) {
+	var st State
+	if err := yaml.Unmarshal([]byte("records:\n  - registry: r\n    namespace: demo\n    name: w\n    target: runner\n    version: 1.0.0\n    capabilities:\n      mcpServers: [\""+osvID+"\"]\n"), &st); err != nil {
+		t.Fatal(err)
+	}
+	old := st.Records[0].Capabilities
+	for _, tc := range []struct{ name, next, want string }{
+		{"declares grants", "      egress: [a.example]\n      secrets: [OSV_TOKEN]\n      tools: [query]\n",
+			"asks again for MCP server " + osvID + ", whose own grants your last consent did not record: network egress to a.example; secrets OSV_TOKEN; tools query"},
+		{"declares none", "",
+			"asks again for MCP server " + osvID + ", whose own grants your last consent did not record: network egress to no host; secrets none; tools all it serves"},
+		{"any host", "      egress: [\"*\"]\n", "network egress to any host (UNRESTRICTED)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := Snapshot(osvServerCaps(t, tc.next))
+			d := DiffCapabilities(old, next)
+			if !d.HasWidened() || !slices.ContainsFunc(d.Widened, func(w string) bool { return strings.Contains(w, tc.want) }) {
+				t.Fatalf("an unrecorded server's grants did not ask again as %q: %+v", tc.want, d)
+			}
+			if len(d.Widened) != 1 || len(d.Narrowed) != 0 {
+				t.Fatalf("an unrecorded server reported more than its one line: %+v", d)
+			}
+			if d := DiffCapabilities(next, next); !d.Empty() {
+				t.Fatalf("the record written by the consent still differs: %+v", d)
+			}
+		})
+	}
+	// A remote server has kept its grants since remote servers existed;
+	// its record is not unknown.
+	remote := CapSnapshot{MCPServers: []string{"url:https://mcp.example/sse"}, MCPRemote: map[string]RemoteSnapshot{"url:https://mcp.example/sse": {Auth: "none"}}}
+	if d := DiffCapabilities(remote, remote); !d.Empty() {
+		t.Fatalf("a remote server read as unrecorded: %+v", d)
 	}
 }
