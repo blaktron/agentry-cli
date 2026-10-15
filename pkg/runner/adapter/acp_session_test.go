@@ -365,3 +365,129 @@ func TestACPSessionCostComesFromTheWire(t *testing.T) {
 		})
 	}
 }
+
+// promptFailsWith runs one turn against a fake harness that answers
+// session/prompt with the given JSON-RPC error object, and returns the
+// events the driver emitted and the prompt's error.
+func promptFailsWith(t *testing.T, rpcErr string) ([]Event, error) {
+	t.Helper()
+	toHarnessR, toHarnessW := io.Pipe()
+	fromHarnessR, fromHarnessW := io.Pipe()
+	go func() {
+		defer func() { _ = fromHarnessW.Close() }()
+		sc := bufio.NewScanner(toHarnessR)
+		for sc.Scan() {
+			var m rpcMessage
+			_ = json.Unmarshal(sc.Bytes(), &m)
+			var answer string
+			switch m.Method {
+			case "initialize":
+				answer = `"result":{"protocolVersion":1}`
+			case "session/new":
+				answer = `"result":{"sessionId":"s"}`
+			case "session/prompt":
+				answer = `"error":` + rpcErr
+			default:
+				continue
+			}
+			_, _ = fromHarnessW.Write([]byte(`{"jsonrpc":"2.0","id":` + string(*m.ID) + `,` + answer + "}\n"))
+		}
+	}()
+	drv := newACPSession(pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, 1, nil)
+	got := make(chan Event, 8)
+	go func() {
+		for ev := range drv.Events() {
+			got <- ev
+		}
+		close(got)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, err := drv.Prompt(ctx, "hello")
+	if err == nil {
+		t.Fatal("the prompt succeeded")
+	}
+	_ = drv.Close()
+	var evs []Event
+	for ev := range got {
+		evs = append(evs, ev)
+	}
+	return evs, err
+}
+
+// docker-agent fails a prompt with the generic "Internal error" and puts
+// the runtime's own words in the error's data. Those words must reach the
+// failure, and a provider's 402 among them ends the session as out of
+// credits only when it is the model's error, never a tool's.
+func TestACPSessionAPromptErrorCarriesTheHarnessesWords(t *testing.T) {
+	cases := []struct {
+		name, rpcErr, want string
+		outOfCredits       bool
+	}{
+		{
+			name:   "a model that cannot be reached (recorded from docker-agent 1.150.0)",
+			rpcErr: `{"code":-32603,"message":"Internal error","data":{"error":"model failed: error receiving from stream: Post \"http://127.0.0.1:9/v1/chat/completions\": dial tcp 127.0.0.1:9: connect: connection refused","runtimeCode":"model_error","sessionId":"ba913ab5-6ede-4858-9cf8-eba5b1314559"}}`,
+			want:   `session/prompt: harness error -32603: Internal error: model failed: error receiving from stream: Post "http://127.0.0.1:9/v1/chat/completions": dial tcp 127.0.0.1:9: connect: connection refused`,
+		},
+		{
+			name:         "a provider out of credits",
+			rpcErr:       `{"code":-32603,"message":"Internal error","data":{"error":"model failed: POST \"https://api.poe.com/v1/chat/completions\": 402 Payment Required","runtimeCode":"model_error","sessionId":"s"}}`,
+			want:         "402 Payment Required",
+			outOfCredits: true,
+		},
+		{
+			name:   "a tool whose output says 402",
+			rpcErr: `{"code":-32603,"message":"Internal error","data":{"error":"the tool said: 402 Payment Required","runtimeCode":"tool_failed","sessionId":"s"}}`,
+			want:   "harness error -32603: Internal error: the tool said: 402 Payment Required",
+		},
+		{
+			name:   "a handler's error with no runtime code",
+			rpcErr: `{"code":-32603,"message":"Internal error","data":{"error":"agent not initialized"}}`,
+			want:   "harness error -32603: Internal error: agent not initialized",
+		},
+		{
+			name:   "data that is a string",
+			rpcErr: `{"code":-32603,"message":"Internal error","data":"stream closed"}`,
+			want:   "harness error -32603: Internal error: stream closed",
+		},
+		{
+			name:   "only the first line of the words",
+			rpcErr: `{"code":-32603,"message":"Internal error","data":{"error":"model failed: boom\nsecond line"}}`,
+			want:   "harness error -32603: Internal error: model failed: boom",
+		},
+		{
+			name:   "no data",
+			rpcErr: `{"code":-32603,"message":"Internal error"}`,
+			want:   "session/prompt: harness error -32603: Internal error",
+		},
+		{
+			name:         "the words in the message itself",
+			rpcErr:       `{"code":-32603,"message":"POST \"https://api.poe.com/v1/chat/completions\": 402 Payment Required"}`,
+			want:         "402 Payment Required",
+			outOfCredits: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			evs, err := promptFailsWith(t, c.rpcErr)
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error %q, want it to hold %q", err, c.want)
+			}
+			if strings.Contains(err.Error(), "second line") {
+				t.Errorf("error %q carries more than the first line", err)
+			}
+			credits := false
+			for _, ev := range evs {
+				if ev.Kind == EventOutOfCredits {
+					credits = true
+				}
+			}
+			if credits != c.outOfCredits {
+				t.Errorf("out of credits %v, want %v (events %+v)", credits, c.outOfCredits, evs)
+			}
+		})
+	}
+}
