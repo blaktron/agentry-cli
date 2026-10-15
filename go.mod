@@ -4,7 +4,7 @@ go 1.27.2
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/blaktron/agentry v0.6.15-dev.90.0.20261015031451-5487ae5c1bd3
+	github.com/blaktron/agentry v0.6.15-dev.94.0.20261015171057-9ee20469427d
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
