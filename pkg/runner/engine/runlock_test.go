@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -308,5 +309,38 @@ func TestRunsInUseNamesTheRunsALiveProcessHolds(t *testing.T) {
 	sweepRunDirs(home, nil, nil)
 	if !pathExists(runDirsAt(own).secretsPath) {
 		t.Error("asking which runs are in use released one")
+	}
+}
+
+// TestSweepRemovesTheNetworksOfARunKilledBeforeItsContainers: a run killed
+// after it made its networks but before any container existed leaves
+// nothing the container sweep can find; its free lock proves it dead, so
+// the next run's sweep removes its networks, the labelled one among them,
+// and its volumes. A live run's networks stay.
+func TestSweepRemovesTheNetworksOfARunKilledBeforeItsContainers(t *testing.T) {
+	home := t.TempDir()
+	killRun(t, startLockedRun(t, filepath.Join(home, "runs", "dead0006"), false))
+	startLockedRun(t, filepath.Join(home, "runs", "live0006"), false)
+	labels := func(r string) map[string]string { return map[string]string{runLabel: r} }
+	f := &dockerx.Fake{Networks: []dockerx.Labeled{
+		{Name: networkName("dead0006"), Labels: labels("dead0006")},
+		{Name: sourceNetworkName("dead0006", "repo"), Labels: labels("dead0006")},
+		{Name: networkName("live0006"), Labels: labels("live0006")},
+	}}
+	sweepAbandonedRun(context.Background(), f, home, nil)
+
+	ops := f.Ops()
+	for _, want := range []string{"NetworkRemove:" + networkName("dead0006"), "NetworkRemove:" + sourceNetworkName("dead0006", "repo"), "VolumeRemove:" + sessionVolumeName("dead0006")} {
+		if !slices.Contains(ops, want) {
+			t.Errorf("missing %s in %v", want, ops)
+		}
+	}
+	for _, op := range ops {
+		if strings.Contains(op, "live0006") {
+			t.Errorf("the sweep touched a live run: %s", op)
+		}
+	}
+	if got := f.NetworkState(); len(got) != 1 || got[0].Name != networkName("live0006") {
+		t.Errorf("networks left = %v, want the live run's only", got)
 	}
 }

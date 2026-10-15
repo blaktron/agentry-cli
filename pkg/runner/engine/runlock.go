@@ -151,18 +151,20 @@ func runDirsAt(root string) *runDirs {
 // kept is not recorded.
 //
 // Best effort: the sweep never fails a run. It says what it removed, and
-// names a sensitive file it could not delete.
-func sweepRunDirs(runRoot string, deadRuns map[string]bool, stderr io.Writer) {
+// names a sensitive file it could not delete. It returns the ids of the
+// runs it swept, every one proven dead: by its free lock and its record, or
+// by deadRuns.
+func sweepRunDirs(runRoot string, deadRuns map[string]bool, stderr io.Writer) []string {
 	if runRoot == "" {
-		return
+		return nil
 	}
 	runs := filepath.Join(runRoot, "runs")
 	if fi, err := os.Lstat(runs); err != nil || !fi.IsDir() {
-		return
+		return nil
 	}
 	entries, err := os.ReadDir(runs)
 	if err != nil {
-		return
+		return nil
 	}
 	var swept, left []string
 	for _, e := range entries {
@@ -178,16 +180,17 @@ func sweepRunDirs(runRoot string, deadRuns map[string]bool, stderr io.Writer) {
 		}
 		left = append(left, still...)
 	}
+	sort.Strings(swept)
 	if stderr == nil {
-		return
+		return swept
 	}
 	if len(swept) > 0 {
-		sort.Strings(swept)
 		_, _ = fmt.Fprintf(stderr, "removed what %d run(s) whose process had died left in their run directories: %s\n", len(swept), strings.Join(swept, ", "))
 	}
 	if len(left) > 0 {
 		_, _ = fmt.Fprintf(stderr, "warning: could not delete %s, left by a run whose process had died: it may hold secret values in the clear; delete it by hand\n", strings.Join(left, "; "))
 	}
+	return swept
 }
 
 // RunsInUse lists, sorted, the runs under runRoot/runs whose lock a live
