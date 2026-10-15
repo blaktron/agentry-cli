@@ -352,7 +352,7 @@ func TestTheWebToolsResolvConf(t *testing.T) {
 			t.Fatalf("%s: a resolv.conf was written", name)
 		}
 	}
-	line := resolversLine(plan.WebResolvers())
+	line := resolversLine(plan, plan.WebResolvers())
 	if !strings.Contains(line, "192.168.122.1, 192.0.2.53") || !strings.Contains(line, "docker.resolvers") {
 		t.Fatalf("the receipt line: %s", line)
 	}

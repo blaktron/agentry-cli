@@ -137,12 +137,15 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		egress = map[string][]string{out: relayImages}
 		names = map[string]string{relayNetwork: internal, relayEgressNetwork: out}
 	}
-	// The web tools' server runs in the runner image (the compiler grants
-	// the tools to no package with exec, so no exec image).
+	// The tools server that reaches past the host joins the run's web
+	// network: the web tools' in the runner image (the compiler grants the
+	// tools to no package with exec), or, for unrestricted egress, the
+	// tools server in whichever image runs it, the run's exec image or the
+	// runner's.
 	var webNet, webImage, webSpec, webResolv string
 	var webCmd []string
-	if plan.Capabilities.WebTools {
-		webNet, webImage = webNetwork(runID), plan.Proxy.Image
+	if plan.Capabilities.ToolsReachPastHost() {
+		webNet, webImage = webNetwork(runID), plan.ToolsImage()
 		webCmd = spec.ToolsCmd()
 		webSpec = filepath.Join(rd.cfg, "gateway", "toolspec.json")
 		if len(plan.WebResolvers()) > 0 {
@@ -340,8 +343,8 @@ func makeRelayNetworks(ctx context.Context, d dockerx.Client, runID string, td *
 	return nil
 }
 
-// webNetwork is the run's own network with a way out of the host for the
-// web tools' server (sockfilter.Config.WebNetwork).
+// webNetwork is the run's own network with a way out of the host for a
+// tools server that reaches past it (sockfilter.Config.WebNetwork).
 func webNetwork(runID string) string { return "agentry-" + runID + "-web" }
 
 // makeWebNetwork makes the run's web network and queues its removal, which
@@ -379,9 +382,14 @@ func daemonLine(rd *runDirs) string {
 		"it may touch no container, network, volume or exec without it (the pinned gateway's shared relay networks excepted; only its digest-pinned relays join the one that leaves the host), " +
 		"lists and events show only the run's, create bodies are checked as the daemon reads them, and it may not create a privileged, host-namespace, device, " +
 		"port-publishing, runtime-choosing or security-weakened container, bind a host path outside the run's directories or write outside its writable ones, " +
-		"or exceed the run's memory, CPU and process limits; every decision is in receipts/" + dockerFilterLog
-	if rd != nil && rd.web {
-		line += "; for the Drafter's web tools one more network leaves the host, the run's own " + webNetwork(rd.runID) +
+		"or exceed the run's memory, CPU and process limits; a container that names no network is created on none, never on the daemon's default bridge; " +
+		"every decision is in receipts/" + dockerFilterLog
+	if rd != nil && (rd.web || rd.anyEgress) {
+		why := "the Drafter's web tools"
+		if !rd.web {
+			why = "the tools server's unrestricted egress (manifest \"*\")"
+		}
+		line += "; for " + why + " one more network leaves the host, the run's own " + webNetwork(rd.runID) +
 			", which only the run's tools server joins, in its one shape (its image's entrypoint, the tools role, the run's spec read-only, no other network, no link), and nothing execs into or writes into"
 	}
 	if rd != nil {
