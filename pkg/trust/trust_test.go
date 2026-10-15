@@ -598,6 +598,52 @@ func TestVerifyAttestationTokenScoping(t *testing.T) {
 	})
 }
 
+// recordingTransport answers every request 404 and keeps what each one
+// asked for and carried, so a test sees where a token went without a
+// server on every origin it names.
+type recordingTransport struct {
+	urls, auths []string
+}
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.urls = append(r.urls, req.URL.String())
+	r.auths = append(r.auths, req.Header.Get("Authorization"))
+	return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody, Request: req}, nil
+}
+
+func TestVerifyAttestationTokenOnlyToRegistryOrigin(t *testing.T) {
+	const registry = "https://reg.example"
+	tests := []struct {
+		name, attestation, wantURL string
+		wantToken                  bool
+	}{
+		{"same origin", "https://reg.example/att/1", "https://reg.example/att/1", true},
+		{"relative URL", "/att/1", "https://reg.example/att/1", true},
+		{"http spelling of the registry's host", "http://reg.example/att/1", "http://reg.example/att/1", false},
+		{"other port", "https://reg.example:8443/att/1", "https://reg.example:8443/att/1", false},
+		{"other host", "https://cdn.example/att/1", "https://cdn.example/att/1", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &recordingTransport{}
+			res := VerifyAttestation(context.Background(), &http.Client{Transport: rt}, registry, "tok-123", tc.attestation, "sha256:"+testDigestHex)
+			if res.State != StateUnsigned {
+				t.Fatalf("res = %+v, want unsigned from the 404", res)
+			}
+			if len(rt.urls) != 1 || rt.urls[0] != tc.wantURL {
+				t.Fatalf("requested %v, want [%s]", rt.urls, tc.wantURL)
+			}
+			want := ""
+			if tc.wantToken {
+				want = "Bearer tok-123"
+			}
+			if rt.auths[0] != want {
+				t.Fatalf("Authorization = %q, want %q", rt.auths[0], want)
+			}
+		})
+	}
+}
+
 func TestSameKeyIDs(t *testing.T) {
 	a := newSigner(t)
 	b := newSigner(t)
@@ -622,24 +668,6 @@ func TestSameKeyIDs(t *testing.T) {
 	for _, tc := range tests {
 		if got := SameKeyIDs(tc.x, tc.y); got != tc.want {
 			t.Errorf("%s: SameKeyIDs = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
-func TestSameHost(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want bool
-	}{
-		{"https://reg.example/att/1", "https://reg.example", true},
-		{"https://reg.example:8443/x", "https://reg.example:8443", true},
-		{"https://cdn.example/att/1", "https://reg.example", false},
-		{"https://reg.example:8443", "https://reg.example", false}, // port is part of the host
-		{"://bad", "https://reg.example", false},
-	}
-	for _, tc := range tests {
-		if got := sameHost(tc.a, tc.b); got != tc.want {
-			t.Errorf("sameHost(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -20,6 +19,8 @@ import (
 
 	"github.com/blaktron/agentry/pkg/apiclient"
 	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/internal/origin"
 )
 
 // Client-side safety caps for release archives. The registry enforces the
@@ -171,14 +172,6 @@ func orNone(s string) string {
 	return s
 }
 
-// sameHost reports whether two URLs share a host, so the bearer token is
-// only ever attached to the registry itself, never to a CDN.
-func sameHost(a, b string) bool {
-	ua, err1 := url.Parse(a)
-	ub, err2 := url.Parse(b)
-	return err1 == nil && err2 == nil && ua.Host == ub.Host
-}
-
 // downloadArchive fetches the release archive named by a resolve result.
 // Relative archive URLs (self-host) resolve against the registry base
 // URL.
@@ -191,7 +184,7 @@ func downloadArchive(ctx context.Context, regURL, token string, res *apiclient.R
 	if err != nil {
 		return nil, fmt.Errorf("build download request: %w", err)
 	}
-	if token != "" && sameHost(archiveURL, regURL) {
+	if token != "" && origin.Same(archiveURL, regURL) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := httpClient.Do(req)
