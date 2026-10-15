@@ -3,9 +3,8 @@
 // manifest-named path passes. The install clears a directory named by a
 // registry's resolve response and writes a file the same response names;
 // neither string is covered by the archive digest or the attestation, so
-// each is judged here before the filesystem sees it (security review
-// 2026-09-20 §4.7). Exported so the desktop client, which has the same two
-// seams, can share it.
+// each is judged here before the filesystem sees it. Exported so the desktop
+// client, which has the same two seams, can share it.
 package pathguard
 
 import (

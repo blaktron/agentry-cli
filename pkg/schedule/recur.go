@@ -1,13 +1,12 @@
-// Package schedule keeps the schedules of runs on this computer (plan
-// quickagent-scheduling.md, agentry-cli#747): when a QuickAgent runs again,
-// the store that is the truth about it, the record of every occurrence, and
-// the operating system's own entries that wake `agentry schedule fire` at
-// the right moments.
+// Package schedule keeps the schedules of runs on this computer: when a
+// QuickAgent runs again, the store that is the truth about it, the record of
+// every occurrence, and the operating system's own entries that wake `agentry
+// schedule fire` at the right moments.
 //
-// A schedule's repeat is a small struct, never cron text (D2), so one type
-// compiles to every system's trigger and to the times a calendar shows.
-// Times are wall-clock in a named zone: "9am" stays 9am across a daylight
-// saving change.
+// A schedule's repeat is a small struct, never cron text, so one type
+// compiles to every system's trigger and to the times a calendar shows. Times
+// are wall-clock in a named zone: "9am" stays 9am across a daylight saving
+// change.
 package schedule
 
 import (
@@ -298,7 +297,7 @@ func dayStart(t time.Time) time.Time {
 
 // wallTime is the first instant on day whose wall clock reads c or later.
 // A time the spring change skips becomes the first valid minute after it;
-// a time the autumn change repeats is its first instance (plan §4).
+// a time the autumn change repeats is its first instance.
 func wallTime(day time.Time, c clock, loc *time.Location) time.Time {
 	y, m, d := day.Date()
 	t := time.Date(y, m, d, c.h, c.m, 0, 0, loc)

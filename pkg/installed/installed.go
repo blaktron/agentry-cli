@@ -1,6 +1,7 @@
 // Package installed is the shared install-state record and the capability
-// diff (§11 install row: "show capability summary (and DIFF vs currently
-// installed version, requiring confirm on widened capabilities)").
+// diff: an install shows the capability summary and the diff against the
+// currently installed version, and requires confirmation when a capability is
+// widened.
 //
 // The registry knows what an agent declares; only the machine knows what it
 // previously ACCEPTED. Without a local record, every reinstall re-asks the
@@ -16,9 +17,9 @@
 //
 // EVERY client (CLI, desktop) must read and write this same file, so a
 // capability diff on upgrade works regardless of which client did the
-// original install. The same clients hold a downloaded archive's own
-// manifest to the contract they asked consent on (ArchiveWidenings), so
-// the rule for that lives here too.
+// original install. The same clients hold a downloaded archive's own manifest
+// to the contract they asked consent on (ArchiveWidenings), so the rule for
+// that lives here too.
 package installed
 
 import (
@@ -37,7 +38,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
 
-// CapSnapshot is the on-disk form of a §5.4 capability contract.
+// CapSnapshot is the on-disk form of a capability contract.
 //
 // It is deliberately NOT manifest.Capabilities: that type's union fields
 // (Egress, FSAccess) carry their shape in unexported-by-tag form with custom
@@ -71,13 +72,13 @@ type CapSnapshot struct {
 	// records written before env existed, which reads as "no env".
 	MCPServerEnv map[string]map[string]string `yaml:"mcpServerEnv,omitempty" json:"mcpServerEnv,omitempty"`
 	// MCPRemote is each declared remote server's sign-in and reach, keyed
-	// like MCPServers ("url:<address>"; agentry-cli#663): the core's diff
-	// compares a remote server's auth, scopes, tool allowlist and bearer
-	// secret, so a record without them would read every run as a widening.
-	// Absent in records written before remote servers existed.
+	// like MCPServers ("url:<address>"): the core's diff compares a remote
+	// server's auth, scopes, tool allowlist and bearer secret, so a record
+	// without them would read every run as a widening. Absent in records
+	// written before remote servers existed.
 	MCPRemote map[string]RemoteSnapshot `yaml:"mcpRemote,omitempty" json:"mcpRemote,omitempty"`
 	// MCPServerOAuth is each package server's OAuth sign-in, keyed like
-	// MCPServers, for the same reason (DEV-215).
+	// MCPServers, for the same reason.
 	MCPServerOAuth map[string]*manifest.MCPOAuth `yaml:"mcpServerOAuth,omitempty" json:"mcpServerOAuth,omitempty"`
 	// Knowledge lists the knowledge packs the release ships in its archive
 	// (the manifest's knowledge.ships, as manifest.Contract carries them):
@@ -86,18 +87,16 @@ type CapSnapshot struct {
 	// knowledge existed, which reads as "ships none".
 	Knowledge []string `yaml:"knowledge,omitempty" json:"knowledge,omitempty"`
 	// TargetHosts lists the intake questions that ask for a target host
-	// (capabilities.targetHosts; plan runtime-hosts.md §8, agentry-cli#863):
-	// one more is one more machine the agent may run any command on, a
-	// widening the consent gate re-asks about. Absent in records written
-	// before target hosts were recorded (CLI v0.6.108 and older), which
-	// reads as "none", so a release that already declared one is asked
-	// about once more.
+	// (capabilities.targetHosts): one more is one more machine the agent
+	// may run any command on, a widening the consent gate re-asks about.
+	// Absent in records written before target hosts were recorded (CLI
+	// v0.6.108 and older), which reads as "none", so a release that
+	// already declared one is asked about once more.
 	TargetHosts []string `yaml:"targetHosts,omitempty" json:"targetHosts,omitempty"`
-	// Browser is the release's browser line (capabilities.browser; plan
-	// browser-testing.md invariant 8, agentry-cli#915): a new site, host or
-	// secret it may type, or site scope to public, is a widening the
-	// consent gate re-asks about. Absent in records written before the
-	// browser existed, which reads as "no browser".
+	// Browser is the release's browser line (capabilities.browser): a new
+	// site, host or secret it may type, or site scope to public, is a
+	// widening the consent gate re-asks about. Absent in records written
+	// before the browser existed, which reads as "no browser".
 	Browser *manifest.Browser `yaml:"browser,omitempty" json:"browser,omitempty"`
 }
 
@@ -163,10 +162,10 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 
 // capabilities is Snapshot's inverse, for the diff only: the stored
 // contract as the manifest type, so the one widening rule, the core's
-// manifest.DiffCapabilities, can compare two snapshots (agentry-cli#201).
-// For any record Snapshot wrote, Snapshot(s.capabilities()) is s. It is
-// lossy — a server's tools, secrets and egress are not in the snapshot and
-// come back empty — which is why it is not exported as a contract.
+// manifest.DiffCapabilities, can compare two snapshots. For any record
+// Snapshot wrote, Snapshot(s.capabilities()) is s. It is lossy — a
+// server's tools, secrets and egress are not in the snapshot and come back
+// empty — which is why it is not exported as a contract.
 func (s CapSnapshot) capabilities() manifest.Capabilities {
 	c := manifest.Capabilities{
 		Network: manifest.Network{Egress: manifest.Egress{
@@ -258,10 +257,10 @@ type Record struct {
 	// existed still load; absent means NOT managed (the safe reading).
 	Managed bool `yaml:"managed,omitempty" json:"managed,omitempty"`
 	// Source is SourceLocal for a QuickAgent installed from a folder on
-	// this machine and never published (agentry-cli#491), empty for a
-	// registry release. A local record names no registry to ask for an
-	// update, and a run of it by name reads the release Digest names from
-	// the runner home instead of resolving it.
+	// this machine and never published, empty for a registry release. A
+	// local record names no registry to ask for an update, and a run of
+	// it by name reads the release Digest names from the runner home
+	// instead of resolving it.
 	Source string `yaml:"source,omitempty" json:"source,omitempty"`
 	// Digest is a local install's archive digest: which release directory
 	// holds it. Empty for a registry release, which a run resolves.
@@ -378,8 +377,8 @@ func (st *State) Upsert(k Key, version string, caps CapSnapshot, managed bool) {
 }
 
 // MarkLocal marks the key's record as a local install of the release with
-// this archive digest (agentry-cli#491). Upsert writes a registry record,
-// as an install from a registry does; a local install calls this after it.
+// this archive digest. Upsert writes a registry record, as an install from
+// a registry does; a local install calls this after it.
 func (st *State) MarkLocal(k Key, digest string) {
 	if cur := st.Find(k); cur != nil {
 		cur.Source, cur.Digest = SourceLocal, digest
@@ -388,12 +387,12 @@ func (st *State) MarkLocal(k Key, digest string) {
 
 // Reconsent records a run's consent to the contract of the release with
 // this digest, keeping what an install recorded: whether the client chose
-// the directory, and a local install's mark (agentry-cli#491). A run of
-// another tree than the agent's local install (a --local folder, a
-// registry release by range) records nothing, so the local install stays
-// what `run ns/name` finds; the consent was still asked and given for the
-// run, and a later run asks it again. It reports whether it recorded.
-// Every client's run records its consent through this, never Upsert.
+// the directory, and a local install's mark. A run of another tree than
+// the agent's local install (a --local folder, a registry release by
+// range) records nothing, so the local install stays what `run ns/name`
+// finds; the consent was still asked and given for the run, and a later
+// run asks it again. It reports whether it recorded. Every client's run
+// records its consent through this, never Upsert.
 func (st *State) Reconsent(k Key, version string, caps CapSnapshot, digest string) bool {
 	cur := st.Find(k)
 	if cur == nil {
@@ -429,25 +428,23 @@ type Diff = manifest.CapabilityDiff
 
 // DiffCapabilities compares the previously installed contract with the new
 // one. The rule is the core's manifest.DiffCapabilities — the registry
-// re-asks for an account install's acceptance by it (DEV-120) — so the
-// promise that the CLI, the desktop and the site ask again on the same
-// widening is kept by construction, not by two copies staying in step
-// (agentry-cli#201). Everything it reports is phrased the way §11 promises:
-// "this update adds network egress to evil.example".
+// re-asks for an account install's acceptance by it — so the promise that
+// the CLI, the desktop and the site ask again on the same widening is kept
+// by construction, not by two copies staying in step. Everything it reports
+// is phrased as a plain statement of the change: "this update adds network
+// egress to evil.example".
 func DiffCapabilities(old, next CapSnapshot) Diff {
 	return manifest.DiffCapabilities(old.capabilities(), next.capabilities())
 }
 
-// ArchiveWidenings reports what an archive's own manifest declares beyond
-// the contract the person consented to, the resolve manifest's, on which
-// the prompt and the diff were raised (agentry-cli#252; the desktop's
-// agentry-desktop#163). The digest and the attestation cover the archive,
-// so a widening means the registry's resolve answer diverged from the
-// bytes it served, and an install refuses it rather than reconciling. It
-// is the core's rule, manifest.DiffCapabilities, on the two full
-// contracts, plus what that rule does not yet compare: a declared MCP
-// server's own egress, secrets and tool restriction (agentry#527). The
-// desktop keeps a copy until it calls this (agentry-desktop#220).
+// ArchiveWidenings reports what an archive's own manifest declares beyond the
+// contract the person consented to, the resolve manifest's, on which the
+// prompt and the diff were raised. The digest and the attestation cover the
+// archive, so a widening means the registry's resolve answer diverged from
+// the bytes it served, and an install refuses it rather than reconciling. It
+// is the core's rule, manifest.DiffCapabilities, on the two full contracts,
+// plus what that rule does not yet compare: a declared MCP server's own
+// egress, secrets and tool restriction.
 func ArchiveWidenings(consented, archive manifest.Capabilities) []string {
 	widened := manifest.DiffCapabilities(consented, archive).Widened
 	return append(widened, serverWidenings(consented.MCPServers, archive.MCPServers)...)
@@ -474,7 +471,7 @@ func serverWidenings(consented, archive []manifest.MCPServer) []string {
 	var out []string
 	for _, s := range archive {
 		if s.IsRemote() {
-			continue // the core's diff compares a remote server's tools and secret (DEV-215)
+			continue // the core's diff compares a remote server's tools and secret
 		}
 		id := serverID(s)
 		c, ok := byID[id]

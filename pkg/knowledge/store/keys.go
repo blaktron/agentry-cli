@@ -31,7 +31,7 @@ const (
 	markerValue  = "stored" // modelkey's marker value
 
 	// machineAccount is this machine's key, which wraps a pack's data key
-	// while no registry is signed in (plan D20).
+	// while no registry is signed in.
 	machineAccount = "knowledge:machine"
 )
 

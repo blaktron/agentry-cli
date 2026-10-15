@@ -1,7 +1,7 @@
 // Package termtext prepares author text (a release guide's overview and
 // key help, the Drafter's narration) for a terminal: cleaned of what a
 // terminal would act on or hide, and set in a gutter so it cannot pass for
-// the CLI's own lines (agentry-cli#257, agentry-cli#419).
+// the CLI's own lines.
 package termtext
 
 import (

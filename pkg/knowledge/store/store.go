@@ -77,7 +77,7 @@ func (e Entry) Where() string {
 }
 
 // KeyHolder says what the pack's data key is wrapped to, in the words the
-// clients show (plan §3: never "safe", "secure" or "private").
+// clients show (never "safe", "secure" or "private").
 func (e Entry) KeyHolder() string {
 	if e.Key.Org != "" {
 		return e.Key.Org + "'s organization key at " + hostOf(e.Key.Registry) + ", which Agentry holds and hands only to its current members"
@@ -362,11 +362,10 @@ func (s *Store) privateDir(prefix string) (string, error) {
 // modification time, which nothing moves while the Creator runs: its pages
 // are written in nested directories, and only the apply step at the end,
 // which stages beside the pack, touches the directory itself. So a build's
-// working copy is kept from the sweep two ways (agentry-cli#507): the
-// process that holds it never sweeps it (held), and touches it every
-// scratchTouchEvery so that no other process on the same store takes it
-// for a leftover. A run's attachment needs neither: it is copied into the
-// run long before.
+// working copy is kept from the sweep two ways: the process that holds it
+// never sweeps it (held), and touches it every scratchTouchEvery so that
+// no other process on the same store takes it for a leftover. A run's
+// attachment needs neither: it is copied into the run long before.
 const staleAfter = time.Hour
 
 // scratchTouchEvery is how often a held working copy is touched. It is
@@ -450,7 +449,7 @@ func (s *Store) Scratch() (dir string, done func(), err error) {
 		once.Do(func() {
 			// Wait for the toucher to stop before the path is given up: a
 			// tick it has already taken would otherwise touch whatever is
-			// at that path next (agentry-cli#517).
+			// at that path next.
 			close(stop)
 			<-stopped
 			held.Lock()
@@ -504,7 +503,7 @@ func (s *Store) dataKey(ctx context.Context, e Entry, skipCache bool) (key []byt
 	if e.Key.Org != "" {
 		// An organization's shared pack: its key is asked for every time,
 		// never read from the keychain nor written to it, so the registry's
-		// check of membership is made at every open (D13).
+		// check of membership is made at every open.
 		sh, err := s.shared(e.Key.Registry, e.Key.Org)
 		if err != nil {
 			return nil, false, fmt.Errorf("knowledge pack %s: it is %s's shared pack at %s: %w", e.Name(), e.Key.Org, e.Key.Registry, err)
@@ -569,7 +568,7 @@ func (s *Store) Open(ctx context.Context, name, dst string) (*knowledge.Pack, er
 
 func (s *Store) openEntry(ctx context.Context, e Entry, dst string) (*knowledge.Pack, error) {
 	// The sealed tree is streamed, never read whole: a pack kept here may
-	// be up to knowledge.MaxLocalBytes (agentry-cli#429).
+	// be up to knowledge.MaxLocalBytes.
 	sealed, err := os.Open(filepath.Join(e.Dir, SealedFile)) //nolint:gosec // an entry of the store
 	if err != nil {
 		return nil, fmt.Errorf("knowledge pack %s: %w", e.Name(), err)
@@ -706,8 +705,8 @@ func (s *Store) Delete(ctx context.Context, name string, everywhere bool) (Entry
 }
 
 // Rewrap moves every pack wrapped by this machine's key to the current
-// registry's wrapper (plan D20: at the next sign-in), and answers their
-// names. Signed out, it does nothing.
+// registry's wrapper (at the next sign-in), and answers their names.
+// Signed out, it does nothing.
 func (s *Store) Rewrap(ctx context.Context) ([]string, error) {
 	reg, err := s.current()
 	if errors.Is(err, ErrSignedOut) {
@@ -785,7 +784,7 @@ func (s *Store) Upload(ctx context.Context, name string) (Entry, Remote, error) 
 	}
 	// Held to Agentry's cap by the manifest's count and by the sealed
 	// file's own size, so an edited manifest cannot make this read a
-	// gigabyte for the registry to refuse (agentry-cli#429).
+	// gigabyte for the registry to refuse.
 	sealedSize := int64(-1)
 	if fi, err := os.Stat(filepath.Join(e.Dir, SealedFile)); err == nil {
 		sealedSize = fi.Size()
@@ -967,12 +966,12 @@ func (s *Store) downloadTarget(name, id, digest string) (string, error) {
 }
 
 // DownloadShared keeps the pack named name that org shares at the current
-// registry (Knowledge M8, D13): its sealed tree, opened with the key the
-// organization's route unwraps and checked in full, then kept here under
-// that wrapped key and the organization's name. Nothing of the key is
-// cached; every later open asks the registry again. A pack kept here with
-// the same id is replaced, as a download replaces one; another pack of
-// that name, the person's own included, is not.
+// registry: its sealed tree, opened with the key the organization's route
+// unwraps and checked in full, then kept here under that wrapped key and
+// the organization's name. Nothing of the key is cached; every later open
+// asks the registry again. A pack kept here with the same id is replaced,
+// as a download replaces one; another pack of that name, the person's own
+// included, is not.
 func (s *Store) DownloadShared(ctx context.Context, org, name string) (Entry, error) {
 	s.sweep()
 	if s.opts.Current == "" {
@@ -988,9 +987,9 @@ func (s *Store) DownloadShared(ctx context.Context, org, name string) (Entry, er
 // Export writes the pack named name, in the clear, into dst (new, or an
 // empty directory), and returns it loaded and verified. The person's own
 // pack is opened here. An organization's shared pack is exported by the
-// registry, which decides whether this person may (D26: its admins
-// always, a member only once the pack is marked exportable;
-// ErrNotExportable otherwise), and its tree is the one Agentry keeps now.
+// registry, which decides whether this person may (its admins always, a
+// member only once the pack is marked exportable; ErrNotExportable
+// otherwise), and its tree is the one Agentry keeps now.
 func (s *Store) Export(ctx context.Context, name, dst string) (*knowledge.Pack, error) {
 	e, err := s.Find(name)
 	if err != nil {

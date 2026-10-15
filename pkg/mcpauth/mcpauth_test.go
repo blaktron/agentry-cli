@@ -360,11 +360,11 @@ func TestNoScopesDeclaredAsksForNoneBeyondTheChallenge(t *testing.T) {
 }
 
 // TestAKeptVerifierFinishesTheSignIn: a client whose redirect returns to
-// another request (the registry's HTTPS callback, agentry-cli#715)
-// registers as a web client under its own name, keeps the state and the
-// verifier, rebuilds the request from them when the vendor's answer
-// arrives, and exchanges the code; the consent address carries its extra
-// parameters, which never replace the request's own.
+// another request (the registry's HTTPS callback) registers as a web
+// client under its own name, keeps the state and the verifier, rebuilds
+// the request from them when the vendor's answer arrives, and exchanges
+// the code; the consent address carries its extra parameters, which
+// never replace the request's own.
 func TestAKeptVerifierFinishesTheSignIn(t *testing.T) {
 	v := mcpauthtest.New(t)
 	v.DCR = true

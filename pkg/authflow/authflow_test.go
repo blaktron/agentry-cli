@@ -151,7 +151,7 @@ func TestStateMismatchIsRefused(t *testing.T) {
 
 // TestBogusStateDoesNotEndTheFlow: a request without the nonce is refused
 // and the real callback still completes the sign-in — anything local can
-// reach the port, and must not be able to abort a sign-in (agentry-cli#164).
+// reach the port, and must not be able to abort a sign-in.
 func TestBogusStateDoesNotEndTheFlow(t *testing.T) {
 	f, err := Start()
 	if err != nil {
@@ -184,9 +184,9 @@ func TestContextCancelUnblocksWait(t *testing.T) {
 	}
 }
 
-// The hardened shape (agentry#19): the callback carries a code, and the flow
-// exchanges it against the registry it was started for, presenting the same
-// state nonce. The browser sees success only after the exchange succeeded.
+// The hardened shape: the callback carries a code, and the flow exchanges
+// it against the registry it was started for, presenting the same state
+// nonce. The browser sees success only after the exchange succeeded.
 func TestCodeIsExchangedForToken(t *testing.T) {
 	var gotState, gotCode string
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

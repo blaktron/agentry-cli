@@ -1,10 +1,10 @@
-// The S1 half of local/remote validation parity (D-12).
+// The S1 half of local/remote validation parity.
 //
-// `agentry validate` used to run the manifest V-rules plus the S3/S4 content
-// scan, and stop. That left a real gap: a committed .dylib, a vendored
+// Without it, `agentry validate` would run only the manifest V-rules and the
+// S3/S4 content scan. That leaves a real gap: a committed .dylib, a vendored
 // tarball, or a Latin-1 README passes locally and is rejected by the server's
-// S1 inventory at submit — the exact "works on my machine, fails at publish"
-// round-trip D-12 exists to prevent.
+// S1 inventory at submit — the "works on my machine, fails at publish"
+// round-trip that parity exists to prevent.
 //
 // This file closes that gap by running the same three S1 checks the pipeline
 // runs, over the resolved include set, with the same severities:
@@ -17,11 +17,11 @@
 // notes.md is the first thing anyone tries, and the server is not fooled by
 // it either.
 //
-// The fourth S1-adjacent check §19 calls for — oversized files against the
-// archive quotas — is deliberately NOT repeated here: manifest rule V8
-// already enforces MaxFiles/MaxFileBytes/MaxImageFileBytes/MaxArchiveBytes
-// over the same resolved include set, in the same command, and reporting one
-// oversized file twice would make the output worse rather than safer.
+// The fourth S1-adjacent check, oversized files against the archive quotas —
+// is deliberately NOT repeated here: manifest rule V8 already enforces
+// MaxFiles/MaxFileBytes/MaxImageFileBytes/MaxArchiveBytes over the same
+// resolved include set, in the same command, and reporting one oversized
+// file twice would make the output worse rather than safer.
 //
 // Parity is by construction: the detection predicates are pkg/archive's, the
 // ones the server's S1 stage classifies with (below).

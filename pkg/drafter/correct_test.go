@@ -10,10 +10,9 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// TestCorrect holds the post-step's mechanical corrections (plan
-// builder-simplify.md §5.2 step 1): each slip is corrected as a data edit
-// and named, the Drafter's key order is kept, and a clean manifest, or one
-// that is not an object, comes back byte for byte.
+// TestCorrect holds the post-step's mechanical corrections: each slip is
+// corrected as a data edit and named, the Drafter's key order is kept, and a
+// clean manifest, or one that is not an object, comes back byte for byte.
 func TestCorrect(t *testing.T) {
 	long := strings.Repeat("word ", 40) // 200 characters
 	m := `{"schemaVersion":"2","name":"x","summary":"` + long + `","modes":["autonomous","autonomous"],` +
@@ -122,8 +121,8 @@ func TestShortenAtWord(t *testing.T) {
 }
 
 // TestADraftNeverShipsAPack: knowledge.ships is removed from a draft and
-// named (plan knowledge-and-drafter.md §6, D4; agentry-cli#522), what it
-// accepts is kept, and a block left with nothing is removed.
+// named, what it accepts is kept, and a block left with nothing is
+// removed.
 func TestADraftNeverShipsAPack(t *testing.T) {
 	m := `{"schemaVersion":"2","name":"x","knowledge":{"ships":[{"name":"runbooks"}],"accepts":{"prompt":"Your runbooks","required":true}}}`
 	out, did := Correct(json.RawMessage(m))
@@ -147,7 +146,7 @@ func TestADraftNeverShipsAPack(t *testing.T) {
 
 // TestKnowledgeUnderCapabilitiesIsLifted: a knowledge block the Drafter
 // wrote under capabilities is moved to the manifest's top level and named,
-// and the manifest then parses (agentry-cli#522).
+// and the manifest then parses.
 func TestKnowledgeUnderCapabilitiesIsLifted(t *testing.T) {
 	m := `{"schemaVersion":"2","name":"x","capabilities":{"exec":"none","knowledge":{"accepts":{"prompt":"Your runbooks"}}}}`
 	out, did := Correct(json.RawMessage(m))
@@ -171,11 +170,11 @@ func TestKnowledgeUnderCapabilitiesIsLifted(t *testing.T) {
 	}
 }
 
-// TestTheInputsBlockIsCorrected (agentry-cli#634, DEV-218): an inputs
-// block written under capabilities is lifted to the top level; a kind in
-// the singular or another case gets its name; a kind named twice once;
-// any beside named kinds is dropped, since it stands alone; an emptied
-// list and block go; a kind outside the set is left for the rules.
+// TestTheInputsBlockIsCorrected: an inputs block written under
+// capabilities is lifted to the top level; a kind in the singular or
+// another case gets its name; a kind named twice once; any beside named
+// kinds is dropped, since it stands alone; an emptied list and block go;
+// a kind outside the set is left for the rules.
 func TestTheInputsBlockIsCorrected(t *testing.T) {
 	kindsOf := func(t *testing.T, out json.RawMessage) (*manifest.Inputs, map[string]json.RawMessage) {
 		t.Helper()

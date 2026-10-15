@@ -23,13 +23,13 @@ import (
 // under the same name.
 const taskFolder = `\Agentry\`
 
-// TaskScheduler is the Windows alarm: a task per schedule that runs as
-// the person, only while they are logged on (an interactive token, so
+// TaskScheduler is the Windows alarm: a task per schedule that runs as the
+// person, only while they are logged on (an interactive token, so
 // Credential Manager and Docker Desktop are theirs), and never wakes the
 // computer. Its calendar keeps local time, so its triggers are
 // LocalRingsFor's superset. A logon trigger and StartWhenAvailable are the
 // catch-up for an occurrence missed while the computer was off, asleep or
-// signed out (D5); fire decides whether it still runs.
+// signed out; fire decides whether it still runs.
 //
 // A task cannot set its program's environment, so the entry's Env travels
 // as `--env KEY=VALUE` arguments, which fire and probe apply first; and it

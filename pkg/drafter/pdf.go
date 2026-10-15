@@ -13,22 +13,21 @@ var namedFile = regexp.MustCompile(`[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,5}\b`)
 var negated = regexp.MustCompile(`(?i)\b(never|not|don't|do not|no)\b`)
 
 // printToPDF is an instruction handing the person a page to print to PDF
-// themselves, which the run can now do with export_pdf.
+// themselves, which the run does with export_pdf.
 var printToPDF = regexp.MustCompile(`(?i)\b(save|print)(s|ing)? (it |them |the [a-z]+ )?(as|to) (a )?pdf\b|\bprint-ready html\b`)
 
-// pdfProblems is the Drafter's rule on PDFs (agentry-cli#787), one line
-// each, in the rules' report's words. Every run has export_pdf, which turns
-// a Markdown file into a PDF in reports/ in the person's report theme
-// (DR-81), and write_report refuses a PDF, so a draft that has its run make
-// a PDF any other way fails on every run while the run still reads
-// succeeded: the operator's redraft of resume-reformat told its agent that
-// it had "no program that makes PDFs" and to write one by hand, as ASCII,
-// with write_report. The rule refuses instructions that have the run
-// write_report a .pdf, or that leave the person to print a page to PDF. A
-// PDF written by hand can reach the person only through write_report, so
-// the first case covers it; PDF syntax alone is not refused, since a
-// QuickAgent that examines PDF files has reason to name it. Nil when the
-// instructions do neither.
+// pdfProblems is the Drafter's rule on PDFs, one line each, in the rules'
+// report's words. Every run has export_pdf, which turns a Markdown file
+// into a PDF in reports/ in the person's report theme, and write_report
+// refuses a PDF, so a draft that has its run make a PDF any other way fails
+// on every run while the run still reads succeeded: a draft whose
+// instructions told its agent it had "no program that makes PDFs" and to
+// write one by hand, as ASCII, with write_report, fails that way. The rule
+// refuses instructions that have the run write_report a .pdf, or that leave
+// the person to print a page to PDF. A PDF written by hand can reach the
+// person only through write_report, so the first case covers it; PDF syntax
+// alone is not refused, since a QuickAgent that examines PDF files has
+// reason to name it. Nil when the instructions do neither.
 func pdfProblems(instructions string) []string {
 	const how = "have the run write the document in Markdown with write_report, then call export_pdf on that file, which makes the PDF in reports/ in the person's report theme (runtime/how-a-run-works.md)"
 	var out []string

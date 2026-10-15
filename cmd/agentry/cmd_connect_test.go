@@ -201,7 +201,7 @@ func TestSetupConnectWritesThePolicy(t *testing.T) {
 func TestModelSignInsConnectPoeNamesTheMissingClient(t *testing.T) {
 	newConnectFixture(t)
 	t.Setenv(mcpauth.PoeClientIDEnv, "")
-	if _, _, err := runCLI(t, strings.NewReader(""), "model-signins", "add", "poe"); err == nil || !strings.Contains(err.Error(), "agentry-cli#743") {
+	if _, _, err := runCLI(t, strings.NewReader(""), "model-signins", "add", "poe"); err == nil || !strings.Contains(err.Error(), "carries no client id") {
 		t.Fatalf("err %v", err)
 	}
 }

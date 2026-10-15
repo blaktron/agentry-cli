@@ -470,7 +470,7 @@ func TestAShippedPacksTextIsItsOwnStages(t *testing.T) {
 
 // TestServerFindingsRateAsTheGate: a declared server's advisory is the
 // finding S7 makes of it, at the gate's rating where the registry serves
-// one (agentry#774, agentry-cli#501), else at the advisory's own severity.
+// one, else at the advisory's own severity.
 func TestServerFindingsRateAsTheGate(t *testing.T) {
 	got := serverFindings([]mcpinstall.VulnStatus{
 		{Ref: "npm:@modelcontextprotocol/sdk@1.25.2", Status: "vulnerable", Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-71", Severity: "high", GateSeverity: "medium"}}},

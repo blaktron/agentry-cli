@@ -1,10 +1,9 @@
-// Package voice is the Writing Voice (plan writing-voice.md §4, D1–D3;
-// agentry-cli#531): the instructions an LLM follows to write as a person
-// writes, one Markdown file, VOICE.md, at most MaxBytes. It is not a
-// knowledge pack: it has no wiki, no sources and no name, and a person
-// keeps one. A run reads it through the one tool voice_read, granted only
-// when a voice is attached, and the System Prompt's head says what it
-// governs and what it never does (D4).
+// Package voice is the Writing Voice: the instructions an LLM follows to
+// write as a person writes, one Markdown file, VOICE.md, at most MaxBytes. It
+// is not a knowledge pack: it has no wiki, no sources and no name, and a
+// person keeps one. A run reads it through the one tool voice_read, granted
+// only when a voice is attached, and the System Prompt's head says what it
+// governs and what it never does.
 //
 // This package is the format: what a VOICE.md must be, its digest, and
 // the record kept beside it. The local store keeps it sealed
@@ -25,7 +24,7 @@ import (
 const (
 	// File is the voice's one file.
 	File = "VOICE.md"
-	// MaxBytes caps a VOICE.md (D3): the drafted instruction's cap, so a
+	// MaxBytes caps a VOICE.md: the drafted instruction's cap, so a
 	// full LLM skill fits and AI Review reads it in one chunk.
 	MaxBytes = 32 << 10
 	// MetaSchema is the format of the record kept beside a voice.
@@ -70,9 +69,8 @@ const (
 	SourceAIEdit Source = "ai-edit"
 	// SourceEdit is the person's own text.
 	SourceEdit Source = "edit"
-	// SourceDownload is the account's live voice, downloaded (V3,
-	// agentry-cli#532): AI Review passed it in the account before it was
-	// live there.
+	// SourceDownload is the account's live voice, downloaded: AI Review
+	// passed it in the account before it was live there.
 	SourceDownload Source = "download"
 )
 
@@ -97,7 +95,7 @@ type Meta struct {
 	Source  Source `json:"source"`
 	Created string `json:"created"`
 	Updated string `json:"updated"`
-	// AlwaysAttach is this computer's voice's own flag (D11): every run
+	// AlwaysAttach is this computer's voice's own flag: every run
 	// here attaches it unless the run says not to. On when a voice is
 	// first made.
 	AlwaysAttach bool `json:"alwaysAttach"`
@@ -126,8 +124,8 @@ func (m Meta) Describe() string {
 
 // Origin is where this computer's voice came from, as a run's receipt
 // records it. A downloaded voice was reviewed in the account; nothing here
-// checks it again, and the record kept beside it is not authenticated
-// (DR-56), so the receipt says no more than that.
+// checks it again, and the record kept beside it is not authenticated,
+// so the receipt says no more than that.
 func (m Meta) Origin() string {
 	if m.Source == SourceDownload {
 		return "kept on this computer, " + m.Source.Phrase() + " (reviewed there, not checked again here)"
@@ -147,7 +145,7 @@ func (s Source) Phrase() string {
 	case SourceEdit:
 		return "written by hand"
 	case SourceDownload:
-		// The record beside the voice is not authenticated (DR-56), so the
+		// The record beside the voice is not authenticated, so the
 		// phrase names where it came from and claims no review itself.
 		return "downloaded from your account"
 	}

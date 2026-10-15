@@ -1,7 +1,7 @@
 package validate
 
-// D-12 parity for the S1 subset: the local checks must agree with the ones
-// the registry runs at submit, or the round-trip they exist to prevent comes
+// Parity for the S1 subset: the local checks must agree with the ones the
+// registry runs at submit, or the round-trip they exist to prevent comes
 // straight back.
 
 import (

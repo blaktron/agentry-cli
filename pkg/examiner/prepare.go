@@ -24,13 +24,12 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// The pre-step (plan §6.1, kind 1): what the registry runs that a client
-// has the code for, run here over the files a submission would carry, and
-// what the registry publishes about its gate and about each declared
-// server. Then the inputs are staged for the run: the manifest's canonical
-// JSON, since the runner image has no YAML parser, and the package's files,
-// both copied, so the run reads a copy and the person's folder is never
-// mounted.
+// The pre-step: what the registry runs that a client has the code for, run
+// here over the files a submission would carry, and what the registry
+// publishes about its gate and about each declared server. Then the inputs
+// are staged for the run: the manifest's canonical JSON, since the runner
+// image has no YAML parser, and the package's files, both copied, so the
+// run reads a copy and the person's folder is never mounted.
 
 // The staged inputs' names, as the run sees them under /inputs.
 const (
@@ -255,10 +254,10 @@ var inventoryConfidence = map[string]string{
 }
 
 // serverFindings are each declared server's advisories as stage S7 rates
-// them: the gate's rating where the registry serves it (agentry#774), else
-// the advisory's own severity, at high confidence. A server the
-// registry has no answer for here gives none; the report says it was not
-// determined (Finish).
+// them: the gate's rating where the registry serves it, else the
+// advisory's own severity, at high confidence. A server the registry has
+// no answer for here gives none; the report says it was not determined
+// (Finish).
 func serverFindings(servers []mcpinstall.VulnStatus) []Finding {
 	var out []Finding
 	for _, s := range servers {

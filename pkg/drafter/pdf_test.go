@@ -10,10 +10,10 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// TestPDFProblems is the Drafter's rule on PDFs (agentry-cli#787): only
-// export_pdf makes a PDF, so instructions that have the run write one with
-// write_report, write PDF syntax by hand, or leave the person to print a
-// page to PDF are refused, and the right way is not.
+// TestPDFProblems is the Drafter's rule on PDFs: only export_pdf makes a
+// PDF, so instructions that have the run write one with write_report,
+// write PDF syntax by hand, or leave the person to print a page to PDF are
+// refused, and the right way is not.
 func TestPDFProblems(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string

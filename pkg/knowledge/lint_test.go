@@ -112,8 +112,8 @@ func TestLintFindings(t *testing.T) {
 	}
 
 	t.Run("web and model citations are declared keys", func(t *testing.T) {
-		// agentry-cli#523 (plan knowledge-and-drafter.md D17): a page the
-		// Creator read on the web, and what its model knew, name no source.
+		// A page the Creator read on the web, and what its model knew, name
+		// no source.
 		root := goodPack(t)
 		write(t, root, map[string]string{"wiki/topics/web.md": page("Web", "s",
 			"A fact [src: web:https://docs.example.com/a?b=c#d].\nAnother [src: model].\nBoth [src: doc:guide.txt; web:http://x.test/; model].\n")})

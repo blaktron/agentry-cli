@@ -124,7 +124,7 @@ func TestApplyDropsAFailingPageNotTheBuild(t *testing.T) {
 		// A page that passes lands.
 		"wiki/topics/good.md": page("Good", "s", "fine [src: doc:guide.txt]\n"),
 		// A page whose only fault is a link to a dropped page is kept, the
-		// link made plain text, so the drop does not cascade (agentry-cli#433).
+		// link made plain text, so the drop does not cascade.
 		"wiki/topics/leans.md": page("Leans", "s", "see [the broken page](broken.md) [src: doc:guide.txt]\n"),
 	}), opts())
 	if err != nil {
@@ -247,7 +247,7 @@ func TestApplyRefusals(t *testing.T) {
 	})
 	t.Run("a linked directory that stays in the outputs is refused too", func(t *testing.T) {
 		// os.Root follows a link inside its root; only the check refuses
-		// it, so this case holds the check on any host (agentry-cli#421).
+		// it, so this case holds the check on any host.
 		packDir := filepath.Join(t.TempDir(), "aws-docs")
 		out := outputs(t, Changes{Write: []string{"sources/linked/page.md"}}, map[string]string{"other/page.md": "# Page\n"})
 		if err := os.MkdirAll(filepath.Join(out, "sources"), 0o755); err != nil {
@@ -296,7 +296,7 @@ func TestApplyRefusals(t *testing.T) {
 // A stopped run's pages link to pages it never wrote. Each is kept with
 // those links made plain text rather than dropped, so a chain of pages
 // linking forward survives; a link that points outside the pack, or any
-// other fault, still drops the page (agentry-cli#433).
+// other fault, still drops the page.
 func TestApplyKeepsAPageWhoseOnlyFaultIsADeadLink(t *testing.T) {
 	packDir := filepath.Join(t.TempDir(), "aws-docs")
 	res, err := Apply(packDir, outputs(t, Changes{
@@ -344,8 +344,7 @@ func TestApplyKeepsAPageWhoseOnlyFaultIsADeadLink(t *testing.T) {
 // left as written, an image loses its '!', the frontmatter is not
 // touched; a link whose text holds a code span with ']' (the raw text
 // cannot match it) and a nest of links whose unlink uncovers one that
-// points outside the pack are dropped, and the result lints clean
-// (agentry-cli#433's review).
+// points outside the pack are dropped, and the result lints clean.
 func TestApplyUnlinksAsTheLintReads(t *testing.T) {
 	packDir := filepath.Join(t.TempDir(), "aws-docs")
 	res, err := Apply(packDir, outputs(t, Changes{
@@ -388,7 +387,7 @@ func TestApplyUnlinksAsTheLintReads(t *testing.T) {
 }
 
 // Apply holds the pack to the cap its caller names: Agentry's 10 MB when
-// none, this computer's when a local build names it (agentry-cli#429).
+// none, this computer's when a local build names it.
 func TestApplyHoldsThePackToItsCap(t *testing.T) {
 	files := func() map[string]string {
 		return map[string]string{
@@ -410,7 +409,7 @@ func TestApplyHoldsThePackToItsCap(t *testing.T) {
 
 // knowledge create DIR takes an existing empty DIR: the pack replaces it.
 // Linux renames onto an empty directory; Windows refuses to, so the empty
-// directory is removed first (agentry-cli#426).
+// directory is removed first.
 func TestApplyMakesANewPackInAnExistingEmptyDirectory(t *testing.T) {
 	packDir := filepath.Join(t.TempDir(), "aws-docs")
 	if err := os.Mkdir(packDir, 0o755); err != nil {

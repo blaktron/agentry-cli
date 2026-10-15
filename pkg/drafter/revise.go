@@ -19,13 +19,12 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// A revision (plan drafter-revisions.md §5, D1; agentry-cli#526): the
-// Drafter is given a QuickAgent's release, what the person who maintains it
-// wants changed and the problems they found, and writes the release's next
-// version instead of a new QuickAgent. The release travels as files, staged
-// under /inputs/revise, so it is not cut at a description's bound; the
-// person's two texts are the task, and AI Review reads them before the
-// Drafter does, as it reads a description.
+// A revision: the Drafter is given a QuickAgent's release, what the person
+// who maintains it wants changed and the problems they found, and writes
+// the release's next version instead of a new QuickAgent. The release
+// travels as files, staged under /inputs/revise, so it is not cut at a
+// description's bound; the person's two texts are the task, and AI Review
+// reads them before the Drafter does, as it reads a description.
 
 // MaxRevisionTextBytes bounds each of the person's two texts: the
 // additional instructions and the problems with this draft.
@@ -144,9 +143,9 @@ func (r *Revision) WithTexts(additional, problems string) error {
 // RevisionTask is the Drafter's task for a revision. It names the release's
 // files under /inputs and then gives the person's two texts, fenced and
 // labelled in the third person, as the site's Describe again does
-// (agentry-web#622: an imperative framing of the person's words was flagged
-// as an injection). AI Review reads the whole of it before the Drafter
-// starts (Prescan); the release's own files are not in it.
+// (an imperative framing of the person's words is flagged as an injection).
+// AI Review reads the whole of it before the Drafter starts (Prescan); the
+// release's own files are not in it.
 func RevisionTask(r *Revision) (string, error) {
 	if r == nil || r.Name == "" {
 		return "", errors.New("a revision needs a release")
@@ -177,7 +176,7 @@ func RevisionTask(r *Revision) (string, error) {
 }
 
 // PrescanRelease has AI Review read the release's two staged files before
-// the Drafter starts, as model input in the pack scan's chunks (DR-44: the
+// the Drafter starts, as model input in the pack scan's chunks (the
 // Drafter's model reads nothing AI Review has not). A revision is of the
 // whole release, so a file it does not pass, or could not scan, stops the
 // draft at stage description rather than being withheld.

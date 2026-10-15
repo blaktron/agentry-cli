@@ -1,14 +1,13 @@
-// Package remote is the client of a registry's Writing Voice routes (plan
-// writing-voice.md V3, D6; agentry-cli#532; the core's docs/voice.md): read
-// the account's voice, put a new version for review, and set the account's
-// always-attach flag, for the account a session token or a personal access
-// token with voice:read and voice:write speaks for. The CLI and the desktop
-// both use it.
+// Package remote is the client of a registry's Writing Voice routes (the
+// core's docs/voice.md): read the account's voice, put a new version for
+// review, and set the account's always-attach flag, for the account a session
+// token or a personal access token with voice:read and voice:write speaks
+// for. The CLI and the desktop both use it.
 //
 // The text travels in the clear over TLS and the registry seals it at rest:
 // unlike a knowledge pack, a voice is read by the registry to be reviewed
 // before it is live, so a client seal would protect nothing the registry
-// does not open (DEV-191).
+// does not open.
 package remote
 
 import (

@@ -12,13 +12,12 @@ import (
 	"github.com/blaktron/agentry/pkg/ruleset"
 )
 
-// The registry's gate, restated (plan desktop-review-key-and-run-cards.md
-// §6.2, D24, D31). The gate's code is internal to the core, so the
-// Examiner's expected outcome restates its rule here, and
+// The registry's gate, restated. The gate's code is internal to the core, so
+// the Examiner's expected outcome restates its rule here, and
 // TestTheGateRestatementMatchesTheCoresTable runs every case of the table the
-// core publishes and tests its own gate against (pkg/gatecases, agentry#776):
-// a core pin bump that changes the gate fails that test until this file
-// follows. Nothing else here may decide an outcome.
+// core publishes and tests its own gate against (pkg/gatecases): a core pin
+// bump that changes the gate fails that test until this file follows. Nothing
+// else here may decide an outcome.
 
 // GateInput is what the gate weighs, in the table's terms.
 type GateInput struct {
@@ -54,7 +53,7 @@ const (
 
 // fallbackMaxAuto is the gate's auto-publish threshold when the policy
 // names none: the ruleset's baseline, read from the core's own package as
-// the core's gate reads it (medium since ruleset 0.3.0, agentry#773), so a
+// the core's gate reads it (medium in ruleset 0.3.0 and later), so a
 // core pin that moves it moves this too.
 func fallbackMaxAuto() string { return ruleset.BaselineMaxAutoPublishSeverity() }
 
@@ -258,9 +257,9 @@ func WildcardEgress(manifestJSON []byte) bool {
 // and not a copy of it: below 2 no finding; 2 medium and 3 high, except that
 // an attempted injection, an undeclared capability and deceiving the user are
 // high from 2, and exfiltration and destructive actions medium at any score
-// (ruleset 0.4.0, agentry#893; DEV-186). The core's further finding for a
-// verdict showing manipulation comes from its generative-model providers
-// alone; the Jev judge AI Review asks never sets it.
+// (ruleset 0.4.0). The core's further finding for a verdict showing
+// manipulation comes from its generative-model providers alone; the Jev judge
+// AI Review asks never sets it.
 func AIReviewFinding(id string, score int) (gatecases.Finding, bool) {
 	if score < judge.WithholdScore {
 		return gatecases.Finding{}, false

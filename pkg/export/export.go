@@ -1,6 +1,6 @@
-// Package export holds the interop exporters (§5.6): pure functions of
-// (archive, manifest, target) that emit the claude-skill and agents-md
-// install formats, and the two tree writers that lay them on disk from an
+// Package export holds the interop exporters: pure functions of (archive,
+// manifest, target) that emit the claude-skill and agents-md install
+// formats, and the two tree writers that lay them on disk from an
 // extracted archive. Keeping the shaping side-effect free makes it
 // table-testable without a registry, and lets any client — the CLI, the
 // desktop app — produce byte-identical installs from the same inputs.
@@ -25,7 +25,7 @@ import (
 // EnsureSkillFrontmatter returns content guaranteed to start with YAML
 // frontmatter. When the skill file already opens with a frontmatter fence it
 // is returned unchanged; otherwise `name` and `description` (mapped from the
-// manifest name and summary per §5.6) are prepended.
+// manifest name and summary) are prepended.
 func EnsureSkillFrontmatter(content []byte, name, summary string) []byte {
 	if bytes.HasPrefix(content, []byte("---\n")) || bytes.HasPrefix(content, []byte("---\r\n")) {
 		return content
@@ -52,7 +52,7 @@ func EnsureSkillFrontmatter(content []byte, name, summary string) []byte {
 }
 
 // AgentsMDSection renders the AGENTS.md section for one installed
-// QuickAgent (§5.6 agents-md target).
+// QuickAgent (the agents-md target).
 func AgentsMDSection(ns, name, version, summary, installPath string) string {
 	return AgentsMDSectionNote(ns, name, version, summary, installPath, "")
 }
@@ -151,14 +151,14 @@ func WriteClaudeSkillTree(staging, dest string, m *manifest.Manifest) error {
 }
 
 // skillBody is the skill's content, read from the verified release
-// (staging) and never from a destination an earlier install may have
-// left a file in: the skill file the manifest names; or, for a release
-// with no skill entrypoint — a prompt agent, whose instruction is AGENT.md
-// — its instruction as the runner reads it (the first of the manifest's
-// InstructionCandidates it carries, agentry-cli#193), else a SKILL.md it
-// ships anyway. A release that names a skill file it does not carry is
-// refused by that name, never patched over from something else; one with
-// nothing to make a skill from is refused naming what was looked for.
+// (staging) and never from a destination an earlier install may have left
+// a file in: the skill file the manifest names; or, for a release with no
+// skill entrypoint — a prompt agent, whose instruction is AGENT.md — its
+// instruction as the runner reads it (the first of the manifest's
+// InstructionCandidates it carries), else a SKILL.md it ships anyway. A
+// release that names a skill file it does not carry is refused by that
+// name, never patched over from something else; one with nothing to make a
+// skill from is refused naming what was looked for.
 func skillBody(staging string, m *manifest.Manifest, skillRel string) ([]byte, error) {
 	if m.Entrypoints.Skill != "" {
 		content, err := readUnder(staging, skillRel)
@@ -221,7 +221,7 @@ func WriteAgentsMDTree(staging, dest, agentsMDPath string, m *manifest.Manifest,
 }
 
 // CopyTree copies src into dest, preserving each file's permission bits
-// (the archive normalizes modes, D-15).
+// (the archive normalizes modes).
 func CopyTree(src, dest string) error { return CopyTreeSkipping(src, dest, nil) }
 
 // CopyTreeSkipping is CopyTree leaving out every directory skipDir names

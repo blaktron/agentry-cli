@@ -12,16 +12,15 @@ import (
 var ErrScanUnconfirmed = errors.New("its scan in Agentry could not be confirmed")
 
 // AgentryScan is the scan record of the kept pack name as the registry
-// that keeps its copy reports it now (plan knowledge-and-drafter.md D14;
-// agentry-cli#522). The record in a pack's manifest.json is only a claim
-// (knowledge.Scan): this asks the registry. It answers the record only
-// when the copy there is this pack's tree: the pack was uploaded to or
-// downloaded from that registry (its own, or its organization's for a
+// that keeps its copy reports it now. The record in a pack's manifest.json is
+// only a claim (knowledge.Scan): this asks the registry. It answers the
+// record only when the copy there is this pack's tree: the pack was uploaded
+// to or downloaded from that registry (its own, or its organization's for a
 // shared pack), is ready there with digest, the tree the caller opened and
-// verified, and has not changed here since. A pack kept on this computer only has no record to
-// confirm: nil, and no error. Otherwise it is an error wrapping
-// ErrScanUnconfirmed, saying why, and the caller treats the pack as not
-// scanned.
+// verified, and has not changed here since. A pack kept on this computer only
+// has no record to confirm: nil, and no error. Otherwise it is an error
+// wrapping ErrScanUnconfirmed, saying why, and the caller treats the pack as
+// not scanned.
 func (s *Store) AgentryScan(ctx context.Context, name, digest string) (json.RawMessage, error) {
 	e, err := s.Find(name)
 	if err != nil {

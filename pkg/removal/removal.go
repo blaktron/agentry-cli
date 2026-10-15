@@ -4,7 +4,7 @@
 // file sharing can keep a handle on a file for a moment after its
 // container is removed, and a file or a directory with an open handle
 // cannot be deleted; so a failed delete is retried there for a bounded
-// time before it is given up (agentry-cli#422).
+// time before it is given up.
 package removal
 
 import (

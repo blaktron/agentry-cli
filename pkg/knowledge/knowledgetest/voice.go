@@ -14,10 +14,10 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/voice"
 )
 
-// The fake's Writing Voice routes (the core's docs/voice.md, agentry#809):
-// one voice per account with a live, a pending and a previous version, put
-// for review and decided by Review, or by ReviewOnRead at the next read,
-// as the core's review job decides it.
+// The fake's Writing Voice routes (the core's docs/voice.md): one voice
+// per account with a live, a pending and a previous version, put for
+// review and decided by Review, or by ReviewOnRead at the next read, as
+// the core's review job decides it.
 
 type fakeVoice struct {
 	always, wentLive        bool

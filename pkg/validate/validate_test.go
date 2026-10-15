@@ -1,6 +1,6 @@
 // The printers' ordering (most severe first, errors before warnings) and
 // the check's own contract: the embedded bundle when a client names no
-// loader, and a loader that fails fails the check (DEV-011).
+// loader, and a loader that fails fails the check.
 package validate
 
 import (
@@ -176,9 +176,9 @@ func TestPrintManifestIssuesOrdersErrorsFirst(t *testing.T) {
 	}
 }
 
-// TestWorkspaceOKLineNamesTheRulesThatRan (agentry-cli#638): a clean
-// manifest's line names the rules pkg/manifest reports, read from its own
-// list, so it cannot say V1-V9 while V10 and V11 run.
+// TestWorkspaceOKLineNamesTheRulesThatRan: a clean manifest's line names
+// the rules pkg/manifest reports, read from its own list, so it cannot
+// say V1-V9 while V10 and V11 run.
 func TestWorkspaceOKLineNamesTheRulesThatRan(t *testing.T) {
 	var out bytes.Buffer
 	if _, err := Workspace(workspace(t), Options{Out: &out}); err != nil {

@@ -43,35 +43,34 @@ type serverCheck struct {
 	err error
 }
 
-// checkServers is the Drafter's rule on declared MCP servers
-// (agentry-cli#609): each pinned release must be one the run's registry
-// publishes, and its own runtime range must admit the runtime a run gives
-// it (policy.DefaultNodeVersion for npm, policy.DefaultPythonVersion for
-// PyPI). A release it excludes installs and then fails every tool call
-// (the OSV server 0.1.15 on Node 22, agentry-cli#608), or is refused at
-// install. A registry that does not answer is this computer's reason, not
-// the draft's: the pin is noted, never refused, and after the first such
-// failure the rest are noted without waiting on it again. Only the first
-// manifest.MaxMCPServers are read; validate refuses more.
+// checkServers is the Drafter's rule on declared MCP servers: each pinned
+// release must be one the run's registry publishes, and its own runtime
+// range must admit the runtime a run gives it (policy.DefaultNodeVersion
+// for npm, policy.DefaultPythonVersion for PyPI). A release it excludes
+// installs and then fails every tool call (the OSV server 0.1.15 on Node
+// 22), or is refused at install. A registry that does not answer is this
+// computer's reason, not the draft's: the pin is noted, never refused, and
+// after the first such failure the rest are noted without waiting on it
+// again. Only the first manifest.MaxMCPServers are read; validate refuses
+// more.
 //
-// It also holds each pin to the drafting guide's server lists
-// (agentry-cli#660, plan drafter-knowledge.md §4.6): a pin Does not run
-// here covers (ServerList.NotRunHere), or one whose direct dependencies,
-// from the metadata the resolution already fetched, include a package its
-// dependencies section lists, is a rules line, so it goes to the repair
-// turn and keepFirst holds it. An npm install script is a sign for the
-// notes, not a rule. No request is added: the list is embedded, and the
-// dependencies come with the resolution. The notes say what admitted each
-// server (noteServerProblems).
+// It also holds each pin to the drafting guide's server lists: a pin Does
+// not run here covers (ServerList.NotRunHere), or one whose direct
+// dependencies, from the metadata the resolution already fetched, include
+// a package its dependencies section lists, is a rules line, so it goes to
+// the repair turn and keepFirst holds it. An npm install script is a sign
+// for the notes, not a rule. No request is added: the list is embedded,
+// and the dependencies come with the resolution. The notes say what
+// admitted each server (noteServerProblems).
 //
-// A remote server (agentry-cli#667; DR-67's addendum) has no package to
-// look up: the core's V5 holds its address and sign-in, and the notes say
-// where it runs, what Agentry checks of it, and what its first run asks of
-// whoever runs it. A package's oauth block must be a sign-in the guide's
-// list carries for that version, copied exactly with the settings it
-// needs (the operator's decision of 2026-10-09): any other is a rules
-// line, since a token file the package does not read fails silently at run
-// time. A rules line names the server by its own index in the manifest.
+// A remote server has no package to look up: the core's V5 holds its
+// address and sign-in, and the notes say where it runs, what Agentry
+// checks of it, and what its first run asks of whoever runs it. A
+// package's oauth block must be a sign-in the guide's list carries for
+// that version, copied exactly with the settings it needs: any other is a
+// rules line, since a token file the package does not read fails silently
+// at run time. A rules line names the server by its own index in the
+// manifest.
 func (p PostStep) checkServers(ctx context.Context, d *Draft) {
 	d.serverProblems, d.serversUnchecked, d.serverSigns, d.serversAdmitted = nil, nil, nil, nil
 	all := declaredServers(d.Manifest)
@@ -79,7 +78,7 @@ func (p PostStep) checkServers(ctx context.Context, d *Draft) {
 		all = all[:manifest.MaxMCPServers]
 	}
 	// The embedded list is held by TestTheEmbeddedServerListLoads; were it
-	// unreadable, the check would go on without it, as before M3.
+	// unreadable, the check would go on without it.
 	list, _ := serverList()
 	packages := len(mcpinstall.Packages(all))
 	for i, srv := range all {
@@ -211,8 +210,8 @@ func scopesClause(scopes []string) string {
 // remoteScopesLine is the rules line for a remote server signed in to by
 // OAuth that names no scopes, where the vendor offers more than one: the
 // draft declares the scopes its task needs, rather than whatever the
-// vendor asks for (agentry-cli#667's acceptance). A vendor the list does
-// not know is not held to it. "" when there is nothing to fix.
+// vendor asks for. A vendor the list does not know is not held to it. ""
+// when there is nothing to fix.
 func remoteScopesLine(i int, srv manifest.MCPServer, list *ServerList) string {
 	if srv.Auth != manifest.AuthOAuth || len(srv.Scopes) > 0 || list == nil {
 		return ""

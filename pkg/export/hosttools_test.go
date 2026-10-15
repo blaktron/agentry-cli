@@ -66,9 +66,9 @@ func TestSkillFrontmatterWithTools(t *testing.T) {
 			t.Errorf("author frontmatter lost:\n%s", got)
 		}
 	})
-	// agentry-cli#195: the line is the declared contract, compiled; an
-	// author's own grant is replaced, never kept, and stays visible as a
-	// comment naming what was dropped.
+	// The line is the declared contract, compiled; an author's own grant
+	// is replaced, never kept, and stays visible as a comment naming
+	// what was dropped.
 	t.Run("author allowed-tools is replaced by the contract", func(t *testing.T) {
 		in := "---\nname: mine\nallowed-tools: Bash\ndescription: d\n---\n\nbody\n"
 		got := string(SkillFrontmatterWithTools([]byte(in), "n", "s", tools))

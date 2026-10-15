@@ -5,11 +5,11 @@
 // special file anywhere on the way is refused, never followed.
 //
 // os.Root already refuses a link that leads out of the root. This does not
-// rest on that: a Windows build run under Wine followed one, because
-// os.Root's escape check there depends on reparse-point handling
-// (agentry-cli#421). It also refuses links that stay inside the root, which
-// os.Root follows. The trees it guards are written by a container that has
-// ended before they are read, so nothing races the check.
+// rest on that: a Windows build followed one, because os.Root's escape check
+// there depends on reparse-point handling. It also refuses links that stay
+// inside the root, which os.Root follows. The trees it guards are written by
+// a container that has ended before they are read, so nothing races the
+// check.
 package plainpath
 
 import (

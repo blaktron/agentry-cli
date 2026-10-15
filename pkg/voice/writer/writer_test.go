@@ -14,7 +14,7 @@ import (
 )
 
 // TestTheVoiceWriterDeclaresOnlyFiles holds the embedded package to the
-// contract plan writing-voice.md §6 gives it, as the compiler reads it: no
+// contract the Voice Writer is meant to have, as the compiler reads it: no
 // egress, no filesystem, no exec — the runner decodes the documents, the
 // model runs nothing — and the files data category, in the one autonomous
 // mode, with the identity the constants name.

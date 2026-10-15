@@ -7,9 +7,8 @@ import (
 )
 
 // ErrNoJevKey is LocalReview's answer when the person has no TypeSafe key
-// of their own: a review does not run without one (plan D28), since AI
-// Review is asked with it and every file the model reads is scanned with it
-// first.
+// of their own: a review does not run without one, since AI Review is asked
+// with it and every file the model reads is scanned with it first.
 var ErrNoJevKey = drafter.ErrNoJevKey
 
 // LocalReview is a review's key on this computer: the person's own, read as
