@@ -81,6 +81,13 @@ func createInPlace(dest string, data []byte, perm fs.FileMode) (bool, error) {
 // to a new one), as a write in place would have left them. A rename
 // refused because a reader briefly holds dest open (Windows) is retried
 // for about a second.
+//
+// Windows also refuses to replace a file by rename for a while after it
+// was written, when a scanner such as Defender has mapped it, though the
+// file can still be renamed away. When the rename over dest is refused,
+// dest is retired aside and the new file renamed into the name it leaves
+// free, as Replace does for a directory; a reader in between finds no
+// file.
 func ReplaceFile(dest string, data []byte, perm fs.FileMode) error {
 	kept := false
 	if target, err := filepath.EvalSymlinks(dest); err == nil {
@@ -106,15 +113,54 @@ func ReplaceFile(dest string, data []byte, perm fs.FileMode) error {
 			time.Sleep(wait)
 			wait *= 2
 		}
-		if err = os.Rename(staging, dest); err == nil {
+		if err = replace(staging, dest); err == nil {
 			return nil
 		}
 		if _, serr := os.Stat(staging); serr != nil {
 			break
 		}
+		if retireFile(staging, dest) == nil {
+			return nil
+		}
 	}
 	_ = os.Remove(staging)
 	return fmt.Errorf("publish %s: %w", dest, err)
+}
+
+// replace renames staging over dest. A seam: the tests refuse it as
+// Windows does while a scanner still maps a file that was just written.
+var replace = os.Rename
+
+// errNotAFile is retireFile's refusal of a dest that is not a regular
+// file: only a file is ever retired in place of the new one.
+var errNotAFile = errors.New("not a regular file")
+
+// retireFile publishes staging at dest when a rename over dest was
+// refused: dest, a regular file, is renamed aside to a retired sibling,
+// staging is renamed into the name it leaves free, and the retired file
+// is removed (a sibling sweep removes one that will not go). If staging
+// does not go in and no other writer has published dest meanwhile, the
+// retired file is put back, so a failed write leaves the previous file.
+func retireFile(staging, dest string) error {
+	info, err := os.Lstat(dest)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errNotAFile
+	}
+	retired := filepath.Join(filepath.Dir(dest), "."+filepath.Base(dest)+retiredInfix+randomSuffix())
+	if err := os.Rename(dest, retired); err != nil {
+		return err
+	}
+	err = os.Rename(staging, dest)
+	if err != nil {
+		if _, serr := os.Lstat(dest); errors.Is(serr, fs.ErrNotExist) && os.Rename(retired, dest) == nil {
+			return err
+		}
+	}
+	_ = os.Remove(retired)
+	return err
 }
 
 // stageFile writes data to a new staging file beside dest, named
