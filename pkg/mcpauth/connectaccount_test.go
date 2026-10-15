@@ -121,6 +121,41 @@ func TestPoeClientIDComesFromTheVariableWhenTheBuildHasNone(t *testing.T) {
 	}
 }
 
+// A source build is this test binary: no -X sets the documents.
+func TestASourceBuildCarriesNoClientMetadataDocument(t *testing.T) {
+	if mcpauth.NativeClientMetadataURL != "" || mcpauth.HuggingFaceClientMetadataURL != "" {
+		t.Fatalf("a source build presents %q and %q; only a release build sets them", mcpauth.NativeClientMetadataURL, mcpauth.HuggingFaceClientMetadataURL)
+	}
+}
+
+func TestHuggingFaceClientIDIsTheVariablesThenTheBuilds(t *testing.T) {
+	t.Setenv(mcpauth.HuggingFaceClientIDEnv, "")
+	if id := mcpauth.HuggingFaceClientID(); id != "" {
+		t.Fatalf("id %q: a build with no document and no variable has no client", id)
+	}
+	prev := mcpauth.HuggingFaceClientMetadataURL
+	t.Cleanup(func() { mcpauth.HuggingFaceClientMetadataURL = prev })
+	mcpauth.HuggingFaceClientMetadataURL = "https://example.test/oauth/clients/hf.json"
+	if id := mcpauth.HuggingFaceClientID(); id != mcpauth.HuggingFaceClientMetadataURL {
+		t.Fatalf("id %q: a release build presents its document", id)
+	}
+	t.Setenv(mcpauth.HuggingFaceClientIDEnv, " hf-app ")
+	if id := mcpauth.HuggingFaceClientID(); id != "hf-app" {
+		t.Fatalf("id %q: the variable names another client in place of the document", id)
+	}
+}
+
+func TestHuggingFaceConnectWithNoClientSaysSoBeforeTheBrowser(t *testing.T) {
+	v := mcpauthtest.NewHuggingFace(t)
+	_, err := v.Flow().Connect(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "no OAuth client configured") || !strings.Contains(err.Error(), mcpauth.HuggingFaceClientIDEnv) {
+		t.Fatalf("err %v: a build with no client must say so and name the variable", err)
+	}
+	if len(v.Authorizations) != 0 {
+		t.Fatal("the browser was sent to a consent with no client")
+	}
+}
+
 func TestHuggingFaceConnectAsAgentrysClientDocument(t *testing.T) {
 	v := mcpauthtest.NewHuggingFace(t)
 	got, err := v.Flow().Connect(context.Background(), v.CIMDURL())

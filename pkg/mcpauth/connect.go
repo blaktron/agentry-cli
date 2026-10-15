@@ -16,10 +16,13 @@ import (
 	"time"
 )
 
-// NativeClientMetadataURL is Agentry's Client ID Metadata Document for the
-// CLI and the desktop ("Agentry Desktop", loopback redirects), served by
-// the site. A CIMD's client id is its own address.
-const NativeClientMetadataURL = "https://secureagentry.net/oauth/clients/agentry-desktop.json"
+// NativeClientMetadataURL is the address of the Client ID Metadata Document
+// the CLI and the desktop present ("Agentry Desktop", loopback redirects);
+// a CIMD's client id is its own address. A release build sets it with
+// -ldflags "-X github.com/blaktron/agentry-cli/pkg/mcpauth.NativeClientMetadataURL=…".
+// A source build has none, so a sign-in registers a client with the vendor
+// where it allows that and otherwise asks for the person's own.
+var NativeClientMetadataURL = ""
 
 // NativeClientName is the name a dynamically registered client gives.
 const NativeClientName = "Agentry Desktop"
