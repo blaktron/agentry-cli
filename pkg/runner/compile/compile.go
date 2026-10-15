@@ -583,6 +583,13 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 			caps.EgressHosts = hosts
 		}
 	}
+	// Unrestricted egress puts the tools server on a network of the run's
+	// own, as the web tools are, where a sandboxed network stack does not
+	// reach docker's embedded DNS: it resolves through the host's name
+	// servers or not at all.
+	if rt := pol.Docker.Runtime; caps.EgressMode == "all" && rt != "" && len(pol.Docker.Resolvers) == 0 {
+		return caps, &PolicyRefusal{Reason: fmt.Sprintf(`manifest declares network.egress: "*", whose tools server under the %[1]s runtime resolves host names only through the host's own name servers: name them in the runner policy's docker.resolvers (docker's embedded DNS is not reachable from %[1]s)`, rt)}
+	}
 
 	caps.FSReadMode, caps.FSReadPaths = fsMode(m.Capabilities.Filesystem.Read)
 	caps.FSWriteMode, caps.FSWritePaths = fsMode(m.Capabilities.Filesystem.Write)
@@ -1616,7 +1623,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	case "hosts":
 		e["network"] = "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: " + strings.Join(caps.EgressHosts, ", ")
 	case "all":
-		e["network"] = "UNRESTRICTED tool-plane egress (manifest \"*\", permitted by operator policy allowWildcardEgress)"
+		e["network"] = "UNRESTRICTED tool-plane egress (manifest \"*\", permitted by operator policy allowWildcardEgress); where the gateway's docker socket is filtered (the daemon line says whether it is), from a network of the run's own that only the tools server joins (its declared commands run there too), else from the daemon's default"
 	}
 	if caps.WebTools {
 		tools, read := toolsrv.ToolWebSearch+" (only with a search to use) and "+toolsrv.ToolWebRead, "every page and search result"

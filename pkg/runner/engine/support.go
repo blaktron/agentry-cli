@@ -87,10 +87,11 @@ type runDirs struct {
 	// fetchLedger is receipts/fetches.ndjson for a run whose fetch can
 	// save into the scratch folder (fetchsave.go), made as webLedger is.
 	fetchLedger string
-	// web says the run has the web tools, and runID names it, for the
-	// receipt's daemon line.
-	web   bool
-	runID string
+	// web says the run has the web tools, anyEgress that its tools server
+	// has unrestricted egress, and runID names it, for the receipt's
+	// daemon line.
+	web, anyEgress bool
+	runID          string
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
@@ -322,7 +323,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			_ = os.RemoveAll(root)
 		}
 	})
-	rd.runID, rd.web = runID, p.Plan.Capabilities.WebTools
+	rd.runID, rd.web, rd.anyEgress = runID, p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode == "all"
 	rd.targets = targetHostsOf(p)
 	if p.Web != nil {
 		// Made here, and only here, as a new regular file: whatever the

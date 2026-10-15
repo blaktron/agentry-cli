@@ -952,10 +952,41 @@ func namespaceMode(field, mode string) error {
 	return deny("HostConfig.%s %q", field, mode)
 }
 
-// checkNetworks resolves every network the container joins and applies
+// checkNetworks judges the networks a container joins (checkNetworkList)
+// and then gives one that names no primary network a primary of the
+// run's, since the daemon would put it on its default bridge: the one
+// network it names as an endpoint, or none.
+func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody, scope browserScope) error {
+	if err := f.checkNetworkList(ctx, c, scope); err != nil {
+		return err
+	}
+	hc := c.HostConfig
+	if hc.NetworkMode != "" && hc.NetworkMode != "default" {
+		return nil
+	}
+	var eps []string
+	if c.NetworkingConfig != nil {
+		for id := range c.NetworkingConfig.EndpointsConfig {
+			eps = append(eps, id)
+		}
+	}
+	switch len(eps) {
+	case 0:
+		hc.NetworkMode = "none"
+	case 1:
+		hc.NetworkMode = eps[0]
+	default:
+		// Which of them would be primary is the gateway's to say, not the
+		// filter's to guess.
+		return deny("a container that joins several networks names which one is its own")
+	}
+	return nil
+}
+
+// checkNetworkList resolves every network the container joins and applies
 // the rules to its name: the run's or a shared one, and an egress network
 // only for a pinned relay.
-func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody, scope browserScope) error {
+func (f *Filter) checkNetworkList(ctx context.Context, c *containerCreateBody, scope browserScope) error {
 	// The web tools' server asks for the daemon's default network; it gets
 	// the run's web network (Config.WebNetwork), and nothing else does.
 	web := false
@@ -1002,6 +1033,11 @@ func (f *Filter) checkNetworks(ctx context.Context, c *containerCreateBody, scop
 	}
 	byID := map[string]*endpointSettings{}
 	for key, ep := range c.NetworkingConfig.EndpointsConfig {
+		if name := netName(key); name == "default" || name == "bridge" {
+			// The daemon reads an endpoint named "default" as its bridge,
+			// and "bridge" is the bridge by its own name.
+			return deny("the daemon's default bridge")
+		}
 		n, err := f.ownNetwork(ctx, netName(key), true)
 		if err != nil {
 			return err

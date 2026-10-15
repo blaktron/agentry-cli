@@ -385,8 +385,27 @@ func TestWildcardEgressPolicyGate(t *testing.T) {
 	if plan.Capabilities.EgressMode != "all" {
 		t.Fatalf("egress mode = %q, want all", plan.Capabilities.EgressMode)
 	}
-	if !strings.Contains(plan.Enforcement["network"], "UNRESTRICTED") {
-		t.Fatalf("wildcard enforcement must disclose itself loudly, got %q", plan.Enforcement["network"])
+	if !strings.Contains(plan.Enforcement["network"], "UNRESTRICTED") || !strings.Contains(plan.Enforcement["network"], "network of the run's own") {
+		t.Fatalf("wildcard enforcement must disclose itself loudly, and where it reaches from, got %q", plan.Enforcement["network"])
+	}
+
+	// Under a sandboxed runtime the tools server on the run's own network
+	// resolves through the host's name servers, or the run is refused.
+	pol.Docker.Runtime = "runsc"
+	_, err = Compile(Inputs{
+		Manifest: m, Digest: "sha256:x", Source: "local", WorkspaceDir: ws,
+		Policy: pol, PolicySHA: "s", RunnerImage: "agentry-runner:test",
+	}, t.TempDir())
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "docker.resolvers") || !strings.Contains(refusal.Reason, "runsc") {
+		t.Fatalf("wildcard egress under runsc with no resolvers: %v", err)
+	}
+	pol.Docker.Resolvers = []string{"192.0.2.53"}
+	plan, err = Compile(Inputs{
+		Manifest: m, Digest: "sha256:x", Source: "local", WorkspaceDir: ws,
+		Policy: pol, PolicySHA: "s", RunnerImage: "agentry-runner:test",
+	}, t.TempDir())
+	if err != nil || !slices.Equal(plan.WebResolvers(), []string{"192.0.2.53"}) {
+		t.Fatalf("wildcard egress under runsc with resolvers: %v %+v", err, plan)
 	}
 }
 
