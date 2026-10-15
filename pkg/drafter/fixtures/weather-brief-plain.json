@@ -1,0 +1,22 @@
+{
+  "id": "weather-brief-plain",
+  "description": "Give me a three-line weather brief for a city I name.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "hosts": [
+      "api.open-meteo.com",
+      "geocoding-api.open-meteo.com",
+      "api.weather.gov",
+      "wttr.in",
+      "api.met.no"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 1,
+    "exec": false,
+    "write": false,
+    "intake": true
+  }
+}

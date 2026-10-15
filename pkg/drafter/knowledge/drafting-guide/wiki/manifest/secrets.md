@@ -3,7 +3,7 @@ title: Keys
 type: guide
 summary: How a QuickAgent declares the keys it needs (its own for fetch, a server's on that server), how to mark each one optional or required, how a run gets them without the model seeing them, and what a run does without an optional one.
 sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/agentry/hosted-runs/, web:https://docs.secureagentry.net/agentry/builder/]
-updated: 2026-10-09
+updated: 2026-10-15
 ---
 
 # Keys
@@ -12,7 +12,7 @@ updated: 2026-10-09
 
 - A key is declared by the name of its environment variable, never by its value: `secrets: [GITHUB_TOKEN]` [src: web:https://docs.secureagentry.net/quickagents/].
 - The QuickAgent's own `capabilities.secrets` holds the keys its `fetch` sends (see [Network and fetch](egress-and-fetch.md)). A key an MCP server needs goes in that server's `secrets`, under the name its documentation reads it from. A remote server that signs in with a key (`auth: secret`) declares exactly one, which goes to the vendor as a bearer token; one that signs in with OAuth declares none, because the person signs in at the vendor instead.
-- One key per service at most, and only a key the task uses. Prefer a service or a server that needs none.
+- One key per service at most, and only a key the task uses. Prefer a service or a server that needs none ([Declared MCP servers](../servers/mcp-servers.md#a-key-or-an-account-only-when-nothing-else-does-the-task)).
 - Each declared key gets its help in `guide.connect`: where to create it and the least permission the task needs (see [The intake and the guide](intake-and-guide.md)). For an optional key, the help also says what the key adds.
 - Never put a key, a token or a password in `env`, in the instructions or in an example. The registry scans every file for them [src: web:https://docs.secureagentry.net/quickagents/].
 - A key a browser types into a site's sign-in form is declared here **and** in `capabilities.browser.secrets`; the browser types it where the agent passes its name, and the agent never reads it ([A browser](browser.md)).
