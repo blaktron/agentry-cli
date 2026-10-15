@@ -67,6 +67,61 @@ type rpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+// detail is the explanation a harness puts in the error's data: docker-agent
+// and the ACP SDK answer a failed request with the generic "Internal error"
+// and carry the runtime's own words as data.error (or data as a string).
+func (e *rpcError) detail() string {
+	var text string
+	if json.Unmarshal(e.Data, &text) == nil {
+		return text
+	}
+	var obj struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(e.Data, &obj)
+	return obj.Error
+}
+
+// runtimeCode is docker-agent's classification of a failed prompt
+// (model_error, tool_failed, rate_limited, …), "" when the data has none.
+func (e *rpcError) runtimeCode() string {
+	var obj struct {
+		RuntimeCode string `json:"runtimeCode"`
+	}
+	_ = json.Unmarshal(e.Data, &obj)
+	return obj.RuntimeCode
+}
+
+// harnessRPCError is the harness's JSON-RPC error answer to a request.
+type harnessRPCError struct {
+	method string
+	rpc    *rpcError
+}
+
+// Error is one line: the method, the code, the message, and the first line
+// of the data's explanation when it adds to the message.
+func (e *harnessRPCError) Error() string {
+	msg := fmt.Sprintf("%s: harness error %d: %s", e.method, e.rpc.Code, firstLineOf(e.rpc.Message))
+	if d := firstLineOf(e.rpc.detail()); d != "" && d != firstLineOf(e.rpc.Message) {
+		msg += ": " + d
+	}
+	return msg
+}
+
+// promptOutOfCredits reports whether a failed prompt is a provider out of
+// credits: its words say so and the harness did not attribute the failure
+// to anything but the model (a tool's output that says 402 is not the
+// provider's answer).
+func promptOutOfCredits(err error) bool {
+	var rpcErr *harnessRPCError
+	if errors.As(err, &rpcErr) {
+		if code := rpcErr.rpc.runtimeCode(); code != "" && code != "model_error" {
+			return false
+		}
+	}
+	return OutOfCredits(err.Error())
+}
+
 // newACPSession starts the reader; the protocol begins with Start. permit
 // decides permission requests (nil denies everything).
 func newACPSession(rw io.ReadWriteCloser, protocolVersion int, permit func(tool string) bool) *acpSession {
@@ -157,7 +212,7 @@ func (s *acpSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 	if err != nil {
 		// A provider out of credits fails the prompt with its own words
 		// (docker-agent's ACP error), which end the session as that.
-		if OutOfCredits(err.Error()) {
+		if promptOutOfCredits(err) {
 			s.emit(Event{Kind: EventOutOfCredits, Text: err.Error()})
 		}
 		return nil, err
@@ -235,7 +290,7 @@ func (s *acpSession) call(ctx context.Context, method string, params any) (json.
 			return nil, fmt.Errorf("%s: harness ended the session before answering", method)
 		}
 		if m.Error != nil {
-			return nil, fmt.Errorf("%s: harness error %d: %s", method, m.Error.Code, firstLineOf(m.Error.Message))
+			return nil, &harnessRPCError{method: method, rpc: m.Error}
 		}
 		return m.Result, nil
 	case <-ctx.Done():

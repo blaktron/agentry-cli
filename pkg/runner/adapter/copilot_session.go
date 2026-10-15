@@ -352,7 +352,7 @@ func (s *copilotSession) call(ctx context.Context, method string, params any) (j
 			return nil, fmt.Errorf("%s: harness ended the session before answering", method)
 		}
 		if m.Error != nil {
-			return nil, fmt.Errorf("%s: harness error %d: %s", method, m.Error.Code, firstLineOf(m.Error.Message))
+			return nil, &harnessRPCError{method: method, rpc: m.Error}
 		}
 		return m.Result, nil
 	case <-ctx.Done():
