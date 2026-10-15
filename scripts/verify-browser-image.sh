@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Hold the CLI's pinned browser image to its signature (agentry-cli#915;
-# plan browser-testing.md D5; agentry-dockerimages#82), as
+# Hold the CLI's pinned browser image to its signature, as
 # verify-hostlink-image.sh holds the hostlink image's.
 #
 # A run that declares capabilities.browser pulls the browser server's image

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Hold the CLI's pinned hostlink image to its signature (agentry-cli#861;
-# plan runtime-hosts.md D5; DR-91), as verify-files-image.sh holds the files
-# image's.
+# Hold the CLI's pinned hostlink image to its signature, as
+# verify-files-image.sh holds the files image's.
 #
 # The host link's image is built on this machine from the hostlink image,
 # pulled by digest only, so the OpenSSH client a run reaches a target host

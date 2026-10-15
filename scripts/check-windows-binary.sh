@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Reads a Windows CLI binary back and checks its Authenticode signature
-# (agentry-cli#196; plan cli-release-signing.md §4; the desktop's
-# check-windows-installer.sh --signed, without the installer clauses):
+# Reads a Windows CLI binary back and checks its Authenticode signature:
 #
 #   scripts/check-windows-binary.sh [--report FILE] <agentry-<version>-windows-amd64.exe>
 #
@@ -20,8 +18,8 @@
 # verify against; the fingerprint pin is then skipped) and SIGNING_TSA_CAFILE
 # (the timestamp chain's root, default: the same file).
 #
-# Nothing in the CLI's build or tests needs this script or anything it needs
-# (plan D5): it runs in the release workflow and in the seam acceptance only.
+# Nothing in the CLI's build or tests needs this script or anything it needs:
+# it runs in the release workflow and in the seam acceptance only.
 set -euo pipefail
 
 report=""

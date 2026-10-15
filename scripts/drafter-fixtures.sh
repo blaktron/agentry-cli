@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# drafter-fixtures.sh OUT [agentry draft flags…] — the Drafter's fixture set
-# (plan builder-rework.md D10; agentry-cli#345): each described task in
-# pkg/drafter/fixtures through `agentry draft` into OUT/<id>, then the
-# measurement table (tokens, calls, AI Review's counts, validate, the shape
-# check) that measurements/drafter.md records.
+# drafter-fixtures.sh OUT [agentry draft flags…] — the Drafter's fixture set:
+# each described task in pkg/drafter/fixtures through `agentry draft` into
+# OUT/<id>, then the measurement table (tokens, calls, AI Review's counts,
+# validate, the shape check).
 #
 # It runs against the model your runner policy names, with your own keys:
 # TYPESAFE_API_KEY (or the policy's judge block) is required, a search key

@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# The registry a release bakes in, chosen by the branch it is cut from
-# (agentry-cli#240; the twin of agentry-desktop#183, which adopts this script
-# and this build/release.env shape unchanged).
+# The registry a release bakes in, chosen by the branch it is cut from.
 #
 #   scripts/release-registry.sh [<commit>]        (default HEAD)
 #
@@ -34,8 +32,7 @@
 # What it does not stop: the script and build/release.env are read from the
 # commit being released, and the `release` environment admits any v* tag. A
 # tag on a feature commit that edits this file could bake whatever it says.
-# That was as true of the single-line release.env before; closing it needs a
-# tag ruleset (unavailable on the repositories' current plan), not a script.
+# Closing it needs a tag ruleset, not a script.
 set -euo pipefail
 
 commit=${1:-HEAD}

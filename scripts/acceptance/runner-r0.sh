@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# M-R0/M-R1 acceptance (RUNNER-PLAN §R12): compile + dry-run against the
-# fixture matrix, with no docker and no registry. Proves: deterministic
-# plans, capability→tool mapping, the wildcard policy gate, the
-# not-runnable refusal, the withdrawn-v1 toolserver refusal (exit 12),
-# exit-code classes, the always-on --block-network invariant, and that
-# `run --plan --json` writes no consent record.
+# Runner acceptance, compile and dry run against the fixture matrix, with no
+# docker and no registry. Proves: deterministic plans, capability→tool
+# mapping, the wildcard policy gate, the not-runnable refusal, the
+# withdrawn-v1 toolserver refusal (exit 12), exit-code classes, the
+# always-on --block-network invariant, and that `run --plan --json` writes
+# no consent record.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -17,8 +17,8 @@ fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 export AGENTRY_RUNNER_HOME="$WORK/home"
-# The consent records `agentry run` writes (§R1) go to the throwaway config
-# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+# The consent records `agentry run` writes go to the throwaway config dir,
+# not the person's ~/.config/agentry/installed.yaml.
 export AGENTRY_CONFIG_DIR="$WORK/config"
 
 # A fixed policy so plans are reproducible; Runner image pinned by name.
@@ -42,7 +42,7 @@ budgets:
   timeoutSeconds: 900
   maxTurns: 60
 # The full-caps fixture declares exec: [jq]; a declared command needs a
-# catalog entry or the plan is refused (agentry-cli#100).
+# catalog entry or the plan is refused.
 exec:
   packages:
     jq: jq
@@ -59,7 +59,7 @@ note() { echo "ok: $*"; }
 PLAN=$(run_dry pure-text)
 echo "$PLAN" | grep -q '"planVersion": "2"' || fail "pure-text: plan version"
 echo "$PLAN" | grep -q '"write_report"'     || fail "pure-text: write_report grant"
-echo "$PLAN" | grep -q '"list_inputs"'      || fail "pure-text: inputs channel missing (RUNNER-PLAN-2 §P4)"
+echo "$PLAN" | grep -q '"list_inputs"'      || fail "pure-text: inputs channel missing"
 echo "$PLAN" | grep -q '"fs_read"'          && fail "pure-text: fs_read must be absent"
 echo "$PLAN" | grep -q -- '--block-network' || fail "pure-text: gateway must always pass --block-network"
 echo "$PLAN" | grep -q '@@RUN_INPUTS@@'     || fail "pure-text: inputs placeholder missing from plan env"
@@ -112,7 +112,7 @@ set -e
 [ "$CODE" -eq 10 ] || fail "unsigned local: want exit 10, got $CODE"
 note "unsigned local refused (exit 10)"
 
-# --plan --json (agentry-cli#124): the consent-free preview compiles the
+# --plan --json: the consent-free preview compiles the
 # plan, reports the attestation and the refusal a run would meet, and asks
 # and records nothing — a local workspace without --allow-unsigned still
 # previews, with the refusal named.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""M-R4 interactive acceptance (plan runner-m-r4-adapters §8, decision D3:
-an adapter is done when BOTH modes pass).
+"""Interactive adapter acceptance: an adapter passes when both its
+autonomous and its interactive mode do.
 
     scripts/acceptance/runner-r4-session.py <adapter> [out-dir]
 
@@ -38,8 +38,8 @@ argv = ["bin/agentry", "run", "--local", "testdata/runner/hello-chat",
         "--allow-unsigned", "--yes", "--out", out]
 m, s = pty.openpty()
 os.set_blocking(m, False)
-# The consent record `agentry run` writes (§R1) goes to a throwaway config
-# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+# The consent record `agentry run` writes goes to a throwaway config dir,
+# not the person's ~/.config/agentry/installed.yaml.
 config_dir = tempfile.mkdtemp(prefix="agentry-r4-config-")
 atexit.register(shutil.rmtree, config_dir, True)
 env = dict(os.environ, AGENTRY_CONFIG_DIR=config_dir)
@@ -108,7 +108,7 @@ if os.path.exists(tr):
     check("the transcript records a tool call", "tool" in body.lower(), body[:300])
 ev = os.path.join(out, "receipts", "events.ndjson")
 check("an events receipt exists", os.path.exists(ev))
-# The session store is a per-run volume, gone with the run (agentry-cli#90);
+# The session store is a per-run volume, gone with the run;
 # no world-writable host directory stands in for it.
 vols = subprocess.run(["docker", "volume", "ls", "--filter", "label=agentry.run", "--format", "{{.Name}}"],
                       capture_output=True, text=True).stdout.split()

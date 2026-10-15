@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 # Copies the core's pkg/judge and pkg/websearch into the runner image's build
-# context, byte for byte (DR-43; agentry-cli#345). The image is compiled inside
-# `docker build` from stdlib-only sources with no module download (DR-2), so
-# the tools server cannot import the core; it carries these two packages
-# instead, and a local scan asks exactly what the registry asks (plan
-# builder-rework.md D25). Since agentry-cli#784 (DR-87) it copies
-# pkg/reportdesign too, with its built-in themes, so the tools server holds a
-# report design to the same rules the core stored it under (plan
-# report-designs.md D22, invariant 3). runnerimage's
-# TestTheImageJudgeIsTheCores fails until this is run after the core
-# dependency moves.
+# context, byte for byte. The image is compiled inside `docker build` from
+# stdlib-only sources with no module download, so the tools server cannot
+# import the core; it carries these two packages instead, and a local scan
+# asks exactly what the registry asks. It copies pkg/reportdesign too, with
+# its built-in themes, so the tools server holds a report design to the same
+# rules the core stored it under. runnerimage's TestTheImageJudgeIsTheCores
+# fails until this is run after the core dependency moves.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 dir=$(GOWORK=off go list -m -f '{{.Dir}}' github.com/blaktron/agentry)
