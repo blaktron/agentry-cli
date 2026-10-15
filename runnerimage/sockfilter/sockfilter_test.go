@@ -1147,6 +1147,57 @@ func TestTheWebNetworkTakesOnlyTheWebToolsServer(t *testing.T) {
 	}
 }
 
+// The daemon puts a container that names no network, or "default", on its
+// default bridge, beside every other container there and with a way to the
+// host. The filter forwards such a create on no network at all, or on the
+// one network of the run's it names as an endpoint, and refuses the bridge
+// by any of its names.
+func TestNoNetworkNamedIsNoNetwork(t *testing.T) {
+	g := newRig(t, Limits{})
+	for name, doc := range map[string]map[string]any{
+		"no HostConfig":          {},
+		"an empty HostConfig":    {"HostConfig": map[string]any{}},
+		"an empty network mode":  {"HostConfig": map[string]any{"NetworkMode": ""}},
+		"the default network":    {"HostConfig": map[string]any{"NetworkMode": "default"}},
+		"no endpoints":           {"HostConfig": map[string]any{"NetworkMode": "default"}, "NetworkingConfig": map[string]any{}},
+		"an empty endpoints map": {"HostConfig": map[string]any{}, "NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{}}},
+	} {
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("%s: %d %s", name, code, body)
+		}
+		hc, _ := g.body("POST /containers/create")["HostConfig"].(map[string]any)
+		if hc["NetworkMode"] != "none" {
+			t.Errorf("%s: forwarded on %v, want none", name, hc["NetworkMode"])
+		}
+	}
+	for name, mode := range map[string]any{"no network mode": nil, "the default network": "default"} {
+		hc := map[string]any{}
+		if mode != nil {
+			hc["NetworkMode"] = mode
+		}
+		doc := map[string]any{"HostConfig": hc, "NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"runa-net": map[string]any{}}}}
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("%s, one endpoint: %d %s", name, code, body)
+		}
+		sent := g.body("POST /containers/create")
+		got, _ := sent["HostConfig"].(map[string]any)
+		eps, _ := sent["NetworkingConfig"].(map[string]any)["EndpointsConfig"].(map[string]any)
+		if got["NetworkMode"] != "id-runa-net" || len(eps) != 1 || eps["id-runa-net"] == nil {
+			t.Errorf("%s, one endpoint: forwarded on %v with %v, want the run's network alone", name, got["NetworkMode"], eps)
+		}
+	}
+	g.refused(t, "two endpoints and no network mode", "POST", "/containers/create", map[string]any{
+		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{"runa-net": map[string]any{}, intNet: map[string]any{}}}},
+		"names its first network in HostConfig.NetworkMode")
+	for _, key := range []string{"default", "bridge"} {
+		g.refused(t, "an endpoint named "+key, "POST", "/containers/create", map[string]any{
+			"HostConfig":       map[string]any{"NetworkMode": "none"},
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{key: map[string]any{}}}}, "default bridge")
+		g.refused(t, "an endpoint named "+key+" and no network mode", "POST", "/containers/create", map[string]any{
+			"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{key: map[string]any{}}}}, "default bridge")
+	}
+}
+
 // TestTheWebToolsServerResolvesThroughTheRunsResolvConf:
 // with the run's resolv.conf configured, the filter binds it read-only at
 // /etc/resolv.conf in the web tools' server, and in no other container; the

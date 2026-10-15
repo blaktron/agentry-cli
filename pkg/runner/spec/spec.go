@@ -490,6 +490,12 @@ const ToolsTmpfsBytes = 256 << 20
 // hosts, or to any.
 func (c CapSummary) Fetches() bool { return c.EgressMode == "hosts" || c.EgressMode == "all" }
 
+// ToolsReachPastHost reports whether the tools server reaches past the
+// host on a network of the run's own, with no allowlist of the gateway's:
+// for the web tools, whose tools hold their own address rule, or for
+// unrestricted egress, which the operator's policy permitted.
+func (c CapSummary) ToolsReachPastHost() bool { return c.WebTools || c.EgressMode == "all" }
+
 // GatewaySpec is the gateway container launch description. Flags are
 // compiled, not chosen at run time, so tests can assert --block-network is
 // always present.
@@ -649,12 +655,12 @@ func (p *Plan) SandboxResolvers() []string {
 	return p.Docker.Resolvers
 }
 
-// WebResolvers are the name servers the plan's web tools resolve through,
-// or none for docker's embedded DNS: only a plan with the web tools reads
-// them here (the compiler also records them under a runtime, for
-// SandboxResolvers).
+// WebResolvers are the name servers the plan's tools server resolves
+// through when it reaches past the host (CapSummary.ToolsReachPastHost),
+// or none for docker's embedded DNS: only such a plan reads them here (the
+// compiler also records them under a runtime, for SandboxResolvers).
 func (p *Plan) WebResolvers() []string {
-	if p == nil || p.Docker == nil || !p.Capabilities.WebTools {
+	if p == nil || p.Docker == nil || !p.Capabilities.ToolsReachPastHost() {
 		return nil
 	}
 	return p.Docker.Resolvers

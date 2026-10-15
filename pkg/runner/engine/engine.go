@@ -661,11 +661,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			return err
 		}
 	}
-	// The web tools' server has a network of the run's own, where the
+	// A tools server that reaches past the host (the web tools', or one
+	// with unrestricted egress) has a network of the run's own, where the
 	// filter runs; elsewhere the gateway gives it the daemon's default and
-	// the receipt's daemon line says the filter did not run. The tools
+	// the receipt's daemon line says the filter did not run. The web tools
 	// hold their own address rule either way (toolsrv/web.go).
-	if filterSupported && p.Plan.Capabilities.WebTools {
+	if filterSupported && p.Plan.Capabilities.ToolsReachPastHost() {
 		if err := makeWebNetwork(ctx, d, runID, td); err != nil {
 			return err
 		}

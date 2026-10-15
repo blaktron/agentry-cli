@@ -346,3 +346,38 @@ func TestTheRunsToolSpecSaysItsTmpfsIsBounded(t *testing.T) {
 		t.Fatalf("a plan without a tools server: %v", err)
 	}
 }
+
+// A tools server with unrestricted egress joins a network of the run's
+// own, as the web tools' server does, in whichever image runs it: the
+// filter would otherwise give it no network, since the gateway asks the
+// daemon's default for it. A plan whose tools reach only declared hosts
+// gets no such network.
+func TestUnrestrictedEgressHasANetworkOfTheRunsOwn(t *testing.T) {
+	withFilter(t, true)
+	rd := &runDirs{cfg: t.TempDir(), runID: "cafe0000", anyEgress: true}
+	for name, c := range map[string]struct {
+		plan  spec.Plan
+		net   string
+		image string
+	}{
+		"unrestricted egress":           {spec.Plan{Capabilities: spec.CapSummary{EgressMode: "all"}, Proxy: spec.ProxySpec{Image: "agentry-runner:test"}}, "agentry-cafe0000-web", "agentry-runner:test"},
+		"unrestricted egress with exec": {spec.Plan{Capabilities: spec.CapSummary{EgressMode: "all", ExecCommands: []string{"git"}}, Proxy: spec.ProxySpec{Image: "agentry-runner:test"}, ExecImage: &spec.ExecImageSpec{Tag: "agentry-exec:abc"}}, "agentry-cafe0000-web", "agentry-exec:abc"},
+		"the web tools":                 {spec.Plan{Capabilities: spec.CapSummary{WebTools: true}, Proxy: spec.ProxySpec{Image: "agentry-runner:test"}}, "agentry-cafe0000-web", "agentry-runner:test"},
+		"declared hosts":                {spec.Plan{Capabilities: spec.CapSummary{EgressMode: "hosts", EgressHosts: []string{"api.osv.dev"}}, Proxy: spec.ProxySpec{Image: "agentry-runner:test"}}, "", ""},
+	} {
+		cfg, err := filterConfig(rd, "cafe0000", nil, policy.Limits{}, &c.plan)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if cfg.WebNetwork != c.net || cfg.WebImage != c.image {
+			t.Errorf("%s: network %q image %q, want %q %q", name, cfg.WebNetwork, cfg.WebImage, c.net, c.image)
+		}
+		if c.net != "" && (!slices.Equal(cfg.WebCmd, spec.ToolsCmd()) || cfg.WebSpec != filepath.Join(rd.cfg, "gateway", "toolspec.json")) {
+			t.Errorf("%s: the server's shape is %v %s", name, cfg.WebCmd, cfg.WebSpec)
+		}
+	}
+	line := daemonLine(rd)
+	if !strings.Contains(line, "unrestricted egress") || !strings.Contains(line, "agentry-cafe0000-web") || !strings.Contains(line, "never on the daemon's default bridge") {
+		t.Errorf("daemon line = %q", line)
+	}
+}
