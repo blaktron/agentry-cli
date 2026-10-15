@@ -7,16 +7,17 @@ import (
 	"net/http"
 )
 
-// Tavily's Search API (agentry#783): a provider a person may name for their
-// own key (agentry-desktop#301). The registry's own provider stays Brave
-// (DEV-157). Tavily's terms keep a right to use queries to train models,
-// which plan builder-rework.md D7 asked of the platform's provider not to;
-// a person who names Tavily chooses those terms for their own searches.
+// Tavily's Search API: a provider a person may name for their own key. The
+// registry's own provider stays Brave. Tavily's terms keep a right to use
+// queries to train models, which the platform's own provider must not
+// allow; a person who names Tavily chooses those terms for their own
+// searches.
 //
 // The call is POST /search with the key as a bearer token. It asks for the
-// basic depth (one credit a search), two chunks of each page, and for none of the paid or unscanned
-// extras: no generated answer, no raw page content, no images, and no
-// automatic parameters, which can raise the depth. Only results[] is read.
+// basic depth (one credit a search), two chunks of each page, and for none
+// of the paid or unscanned extras: no generated answer, no raw page
+// content, no images, and no automatic parameters, which can raise the
+// depth. Only results[] is read.
 const (
 	TavilyName           = "tavily"
 	TavilyDefaultBaseURL = "https://api.tavily.com"

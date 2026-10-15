@@ -1,9 +1,8 @@
-// Package judge is the estate's one client for TypeSafe AI's Jev and the
-// question sets it is asked (plan builder-rework.md D20, D23, D25;
-// agentry#608). Jev is a typed-decision model behind POST /v1/systemone: a
-// request carries a `state` (the data a question is about) and a set of
-// yes/no questions ("Nouls"), and each question is answered with a
-// probability.
+// Package judge is the one client for TypeSafe AI's Jev and the
+// question sets it is asked. Jev is a typed-decision model behind POST
+// /v1/systemone: a request carries a `state` (the data a question is
+// about) and a set of yes/no questions ("Nouls"), and each question is
+// answered with a probability.
 //
 // Three question sets exist, all constants:
 //   - the rubric's six, which stage S5 of the publication pipeline asks
@@ -14,12 +13,12 @@
 //   - the draft set, which the check of a finished draft asks about its
 //     instruction beside the rubric (DraftQuestions), through DraftScanner.
 //
-// Nothing a caller scans is ever rendered into a question: the text travels
-// in the request's state, the data the questions are asked about, so a
-// hostile page can no more rewrite the question than a hostile SKILL.md can
-// (DEV-113's rule). The registry asks with the deployment's key; the CLI and
-// the desktop ask with the person's own key through this same package, so a
-// local scan asks exactly what the registry asks (D25).
+// Nothing a caller scans is ever rendered into a question: the text
+// travels in the request's state, the data the questions are asked
+// about, so a hostile page can no more rewrite the question than a
+// hostile SKILL.md can. The registry asks with the deployment's key;
+// the CLI and the desktop ask with the person's own key through this
+// same package, so a local scan asks exactly what the registry asks.
 package judge
 
 import (
@@ -338,9 +337,10 @@ func Hash(parts ...string) string {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
-// ScoreFromProbability maps a positive-class probability onto the rubric's
-// 0–3 scale: 0.5/0.7/0.9 → 1/2/3. A score of 2 is the gate's medium, and
-// for a model-input scan the line at which text is withheld (D22).
+// ScoreFromProbability maps a positive-class probability onto the
+// rubric's 0–3 scale: 0.5/0.7/0.9 → 1/2/3. A score of 2 is the gate's
+// medium, and for a model-input scan the line at which text is
+// withheld.
 func ScoreFromProbability(p float64) int {
 	switch {
 	case p >= 0.9:

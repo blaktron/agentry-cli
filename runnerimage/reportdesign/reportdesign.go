@@ -1,23 +1,22 @@
-// Package reportdesign is the one definition of a report design (agentry-notes
-// plans/report-designs.md §4, D11, D14, D17, D22; agentry#1024): the theme
+// Package reportdesign is the one definition of a report design: the theme
 // document version 2 that sets the look of a person's PDF reports. The server
 // validates a design with it before storing one on the account, the CLI before
 // the runner's template reads one, and the desktop before it saves one; the
 // site's editor reads the same rules through the openapi's ReportDesign
 // schema, which a core test holds to Schema.
 //
-// A design is data, never markup (plan invariant 2): colours are #rrggbb,
-// fonts, title blocks, heading treatments, quote styles, paper and page
-// numbers are names from closed lists, and the two free texts (the design's
-// name and the footer line) are one line of plain text that the template sets
-// as content, never evaluates. There is no path, URL or file name in it. A
+// A design is data, never markup: colours are #rrggbb, fonts, title
+// blocks, heading treatments, quote styles, paper and page numbers are
+// names from closed lists, and the two free texts (the design's name and
+// the footer line) are one line of plain text that the template sets as
+// content, never evaluates. There is no path, URL or file name in it. A
 // logo, when the person has one, is the pixels themselves (logo.go).
 //
-// The look stays restrained (D2): one accent and its tint, which Tint derives;
-// body text is near-black whatever the design. Where the accent touches text
-// it must reach 4.5:1 on white, and where it colours only graphics 3:1 (D17,
-// invariant 7). Which it is follows from the design, and the runner's template
-// must draw it so (AccentOnText):
+// The look stays restrained: one accent and its tint, which Tint derives;
+// body text is near-black whatever the design. Where the accent touches
+// text it must reach 4.5:1 on white, and where it colours only graphics
+// 3:1. Which it is follows from the design, and the runner's template must
+// draw it so (AccentOnText):
 //
 //   - titleBlock "band" sets the title in white on a full-width accent band;
 //   - headings "smallcaps" and "numbered" set level 1 and 2 headings in the
@@ -41,20 +40,19 @@ import (
 	"unicode/utf8"
 )
 
-// DocumentVersion is the value of "agentryTheme" this package reads. Version 1
-// (DR-82, the scratch-and-pdf-reports plan's theme document) is refused, with
-// no mapping (D16, D20).
+// DocumentVersion is the value of "agentryTheme" this package reads.
+// Version 1 (the earlier theme document) is refused, with no mapping.
 const DocumentVersion = 2
 
 // Bounds on a design.
 const (
 	// MaxDocumentBytes caps a design document as it is sent, not counting
-	// its logo's field (D11). A canonical design is well under it; the cap
+	// its logo's field. A canonical design is well under it; the cap
 	// bounds what a client may make the server parse.
 	MaxDocumentBytes = 16 << 10
 	// MaxNameRunes caps the design's name, a label the person sees.
 	MaxNameRunes = 60
-	// MaxFooterTextRunes caps the footer's one line of text (plan §4).
+	// MaxFooterTextRunes caps the footer's one line of text.
 	MaxFooterTextRunes = 120
 	// MaxVersion caps the design's revision number.
 	MaxVersion = 1_000_000
@@ -88,7 +86,7 @@ type Design struct {
 	Quotes string `json:"quotes"`
 	Footer Footer `json:"footer"`
 	// Logo is the person's logo, drawn only in the title block; the zero
-	// Logo is none, and is not written (agentry#1025).
+	// Logo is none, and is not written.
 	Logo Logo `json:"logo,omitzero"`
 }
 
@@ -137,9 +135,8 @@ const (
 	Mono  Kind = "mono"
 )
 
-// Family is a font family the Typst image carries (agentry-dockerimages#58;
-// plan D3, D13). The runner sets it with Noto behind it for the scripts it
-// lacks.
+// Family is a font family the Typst image carries. The runner sets it with
+// Noto behind it for the scripts it lacks.
 type Family struct {
 	// Name is the family's name as Typst and the web fonts know it.
 	Name string
@@ -518,7 +515,7 @@ func (d Design) AccentOnText() bool {
 }
 
 // MinContrast is the contrast the design's accent must reach on white: 4.5:1
-// where it touches text, 3:1 where it colours only graphics (D17).
+// where it touches text, 3:1 where it colours only graphics.
 func (d Design) MinContrast() float64 {
 	if d.AccentOnText() {
 		return TextContrast
@@ -528,7 +525,7 @@ func (d Design) MinContrast() float64 {
 
 // Canonical is the design's canonical document: its JSON in field order,
 // indented by two spaces, with a final newline. A built-in's embedded
-// document is exactly its Canonical (invariant 8), and the receipt hashes it,
+// document is exactly its Canonical, and the receipt hashes it,
 // the logo's bytes included. A design with no logo has no "logo" key.
 // Characters such as "&" and "<" are written as they are, not escaped.
 func (d Design) Canonical() []byte {

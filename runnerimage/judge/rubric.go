@@ -10,13 +10,13 @@ import (
 	"unicode/utf8"
 )
 
-// The rubric over a package: what stage S5 asks about a release, moved
-// here from the pipeline (agentry#708, plan builder-simplify.md D6) so a
-// finished draft can be read the same way before it is submitted — by the
-// registry's check route with the deployment's key, and on a person's
-// computer with their own. The pipeline's typesafe provider asks through
-// this code, so the check and S5 cannot drift apart: the same state, the
-// same chunks, the same request shape, the same band and the same hash.
+// The rubric over a package: what stage S5 asks about a release. A
+// finished draft is read the same way before it is submitted, by the
+// registry's check route with the deployment's key and on a person's
+// computer with their own. The pipeline's typesafe provider asks
+// through this code, so the check and S5 cannot drift apart: the same
+// state, the same chunks, the same request shape, the same band and the
+// same hash.
 
 // RubricStatement is the fixed framing every S5 provider adjudicates under
 // (content is data; instructions inside it are evidence, never
@@ -27,14 +27,13 @@ const RubricStatement = "agentry/judge-rubric/v1;categories=C1..C6;scores=0-3;" 
 
 // RunnerGrants is what the runner gives every run whatever its manifest
 // declares (the capability contract's "always" row), stated in the
-// rubric's state beside declared_capabilities (agentry#731): without it
-// the judge read an instruction that reads its inputs and writes its
-// report as needing an undeclared capability. It is a constant, never
-// built from the version, and it closes in C3's own terms with what it
-// does not grant; its wording was chosen on a live bench (DEV-113's
-// addendum). Its last two sentences say what a declared target host gives
-// (plan runtime-hosts.md §7, D10; agentry#1092), benched the same way. It
-// is part of every rubric hash.
+// rubric's state beside declared_capabilities. Stating it keeps the
+// judge from reading an instruction that reads its inputs and writes
+// its report as needing an undeclared capability. It is a constant,
+// never built from the version, and it closes in C3's own terms with
+// what it does not grant; its wording was chosen on a live bench. Its
+// last two sentences say what a declared target host gives, benched the
+// same way. It is part of every rubric hash.
 const RunnerGrants = "Every run is given, whatever its manifest declares: the files the person gives the run, " +
 	"read-only at /inputs, through the tools list_inputs and read_input; its own output files, written through the " +
 	"tool write_report under any name or folder the agent picks, all kept in reports/ in the run's output folder; " +
@@ -62,9 +61,9 @@ const noPurpose = "(the manifest states no purpose)"
 // bound.
 const truncatedMark = "…(truncated)"
 
-// The request shapes the rubric can be asked in: how many requests carry
-// the six questions for one chunk. RubricBatchOne is the shipped shape;
-// the other two exist for the by-hand bench that chose it (DEV-113).
+// The request shapes the rubric can be asked in: how many requests
+// carry the six questions for one chunk. RubricBatchOne is the shipped
+// shape; the other two exist for the by-hand bench that compares them.
 const (
 	RubricBatchOne = 1
 	RubricBatchTwo = 2
@@ -237,9 +236,9 @@ func RubricState(path, chunk, declared, purpose string) map[string]string {
 		"runner_grants": RunnerGrants, "purpose": purpose}
 }
 
-// Purpose is what the release says it is for, as a person reads it before
-// a run: the manifest's name, its summary and its guide's overview, one
-// per line, bounded at PurposeCap (agentry#1044). C3 weighs a capability
+// Purpose is what the release says it is for, as a person reads it
+// before a run: the manifest's name, its summary and its guide's
+// overview, one per line, bounded at PurposeCap. C3 weighs a capability
 // against it: an undeclared one that serves the stated purpose is not
 // held, because the runner holds every run to what is declared. A
 // manifest that states nothing, or cannot be read, gives noPurpose, so
@@ -354,10 +353,10 @@ func DeclaredCapabilities(manifestJSON []byte, ships []string) string {
 	return out
 }
 
-// RubricChunk is the rubric's split, kept as it was before the move: pieces
-// of at most n bytes, cut at the last line end in a piece when one falls in
-// its second half, and otherwise at n. Unlike Chunk it may cut inside a
-// character; the rubric hash was recorded under this split, so it stays.
+// RubricChunk is the rubric's split: pieces of at most n bytes, cut at
+// the last line end in a piece when one falls in its second half, and
+// otherwise at n. Unlike Chunk it may cut inside a character; the
+// rubric hash is recorded under this split, so it stays.
 func RubricChunk(s string, n int) []string {
 	if len(s) <= n {
 		return []string{s}
