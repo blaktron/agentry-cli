@@ -1,6 +1,6 @@
 package decode
 
-// Archives (plan file-handling.md §6, D5; agentry-cli#562). An archive's
+// Archives. An archive's
 // members are unpacked into the decode's own unpack directory and each is
 // then decoded like a top-level file, named <archive>/<member> in the
 // report. Zip and tar are read by the standard library's readers; a

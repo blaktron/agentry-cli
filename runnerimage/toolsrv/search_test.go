@@ -1,6 +1,6 @@
 package toolsrv
 
-// grep and glob (plan ripgrep-search.md, agentry-cli#912). The grant,
+// grep and glob. The grant,
 // scope and argument-list tests hold the server's half anywhere. The ones
 // that search run the real ripgrep from the pinned image when
 // AGENTRY_RIPGREP_BIN names it, as the ripgrep-image CI job does;
@@ -387,7 +387,7 @@ func TestAGlobIsRelativeToTheNamedFolder(t *testing.T) {
 
 // TestAnInputsSearchReachesTheAgentUnchanged: on the wire, a grep of the
 // inputs answers as read_input does, an embedded resource the gateway's
-// secret block does not rewrite (DR-78); the next call, of the scratch
+// secret block does not rewrite; the next call, of the scratch
 // folder, is a text item again.
 func TestAnInputsSearchReachesTheAgentUnchanged(t *testing.T) {
 	spec := decodedSpec(t)

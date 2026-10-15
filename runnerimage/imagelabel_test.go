@@ -8,7 +8,7 @@ import (
 
 // Every stage of the runner image that runs an instruction carries the
 // runner kind, so the build stage the classic builder leaves untagged is
-// found by label as well as the image (agentry-cli#892).
+// found by label as well as the image.
 func TestDockerfileLabelsEveryStage(t *testing.T) {
 	b, err := contextFS.ReadFile("Dockerfile")
 	if err != nil {

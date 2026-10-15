@@ -1,23 +1,23 @@
-// Package netproxy is the llm-proxy of the agent-container topology
-// (RUNNER-PLAN §R4): the run network is created --internal, so the ONLY
+// Package netproxy is the llm-proxy of the agent-container topology:
+// the run network is created --internal, so the ONLY
 // way anything the agent container runs can reach the outside world is a
 // CONNECT tunnel through this proxy — and the proxy tunnels only to the
 // operator's model endpoints (policy.model.proxyAllow). Manifest egress
 // hosts never appear here; those are tool-plane grants served by fetch.
 //
-// The proxy deliberately does not decrypt TLS (RUNNER-DEVIATIONS DR-6):
+// The proxy deliberately does not decrypt TLS:
 // the control is which host:port a tunnel may reach, not what crosses it.
 // It reads one thing in clear, the ClientHello's server name, and refuses
-// a tunnel whose name is not the host it was opened to (agentry-cli#616,
-// sni.go), because a CDN front end routes by that name.
+// a tunnel whose name is not the host it was opened to
+// (sni.go), because a CDN front end routes by that name.
 // One exception to "tunnels only": a plain-http model endpoint the
-// operator chose (DR-45, agentry-cli#377) is served by forwarding the
+// policy names is served by forwarding the
 // harness's absolute-form request, for the host:ports in PlainHTTP and
 // nothing else.
 // A harness that ignores HTTPS_PROXY fails closed — the internal network
 // has no other route out — which is the acceptable failure direction.
 //
-// Part of the embedded runner-image build context (§R7): stdlib-only,
+// Part of the embedded runner-image build context: stdlib-only,
 // enforced by a test in the parent package.
 package netproxy
 
@@ -45,8 +45,8 @@ type Proxy struct {
 	// the one hole in the agent's network isolation.
 	Allow []string
 	// PlainHTTP lists the host[:port] targets a plain-http request may be
-	// forwarded to (an entry without a port means 80): the operator's
-	// http model endpoints, each also on Allow (DR-45). Empty — the zero
+	// forwarded to (an entry without a port means 80): the policy's
+	// http model endpoints, each also on Allow. Empty — the zero
 	// value, and every run whose model endpoints are https — means no
 	// plaintext proxying at all.
 	PlainHTTP []string
@@ -55,11 +55,10 @@ type Proxy struct {
 	// it resolves to is private, loopback, link-local, shared (CGNAT, the
 	// tailnet's range) or otherwise not on the public internet, and dials
 	// the address it checked, so a second answer cannot slip in between.
-	// An input source's fetch step runs behind such a proxy (plan
-	// input-sources.md §5, invariant 3; agentry-cli#833).
+	// An input source's fetch step runs behind such a proxy.
 	PublicOnly bool
-	// Scope, where set, makes this a browse proxy (browse.go,
-	// agentry-cli#915): CONNECT and plain http are judged by the scope,
+	// Scope, where set, makes this a browse proxy (browse.go):
+	// CONNECT and plain http are judged by the scope,
 	// every name is resolved here and only the address checked is
 	// dialled, and Allow, PlainHTTP and PublicOnly are not read.
 	Scope *Scope
@@ -113,7 +112,7 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Plaintext proxying only toward an http model endpoint the
-		// operator named (DR-45); anything else is refused as before.
+		// policy names; anything else is refused as before.
 		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 && !p.PublicOnly {
 			p.forwardPlain(w, r)
 			return
@@ -178,8 +177,8 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// The client side reads through bufrw because the hijacked buffer may
 	// already hold bytes the client pipelined behind its CONNECT. Before
 	// any of them goes upstream, the ClientHello's server name must be the
-	// tunnel's host (agentry-cli#616); a plain-http model endpoint the
-	// operator named (DR-45) is the one target that carries no TLS. The
+	// tunnel's host; a plain-http model endpoint the
+	// policy names is the one target that carries no TLS. The
 	// upstream was dialled first so that an unreachable host is still a
 	// 502, but it has been sent nothing.
 	if !p.plainTarget(host, port) {
@@ -269,7 +268,7 @@ func (p *Proxy) relayPlain(w http.ResponseWriter, r *http.Request, t *http.Trans
 	// body when the answer's first bytes are written back. Without it the
 	// server closes that body at the first write, the transport fails its
 	// next read and drops the upstream connection, and the answer is cut
-	// after its first event (agentry-cli#756). The proxy's own HTTP/1
+	// after its first event. The proxy's own HTTP/1
 	// server supports it; a writer that does not is used as it is.
 	rc := http.NewResponseController(w)
 	_ = rc.EnableFullDuplex()
@@ -370,14 +369,14 @@ func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) 
 }
 
 // Public says whether an address is on the public internet: the runner's
-// one list (netaddr, agentry-cli#915), shared with web_read.
+// one list (netaddr), shared with web_read.
 func Public(ip net.IP) bool {
 	a, ok := netip.AddrFromSlice(ip)
 	return ok && netaddr.Public(a)
 }
 
 // plainTarget is true for a CONNECT to a plain-http model endpoint the
-// operator named (DR-45), the one tunnel whose first bytes are not TLS.
+// policy names, the one tunnel whose first bytes are not TLS.
 // An input source's proxy (PublicOnly) has none.
 func (p *Proxy) plainTarget(host, port string) bool {
 	return !p.PublicOnly && p.Scope == nil && permitsIn(p.PlainHTTP, "80", host, port)

@@ -33,7 +33,7 @@ func options(t *testing.T, argv []string, allowed ...string) map[string]string {
 				t.Fatalf("option %q has no value", argv[i+1])
 			}
 			if _, dup := got[strings.ToLower(k)]; dup {
-				t.Fatalf("option %s is given twice: ssh keeps the first value, so a second one is a lie (DR-91)", k)
+				t.Fatalf("option %s is given twice: ssh keeps the first value, so a second one is a lie", k)
 			}
 			got[strings.ToLower(k)] = v
 			i++
@@ -51,7 +51,7 @@ func options(t *testing.T, argv []string, allowed ...string) map[string]string {
 	return nil
 }
 
-// TestTheHostLinkForwardsNothing is invariant 5 (plan runtime-hosts.md): no
+// TestTheHostLinkForwardsNothing: no
 // agent, X11, TCP, stream-local or tunnel forwarding, no other hop, no
 // shared connection, no configuration of anyone's, the one checked key.
 func TestTheHostLinkForwardsNothing(t *testing.T) {
@@ -75,7 +75,7 @@ func TestTheHostLinkForwardsNothing(t *testing.T) {
 		case "sftp":
 			allowed = []string{"-b", "-"}
 		case "shell":
-			// D18: the host's pseudo-terminal, asked for whatever this side
+			// The host's pseudo-terminal, asked for whatever this side
 			// has, and no command, so the account's login shell.
 			allowed = nil
 			if argv[len(argv)-2] != "--" || argv[len(argv)-1] != "172.20.0.3" {

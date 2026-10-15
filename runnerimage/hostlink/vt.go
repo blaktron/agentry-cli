@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 )
 
-// The text view of a terminal (plan runtime-hosts.md D18): what a shell
+// The text view of a terminal: what a shell
 // session printed, with the terminal's control sequences removed, as a
 // person would read it on a line-by-line terminal. A carriage return that
 // redraws a line (a progress bar, a spinner) leaves the line as it was last
@@ -14,7 +14,7 @@ import (
 // end of the line takes effect; colours, cursor movement between lines,
 // titles, modes and every other sequence are dropped. It is not a screen:
 // a full-screen program reads as a stream of its text (a rendered screen
-// is a follow-up, D18).
+// is not implemented).
 
 // vt renders a terminal's bytes as text, a write at a time: a sequence or a
 // character a write splits is finished by the next.

@@ -13,7 +13,7 @@ import (
 const tmpfsMagic = 0x01021994
 
 // PrepareMounts readies the tools container's /tmp and scratch folder
-// before the tools role serves (agentry-cli#599, #729). Where the run's
+// before the tools role serves. Where the run's
 // docker filter mounts them as size-capped tmpfs (spec.TmpfsBytes, on a
 // Linux host), it refuses to serve unless both are tmpfs no larger than
 // that cap: without them a

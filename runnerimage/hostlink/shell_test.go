@@ -423,7 +423,7 @@ func TestASudoPasswordTypedAtThePromptIsMasked(t *testing.T) {
 	}
 }
 
-// TestAShellErrorCarryingHostOutputIsAResource is D9: what the host
+// TestAShellErrorCarryingHostOutputIsAResource: what the host
 // printed reaches the agent past the gateway's secret block even when the
 // answer is an error.
 func TestAShellErrorCarryingHostOutputIsAResource(t *testing.T) {

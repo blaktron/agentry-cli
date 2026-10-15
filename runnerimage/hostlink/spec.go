@@ -1,14 +1,13 @@
-// Package hostlink is the runner's host link (plan runtime-hosts.md §4–§6,
-// D3–D9, D19; agentry-cli#861): the MCP server through which an agent works
-// a target host, a machine the person named when the run started. It runs
-// in its own container, on the agentry-hostlink image (OpenSSH, DR-91) with
+// Package hostlink is the runner's host link: the MCP server through which an
+// agent works a target host, a machine the person named when the run started.
+// It runs in its own container, on the agentry-hostlink image (OpenSSH) with
 // this binary copied in, launched by the run's gateway like any declared
-// server, behind one relay per target host to the address and port the
-// person named. It holds each host's credential in files bound into it
-// alone, and makes every SSH session itself: the agent never does, and
-// neither the agent container nor the tools server gains a route out.
+// server, behind one relay per target host to the address and port the person
+// named. It holds each host's credential in files bound into it alone, and
+// makes every SSH session itself: the agent never does, and neither the agent
+// container nor the tools server gains a route out.
 //
-// Stdlib only (DR-2), like everything else in this binary.
+// Stdlib only, like everything else in this binary.
 package hostlink
 
 import (
@@ -40,8 +39,8 @@ const (
 	// FilesPath is that folder as the agent and the tools server name it.
 	FilesPath = "/scratch/hosts"
 	// PasswdFile is the passwd file in HostsMount that the engine binds
-	// over /etc/passwd: ssh refuses to start for a uid with no entry
-	// (DR-91), and the host link runs as the person's uid.
+	// over /etc/passwd: ssh refuses to start for a uid with no entry, and
+	// the host link runs as the person's uid.
 	PasswdFile = "passwd"
 	// AskpassProgram is the name this binary answers to as OpenSSH's
 	// SSH_ASKPASS (a link to it in the image): it prints the one file
@@ -72,8 +71,7 @@ const (
 	AuthPassword = "password"
 )
 
-// The host link's tools (plan runtime-hosts.md §5): the one-shot five
-// (agentry-cli#861) and the shell's four (D18, agentry-cli#862).
+// The host link's tools: the one-shot five and the shell's four.
 const (
 	ToolRun   = "host_run"
 	ToolRead  = "host_read"
@@ -88,7 +86,7 @@ const (
 )
 
 // Tools are the host link's tools, in the order it lists them. Their
-// results reach the agent unchanged (D9), past the gateway's secret block
+// results reach the agent unchanged, past the gateway's secret block
 // and the harness's scrub, so a client that scrubs tool output by name
 // leaves these out.
 var Tools = append([]string{ToolRun, ToolRead, ToolWrite, ToolPut, ToolGet}, shellTools...)
@@ -185,7 +183,7 @@ func LogFile(id string) string { return "host-" + id + ".log" }
 
 // ShellLogFile is the transcript of a target host's shell session n under
 // LogMount: what was typed and what the shell printed, as text, masked of
-// the run's own sign-ins (plan runtime-hosts.md invariant 7, D19).
+// the run's own sign-ins.
 func ShellLogFile(id string, n int) string { return fmt.Sprintf("host-%s-shell-%d.log", id, n) }
 
 // ShellLogPattern names every shell transcript of a target host, as a
@@ -195,10 +193,9 @@ func ShellLogPattern(id string) string { return "host-" + id + "-shell-<n>.log" 
 // ShellLogRE matches a shell transcript's name, giving the host's id.
 var ShellLogRE = regexp.MustCompile(`^host-([a-z0-9_]{1,64})-shell-([1-9][0-9]{0,5})\.log$`)
 
-// LogEntry is one line of a target host's log (plan runtime-hosts.md
-// invariant 7): the tool, the command or the paths, the exit status and
-// the byte counts. The engine masks it with the run's redactor before it
-// is a receipt.
+// LogEntry is one line of a target host's log: the tool, the command or the
+// paths, the exit status and the byte counts. The engine masks it with the
+// run's redactor before it is a receipt.
 type LogEntry struct {
 	Time    string `json:"time"`
 	Tool    string `json:"tool"`

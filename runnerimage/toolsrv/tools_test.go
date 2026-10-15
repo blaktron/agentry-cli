@@ -1,6 +1,6 @@
 // Per-tool behavior tests: byte caps, grant enforcement, the exec shim
 // jail, and the fetch egress/credential rules — the server-side halves of
-// RUNNER-PLAN §R3's table, each pinned so a regression is a red test and
+// the tool contract, each pinned so a regression is a red test and
 // not a widened capability.
 
 package toolsrv
@@ -339,8 +339,8 @@ func TestRunCommand(t *testing.T) {
 	})
 
 	t.Run("runs without a workspace mount", func(t *testing.T) {
-		// exec with no filesystem grant: the workspace dir does not exist
-		// (agentry-cli#120), the command still runs, in a scratch dir.
+		// exec with no filesystem grant: the workspace dir does not exist,
+		// the command still runs, in a scratch dir.
 		noWS := baseSpec(t)
 		noWS.WorkspaceDir = filepath.Join(t.TempDir(), "never-mounted")
 		noWS.Exec = Exec{Commands: []string{"sh"}}
@@ -352,7 +352,7 @@ func TestRunCommand(t *testing.T) {
 	})
 
 	t.Run("args sent as a JSON string are the array they encode", func(t *testing.T) {
-		// agentry-cli#113: what the operator's provider sends.
+		// What some model providers send.
 		got, isErr := s.toolRunCommand(json.RawMessage(`{"command":"echo","args":"[\"hello\",\"there\"]"}`))
 		if isErr || got != "exit code 0\nhello there\n" {
 			t.Fatalf("echo with stringified args = %q (isError %v)", got, isErr)
@@ -656,7 +656,7 @@ func TestFetch(t *testing.T) {
 	})
 }
 
-// run_command's output passes fetch's secret scrub (agentry-cli#246): a
+// run_command's output passes fetch's secret scrub: a
 // granted secret's value never reaches the model verbatim through exec.
 func TestRunCommandScrubsGrantedSecrets(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -676,9 +676,9 @@ func TestRunCommandScrubsGrantedSecrets(t *testing.T) {
 	}
 }
 
-// run_command's description tells the agent the PATH it will actually get
-// (agentry-cli#502): the shims alone by default, the image's PATH after the
-// shims in Unsafe Mode (RUNNER-DEVIATIONS DR-53). The default posture's sentence is pinned
+// run_command's description tells the agent the PATH it will actually get:
+// the shims alone by default, the image's PATH after the
+// shims in Unsafe Mode. The default posture's sentence is pinned
 // verbatim; Unsafe Mode's must still say only a declared command can be
 // called, since the argv[0] allowlist holds there too.
 func TestRunCommandDescriptionFollowsThePath(t *testing.T) {
@@ -703,11 +703,10 @@ func TestRunCommandDescriptionFollowsThePath(t *testing.T) {
 	}
 }
 
-// In Unsafe Mode (Exec.ImagePath; agentry-cli#490, the operator's decision
-// of 2026-09-30) a declared command runs with the image's PATH after the
-// shims, so a declared script finds the interpreter and programs it calls.
-// The argv[0] allowlist does not move: an undeclared bash is still refused
-// (plan unsafe-mode.md invariant 2). Off, the PATH is the shims alone.
+// In Unsafe Mode (Exec.ImagePath) a declared command runs with the image's
+// PATH after the shims, so a declared script finds the interpreter and
+// programs it calls. The argv[0] allowlist does not move: an undeclared bash
+// is still refused. Off, the PATH is the shims alone.
 func TestRunCommandImagePathInUnsafeModeOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("exec tests use sh semantics")

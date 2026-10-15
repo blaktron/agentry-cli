@@ -165,8 +165,8 @@ func isGitName(name string) bool {
 // portableName says whether a name is a plain file name on Linux, macOS and
 // Windows alike: no control characters, none of Windows' reserved
 // characters, no trailing dot or space, and not a device name. The whole
-// path is also held to the names an archive member may have (DR-39,
-// decode.PlainMemberPath): no C1 control, no mark that reorders or hides
+// path is also held to the names an archive member may have
+// (decode.PlainMemberPath): no C1 control, no mark that reorders or hides
 // text.
 func portableName(name string) bool {
 	if len(name) > 255 {

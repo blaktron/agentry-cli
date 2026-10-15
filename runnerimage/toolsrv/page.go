@@ -1,8 +1,8 @@
 package toolsrv
 
-// The result budget (plan input-sources.md §4, D1; agentry-cli#831). The
+// The result budget. The
 // harness that receives a tool's result bounds it too, and its bound is the
-// smaller one: docker-agent (1.128.0, and 1.150.0 since agentry-cli#836)
+// smaller one: docker-agent (1.128.0 and 1.150.0)
 // replaces any MCP result over 50 KiB, or over 2,000 lines, with its last
 // 50 KiB, and the other harnesses have limits of their own. A result the
 // harness cuts loses its head, and with it what the agent needed first,

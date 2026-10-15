@@ -1,7 +1,7 @@
 // End-to-end tests of the CONNECT allowlist: a permitted tunnel must
 // carry bytes both ways, a denied one must die with a 403 and a receipt
 // line, and nothing but CONNECT may pass — the proxy is the single hole
-// in the agent container's network isolation (RUNNER-PLAN §R4), so its
+// in the agent container's network isolation, so its
 // behavior is pinned at the socket level, not through a mock.
 
 package netproxy
@@ -385,7 +385,7 @@ func plainClient(t *testing.T, proxyAddr string) *http.Client {
 	}
 }
 
-// A plain-http model endpoint the operator chose is forwarded (DR-45): the
+// A plain-http model endpoint the policy names is forwarded: the
 // request reaches it with its body and key, the Host header is the target,
 // hop-by-hop and proxy headers are dropped, and an event-stream answer
 // arrives intact.
@@ -530,7 +530,7 @@ func TestPlainHTTPStreamsAsItArrives(t *testing.T) {
 }
 
 // An answer that starts before the request has been read to its end is
-// relayed whole (agentry-cli#756): the proxy must not close the request
+// relayed whole: the proxy must not close the request
 // body under the upstream transport when it writes the answer's first
 // bytes, or the transport, failing to read the rest, drops the upstream
 // connection and cuts the answer after its first event. Here the client
@@ -635,7 +635,7 @@ func (f fakeResolver) LookupIPAddr(_ context.Context, _ string) ([]net.IPAddr, e
 
 // TestPublicOnlyRefusesAPrivateAnswer: an input source's proxy refuses a
 // permitted host that resolves to any address off the public internet,
-// even when another of its answers is public (invariant 3).
+// even when another of its answers is public.
 func TestPublicOnlyRefusesAPrivateAnswer(t *testing.T) {
 	for _, answer := range [][]string{{"127.0.0.1"}, {"10.1.2.3"}, {"169.254.169.254"}, {"100.101.102.103"}, {"8.8.8.8", "192.168.1.1"}, {"::1"}, {"fd00::1"}, {"fe80::1"}, {"::ffff:127.0.0.1"}} {
 		logs := &lockedBuf{}

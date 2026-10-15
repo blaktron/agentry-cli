@@ -26,7 +26,7 @@ import (
 //     stack does not reach docker's DNS);
 //   - else of the container's name server (docker's embedded DNS), with an
 //     A query for the address as a name, which no library resolver makes
-//     for an address (measured 2026-10-11: docker answers it with the
+//     for an address (docker answers it with the
 //     relay's address).
 
 // relayLookup finds the relay of a target host's address; a variable so a

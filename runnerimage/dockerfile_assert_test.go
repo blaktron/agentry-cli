@@ -1,4 +1,4 @@
-// The Dockerfile's artefact assertion (agentry-cli#235): the build stage must
+// The Dockerfile's artefact assertion: the build stage must
 // refuse a result that is not an executable ELF binary, because building the
 // embedded Dockerfile from the repository root instead of the context
 // Materialize writes turns ./runnerimage into a library package and `go build
@@ -39,7 +39,7 @@ func assertionLine(t *testing.T) string {
 		}
 	}
 	if found == "" {
-		t.Fatalf("Dockerfile has no `RUN test -x %s` assertion after the build (agentry-cli#235)", artefactPath)
+		t.Fatalf("Dockerfile has no `RUN test -x %s` assertion after the build", artefactPath)
 	}
 	// It must run after the go build and before the runtime stage copies.
 	s := string(df)
@@ -134,12 +134,12 @@ func copyFile(t *testing.T, src, dst string, mode os.FileMode) {
 	}
 }
 
-// The Dockerfile names no external frontend (agentry-cli#281). A `# syntax=`
+// The Dockerfile names no external frontend. A `# syntax=`
 // parser directive makes BuildKit pull that frontend image before it reads a
 // line of the file — docker.io/docker/dockerfile:1, by a tag that can move, on
 // every build of every client's first run — and that image's code parses the
 // build. The file uses nothing the daemon's built-in frontend lacks, so it
-// carries no directive and the bases (DR-32) are the only images the build
+// carries no directive and the bases are the only images the build
 // fetches. Directives are only honoured in the leading comment block, but any
 // `syntax=` directive line anywhere is refused so one cannot creep back in.
 func TestDockerfileNamesNoExternalFrontend(t *testing.T) {
@@ -150,7 +150,7 @@ func TestDockerfileNamesNoExternalFrontend(t *testing.T) {
 	for i, line := range strings.Split(string(df), "\n") {
 		l := strings.ToLower(strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "#")), ""))
 		if strings.HasPrefix(strings.TrimSpace(line), "#") && strings.HasPrefix(l, "syntax=") {
-			t.Errorf("Dockerfile line %d is a syntax directive (%q): it makes BuildKit pull an external frontend on every build (agentry-cli#281)", i+1, line)
+			t.Errorf("Dockerfile line %d is a syntax directive (%q): it makes BuildKit pull an external frontend on every build", i+1, line)
 		}
 	}
 }

@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestChooseConfinement is agentry-cli#596's decision table: Landlock
+// TestChooseConfinement is the confinement decision table: Landlock
 // wherever the kernel has it; without it, nobody when the contract grants
 // no workspace writes, and no command at all when it does or when the
 // server cannot change user; nothing off Linux, the debugging path.
@@ -91,7 +91,7 @@ func TestRunCommandRefusedWhenItCannotBeConfined(t *testing.T) {
 	}
 }
 
-// TestRunCommandCannotWriteTheOutputFolder is agentry-cli#596 end to end
+// TestRunCommandCannotWriteTheOutputFolder checks write confinement end to end
 // under Landlock: a declared command reaches its scratch directory and
 // cannot write, link into or truncate anything in the output folder — the
 // reports and the receipts' ledgers write_report and the web tools keep

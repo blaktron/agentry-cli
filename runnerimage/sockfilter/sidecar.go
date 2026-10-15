@@ -14,7 +14,7 @@ import (
 // runs in a container of its own beside the gateway: the runner image's
 // docker-filter role, holding the daemon's socket and serving this same
 // package's filter on a socket in a volume the gateway mounts in place of
-// the daemon's (agentry-cli#322). One policy, wherever it runs.
+// the daemon's. One policy, wherever it runs.
 
 // SidecarReady is the line the docker-filter role prints once its socket
 // accepts connections; the engine starts the gateway only after it.

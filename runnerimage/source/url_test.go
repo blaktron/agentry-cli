@@ -106,7 +106,7 @@ func TestURLFetchOverTheCapStagesNothing(t *testing.T) {
 			if err != nil || !strings.Contains(rep.Refusal, "1.0 KiB cap") {
 				t.Fatalf("refusal %q, err %v", rep.Refusal, err)
 			}
-			// Typed (agentry-cli#884): the declared length, or the cap
+			// Typed: the declared length, or the cap
 			// the stream ran past.
 			want := Over{Cap: CapBytes, Of: OfBytes, Count: int64(len(body))}
 			if !declare {

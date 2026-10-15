@@ -156,7 +156,7 @@ func decodeArchives(t *testing.T, lim Limits, files map[string][]byte) (Report, 
 }
 
 func TestArchiveMembersAreDecodedLikeFiles(t *testing.T) {
-	inner := tarOf(t, reg("memo.docx", "PK not really"), reg("notes/todo.md", "- ship M4\n"))
+	inner := tarOf(t, reg("memo.docx", "PK not really"), reg("notes/todo.md", "- ship it\n"))
 	_, got, out := decodeArchives(t, Limits{}, map[string][]byte{
 		"bundle.zip": zipOf(t,
 			zipEntry{name: "dir/"},
@@ -181,7 +181,7 @@ func TestArchiveMembersAreDecodedLikeFiles(t *testing.T) {
 		"bundle.zip/report.pdf":              {FamilyPDF, "pdftotext", OutcomeDecoded, "bundle.zip", "pdftotext read report.pdf\n"},
 		"bundle.zip/inner.tar":               {FamilyArchive, "agentry-runner", OutcomeUnpacked, "bundle.zip", ""},
 		"bundle.zip/inner.tar/memo.docx":     {FamilyDocument, "pandoc", OutcomeDecoded, "bundle.zip/inner.tar", "pandoc read memo.docx\n"},
-		"bundle.zip/inner.tar/notes/todo.md": {FamilyText, "", OutcomeText, "bundle.zip/inner.tar", "- ship M4\n"},
+		"bundle.zip/inner.tar/notes/todo.md": {FamilyText, "", OutcomeText, "bundle.zip/inner.tar", "- ship it\n"},
 		"letter.md.gz":                       {FamilyArchive, "bsdcat", OutcomeUnpacked, "", ""},
 		"letter.md.gz/letter.md":             {FamilyText, "", OutcomeText, "letter.md.gz", "Dear reader,\n"},
 		"backup.tgz.gz":                      {FamilyArchive, "bsdcat", OutcomeUnpacked, "", ""},
@@ -224,12 +224,12 @@ func TestArchiveMembersAreDecodedLikeFiles(t *testing.T) {
 	}
 	// Every file read, archives and members included, carries its content's
 	// SHA-256 and the type it was detected as, for the host's Hybrid
-	// Analysis lookup (agentry-cli#564).
+	// Analysis lookup.
 	for path, body := range map[string]string{
 		"bundle.zip/dir/readme.md":           "# Read me\n",
 		"bundle.zip/report.pdf":              "%PDF not really",
 		"bundle.zip/inner.tar":               string(inner),
-		"bundle.zip/inner.tar/notes/todo.md": "- ship M4\n",
+		"bundle.zip/inner.tar/notes/todo.md": "- ship it\n",
 	} {
 		sum := sha256.Sum256([]byte(body))
 		if f := got[path]; f.SHA256 != hex.EncodeToString(sum[:]) {

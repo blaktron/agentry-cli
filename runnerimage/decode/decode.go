@@ -1,20 +1,19 @@
-// Package decode is the runner image's `decode` role (plan knowledge.md
-// §4.2, D14, D21; agentry-cli#318, and agentry-cli#321 for a hosted run's
-// inputs): it turns the documents under one directory into plain text
-// under another, before any agent sees them, so a run reads text and no
-// model ever runs a decoder. Each family of file has one fixed decoder
-// with a fixed argv — pdftotext for PDF, pandoc (in its sandbox mode) for
-// DOCX, ODT, EPUB and RTF, tesseract's OCR for images, and this package's
-// own spreadsheet and slide readers, plus Tika for the long tail. An
-// archive's members are unpacked and decoded in turn (archive.go). Before
-// any decoder reads a file, every file and member is checked by ClamAV in
-// one clamscan run, and a file it finds is never decoded (clamav.go).
-// A git repository's internals, everything under a .git directory, are
-// listed and checked but never detected or decoded (InRepository).
-// Nothing a document contains reaches an argv but its own path. Any other
-// UTF-8 text (code, markup, configuration, data) passes as it is, byte
-// for byte, told without a JVM (detect; agentry-cli#630). The caller runs this in a container with no
-// network and no capabilities, the inputs mounted read-only.
+// Package decode is the runner image's `decode` role: it turns the documents
+// under one directory into plain text under another, before any agent sees
+// them, so a run reads text and no model ever runs a decoder. Each family of
+// file has one fixed decoder with a fixed argv — pdftotext for PDF, pandoc
+// (in its sandbox mode) for DOCX, ODT, EPUB and RTF, tesseract's OCR for
+// images, and this package's own spreadsheet and slide readers, plus Tika for
+// the long tail. An archive's members are unpacked and decoded in turn
+// (archive.go). Before any decoder reads a file, every file and member is
+// checked by ClamAV in one clamscan run, and a file it finds is never decoded
+// (clamav.go). A git repository's internals, everything under a .git
+// directory, are listed and checked but never detected or decoded
+// (InRepository). Nothing a document contains reaches an argv but its own
+// path. Any other UTF-8 text (code, markup, configuration, data) passes as it
+// is, byte for byte, told without a JVM (detect). The caller runs this in a
+// container with no network and no capabilities, the inputs mounted
+// read-only.
 //
 // This package is part of the embedded runner-image build context and so
 // imports nothing outside the standard library.
@@ -104,8 +103,7 @@ type File struct {
 	Bytes int64 `json:"bytes,omitempty"`
 	// Markdown is the slash path, relative to the output root, of a
 	// second view of a file read as text: HTML converted to Markdown by
-	// MarkdownBy (pandoc), at exactly <path>.md (plan
-	// quickagents-that-run.md D2; agentry-cli#631). The file itself stays
+	// MarkdownBy (pandoc), at exactly <path>.md. The file itself stays
 	// its own view; a failed conversion leaves this empty and the file read
 	// as it is. MarkdownBytes is the size of the Markdown written.
 	Markdown      string `json:"markdown,omitempty"`
@@ -130,7 +128,7 @@ type File struct {
 	// MIME is the type the file was detected as, and SHA256 its content's
 	// digest, lower-case hex: for every file read, archives and members
 	// included, so the host can look the risky ones up on Hybrid Analysis
-	// by hash (agentry-cli#564). The host checks a staged file's digest
+	// by hash. The host checks a staged file's digest
 	// against the file; only a member's is the decode's word alone.
 	MIME   string `json:"mime,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
@@ -183,14 +181,14 @@ func (t Tools) withDefaults() Tools {
 	return t
 }
 
-// The decode's fixed bounds on archives (D5), which the host holds a
+// The decode's fixed bounds on archives, which the host holds a
 // report to: how deep archives nest and are still unpacked, and how many
 // files and members a decode takes in all.
 const (
 	MaxDepth        = 3
 	DefaultMaxFiles = 2000
 	// DefaultSourceMaxFiles is an input source's own cap, its archive
-	// members included (plan input-sources.md D7): the fetch step refused
+	// members included: the fetch step refused
 	// a larger source already.
 	DefaultSourceMaxFiles = 20000
 )
@@ -217,17 +215,16 @@ type Limits struct {
 	// decode container, a tmpfs of its own the size of MaxUnpackedBytes).
 	UnpackDir string
 	// MaxUnpackedBytes is what every archive in the decode may unpack in
-	// all, counted as each member streams (default 512 MiB; D5).
+	// all, counted as each member streams (default 512 MiB).
 	MaxUnpackedBytes int64
 	// ClamDB is the directory of ClamAV signatures the malware check reads
 	// (the host's bundle, mounted read-only); empty, nothing is checked and
 	// every file says so.
 	ClamDB string
-	// Sources names the top-level folders that are input sources (plan
-	// input-sources.md §5; agentry-cli#833). A source's files count
-	// against SourceMaxFiles, apart from the uploads' MaxFiles, and only
-	// its executable and binary risky files are checked by ClamAV (D8,
-	// SourceRisky); the rest say so (UncheckedNotRisky).
+	// Sources names the top-level folders that are input sources. A source's
+	// files count against SourceMaxFiles, apart from the uploads' MaxFiles,
+	// and only its executable and binary risky files are checked by ClamAV
+	// (SourceRisky); the rest say so (UncheckedNotRisky).
 	Sources []string
 	// SourceMaxFiles is each source's cap (default 20,000).
 	SourceMaxFiles int
@@ -264,7 +261,7 @@ func (l Limits) withDefaults() Limits {
 // Decode decodes every regular file under in into out and writes the
 // report to out/decode.json. A file's failure is its outcome; the error is
 // for the roots alone. The file cap counts an archive's members with the
-// files as staged (D5). It goes in three passes: every file is detected and
+// files as staged. It goes in three passes: every file is detected and
 // every archive unpacked, the members kept until the end; then everything
 // is checked by ClamAV at once; then each file the check did not find is
 // decoded.
@@ -336,7 +333,7 @@ const WhyRepository Why = "repository"
 // objects, packs, the index, refs, hooks) are kept as they are: listed,
 // checked by ClamAV, never detected, decoded or unpacked. A run that wants
 // a repository's history reads it with git; a decode of zlib objects only
-// cost a detector start or two per object (agentry-cli#642). A file named
+// cost a detector start or two per object. A file named
 // .git (a worktree's or submodule's pointer) is decoded like any other.
 // The host holds a report to the same rule.
 func InRepository(rel string) bool {
@@ -403,7 +400,7 @@ func (d *decoder) take(pool string) bool {
 }
 
 // target makes a file a target of the malware check: every upload, and in
-// an input source only an executable or binary risky file (D8), the rest
+// an input source only an executable or binary risky file, the rest
 // saying why they were not checked.
 func (d *decoder) target(idx int, src string) {
 	f := &d.files[idx]
@@ -606,7 +603,7 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 		}
 		if err == nil {
 			// 0644 like every other decoded text: the tools container's
-			// search runs as a user of its own (agentry-cli#912).
+			// search runs as a user of its own.
 			err = os.WriteFile(text, []byte(body), 0o644) //nolint:gosec // the decoded text, read by the run
 		}
 	case "tika":
@@ -618,7 +615,7 @@ func decodeKind(ctx context.Context, kind contentKind, err error, src, rel, out 
 	return finish(f, text, dst, lim.MaxOutputBytes)
 }
 
-// htmlTypes are the text files that also get a Markdown view (D2): a page
+// htmlTypes are the text files that also get a Markdown view: a page
 // is code to a reviewer and a document to a reader.
 var htmlTypes = map[string]bool{"text/html": true, "application/xhtml+xml": true}
 

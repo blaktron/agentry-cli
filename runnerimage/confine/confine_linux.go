@@ -152,7 +152,7 @@ func ExecWith(o Options, path string, argv, env []string) error {
 	// a goroutine on another P that needs memory between the limit and the
 	// execve gets none: the runtime dies of it ("fatal error: runtime:
 	// cannot allocate memory"), on the program's stderr when the execve
-	// wins and in its place when it does not (agentry-cli#887; one run in
+	// wins and in its place when it does not (one run in
 	// a hundred on a loaded machine). With one P, held by this goroutine
 	// through the raw syscalls below, which never give it up, nothing else
 	// runs until the program replaces the process.
