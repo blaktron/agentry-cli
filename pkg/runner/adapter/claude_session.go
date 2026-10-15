@@ -33,6 +33,7 @@ type claudeSession struct {
 	turn chan claudeTurnResult // non-nil while a Prompt is in flight
 
 	events    chan Event
+	eventGate eventGate // orders sends against close(events)
 	readDone  chan struct{}
 	closeOnce sync.Once
 }
@@ -97,7 +98,7 @@ func (s *claudeSession) Close() error {
 	s.closeOnce.Do(func() {
 		err = s.rw.Close()
 		<-s.readDone
-		close(s.events)
+		s.eventGate.close(s.events)
 	})
 	return err
 }
@@ -167,4 +168,4 @@ func (s *claudeSession) readLoop() {
 	}
 }
 
-func (s *claudeSession) emit(ev Event) { s.events <- ev }
+func (s *claudeSession) emit(ev Event) { s.eventGate.send(s.events, ev) }

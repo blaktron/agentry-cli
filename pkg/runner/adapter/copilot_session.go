@@ -67,6 +67,7 @@ type copilotSession struct {
 	permit         func(server, tool string) bool
 
 	events    chan Event
+	eventGate eventGate // orders sends against close(events)
 	readDone  chan struct{}
 	closeOnce sync.Once
 	// workers are the goroutines that answer off the read loop (a token,
@@ -316,7 +317,7 @@ func (s *copilotSession) Close() error {
 			delete(s.pending, id)
 		}
 		s.mu.Unlock()
-		close(s.events)
+		s.eventGate.close(s.events)
 	})
 	return err
 }
@@ -705,4 +706,4 @@ func (s *copilotSession) endTurn(why string) {
 	t.done <- copilotTurnEnd{err: why}
 }
 
-func (s *copilotSession) emit(ev Event) { s.events <- ev }
+func (s *copilotSession) emit(ev Event) { s.eventGate.send(s.events, ev) }
