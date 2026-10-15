@@ -82,8 +82,8 @@ func TestARemoteServerIsNotedWithWhatItsFirstRunAsks(t *testing.T) {
 	}
 	all := strings.Join(d.serversAdmitted, "\n")
 	for _, want := range []string{
-		"https://mcp.linear.app/mcp: a remote server, run by its vendor; Agentry checks its address and what it asks for, not the vendor's code. It signs in with OAuth: the first run of this version asks whoever runs it to sign in at the vendor and allow the scopes read, and a run gets an access token, nothing else. Seen to answer through Agentry (agentry-enterprise#425, agentry-enterprise#426).",
-		"https://api.githubcopilot.com/mcp/readonly: a remote server, run by its vendor; Agentry checks its address and what it asks for, not the vendor's code. It signs in with the key GITHUB_TOKEN, sent to the vendor as a bearer token. Seen to answer through Agentry (agentry-cli#663).",
+		"https://mcp.linear.app/mcp: a remote server, run by its vendor; Agentry checks its address and what it asks for, not the vendor's code. It signs in with OAuth: the first run of this version asks whoever runs it to sign in at the vendor and allow the scopes read, and a run gets an access token, nothing else. Seen to answer through Agentry (a consent and two hosted runs, 2026-10-07).",
+		"https://api.githubcopilot.com/mcp/readonly: a remote server, run by its vendor; Agentry checks its address and what it asks for, not the vendor's code. It signs in with the key GITHUB_TOKEN, sent to the vendor as a bearer token. Seen to answer through Agentry (a local run, 2026-10-05).",
 		"allow the scopes the vendor asks for",
 		"Its sign-in was read from Asana's own metadata, not seen to run here (vendor metadata read 2026-10-09). Asana registers no client for Agentry, so whoever runs it brings their own OAuth client; the run setup says how.",
 		"https://mcp.example.com/mcp: a remote server, run by its vendor; Agentry checks its address and what it asks for, not the vendor's code. It signs in with nothing. It is on no list, so it was judged with the drafting guide.",
@@ -116,7 +116,7 @@ func TestAPackagesSignInIsHeldToTheListedOne(t *testing.T) {
 		t.Errorf("a listed sign-in is its package's one admission, not \"on neither list\": %q", d.serversAdmitted)
 	}
 	if all := strings.Join(d.serversAdmitted, "\n"); !strings.Contains(all,
-		"pypi:workspace-mcp@2.0.1: signs in with OAuth at https://accounts.google.com with the sign-in the drafting guide lists (agentry-cli#665, agentry#937, 2026-10-06): the first run of this version asks whoever runs it to allow the scopes https://www.googleapis.com/auth/gmail.readonly, and the server gets an access token, never a refresh token. The vendor registers no client for Agentry") {
+		"pypi:workspace-mcp@2.0.1: signs in with OAuth at https://accounts.google.com with the sign-in the drafting guide lists (a local run, and its renewal 65 minutes later, 2026-10-06): the first run of this version asks whoever runs it to allow the scopes https://www.googleapis.com/auth/gmail.readonly, and the server gets an access token, never a refresh token. The vendor registers no client for Agentry") {
 		t.Errorf("the notes do not say what the listed sign-in asks:\n%s", all)
 	}
 

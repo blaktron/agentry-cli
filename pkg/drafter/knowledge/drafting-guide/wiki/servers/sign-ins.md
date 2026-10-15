@@ -40,21 +40,21 @@ An entry says what was seen, or what the vendor's own metadata said on its date.
 - **Signs in with:** `auth: secret`.
 - **Seen to run here:** A local run reached GitHub's read-only tools with a GitHub token sent as the bearer header. [src: doc:servers.yaml]
 - **Needs:** One key: a GitHub token, declared as the server's one secret.
-- **Evidence:** agentry-cli#663, 2026-10-05.
+- **Evidence:** a local run, 2026-10-05.
 
 ### Google, `https://gmailmcp.googleapis.com/mcp/v1`
 
 - **Signs in with:** `auth: oauth`; the person brings their own client.
 - **Scopes it offers:** `https://www.googleapis.com/auth/gmail.readonly`.
 - **Not seen to run here.** Google's Gmail server is in its Workspace Developer Preview, which an account must join, and has no tool that sends mail. Google offers neither dynamic registration nor a client metadata document, so the person brings their own Google OAuth client. For Gmail without the preview, the listed sign-in of the PyPI package workspace-mcp is the alternative. [src: doc:servers.yaml]
-- **Evidence:** vendor metadata read 2026-10-09; agentry-desktop#666.
+- **Evidence:** vendor metadata read 2026-10-09.
 
 ### Linear, `https://mcp.linear.app/mcp`
 
 - **Signs in with:** `auth: oauth`; Agentry signs in as itself.
 - **Scopes it offers:** `read`, `write`.
-- **Seen to run here:** A consent on dev and two hosted runs listed the person's issues; the vendor registers Agentry's client itself (dynamic registration and a client metadata document). [src: doc:servers.yaml]
-- **Evidence:** agentry-enterprise#425, agentry-enterprise#426, 2026-10-07.
+- **Seen to run here:** A consent and two hosted runs listed the person's issues; the vendor registers Agentry's client itself (dynamic registration and a client metadata document). [src: doc:servers.yaml]
+- **Evidence:** a consent and two hosted runs, 2026-10-07.
 
 ### Notion, `https://mcp.notion.com/mcp`
 
@@ -78,7 +78,7 @@ An entry says what was seen, or what the vendor's own metadata said on its date.
 
 - **Its client:** the person brings their own client.
 - **Seen:** Read the person's Gmail inbox on a run, and again 65 minutes later after the runner renewed the token mid-run. The file is named for USER_GOOGLE_EMAIL, and client_id and client_secret are fixed dummies, never a real client's. [src: doc:servers.yaml]
-- **Evidence:** agentry-cli#665, agentry#937, 2026-10-06.
+- **Evidence:** a local run, and its renewal 65 minutes later, 2026-10-06.
 
 Copy this entry into `capabilities.mcpServers`, with the server's tools, exactly as it stands:
 

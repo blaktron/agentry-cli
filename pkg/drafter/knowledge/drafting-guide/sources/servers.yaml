@@ -1,7 +1,7 @@
 # The drafting guide's two soft lists of declared MCP servers, Runs here
 # and Does not run here, and the packages whose presence as a server's
-# direct dependency means it does not run here (plan drafter-knowledge.md
-# §4.4; agentry-cli#658). Written by hand from the survey's results
+# direct dependency means it does not run here. Written by hand from the
+# survey's results
 # (scripts/mcp-server-survey); the two list pages are generated from it
 # (go test ./pkg/drafter -run TestTheDraftingGuideIsCurrent -update).
 #
@@ -178,8 +178,8 @@ servers:
   list: does-not-run-here
   reason: musl-native
   runtime: Python 3.12.14
-  observed: "Did not install: pip found no installable set of packages, because its markitdown[all] dependency pulls in onnxruntime (through magika), which publishes no musllinux wheel (agentry-cli#653)."
-  evidence: "survey 2026-10-05; agentry-cli#653"
+  observed: "Did not install: pip found no installable set of packages, because its markitdown[all] dependency pulls in onnxruntime (through magika), which publishes no musllinux wheel."
+  evidence: "survey 2026-10-05"
   date: 2026-10-05
 - ecosystem: pypi
   package: mcp-for-blender
@@ -895,7 +895,7 @@ dependencies:
 - ecosystem: pypi
   package: onnxruntime
   reason: musl-native
-  observed: "It publishes no musllinux wheel, so no server that needs it can install (markitdown-mcp, through magika; agentry-cli#653)."
+  observed: "It publishes no musllinux wheel, so no server that needs it can install (markitdown-mcp, through magika)."
   evidence: survey 2026-10-05
   date: 2026-10-05
 - ecosystem: pypi
@@ -968,7 +968,7 @@ runtimes:
   - pip
   evidence: survey 2026-10-05 (runtimes probe)
   date: 2026-10-05
-# Vendors' own remote MCP servers (agentry-cli#667; DR-67's addendum):
+# Vendors' own remote MCP servers:
 # declared by url with an auth, reached through the runner image's bridge
 # behind one relay to the address's host. seen is true only for a server
 # that answered a tool call through Agentry; the others are what the
@@ -982,8 +982,8 @@ remote:
   scopes: [read, write]
   client: agentry
   seen: true
-  observed: A consent on dev and two hosted runs listed the person's issues; the vendor registers Agentry's client itself (dynamic registration and a client metadata document).
-  evidence: agentry-enterprise#425, agentry-enterprise#426
+  observed: A consent and two hosted runs listed the person's issues; the vendor registers Agentry's client itself (dynamic registration and a client metadata document).
+  evidence: a consent and two hosted runs, 2026-10-07
   date: 2026-10-07
 - vendor: GitHub
   url: https://api.githubcopilot.com/mcp/readonly
@@ -992,7 +992,7 @@ remote:
   observed: A local run reached GitHub's read-only tools with a GitHub token sent as the bearer header.
   conditions:
     - "One key: a GitHub token, declared as the server's one secret."
-  evidence: agentry-cli#663
+  evidence: a local run, 2026-10-05
   date: 2026-10-05
 - vendor: GitHub
   url: https://api.githubcopilot.com/mcp/readonly
@@ -1046,9 +1046,9 @@ remote:
   client: own
   seen: false
   observed: Google's Gmail server is in its Workspace Developer Preview, which an account must join, and has no tool that sends mail. Google offers neither dynamic registration nor a client metadata document, so the person brings their own Google OAuth client. For Gmail without the preview, the listed sign-in of the PyPI package workspace-mcp is the alternative.
-  evidence: vendor metadata read 2026-10-09; agentry-desktop#666
+  evidence: vendor metadata read 2026-10-09
   date: 2026-10-09
-# Package servers' OAuth sign-ins seen working (agentry-cli#667). A draft
+# Package servers' OAuth sign-ins seen working. A draft
 # gives a package an oauth block only by copying one of these exactly, with
 # the egress and env it lists: a token file the package does not read fails
 # silently at run time, so a block nobody saw work is not written.
@@ -1072,5 +1072,5 @@ signins:
       WORKSPACE_MCP_CREDENTIALS_DIR: "{dir}"
   client: own
   observed: Read the person's Gmail inbox on a run, and again 65 minutes later after the runner renewed the token mid-run. The file is named for USER_GOOGLE_EMAIL, and client_id and client_secret are fixed dummies, never a real client's.
-  evidence: agentry-cli#665, agentry#937
+  evidence: a local run, and its renewal 65 minutes later, 2026-10-06
   date: 2026-10-06
