@@ -59,3 +59,9 @@ A new page, A browser: when a task tests a website the person names as a person 
 The server lists' evidence lines say what was seen and when, instead of naming internal tickets, and the sources file's comments describe the file. No fact about a server changed.
 
 - updated: sources/servers.yaml, servers/does-not-run-here.md, servers/sign-ins.md (both generated)
+
+## [2026-10-15] update | key-free first, and no hosted browser (Drafter 1.15.2)
+
+A draft asked to run a website test suite declared a hosted browser service's remote server with a token, instead of the browser the runner gives. The servers page gains a section on choosing a server or an API that needs a key, an account or a paid plan only when nothing key-free does the task, with the notes saying why; the browser, keys, fetch and review pages say the same and name the hosted browser services, which the check after an answer now sends to a repair turn by package or by address.
+
+- updated: servers/mcp-servers.md, manifest/browser.md, manifest/secrets.md, manifest/egress-and-fetch.md, draft/review.md
