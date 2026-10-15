@@ -28,21 +28,37 @@ import (
 //
 // Best effort and bounded: the sweep never fails a run, and it tells the
 // person what it removed and what it could not. Run and StartSession call
-// it; exported so `agentry run` can sweep before its MCP server installs,
-// whose fixed container names a leftover installer would collide with.
+// it, then sweep the dead runs' files (sweepAbandonedRun); exported so
+// `agentry run` can sweep before its MCP server installs, whose fixed
+// container names a leftover installer would collide with.
 // Not covered: a run network or volume whose containers were already gone
 // when the process died has nothing left to name it (a labelled volume's
 // owner labels are not read here).
 func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
+	_ = sweepAbandoned(ctx, d, stderr)
+}
+
+// sweepAbandonedRun is the sweep a run or a session starts with: the
+// containers, networks and volumes of runs whose process died
+// (SweepAbandoned), then the files they left in this install's run
+// directories (sweepRunDirs), which also takes the dead runs' ids for a
+// directory that holds no lock file.
+func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot string, stderr io.Writer) {
+	sweepRunDirs(runRoot, sweepAbandoned(ctx, d, stderr), stderr)
+}
+
+// sweepAbandoned is SweepAbandoned, returning the ids of the runs whose
+// containers it removed.
+func sweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) map[string]bool {
 	id, ok := owner.Identity()
 	if !ok {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	found, err := d.PSLabels(ctx, owner.LabelHost+"="+id, []string{owner.LabelHost, owner.LabelPID, owner.LabelStart, runLabel})
 	if err != nil {
-		return
+		return nil
 	}
 	var removed, failed []string
 	runs := map[string]bool{}
@@ -68,7 +84,7 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 		}
 	}
 	if stderr == nil {
-		return
+		return runs
 	}
 	if len(removed) > 0 {
 		sort.Strings(removed)
@@ -78,6 +94,7 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 		sort.Strings(failed)
 		_, _ = fmt.Fprintf(stderr, "warning: could not remove %d container(s) a run whose process had died left behind: %s (docker rm -fv <name>)\n", len(failed), strings.Join(failed, ", "))
 	}
+	return runs
 }
 
 // runVolumes is every volume of run r: its session volume by name, and

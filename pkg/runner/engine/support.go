@@ -55,7 +55,7 @@ type runDirs struct {
 	knowledge   string // root/knowledge — the :ro knowledge packs, one directory each
 	session     string // the per-run volume an interactive session's harness store lives in
 	cfg         string // root/cfg — rendered gateway+harness files
-	secretsPath string // root/secrets.env (0600, deleted on teardown)
+	secretsPath string // root/cfg/gateway/secrets.env (0600, deleted on teardown)
 	serversDir  string // the signature's server store, :ro
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its
@@ -257,27 +257,19 @@ func gatewayHostPath(p, goos string) string {
 // rendered config, and the output folder with reports/ and receipts/.
 func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	root := filepath.Join(p.RunRoot, "runs", runID)
-	rd := &runDirs{
-		root:      root,
-		workspace: filepath.Join(root, "workspace"),
-		inputs:    filepath.Join(root, "inputs"),
-		// The decoded inputs, written only by the host from the decode
-		// step's checked output (inputs.go).
-		inputsText: filepath.Join(root, "inputs-text"),
-		knowledge:  filepath.Join(root, "knowledge"),
-		// The session store is a per-run named volume, not a host
-		// directory: the harness runs unprivileged, and a host directory
-		// it could write was a world-writable one.
-		session: sessionVolumeName(runID),
-		cfg:     filepath.Join(root, "cfg"),
-		// secrets.env lives INSIDE cfg/gateway because that directory is
-		// the gateway's /mcp mount — the compiled `--secrets
-		// /mcp/secrets.env` argv resolves to this file and nothing else.
-		secretsPath: filepath.Join(root, "cfg", "gateway", "secrets.env"),
-		serversDir:  p.ServersDir,
-		outDir:      p.OutDir,
-		receiptsDir: filepath.Join(p.OutDir, "receipts"),
-	}
+	// inputs-text holds the decoded inputs, written only by the host from
+	// the decode step's checked output (inputs.go). secrets.env lives
+	// INSIDE cfg/gateway because that directory is the gateway's /mcp
+	// mount — the compiled `--secrets /mcp/secrets.env` argv resolves to
+	// this file and nothing else.
+	rd := runDirsAt(root)
+	// The session store is a per-run named volume, not a host directory:
+	// the harness runs unprivileged, and a host directory it could write
+	// was a world-writable one.
+	rd.session = sessionVolumeName(runID)
+	rd.serversDir = p.ServersDir
+	rd.outDir = p.OutDir
+	rd.receiptsDir = filepath.Join(p.OutDir, "receipts")
 	if spec.HasPackageServers(p.Plan.MCPServers) && rd.serversDir == "" {
 		return nil, Classify(ExitCLI, fmt.Errorf("plan declares MCP servers but no server store was provided"))
 	}
@@ -296,13 +288,16 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 			return nil, Classify(ExitCLI, fmt.Errorf("%s %s: %w", f.what, f.path, err))
 		}
 	}
-	// inputs/, inputs-text/ and knowledge/ exist even when empty: the
-	// compiled catalog always mounts them :ro, and an absent bind source
-	// would fail the tools container.
-	for _, dir := range []string{rd.workspace, rd.inputs, rd.inputsText, rd.knowledge, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
-		}
+	// The run's lock on its directory comes before anything is written
+	// into it, so a later run can tell this one's leftovers from a live
+	// run's when this process dies without its teardown (runlock.go).
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
+	}
+	lock, err := holdRunLock(root, runID, p.KeepRunDir)
+	if err != nil {
+		_ = os.Remove(root)
+		return nil, Classify(ExitCLI, err)
 	}
 	// Registered before anything is staged into it: a failure in stageInputs
 	// or stageIntake — or a panic — otherwise leaves the run directory, and
@@ -313,16 +308,24 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// pages, which a pack kept sealed on the machine would otherwise leave
 	// in the clear there).
 	td.add(func(context.Context) {
-		td.removeSensitive(rd.secretsPath, false)
-		td.removeSensitive(rd.connections(), true)
-		td.removeSensitive(rd.modelSignInDir(), true)
-		td.removeSensitive(rd.knowledge, true)
-		td.removeSensitive(rd.hostsDir(), true)
-		td.removeSensitive(rd.browserDir(), true)
+		for _, s := range rd.sensitive() {
+			td.removeSensitive(s.path, s.all)
+		}
+		// Released before the directory goes: on Windows a directory
+		// holding an open file cannot be deleted.
+		lock.release(p.KeepRunDir)
 		if !p.KeepRunDir {
 			_ = os.RemoveAll(root)
 		}
 	})
+	// inputs/, inputs-text/ and knowledge/ exist even when empty: the
+	// compiled catalog always mounts them :ro, and an absent bind source
+	// would fail the tools container.
+	for _, dir := range []string{rd.workspace, rd.inputs, rd.inputsText, rd.knowledge, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
+		}
+	}
 	rd.runID, rd.web, rd.anyEgress = runID, p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode == "all"
 	rd.targets = targetHostsOf(p)
 	if p.Web != nil {

@@ -27,6 +27,11 @@ func TestMain(m *testing.M) {
 	if play := fakeHostHarness(os.Args[1:]); play != nil {
 		os.Exit(play(os.Stdin, os.Stdout))
 	}
+	// A run that holds its run directory's lock until it is killed
+	// (runlock_test.go).
+	if root := os.Getenv(holdRunLockEnv); root != "" {
+		os.Exit(playLockedRun(root))
+	}
 	// No test touches DNS: the model hosts resolve nowhere unless a test
 	// says otherwise (modelhosts_test.go).
 	lookupModelHost = func(context.Context, string) ([]net.IP, error) { return nil, errors.New("no DNS in tests") }

@@ -12,7 +12,7 @@ import (
 func tryLockFile(f *os.File) error {
 	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) //nolint:gosec // a file descriptor fits an int
 	if errors.Is(err, syscall.EWOULDBLOCK) {
-		return errRelayLockHeld
+		return errLockHeld
 	}
 	return err
 }
