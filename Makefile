@@ -26,10 +26,10 @@ check: lint test build
 
 # The five release binaries into dist/, named as the site's download manifest
 # admits them. DIST_VERSION is the tag (bare semver) or the describe string;
-# AGENTRY_DEFAULT_REGISTRY, when set, is baked in as the fallback registry.
+# AGENTRY_DEFAULT_REGISTRY, when set, is baked in as the fallback registry;
+# EXTRA_LDFLAGS is added to the linker flags (a build's own -X values).
 # Pure Go, CGO off, so every target builds on any host with the toolchain and
-# nothing else. No signing input is read here: the release workflow signs
-# the Windows exe after this target, not inside it.
+# nothing else. Nothing here signs: the binaries are unsigned.
 DIST_VERSION ?= $(shell v=$$(git describe --tags --always --dirty 2>/dev/null) || v=0.0.0-dev; echo "$$v" | sed 's/^v//')
 DIST_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 dist:
@@ -38,7 +38,7 @@ dist:
 	  os=$${t%/*}; arch=$${t#*/}; ext=""; [ "$$os" = windows ] && ext=.exe; \
 	  out="dist/agentry-$(DIST_VERSION)-$$os-$$arch$$ext"; echo "  $$out"; \
 	  GOWORK=off CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
-	    -ldflags "-s -w -X github.com/blaktron/agentry-cli/internal/version.Version=$(DIST_VERSION)$(if $(AGENTRY_DEFAULT_REGISTRY), -X main.defaultRegistryURL=$(AGENTRY_DEFAULT_REGISTRY),)" \
+	    -ldflags "-s -w -X github.com/blaktron/agentry-cli/internal/version.Version=$(DIST_VERSION)$(if $(AGENTRY_DEFAULT_REGISTRY), -X main.defaultRegistryURL=$(AGENTRY_DEFAULT_REGISTRY),) $(EXTRA_LDFLAGS)" \
 	    -o "$$out" ./cmd/agentry || exit 1; \
 	done
 

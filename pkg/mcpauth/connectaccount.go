@@ -91,10 +91,6 @@ func PoeClientID() (string, error) {
 // Hugging Face's issuer, Agentry's client for it, and what a connect asks.
 const (
 	HuggingFaceIssuer = "https://huggingface.co"
-	// HuggingFaceClientMetadataURL is Agentry's Client ID Metadata Document
-	// for Hugging Face, served by the site: a public native client with
-	// loopback redirects on 127.0.0.1 and localhost.
-	HuggingFaceClientMetadataURL = "https://secureagentry.net/oauth/clients/agentry-huggingface.json"
 	// HuggingFaceClientIDEnv names another client id (a public app
 	// registered at huggingface.co) in place of the document.
 	HuggingFaceClientIDEnv = "AGENTRY_HF_CLIENT_ID"
@@ -105,12 +101,20 @@ const (
 	HuggingFaceAppsPage = "https://huggingface.co/settings/connected-applications"
 )
 
+// HuggingFaceClientMetadataURL is the address of the Client ID Metadata
+// Document a Hugging Face connect presents: a public native client with
+// loopback redirects on 127.0.0.1 and localhost. A release build sets it
+// with -ldflags "-X github.com/blaktron/agentry-cli/pkg/mcpauth.HuggingFaceClientMetadataURL=…";
+// a source build has none, and HuggingFaceClientIDEnv supplies a client.
+var HuggingFaceClientMetadataURL = ""
+
 // HuggingFaceScopes are what a connect asks for: the inference scope, and
 // the profile that names the account.
 var HuggingFaceScopes = []string{"openid", "profile", HuggingFaceInferenceScope}
 
 // HuggingFaceClientID is the client a Hugging Face connect presents: the
-// variable's, else Agentry's metadata document.
+// variable's, else this build's metadata document, else "" (Connect then
+// says the client is not configured).
 func HuggingFaceClientID() string {
 	if id := strings.TrimSpace(os.Getenv(HuggingFaceClientIDEnv)); id != "" {
 		return id
@@ -377,6 +381,9 @@ func (h HuggingFace) discover(ctx context.Context) (*ServerMetadata, error) {
 func (h HuggingFace) Connect(ctx context.Context, clientID string) (*ConnectedKey, error) {
 	if h.HTTP == nil {
 		return nil, errors.New("connect Hugging Face: no HTTP client")
+	}
+	if clientID == "" {
+		return nil, fmt.Errorf("connect Hugging Face: this build of agentry has no OAuth client configured for Hugging Face; set %s to a public app's client id", HuggingFaceClientIDEnv)
 	}
 	md, err := h.discover(ctx)
 	if err != nil {
