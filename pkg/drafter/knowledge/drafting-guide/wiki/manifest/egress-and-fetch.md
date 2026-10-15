@@ -3,7 +3,7 @@ title: Network and fetch
 type: guide
 summary: When a QuickAgent needs the network, how its own fetch tool works (methods, keys, redirects, the response cap, saving a body to the scratch folder), how to choose and name its hosts, and which hosts go on an MCP server instead.
 sources: [doc:runtime-facts.md, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/trust/]
-updated: 2026-10-12
+updated: 2026-10-15
 ---
 
 # Network and fetch
@@ -35,6 +35,6 @@ A run has no network unless `network.egress` names hosts, and no web search ever
 - **A repository or a file the person gives at run time needs no host here.** Ask for it with a `repository` or a `url` question, and the runner fetches it before the run (see [Input files](inputs.md#a-repository-or-a-file-at-an-address)). Declaring `github.com` or a `GITHUB_TOKEN` to clone a repository is never needed [src: web:https://docs.secureagentry.net/runner/]. An API the task calls about the source is a host as any other: a QuickAgent that looks up a repository's dependencies in an advisory database declares that database's API host (`api.osv.dev`) for its own `fetch`, and needs no MCP server for it; one that reads the repository's issues or pull requests declares `api.github.com` as before.
 - Name the API host, not the product's site: `api.github.com`, not `github.com`; `api.openweathermap.org`, not `openweathermap.org`. Read the API's documentation for the exact host of each call the instructions make, including the host it serves files or exports from.
 - Declare every host the instructions tell the run to fetch, and only those. A host the instruction reaches but the manifest does not declare can be read by AI Review as an undeclared capability, which is a high finding that sends the release to review, and a run could not reach it anyway [src: web:https://docs.secureagentry.net/trust/].
-- Prefer an API that needs no key. When it needs one, declare the key's name in `secrets` and write its help in `guide.connect` (see [Keys](secrets.md) and [The intake and the guide](intake-and-guide.md)).
+- Prefer an API that needs no key, and take one that needs a key or an account only when no key-free API does the task ([Declared MCP servers](../servers/mcp-servers.md#a-key-or-an-account-only-when-nothing-else-does-the-task)). When it needs one, declare the key's name in `secrets` and write its help in `guide.connect` (see [Keys](secrets.md) and [The intake and the guide](intake-and-guide.md)).
 - An API that signs a person in through a browser (OAuth) cannot be reached with `fetch`. One that takes a token the person creates and pastes can. When the vendor has its own remote MCP server, declare that instead: it signs the person in at the vendor ([Remote servers](../servers/mcp-servers.md#remote-servers)).
 - Write the requests into the instructions: the host, the path, the parameters and what to read from the answer, so the run does not have to guess.

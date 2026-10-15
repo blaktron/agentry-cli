@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -163,7 +164,7 @@ func TestTheGuideTeachesTheBrowser(t *testing.T) {
 	mustSay(t, map[string][]string{
 		instructionFile: {
 			"takes a **browser**: a `url` intake question listed in `capabilities.browser.sites`",
-			"never a browser, Playwright or `curl` in `exec`, and no MCP server for one",
+			"never a browser, Playwright or `curl` in `exec`, and no MCP server for one**, a hosted browser service (Browserless, Browserbase) included",
 			"declares its keys in `capabilities.secrets` and in `capabilities.browser.secrets`, and then never `scope: public`",
 			"saves each screenshot by a **bare file name**",
 			"a site to test by a `url` question its browser names",
@@ -215,4 +216,85 @@ func TestTheGuideTeachesTheBrowser(t *testing.T) {
 			t.Errorf("manifest/manifest.md does not state %q", want)
 		}
 	}
+}
+
+// TestAHostedBrowserServiceGoesToTheRepairTurn: a draft that declares a
+// hosted browser service, by its remote address or by a package whose name
+// says browser but none of the browsers', is refused by the Drafter's
+// rules with the same way out as a browser package: a url question listed
+// in capabilities.browser.sites. Servers that are not browsers pass.
+func TestAHostedBrowserServiceGoesToTheRepairTurn(t *testing.T) {
+	// A website test suite's draft that declares Browserless's remote
+	// server with a token.
+	raw := json.RawMessage(`{"schemaVersion": "2", "name": "website-test-suite-reporter",` +
+		` "intake": [{"id": "website", "prompt": "The website", "type": "text", "required": true}],` +
+		` "capabilities": {"network": {"egress": "none"}, "filesystem": {"read": "none", "write": "none"}, "exec": "none",` +
+		` "mcpServers": [{"url": "https://mcp.browserless.io/mcp", "auth": "secret", "secrets": ["BROWSERLESS_TOKEN"], "tools": ["browserless_agent"]}]}}`)
+	lines := browserServerProblems(raw)
+	if len(lines) != 1 {
+		t.Fatalf("the rule's lines: %q", lines)
+	}
+	for _, want := range []string{"capabilities.mcpServers: https://mcp.browserless.io/mcp: a browser run by its vendor", "intake question of type url", "capabilities.browser.sites", "need no key and no account"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("the line %q does not say %q", lines[0], want)
+		}
+	}
+	d := &Draft{Manifest: raw, Instructions: browserDraftInstructions}
+	if got, refused := rulesReport(d); !refused || !slices.Contains(got, lines[0]) {
+		t.Errorf("the rules' report: %q, %v", got, refused)
+	}
+
+	for _, c := range []struct {
+		server  string
+		browser bool
+	}{
+		{`{"url": "https://mcp.browserbase.com/mcp", "auth": "secret", "secrets": ["BROWSERBASE_API_KEY"]}`, true},
+		{`{"url": "https://api.example.com/browser-rendering/mcp", "auth": "none"}`, true},
+		{`{"url": "https://mcp.steel.dev/mcp", "auth": "secret", "secrets": ["STEEL_API_KEY"]}`, true},
+		{`{"name": "browserbase", "npm": "@browserbasehq/mcp-server-browserbase", "version": "2.1.0"}`, true},
+		{`{"name": "hyperbrowser", "npm": "hyperbrowser-mcp", "version": "1.1.0"}`, true},
+		{`{"name": "browser-use", "pypi": "browser-use", "version": "0.5.0"}`, true},
+		{`{"url": "https://mcp.linear.app/mcp", "auth": "oauth", "scopes": ["read"]}`, false},
+		{`{"url": "https://api.githubcopilot.com/mcp/readonly", "auth": "secret", "secrets": ["GITHUB_TOKEN"]}`, false},
+		{`{"name": "time", "pypi": "mcp-server-time", "version": "2026.8.18"}`, false},
+		{`{"url": "not an address\u0000", "auth": "none"}`, false},
+	} {
+		m := json.RawMessage(`{"capabilities": {"mcpServers": [` + c.server + `]}}`)
+		if got := len(browserServerProblems(m)) == 1; got != c.browser {
+			t.Errorf("%s: a browser %v, want %v", c.server, got, c.browser)
+		}
+	}
+}
+
+// TestTheGuideTeachesKeyFreeFirst: the instruction and the guide's pages
+// prefer what needs no key and no account, take a server or an API that
+// needs a key, an account or a paid plan only when nothing key-free does
+// the task, have the notes say why, and name the hosted browser services
+// as never the way.
+func TestTheGuideTeachesKeyFreeFirst(t *testing.T) {
+	mustSay(t, map[string][]string{
+		instructionFile: {
+			"**Prefer what needs no key and no account**",
+			"only when nothing key-free does the task, and then say in the notes why it is the only way",
+			"a key it needs and why nothing key-free does the task",
+		},
+		"servers/mcp-servers.md": {
+			"## A key or an account only when nothing else does the task",
+			"A vendor's free tier still needs an account and a key, so it counts as one.",
+			"Declare a keyed server or API only when none of those does the task",
+			"- **A hosted browser is never the way.**",
+		},
+		"manifest/browser.md": {
+			"a hosted browser service (Browserless, Browserbase, browser-use, Hyperbrowser, Steel) included",
+		},
+		"manifest/secrets.md": {
+			"(../servers/mcp-servers.md#a-key-or-an-account-only-when-nothing-else-does-the-task)",
+		},
+		"manifest/egress-and-fetch.md": {
+			"take one that needs a key or an account only when no key-free API does the task",
+		},
+		"draft/review.md": {
+			"a hosted browser service by its address, which a declared browser replaces",
+		},
+	})
 }

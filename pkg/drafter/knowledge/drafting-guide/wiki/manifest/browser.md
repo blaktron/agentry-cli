@@ -3,7 +3,7 @@ title: A browser
 type: guide
 summary: When a QuickAgent tests a website in a real browser (pages that render, forms that work, links that resolve, a clean console, a phone's width), how it declares one (a url question listed in capabilities.browser.sites, the hosts its pages load from, the scope, the keys it may type), what the run has for it (the browser tools, screenshots in reports/browser/), how to write its instructions, and where it runs.
 sources: [web:https://docs.secureagentry.net/agentry/browser/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/hosted-runs/, doc:runtime-facts.md]
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 # A browser
@@ -38,7 +38,7 @@ Two halves that name each other: an intake question of type `url`, and its id un
 - **`hosts`** lists the other hosts the site's pages load from that the task needs, each an exact name or `*.` and a domain: a font host, a CDN, a sign-in provider (`fonts.googleapis.com`, `*.stripe.com`). At most 32, never `"*"`, an address, a port or a one-label name. Leave it out when the test needs only the site: a request to another host fails, and the run reports it, which is often the finding.
 - **`scope`** is `site` (the default: the sites, their subdomains and the hosts; leave it out) or `public` (any public website). **Use `site`.** `public` is for a task that must follow links to sites nobody can list (a crawl of outbound links): it is treated like egress to any host, so a version that asks for it goes to a person for review before it publishes, a runner refuses it unless its operator allows a browser on the public web, and Agentry does not run it In Agentry.
 - **`secrets`** names the declared keys the browser may type into the site's sign-in forms (below).
-- **The browser is not egress.** Never put the site in `egress`, never declare `curl`, a browser, Playwright or Selenium in `exec`, and never add an MCP server for a browser: the runner gives the browser, and the check after you answer sends a draft that declares one of those for the site to a repair turn of its own.
+- **The browser is not egress.** Never put the site in `egress`, never declare `curl`, a browser, Playwright or Selenium in `exec`, and never add an MCP server for a browser, a hosted browser service (Browserless, Browserbase, browser-use, Hyperbrowser, Steel) included: the runner gives the browser, with no key and no account at a vendor, and the check after you answer sends a draft that declares one of those for the site to a repair turn of its own. A hosted service also opens the person's site from its vendor's machines, so a staging server on their own network is out of its reach.
 
 ## Signing in
 

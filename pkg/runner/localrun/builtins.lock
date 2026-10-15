@@ -60,3 +60,5 @@ agentry/drafter@1.14.0 sha256:ca4f4fd3e48756e2446230d8c286a574b6546170a1261fe85e
 agentry/drafter@1.15.0 sha256:1147c95155df0c115964c0f107216c886d8fd8c5ec285fe2c6faf92289a76d7c
 # 1.15.1: the drafting guide's server lists give their evidence as what was seen and when, without internal references; the README drops its plan references. No fact about a server changed.
 agentry/drafter@1.15.1 sha256:56cf111c92bf0a453f4810cdf25e6adf39bc3b2d2c5826e3c3d0bde828bbc3cc
+# 1.15.2: the drafting guide and AGENT.md prefer what needs no key and no account (the run's own tools, the runner's browser, fetch to a key-free API, a key-free server) and take a server or an API that needs a key, an account or a paid plan only when nothing key-free does the task, the notes saying why; the post-step sends a hosted browser service (Browserless, Browserbase, browser-use, Hyperbrowser, Steel), by its package or its remote address, to the repair turn with the browser line.
+agentry/drafter@1.15.2 sha256:134f2f5b7bb5843106cd856e6e6df1886f81fa24ae99ff8b630f3c9ff5d8c2f4

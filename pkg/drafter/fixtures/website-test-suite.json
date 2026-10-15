@@ -1,0 +1,18 @@
+{
+  "id": "website-test-suite",
+  "description": "An agent that takes detailed website testing instructions as input and then does live user testing along the entire provided test suite and then outputs a detailed PDF report of any errors encountered in testing.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "autonomous"
+    ],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "intakeTypes": [
+      "url"
+    ],
+    "browser": true
+  }
+}

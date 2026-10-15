@@ -1,9 +1,9 @@
 ---
 title: Declared MCP servers
 type: guide
-summary: What a declared MCP server meets in the runner (a package installed, started and reached, or a vendor's remote server reached at its address), what that rules out, how a server signs in, and how to check a server before you pin it. Read it before you declare any server.
+summary: When a server that needs a key or an account is the right one (only when nothing key-free does the task, and never a hosted browser), what a declared MCP server meets in the runner (a package installed, started and reached, or a vendor's remote server reached at its address), what that rules out, how a server signs in, and how to check a server before you pin it. Read it before you declare any server.
 sources: [doc:runtime-facts.md, doc:servers.yaml, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization, web:https://docs.npmjs.com/cli/v11/commands/npm-install, web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json, web:https://pip.pypa.io/en/stable/cli/pip_install/, web:https://peps.python.org/pep-0656/, web:https://packaging.python.org/en/latest/specifications/entry-points/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports]
-updated: 2026-10-09
+updated: 2026-10-15
 ---
 
 # Declared MCP servers
@@ -15,6 +15,10 @@ When a vendor has its own remote server and a package for the same service takes
 Most servers published on npm and PyPI were written for a person's laptop. The runner is not one, and a server that works on a laptop can fail here. Some fail at install. Others install, start, list their tools and then fail on every call. Each point below is how the runner works today. Pin a server only when it passes all of them; otherwise use no server, or `fetch` to exact hosts, or ask for the data as an input file.
 
 First look the server up on the two lists, [Runs here](runs-here.md) and [Does not run here](does-not-run-here.md). They hold what a survey of 50 servers saw in the runner on 2026-10-05: which ones started, listed their tools and answered, and why the others failed. Never pin a server on *Does not run here*, or one whose own dependencies include a package listed at that page's end: the check after you answer sends either to a repair turn, and the notes say what admitted each server you keep. A server on *Runs here* still needs what its entry lists (its keys, its hosts, an `env` setting) and tools that fit the task. For a server on neither list, follow [Judging a server on neither list](#judging-a-server-on-neither-list) [src: doc:servers.yaml].
+
+## A key or an account only when nothing else does the task
+
+Before you declare a server, or `fetch` to an API, that needs a key, an account or a paid plan at its vendor, look for a way that needs none, in this order: the run's own tools ([How a run works](../runtime/how-a-run-works.md)); the browser the runner gives, for a website to test or read as a person sees it ([A browser](../manifest/browser.md)); the QuickAgent's own `fetch` to an API that answers without a key ([Egress and fetch](../manifest/egress-and-fetch.md)); a server that needs no key (its entry on [Runs here](runs-here.md) says so). A key means every person who runs the QuickAgent signs up at the vendor, and often pays, before the first run, and their data goes to one more company. A vendor's free tier still needs an account and a key, so it counts as one. Declare a keyed server or API only when none of those does the task, and say in the notes, in one bullet, which key-free ways you looked at and why each falls short. When a key adds something to a task a key-free way already does (a higher rate limit, private repositories beside public ones), declare it optional ([Keys](../manifest/secrets.md)).
 
 ## How it is installed
 
@@ -93,6 +97,7 @@ A server that fails any point does not run here. Choose another, or do the task 
 
 The survey of 2026-10-05 found the same few failures again and again. Check for each one before you pin a server that is on neither list [src: doc:servers.yaml]:
 
+- **A hosted browser is never the way.** A hosted browser service (Browserless, Browserbase, browser-use, Hyperbrowser, Steel) runs the browser at its vendor, needs an account and a key there, and opens the person's site from the vendor's machines. The runner gives a browser with neither ([A browser](../manifest/browser.md)), and the check after you answer sends a hosted one, by its package or its address, to a repair turn.
 - **Listing tools is not doing the task.** Browser servers (Playwright, Puppeteer, Chrome DevTools) installed, started and listed every tool, then failed on the first call because there is no browser. A filesystem server, a PDF toolkit and a shell server listed their tools, but every tool takes a local path, and none of the person's files are in the server's container. Judge a server by what its tools need, not by whether it starts.
 - **It fails at start without what it needs.** Several servers exit at start: one that wants a database URL as an argument, one that wants a subcommand (`server`, `server start`), one that reads its URL and token from the environment and has neither. An argument cannot be given here. A value in an environment variable can, through `env` or `secrets`, so read the README for which the server takes.
 - **It reaches a host you did not declare.** Two servers failed until every host they talk to was declared: one also reads its documentation site when it lists its tools, and one fetches a service list from another host as it starts. List every host the README or the error names. When the README cannot tell you, prefer another server.
