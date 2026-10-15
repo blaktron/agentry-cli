@@ -817,8 +817,9 @@ func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed
 		"install aborted (widened capability contract not accepted)")
 }
 
-// confirmCapabilities enforces the install gate: declared network egress,
-// exec, a remote MCP server or a target host needs typed confirmation,
+// confirmCapabilities enforces the install gate: declared network egress
+// (the release's own or a package MCP server's), exec, a remote MCP server
+// or a target host needs typed confirmation,
 // skipped by --yes; non-interactive runs must pass --yes. The prompt names
 // what the release declares.
 func confirmCapabilities(cmd *cobra.Command, caps manifest.Capabilities, yes bool) error {
