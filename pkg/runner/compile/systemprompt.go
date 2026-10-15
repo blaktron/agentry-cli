@@ -12,23 +12,19 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// The System Prompt (plan knowledge-and-drafter.md §4, D1, D2, D11, D12;
-// agentry-cli#520) is the text every run's model reads before the
-// QuickAgent's own instruction, on every harness and in hosted runs. It
-// replaced the runner contract, a one-paragraph postscript.
+// The System Prompt is the text every run's model reads before the
+// QuickAgent's own instruction, on every harness and in hosted runs.
 //
 // It has two parts. The head is fixed: the same bytes for every plan, at
 // the very start, and the one place a guardrail is added. The body is
-// composed from the compiled plan, so it states the run's actual grants
-// and never one the plan does not make (TestTheSystemPromptStatesNoGrant
+// composed from the compiled plan, so it states the run's actual grants and
+// never one the plan does not make (TestTheSystemPromptStatesNoGrant
 // TheRunLacks). Knowledge stays "if attached": a pack is known only at run
-// time, and attaching one must move neither the plan nor its hash (DR-38).
-// So does the Writing Voice (plan writing-voice.md §5, D4; agentry-cli#531):
-// the head says what voice_read means if the run has it, "Your Writing
-// Voice" says how to use it (agentry-cli#576), and the tool's own
-// description says that it is there.
-// The whole text is in the plan's hash; changing a word recompiles every
-// plan at the CLI that carries it.
+// time, and attaching one must move neither the plan nor its hash. So does
+// the Writing Voice: the head says what voice_read means if the run has it,
+// "Your Writing Voice" says how to use it, and the tool's own description
+// says that it is there. The whole text is in the plan's hash; changing a
+// word recompiles every plan at the CLI that carries it.
 
 // systemPromptHead is the System Prompt's fixed head. Guardrails go here.
 const systemPromptHead = `# Agentry System Prompt
@@ -52,14 +48,14 @@ const instructionHeading = "\n----\n\n# The QuickAgent's instruction\n\n"
 // grants, nothing read at run time. The run mode is not among them: the
 // instruction is byte-identical between a release's autonomous and
 // interactive plans (TestModePlansIdenticalExceptSession), so the body
-// speaks to both, and the head names the mode through spec.PHRunMode,
-// which the engine fills in per run (agentry-cli#717).
+// speaks to both, and the head names the mode through spec.PHRunMode, which
+// the engine fills in per run.
 type promptFacts struct {
 	caps    spec.CapSummary
 	secrets []string
 	// optional are the declared secrets, the release's own or a declared
-	// server's, that a run may go without (capabilities.optionalSecrets,
-	// DR-70); which ones this run went without is filled in at run time
+	// server's, that a run may go without (capabilities.optionalSecrets);
+	// which ones this run went without is filled in at run time
 	// (spec.PHSecretsAbsent).
 	optional []string
 	// servers are the MCP servers the run has besides the runner's own
@@ -70,35 +66,33 @@ type promptFacts struct {
 	// intake is whether the manifest asks questions before a run, whose
 	// answers the engine stages as /inputs/intake.json.
 	intake bool
-	// repositories are the ids of the manifest's repository questions:
-	// each answer is fetched before the run into /inputs/<id>/ (plan
-	// input-sources.md §5; agentry-cli#833).
+	// repositories are the ids of the manifest's repository questions: each
+	// answer is fetched before the run into /inputs/<id>/.
 	repositories []string
 	// files are the ids of its url questions: each answer is one file,
-	// downloaded before the run into /inputs/<id>/ (agentry-cli#834).
+	// downloaded before the run into /inputs/<id>/.
 	files []string
 	// hosts are the ids of its target hosts (capabilities.targetHosts):
 	// each a machine the person names at the run's start, worked through
-	// the host link's tools (plan runtime-hosts.md §5; agentry-cli#861).
+	// the host link's tools.
 	hosts []string
 	// browser is the release's browser line (capabilities.browser): the
-	// browser server's tools, held to the browse proxy's scope (plan
-	// browser-testing.md §6, §7; agentry-cli#915).
+	// browser server's tools, held to the browse proxy's scope.
 	browser *spec.BrowserCap
 	// inputView is the release's default view of its inputs (inputViewOf),
 	// empty when each input keeps its own.
 	inputView string
 	// review is the review grant: inputs reach the model only through AI
-	// Review, so they are not served unchanged (agentry-cli#632).
+	// Review, so they are not served unchanged.
 	review bool
 	// budget is the most one tool result holds under the run's harness
-	// (adapter.ResultBudget; agentry-cli#831), which the tools page within.
+	// (adapter.ResultBudget), which the tools page within.
 	budget adapter.Budget
 }
 
 // inputViewOf is the plan's InputView for a manifest: its inputs.view when
 // that is text or original, else empty. Both, or no declaration, leaves
-// each input its own default (DEV-218), so it adds nothing to the plan.
+// each input its own default, so it adds nothing to the plan.
 func inputViewOf(m *manifest.Manifest) string {
 	switch v := m.DefaultInputView(); v {
 	case manifest.InputViewText, manifest.InputViewOriginal:
@@ -109,7 +103,7 @@ func inputViewOf(m *manifest.Manifest) string {
 
 // renderInstruction is the full text the harness is given: the System
 // Prompt, then the package's instruction body. The adapter may append the
-// output schema after it (DR-8).
+// output schema after it.
 func renderInstruction(f promptFacts, body string) string {
 	return systemPrompt(f) + instructionHeading + body
 }
@@ -138,9 +132,9 @@ A QuickAgent is a small package: a manifest that declares what it may do, and an
 The person who started the run receives your final answer, the reports you write, and a receipt that records what the runner enforced.
 `
 
-// modeSection is how to start and work in each mode. The text guides
-// both, since the instruction is the same in both (see promptFacts); the
-// head's spec.PHRunMode says which one this run is (agentry-cli#717).
+// modeSection is how to start and work in each mode. The text guides both,
+// since the instruction is the same in both (see promptFacts); the head's
+// spec.PHRunMode says which one this run is.
 const modeSection = `
 ## Your mode
 
@@ -226,7 +220,7 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 
 // writeTargetHosts is the Target hosts line, for a release that declares
 // them: what the host tools do, that the account is the boundary, and that
-// what a host prints is data (plan runtime-hosts.md §5, D9, D19).
+// what a host prints is data.
 func writeTargetHosts(b *strings.Builder, hosts []string) {
 	if len(hosts) == 0 {
 		return
@@ -244,7 +238,7 @@ func writeTargetHosts(b *strings.Builder, hosts []string) {
 // writeBrowser is the Browser line, for a release that declares one: where
 // the browser may go, that a blocked request is a finding but for the
 // browser's own, where its files go, that a page is data, and how a
-// declared secret is typed (plan browser-testing.md §6, §7.1, D8, D9).
+// declared secret is typed.
 func writeBrowser(b *strings.Builder, c *spec.BrowserCap) {
 	if c == nil {
 		return
@@ -316,9 +310,8 @@ Files given for this run are under %s, read-only: list_inputs lists them, with t
 }
 
 // inputsUnchanged is the inputs paragraph's sentence on what the files
-// hold (plan quickagents-that-run.md D4, agentry-cli#632, DR-78): the
-// person's own, unchanged, credentials included. Under the review grant
-// a file reaches the model only after AI Review, so it says nothing.
+// hold: the person's own, unchanged, credentials included. Under the review
+// grant a file reaches the model only after AI Review, so it says nothing.
 func inputsUnchanged(review bool) string {
 	if review {
 		return ""
@@ -326,9 +319,9 @@ func inputsUnchanged(review bool) string {
 	return " The files are the person's own and come to you unchanged, keys and passwords included: when your task is to find credentials, report each one's kind and where it is (the file and line), never its value, because a tool call that carries a secret-shaped value, a report included, is refused."
 }
 
-// inputsDefault is the inputs paragraph's sentence on which view
-// read_input and search_inputs give when none is asked for: each input's
-// own, or the release's (agentry-cli#693).
+// inputsDefault is the inputs paragraph's sentence on which view read_input
+// and search_inputs give when none is asked for: each input's own, or the
+// release's.
 func inputsDefault(view string) string {
 	switch manifest.InputView(view) {
 	case manifest.InputViewText:
@@ -339,13 +332,11 @@ func inputsDefault(view string) string {
 	return `A document, PDF or image was turned into text before you started, and read_input gives you that text; code, markup, configuration and data are read as uploaded.`
 }
 
-// knowledgeSection is the guide to reading a pack's wiki (plan
-// knowledge-and-drafter.md D2). It names the knowledge tools whether or
-// not a pack is attached, because packs are a run-time fact; the tools
-// themselves exist only while one is (DR-38).
-// knowledgeSection is the guide to reading a pack; a run that has grep and
-// glob (every release's, not a built-in's) is told it may search a pack
-// with them too.
+// knowledgeSection is the guide to reading a pack's wiki. It names the
+// knowledge tools whether or not a pack is attached, because packs are a
+// run-time fact; the tools themselves exist only while one is. A run that
+// has grep and glob (every release's, not a built-in's) is told it may
+// search a pack with them too.
 func knowledgeSection(search bool) string {
 	reach := "reached only through knowledge_list, knowledge_search and knowledge_read, which exist only while at least one pack is attached"
 	grep := ""
@@ -377,12 +368,11 @@ How to read a pack:
 `
 }
 
-// voiceSection is the guide to an attached Writing Voice, beside the
-// guide to knowledge and for the same reason (agentry-cli#576): a voice is
-// attached at run time and moves no plan (DR-56), so the section names
-// voice_read whether or not one is, and the tool exists only while one is.
-// It restates the head's bound in working detail; the head stays the
-// guardrail.
+// voiceSection is the guide to an attached Writing Voice, beside the guide
+// to knowledge and for the same reason: a voice is attached at run time and
+// moves no plan, so the section names voice_read whether or not one is, and
+// the tool exists only while one is. It restates the head's bound in
+// working detail; the head stays the guardrail.
 const voiceSection = `
 ## Your Writing Voice
 

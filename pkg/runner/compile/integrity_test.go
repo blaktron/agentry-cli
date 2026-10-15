@@ -148,13 +148,13 @@ func recompileInto(t *testing.T, key []byte, dir string, plan []byte) {
 	}
 }
 
-// TestReadInstalledPlanSurvivesAConcurrentRecompile (agentry-cli#289): a
-// recompile of the same plan directory landing between the reader's reads
-// of plan.json and of its record paired one compile's bytes with another
-// compile's record, and a run was refused as tampered although nothing
-// had been edited. The recompile is interleaved after each read in turn;
-// the reader must return one compile's plan, never a TamperedPlanError.
-// A real edit, which stays put, is still refused.
+// TestReadInstalledPlanSurvivesAConcurrentRecompile: a recompile of the
+// same plan directory landing between the reader's reads of plan.json and
+// of its record paired one compile's bytes with another compile's record,
+// and a run was refused as tampered although nothing had been edited. The
+// recompile is interleaved after each read in turn; the reader must return
+// one compile's plan, never a TamperedPlanError. A real edit, which stays
+// put, is still refused.
 func TestReadInstalledPlanSurvivesAConcurrentRecompile(t *testing.T) {
 	key := bytes.Repeat([]byte{4}, integrityKeyLen)
 	planA := []byte(`{"planVersion":"2","compiledBy":"cli"}` + "\n")
@@ -200,13 +200,13 @@ func TestReadInstalledPlanSurvivesAConcurrentRecompile(t *testing.T) {
 	})
 }
 
-// TestConcurrentCompilesLeaveOneWholePlan (agentry-cli#289): compiles of
-// the same plan directory running at once, as the CLI and the desktop do
-// when started together, used to write into one directory, and could
-// leave one compile's plan.json beside another's record, a pair no reader
-// can tell from an edit. Each compile now publishes a whole directory, so
-// readers running alongside never see a tampered plan, and the directory
-// left at the end is one compile's, record, plan and files alike.
+// TestConcurrentCompilesLeaveOneWholePlan: compiles of the same plan
+// directory running at once, as the CLI and the desktop do when started
+// together, could write into one directory and leave one compile's
+// plan.json beside another's record, a pair no reader can tell from an
+// edit. Each compile publishes a whole directory, so readers running
+// alongside never see a tampered plan, and the directory left at the end is
+// one compile's, record, plan and files alike.
 func TestConcurrentCompilesLeaveOneWholePlan(t *testing.T) {
 	key := bytes.Repeat([]byte{5}, integrityKeyLen)
 	m := parseManifest(t, fullCapsYAML)

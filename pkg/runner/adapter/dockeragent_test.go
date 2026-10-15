@@ -1,7 +1,7 @@
 // docker-agent adapter tests: the compiled agent.yaml must carry the
-// gateway as its ONLY toolset (RQ1/RQ2 — no built-ins, ever), the token
-// must ride as ${env.…} (never a value), and the event mapper must be
-// tolerant of shapes it does not know.
+// gateway as its ONLY toolset (no built-ins, ever), the token must ride as
+// ${env.…} (never a value), and the event mapper must be tolerant of shapes
+// it does not know.
 package adapter
 
 import (
@@ -41,8 +41,8 @@ func TestDockerAgentCompile(t *testing.T) {
 		"transport_type: streamable",
 		"Bearer ${env.MCP_GATEWAY_TOKEN}",
 		"allow_private_ips: true",
-		"version: \"" + HarnessConfigVersion + "\"", // schema of the pinned harness (#43)
-		"safety: autonomous",                        // serve acp has no flag; the config carries the mode (DR-15)
+		"version: \"" + HarnessConfigVersion + "\"", // schema of the pinned harness
+		"safety: autonomous",                        // serve acp has no flag; the config carries the mode
 		"Do the thing.",
 	} {
 		if !strings.Contains(y, want) {
@@ -50,7 +50,7 @@ func TestDockerAgentCompile(t *testing.T) {
 		}
 	}
 	// No built-in toolsets may sneak in: the gateway is the whole tool
-	// surface (RUNNER-PLAN §R10).
+	// surface.
 	for _, banned := range []string{"type: shell", "type: filesystem", "type: fetch", "type: script"} {
 		if strings.Contains(y, banned) {
 			t.Errorf("agent.yaml enables a built-in toolset %q:\n%s", banned, y)
@@ -112,14 +112,15 @@ func TestDockerAgentEvents(t *testing.T) {
 	}{
 		{"tool call", `{"type":"tool_call","tool":"fs_read"}`, []EventKind{EventToolCall}},
 		{"tool use variant", `{"type":"tool_use_started"}`, []EventKind{EventToolCall}},
-		// The 1.128.0 harness streams a call's arguments as partial_tool_call
-		// chunks and answers it with tool_call_response; neither is a turn
-		// (agentry-cli#51: 55 chunks of one write_report call ate the budget).
+		// The 1.128.0 harness streams a call's arguments as
+		// partial_tool_call chunks and answers it with tool_call_response;
+		// neither is a turn (55 chunks of one write_report call would eat
+		// the budget).
 		{"partial chunk", `{"type":"partial_tool_call","tool_call":{"id":"call_1","function":{"name":"write_report","arguments":"| 101 |"}}}`, []EventKind{EventOther}},
 		{"tool response", `{"type":"tool_call_response","tool_call_id":"call_1","response":"ok"}`, []EventKind{EventOther}},
 		{"tool confirmation", `{"type":"tool_call_confirmation","tool_call":{"id":"call_1"}}`, []EventKind{EventOther}},
 		{"complete call", `{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"list_inputs","arguments":"{}"}}}`, []EventKind{EventToolCall}},
-		// The model's reasoning stream is not assistant output (agentry-cli#53).
+		// The model's reasoning stream is not assistant output.
 		{"reasoning", `{"type":"agent_choice_reasoning","content":"Let me"}`, []EventKind{EventReasoning}},
 		{"choice text", `{"type":"agent_choice","message":{"content":"hello"}}`, []EventKind{EventAssistantText}},
 		{"content parts", `{"type":"agent_choice","message":{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`, []EventKind{EventAssistantText}},
@@ -160,8 +161,8 @@ func TestRegistry(t *testing.T) {
 	if _, err := Get("docker-agent"); err != nil {
 		t.Fatalf("default adapter missing: %v", err)
 	}
-	if _, err := Get("goose"); err == nil || !strings.Contains(err.Error(), "M-R4") {
-		t.Errorf("planned adapter must point at M-R4, got %v", err)
+	if _, err := Get("goose"); err == nil || !strings.Contains(err.Error(), "planned") {
+		t.Errorf("planned adapter must say it is planned, got %v", err)
 	}
 	if _, err := Get("nope"); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Errorf("unknown adapter must say unknown, got %v", err)
@@ -169,7 +170,7 @@ func TestRegistry(t *testing.T) {
 }
 
 // TestDockerAgentCompileInteractive: the interactive plan differs from the
-// autonomous one only in argv, stdin and the Session block (plan §6.10).
+// autonomous one only in argv, stdin and the Session block.
 func TestDockerAgentCompileInteractive(t *testing.T) {
 	ad, _ := Get(DefaultName)
 	auto, err := ad.Compile(testInput())
@@ -213,7 +214,7 @@ func TestDockerAgentCompileInteractive(t *testing.T) {
 }
 
 // Streamed assistant text is flagged as a delta so the engine concatenates
-// it; a whole-message shape is not (agentry-cli#53).
+// it; a whole-message shape is not.
 func TestDockerAgentTextDeltas(t *testing.T) {
 	ad, _ := Get(DefaultName)
 	if evs := ad.Events([]byte(`{"type":"agent_choice","content":"{"}`)); len(evs) != 1 || evs[0].Kind != EventAssistantText || !evs[0].Delta || evs[0].Text != "{" {
@@ -227,8 +228,7 @@ func TestDockerAgentTextDeltas(t *testing.T) {
 // The policy's "custom" provider is an OpenAI-compatible endpoint of the
 // operator's own; docker-agent has no provider of that name (1.128.0
 // refuses `unknown provider type "custom"`) and reaches such an endpoint
-// through its openai client with a base URL (agentry-cli#169, measured
-// on the pinned image).
+// through its openai client with a base URL (measured on the pinned image).
 func TestDockerAgentCompileMapsCustomToTheOpenAIClient(t *testing.T) {
 	ad, err := Get(DefaultName)
 	if err != nil {
@@ -328,11 +328,11 @@ func TestDockerAgentCompileNamesTheKeyForTheHarnessClient(t *testing.T) {
 	}
 }
 
-// An Anthropic subscription token is admitted from Claude Code alone —
-// by Anthropic's terms and by the API — so the container harness refuses
-// it at compile time, naming the harness that can use it and the key
-// this one needs (agentry-cli#171). The refusal is a plan-time fact, so
-// `agentry run --plan` shows it before any container starts.
+// An Anthropic subscription token is admitted from Claude Code alone — by
+// Anthropic's terms and by the API — so the container harness refuses it at
+// compile time, naming the harness that can use it and the key this one
+// needs. The refusal is a plan-time fact, so `agentry run --plan` shows it
+// before any container starts.
 func TestDockerAgentCompileRefusesASubscriptionToken(t *testing.T) {
 	ad, err := Get(DefaultName)
 	if err != nil {

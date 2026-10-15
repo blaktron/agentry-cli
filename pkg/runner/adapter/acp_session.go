@@ -13,14 +13,13 @@ import (
 
 // acpSession is the docker-agent SessionDriver: a minimal Agent Client
 // Protocol client (JSON-RPC 2.0, newline-delimited, over the harness
-// container's attached stdio) shaped by the agentry-cli#33 spike. It
-// speaks exactly what the runner needs — initialize, session/new,
-// session/prompt — and answers every agent→client request itself: a
-// permission request is granted allow_once for a tool the run's gateway
-// serves (SessionOptions.GatewayTools) and denied for anything else (DR-15, agentry-cli#61; no human
-// approves anything, plan §6.10 line 4), and any other request is refused
-// as unsupported, so the harness can never reach the host through the
-// client side of the protocol.
+// container's attached stdio). It speaks exactly what the runner needs —
+// initialize, session/new, session/prompt — and answers every agent→client
+// request itself: a permission request is granted allow_once for a tool the
+// run's gateway serves (SessionOptions.GatewayTools) and denied for
+// anything else (no human approves anything), and any other request is
+// refused as unsupported, so the harness can never reach the host through
+// the client side of the protocol.
 type acpSession struct {
 	rw              io.ReadWriteCloser
 	protocolVersion int
@@ -40,8 +39,8 @@ type acpSession struct {
 	// permit says whether a permission request for a tool is granted. Nil
 	// denies everything.
 	permit func(tool string) bool
-	// lastUsed is the last cumulative `used` a usage_update carried, so each
-	// update is reported as its delta (agentry-cli#71).
+	// lastUsed is the last cumulative `used` a usage_update carried, so
+	// each update is reported as its delta.
 	lastUsed int64
 }
 
@@ -84,7 +83,7 @@ func newACPSession(rw io.ReadWriteCloser, protocolVersion int, permit func(tool 
 }
 
 // Session implements Adapter. Permission requests are granted for the
-// gateway's tools and denied for anything else (DR-15, agentry-cli#61).
+// gateway's tools and denied for anything else.
 func (d *dockerAgent) Session(_ context.Context, rw io.ReadWriteCloser, opts SessionOptions) (SessionDriver, error) {
 	if rw == nil {
 		return nil, errors.New("docker-agent session: nil transport")
@@ -303,12 +302,11 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 			Used int64 `json:"used"`
 			Size int64 `json:"size"`
 			// Cost is the running cost a harness that prices the session
-			// reports. A pointer because docker-agent 1.128.0 sends no
-			// cost field at all, and absent must stay distinguishable
-			// from zero: against such a harness the session's cost
-			// ceiling cannot fire, and the envelope says so rather than
-			// leaving usage.costUsd 0 to read as a free session
-			// (agentry-cli#222).
+			// reports. A pointer because docker-agent 1.128.0 sends no cost
+			// field at all, and absent must stay distinguishable from zero:
+			// against such a harness the session's cost ceiling cannot
+			// fire, and the envelope says so rather than leaving
+			// usage.costUsd 0 to read as a free session.
 			Cost *struct {
 				Amount   float64 `json:"amount"`
 				Currency string  `json:"currency"`
@@ -321,7 +319,7 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 	case "usage_update":
 		// `used` is cumulative across the session; report the delta since
 		// the previous update as this step's tokens. No input/output split
-		// exists, so only TotalTokens is set (agentry-cli#71, DR-15).
+		// exists, so only TotalTokens is set.
 		s.mu.Lock()
 		delta := u.Used - s.lastUsed
 		if delta < 0 || s.lastUsed == 0 {
@@ -371,12 +369,12 @@ func (s *acpSession) handleRequest(m rpcMessage, line []byte) {
 		}
 		_ = json.Unmarshal(m.Params, &p)
 		// docker-agent names the tool in toolCall.title and asks once per
-		// call, whatever the YAML safety mode says (agentry-cli#33 parts 2–3).
-		// A gateway tool is granted — the gateway is the only toolset and the
-		// policy bounds its catalog — with allow_once so every approval is a
-		// line in the transcript; anything else is denied: pick a reject
-		// option when offered, cancel otherwise. Denial is not a control: a
-		// tool that must not run is kept out of the gateway's catalog.
+		// call, whatever the YAML safety mode says. A gateway tool is
+		// granted — the gateway is the only toolset and the policy bounds
+		// its catalog — with allow_once so every approval is a line in the
+		// transcript; anything else is denied: pick a reject option when
+		// offered, cancel otherwise. Denial is not a control: a tool that
+		// must not run is kept out of the gateway's catalog.
 		tool := p.ToolCall.Title
 		kind := EventPermissionDenied
 		reply := map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}

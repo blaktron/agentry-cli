@@ -11,12 +11,11 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// TestBuiltinsGetNoExportPDF (plan scratch-and-pdf-reports.md §3 invariants
-// 1 and 2, D5, D6, D17; agentry-cli#730): export_pdf is the runner's grant
-// to every release's run and session beside the scratch folder, never a
-// line of the contract, and a built-in gets neither. The plan names it in
-// its enforcement, and the System Prompt says when to export; the compiled
-// plan carries no theme, author or ledger, which are the run's.
+// TestBuiltinsGetNoExportPDF: export_pdf is the runner's grant to every
+// release's run and session beside the scratch folder, never a line of the
+// contract, and a built-in gets neither. The plan names it in its
+// enforcement, and the System Prompt says when to export; the compiled plan
+// carries no theme, author or ledger, which are the run's.
 func TestBuiltinsGetNoExportPDF(t *testing.T) {
 	for _, source := range []string{"registry", "local", "builtin"} {
 		plan, dir, err := compileWebWith(t, webTextAgent, source, false, nil)

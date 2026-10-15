@@ -1,13 +1,12 @@
-// The codex-image adapter (plan model-sign-ins.md §4.3, D8, D11, D15, D16;
-// agentry-cli#739): OpenAI's Codex CLI in agentry-dockerimages' Codex
-// harness image (agentry-dockerimages#53), run in the agent container as
-// docker-agent is. It is the default for a ChatGPT plan, and may run on an
-// OpenAI API key as a choice.
+// The codex-image adapter: OpenAI's Codex CLI in agentry-dockerimages'
+// Codex harness image, run in the agent container as docker-agent is. It is
+// the default for a ChatGPT plan, and may run on an OpenAI API key as a
+// choice.
 //
 // What it shares with the host codex adapter: the generated config.toml,
-// the one-model catalog and the app-server driver, so the §3 invariants of
-// codex.go hold the same way (gateway-only tools, secrets by name, no
-// ambient context). What the container adds:
+// the one-model catalog and the app-server driver, so the invariants
+// described in codex.go hold the same way (gateway-only tools, secrets by
+// name, no ambient context). What the container adds:
 //
 //   - The image's own user (uid 10001) on a read-only root. CODEX_HOME is
 //     the user's home, a tmpfs: codex must write there (its helper links,

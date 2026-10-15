@@ -58,10 +58,10 @@ func compileWebGrant(t *testing.T, web, registry, searchedOnly bool) (*spec.Plan
 		Policy: policy.Default(), PolicySHA: "sha", RunnerImage: "agentry-runner:test"}, filepath.Join(t.TempDir(), "plan"))
 }
 
-// TestRegistrySearchIsCompiledApart (agentry-cli#523): registry_search is
-// compiled on its own, the Drafter's alone, so the Knowledge Creator's web
-// tools are web_search and web_read; it is never granted without them, and
-// the plan's enforcement and System Prompt name it only when it is granted.
+// TestRegistrySearchIsCompiledApart: registry_search is compiled on its
+// own, the Drafter's alone, so the Knowledge Creator's web tools are
+// web_search and web_read; it is never granted without them, and the plan's
+// enforcement and System Prompt name it only when it is granted.
 func TestRegistrySearchIsCompiledApart(t *testing.T) {
 	_, err := compileWebRegistry(t, false, true)
 	var refusal *PolicyRefusal
@@ -133,9 +133,9 @@ func compileWebWith(t *testing.T, yaml, source string, web bool, edit func(*poli
 }
 
 // TestCompileRefusesTheWebToolsToARelease: the web tools are the built-in
-// Drafter's alone (plan builder-rework.md §7.3): a release or a local
-// package asking for them is refused by policy, and so is a built-in whose
-// contract would run beside them in a container with no allowlist.
+// Drafter's alone: a release or a local package asking for them is refused
+// by policy, and so is a built-in whose contract would run beside them in a
+// container with no allowlist.
 func TestCompileRefusesTheWebToolsToARelease(t *testing.T) {
 	for _, source := range []string{"registry", "local", ""} {
 		_, _, err := compileWeb(t, webTextAgent, source, true)
@@ -200,13 +200,13 @@ func TestTheWebGrantCompilesItsContainer(t *testing.T) {
 	}
 }
 
-// TestTheWebToolsUnderARuntimeNeedTheHostsResolvers (agentry-cli#386): a
-// sandboxed runtime's network stack does not reach docker's embedded DNS
-// on the run's web network (DR-23), so the web tools under a runtime with
-// no docker.resolvers are refused by policy rather than left to resolve
-// nothing; with them, the plan carries the name servers (and so its hash
-// changes with them); a run without the web tools carries none, and one
-// on the daemon's default needs none.
+// TestTheWebToolsUnderARuntimeNeedTheHostsResolvers: a sandboxed runtime's
+// network stack does not reach docker's embedded DNS on the run's web
+// network, so the web tools under a runtime with no docker.resolvers are
+// refused by policy rather than left to resolve nothing; with them, the
+// plan carries the name servers (and so its hash changes with them); a run
+// without the web tools carries none, and one on the daemon's default needs
+// none.
 func TestTheWebToolsUnderARuntimeNeedTheHostsResolvers(t *testing.T) {
 	_, _, err := compileWebWith(t, webTextAgent, "builtin", true, func(p *policy.Policy) { p.Docker.Runtime = "runsc" })
 	var refusal *PolicyRefusal

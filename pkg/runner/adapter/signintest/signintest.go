@@ -1,8 +1,7 @@
-// Package signintest is a fake harness adapter for tests of model
-// sign-ins (agentry-cli#738): a container harness that reads its model
-// credential from the file or directory a model sign-in hands it, and
-// speaks a small NDJSON event stream the tests script. Nothing but tests
-// imports it.
+// Package signintest is a fake harness adapter for tests of model sign-ins:
+// a container harness that reads its model credential from the file or
+// directory a model sign-in hands it, and speaks a small NDJSON event
+// stream the tests script. Nothing but tests imports it.
 package signintest
 
 import (

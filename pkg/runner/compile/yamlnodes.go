@@ -1,7 +1,7 @@
 // YAML node construction for the generated gateway files. Built on
 // yaml.Node rather than Go maps for one reason: plan bytes must be
-// deterministic (§R4), and explicit node trees make key order a decision,
-// not an iteration-order accident.
+// deterministic, and explicit node trees make key order a decision, not an
+// iteration-order accident.
 package compile
 
 import (

@@ -1,18 +1,17 @@
 package adapter
 
-// The Copilot CLI driver (plan model-sign-ins.md §4.5, D25; agentry-cli#741):
-// the runner's own JSON-RPC 2.0 client for Copilot CLI's server mode over
-// the agent container's attached stdio, framed as LSP is (a Content-Length
-// header, a blank line, the body). The messages are copilot-sdk's (MIT,
-// github/copilot-sdk go/v1.0.19, protocol version 3: go/client.go,
-// go/types.go, go/rpc/zrpc.go and go/rpc/zsession_events.go); the SDK's own
-// client starts the CLI as its child, and the runner's container is the
-// engine's to start, so the few messages the run needs are spoken here.
-// Measured against Copilot CLI 1.0.95 with no account: connect answers
-// protocol 3; session.create calls gitHubToken.getToken before it answers,
-// then asks api.github.com for the account's Copilot entitlement, and a
-// token GitHub refuses fails session.create with "GitHub token validation
-// failed: … 401 Unauthorized".
+// The Copilot CLI driver: the runner's own JSON-RPC 2.0 client for Copilot
+// CLI's server mode over the agent container's attached stdio, framed as
+// LSP is (a Content-Length header, a blank line, the body). The messages
+// are copilot-sdk's (MIT, github/copilot-sdk go/v1.0.19, protocol version
+// 3: go/client.go, go/types.go, go/rpc/zrpc.go and
+// go/rpc/zsession_events.go); the SDK's own client starts the CLI as its
+// child, and the runner's container is the engine's to start, so the few
+// messages the run needs are spoken here. Measured against Copilot CLI
+// 1.0.95 with no account: connect answers protocol 3; session.create calls
+// gitHubToken.getToken before it answers, then asks api.github.com for the
+// account's Copilot entitlement, and a token GitHub refuses fails
+// session.create with "GitHub token validation failed: … 401 Unauthorized".
 //
 // The order of a session: connect; session.create with the plan's
 // session.json, a fresh session id, the token callback's registration, the
@@ -228,9 +227,9 @@ func (s *copilotSession) createParams() (map[string]any, error) {
 var copilotPolicyRefusal = []string{"denied by policy", "policy settings", "userblocked", "user is blocked", "disabled by your organization", "disabled by your enterprise"}
 
 // startError is session.create's failure as the run reports it: an
-// organization's policy that refused the account is that outcome (D29), an
-// *OrgPolicyRefusal the engine ends the run with; GitHub refusing the
-// token says to sign in again.
+// organization's policy that refused the account is that outcome, an
+// *OrgPolicyRefusal the engine ends the run with; GitHub refusing the token
+// says to sign in again.
 func (s *copilotSession) startError(err error) error {
 	msg := err.Error()
 	low := strings.ToLower(msg)
@@ -592,10 +591,10 @@ func (s *copilotSession) handleNotification(m rpcMessage, frame []byte) {
 }
 
 // decide answers a permission request: approved once for a gateway tool of
-// the run's grant, rejected for anything else (DR-15). A request that an
+// the run's grant, rejected for anything else. A request that an
 // organization's managed settings say a person must approve is rejected,
 // and ends the run with that policy named: the run's driver approves its
-// tools itself, which that policy forbids (D29).
+// tools itself, which that policy forbids.
 func (s *copilotSession) decide(ev copilotEvent, raw json.RawMessage) {
 	d := ev.Data
 	if d.ResolvedByHook || d.RequestID == "" {
@@ -631,8 +630,8 @@ func (s *copilotSession) decide(ev copilotEvent, raw json.RawMessage) {
 
 // sessionError is a session.error: on a run paid by a sign-in, a quota or a
 // rate limit is the plan's limit (I9), said once, and an authorization
-// refused by policy the organization's outcome (D29); anything else an
-// error. Each ends the turn as a failure.
+// refused by policy the organization's outcome; anything else an error.
+// Each ends the turn as a failure.
 func (s *copilotSession) sessionError(ev copilotEvent, raw json.RawMessage) {
 	d := ev.Data
 	msg := d.Message

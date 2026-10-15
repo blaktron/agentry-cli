@@ -1,21 +1,19 @@
-// The claude-image adapter (plan model-sign-ins.md §4.4, D19–D23;
-// agentry-cli#740): Anthropic's Claude Code, unmodified, in an image built
-// on this machine from the npm packages this build pins
-// (pkg/runner/harnessbuild), run in the agent container as docker-agent
-// is. It is the default whenever the policy's model is a Claude
-// subscription through Claude Code (apiKeyKind claude-signin), and runs on
-// nothing else: an Anthropic key stays docker-agent's, or the installed
-// claude's.
+// The claude-image adapter: Anthropic's Claude Code, unmodified, in an
+// image built on this machine from the npm packages this build pins
+// (pkg/runner/harnessbuild), run in the agent container as docker-agent is.
+// It is the default whenever the policy's model is a Claude subscription
+// through Claude Code (apiKeyKind claude-signin), and runs on nothing else:
+// an Anthropic key stays docker-agent's, or the installed claude's.
 //
-// What it shares with the host claude adapter: the gateway-only MCP
-// config, the argv and the stream-json driver, so the §3 invariants of
+// What it shares with the host claude adapter: the gateway-only MCP config,
+// the argv and the stream-json driver, so the invariants described in
 // claude.go hold the same way (--strict-mcp-config with the gateway alone,
 // --tools "", --setting-sources ""). What the container adds:
 //
 //   - Claude Code's own sign-in, kept in its config directory: a docker
 //     volume of Agentry's own, which only Claude Code reads and writes,
 //     mounted read-write at harnessbuild.ClaudeConfigDir by the compiler
-//     (D20, I3, I4). The runner never reads it.
+//     (I3, I4). The runner never reads it.
 //   - No --bare (bare mode reads no OAuth credential) and no key variable
 //     at all, so nothing outranks the sign-in: the container's environment
 //     is the plan's alone, without ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN
@@ -26,7 +24,8 @@
 //     claude.ai's connectors off.
 //   - The image's own user on a read-only root, the working directory an
 //     empty tmpfs home: the ancestors whose CLAUDE.md a run without --bare
-//     reads are the image's, so DR-26's refusal is not needed here.
+//     reads are the image's, so the ancestor-file refusal is not needed
+//     here.
 package adapter
 
 import (

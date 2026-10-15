@@ -13,9 +13,9 @@ import (
 )
 
 // TestThePlanStampsItsHarnessResultBudget: the tools spec carries the run's
-// adapter's result budget (agentry-cli#831, DR-89), and the System Prompt
-// states the same size, so the pages the tools serve and what the agent is
-// told agree for every harness.
+// adapter's result budget, and the System Prompt states the same size, so
+// the pages the tools serve and what the agent is told agree for every
+// harness.
 func TestThePlanStampsItsHarnessResultBudget(t *testing.T) {
 	for _, tc := range []struct {
 		adapter string
