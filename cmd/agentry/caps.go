@@ -1,7 +1,7 @@
 // Capability-summary rendering (install-time display): the declared
 // security contract is shown before anything is written to disk, and
-// network egress, exec, a remote MCP server or a target host requires
-// confirmation.
+// network egress (the release's own or a package MCP server's), exec, a
+// remote MCP server or a target host requires confirmation.
 package main
 
 import (
@@ -50,7 +50,11 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		}
 		line := "mcpServer: " + srv.SourceID() + "@" + srv.Version
 		if len(srv.Egress) > 0 {
-			line += " (egress: " + renderList(srv.Egress) + ")"
+			line += " (egress: " + renderList(srv.Egress)
+			if slices.Contains(srv.Egress, "*") {
+				line += " (unrestricted — policy-gated)"
+			}
+			line += ")"
 		}
 		if len(srv.Secrets) > 0 {
 			line += " (secrets: " + renderList(srv.Secrets) + ")"
@@ -101,8 +105,8 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 }
 
 // capabilityNeedsConfirm reports whether install must ask before proceeding:
-// declared network egress or subprocess execution, a remote MCP server, or a
-// target host.
+// declared network egress (the release's own or a package MCP server's),
+// subprocess execution, a remote MCP server, a target host or a browser.
 func capabilityNeedsConfirm(c manifest.Capabilities) bool {
 	return len(confirmedCapabilities(c)) > 0
 }
@@ -122,6 +126,17 @@ func confirmedCapabilities(c manifest.Capabilities) []string {
 	// release's own egress says.
 	if slices.ContainsFunc(c.MCPServers, manifest.MCPServer.IsRemote) {
 		what = append(what, "a remote MCP server")
+	}
+	// A package server's own egress is network reach from its container,
+	// whatever the release's own egress says; any host is called out.
+	for _, srv := range c.MCPServers {
+		switch {
+		case srv.IsRemote() || len(srv.Egress) == 0:
+		case slices.Contains(srv.Egress, "*"):
+			what = append(what, "UNRESTRICTED network egress for MCP server "+srv.SourceID()+"@"+srv.Version)
+		default:
+			what = append(what, "network egress for MCP server "+srv.SourceID()+"@"+srv.Version)
+		}
 	}
 	// A target host is a machine the person names, worked as the account
 	// they sign in with.
