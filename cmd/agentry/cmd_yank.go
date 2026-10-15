@@ -1,5 +1,5 @@
-// `agentry yank` (§11): author yank of a published version. Yanked versions
-// leave range resolution but stay downloadable by exact pin (§5.5); the
+// `agentry yank`: author yank of a published version. Yanked versions
+// leave range resolution but stay downloadable by exact pin; the
 // version string is burned forever.
 package main
 

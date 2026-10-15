@@ -1,10 +1,10 @@
-// Package copilottest is a fake Copilot CLI server mode for tests
-// (agentry-cli#741): the JSON-RPC 2.0 server of `copilot --headless
-// --stdio`, framed by Content-Length, in the shapes Copilot CLI 1.0.95
-// answers with (recorded against the real binary with no account) and
-// copilot-sdk go/v1.0.19 names. It asks for the session's token at
-// session.create, as the real one does, then plays a scripted turn per
-// session.send, and lists its Models to session.model.list.
+// Package copilottest is a fake Copilot CLI server mode for tests: the
+// JSON-RPC 2.0 server of `copilot --headless --stdio`, framed by
+// Content-Length, in the shapes Copilot CLI 1.0.95 answers with (recorded
+// against the real binary with no account) and copilot-sdk go/v1.0.19
+// names. It asks for the session's token at session.create, as the real one
+// does, then plays a scripted turn per session.send, and lists its Models
+// to session.model.list.
 package copilottest
 
 import (

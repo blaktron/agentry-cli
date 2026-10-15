@@ -1,14 +1,12 @@
 package mcpauth
 
-// Sign in with GitHub for a Copilot plan (plan model-sign-ins.md §4.5,
-// D26; agentry-cli#741): a person's Copilot plan pays for their local
-// runs, through Copilot CLI, which GitHub documents for this use ("Copilot
-// requests are made on behalf of each authenticated user, using their
-// Copilot subscription", copilot-sdk docs/setup/github-oauth.md). The
-// protocol is GitHub's device flow, as docs.github.com states it (read
-// 2026-10-08 and 2026-10-09: "Generating a user access token for a GitHub
-// App", "Refreshing user access tokens", "Authorizing OAuth apps", "REST
-// API endpoints for revocation"):
+// Sign in with GitHub for a Copilot plan: a person's Copilot plan pays for
+// their local runs, through Copilot CLI, which GitHub documents for this use
+// ("Copilot requests are made on behalf of each authenticated user, using
+// their Copilot subscription", copilot-sdk docs/setup/github-oauth.md). The
+// protocol is GitHub's device flow, as docs.github.com states it ("Generating
+// a user access token for a GitHub App", "Refreshing user access tokens",
+// "Authorizing OAuth apps", "REST API endpoints for revocation"):
 //
 //   - POST github.com/login/device/code with the client id (and, for an
 //     OAuth App, its scope) gives a device code, a user code, the page to
@@ -31,11 +29,10 @@ package mcpauth
 //
 // The default is Agentry's GitHub App; its OAuth App is the fallback a
 // sign-in may choose, because whether Copilot accepts a GitHub App's user
-// token that carries no permission is not established until M11
-// (agentry-cli#744). Nothing here reaches a run: the CLI is the only
-// refresher, and a run is handed an access token alone (invariant I3).
-// Every request goes through the caller's HTTP client, the egress Guard in
-// production, to github.com and api.github.com alone (I6).
+// token that carries no permission is not established. Nothing here reaches a
+// run: the CLI is the only refresher, and a run is handed an access token
+// alone. Every request goes through the caller's HTTP client, the egress
+// Guard in production, to github.com and api.github.com alone.
 
 import (
 	"bytes"
@@ -59,7 +56,7 @@ const (
 	GitHubAPI           = "https://api.github.com"
 )
 
-// The apps a Copilot sign-in may go through (D26).
+// The apps a Copilot sign-in may go through.
 const (
 	// GitHubApp is Agentry's GitHub App: user tokens it is granted no
 	// permission for, outside organizations' OAuth App restrictions.
@@ -68,10 +65,10 @@ const (
 	GitHubOAuthApp = "oauth-app"
 )
 
-// gitHubClientIDs are Agentry's public client ids for each app, which the
-// operator registers (M8, agentry-cli#743); empty until they are, when the
-// variable beside each supplies one (a test against an app registered
-// before the build carries it). A client id is not a secret.
+// gitHubClientIDs are Agentry's public client ids for each app; empty when
+// the build carries none, in which case the variable beside each supplies one
+// (a test against an app registered before the build carries it). A client id
+// is not a secret.
 var gitHubClientIDs = map[string]struct{ id, env string }{
 	GitHubApp:      {"", "AGENTRY_GITHUB_APP_CLIENT_ID"},
 	GitHubOAuthApp: {"", "AGENTRY_GITHUB_OAUTH_APP_CLIENT_ID"},
@@ -87,9 +84,9 @@ func GitHubAppName(app string) string {
 
 // GitHubOAuthScope is what a sign-in through the OAuth App asks for: the
 // account's profile, which names it. Which scope, if any, Copilot itself
-// needs of an OAuth App's token is not documented; M11 checks this one. A
-// GitHub App's device flow takes no scope: its token holds the permissions
-// the app is granted, none.
+// needs of an OAuth App's token is not documented. A GitHub App's device
+// flow takes no scope: its token holds the permissions the app is granted,
+// none.
 const GitHubOAuthScope = "read:user"
 
 // GitHubClientID is app's public client id, and an error naming what is
@@ -103,7 +100,7 @@ func GitHubClientID(app string) (string, error) {
 		return id, nil
 	}
 	if c.id == "" {
-		return "", fmt.Errorf("this build of agentry carries no client id for Agentry's %s yet (agentry-cli#743); set %s to one", GitHubAppName(app), c.env)
+		return "", fmt.Errorf("this build of agentry carries no client id for Agentry's %s; set %s to one", GitHubAppName(app), c.env)
 	}
 	return c.id, nil
 }

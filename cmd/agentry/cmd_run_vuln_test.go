@@ -17,9 +17,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
-// The run's decision on the registry's verdict (agentry-cli#58): a known
-// high/critical advisory refuses unless the flag or the policy allows it,
-// and the receipt line always says what was checked and why it ran.
+// The run's decision on the registry's verdict: a known high/critical
+// advisory refuses unless the flag or the policy allows it, and the
+// receipt line always says what was checked and why it ran.
 func TestVulnerabilityVerdict(t *testing.T) {
 	bad := mcpinstall.VulnStatus{Ref: "npm:minimist@1.2.5", Server: "npm:minimist", Status: "vulnerable", MaxSeverity: "critical",
 		Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-xvch-5gv4-984h", Severity: "critical", FixedIn: []string{"1.2.6"}}}}
@@ -47,9 +47,9 @@ func TestVulnerabilityVerdict(t *testing.T) {
 	}
 }
 
-// With the gate's rating served (agentry-cli#501): a High the gate rates
-// medium runs, one it rates high refuses and names the rating and the
-// advisory, and the flag and the policy lift a high and a critical alike.
+// With the gate's rating served: a High the gate rates medium runs, one
+// it rates high refuses and names the rating and the advisory, and the
+// flag and the policy lift a high and a critical alike.
 func TestVulnerabilityVerdictOnTheGatesRating(t *testing.T) {
 	score := func(f float64) *float64 { return &f }
 	medium := mcpinstall.VulnStatus{Ref: "npm:@modelcontextprotocol/sdk@1.25.2", Status: "vulnerable", MaxSeverity: "high",
@@ -81,12 +81,12 @@ func TestVulnerabilityVerdictOnTheGatesRating(t *testing.T) {
 	}
 }
 
-// TestRunPlanReportsEveryRefusal (agentry-cli#126): --plan on a local
-// workspace (no attestation) whose manifest declares a server with a
-// known critical advisory reports both refusals, in the order a run meets
-// them, so a client that lifts the unsigned gate with the person's
-// acceptance has already shown the vulnerability. refusal stays the first
-// for clients that read one.
+// TestRunPlanReportsEveryRefusal: --plan on a local workspace (no
+// attestation) whose manifest declares a server with a known critical
+// advisory reports both refusals, in the order a run meets them, so a
+// client that lifts the unsigned gate with the person's acceptance has
+// already shown the vulnerability. refusal stays the first for clients
+// that read one.
 func TestRunPlanReportsEveryRefusal(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)

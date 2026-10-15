@@ -3,7 +3,7 @@
 // stdlib-only, unix-only, and honest when it cannot: the fallback prompts
 // visibly and says so rather than silently echoing what the operator
 // believed was hidden. The desktop app implements Prompter as a form and
-// never comes through here (RUNNER-PLAN-2 §P8).
+// never comes through here.
 package setup
 
 import (
@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-// TTYPrompter prompts on Err (stderr, keeping stdout pipeline-clean, §R8)
+// TTYPrompter prompts on Err (stderr, keeping stdout pipeline-clean)
 // and reads answers from In.
 type TTYPrompter struct {
 	In  io.Reader

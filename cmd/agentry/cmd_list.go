@@ -1,8 +1,8 @@
-// `agentry list` (agentry-cli#102): the shared install state as this machine
-// holds it — every record `install` and `run` wrote, each with whether its
-// directory still exists. Text for a person, --json for a client; nothing
-// is changed. The runner's own consent records (target "runner") are listed
-// as what they are.
+// `agentry list`: the shared install state as this machine holds it — every
+// record `install` and `run` wrote, each with whether its directory still
+// exists. Text for a person, --json for a client; nothing is changed. The
+// runner's own consent records (target "runner") are listed as what they
+// are.
 package main
 
 import (
@@ -24,11 +24,11 @@ type listedRecord struct {
 	// Present is true when Dir exists and is a directory. A record whose
 	// directory is gone is still a record: nothing prunes it silently.
 	Present bool `json:"present"`
-	// Under --check (agentry-cli#190): Latest is the newest version the
-	// record's registry resolves ns/name to, UpdateAvailable whether it is
-	// newer than the installed one, CheckError why the registry could not
-	// say — one record's unreachable registry is that record's fact, not
-	// the listing's failure.
+	// Under --check: Latest is the newest version the record's registry
+	// resolves ns/name to, UpdateAvailable whether it is newer than the
+	// installed one, CheckError why the registry could not say — one
+	// record's unreachable registry is that record's fact, not the
+	// listing's failure.
 	Latest          string `json:"latest,omitempty"`
 	UpdateAvailable bool   `json:"updateAvailable,omitempty"`
 	CheckError      string `json:"checkError,omitempty"`
@@ -75,7 +75,7 @@ func runList(cmd *cobra.Command, check bool) error {
 	for _, r := range state.Records {
 		info, statErr := os.Stat(r.Dir)
 		rec := listedRecord{Record: r, Present: statErr == nil && info.IsDir()}
-		// A local install (agentry-cli#491) has no registry to ask.
+		// A local install has no registry to ask.
 		if check && !r.Local() {
 			checkUpdate(cmd, &rec)
 		}

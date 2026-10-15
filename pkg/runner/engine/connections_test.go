@@ -1,12 +1,11 @@
 package engine
 
 // A package server fed by a connection, and the renewal of a run's
-// connections before they expire (plan mcp-oauth-connections.md D8, D15,
-// D24; agentry-cli#665): the server's token folder holds its templates
-// rendered with the access token and nothing else; an env token reaches
-// the gateway's secrets file alone and is fixed for the run; a renewed
-// token rewrites the folder by rename, is masked from then on, and nothing
-// renews after the run.
+// connections before they expire: the server's token folder holds its
+// templates rendered with the access token and nothing else; an env token
+// reaches the gateway's secrets file alone and is fixed for the run; a
+// renewed token rewrites the folder by rename, is masked from then on, and
+// nothing renews after the run.
 
 import (
 	"context"
@@ -292,8 +291,8 @@ func TestTheRedactorLearnsARenewedTokenWhileMasking(t *testing.T) {
 	}
 }
 
-// A session renews its connections for as long as it lives (plan D24),
-// and stops renewing when it ends.
+// A session renews its connections for as long as it lives, and stops
+// renewing when it ends.
 func TestASessionRenewsItsConnectionUntilItEnds(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)

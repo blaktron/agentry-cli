@@ -43,8 +43,8 @@ type voiceOpts struct {
 	onUsage      func(receipt.Usage)
 }
 
-// newVoiceCmd is `agentry voice` (plan writing-voice.md; agentry-cli#531):
-// the Writing Voice this computer keeps, which runs here write in.
+// newVoiceCmd is `agentry voice`: the Writing Voice this computer
+// keeps, which runs here write in.
 func newVoiceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "voice",
@@ -84,7 +84,7 @@ func voiceSampleFlags(cmd *cobra.Command, o *voiceOpts) {
 }
 
 // voiceSamplesFlags declares the samples and their cap: required for
-// Create and Improve, optional for an Edit (agentry-cli#605).
+// Create and Improve, optional for an Edit.
 func voiceSamplesFlags(cmd *cobra.Command, o *voiceOpts, need string) {
 	f := cmd.Flags()
 	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; "+need+")")
@@ -167,7 +167,7 @@ func voiceRunE(o *voiceOpts, work func(cmd *cobra.Command, args []string) error)
 }
 
 // voiceStore is the store the voice is kept in: the knowledge store's,
-// whose key wrapping the voice shares (plan writing-voice.md §4).
+// whose key wrapping the voice shares.
 func voiceStore(cmd *cobra.Command) (*store.Store, error) { return knowledgeStore(cmd) }
 
 // voiceReport is the json report of a Voice Writer command.
@@ -312,7 +312,7 @@ func voiceAfterRun(cmd *cobra.Command, o *voiceOpts, res *build.Result, report v
 	return err
 }
 
-// sayVoiceOn is what a person hears when their first voice is made (D11).
+// sayVoiceOn is what a person hears when their first voice is made.
 func sayVoiceOn(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Your voice is on for every run. Turn it off with `agentry voice attach off`, or for one run with --no-voice.")
 }
@@ -471,7 +471,7 @@ func newVoiceDeleteCmd() *cobra.Command {
 	}
 }
 
-// attachVoice is the voice a run attaches (plan writing-voice.md D5, D11):
+// attachVoice is the voice a run attaches:
 // --voice-file's, else this computer's when --voice says so or its
 // always-attach flag is on and --no-voice does not say otherwise. None is
 // nil. It says on stderr what it attached.

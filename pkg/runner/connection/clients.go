@@ -60,10 +60,10 @@ func (OSKeychain) Delete(account string) error {
 	return nil
 }
 
-// Clients keeps the person's own OAuth clients, one per issuer (D23): the
+// Clients keeps the person's own OAuth clients, one per issuer: the
 // id in a 0600 record, the secret in the keychain or a 0600 file beside it.
 // Every consent to that issuer uses it; each release still makes its own
-// connection (D10).
+// connection.
 type Clients struct {
 	dir  string
 	keys Keychain

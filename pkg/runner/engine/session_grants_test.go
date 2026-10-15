@@ -12,12 +12,12 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// TestASessionPermitsWhatItsAttachmentsGrant (agentry-cli#576): knowledge
-// and a Writing Voice are attached at run time and never move the plan,
-// so the session's driver, which grants a harness's permission request
-// only for a tool the gateway serves, must be told the run's own grant,
-// not the compiled plan's, which lacks them. The harness here asks through
-// ACP, as docker-agent does, where a denial fails the whole turn.
+// TestASessionPermitsWhatItsAttachmentsGrant: knowledge and a Writing
+// Voice are attached at run time and never move the plan, so the session's
+// driver, which grants a harness's permission request only for a tool the
+// gateway serves, must be told the run's own grant, not the compiled
+// plan's, which lacks them. The harness here asks through ACP, as
+// docker-agent does, where a denial fails the whole turn.
 func TestASessionPermitsWhatItsAttachmentsGrant(t *testing.T) {
 	attached := []string{"knowledge_list", "knowledge_search", "knowledge_read", "voice_read"}
 	for _, tc := range []struct {
@@ -64,8 +64,7 @@ func TestASessionPermitsWhatItsAttachmentsGrant(t *testing.T) {
 // TestASessionRefusesTheWebTools: the web tools are an autonomous draft's.
 // A session refuses a run that brings them, before any run directory
 // exists, which is what keeps web_read and web_search off a session's
-// grant now that the grant is read from the run's own tools spec
-// (agentry-cli#576).
+// grant now that the grant is read from the run's own tools spec.
 func TestASessionRefusesTheWebTools(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)
@@ -78,12 +77,12 @@ func TestASessionRefusesTheWebTools(t *testing.T) {
 	}
 }
 
-// TestASessionPermitsTheGatewaysDeclaredServers (agentry-cli#578): a
-// declared MCP server's tools are named by the server at run time unless
-// its manifest filters them, and docker-agent asks permission for each one
-// not marked read-only. The session's probe lists what the gateway serves,
-// and the driver permits that beside the run's own grant; a tool the
-// gateway did not list is still refused.
+// TestASessionPermitsTheGatewaysDeclaredServers: a declared MCP server's
+// tools are named by the server at run time unless its manifest filters
+// them, and docker-agent asks permission for each one not marked
+// read-only. The session's probe lists what the gateway serves, and the
+// driver permits that beside the run's own grant; a tool the gateway did
+// not list is still refused.
 func TestASessionPermitsTheGatewaysDeclaredServers(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)

@@ -28,13 +28,13 @@ func sidecarRig(t *testing.T) (*dockerx.Fake, *runDirs, *teardown) {
 	return d, rd, &teardown{d: d}
 }
 
-// TestDockerDesktopsFilterRunsInAContainerOfTheRuns (agentry-cli#322): on
-// Docker Desktop the filter is the runner image's docker-filter role, on
-// no network, as root with every capability dropped and a read-only root,
-// holding the daemon's socket, its configuration read-only, the run's
-// roots read-only at the gateway's spelling of them, and its socket in a
-// volume of the run's that the gateway then mounts at /var/run; its
-// teardown removes the container before the volume.
+// TestDockerDesktopsFilterRunsInAContainerOfTheRuns: on Docker Desktop
+// the filter is the runner image's docker-filter role, on no network, as
+// root with every capability dropped and a read-only root, holding the
+// daemon's socket, its configuration read-only, the run's roots read-only
+// at the gateway's spelling of them, and its socket in a volume of the
+// run's that the gateway then mounts at /var/run; its teardown removes
+// the container before the volume.
 func TestDockerDesktopsFilterRunsInAContainerOfTheRuns(t *testing.T) {
 	d, rd, td := sidecarRig(t)
 	was := gatewayOS

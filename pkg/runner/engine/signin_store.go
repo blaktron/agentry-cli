@@ -13,12 +13,12 @@ import (
 
 // ModelSignInFor is the model sign-in a plan spends, from the person's
 // store, for Params.ModelSignIn and Params.RenewModelSignIn: nil when the
-// plan spends a key. A hosted run is refused before the store is read
-// (I5): a sign-in is the person's own, local only, permanently (D2). No
-// sign-in of the plan's kind is the receipt reason signin-missing.
+// plan spends a key. A hosted run is refused before the store is read: a
+// sign-in is the person's own, local only, permanently. No sign-in of the
+// plan's kind is the receipt reason signin-missing.
 //
 // Every local client calls it: `agentry run`, a built-in's run
-// (localrun), and the desktop's run path (agentry-cli#845).
+// (localrun), and the desktop's run path.
 func ModelSignInFor(ctx context.Context, store *modelsignin.Store, plan *spec.Plan, hosted bool) (*ModelSignInGrant, func(context.Context) (ConnectionToken, error), error) {
 	msi := plan.Harness.ModelSignIn
 	if msi == nil {

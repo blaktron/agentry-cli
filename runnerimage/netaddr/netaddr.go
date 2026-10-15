@@ -1,9 +1,7 @@
-// Package netaddr is the runner's one rule for a public address
-// (agentry-notes plans/browser-testing.md §6; agentry-cli#915): the
-// ranges web_read, the input-source proxy and the browse proxy never
-// connect to. It was web_read's list, the most complete of the three the
-// runner kept; the proxies' own was missing the 6to4 relay anycast range,
-// Azure's wireserver, the IPv6 discard prefix and site-local space.
+// Package netaddr is the runner's one rule for a public address:
+// the ranges web_read, the input-source proxy and the browse proxy never
+// connect to, among them the 6to4 relay anycast range, Azure's
+// wireserver, the IPv6 discard prefix and site-local space.
 //
 // Part of the embedded runner-image build context: stdlib-only.
 package netaddr

@@ -5,10 +5,9 @@ import (
 	"net/netip"
 )
 
-// HostsPolicy is the operator's rule for target hosts (agentry-notes
-// plans/runtime-hosts.md D8; agentry-cli#861): IPv4 networks in CIDR form.
-// Neither set, any address is reached but the ones a target host never is
-// (loopback, link-local; targethost.CheckAddress).
+// HostsPolicy is the operator's rule for target hosts: IPv4 networks in CIDR
+// form. Neither set, any address is reached but the ones a target host never
+// is (loopback, link-local; targethost.CheckAddress).
 type HostsPolicy struct {
 	// Allow, when set, is every network a target host's address may be in.
 	Allow []string `yaml:"allow,omitempty"`

@@ -8,7 +8,7 @@ import (
 // Schema is the theme document's JSON Schema (draft 2020-12), built from the
 // same lists Validate reads, so it cannot drift from them. schema.json beside
 // this file is its committed copy, which a test holds equal; the openapi's
-// ReportDesign schema is held to it by the core's api tests (D11, D22).
+// ReportDesign schema is held to it by the core's api tests.
 //
 // The schema says what a document may hold, the families each role takes
 // included. Two rules it cannot say are Validate's alone: the accent's

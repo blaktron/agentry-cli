@@ -1,10 +1,10 @@
-// Package websearch is web search behind one small interface (plan
-// builder-rework.md D21; agentry#608). The registry brokers the Drafter's
-// `web_search` through the deployment's provider with the platform's key,
-// so no sandbox host holds one; a person's local draft uses the same
-// clients with their own key. Every result is scanned as model input
-// before a model reads it (pkg/judge), which is the caller's job, not this
-// package's: here a result is only fetched and bounded.
+// Package websearch is web search behind one small interface. The registry
+// brokers the Drafter's `web_search` through the deployment's provider
+// with the platform's key, so no sandbox host holds one; a person's local
+// draft uses the same clients with their own key. Every result is scanned
+// as model input before a model reads it (pkg/judge), which is the
+// caller's job, not this package's: here a result is only fetched and
+// bounded.
 package websearch
 
 import (

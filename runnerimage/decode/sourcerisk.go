@@ -6,7 +6,7 @@ import (
 )
 
 // In an input source, ClamAV checks only the executable and binary risky
-// files (plan input-sources.md D8, agentry-cli#833): "a ClamAV scan of
+// files: "a ClamAV scan of
 // 10000 files might take a long time", and a repository's source code,
 // text and data are not where an executable payload hides. The host looks
 // the same files up on Hybrid Analysis. Uploads and a url source are
@@ -57,7 +57,7 @@ var sourceRiskyTypes = map[string]bool{
 // sourceRiskyNames are the extensions checked whatever the content was
 // detected as, so a package a detector names a plain zip (.jar, .apk), or a
 // binary whose detection failed, is still checked. No script or text
-// extension is here: those are what D8 leaves unchecked.
+// extension is here: those are what a source leaves unchecked.
 var sourceRiskyNames = map[string]bool{
 	"exe": true, "dll": true, "scr": true, "sys": true, "so": true, "dylib": true, "msi": true, "apk": true, "jar": true, "class": true, "wasm": true,
 	"doc": true, "xls": true, "ppt": true, "docm": true, "xlsm": true, "pptm": true, "dotm": true, "xltm": true, "potm": true,
@@ -79,10 +79,10 @@ func SourceRisky(mime, p string) bool {
 }
 
 // WhySourceImage: an image in an input source is not read with OCR. A
-// codebase's screenshots and icons run to hundreds, tesseract takes
-// seconds each, and the whole decode has 30 minutes (measured
-// 2026-10-11: a desktop repository's 896 screenshots alone would take
-// about 40); the image stays readable as its original.
+// codebase's screenshots and icons run to hundreds, tesseract takes seconds
+// each, and the whole decode has 30 minutes (a desktop repository's 896
+// screenshots alone would take about 40); the image stays readable as its
+// original.
 const WhySourceImage Why = "source-image"
 
 // InSource says whether a report path is inside one of the sources'

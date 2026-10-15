@@ -1,14 +1,13 @@
 package engine
 
-// export_pdf's run-time half (plan scratch-and-pdf-reports.md §5, D13-D15,
-// D19; agentry-cli#730). The compiler grants the tool with the scratch
-// folder; the engine stamps into the run's own tools spec what the plan
-// cannot hold: the run's report design (report-designs.md, agentry-cli#784),
-// the QuickAgent the PDF names as its author, and the ledger each exported
-// PDF is recorded in. After the agent ends, the receipt's pdfs block names
-// the design and every PDF whose bytes are still the ones the ledger
-// recorded, with its form: the record the site and the desktop hold a PDF to
-// before they open it in place (D15).
+// export_pdf's run-time half. The compiler grants the tool with the
+// scratch folder; the engine stamps into the run's own tools spec what the
+// plan cannot hold: the run's report design, the QuickAgent the PDF names
+// as its author, and the ledger each exported PDF is recorded in. After
+// the agent ends, the receipt's pdfs block names the design and every PDF
+// whose bytes are still the ones the ledger recorded, with its form: the
+// record the site and the desktop hold a PDF to before they open it in
+// place.
 
 import (
 	"bufio"
@@ -50,8 +49,7 @@ type ReportTheme struct {
 // ThemeSource is what chose a run's report theme, as the receipt says it.
 type ThemeSource string
 
-// What can choose a run's report design (agentry-cli#731, DR-82;
-// agentry-cli#784, DR-87).
+// What can choose a run's report design.
 const (
 	ThemeFromFlag         ThemeSource = "the --report-theme flag"
 	ThemeFromDesignFlag   ThemeSource = "the --report-design flag"

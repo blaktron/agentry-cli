@@ -1,10 +1,9 @@
-// Connections (plan mcp-oauth-connections.md §6, agentry-cli#664, #665): a
-// person's OAuth grant to a remote MCP server, or at a package server's
-// issuer, for one QuickAgent release.
-// A run asks for each one it lacks at Start, on a terminal, and refreshes
-// each before the sandbox starts; `agentry connect` makes them ahead of a
-// run; `agentry connections` lists and removes them and keeps the person's
-// own OAuth clients. The run is given an access token and nothing else.
+// Connections: a person's OAuth grant to a remote MCP server, or at a
+// package server's issuer, for one QuickAgent release. A run asks for each
+// one it lacks at Start, on a terminal, and refreshes each before the
+// sandbox starts; `agentry connect` makes them ahead of a run; `agentry
+// connections` lists and removes them and keeps the person's own OAuth
+// clients. The run is given an access token and nothing else.
 package main
 
 import (
@@ -58,8 +57,8 @@ func oauthServers(m *manifest.Manifest) []manifest.MCPServer {
 }
 
 // refuseUnsupported refuses a package that cannot run on an access token
-// alone (plan D25) before anyone is taken through consent for it: its runs
-// are refused at plan time anyway.
+// alone before anyone is taken through consent for it: its runs are
+// refused at plan time anyway.
 func refuseUnsupported(servers []manifest.MCPServer) error {
 	for _, srv := range servers {
 		if alt, bad := manifest.UnsupportedOAuthPackage(srv.SourceID()); bad && !srv.IsRemote() {
@@ -100,7 +99,7 @@ func connectionWhat(srv manifest.MCPServer) string {
 // runConnections is what a run of a release is given of its connections:
 // each server's access token, the receipt's line naming each one used
 // (server, issuer, scopes, client kind; never a token), and the renewal
-// the engine asks for before a token expires (plan D24).
+// the engine asks for before a token expires.
 type runConnections struct {
 	tokens map[string]engine.ConnectionToken
 	line   string
@@ -167,10 +166,10 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 	return out, nil
 }
 
-// fileConnection is one server's entry in --connections-file
-// (agentry-cli#722): an access token a host fetched for the run, its
-// expiry, and the issuer and scopes for the receipt's line. Never a
-// refresh token or a client secret: the file has no field for one.
+// fileConnection is one server's entry in --connections-file: an
+// access token a host fetched for the run, its expiry, and the
+// issuer and scopes for the receipt's line. Never a refresh token
+// or a client secret: the file has no field for one.
 type fileConnection struct {
 	AccessToken string    `json:"accessToken"`
 	ExpiresAt   time.Time `json:"expiresAt"`
@@ -181,14 +180,13 @@ type fileConnection struct {
 // maxConnectionsFile bounds --connections-file.
 const maxConnectionsFile = 256 << 10
 
-// connectionsFromFile is a hosted run's connections (agentry-cli#722, plan
-// mcp-oauth-connections.md D8): the access tokens the deployment's worker
-// refreshed at the hand-off, keyed as engine.Params.Connections is. Nothing
-// is consented to, refreshed or renewed here, and no store is opened: a
-// token that expires during the run ends that server's calls (D13). The
-// file must be a regular file only its owner can read; a key the release
-// does not declare as signing in by OAuth, an unknown field, or a declared
-// server it does not name refuses the run.
+// connectionsFromFile is a hosted run's connections: the access tokens the
+// deployment's worker refreshed at the hand-off, keyed as
+// engine.Params.Connections is. Nothing is consented to, refreshed or
+// renewed here, and no store is opened: a token that expires during the run
+// ends that server's calls. The file must be a regular file only its owner
+// can read; a key the release does not declare as signing in by OAuth, an
+// unknown field, or a declared server it does not name refuses the run.
 func connectionsFromFile(path string, m *manifest.Manifest) (*runConnections, error) {
 	refuse := func(format string, a ...any) error {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("--connections-file: "+format, a...))
@@ -255,9 +253,9 @@ func scopeList(s []string) string {
 
 // consentFor asks the person, on the terminal, to connect srv for the
 // release k names: the vendor's consent screen in the browser, or its
-// address printed and the redirect pasted back (D21). A vendor that needs
+// address printed and the redirect pasted back. A vendor that needs
 // the person's own client (Google) asks for one first, with Agentry's
-// steps where it has them (D22). The grant is kept, replacing a broken one
+// steps where it has them. The grant is kept, replacing a broken one
 // (whose refresh token is revoked where the vendor offers it).
 func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, httpc *http.Client, k connection.Key, srv manifest.MCPServer) (*mcpauth.Grant, error) {
 	errOut := cmd.ErrOrStderr()
@@ -321,11 +319,11 @@ func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, client
 }
 
 // browserConsent is a consent shown in the person's browser whose redirect
-// may be pasted back from another machine (D21), for every flow the CLI
-// runs there (a connection's, Sign in with ChatGPT, a connect): present
-// prints the address under heading, opens it where it can and starts
-// reading pasted addresses; finish, once the flow has returned, waits for
-// that reader, so the next question reads its own answer.
+// may be pasted back from another machine, for every flow the CLI runs
+// there (a connection's, Sign in with ChatGPT, a connect): present prints
+// the address under heading, opens it where it can and starts reading
+// pasted addresses; finish, once the flow has returned, waits for that
+// reader, so the next question reads its own answer.
 type browserConsent struct {
 	errOut   io.Writer
 	in       *bufio.Reader
@@ -390,8 +388,8 @@ func readPasted(in *bufio.Reader, out chan<- string, done <-chan struct{}, finis
 }
 
 // askOwnClient asks for the person's own OAuth client for issuer and keeps
-// it for every later consent there (D23), after Agentry's steps for making
-// one where it has written them (D22).
+// it for every later consent there, after Agentry's steps for making one
+// where it has written them.
 func askOwnClient(cmd *cobra.Command, in *bufio.Reader, clients *connection.Clients, issuer, server string) error {
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "\n%s lets no app register itself, so signing in there needs an OAuth client of your own.\n", issuer)
@@ -415,7 +413,7 @@ func askOwnClient(cmd *cobra.Command, in *bufio.Reader, clients *connection.Clie
 	return nil
 }
 
-// ownClientSteps are Agentry's steps for making one's own client (D22):
+// ownClientSteps are Agentry's steps for making one's own client:
 // Google's, which Agentry writes; any other vendor's general shape.
 func ownClientSteps(issuer, server string) string {
 	if strings.TrimRight(issuer, "/") == "https://accounts.google.com" {
@@ -658,9 +656,9 @@ type removedConnection struct {
 	Error      string `json:"error,omitempty"`
 	// SharesGrantWith names the connections this removal leaves, made with
 	// the same client at the same issuer, which a vendor that revokes the
-	// whole grant ends with this one (the operator, 2026-10-06: removal
-	// still revokes, and says so). Empty unless the revocation was done;
-	// with --plan, those it would end.
+	// whole grant ends with this one (removal still revokes, and says so).
+	// Empty unless the revocation was done; with --plan, those it would
+	// end.
 	SharesGrantWith []string `json:"sharesGrantWith,omitempty"`
 }
 
@@ -732,7 +730,7 @@ func newConnectionsRemoveCmd() *cobra.Command {
 
 // removeConnections removes the connections of the releases sel matches
 // ("" for all), to server where one is named, revoking each at the vendor
-// where it offers that (D17), and names, for each one revoked, the kept
+// where it offers that, and names, for each one revoked, the kept
 // connections it does not remove that were made with the same client.
 func removeConnections(ctx context.Context, home, sel, server, why string) ([]removedConnection, error) {
 	store := connection.Open(home, connectionKeys())

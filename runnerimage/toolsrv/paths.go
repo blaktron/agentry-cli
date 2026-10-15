@@ -1,8 +1,7 @@
-// Path safety for every filesystem-facing tool (RUNNER-PLAN §R11
-// invariant 5): fs_read, fs_list, fs_write, and write_report all funnel
-// through resolveUnder, so there is exactly one place that decides whether
-// a model-supplied path stays inside its root — and one place the
-// traversal corpus has to hit.
+// Path safety for every filesystem-facing tool: fs_read, fs_list, fs_write,
+// and write_report all funnel through resolveUnder, so there is exactly one
+// place that decides whether a model-supplied path stays inside its root —
+// and one place the traversal corpus has to hit.
 //
 // Two layers, because each catches what the other cannot. The lexical
 // check refuses absolute paths, backslashes, and ".." escapes without
@@ -11,7 +10,7 @@
 // ancestor of the target, so a link planted inside the workspace cannot
 // alias a lexically clean path back out of it. A link created between
 // check and use is out of scope: the tools container is the only writer
-// during a run and handles calls serially (§R3).
+// during a run and handles calls serially.
 
 package toolsrv
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Acceptance for agentry-cli#327: a release tag's form must agree with the
-# branch line its commit is on, 1.x waits for the operator, and the next tag
-# an agent cuts follows the scheme (DEV-148).
+# Acceptance: a release tag's form must agree with the branch line its
+# commit is on, 1.x is refused unless AGENTRY_ALLOW_V1 allows it, and the
+# next tag follows the scheme.
 #
 #   scripts/acceptance/release-tag.sh
 #
-# Builds a throwaway origin with the estate's branch model (as
+# Builds a throwaway origin with the repository's branch model (as
 # release-registry.sh's acceptance does), clones it as actions/checkout does,
 # and asks scripts/release-tag.sh about each tag form on each line, then
 # about the next tag as releases accumulate. Needs git; no network, no go.
@@ -82,11 +82,11 @@ refuse "v1.0.0-dev.1 without AGENTRY_ALLOW_V1" check v1.0.0-dev.1 "$m1"
 refuse "v1.0.0 with AGENTRY_ALLOW_V1=yes (only true opens it)" env AGENTRY_ALLOW_V1=yes scripts/release-tag.sh check v1.0.0 "$p1"
 is "v1.0.0 with AGENTRY_ALLOW_V1=true" production "$(AGENTRY_ALLOW_V1=true scripts/release-tag.sh check v1.0.0 "$p1" | field channel)"
 out=$(AGENTRY_ALLOW_V1=true scripts/release-tag.sh check v1.0.0 "$p1")
-expect "1.0.0 waits for the operator's notes (draft)" true field draft <<<"$out"
+expect "1.0.0 is a draft until its notes are approved" true field draft <<<"$out"
 
-# The next tag an agent cuts.
+# The next tag to cut.
 next() { scripts/release-tag.sh next "$@"; }
-expect "no release yet: main's first is v0.6.0 (DEV-148)" v0.6.0 next main
+expect "no release yet: main's first is v0.6.0" v0.6.0 next main
 expect "no release yet: dev's first is v0.6.0-dev.1" v0.6.0-dev.1 next dev
 g tag v0.6.0 "$p1"
 expect "after v0.6.0, dev's next is v0.6.1-dev.1" v0.6.1-dev.1 next dev
@@ -94,7 +94,7 @@ expect "after v0.6.0, main's next is v0.6.1" v0.6.1 next main
 g tag v0.6.1-dev.1 "$m1"; g tag v0.6.1-dev.4 "$m1"
 expect "N is one more than the highest" v0.6.1-dev.5 next dev
 expect "main's next releases what dev has been prereleasing" v0.6.1 next main
-expect "the operator moves the minor with RELEASE_VERSION" v0.7.0-dev.1 env RELEASE_VERSION=0.7.0 scripts/release-tag.sh next dev
+expect "RELEASE_VERSION moves the minor" v0.7.0-dev.1 env RELEASE_VERSION=0.7.0 scripts/release-tag.sh next dev
 refuse "RELEASE_VERSION at or below the newest release" env RELEASE_VERSION=0.6.0 scripts/release-tag.sh next main
 g tag v0.7.0-dev.1 "$m1"
 expect "dev prereleases of a higher version name main's next" v0.7.0 next main

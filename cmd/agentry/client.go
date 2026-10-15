@@ -1,6 +1,6 @@
 // API client plumbing: bearer-authenticated apiclient construction, RFC 9457
-// problem rendering, and the §9.4 download/verify helpers shared by
-// install and verify.
+// problem rendering, and the download/verify helpers shared by install and
+// verify.
 package main
 
 import (
@@ -23,7 +23,7 @@ import (
 )
 
 // Client-side safety caps for release archives. The registry enforces the
-// real quotas (§19: 100 MB repo hard cap, 25 MB single object); these only
+// real quotas (100 MB repo hard cap, 25 MB single object); these only
 // bound what the CLI is willing to buffer and unpack.
 const (
 	maxArchiveBytes      int64 = 512 << 20
@@ -63,9 +63,9 @@ func newAPIClientWithHTTP(regURL, token string, hc *http.Client) (*apiclient.Cli
 	return c, nil
 }
 
-// newAPIClientChecked is newAPIClient plus the §11 min-version gate: the
-// first API-using command in an invocation asks the registry what CLI version
-// it still supports, and reports (or refuses) before doing any work. Every
+// newAPIClientChecked is newAPIClient plus the min-version gate: the first
+// API-using command in an invocation asks the registry what CLI version it
+// still supports, and reports (or refuses) before doing any work. Every
 // command that talks to a registry goes through here, so no command can
 // forget the check.
 func newAPIClientChecked(cmd *cobra.Command, regURL, token string) (*apiclient.ClientWithResponses, error) {
@@ -118,16 +118,16 @@ func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error 
 
 // refusedAccount names the account a payment refusal is about. A member
 // publishes to their own namespace but spends from their organization's
-// pool (plan organization-subscriptions.md D22), so the account whose
-// balance is short is often not the one that signed the request, and the
-// refusal's prose alone leaves that to be guessed.
+// pool, so the account whose balance is short is often not the one that
+// signed the request, and the refusal's prose alone leaves that to be
+// guessed.
 //
 // Only a 402 is read for it: `account` is the billing extension's
 // extension member, and 402 is the one status it refuses with, so no other
-// problem body can put a word of its own choosing into this sentence.
-// The value is still the server's, so it is bounded and stripped of
-// control characters before it reaches a terminal — the same care the
-// non-problem branch below takes with a body it did not write.
+// problem body can put a word of its own choosing into this sentence. The
+// value is still the server's, so it is bounded and stripped of control
+// characters before it reaches a terminal — the same care the non-problem
+// branch below takes with a body it did not write.
 func refusedAccount(status int, body []byte) string {
 	if status != http.StatusPaymentRequired {
 		return ""
@@ -157,7 +157,7 @@ func safeTerminalText(s string, max int) string {
 	return clean
 }
 
-// sha256Digest computes the "sha256:<hex>" digest of b (D-15 identity form).
+// sha256Digest computes the "sha256:<hex>" digest of b (the identity form).
 func sha256Digest(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -172,16 +172,16 @@ func orNone(s string) string {
 }
 
 // sameHost reports whether two URLs share a host, so the bearer token is
-// only ever attached to the registry itself, never to a CDN (§9.4).
+// only ever attached to the registry itself, never to a CDN.
 func sameHost(a, b string) bool {
 	ua, err1 := url.Parse(a)
 	ub, err2 := url.Parse(b)
 	return err1 == nil && err2 == nil && ua.Host == ub.Host
 }
 
-// downloadArchive fetches the release archive named by a resolve result
-// (§9.4 step 2). Relative archive URLs (self-host) resolve against the
-// registry base URL.
+// downloadArchive fetches the release archive named by a resolve result.
+// Relative archive URLs (self-host) resolve against the registry base
+// URL.
 func downloadArchive(ctx context.Context, regURL, token string, res *apiclient.ResolveResult) ([]byte, error) {
 	archiveURL := res.ArchiveUrl
 	if strings.HasPrefix(archiveURL, "/") {
@@ -229,7 +229,7 @@ func manifestFromResolve(res *apiclient.ResolveResult) (*manifest.Manifest, erro
 
 // resolveRef calls GET /resolve for a ns/name[@range] reference.
 // installIntent adds the X-Agentry-Install hint so the registry counts an
-// install without a download round-trip through the API (§9.4 step 4).
+// install without a download round-trip through the API.
 func resolveRef(ctx context.Context, client *apiclient.ClientWithResponses, ref string, installIntent bool) (*apiclient.ResolveResult, error) {
 	var editors []apiclient.RequestEditorFn
 	if installIntent {

@@ -1,21 +1,19 @@
 package toolsrv
 
-// The decoded inputs (plan file-handling.md §5, D2; agentry-cli#560). The
-// engine's decode step runs before any agent starts and writes, under the
-// read-only InputsTextDir, an index of every input (InputsIndexFile) and
-// the text decoded from each input that is not text already
-// (InputsTextSubdir/<path>), and HTML's Markdown (InputsConvertedSubdir/
-// <path>). list_inputs answers from the index, with the views each input
-// has. read_input and search_inputs read either view (agentry-cli#631;
-// plan quickagents-that-run.md D2, D3): the text, which is the decoded
-// text of a document, HTML's Markdown, or the file itself; or the original,
-// the file as uploaded, a binary one as a base64 page, which a file no
-// reader took has too. A document is read as its text by default, anything
-// else as its original. Without an index (a built-in whose caller decoded
-// its documents itself, or a run with no inputs) list_inputs and
-// read_input answer from /inputs as they always have, a binary file as
-// base64 only when the original is asked for, and search_inputs searches
-// the inputs that are UTF-8 text.
+// The decoded inputs. The engine's decode step runs before any agent starts
+// and writes, under the read-only InputsTextDir, an index of every input
+// (InputsIndexFile) and the text decoded from each input that is not text
+// already (InputsTextSubdir/<path>), and HTML's Markdown
+// (InputsConvertedSubdir/ <path>). list_inputs answers from the index, with
+// the views each input has. read_input and search_inputs read either view:
+// the text, which is the decoded text of a document, HTML's Markdown, or the
+// file itself; or the original, the file as uploaded, a binary one as a
+// base64 page, which a file no reader took has too. A document is read as its
+// text by default, anything else as its original. Without an index (a
+// built-in whose caller decoded its documents itself, or a run with no
+// inputs) list_inputs and read_input answer from /inputs as they always have,
+// a binary file as base64 only when the original is asked for, and
+// search_inputs searches the inputs that are UTF-8 text.
 
 import (
 	"encoding/json"
@@ -36,11 +34,11 @@ const (
 	InputsIndexSchema = "inputs/v1"
 	InputsTextSubdir  = "text"
 	// InputsConvertedSubdir holds the Markdown view of a file read as
-	// text: HTML converted by pandoc (agentry-cli#631).
+	// text: HTML converted by pandoc.
 	InputsConvertedSubdir = "converted"
 )
 
-// The two views of an input (agentry-cli#631).
+// The two views of an input.
 const (
 	ViewText     = "text"
 	ViewOriginal = "original"
@@ -60,7 +58,7 @@ func validView(view string) error {
 type InputsIndex struct {
 	Schema string `json:"schema"`
 	// DefaultView is the release's own default (its manifest's
-	// inputs.view, agentry-cli#693): ViewText or ViewOriginal, which each
+	// inputs.view): ViewText or ViewOriginal, which each
 	// input that has that view is read in when the model asks for none.
 	// Empty keeps each input's own default.
 	DefaultView string       `json:"defaultView,omitempty"`
@@ -88,10 +86,9 @@ type InputEntry struct {
 	DecodedBy string `json:"decodedBy,omitempty"`
 	// TextBytes is the size of the text read_input serves for it.
 	TextBytes int64 `json:"textBytes,omitempty"`
-	// InArchive is the archive it was unpacked from (plan file-handling.md
-	// §6; agentry-cli#562): its Path is <archive>/<member>, it is not
-	// under InputsDir, and its text, decoded or read as it is, is at
-	// InputsTextSubdir/<Path>.
+	// InArchive is the archive it was unpacked from: its Path is
+	// <archive>/<member>, it is not under InputsDir, and its text, decoded or
+	// read as it is, is at InputsTextSubdir/<Path>.
 	InArchive string `json:"inArchive,omitempty"`
 	// Unpacked says it is an archive whose members are entries of their
 	// own; Partial, when set, is why only part of it was unpacked.
@@ -107,7 +104,7 @@ type InputEntry struct {
 	ConvertedBy    string `json:"convertedBy,omitempty"`
 	ConvertedBytes int64  `json:"convertedBytes,omitempty"`
 	// Original says an input that is Unread, since no decoder reads it,
-	// can still be read as uploaded (D3): a file as staged that no reader
+	// can still be read as uploaded: a file as staged that no reader
 	// took, never one ClamAV found, refused, or inside a .git folder.
 	Original bool `json:"original,omitempty"`
 	// releaseView is the index's DefaultView, stamped on each entry as
@@ -125,8 +122,8 @@ func (e InputEntry) hasOriginal() bool {
 
 // viewOrDefault is the view asked for, or, when none was, the one
 // read_input and search_inputs read: the release's default where the input
-// has that view (agentry-cli#693, plan D2), else its own, a document's
-// text and anything else as uploaded, HTML included (D2).
+// has that view else its own, a document's
+// text and anything else as uploaded, HTML included.
 func (e InputEntry) viewOrDefault(view string) string {
 	switch {
 	case view != "":
@@ -452,7 +449,7 @@ func (s *server) searchTargets(clean, view string) ([]searchTarget, error) {
 			if v == "" && e.Decoded {
 				// A decoded document's original is binary and never
 				// searched, so with no view asked its text is, whatever
-				// the release's default (agentry-cli#693).
+				// the release's default.
 				v = ViewText
 			}
 			abs, err := s.viewOf(e, v)

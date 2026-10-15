@@ -15,12 +15,11 @@ import (
 	"github.com/blaktron/agentry/pkg/apiclient"
 )
 
-// Publish progress over server-sent events (§11 "SSE/poll"; agentry#65,
-// agentry-cli#26). The registry streams status snapshots for a version;
-// the CLI prints stage completions as they land and the verdict when the
-// stream reaches a terminal state. Anything that is not a clean stream —
-// a server without the endpoint (404), a dropped connection, a stream
-// that ends without a verdict — falls back to the 2 s poll, so the
+// Publish progress over server-sent events. The registry streams status
+// snapshots for a version; the CLI prints stage completions as they land and
+// the verdict when the stream reaches a terminal state. Anything that is not a
+// clean stream — a server without the endpoint (404), a dropped connection, a
+// stream that ends without a verdict — falls back to the 2 s poll, so the
 // command's behaviour on older registries is unchanged.
 
 // versionEvent mirrors the API's `event: status` payload.

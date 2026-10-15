@@ -12,15 +12,14 @@ import (
 	"sync"
 )
 
-// claudeSession is the SessionDriver for an interactive Claude Code run
-// (DR-18). Claude Code's `--input-format stream-json` is not the Agent
-// Client Protocol: there is no JSON-RPC envelope, no handshake and no
-// per-call permission request. A user turn is one newline-delimited JSON
-// message written to stdin; the harness answers with the same event
-// stream an autonomous run prints and closes the turn with a `result`
-// message; closing stdin ends the process. That is the whole protocol,
-// which is why this driver is smaller than acpSession rather than a
-// variant of it.
+// claudeSession is the SessionDriver for an interactive Claude Code run.
+// Claude Code's `--input-format stream-json` is not the Agent Client
+// Protocol: there is no JSON-RPC envelope, no handshake and no per-call
+// permission request. A user turn is one newline-delimited JSON message
+// written to stdin; the harness answers with the same event stream an
+// autonomous run prints and closes the turn with a `result` message;
+// closing stdin ends the process. That is the whole protocol, which is why
+// this driver is smaller than acpSession rather than a variant of it.
 //
 // Verified against Claude Code 2.1.263: nothing is printed until the
 // first user turn, context carries across turns, and stdin EOF exits 0.

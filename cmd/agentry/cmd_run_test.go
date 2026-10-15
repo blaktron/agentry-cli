@@ -1,9 +1,9 @@
-// `agentry run` behavior that needs no docker: the §R8 input/output
-// contract (task precedence, envelope printing, out-dir), the §R5
-// materialize gates (local trees are unsigned; digest/pin/attestation
-// mismatches are exit-10 verify failures; bad manifests are exit-12), the
-// §R6 install cache, MCP-profile lifecycle plumbing (RUNNER-PLAN-2 §P2/§P3),
-// and the --dry-run plan path with its determinism guarantee (§R4).
+// `agentry run` behavior that needs no docker: the input/output contract
+// (task precedence, envelope printing, out-dir), the materialize gates
+// (local trees are unsigned; digest/pin/attestation mismatches are
+// exit-10 verify failures; bad manifests are exit-12), the install cache,
+// MCP-profile lifecycle plumbing, and the --dry-run plan path with its
+// determinism guarantee.
 package main
 
 import (
@@ -52,7 +52,7 @@ func isolateRunnerHome(t *testing.T) (home, policyPath string) {
 	return home, filepath.Join(home, "policy.yaml")
 }
 
-// wantClassified asserts err carries the given §R8 exit class.
+// wantClassified asserts err carries the given exit class.
 func wantClassified(t *testing.T, err error, code int) {
 	t.Helper()
 	var ce *engine.ClassifiedError
@@ -126,8 +126,8 @@ func TestResolveOutDir(t *testing.T) {
 	}
 }
 
-// TestTaskReaderPrecedence: --input file > piped stdin > TTY nil (§R2), and
-// a NAMED file that does not open fails loudly through the deferred reader.
+// TestTaskReaderPrecedence: --input file > piped stdin > TTY nil, and a
+// NAMED file that does not open fails loudly through the deferred reader.
 func TestTaskReaderPrecedence(t *testing.T) {
 	taskFile := filepath.Join(t.TempDir(), "task.json")
 	if err := os.WriteFile(taskFile, []byte(`{"job":1}`), 0o644); err != nil {
@@ -190,7 +190,7 @@ func TestPrintEnvelopeFormats(t *testing.T) {
 		Result: json.RawMessage(`"the answer"`), OutDir: "/out/dir",
 	}
 
-	// Text mode: only the result text on stdout (Unix composition, §R8);
+	// Text mode: only the result text on stdout (Unix composition);
 	// the pointer to reports goes to stderr.
 	cmd := stubCmd(t)
 	var out, errOut bytes.Buffer
@@ -226,7 +226,7 @@ func TestPrintAdaptersListsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "docker-agent (default)") || !strings.Contains(stdout, "planned (RUNNER-PLAN M-R4)") {
+	if !strings.Contains(stdout, "docker-agent (default)") || !strings.Contains(stdout, "planned: goose") {
 		t.Errorf("adapters listing = %q", stdout)
 	}
 }
@@ -328,10 +328,10 @@ publish:
 	}
 }
 
-// TestRunLocalDryRunDeterministic: the M-R0 acceptance shape as a unit test
-// — a --local --dry-run prints the compiled plan on stdout, needs no
-// docker, and produces byte-identical plans on repeat runs (§R4:
-// deterministic, hashable, printable).
+// TestRunLocalDryRunDeterministic: the acceptance shape as a unit test — a
+// --local --dry-run prints the compiled plan on stdout, needs no docker, and
+// produces byte-identical plans on repeat runs (deterministic, hashable,
+// printable).
 func TestRunLocalDryRunDeterministic(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -363,7 +363,7 @@ func TestRunLocalDryRunDeterministic(t *testing.T) {
 }
 
 // TestRunWildcardEgressPolicyRefusal: manifest egress "*" without policy
-// consent is refused at compile with the policy exit class (§R4 Q-R1).
+// consent is refused at compile with the policy exit class.
 func TestRunWildcardEgressPolicyRefusal(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -375,8 +375,8 @@ func TestRunWildcardEgressPolicyRefusal(t *testing.T) {
 
 // A run that fails before the engine writes an envelope still prints one
 // under --output-format json: the exit class and the step it stopped in,
-// which is all a hosted run's host may keep (agentry-cli#332). In text
-// mode stdout stays empty.
+// which is all a hosted run's host may keep. In text mode stdout stays
+// empty.
 func TestRunFailingBeforeTheEngineNamesItsStage(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -390,7 +390,7 @@ func TestRunFailingBeforeTheEngineNamesItsStage(t *testing.T) {
 		{"an unsigned local release", []string{"--local", repoPath(t, "testdata/runner/pure-text")}, engine.ExitVerify, receipt.StageVerify, nil},
 		{"an undeclared adapter", []string{"--local", repoPath(t, "testdata/runner/pure-text"), "--allow-unsigned", "--adapter", "nonesuch"}, engine.ExitCLI, receipt.StageCompile, nil},
 		// The reason says why in fixed words, naming the declared command
-		// this machine does not provide (agentry-cli#628).
+		// this machine does not provide.
 		{"a command the policy does not provide", []string{"--local", repoPath(t, "testdata/runner/exec-git"), "--allow-unsigned"}, engine.ExitPolicy, receipt.StageCompile,
 			&receipt.Reason{Code: receipt.ReasonExecNotProvided, Names: []string{"git"}}},
 	} {
@@ -484,7 +484,7 @@ func TestRunRegistryDryRun(t *testing.T) {
 }
 
 // TestRunRegistryVerifyGates: pin mismatch, digest mismatch, and the
-// unsigned-without-flag refusal are all §R8 exit-10 verify failures.
+// unsigned-without-flag refusal are all exit-10 verify failures.
 func TestRunRegistryVerifyGates(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -530,11 +530,11 @@ entrypoints:
 	return m
 }
 
-// TestEnsureProfilePaths: the non-guided branches of RUNNER-PLAN-2 §P2/§P3
-// — flag validation, the policy-default keep choice, the explicit-keep
-// record with no secrets, stored-profile reuse, and the non-TTY fallback
-// note. The guided TTY conversation itself is pkg/runner/setup's tested
-// code and is not faked here.
+// TestEnsureProfilePaths: the non-guided branches of the MCP profile step —
+// flag validation, the policy-default keep choice, the explicit-keep record
+// with no secrets, stored-profile reuse, and the non-TTY fallback note. The
+// guided TTY conversation itself is pkg/runner/setup's tested code and is
+// not faked here.
 func TestEnsureProfilePaths(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
@@ -562,7 +562,7 @@ func TestEnsureProfilePaths(t *testing.T) {
 	}
 
 	// --keep-profile=true with nothing to collect records the choice for
-	// future schema growth (§P3).
+	// future schema growth.
 	prof, dir, keep, err = ensureProfile(stubCmd(t), home, meta, pure, pol, runOpts{keepProfile: "true"})
 	if err != nil || prof == nil || !keep || !prof.Keep {
 		t.Fatalf("explicit-keep record = %+v keep=%v err=%v", prof, keep, err)
@@ -615,7 +615,7 @@ func TestEnsureProfilePaths(t *testing.T) {
 }
 
 // TestFinishProfileLifecycle: keep stamps lastUsedAt and persists; remove
-// deletes the directory with the run; nil is a no-op (§P2 completion).
+// deletes the directory with the run; nil is a no-op.
 func TestFinishProfileLifecycle(t *testing.T) {
 	var errOut bytes.Buffer
 	finishProfile(&errOut, nil, t.TempDir(), true)
@@ -682,7 +682,7 @@ func TestRunInteractiveUsageGates(t *testing.T) {
 
 // A cached plan compiled by an older CLI is recompiled in place by
 // ensurePlan — the --prepare and run paths — and reported; doctor names it
-// as stale until then (agentry-cli#60).
+// as stale until then.
 func TestEnsurePlanRecompilesOldPlanVersionAndDoctorReportsIt(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
@@ -746,11 +746,11 @@ func doctorHas(rep *doctorReport, status, needle string) bool {
 	return false
 }
 
-// TestEnsurePlanRecompilesForANewerCLIOrRunnerImage (agentry-cli#105): a
-// plan the same schema version but compiled by another CLI build, or
-// against another runner image, is recompiled — the compiler's output
-// changed under it (the catalog env, a proxy switch), and reusing the old
-// files would run yesterday's plan with today's binary.
+// TestEnsurePlanRecompilesForANewerCLIOrRunnerImage: a plan the same
+// schema version but compiled by another CLI build, or against another
+// runner image, is recompiled — the compiler's output changed under it
+// (the catalog env, a proxy switch), and reusing the old files would run
+// yesterday's plan with today's binary.
 func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
@@ -760,7 +760,7 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	}
 	// Each case below stands for a plan another build compiled under this
 	// runner home, so each rewrite is sealed as that build's compile would
-	// have been; an unsealed edit is refused (agentry-cli#266).
+	// have been; an unsealed edit is refused.
 	rewrite := func(planDir string, edit func(string) string) {
 		t.Helper()
 		b, _ := os.ReadFile(filepath.Join(planDir, "plan.json")) //nolint:gosec // test plan dir
@@ -794,7 +794,7 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 		t.Fatal("plan does not record the CLI that compiled it")
 	}
 	// The test binary is unstamped, so the plan names the binary, not only
-	// the version every unstamped build shares (agentry-cli#144).
+	// the version every unstamped build shares.
 	if !strings.HasPrefix(first.CompiledBy, "0.0.0-dev+exe.") {
 		t.Errorf("an unstamped build recorded %q, want 0.0.0-dev+exe.<digest>", first.CompiledBy)
 	}
@@ -811,8 +811,8 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 		t.Fatalf("plan from another CLI build was reused: %v compiledBy=%q %q", err, again.CompiledBy, errOut.String())
 	}
 	// A plan an older unstamped CLI cached records the bare 0.0.0-dev that
-	// every unstamped build used to share: recompiled. This is how the hosted
-	// worker kept running plans from before a compile change (agentry-cli#144).
+	// every unstamped build shares: recompiled, so a hosted worker does not
+	// keep running plans from before a compile change.
 	rewrite(planDir, func(s string) string { return strings.Replace(s, again.CompiledBy, "0.0.0-dev", 1) })
 	errOut.Reset()
 	again, _, err = ensurePlan(&errOut, home, m, meta, installDir, ws, pol, "policy-sha", "docker-agent", nil, manifest.ModeAutonomous)
@@ -828,12 +828,12 @@ func TestEnsurePlanRecompilesForANewerCLIOrRunnerImage(t *testing.T) {
 	}
 }
 
-// TestEnsurePlanRefusesAPlanEditedAfterCompile (agentry-cli#266): a
-// compiled plan is used only as compiled. plan.json edited after the
-// compile, with its generated files left alone so their hashes still
-// pass, refuses the run with the verify class instead of running the
-// edit; a plan with no record this runner home can check (none, or one
-// from another home's key) is recompiled, never trusted.
+// TestEnsurePlanRefusesAPlanEditedAfterCompile: a compiled plan is
+// used only as compiled. plan.json edited after the compile, with its
+// generated files left alone so their hashes still pass, refuses the
+// run with the verify class instead of running the edit; a plan with
+// no record this runner home can check (none, or one from another
+// home's key) is recompiled, never trusted.
 func TestEnsurePlanRefusesAPlanEditedAfterCompile(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)
@@ -927,10 +927,10 @@ func TestEnsurePlanRefusesAPlanEditedAfterCompile(t *testing.T) {
 	}
 }
 
-// TestRunPlanAsksNothingRecordsNothing (agentry-cli#124): --plan --json is
-// the consent-free preview. A first run of a contract with egress would
-// prompt (and fail off a TTY) under --dry-run; --plan reports that a run
-// would ask, records no consent, and writes nothing under the runner home.
+// TestRunPlanAsksNothingRecordsNothing: --plan --json is the consent-free
+// preview. A first run of a contract with egress would prompt (and fail
+// off a TTY) under --dry-run; --plan reports that a run would ask, records
+// no consent, and writes nothing under the runner home.
 func TestRunPlanAsksNothingRecordsNothing(t *testing.T) {
 	isolateEnv(t)
 	home, policyPath := isolateRunnerHome(t)
@@ -1008,8 +1008,8 @@ func TestRunPlanAsksNothingRecordsNothing(t *testing.T) {
 	}
 }
 
-// TestRunCachedUnsignedInstallIsRegated (agentry-cli#124): the unsigned gate
-// asks for --allow-unsigned on every run, not once per digest.
+// TestRunCachedUnsignedInstallIsRegated: the unsigned gate asks
+// for --allow-unsigned on every run, not once per digest.
 func TestRunCachedUnsignedInstallIsRegated(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -1031,7 +1031,7 @@ func TestRunCachedUnsignedInstallIsRegated(t *testing.T) {
 // TestRunRegistryRefusesAnInvalidManifest: a release downloaded from a
 // registry is validated exactly as a --local tree is, before it is cached.
 // The fake registry applies no publish-time rules, so it stands in for a
-// compromised or out-of-date one (security review 2026-09-20 §4.2, C3).
+// compromised or out-of-date one.
 func TestRunRegistryRefusesAnInvalidManifest(t *testing.T) {
 	isolateEnv(t)
 	home, policyPath := isolateRunnerHome(t)
@@ -1053,7 +1053,7 @@ func TestRunRegistryRefusesAnInvalidManifest(t *testing.T) {
 }
 
 // TestRunUnscannedIsItsOwnConsent: a release the registry admitted without
-// a scan (M22; the core's M21) is refused by run without --allow-unscanned — and
+// a scan is refused by run without --allow-unscanned — and
 // --allow-unsigned does not stand in for it — on the first run and on
 // every run from the cache; the receipt names the consent that admitted
 // it; --plan reports the verdict and the refusal instead of stopping.
@@ -1207,10 +1207,10 @@ func cachedInstall(t *testing.T, path string) installdir.Meta {
 	return meta
 }
 
-// TestEnsurePlanRecompilesUnderAnotherPolicy (agentry-cli#152): a cached
-// plan is reused only when it was compiled against the policy the run
-// read, so the receipt's policy.sha256 (the plan's policySha256) is
-// always the digest of the file the receipt's policy.path names.
+// TestEnsurePlanRecompilesUnderAnotherPolicy: a cached plan is reused
+// only when it was compiled against the policy the run read, so the
+// receipt's policy.sha256 (the plan's policySha256) is always the
+// digest of the file the receipt's policy.path names.
 func TestEnsurePlanRecompilesUnderAnotherPolicy(t *testing.T) {
 	isolateEnv(t)
 	home, _ := isolateRunnerHome(t)

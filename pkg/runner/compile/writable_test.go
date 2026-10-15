@@ -12,14 +12,14 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// TestEveryWritableBindHasAnExactEntry (agentry-cli#855): the gateway
-// starts a server with a writable host bind only when that exact host path
-// is in MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS, and the run's docker
-// filter refuses any bind whose source sits inside a writable root
-// without being that root. A paths write grant bound workspace/<p> rw
-// while the list named only the whole workspace, so the tools server never
-// started (exit 13). Every filesystem shape a manifest can take is held to
-// both rules here.
+// TestEveryWritableBindHasAnExactEntry: the gateway starts a server with a
+// writable host bind only when that exact host path is in
+// MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS, and the run's docker filter
+// refuses any bind whose source sits inside a writable root without being
+// that root. A paths write grant bound workspace/<p> rw while the list
+// named only the whole workspace, so the tools server never started (exit
+// 13). Every filesystem shape a manifest can take is held to both rules
+// here.
 func TestEveryWritableBindHasAnExactEntry(t *testing.T) {
 	base := "schemaVersion: \"2\"\nname: writable\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"w\"\nentrypoints:\n  instruction: SKILL.md\npublish:\n  include: [agent.yaml, SKILL.md]\n"
 	shapes := map[string]string{
@@ -83,8 +83,8 @@ func TestEveryWritableBindHasAnExactEntry(t *testing.T) {
 			}
 			// And no entry the tools server does not bind writable: the
 			// list is the run's write grant, not a wider one. Entries under
-			// cfg are the package servers' token folders (DR-77), which
-			// these fixtures do not declare but the rule exempts.
+			// cfg are the package servers' token folders, which these
+			// fixtures do not declare but the rule exempts.
 			for _, root := range writable {
 				if !slices.Contains(rw, root) && !strings.HasPrefix(root, spec.PHCfg+"/") {
 					t.Errorf("writable entry %q is no writable bind of the tools server (%q)", root, rw)

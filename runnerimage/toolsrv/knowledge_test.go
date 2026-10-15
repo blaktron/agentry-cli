@@ -1,4 +1,4 @@
-// Knowledge tools tests (plan knowledge.md §4.5, agentry-cli#317): the
+// Knowledge tools tests: the
 // three tools exist exactly when the engine attached a pack, reach only
 // the packs the spec names, stay read-only and inside each pack, and hold
 // read_input's byte cap. Expected values are literals written from the
@@ -360,7 +360,7 @@ func TestKnowledgeRead(t *testing.T) {
 
 // TestKnowledgeListNamesTheAttachedPacks: the list tool's description says
 // which packs this run has and that they come first, since the System
-// Prompt is compiled before any is attached (agentry-cli#520).
+// Prompt is compiled before any is attached.
 func TestKnowledgeListNamesTheAttachedPacks(t *testing.T) {
 	s := newTestServer(t, knowledgeSpec(t))
 	desc := s.tools[ToolKnowledgeList].description

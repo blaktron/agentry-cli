@@ -1,11 +1,10 @@
-// Package remote is the client of a registry's knowledge routes (plan
-// knowledge.md §4.3, §4.4; agentry-cli#319): wrap and unwrap a pack's data
-// key, create a pack, upload and download its sealed tree, list and delete,
-// for the account a session token or a personal access token with
-// knowledge:read and knowledge:write speaks for. It implements
+// Package remote is the client of a registry's knowledge routes: wrap and
+// unwrap a pack's data key, create a pack, upload and download its sealed
+// tree, list and delete, for the account a session token or a personal access
+// token with knowledge:read and knowledge:write speaks for. It implements
 // store.Registry for the CLI and the desktop alike, and, through Shared,
-// store.Shared for an organization's shared packs (Knowledge M8,
-// agentry-cli#380; the core's /orgs/{org}/knowledge/).
+// store.Shared for an organization's shared packs (the core's
+// /orgs/{org}/knowledge/).
 package remote
 
 import (
@@ -283,8 +282,8 @@ func safe(s string, limit int) string {
 const maxExport = knowledge.MaxBytes + 4<<20
 
 // OrgClient is one organization's shared packs at a registry, as the
-// account a Client speaks for (Knowledge M8): the registry answers it only
-// while that account is an active member, and 404 to anyone else.
+// account a Client speaks for: the registry answers it only while
+// that account is an active member, and 404 to anyone else.
 type OrgClient struct {
 	c   *Client
 	org string

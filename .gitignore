@@ -3,12 +3,12 @@
 .DS_Store
 /dist/
 # A run or a knowledge build from a checkout writes its output here; it
-# holds pages and receipts and never enters the tree (agentry-cli#436).
+# holds pages and receipts and never enters the tree.
 /agentry-out/
 __pycache__/
 *.pyc
-# Local credentials never enter the tree (agentry-cli#165): the estate's
-# convention for secrets is an .env file. build/release.env is a committed,
-# non-secret build input and is not matched by these patterns.
+# Local credentials never enter the tree: secrets live in an .env file.
+# build/release.env is a committed, non-secret build input and is not
+# matched by these patterns.
 .env
 .env.*

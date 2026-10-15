@@ -1,9 +1,8 @@
 package compile
 
-// Target hosts (plan runtime-hosts.md §4, invariants 2, 5, 8;
-// agentry-cli#861): a release that declares one compiles a host link,
-// a catalog entry of its own behind one relay a host, whose run-time values
-// are placeholders, and nothing else of the plan moves for it.
+// Target hosts: a release that declares one compiles a host link, a catalog
+// entry of its own behind one relay a host, whose run-time values are
+// placeholders, and nothing else of the plan moves for it.
 
 import (
 	"encoding/json"
@@ -79,7 +78,7 @@ func TestCompileRendersTheHostLink(t *testing.T) {
 		t.Fatalf("command = %v", got)
 	}
 	// One relay, to the address and port the run resolves, and no other
-	// network (invariant 3's half that is the plan's).
+	// network (the half of the network rule that is the plan's).
 	if got := strs(hl["allowHosts"]); !slices.Equal(got, []string{"@@RUN_HOST_server@@/tcp"}) || hl["disableNetwork"] != nil {
 		t.Fatalf("allowHosts = %v", got)
 	}
@@ -129,8 +128,8 @@ func TestCompileRendersTheHostLink(t *testing.T) {
 		}
 	}
 
-	// The agent container gains nothing (invariant 2): its spec is the
-	// plain run's, the harness's scrub leaves the host tools' output be.
+	// The agent container gains nothing: its spec is the plain run's, the
+	// harness's scrub leaves the host tools' output be.
 	agentYAML, err := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
 	if err != nil {
 		t.Fatal(err)
@@ -178,8 +177,8 @@ func TestTwoTargetHostsEachTakeTheirRelay(t *testing.T) {
 	}
 }
 
-// TestAReleaseWithoutATargetHostHasNoHostLink is invariant 8's other half:
-// nothing of the host link reaches a plan that declares none.
+// TestAReleaseWithoutATargetHostHasNoHostLink: nothing of the host link
+// reaches a plan that declares none.
 func TestAReleaseWithoutATargetHostHasNoHostLink(t *testing.T) {
 	planDir := t.TempDir()
 	plan, err := Compile(mcpFixtureInputs(t, nil, policy.Default()), planDir)

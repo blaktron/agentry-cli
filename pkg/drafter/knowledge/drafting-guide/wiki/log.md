@@ -53,3 +53,9 @@ A new page, A browser: when a task tests a website the person names as a person 
 
 - wrote: manifest/browser.md
 - updated: guide/start-here.md, manifest/intake-and-guide.md, manifest/manifest.md, manifest/exec.md, manifest/egress-and-fetch.md, manifest/secrets.md, runtime/how-a-run-works.md, draft/examples.md, draft/review.md, sources/runtime-facts.md
+
+## [2026-10-14] refactor | evidence without internal references (Drafter 1.15.1)
+
+The server lists' evidence lines say what was seen and when, instead of naming internal tickets, and the sources file's comments describe the file. No fact about a server changed.
+
+- updated: sources/servers.yaml, servers/does-not-run-here.md, servers/sign-ins.md (both generated)

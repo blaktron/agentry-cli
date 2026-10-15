@@ -14,10 +14,10 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// A remote server's bearer (plan mcp-oauth-connections.md §5;
-// agentry-cli#663) is resolved as any declared secret is, then written into
-// the server's own connection folder for its bridge, never into the
-// gateway's secrets file; the receipts mask it, and teardown deletes it.
+// A remote server's bearer is resolved as any declared secret is, then
+// written into the server's own connection folder for its bridge, never
+// into the gateway's secrets file; the receipts mask it, and teardown
+// deletes it.
 
 const remoteBearer = "ghp-remote-bearer-0123456789"
 
@@ -144,10 +144,10 @@ func TestAnOptionalRemoteBearerIsWrittenEmpty(t *testing.T) {
 	}
 }
 
-// TestNoPackageServerNoStore is agentry-cli#329, which a remote-only
-// release (agentry-cli#663) meets on every run: with no package server the
-// signature's store is neither required, nor labelled, nor named, whether
-// the release declares remote servers or none at all.
+// TestNoPackageServerNoStore: a remote-only release meets this on every
+// run. With no package server the signature's store is neither
+// required, nor labelled, nor named, whether the release declares remote
+// servers or none at all.
 func TestNoPackageServerNoStore(t *testing.T) {
 	for name, remote := range map[string]bool{"no servers": false, "a remote server": true} {
 		t.Run(name, func(t *testing.T) {
@@ -174,10 +174,9 @@ func TestNoPackageServerNoStore(t *testing.T) {
 	}
 }
 
-// An auth: oauth server (agentry-cli#664) is handed the access token the
-// caller refreshed from the person's connection, in the same folder and
-// the same way as a bearer: the bridge's alone, masked in receipts, gone
-// with the run.
+// An auth: oauth server is handed the access token the caller refreshed
+// from the person's connection, in the same folder and the same way as a
+// bearer: the bridge's alone, masked in receipts, gone with the run.
 
 const remoteAccessToken = "lin-oauth-access-token-0123456789"
 

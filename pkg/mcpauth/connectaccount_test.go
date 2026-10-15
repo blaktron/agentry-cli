@@ -110,7 +110,7 @@ func TestPoeConnectWithAnUnknownClientFailsInTheBrowser(t *testing.T) {
 	}
 }
 
-func TestPoeClientIDComesFromTheVariableUntilM8(t *testing.T) {
+func TestPoeClientIDComesFromTheVariableWhenTheBuildHasNone(t *testing.T) {
 	t.Setenv(mcpauth.PoeClientIDEnv, "")
 	if _, err := mcpauth.PoeClientID(); err == nil || !strings.Contains(err.Error(), mcpauth.PoeClientIDEnv) {
 		t.Fatalf("err %v: a build with no client must name the variable", err)
@@ -145,7 +145,7 @@ func TestHuggingFaceConnectRefusesAnUnservedClientDocument(t *testing.T) {
 	v := mcpauthtest.NewHuggingFace(t)
 	v.NoCIMD = true
 	_, err := v.Flow().Connect(context.Background(), v.CIMDURL())
-	if err == nil || !strings.Contains(err.Error(), "agentry-web#1331") {
+	if err == nil || !strings.Contains(err.Error(), "is not served") {
 		t.Fatalf("err %v", err)
 	}
 	if len(v.Authorizations) != 0 {
@@ -200,7 +200,7 @@ func TestHuggingFaceRevokeOnlyWhereItsDiscoveryNamesAnEndpoint(t *testing.T) {
 }
 
 // Hugging Face's discovery is held to its own host for the endpoints the
-// code, the verifier and the refresh token go to (I6).
+// code, the verifier and the refresh token go to.
 func TestHuggingFaceRefusesATokenEndpointOnAnotherHost(t *testing.T) {
 	v := mcpauthtest.NewHuggingFace(t)
 	v.ForeignToken = true

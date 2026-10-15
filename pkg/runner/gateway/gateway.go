@@ -1,8 +1,8 @@
-// Package gateway owns the "installed on first agent use" half of RQ2:
+// Package gateway owns the "installed on first agent use" half:
 // making sure the pinned docker-mcp-gateway and harness images are present
-// and the local runner image (§R7) is built, before any run needs them.
-// Containerized gateway only in v1 — RUNNER-DEVIATIONS DR-3 records why
-// the CLI-plugin auto-install path was rejected (supply-chain surface).
+// and the local runner image is built, before any run needs them.
+// Only the containerized gateway is supported: the CLI-plugin auto-install
+// path is rejected for its supply-chain surface.
 package gateway
 
 import (
@@ -25,15 +25,14 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
 
-// EnsureInstalled verifies the docker engine answers, pulls the pinned
-// gateway + harness images if absent, and builds the local runner image
-// from the embedded context if absent. Called from the install step of
-// `agentry run` (RQ5): after this returns nil, a run needs no further
-// network access for infrastructure.
-// harnessImage says whether this run needs the pinned harness image at
-// all: an adapter that drives the person's own installation runs no
-// container, so pulling docker-agent for it would be a download nobody
-// asked for (plan runner-m-r4-adapters §5).
+// EnsureInstalled verifies the docker engine answers, pulls the pinned gateway
+// + harness images if absent, and builds the local runner image from the
+// embedded context if absent. Called from the install step of `agentry run`:
+// after this returns nil, a run needs no further network access for
+// infrastructure. harnessImage says whether this run needs the pinned harness
+// image at all: an adapter that drives the person's own installation runs no
+// container, so pulling docker-agent for it would be a download nobody asked
+// for.
 func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	runnerTag, imageCtxDir string, logw io.Writer, harnessImage bool,
 ) error {
@@ -69,15 +68,14 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 		return nil
 	}
 	// The runner image is built, not pulled: its source ships inside this
-	// binary (§R7), so the image's own code needs no registry at all. Its
-	// two bases do: since DR-32 they come from our registry
-	// (ghcr.io/blaktron), GO_IMAGE from the policy's images.goBuilder and
-	// RUNTIME_IMAGE from the Dockerfile's pinned default, so first use
-	// needs ghcr.io for them and nothing else: the Dockerfile names no
-	// external frontend (agentry-cli#281). A new embedded context derives
-	// a new tag, which is what triggers rebuilds.
-	// The log names the builder base it hands the build, digest and all,
-	// so a run's own output shows what the image was built from (DR-32).
+	// binary, so the image's own code needs no registry at all. Its two bases
+	// do: they come from our registry (ghcr.io/blaktron), GO_IMAGE from the
+	// policy's images.goBuilder and RUNTIME_IMAGE from the Dockerfile's pinned
+	// default, so first use needs ghcr.io for them and nothing else: the
+	// Dockerfile names no external frontend. A new embedded context derives a
+	// new tag, which is what triggers rebuilds. The log names the builder base
+	// it hands the build, digest and all, so a run's own output shows what the
+	// image was built from.
 	_, _ = fmt.Fprintf(logw, "building %s from embedded context with GO_IMAGE=%s (first use)\n", runnerTag, pol.Images.GoBuilder)
 	if err := runnerimage.Materialize(imageCtxDir); err != nil {
 		return fmt.Errorf("materialize runner image context: %w", err)
@@ -85,8 +83,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	if err := d.Build(ctx, imageCtxDir, runnerTag, map[string]string{"GO_IMAGE": pol.Images.GoBuilder}); err != nil {
 		// The context's go.mod names the CLI's Go to the patch, and the Go
 		// images refuse a newer go line under GOTOOLCHAIN=local: say which
-		// setting to change rather than leave it in docker's output
-		// (agentry-cli#786).
+		// setting to change rather than leave it in docker's output.
 		if strings.Contains(err.Error(), "go.mod requires go >=") {
 			return fmt.Errorf("build runner image: images.goBuilder %s is older than the Go the runner needs; point it at a builder of that Go or newer, or remove it for the default: %w", pol.Images.GoBuilder, err)
 		}
@@ -96,11 +93,10 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 }
 
 // EnsureInstalledFor is EnsureInstalled for one plan: the harness image
-// prepared is the one the plan's adapter runs and no other (plan
-// model-sign-ins.md D7), none for a host harness. A published image is
-// pulled by its pinned ref; one pinned by the artifact it is built from is
-// built on this machine (harnessbuild), refused when this build cannot
-// build it (I8).
+// prepared is the one the plan's adapter runs and no other, none for a host
+// harness. A published image is pulled by its pinned ref; one pinned by the
+// artifact it is built from is built on this machine (harnessbuild), refused
+// when this build cannot build it.
 func EnsureInstalledFor(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 	runnerTag, imageCtxDir string, logw io.Writer, plan *spec.Plan,
 ) error {
@@ -134,7 +130,7 @@ func checkHarnessImage(adapterName string, h policy.HarnessImage) error {
 
 // EnsureHarnessImage makes adapterName's harness image h present: pulled
 // by its pinned ref, which names a digest, or built here from the artifact
-// it is pinned by (I8). Setup prepares the default adapter's image with
+// it is pinned by. Setup prepares the default adapter's image with
 // it, a run its plan's (EnsureInstalledFor).
 func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName string, h policy.HarnessImage, logw io.Writer) error {
 	if err := checkHarnessImage(adapterName, h); err != nil {
@@ -154,16 +150,15 @@ func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName strin
 	return nil
 }
 
-// EnsureRuntime refuses, before anything is pulled or started, a policy
-// whose docker.runtime the daemon has not registered (DR-23): a run that
-// quietly landed on runc after asking for runsc would carry a receipt
-// claiming an isolation it did not have. The error names the runtime the
-// policy wants and the ones the daemon has. The gateway's own runtime
-// (docker.gatewayRuntime, agentry-cli#337) is held to the same rule, and
-// by what it runs as well as its name: it must be docker.runtime's binary
-// registered again with --host-uds=open and nothing else, since the
-// receipt says the gateway ran under it (agentry-cli#396). An unset
-// runtime asks nothing.
+// EnsureRuntime refuses, before anything is pulled or started, a policy whose
+// docker.runtime the daemon has not registered: a run that quietly landed on
+// runc after asking for runsc would carry a receipt claiming an isolation it
+// did not have. The error names the runtime the policy wants and the ones the
+// daemon has. The gateway's own runtime (docker.gatewayRuntime) is held to the
+// same rule, and by what it runs as well as its name: it must be
+// docker.runtime's binary registered again with --host-uds=open and nothing
+// else, since the receipt says the gateway ran under it. An unset runtime asks
+// nothing.
 func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) error {
 	if pol.Docker.Runtime == "" && pol.Docker.GatewayRuntime == "" {
 		return nil
@@ -195,21 +190,20 @@ func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) er
 // line, `apk list --installed`), read back into the receipt.
 const ExecPackagesFile = "/etc/agentry/exec-packages"
 
-// EnsureExecImage builds the per-QuickAgent exec image for a plan when
-// absent (agentry-cli#9, #100): `FROM <runnerImage>`, the operator's
-// catalogued apk packages installed (from the policy's mirror when one is
-// named) with their resolved versions recorded into the image, git's
-// safe.directory when git is declared, then one exec-form RUN of the
-// runner binary's `minimize` role, so the resulting image holds only the
-// declared commands (and the runner binary that serves the tools). The
-// context is a generated Dockerfile under ctxDir. Returns the resolved
-// package versions, read from the image whether it was built now or
-// found; nil when no exec is declared.
+// EnsureExecImage builds the per-QuickAgent exec image for a plan when absent:
+// `FROM <runnerImage>`, the operator's catalogued apk packages installed (from
+// the policy's mirror when one is named) with their resolved versions recorded
+// into the image, git's safe.directory when git is declared, then one exec-form
+// RUN of the runner binary's `minimize` role, so the resulting image holds only
+// the declared commands (and the runner binary that serves the tools). The
+// context is a generated Dockerfile under ctxDir. Returns the resolved package
+// versions, read from the image whether it was built now or found; nil when no
+// exec is declared.
 //
-// An Unsafe Mode exec image (img.Unsafe; agentry-cli#490) is built from
-// the unsafe base instead and rebuilt when its last build left tools
-// uninstalled; its result lists what installed, then what did not, each of
-// those marked spec.ExecNotInstalledPrefix.
+// An Unsafe Mode exec image (img.Unsafe) is built from the unsafe base instead
+// and rebuilt when its last build left tools uninstalled; its result lists what
+// installed, then what did not, each of those marked
+// spec.ExecNotInstalledPrefix.
 func EnsureExecImage(ctx context.Context, d dockerx.Client, runnerImage string, img spec.ExecImageSpec, ctxDir string, logw io.Writer) ([]string, error) {
 	if img.Tag == "" {
 		return nil, nil
@@ -256,7 +250,7 @@ func EnsureExecImage(ctx context.Context, d dockerx.Client, runnerImage string, 
 // shell still exists.
 func execDockerfile(runnerImage string, img spec.ExecImageSpec) string {
 	var b strings.Builder
-	b.WriteString("# generated by agentry: the runner image with the operator's catalogued packages, minimized to the declared exec commands (agentry-cli#9, #100)\n")
+	b.WriteString("# generated by agentry: the runner image with the operator's catalogued packages, minimized to the declared exec commands\n")
 	b.WriteString("FROM " + runnerImage + "\n")
 	b.WriteString(imagelabel.Line(imagelabel.Exec))
 	if len(img.Packages) > 0 {
@@ -272,7 +266,7 @@ func execDockerfile(runnerImage string, img spec.ExecImageSpec) string {
 		for _, p := range img.Packages {
 			names = append(names, strings.SplitN(p, "=", 2)[0])
 			// Unpinned busybox is the runner image's own (every base
-			// command's, agentry-cli#595): asking apk for it again would
+			// command's): asking apk for it again would
 			// make the build fetch the indexes for nothing, and fail
 			// where they cannot be fetched.
 			if p != "busybox" {

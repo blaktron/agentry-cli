@@ -172,7 +172,7 @@ func TestChatGPTRevokeRevokesTheRefreshTokenAsTheIssuedClient(t *testing.T) {
 	}
 }
 
-// The refresh token goes to OpenAI alone (I6): a discovery document that
+// The refresh token goes to OpenAI alone: a discovery document that
 // names a revocation endpoint elsewhere is refused, and nothing is sent.
 func TestChatGPTRevokesAtOpenAIsDomainAlone(t *testing.T) {
 	v := mcpauthtest.NewChatGPT(t)

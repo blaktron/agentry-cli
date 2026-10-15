@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Acceptance for agentry-cli#240: a release cut from main bakes production's
-# registry, one cut from dev bakes dev's, and nothing else is a release.
+# Acceptance: a release cut from main bakes production's registry, one cut
+# from dev bakes dev's, and nothing else is a release.
 #
 #   scripts/acceptance/release-registry.sh
 #
-# Builds a throwaway origin with the estate's branch model — dev merges
+# Builds a throwaway origin with the repository's branch model: dev merges
 # feature branches with merge commits, main takes only promotions of dev
-# with merge commits — clones it as actions/checkout does (fetch-depth 0,
+# with merge commits. It clones it as actions/checkout does (fetch-depth 0,
 # origin/* refs), and asks scripts/release-registry.sh about each kind of
 # commit a tag could name. Then it builds the CLI with `make dist` and what a
 # main commit is given, and reads the registry back from the binary's

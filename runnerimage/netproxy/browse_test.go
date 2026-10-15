@@ -10,8 +10,7 @@ import (
 	"testing"
 )
 
-// The browse proxy (agentry-notes plans/browser-testing.md §3 invariant 3,
-// §6, D1, D2, D13; agentry-cli#915): it admits the run's sites with their
+// The browse proxy: it admits the run's sites with their
 // subdomains, the declared hosts, or any public name; it resolves every
 // name itself and dials only the address it checked, on 80 or 443 or a
 // site's own port; private, loopback, link-local, CGNAT and metadata
@@ -157,7 +156,7 @@ func TestBrowseRefusesWithAReason(t *testing.T) {
 	}
 }
 
-// TestBrowseAPersonTypedLANSite is D2: in a local run, the exact private
+// TestBrowseAPersonTypedLANSite: in a local run, the exact private
 // host the person typed is reached on its own port, plain http included.
 func TestBrowseAPersonTypedLANSite(t *testing.T) {
 	var host string
@@ -193,8 +192,8 @@ func TestBrowseAPersonTypedLANSite(t *testing.T) {
 	}
 }
 
-// TestBrowseForwardsAPagesPlainHTTP: an http:// page in scope is forwarded
-// (the role answered 405 before M4), and one out of scope is refused
+// TestBrowseForwardsAPagesPlainHTTP: an http:// page in scope is forwarded,
+// and one out of scope is refused
 // without a connection.
 func TestBrowseForwardsAPagesPlainHTTP(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

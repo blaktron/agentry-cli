@@ -1,4 +1,4 @@
-// Package trust is the shared client-side provenance layer (§8.8): fetch a
+// Package trust is the shared client-side provenance layer: fetch a
 // registry's signing keys, pin them on first use (TOFU) with key-id
 // continuity warnings, and verify DSSE envelopes offline against an archive
 // digest. Verification uses the same library code the server signs with
@@ -26,11 +26,11 @@ import (
 )
 
 // SigningKey is one entry from /.well-known/agentry/signing-keys.json.
-// Status and RetiredAt are the registry's own record of the key
-// (agentry#350): "active" for the key that signs today, "retired" (with
-// the date) for one it signed with before and no longer does, empty for a
-// verification-only key the registry never signed with. They are shown,
-// never trusted: which keys verify is decided by the pinned PEMs alone.
+// Status and RetiredAt are the registry's own record of the key: "active"
+// for the key that signs today, "retired" (with the date) for one it
+// signed with before and no longer does, empty for a verification-only
+// key the registry never signed with. They are shown, never trusted:
+// which keys verify is decided by the pinned PEMs alone.
 type SigningKey struct {
 	KeyID     string `json:"keyId" yaml:"keyId"`
 	Algorithm string `json:"algorithm" yaml:"algorithm"`
@@ -39,7 +39,7 @@ type SigningKey struct {
 	RetiredAt string `json:"retiredAt,omitempty" yaml:"retiredAt,omitempty"`
 }
 
-// Key statuses the registry advertises (agentry#350).
+// Key statuses the registry advertises.
 const (
 	KeyStatusActive  = "active"
 	KeyStatusRetired = "retired"
@@ -66,22 +66,21 @@ const (
 	StateMismatch     = "mismatch"
 	// StateUnscanned is a version the registry admitted without a scan
 	// (an organization's private agent its administrator took off the
-	// pipeline; plan organization-subscriptions §4): no findings, no
-	// report and no attestation, because nothing was attested. It is
-	// its own outcome — not unsigned (a registry that signs nothing), and
-	// not a scan with a known gap.
+	// pipeline): no findings, no report and no attestation, because
+	// nothing was attested. It is its own outcome — not unsigned (a
+	// registry that signs nothing), and not a scan with a known gap.
 	StateUnscanned = "unscanned"
 	// StateBuiltin is a package this binary embeds, run as part of the
-	// application (plan knowledge.md §4.2, D6): not a release, so it has
-	// no registry attestation and needs none, and it is never verified —
-	// a client shows it as the application's own, never as a verified
-	// release. Only localrun's Materialize of an embedded package sets it,
-	// in memory; no record on disk carries it into a run.
+	// application: not a release, so it has no registry attestation and
+	// needs none, and it is never verified — a client shows it as the
+	// application's own, never as a verified release. Only localrun's
+	// Materialize of an embedded package sets it, in memory; no record on
+	// disk carries it into a run.
 	StateBuiltin = "builtin"
 	// StateLocal is a package from a folder on this machine: a `run
 	// --local` directory, or a QuickAgent installed from one and never
-	// published (agentry-cli#491). Nothing attests to it, so every client
-	// gates it as it gates unsigned.
+	// published. Nothing attests to it, so every client gates it as it
+	// gates unsigned.
 	StateLocal = "local"
 )
 
@@ -115,12 +114,12 @@ type AttestationResult struct {
 	KeyRotated bool `json:"keyRotated,omitempty"`
 	// KeyChange says how the registry's advertised key set differs from
 	// the pinned one, when a signature no pinned key verifies made us
-	// look (agentry-cli#139).
+	// look.
 	KeyChange *KeyChange `json:"keyChange,omitempty"`
 	// KeyRetired is true when the key that verified the signature is one
-	// the registry records as retired (agentry#350), and KeyRetiredAt is
-	// the date it gives. Shown, not judged: a retired key's signature
-	// verifies exactly as before.
+	// the registry records as retired, and KeyRetiredAt is the date it
+	// gives. Shown, not judged: a retired key's signature verifies
+	// exactly as before.
 	KeyRetired   bool   `json:"keyRetired,omitempty"`
 	KeyRetiredAt string `json:"keyRetiredAt,omitempty"`
 }
@@ -157,11 +156,10 @@ func retiredDate(v string) string {
 }
 
 // KeyChange is how a registry's advertised key set differs from the
-// pinned one (agentry-cli#139). Under agentry#350 a rotation adds the new
-// key and keeps every earlier one listed as retired, so an advertised set
-// that is a strict superset of the pinned one is what a rotation looks
-// like; a pinned key that disappears, or an id that now carries a
-// different public key, is not.
+// pinned one. A rotation adds the new key and keeps every earlier one
+// listed as retired, so an advertised set that is a strict superset of
+// the pinned one is what a rotation looks like; a pinned key that
+// disappears, or an id that now carries a different public key, is not.
 type KeyChange struct {
 	// Added are key ids the registry advertises that are not pinned.
 	Added []string `json:"added,omitempty"`
@@ -304,10 +302,10 @@ func FetchKeys(ctx context.Context, hc *http.Client, registryURL string) (KeySet
 }
 
 // EnvPinRegistry names the registry whose pinned keys verify attestations
-// in place of the one being talked to (agentry-cli#232). A driver that
-// points --registry at a run-scoped prefix of a registry keeps the pins it
-// made at login against the registry itself, instead of trusting whatever
-// the prefix serves on first use under a pin file named after the prefix.
+// in place of the one being talked to. A driver that points --registry at
+// a run-scoped prefix of a registry keeps the pins it made at login
+// against the registry itself, instead of trusting whatever the prefix
+// serves on first use under a pin file named after the prefix.
 const EnvPinRegistry = "AGENTRY_PIN_REGISTRY"
 
 // PinnedKeysPath is where TOFU-pinned keys live, per registry: the one
@@ -379,16 +377,16 @@ func savePinnedFile(path string, set KeySet) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// PinAtLogin implements the §11 login row: "pins signing keys (TOFU)".
-// Pinning at login rather than at first verify is the whole point — login is
-// the moment a human deliberately chose this registry and typed a credential
-// for it, which is exactly when trust-on-first-use should be established.
-// Pinning later, at the first `verify` or `install`, silently moves that
-// decision to whichever download happens to come first.
+// PinAtLogin pins the registry's signing keys at login (TOFU). Pinning at
+// login rather than at first verify is the whole point — login is the moment
+// a human deliberately chose this registry and typed a credential for it,
+// which is exactly when trust-on-first-use should be established. Pinning
+// later, at the first `verify` or `install`, silently moves that decision to
+// whichever download happens to come first.
 //
 // It returns a human-readable note describing what happened, and never fails
 // the login: a registry with signing switched off publishes an empty key set,
-// and that is a legitimate self-host configuration (§8.8), not a login error.
+// and that is a legitimate self-host configuration, not a login error.
 func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string {
 	return PinAtLoginResult(ctx, hc, registryURL).Note
 }
@@ -406,7 +404,7 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 	// Login pins the registry it was pointed at, whatever
 	// AGENTRY_PIN_REGISTRY names: the override chooses which pins verify,
 	// and must never let a prefix's keys be written into another
-	// registry's pin file (agentry-cli#232).
+	// registry's pin file.
 	own, err := ownPinnedKeysPath(registryURL)
 	if err != nil {
 		return LoginPinResult{"unavailable", "could not read pinned signing keys: " + err.Error()}
@@ -449,10 +447,9 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 	}
 	// A changed key set at login is reported, never silently adopted:
 	// re-pinning on the strength of a fresh fetch would defeat the pin.
-	// A superset is reported as consistent with a rotation
-	// (agentry-cli#139, DR-35), which is all the client can tell, and is
-	// still not adopted: the new key is trusted only after a deliberate
-	// re-pin.
+	// A superset is reported as consistent with a rotation, which is
+	// all the client can tell, and is still not adopted: the new key is
+	// trusted only after a deliberate re-pin.
 	repin := "delete " + own + " and log in again to re-pin deliberately"
 	if change.Rotation() {
 		return LoginPinResult{"rotation", "possible key rotation: the registry " + change.String() + " and still advertises every pinned key" + statusNote + ", which is consistent with a key rotation. " +
@@ -468,7 +465,7 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 // archiveDigest is the digest the client computed from the downloaded bytes,
 // so a verified attestation binds the signature to what is actually on disk.
 // token, when non-empty, is attached as a bearer credential — but only to
-// requests going to the registry's own host, never to a CDN (§9.4).
+// requests going to the registry's own host, never to a CDN.
 func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token, attestationURL, archiveDigest string) AttestationResult {
 	if attestationURL == "" {
 		return AttestationResult{State: StateUnsigned, Detail: "the registry published no attestation for this version"}
@@ -638,7 +635,7 @@ func SameKeyIDs(a, b KeySet) bool {
 }
 
 // sameHost reports whether two URLs share a host, so the bearer token is
-// only ever attached to the registry itself, never to a CDN (§9.4).
+// only ever attached to the registry itself, never to a CDN.
 func sameHost(a, b string) bool {
 	ua, err1 := url.Parse(a)
 	ub, err2 := url.Parse(b)

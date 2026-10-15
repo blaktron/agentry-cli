@@ -27,7 +27,7 @@ import (
 
 // TestNpmBuilderRunsUnderNode runs npm_builder.js with the host's node and
 // npm against a local registry serving one generated package, the way the
-// runtime image runs it (agentry-cli#91): it installs the pinned tarball
+// runtime image runs it: it installs the pinned tarball
 // when it matches the recorded integrity (SRI sha512, or the legacy sha1
 // form), refuses a mismatch (exit 4) and a missing integrity (exit 3)
 // before anything is installed, and passes a value with shell syntax to npm
@@ -128,7 +128,7 @@ func TestNpmBuilderRunsUnderNode(t *testing.T) {
 
 // TestNpmBuilderChecksEngines runs npm_builder.js under the host's node, as
 // TestNpmBuilderRunsUnderNode does, against packages whose engines.node the
-// host's Node does or does not satisfy (agentry-cli#608): a mismatch exits
+// host's Node does or does not satisfy: a mismatch exits
 // 5, naming the range, the runtime's Node and the policy key, before
 // anything is installed; a satisfied range, or none, installs.
 func TestNpmBuilderChecksEngines(t *testing.T) {

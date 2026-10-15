@@ -60,7 +60,7 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// In the gateway's spelling of the run's directory: the same bytes on
-	// Linux and macOS, /c/… on Windows (agentry-cli#414).
+	// Linux and macOS, /c/… on Windows.
 	if !strings.Contains(string(catalog), gatewayPath(filepath.Join(runDir, "knowledge"))+":/knowledge:ro") {
 		t.Fatalf("rendered catalog lacks the ro knowledge mount:\n%s", catalog)
 	}
@@ -85,8 +85,8 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 	if !strings.HasSuffix(string(tools), wantTools) {
 		t.Fatalf("rendered tools.yaml =\n%s\nwant it to end\n%s", tools, wantTools)
 	}
-	// §R11 invariant 2 holds with a pack attached: the agent container
-	// mounts /plan and nothing else.
+	// Isolation holds with a pack attached: the agent container mounts /plan
+	// and nothing else.
 	agent, ok := f.FindRun("-agent")
 	if !ok {
 		t.Fatal("agent run not recorded")
@@ -225,8 +225,7 @@ func TestKnowledgeTwoPacksOneNameRefused(t *testing.T) {
 
 // TestShippedKnowledgeLine: a pack the release ships is named as the
 // release's in the receipt, by the archive digest the attestation covers,
-// beside an attached pack named as before (plan knowledge.md §4.6,
-// agentry-cli#320).
+// beside an attached pack.
 func TestShippedKnowledgeLine(t *testing.T) {
 	got := withKnowledge(nil, []AttachedPack{
 		{Name: "aws-docs", Digest: "sha256:ab", Pages: 1, Bytes: 216, Shipped: &ShippedFrom{InWorkspace: "knowledge/aws-docs", Release: "archive sha256:arch"}},
@@ -245,7 +244,7 @@ func TestShippedKnowledgeLine(t *testing.T) {
 // CheckWorkspace held that copy to the install record, and held to the
 // digest its caller pinned: a pack swapped in the install after it was
 // loaded is refused before any container starts, even if it is swapped
-// back for the workspace check (agentry-cli#320).
+// back for the workspace check.
 func TestAShippedPackIsStagedFromTheVerifiedWorkspace(t *testing.T) {
 	shipIn := func(t *testing.T, p *Params, pack *knowledge.Pack) AttachedPack {
 		t.Helper()

@@ -47,7 +47,7 @@ func signInRunFixture(t *testing.T) (policyPath string, f *dockerx.Fake) {
 }
 
 // A hosted run's markers refuse a sign-in plan through `agentry run`
-// itself (I5): exit 11, before a harness image is pulled and before any
+// itself: exit 11, before a harness image is pulled and before any
 // container starts.
 func TestAgentryRunRefusesASignInForAHostedRun(t *testing.T) {
 	policyPath, f := signInRunFixture(t)
@@ -69,7 +69,7 @@ func TestAgentryRunRefusesASignInForAHostedRun(t *testing.T) {
 }
 
 // `agentry run --max-cost` is refused for a plan run before anything is
-// installed (D13).
+// installed.
 func TestAgentryRunRefusesACostBudgetForAPlanRun(t *testing.T) {
 	policyPath, f := signInRunFixture(t)
 	_, _, err := runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/pure-text"), "--allow-unsigned", "--yes",
@@ -81,7 +81,7 @@ func TestAgentryRunRefusesACostBudgetForAPlanRun(t *testing.T) {
 }
 
 // On this computer `agentry run` hands the run its sign-in's access token
-// alone (I3): a probe search of the runner home's run folders, the output
+// alone: a probe search of the runner home's run folders, the output
 // folder and every docker call finds no refresh token, and no access
 // token outside the run's own token file, which dies with the run.
 func TestAgentryRunHandsItsSignInsAccessTokenAlone(t *testing.T) {
@@ -134,8 +134,8 @@ func TestAgentryRunHandsItsSignInsAccessTokenAlone(t *testing.T) {
 }
 
 // A hosted run's markers refuse a release that declares a target host
-// through `agentry run` itself (plan runtime-hosts.md D11, agentry-cli#861):
-// exit 11, host-refused, before any image is pulled or container started.
+// through `agentry run` itself: exit 11, host-refused, before any image
+// is pulled or container started.
 func TestAgentryRunRefusesATargetHostForAHostedRun(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -157,7 +157,7 @@ func TestAgentryRunRefusesATargetHostForAHostedRun(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 	// A hosted run's job token alone marks it too, and so does the host's
-	// own marker (agentry-enterprise#534).
+	// own marker.
 	t.Setenv(envHosted, "1")
 	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", repoPath(t, "testdata/runner/target-host"), "--allow-unsigned", "--yes",
 		"--policy", policyPath, "--intake", "server=admin@203.0.113.4")

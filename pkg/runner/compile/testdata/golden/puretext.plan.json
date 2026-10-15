@@ -179,11 +179,11 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "302d165fc42fca1ae946f1de4819f93e3560e585d5e5369a964ee94febff2df3",
+    "gateway/catalog.yaml": "f644f4d082649e04489900d3f9e718cfa120e8a21c13091b3dd245d604a343d3",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "46993c9ffdb687abec8b11549c7b0873941f0ec3127425a5e5c5e5cd1978b055",
     "gateway/toolspec.json": "22334348ed32a4dafd0340b14dc4001b97fa794522d2c56b0feface2c46b5b4a",
-    "harness/agent.yaml": "e315711ea03d8ca32dde5c86e318053c4bd81c97e21193dc75b44565a9368a32"
+    "harness/agent.yaml": "681344964a3b2175e904c142b98116c86139b1fa0408b15015155509f528feeb"
   }
 }

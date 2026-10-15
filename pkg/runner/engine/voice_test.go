@@ -120,7 +120,7 @@ func TestVoiceIsStagedGrantedAndNamed(t *testing.T) {
 
 // TestAttachedVoiceWidensNothing: attaching a voice moves neither the plan
 // the run executes, nor its hash, nor the installed plan files, and no
-// enforcement line but its own differs (plan writing-voice.md §3, 1).
+// enforcement line but its own differs.
 func TestAttachedVoiceWidensNothing(t *testing.T) {
 	run := func(t *testing.T, attach bool) (map[string]string, string, map[string]string) {
 		t.Helper()

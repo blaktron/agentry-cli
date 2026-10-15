@@ -18,15 +18,13 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
 
-// The install's egress (agentry-cli#92, DR-12). A run's containers have
-// one route out, the CONNECT proxy whose allowlist the plan names; the
-// MCP-server builder used to fetch over Docker's default bridge, which
-// reached every host there is. Now each install gets the same shape as a
-// run: an internal network with no route off it, and on it the runner
-// image's proxy, the one container with a second leg on the bridge, whose
-// allowlist is the configured registry plus the artifact hosts the
-// registry's own metadata named for the pinned release. The builder sees
-// the proxy through the usual proxy variables and nothing else.
+// The install's egress. A run's containers have one route out, the CONNECT
+// proxy whose allowlist the plan names; the MCP-server builder gets the same
+// shape as a run: an internal network with no route off it, and on it the
+// runner image's proxy, the one container with a second leg on the bridge,
+// whose allowlist is the configured registry plus the artifact hosts the
+// registry's own metadata named for the pinned release. The builder sees the
+// proxy through the usual proxy variables and nothing else.
 
 const (
 	// installProxyAlias and installProxyPort locate the proxy on the
@@ -44,19 +42,19 @@ const (
 // installNetworkName and installProxyName are fixed per server, like the
 // builder's own name: a leftover from a CLI killed mid-install is removed
 // before the next install of that server (and the proxy by the owner
-// sweep, agentry-cli#161).
+// sweep).
 func installNetworkName(id string) string { return "agentry-mcpinstall-" + id + "-net" }
 
 // installEgressName is the proxy's own way out when it runs under the
-// policy's runtime (agentry-cli#337): a network joined at create, since a
+// policy's runtime: a network joined at create, since a
 // sandbox takes no network connected after start and docker refuses the
 // default bridge beside a user-defined network at create.
 func installEgressName(id string) string { return "agentry-mcpinstall-" + id + "-out" }
 func installProxyName(id string) string  { return "agentry-mcpproxy-" + id }
 
 // proxyImage is the runner image, whose proxy role is the run's own
-// CONNECT proxy: the tag both clients build from the embedded context
-// (DR-14), or the policy's images.runner.
+// CONNECT proxy: the tag both clients build from the embedded context,
+// or the policy's images.runner.
 func proxyImage(images policy.Images) string {
 	return (&policy.Policy{Images: images}).RunnerImageTag(runnerimage.ContentVersion())
 }
@@ -140,14 +138,13 @@ func (e *installEgress) env() map[string]string {
 	}
 }
 
-// startInstallProxy creates the install's internal network and starts the
-// proxy on it, joined to the bridge as its second leg; under the policy's
-// runtime with the host's name servers (agentry-cli#337), to a network of
-// the install's own at create instead, reading a resolv.conf of its own.
-// The runner image
-// must already be built (the install step builds it before any server is
-// installed); a missing one is refused rather than left to docker, which
-// would try to pull a name that is only ever built locally.
+// startInstallProxy creates the install's internal network and starts the proxy
+// on it, joined to the bridge as its second leg; under the policy's runtime
+// with the host's name servers, to a network of the install's own at create
+// instead, reading a resolv.conf of its own. The runner image must already be
+// built (the install step builds it before any server is installed); a missing
+// one is refused rather than left to docker, which would try to pull a name
+// that is only ever built locally.
 func startInstallProxy(ctx context.Context, d dockerx.Client, id, storeDir string, allow []string,
 	images policy.Images, docker policy.DockerPolicy, logw io.Writer,
 ) (*installEgress, error) {
@@ -176,8 +173,7 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id, storeDir strin
 		// The daemon's default runtime, like the run's llm-proxy, unless
 		// the host's name servers are named: it resolves the registry's
 		// hosts by name, and a sandboxed runtime does not reach docker's
-		// embedded DNS (measured under runsc on dev, DR-23,
-		// agentry-cli#221, #337).
+		// embedded DNS (as under runsc).
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	spec.ReadOnly, spec.Tmpfs = true, []string{"/tmp"}
 	if docker.SandboxesProxies() {
@@ -200,7 +196,7 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id, storeDir strin
 	return e, nil
 }
 
-// sandboxProxy puts the proxy under the policy's runtime (agentry-cli#337):
+// sandboxProxy puts the proxy under the policy's runtime:
 // its egress network, made here and joined at create, and a resolv.conf of
 // the install's own naming the host's name servers, bound over docker's.
 // The file is written under the server store, which the docker daemon
@@ -208,7 +204,7 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id, storeDir strin
 // container that shares only its runner home with the host, so a file in
 // the process's temporary directory was missing on the daemon's side,
 // which bound a directory it made in its place and left runsc unable to
-// start the proxy (agentry-cli#627).
+// start the proxy.
 func (e *installEgress) sandboxProxy(ctx context.Context, id, storeDir string, labels map[string]string,
 	docker policy.DockerPolicy, spec *dockerx.RunSpec,
 ) error {
@@ -245,7 +241,7 @@ func (e *installEgress) sandboxProxy(ctx context.Context, id, storeDir string, l
 // hosts pins the proxy's alias into a builder that runs under a
 // sandboxed runtime, which cannot ask docker's embedded DNS for it: the
 // builder under runsc failed every install with "getaddrinfo EAI_AGAIN
-// mcp-install-proxy" (dev, agentry-cli#221). Without a runtime nothing is
+// mcp-install-proxy" (dev). Without a runtime nothing is
 // pinned and docker resolves the alias as before.
 func (e *installEgress) hosts(ctx context.Context, runtime string) ([]string, error) {
 	if runtime == "" {

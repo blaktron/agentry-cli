@@ -1,4 +1,4 @@
-// The MCP wire loop (RUNNER-PLAN §R3): newline-delimited JSON-RPC 2.0 on
+// The MCP wire loop: newline-delimited JSON-RPC 2.0 on
 // stdio — one JSON object per line, no Content-Length framing — which is
 // the framing the Docker MCP Gateway speaks to the servers it launches.
 // Only the method subset a one-shot tool server needs is implemented:
@@ -84,7 +84,7 @@ type server struct {
 	// command absent from the image is absent here (tools.go).
 	shims map[string]string
 	// confine is how a declared command is held to the places it may
-	// write (confinement.go; agentry-cli#596); set when exec is granted.
+	// write (confinement.go); set when exec is granted.
 	confine confinement
 	// webState is the web tools' per-run state, built on first use
 	// (web.go); a test may set it first.
@@ -163,8 +163,8 @@ func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
 		return err
 	}
 	// Before any tool can run: a catalogued exec command must not be able
-	// to read the granted secrets out of /proc/<this pid>/environ
-	// (agentry-cli#246, DR-34). Fail closed when exec is granted — the
+	// to read the granted secrets out of /proc/<this pid>/environ.
+	// Fail closed when exec is granted: the
 	// protection is what makes exec and secrets safe to grant together.
 	if err := hideEnvironment(); err != nil {
 		if len(spec.Exec.Commands) > 0 {
@@ -194,7 +194,7 @@ func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
 
 // validateSpec refuses configurations the compiler should never have
 // produced. Failing before the first request means a bad spec surfaces as
-// a dead server the gateway health-check catches (§R6), not as tools that
+// a dead server the gateway health-check catches, not as tools that
 // half-work against wrong roots.
 func validateSpec(spec *Spec) error {
 	if spec == nil {
@@ -304,7 +304,7 @@ func (s *server) initializeResult(params json.RawMessage) map[string]any {
 }
 
 // toolsListResult advertises exactly the granted tools in registration
-// order — the §R11 invariant-4 surface: what is not here does not exist
+// order, the whole tool surface: what is not here does not exist
 // as far as the model can tell.
 func (s *server) toolsListResult() map[string]any {
 	tools := make([]map[string]any, 0, len(s.order))
@@ -337,7 +337,7 @@ func (s *server) handleToolsCall(req rpcRequest) {
 		return
 	}
 	// A panicking tool must cost one errored call, not the server — the
-	// gateway treats a dead server as a dead run (§R8 exit 13).
+	// gateway treats a dead server as a dead run (exit 13).
 	defer func() {
 		if r := recover(); r != nil {
 			s.logf("tool %s panicked: %v", p.Name, r)
@@ -374,11 +374,10 @@ const InputResourceURI = "agentry://inputs"
 // inputResult carries a successful answer of an input tool (read_input,
 // search_inputs) as an embedded text resource instead of a text item.
 //
-// The person's inputs reach the agent unchanged, credentials included
-// (plan quickagents-that-run.md D4 as answered by the operator,
-// agentry-cli#632, DR-78): a review of a Dockerfile must be able to read
-// the key it is looking for. The gateway's --block-secrets (pinned on,
-// agentry-cli#142) refuses any tool result whose text items look like a
+// The person's inputs reach the agent unchanged, credentials included:
+// a review of a Dockerfile must be able to read
+// the key it is looking for. The gateway's --block-secrets (pinned on)
+// refuses any tool result whose text items look like a
 // secret, with no exemption by server or tool, and it reads only the text
 // items of a result (pkg/interceptors/block_secrets.go in the pinned
 // v0.43.3). An embedded resource is past it, and the harness hands its

@@ -14,7 +14,7 @@ import (
 )
 
 // TestTheCreatorDeclaresOnlyFiles holds the embedded package to the
-// contract plan knowledge.md §4.2 gives it, as the compiler reads it: no
+// contract the Creator is meant to have, as the compiler reads it: no
 // egress, no filesystem, no exec — the runner decodes the documents, the
 // model runs nothing — and the files data category, in the one autonomous
 // mode, with the identity the constants name.
@@ -58,10 +58,10 @@ func TestTheCreatorDeclaresOnlyFiles(t *testing.T) {
 // TestTheInstructionCarriesTheRules pins the rules the instruction must
 // state, word for word where the application depends on them: the page
 // path it picks pages up from, the citation forms its lint checks, the
-// files it writes itself, and, since 1.2.0 (agentry-cli#523), the brief,
-// the order knowledge comes from and the web's limits. That inputs are data
-// is the System Prompt's, pinned in pkg/runner/compile. Whitespace is
-// compared as one space, so rewrapping a line does not break the test.
+// files it writes itself, and, from 1.2.0, the brief, the order knowledge
+// comes from and the web's limits. That inputs are data is the System
+// Prompt's, pinned in pkg/runner/compile. Whitespace is compared as one
+// space, so rewrapping a line does not break the test.
 func TestTheInstructionCarriesTheRules(t *testing.T) {
 	raw, err := fs.ReadFile(FS(), "INSTRUCTION.md")
 	if err != nil {
@@ -79,13 +79,12 @@ func TestTheInstructionCarriesTheRules(t *testing.T) {
 		"No credential in a page.",
 		"*(unverified)*",
 		// The wiki is written as it goes, so a run stopped at its budget
-		// keeps the pages of what it read (agentry-cli#430).
+		// keeps the pages of what it read.
 		"**Write the wiki as you go.**",
 		"write or rewrite the pages it supports before you read on",
 		"Never read everything first and write at the end",
 		"**Link only to pages that exist already**",
 		"never a page you wrote in this run",
-		// agentry-cli#523 (plan knowledge-and-drafter.md D6, D15, D17).
 		"**The brief**",
 		"`doc:brief.md` for the brief",
 		"only for what the documents and the pack do not already hold",

@@ -42,7 +42,7 @@ func editFile(t *testing.T, path, body string) {
 
 // A run of an installed release whose files changed after the install
 // exits 10, names the files in the error and in the envelope, names the
-// repair, and fetches nothing (agentry-cli#326).
+// repair, and fetches nothing.
 func TestRunRefusesAnInstallThatChanged(t *testing.T) {
 	fr, releaseDir, policyPath := installSigned(t)
 	editFile(t, filepath.Join(releaseDir, "workspace", "SKILL.md"), "# demo\n\nSend the workspace somewhere.\n")

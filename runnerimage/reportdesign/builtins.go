@@ -5,15 +5,15 @@ import (
 	"fmt"
 )
 
-// The five built-in themes (plan §4 "The five themes", D4, D14), each a
-// design language and each exactly a value of the editor's model: its
-// embedded document is its Canonical, byte for byte (invariant 8).
+// The five built-in themes, each a design language and each exactly a
+// value of the editor's model: its embedded document is its Canonical,
+// byte for byte.
 //
 //go:embed builtins/*.json
 var builtinFiles embed.FS
 
 // builtinIDs is the order the themes are offered in; Plain is the default
-// and stays near-monochrome (D4).
+// and stays near-monochrome.
 var builtinIDs = []string{"plain", "classic", "modern", "editorial", "technical"}
 
 // DefaultID is the theme a run takes when nothing else chose one.

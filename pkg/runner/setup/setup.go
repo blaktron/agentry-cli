@@ -1,14 +1,12 @@
-// Package setup implements the operator-experience flows of RUNNER-PLAN-2:
-// first-run machine setup with LLM-provider configuration (§P1), the
-// guided MCP-profile setup that collects a QuickAgent's keys and
-// identities (§P3), and the model catalog — one read of a provider's
-// models listing with the operator's key, so a form can offer the models
-// rather than ask for one to be typed, which is also the endpoint test the
-// form gets for free (agentry-cli#170; models.go). Everything works
-// through the Prompter interface so the CLI (a TTY) and the desktop app (a
-// form) drive the same logic — no parallel implementations (§P8); the
-// provider table below is the one place that knows a provider's endpoints
-// and how its key is sent.
+// Package setup implements the operator-experience flows: first-run machine
+// setup with LLM-provider configuration, the guided MCP-profile setup that
+// collects a QuickAgent's keys and identities, and the model catalog — one read
+// of a provider's models listing with the operator's key, so a form can offer
+// the models rather than ask for one to be typed, which is also the endpoint
+// test the form gets for free (models.go). Everything works through the
+// Prompter interface so the CLI (a TTY) and the desktop app (a form) drive the
+// same logic — no parallel implementations; the provider table below is the one
+// place that knows a provider's endpoints and how its key is sent.
 package setup
 
 import (
@@ -41,7 +39,7 @@ type Prompter interface {
 	Say(text string)
 }
 
-// ProviderDefault is one row of the §P1 provider table.
+// ProviderDefault is one row of the provider table.
 type ProviderDefault struct {
 	Provider   string
 	Model      string
@@ -57,7 +55,7 @@ type ProviderDefault struct {
 // rather than a header of its own.
 const keyHeaderBearer = "Authorization"
 
-// providerDefaults is the closed §P1 table; "custom" is handled by asking
+// providerDefaults is the closed table; "custom" is handled by asking
 // (its endpoint is the operator's base URL, its key a bearer, the OpenAI
 // shape every compatible endpoint uses).
 var providerDefaults = []ProviderDefault{
@@ -67,11 +65,11 @@ var providerDefaults = []ProviderDefault{
 		ModelsURL: "https://api.openai.com/v1/models", KeyHeader: keyHeaderBearer},
 	{Provider: "google", Model: "gemini-3-pro", APIKeyEnv: "GEMINI_API_KEY", ProxyAllow: []string{"generativelanguage.googleapis.com:443"},
 		ModelsURL: "https://generativelanguage.googleapis.com/v1beta/models", KeyHeader: "x-goog-api-key"},
-	// The providers whose account a person may connect (plan §4.6, D30;
-	// agentry-cli#742), each also paid by a pasted key. No default model
-	// and no model list: the person types the model id (D33). The key
-	// variables are the ones docker-agent's aliases read (Poe's is the
-	// named provider's token_key), and the endpoints docker-agent's.
+	// The providers whose account a person may connect, each also paid by a
+	// pasted key. No default model and no model list: the person types the
+	// model id. The key variables are the ones docker-agent's aliases read
+	// (Poe's is the named provider's token_key), and the endpoints
+	// docker-agent's.
 	{Provider: policy.ProviderOpenRouter, APIKeyEnv: "OPENROUTER_API_KEY", ProxyAllow: []string{"openrouter.ai:443"}},
 	{Provider: policy.ProviderPoe, APIKeyEnv: "POE_API_KEY", ProxyAllow: []string{"api.poe.com:443"}},
 	{Provider: policy.ProviderHuggingFace, APIKeyEnv: "HF_TOKEN", ProxyAllow: []string{"router.huggingface.co:443"}},
@@ -104,37 +102,33 @@ type ModelOpts struct {
 	Provider  string
 	Model     string
 	APIKeyEnv string
-	// APIKeySource is "" (keep what the policy has for the same provider,
-	// else env), "env" or "keyring": where the key comes from when the
-	// variable is unset (agentry-cli#148). Interactive setup offers to
-	// store the key in the keychain and sets keyring itself.
+	// APIKeySource is "" (keep what the policy has for the same provider, else
+	// env), "env" or "keyring": where the key comes from when the variable is
+	// unset. Interactive setup offers to store the key in the keychain and sets
+	// keyring itself.
 	APIKeySource string
 	// StoreKey puts a key into the OS keychain (nil: modelkey.Store). A
 	// seam: tests have no keychain, and a form-driven caller stores the
 	// key itself before calling.
 	StoreKey func(provider, key string) error
-	// APIKeyKind is what the credential is (policy apiKeyKind,
-	// agentry-cli#171): "" (keep what the policy has for the same
-	// provider, else api), "api" or "subscription". A form-driven caller
-	// that stored the key itself passes policy.CredentialKindOf's answer;
-	// an interactive setup derives it from the key it stores; a
-	// variable-only setup takes --api-key-kind.
+	// APIKeyKind is what the credential is (policy apiKeyKind): "" (keep what
+	// the policy has for the same provider, else api), "api" or "subscription".
+	// A form-driven caller that stored the key itself passes
+	// policy.CredentialKindOf's answer; an interactive setup derives it from
+	// the key it stores; a variable-only setup takes --api-key-kind.
 	APIKeyKind string
 	BaseURL    string
-	// ChatGPT offers Sign in with ChatGPT for provider openai (plan
-	// model-sign-ins.md §4.3; agentry-cli#739): nil offers none. APIKeyKind
-	// chatgpt-plan asks for it without the question.
+	// ChatGPT offers Sign in with ChatGPT for provider openai: nil offers none.
+	// APIKeyKind chatgpt-plan asks for it without the question.
 	ChatGPT ChatGPTOffer
-	// Claude offers ClaudeSignInLabel for provider anthropic (plan
-	// model-sign-ins.md §4.4; agentry-cli#740): nil offers none.
+	// Claude offers ClaudeSignInLabel for provider anthropic: nil offers none.
 	// APIKeyKind claude-signin asks for it without the question.
 	Claude ClaudeOffer
 	// Copilot offers Sign in with GitHub for provider copilot, its one way
-	// to pay (plan model-sign-ins.md §4.5; agentry-cli#741).
+	// to pay.
 	Copilot CopilotOffer
-	// Connect offers Connect your account for OpenRouter, Poe and Hugging
-	// Face (plan model-sign-ins.md §4.6; agentry-cli#742): nil offers none.
-	// ConnectAccount asks for it without the question.
+	// Connect offers Connect your account for OpenRouter, Poe and Hugging Face:
+	// nil offers none. ConnectAccount asks for it without the question.
 	Connect        ConnectOffer
 	ConnectAccount bool
 	// CopilotPlan is the Copilot plan the account is on (policy.CopilotPlans:
@@ -158,11 +152,11 @@ type ChatGPTOffer struct {
 	SignIn func(fresh bool) (account string, models []string, err error)
 }
 
-// ClaudeSignInLabel is the Claude choice's wording everywhere (plan D24):
+// ClaudeSignInLabel is the Claude choice's wording everywhere:
 // plain text that runs use Claude Code, no logo, no "Sign in with Claude".
 const ClaudeSignInLabel = "Use your Claude subscription (runs Claude Code)"
 
-// AnthropicKeyCredits is what the API-key choice for Anthropic says (D24):
+// AnthropicKeyCredits is what the API-key choice for Anthropic says:
 // the plans whose included API credits a key spends.
 const AnthropicKeyCredits = "an Anthropic API key (the Max and Team plans include monthly API credits, spent through a key from the Console organization linked to the plan)"
 
@@ -185,12 +179,12 @@ type CopilotOffer struct {
 	// SignIn signs in with GitHub and returns the account.
 	SignIn func() (account string, err error)
 	// Models lists the model ids the Copilot plan named offers the signed-in
-	// account, asked of Copilot CLI (agentry-cli#808), in its order; nil
-	// lists none. Setup asks it only when it is about to ask for the model.
+	// account, asked of Copilot CLI, in its order; nil lists none. Setup asks
+	// it only when it is about to ask for the model.
 	Models func(plan string) ([]string, error)
 }
 
-// ConnectLabel is the connect choice's wording (plan §4.1).
+// ConnectLabel is the connect choice's wording.
 const ConnectLabel = "Connect your account"
 
 // ConnectOffer is how setup reaches a connect, which the caller owns (the
@@ -221,7 +215,7 @@ var connectNames = map[string]struct{ name, example string }{
 func IsConnectProvider(provider string) bool { _, ok := connectNames[provider]; return ok }
 
 // configureConnect is the model setup for a connected account: the
-// connect (or the one kept), the model id the person types (D33), and a
+// connect (or the one kept), the model id the person types, and a
 // policy whose key is the provider's keychain entry, where the connect
 // kept it. The variable still wins when it is set.
 func configureConnect(p Prompter, pol *policy.Policy, opts ModelOpts, prov string) error {
@@ -298,14 +292,14 @@ func configureConnect(p Prompter, pol *policy.Policy, opts ModelOpts, prov strin
 	return nil
 }
 
-// CopilotSignInLabel is the Copilot choice's wording (plan §4.1).
+// CopilotSignInLabel is the Copilot choice's wording.
 const CopilotSignInLabel = "Sign in with GitHub"
 
 // configureCopilot is the model setup for a Copilot plan: the sign-in, the
 // model, the plan whose Copilot API host the proxy allows, and the policy's
 // model block. No key variable and no base URL: Copilot CLI finds GitHub's
 // endpoints itself, and the proxy allows GitHub's API and the plan's
-// Copilot host alone (invariant I2).
+// Copilot host alone.
 func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if opts.Copilot.SignIn == nil {
 		return errors.New("this setup cannot sign in with GitHub")
@@ -388,7 +382,7 @@ func configureCopilot(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 					break
 				}
 				// A model the plan does not offer, a disabled one among them,
-				// is not taken (agentry-cli#808).
+				// is not taken.
 				p.Say(fmt.Sprintf("your Copilot plan does not offer %q: choose one of %s", model, strings.Join(offered, ", ")))
 			}
 		}
@@ -444,7 +438,7 @@ func copilotOffered(p Prompter, opts ModelOpts, plan string) []string {
 // Claude Code: Claude Code's own sign-in, a model, and the policy's model
 // block. No key variable and no base URL: Claude Code talks to Anthropic
 // itself, and the proxy allows Anthropic's API and the host Claude Code
-// refreshes its sign-in at, alone (invariant I2).
+// refreshes its sign-in at, alone.
 func configureClaude(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if opts.Claude.SignIn == nil {
 		return errors.New("this setup cannot start Claude Code's sign-in")
@@ -505,7 +499,7 @@ func configureClaude(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 // configureChatGPT is the model setup for a ChatGPT plan: the sign-in, the
 // model from the plan's own list, and the policy's model block. No key
 // variable, no base URL: the plan's endpoint is OpenAI's, and the proxy
-// allows it alone (invariant I2).
+// allows it alone.
 func configureChatGPT(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if opts.ChatGPT.SignIn == nil {
 		return errors.New("this setup cannot sign in with ChatGPT")
@@ -561,7 +555,7 @@ func configureChatGPT(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		Provider:   policy.ProviderOpenAI,
 		Name:       model,
 		APIKeyKind: policy.KeyKindChatGPTPlan,
-		// The one endpoint the compiler holds a plan run to (I2).
+		// The one endpoint the compiler holds a plan run to.
 		ProxyAllow: policy.SignInProxyAllow(policy.KeyKindChatGPTPlan),
 	}
 	who := ""
@@ -603,15 +597,14 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	d := DefaultsFor(prov)
 	if d == nil && prov != "custom" && prov != policy.ProviderCopilot {
 		// An unlisted provider name is passed to the harness as it is:
-		// docker-agent knows more providers than the table, which only
-		// carries the ones whose endpoints we can derive — but it does
-		// not know "custom", which the adapter renders as its openai
-		// client at the base URL (agentry-cli#169), and it will not know
-		// a name made up here.
+		// docker-agent knows more providers than the table, which only carries
+		// the ones whose endpoints we can derive — but it does not know
+		// "custom", which the adapter renders as its openai client at the base
+		// URL, and it will not know a name made up here.
 		p.Say(fmt.Sprintf("provider %q is not in the built-in table; the harness must know it by that name — for an OpenAI-compatible endpoint of your own, use custom with --base-url", prov))
 	}
 
-	// Copilot is paid by the person's Copilot plan alone (D25–D28).
+	// Copilot is paid by the person's Copilot plan alone.
 	if prov == policy.ProviderCopilot {
 		if kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind)); kind != "" && kind != policy.KeyKindCopilotSignIn {
 			return fmt.Errorf("provider copilot is paid by your Copilot plan alone (api key kind %s), not %q", policy.KeyKindCopilotSignIn, kind)
@@ -621,7 +614,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		return fmt.Errorf("api key kind copilot-signin needs provider copilot (it is %q)", prov)
 	}
 
-	// OpenAI is paid by a key or by the person's ChatGPT plan (D15, D16):
+	// OpenAI is paid by a key or by the person's ChatGPT plan:
 	// asked when setup can sign in, unless the caller already said.
 	if prov == policy.ProviderOpenAI {
 		kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind))
@@ -651,9 +644,9 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		return fmt.Errorf("api key kind chatgpt-plan needs provider openai (it is %q)", prov)
 	}
 
-	// Anthropic is paid by a key, a pasted subscription token (DR-26), or
-	// the person's Claude subscription through Claude Code's own sign-in
-	// (D19–D24): the last asked when setup can start it.
+	// Anthropic is paid by a key, a pasted subscription token, or
+	// the person's Claude subscription through Claude Code's own sign-in:
+	// the last asked when setup can start it.
 	if prov == policy.ProviderAnthropic {
 		kind := strings.ToLower(strings.TrimSpace(opts.APIKeyKind))
 		if kind == "" && !opts.Yes && opts.Claude.SignIn != nil {
@@ -681,7 +674,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	}
 
 	// OpenRouter, Poe and Hugging Face are paid by a key, pasted or minted
-	// by connecting the person's account (D30): asked when setup can
+	// by connecting the person's account: asked when setup can
 	// connect, unless the caller already said.
 	if IsConnectProvider(prov) {
 		connect := opts.ConnectAccount
@@ -772,11 +765,10 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		proxyAllow = append([]string(nil), d.ProxyAllow...)
 	default:
 		if baseURL == "" {
-			// The same-provider rule covers the URL too: staying on
-			// custom keeps the endpoint the policy has — the question's
-			// default, and under --yes the answer — and derives the
-			// allowlist from it again (agentry-cli#188). A switch brings
-			// no URL along.
+			// The same-provider rule covers the URL too: staying on custom
+			// keeps the endpoint the policy has — the question's default, and
+			// under --yes the answer — and derives the allowlist from it again.
+			// A switch brings no URL along.
 			if opts.Yes {
 				if sameProvider {
 					baseURL = strings.TrimSpace(pol.Model.BaseURL)
@@ -797,8 +789,8 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 			return err
 		}
 		proxyAllow = []string{hp}
-		// Plain http off this machine is allowed and said out loud
-		// (agentry-cli#377): the key rides every model call.
+		// Plain http off this machine is allowed and said out loud:
+		// the key rides every model call.
 		if w := PlainHTTPWarning(baseURL); w != "" {
 			p.Say("warning: " + w)
 		}
@@ -888,15 +880,14 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	p.Say(fmt.Sprintf("model: %s/%s (key from %s; agent-container egress limited to %s)",
 		prov, model, from, strings.Join(proxyAllow, ", ")))
 	if kind == policy.KeyKindSubscription {
-		// The shared sentence stands alone (agentry-cli#182); a prefix
-		// made it ungrammatical (agentry-cli#183).
+		// The shared sentence stands alone; a prefix made it ungrammatical.
 		p.Say(policy.SubscriptionTokenSentence)
 	}
 	return nil
 }
 
 // hostPortOf derives the proxy allowlist entry from a base URL — the
-// agent container's ONLY egress (RUNNER-PLAN §R4), so it must be exact.
+// agent container's ONLY egress, so it must be exact.
 func hostPortOf(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
@@ -914,7 +905,7 @@ func hostPortOf(raw string) (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
-// GuidedProfileOpts parameterizes the §P3 flow.
+// GuidedProfileOpts parameterizes the guided profile flow.
 type GuidedProfileOpts struct {
 	Ref    string
 	Digest string
@@ -923,20 +914,20 @@ type GuidedProfileOpts struct {
 	// Secrets are the manifest-declared env names to collect.
 	Secrets []string
 	// Optional are the ones a run may go without (the manifest's
-	// optionalSecrets, DR-70): asked the same way, and said so.
+	// optionalSecrets): asked the same way, and said so.
 	Optional []string
 	// DefaultKeep seeds the keep question (policy default or flag).
 	DefaultKeep bool
 	// KeepDecided suppresses the keep question (the flag already chose).
 	KeepDecided bool
-	// Help is the release guide's connect help per secret name (DEV-141):
+	// Help is the release guide's connect help per secret name:
 	// where to create the key, which scopes it needs, in markdown that may
-	// span lines (DEV-167). Printed as text before the question for that
+	// span lines. Printed as text before the question for that
 	// key, beneath its name behind termtext's gutter when it spans lines.
 	Help map[string]string
 }
 
-// GuidedProfile runs the §P3 conversation and returns the new profile.
+// GuidedProfile runs the guided conversation and returns the new profile.
 // Empty secret answers are recorded as absent (resolve from the
 // environment at run time), not as empty strings.
 func GuidedProfile(p Prompter, opts GuidedProfileOpts) (*profile.Profile, error) {
@@ -953,7 +944,7 @@ func GuidedProfile(p Prompter, opts GuidedProfileOpts) (*profile.Profile, error)
 	sort.Strings(names)
 	for _, name := range names {
 		if h := strings.TrimSpace(opts.Help[name]); h != "" {
-			// The help is markdown that may span lines (DEV-167), so it is
+			// The help is markdown that may span lines, so it is
 			// said beneath the key's name behind the gutter: no line of it
 			// can read as the CLI's own (another key's prompt, a contract
 			// line). A one-line help is said beside the name, as before.

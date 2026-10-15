@@ -1,7 +1,7 @@
-// `agentry validate` failure modes (§11, D-12): the scaffold-PASS half
-// lives in cmd_init_test.go; this file proves the command actually FAILS —
-// manifest errors, S1 inventory findings, --strict warning promotion. The
-// printers' ordering is pinned in pkg/validate.
+// `agentry validate` failure modes: the scaffold-PASS half lives in
+// cmd_init_test.go; this file proves the command actually FAILS — manifest
+// errors, S1 inventory findings, --strict warning promotion. The printers'
+// ordering is pinned in pkg/validate.
 package main
 
 import (
@@ -26,7 +26,7 @@ func TestValidateMissingOrBrokenManifest(t *testing.T) {
 }
 
 // TestValidateFlagsS1Findings: a content-sniffed ELF inside the include set
-// is the submit-time rejection D-12 exists to surface locally — non-zero,
+// is the submit-time rejection validate exists to surface locally — non-zero,
 // with the finding printed in the shared format.
 func TestValidateFlagsS1Findings(t *testing.T) {
 	isolateEnv(t)
@@ -47,8 +47,8 @@ func TestValidateFlagsS1Findings(t *testing.T) {
 	}
 }
 
-// TestValidateAppliesTextTotalQuota: the §19 text total (V8, agentry#44) is
-// the registry's submit-time rule, and validate promises the same rules
+// TestValidateAppliesTextTotalQuota: the text total (V8) is the
+// registry's submit-time rule, and validate promises the same rules
 // offline — two 600 KiB prose files must fail here, not at upload.
 func TestValidateAppliesTextTotalQuota(t *testing.T) {
 	isolateEnv(t)
@@ -105,10 +105,10 @@ func TestValidateRulesUpdateFailsClosed(t *testing.T) {
 	}
 }
 
-// TestValidateAcceptsDeclaredServerEnv (agentry-cli#99): the vendored spec
-// carries the manifest's plain env map on a declared server (agentry#286),
-// so validate passes it offline — and refuses the one collision the spec
-// refuses, a name that is both a secret and env.
+// TestValidateAcceptsDeclaredServerEnv: the vendored spec carries the
+// manifest's plain env map on a declared server, so validate passes it
+// offline — and refuses the one collision the spec refuses, a name that
+// is both a secret and env.
 func TestValidateAcceptsDeclaredServerEnv(t *testing.T) {
 	isolateEnv(t)
 	caps := `capabilities:
@@ -142,8 +142,8 @@ func publishableSkillFiles(name, capsYAML string) map[string]string {
 	return files
 }
 
-// TestValidateHelpNamesTheRulesThatRun (agentry-cli#638): the help text
-// names the same rules the check runs, not a range typed in by hand.
+// TestValidateHelpNamesTheRulesThatRun: the help text names the same
+// rules the check runs, not a range typed in by hand.
 func TestValidateHelpNamesTheRulesThatRun(t *testing.T) {
 	cmd := newValidateCmd()
 	span := "rules " + validate.ManifestRules()

@@ -120,11 +120,10 @@ func claudePlanFixture(t *testing.T, adapterName string) (Params, *dockerx.Fake)
 	}, f
 }
 
-// The installed Claude Code on a Claude subscription (agentry-cli#740):
-// it runs in Agentry's own directory for it, never the person's ~/.claude,
-// with no key variable of the person's reaching it, and the runner leaves
-// what Claude Code keeps there alone; the receipt names the kind, no
-// dollars (D13).
+// The installed Claude Code on a Claude subscription: it runs in Agentry's
+// own directory for it, never the person's ~/.claude, with no key variable
+// of the person's reaching it, and the runner leaves what Claude Code
+// keeps there alone; the receipt names the kind, no dollars.
 func TestTheInstalledClaudeCodeRunsOnItsOwnSignIn(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-person-0000")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-person")
@@ -152,7 +151,7 @@ func TestTheInstalledClaudeCodeRunsOnItsOwnSignIn(t *testing.T) {
 
 // The installed Claude Code reading a rejected rate_limit_event ends the
 // run with the plan-limit outcome and Claude Code's own reset time, never
-// a success (I9).
+// a success.
 func TestAClaudePlanLimitEndsTheRunWithItsResetTime(t *testing.T) {
 	for _, name := range []string{adapter.ClaudeAdapterName, adapter.ClaudeImageAdapterName} {
 		p, f := claudePlanFixture(t, name)
@@ -174,8 +173,8 @@ func TestAClaudePlanLimitEndsTheRunWithItsResetTime(t *testing.T) {
 }
 
 // The installed Claude Code reads a directory on this computer: the image's
-// volume handed to it is refused before anything runs. DR-26's refusal of
-// an ancestor CLAUDE.md still holds for a sign-in run on the host.
+// volume handed to it is refused before anything runs. The refusal of an
+// ancestor CLAUDE.md still holds for a sign-in run on the host.
 func TestTheInstalledClaudeCodeIsRefusedWhatItCannotRunOn(t *testing.T) {
 	p, f := claudePlanFixture(t, adapter.ClaudeAdapterName)
 	p.ModelSignIn.ConfigDir = "agentry-claude-signin"
@@ -196,8 +195,7 @@ func TestTheInstalledClaudeCodeIsRefusedWhatItCannotRunOn(t *testing.T) {
 
 // The Claude Code image's sign-in is its docker volume, mounted read-write
 // at Claude Code's config directory into the agent container, and into no
-// other container of the run (I3, I4): not the gateway, not the proxy, not
-// a tool.
+// other container of the run: not the gateway, not the proxy, not a tool.
 func TestTheClaudeImagesVolumeIsMountedIntoTheAgentAlone(t *testing.T) {
 	p, f := claudePlanFixture(t, adapter.ClaudeImageAdapterName)
 	env, err := Run(context.Background(), f, p)

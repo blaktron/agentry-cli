@@ -1,4 +1,4 @@
-// The six §R3 tool implementations and their JSON Schemas. Everything the
+// The core tool implementations and their JSON Schemas. Everything the
 // model can do to the workspace, the network, or a process goes through
 // one of these functions, so every enforcement promise the run plan makes
 // (paths grants, host allowlists, the exec shim, byte caps) has its
@@ -82,7 +82,7 @@ type toolDef struct {
 	schema      map[string]any
 	call        func(args json.RawMessage) (text string, isError bool)
 	// personsInput marks a tool whose answer is the person's own input,
-	// served unchanged (plan quickagents-that-run.md D4, agentry-cli#632):
+	// served unchanged:
 	// its result goes out as an embedded text resource, which the
 	// gateway's --block-secrets does not scan (see inputResult).
 	personsInput bool
@@ -91,8 +91,7 @@ type toolDef struct {
 // buildTools registers exactly the granted subset, iterating
 // GrantedTools() so the registration order — and therefore tools/list
 // order — is the one the compiler and the gateway allowlist share
-// (RUNNER-PLAN §R11 invariant 4: an undeclared capability's tool is
-// absent, not refusing).
+// (an undeclared capability's tool is absent, not refusing).
 func (s *server) buildTools() {
 	add := func(name, desc string, schema map[string]any, call func(json.RawMessage) (string, bool)) {
 		s.order = append(s.order, name)
@@ -203,7 +202,7 @@ func intProp(desc string) map[string]any {
 	return map[string]any{"type": "integer", "description": desc}
 }
 
-// viewProp is the input tools' choice of view (agentry-cli#631).
+// viewProp is the input tools' choice of view.
 func viewProp() map[string]any {
 	return map[string]any{"type": "string", "enum": []string{ViewText, ViewOriginal},
 		"description": "which view of the file: \"text\" (a document's decoded text, HTML as Markdown) or \"original\" (the file as uploaded, a binary one as base64); default: the view list_inputs marks for that file, which says which views each file has"}
@@ -322,7 +321,7 @@ func writeReportSchema() map[string]any {
 // arrives as a JSON-encoded string — "[\"a\"]" for an array, "200" for a
 // number, "true" for a bool, or the whole object as one string — is taken
 // as the value it encodes, since models do send exactly that and every
-// call would otherwise fail (agentry-cli#113). A string parameter is never
+// call would otherwise fail. A string parameter is never
 // reinterpreted; a string that does not encode the wanted type is refused
 // naming the parameter, what arrived and what was wanted. Malformed JSON
 // errors as before.
@@ -508,7 +507,7 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 	if rel == "." && len(s.spec.FSRead.Paths) > 0 {
 		// Paths mode: the workspace root itself is not granted, but the
 		// model still needs a way to discover what is — so listing the
-		// root lists the grant entries themselves (§R3).
+		// root lists the grant entries themselves.
 		lines := make([]string, 0, len(s.spec.FSRead.Paths))
 		for _, entry := range s.spec.FSRead.Paths {
 			e := path.Clean(entry)
@@ -692,7 +691,7 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		case "authorization", "proxy-authorization", "cookie":
 			// Credential headers only via auth: that path reads the value
 			// from a granted env var, so the secret never has to pass
-			// through model context to be used (§R3).
+			// through model context to be used.
 			return fmt.Sprintf("fetch: header %q is refused — pass credentials via the auth parameter", k), true
 		}
 		req.Header.Set(k, v)
@@ -810,9 +809,9 @@ func (s *server) grantedSecretEnv() []string {
 
 // holdsRunSecret names the first of this server's own secrets whose value
 // content holds, or "". A file the agent writes never carries one: the
-// person's inputs are served unchanged (D4) and may hold such a value, and
+// person's inputs are served unchanged and may hold such a value, and
 // the gateway's --block-secrets matches only secret-shaped text, so a
-// report is held to the values themselves here (agentry-cli#632).
+// report is held to the values themselves here.
 func (s *server) holdsRunSecret(content string) string {
 	for _, env := range s.grantedSecretEnv() {
 		if v := os.Getenv(env); v != "" && strings.Contains(content, v) {
@@ -827,9 +826,9 @@ func (s *server) holdsRunSecret(content string) string {
 // buildShims prepares the exec PATH jail once at server start: a fresh
 // temp dir holding one symlink per declared-and-present command. Children
 // run with PATH set to only this dir, so even a shell among the declared
-// commands can only resolve declared names (§R3; DR-1 records that the
-// rest of the image's binaries still exist — argv0 + PATH is the v1
-// control, not binary absence).
+// commands can only resolve declared names (the
+// rest of the image's binaries still exist: argv0 + PATH is the control,
+// not binary absence).
 func (s *server) buildShims() error {
 	if len(s.spec.Exec.Commands) == 0 {
 		return nil
@@ -891,12 +890,12 @@ func (s *server) imagePath() string {
 	return os.Getenv("PATH")
 }
 
-// runCommandDescription says the PATH execPath gives a declared command
-// (agentry-cli#502): with the image's PATH (RUNNER-DEVIATIONS DR-53), the
+// runCommandDescription says the PATH execPath gives a declared command:
+// with the image's PATH, the
 // agent is not told a narrower posture than the one enforced.
 // knowledgeListDescription names the packs attached to this run, which the
 // System Prompt cannot: it is compiled before a run attaches any, and
-// attaching one must not move the plan (DR-38; agentry-cli#520). The tool
+// attaching one must not move the plan. The tool
 // exists only while a pack is attached, so its description is where the
 // model learns that one is, and that it comes first.
 func (s *server) knowledgeListDescription() string {
@@ -952,7 +951,7 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(limitSec)*time.Second)
 	defer cancel()
-	// The command is held to the places it may write (agentry-cli#596):
+	// The command is held to the places it may write:
 	// through the confine trampoline, or as nobody (confinement.go).
 	name, argv := s.confine.argv(shim, a.Args)
 	cmd := exec.CommandContext(ctx, name, argv...)
@@ -962,7 +961,7 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	// The command runs in the workspace when the contract mounted one;
 	// exec and filesystem are independent grants, so a QuickAgent that
 	// declares exec and no filesystem access (it works on /inputs) gets a
-	// scratch directory instead of a failed chdir (agentry-cli#120).
+	// scratch directory instead of a failed chdir.
 	cmd.Dir = s.execDir()
 	// A minimal, explicit environment: PATH is the shim directory (with,
 	// in Unsafe Mode, the image's PATH after it); HOME and LANG exist
@@ -981,7 +980,7 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	if failed != "" {
 		return "run_command: " + failed, true
 	}
-	// The output passes the same scrub as fetch's (agentry-cli#246): the
+	// The output passes the same scrub as fetch's: the
 	// child cannot read this process's environment (hideEnvironment), but a
 	// granted secret that reached it some other way must still not be
 	// echoed to the model verbatim.
@@ -995,7 +994,7 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 		return "exit code 0\n" + text, false
 	case errors.As(err, &exitErr):
 		// Deliberately NOT isError: the exit code is information the
-		// agent acts on (§R3), not a tool malfunction.
+		// agent acts on, not a tool malfunction.
 		return fmt.Sprintf("exit code %d\n%s", exitErr.ExitCode(), text), false
 	default:
 		return "run_command: " + err.Error(), true
@@ -1032,7 +1031,7 @@ func (w *capWriter) text() string {
 	return t
 }
 
-// ---- list_inputs / read_input (RUNNER-PLAN-2 §P4) ----
+// ---- list_inputs / read_input ----
 //
 // The inputs channel is operator-provided task material, mounted :ro and
 // exposed read-only here — a second read root beside the workspace, with
@@ -1137,7 +1136,7 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 	}
 	if !s.spec.Review.Enabled {
 		if view == ViewOriginal && isBinary(abs) {
-			// A binary original is answered, not refused (D3), every page
+			// A binary original is answered, not refused, every page
 			// of it: the file decides, not a page that happens to decode.
 			text, err := readBase64Page(abs, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget(), mime)
 			if err != nil {
@@ -1236,7 +1235,7 @@ func binaryHead(f io.ReaderAt) (fileHead, error) {
 	}, nil
 }
 
-// readBase64Page answers one page of a binary original (agentry-cli#631):
+// readBase64Page answers one page of a binary original:
 // its size, its detected type and the page's bytes as base64, sized so the
 // encoding stays within the server cap and the result budget (or the
 // caller's tighter maxBytes, counted in raw bytes). Base64 is one line, so
@@ -1305,13 +1304,12 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	if limit := s.spec.Limits.writeCap(); int64(len(a.Content)) > limit {
 		return fmt.Sprintf("write_report: content is %d bytes, over the %d-byte limit — append in parts", len(a.Content), limit), true
 	}
-	// Only export_pdf puts a PDF in reports/ (plan scratch-and-pdf-reports.md
-	// D15): a name ending .pdf is refused, and so is content that would open
-	// as one.
+	// Only export_pdf puts a PDF in reports/: a name ending .pdf is refused,
+	// and so is content that would open as one.
 	if strings.EqualFold(path.Ext(a.Path), ".pdf") {
 		return "write_report: a report named .pdf is written only by export_pdf: write the report as Markdown here, then call export_pdf", true
 	}
-	// Reports root under the out mount (RQ3): created lazily so a run
+	// Reports root under the out mount: created lazily so a run
 	// that writes no report leaves no empty reports/ dir behind.
 	root := filepath.Join(s.spec.OutDir, "reports")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -1351,7 +1349,7 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	return fmt.Sprintf("report written: reports/%s (%d bytes)", path.Clean(a.Path), len(a.Content)), false
 }
 
-// own gives path to the host user when the spec names one (agentry-cli#55).
+// own gives path to the host user when the spec names one.
 // Best-effort: a mount that forbids chown (a non-Linux Docker Desktop
 // share, a uid-mapped mount) leaves the file as it is rather than failing
 // the tool — the write itself succeeded, and the receipt shows the result.

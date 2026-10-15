@@ -1,12 +1,12 @@
 package engine
 
-// The fetch ledger (plan input-sources.md §6, agentry-cli#832). The tools
-// server saves a fetched body in the scratch folder when the agent names a
-// path for it (saveTo) or when it is larger than one result, and records
-// each save in the ledger the engine stamps into the run's own tools spec.
-// The scratch folder is gone with the run, so the ledger is the record of
-// what was saved: the receipt's fetchSaves block counts it, and the ledger
-// names each file, its host, its size and its SHA-256.
+// The fetch ledger. The tools server saves a fetched body in the scratch
+// folder when the agent names a path for it (saveTo) or when it is larger
+// than one result, and records each save in the ledger the engine stamps
+// into the run's own tools spec. The scratch folder is gone with the run,
+// so the ledger is the record of what was saved: the receipt's fetchSaves
+// block counts it, and the ledger names each file, its host, its size and
+// its SHA-256.
 
 import (
 	"bufio"

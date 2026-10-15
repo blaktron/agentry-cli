@@ -1,4 +1,4 @@
-// CLI configuration and credential storage (§11): PATs live in the OS
+// CLI configuration and credential storage: PATs live in the OS
 // keychain via go-keyring, with a chmod-600 config-file fallback for
 // headless machines; ~/.config/agentry/config.yaml records the default
 // registry and per-registry token references.
@@ -61,19 +61,18 @@ type cliConfig struct {
 	DefaultRegistry string `yaml:"defaultRegistry,omitempty"`
 	// Registries lists known registries and their credential references.
 	Registries []registryEntry `yaml:"registries,omitempty"`
-	// Report holds this computer's report settings (agentry-cli#731).
+	// Report holds this computer's report settings.
 	Report reportConfig `yaml:"report,omitempty"`
 }
 
 // reportConfig is config.yaml's report block.
 type reportConfig struct {
 	// Theme is the built-in report theme a run takes when no flag and no
-	// signed-in account chooses a design (plan D21).
+	// signed-in account chooses a design.
 	Theme string `yaml:"theme,omitempty"`
 	// Design is a file holding a report design document (theme document
 	// version 2), taken as Theme is; a relative path is the config
-	// directory's (report-designs.md D12, agentry-cli#784). At most one of
-	// the two is set.
+	// directory's. At most one of the two is set.
 	Design string `yaml:"design,omitempty"`
 }
 
@@ -194,7 +193,7 @@ func credentialFor(regURL string) string {
 		return ""
 	}
 	// A signed-out schedule's fire reads the token sealed for it, and
-	// never the keychain (agentry-cli#749).
+	// never the keychain.
 	if token, sealed, _ := modelkey.SealedAccount(host); sealed {
 		return token
 	}

@@ -1,6 +1,6 @@
 // Trust-layer tests: real DSSE envelopes signed by in-test ECDSA keys, a
 // fake registry serving the well-known key set and attestation endpoints,
-// and an isolated pin store — so every AttestationResult state (§8.8) is
+// and an isolated pin store — so every AttestationResult state is
 // produced by the genuine verification path, not by stubbing outcomes.
 // The signing side deliberately reuses pkg/attest's own PAE/payload
 // encoding so these tests break if the formats ever drift.
@@ -592,7 +592,7 @@ func TestVerifyAttestationTokenScoping(t *testing.T) {
 		}
 		for _, a := range cdn.auths() {
 			if a != "" {
-				t.Fatalf("token leaked to a non-registry host: %q (§9.4)", a)
+				t.Fatalf("token leaked to a non-registry host: %q", a)
 			}
 		}
 	})
@@ -670,9 +670,9 @@ func TestDecodePredicate(t *testing.T) {
 	})
 }
 
-// AGENTRY_PIN_REGISTRY names whose pins verify (agentry-cli#232): a
-// run-scoped prefix of a registry uses the registry's own pin file, and
-// without it every URL keeps its own.
+// AGENTRY_PIN_REGISTRY names whose pins verify: a run-scoped prefix of
+// a registry uses the registry's own pin file, and without it every URL
+// keeps its own.
 func TestPinRegistryNamesThePinFile(t *testing.T) {
 	t.Setenv("AGENTRY_CONFIG_DIR", t.TempDir())
 	root, _ := PinnedKeysPath("https://reg.example")
@@ -688,7 +688,7 @@ func TestPinRegistryNamesThePinFile(t *testing.T) {
 
 // With AGENTRY_PIN_REGISTRY set and nothing pinned for it, verification
 // refuses rather than trusting --registry on first use, and writes no pin
-// file for the named registry (agentry-cli#232).
+// file for the named registry.
 func TestPinRegistryWithoutPinsRefusesFirstUse(t *testing.T) {
 	t.Setenv("AGENTRY_CONFIG_DIR", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

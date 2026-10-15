@@ -1,5 +1,4 @@
-// The review grant (plan desktop-review-key-and-run-cards.md §6.2, D18, D24,
-// D27; agentry-cli#503): a built-in that reviews the QuickAgent handed to it
+// The review grant: a built-in that reviews the QuickAgent handed to it
 // as its inputs, with the person's own TypeSafe key. Two things change in
 // its tools container:
 //
@@ -90,7 +89,7 @@ const (
 type ReviewEntry struct {
 	Tool string `json:"tool"`
 	// Path is the input file, inputs-relative, and View the view of it
-	// read_input was asked for, when one was (agentry-cli#631).
+	// read_input was asked for, when one was.
 	Path string `json:"path,omitempty"`
 	View string `json:"view,omitempty"`
 	// Manifest and Dir are what an ai_review call read, inputs-relative and
@@ -111,7 +110,7 @@ type ReviewEntry struct {
 	// Axes are an answered ai_review call's six scores, as the model was
 	// given them: the record a host post-step reads the review from, so
 	// that what it reports never rests on what the model says the tool
-	// answered (agentry-cli#504).
+	// answered.
 	Axes []ReviewAxis `json:"axes,omitempty"`
 	webscan.Result
 }
@@ -222,8 +221,8 @@ type reviewKey struct{ rel, view string }
 // is told instead and whether that is a tool error. Each view is scanned
 // once, whole; a file past ReviewFileBytes is withheld as too large, and a
 // binary one (a NUL, or not UTF-8) is refused, since no review reads it,
-// though without the grant read_input answers a binary original as base64
-// (agentry-cli#631). (ai_review picks its files by stage S1's sniff
+// though without the grant read_input answers a binary original as base64.
+// (ai_review picks its files by stage S1's sniff
 // instead, as the registry reads a release.)
 func (s *server) reviewedInput(rel, view, abs string, fi fs.FileInfo) (instead string, isErr, ok bool) {
 	r := s.review()
@@ -354,7 +353,7 @@ type ReviewAnswer struct {
 	Files    []string        `json:"files"`
 	NotRead  []ReviewNotRead `json:"notRead,omitempty"`
 	// Requests and InputTokens are what the call cost the judge, for the
-	// record; AI Review is 1 credit an operation (DEV-150).
+	// record; AI Review is 1 credit an operation.
 	Requests    int   `json:"requests"`
 	InputTokens int64 `json:"inputTokens"`
 }
@@ -472,7 +471,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 // package paths relative to root, sorted, the manifest's own staged JSON
 // left out, and a shipped pack's tree left to its own stage. What is left
 // out is named. The Examiner's host pre-step asks it of the staged package
-// too, to know whether one call sends all of it (agentry-cli#504).
+// too, to know whether one call sends all of it.
 func ReviewFiles(root, manifestAbs string, ships []string) ([]judge.RubricFile, []ReviewNotRead, error) {
 	var files []judge.RubricFile
 	var notRead []ReviewNotRead

@@ -8,7 +8,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// --review-inputs (agentry-cli#321): nothing without it; with it, the
+// --review-inputs: nothing without it; with it, the
 // registry named and the job's credential from the environment, or a
 // refusal before anything is pulled.
 func TestReviewInputsTakesTheRegistryAndTheJobsCredential(t *testing.T) {

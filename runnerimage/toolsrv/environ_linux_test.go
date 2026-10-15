@@ -17,11 +17,11 @@ import (
 // The planted value: long and unique so no other text can contain it.
 const plantedSecret = "agentry-246-planted-9f1c2e7b5a"
 
-// TestExecChildCannotReadServerEnvironment is agentry-cli#246 item 1 at the
-// unit seam: a tools server started with a granted secret in its initial
-// environment, and exec granting sh and cat, must not let `cat /proc/$PPID/environ`
-// hand that secret back. The server runs in a re-executed copy of this test
-// binary so the secret is in its STARTING environment block — the one
+// TestExecChildCannotReadServerEnvironment is the unit-seam check: a tools
+// server started with a granted secret in its initial environment, and exec
+// granting sh and cat, must not let `cat /proc/$PPID/environ` hand that
+// secret back. The server runs in a re-executed copy of this test binary so
+// the secret is in its STARTING environment block — the one
 // /proc/<pid>/environ shows — exactly as the gateway starts the container.
 func TestExecChildCannotReadServerEnvironment(t *testing.T) {
 	if os.Getenv("AGENTRY_TOOLSRV_HELPER") == "1" {
@@ -66,7 +66,7 @@ func TestExecChildCannotReadServerEnvironment(t *testing.T) {
 	}
 	out := stdout.String()
 	if strings.Contains(out, plantedSecret) {
-		t.Fatalf("an exec child read the tools server's environment (agentry-cli#246):\n%s", out)
+		t.Fatalf("an exec child read the tools server's environment:\n%s", out)
 	}
 	line2 := lineWithID(t, out, 2)
 	if !strings.Contains(line2, "Permission denied") {

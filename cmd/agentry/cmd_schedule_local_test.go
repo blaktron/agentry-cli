@@ -41,8 +41,8 @@ func builtRunnerImage(f *dockerx.Fake) bool {
 	return false
 }
 
-// TestScheduleAddLocalKeepsAllowUnsigned (agentry-cli#856): add --local
-// with --allow-unsigned goes through its prepare step and keeps the
+// TestScheduleAddLocalKeepsAllowUnsigned: add --local with
+// --allow-unsigned goes through its prepare step and keeps the
 // schedule with the flag, and a fire's own run arguments pass the same
 // gates.
 func TestScheduleAddLocalKeepsAllowUnsigned(t *testing.T) {

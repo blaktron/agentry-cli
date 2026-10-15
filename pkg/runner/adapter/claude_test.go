@@ -65,8 +65,7 @@ func TestClaudeCompileGatewayOnly(t *testing.T) {
 		t.Errorf("gateway server = %+v, want an http server at %s", gw, spec.PHHostGatewayURL)
 	}
 	// The token rides as a variable NAME, expanded by Claude Code from the
-	// process environment: a plan file must never hold the value (§R11
-	// invariant 7).
+	// process environment: a plan file must never hold the value.
 	if want := "Bearer ${" + spec.GatewayTokenEnv + "}"; gw.Headers["Authorization"] != want {
 		t.Errorf("Authorization header = %q, want %q", gw.Headers["Authorization"], want)
 	}
@@ -209,7 +208,7 @@ func TestClaudeCompileInteractive(t *testing.T) {
 	if res.Host.StdinTask {
 		t.Error("an interactive session takes its turns from the driver, not a piped task")
 	}
-	// The two plans differ in the input side only (plan §6.10 line 1).
+	// The two plans differ in the input side only.
 	autonomous := claudeCompile(t, claudeInput())
 	if string(autonomous.Files[claudeMCPFile]) != string(res.Files[claudeMCPFile]) {
 		t.Error("the two modes must compile the same gateway configuration")
@@ -224,7 +223,7 @@ func TestClaudeCompileSchemaRidesThePrompt(t *testing.T) {
 		t.Errorf("resultKind = %q, want json", res.ResultKind)
 	}
 	if !strings.Contains(string(res.Files[claudeInstructionFile]), `{"type":"object"}`) {
-		t.Error("the schema must ride in the instruction (DR-8)")
+		t.Error("the schema must ride in the instruction")
 	}
 }
 
@@ -401,7 +400,7 @@ func (f *fakeStdio) say(line string) { _, _ = f.outW.Write([]byte(line + "\n")) 
 // and reports whether it did. A scripted harness that answers a turn calls
 // it first: a real harness replies only after it has read the turn, and a
 // fake that replies earlier can have its answer dropped before the driver
-// has registered the turn it belongs to (agentry-cli#205).
+// has registered the turn it belongs to.
 func (f *fakeStdio) awaitLine(want string, d time.Duration) bool {
 	deadline := time.After(d)
 	for {
@@ -446,7 +445,7 @@ func TestClaudeSessionTurn(t *testing.T) {
 	// The harness answers only once the user turn has reached it, as Claude
 	// Code does: the driver drops a result that arrives while no turn is in
 	// flight, so a fake that answered at once could race Prompt's
-	// registration and leave it waiting for its deadline (agentry-cli#205).
+	// registration and leave it waiting for its deadline.
 	go func() {
 		if !stdio.awaitLine(`"type":"user"`, 5*time.Second) {
 			return // Prompt times out and the test says why
@@ -531,13 +530,12 @@ func TestClaudeSessionEndsWithoutAnAnswer(t *testing.T) {
 	}
 }
 
-// A subscription OAuth token (policy apiKeyKind subscription,
-// agentry-cli#171) is what Claude Code reads from CLAUDE_CODE_OAUTH_TOKEN
-// — and bare mode does not read that variable, by Anthropic's own
-// documentation — so the plan drops --bare for that kind and keeps every
-// other isolation flag; the plan records the kind it was rendered for,
-// so the engine refuses an API key under it. An API key renders exactly
-// as before.
+// A subscription OAuth token (policy apiKeyKind subscription) is what
+// Claude Code reads from CLAUDE_CODE_OAUTH_TOKEN — and bare mode does not
+// read that variable, by Anthropic's own documentation — so the plan drops
+// --bare for that kind and keeps every other isolation flag; the plan
+// records the kind it was rendered for, so the engine refuses an API key
+// under it. An API key keeps --bare.
 func TestClaudeCompileSubscriptionTokenDropsBareAndUsesTheOAuthVariable(t *testing.T) {
 	in := claudeInput()
 	in.Model.APIKeyKind = policy.KeyKindSubscription

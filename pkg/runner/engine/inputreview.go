@@ -19,21 +19,20 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// AI Review of a hosted run's inputs (plan file-handling.md §8, M7;
-// agentry-cli#321). Once the inputs are decoded and checked for malware,
-// and before the agent starts, every text the model could read of them is
-// pushed to the registry's model-input scan as `input_file` with the job's
-// own credential: each input's text view, HTML's Markdown view, and the
-// original as uploaded when that is text too, archive members included.
-// A text AI Review flags, or one it could not read, refuses the run before
-// the agent starts (the route's rule: not scanned is withheld), naming the
-// file; in a session, a file added mid-run is refused alone. A file past
-// what AI Review reads of a run is withheld, never refused: it is listed as
-// not read and none of its views is served, and the run goes on with the
-// rest (the operator's rule of 2026-10-05: input is scanned, not blocked).
-// AI Review is
-// one credit a run however many calls (DEV-150), which the sandbox host's
-// runs extension settles, never this process. Local runs are not reviewed.
+// AI Review of a hosted run's inputs. Once the inputs are decoded and
+// checked for malware, and before the agent starts, every text the model
+// could read of them is pushed to the registry's model-input scan as
+// `input_file` with the job's own credential: each input's text view,
+// HTML's Markdown view, and the original as uploaded when that is text too,
+// archive members included. A text AI Review flags, or one it could not
+// read, refuses the run before the agent starts (the route's rule: not
+// scanned is withheld), naming the file; in a session, a file added mid-run
+// is refused alone. A file past what AI Review reads of a run is withheld,
+// never refused: it is listed as not read and none of its views is served,
+// and the run goes on with the rest (input is scanned, not
+// blocked). AI Review is one credit a run however
+// many calls, which the sandbox host's runs extension settles, never this
+// process. Local runs are not reviewed.
 
 // MaxInputReviewText is the most text AI Review reads of one run's inputs,
 // a session's added files included, so that one credit cannot buy an
@@ -47,15 +46,15 @@ const MaxInputReviewText = 16 << 20
 // inputs, a session's added files, the calls asked again and those that
 // name a flagged file included: the registry's cap of scans a run (the
 // runs extension's runInputScans), which refuses a call past it and so
-// the run (agentry-cli#823, agentry-enterprise#499; register DR-88).
-// reviewRetryBudget of them are kept for asking again, and reviewCalls
-// read the texts and name a flagged file. A file whose texts would take
-// the calls past what is left, keeping room to name a flagged file, is
-// withheld, unasked, as a file past MaxInputReviewText is. Packed as
-// packer packs them, 16 MiB of text takes about 260 to 275 calls whatever
-// the sizes of its texts, so a run meets this only with very many small
-// texts (2,000 small HTML files, read as uploaded, as text and as
-// Markdown, are 375 calls) or a session that adds a great many files.
+// the run. reviewRetryBudget of them are kept for asking
+// again, and reviewCalls read the texts and name a flagged file. A file
+// whose texts would take the calls past what is left, keeping room to
+// name a flagged file, is withheld, unasked, as a file past
+// MaxInputReviewText is. Packed as packer packs them, 16 MiB of text
+// takes about 260 to 275 calls whatever the sizes of its texts, so a run
+// meets this only with very many small texts (2,000 small HTML files,
+// read as uploaded, as text and as Markdown, are 375 calls) or a session
+// that adds a great many files.
 const MaxInputReviewCalls = 400
 
 // reviewCalls is how many of MaxInputReviewCalls read the texts and name a
@@ -69,13 +68,13 @@ const (
 // The shape of the review's calls. A call carries at most webscan.MaxText,
 // texts packed one after another, each headed by its path, as the pack scan
 // does, at most reviewBatchTexts of them so a flagged call can be asked
-// again a text at a time to name the file. A text that does not fit in
-// what is left of a call is cut to fill it, when at least reviewMinPiece
-// is left, and goes on in the next call, which starts reviewOverlap bytes
-// before the cut, so a phrase no longer than that is read whole in one
-// call wherever the cut falls (agentry-cli#823). reviewWorkers calls are
-// in flight at once, started at least reviewPace apart, under the
-// registry's budget for one job (limits.modelInputPerMin, 120 a minute).
+// again a text at a time to name the file. A text that does not fit in what
+// is left of a call is cut to fill it, when at least reviewMinPiece is
+// left, and goes on in the next call, which starts reviewOverlap bytes
+// before the cut, so a phrase no longer than that is read whole in one call
+// wherever the cut falls. reviewWorkers calls are in flight at once,
+// started at least reviewPace apart, under the registry's budget for one
+// job (limits.modelInputPerMin, 120 a minute).
 const (
 	reviewBatchTexts = 16
 	reviewWorkers    = 4
@@ -91,12 +90,12 @@ var reviewPace = 550 * time.Millisecond
 // A call answered not scanned for a failure that may pass (transient) is
 // asked again, at most reviewRetries times, the nth after n times
 // reviewBackoff and then its turn under reviewPace, holding its place
-// among the reviewWorkers (agentry-cli#806; register DR-88). Only then is
-// the run refused as not reviewed: one judge error must not refuse a
-// person's run, and a text AI Review has not read still never reaches the
-// agent. A run asks again at most reviewRetryBudget times in all, a
-// session's added files included, so a judge that keeps failing cannot
-// spend the run's MaxInputReviewCalls on asking again.
+// among the reviewWorkers. Only then is the run refused as not
+// reviewed: one judge error must not refuse a person's run, and a text AI
+// Review has not read still never reaches the agent. A run asks again at
+// most reviewRetryBudget times in all, a session's added files included,
+// so a judge that keeps failing cannot spend the run's
+// MaxInputReviewCalls on asking again.
 const (
 	reviewRetries     = 2
 	reviewRetryBudget = 24

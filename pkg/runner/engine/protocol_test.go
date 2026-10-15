@@ -25,12 +25,12 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
 )
 
-// The session protocol (agentry-cli#477) is a fourth client of the session
-// API. These tests drive the engine's real session — the real adapter's
-// driver over each harness's wire shape, the real pump, budgets and
-// teardown — once through the API and once through the protocol, and hold
-// the two to the same events and the same envelope. No test here sets a
-// field the production path would not (the lesson of agentry-cli#206).
+// The session protocol is a fourth client of the session API. These tests
+// drive the engine's real session — the real adapter's driver over each
+// harness's wire shape, the real pump, budgets and teardown — once through
+// the API and once through the protocol, and hold the two to the same
+// events and the same envelope. No test here sets a field the production
+// path would not.
 
 // protocolAdapters are the three harnesses a session can run on.
 var protocolAdapters = []string{adapter.DefaultName, adapter.ClaudeAdapterName, adapter.CodexAdapterName}
@@ -483,7 +483,7 @@ func TestProtocolReachesEveryEndReason(t *testing.T) {
 // command, a second send while a turn is in flight, and an add naming
 // anything but a regular file are each answered with an error event naming
 // the refusal — and the session carries on, takes the next turn, and still
-// tears down at the end (agentry-cli#161's guarantee, extended).
+// tears down at the end.
 func TestProtocolRefusesWithoutEndingTheSession(t *testing.T) {
 	ctx := context.Background()
 	gate := make(chan struct{})

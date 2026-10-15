@@ -1,8 +1,7 @@
-// Use your Claude subscription (runs Claude Code) (plan model-sign-ins.md
-// §4.4, D19–D24; agentry-cli#740): `agentry model-signins add claude`, its
-// removal, and the offer in `agentry setup`. The sign-in and its removal
-// are pkg/runner/claudesignin, which the desktop calls too
-// (agentry-cli#844); this is the terminal around them.
+// Use your Claude subscription (runs Claude Code): `agentry model-signins
+// add claude`, its removal, and the offer in `agentry setup`. The sign-in
+// and its removal are pkg/runner/claudesignin, which the desktop calls
+// too; this is the terminal around them.
 package main
 
 import (
@@ -89,7 +88,7 @@ func endClaude(errOut io.Writer, home string) func(context.Context, modelsignin.
 }
 
 // claudeOffer is what `agentry setup` offers of the Claude sign-in: the
-// image's, the default adapter's (D23).
+// image's, the default adapter's.
 func claudeOffer(cmd *cobra.Command, in *bufio.Reader, home string) setup.ClaudeOffer {
 	return setup.ClaudeOffer{
 		Kept: func() string { return claudesignin.Kept(home) },

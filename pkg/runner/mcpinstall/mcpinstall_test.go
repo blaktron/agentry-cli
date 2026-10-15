@@ -93,7 +93,7 @@ func TestResolveAll(t *testing.T) {
 	if res[0].BinName != "server-x" || res[0].Integrity != "sha512-AAA" {
 		t.Fatalf("npm resolution = %+v", res[0])
 	}
-	// The release's own runtime range is recorded (agentry-cli#609).
+	// The release's own runtime range is recorded.
 	if res[0].DeclaredRuntime != ">=20" || res[1].DeclaredRuntime != ">=3.10" {
 		t.Fatalf("declared runtimes = %q, %q", res[0].DeclaredRuntime, res[1].DeclaredRuntime)
 	}
@@ -140,18 +140,18 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 		t.Fatalf("builder ran %d times, want 1", n)
 	}
 	// The installer's name is fixed per server: it must remove itself, or
-	// the next agent declaring the same server cannot install it (#106).
+	// the next agent declaring the same server cannot install it.
 	if run, ok := fake.FindRun("agentry-mcpinstall-"); !ok || !run.AutoRemove {
 		t.Fatalf("installer container not auto-removed: %+v", run)
 	}
 	// A CLI killed mid-install leaves the builder running; its owner labels
-	// are what the next run's sweep removes it by (agentry-cli#161).
+	// are what the next run's sweep removes it by.
 	if run, _ := fake.FindRun("agentry-mcpinstall-"); run.Labels["agentry.mcpinstall"] == "" {
 		t.Fatalf("installer labels = %v, want the server it builds", run.Labels)
 	} else if own := owner.Labels(); own != nil && run.Labels[owner.LabelPID] != own[owner.LabelPID] {
 		t.Fatalf("installer labels = %v, want this process as owner", run.Labels)
 	}
-	// The store is the user's (#112): the builder runs as the invoking
+	// The store is the user's: the builder runs as the invoking
 	// uid:gid so `rm -rf` of the profile works afterwards, with npm's home
 	// and cache pointed at /tmp, where that user can write in the image.
 	if run, _ := fake.FindRun("agentry-mcpinstall-"); run.User != invokingUser() || run.User == "" {
@@ -208,7 +208,7 @@ func TestSpecsCarryManifestFilters(t *testing.T) {
 }
 
 // PyPI installs are wheel-only and verify the pinned artifact against the
-// registry's advertised digests before installing (agentry-cli#4); policy
+// registry's advertised digests before installing; policy
 // can opt back into source distributions.
 func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 	regs := fakeRegistries(t)
@@ -249,9 +249,9 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 }
 
 // A PyPI server's launchable entry is the console script the installed
-// distribution declares, not the project name (agentry-cli#13 / DR-11):
-// the builder records entry points, the host adopts the right one, and a
-// later reuse of the store carries the recorded name.
+// distribution declares, not the project name: the builder records entry
+// points, the host adopts the right one, and a later reuse of the store carries
+// the recorded name.
 func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
 	store := t.TempDir()
 	fake := &dockerx.Fake{
@@ -328,11 +328,10 @@ func TestPypiBuilderProgram(t *testing.T) {
 	}
 }
 
-// No manifest value reaches a shell (agentry-cli#162): a package name
-// carrying shell syntax is one argv element of a fixed program, and the
-// builder refuses it before any container runs, as it refuses a value pip
-// or npm would read as an option or an npm spec that is not a registry
-// version.
+// No manifest value reaches a shell: a package name carrying shell syntax is
+// one argv element of a fixed program, and the builder refuses it before any
+// container runs, as it refuses a value pip or npm would read as an option or
+// an npm spec that is not a registry version.
 func TestBuilderValuesNeverReachAShell(t *testing.T) {
 	evil := Resolved{Source: "pypi", Package: "x; touch /tmp/x", Version: "1.0", ID: "pypi-x"}
 	argv := pipArgv(&evil, policy.MCPRegistries{PyPI: "http://pypi.invalid"})
@@ -380,13 +379,12 @@ func TestBuilderValuesNeverReachAShell(t *testing.T) {
 	}
 }
 
-// The builder's only route out is the install proxy (agentry-cli#92,
-// DR-12): an internal network of its own, where the runner image's proxy
-// allows the configured registry and the artifact hosts the registry's
-// metadata named, and nothing else; the builder is told the proxy by the
-// proxy variables. The proxy's decisions are kept beside the record, the
-// record names the allowlist, and the proxy and the network go when the
-// build ends.
+// The builder's only route out is the install proxy: an internal network of its
+// own, where the runner image's proxy allows the configured registry and the
+// artifact hosts the registry's metadata named, and nothing else; the builder
+// is told the proxy by the proxy variables. The proxy's decisions are kept
+// beside the record, the record names the allowlist, and the proxy and the
+// network go when the build ends.
 func TestEnsureInstalledRoutesTheBuilderThroughTheInstallProxy(t *testing.T) {
 	cases := []struct {
 		decl      manifest.MCPServer
@@ -439,7 +437,7 @@ func TestEnsureInstalledRoutesTheBuilderThroughTheInstallProxy(t *testing.T) {
 				t.Errorf("install proxy = image %q argv %q network %q alias %q; want %q %q", proxy.Image, proxy.Argv, proxy.Network, proxy.Alias, proxyImage(policy.Images{}), wantArgv)
 			}
 			// The runner's own binary on the daemon's default: it resolves
-			// the registry through docker's DNS (agentry-cli#221).
+			// the registry through docker's DNS.
 			if proxy.Runtime != "" || !proxy.ReadOnly || !proxy.NoNewPrivileges {
 				t.Errorf("install proxy posture: runtime %q readOnly %v noNewPrivileges %v", proxy.Runtime, proxy.ReadOnly, proxy.NoNewPrivileges)
 			}
@@ -504,9 +502,9 @@ func TestFetchHosts(t *testing.T) {
 	}
 }
 
-// A reused store is held to the digest its install recorded
-// (agentry-cli#162): a file added or changed refuses, and a record from
-// before digests were kept gets one on first use and is held to it.
+// A reused store is held to the digest its install recorded: a file added or
+// changed refuses, and a record from before digests were kept gets one on first
+// use and is held to it.
 func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
 	regs := policy.MCPRegistries{NPM: "https://unused.invalid", PyPI: "https://unused.invalid"}
@@ -573,7 +571,7 @@ func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 }
 
 // The installer container runs under the policy's runtime like every
-// container of a run (DR-23); an empty runtime asks the daemon nothing.
+// container of a run; an empty runtime asks the daemon nothing.
 func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 	regs := fakeRegistries(t)
 	res, err := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{decl("@scope/server-x", "", "1.2.3")})
@@ -590,8 +588,8 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 	if !ok || inst.Runtime != "runsc" {
 		t.Fatalf("installer runtime = %q (found %v), want runsc", inst.Runtime, ok)
 	}
-	// A sandboxed builder cannot ask docker's DNS for the install proxy
-	// (agentry-cli#221): its alias is pinned; the proxy itself resolves the
+	// A sandboxed builder cannot ask docker's DNS for the install proxy:
+	// its alias is pinned; the proxy itself resolves the
 	// registry through that DNS and stays on the daemon's default.
 	if len(inst.ExtraHosts) != 1 || !strings.HasPrefix(inst.ExtraHosts[0], "mcp-install-proxy:") {
 		t.Fatalf("installer extra hosts = %v, want the install proxy pinned", inst.ExtraHosts)
@@ -599,21 +597,21 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 	if proxy, ok := fake.FindRun("agentry-mcpproxy-"); !ok || proxy.Runtime != "" {
 		t.Fatalf("install proxy runtime = %q (found %v), want the daemon's default", proxy.Runtime, ok)
 	}
-	// The run's container posture too (agentry-cli#163), the policy's
-	// memory and the defaults for what it left unset.
+	// The run's container posture too, the policy's memory and the defaults for
+	// what it left unset.
 	if len(inst.CapDrop) != 1 || inst.CapDrop[0] != "ALL" || !inst.NoNewPrivileges || inst.Memory != "1g" ||
 		inst.CPUs != policy.DefaultCPUs || inst.PidsLimit != policy.DefaultPids {
 		t.Fatalf("installer posture: cap-drop %v nnp %v memory %q cpus %d pids %d", inst.CapDrop, inst.NoNewPrivileges, inst.Memory, inst.CPUs, inst.PidsLimit)
 	}
-	// With the host's name servers the proxy runs under the runtime too
-	// (agentry-cli#337): on an egress network of the install's own, joined
+	// With the host's name servers the proxy runs under the runtime too:
+	// on an egress network of the install's own, joined
 	// at create, reading a resolv.conf of its own; nothing is connected
 	// after it starts, and both networks and the file go with the install.
 	// The file is bound from under the server store, a path the docker
 	// daemon finds as the CLI does: a sandbox host's runhost runs the CLI
 	// in a container sharing only its runner home with the host, and a
 	// file in the process's temporary directory was missing on the
-	// daemon's side (agentry-cli#627). One a killed install left behind is
+	// daemon's side. One a killed install left behind is
 	// swept when the next starts.
 	fake3 := &dockerx.Fake{}
 	withRunner(fake3)
@@ -681,8 +679,7 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 
 // A builder that refuses the package's engines.node (npm_builder.js exit 5)
 // fails the install with a sentence that names the runtime image and the
-// policy key, and records no resolution, so the next try installs afresh
-// (agentry-cli#608).
+// policy key, and records no resolution, so the next try installs afresh.
 func TestEnsureInstalledNamesAnEnginesRefusal(t *testing.T) {
 	regs := fakeRegistries(t)
 	res, err := ResolveAll(t.Context(), nil, regs, []manifest.MCPServer{decl("@scope/server-x", "", "1.2.3")})
@@ -709,7 +706,7 @@ func TestEnsureInstalledNamesAnEnginesRefusal(t *testing.T) {
 }
 
 // Each install step that fails names the declared server and itself in
-// the run's reason, never text (agentry-cli#628).
+// the run's reason, never text.
 func TestEnsureInstalledNamesTheStepThatFailed(t *testing.T) {
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
 	regs := httpsRegs(policy.MCPRegistries{NPM: "https://unused.invalid", PyPI: "https://unused.invalid"})
@@ -776,7 +773,7 @@ func TestResolveAllNamesTheServerItCouldNotResolve(t *testing.T) {
 	}
 }
 
-// A remote server (agentry-cli#663) is neither resolved nor installed, and
+// A remote server is neither resolved nor installed, and
 // becomes a plan spec of its own: its address, auth, tools, bearer secret
 // and its one host.
 func TestRemoteServersAreSpecsNotPackages(t *testing.T) {
@@ -806,8 +803,8 @@ func TestRemoteServersAreSpecsNotPackages(t *testing.T) {
 }
 
 // The Drafter's server check reads a release's direct dependencies and
-// install scripts from the one metadata request a resolution already makes
-// (agentry-cli#660; DR-67: what leaves the machine does not grow).
+// install scripts from the one metadata request a resolution already makes,
+// so what leaves the machine does not grow.
 func TestResolveAllReadsDependenciesFromItsOneRequest(t *testing.T) {
 	var requests atomic.Int32
 	mux := http.NewServeMux()

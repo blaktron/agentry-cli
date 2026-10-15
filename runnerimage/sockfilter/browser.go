@@ -12,15 +12,14 @@ import (
 	"strings"
 )
 
-// The browser class (agentry-notes plans/browser-testing.md §4, §7, M1;
-// agentry-cli#915). The run's browser server renders pages nobody vetted
+// The browser class. The run's browser server renders pages nobody vetted
 // and, for a release that declares browser secrets, holds them, so it is
 // held tighter than a declared server: no capability back, a read-only
 // root with a tmpfs home and /tmp, the user the run gave it, and Chromium's
 // own sandbox on. Under runc that sandbox needs user, PID and network
 // namespaces, which docker's default seccomp profile refuses a process
 // without CAP_SYS_ADMIN; the filter gives this one class moby's default
-// profile plus clone, unshare, setns and chroot (measured by M1), still
+// profile plus clone, unshare, setns and chroot, still
 // with every capability dropped and no new privileges. Under a sandboxed
 // runtime (gVisor) Docker's default profile lets it run, and none is set.
 

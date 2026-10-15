@@ -1,6 +1,6 @@
-// `agentry publish` (§11, §6.5): both submission sources (git-tag and the
-// locally packed cli-upload), the credential gate, and the §7 verdict
-// mapping — published/needs_review end the poll cleanly, rejected and the
+// `agentry publish`: both submission sources (git-tag and the locally
+// packed cli-upload), the credential gate, and the verdict mapping —
+// published/needs_review end the poll cleanly, rejected and the
 // containment states end it non-zero with the recorded reason.
 package main
 
@@ -37,7 +37,7 @@ func TestPublishUploadToPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The cli-upload banner carries the client-computed identity the server
-	// will cross-check (§6.5).
+	// will cross-check.
 	if !strings.Contains(stdout, "(cli-upload source)") || !strings.Contains(stdout, "sha256:") {
 		t.Errorf("upload banner = %s", stdout)
 	}
@@ -76,7 +76,7 @@ func TestPublishPollsToVerdict(t *testing.T) {
 	}
 }
 
-// TestVerdictTable: the §7 terminal-state mapping, without a poll loop.
+// TestVerdictTable: the terminal-state mapping, without a poll loop.
 func TestVerdictTable(t *testing.T) {
 	reason := "why"
 	digest := "sha256:abc"
@@ -146,7 +146,7 @@ publish:
 
 // A transport-level or 5xx failure is retried with the SAME Idempotency-Key,
 // so the registry replays an already-accepted submission instead of the
-// retry colliding on V3 "version exists" (agentry#22).
+// retry colliding on V3 "version exists".
 func TestPublishRetriesUploadWithSameKey(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_testtoken")

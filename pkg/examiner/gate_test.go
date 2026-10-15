@@ -7,11 +7,10 @@ import (
 	"github.com/blaktron/agentry/pkg/judge"
 )
 
-// TestTheGateRestatementMatchesTheCoresTable (plan
-// desktop-review-key-and-run-cards.md D31; agentry#776): every case of the
-// table the core publishes, and runs against its own gate, reaches the same
-// outcome, queue and branch here. A core pin that changes the gate fails
-// this test until Gate follows it.
+// TestTheGateRestatementMatchesTheCoresTable: every case of the table the
+// core publishes, and runs against its own gate, reaches the same outcome,
+// queue and branch here. A core pin that changes the gate fails this test
+// until Gate follows it.
 func TestTheGateRestatementMatchesTheCoresTable(t *testing.T) {
 	table, err := gatecases.Load()
 	if err != nil {
@@ -41,9 +40,8 @@ func TestTheGateRestatementMatchesTheCoresTable(t *testing.T) {
 
 // TestAIReviewFindingRatesAsS5Does: score 2 medium and 3 high, with an
 // attempted injection, an undeclared capability and deceiving the user high
-// from 2 (DEV-186; deception since ruleset 0.4.0), exfiltration and
-// destructive actions medium at any score (ruleset 0.4.0, agentry#893), and
-// nothing under 2.
+// from 2 (deception from ruleset 0.4.0), exfiltration and destructive
+// actions medium at any score (ruleset 0.4.0), and nothing under 2.
 func TestAIReviewFindingRatesAsS5Does(t *testing.T) {
 	for _, tc := range []struct {
 		id    string

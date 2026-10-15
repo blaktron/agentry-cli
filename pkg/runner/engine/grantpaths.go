@@ -11,13 +11,13 @@ import (
 )
 
 // makeGrantedPaths creates, in the run's own workspace copy, each path a
-// paths grant names that the release does not ship, as an empty folder
-// (agentry-cli#855). The compiled catalog binds every such path into the
-// tools server, and a bind needs its source: the run's docker filter
-// refuses an absent one, so a release whose write grant names a folder
-// for its output (out/) never started its tools server. The install
-// itself is never touched. Every step runs under an os.Root of the
-// workspace, so a link the release ships cannot carry a folder outside it.
+// paths grant names that the release does not ship, as an empty folder.
+// The compiled catalog binds every such path into the tools server, and a
+// bind needs its source: the run's docker filter refuses an absent one, so
+// a release whose write grant names a folder for its output (out/) would
+// not start its tools server. The install itself is never touched. Every
+// step runs under an os.Root of the workspace, so a link the release ships
+// cannot carry a folder outside it.
 func makeGrantedPaths(workspace string, caps spec.CapSummary) error {
 	var paths []string
 	if caps.FSReadMode == "paths" {

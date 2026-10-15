@@ -61,9 +61,9 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(in, "scan.tiff"), tiff, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Code, markup, configuration and data text, as the hosted test of
-	// 2026-10-04 gave them: each is read as uploaded, whatever libmagic
-	// calls it (agentry-cli#630).
+	// Code, markup, configuration and data text, as a hosted run gives
+	// them: each is read as uploaded, whatever libmagic
+	// calls it.
 	code := map[string]string{
 		"index.html": "<!doctype html>\n<form action=\"/q\"><input name=\"q\"></form>\n<div id=\"out\"></div>\n<script>document.getElementById('out').innerHTML = location.hash.slice(1);</script>\n",
 		"pom.xml":    "<?xml version=\"1.0\"?>\n<project><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>\n",
@@ -95,8 +95,7 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 		if !ok {
 			continue
 		}
-		// HTML also gets pandoc's Markdown as its text view (D2,
-		// agentry-cli#631).
+		// HTML also gets pandoc's Markdown as its text view.
 		wantBy := ""
 		if f.Path == "index.html" {
 			wantBy = "pandoc"

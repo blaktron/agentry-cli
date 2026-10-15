@@ -38,12 +38,12 @@ func TestRelaysStartedBy(t *testing.T) {
 	}
 }
 
-// TestRunRefusesForeignRelays (agentry-cli#108): a plan whose declared
-// server has egress hosts does not start while another gateway's relay
-// sidecars are on the shared relay network — exit 13, the names in the
-// error, no gateway started; a plan without such a server ignores them.
+// TestRunRefusesForeignRelays: a plan whose declared server has egress
+// hosts does not start while another gateway's relay sidecars are on
+// the shared relay network — exit 13, the names in the error, no
+// gateway started; a plan without such a server ignores them.
 func TestRunRefusesForeignRelays(t *testing.T) {
-	withoutFilter(t) // DR-22 holds where the filter does not run (agentry-cli#220)
+	withoutFilter(t) // the shared relay network rule holds where the filter does not run
 	p, f := serverFixture(t)
 	happyFake(f)
 	f.ByLabel = map[string][]string{RelayLabel: {"docker-mcp-l4proxy-theirs"}}
@@ -76,13 +76,13 @@ func TestRunRefusesForeignRelays(t *testing.T) {
 	}
 }
 
-// TestTeardownReapsOwnRelaysByName (agentry-cli#106): the relays the
-// gateway's log says it started — and the label confirms are relays —
-// are removed at teardown, after the gateway's stop and before its
-// removal: on the success path, on the path where a declared server
-// failed to start, and on the path where the health probe failed before
-// the log was snapshotted. A relay the log does not name, and a name the
-// log carries that is not a relay, are left alone.
+// TestTeardownReapsOwnRelaysByName: the relays the gateway's log says it
+// started — and the label confirms are relays — are removed at teardown,
+// after the gateway's stop and before its removal: on the success path,
+// on the path where a declared server failed to start, and on the path
+// where the health probe failed before the log was snapshotted. A relay
+// the log does not name, and a name the log carries that is not a relay,
+// are left alone.
 func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 	relayLine := "starting l4 proxy docker-mcp-l4proxy-ours for api.example, ports 443\nstarting l4 proxy docker-mcp-l4proxy-notlabelled for api.other, ports 443\n"
 	// The gateway creates its relays as it starts: none on the host before
@@ -130,8 +130,7 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 	// A relay the gateway starts after its health probe — the l4 relay for
 	// a declared server's egress host starts when the server first connects
 	// — is not in the probe-time snapshot. Teardown reads the log again, so
-	// it is reaped all the same (agentry-cli#184, found by runner-r2's
-	// mcp-osv fixture).
+	// it is reaped all the same.
 	t.Run("relay started after the snapshot", func(t *testing.T) {
 		p, f := serverFixture(t)
 		happyFake(f)
@@ -255,14 +254,13 @@ func (h hostDocker) RemoveForce(ctx context.Context, name string) error {
 	return h.Fake.RemoveForce(ctx, name)
 }
 
-// TestConcurrentRelayRunsDoNotShareTheRelayNetwork (agentry-cli#268): two
-// runs whose plans need relays, started together on one host, both list
-// the relay network before either gateway is up. Listing and then starting
-// with nothing held across the two let both see an empty network and both
-// start, each gateway's relays beside the other's. The second must be
-// refused.
+// TestConcurrentRelayRunsDoNotShareTheRelayNetwork: two runs whose plans
+// need relays, started together on one host, both list the relay network
+// before either gateway is up. Listing and then starting with nothing held
+// across the two let both see an empty network and both start, each
+// gateway's relays beside the other's. The second must be refused.
 func TestConcurrentRelayRunsDoNotShareTheRelayNetwork(t *testing.T) {
-	withoutFilter(t) // DR-22 holds where the filter does not run (agentry-cli#220)
+	withoutFilter(t) // the shared relay network rule holds where the filter does not run
 	host := newRelayHost()
 	home := t.TempDir()
 	type result struct {
@@ -303,13 +301,13 @@ func TestConcurrentRelayRunsDoNotShareTheRelayNetwork(t *testing.T) {
 	}
 }
 
-// TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath
-// (agentry-cli#268): the lock is taken before the relay listing, held
-// while the run is going — a relay can start late, after the gateway's
-// probe — and released by teardown after the relays are reaped, on the
-// success path and on a refusal alike; a run without relays never takes it.
+// TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath: the lock is
+// taken before the relay listing, held while the run is going — a relay can
+// start late, after the gateway's probe — and released by teardown after
+// the relays are reaped, on the success path and on a refusal alike; a run
+// without relays never takes it.
 func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
-	withoutFilter(t) // DR-22 holds where the filter does not run (agentry-cli#220)
+	withoutFilter(t) // the shared relay network rule holds where the filter does not run
 	heldNow := func(home string) bool {
 		release, err := holdRelayLock(home)
 		if err != nil {
@@ -406,7 +404,7 @@ func (r *reapProbe) RemoveForce(ctx context.Context, name string) error {
 }
 
 // withoutFilter runs a test as on a platform without the gateway's docker
-// filter, where the relay network is the host's one fixed network (DR-22).
+// filter, where the relay network is the host's one fixed network.
 func withoutFilter(t *testing.T) {
 	t.Helper()
 	withFilter(t, false)

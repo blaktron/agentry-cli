@@ -3,9 +3,8 @@
 // default runtime, whether it installs, whether it starts and lists its
 // tools, and what one keyless read-only call returned. Its results seed the
 // drafting guide's soft lists, Runs here and Does not run here
-// (pkg/drafter/knowledge/drafting-guide/sources/servers.yaml; plan
-// drafter-knowledge.md §4.5, agentry-cli#658). README.md beside it is the
-// procedure.
+// (pkg/drafter/knowledge/drafting-guide/sources/servers.yaml). README.md
+// beside it is the procedure.
 //
 // It reuses the runner's own parts: the resolver and the builder
 // (mcpinstall.ResolveAll, EnsureInstalled) in the default runtime images
@@ -17,8 +16,8 @@
 // looser, never stricter, so a server that fails here fails in a run too:
 // it speaks stdio rather than streaming HTTP, so the survey talks MCP to it
 // directly; it reaches the Docker daemon's own socket, where a run's
-// gateway on Linux goes through the run's filter (engine's daemon filter,
-// agentry-cli#219); and it uses the daemon's default runtime, where a
+// gateway on Linux goes through the run's filter (engine's daemon filter);
+// and it uses the daemon's default runtime, where a
 // hosted run's may be gVisor.
 package main
 
@@ -133,7 +132,7 @@ func main() {
 }
 
 func run(listPath, outDir, only string) error {
-	raw, err := os.ReadFile(listPath) //nolint:gosec // the operator's list
+	raw, err := os.ReadFile(listPath) //nolint:gosec // the list is the caller's
 	if err != nil {
 		return err
 	}
@@ -223,8 +222,7 @@ const runtimeProbe = `echo "user=$(id -un) uid=$(id -u) gid=$(id -g)"; echo "hom
 	`for p in git curl wget python3 node npx uvx docker chromium; do command -v "$p" >/dev/null 2>&1 && echo "has=$p"; done; true`
 
 // runtimes records runtimeProbe's answer for both default runtime images,
-// in runtimes-<date>.txt (plan drafter-knowledge.md §4.5: the images'
-// default user and HOME).
+// in runtimes-<date>.txt (the images' default user and HOME).
 func runtimes(ctx context.Context, d dockerx.Client, pol *policy.Policy, outDir, date string) error {
 	var b strings.Builder
 	for _, image := range []string{pol.Images.NodeRuntime, pol.Images.PythonRuntime} {
@@ -619,8 +617,8 @@ func launch(ctx context.Context, d dockerx.Client, pol *policy.Policy, outDir, s
 			{Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"},
 		},
 		// Not its container name, so it attaches no network of its own
-		// to the server (engine.startInfra, agentry-cli#105); short,
-		// because docker caps a hostname at 64 bytes.
+		// to the server (engine.startInfra); short, because docker caps a
+		// hostname at 64 bytes.
 		Hostname:            "agentry-survey-gateway",
 		Network:             "none",
 		Interactive:         true,

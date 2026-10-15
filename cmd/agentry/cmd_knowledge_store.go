@@ -1,6 +1,6 @@
-// `agentry knowledge list | import | upload | download | export | delete`
-// (plan knowledge.md §4.3, §4.8; agentry-cli#319): the packs kept sealed in
-// the local store the desktop shares, and their copies in Agentry.
+// `agentry knowledge list | import | upload | download | export |
+// delete`: the packs kept sealed in the local store the desktop shares,
+// and their copies in Agentry.
 
 package main
 
@@ -46,7 +46,7 @@ func knowledgeStoreFor(cmd *cobra.Command, current string) (*store.Store, error)
 		Registries: func(u string) (store.Registry, error) {
 			return knowledgeClient(cmd, u)
 		},
-		// An organization's shared packs (Knowledge M8): the same account's
+		// An organization's shared packs: the same account's
 		// client, under the organization's routes.
 		Shared: func(u, org string) (store.Shared, error) {
 			c, err := knowledgeClient(cmd, u)
@@ -82,7 +82,7 @@ func signedInToken(cmd *cobra.Command, u string) (string, error) {
 }
 
 // rewrapOnSignIn moves packs kept under this machine's key to the account's
-// key once a registry is signed in (plan D20), and says so.
+// key once a registry is signed in, and says so.
 func rewrapOnSignIn(cmd *cobra.Command, s *store.Store) {
 	moved, err := s.Rewrap(cmd.Context())
 	for _, name := range moved {
@@ -104,7 +104,7 @@ type knowledgeEntryJSON struct {
 	Where   string         `json:"where"`
 	Key     string         `json:"key"`
 	Wrapper store.Wrapper  `json:"wrapper"`
-	// Org is the organization whose shared pack this is (Knowledge M8).
+	// Org is the organization whose shared pack this is.
 	Org     string             `json:"org,omitempty"`
 	Agentry *store.AgentryCopy `json:"agentry,omitempty"`
 }
@@ -428,8 +428,7 @@ func newKnowledgeDeleteCmd() *cobra.Command {
 // knowledgeArgIsPath says whether a --knowledge (or add) value is written
 // as a path: it holds a path separator, or is "." or "..". Anything else is
 // a pack's name, looked up in the store first (a directory of that name in
-// the working directory is taken only when the store keeps no such pack,
-// as M1 took every value).
+// the working directory is taken only when the store keeps no such pack).
 func knowledgeArgIsPath(arg string) bool {
 	return strings.ContainsAny(arg, `/\`) || arg == "." || arg == ".."
 }
@@ -440,7 +439,7 @@ func isDir(path string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// rewrapAfterLogin is the sign-in's half of plan D20: packs kept signed
+// rewrapAfterLogin is the sign-in's half of key wrapping: packs kept signed
 // out move to the account's key at the registry just signed in to. Never
 // fatal: the login stands whatever the store says.
 func rewrapAfterLogin(cmd *cobra.Command, reg string) {

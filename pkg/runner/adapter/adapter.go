@@ -1,9 +1,9 @@
-// Package adapter defines the harness adapter interface (RUNNER-PLAN §R10)
-// and its registry. The harness ecosystem moves fast (annex §4); the
-// runner's leverage is the contract-to-enforcement compiler, not the model
-// loop, so harnesses sit behind the smallest interface that lets the
-// engine stay harness-agnostic: compile definition files + describe the
-// agent container, then normalize the event stream.
+// Package adapter defines the harness adapter interface and its registry.
+// The harness ecosystem moves fast; the runner's value is the
+// contract-to-enforcement compiler, not the model loop, so harnesses sit
+// behind the smallest interface that lets the engine stay harness-agnostic:
+// compile definition files + describe the agent container, then normalize
+// the event stream.
 package adapter
 
 import (
@@ -24,14 +24,14 @@ import (
 
 // Input is everything an adapter may use to compile harness files. Note
 // what is absent: secret values, host paths, run ids — adapters compile
-// deterministic plan content only (§R4).
+// deterministic plan content only.
 type Input struct {
 	// Mode is the run mode the plan is compiled for (autonomous or
 	// interactive); it selects the harness argv and the Session block and
-	// changes nothing else (plan §6.10 line 1).
+	// changes nothing else.
 	Mode manifest.Mode
 	// Instruction is the fully rendered system instruction: the System
-	// Prompt, then the package's instruction body (agentry-cli#520).
+	// Prompt, then the package's instruction body.
 	Instruction string
 	// Summary is the manifest one-liner (harness description fields).
 	Summary string
@@ -41,20 +41,19 @@ type Input struct {
 	HarnessImage string
 	// GatewayURL is the MCP endpoint on the run network.
 	GatewayURL string
-	// SchemaJSON is the optional output.schema.json content (§R2).
+	// SchemaJSON is the optional output.schema.json content.
 	SchemaJSON []byte
 	// Harness is the operator policy's block for THIS adapter
 	// (harness.<name>), the configuration an adapter that drives the
-	// person's own installation of a harness needs: which executable,
-	// and — because such a harness speaks its own protocol to its own
-	// endpoint — which model and credential variable it is given (plan
-	// runner-m-r4-adapters §5). Zero for a containerised harness.
+	// person's own installation of a harness needs: which executable, and —
+	// because such a harness speaks its own protocol to its own endpoint —
+	// which model and credential variable it is given. Zero for a
+	// containerised harness.
 	Harness policy.HarnessPolicy
 	// UnchangedTools are tools beyond the input tools whose results reach
 	// the model unchanged, past a harness's own scrub of tool output: the
-	// host link's, where the release declares a target host (plan
-	// runtime-hosts.md D9, agentry-cli#861). Empty for every other plan,
-	// whose harness files stay as they were.
+	// host link's, where the release declares a target host. Empty for
+	// every other plan.
 	UnchangedTools []string
 }
 
@@ -69,7 +68,7 @@ type Result struct {
 	// Agent is the agent container to run.
 	Agent spec.ContainerSpec
 	// Host runs the harness on this machine from the person's own
-	// installation instead of Agent (plan runner-m-r4-adapters §5).
+	// installation instead of Agent.
 	Host *spec.HostProcessSpec
 	// Model is the provider/model string for receipts.
 	Model string
@@ -91,10 +90,10 @@ type Result struct {
 type EventKind string
 
 // Event kinds. Parsed best-effort: harness NDJSON schemas are not stable
-// contracts (annex risk register), so adapters map what they recognize and
-// pass the rest through as Other; receipts keep every raw line regardless.
+// contracts, so adapters map what they recognize and pass the rest through
+// as Other; receipts keep every raw line regardless.
 const (
-	// EventToolCall counts against --max-turns (§R8 exit 16).
+	// EventToolCall counts against --max-turns (exit 16).
 	EventToolCall EventKind = "tool_call"
 	// EventAssistantText carries assistant output text; the engine keeps
 	// the last one as the result.
@@ -105,36 +104,34 @@ const (
 	EventError EventKind = "error"
 	// EventPermissionGranted records an in-harness permission request the
 	// runner allowed: the tool is one the gateway serves, so the policy
-	// already bounds it (interactive sessions; DR-15, agentry-cli#61).
+	// already bounds it (interactive sessions).
 	EventPermissionGranted EventKind = "permission_granted"
 	// EventPermissionDenied records an in-harness permission request the
 	// runner refused: a tool outside the gateway's catalog, which should
-	// never occur (interactive sessions; plan §6.10 line 4).
+	// never occur (interactive sessions).
 	EventPermissionDenied EventKind = "permission_denied"
 	// EventPlanLimit says the person's plan refused the run's model calls
-	// for its usage limit (plan model-sign-ins.md D12, invariant I9): the
-	// engine ends the run with the plan-limit outcome, never retries it
-	// and never reports it as success. Text is the vendor's own words,
-	// ResetsAt when it said when the limit lifts (zero otherwise: no reset
-	// time is invented).
+	// for its usage limit (invariant I9): the engine ends the run with the
+	// plan-limit outcome, never retries it and never reports it as success.
+	// Text is the vendor's own words, ResetsAt when it said when the limit
+	// lifts (zero otherwise: no reset time is invented).
 	EventPlanLimit EventKind = "plan_limit"
 	// EventOrgPolicy says a policy of the person's organization or
-	// enterprise at the vendor refused the run (plan model-sign-ins.md D29):
-	// the engine ends the run with that policy named, never retries it and
-	// never reports it as success. Policy is which, a word of
-	// receipt's closed list (receipt.OrgPolicy*); Text the vendor's words.
+	// enterprise at the vendor refused the run: the engine ends the run
+	// with that policy named, never retries it and never reports it as
+	// success. Policy is which, a word of receipt's closed list
+	// (receipt.OrgPolicy*); Text the vendor's words.
 	EventOrgPolicy EventKind = "org_policy"
 	// EventOutOfCredits says the model's provider refused the run's calls
 	// because the account that pays has no credits left: an HTTP 402, or
-	// the provider's own words for it (plan model-sign-ins.md §4.6;
-	// agentry-cli#742). The engine ends the run with the out-of-credits
-	// outcome and the provider's reason, never retried, never a success.
-	// Text is the provider's words.
+	// the provider's own words for it. The engine ends the run with the
+	// out-of-credits outcome and the provider's reason, never retried,
+	// never a success. Text is the provider's words.
 	EventOutOfCredits EventKind = "out_of_credits"
 	// EventReasoning marks a chunk of the model's reasoning stream. It
-	// carries no text: reasoning is never the result (agentry-cli#53). The
-	// engine notes only that the model's last output was reasoning, to name
-	// why a schema-checked run has no answer (agentry-cli#825).
+	// carries no text: reasoning is never the result. The engine notes only
+	// that the model's last output was reasoning, to name why a
+	// schema-checked run has no answer.
 	EventReasoning EventKind = "reasoning"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
@@ -148,7 +145,7 @@ type Event struct {
 	Text string
 	// Delta marks Text as one streamed chunk of the current assistant
 	// message rather than a whole message: the engine concatenates deltas
-	// until a tool call or usage event ends the message (agentry-cli#53).
+	// until a tool call or usage event ends the message.
 	Delta bool
 	// InputTokens/OutputTokens/CostUSD are set on EventUsage.
 	InputTokens  int64
@@ -157,8 +154,8 @@ type Event struct {
 	// TotalTokens is set on EventUsage by a harness that reports context
 	// tokens without an input/output split: docker-agent's ACP
 	// `usage_update` carries a cumulative `used`, and the driver emits the
-	// delta since the previous update (agentry-cli#71). Input and output
-	// stay zero then — unknown, not guessed.
+	// delta since the previous update. Input and output stay zero then —
+	// unknown, not guessed.
 	TotalTokens int64
 	// ResetsAt is set on EventPlanLimit when the harness said when the
 	// plan's limit lifts.
@@ -181,8 +178,8 @@ type Adapter interface {
 	// a run the harness thinks is fine.
 	Events(line []byte) []Event
 	// Session returns the driver for an interactive session over the
-	// harness container's attached stdio (plan §6.9). Adapters without an
-	// interactive transport return ErrNotSupported.
+	// harness container's attached stdio. Adapters without an interactive
+	// transport return ErrNotSupported.
 	Session(ctx context.Context, rw io.ReadWriteCloser, opts SessionOptions) (SessionDriver, error)
 }
 
@@ -191,14 +188,13 @@ type Adapter interface {
 type SessionOptions struct {
 	// GatewayTools are the tool names the run's gateway serves — the run's
 	// own grant: the plan's `tools`, bounded by policy at compile, plus the
-	// knowledge and voice tools a run-time attachment adds
-	// (agentry-cli#576), plus every tool the gateway lists to the session's
-	// probe, which is how a declared MCP server's tools are known
-	// (agentry-cli#578). A harness permission request
-	// for one of them is granted; anything else is denied (DR-15,
-	// agentry-cli#61: under ACP the client is the permission authority for
-	// every tool call, and a denial does not reach the model as a refused
-	// tool result — docker-agent fails the whole turn).
+	// knowledge and voice tools a run-time attachment adds, plus every tool
+	// the gateway lists to the session's probe, which is how a declared MCP
+	// server's tools are known. A harness permission request for one of
+	// them is granted; anything else is denied (under ACP the client is the
+	// permission authority for every tool call, and a denial does not reach
+	// the model as a refused tool result — docker-agent fails the whole
+	// turn).
 	GatewayTools []string
 	// ModelSignIn says the run is paid by a model sign-in: a 429 from the
 	// model is then the plan's limit (EventPlanLimit), not a rate limit to
@@ -232,18 +228,18 @@ type SignInToken struct {
 
 // Resumer is a SessionDriver that carries its conversation over to a new
 // harness process: after the engine has ended the old one between turns
-// (its stdin closed, the process gone), Resume performs the handshake on
-// rw and resumes the conversation, on the same event stream (the restart
-// token route, plan model-sign-ins.md D10).
+// (its stdin closed, the process gone), Resume performs the handshake on rw
+// and resumes the conversation, on the same event stream (the restart token
+// route).
 type Resumer interface {
 	Resume(ctx context.Context, rw io.ReadWriteCloser) error
 }
 
 // ModelSignInAdapter is implemented by an adapter that can spend a model
-// sign-in (plan model-sign-ins.md §4.2): it names the kinds it can, and
-// for those its Compile returns Result.ModelSignIn. The compiler refuses a
-// policy naming a sign-in kind for any other adapter by policy, before
-// the adapter compiles, so no adapter renders a key for a sign-in.
+// sign-in: it names the kinds it can, and for those its Compile returns
+// Result.ModelSignIn. The compiler refuses a policy naming a sign-in kind
+// for any other adapter by policy, before the adapter compiles, so no
+// adapter renders a key for a sign-in.
 type ModelSignInAdapter interface {
 	ModelSignIns() []string
 }
@@ -255,9 +251,9 @@ func SpendsModelSignIn(a Adapter, kind string) bool {
 }
 
 // HostHarness is implemented by adapters that drive the person's own
-// installation of a harness instead of a container (plan
-// runner-m-r4-adapters §5), so `agentry doctor --adapter <name>` can
-// report what is actually installed before a scheduled run finds out.
+// installation of a harness instead of a container, so `agentry doctor
+// --adapter <name>` can report what is actually installed before a
+// scheduled run finds out.
 type HostHarness interface {
 	// Executable is the program name looked up on PATH, then in
 	// WellKnownPaths; the operator policy's harness.<name>.path
@@ -275,19 +271,19 @@ type HostHarness interface {
 	// DisplayName is the product's name for a person ("Claude Code"),
 	// where Name is the adapter's ("claude").
 	DisplayName() string
-	// MCPCommand is the one line that registers the agentry-mcp server
-	// with this host, verbatim from agentry-mcp's README ("Install"; the
-	// README also shows an AGENTRY_BIN variant these strings leave out);
-	// the path is the person's own build of the server. A client shows
-	// it; nothing runs it (agentry-cli#151).
+	// MCPCommand is the one line that registers the agentry-mcp server with
+	// this host, verbatim from agentry-mcp's README ("Install"; the README
+	// also shows an AGENTRY_BIN variant these strings leave out); the path
+	// is the person's own build of the server. A client shows it; nothing
+	// runs it.
 	MCPCommand() string
 	// WellKnownPaths are the places the harness's executable is usually
 	// installed on goos ("linux", "darwin", "windows"), tried in order
-	// after PATH (agentry-cli#167): a GUI launched from the dock or the
-	// Start Menu carries the login session's PATH, not the shell's, and
-	// the desktop apps that bundle a harness put it nowhere on PATH at
-	// all. Each is a path template, and this is the whole rule
-	// (harnessprobe applies it and defines nothing of its own):
+	// after PATH: a GUI launched from the dock or the Start Menu carries
+	// the login session's PATH, not the shell's, and the desktop apps that
+	// bundle a harness put it nowhere on PATH at all. Each is a path
+	// template, and this is the whole rule (harnessprobe applies it and
+	// defines nothing of its own):
 	//
 	//   - "~" as the whole first element is the home directory ("~user"
 	//     is left alone); it is substituted after the variables, so a
@@ -309,16 +305,15 @@ type HostHarness interface {
 // interactive transport.
 var ErrNotSupported = errors.New("adapter does not support interactive sessions")
 
-// SessionDriver drives one interactive harness session (DR-15). Turns go
-// in through Prompt; everything the harness says comes out of Events as
-// the same normalized kinds an autonomous run produces, so receipts have
-// one shape. A permission request from the harness is answered by the
-// driver — granted for a gateway tool (EventPermissionGranted), denied for
-// anything else (EventPermissionDenied) — and surfaced either way, so the
-// transcript shows every approval. Every event a turn produces is on
-// Events before its Prompt returns: the engine records them ahead of the
-// turn's end on that promise, so none is lost to an End that follows the
-// turn (agentry-cli#204).
+// SessionDriver drives one interactive harness session. Turns go in through
+// Prompt; everything the harness says comes out of Events as the same
+// normalized kinds an autonomous run produces, so receipts have one shape.
+// A permission request from the harness is answered by the driver — granted
+// for a gateway tool (EventPermissionGranted), denied for anything else
+// (EventPermissionDenied) — and surfaced either way, so the transcript
+// shows every approval. Every event a turn produces is on Events before its
+// Prompt returns: the engine records them ahead of the turn's end on that
+// promise, so none is lost to an End that follows the turn.
 type SessionDriver interface {
 	// Start performs the protocol handshake and opens the session.
 	Start(ctx context.Context) error
@@ -347,11 +342,10 @@ type TurnUsage struct {
 	TotalTokens  int
 }
 
-// registry maps adapter names to constructors. Slots for planned adapters
-// (M-R4) are declared with nil so --list-adapters can show them honestly.
+// registry maps adapter names to constructors.
 var registry = map[string]Adapter{}
 
-// planned names error with an M-R4 pointer instead of "unknown".
+// planned names error with a "planned" message instead of "unknown".
 var planned = map[string]bool{"goose": true}
 
 // Register installs an adapter; duplicate names are a programmer error.
@@ -368,7 +362,7 @@ func Get(name string) (Adapter, error) {
 		return a, nil
 	}
 	if planned[name] {
-		return nil, fmt.Errorf("adapter %q is planned but not implemented in v1 (RUNNER-PLAN M-R4); available: %v", name, Names())
+		return nil, fmt.Errorf("adapter %q is planned but not implemented; available: %v", name, Names())
 	}
 	return nil, fmt.Errorf("unknown adapter %q; available: %v", name, Names())
 }
@@ -383,15 +377,14 @@ func Names() []string {
 	return out
 }
 
-// DefaultName is the v1 default adapter (annex §7, Q-R4).
+// DefaultName is the default adapter.
 const DefaultName = "docker-agent"
 
 // DefaultFor is the adapter a run uses when none is named, for a model
-// sign-in docker-agent cannot spend: the Codex image for a ChatGPT plan
-// (plan model-sign-ins.md D8, D15; agentry-cli#739), the Claude Code image
-// for a Claude subscription (D19, D23; agentry-cli#740), the Copilot CLI
-// image for a Copilot plan (D25, D28; agentry-cli#741); else DefaultName.
-// docker-agent stays the default for every key (D16).
+// sign-in docker-agent cannot spend: the Codex image for a ChatGPT plan,
+// the Claude Code image for a Claude subscription, the Copilot CLI image
+// for a Copilot plan; else DefaultName. docker-agent stays the default for
+// every key.
 func DefaultFor(pol *policy.Policy) string {
 	if pol == nil {
 		return DefaultName
@@ -409,8 +402,8 @@ func DefaultFor(pol *policy.Policy) string {
 
 // keyringAccount is the OS keychain account a run falls back to for the
 // model key when the named variable is unset (policy.KeySource says
-// keyring; agentry-cli#148): the model provider's; "" when the environment
-// is the only source.
+// keyring): the model provider's; "" when the environment is the only
+// source.
 func keyringAccount(in Input) string {
 	if policy.KeySource(in.Harness, in.Model) != modelkey.SourceKeyring {
 		return ""
@@ -418,19 +411,18 @@ func keyringAccount(in Input) string {
 	return modelkey.Account(in.Model.Provider)
 }
 
-// anthropicKeyExpectation is the credential kind the plan is rendered
-// for, for the engine to hold the resolved value against
-// (agentry-cli#171). Only an Anthropic-shaped credential has two kinds:
-// the claude adapter attaches it always (its credential is Anthropic's
-// shape whatever endpoint the policy names), the docker-agent adapter
-// when its client is the anthropic one.
+// anthropicKeyExpectation is the credential kind the plan is rendered for,
+// for the engine to hold the resolved value against. Only an
+// Anthropic-shaped credential has two kinds: the claude adapter attaches it
+// always (its credential is Anthropic's shape whatever endpoint the policy
+// names), the docker-agent adapter when its client is the anthropic one.
 func anthropicKeyExpectation(in Input) *spec.CredentialKind {
 	return &spec.CredentialKind{Provider: policy.ProviderAnthropic, Kind: policy.KeyKind(in.Harness, in.Model)}
 }
 
 // OrgPolicyRefusal is a driver's Start refused by a policy of the person's
-// organization at the vendor (plan model-sign-ins.md D29): the engine ends
-// the run with that outcome, as it does for an EventOrgPolicy mid-run.
+// organization at the vendor: the engine ends the run with that outcome, as
+// it does for an EventOrgPolicy mid-run.
 type OrgPolicyRefusal struct {
 	// Policy is which, a word of receipt's closed list; Text the vendor's
 	// words.

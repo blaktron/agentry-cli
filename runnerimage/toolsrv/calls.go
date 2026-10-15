@@ -1,7 +1,6 @@
 package toolsrv
 
-// The calls ledger and end_blocked (agentry-cli#629, plan
-// quickagents-that-run.md M9). A one-shot run of a release records every
+// The calls ledger and end_blocked. A one-shot run of a release records every
 // tool call's outcome, and the agent can end the run as blocked, so that a
 // run whose agent could not do its task is not recorded as a success. The
 // engine reads the ledger after the agent ends: an end_blocked call, every
@@ -109,7 +108,7 @@ func (s *server) recordCall(tool string, ok bool) {
 
 // failed is a tool's answer to an error from the filesystem, which marks
 // the call a fault when the error is the run's machinery failing: a
-// channel it may not open (an SELinux label, agentry-cli#617), an I/O
+// channel it may not open (an SELinux label), an I/O
 // error, a read-only or full disk. A name that does not exist, a path
 // that escapes its root or an argument out of range is the agent's own
 // and no fault.

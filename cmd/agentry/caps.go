@@ -1,7 +1,7 @@
-// Capability-summary rendering (§5.4 install-time display): the declared
+// Capability-summary rendering (install-time display): the declared
 // security contract is shown before anything is written to disk, and
 // network egress, exec, a remote MCP server or a target host requires
-// confirmation (§11 install).
+// confirmation.
 package main
 
 import (
@@ -14,14 +14,14 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// capabilityLines renders the §5.4 capability block as stable, indentable
+// capabilityLines renders the capability block as stable, indentable
 // lines. A fully-zero block renders as the single pure-text line.
 func capabilityLines(c manifest.Capabilities) []string { return capabilityLinesSized(c, nil) }
 
 // capabilityLinesSized is capabilityLines with each shipped knowledge pack's
-// size beside its name where sizes has it, "knowledge: ships aws-docs
-// (4.2 MiB)": the consent shows what the release carries into the agent's
-// context as well as its name (plan knowledge.md §4.6).
+// size beside its name where sizes has it, "knowledge: ships aws-docs (4.2
+// MiB)": the consent shows what the release carries into the agent's context
+// as well as its name.
 func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []string {
 	if isZeroCapabilities(c) {
 		return []string{"none declared (pure text agent)"}
@@ -33,16 +33,16 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		"exec: " + renderExec(c.Exec),
 		"secrets: " + renderList(c.Secrets),
 	}
-	// Which declared secrets a run may go without (DR-70). Every declared
+	// Which declared secrets a run may go without. Every declared
 	// secret stays on its own line, optional or not: the consent names
 	// them all, which is what lets a flip between optional and required
-	// ask nothing again (DEV-212, plan optional-secrets.md D6).
+	// ask nothing again.
 	if len(c.OptionalSecrets) > 0 {
 		lines = append(lines, "optionalSecrets: "+renderList(c.OptionalSecrets))
 	}
 	lines = append(lines, "dataAccess: "+renderDataAccess(c.DataAccess))
-	// Declared MCP servers (RUNNER-PLAN-3): one line each — the consent
-	// gate and guided setup must show exactly what will be installed.
+	// Declared MCP servers: one line each — the consent gate and
+	// guided setup must show exactly what will be installed.
 	for _, srv := range c.MCPServers {
 		if srv.IsRemote() {
 			lines = append(lines, remoteServerLine(srv))
@@ -65,8 +65,8 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 			line += " (env: " + strings.Join(pairs, ", ") + ")"
 		}
 		if srv.OAuth != nil {
-			// The sign-in is contract (plan §3 invariant 7): its issuer and
-			// scopes are what the person's consent at the vendor will ask.
+			// The sign-in is part of the contract: its issuer and scopes
+			// are what the person's consent at the vendor will ask.
 			line += " (OAuth sign-in at " + srv.OAuth.Issuer
 			if len(srv.OAuth.Scopes) > 0 {
 				line += ", scopes: " + renderList(srv.OAuth.Scopes)
@@ -75,20 +75,18 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		}
 		lines = append(lines, line)
 	}
-	// Target hosts (plan runtime-hosts.md §8; agentry-cli#861): a machine
-	// the person names at the run's start, worked as the account they sign
-	// in with.
+	// Target hosts: a machine the person names at the run's start, worked
+	// as the account they sign in with.
 	if len(c.TargetHosts) > 0 {
 		lines = append(lines, "targetHosts: "+renderList(c.TargetHosts)+
 			" (asks for a server when it runs, and can run any command on it as the account you sign in with)")
 	}
-	// The browser (plan browser-testing.md §5; agentry-cli#915): where it
-	// may go, and the secrets it may type.
+	// The browser: where it may go, and the secrets it may type.
 	if b := c.Browser; b != nil {
 		lines = append(lines, "browser: "+browserLine(b))
 	}
-	// Shipped knowledge (plan knowledge.md §4.6): packs inside the release
-	// the agent reads, part of what is consented to.
+	// Shipped knowledge: packs inside the release the agent
+	// reads, part of what is consented to.
 	if len(c.Knowledge) > 0 {
 		names := make([]string, 0, len(c.Knowledge))
 		for _, name := range c.Knowledge {
@@ -103,15 +101,15 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 }
 
 // capabilityNeedsConfirm reports whether install must ask before proceeding:
-// declared network egress or subprocess execution (§11 install row), a
-// remote MCP server, or a target host.
+// declared network egress or subprocess execution, a remote MCP server, or a
+// target host.
 func capabilityNeedsConfirm(c manifest.Capabilities) bool {
 	return len(confirmedCapabilities(c)) > 0
 }
 
 // confirmedCapabilities names what c declares that the install gate asks
-// about, in the words the prompt uses (agentry-cli#888): the question names
-// what the release has, never a capability it does not.
+// about, in the words the prompt uses: the question names what the
+// release has, never a capability it does not.
 func confirmedCapabilities(c manifest.Capabilities) []string {
 	var what []string
 	if len(c.Network.Egress.Hosts) > 0 {
@@ -121,12 +119,12 @@ func confirmedCapabilities(c manifest.Capabilities) []string {
 		what = append(what, "exec")
 	}
 	// A remote server is network reach to its vendor, whatever the
-	// release's own egress says (agentry-cli#663).
+	// release's own egress says.
 	if slices.ContainsFunc(c.MCPServers, manifest.MCPServer.IsRemote) {
 		what = append(what, "a remote MCP server")
 	}
 	// A target host is a machine the person names, worked as the account
-	// they sign in with (agentry-cli#861).
+	// they sign in with.
 	switch n := len(c.TargetHosts); {
 	case n == 1:
 		what = append(what, "a target host")
@@ -134,7 +132,7 @@ func confirmedCapabilities(c manifest.Capabilities) []string {
 		what = append(what, "target hosts")
 	}
 	// A browser reaches the sites the person names and the declared hosts,
-	// or the public web (agentry-cli#915).
+	// or the public web.
 	if c.Browser != nil {
 		what = append(what, "a web browser")
 	}
@@ -244,7 +242,7 @@ func modeStrings[T ~string](modes []T) []string {
 }
 
 // modesLabel renders a mode set for one-line output ("autonomous,interactive");
-// an empty set — a v1 release of the withdrawn kind — reads "none".
+// an empty set reads "none".
 func modesLabel[T ~string](modes []T) string {
 	if len(modes) == 0 {
 		return "none"
@@ -276,9 +274,9 @@ func parseModes(s string) ([]manifest.Mode, error) {
 	return out, nil
 }
 
-// remoteServerLine is a remote server's consent line (agentry-cli#663):
-// its address, how it is signed in to, and what it may be asked; it runs
-// at its vendor, reached through the runner image's bridge.
+// remoteServerLine is a remote server's consent line: its address, how
+// it is signed in to, and what it may be asked; it runs at its vendor,
+// reached through the runner image's bridge.
 func remoteServerLine(srv manifest.MCPServer) string {
 	line := "mcpServer: " + srv.URL + " (remote, at its vendor; auth: " + string(srv.Auth)
 	switch srv.Auth {

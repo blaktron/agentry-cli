@@ -110,12 +110,12 @@ Keep me.
 	}
 }
 
-// TestWriteClaudeSkillTreeBody (agentry-cli#193): what the exported skill's
-// body is read from — the named skill file; for a release with no skill
-// entrypoint, its instruction as the runner reads it, else a SKILL.md it
-// ships; always from the verified release, never from what an earlier
-// install left in the destination — and how a release with nothing to
-// make a skill from is refused.
+// TestWriteClaudeSkillTreeBody: what the exported skill's body is read
+// from — the named skill file; for a release with no skill entrypoint,
+// its instruction as the runner reads it, else a SKILL.md it ships;
+// always from the verified release, never from what an earlier install
+// left in the destination — and how a release with nothing to make a
+// skill from is refused.
 func TestWriteClaudeSkillTreeBody(t *testing.T) {
 	caps := manifest.Capabilities{}
 	caps.Filesystem.Read.Mode = manifest.FSModeWorkspace

@@ -174,7 +174,7 @@ func TestAPackageWhoseIntegrityDiffersIsRefusedAndNothingIsBuilt(t *testing.T) {
 
 // An image of the tag that carries the artifact and this build's recipe is
 // used as it is; one that carries another artifact, none, or an older
-// recipe (an image built before the stand-in browser, agentry-cli#848) is
+// recipe (an image built before the stand-in browser) is
 // built again.
 func TestAnImageIsBuiltAgainUnlessItCarriesItsArtifact(t *testing.T) {
 	for _, c := range []struct {
@@ -274,7 +274,7 @@ func TestTheDefaultPinIsAReleaseThisBuildCarries(t *testing.T) {
 	}
 }
 
-// The Claude Code image's browser is the stand-in opener (agentry-cli#848):
+// The Claude Code image's browser is the stand-in opener:
 // the Dockerfile puts it where BROWSER names it and labels the recipe, and
 // the script only writes the address to PID 1's stderr, opening nothing.
 func TestTheClaudeImageCarriesItsStandInBrowser(t *testing.T) {

@@ -1,9 +1,8 @@
-// `agentry validate --rules-update` (§11): the bundle is pinned by DIGEST
-// (DEV-024 records why there is no signature yet) — the CLI recomputes the
-// digest over what it received via the same pkg/rules code the server uses,
-// and any disagreement (missing headers, wrong digest, wrong version) is a
-// refusal, never a cached lie. The fixture bundle is the embedded one,
-// re-served over HTTP, so digests are real.
+// `agentry validate --rules-update`: the bundle is pinned by DIGEST — the
+// CLI recomputes the digest over what it received via the same pkg/rules
+// code the server uses, and any disagreement (missing headers, wrong
+// digest, wrong version) is a refusal, never a cached lie. The fixture
+// bundle is the embedded one, re-served over HTTP, so digests are real.
 package main
 
 import (
@@ -177,7 +176,7 @@ func plantCachedBundle(t *testing.T, version string) {
 // TestLoadRulesBundlePrecedence: $AGENTRY_RULES_DIR beats ./rules beats a
 // cached bundle newer than the embedded one beats the embedded bundle, and
 // a broken override is a hard error, never a silent fall-through to weaker
-// rules (DEV-011).
+// rules.
 func TestLoadRulesBundlePrecedence(t *testing.T) {
 	isolateEnv(t)
 	t.Chdir(t.TempDir()) // no ./rules dir here
@@ -227,7 +226,7 @@ func TestLoadRulesBundlePrecedence(t *testing.T) {
 
 // A signed bundle verifies against the registry's published key (pinned on
 // first use); a signature over a different digest is refused and nothing is
-// cached (agentry-cli#8 / agentry#25).
+// cached.
 func TestFetchRulesBundleVerifiesSignature(t *testing.T) {
 	isolateEnv(t)
 	bundle, tar := bundleFixture(t)
@@ -275,11 +274,11 @@ func TestFetchRulesBundleUnsignedIsReported(t *testing.T) {
 	}
 }
 
-// TestAnOlderCachedBundleYieldsToTheEmbeddedOne is agentry-cli#586: a
-// machine that ran `validate --rules-update` once kept scanning with that
-// bundle after every upgrade, because the newest cached bundle was preferred
-// whatever the binary embedded. On 2026-10-03 the workstation's cached 0.3.0
-// hid an embedded 0.3.4.
+// TestAnOlderCachedBundleYieldsToTheEmbeddedOne: a machine that ran
+// `validate --rules-update` once must not keep scanning with that bundle
+// after an upgrade just because the newest cached bundle was preferred
+// whatever the binary embedded. A cached 0.3.0 must not hide an embedded
+// 0.3.4.
 func TestAnOlderCachedBundleYieldsToTheEmbeddedOne(t *testing.T) {
 	isolateEnv(t)
 	t.Chdir(t.TempDir())

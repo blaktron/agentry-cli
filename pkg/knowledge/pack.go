@@ -1,10 +1,9 @@
-// Package knowledge is the knowledge pack (plan knowledge.md §4.1,
-// agentry-cli#317): an LLM wiki — compiled markdown pages with an index —
-// together with the documents it was compiled from, at most 10 MB, that a
-// run searches through the tools server's knowledge tools over a read-only
-// /knowledge mount. Everything that makes, stores or attaches a pack reads
-// the format from here: the runner (run --knowledge), the Creator's apply
-// step, the local store, the desktop.
+// Package knowledge is the knowledge pack: an LLM wiki — compiled markdown
+// pages with an index — together with the documents it was compiled from, at
+// most 10 MB, that a run searches through the tools server's knowledge tools
+// over a read-only /knowledge mount. Everything that makes, stores or
+// attaches a pack reads the format from here: the runner (run --knowledge),
+// the Creator's apply step, the local store, the desktop.
 //
 // A pack is one directory:
 //
@@ -42,15 +41,14 @@ const Schema = "knowledge/v1"
 
 // MaxBytes caps a pack Agentry keeps or builds — every file in it, the
 // manifest included: one uploaded, downloaded, shared, shipped in a release
-// or made by a build In Agentry (plan D16: "no knowledge set should exceed
-// 10mb"). Counted in MiB, the unit of the release archive's own cap (rule
-// V8). It is also a build's cap when the caller names none.
+// or made by a build In Agentry. Counted in MiB, the unit of the release
+// archive's own cap (rule V8). It is also a build's cap when the caller names
+// none.
 const MaxBytes = 10 << 20
 
 // MaxLocalBytes caps a pack made and kept on this computer, documents
-// included (operator decision 2026-09-28, agentry-cli#429, DR-48): a local
-// build may take up to 1 GB of documents. Such a pack past MaxBytes stays
-// on this computer: Agentry takes none past MaxBytes.
+// included: a local build may take up to 1 GB of documents. Such a pack
+// past MaxBytes stays on this computer: Agentry takes none past MaxBytes.
 const MaxLocalBytes = 1 << 30
 
 // localCap is MaxLocalBytes, the cap Load, CopyPack and ExtractTree hold
@@ -110,11 +108,11 @@ type Creator struct {
 }
 
 // Scan is the pack's scan record: "not scanned" for every pack no registry
-// has scanned — every pack made on a machine (plan D19) — or the record the
-// registry wrote, kept as written. A record in a manifest is only a claim:
-// anyone can write one into a file, so it reads as scanned only once code
-// that asked the registry has set Verified, which this client's local
-// paths never do.
+// has scanned — every pack made on a machine — or the record the registry
+// wrote, kept as written. A record in a manifest is only a claim: anyone
+// can write one into a file, so it reads as scanned only once code that
+// asked the registry has set Verified, which this client's local paths
+// never do.
 type Scan struct {
 	// Scanned is true when the manifest carries a registry's record.
 	Scanned bool
@@ -210,8 +208,8 @@ func TreeDigest(dir string) (Digest, error) {
 }
 
 // WriteTree writes dir's wiki/ and sources/ to w as the canonical tar
-// TreeDigest hashes — the plaintext a sealed pack holds (plan knowledge.md
-// §4.3; the core's pkg/packseal seals it) — and returns its digest.
+// TreeDigest hashes — the plaintext a sealed pack holds (the core's
+// pkg/packseal seals it) — and returns its digest.
 func WriteTree(dir string, w io.Writer) (Digest, error) {
 	files, err := treeFiles(dir)
 	if err != nil {

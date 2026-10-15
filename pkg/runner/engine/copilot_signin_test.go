@@ -31,8 +31,8 @@ const (
 )
 
 // copilotPlanFixture compiles the engine fixture for the Copilot image
-// under a Copilot plan and hands the run its access token and a renewal
-// (agentry-cli#741). The agent container is srv, a fake Copilot CLI.
+// under a Copilot plan and hands the run its access token and a
+// renewal. The agent container is srv, a fake Copilot CLI.
 func copilotPlanFixture(t *testing.T, srv *copilottest.Server) (Params, *dockerx.Fake, *int) {
 	t.Helper()
 	m, err := manifest.Parse([]byte(engineManifest))
@@ -101,8 +101,7 @@ func copilotPlanFixture(t *testing.T, srv *copilottest.Server) (Params, *dockerx
 // CLI is handed the run's token through its callback, and a renewed one
 // when it asks for a refresh; a gateway tool of the grant is approved; the
 // receipt names the plan's kind and the image's checksum pin, not signed;
-// and neither token is in any docker call, receipt or output file (I3, I4,
-// I6, I8).
+// and neither token is in any docker call, receipt or output file.
 func TestACopilotRunIsHandedItsTokenThroughTheCallbackAlone(t *testing.T) {
 	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, prompt string) {
 		c.AskToken("refresh")
@@ -164,7 +163,7 @@ func TestACopilotRunIsHandedItsTokenThroughTheCallbackAlone(t *testing.T) {
 	}
 }
 
-// A quota error on a Copilot plan's turn is the plan's limit (I9).
+// A quota error on a Copilot plan's turn is the plan's limit.
 func TestACopilotQuotaEndsTheRunWithThePlanLimit(t *testing.T) {
 	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, _ string) {
 		c.Event("session.error", map[string]any{"errorType": "quota", "errorCode": "quota_exceeded", "message": "You have exceeded your monthly quota."})
@@ -181,7 +180,7 @@ func TestACopilotQuotaEndsTheRunWithThePlanLimit(t *testing.T) {
 }
 
 // An organization's policy that turns Copilot CLI off for the account ends
-// the run as refused by policy, the policy named (D29).
+// the run as refused by policy, the policy named.
 func TestAnOrganizationsCopilotPolicyEndsTheRunWithThePolicyNamed(t *testing.T) {
 	p, f, _ := copilotPlanFixture(t, &copilottest.Server{CreateError: "Error: Access denied by policy settings"})
 	env, err := Run(context.Background(), f, p)
@@ -266,7 +265,7 @@ func copilotSessionFixture(t *testing.T, srv *copilottest.Server) (Params, *dock
 
 // A Copilot session is handed its token through the callback at its start
 // and a renewed one when Copilot CLI asks mid-session, and its receipts
-// hold neither (I3).
+// hold neither.
 func TestACopilotSessionIsHandedItsTokenThroughTheCallbackAndRenewed(t *testing.T) {
 	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, prompt string) {
 		c.AskToken("refresh")
@@ -309,7 +308,7 @@ func TestACopilotSessionIsHandedItsTokenThroughTheCallbackAndRenewed(t *testing.
 }
 
 // An organization's policy that refuses the session at its start ends it
-// refused by that policy, named (D29).
+// refused by that policy, named.
 func TestAnOrganizationsPolicyRefusesACopilotSessionAtItsStart(t *testing.T) {
 	p, f, _ := copilotSessionFixture(t, &copilottest.Server{CreateError: "Error: Access denied by policy settings"})
 	_, err := StartSession(context.Background(), f, p)

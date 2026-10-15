@@ -9,7 +9,7 @@ import (
 )
 
 // TestASourceChecksOnlyItsRiskyFiles: in an input source's folder ClamAV
-// reads only the executable and binary risky files (D8); every other file
+// reads only the executable and binary risky files; every other file
 // there says it was not checked and why, and an upload beside it is
 // checked as before. An EICAR executable in the source is found.
 func TestASourceChecksOnlyItsRiskyFiles(t *testing.T) {

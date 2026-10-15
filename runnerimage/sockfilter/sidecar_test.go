@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestASidecarsConfigurationIsTheFiltersOwn (agentry-cli#322): what the
+// TestASidecarsConfigurationIsTheFiltersOwn: what the
 // engine hands the docker-filter role reads back as the same policy, less
 // the three fields that are the container's, and a field the role does
 // not know is refused rather than dropped.

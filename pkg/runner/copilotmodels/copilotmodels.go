@@ -1,10 +1,9 @@
-// Package copilotmodels lists the models a person's Copilot plan offers
-// (plan model-sign-ins.md §4.1, research copilot-cli.md R8;
-// agentry-cli#808), for `agentry setup` and the desktop's model setup, so
-// there is one implementation per machine: the Copilot sign-in kept on this
-// computer, the images a Copilot run needs made present as setup makes them,
-// then Copilot CLI's own list in a run's container
-// (engine.ListCopilotModels). Nothing of Agentry's calls the Copilot API.
+// Package copilotmodels lists the models a person's Copilot plan offers for
+// `agentry setup` and the desktop's model setup, so there is one implementation
+// per machine: the Copilot sign-in kept on this computer, the images a Copilot
+// run needs made present as setup makes them, then Copilot CLI's own list in a
+// run's container (engine.ListCopilotModels). Nothing of Agentry's calls the
+// Copilot API.
 package copilotmodels
 
 import (

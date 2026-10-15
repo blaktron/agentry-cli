@@ -1,6 +1,6 @@
-// `agentry runner-tools` (RUNNER-DEVIATIONS DR-7): the hidden stdio mirror
-// of the tools container. The spec decode is strict — an unknown field
-// means a compiler/server version skew and must refuse, not half-work.
+// `agentry runner-tools`: the hidden stdio mirror of the tools
+// container. The spec decode is strict — an unknown field means a
+// compiler/server version skew and must refuse, not half-work.
 package main
 
 import (
@@ -59,7 +59,7 @@ func TestRunnerToolsSpecGuards(t *testing.T) {
 }
 
 // TestRunnerToolsServeSmoke: one MCP initialize over stdio, exactly as the
-// gateway's health probe does (§R6), then EOF shuts the server down clean.
+// gateway's health probe does, then EOF shuts the server down clean.
 func TestRunnerToolsServeSmoke(t *testing.T) {
 	specPath := filepath.Join(t.TempDir(), "toolspec.json")
 	if err := os.WriteFile(specPath, []byte(toolSpecJSON(t)), 0o644); err != nil {

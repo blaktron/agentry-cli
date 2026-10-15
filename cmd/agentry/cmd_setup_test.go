@@ -1,7 +1,7 @@
-// `agentry setup` (RUNNER-PLAN-2 §P1): the policy-writing half, which needs
-// no docker. Provider tables fill gaps under --yes, a custom endpoint
-// derives the proxy allowlist from --base-url (and refuses to guess one),
-// and re-running preserves everything outside the model block.
+// `agentry setup`: the policy-writing half, which needs no docker.
+// Provider tables fill gaps under --yes, a custom endpoint derives the
+// proxy allowlist from --base-url (and refuses to guess one), and
+// re-running preserves everything outside the model block.
 package main
 
 import (
@@ -35,7 +35,7 @@ func TestSetupYesWritesProviderDefaults(t *testing.T) {
 	if !strings.Contains(stdout, "setup complete (policy only; images skipped)") {
 		t.Errorf("setup banner = %q", stdout)
 	}
-	// The §P1 table row for openai, and the generated-file warning header.
+	// The table row for openai, and the generated-file warning header.
 	for _, want := range []string{
 		"provider: openai", "name: gpt-5.2", "apiKeyEnv: OPENAI_API_KEY",
 		"api.openai.com:443", "comments are not preserved",
@@ -56,7 +56,7 @@ func TestSetupYesWritesProviderDefaults(t *testing.T) {
 
 // TestSetupCustomProvider: a custom endpoint must derive the agent
 // container's ONLY egress from --base-url — and refuse to proceed without
-// one rather than inventing an allowlist (§R4).
+// one rather than inventing an allowlist.
 func TestSetupCustomProvider(t *testing.T) {
 	// Custom has no table row: under --yes there is no model default to
 	// fall back to, and no base URL to derive the allowlist from. Each gap
@@ -69,7 +69,7 @@ func TestSetupCustomProvider(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--base-url") {
 		t.Fatalf("custom without --base-url: %v", err)
 	}
-	// Setup failures are policy-class (§R8 exit 11) so scripts can branch.
+	// Setup failures are policy-class (exit 11) so scripts can branch.
 	wantClassified(t, err, engine.ExitPolicy)
 
 	_, written, err := setupPolicy(t, "--yes", "--provider", "custom",
@@ -98,7 +98,7 @@ func TestSetupNonInteractiveDefaults(t *testing.T) {
 }
 
 // TestSetupPreservesNonModelPolicy: re-running setup edits the model block
-// and nothing else (§P1: "everything else in the policy is preserved").
+// and nothing else (everything else in the policy is preserved).
 func TestSetupPreservesNonModelPolicy(t *testing.T) {
 	isolateEnv(t)
 	isolateRunnerHome(t)
@@ -128,9 +128,9 @@ func TestSetupPreservesNonModelPolicy(t *testing.T) {
 	}
 }
 
-// TestSetupAPIKeySourceFlag (agentry-cli#148): --api-key-source keyring
-// records the keychain as the fallback and the JSON report says so; the
-// value is nowhere.
+// TestSetupAPIKeySourceFlag: --api-key-source keyring records the
+// keychain as the fallback and the JSON report says so; the value is
+// nowhere.
 func TestSetupAPIKeySourceFlag(t *testing.T) {
 	_, written, err := setupPolicy(t, "--yes", "--provider", "anthropic", "--api-key-source", "keyring")
 	if err != nil {

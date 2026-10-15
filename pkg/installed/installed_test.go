@@ -1,8 +1,8 @@
 package installed
 
-// The capability diff (§11 install row). The whole value of the install
-// manifest is what it makes the client *ask* about, so these tests are about
-// which changes count as widening.
+// The capability diff. The whole value of the install manifest is what it
+// makes the client *ask* about, so these tests are about which changes count
+// as widening.
 
 import (
 	"path/filepath"
@@ -245,11 +245,11 @@ func TestInstallStateRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSnapshotAndDiffOfServerEnv (agentry-cli#99): a declared server's plain
-// env is part of the installed contract. A new or changed value is a change
-// to the server and re-asks for consent; a dropped one narrows; the same
-// env twice is no diff, and a record written before env existed compares
-// as "no env" rather than as corrupt.
+// TestSnapshotAndDiffOfServerEnv: a declared server's plain env is part of
+// the installed contract. A new or changed value is a change to the server
+// and re-asks for consent; a dropped one narrows; the same env twice is no
+// diff, and a record written before env existed compares as "no env" rather
+// than as corrupt.
 func TestSnapshotAndDiffOfServerEnv(t *testing.T) {
 	m, err := manifest.Parse([]byte(`schemaVersion: "2"
 name: snap
@@ -304,12 +304,12 @@ publish:
 }
 
 // TestCapabilitiesInvertsSnapshot pins the one piece of new logic the shared
-// rule needs (agentry-cli#201): the diff is the core's
-// manifest.DiffCapabilities, over manifest.Capabilities, so a stored
-// snapshot is turned back into that type first. Snapshotting the result
-// must give back the snapshot exactly — every field, a scoped npm server
-// whose name carries its own "@", a PyPI server, and a server's env —
-// or an installed record would read as a changed contract and re-ask.
+// rule needs: the diff is the core's manifest.DiffCapabilities, over
+// manifest.Capabilities, so a stored snapshot is turned back into that type
+// first. Snapshotting the result must give back the snapshot exactly — every
+// field, a scoped npm server whose name carries its own "@", a PyPI server,
+// and a server's env — or an installed record would read as a changed
+// contract and re-ask.
 func TestCapabilitiesInvertsSnapshot(t *testing.T) {
 	snap := CapSnapshot{
 		EgressHosts:  []string{"a.example.com", "*"},
@@ -353,11 +353,11 @@ func TestMalformedServerIDStillReasks(t *testing.T) {
 	}
 }
 
-// TestArchiveWideningsHoldTheArchiveToTheConsentedContract
-// (agentry-cli#252): what an archive's own agent.yaml declares beyond the
-// resolve manifest the person consented to — the core rule's widenings,
-// plus a same-pin server's own egress, secrets and tools, which that rule
-// does not compare (agentry#527). Matching and narrowing report nothing.
+// TestArchiveWideningsHoldTheArchiveToTheConsentedContract: what an archive's
+// own agent.yaml declares beyond the resolve manifest the person consented to
+// — the core rule's widenings, plus a same-pin server's own egress, secrets
+// and tools, which that rule does not compare. Matching and narrowing report
+// nothing.
 func TestArchiveWideningsHoldTheArchiveToTheConsentedContract(t *testing.T) {
 	caps := func(t *testing.T, y string) manifest.Capabilities {
 		t.Helper()
@@ -400,7 +400,7 @@ func TestArchiveWideningsHoldTheArchiveToTheConsentedContract(t *testing.T) {
 
 // TestShippedKnowledgeIsInTheSnapshot: the packs a release ships are part
 // of the recorded contract, so a later release shipping one more re-asks
-// and the record reads back what was consented (agentry-cli#320).
+// and the record reads back what was consented.
 func TestShippedKnowledgeIsInTheSnapshot(t *testing.T) {
 	before := Snapshot(manifest.Capabilities{})
 	after := Snapshot(manifest.Capabilities{Knowledge: []string{"aws-docs"}})
@@ -418,11 +418,10 @@ func TestShippedKnowledgeIsInTheSnapshot(t *testing.T) {
 	}
 }
 
-// TestTargetHostsAreInTheSnapshot (agentry-cli#863, plan runtime-hosts.md
-// §8): the target hosts a release asks for are part of the recorded
-// contract, so an update that adds one asks again, the record reads back
-// what was consented, and a record from before they were recorded asks
-// once more.
+// TestTargetHostsAreInTheSnapshot: the target hosts a release asks for are
+// part of the recorded contract, so an update that adds one asks again, the
+// record reads back what was consented, and a record from before they were
+// recorded asks once more.
 func TestTargetHostsAreInTheSnapshot(t *testing.T) {
 	before := Snapshot(manifest.Capabilities{})
 	after := Snapshot(manifest.Capabilities{TargetHosts: []string{"server"}})
@@ -465,9 +464,9 @@ func TestArchiveWideningsCatchAShippedPackTheResolveDidNotName(t *testing.T) {
 	}
 }
 
-// Reconsent keeps what an install recorded (agentry-cli#491): a run of the
-// local install keeps its mark and digest, a run of another tree records
-// nothing over it, and a registry record stays a registry record.
+// Reconsent keeps what an install recorded: a run of the local install
+// keeps its mark and digest, a run of another tree records nothing over
+// it, and a registry record stays a registry record.
 func TestReconsentKeepsALocalInstall(t *testing.T) {
 	var st State
 	k := Key{Registry: "runner", Namespace: "me", Name: "x", Target: "runner", Dir: "/h/agents/me/x"}
@@ -494,10 +493,10 @@ func TestReconsentKeepsALocalInstall(t *testing.T) {
 	}
 }
 
-// A remote server in the consent record (agentry-cli#663): the record keeps
-// its address, auth, scopes, tools and bearer secret, so the same release
-// asks nothing again, while a changed auth, a new tool or a lifted
-// allowlist re-asks through the core's rule (DEV-215).
+// A remote server in the consent record: the record keeps its address,
+// auth, scopes, tools and bearer secret, so the same release asks nothing
+// again, while a changed auth, a new tool or a lifted allowlist re-asks
+// through the core's rule.
 func TestSnapshotAndDiffOfRemoteServers(t *testing.T) {
 	parse := func(servers string) manifest.Capabilities {
 		t.Helper()
@@ -564,10 +563,10 @@ publish:
 	}
 }
 
-// TestTheBrowserIsInTheSnapshot (agentry-cli#915, plan browser-testing.md
-// invariant 8): the browser line is part of the recorded contract, so an
-// update that adds one, a host, a secret it may type or site to public
-// asks again, the record reads back what was consented and survives YAML.
+// TestTheBrowserIsInTheSnapshot: the browser line is part of the recorded
+// contract, so an update that adds one, a host, a secret it may type or site
+// to public asks again, the record reads back what was consented and survives
+// YAML.
 func TestTheBrowserIsInTheSnapshot(t *testing.T) {
 	site := manifest.Capabilities{Browser: &manifest.Browser{Sites: []string{"site"}, Hosts: []string{"cdn.example.com"}}}
 	before, after := Snapshot(manifest.Capabilities{}), Snapshot(site)

@@ -14,20 +14,20 @@ import (
 	"time"
 )
 
-// The interactive shell (plan runtime-hosts.md §5, D4, D18; agentry-cli#862):
+// The interactive shell:
 // host_shell_open signs in to a target host and starts the account's login
 // shell on a pseudo-terminal the host allocates (ssh -tt), host_shell_send
 // types into it, host_shell_read reads what it printed, host_shell_close
 // ends it. A session is one ssh process this server keeps between calls,
 // which it can because the gateway keeps the host link up once it has
-// started it for a call. What the shell prints reaches the agent as it is
-// (D9), as text with the terminal's control sequences removed or, asked,
-// raw, but for the run's own sign-ins (D19); the sudo password is typed by
+// started it for a call. What the shell prints reaches the agent as it is,
+// as text with the terminal's control sequences removed or, asked,
+// raw, but for the run's own sign-ins; the sudo password is typed by
 // the host link and never seen. Every session's transcript is kept,
 // ShellLogFile, and every call is a line of the host's log.
 
-// The bounds of §5. The exported ones are stated in the Drafter's runtime
-// facts (agentry-cli#864), generated from these.
+// The bounds. The exported ones are stated in the Drafter's runtime
+// facts, generated from these.
 const (
 	MaxShellsPerHost  = 4
 	DefaultShellIdle  = 30 * time.Minute

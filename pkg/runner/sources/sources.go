@@ -1,5 +1,4 @@
-// Package sources is the input-source seam (plan input-sources.md §5,
-// D2–D8, D12; agentry-cli#833, agentry-cli#834). An input source is where a
+// Package sources is the input-source seam. An input source is where a
 // run's inputs come from beyond what was uploaded: a repository, a file at
 // a web address, a SharePoint library later. A QuickAgent
 // asks for one with an intake question of the kind's type; the answer is
@@ -9,15 +8,15 @@
 //
 // Each kind is one entry in a registry and gives: how its answer is parsed
 // and checked, the host its fetch reaches, how it uses a credential, the
-// fetch step's argv (the fetch itself is the runner image's), its caps
-// (D7), its malware-check rule (D8: the source rule, or decoded as an
+// fetch step's argv (the fetch itself is the runner image's), its caps,
+// its malware-check rule (the source rule, or decoded as an
 // upload) and its receipt line. The engine runs every source through the
 // same steps (engine/sources.go). A new kind is a new entry here and in the
 // runner image, and a branch in Line, Document and CheckReport when its
 // report has a shape of its own, as a url source's one file does.
 //
-// A source is outside the contract (D4): giving it is the grant, and its
-// access token is used by the fetch step alone (D5). The token is never
+// A source is outside the contract: giving it is the grant, and its
+// access token is used by the fetch step alone. The token is never
 // part of an intake document, a receipt or an error.
 package sources
 
@@ -37,7 +36,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 )
 
-// Caps bound one source (D7): a source over either is refused with its
+// Caps bound one source: a source over either is refused with its
 // count and never staged in part.
 type Caps struct {
 	Files int
@@ -52,14 +51,12 @@ var LocalCaps = Caps{Files: source.DefaultMaxFiles, Bytes: source.DefaultMaxByte
 // its archive members counted against the uploads' 2,000 in the decode.
 var URLCaps = Caps{Files: 1, Bytes: source.DefaultURLMaxBytes}
 
-// HostedRepositoryCaps are a hosted run's repository caps (D7,
-// agentry-cli#872): 10,000 files and 256 MiB, on a run host shared by
-// every account.
+// HostedRepositoryCaps are a hosted run's repository caps: 10,000 files and 256
+// MiB, on a run host shared by every account.
 var HostedRepositoryCaps = Caps{Files: 10_000, Bytes: 256 << 20}
 
-// HostedURLCaps are a hosted run's url source caps: the hosted upload
-// cap, 10 MiB (agentry-enterprise's runs InputMaxBytes), since its file is
-// decoded as an upload is.
+// HostedURLCaps are a hosted run's url source caps: the hosted upload cap, 10
+// MiB, since its file is decoded as an upload is.
 var HostedURLCaps = Caps{Files: 1, Bytes: 10 << 20}
 
 // Kind is one source kind on the seam.
@@ -78,12 +75,12 @@ type Kind struct {
 	// Runner is the kind's word in the runner image's source role (its
 	// --kind) and in the role's report.
 	Runner string
-	// Caps are a local run's caps for it (D7); HostedCaps a hosted run's.
+	// Caps are a local run's caps for it; HostedCaps a hosted run's.
 	Caps       Caps
 	HostedCaps Caps
 	// AsUpload decodes it as an upload is decoded: every file checked by
 	// ClamAV, images read with OCR, and its files counted against the
-	// uploads' cap. Otherwise the source rule holds (D8): only executable
+	// uploads' cap. Otherwise the source rule holds: only executable
 	// and binary risky files are checked, images are not read with OCR,
 	// and the source has a cap of its own.
 	AsUpload bool
@@ -114,7 +111,7 @@ const (
 	TokenFromFlag     = "flag"
 	TokenFromKeychain = "keychain"
 	// TokenFromSealed is the saved key, read from the keys sealed beside
-	// a schedule that runs while its person is signed out (DR-84).
+	// a schedule that runs while its person is signed out.
 	TokenFromSealed = "sealed"
 	TokenFromPrompt = "prompt"
 )
@@ -182,8 +179,8 @@ func parseRepository(answer string) (Source, error) {
 	return Source{Kind: manifest.IntakeRepository, URL: raw, Ref: ref, Host: host}, nil
 }
 
-// fileURL is the url kind (agentry-cli#834): one file at a web address,
-// fetched with one https GET and decoded as an upload (D8, D12).
+// fileURL is the url kind: one file at a web address, fetched with one https
+// GET and decoded as an upload.
 var fileURL = Kind{
 	Type:       manifest.IntakeURL,
 	Noun:       "file",
@@ -285,8 +282,7 @@ func CheckReport(raw []byte, s Source, caps Caps) (source.Report, error) {
 		return rep, errors.New("the fetch step's report gives counts outside the source's caps")
 	}
 	// A refusal's count is held to the closed words and must be over the
-	// cap the caller fetched with, whose value is never the report's
-	// (agentry-cli#884).
+	// cap the caller fetched with, whose value is never the report's.
 	if o := rep.Over; o != nil && !overTheCap(rep, caps) {
 		return rep, errors.New("the fetch step's report gives a count that is not a refusal's")
 	}
@@ -458,7 +454,7 @@ func skippedWords(m map[string]int) string {
 // Checks is the malware-check clause of a source's receipt line, from the
 // decode's report of its files: how many executable or binary risky files
 // ClamAV checked and what it made of them, and how many were left
-// unchecked by the source rule (D8).
+// unchecked by the source rule.
 func Checks(id string, files []runnerdecode.File) string {
 	clean, found, other, notRisky := 0, 0, 0, 0
 	prefix := id + "/"

@@ -1,13 +1,12 @@
 package mcpauth
 
-// Connect your account (plan model-sign-ins.md §4.6, D30–D34;
-// agentry-cli#742): OpenRouter, Poe and Hugging Face each document an OAuth
-// flow by which a third-party app obtains, for the person, an ordinary API
-// key (OpenRouter, Poe) or an inference token (Hugging Face) billed to their
-// own account. What a connect hands back is kept like any other model key;
-// it is not a model sign-in, and nothing here reaches a run but the key or
-// token itself, through the model key's own path. The protocols, as each
-// vendor's pages state them (read 2026-10-09):
+// Connect your account: OpenRouter, Poe and Hugging Face each document an
+// OAuth flow by which a third-party app obtains, for the person, an ordinary
+// API key (OpenRouter, Poe) or an inference token (Hugging Face) billed to
+// their own account. What a connect hands back is kept like any other model
+// key; it is not a model sign-in, and nothing here reaches a run but the key
+// or token itself, through the model key's own path. The protocols, as each
+// vendor's pages state them:
 //
 //   - OpenRouter (openrouter.ai/docs/guides/overview/auth/oauth): the
 //     browser goes to /auth with callback_url, a PKCE S256 challenge and a
@@ -16,7 +15,7 @@ package mcpauth
 //     POSTed as JSON to /api/v1/auth/keys, which answers {"key": "sk-or-…"}.
 //     No client is registered and nothing can be revoked by the app.
 //   - Poe (creator.poe.com/docs/external-applications/sign-in-with-poe):
-//     Agentry's public client (created by hand on poe.com/api/clients, M8),
+//     Agentry's public client (created by hand on poe.com/api/clients),
 //     PKCE S256 mandatory, the one scope apikey:create, a 127.0.0.1
 //     redirect; the form-encoded exchange at api.poe.com/token answers
 //     api_key and api_key_expires_in (seconds, or null for a key that does
@@ -25,7 +24,7 @@ package mcpauth
 //     is Agentry's Client ID Metadata Document, PKCE S256, loopback
 //     redirects on any port, the scopes openid, profile and inference-api;
 //     refresh_token is a grant its discovery lists. Its discovery names no
-//     revocation endpoint (measured 2026-10-09; /oauth/revoke is a 404), so
+//     revocation endpoint (/oauth/revoke is a 404), so
 //     a token can be revoked only where a later discovery names one.
 //
 // Every request goes through the caller's HTTP client, the egress Guard in
@@ -72,8 +71,8 @@ const (
 	PoeClientIDEnv = "AGENTRY_POE_CLIENT_ID"
 )
 
-// poeClientID is Agentry's public Poe client, which the operator creates on
-// poe.com/api/clients (M8, agentry-cli#743); empty until then, when
+// poeClientID is Agentry's public Poe client, created on poe.com/api/clients;
+// empty when the build carries none, in which case
 // PoeClientIDEnv supplies one. A client id is not a secret.
 var poeClientID = ""
 
@@ -84,7 +83,7 @@ func PoeClientID() (string, error) {
 		return id, nil
 	}
 	if poeClientID == "" {
-		return "", fmt.Errorf("this build of agentry carries no client id for Agentry's Poe app yet (agentry-cli#743); set %s to one", PoeClientIDEnv)
+		return "", fmt.Errorf("this build of agentry carries no client id for Agentry's Poe app; set %s to one", PoeClientIDEnv)
 	}
 	return poeClientID, nil
 }
@@ -93,8 +92,8 @@ func PoeClientID() (string, error) {
 const (
 	HuggingFaceIssuer = "https://huggingface.co"
 	// HuggingFaceClientMetadataURL is Agentry's Client ID Metadata Document
-	// for Hugging Face, served by the site (agentry-web#1331): a public
-	// native client with loopback redirects on 127.0.0.1 and localhost.
+	// for Hugging Face, served by the site: a public native client with
+	// loopback redirects on 127.0.0.1 and localhost.
 	HuggingFaceClientMetadataURL = "https://secureagentry.net/oauth/clients/agentry-huggingface.json"
 	// HuggingFaceClientIDEnv names another client id (a public app
 	// registered at huggingface.co) in place of the document.
@@ -364,7 +363,7 @@ func (h HuggingFace) discover(ctx context.Context) (*ServerMetadata, error) {
 		return nil, fmt.Errorf("reach Hugging Face: %w", err)
 	}
 	// The code, the verifier and the refresh token go to the token
-	// endpoint: Hugging Face's own host alone (I6).
+	// endpoint: Hugging Face's own host alone.
 	if !sameHost(md.TokenEndpoint, md.Issuer) || !sameHost(md.AuthorizationEndpoint, md.Issuer) {
 		return nil, errors.New("reach Hugging Face: its discovery names an endpoint on another host: refused")
 	}
@@ -389,7 +388,7 @@ func (h HuggingFace) Connect(ctx context.Context, clientID string) (*ConnectedKe
 			return nil, errors.New("connect Hugging Face: its discovery no longer says it takes client metadata documents, which Agentry's connect presents")
 		}
 		if !CIMDServed(ctx, h.HTTP, clientID) {
-			return nil, fmt.Errorf("connect Hugging Face: Agentry's client document for it (%s) is not served yet (agentry-web#1331); set %s to a public app's client id meanwhile", clientID, HuggingFaceClientIDEnv)
+			return nil, fmt.Errorf("connect Hugging Face: Agentry's client document for it (%s) is not served; set %s to a public app's client id instead", clientID, HuggingFaceClientIDEnv)
 		}
 		client.Kind = ClientCIMD
 	}
@@ -438,7 +437,7 @@ func (h HuggingFace) Refresh(ctx context.Context, clientID, refreshToken string)
 
 // Revoke revokes a Hugging Face refresh token where its discovery names a
 // revocation endpoint on Hugging Face's own host, ErrRevokeNotOffered
-// where it names none (as of 2026-10-09).
+// where it names none.
 func (h HuggingFace) Revoke(ctx context.Context, clientID, refreshToken string) error {
 	md, err := h.discover(ctx)
 	if err != nil {
@@ -454,7 +453,7 @@ func (h HuggingFace) Revoke(ctx context.Context, clientID, refreshToken string) 
 }
 
 // sameHost reports whether endpoint is an https address on the issuer's own
-// host: a token is sent to no other (invariant I6).
+// host: a token is sent to no other.
 func sameHost(endpoint, issuer string) bool {
 	eu, err := url.Parse(endpoint)
 	iu, ierr := url.Parse(issuer)

@@ -13,12 +13,12 @@ import (
 )
 
 // TestTheFixtureRuns reads a fixture run's results and prints the
-// measurement table of measurements/drafter.md (plan D10): per fixture, the
-// run's exit, whether the rendered package passes validate, how the draft
-// departs from the shape expected, the model's tokens and turns, the web
-// tools' calls and AI Review's counts. It runs only when
-// AGENTRY_DRAFTER_RESULTS names a directory holding one `agentry draft --out`
-// folder per fixture id; a fixture with no folder is reported as not run.
+// measurement table: per fixture, the run's exit, whether the rendered
+// package passes validate, how the draft departs from the shape expected, the
+// model's tokens and turns, the web tools' calls and AI Review's counts. It
+// runs only when AGENTRY_DRAFTER_RESULTS names a directory holding one
+// `agentry draft --out` folder per fixture id; a fixture with no folder is
+// reported as not run.
 func TestTheFixtureRuns(t *testing.T) {
 	root := os.Getenv("AGENTRY_DRAFTER_RESULTS")
 	if root == "" {
@@ -140,12 +140,11 @@ func checkColumns(a *AIReview) (offTask, rubric string) {
 	return offTask, rubric
 }
 
-// tokenCredits is the model's tokens at the hosted draft's rate (plan
-// builder-rework.md D29): max(1, ceil(input ÷ 50,000 + output ÷ 25,000)),
-// for measurements/drafter.md's table alone. The rate itself is the
-// enterprise build's, which settles a hosted draft; a draft on this
-// computer is never worded in credits. AI Review's one credit (DEV-150) is
-// not in it.
+// tokenCredits is the model's tokens at the hosted draft's rate: max(1,
+// ceil(input ÷ 50,000 + output ÷ 25,000)), for the measurement table
+// alone. The rate itself is the enterprise build's, which settles a
+// hosted draft; a draft on this computer is never worded in credits. AI
+// Review's one credit is not in it.
 func tokenCredits(in, out int64) int64 {
 	return max(1, (in+2*out+49_999)/50_000)
 }

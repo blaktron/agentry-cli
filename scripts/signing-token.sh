@@ -3,7 +3,7 @@
 # token for the Artifact Signing service, and prints THAT token on standard
 # output — nothing else goes there, so `token=$(scripts/signing-token.sh)` is
 # the whole contract. The caller masks it (`::add-mask::`) and hands it on
-# through the environment (the desktop's #151 and #54, copied for agentry-cli#196; plan os-code-signing.md D6).
+# through the environment.
 #
 # The exchange is the OAuth client-credentials grant with the OIDC token as
 # the client assertion, against the Entra app registration whose one
@@ -18,8 +18,8 @@
 set -euo pipefail
 
 fail() { echo "signing-token: $*" >&2; exit 1; }
-: "${AZURE_TENANT_ID:?the AZURE_TENANT_ID repository variable is not set (the desktop's scripts/operator/artifact-signing-setup.sh --repo blaktron/agentry-cli, agentry-cli#197)}"
-: "${AZURE_CLIENT_ID:?the AZURE_CLIENT_ID repository variable is not set (the desktop's scripts/operator/artifact-signing-setup.sh --repo blaktron/agentry-cli, agentry-cli#197)}"
+: "${AZURE_TENANT_ID:?the AZURE_TENANT_ID repository variable is not set}"
+: "${AZURE_CLIENT_ID:?the AZURE_CLIENT_ID repository variable is not set}"
 : "${ACTIONS_ID_TOKEN_REQUEST_URL:?this job has no id-token permission}"
 : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?this job has no id-token permission}"
 command -v jq >/dev/null 2>&1 || fail "jq is needed"

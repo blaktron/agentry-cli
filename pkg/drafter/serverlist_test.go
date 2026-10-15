@@ -7,8 +7,7 @@ import (
 )
 
 // TestTheEmbeddedServerListLoads: the lists the Drafter ships are the file
-// in its embedded tree, and every entry keeps the file's rules
-// (agentry-cli#658).
+// in its embedded tree, and every entry keeps the file's rules.
 func TestTheEmbeddedServerListLoads(t *testing.T) {
 	l, err := LoadServerList(FS())
 	if err != nil {

@@ -9,13 +9,12 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
-// AI Review of an input source on a hosted run (plan input-sources.md D9,
-// agentry-cli#872): of a repository it reads the Markdown files alone,
-// where an injected instruction is most likely to sit, and not its code;
-// a url source is decoded as an upload and is read whole, as one. A
-// source's Markdown is read whole or the run is refused with the count:
-// unlike an upload's text, which is withheld past the cap (DR-88), a
-// repository is never reviewed in part.
+// AI Review of an input source on a hosted run: of a repository it reads
+// the Markdown files alone, where an injected instruction is most likely
+// to sit, and not its code; a url source is decoded as an upload and is
+// read whole, as one. A source's Markdown is read whole or the run is
+// refused with the count: unlike an upload's text, which is withheld past
+// the cap, a repository is never reviewed in part.
 
 // isMarkdownName says whether a file is one AI Review reads of a source:
 // .md, .markdown or .mdx, or a README or CONTRIBUTING with no extension.
@@ -95,8 +94,8 @@ func sourceNotReviewed(withheld []string, sources []string, counts map[string]in
 	}
 	err := fmt.Errorf("the input source %s has %d Markdown %s for AI Review, and %d of them do not fit in what AI Review reads of a run (%d calls, %d MiB of text): a source is refused rather than reviewed in part",
 		id, counts[id], files, missing[id], MaxInputReviewCalls, MaxInputReviewText>>20)
-	// The reason carries the source and its count (agentry-cli#884): its
-	// Markdown files, against how many of them fit.
+	// The reason carries the source and its count: its Markdown files,
+	// against how many of them fit.
 	count := &receipt.ReasonCount{Cap: receipt.CapAIReview, Limit: int64(max(counts[id]-missing[id], 0)), Of: receipt.OfMarkdownFiles, Count: int64(counts[id])}
 	return receipt.WithCount(err, receipt.ReasonInputRefused, receipt.InputNotReviewed, count, id)
 }

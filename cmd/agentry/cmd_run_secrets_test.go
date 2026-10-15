@@ -7,7 +7,7 @@ import (
 )
 
 // A QuickAgent with no intake questions yields nil answers; the overrides
-// must still be the profile's secrets, not a panic (agentry-cli#49).
+// must still be the profile's secrets, not a panic.
 func TestSecretOverridesNilAnswers(t *testing.T) {
 	got := secretOverrides(map[string]string{"GITHUB_TOKEN": "p1"}, nil)
 	if len(got) != 1 || got["GITHUB_TOKEN"] != "p1" {

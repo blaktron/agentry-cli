@@ -1,4 +1,4 @@
-// The traversal corpus for RUNNER-PLAN §R11 invariant 5: every escape
+// The traversal corpus: every escape
 // shape we know — dot-dot, absolute, backslash, and symlink aliases — must
 // be refused by resolveUnder, and the paths-mode grant matcher must not be
 // fooled by prefixes or un-cleaned input.

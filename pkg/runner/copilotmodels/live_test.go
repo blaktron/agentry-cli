@@ -19,7 +19,7 @@ import (
 // GitHub has never issued: Copilot CLI asks for it through the callback,
 // reaches api.github.com through the proxy, and GitHub refuses it, which
 // the list says as a run says a refused sign-in. Without an account that
-// is as far as a list goes; the list itself is M11's (agentry-cli#744). It
+// is as far as a list goes; a list against an account needs one. It
 // builds the runner and Copilot images when absent, so it runs only when
 // asked: AGENTRY_LIVE_COPILOT=1 on a host with docker and the network.
 func TestLiveCopilotModelList(t *testing.T) {

@@ -1,13 +1,12 @@
-// The built-in Drafter's web tools (plan builder-rework.md §7.3, D7, D21,
-// D22, D24; agentry-cli#345): web_search, web_read and registry_search. The
-// compiler grants them to the Drafter alone and refuses them to any release
-// (compile.Inputs.Web); their contract is not the manifest's, which declares
-// no egress.
+// The built-in Drafter's web tools: web_search, web_read and registry_search.
+// The compiler grants them to the Drafter alone and refuses them to any
+// release (compile.Inputs.Web); their contract is not the manifest's, which
+// declares no egress.
 //
 // Every text they bring back is read by AI Review before the model sees it
 // (runnerimage/webscan): a page, each search result and each registry
 // answer. One that is flagged, or that could not be scanned, is withheld:
-// the model gets its address and the reason, never the text (D22). Each
+// the model gets its address and the reason, never the text. Each
 // result's verdict goes on stderr, which the gateway keeps as gateway.log,
 // and into the run's web ledger, which the engine counts into the receipt.
 //
@@ -17,7 +16,7 @@
 // on ports 80 and 443; public addresses only, checked on the address each
 // connection is actually made to, so a name that resolves somewhere private
 // and every redirect hop are refused alike; no cookie and no credential; at
-// most 32 KiB of text a page (D24).
+// most 32 KiB of text a page.
 
 package toolsrv
 
@@ -52,13 +51,13 @@ import (
 // copy of this file, since one plan serves a local and a hosted draft alike.
 type Web struct {
 	Enabled bool `json:"enabled"`
-	// RegistrySearch is compiled too: registry_search, the Drafter's alone
-	// (agentry-cli#523), granted only when Enabled and with a Registry to
+	// RegistrySearch is compiled too: registry_search, the Drafter's alone,
+	// granted only when Enabled and with a Registry to
 	// read.
 	RegistrySearch bool `json:"registrySearch,omitempty"`
 	// SearchedOnly is compiled: web_read opens only an address a web_search
-	// of this run returned and AI Review passed (the Knowledge Creator's,
-	// agentry-cli#523). Its model reads documents no one scanned, so an
+	// of this run returned and AI Review passed (the Knowledge Creator's).
+	// Its model reads documents no one scanned, so an
 	// instruction hidden in one must not be able to send another's text out
 	// in an address of its choosing; a search result's address is the
 	// search provider's, never the model's.
@@ -102,13 +101,13 @@ const (
 // WebSecretEnv is every key the web tools may be given, sorted.
 func WebSecretEnv() []string { return []string{EnvWebJevKey, EnvWebJobToken, EnvWebSearchKey} }
 
-// The web tools' bounds (plan builder-rework.md D9, D24).
+// The web tools' bounds.
 const (
 	// PageTextBytes is the most text a page gives the model: four of the
-	// judge's 8 KiB chunks (D24).
+	// judge's 8 KiB chunks.
 	PageTextBytes = 32 << 10
 	// DefaultMaxPages, DefaultMaxSearches and DefaultMaxRegistryCalls are
-	// a run's calls (D9's starting point: 60 pages, 30 searches).
+	// a run's calls (60 pages, 30 searches to start with).
 	DefaultMaxPages         = 60
 	DefaultMaxSearches      = 30
 	DefaultMaxRegistryCalls = 60
@@ -296,7 +295,7 @@ func publicAddrPort(ap netip.AddrPort) error {
 }
 
 // publicAddr is the runner's one public-address rule (netaddr, shared
-// with the input-source and browse proxies; agentry-cli#915).
+// with the input-source and browse proxies).
 func publicAddr(a netip.Addr) error {
 	if !netaddr.Public(a) {
 		return fmt.Errorf("%s is %w", a.Unmap(), errNotPublic)
@@ -618,7 +617,7 @@ func (s *server) fetchPage(u *url.URL) (string, string, error) {
 		text = strings.ToValidUTF8(string(body), "\uFFFD")
 	}
 	// The whole answer, its head and the cut note included, is at most
-	// PageTextBytes: four of the judge's chunks (D24), and within the run's
+	// PageTextBytes: four of the judge's chunks, and within the run's
 	// result budget (page.go), so that the harness never cuts what AI
 	// Review read.
 	head := fmt.Sprintf("URL: %s\nStatus: %s\nContent-Type: %s\n\n", final, resp.Status, mt)

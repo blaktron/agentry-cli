@@ -343,7 +343,7 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err := f.toolsTmpfs(ctx, &c, imageID); err != nil {
 		return nil, err
 	}
-	// The browser server's class (browser.go, agentry-cli#915).
+	// The browser server's class (browser.go).
 	browser, err := f.isBrowser(ctx, imageID)
 	if err != nil {
 		return nil, err
@@ -366,8 +366,8 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		}
 		f.relayPinHosts(&c)
 		if f.cfg.RelayResolvConf != "" && f.cfg.Runtime != "" {
-			// Under the run's runtime, with the run's own name servers
-			// (agentry-cli#337): added after the shape check, which holds
+			// Under the run's runtime, with the run's own name servers:
+			// added after the shape check, which holds
 			// the gateway to naming no file of a relay's. A relay is
 			// created with both its networks, so none is connected after
 			// it starts (a sandbox takes no such network).
@@ -386,11 +386,10 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	return c, nil
 }
 
-// The capabilities a gateway-launched container keeps (agentry-cli#227,
-// DR-95). The gateway asks for none of its own (checkHost refuses CapAdd)
-// and can drop none back: every container it creates drops them all, and
-// gets back only what its class needs, as the runner's own containers do
-// since agentry-cli#163.
+// The capabilities a gateway-launched container keeps. The gateway asks for
+// none of its own (checkHost refuses CapAdd) and can drop none back: every
+// container it creates drops them all, and gets back only what its class
+// needs, as the runner's own containers do.
 var (
 	// toolsCapabilities are the runner's tools servers' (the run's tools
 	// server and the web tools' server, both the runner image's toolsrv
@@ -474,7 +473,7 @@ func (f *Filter) isToolsServer(ctx context.Context, c *containerCreateBody, imag
 
 // toolsTmpfs mounts Config.ToolsTmpfs into the run's tools server, the
 // container of ToolsImage that runs ToolsCmd, and into no other: its /tmp
-// and scratch folder become size-capped tmpfs (agentry-cli#599, #729), so
+// and scratch folder become size-capped tmpfs, so
 // what a declared command or the scratch tools write is bounded and never
 // reaches the host's disk. Added after the storage check, as the run's
 // own; a request that puts anything of the gateway's at or beneath one of
@@ -549,7 +548,7 @@ func (f *Filter) toolsShared() (map[string]string, error) {
 // /etc/hosts entry for each container it links to: the link's alias at
 // that container's address on a network the two share. A sandboxed
 // runtime's own network stack does not reach docker's embedded DNS, which
-// is what answers a link's name (measured on dev under gVisor, DR-23), so
+// is what answers a link's name (observed under gVisor), so
 // a declared server would not find its relay; the entry answers exactly
 // what the DNS would have. The links stay, and every linked container has
 // already been confirmed this run's gateway's (checkHost, checkNetworks).
@@ -584,7 +583,7 @@ func (f *Filter) pinLinks(ctx context.Context, c *containerCreateBody) error {
 		// A link makes the linked container answer to its name as well as
 		// the alias, and the gateway uses both: a server reaches its L4
 		// relay by the declared host (the alias), the tools server its L7
-		// relay by the relay's name in http_proxy (agentry-cli#346).
+		// relay by the relay's name in http_proxy.
 		if !hostNameRE.MatchString(name) {
 			return deny("linked container name %q is not a host name", name)
 		}
@@ -765,7 +764,7 @@ func (f *Filter) relayShape(c *containerCreateBody, pin string) error {
 	// its own form, bound to its image: the L4 relay one host and its ports
 	// (PROXY_HOSTNAME, PROXY_PORTS), the L7 relay a list of host:port it
 	// may CONNECT to (ALLOWED_HOSTS), which is how the tools server's fetch
-	// reaches the agent's declared hosts (agentry-cli#346). Nothing else,
+	// reaches the agent's declared hosts. Nothing else,
 	// and every target declared.
 	settings := map[string]string{}
 	for _, kv := range c.Env {
@@ -1311,7 +1310,7 @@ func (f *Filter) connect(r *http.Request, network string, joining bool) error {
 			return err
 		}
 		// The browser's network takes no container after it is made, and
-		// the browser server joins no network (invariant 2).
+		// the browser server joins no network.
 		if f.cfg.BrowserNetwork != "" && network == f.cfg.BrowserNetwork {
 			return deny("the browser's network takes no container after it is made")
 		}
@@ -1320,7 +1319,7 @@ func (f *Filter) connect(r *http.Request, network string, joining bool) error {
 		}
 		// A container under the run's runtime takes its networks before
 		// it starts: a sandboxed runtime's network stack takes none
-		// connected once it runs (agentry-cli#337), so the join would
+		// connected once it runs, so the join would
 		// succeed and leave it with no way there.
 		if c.running && f.cfg.Runtime != "" && c.runtime == f.cfg.Runtime {
 			return deny("container %s is running under %s, which takes no network connected after start", short(c.id), f.cfg.Runtime)

@@ -36,20 +36,19 @@ type Options struct {
 	Say func(string)
 	// Pin is the SHA256 fingerprint (ssh.FingerprintSHA256) of the host
 	// key a schedule was made with: a run that finds another refuses, as a
-	// changed key does (plan D12; agentry-cli#863).
+	// changed key does.
 	Pin string
 	// Keep saves the sign-in in the keychain, without asking, wherever it
-	// came from: a schedule's runs read it there (plan D12).
+	// came from: a schedule's runs read it there.
 	Keep bool
 }
 
 // Prepare readies one target host. With a person at a terminal it asks for
-// nothing a refusal would waste: the address (D8), the host key (D7), and
-// only then the sign-in (D6). With no one to ask it takes the sign-in
+// nothing a refusal would waste: the address, the host key, and
+// only then the sign-in. With no one to ask it takes the sign-in
 // first: such a run has only its flags and its keychain, and one with
 // neither (a hosted run, whose host has no keychain and passes no host
-// flag) is refused before any name is resolved or any address dialled
-// (agentry-cli#861, found live on dev; agentry-enterprise#534).
+// flag) is refused before any name is resolved or any address dialled.
 func Prepare(ctx context.Context, id string, a Answer, o Options) (*Host, error) {
 	if o.Say == nil {
 		o.Say = func(string) {}
@@ -115,7 +114,7 @@ func ssh256(h *Host) string {
 	return Fingerprint(h.HostKey.Key)
 }
 
-// ReceiptLine is the host's capabilities_enforced line (plan §8): who, the
+// ReceiptLine is the host's capabilities_enforced line: who, the
 // host as named and the address it resolved to, the port, the key and
 // where its trust came from, the sign-in's kind and source, and what the
 // run's boundary does not cover.
@@ -125,7 +124,7 @@ func (h *Host) ReceiptLine(calls, shells int) string {
 
 // shortNote says when a sign-in is too short to mask: the host link's
 // scrub masks values of hostlink.MinScrub bytes and more, the run's files
-// eight and more (D19).
+// eight and more.
 func (h *Host) shortNote() string {
 	for _, v := range h.Credential.Values() {
 		if len(strings.TrimSpace(v)) < 8 {

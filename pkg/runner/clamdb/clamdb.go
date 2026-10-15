@@ -1,14 +1,13 @@
-// Package clamdb keeps this machine's copy of the ClamAV signature bundle
-// the decode step checks every input against (plan file-handling.md §7,
-// D15; agentry-cli#563). agentry-dockerimages' clamav-db workflow publishes
-// the bundle daily to GHCR as an OCI artifact of three CVDs, signed keyless
-// as that workflow (agentry-dockerimages#30). Ensure refreshes the copy
-// under the runner home when it is over a day since it last asked,
-// verifies the signature before a byte of it is used, refuses a bundle
-// older than the one it holds, and answers the directory a decode mounts
-// read-only. A refresh that fails never fails a run: the copy it has is
-// used, and past 7 days old its receipt says the signatures are stale;
-// with no copy at all, nothing is checked, and the receipt says that.
+// Package clamdb keeps this machine's copy of the ClamAV signature bundle the
+// decode step checks every input against. agentry-dockerimages' clamav-db
+// workflow publishes the bundle daily to GHCR as an OCI artifact of three CVDs,
+// signed keyless as that workflow. Ensure refreshes the copy under the runner
+// home when it is over a day since it last asked, verifies the signature before
+// a byte of it is used, refuses a bundle older than the one it holds, and
+// answers the directory a decode mounts read-only. A refresh that fails never
+// fails a run: the copy it has is used, and past 7 days old its receipt says
+// the signatures are stale; with no copy at all, nothing is checked, and the
+// receipt says that.
 package clamdb
 
 import (
@@ -27,7 +26,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// The plan's two ages (D15), and how often a refresh that failed is tried
+// The plan's two ages, and how often a refresh that failed is tried
 // again while a bundle is held.
 const (
 	// RefreshAfter: the registry is asked again once a day has passed.

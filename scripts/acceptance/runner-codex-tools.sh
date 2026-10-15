@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The codex adapter's gateway-only tools, measured on the installed Codex
-# (adapter invariant 1; agentry-cli#737).
+# The codex adapter's gateway-only tools, checked against the installed
+# Codex.
 #
 #   scripts/acceptance/runner-codex-tools.sh [model...]
 #       (default: gpt-5.5 gpt-6-astra fixture-model)
@@ -17,7 +17,7 @@
 # requires the request's tools to be exactly the gateway's namespace and
 # codex's three MCP resource readers (which read from that gateway), and no
 # developer message to list codex's bundled skills, nor any skill to be
-# installed into its CODEX_HOME (agentry-cli#762).
+# installed into its CODEX_HOME.
 #
 # No model key, no network, no docker: the endpoint is 127.0.0.1 and
 # answers 400 after recording. Run it on every Codex version bump.
@@ -117,7 +117,7 @@ instruction = (req.get("instructions") or (developer[0] if developer else "")).s
 if sorted(names) != want or instruction != "Do the thing.":
     print(f"FAIL {model}: tools {sorted(names)}, instruction {instruction[:80]!r}", file=sys.stderr); sys.exit(1)
 # Codex's bundled skills (imagegen, openai-docs, …) are a capability the
-# run does not have; the prompt must not list them (agentry-cli#762).
+# run does not have; the prompt must not list them.
 if any("<skills_instructions>" in m for m in developer):
     print(f"FAIL {model}: a developer message lists codex's skills (<skills_instructions>)", file=sys.stderr); sys.exit(1)
 installed = sorted(os.listdir(f"{d}/home/skills")) if os.path.isdir(f"{d}/home/skills") else []

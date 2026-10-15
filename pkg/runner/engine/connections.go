@@ -1,15 +1,14 @@
 package engine
 
-// A run's OAuth connections (plan mcp-oauth-connections.md §5, D8, D15,
-// D24; agentry-cli#664, #665). The caller hands the engine an access token
+// A run's OAuth connections. The caller hands the engine an access token
 // per server that signs in, and nothing else of the connection. The engine
 // writes it where the server reads it: a remote server's bridge reads
 // cfg/connections/<server>/bearer, mounted read-only; a package server
 // reads the files its oauth block declares, rendered into the same kind of
-// folder, mounted writable (DR-77), or an env entry the gateway sets from
-// the secrets file. While the run lives, a
-// renewer asks the caller for a new token before the one held expires and
-// rewrites the folder; an env token is fixed for the run.
+// folder, mounted writable, or an env entry the gateway sets from the
+// secrets file. While the run lives, a renewer asks the caller for a new
+// token before the one held expires and rewrites the folder; an env token
+// is fixed for the run.
 
 import (
 	"context"
@@ -40,7 +39,7 @@ type ConnectionToken struct {
 const assumedTokenLife = time.Hour
 
 // accessTokenRE is RFC 6750's b64token, the shape of every access token
-// the measured vendors issue. A token outside it is refused rather than
+// the vendors issue. A token outside it is refused rather than
 // written into a template, where a quote or a newline could add a key the
 // server reads.
 var accessTokenRE = regexp.MustCompile(`^[A-Za-z0-9\-._~+/]+=*$`)
@@ -267,10 +266,10 @@ func renewAt(t ConnectionToken, now time.Time) time.Time {
 // renewal before it asks again.
 var renewRetry = time.Minute
 
-// renewConnections starts the run's renewer (plan D24) once the redactor
-// exists, and returns the function that stops it and waits for it; the
-// caller registers that with teardown, which runs it before the
-// connection folders are deleted. Nothing starts when the caller gave no
+// renewConnections starts the run's renewer once the redactor exists,
+// and returns the function that stops it and waits for it; the caller
+// registers that with teardown, which runs it before the connection
+// folders are deleted. Nothing starts when the caller gave no
 // RenewConnection or no connection would see a new token.
 func renewConnections(ctx context.Context, p Params, rd *runDirs) (stop func()) {
 	var held []*heldToken
@@ -314,8 +313,7 @@ func renewConnections(ctx context.Context, p Params, rd *runDirs) (stop func()) 
 
 // renewOne asks for h's new token and hands it to the server. A failure is
 // said once, on the run's stderr (masked), and asked again after
-// renewRetry; the server's calls fail once the old token expires, which is
-// plan D13's outcome for a hosted run.
+// renewRetry; the server's calls fail once the old token expires.
 func renewOne(ctx context.Context, p Params, rd *runDirs, h *heldToken) {
 	t, err := h.ask(ctx)
 	if err == nil && t.AccessToken == "" {

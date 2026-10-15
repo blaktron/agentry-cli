@@ -124,7 +124,7 @@ func signInInput(mode manifest.Mode) Input {
 }
 
 // The installed Codex reads the token file with cat, which a Windows host
-// lacks: there a ChatGPT plan is the image's (D15's default).
+// lacks: there a ChatGPT plan is the image's.
 func TestTheInstalledCodexRefusesAPlanOnWindows(t *testing.T) {
 	prev := hostOS
 	hostOS = "windows"
@@ -135,7 +135,7 @@ func TestTheInstalledCodexRefusesAPlanOnWindows(t *testing.T) {
 	if !errors.As(err, &r) || !strings.Contains(err.Error(), "--adapter codex-image") {
 		t.Fatalf("err %v", err)
 	}
-	// A key run on Windows is as before.
+	// A key run on Windows compiles.
 	if _, err := ad.Compile(conformanceInput(manifest.ModeAutonomous, false)); err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +200,8 @@ func TestTheRestartRouteReadsTheTokenOnceAtStart(t *testing.T) {
 	}
 }
 
-// The Codex image may run on an OpenAI API key, as a choice (D16): the key
-// by name, no sign-in, both modes app-server.
+// The Codex image may run on an OpenAI API key, as a choice: the key by
+// name, no sign-in, both modes app-server.
 func TestTheCodexImageRunsOnAnAPIKeyByChoice(t *testing.T) {
 	img, _ := Get(CodexImageAdapterName)
 	r, err := img.Compile(conformanceInput(manifest.ModeAutonomous, false))

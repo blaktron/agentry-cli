@@ -1,9 +1,8 @@
-// Package modelsignin keeps a person's model sign-ins on this machine
-// (plan model-sign-ins.md §4.1, §4.2, D3, D7; agentry-cli#738, DR-86): the
-// grants that let their local runs spend a model vendor's plan, one per
-// vendor, apart from the MCP connections of pkg/runner/connection. Any
-// number are kept; the policy's model setup names which kind is in use;
-// switching signs nothing out. A hosted run never reads this store (D2).
+// Package modelsignin keeps a person's model sign-ins on this machine: the
+// grants that let their local runs spend a model vendor's plan, one per vendor,
+// apart from the MCP connections of pkg/runner/connection. Any number are kept;
+// the policy's model setup names which kind is in use; switching signs nothing
+// out. A hosted run never reads this store.
 //
 // Under the runner home:
 //
@@ -20,23 +19,20 @@
 //	model-signins/audit.ndjson     removals and their revocation outcome
 //
 // The secret half is kept in the OS keychain where one answers (account
-// model-signin:<vendor>), in the 0600 file otherwise. No access token is
-// kept: Use refreshes at each run's start and before it expires mid-run,
-// and hands the run the access token alone (invariant I3). A Claude
-// sign-in keeps no secret here at all: Claude Code holds it, in a
-// directory Agentry owns and never reads (D19, D20), which the record
-// names: the Claude Code image's docker volume, the installed Claude
-// Code's directory under this store, or both, each signed in by the
-// Claude Code that uses it (agentry-cli#740). A connected key (OpenRouter,
-// Poe, Hugging Face; D30, agentry-cli#742) is an API key in the model key's
-// keychain entry; its record here marks it connected, for its Disconnect,
-// and keeps Hugging Face's refresh token (connect.go).
+// model-signin:<vendor>), in the 0600 file otherwise. No access token is kept:
+// Use refreshes at each run's start and before it expires mid-run, and hands
+// the run the access token alone. A Claude sign-in keeps no secret here at all:
+// Claude Code holds it, in a directory Agentry owns and never reads, which the
+// record names: the Claude Code image's docker volume, the installed Claude
+// Code's directory under this store, or both, each signed in by the Claude Code
+// that uses it. A connected key (OpenRouter, Poe, Hugging Face) is an API key
+// in the model key's keychain entry; its record here marks it connected, for
+// its Disconnect, and keeps Hugging Face's refresh token (connect.go).
 //
-// The vendors' flows (M4–M7) register what refreshes and revokes their
-// grants (RegisterVendor; ChatGPT's and Copilot's are registered by this
-// package, M4 and M6); a
-// vendor with none registered is kept and listed, and Use and Remove say
-// what this build cannot do with it.
+// The vendors' flows register what refreshes and revokes their grants
+// (RegisterVendor; ChatGPT's and Copilot's are registered by this package); a
+// vendor with none registered is kept and listed, and Use and Remove say what
+// this build cannot do with it.
 package modelsignin
 
 import (
@@ -127,7 +123,7 @@ type Record struct {
 	Vendor   string `json:"vendor"`
 	Kind     string `json:"kind"`
 	Provider string `json:"provider"`
-	// Connected marks an API key a connect flow minted (D30).
+	// Connected marks an API key a connect flow minted.
 	Connected bool     `json:"connected,omitempty"`
 	Label     string   `json:"label,omitempty"`
 	Scopes    []string `json:"scopes,omitempty"`
@@ -142,7 +138,7 @@ type Record struct {
 	// oaiapp_…). Not a secret: it proves nothing without the grant.
 	ClientID string `json:"clientId,omitempty"`
 	// App is which of Agentry's apps a Copilot sign-in went through
-	// (mcpauth.GitHubApp or GitHubOAuthApp; plan D26).
+	// (mcpauth.GitHubApp or GitHubOAuthApp).
 	App string `json:"app,omitempty"`
 	// KeyExpiresAt is when a connected key that cannot be refreshed stops
 	// working (Poe's, the expiry the person chose), RFC 3339; "" when it
@@ -166,7 +162,7 @@ type Grant struct {
 }
 
 // Access is what Use gives a run: an access token and its expiry (zero
-// when the vendor did not say). Never the refresh token (I3).
+// when the vendor did not say). Never the refresh token.
 type Access struct {
 	Token     string
 	ExpiresAt time.Time
@@ -496,7 +492,7 @@ const (
 	// RevokeSubmitted: the vendor took the grant's tokens for revocation
 	// and answered before acting, saying nothing of what it revoked
 	// (GitHub's credential revocation answers 202 even for a token it never
-	// issued; measured 2026-10-09).
+	// issued).
 	RevokeSubmitted  = "submitted to the vendor's credential revocation, which accepted it"
 	RevokeNotOffered = "not offered by this build: forgotten here; revoke it in your account at the vendor"
 	RevokeNothing    = "nothing to revoke: no grant was kept here"
@@ -683,7 +679,7 @@ func (s *Store) lock(vendor string) (func(), error) {
 // RunGrant is what a run on this machine is given of a model sign-in: an
 // access token for a token-file or session-callback sign-in, with the Renew
 // that refreshes it mid-run, or a config-directory sign-in's directory.
-// Never the refresh token (I3).
+// Never the refresh token.
 type RunGrant struct {
 	Kind      string
 	Access    Access

@@ -13,22 +13,21 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// The runner half of MCP server vulnerability scanning (agentry#177,
-// agentry-cli#58, DR-16): before a declared server is installed, ask the
-// registry what its S7 scan and daily sweep recorded for that exact package
-// version. The registry is the source of truth — it holds the scanned-server
-// registry the sweep refreshes — so the runner never consults a
-// vulnerability database itself. The check fails open on an unreachable
-// registry (a stale laptop must still run) and closed on an advisory the
-// registry's gate rates high or critical (unless the operator overrides
-// it), and either way the receipt says which.
+// The runner half of MCP server vulnerability scanning: before a declared
+// server is installed, ask the registry what its S7 scan and daily sweep
+// recorded for that exact package version. The registry is the source of truth
+// — it holds the scanned-server registry the sweep refreshes — so the runner
+// never consults a vulnerability database itself. The check fails open on an
+// unreachable registry (a stale laptop must still run) and closed on an
+// advisory the registry's gate rates high or critical (unless the operator
+// overrides it), and either way the receipt says which.
 //
-// The rating is the gate's, not the advisory's word (agentry-cli#501,
-// amending DR-16): since ruleset 0.3.1 the registry rates a High advisory
-// medium below CVSS 8.5 and publishes the version, so the runner refusing
-// on the database's "high" would refuse what the gate let through. A
-// registry that does not serve the gate's rating (an older or a
-// self-hosted one) is weighed by the advisory's own severity, as before.
+// The rating is the gate's, not the advisory's word: since ruleset 0.3.1 the
+// registry rates a High advisory medium below CVSS 8.5 and publishes the
+// version, so the runner refusing on the database's "high" would refuse what
+// the gate let through. A registry that does not serve the gate's rating (an
+// older or a self-hosted one) is weighed by the advisory's own severity, as
+// before.
 
 // VulnAdvisory is one advisory the registry reports for a server version.
 type VulnAdvisory struct {
@@ -38,7 +37,7 @@ type VulnAdvisory struct {
 	// of its CVSS score).
 	Severity string `json:"severity"`
 	// GateSeverity is the registry gate's rating of the finding this
-	// advisory makes (agentry#774): Critical is critical, High is high
+	// advisory makes: Critical is critical, High is high
 	// from a CVSS base score of 8.5 (or with no usable score) and medium
 	// below it, any other its own. Empty from a registry that does not
 	// serve it.
@@ -101,7 +100,7 @@ type VulnStatus struct {
 	// Ref is "npm:pkg@1.2.3" / "pypi:pkg@1.2.3".
 	Ref string `json:"ref"`
 	// Server is the declared server's id without its version
-	// ("npm:pkg"), the name a refusal's reason gives (agentry-cli#628).
+	// ("npm:pkg"), the name a refusal's reason gives.
 	Server string `json:"-"`
 	// Status is the registry's word — "safe" (no known advisories at
 	// CheckedAt), "vulnerable", "error" (its last lookup failed; Advisories
@@ -116,7 +115,7 @@ type VulnStatus struct {
 }
 
 // StatusRemote is a remote server's status: not looked up, since it is a
-// service its vendor runs, not a package version (agentry-cli#663).
+// service its vendor runs, not a package version.
 const StatusRemote = "remote"
 
 // Refusing is the advisories that refuse a run by default: those rated
@@ -202,7 +201,7 @@ func CheckVulnerabilities(ctx context.Context, client *http.Client, registry str
 		if srv.IsRemote() {
 			// A remote server is the vendor's running service: there is no
 			// package version to look up, and the registry records none
-			// (S7/remote-server, DEV-215).
+			// (S7/remote-server).
 			out = append(out, VulnStatus{Ref: srv.URL, Server: srv.SourceID(), Status: StatusRemote})
 			continue
 		}

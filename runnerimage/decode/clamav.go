@@ -1,6 +1,6 @@
 package decode
 
-// The malware check (plan file-handling.md §7, D14, D15; agentry-cli#563).
+// The malware check.
 // Every regular file a decode takes, as staged or unpacked from an archive,
 // archives included, is checked by ClamAV's clamscan before any decoder
 // reads it, in one clamscan run for the whole decode: loading the
@@ -10,7 +10,7 @@ package decode
 // argv, not even a path. clamscan also opens each archive itself, so what it
 // can reach inside one is checked twice: once in the archive, once as the
 // member the runner unpacked. A file clamscan finds is never decoded; the
-// host refuses the run (D9). The signatures are the bundle the host mounts
+// host refuses the run. The signatures are the bundle the host mounts
 // read-only; with none, every file is unchecked, and says so.
 
 import (
@@ -56,7 +56,7 @@ const (
 	UncheckedFailed Unchecked = "failed"
 	// UncheckedNotRisky: a file in an input source that is not an
 	// executable or binary risky type, which only those are checked in a
-	// source (plan input-sources.md D8; SourceRisky).
+	// source (SourceRisky).
 	UncheckedNotRisky Unchecked = "not-risky"
 )
 
@@ -92,7 +92,7 @@ func ValidSignature(s string) bool { return signatureRE.MatchString(s) }
 
 // clamscanArgv is clamscan's argv after the command: the signature
 // directory, scratch, the file list, nothing else variable. Potentially
-// unwanted applications stay off (D14); scripts/check.sh in
+// unwanted applications stay off; scripts/check.sh in
 // agentry-dockerimages runs the same argv.
 func clamscanArgv(db, scratch, list string) []string {
 	return []string{

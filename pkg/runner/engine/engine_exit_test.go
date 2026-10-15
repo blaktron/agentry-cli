@@ -8,7 +8,7 @@ import (
 
 // The exit-class names the envelope carries (receipt.ExitClassName) and the
 // codes this package defines are one table in two places; this holds them
-// together (agentry-cli#102).
+// together.
 func TestExitClassNamesMatchCodes(t *testing.T) {
 	want := map[int]string{
 		ExitOK: "ok", ExitCLI: "cli", ExitUsage: "usage", ExitVerify: "verify", ExitPolicy: "policy",

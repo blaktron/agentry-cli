@@ -9,8 +9,8 @@ import (
 
 // heldOpen says whether this process still holds path open. On Linux it
 // reads the process's descriptors; on Windows an open handle makes the
-// file impossible to rename, which is the harm itself (agentry-cli#459).
-// Elsewhere there is no cheap way to ask, and the test is skipped.
+// file impossible to rename, which is the harm itself. Elsewhere there
+// is no cheap way to ask, and the test is skipped.
 func heldOpen(t *testing.T, path string) bool {
 	t.Helper()
 	switch runtime.GOOS {

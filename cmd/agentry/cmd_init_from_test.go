@@ -1,5 +1,5 @@
-// `agentry init --from` (agentry#71): imports populate the manifest from
-// what the source states and never guess the capability contract — the
+// `agentry init --from`: imports populate the manifest from what the
+// source states and never guess the capability contract — the
 // non-interactive path refuses without explicit answers, the wizard asks
 // with hints as defaults, and every result validates under the real
 // toolchain.

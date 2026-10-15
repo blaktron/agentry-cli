@@ -6,7 +6,7 @@ import (
 	"strconv"
 )
 
-// The contrast a design's accent must reach on white (D17, WCAG 2.2 1.4.3 and
+// The contrast a design's accent must reach on white (WCAG 2.2 1.4.3 and
 // 1.4.11).
 const (
 	// TextContrast is the least contrast for an accent that touches text.
@@ -18,7 +18,7 @@ const (
 // White is the page.
 const White = "#ffffff"
 
-// TintMix is the accent's share of its tint, the rest white (plan §4: the
+// TintMix is the accent's share of its tint, the rest white (the
 // tint is derived, never stored). The site's editor mixes the same.
 const TintMix = 0.12
 
@@ -79,7 +79,7 @@ func onWhite(colour string) float64 {
 // NearestPassing is the shade of a colour that reaches min contrast on white
 // with the least change: the colour itself when it passes, else the lightest
 // darkening of it (the same hue and saturation, a lower lightness) that does.
-// The editor offers it when it refuses an accent (D17).
+// The editor offers it when it refuses an accent.
 func NearestPassing(colour string, min float64) (string, error) {
 	c, err := parseHex(colour)
 	if err != nil {

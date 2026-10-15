@@ -3,38 +3,38 @@
 # server, from its README; a secret gets a placeholder value, never a key.
 # call is one read-only tool call that needs no key, where one exists.
 
-# --- Every server a published QuickAgent declares (dev and production, 2026-10-05)
+# --- Every server a published QuickAgent declares
 - ecosystem: npm
   package: "@cyanheads/osv-advisory-mcp-server"
-  why: registry (dev, production)
+  why: published QuickAgent
   egress: [api.osv.dev]
   call: {tool: osv_query_package, arguments: {ecosystem: PyPI, name: flask, version: "0.12"}}
 - ecosystem: npm
   package: frankfurter-mcp-server
-  why: registry (dev)
+  why: published QuickAgent
   egress: [api.frankfurter.dev]
   call: {tool: frankfurter_get_latest_rates, arguments: {base: EUR}}
 - ecosystem: npm
   package: github-mcp-server-js
-  why: registry (dev)
+  why: published QuickAgent
   egress: [api.github.com]
   secrets: [GITHUB_TOKEN]
   env: {GITHUB_PERMISSION: read-only}
 - ecosystem: npm
   package: "@bytebase/dbhub"
-  why: registry (dev)
+  why: published QuickAgent
 - ecosystem: npm
   package: "@modelcontextprotocol/sdk"
-  why: registry (dev)
-  note: the MCP TypeScript SDK, declared by a published dev release as if it were a server
+  why: published QuickAgent
+  note: the MCP TypeScript SDK, declared by a published release as if it were a server
 - ecosystem: npm
   package: "@aryanbv/pdf-toolkit-mcp"
-  why: registry (production)
+  why: published QuickAgent
   call: {tool: pdf_get_metadata, arguments: {filePath: /inputs/report.pdf}}
   note: its tools take local file paths; the call asks for a path where a run's inputs would be
 - ecosystem: pypi
   package: markitdown-mcp
-  why: registry (production)
+  why: published QuickAgent
 
 # --- The MCP reference servers (modelcontextprotocol/servers), current
 - ecosystem: npm
@@ -120,7 +120,7 @@
   why: reference (archived)
   egress: [sentry.io]
 
-# --- The most-downloaded MCP servers on npm (last month, 2026-10-05)
+# --- The most-downloaded MCP servers on npm (last month)
 - ecosystem: npm
   package: "@playwright/mcp"
   why: top npm
@@ -180,7 +180,7 @@
   package: n8n-mcp
   why: top npm
 
-# --- The most-downloaded MCP servers on PyPI (last 30 days, 2026-10-01)
+# --- The most-downloaded MCP servers on PyPI (last 30 days)
 - ecosystem: pypi
   package: mcp-for-blender
   why: top PyPI

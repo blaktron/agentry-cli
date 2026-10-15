@@ -36,10 +36,10 @@ func refusedDraft() *Draft {
 }
 
 // TestTheRepairTurnIsGivenTheReportAndItsOwnDraftAlone holds the invariant
-// the repair turn keeps (plan builder-simplify.md §3, §5.2 step 3): its task
-// is the constant framing, the rules' own report, and the manifest and
-// instructions the Drafter itself wrote, and nothing else: no description,
-// no notes, no source, match, open question or withheld address.
+// the repair turn keeps: its task is the constant framing, the rules' own
+// report, and the manifest and instructions the Drafter itself wrote, and
+// nothing else: no description, no notes, no source, match, open question
+// or withheld address.
 func TestTheRepairTurnIsGivenTheReportAndItsOwnDraftAlone(t *testing.T) {
 	d := refusedDraft()
 	report := []string{"V10 intake[0].choices: type choice requires at least one choice", "V8 summary:  two\n lines"}
@@ -119,8 +119,8 @@ func TestARepairAfterTheCheckIsGivenWhatItFlaggedAndTheTask(t *testing.T) {
 // TestRecordCheck: the check goes into aiReview.check with how many were
 // asked; a pass adds nothing to the notes, a flag says what it flagged, that
 // the rubric's findings are advisory, and what each does at publish by its
-// severity (agentry-cli#569), a check with no answer says why; and the notes
-// keep every section the post-step added, the repair's among them.
+// severity, a check with no answer says why; and the notes keep every
+// section the post-step added, the repair's among them.
 func TestRecordCheck(t *testing.T) {
 	pass := &Check{Rubric: &CheckRubric{Verdict: CheckPass, Findings: []CheckFinding{}}, Draft: &CheckDraft{Verdict: CheckPass, Flagged: []string{}}}
 	d := refusedDraft()
@@ -134,8 +134,8 @@ func TestRecordCheck(t *testing.T) {
 	flagged := &Check{Rubric: &CheckRubric{Verdict: CheckFlagged, Findings: []CheckFinding{
 		{ID: RubricIDUndeclared, Score: 3, Path: "AGENT.md", Severity: SeverityHigh},
 		{ID: "C6_destructive_actions", Score: 2, Path: "AGENT.md", Severity: SeverityMedium},
-		// A record with no severity (before agentry-cli#569) reads the core's
-		// rule, which rates C2 medium at most since ruleset 0.4.0 (DEV-221).
+		// A record with no severity reads the core's rule, which rates C2
+		// medium at most from ruleset 0.4.0.
 		{ID: "C2_exfiltration", Score: 3, Path: "agent.yaml"}}},
 		Draft: &CheckDraft{Verdict: CheckFlagged, Score: 3, Flagged: []string{"off_task"}}}
 	d.RecordCheck(flagged, 2, nil)
@@ -246,9 +246,8 @@ func TestRepaired(t *testing.T) {
 const maxNameChars = 65
 
 // TestTheInstructionStatesItsBoundsByValue: the instruction teaches the
-// model its own caps (plan builder-simplify.md §5.1, D8), and the guide the
-// numbers the rules use (plan drafter-knowledge.md D11; agentry-cli#659),
-// each held equal to where it is enforced, in the file that now carries it.
+// model its own caps, and the guide the numbers the rules use, each held
+// equal to where it is enforced, in the file that now carries it.
 func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
 	headings := make([]string, 0, len(instructionShape))
 	for _, h := range instructionShape {
@@ -292,9 +291,9 @@ func TestTheInstructionStatesItsBoundsByValue(t *testing.T) {
 	if MaxIntake > manifest.MaxIntakeQuestions || MaxPrepare > manifest.MaxGuidePrepare {
 		t.Error("a cap is looser than the rule it sits inside")
 	}
-	// The instruction's cap is the draft check's instruction bound
-	// (agentry#789), and within the report's own read bound, so an over-cap
-	// one is read and repaired rather than lost.
+	// The instruction's cap is the draft check's instruction bound, and
+	// within the report's own read bound, so an over-cap one is read and
+	// repaired rather than lost.
 	if MaxInstructionBytes != corejudge.DraftMaxInstruction || MaxInstructionBytes >= maxInstructions {
 		t.Errorf("the instruction cap %d, the check's bound %d, the report bound %d", MaxInstructionBytes, corejudge.DraftMaxInstruction, maxInstructions)
 	}

@@ -1,4 +1,4 @@
-// The SNI check (agentry-cli#616): a tunnel the allowlist opened to one
+// The SNI check: a tunnel the allowlist opened to one
 // host carries only a ClientHello that names that host, so a CDN front end
 // serving the host cannot be asked for another site. Pinned end to end
 // with Go's own TLS client, and with hand-built hellos for what Go's
@@ -266,7 +266,7 @@ func TestSNIFragmentedPipelinedHelloForwardedIntact(t *testing.T) {
 	}
 }
 
-// A CONNECT to a plain-http model endpoint (DR-45) is the one tunnel that
+// A CONNECT to a plain-http model endpoint is the one tunnel that
 // carries no TLS, and is relayed as before.
 func TestSNINotAskedOfAPlainHTTPTarget(t *testing.T) {
 	echo := startEcho(t)

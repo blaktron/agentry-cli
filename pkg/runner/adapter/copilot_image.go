@@ -1,13 +1,12 @@
-// The copilot-image adapter (plan model-sign-ins.md §4.5, D25–D29;
-// agentry-cli#741): GitHub's Copilot CLI, unmodified, in an image built on
-// this machine from GitHub's release download (pkg/runner/harnessbuild),
-// run in the agent container as docker-agent is and driven through its
-// JSON-RPC server mode (`--headless --stdio`) by the runner's own
-// transport (copilot_session.go). It is the default whenever the policy's
-// model is a Copilot plan (apiKeyKind copilot-signin), and runs on nothing
-// else. There is no host adapter (D28).
+// The copilot-image adapter: GitHub's Copilot CLI, unmodified, in an image
+// built on this machine from GitHub's release download
+// (pkg/runner/harnessbuild), run in the agent container as docker-agent is
+// and driven through its JSON-RPC server mode (`--headless --stdio`) by the
+// runner's own transport (copilot_session.go). It is the default whenever
+// the policy's model is a Copilot plan (apiKeyKind copilot-signin), and
+// runs on nothing else. There is no host adapter.
 //
-// How each adapter invariant holds (plan runner-m-r4-adapters §3):
+// How each adapter invariant holds:
 //
 //  1. Gateway-only tools: --available-tools mcp:* on the argv and
 //     availableTools ["mcp:*"] in the session, Copilot CLI's allowlist,
@@ -31,9 +30,8 @@
 //  5. Best-effort events: the session's events are read for the dozen
 //     kinds the runner needs; the rest are kept as they came.
 //  6. The same envelope: tokens from assistant.usage; a plan run reports
-//     no dollars (D13). A quota or rate-limit error is the plan's limit
-//     (I9); an organization's policy refusing the run is its own outcome
-//     (D29).
+//     no dollars. A quota or rate-limit error is the plan's limit
+//     (I9); an organization's policy refusing the run is its own outcome.
 //  7. Telemetry off: enableSessionTelemetry false, and the proxy denies
 //     GitHub's telemetry hosts besides. GitHub's System Prompt is replaced
 //     by the run's (systemMessage replace); no custom instructions,

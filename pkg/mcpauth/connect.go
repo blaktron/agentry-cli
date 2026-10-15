@@ -18,7 +18,7 @@ import (
 
 // NativeClientMetadataURL is Agentry's Client ID Metadata Document for the
 // CLI and the desktop ("Agentry Desktop", loopback redirects), served by
-// the site (agentry-web#1180). A CIMD's client id is its own address.
+// the site. A CIMD's client id is its own address.
 const NativeClientMetadataURL = "https://secureagentry.net/oauth/clients/agentry-desktop.json"
 
 // NativeClientName is the name a dynamically registered client gives.
@@ -32,7 +32,7 @@ const ConsentTimeout = 10 * time.Minute
 
 // NeedsOwnClientError is a vendor that takes no client Agentry can present
 // for itself (no CIMD, no dynamic registration), so the person's own OAuth
-// client is the way (D16, D23): Google is the first.
+// client is the way: Google is the first.
 type NeedsOwnClientError struct{ Issuer string }
 
 func (e *NeedsOwnClientError) Error() string {
@@ -45,9 +45,9 @@ type Consent struct {
 	// HTTP reaches the vendor; Guard{}.Client() in production.
 	HTTP *http.Client
 	// ServerURL is the remote server's address, discovered from its own
-	// metadata. Issuer, for a package server (agentry-cli#665), which has
-	// no address, is the authorization server its oauth block names; no
-	// resource parameter is sent then. Exactly one is set. Scopes are the
+	// metadata. Issuer, for a package server, which has no address, is
+	// the authorization server its oauth block names; no resource
+	// parameter is sent then. Exactly one is set. Scopes are the
 	// manifest's.
 	ServerURL string
 	Issuer    string
@@ -58,7 +58,7 @@ type Consent struct {
 	CIMDURL string
 	// Present shows the consent address and, where it can, opens it.
 	Present func(authURL string)
-	// Pasted carries redirect addresses the person pasted back (D21); nil
+	// Pasted carries redirect addresses the person pasted back; nil
 	// where none can be.
 	Pasted <-chan string
 	// Say tells the person something mid-consent.
@@ -200,10 +200,10 @@ func (c Consent) say(s string) {
 	}
 }
 
-// pickClient is the client a sign-in presents (plan §6, D16, D23): the
-// person's own for this issuer where they keep one, else Agentry's CIMD
-// where the vendor takes one and the document is served, else a dynamic
-// registration, else the person must make their own.
+// pickClient is the client a sign-in presents: the person's own for
+// this issuer where they keep one, else Agentry's CIMD where the vendor
+// takes one and the document is served, else a dynamic registration,
+// else the person must make their own.
 func (c Consent) pickClient(ctx context.Context, md ServerMetadata, redirectURI string) (Client, error) {
 	if c.OwnClient != nil {
 		own, err := c.OwnClient(md.Issuer)
@@ -298,10 +298,10 @@ func Register(ctx context.Context, c *http.Client, md ServerMetadata, redirectUR
 }
 
 // RegisterAs registers a client for this redirect under the name and the
-// application type given (agentry-cli#715: the registry's hosted consent
-// registers a web client named Agentry). It asks to be public where the
-// token endpoint takes a public client; a vendor that issues a secret all
-// the same gets the secret sent the way its metadata allows, never none.
+// application type given (the registry's hosted consent registers a web
+// client named Agentry). It asks to be public where the token endpoint takes
+// a public client; a vendor that issues a secret all the same gets the secret
+// sent the way its metadata allows, never none.
 func RegisterAs(ctx context.Context, c *http.Client, md ServerMetadata, redirectURI string, reg Registration) (Client, error) {
 	method := AuthNone
 	if !supportsNone(md) && len(md.TokenEndpointAuthMethodsSupported) > 0 {
@@ -415,7 +415,7 @@ func (l *Loopback) handle(w http.ResponseWriter, r *http.Request) {
 	code, err := req.Callback(r.URL)
 	if errors.Is(err, ErrStateMismatch) {
 		// Anything on this machine can reach the port: a request without
-		// the state ends nothing (agentry-cli#164's rule).
+		// the state ends nothing.
 		http.Error(w, "this is not the sign-in Agentry started", http.StatusForbidden)
 		return
 	}

@@ -12,11 +12,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
-// TestALocalRunsOutputIsInTokens (plan scan-and-run-tweaks.md invariant 10;
-// agentry-cli#500): a whole run on the fake docker client, to the person's
-// own model provider. Its envelope and the usage it reports as it goes
-// count tokens, and nothing it writes — the narration, the envelope, a
-// file in the output folder or its receipts — is worded in credits.
+// TestALocalRunsOutputIsInTokens: a whole run on the fake docker client, to
+// the person's own model provider. Its envelope and the usage it reports as
+// it goes count tokens, and nothing it writes — the narration, the
+// envelope, a file in the output folder or its receipts — is worded in
+// credits.
 func TestALocalRunsOutputIsInTokens(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)

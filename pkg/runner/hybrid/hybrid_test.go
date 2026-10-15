@@ -20,7 +20,7 @@ const (
 	white  = "2222222222222222222222222222222222222222222222222222222222222222"
 )
 
-// fakeHA answers the overview route as Hybrid Analysis did on 2026-10-02:
+// fakeHA answers the overview route as Hybrid Analysis does:
 // EICAR is malicious with threat score 100, an unseen hash is 404.
 type fakeHA struct {
 	mu       sync.Mutex
@@ -64,7 +64,7 @@ func client(t *testing.T, h http.Handler) (*Client, *[]time.Duration) {
 
 // The request is a GET of the overview of one SHA-256, the key in the
 // api-key header, Hybrid Analysis's own User-Agent, and no body: nothing
-// of a file but its hash leaves the machine (plan §3 invariant 5).
+// of a file but its hash leaves the machine.
 func TestTheLookupSendsAHashAndNothingElse(t *testing.T) {
 	f := &fakeHA{}
 	c, _ := client(t, f)
@@ -84,7 +84,7 @@ func TestTheLookupSendsAHashAndNothingElse(t *testing.T) {
 	}
 }
 
-// The verdict rule (D14): malicious refuses, suspicious is noted with its
+// The verdict rule: malicious refuses, suspicious is noted with its
 // threat score, anything else and an unseen hash are clean. Each hash is
 // asked once however many files share it.
 func TestTheVerdictRule(t *testing.T) {
@@ -105,7 +105,7 @@ func TestTheVerdictRule(t *testing.T) {
 	}
 }
 
-// No key: nothing is asked, and every hash is not checked, no key (D8).
+// No key: nothing is asked, and every hash is not checked, no key.
 func TestNoKeyAsksNothing(t *testing.T) {
 	f := &fakeHA{}
 	c, _ := client(t, f)
@@ -121,7 +121,7 @@ func TestNoKeyAsksNothing(t *testing.T) {
 }
 
 // A 429 waits, then asks again; past a minute of waiting in all, the
-// hash and every one after it are not checked, quota (D13).
+// hash and every one after it are not checked, quota.
 func TestARateLimitWaitsThenGivesUp(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0

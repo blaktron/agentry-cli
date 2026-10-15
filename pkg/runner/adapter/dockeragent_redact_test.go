@@ -6,7 +6,7 @@ import (
 )
 
 // notExactly matches every tool name but the input tools, under
-// docker-agent's anchoring (agentry-cli#632).
+// docker-agent's anchoring.
 func TestNotExactlyMatchesEveryNameButTheInputTools(t *testing.T) {
 	re := regexp.MustCompile("^(?:" + notExactly(InputTools...) + ")$")
 	for _, name := range InputTools {

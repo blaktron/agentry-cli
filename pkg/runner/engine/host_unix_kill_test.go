@@ -15,11 +15,11 @@ import (
 	"time"
 )
 
-// TestConfigProcessEscalatesToTheWholeGroup (agentry-cli#161): exec's own
-// escalation when WaitDelay expires is os.Process.Kill on the leader's single
-// pid, so a child that ignores SIGTERM survives the run holding whatever it
-// was given — the model key, in the harness's case. The group is SIGTERM'd
-// first and SIGKILL'd after the grace, which reaches that child.
+// TestConfigProcessEscalatesToTheWholeGroup: exec's own escalation when
+// WaitDelay expires is os.Process.Kill on the leader's single pid, so a child
+// that ignores SIGTERM survives the run holding whatever it was given — the
+// model key, in the harness's case. The group is SIGTERM'd first and
+// SIGKILL'd after the grace, which reaches that child.
 //
 // The child has to hold the leader's stdout open, because that is what makes
 // cmd.Wait block past the leader's own exit and gives the escalation its

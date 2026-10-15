@@ -1,14 +1,13 @@
 package main
 
-// agentry report-design (plan report-designs.md D19, agentry-cli#785): the
-// person's report design from the command line, so a script or a person
-// without the site or the desktop can see which design their PDFs take,
-// keep one as a file, and put one on their account. show asks exactly what a
-// run asks (chooseReportTheme), so what it prints is what the next run
-// draws. Every document this command writes or sends is the design's
-// canonical form (pkg/reportdesign), so export then import is byte for byte.
-// The person's logo travels in the design (agentry-cli#816): export writes
-// it, import sends it, and show says whether there is one.
+// agentry report-design: the person's report design from the command line,
+// so a script or a person without the site or the desktop can see which
+// design their PDFs take, keep one as a file, and put one on their account.
+// show asks exactly what a run asks (chooseReportTheme), so what it prints
+// is what the next run draws. Every document this command writes or sends is
+// the design's canonical form (pkg/reportdesign), so export then import is
+// byte for byte. The person's logo travels in the design: export writes it,
+// import sends it, and show says whether there is one.
 
 import (
 	"bytes"
@@ -348,8 +347,8 @@ func runReportDesignImport(cmd *cobra.Command, file string) error {
 	if err != nil {
 		return fmt.Errorf("the registry saved a report design this CLI cannot read (%w); update agentry", err)
 	}
-	// A design sent without a logo keeps the one the account holds
-	// (agentry#1025), so the file is compared with the saved design less
+	// A design sent without a logo keeps the one the account
+	// holds, so the file is compared with the saved design less
 	// that logo, and the person is told it stayed.
 	kept := d.Logo == (reportdesign.Logo{}) && sd.Logo != (reportdesign.Logo{})
 	compare := sd

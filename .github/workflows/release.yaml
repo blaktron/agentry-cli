@@ -1,41 +1,36 @@
-# The CLI's release (agentry-cli#196; plan cli-release-signing.md; the scheme
-# and the GitHub Releases of DEV-148, agentry-cli#327 and #241). A tag is one
-# of two forms, and the line its commit is on must agree:
+# The CLI's release. A tag is one of two forms, and the line its commit is on
+# must agree:
 #   vX.Y.Z        on main's first-parent line: a production release, baking
 #                 production's registry;
 #   vX.Y.Z-dev.N  on dev's first-parent line: a dev prerelease, baking dev's.
 # scripts/release-tag.sh check refuses anything else in preflight, before a
-# binary is built (the line is scripts/release-registry.sh's rule,
-# agentry-cli#240, DR-33), and refuses any 1.x unless the operator has set the
-# repository variable AGENTRY_ALLOW_V1=true (agentry#522). An agent cuts a
-# release by pushing the tag `scripts/release-tag.sh next dev|main` names
-# (README "Releasing").
+# binary is built (the line is scripts/release-registry.sh's rule), and
+# refuses any 1.x unless the repository variable AGENTRY_ALLOW_V1=true is set.
+# A release is cut by pushing the tag `scripts/release-tag.sh next dev|main`
+# names (README "Releases").
 #
-# What this does not stop (DR-33, DR-40): a pushed tag runs the workflow and
-# the checks of the tagged commit's own tree, so a tag on a commit whose tree
-# drops them still builds, and the `release` environment admits any v* tag.
-# The checks bind a tag on main's or dev's head, which is reviewed code; a
-# tag on anything else is a mistake they catch only while the tree carries
-# them. Closing it needs a tag ruleset (unavailable on the current plan).
+# What this does not stop: a pushed tag runs the workflow and the checks of
+# the tagged commit's own tree, so a tag on a commit whose tree drops them
+# still builds, and the `release` environment admits any v* tag. The checks
+# bind a tag on main's or dev's head, which is reviewed code; a tag on
+# anything else is a mistake they catch only while the tree carries them.
+# Closing it needs a tag ruleset.
 #
 # The build job makes the five binaries on the Linux runner in the `release`
-# environment; the darwin job signs the two macOS ones on the Mac; the bundle
-# job writes BUILD-INFO and SHA256SUMS over the set and signs the sums. Sign
-# where signing exists, release unsigned where it does not (DEV-148; the
-# operator, 2026-09-25):
+# environment; the darwin job signs the two macOS ones on a Mac runner; the
+# bundle job writes BUILD-INFO and SHA256SUMS over the set and signs the
+# sums. Sign where signing exists, release unsigned where it does not:
 #   - the Windows exe is Authenticode-signed against Azure Artifact Signing
-#     over the job's OIDC token (the desktop's identity, scripts and checks,
-#     agentry-desktop D-032) when the five signing variables are set
-#     (agentry-cli#197), and ships unsigned when none is;
+#     over the job's OIDC token when the five signing variables are set, and
+#     ships unsigned when none is;
 #   - the two darwin binaries are Developer ID-signed under the hardened
-#     runtime and notarized on the Mac runner (agentry-cli#198, DR-59), for a
-#     production release only (a dev prerelease skips Apple, agentry-cli#570), when
-#     the release environment's five APPLE_* secrets are set, and ship as
-#     built when none is;
-#   - SHA256SUMS is signed with the estate's update-signing key by the
-#     desktop's signrelease at a pinned commit (which verifies what it wrote
-#     against the committed key set) when the AGENTRY_UPDATE_SIGNING_KEY
-#     secret exists, and ships without SHA256SUMS.minisig when it does not.
+#     runtime and notarized on the Mac runner, for a production release only
+#     (a dev prerelease skips Apple), when the release environment's five
+#     APPLE_* secrets are set, and ship as built when none is;
+#   - SHA256SUMS is signed with the update-signing key by the desktop's
+#     signrelease at a pinned commit (which verifies what it wrote against
+#     the committed key set) when the AGENTRY_UPDATE_SIGNING_KEY secret
+#     exists, and ships without SHA256SUMS.minisig when it does not.
 # A signing input that is present but half-configured, or a signature that
 # fails, fails the release: "available" means configured, never a silent
 # fallback. BUILD-INFO (inside the sums) and the Release's notes say which.
@@ -44,18 +39,16 @@
 # job): a -dev.N tag's is a prerelease, a vX.Y.Z tag's a full release, the
 # newest one the latest. Notes are generated from the commits. Before 1.0.0
 # every release publishes at once; from 1.0.0 on a minor or major main release
-# (X.Y.0) is left a draft for the operator to approve its notes and publish
-# (agentry-cli#241, #349). The bundle is also the workflow
-# artifact agentry-cli-<version> that the site's importer reads.
+# (X.Y.0) is left a draft until its notes are approved and it is published.
+# The bundle is also the workflow artifact agentry-cli-<version> that the
+# site's importer reads.
 #
 # workflow_dispatch runs the build as a dry run from main or a v* tag (all
-# the `release` environment admits once agentry-cli#197 sets its policy),
-# named by the describe string on main and by the tag, after the same check,
-# on a tag; it signs exactly as a tag does (plan D8 of
-# os-code-signing.md), publishes no Release, and the site's importer refuses
-# its bundle by event=. Nothing in the tree's build or tests needs any of
-# this (plan cli-release-signing.md D5): `make build` and `make check` work
-# with no token and no signing tool.
+# the `release` environment admits), named by the describe string on main and
+# by the tag, after the same check, on a tag; it signs exactly as a tag does,
+# publishes no Release, and the site's importer refuses its bundle by event=.
+# Nothing in the tree's build or tests needs any of this: `make build` and
+# `make check` work with no token and no signing tool.
 name: release
 on:
   push:
@@ -71,24 +64,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 env:
-  # The desktop COMMIT (agentry-desktop#172: signrelease knows -product)
-  # whose internal/cmd/signrelease signs this bundle and
+  # The desktop COMMIT whose internal/cmd/signrelease signs this bundle and
   # whose internal/selfupdate/keys.json is the key set the signature is
-  # verified against before upload — the same key set the site's importer
-  # checks (agentry-web#189). When the desktop rotates or retires a key
-  # (agentry-desktop#111), this pin and this repository's
-  # AGENTRY_UPDATE_SIGNING_KEY secret move together, by a pull request and the
-  # operator's secret update in one operation; either alone fails the next
-  # release closed (a key the set does not carry as current is refused).
+  # verified against before upload, the same key set the site's importer
+  # checks. When the desktop rotates or retires a key, this pin and this
+  # repository's AGENTRY_UPDATE_SIGNING_KEY secret move together; either alone
+  # fails the next release closed (a key the set does not carry as current is
+  # refused).
   DESKTOP_SIGNRELEASE_REF: c4b13867dd9fc9783f5daf9438e964e5d7fce05d
 
 jobs:
   # Refuses before a binary is built: a tag of neither form, one whose form
-  # disagrees with its commit's line, and a 1.x without the operator. The
-  # version is the tag without its v, as the desktop names its files (D-023)
-  # and as the site's manifest reads a tagged release; a dispatch is named by
-  # git describe, which the importer refuses as a dry run by event=
-  # regardless.
+  # disagrees with its commit's line, and a 1.x without AGENTRY_ALLOW_V1. The
+  # version is the tag without its v, as the desktop names its files and as
+  # the site's manifest reads a tagged release; a dispatch is named by git
+  # describe, which the importer refuses as a dry run by event= regardless.
   preflight:
     runs-on: [self-hosted, linux, x64]
     outputs:
@@ -140,8 +130,7 @@ jobs:
     needs: preflight
     runs-on: [self-hosted, linux, x64]
     # The `release` environment is what the Windows signing credential is
-    # scoped to (agentry-cli#197; the desktop's #151): the Entra federated
-    # credential matches a job of this repository in this environment and
+    # scoped to: the Entra federated credential matches a job of this repository in this environment and
     # nothing else, and the environment admits only main and v* tags.
     # id-token lets the job mint the OIDC token it exchanges; contents: read
     # is what checkout needs and is repeated because a job-level permissions
@@ -168,11 +157,10 @@ jobs:
         with:
           go-version-file: go.mod
           # Shared persistent host module cache; restoring the Actions cache
-          # over it left partial modules in the core (agentry#225).
+          # over it left partial modules in the core.
           cache: false
-      # Job-scoped on this persistent runner, removed at the end (the
-      # desktop's #92 shape): the token reaches a file the job deletes, not
-      # the runner's global git config.
+      # Job-scoped on this persistent runner, removed at the end: the token
+      # reaches a file the job deletes, not the runner's global git config.
       - name: Authenticate for the private blaktron modules (job-scoped)
         env:
           AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
@@ -196,8 +184,8 @@ jobs:
           # customer" (the pinned root is shared).
           : "${AGENTRY_WINDOWS_SIGNING_CN:?build/release.env must set AGENTRY_WINDOWS_SIGNING_CN}"
           echo "AGENTRY_WINDOWS_SIGNING_CN=${AGENTRY_WINDOWS_SIGNING_CN}" >> "$GITHUB_ENV"
-      # Which signatures this repository can make today (DEV-148: sign where
-      # available, release unsigned where not). All five Windows variables or
+      # Which signatures this repository can make today (sign where available,
+      # release unsigned where not). All five Windows variables or
       # none; the update-signing secret or not. Half a configuration is a
       # mistake, not "unavailable", and fails the release.
       - name: What can be signed here
@@ -209,15 +197,13 @@ jobs:
           ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
           ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
           HAS_UPDATE_SIGNING_KEY: ${{ secrets.AGENTRY_UPDATE_SIGNING_KEY != '' }}
-          # The release environment's five Apple secrets (agentry-cli#198):
-          # only whether each exists reaches this step, never a value.
+          # The release environment's five Apple secrets: only whether each exists reaches this step, never a value.
           HAS_APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 != '' }}
           HAS_APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
           HAS_APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 != '' }}
           HAS_APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID != '' }}
           HAS_APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID != '' }}
-          # Set to true by agentry-cli#197's wizard once signing exists: from
-          # then on a missing input fails the release rather than shipping
+          # Set to true once signing exists: from then on a missing input fails the release rather than shipping
           # unsigned, so removing a credential cannot quietly turn signing off.
           REQUIRE_SIGNING: ${{ vars.AGENTRY_REQUIRE_SIGNING }}
         run: |
@@ -228,10 +214,10 @@ jobs:
           done
           case "$set_" in
             5) echo "windows=sign" >> "$GITHUB_OUTPUT"; echo "Windows: Authenticode against Artifact Signing" ;;
-            0) [ "$REQUIRE_SIGNING" != true ] || { echo "::error::AGENTRY_REQUIRE_SIGNING is true and no Windows signing variable is set (agentry-cli#197)"; exit 1; }
+            0) [ "$REQUIRE_SIGNING" != true ] || { echo "::error::AGENTRY_REQUIRE_SIGNING is true and no Windows signing variable is set"; exit 1; }
                echo "windows=none" >> "$GITHUB_OUTPUT"
-               echo "::warning::No Windows signing variables on this repository (agentry-cli#197): the Windows exe ships unsigned (an empty signed_windows= in BUILD-INFO), and the Release says so." ;;
-            *) echo "::error::Windows signing is half-configured: unset$unset_. Set all five (the desktop's artifact-signing-setup.sh --repo blaktron/agentry-cli, agentry-cli#197) or none."; exit 1 ;;
+               echo "::warning::No Windows signing variables on this repository: the Windows exe ships unsigned (an empty signed_windows= in BUILD-INFO), and the Release says so." ;;
+            *) echo "::error::Windows signing is half-configured: unset$unset_. Set all five or none."; exit 1 ;;
           esac
           set_=0; unset_=""
           for v in APPLE_DEVELOPER_ID_P12 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_NOTARY_KEY_P8 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID; do
@@ -239,32 +225,31 @@ jobs:
             if [ "${!h}" = true ]; then set_=$((set_ + 1)); else unset_="$unset_ $v"; fi
           done
           # A dev prerelease never waits on Apple's notary queue: the dev
-          # channel takes unsigned darwin binaries, as it did before
-          # agentry-cli#198, and only production's vX.Y.Z signs them
-          # (agentry-cli#570, DR-59's addendum). AGENTRY_REQUIRE_SIGNING
-          # holds production alone to the Apple step.
+          # channel takes unsigned darwin binaries, and only production's
+          # vX.Y.Z signs them. AGENTRY_REQUIRE_SIGNING holds production alone
+          # to the Apple step.
           if [ "$AGENTRY_RELEASE_CHANNEL" = dev ]; then
             set_=dev
           fi
           case "$set_" in
             dev) echo "darwin=none" >> "$GITHUB_OUTPUT"
-                 echo "::notice::A dev prerelease: the darwin binaries ship unsigned and are not notarized (an empty signed_darwin= in BUILD-INFO); only a production release signs them (agentry-cli#570)." ;;
+                 echo "::notice::A dev prerelease: the darwin binaries ship unsigned and are not notarized (an empty signed_darwin= in BUILD-INFO); only a production release signs them." ;;
             5) echo "darwin=sign" >> "$GITHUB_OUTPUT"; echo "macOS: Developer ID and notarization on the Mac runner" ;;
-            0) [ "$REQUIRE_SIGNING" != true ] || { echo "::error::AGENTRY_REQUIRE_SIGNING is true and no Apple signing secret is set in the release environment (agentry-cli#198)"; exit 1; }
+            0) [ "$REQUIRE_SIGNING" != true ] || { echo "::error::AGENTRY_REQUIRE_SIGNING is true and no Apple signing secret is set in the release environment"; exit 1; }
                echo "darwin=none" >> "$GITHUB_OUTPUT"
-               echo "::warning::No Apple signing secrets in the release environment (agentry-cli#198): the darwin binaries ship unsigned (an empty signed_darwin= in BUILD-INFO), and the Release says so." ;;
-            *) echo "::error::macOS signing is half-configured: unset$unset_. Set all five in the release environment (operator-wizards/apple-signing.sh, agentry-cli#198) or none."; exit 1 ;;
+               echo "::warning::No Apple signing secrets in the release environment: the darwin binaries ship unsigned (an empty signed_darwin= in BUILD-INFO), and the Release says so." ;;
+            *) echo "::error::macOS signing is half-configured: unset$unset_. Set all five in the release environment or none."; exit 1 ;;
           esac
           if [ "$HAS_UPDATE_SIGNING_KEY" = true ]; then
-            echo "sums=sign" >> "$GITHUB_OUTPUT"; echo "SHA256SUMS: the estate's update-signing key"
+            echo "sums=sign" >> "$GITHUB_OUTPUT"; echo "SHA256SUMS: the update-signing key"
           else
-            [ "$REQUIRE_SIGNING" != true ] || { echo "::error::AGENTRY_REQUIRE_SIGNING is true and the AGENTRY_UPDATE_SIGNING_KEY secret is missing (agentry-cli#197)"; exit 1; }
+            [ "$REQUIRE_SIGNING" != true ] || { echo "::error::AGENTRY_REQUIRE_SIGNING is true and the AGENTRY_UPDATE_SIGNING_KEY secret is missing"; exit 1; }
             echo "sums=none" >> "$GITHUB_OUTPUT"
-            echo "::warning::No AGENTRY_UPDATE_SIGNING_KEY secret on this repository (agentry-cli#197): SHA256SUMS ships unsigned, with no SHA256SUMS.minisig, and BUILD-INFO and the Release say so."
+            echo "::warning::No AGENTRY_UPDATE_SIGNING_KEY secret on this repository: SHA256SUMS ships unsigned, with no SHA256SUMS.minisig, and BUILD-INFO and the Release say so."
           fi
       # The five binaries, unsigned, from the Makefile's own target: what a
       # person builds locally is what ships, and this step reads nothing
-      # signing-related (plan D5).
+      # signing-related.
       - name: The five binaries
         run: |
           set -euo pipefail
@@ -291,7 +276,7 @@ jobs:
       - name: jsign at the pinned digest
         if: steps.signing.outputs.windows == 'sign'
         run: scripts/sign-windows.sh fetch "$RUNNER_TEMP"
-      # Authenticode (agentry-cli#196; agentry-desktop D-032). The job proves
+      # Authenticode. The job proves
       # who it is with the OIDC token GitHub minted for it and gets an Azure
       # access token for the signing service in return (scripts/signing-token.sh:
       # no Azure secret, both tokens via curl's stdin config, never argv); the
@@ -309,7 +294,7 @@ jobs:
           ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
         run: |
           set -euo pipefail
-          token=$(scripts/signing-token.sh) || { echo "::error::no signing token: the release environment's federated credential (agentry-cli#197) must match this job's OIDC subject"; exit 1; }
+          token=$(scripts/signing-token.sh) || { echo "::error::no signing token: the release environment's federated credential must match this job's OIDC subject"; exit 1; }
           [ -n "$token" ] || { echo "::error::signing-token.sh printed no token"; exit 1; }
           echo "::add-mask::$token"
           echo "signing as $ARTIFACT_SIGNING_ACCOUNT/$ARTIFACT_SIGNING_PROFILE at $ARTIFACT_SIGNING_ENDPOINT"
@@ -326,15 +311,14 @@ jobs:
         run: |
           set -euo pipefail
           # Unsigned is the empty value in the grammar the site's importer
-          # reads (agentry-web's manifest.py: empty, or authenticode …).
+          # reads (empty, or authenticode …).
           if [ "$WINDOWS" != sign ]; then
             echo "signed_windows=" >> "$GITHUB_OUTPUT"; exit 0
           fi
           scripts/check-windows-binary.sh --report "$RUNNER_TEMP/windows-signing.txt" "dist/agentry-$VERSION-windows-amd64.exe"
           cn=$(sed -n 's/^cn=//p' "$RUNNER_TEMP/windows-signing.txt"); ts=$(sed -n 's/^timestamp=//p' "$RUNNER_TEMP/windows-signing.txt"); root=$(sed -n 's/^root=//p' "$RUNNER_TEMP/windows-signing.txt")
           [ -n "$cn" ] && [ -n "$ts" ] && [ -n "$root" ] || { cat "$RUNNER_TEMP/windows-signing.txt"; echo "::error::the signing report is incomplete"; exit 1; }
-          # The grammar the site's importer reads (agentry-web#189): the keys in
-          # this order, each value running to the next key.
+          # The grammar the site's importer reads: the keys in this order, each value running to the next key.
           echo "signed_windows=authenticode CN=$cn profile=$ARTIFACT_SIGNING_ACCOUNT/$ARTIFACT_SIGNING_PROFILE timestamp=$ts verified=osslsigncode root=$root" >> "$GITHUB_OUTPUT"
       - name: Remove the signing report
         if: always()
@@ -353,17 +337,14 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/gitconfig"
 
-  # macOS (agentry-cli#198, DR-59; plan cli-release-signing.md D6, D7, §5):
-  # the two darwin binaries, Developer ID-signed under the hardened runtime
-  # with Apple's timestamp and notarized, on the Mac runner registered for
-  # this repository (mac-cli-1, the second instance beside the desktop's
-  # mac-1 on maxbookpro; the workspace's runner-register.sh mac-cli). The
-  # five Apple inputs are secrets of the `release` environment, so no other
-  # workflow and no pull request can read them; they reach
-  # scripts/sign-darwin.sh through its environment, which imports the
-  # certificate into a keychain it makes and deletes in this job's temp
-  # directory (plan os-code-signing.md D5: never a persistent keychain on the
-  # runner). With none set this job does not run and the darwin binaries ship
+  # macOS: the two darwin binaries, Developer ID-signed under the hardened
+  # runtime with Apple's timestamp and notarized, on the Mac runner
+  # registered for this repository. The five Apple inputs are secrets of the
+  # `release` environment, so no other workflow and no pull request can read
+  # them; they reach scripts/sign-darwin.sh through its environment, which
+  # imports the certificate into a keychain it makes and deletes in this
+  # job's temp directory (never a persistent keychain on the runner). With
+  # none set this job does not run and the darwin binaries ship
   # as built; half a configuration failed in the build job. A bare Mach-O
   # cannot be stapled: Gatekeeper fetches the notarization ticket online when
   # a browser-downloaded binary is first run, and one fetched with curl is
@@ -373,9 +354,9 @@ jobs:
     if: needs.build.outputs.darwin == 'sign'
     runs-on: [self-hosted, macOS, ARM64]
     environment: release
-    # Two notarizations, submitted together and waited for. A new team's
-    # took 40 to 75 minutes on 2026-10-01 (agentry-cli#198), so the script
-    # waits up to 100 and the job allows 150.
+    # Two notarizations, submitted together and waited for. A new team's can
+    # take over an hour, so the script waits up to 100 minutes and the job
+    # allows 150.
     timeout-minutes: 150
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
@@ -415,8 +396,7 @@ jobs:
           notarized=$(sed -n 's/^notarized=//p' "$RUNNER_TEMP/darwin-signing.txt")
           [ "$team" = "$APPLE_TEAM_ID" ] && [ "$notarized" = true ] || { cat "$RUNNER_TEMP/darwin-signing.txt"; echo "::error::the signing report is incomplete"; exit 1; }
           echo "Apple notary submissions: $(sed -n 's/^submissions=//p' "$RUNNER_TEMP/darwin-signing.txt")"
-          # The grammar of plan os-code-signing.md M-M2 step 8, shared with
-          # the desktop (agentry-desktop#6) and read by the site (agentry-web#215).
+          # The grammar shared with the desktop and read by the site.
           echo "signed_darwin=developer-id TEAM=$team notarized=true" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -431,8 +411,8 @@ jobs:
   # One bundle: the binaries (the darwin ones as the darwin job signed them,
   # when it ran), BUILD-INFO saying what built them, what they bake in and
   # what is signed, SHA256SUMS over all of it, every file but SHA256SUMS
-  # itself, and, when the key exists, SHA256SUMS.minisig, the estate's own
-  # signature over the sums. The sums are taken after every OS signature,
+  # itself, and, when the key exists, SHA256SUMS.minisig, the update-signing
+  # key's signature over the sums. The sums are taken after every OS signature,
   # since a signature changes the file. It runs when the darwin job succeeded
   # or did not need to run; a darwin job that failed stops the release.
   bundle:
@@ -498,8 +478,8 @@ jobs:
           case "$SUMS" in sign) signed_sums=minisign ;; *) signed_sums=none ;; esac
           # signed= is true only when every artifact that has an OS signature
           # to carry carries it: the Windows exe and the two darwin binaries.
-          # Linux binaries have none (plan cli-release-signing.md); the
-          # per-platform lines say which are signed.
+          # Linux binaries have none; the per-platform lines say which are
+          # signed.
           signed=false
           [ -z "$SIGNED_WINDOWS" ] || [ -z "$SIGNED_DARWIN" ] || signed=true
           {
@@ -514,10 +494,10 @@ jobs:
             # Empty when the exe is unsigned (the site's grammar).
             echo "signed_windows=${SIGNED_WINDOWS}"
             # developer-id TEAM=<id> notarized=true, or empty when the darwin
-            # binaries are unsigned (plan os-code-signing.md M-M2).
+            # binaries are unsigned.
             echo "signed_darwin=${SIGNED_DARWIN}"
-            # The estate's signature over SHA256SUMS: minisign (the file
-            # SHA256SUMS.minisig beside it) or none (DEV-148).
+            # The update-signing key's signature over SHA256SUMS: minisign
+            # (the file SHA256SUMS.minisig beside it) or none.
             echo "signed_sums=${signed_sums}"
             echo "built_by=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } > "$b/BUILD-INFO"
@@ -541,13 +521,12 @@ jobs:
         run: GOBIN="$RUNNER_TEMP" go install "github.com/blaktron/agentry-desktop/internal/cmd/signrelease@${DESKTOP_SIGNRELEASE_REF}"
       # The private half is an Actions secret, piped to the signer on stdin,
       # never written to disk, dropped from the signer's own environment
-      # (agentry-desktop D-026). -product agentry-cli: the signed trusted
-      # comment names THIS product ("agentry-cli <version> (commit <sha>)",
-      # agentry-desktop#171), and the signer refuses to sign sums whose
+      # -product agentry-cli: the signed trusted comment names THIS product
+      # ("agentry-cli <version> (commit <sha>)"), and the signer refuses to sign sums whose
       # artifact names are not the CLI's; the desktop's update check reads
       # only its own product's comment, so this bundle can never be offered
       # to the desktop as an update, whatever manifest names it.
-      - name: Sign SHA256SUMS with the estate's update-signing key
+      - name: Sign SHA256SUMS with the update-signing key
         if: needs.build.outputs.sums == 'sign'
         env:
           AGENTRY_UPDATE_SIGNING_KEY: ${{ secrets.AGENTRY_UPDATE_SIGNING_KEY }}
@@ -574,11 +553,11 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/gitconfig"
 
-  # The GitHub Release (agentry-cli#241, DEV-148): every tag, never a dry
-  # run. The bundle exactly as built and summed; notes generated from the
-  # commits under a header that says what is signed and how to check it. A
-  # minor or major main release from 1.0.0 on is a draft until the operator
-  # approves its notes and publishes it; before 1.0.0 nothing is held.
+  # The GitHub Release: every tag, never a dry run. The bundle exactly as
+  # built and summed; notes generated from the commits under a header that
+  # says what is signed and how to check it. A minor or major main release
+  # from 1.0.0 on is a draft until its notes are approved and it is
+  # published; before 1.0.0 nothing is held.
   publish:
     needs: [preflight, bundle]
     # Explicit about the bundle: a darwin job that was skipped (no Apple
@@ -618,32 +597,32 @@ jobs:
             *) what="A dev prerelease, for testing on dev: its binaries talk to $REGISTRY by default." ;;
           esac
           case "$win" in
-            "") winl="unsigned: no signing credential is configured yet (agentry-cli#197)" ;;
+            "") winl="unsigned: no signing credential is configured" ;;
             "authenticode "*) winl="Authenticode-signed (${win%% profile=*})" ;;
             *) echo "::error::BUILD-INFO signed_windows='$win' is neither empty nor authenticode"; exit 1 ;;
           esac
           case "$mac" in
             "") if [ "$CHANNEL" = dev ]; then
-                  macl="not signed or notarised: a dev prerelease skips Apple's signing and notary queue, and only a production release signs them (agentry-cli#570)"
+                  macl="not signed or notarised: a dev prerelease skips Apple's signing and notary queue, and only a production release signs them"
                 else
-                  macl="not signed or notarised: no Apple signing credential is configured (agentry-cli#198)"
+                  macl="not signed or notarised: no Apple signing credential is configured"
                 fi ;;
             "developer-id TEAM="*" notarized=true") t=${mac#*TEAM=}; macl="Developer ID-signed under the hardened runtime and notarised by Apple (Team ID ${t%% *}). A bare binary cannot be stapled, so macOS checks the notarisation online the first time a browser-downloaded copy runs" ;;
             *) echo "::error::BUILD-INFO signed_darwin='$mac' is neither empty nor developer-id"; exit 1 ;;
           esac
           case "$sums" in minisign|none) ;; *) echo "::error::BUILD-INFO signed_sums='$sums' is neither minisign nor none"; exit 1 ;; esac
           [ "$sums" != minisign ] || [ -f "$b/SHA256SUMS.minisig" ] || { echo "::error::BUILD-INFO says the sums are signed and there is no SHA256SUMS.minisig"; exit 1; }
-          if [ "$sums" = minisign ]; then sumsl="signed with the estate's update-signing key: \`SHA256SUMS.minisig\`, checked against the key set in agentry-desktop's \`internal/selfupdate/keys.json\`"; else sumsl="not signed: no update-signing key is configured yet (agentry-cli#197), so there is no \`SHA256SUMS.minisig\`"; fi
+          if [ "$sums" = minisign ]; then sumsl="signed with the update-signing key: \`SHA256SUMS.minisig\`, checked against the key set in agentry-desktop's \`internal/selfupdate/keys.json\`"; else sumsl="not signed: no update-signing key is configured, so there is no \`SHA256SUMS.minisig\`"; fi
           {
             echo "$what"
             echo
-            echo "**Signatures** (DEV-148: signed where signing exists, unsigned where it does not):"
+            echo "**Signatures** (signed where signing exists, unsigned where it does not):"
             echo "- Windows \`agentry-$VERSION-windows-amd64.exe\`: $winl."
             echo "- macOS \`agentry-$VERSION-darwin-arm64\` and \`-darwin-amd64\`: $macl."
             echo "- \`SHA256SUMS\`: $sumsl."
             echo
             echo "Check a download against the sums: \`sha256sum -c --ignore-missing SHA256SUMS\`. \`BUILD-INFO\` (covered by the sums) records the commit, the channel, the registry and the signatures; \`agentry --version\` prints the version and the registry."
-            [ "$DRAFT" = true ] && { echo; echo "_A minor release: drafted for the operator to approve these notes and publish._"; }
+            [ "$DRAFT" = true ] && { echo; echo "_A minor release: left as a draft until its notes are approved and it is published._"; }
             echo
           } > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
@@ -663,13 +642,12 @@ jobs:
   # Every built-in package this release carries (the Knowledge Creator, the
   # Drafter, any later entry of localrun.Builtins()) is published to the
   # channel's registry by the release's own Linux binary, from the bytes it
-  # embeds, so the directory shows the packages that run (agentry-cli#470).
-  # A version the registry already holds with the same digest is skipped.
-  # The built-ins live in the agentry organization's namespace, and only an
-  # account with publish rights there can put them on the registry (the
-  # operator, 2026-09-29): the release environment's secret
-  # AGENTRY_BUILTINS_TOKEN_DEV or AGENTRY_BUILTINS_TOKEN_PRODUCTION is that
-  # account's PAT. Without it the
+  # embeds, so the directory shows the packages that run. A version the
+  # registry already holds with the same digest is skipped. The built-ins
+  # live in the agentry organization's namespace, and only an account with
+  # publish rights there can put them on the registry: the release
+  # environment's secret AGENTRY_BUILTINS_TOKEN_DEV or
+  # AGENTRY_BUILTINS_TOKEN_PRODUCTION is that account's PAT. Without it the
   # job fails: the release is out and its built-ins are not in the registry.
   # A version that goes to review publishes when platform staff approve it;
   # the summary says which.

@@ -21,12 +21,12 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// The post-step (plan §6.1): one report from the pre-step's findings, the
-// run's own record of AI Review and the Examiner's answer. The expected
-// outcome is computed from the first two kinds alone, by Gate; the third is
-// reported beside it and never counted. Nothing the model wrote reaches the
-// first two kinds: AI Review's scores are read from the review ledger the
-// tools container wrote, not from the model's answer.
+// The post-step: one report from the pre-step's findings, the run's own
+// record of AI Review and the Examiner's answer. The expected outcome is
+// computed from the first two kinds alone, by Gate; the third is reported
+// beside it and never counted. Nothing the model wrote reaches the first
+// two kinds: AI Review's scores are read from the review ledger the tools
+// container wrote, not from the model's answer.
 
 // ReportFile is the report's name in the output folder.
 const ReportFile = "report.json"

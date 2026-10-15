@@ -18,12 +18,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// The browser in a run (agentry-notes plans/browser-testing.md §3
-// invariants 2, 4, 6; §6, §7.1; agentry-cli#915): the engine starts the
-// browse proxy with the run's scope on the relay egress network, gives the
-// browser server's placeholders their values, writes the browser secrets
-// into a file for it alone, copies what it saved into reports/browser/,
-// and keeps the proxy's refusals as a receipt.
+// The browser in a run: the engine starts the browse proxy with the
+// run's scope on the relay egress network, gives the browser server's
+// placeholders their values, writes the browser secrets into a file for
+// it alone, copies what it saved into reports/browser/, and keeps the
+// proxy's refusals as a receipt.
 
 const plantedSitePassword = "planted-site-password-7302"
 
@@ -119,7 +118,7 @@ func TestABrowserRunStartsTheBrowseProxyWithItsScope(t *testing.T) {
 		t.Errorf("a placeholder is left in the rendered catalog:\n%s", cat)
 	}
 
-	// Invariant 4: the secret is in no container's argv or environment the
+	// The secret is in no container's argv or environment the
 	// runner makes (the gateway binds the file into the browser alone), and
 	// in no file the run leaves.
 	for _, c := range f.Calls {
@@ -146,7 +145,7 @@ func TestABrowserRunStartsTheBrowseProxyWithItsScope(t *testing.T) {
 		return nil
 	})
 
-	// Invariant 6: what the browser saved reaches reports/browser/, and a
+	// What the browser saved reaches reports/browser/, and a
 	// link it made does not lead out of it.
 	if b, err := os.ReadFile(filepath.Join(p.OutDir, spec.BrowserReports, "home-phone.png")); err != nil || string(b) != "PNG" {
 		t.Errorf("reports/browser/home-phone.png: %q %v", b, err)
@@ -195,10 +194,9 @@ func stubSiteDNS(t *testing.T, table map[string][]string) {
 	t.Cleanup(func() { lookupSiteHost = prev })
 }
 
-// TestAHostedRunGivesItsBrowserPublicSitesOnly (plan D2, M7;
-// agentry-cli#941): a hosted run's browser starts as a local run's does,
-// but the browse proxy is given no private site, and the receipt says the
-// sites are public.
+// TestAHostedRunGivesItsBrowserPublicSitesOnly: a hosted run's
+// browser starts as a local run's does, but the browse proxy is given no
+// private site, and the receipt says the sites are public.
 func TestAHostedRunGivesItsBrowserPublicSitesOnly(t *testing.T) {
 	stubSiteDNS(t, map[string][]string{"shop.example": {"93.184.215.14"}})
 	p, f := browserFixture(t)
@@ -221,7 +219,7 @@ func TestAHostedRunGivesItsBrowserPublicSitesOnly(t *testing.T) {
 	}
 }
 
-// TestAHostedRunRefusesASiteItCouldNotOpen before any container starts:
+// TestAHostedRunRefusesASiteItCouldNotOpen: before any container starts:
 // a private or loopback address, a name that resolves to one, a name that
 // does not resolve, and a port a sandbox host does not let out. A run that
 // reviews its inputs through the registry is hosted too.
@@ -279,7 +277,7 @@ func TestAHostedRunTakesEitherWebPortWhateverTheScheme(t *testing.T) {
 }
 
 // TestALocalRunKeepsItsPrivateSite: the person's own LAN site is still a
-// local run's to test (D2), and no DNS is asked first.
+// local run's to test, and no DNS is asked first.
 func TestALocalRunKeepsItsPrivateSite(t *testing.T) {
 	stubSiteDNS(t, nil)
 	p, f := browserFixture(t)
@@ -339,9 +337,9 @@ func TestTheBrowserImageIsPulledWhenMissing(t *testing.T) {
 	}
 }
 
-// TestABrowserRunsRuntimeLineNamesTheBrowseProxy (agentry-cli#943): the
-// browse proxy is on the daemon's default runtime by design, so even a run
-// whose every other class is sandboxed does not say none is.
+// TestABrowserRunsRuntimeLineNamesTheBrowseProxy: the browse proxy is on
+// the daemon's default runtime by design, so even a run whose every other
+// class is sandboxed does not say none is.
 func TestABrowserRunsRuntimeLineNamesTheBrowseProxy(t *testing.T) {
 	withFilter(t, true)
 	t.Setenv("SITE_PASSWORD", plantedSitePassword)
@@ -352,12 +350,13 @@ func TestABrowserRunsRuntimeLineNamesTheBrowseProxy(t *testing.T) {
 	}, declareBrowser)
 	line := runtimeLine(p)
 	if strings.Contains(line, "no container class of the run is on the daemon's default runtime") ||
-		!strings.Contains(line, "on the daemon's default runtime, as measured under runsc (DR-23): the browse proxy (it resolves every name the browser asks for through docker's embedded DNS") {
+		!strings.Contains(line, "on the daemon's default runtime, as measured under runsc: the browse proxy (it resolves every name the browser asks for through docker's embedded DNS") {
 		t.Errorf("runtime line: %q", line)
 	}
 }
 
-// TestTheSecretsLineNamesOnlyWhatTheRunWasGiven (agentry-cli#943).
+// TestTheSecretsLineNamesOnlyWhatTheRunWasGiven: the line names the
+// declared secrets the run was given and says which it was not given.
 func TestTheSecretsLineNamesOnlyWhatTheRunWasGiven(t *testing.T) {
 	declared := []string{"SITE_USER", "SITE_PASSWORD"}
 	if got := browserSecretsLine(declared, nil); got != "none of SITE_USER, SITE_PASSWORD was given to this run, so the browser has no secret to type (its secrets file is empty)" {

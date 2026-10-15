@@ -1,16 +1,15 @@
-// Package build writes a Writing Voice with the Voice Writer (plan
-// writing-voice.md §6, D8, D10; agentry-cli#531): it stages the person's
-// writing samples, decodes them before any agent sees them
-// (pkg/runner/decode, the Knowledge Creator's decode step), runs the
-// built-in Voice Writer over their text with the current voice when there
-// is one (pkg/runner/localrun), and returns the VOICE.md it wrote, held to
-// the format. It keeps nothing: the CLI keeps the result in this
-// computer's store, and a hosted build's driver writes it out.
+// Package build writes a Writing Voice with the Voice Writer: it stages the
+// person's writing samples, decodes them before any agent sees them
+// (pkg/runner/decode, the Knowledge Creator's decode step), runs the built-in
+// Voice Writer over their text with the current voice when there is one
+// (pkg/runner/localrun), and returns the VOICE.md it wrote, held to the
+// format. It keeps nothing: the CLI keeps the result in this computer's
+// store, and a hosted build's driver writes it out.
 //
 // On this computer the Voice Writer runs against the model the runner
 // policy names, for no credits, and nothing it reads or writes is
-// reviewed (D6). A voice reaches the account only by the person's choice,
-// and is reviewed there.
+// reviewed. A voice reaches the account only by the person's choice, and is
+// reviewed there.
 package build
 
 import (
@@ -48,7 +47,7 @@ var ensureSignatures = clamdb.Ensure
 // against a fake service.
 var hybridClient = hybrid.FromPolicy
 
-// Job is which of the Voice Writer's three jobs a build is (§6).
+// Job is which of the Voice Writer's three jobs a build is.
 type Job string
 
 const (
@@ -58,8 +57,7 @@ const (
 	// and a brief.
 	Improve Job = "improve"
 	// Edit writes the voice again from the current one and a note, with
-	// more samples when the person gives some (plan
-	// voice-page-redesign.md D3, agentry-cli#605).
+	// more samples when the person gives some.
 	Edit Job = "edit"
 )
 
@@ -75,7 +73,7 @@ func (j Job) Source() voice.Source {
 }
 
 // MaxSampleBytes caps the samples as given, before they are decoded: a
-// hosted build's inputs are capped the same (10 MB, plan D9).
+// hosted build's inputs are capped the same (10 MB).
 const MaxSampleBytes = 10 << 20
 
 // MaxBriefBytes caps a brief or a note.
@@ -94,7 +92,7 @@ type Options struct {
 	// refused for Create.
 	Current []byte
 	// MaxTextBytes, when set, caps the samples' decoded text the Voice
-	// Writer is given (a hosted build's 1 MB, D9): past it a sample is cut
+	// Writer is given (a hosted build's 1 MB): past it a sample is cut
 	// short or left out, and the task says which.
 	MaxTextBytes int64
 
@@ -111,7 +109,7 @@ type Options struct {
 	Stderr  io.Writer
 	OnUsage func(receipt.Usage)
 	// Hosted is a sandbox host's build, which never spends a model sign-in
-	// (localrun.Run.Hosted; agentry-cli#845).
+	// (localrun.Run.Hosted).
 	Hosted bool
 }
 
@@ -186,14 +184,14 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 			return nil, engine.Classify(engine.ExitGateway, err)
 		}
 		// Every sample is checked by ClamAV before it is decoded, and a
-		// finding refuses the build (plan file-handling.md §7, D9).
+		// finding refuses the build.
 		img.Signatures = ensureSignatures(ctx, o.Home, o.Policy.Images.ClamAVSignaturesRef(), logw)
 		dec, err := decode.Run(ctx, d, img, samplesDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), logw)
 		if err != nil {
 			return nil, engine.Classify(engine.ExitGateway, err)
 		}
 		// The risky samples are looked up on Hybrid Analysis by hash, and a
-		// malicious verdict refuses the build too (plan §7, agentry-cli#564).
+		// malicious verdict refuses the build too.
 		lookup, err := hybridClient(o.Policy)
 		if err != nil {
 			return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the Hybrid Analysis key: %w", err))
@@ -334,9 +332,8 @@ func task(o Options, docs []decode.Document, cut []string) string {
 }
 
 // stageSamples, safeName and copyFile follow pkg/knowledge/build's
-// stageDocuments and its helpers, copied rather than shared while
-// agentry-cli#523 rewrites that build path; they are folded into one once
-// it lands. The differences are the cap (MaxSampleBytes) and the words.
+// stageDocuments and its helpers, copied rather than shared. TODO: fold them
+// into one. The differences are the cap (MaxSampleBytes) and the words.
 //
 // stageSamples copies the samples under dst by names a document list can
 // carry: letters, digits, '.', '-' and '_', anything else a '-'; a

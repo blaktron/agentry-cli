@@ -19,8 +19,7 @@ const (
 )
 
 // keyedDraft is a draft whose QuickAgent fetches from GitHub with
-// GITHUB_TOKEN, the key marked optional or not, and asking q for it
-// (optional secrets M6: plan optional-secrets.md D3, D7; agentry-cli#652).
+// GITHUB_TOKEN, the key marked optional or not, and asking q for it.
 func keyedDraft(optional bool, q question) *Draft {
 	caps := `"network": {"egress": ["api.github.com"]}, "filesystem": {"read": "none", "write": "none"}, "exec": "none", "secrets": ["GITHUB_TOKEN"]`
 	if optional {
@@ -72,8 +71,8 @@ func TestThePostStepChecksAKeysMarking(t *testing.T) {
 		{"a required key", keyedDraft(false, noQuestion), true, false},
 		{"an optional key's question, not required", keyedDraft(true, notRequired), true, false},
 		{"a required key's question, required", keyedDraft(false, required), true, false},
-		{"an optional key's question marked required (D7)", keyedDraft(true, required), false, true},
-		{"a required key's question not marked required (D7)", keyedDraft(false, notRequired), false, true},
+		{"an optional key's question marked required", keyedDraft(true, required), false, true},
+		{"a required key's question not marked required", keyedDraft(false, notRequired), false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			passed, refused := checkMarking(t, tc.d)
@@ -116,8 +115,8 @@ func TestTheBenchHoldsADraftToItsDescriptionsMarking(t *testing.T) {
 }
 
 // A repair's second answer that moves a key between optional and required
-// keeps every key it declared, so it drops nothing (agentry-cli#633's
-// rule reads the declared names, never the marking).
+// keeps every key it declared, so it drops nothing (the rule reads the
+// declared names, never the marking).
 func TestMovingAKeyBetweenOptionalAndRequiredIsNoDrop(t *testing.T) {
 	first, second := keyedDraft(false, noQuestion), keyedDraft(true, noQuestion)
 	second.Validation = json.RawMessage(`{"passed":true}`)

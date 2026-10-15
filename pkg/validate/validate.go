@@ -1,11 +1,11 @@
-// Package validate is `agentry validate`'s workspace check (§11, D-12):
-// offline parity with the server's submit validation — every manifest rule
-// pkg/manifest reports (ManifestRules), the S1 inventory subset (localscan.go), and the
+// Package validate is `agentry validate`'s workspace check: offline parity
+// with the server's submit validation — every manifest rule pkg/manifest
+// reports (ManifestRules), the S1 inventory subset (localscan.go), and the
 // S3/S4 scan via pkg/rules, run over the files publish would actually ship.
-// It left the command's main package so that the Drafter's post-step
-// (pkg/drafter) checks a draft with the same code in every client
-// (agentry-cli#478): `agentry validate`, `agentry draft` and the desktop's
-// draft on this computer write one report, the `validate --json` shape.
+// It lives outside the command's main package so that the Drafter's post-step
+// (pkg/drafter) checks a draft with the same code in every client: `agentry
+// validate`, `agentry draft` and the desktop's draft on this computer write
+// one report, the `validate --json` shape.
 package validate
 
 import (
@@ -23,9 +23,9 @@ import (
 	"github.com/blaktron/agentry/pkg/ruleset"
 )
 
-// Report is the `validate --json` shape (agentry-cli#102): the rules and
-// scan findings as data, and the verdict `publish` would reach. A draft's
-// draft.json carries it as its validation.
+// Report is the `validate --json` shape: the rules and scan findings as
+// data, and the verdict `publish` would reach. A draft's draft.json
+// carries it as its validation.
 type Report struct {
 	Passed bool `json:"passed"`
 	// Manifest is what agent.yaml said about itself.
@@ -103,8 +103,7 @@ type Options struct {
 	Out, ErrOut io.Writer
 	// Rules loads the S4 signature bundle and says where it came from; nil
 	// is the bundle embedded in this binary (Embedded). A loader that fails
-	// fails the check: it never passes content S4 did not examine
-	// (DEV-011).
+	// fails the check: it never passes content S4 did not examine.
 	Rules RulesLoader
 }
 
@@ -195,8 +194,8 @@ func Workspace(dir string, o Options) (Report, error) {
 	}
 	report.FileCount = len(scanFiles)
 
-	// S1 subset (D-12): the inventory checks that used to reject a workspace
-	// at submit after it had passed locally.
+	// S1 subset: the inventory checks the server runs at submit, so a
+	// workspace that passes here passes there.
 	s1 := scanS1(scanFiles)
 	s1Failing := failingFindings(s1)
 	for _, f := range s1 {
@@ -243,7 +242,7 @@ func Workspace(dir string, o Options) (Report, error) {
 // ManifestRules names the manifest rules a validation runs, in the form
 // the report and the command's help print them ("V1-V5, V7-V11"). It is
 // read from pkg/manifest's own rule list, so a rule the core adds is named
-// here without a change in this repository (agentry-cli#638).
+// here without a change in this repository.
 func ManifestRules() string {
 	rs := manifest.Rules()
 	ids := make([]string, len(rs))

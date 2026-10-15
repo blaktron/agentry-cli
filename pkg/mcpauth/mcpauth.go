@@ -1,21 +1,20 @@
 // Package mcpauth signs a person in to a remote MCP server by OAuth, as the
-// MCP authorization specification (2026-07-28) asks of a client (plan
-// mcp-oauth-connections.md §6, agentry-cli#664): Protected Resource
-// Metadata (RFC 9728) from the server's 401, the authorization server's
-// metadata (RFC 8414, OpenID discovery), the client the vendor will take
-// (the person's own, Agentry's Client ID Metadata Document, or dynamic
-// registration, in that order here), PKCE with S256, the resource
-// parameter (RFC 8707), the iss check on the redirect (RFC 9207), the code
-// exchange, refresh and revocation (RFC 7009).
+// MCP authorization specification (2026-07-28) asks of a client: Protected
+// Resource Metadata (RFC 9728) from the server's 401, the authorization
+// server's metadata (RFC 8414, OpenID discovery), the client the vendor will
+// take (the person's own, Agentry's Client ID Metadata Document, or dynamic
+// registration, in that order here), PKCE with S256, the resource parameter
+// (RFC 8707), the iss check on the redirect (RFC 9207), the code exchange,
+// refresh and revocation (RFC 7009).
 //
 // Every request to a vendor goes through Guard: https, public addresses
 // only, no redirect, no proxy from the environment. Nothing here logs or
 // returns a vendor's answer: an error carries the OAuth error code and
 // never a body, which can hold a token.
 //
-// What a run receives is an access token and nothing else (D8's
-// condition): the refresh token and any client secret stay with the
-// caller's store (pkg/runner/connection) and this package's callers.
+// What a run receives is an access token and nothing else: the refresh token
+// and any client secret stay with the caller's store (pkg/runner/connection)
+// and this package's callers.
 package mcpauth
 
 import (
@@ -334,7 +333,7 @@ const (
 
 // The kinds of Client.
 const (
-	ClientOwn  = "own"  // the person's own, made at the vendor (D23)
+	ClientOwn  = "own"  // the person's own, made at the vendor
 	ClientCIMD = "cimd" // Agentry's Client ID Metadata Document
 	ClientDCR  = "dcr"  // dynamically registered for this connection
 )
@@ -383,8 +382,8 @@ func NewRequest(md ServerMetadata, client Client, redirectURI, resource string, 
 }
 
 // ResumeRequest rebuilds a request from the state and the PKCE verifier its
-// client kept (agentry-cli#715): the registry seals the verifier between
-// the consent's start and its callback, which arrive as two requests.
+// client kept: the registry seals the verifier between the consent's start
+// and its callback, which arrive as two requests.
 func ResumeRequest(md ServerMetadata, client Client, redirectURI, resource string, scopes []string, state, verifier string) *Request {
 	return &Request{Server: md, Client: client, RedirectURI: redirectURI, Resource: resource, Scopes: scopes, State: state, verifier: verifier}
 }

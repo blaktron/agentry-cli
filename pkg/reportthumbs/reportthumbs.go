@@ -1,8 +1,7 @@
 // Package reportthumbs holds a thumbnail of each built-in report theme: the
 // first page of one sample report (runnerimage/toolsrv/testdata/pdf/
 // thumbnail.md) rendered by the runner's own template and the pinned Typst
-// image, as a PNG (plan report-designs.md §4 "The editor", D5;
-// agentry-cli#784). The site's and the desktop's Report design pages show
+// image, as a PNG. The site's and the desktop's Report design pages show
 // them, taking them with the CLI version they pin, so a thumbnail cannot
 // drift from what a run draws: runnerimage/toolsrv's
 // TestThumbnailsAreTheTemplates renders them again in the typst-image CI

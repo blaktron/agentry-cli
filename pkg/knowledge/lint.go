@@ -11,18 +11,16 @@ import (
 	"strings"
 )
 
-// The mechanical lint (plan knowledge.md §4.2): a Go port of the estate
-// wiki's own lint (agentry-notes wiki/tools/wiki-lint.py) — its link,
-// frontmatter, slug and index checks — made general for a pack, plus the
-// check that every citation resolves to a document under sources/, since a
-// pack keeps its sources so that its citations resolve (plan D8). The
-// Creator's apply step drops a page that fails, never the whole build.
+// The mechanical lint: a Go port of a wiki lint — its link, frontmatter,
+// slug and index checks — made general for a pack, plus the check that
+// every citation resolves to a document under sources/, since a pack keeps
+// its sources so that its citations resolve. The Creator's apply step
+// drops a page that fails, never the whole build.
 //
-// Two citation keys name no source and are declared instead (plan
-// knowledge-and-drafter.md D17; agentry-cli#523): web:<url>, a page the
-// Creator read on the web and compiled in its own words, whose text the
-// pack does not keep, and model, what the Creator's model wrote from its
-// own knowledge.
+// Two citation keys name no source and are declared instead: web:<url>, a
+// page the Creator read on the web and compiled in its own words, whose
+// text the pack does not keep, and model, what the Creator's model wrote
+// from its own knowledge.
 
 // Rule names what a finding is about.
 type Rule string
@@ -48,8 +46,7 @@ type Finding struct {
 	// pack that it names and that is missing; empty otherwise.
 	Target string
 	// Href is, for a link to nothing in the pack, the link as the page
-	// writes it, so the apply step can make it plain text
-	// (agentry-cli#433).
+	// writes it, so the apply step can make it plain text.
 	Href    string
 	Message string
 }
@@ -61,8 +58,8 @@ func (f Finding) String() string {
 	return fmt.Sprintf("%s: %s: %s", f.Page, f.Rule, f.Message)
 }
 
-// requiredKeys are the frontmatter keys every page carries: the estate
-// schema's, with verified dropped (a pack's pages are compiled, not
+// requiredKeys are the frontmatter keys every page carries: the wiki
+// page schema's, without a verified key (a pack's pages are compiled, not
 // re-checked against a live system).
 var requiredKeys = []string{"title", "type", "summary", "sources", "updated"}
 

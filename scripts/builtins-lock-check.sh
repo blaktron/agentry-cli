@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# builtins.lock is append-only (agentry-cli#470): every line the base
+# builtins.lock is append-only: every line the base
 # revision holds must still be in the working tree, unchanged. A line that
 # changed means a built-in's tree changed under a version the registry may
 # already hold, and a published version is never rebuilt; give the built-in

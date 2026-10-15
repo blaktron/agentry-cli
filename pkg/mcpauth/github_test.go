@@ -113,11 +113,11 @@ func TestAGitHubGrantRefreshesAndRevokesWithoutASecret(t *testing.T) {
 	}
 }
 
-// The client ids are Agentry's public ones (M8); until the build carries
+// The client ids are Agentry's public ones; until the build carries
 // them, a variable names one and nothing else does.
 func TestAGitHubClientIDComesFromTheBuildOrItsVariable(t *testing.T) {
 	t.Setenv("AGENTRY_GITHUB_APP_CLIENT_ID", "")
-	if _, err := mcpauth.GitHubClientID(mcpauth.GitHubApp); err == nil || !strings.Contains(err.Error(), "agentry-cli#743") {
+	if _, err := mcpauth.GitHubClientID(mcpauth.GitHubApp); err == nil || !strings.Contains(err.Error(), "carries no client id") {
 		t.Fatalf("no id: %v", err)
 	}
 	t.Setenv("AGENTRY_GITHUB_APP_CLIENT_ID", "Iv1.fromtheoperator")
@@ -129,8 +129,8 @@ func TestAGitHubClientIDComesFromTheBuildOrItsVariable(t *testing.T) {
 	}
 }
 
-// GitHub's refusals reach the person without a token in them (I6): a
-// refused refresh, an account GitHub will not name, a failed revocation.
+// GitHub's refusals reach the person without a token in them: a refused
+// refresh, an account GitHub will not name, a failed revocation.
 func TestGitHubErrorsCarryNoToken(t *testing.T) {
 	ctx := context.Background()
 	v := mcpauthtest.NewGitHub(t)

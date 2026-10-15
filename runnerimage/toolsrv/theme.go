@@ -1,13 +1,12 @@
 package toolsrv
 
-// The run's report design (plan report-designs.md §4, D1, D11, D12, D14,
-// D22; agentry-cli#784, DR-87): the theme document, version 2, that
+// The run's report design: the theme document, version 2, that
 // export_pdf's template reads to lay a report out. It is data, defined once
 // in the core's pkg/reportdesign, which this image carries as a byte-for-byte
-// copy (runnerimage/reportdesign, DR-43's rule), so a design is held here to
-// the rules the core stored it under (invariant 3). The five built-in themes
+// copy (runnerimage/reportdesign), so a design is held here to
+// the rules the core stored it under. The five built-in themes
 // are that package's; the engine delivers the run's design in the tools spec
-// (PDF.Theme), and the model never chooses one (D1): it chooses only each
+// (PDF.Theme), and the model never chooses one: it chooses only each
 // PDF's form.
 
 import (
@@ -39,7 +38,7 @@ func BuiltinThemes() []string { return reportdesign.BuiltinIDs() }
 func IsBuiltinTheme(name string) bool { return slices.Contains(reportdesign.BuiltinIDs(), name) }
 
 // BuiltinTheme is a built-in theme's document as the core ships it, its
-// canonical form (invariant 8).
+// canonical form.
 func BuiltinTheme(name string) ([]byte, error) {
 	doc, ok := reportdesign.BuiltinDocument(name)
 	if !ok {
@@ -81,8 +80,7 @@ func StampTheme(doc []byte) (*ThemeStamp, error) {
 	return &ThemeStamp{Name: d.Name, BasedOn: d.BasedOn, Version: strconv.Itoa(d.Version), SHA256: hex.EncodeToString(sum[:]), Document: string(canonical)}, nil
 }
 
-// HasLogo says the stamped design carries the person's logo
-// (agentry-cli#816).
+// HasLogo says the stamped design carries the person's logo.
 func (st *ThemeStamp) HasLogo() bool {
 	d, err := reportdesign.Parse([]byte(st.Document))
 	return err == nil && d.Logo != (reportdesign.Logo{})

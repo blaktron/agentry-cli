@@ -58,8 +58,7 @@ func setHomes(t *testing.T) string {
 
 // A folder is staged as publish would pack it, the consent is the staged
 // manifest's, and Install lays that same tree down under the runner home,
-// sealed, and records it as a local install of that digest
-// (agentry-cli#491).
+// sealed, and records it as a local install of that digest.
 func TestInstallLaysTheStagedFolderDownAndRecordsItAsLocal(t *testing.T) {
 	home := setHomes(t)
 	s, err := Stage(folder(t), limits)

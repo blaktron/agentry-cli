@@ -161,11 +161,10 @@ func (b *browser) addresses() []string {
 	return slices.Clone(b.opened)
 }
 
-// The image signs in through the browser alone (operator, 2026-10-11): the
-// browser is sent to the address Claude Code handed its opener, and the
-// page's answer reaches Claude Code's own callback through the relay
-// unread. Nothing is pasted, the code is shown and kept nowhere, and the
-// relay is gone when the sign-in returns.
+// The image signs in through the browser alone: the browser is sent to the
+// address Claude Code handed its opener, and the page's answer reaches Claude
+// Code's own callback through the relay unread. Nothing is pasted, the code is
+// shown and kept nowhere, and the relay is gone when the sign-in returns.
 func TestTheImageSignsInThroughTheBrowserAlone(t *testing.T) {
 	port := freePort(t)
 	login := newClaudeLogin(port)

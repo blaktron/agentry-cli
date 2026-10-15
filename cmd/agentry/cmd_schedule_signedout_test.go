@@ -486,10 +486,10 @@ func keepConnect(t *testing.T, vendor string, rec map[string]any) {
 
 // A connected Hugging Face token is renewed at each run's start from the
 // keychain, which is locked while its person is signed out, and its sealed
-// copy never is (agentry-cli#811). So --signed-out is refused for it, with
-// the fix named, the re-seal refuses to seal it, and check-signed-out says
-// so on a computer that can otherwise run signed out. A Poe key is
-// refused once past its expiry.
+// copy never is. So --signed-out is refused for it, with the fix named,
+// the re-seal refuses to seal it, and check-signed-out says so on a
+// computer that can otherwise run signed out. A Poe key is refused once
+// past its expiry.
 func TestSignedOutRefusesAConnectedKeyItCannotRenew(t *testing.T) {
 	h := newSignedOutHarness(t)
 	pol, _, err := policy.Load(h.policy)
@@ -554,8 +554,8 @@ func TestSignedOutRefusesAConnectedKeyItCannotRenew(t *testing.T) {
 // A connect changes the key in the model key's entry, so it seals a
 // signed-out schedule's keys again, as setup does; connecting Hugging Face
 // under one tells the person at once that it will not run signed out, and
-// removes its sealed keys, rather than letting its fire find out
-// (agentry-cli#811). A disconnect seals again too.
+// removes its sealed keys, rather than letting its fire find out. A
+// disconnect seals again too.
 func TestAConnectSealsSignedOutSchedulesAgain(t *testing.T) {
 	f := newConnectFixture(t)
 	h := newSignedOutHarness(t)

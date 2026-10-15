@@ -32,11 +32,10 @@ func designOf(t *testing.T, base, name, accent string) []byte {
 	return d.Canonical()
 }
 
-// TestChooseReportTheme (agentry-cli#731, plan D21, D22; agentry-cli#784,
-// report-designs.md D12, D19, D20): a flag, then the account, then the
-// config, then Plain; a name or a file typed in a flag or the config that is
-// not a design refuses as a usage error; the account's design, unread or not
-// one this CLI accepts, is a warning and the next choice runs.
+// TestChooseReportTheme: a flag, then the account, then the config, then
+// Plain; a name or a file typed in a flag or the config that is not a design
+// refuses as a usage error; the account's design, unread or not one this CLI
+// accepts, is a warning and the next choice runs.
 func TestChooseReportTheme(t *testing.T) {
 	dir := t.TempDir()
 	house := designOf(t, "editorial", "House", "#7a1f1f")
@@ -221,8 +220,8 @@ func TestReportThemeSurvivesAConfigRewrite(t *testing.T) {
 }
 
 // A design file with a logo near the largest one a design may carry is
-// read whole by --report-design (agentry-cli#816): the read is bounded by
-// the logo's size, not the 16 KB of the design alone.
+// read whole by --report-design: the read is bounded by the logo's
+// size, not the 16 KB of the design alone.
 func TestReportDesignFileWithALargeLogo(t *testing.T) {
 	isolateEnv(t)
 	img := image.NewNRGBA(image.Rect(0, 0, 330, 330))

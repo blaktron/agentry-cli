@@ -22,7 +22,7 @@ var ConfineRole = confine.Role
 const unprivilegedID = 65534
 
 // confinement is how run_command holds a declared command to the places it
-// may write (agentry-cli#596): the run's output folder is mounted
+// may write: the run's output folder is mounted
 // read-write into the tools container for write_report and the receipts'
 // ledgers, and a declared command runs in the same container.
 //

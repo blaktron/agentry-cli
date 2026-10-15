@@ -11,22 +11,21 @@ import (
 	"unicode/utf8"
 )
 
-// Brave's LLM Context API (agentry#631, DEV-157): the provider the operator
-// chose on 2026-09-26 for dev and production, in place of You.com (DEV-156's
-// choice, whose account never opened). It is a search whose results are
-// page chunks extracted for a model to read, in Brave's plain Search plan.
-// Brave's published terms want a plan with storage rights to store results
-// "in part or whole". The route stores none; whether what a draft keeps of
-// its sources counts is an open question DEV-157 records.
+// Brave's LLM Context API: the registry's own provider, a search whose
+// results are page chunks extracted for a model to read, in Brave's plain
+// Search plan. Brave's published terms want a plan with storage rights to
+// store results "in part or whole". The route stores none; whether what a
+// draft keeps of its sources counts is an open question.
 //
-// The call is GET /res/v1/llm/context with the key in X-Subscription-Token.
-// Brave considers its default pool of results and returns at most count
-// URLs, within a small token budget with a per-URL cap, so one page cannot
-// take all of it: every result is scanned before a model reads it, and
-// Clean cuts a snippet to a thousand characters anyway. Only
-// grounding.generic is read, each result's snippets joined into its
-// snippet; local results (grounding.poi, grounding.map, never asked for:
-// enable_local is off) and the sources metadata map are ignored.
+// The call is GET /res/v1/llm/context with the key in
+// X-Subscription-Token. Brave considers its default pool of results and
+// returns at most count URLs, within a small token budget with a per-URL
+// cap, so one page cannot take all of it: every result is scanned before a
+// model reads it, and Clean cuts a snippet to a thousand characters
+// anyway. Only grounding.generic is read, each result's snippets joined
+// into its snippet; local results (grounding.poi, grounding.map, never
+// asked for: enable_local is off) and the sources metadata map are
+// ignored.
 const (
 	BraveName           = "brave"
 	BraveDefaultBaseURL = "https://api.search.brave.com"

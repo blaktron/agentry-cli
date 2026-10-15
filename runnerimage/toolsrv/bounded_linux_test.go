@@ -9,8 +9,8 @@ import (
 )
 
 // TestTheToolsRoleRefusesAnUnboundedScratch: a /tmp or scratch folder that
-// is not a tmpfs stops the tools role before it serves (agentry-cli#599,
-// #729): /dev/shm is a tmpfs on Linux, /proc is not.
+// is not a tmpfs stops the tools role before it serves:
+// /dev/shm is a tmpfs on Linux, /proc is not.
 func TestTheToolsRoleRefusesAnUnboundedScratch(t *testing.T) {
 	if err := isBoundedTmpfs("/dev/shm", 1<<62); err != nil {
 		t.Skipf("/dev/shm is not a tmpfs here: %v", err)

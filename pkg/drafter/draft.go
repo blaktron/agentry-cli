@@ -20,11 +20,10 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// Draft is draft.json (plan builder-rework.md §7.5, D15): what the Drafter
-// returned, known fields only, and what the post-step adds (Finish, and the
-// CLI's validation of the rendered package). A client reads it as data: its
-// values reach the Builder only as text in the fields the Builder already
-// has.
+// Draft is draft.json: what the Drafter returned, known fields only, and
+// what the post-step adds (Finish, and the CLI's validation of the rendered
+// package). A client reads it as data: its values reach the Builder only as
+// text in the fields the Builder already has.
 type Draft struct {
 	// Manifest is the v2 manifest as JSON, as the Drafter wrote it.
 	Manifest json.RawMessage `json:"manifest"`
@@ -42,16 +41,16 @@ type Draft struct {
 	AIReview *AIReview `json:"aiReview,omitempty"`
 	// Knowledge is each of the person's knowledge packs the Drafter was
 	// given, how it was scanned and what of it was withheld (the
-	// post-step's; agentry-cli#522).
+	// post-step's).
 	Knowledge []PackRead `json:"knowledge,omitempty"`
-	// Revises is the release a revision was drafted from (the post-step's;
-	// agentry-cli#526): its ref and its archive's digest. Absent for a new
+	// Revises is the release a revision was drafted from (the post-step's):
+	// its ref and its archive's digest. Absent for a new
 	// QuickAgent.
 	Revises *Revises `json:"revises,omitempty"`
 	// Validation is `agentry validate --json`'s report over the rendered
 	// package (the post-step's): the manifest rules and the S1, S3 and S4
 	// scanners. A draft that fails them is kept, with its problems, for the
-	// person to fix (plan §7.5).
+	// person to fix.
 	Validation json.RawMessage `json:"validation,omitempty"`
 	// ManifestError says why the draft could not be checked: its manifest
 	// does not parse (the package is rendered all the same, for the person
@@ -79,7 +78,7 @@ type Draft struct {
 	serversUnchecked []string
 	// serverSigns are what to check before a run, and serversAdmitted what
 	// admitted each server with no problem: a Runs here entry or the
-	// Drafter's judgement (checkServers, agentry-cli#660).
+	// Drafter's judgement (checkServers).
 	serverSigns     []string
 	serversAdmitted []string
 }
@@ -105,9 +104,9 @@ type Made struct {
 	Model string `json:"model,omitempty"`
 	RunID string `json:"runId,omitempty"`
 	// Guide is the pack the Drafter ships and every run of it read
-	// (GuideName; agentry-cli#657), recorded apart from the person's
-	// packs in Knowledge. It is part of the Drafter's release, so it has
-	// no scan record of its own.
+	// (GuideName), recorded apart from the person's packs in Knowledge.
+	// It is part of the Drafter's release, so it has no scan record of
+	// its own.
 	Guide *GuideRead `json:"guide,omitempty"`
 }
 
@@ -151,8 +150,8 @@ type AIReview struct {
 	receipt.Web
 	// WithheldSources is every text AI Review kept from the model, with why.
 	WithheldSources []WithheldSource `json:"withheldSources"`
-	// Check is AI Review's check of the finished draft (the post-step's,
-	// agentry-cli#418): absent for a draft that could not be rendered.
+	// Check is AI Review's check of the finished draft (the post-step's):
+	// absent for a draft that could not be rendered.
 	Check *Check `json:"check,omitempty"`
 }
 
@@ -200,11 +199,11 @@ const (
 )
 
 // FromReports fills the instructions and the notes from the reports the
-// Drafter wrote (plan §7.5): its last message carries the manifest and the
-// lists, and each long text comes as a report of its own, which a model
-// writes more reliably than one large JSON answer. A field the message
-// carried is kept. A report that is not a regular file, or is over its
-// bound, is not read, and the error says so.
+// Drafter wrote: its last message carries the manifest and the lists,
+// and each long text comes as a report of its own, which a model writes
+// more reliably than one large JSON answer. A field the message carried
+// is kept. A report that is not a regular file, or is over its bound,
+// is not read, and the error says so.
 func FromReports(d *Draft, reportsDir string) error {
 	var errs []error
 	for _, r := range []struct {
@@ -303,8 +302,8 @@ func Render(d *Draft, dir string) (*manifest.Manifest, error) {
 }
 
 // NoteWithheld adds to the notes the texts AI Review kept from the model,
-// with why (plan §7.3: the notes list every withheld source), from the
-// draft's AI Review record rather than from what the model chose to say.
+// with why (the notes list every withheld source), from the draft's AI
+// Review record rather than from what the model chose to say.
 func (d *Draft) NoteWithheld() {
 	if d.AIReview == nil || len(d.AIReview.WithheldSources) == 0 {
 		return

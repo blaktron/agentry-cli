@@ -15,7 +15,7 @@ import (
 
 // Source says where a harness executable was found. The values are wire
 // values: doctor prints them and the desktop's Coding agent step reads
-// them from the probe's JSON (agentry-desktop#131).
+// them from the probe's JSON.
 type Source string
 
 const (
@@ -23,9 +23,9 @@ const (
 	SourcePolicy Source = "policy"
 	// SourcePath is the process's PATH.
 	SourcePath Source = "PATH"
-	// SourceKnown is one of the adapter's well-known install locations
-	// (agentry-cli#167) — the native installer's directory, or a desktop
-	// app's bundled build — which a PATH-less GUI launch never sees.
+	// SourceKnown is one of the adapter's well-known install locations — the
+	// native installer's directory, or a desktop app's bundled build — which a
+	// PATH-less GUI launch never sees.
 	SourceKnown Source = "known location"
 )
 

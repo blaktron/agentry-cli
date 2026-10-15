@@ -27,9 +27,9 @@ func Task(description string, hints []string) (string, error) {
 }
 
 // TaskWithKnowledge is Task for a draft given the person's knowledge
-// packs (agentry-cli#522): the message also names the packs, so the
-// Drafter reads them first. The packs themselves reach it only through its
-// knowledge tools, after their scan (ReadyKnowledge).
+// packs: the message also names the packs, so the Drafter reads them
+// first. The packs themselves reach it only through its knowledge tools,
+// after their scan (ReadyKnowledge).
 func TaskWithKnowledge(description string, hints, packs []string) (string, error) {
 	description = strings.TrimSpace(description)
 	if description == "" {
@@ -66,9 +66,9 @@ func TaskWithKnowledge(description string, hints, packs []string) (string, error
 	return task, nil
 }
 
-// Prescan is the step before the Drafter starts (plan §7.3, D22): AI Review
-// reads the task as a description, and one that is flagged, or cannot be
-// scanned, refuses the draft (exit 11) before anything else happens.
+// Prescan is the step before the Drafter starts: AI Review reads the
+// task as a description, and one that is flagged, or cannot be scanned,
+// refuses the draft (exit 11) before anything else happens.
 func Prescan(ctx context.Context, sc webscan.Scanner, task string) (webscan.Result, error) {
 	res := sc.Scan(ctx, webscan.SourceDescription, task)
 	if !res.Passed() {
@@ -79,7 +79,7 @@ func Prescan(ctx context.Context, sc webscan.Scanner, task string) (webscan.Resu
 }
 
 // CoreJev scans with the person's own Jev key through the core's own
-// pkg/judge, the registry's client and question set (D25). It is the
+// pkg/judge, the registry's client and question set. It is the
 // description's scanner for a local draft; the tools server in the run
 // asks the same questions through the image's byte-for-byte copy.
 func CoreJev(key string) (webscan.Scanner, error) {

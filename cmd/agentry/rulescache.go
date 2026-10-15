@@ -1,20 +1,18 @@
-// `agentry validate --rules-update` (§11): fetch the registry's current S3/S4
+// `agentry validate --rules-update`: fetch the registry's current S3/S4
 // rule bundle and cache it, so local validation can track rules that move
 // faster than CLI releases.
 //
-// Trust model, stated plainly because it is narrower than §11's one-word
-// "(signed)": the bundle is pinned by DIGEST, not by a signature. The
-// registry advertises the digest recorded on its ruleset_releases row, the
-// CLI recomputes that digest over what it received, and a mismatch is a hard
+// Trust model, stated plainly: the bundle is pinned by DIGEST. The registry
+// advertises the digest recorded on its ruleset_releases row, the CLI
+// recomputes that digest over what it received, and a mismatch is a hard
 // refusal. That defeats a corrupted or truncated transfer and a proxy that
-// rewrites bytes; it does NOT defeat a registry that lies about both the
-// bundle and its digest, which is what a signature would buy. There is no
-// bundle-level signature to verify yet — see DEVIATIONS DEV-024, which
-// records the deferral rather than inventing a scheme the server cannot
-// honour.
+// rewrites bytes; on its own it does NOT defeat a registry that lies about
+// both the bundle and its digest, which is what a signature buys. When the
+// registry signs the bundle, the signature is verified against the pinned
+// keys; a registry that does not sign is tolerated.
 //
-// Cache layout: ~/.config/agentry/rules/<semver>/{bundle.yaml,*.yaml},
-// one directory per version, alongside the config (see installed.go for why
+// Cache layout: ~/.config/agentry/rules/<semver>/{bundle.yaml,*.yaml}, one
+// directory per version, alongside the config (see installed.go for why
 // everything the CLI keeps lives under one root).
 package main
 
@@ -109,12 +107,12 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 			semver, bundle.Version())
 	}
 
-	// Signature (agentry-cli#8 / agentry#25): the registry signs the bundle
-	// with its release key. Verified against the TOFU-pinned key set exactly
-	// like an install attestation; the digest we just recomputed is the
-	// subject we require. A present-but-invalid signature is fatal; an
-	// absent one (a registry that does not sign) is reported and tolerated,
-	// the same split `verify` makes (DEV-043).
+	// Signature: the registry signs the bundle with its release key.
+	// Verified against the TOFU-pinned key set exactly like an install
+	// attestation; the digest we just recomputed is the subject we require.
+	// A present-but-invalid signature is fatal; an absent one (a registry
+	// that does not sign) is reported and tolerated, the same split `verify`
+	// makes.
 	att := trust.VerifyAttestation(ctx, httpClient, regURL, "", "/api/v1/ruleset-releases/latest/attestation", got)
 	switch att.State {
 	case trust.StateVerified:

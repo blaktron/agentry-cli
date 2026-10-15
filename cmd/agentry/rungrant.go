@@ -7,14 +7,13 @@ import (
 	"sync"
 )
 
-// A run-scoped registry grant (agentry-cli#232, agentry-enterprise#92). A
-// hosted run of a private release reaches it through a prefix of the
-// registry that answers for that one run: the driver points --registry at
-// the prefix and hands the run's grant in AGENTRY_RUN_GRANT, and every
-// request to the registry's host carries it in its own header. The grant is
-// never in a URL, so no access log, receipt or pin file name holds it; it
-// never goes to another host (a CDN, npm); and nothing the CLI prints
-// includes a request's headers.
+// A run-scoped registry grant. A hosted run of a private release reaches it
+// through a prefix of the registry that answers for that one run: the
+// driver points --registry at the prefix and hands the run's grant in
+// AGENTRY_RUN_GRANT, and every request to the registry's host carries it in
+// its own header. The grant is never in a URL, so no access log, receipt or
+// pin file name holds it; it never goes to another host (a CDN, npm); and
+// nothing the CLI prints includes a request's headers.
 
 const (
 	envRunGrant    = "AGENTRY_RUN_GRANT"

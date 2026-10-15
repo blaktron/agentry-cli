@@ -3,9 +3,8 @@
 This program installs and starts declared MCP servers the way the runner does
 and records what each one did. Its results seed the Drafter's two soft lists,
 *Runs here* and *Does not run here*, in
-`pkg/drafter/knowledge/drafting-guide/sources/servers.yaml` (plan
-`drafter-knowledge.md` §4.5, agentry-cli#658). This README is the procedure:
-follow it to run the survey again.
+`pkg/drafter/knowledge/drafting-guide/sources/servers.yaml`. This README is
+the procedure: follow it to run the survey again.
 
 ## What it does with each server
 
@@ -49,21 +48,21 @@ programs servers often spawn (git, curl, a browser, Docker) the image has
 
 ## Running it
 
-Run it on the workstation from `~/scratch`, never from a worktree: it writes
-server stores, logs and results into its output folder, and refuses an
-output folder inside a git work tree. It needs Docker and
-network access to npm, PyPI, ghcr.io and the hosts the list declares. It runs
-one server at a time and refuses to start a server while another gateway's
-relays are on the host's shared relay network.
+Run it from a folder outside the repository: it writes server stores, logs
+and results into its output folder, and refuses an output folder inside a git
+work tree. It needs Docker and network access to npm, PyPI, ghcr.io and the
+hosts the list declares. It runs one server at a time and refuses to start a
+server while another gateway's relays are on the host's shared relay
+network.
 
 ```bash
-cd ~/agentry/.worktrees/agentry-cli/<branch>    # or the agentry-cli checkout
-GOWORK=off go build -o ~/scratch/mcp-survey/mcp-server-survey ./scripts/mcp-server-survey
-cp scripts/mcp-server-survey/list.yaml ~/scratch/mcp-survey/
-cd ~/scratch/mcp-survey && ./mcp-server-survey -list list.yaml -out .
+# from the repository root
+go build -o ../mcp-survey/mcp-server-survey ./scripts/mcp-server-survey
+cp scripts/mcp-server-survey/list.yaml ../mcp-survey/
+cd ../mcp-survey && ./mcp-server-survey -list list.yaml -out .
 ```
 
-The 50 take about an hour on the workstation. It writes:
+The 50 servers take about an hour. It writes:
 
 - `results-<date>.json`: one record per server (version, excluded versions,
   direct dependencies, npm install scripts, the furthest stage reached, the
@@ -110,19 +109,14 @@ version with its own `builtins.lock` line (see `pkg/drafter/README.md`).
 
 ## The list
 
-`list.yaml` holds the 50 servers of the 2026-10-05 survey, chosen as plan §4.5
-says: the union of the sources below, topped up to 50.
+`list.yaml` holds 50 servers, the union of the sources below.
 
-1. **Every server a published QuickAgent declares.** On dev, this comes from
-   the registry's own table (`agent_version_mcp_servers` joined to published
-   versions, read on the dev host). Production's database is not reachable
-   from the workstation, so production's are read from the public API instead
-   (`/api/v1/search`, each agent's versions, each version's manifest). That
-   covers public QuickAgents only. On 2026-10-05 the two gave 7 servers.
+1. **Every server a published QuickAgent declares.** These come from the
+   registry's public API (`/api/v1/search`, each agent's versions, each
+   version's manifest), which covers public QuickAgents only. 7 servers.
 2. **The MCP reference servers**
    (https://github.com/modelcontextprotocol/servers): the seven current ones,
-   and twelve of the archived ones. `server-aws-kb-retrieval-server` is no
-   longer on npm (404 on 2026-10-05), so it was dropped. 19 servers.
+   and twelve of the archived ones. 19 servers.
 3. **The most-downloaded MCP servers.** For npm, the packages that npm's search
    API returns for `keywords:mcp-server`, `keywords:mcp`, `mcp server` and
    `modelcontextprotocol`, ranked by last month's downloads
@@ -132,7 +126,7 @@ says: the union of the sources below, topped up to 50.
    It takes, in rank order, packages whose own description says they are an
    MCP server and that are not already on the list. It skips SDKs, frameworks,
    clients, proxies, instrumentation, editor add-ons, and tools whose MCP server
-   is a side entry. That gave the top 14 on npm and the top 10 on PyPI.
+   is a side entry. That gives the top 14 on npm and the top 10 on PyPI.
 
 To refresh it, repeat each step and replace the entries whose source moved.
 Keep the `why:` of each entry.

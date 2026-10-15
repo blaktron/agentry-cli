@@ -275,7 +275,7 @@ func TestFetchOverACapStagesNothing(t *testing.T) {
 			if !strings.Contains(rep.Refusal, tc.want) {
 				t.Errorf("refusal %q, want it to say %q", rep.Refusal, tc.want)
 			}
-			// The same count, typed (agentry-cli#884); a byte count is
+			// The same count, typed; a byte count is
 			// the tree's, past the cap.
 			if o := rep.Over; o == nil || o.Cap != tc.over.Cap || o.Of != tc.over.Of || o.More ||
 				(tc.over.Count != 0 && o.Count != tc.over.Count) || (tc.over.Cap == CapBytes && o.Count <= tc.bytes) {
@@ -364,7 +364,7 @@ func TestPortableName(t *testing.T) {
 	}
 	for _, bidi := range []string{"a\u202ebad", "x\u0085y", "zero\ufeffwidth"} {
 		if decode.PlainMemberPath("dir/" + bidi) {
-			t.Errorf("DR-39's rule passed %q", bidi)
+			t.Errorf("the member-name rule passed %q", bidi)
 		}
 	}
 	tok := strings.Repeat("t", 16)

@@ -12,8 +12,7 @@ import (
 
 // archiveReaders are the base commands that read archives. A draft never
 // declares one: the runner unpacks every archive before the run, and the
-// input tools read each file in it (DR-64 amended by agentry-cli#634;
-// plan quickagents-that-run.md M7). Exec is for computation the tools
+// input tools read each file in it. Exec is for computation the tools
 // cannot do, never for reading inputs.
 var archiveReaders = []string{"tar", "unzip", "gunzip", "bunzip2", "unxz", "zcat", "bzcat", "xzcat"}
 
@@ -22,12 +21,10 @@ var archiveReaders = []string{"tar", "unzip", "gunzip", "bunzip2", "unxz", "zcat
 // which a run would refuse at plan time; an SSH client (ssh, scp, sftp,
 // rsync, as manifest.RemoteShellCommands names them), which reaches no
 // machine from a run, where a declared target host has the runner make the
-// session (plan runtime-hosts.md M8, agentry-cli#864); a browser of its own
-// (drivesABrowser), where a declared browser has the runner give one (plan
-// browser-testing.md M8, agentry-cli#916); and an archive
-// reader, which only reads what the runner already unpacked. Nil when the
-// draft declares no commands, or its manifest does not parse (validate
-// says so).
+// session; a browser of its own (drivesABrowser), where a declared browser
+// has the runner give one; and an archive reader, which only reads what the
+// runner already unpacked. Nil when the draft declares no commands, or its
+// manifest does not parse (validate says so).
 func execProblems(raw json.RawMessage) []string {
 	var m struct {
 		Capabilities struct {

@@ -1,4 +1,4 @@
-// Fake recorder tests: the engine's entire lifecycle proof (DR-7) leans
+// Fake recorder tests: the engine's entire lifecycle proof leans
 // on this double, so its recording formats, scripted failures, and the
 // Block/ctx foreground behavior are contracts of their own and pinned
 // here — a Fake that drifts would green-light a broken engine.

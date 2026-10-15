@@ -1,9 +1,8 @@
 package store
 
-// The Writing Voice this computer keeps (plan writing-voice.md §4, D6;
-// agentry-cli#531): at most one, in <runner home>/voice/, sealed the way a
-// kept pack is and beside the knowledge store rather than in it, since a
-// voice is not a pack:
+// The Writing Voice this computer keeps: at most one, in <runner
+// home>/voice/, sealed the way a kept pack is and beside the knowledge store
+// rather than in it, since a voice is not a pack:
 //
 //	voice.json    its record (pkg/voice.Meta), in the clear: the digest,
 //	              the size, where it came from, its always-attach flag
@@ -16,7 +15,7 @@ package store
 // memory (it is at most 32 KiB), and a run writes its own copy into the
 // run's knowledge channel, which dies at teardown. It is never reviewed:
 // the account's voice, which AI Review passes before it is live, is the
-// registry's (V2), and this computer's is moved to it only by the person.
+// registry's, and this computer's is moved to it only by the person.
 
 import (
 	"bytes"
@@ -88,7 +87,7 @@ func (s *Store) Voice() (Voice, error) {
 // KeepVoice keeps text as this computer's voice, in place of the one it
 // keeps, if any. A new version keeps the voice's id, its data key, its
 // always-attach flag and when it was first made; the first voice is made
-// with always-attach on (D11), and created says it was the first.
+// with always-attach on, and created says it was the first.
 func (s *Store) KeepVoice(ctx context.Context, text []byte, src voice.Source, by *voice.Creator, now time.Time) (v Voice, created bool, err error) {
 	if err := voice.Check(text); err != nil {
 		return Voice{}, false, err

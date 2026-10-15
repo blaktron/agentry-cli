@@ -34,13 +34,12 @@ func workedHostDraft(t *testing.T) json.RawMessage {
 	return nil
 }
 
-// TestADraftThatTakesATargetHostPasses (target hosts M8, agentry-cli#864;
-// plan runtime-hosts.md D15): a draft with a host question listed in
-// capabilities.targetHosts goes through the post-step as any other. The
+// TestADraftThatTakesATargetHostPasses: a draft with a host question listed
+// in capabilities.targetHosts goes through the post-step as any other. The
 // corrections leave both halves, the registry's rules and the local scans
-// pass it with no finding, the Drafter's rules find nothing in it, and the check
-// reads the line among the declared capabilities, where the rubric's runner
-// grant names it. Without the line, the registry's rules refuse it.
+// pass it with no finding, the Drafter's rules find nothing in it, and the
+// check reads the line among the declared capabilities, where the rubric's
+// runner grant names it. Without the line, the registry's rules refuse it.
 func TestADraftThatTakesATargetHostPasses(t *testing.T) {
 	raw := workedHostDraft(t)
 	corrected, did := Correct(raw)
@@ -118,12 +117,11 @@ func TestADraftThatMakesItsOwnSSHGoesToTheRepairTurn(t *testing.T) {
 	}
 }
 
-// TestTheGuideTeachesTargetHosts (target hosts M8, agentry-cli#864): the
-// instruction and the guide's pages ask for a machine by a host question
-// listed in capabilities.targetHosts, declare no SSH client, egress or key
-// for it, write the instructions for the host tools, never ask for the
-// sign-in in a question, and say that such a QuickAgent runs only on the
-// person's computer.
+// TestTheGuideTeachesTargetHosts: the instruction and the guide's pages
+// ask for a machine by a host question listed in capabilities.targetHosts,
+// declare no SSH client, egress or key for it, write the instructions for
+// the host tools, never ask for the sign-in in a question, and say that
+// such a QuickAgent runs only on the person's computer.
 func TestTheGuideTeachesTargetHosts(t *testing.T) {
 	mustSay(t, map[string][]string{
 		instructionFile: {

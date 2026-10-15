@@ -51,17 +51,17 @@ type Verdict string
 const (
 	// VerdictPass is text no question scored at WithholdScore or above.
 	VerdictPass Verdict = "pass"
-	// VerdictWithheld is text a question scored at WithholdScore or above:
-	// the model gets its address and the reason, never the text (D22).
+	// VerdictWithheld is text a question scored at WithholdScore or
+	// above: the model gets its address and the reason, never the text.
 	VerdictWithheld Verdict = "withheld"
 	// VerdictNotScanned is text some part of which the judge could not
-	// answer for — an error, a timeout, an answer out of shape. A caller
-	// treats it as withheld (D22).
+	// answer for — an error, a timeout, an answer out of shape. A
+	// caller treats it as withheld.
 	VerdictNotScanned Verdict = "not_scanned"
 )
 
 // WithholdScore is the score at which text is withheld: 2, the gate's
-// medium, a probability of 0.7 or more (D22).
+// medium, a probability of 0.7 or more.
 const WithholdScore = 2
 
 // Failure words a chunk that was not scanned carries. They are a closed
@@ -73,7 +73,7 @@ const (
 
 const (
 	// modelInputParallel is how many of one text's chunks are asked at
-	// once: a 32 KiB page (D24) is four.
+	// once: a 32 KiB page is four.
 	modelInputParallel = 4
 	// The borderline band is the gate's (BandLow, BandHigh, Samples).
 	modelInputBandLow  = BandLow
@@ -113,8 +113,8 @@ type ScanResult struct {
 	// changes a verdict.
 	Model       string
 	QuestionSet string
-	// Usage is what the scan cost in tokens and requests, for the record.
-	// It is never a price (DEV-150: AI Review is 1 credit an operation).
+	// Usage is what the scan cost in tokens and requests, for the
+	// record. It is never a price: AI Review is 1 credit an operation.
 	Usage Usage
 }
 
@@ -146,8 +146,8 @@ func modelInputHash(model string, resample bool) string {
 	return modelInputHashOf(model, resample, ModelInputQuestions())
 }
 
-// modelInputHashOf is the hash over a given set, so a test can show that a
-// question's wording is in it (agentry#703).
+// modelInputHashOf is the hash over a given set, so a test can show
+// that a question's wording is in it.
 func modelInputHashOf(model string, resample bool, qs []Question) string {
 	parts := []string{"agentry/model-input/v1", "provider=typesafe", "model=" + model, "state=source,content"}
 	for _, q := range qs {
@@ -172,7 +172,7 @@ func modelInputHashOf(model string, resample bool, qs []Question) string {
 // WithholdScore or more, else not scanned when any chunk could not be
 // answered, else pass. Text that is empty, or only white space, passes
 // with no chunks: there is nothing for a model to read. The scan never
-// returns an error; a failure is a verdict (D22).
+// returns an error; a failure is a verdict.
 func (s *ModelInputScanner) Scan(ctx context.Context, source Source, text string) ScanResult {
 	res := ScanResult{Model: s.asker.Model(), QuestionSet: s.QuestionSet(), Scores: map[string]int{}}
 	if !ValidSource(source) {

@@ -35,7 +35,7 @@ func localFolder(t *testing.T) string {
 }
 
 // A local folder is unsigned by definition: installing it needs
-// --allow-unsigned, and it goes only into the runner home (agentry-cli#491).
+// --allow-unsigned, and it goes only into the runner home.
 func TestInstallLocalGates(t *testing.T) {
 	isolateEnv(t)
 	isolateRunnerHome(t)
@@ -126,7 +126,7 @@ func TestARunOfAnotherTreeKeepsTheLocalInstall(t *testing.T) {
 }
 
 // --plan reports the unsigned refusal rather than stopping on it, and
-// --json answers in the registry install's shapes (§R8: stdout holds only
+// --json answers in the registry install's shapes (stdout holds only
 // the JSON document).
 func TestInstallLocalPlanAndJSON(t *testing.T) {
 	isolateEnv(t)

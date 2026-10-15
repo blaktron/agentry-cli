@@ -13,15 +13,15 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// fixtures is the fixture set (plan D10): described tasks with the shapes
-// expected of their drafts, the regression check on the instruction and the
-// model. It is the tests' and scripts/drafter-fixtures.sh's, never part of
-// the package a run is given.
+// fixtures is the fixture set: described tasks with the shapes expected of
+// their drafts, the regression check on the instruction and the model. It
+// is the tests' and scripts/drafter-fixtures.sh's, never part of the
+// package a run is given.
 //
 //go:embed fixtures/*.json
 var fixtures embed.FS
 
-// Fixture is one described task of the fixture set (plan D10) and the shape
+// Fixture is one described task of the fixture set and the shape
 // expected of its draft.
 type Fixture struct {
 	ID          string   `json:"id"`
@@ -56,37 +56,36 @@ type Expect struct {
 	Open   bool `json:"open,omitempty"`
 	// IntakeTypes are question types the draft's intake must carry, each
 	// at least once: `repository` for a codebase, `url` for a file at an
-	// address (input sources M8, agentry-cli#835). Not checked when empty.
+	// address. Not checked when empty.
 	IntakeTypes []string `json:"intakeTypes,omitempty"`
-	// Browser wants a browser line (browser testing M8, agentry-cli#916):
-	// at least one site, each a url question, and the site scope.
-	// BrowserKeys is the fewest keys the line may type, each also in
-	// capabilities.secrets; a draft with fewer typed keys than that, or a
-	// line with keys where BrowserKeys is 0 and the description signs in to
-	// nothing, is off its shape. Neither is checked when Browser is false.
+	// Browser wants a browser line: at least one site, each a url question,
+	// and the site scope. BrowserKeys is the fewest keys the line may type,
+	// each also in capabilities.secrets; a draft with fewer typed keys than
+	// that, or a line with keys where BrowserKeys is 0 and the description
+	// signs in to nothing, is off its shape. Neither is checked when
+	// Browser is false.
 	Browser     bool `json:"browser,omitempty"`
 	BrowserKeys int  `json:"browserKeys,omitempty"`
 	// InputKinds are kinds the draft's inputs block must declare, so the
 	// block is required; InputViews are the views a declared block may
-	// choose, checked only when there is one (agentry-cli#634). Neither is
-	// checked when empty.
+	// choose, checked only when there is one. Neither is checked when
+	// empty.
 	InputKinds []string `json:"inputKinds,omitempty"`
 	InputViews []string `json:"inputViews,omitempty"`
 	// Keys is the marking the description calls for on every key a draft
 	// declares: "optional" when the QuickAgent can do its job without it,
 	// so each is in optionalSecrets, "required" when it cannot, so none is;
-	// not checked when empty (plan optional-secrets.md D3, agentry-cli#652).
+	// not checked when empty.
 	Keys string `json:"keys,omitempty"`
 	// Remote maps the host of each vendor's remote MCP server the draft
 	// must declare by address to how it must sign in (oauth, secret or
 	// none), and SignIns are the package servers (ecosystem:package) that
-	// must carry the sign-in the guide lists for them (agentry-cli#667).
-	// Neither is checked when empty.
+	// must carry the sign-in the guide lists for them. Neither is checked
+	// when empty.
 	Remote  map[string]string `json:"remote,omitempty"`
 	SignIns []string          `json:"signIns,omitempty"`
 	// PDF wants the result as a PDF: the instructions call export_pdf and
-	// break none of the Drafter's rules on PDFs (agentry-cli#787). Not
-	// checked when false.
+	// break none of the Drafter's rules on PDFs. Not checked when false.
 	PDF bool `json:"pdf,omitempty"`
 }
 
@@ -153,8 +152,8 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 		if s.Version == "" || strings.ContainsAny(s.Version, "^~*<> ") || s.Version == "latest" {
 			out = append(out, fmt.Sprintf("server %s is not pinned at an exact version (%q)", s.SourceID(), s.Version))
 		}
-		// The post-step's list check (agentry-cli#660) has had its say by
-		// now; a pin it covers that is still here is the bench's to count.
+		// The post-step's list check has had its say by now; a pin it
+		// covers that is still here is the bench's to count.
 		if list != nil {
 			eco, pkg := packageOf(s)
 			if e, ok := list.NotRunHere(eco, pkg, s.Version); ok {
@@ -258,7 +257,7 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	if n := len(d.Instructions); n > MaxInstructionBytes {
 		out = append(out, fmt.Sprintf("instructions of %d bytes, want at most %d", n, MaxInstructionBytes))
 	}
-	// The Drafter's own caps (plan builder-simplify.md §5.1, D8).
+	// The Drafter's own caps.
 	if n := len(m.Intake); n > MaxIntake {
 		out = append(out, fmt.Sprintf("%d intake questions, want at most %d", n, MaxIntake))
 	}
@@ -274,9 +273,8 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	return out
 }
 
-// instructionShape is the generated AGENT.md's fixed shape (plan
-// builder-simplify.md §5.1; Background and Checks since agentry-cli#521,
-// plan knowledge-and-drafter.md D5): its six headings, in this order.
+// instructionShape is the generated AGENT.md's fixed shape: its six headings,
+// in this order.
 var instructionShape = []string{"## Role", "## Inputs", "## Steps", "## Output", "## Background", "## Checks"}
 
 // inOrder says every heading is a line of text, in order.

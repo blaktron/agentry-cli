@@ -57,7 +57,7 @@
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
     "dataAccess": "declared tickets; no servers cataloged by policy (declaration recorded for audit)",
-    "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools container is the runner image with the operator's catalogued packages installed (git ← apk git, jq ← apk jq) and minimized to exactly those binaries (per-QuickAgent exec image, agentry-cli#9, #100); git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned",
+    "exec": "run_command restricted to argv0 allowlist + shim PATH {git, jq}; tools container is the runner image with the operator's catalogued packages installed (git ← apk git, jq ← apk jq) and minimized to exactly those binaries (per-QuickAgent exec image); git: safe.directory covers the run's workspace and inputs mounts in the image's /etc/gitconfig, so a bind mount owned by the host user is not refused as dubiously owned",
     "filesystem": "read workspace; write paths {notes/summary.md, reports} — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; the run's docker filter (in the CLI on Linux, in a container of the run's own on Docker Desktop) mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; where no filter runs it is the container's own layer, unbounded",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
     "network": "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: api.example.com, api.other.net",
@@ -219,11 +219,11 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "a71acc02135997b891298d866eb3fa0fc23fb4d49a19790633f802cedd842c0b",
+    "gateway/catalog.yaml": "2411a60dcab39f267f5187856c42cbaf27506583849bad2a259802632c911ade",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "255a810dbbe8c2afb8db71aa982c97201466805000241edaf935404dfe1649a9",
     "gateway/toolspec.json": "5b9e738b078055b709640f3d6b67e4307f8b7a3f28ac6062907d9666eb0f43d9",
-    "harness/agent.yaml": "afacbb8ae9f412c3b06c3bd64b100a8b4d363e9c25f85a719cf59a10480bcf49"
+    "harness/agent.yaml": "4a364b42321e1906f601f0c640cf65a3501aac5877468ad61f68cc3a0c50cec4"
   }
 }

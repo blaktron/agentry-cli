@@ -1,9 +1,8 @@
-// Package claudesignin is "Use your Claude subscription (runs Claude Code)"
-// (plan model-sign-ins.md §4.4, D19–D24; agentry-cli#740): Claude Code's own
-// sign-in into a config directory of Agentry's, and its removal. The CLI
-// (`agentry model-signins add|remove claude`, `agentry setup`) and the
-// desktop's model setup both call it, so there is one implementation per
-// machine (agentry-cli#844).
+// Package claudesignin is "Use your Claude subscription (runs Claude Code)":
+// Claude Code's own sign-in into a config directory of Agentry's, and its
+// removal. The CLI (`agentry model-signins add|remove claude`, `agentry setup`)
+// and the desktop's model setup both call it, so there is one implementation
+// per machine.
 //
 // Anthropic forbids a third party to "collect, store, or intermediate
 // Claude.ai credentials or session tokens", so Agentry never runs this
@@ -13,7 +12,7 @@
 // Agentry never reads that directory. Each Claude Code signs in where it
 // runs: the image (the default) in its docker volume, through the person's
 // browser with Claude Code's callback relayed into the container
-// (browser.go, agentry-cli#848), pasting the code Anthropic's page shows
+// (browser.go), pasting the code Anthropic's page shows
 // only where that cannot work; the installed Claude Code in a directory
 // under the model sign-in store, with its own browser and callback.
 package claudesignin
@@ -384,7 +383,7 @@ func (s SignIn) Run(ctx context.Context, p Person, installed bool) (*modelsignin
 }
 
 // Kept is the account the image's sign-in names, for "Signed in as …": ""
-// when there is none (the image's sign-in is the default adapter's, D23).
+// when there is none (the image's sign-in is the default adapter's).
 func Kept(home string) string {
 	r, err := modelsignin.Open(home, nil).Get(modelsignin.Claude)
 	if err != nil || r.ConfigDir == "" {

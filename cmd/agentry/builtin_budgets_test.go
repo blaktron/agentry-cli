@@ -34,11 +34,10 @@ func savePolicyBudgets(t *testing.T, policyPath string, b policy.Budgets) {
 	}
 }
 
-// TestADraftOnThisComputerGetsThirtyMinutes (plan scan-and-run-tweaks.md
-// §6.1, D14; agentry-cli#500): the Drafter's run is given the longer of the
-// policy's timeout and 1,800 seconds; --timeout still wins, shorter or
-// longer; the tool-call and cost caps stay the policy's; and a hosted
-// draft, whose caps travel in its job, is given no floor.
+// TestADraftOnThisComputerGetsThirtyMinutes: the Drafter's run is given the
+// longer of the policy's timeout and 1,800 seconds; --timeout still wins,
+// shorter or longer; the tool-call and cost caps stay the policy's; and a
+// hosted draft, whose caps travel in its job, is given no floor.
 func TestADraftOnThisComputerGetsThirtyMinutes(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -152,8 +151,7 @@ func creatorBuilds(t *testing.T, env *receipt.Envelope, err error) *[]build.Opti
 	return &got
 }
 
-// TestAKnowledgeBuildOnThisComputerGetsSixtyMinutes (plan
-// scan-and-run-tweaks.md §6.2, D13; agentry-cli#500): the Creator's run is
+// TestAKnowledgeBuildOnThisComputerGetsSixtyMinutes: the Creator's run is
 // given the longer of the policy's timeout and 3,600 seconds, for create
 // and for add; --timeout still wins, which is how a sandbox host's job
 // carries its own caps; the tool-call and cost caps stay the policy's.
@@ -241,18 +239,16 @@ func narrationInCredits(stderr string) bool {
 	return wordedInCredits(costsNoCredits.ReplaceAllString(stderr, ""))
 }
 
-// TestALocalRunReportsTokensAndNeverCredits (plan scan-and-run-tweaks.md
-// invariant 10; agentry-cli#500): a run to the person's own model provider
-// reports its usage in tokens, in the envelope and in the narration a
-// driver reads, and is never translated into credits. Credits are what a
-// hosted run reports, and the registry works those out from this same
-// narration; the CLI never does. Stdout, where the envelope and the report
-// go, never uses the word; stderr uses it only to say the run costs none.
-// The text form prints no usage at all, so its token counts are the json
-// form's to show. `agentry run` has no seam for a fake docker client at
-// the command: its half is the engine's, TestALocalRunsOutputIsInTokens,
-// with the narration line here and the envelope's shape in
-// TestNoReceiptFieldIsNamedInCredits.
+// TestALocalRunReportsTokensAndNeverCredits: a run to the person's own model
+// provider reports its usage in tokens, in the envelope and in the narration a
+// driver reads, and is never translated into credits. Credits are what a hosted
+// run reports, and the registry works those out from this same narration; the
+// CLI never does. Stdout, where the envelope and the report go, never uses the
+// word; stderr uses it only to say the run costs none. The text form prints no
+// usage at all, so its token counts are the json form's to show. `agentry run`
+// has no seam for a fake docker client at the command: its half is the
+// engine's, TestALocalRunsOutputIsInTokens, with the narration line here and
+// the envelope's shape in TestNoReceiptFieldIsNamedInCredits.
 func TestALocalRunReportsTokensAndNeverCredits(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)

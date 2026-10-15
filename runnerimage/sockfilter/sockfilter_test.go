@@ -293,7 +293,7 @@ func (g *rig) refused(t *testing.T, name, method, p string, body any, reason str
 	}
 }
 
-// The acceptance test of agentry-cli#219: run A's gateway tries to list,
+// The acceptance test: run A's gateway tries to list,
 // inspect, exec into, stop and create against run B's objects, and each is
 // refused before it reaches the daemon; the same verbs on its own pass.
 func TestAnotherRunsObjectsAreRefused(t *testing.T) {
@@ -649,8 +649,8 @@ func TestARelayIsOnlyARelay(t *testing.T) {
 }
 
 // The gateway's L7 relay, the tools server's way to the agent's declared
-// hosts, takes ALLOWED_HOSTS alone, each host:port one the run declared
-// (agentry-cli#346); the two relay forms never mix.
+// hosts, takes ALLOWED_HOSTS alone, each host:port one the run declared;
+// the two relay forms never mix.
 func TestAnL7RelayReachesOnlyTheDeclaredHosts(t *testing.T) {
 	g := newRig(t, Limits{}, func(c *Config) { c.RelayHosts = []string{"api.osv.dev", "api.frankfurter.dev:443"} })
 	l7 := func(env ...string) map[string]any {
@@ -763,7 +763,7 @@ func TestTheGatewaysRelayNamesAreTheRunsNetworks(t *testing.T) {
 	g.refused(t, "removing the run's relay network", "DELETE", "/networks/"+intNet, nil, "not the gateway's to remove")
 }
 
-// Under the policy's runtime (agentry-cli#221): every container the
+// Under the policy's runtime: every container the
 // gateway makes but a relay runs under it, the gateway choosing none; a
 // sandboxed server cannot reach docker's DNS, so each of its links becomes
 // an /etc/hosts entry for the linked relay's address on the network they
@@ -842,8 +842,7 @@ func TestTheGatewaysContainersRunUnderTheRunsRuntime(t *testing.T) {
 // With the run's own resolv.conf, a relay runs under the run's runtime and
 // reads that file in place of docker's; without it, the relay stays on the
 // daemon's default as before. Under the runtime, a started container is
-// never connected to a network: a sandbox would take no such network
-// (agentry-cli#337).
+// never connected to a network: a sandbox would take no such network.
 func TestRelaysRunUnderTheRuntimeWithTheHostsResolvers(t *testing.T) {
 	relays := func(c *Config) {
 		c.SharedNetworks = []string{"agentry-A-relays"}
@@ -924,7 +923,7 @@ func TestTheRunsLimitsBoundEveryContainer(t *testing.T) {
 	}
 }
 
-// TestEveryGatewayContainerDropsItsCapabilities (agentry-cli#227, DR-95):
+// TestEveryGatewayContainerDropsItsCapabilities:
 // whatever the gateway asks, each container it creates drops every
 // capability and gets back only its class's: a relay none, the run's tools
 // server its toolsrv set, a declared server read past the store's mode, and
@@ -1037,7 +1036,7 @@ func TestEventsAreScopedToTheRun(t *testing.T) {
 	}
 }
 
-// The built-in Drafter's web tools (agentry-cli#345): their server asks for
+// The built-in Drafter's web tools: their server asks for
 // the daemon's default network, which the filter gives no container; it
 // joins the run's own web network instead, in its one shape, and nothing
 // else does.
@@ -1148,7 +1147,7 @@ func TestTheWebNetworkTakesOnlyTheWebToolsServer(t *testing.T) {
 	}
 }
 
-// TestTheWebToolsServerResolvesThroughTheRunsResolvConf (agentry-cli#386):
+// TestTheWebToolsServerResolvesThroughTheRunsResolvConf:
 // with the run's resolv.conf configured, the filter binds it read-only at
 // /etc/resolv.conf in the web tools' server, and in no other container; the
 // gateway may not bind a resolv.conf of its own there, nor set DNS servers,
@@ -1278,7 +1277,7 @@ func TestTheWebToolsServerResolvesThroughTheRunsResolvConf(t *testing.T) {
 	}
 }
 
-// TestTheToolsServerGetsTheRunsBoundedTmpfs (agentry-cli#599, #729): the
+// TestTheToolsServerGetsTheRunsBoundedTmpfs: the
 // filter mounts ToolsTmpfs into the tools server, the container of
 // ToolsImage running ToolsCmd, and into nothing else; a request that puts
 // anything of the gateway's at or beneath those targets is refused.
@@ -1334,7 +1333,7 @@ func TestTheToolsServerGetsTheRunsBoundedTmpfs(t *testing.T) {
 	}
 }
 
-// TestTheToolsServerTakesTheHostLinksCopyFolder (agentry-cli#861): the one
+// TestTheToolsServerTakesTheHostLinksCopyFolder: the one
 // bind the tools server may have beneath its scratch tmpfs is the host
 // link's copy folder at /scratch/hosts, the run's own; another folder
 // there, or that folder anywhere else beneath the tmpfs, is refused.
@@ -1380,10 +1379,9 @@ func TestTheToolsServerTakesTheHostLinksCopyFolder(t *testing.T) {
 	}
 }
 
-// TestATargetHostsRelayReachesItsOneAddressAndPort is invariant 3 of plan
-// runtime-hosts.md (agentry-cli#861): a target host's relay is admitted to
-// the address the person's machine resolved and the port they named, and a
-// relay to any other address or port is refused.
+// TestATargetHostsRelayReachesItsOneAddressAndPort: a target host's relay is
+// admitted to the address the person's machine resolved and the port they
+// named, and a relay to any other address or port is refused.
 func TestATargetHostsRelayReachesItsOneAddressAndPort(t *testing.T) {
 	g := newRig(t, Limits{}, func(c *Config) { c.RelayHosts = []string{"203.0.113.4:2222"} })
 	relay := func(env ...string) map[string]any {
@@ -1402,10 +1400,10 @@ func TestATargetHostsRelayReachesItsOneAddressAndPort(t *testing.T) {
 	}
 }
 
-// A container inherits its image's labels: the image label (agentry-cli#892)
+// A container inherits its image's labels: the image label
 // makes nothing the run's, even carrying the run's own id as its value.
 // imageLabelKey is imagelabel.Key, spelled here because the runner image's
-// build context is stdlib-only (agentry-cli#322); pkg/runner/engine's
+// build context is stdlib-only; pkg/runner/engine's
 // TestTheFiltersImageLabelIsTheRunners holds the two equal.
 const imageLabelKey = "org.agentry.image"
 

@@ -11,7 +11,7 @@ import (
 )
 
 // Golden: the LaunchAgent holds the binary, the schedule id, paths and the
-// calendar, and nothing else (invariant 7).
+// calendar, and nothing else.
 func TestLaunchAgentPlistGolden(t *testing.T) {
 	unixAlarm(t)
 	sc := sample(t)
@@ -241,7 +241,7 @@ func TestLaunchdRemoveFromItsOwnFire(t *testing.T) {
 }
 
 // A pause or a removal made while a run is going does not boot the agent
-// out: launchd would stop the run before it is recorded (invariant 8).
+// out: launchd would stop the run before it is recorded.
 func TestLaunchdRemoveSparesARunningAgent(t *testing.T) {
 	unixAlarm(t)
 	l, f := newFakeLaunchd(t)

@@ -45,13 +45,13 @@ var update = flag.Bool("update", false, "rewrite the drafting guide's generated 
 const updateGuide = "go test ./pkg/drafter -run TestTheDraftingGuideIsCurrent -update"
 
 // runtimeFacts is sources/runtime-facts.md: the defaults the guide's pages
-// state (plan drafter-knowledge.md D6; agentry-cli#657). The values the
-// code holds as exported constants (the runtime images and versions, the
-// server cap, the container limits, the base commands) are read from them,
-// so those cannot drift from the runner. The install flags, port 443 and
-// musl are written here as the runner's code writes them inline; a change
-// there must change this text, and the page tests below hold the pages to
-// it. The fetch tool's response cap and timeout are the tools server's.
+// state. The values the code holds as exported constants (the runtime
+// images and versions, the server cap, the container limits, the base
+// commands) are read from them, so those cannot drift from the runner. The
+// install flags, port 443 and musl are written here as the runner's code
+// writes them inline; a change there must change this text, and the page
+// tests below hold the pages to it. The fetch tool's response cap and
+// timeout are the tools server's.
 func runtimeFacts() []byte {
 	var b bytes.Buffer
 	b.WriteString("# Runtime facts\n\n")
@@ -99,9 +99,8 @@ func runtimeFacts() []byte {
 }
 
 // serverListPages are the guide's two list pages, rendered from
-// ServerListFile (plan drafter-knowledge.md §4.4; agentry-cli#658): each
-// entry with what was observed, on which runtime, on which date, and
-// never a word of safety or quality.
+// ServerListFile: each entry with what was observed, on which runtime,
+// on which date, and never a word of safety or quality.
 func serverListPages(t *testing.T) map[string][]byte {
 	t.Helper()
 	l, err := LoadServerList(os.DirFS("."))
@@ -176,9 +175,9 @@ func serverListPages(t *testing.T) map[string][]byte {
 	return pages
 }
 
-// signInsPage renders the list's remote servers and package sign-ins
-// (agentry-cli#667): what each vendor's server asks of whoever runs it,
-// and the package sign-ins a draft may copy.
+// signInsPage renders the list's remote servers and package sign-ins:
+// what each vendor's server asks of whoever runs it, and the package
+// sign-ins a draft may copy.
 func signInsPage(t *testing.T, l *ServerList) []byte {
 	t.Helper()
 	var updated time.Time
@@ -441,9 +440,9 @@ func TestTheDraftingGuideStatesTheRuntime(t *testing.T) {
 // package's tree; heldText reads any other path as a page of the guide.
 const instructionFile = "AGENT.md"
 
-// guideFile is a file the tests hold to the code (plan drafter-knowledge.md
-// D6, D11; agentry-cli#659): the instruction, or a page of the guide by its
-// path under the wiki (manifest/manifest.md), as the package embeds it.
+// guideFile is a file the tests hold to the code: the instruction, or a page
+// of the guide by its path under the wiki (manifest/manifest.md), as the
+// package embeds it.
 func guideFile(t *testing.T, rel string) []byte {
 	t.Helper()
 	p := rel
@@ -518,9 +517,8 @@ func numberWord(n int) string {
 
 // TestTheInstructionNamesTheGuide: AGENT.md names the pack, sends the
 // Drafter to the servers page before it pins a server and to the
-// manifest's bounds before it returns (plan drafter-knowledge.md §4.3,
-// D11), and every page it or the repair turn's framing names is a page of
-// the guide, so the map cannot point at nothing.
+// manifest's bounds before it returns, and every page it or the repair turn's
+// framing names is a page of the guide, so the map cannot point at nothing.
 func TestTheInstructionNamesTheGuide(t *testing.T) {
 	mustSay(t, map[string][]string{
 		instructionFile: {
@@ -563,12 +561,9 @@ func TestEveryPageIsOnTheMap(t *testing.T) {
 	}
 }
 
-// stubPages are the pages that state today's facts until the milestone
-// that changes them rewrites them (plan drafter-knowledge.md §4.3, D6):
-// what holds publishing (plan quickagents-that-run.md M8, agentry#893). The
-// input cases were rewritten by agentry-cli#634 (M7), and the keys page by
-// optional secrets M6 (agentry-cli#652). The pages are public text and
-// name the change, not the plan.
+// stubPages are the pages that state today's facts until a later release
+// rewrites them. The pages are public text and name the change, not the
+// plan.
 var stubPages = []string{"draft/review.md"}
 
 // TestTheStubPagesSayTheyAreTodaysFacts: each stub says it states today's
@@ -583,8 +578,8 @@ func TestTheStubPagesSayTheyAreTodaysFacts(t *testing.T) {
 	}
 }
 
-// TestTheGuidesPagesStateTheRules: the rules that moved off AGENT.md are
-// stated on the pages that now carry them, each where a draft reads it.
+// TestTheGuidesPagesStateTheRules: the rules the guide carries are stated
+// on its pages, each where a draft reads it.
 func TestTheGuidesPagesStateTheRules(t *testing.T) {
 	mustSay(t, map[string][]string{
 		"manifest/egress-and-fetch.md":  {"**Never `\"*\"`.**", "A host an MCP server reaches goes in that server's `egress`, not here.", "port 443"},
@@ -668,8 +663,7 @@ func entriesWord(n int) string {
 	return fmt.Sprintf("%d entries", n)
 }
 
-// TestTheGuideTeachesInputSources (input sources M8, agentry-cli#835;
-// plan input-sources.md §5, §6): the instruction and the guide's pages ask
+// TestTheGuideTeachesInputSources: the instruction and the guide's pages ask
 // for a codebase by a repository question and a file at an address by a
 // url question, declare no egress and no key to fetch either, never advise
 // a .zip for a repository, and teach fetch's saveTo, the scratch tools and

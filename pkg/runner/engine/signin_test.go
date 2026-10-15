@@ -28,7 +28,7 @@ const (
 	signInAccessToken  = "plan-access-token-0123456789abcdef"
 	signInRenewedToken = "plan-renewed-token-fedcba9876543210"
 	// What the person's store holds beside the access token, and the run
-	// must never see (I3): the CLI's glue keeps them (modelsignin).
+	// must never see: the CLI's glue keeps them (modelsignin).
 	signInRefreshToken = "plan-refresh-token-never-in-a-run"
 )
 
@@ -109,11 +109,11 @@ func agentCall(t *testing.T, f *dockerx.Fake) dockerx.RunSpec {
 }
 
 // A token-file sign-in: the agent container mounts the plan and one
-// read-only folder holding the token file and nothing else (I4); the file
-// holds the access token alone, 0600, and a renewal rewrites it before
-// the token expires; the token is in no docker call, no receipt and no
-// output, and dies with the run (I3, I6); the receipt names the kind and
-// the image's pin (I8) and reports tokens, not the harness's dollars (D13).
+// read-only folder holding the token file and nothing else; the file holds
+// the access token alone, 0600, and a renewal rewrites it before the token
+// expires; the token is in no docker call, no receipt and no output, and
+// dies with the run; the receipt names the kind and the image's pin and
+// reports tokens, not the harness's dollars.
 func TestASignInTokenReachesTheAgentAloneAndIsRenewed(t *testing.T) {
 	p, f := signInFixture(t, signintest.TokenAdapter, policy.KeyKindChatGPTPlan)
 	p.ModelSignIn.Token.ExpiresAt = time.Now().Add(3 * time.Second)
@@ -296,7 +296,7 @@ func TestAnUnrenewedTokenIsSaidSo(t *testing.T) {
 
 // Every refusal is made before the daemon is touched: no grant (exit 11,
 // signin-missing), a grant of another kind (11), a grant handed to a run
-// compiled for a key (11), and a cost budget (exit 2, D13).
+// compiled for a key (11), and a cost budget (exit 2).
 func TestASignInRunRefusesWhatItWasNotCompiledFor(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -335,8 +335,8 @@ func TestASignInRunRefusesWhatItWasNotCompiledFor(t *testing.T) {
 	}
 }
 
-// A plan limit ends the run with its own outcome (I9): the budget class
-// with reason plan-limit, the vendor's words and the reset time it gave,
+// A plan limit ends the run with its own outcome: the budget class with
+// reason plan-limit, the vendor's words and the reset time it gave,
 // never a success though the harness exits 0, and the agent ran once.
 func TestAPlanLimitEndsTheRunWithItsOwnOutcome(t *testing.T) {
 	p, f := signInFixture(t, signintest.TokenAdapter, policy.KeyKindChatGPTPlan)
@@ -412,7 +412,7 @@ func (d *planLimitDriver) Prompt(ctx context.Context, text string) (*adapter.Tur
 	return turn, err
 }
 
-// A plan limit ends a session with its own reason and outcome (I9): the
+// A plan limit ends a session with its own reason and outcome: the
 // plan_limit end, exit 16 with reason plan-limit, and no further turn.
 func TestAPlanLimitEndsASession(t *testing.T) {
 	p, f := sessionFixture(t)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# M-R2 acceptance (RUNNER-PLAN §R12): the real execute path on a plain
-# docker engine — first-use image install, gateway + tools + proxy + agent
-# containers, result envelope, receipts, and the no-leak teardown sweep.
+# Runner acceptance, the real execute path on a plain docker engine:
+# first-use image install, gateway + tools + proxy + agent containers,
+# result envelope, receipts, and the no-leak teardown sweep.
 #
 # Requirements (the script gates on each and says so):
 #   - a reachable docker daemon (docker CE is enough; no Desktop features)
@@ -15,12 +15,12 @@ AGENTRY=${AGENTRY:-bin/agentry}
 [ -x "$AGENTRY" ] || make build >/dev/null
 
 if ! docker info >/dev/null 2>&1; then
-  echo "SKIP: no reachable docker daemon (RUNNER-DEVIATIONS DR-7)" >&2
+  echo "SKIP: no reachable docker daemon" >&2
   exit 0
 fi
-# The model comes from the operator policy when one exists (agentry-cli#56):
-# its apiKeyEnv names the variable that must be set. Without a policy the
-# runner's built-in default (anthropic, ANTHROPIC_API_KEY) applies as before.
+# The model comes from the operator policy when one exists: its apiKeyEnv
+# names the variable that must be set. Without a policy the runner's built-in
+# default (anthropic, ANTHROPIC_API_KEY) applies.
 POLICY=${AGENTRY_POLICY:-$HOME/.agentry/runner/policy.yaml}
 POLICY_FLAG=()
 KEY_ENV=ANTHROPIC_API_KEY
@@ -35,10 +35,10 @@ if [ -z "${!KEY_ENV:-}" ]; then
 fi
 
 WORK=$(mktemp -d)
-# The leak sweep runs whatever happened: under set -e a failed run used to
-# skip it, so "teardown on every path" was only ever checked on the
-# success path (agentry-cli#160). A leak found after a failure is reported
-# beside the failure; the exit status stays the failure's.
+# The leak sweep runs whatever happened: under set -e a failed run would
+# skip it, and "teardown on every path" would be checked on the success path
+# only. A leak found after a failure is reported beside the failure; the exit
+# status stays the failure's.
 RUN_PID=""
 sweep_leftovers() {
   local rc=$?
@@ -57,7 +57,7 @@ sweep_leftovers() {
   exit $rc
 }
 trap sweep_leftovers EXIT
-# The gateway's daemon socket is a per-run filter (agentry-cli#219): the
+# The gateway's daemon socket is a per-run filter: the
 # receipt names it, and a run whose gateway was refused anything fails
 # here with the refusals, since a working run's gateway needs nothing the
 # filter denies.
@@ -70,8 +70,8 @@ check_filter() {
   [ -z "$refused" ] || { echo "FAIL: the docker filter refused the gateway:"; echo "$refused"; exit 1; }
 }
 export AGENTRY_RUNNER_HOME="$WORK/home"
-# The consent records `agentry run` writes (§R1) go to the throwaway config
-# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+# The consent records `agentry run` writes go to the throwaway config dir,
+# not the person's ~/.config/agentry/installed.yaml.
 export AGENTRY_CONFIG_DIR="$WORK/config"
 OUT="$WORK/out"
 
@@ -81,9 +81,8 @@ echo "prepare ok"
 
 # The run itself: task on stdin, envelope on stdout. It runs in the
 # background so the containers can be inspected while they are live —
-# the §9 row's "gateway never without --block-network; agent container
-# internal-only, no published ports, no secret in its environment" was
-# proven only against the docker fake until agentry-cli#160.
+# the gateway never runs without --block-network, and the agent container is
+# internal-only with no published ports and no secret in its environment.
 echo "please make the report" | "$AGENTRY" run --local testdata/runner/hello-report ${POLICY_FLAG[@]+"${POLICY_FLAG[@]}"} \
   --allow-unsigned --yes --out "$OUT" --output-format json --timeout 300 >"$WORK/envelope.json" &
 RUN_PID=$!
@@ -104,12 +103,12 @@ if [ -n "$AGENT" ]; then
   PORTS=$(docker inspect "$AGENT" --format '{{json .NetworkSettings.Ports}}')
   echo "$PORTS" | grep -q 'HostPort' && { echo "FAIL: agent container publishes a port: $PORTS"; exit 1; }
   # The agent holds the model key under the provider's name by necessity
-  # (agentry-cli#96) and the gateway token it calls the gateway with; what
-  # it must never hold is the registry credential (nothing in pkg/runner
-  # reads AGENTRY_TOKEN) or the daemon's socket (§R4: the gateway alone).
+  # and the gateway token it calls the gateway with; what it must never hold
+  # is the registry credential (nothing in pkg/runner reads AGENTRY_TOKEN) or
+  # the daemon's socket (the gateway alone has one, through the filter).
   docker inspect "$AGENT" --format '{{join .Config.Env "\n"}}' | grep -q '^AGENTRY_TOKEN=' && { echo "FAIL: the registry token is in the agent container's environment"; exit 1; }
   docker inspect "$AGENT" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q 'docker.sock' && { echo "FAIL: the agent container mounts the docker socket"; exit 1; }
-  # The container posture (agentry-cli#163): every capability dropped and
+  # The container posture: every capability dropped and
   # no-new-privileges on the agent and the gateway, a read-only root and a
   # pids and memory bound on the agent, and the bounds passed to what the
   # gateway launches.
@@ -139,10 +138,9 @@ fi
 check_filter "$OUT"
 echo "envelope + receipts ok; the docker filter refused nothing"
 
-# docker.runtime (DR-23): when the operator policy names a runtime, the
-# receipt names it too, class by class (agentry-cli#221) — the receipt
-# line is the runner's claim, so it is asserted only when the policy made
-# one.
+# docker.runtime: when the operator policy names a runtime, the receipt names
+# it too, class by class. The receipt line is the runner's claim, so it is
+# asserted only when the policy made one.
 if [ -f "$POLICY" ] && RUNTIME=$(awk '/^docker:/{d=1; next} d && /^[^ ]/{d=0} d && /^ *runtime:/{print $2; exit}' "$POLICY") && [ -n "$RUNTIME" ]; then
   grep -q "\"runtime\": \"$RUNTIME:" "$OUT/result.json" || { echo "FAIL: policy names docker.runtime $RUNTIME but the receipt does not"; grep '"runtime"' "$OUT/result.json"; exit 1; }
   grep '"runtime":' "$OUT/result.json" | grep -q "the gateway's health probe" || { echo "FAIL: the receipt's runtime line does not name each class"; grep '"runtime"' "$OUT/result.json"; exit 1; }
@@ -151,14 +149,14 @@ else
   if grep -q '"runtime":' "$OUT/result.json"; then echo "FAIL: the receipt names a runtime the policy never set"; exit 1; fi
 fi
 
-# The exec catalog (agentry-cli#100): a QuickAgent declaring exec [git]
+# The exec catalog: a QuickAgent declaring exec [git]
 # runs in an exec image built from the catalogued package, and the receipt
 # names the packages the build resolved. The model's use of git is not
-# asserted (its tool-call shape varies; agentry-cli#113) — the build, the
-# record and the receipt line are.
+# asserted (its tool-call shape varies); the build, the record and the
+# receipt line are.
 EXECPOL="$WORK/policy-exec.yaml"
 # With AGENTRY_RUNNER_HOME exported above, --prepare writes its default
-# policy under that home, not the user's (agentry-cli#149).
+# policy under that home, not the user's.
 if [ -f "$POLICY" ]; then cp "$POLICY" "$EXECPOL"; else "$AGENTRY" run --local testdata/runner/hello-report --allow-unsigned --yes --prepare >/dev/null 2>&1; cp "$AGENTRY_RUNNER_HOME/policy.yaml" "$EXECPOL"; fi
 if ! grep -q '^exec:' "$EXECPOL"; then printf 'exec:\n  packages:\n    git: git\n' >> "$EXECPOL"; fi
 EXECOUT="$WORK/out-exec"
@@ -170,8 +168,8 @@ grep -q 'safe.directory' "$EXECOUT/result.json" || { echo "FAIL: receipt does no
 check_filter "$EXECOUT"
 echo "exec catalog: image built, receipt names the packages"
 
-# A declared MCP server (agentry-cli#160): the gateway starts relay
-# sidecars for it, and DR-22's teardown assertion below is about them. The
+# A declared MCP server: the gateway starts relay sidecars for it, and the
+# teardown assertion below is about them. The
 # fixture pins the same server the examples use; the install needs the
 # registry (npm) reachable from the docker host.
 MCPOUT="$WORK/out-mcp"
@@ -182,7 +180,7 @@ grep -q '"status": "ok"' "$WORK/envelope-mcp.json" || { echo "FAIL: declared-ser
 check_filter "$MCPOUT"
 echo "declared MCP server: run ok, relays launched through the docker filter"
 
-# A declared remote MCP server (agentry-cli#663): the gateway launches the
+# A declared remote MCP server: the gateway launches the
 # runner image's bridge for it like any declared server, behind one relay to
 # the server's host, through the docker filter. The fixture's server is
 # DeepWiki's public one (no sign-in), so the docker host needs to reach
@@ -197,7 +195,7 @@ grep -q 'https://mcp.deepwiki.com/mcp (auth none' "$REMOTEOUT/result.json" || { 
 grep -qE 'docker-mcp-l[47]proxy-[^ ]+ for mcp\.deepwiki\.com' "$REMOTEOUT/receipts/gateway.log" || { echo "FAIL: no relay to mcp.deepwiki.com named in the remote run's gateway.log"; exit 1; }
 echo "declared remote MCP server: run ok, bridged behind one relay through the docker filter"
 
-# §R11 invariant 6: nothing of ours survives. (The EXIT trap repeats this
+# Nothing of ours survives. (The EXIT trap repeats this
 # on every path; here it is the success-path assertion with the names.)
 LEFT=$(docker ps -a --filter label=agentry.run --format '{{.Names}}')
 [ -z "$LEFT" ] || { echo "FAIL: leftover containers: $LEFT"; exit 1; }
@@ -208,14 +206,13 @@ VOLS=$(docker volume ls --filter label=agentry.run --format '{{.Name}}')
 find "$AGENTRY_RUNNER_HOME" -name secrets.env | grep -q . && { echo "FAIL: secrets.env survived"; exit 1; }
 find "$AGENTRY_RUNNER_HOME" -type d -name connections -path '*/cfg/*' | grep -q . && { echo "FAIL: a run's connection folders survived"; exit 1; }
 # The relay sidecars the gateway started for a declared server are reaped
-# by the names its log gave them (agentry-cli#106, #108): none named in any
+# by the names its log gave them: none named in any
 # run's gateway.log receipt may survive. Checked by name, never by label —
 # the user's own docker mcp gateway may have relays of its own. The list
 # must be non-empty: the mcp-osv run above declares a server, so an empty
-# list means the assertion is looping over nothing (DR-22 was "accepted"
-# on exactly that for a while, agentry-cli#160).
+# list means the assertion is looping over nothing.
 RELAYS=$(cat "$OUT"/receipts/gateway.log "$EXECOUT"/receipts/gateway.log "$MCPOUT"/receipts/gateway.log "$REMOTEOUT"/receipts/gateway.log 2>/dev/null | grep -oE '^(starting l4 proxy docker-mcp-l4proxy-[^ ]+ for|[[:space:]]+- Starting l7 proxy docker-mcp-l7proxy-[^ ]+ for)' | grep -oE 'docker-mcp-l[47]proxy-[^ ]+' | sort -u || true)
-[ -n "$RELAYS" ] || { echo "FAIL: no relay sidecar named in any gateway.log — the declared-server fixture started none, so the DR-22 assertion proves nothing"; exit 1; }
+[ -n "$RELAYS" ] || { echo "FAIL: no relay sidecar named in any gateway.log — the declared-server fixture started none, so the assertion proves nothing"; exit 1; }
 for r in $RELAYS; do
   docker ps -a --format '{{.Names}}' | grep -qx "$r" && { echo "FAIL: relay sidecar $r survived teardown"; exit 1; }
 done

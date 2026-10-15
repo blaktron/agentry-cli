@@ -10,10 +10,9 @@ import (
 )
 
 // The gateway image's VOLUME /misc is mounted as an anonymous volume that
-// carries the run's labels, so it is not the unlabelled volume every run
-// used to leave behind (agentry-cli#458). Teardown removes the gateway by
-// RemoveForce, which takes its anonymous volumes (-v, pinned in dockerx's
-// TestCLIStopAndRemoveForce), and then every volume the run label finds:
+// carries the run's labels, so it is not an unlabelled volume left behind
+// by every run. Teardown removes the gateway by RemoveForce, which takes
+// its anonymous volumes (-v, pinned in dockerx's TestCLIStopAndRemoveForce), and then every volume the run label finds:
 // the gateway's /misc as well, had its container gone some other way.
 func TestTheGatewaysVolumeIsTheRunsAndGoesWithIt(t *testing.T) {
 	p, f := fixture(t)
@@ -44,7 +43,7 @@ func TestTheGatewaysVolumeIsTheRunsAndGoesWithIt(t *testing.T) {
 }
 
 // A dead run's labelled volumes go with its containers, beside its session
-// volume by name; a live sibling's are never listed (agentry-cli#458).
+// volume by name; a live sibling's are never listed.
 func TestSweepRemovesADeadRunsLabelledVolumes(t *testing.T) {
 	dead := deadOwner(t)
 	f := &dockerx.Fake{

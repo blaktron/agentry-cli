@@ -2,7 +2,7 @@
 // stdio, exactly as the runner image's `tools` mode does inside the tools
 // container. It exists for two reasons: debugging a tool spec without a
 // docker round-trip, and letting acceptance scripts exercise the MCP
-// surface on machines with no engine (RUNNER-DEVIATIONS DR-7).
+// surface on machines with no engine.
 package main
 
 import (
@@ -19,7 +19,7 @@ import (
 
 // runnerConfineUse is the hidden command that is runner-tools' confine
 // trampoline, as the runner image's `confine` role is the tools
-// container's (agentry-cli#596).
+// container's.
 const runnerConfineUse = "runner-confine"
 
 // newRunnerToolsCmd builds the hidden runner-tools command.

@@ -32,14 +32,13 @@ func argValue(argv []string, flag string) (string, bool) {
 }
 
 // A run on Claude Code's own sign-in, in the image or the installed Claude
-// Code, in either mode (plan model-sign-ins.md §4.4; agentry-cli#740):
-// without --bare, which reads no OAuth credential; with no key variable at
-// all, so nothing outranks the sign-in, and none of the person's
-// inherited; with no settings loaded, so no apiKeyHelper; the gateway the
-// only MCP server and no built-in tool; nonessential traffic, the
-// autoupdater and claude.ai's connectors off; the egress proxy its route;
-// and Claude Code's config directory the one thing of the sign-in it is
-// handed, never read by the runner.
+// Code, in either mode: without --bare, which reads no OAuth credential;
+// with no key variable at all, so nothing outranks the sign-in, and none of
+// the person's inherited; with no settings loaded, so no apiKeyHelper; the
+// gateway the only MCP server and no built-in tool; nonessential traffic,
+// the autoupdater and claude.ai's connectors off; the egress proxy its
+// route; and Claude Code's config directory the one thing of the sign-in it
+// is handed, never read by the runner.
 func TestAClaudeSignInRunIsHeldToClaudeCodesOwnSignIn(t *testing.T) {
 	for _, name := range []string{ClaudeImageAdapterName, ClaudeAdapterName} {
 		ad, err := Get(name)
@@ -60,8 +59,9 @@ func TestAClaudeSignInRunIsHeldToClaudeCodesOwnSignIn(t *testing.T) {
 				if !slices.Equal(r.Host.InheritEnv, []string{"HOME", "PATH"}) {
 					t.Errorf("%s: inherits %v of the person's environment", what, r.Host.InheritEnv)
 				}
-				// DR-26's refusal still holds on the host: without --bare
-				// Claude Code reads the ancestors' CLAUDE.md.
+				// The ancestor-file refusal still holds on the host:
+				// without --bare Claude Code reads the ancestors'
+				// CLAUDE.md.
 				if !slices.Contains(r.Host.RefuseAncestorFiles, "CLAUDE.md") {
 					t.Errorf("%s: the ancestor CLAUDE.md refusal is gone", what)
 				}

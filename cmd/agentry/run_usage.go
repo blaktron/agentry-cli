@@ -7,10 +7,10 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
-// Live usage narration (agentry-cli#138). The envelope's usage arrives only
-// when the run is over, which is too late for a driver that has to hold the
-// run to a token cap. These two functions are the whole of the stderr half:
-// what the line says, and when there is a line at all.
+// Live usage narration. The envelope's usage arrives only when the run is
+// over, which is too late for a driver that has to hold the run to a token
+// cap. These two functions are the whole of the stderr half: what the line
+// says, and when there is a line at all.
 
 // usageReporter returns the callback the engine fires on every harness usage
 // report, or nil when nothing should be narrated. Narration is on exactly

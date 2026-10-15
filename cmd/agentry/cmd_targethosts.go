@@ -18,18 +18,17 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 )
 
-// Target hosts at `agentry run` (agentry-notes plans/runtime-hosts.md §6;
-// agentry-cli#861): a release that declares one asks for a machine when it
-// runs, and the run readies each before anything starts: its address, its
-// host key (trusted by the person, at a terminal, when no file knows it),
-// and its sign-in from --host-key / --host-password, the keychain or a
-// prompt. A hosted run refuses one before anything is installed (D11).
+// Target hosts at `agentry run`: a release that declares one asks for a machine
+// when it runs, and the run readies each before anything starts: its address,
+// its host key (trusted by the person, at a terminal, when no file knows it),
+// and its sign-in from --host-key / --host-password, the keychain or a prompt.
+// A hosted run refuses one before anything is installed.
 
 // targetHostFlags are the run's target-host flags.
 type targetHostFlags struct {
 	key, passphrase, password, sudo []string
 	// pins are the host keys a schedule was made with (--host-key-pin,
-	// hidden: a schedule's fire passes them; agentry-cli#863).
+	// hidden: a schedule's fire passes them).
 	pins []string
 }
 
@@ -43,7 +42,7 @@ func addTargetHostFlags(cmd *cobra.Command, f *targetHostFlags) {
 
 // addHostKeyPinFlag is the run's hidden --host-key-pin, which a
 // schedule's fire passes: id=SHA256:… refuses any other key the host
-// offers (plan runtime-hosts.md D12).
+// offers.
 func addHostKeyPinFlag(cmd *cobra.Command, f *targetHostFlags) {
 	cmd.Flags().StringArrayVar(&f.pins, hostKeyPinFlag, nil, "refuse a target host whose key is not this one: id=SHA256:… (repeatable; a schedule's runs pass it)")
 	_ = cmd.Flags().MarkHidden(hostKeyPinFlag)
@@ -65,11 +64,11 @@ func parseHostKeyPins(vals []string) (map[string]string, error) {
 }
 
 // prepareTargetHost readies one target host; a variable so a test can
-// stand in for the network (agentry-cli#863).
+// stand in for the network.
 var prepareTargetHost = targethost.Prepare
 
 // refuseHostedTargetHosts refuses, before anything is installed, a hosted
-// run of a release that declares a target host (plan D11).
+// run of a release that declares a target host.
 func refuseHostedTargetHosts(plan *spec.Plan, opts runOpts) error {
 	ids := plan.Capabilities.TargetHosts
 	if len(ids) == 0 || !hostedFor(opts) {

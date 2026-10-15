@@ -6,8 +6,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// TestKeyringAccountFollowsThePolicy (agentry-cli#148): the model's source,
-// overridden by the harness's; env or unset means no keychain fallback.
+// TestKeyringAccountFollowsThePolicy: the model's source, overridden by the
+// harness's; env or unset means no keychain fallback.
 func TestKeyringAccountFollowsThePolicy(t *testing.T) {
 	in := Input{Model: policy.Default().Model}
 	if got := keyringAccount(in); got != "" {

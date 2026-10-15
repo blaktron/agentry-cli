@@ -43,7 +43,7 @@ func TestOnCalendar(t *testing.T) {
 }
 
 // systemd never rings at a skipped wall time, so the calendar carries a
-// one-off ring at the instant the plan's rule runs it.
+// one-off ring at the instant the schedule's rule runs it.
 func TestOnCalendarRingsSkippedTimes(t *testing.T) {
 	r := Recurrence{Kind: Daily, Time: "02:30", Zone: "America/New_York", Start: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}
 	got, err := OnCalendar(r, r.Start)
@@ -85,7 +85,7 @@ func goldenEntry() Entry {
 }
 
 // Golden: the generated units hold the binary, the schedule id, paths and
-// the calendar, and nothing else (invariant 7).
+// the calendar, and nothing else.
 func TestSystemdUnitsGolden(t *testing.T) {
 	unixAlarm(t)
 	sc := sample(t)

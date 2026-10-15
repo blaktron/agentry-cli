@@ -1,20 +1,19 @@
 // Package build makes or extends a knowledge pack with the Knowledge
-// Creator (plan knowledge.md §4.2; agentry-cli#318): it stages the
-// documents, decodes them before any agent sees them (pkg/runner/decode),
-// runs the built-in Creator over their text with the pack as it stands
-// attached (pkg/runner/localrun, pkg/runner/engine), and applies the pages
-// it wrote — with the documents themselves and their decoded text, which
-// only this step, never the model, puts in the pack's sources/ — through
-// pkg/knowledge's apply step. The CLI's `agentry knowledge create|add`
-// drives it today; the desktop and the cloud build are its other callers.
+// Creator: it stages the documents, decodes them before any agent sees them
+// (pkg/runner/decode), runs the built-in Creator over their text with the
+// pack as it stands attached (pkg/runner/localrun, pkg/runner/engine), and
+// applies the pages it wrote — with the documents themselves and their
+// decoded text, which only this step, never the model, puts in the pack's
+// sources/ — through pkg/knowledge's apply step. The CLI's `agentry
+// knowledge create|add` drives it today; the desktop and the cloud build are
+// its other callers.
 //
 // Locally the Creator runs against the model the runner policy names, for
 // no credits, and neither the documents nor the pack are scanned: the pack
-// records "not scanned" (D19). What the web tools bring back is read by AI
+// records "not scanned". What the web tools bring back is read by AI
 // Review before the model reads it.
 //
-// Since agentry-cli#523 (plan knowledge-and-drafter.md §7, D6, D15–D17) a
-// build takes documents, a brief, or both: the brief is staged as one more
+// A build takes documents, a brief, or both: the brief is staged as one more
 // text document (brief.md), so its claims are cited and kept like any
 // document's. And a build may search the web, with the built-ins' web
 // tools and every result read by AI Review first: Options.Web is that
@@ -93,13 +92,13 @@ type Options struct {
 	Budgets *spec.Budgets
 	// MaxBytes caps the pack, documents included: knowledge.MaxBytes when
 	// zero, Agentry's cap, which a build In Agentry keeps; a build on this
-	// computer passes knowledge.MaxLocalBytes (agentry-cli#429).
+	// computer passes knowledge.MaxLocalBytes.
 	MaxBytes int64
 	RunID    string
 	Stderr   io.Writer
 	OnUsage  func(receipt.Usage)
 	// Hosted is a sandbox host's build, which never spends a model sign-in
-	// (localrun.Run.Hosted; agentry-cli#845).
+	// (localrun.Run.Hosted).
 	Hosted bool
 }
 
@@ -120,8 +119,7 @@ type Result struct {
 	RunErr error
 }
 
-// MaxBriefBytes is the most a brief may hold (plan knowledge-and-drafter.md
-// D15): 8 KiB.
+// MaxBriefBytes is the most a brief may hold: 8 KiB.
 const MaxBriefBytes = 8 << 10
 
 // The brief's document name, and the stem of the names a further brief
@@ -190,8 +188,8 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		return nil, engine.Classify(engine.ExitCLI, err)
 	}
 	// It holds the documents' copies, their decoded text and the pages in
-	// the clear: a delete that fails even after removal's retry (Windows,
-	// agentry-cli#422) is named, never passed over.
+	// the clear: a delete that fails even after removal's retry (Windows)
+	// is named, never passed over.
 	defer func() {
 		if err := removeWork(work, true); err != nil {
 			var pe *fs.PathError
@@ -232,14 +230,14 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
 	// Every document is checked by ClamAV before it is decoded, and a
-	// finding refuses the build (plan file-handling.md §7, D9).
+	// finding refuses the build.
 	img.Signatures = ensureSignatures(ctx, o.Home, o.Policy.Images.ClamAVSignaturesRef(), logw)
 	dec, err := decode.Run(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), logw)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
 	// The risky documents are looked up on Hybrid Analysis by hash, and a
-	// malicious verdict refuses the build too (plan §7, agentry-cli#564).
+	// malicious verdict refuses the build too.
 	lookup, err := hybridClient(o.Policy)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the Hybrid Analysis key: %w", err))
@@ -490,18 +488,18 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 			return 0, err
 		}
 		defer func() { _ = root.Close() }()
-		// A link in the reports is never followed (agentry-cli#421): a
-		// linked wiki/ fails the build, since there is no tree to take the
-		// pages from; a linked page is skipped, and a linked changes.json
-		// is not read, as if the Creator had not written them.
+		// A link in the reports is never followed: a linked wiki/ fails
+		// the build, since there is no tree to take the pages from; a
+		// linked page is skipped, and a linked changes.json is not read,
+		// as if the Creator had not written them.
 		if err := plainpath.Dir(root, knowledge.WikiDir); err != nil {
 			return 0, fmt.Errorf("the Creator's reports: %w", err)
 		}
 		// The model removes pages and nothing else: sources/ is the
 		// build's, and holds the documents as given. A page it wrote and
 		// then deleted in the same run is deleted, not written, and a
-		// delete it named twice is one (agentry-cli#575): the apply step
-		// refuses a list that names a path twice.
+		// delete it named twice is one: the apply step refuses a list
+		// that names a path twice.
 		deleted := map[string]bool{}
 		if own, ok := ownChanges(root); ok {
 			for _, rel := range own.Delete {
@@ -572,7 +570,7 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 }
 
 // ownChanges reads the changes.json the Creator wrote, if it wrote one as
-// a plain file within the pack's bound; a link is not read (agentry-cli#421).
+// a plain file within the pack's bound; a link is not read.
 func ownChanges(root *os.Root) (knowledge.Changes, bool) {
 	var own knowledge.Changes
 	if _, err := plainpath.File(root, knowledge.ChangesFile); err != nil {

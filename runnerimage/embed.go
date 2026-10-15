@@ -1,9 +1,9 @@
 // Package runnerimage is the embedded build context of the locally built
-// agentry-runner image (RUNNER-PLAN §R7). The tree leads a double life:
+// agentry-runner image. The tree leads a double life:
 // in this repo it is ordinary unit-tested Go source; at first `agentry
 // run` it is written out verbatim and compiled standalone inside `docker
-// build`. Self-containment is the point (RQ1, RUNNER-DEVIATIONS DR-2) —
-// first use must need no registry of ours — so everything embedded here
+// build`. Self-containment is the point (first use must need no
+// registry of ours), so everything embedded here
 // is stdlib-only, and TestEmbeddedSourcesStdlibOnly keeps it that way.
 package runnerimage
 
@@ -27,10 +27,10 @@ const ImageTagPrefix = "agentry-runner"
 // module path matches this repo so main.go's runnerimage/* imports
 // resolve inside the standalone module; there are no require lines
 // because the tree is stdlib-only, which is what lets the docker build
-// run with no module downloads (§R7). The go line is the CLI's own, to the
+// run with no module downloads. The go line is the CLI's own, to the
 // patch (TestContextGoModFollowsTheModule): under the Go images'
 // GOTOOLCHAIN=local, a builder older than it refuses rather than building
-// the runner with an older standard library (agentry-cli#786).
+// the runner with an older standard library.
 const contextGoMod = "module github.com/blaktron/agentry-cli\n\ngo 1.27.2\n"
 
 // mainIgnoreTag is the build constraint main.go carries IN THIS REPO,

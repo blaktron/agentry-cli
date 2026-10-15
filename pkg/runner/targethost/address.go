@@ -36,10 +36,9 @@ func refuse(id, detail string, format string, args ...any) *Refusal {
 	return &Refusal{ID: id, Detail: detail, Err: fmt.Errorf(format, args...)}
 }
 
-// lookupIP resolves a name with this machine's own resolver (DR-62's
-// path): a tailnet, mDNS or split-DNS name resolves as the person's own
-// ssh would resolve it, which docker's embedded DNS would not. A variable
-// for tests.
+// lookupIP resolves a name with this machine's own resolver: a Tailscale, mDNS
+// or split-DNS name resolves as the person's own ssh would resolve it, which
+// docker's embedded DNS would not. A variable for tests.
 var lookupIP = func(ctx context.Context, host string) ([]netip.Addr, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -49,8 +48,8 @@ var lookupIP = func(ctx context.Context, host string) ([]netip.Addr, error) {
 // ResolveAddress is the IPv4 address a run reaches a target host at: the
 // host if it is an address, else the first IPv4 answer this machine's
 // resolver gives for it. It refuses what a target host is never
-// (loopback, link-local, an unspecified, multicast or broadcast address;
-// plan D8), what the policy's hosts lists exclude, and a host with no IPv4
+// (loopback, link-local, an unspecified, multicast or broadcast address),
+// what the policy's hosts lists exclude, and a host with no IPv4
 // address: the relay that reaches it is on docker's IPv4 network.
 func ResolveAddress(ctx context.Context, id string, a Answer, rule policy.HostsPolicy) (netip.Addr, error) {
 	var addrs []netip.Addr
@@ -92,7 +91,7 @@ var thisNetwork = netip.MustParsePrefix("0.0.0.0/8")
 // CheckAddress refuses an address a target host is never at: this
 // machine's own loopback, a link-local address (a cloud's metadata service
 // among them), and addresses that are no one host. Private, LAN and
-// tailnet addresses are reached (plan D8).
+// Tailscale addresses are reached.
 func CheckAddress(a netip.Addr) error {
 	a = a.Unmap()
 	switch {

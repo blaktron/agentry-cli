@@ -1,24 +1,23 @@
-# CI gate for the CLI (PLAN §11, DEV-050): gofmt/vet/lint, tests, build, and
-# dependency hygiene. The server-side e2e round-trip (register → publish →
-# install → verify → yank) lives in the main repo's scripts/acceptance/
-# m3-cli.sh, which resolves and exercises this CLI against a live registry —
-# it does not run here because it needs the server repo. `gitleaks` scans the
-# commits every event brings for secrets. Every job carries the fork guard
-# (below), and every action is pinned to a commit SHA (agentry-cli#165).
+# CI gate for the CLI: gofmt/vet/lint, tests, build, and dependency hygiene.
+# The server-side e2e round-trip (register, publish, install, verify, yank)
+# lives in the core repository's scripts/acceptance/m3-cli.sh, which
+# resolves and exercises this CLI against a live registry; it does not run
+# here because it needs the server repo. `gitleaks` scans the commits every
+# event brings for secrets. Every job carries the fork guard (below), and
+# every action is pinned to a commit SHA.
 name: ci
 on:
   push:
-    # dev is the integration branch; main is production (WORKFLOW.md
-    # "Branches", 2026-09-22).
+    # dev is the integration branch; main is production.
     branches: [main, dev]
   pull_request:
 
 permissions:
   contents: read
 
-# The CI tools' versions, in one place (agentry-cli#165; the desktop's shape,
-# agentry#419): no step installs anything unpinned, and scripts/pins-check.sh
-# (the daily pins workflow) reads these lines to report newer releases.
+# The CI tools' versions, in one place: no step installs anything unpinned,
+# and scripts/pins-check.sh (the daily pins workflow) reads these lines to
+# report newer releases.
 # GITLEAKS_SHA256 is the checksum of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
 # from the release's own gitleaks_${GITLEAKS_VERSION}_checksums.txt.
 env:
@@ -35,15 +34,13 @@ concurrency:
 
 # Every job carries the fork guard
 #   if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-# (agentry-cli#165; the estate's shape, agentry#419, agentry-desktop#128). This
-# repository goes public at the 1.0 flip, and every job here runs on a
-# persistent self-hosted runner that shares one module cache with the release
-# builders. A pull request from a fork would otherwise execute its own `run:`
-# steps there. The guard lives in the file, where a diff shows it; the
-# repository setting "Require approval for all external contributors" stays on
-# as belt-and-braces (PUBLIC-FLIP.md item 5). A fork's pull request shows these
-# jobs as skipped; a maintainer who wants it built pushes its commits to a
-# branch here.
+# Every job here runs on a persistent self-hosted runner that shares one
+# module cache with the release builders. A pull request from a fork would
+# otherwise execute its own `run:` steps there. The guard lives in the file,
+# where a diff shows it; the repository setting "Require approval for all
+# external contributors" stays on as belt-and-braces. A fork's pull request
+# shows these jobs as skipped; a maintainer who wants it built pushes its
+# commits to a branch here.
 jobs:
   check:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -60,18 +57,17 @@ jobs:
           go-version-file: go.mod
           # The runner shares one persistent host module cache with every other
           # runner; restoring the Actions cache over it is slow and left partial
-          # modules that broke `go mod verify` in the core (agentry#225).
+          # modules that broke `go mod verify` in the core.
           cache: false
       # The blaktron modules are private; the runner needs credentials to
-      # fetch github.com/blaktron/agentry. The token never lands in the repo —
+      # fetch github.com/blaktron/agentry. The token never lands in the repo
       # and never in this container's global git config or go env either. The
       # container is long-lived, so a `--global` rewrite outlives the job that
       # wrote it and is readable by every later job that runs here, a pull
       # request's own `run:` steps included (the fork guard on this job keeps a
-      # fork's out, agentry-cli#165, but the rewrite stays job-scoped) — and
-      # what it reads is a token for a *different* repository's private
-      # source (agentry#385). Both go
-      # through the job environment instead. The job's last step removes the
+      # fork's out, but the rewrite stays job-scoped), and what it reads is a
+      # token for a *different* repository's private source. Both go through
+      # the job environment instead. The job's last step removes the
       # file, and the runner wipes $RUNNER_TEMP at the start of every job,
       # which is what covers a run cancelled by `cancel-in-progress` before
       # that step could execute.
@@ -98,34 +94,32 @@ jobs:
         run: make check
       # Every built-in is published from its embedded tree and a published
       # version is never rebuilt, so builtins.lock is append-only
-      # (agentry-cli#470): a changed tree takes a new version.
+      # a changed tree takes a new version.
       - name: builtins.lock is append-only
         run: scripts/builtins-lock-check.sh
-      # ARCHITECTURE §9's runner row names runner-r0/r1 as its evidence;
-      # until agentry-cli#160 no workflow ran them. Both need no docker and
-      # no registry (r2 needs a docker host and a model key, and stays a
-      # manual gate — the row says so).
+      # runner-r0 and runner-r1 need no docker and no registry (r2 needs a
+      # docker host and a model key, and stays a manual gate).
       - name: runner acceptance r0 + r1 (no docker)
         run: |
           scripts/acceptance/runner-r0.sh
           scripts/acceptance/runner-r1.sh
       # A release from main bakes production's registry, one from dev
-      # bakes dev's, and no other commit is a release (agentry-cli#240):
+      # bakes dev's, and no other commit is a release:
       # scripts/release-registry.sh against a throwaway origin with the
-      # estate's branch model, then a main build's --version read back.
+      # repository's branch model, then a main build's --version read back.
       - name: release registry by branch
         run: scripts/acceptance/release-registry.sh
       # A tag's form must agree with the line its commit is on (vX.Y.Z on
-      # main's, vX.Y.Z-dev.N on dev's), 1.x waits for AGENTRY_ALLOW_V1, and
-      # the next tag follows the scheme (agentry-cli#327, DEV-148).
+      # main's, vX.Y.Z-dev.N on dev's), 1.x needs AGENTRY_ALLOW_V1, and the
+      # next tag follows the scheme.
       - name: release tags by branch
         run: scripts/acceptance/release-tag.sh
-      # The release signs the Windows exe (agentry-cli#196); a PR proves the
+      # The release signs the Windows exe; a PR proves the
       # seam with a throwaway CA instead of the key: the checker accepts a
       # signed, timestamped binary chained to the root it is given and refuses
       # an unsigned one, a foreign root and an unexpected CN. It timestamps
       # against a public TSA (two tried), so it needs the network this job
-      # already needs. Nothing in make check depends on this (plan D5).
+      # already needs. Nothing in make check depends on this.
       - name: osslsigncode and openssl from Ubuntu's packages
         run: |
           set -euo pipefail
@@ -141,8 +135,8 @@ jobs:
           mkdir -p dist
           GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/agentry-0.0.0-windows-amd64.exe ./cmd/agentry
           scripts/acceptance/windows-signing.sh dist/agentry-0.0.0-windows-amd64.exe
-      # No client takes money (plan subscription-tiers.md D12): the CLI shows
-      # a tier and a balance and sends the person to the site to upgrade.
+      # No client takes money: the CLI shows a tier and a balance and sends
+      # the person to the site to upgrade.
       - name: no payment provider in the CLI
         run: |
           if grep -rIi --include='*.go' -n 'stripe' . ; then echo "::error::a payment provider reached the CLI"; exit 1; fi
@@ -162,10 +156,9 @@ jobs:
           go-version-file: go.mod
           # The runner shares one persistent host module cache with every other
           # runner; restoring the Actions cache over it is slow and left partial
-          # modules that broke `go mod verify` in the core (agentry#225).
+          # modules that broke `go mod verify` in the core.
           cache: false
-      # Job-scoped, and guarded, for the reasons the `check` job states
-      # (agentry#385).
+      # Job-scoped, and guarded, for the reasons the `check` job states.
       - name: Authenticate for the private blaktron modules (job-scoped)
         env:
           AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
@@ -184,7 +177,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/gitconfig"
 
   # The pinned files image is the one agentry-dockerimages' files workflow
-  # signed (agentry-cli#559): a run pulls it by digest only, so this holds
+  # signed: a run pulls it by digest only, so this holds
   # the pin itself to the signature, on every pull request. It needs the
   # registry and Sigstore, so it is a job of its own.
   files-image:
@@ -199,7 +192,7 @@ jobs:
         run: ./scripts/verify-files-image.sh
 
   # The pinned hostlink image is the one agentry-dockerimages' hostlink
-  # workflow signed (agentry-cli#861): the host link's image is built on it,
+  # workflow signed: the host link's image is built on it,
   # pulled by digest only, so this holds the pin itself to the signature, on
   # every pull request.
   hostlink-image:
@@ -214,7 +207,7 @@ jobs:
         run: ./scripts/verify-hostlink-image.sh
 
   # The pinned browser image is the one agentry-dockerimages' browser
-  # workflow signed (agentry-cli#915): a run with a browser pulls it by
+  # workflow signed: a run with a browser pulls it by
   # digest only, so this holds the pin itself to the signature, on every
   # pull request.
   browser-image:
@@ -229,7 +222,7 @@ jobs:
         run: ./scripts/verify-browser-image.sh
 
   # The pinned Codex harness image is the one agentry-dockerimages' codex
-  # workflow signed (agentry-cli#739): the codex-image adapter's runs pull
+  # workflow signed: the codex-image adapter's runs pull
   # it by digest only, so this holds the pin itself to the signature, on
   # every pull request.
   codex-image:
@@ -244,13 +237,12 @@ jobs:
         run: ./scripts/verify-codex-image.sh
 
   # The pinned Typst image is the one agentry-dockerimages' typst workflow
-  # signed, and export_pdf renders with it as the tests say (agentry-cli#730;
-  # plan scratch-and-pdf-reports.md D26). The runner image copies its files by
-  # digest, so the pin is held to the signature on every pull request; then
-  # its renderer, fonts and packages render the tests that need the real
-  # Typst (raw Typst is text, links are http or mail, only local images are
-  # drawn, the PDF is tagged with every script; since agentry-cli#784 every
-  # report design theme in every form, the image carries every family
+  # signed, and export_pdf renders with it as the tests say. The runner image
+  # copies its files by digest, so the pin is held to the signature on every
+  # pull request; then its renderer, fonts and packages render the tests that
+  # need the real Typst (raw Typst is text, links are http or mail, only
+  # local images are drawn, the PDF is tagged with every script, every report
+  # design theme renders in every form, the image carries every family
   # pkg/reportdesign names, and pkg/reportthumbs' thumbnails are this
   # template's render), which may not skip here.
   typst-image:
@@ -263,7 +255,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          # The shared host module cache, as the `check` job says (agentry#225).
+          # The shared host module cache, as the `check` job says.
           cache: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: The pinned Typst image is signed by the typst workflow on main
@@ -273,8 +265,8 @@ jobs:
           AGENTRY_TYPST_REQUIRED: "1"
         run: AGENTRY_TYPST_DIR="$RUNNER_TEMP/typst" go test -count=1 ./runnerimage/toolsrv/ -run 'TestRawTypstIsText|TestLinksAreHttpOrMail|TestRealRender|TestTheImageCarriesEveryDesignFamily|TestThumbnailsAreTheTemplates' -v
 
-  # grep and glob's ripgrep (agentry-cli#912; plan ripgrep-search.md D3): the
-  # runner image copies it from agentry-ripgrep by digest, so the pin must
+  # grep and glob's ripgrep: the runner image copies it from agentry-ripgrep
+  # by digest, so the pin must
   # name the image the ripgrep workflow signed on main, and the tests that
   # search with the real binary (each output, context, paging within the
   # budget, hidden and ignored files, .git kept out whatever the glob, a link
@@ -291,7 +283,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          # The shared host module cache, as the `check` job says (agentry#225).
+          # The shared host module cache, as the `check` job says.
           cache: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: The pinned ripgrep image is signed by the ripgrep workflow on main
@@ -301,9 +293,9 @@ jobs:
           AGENTRY_RIPGREP_REQUIRED: "1"
         run: AGENTRY_RIPGREP_BIN="$RUNNER_TEMP/ripgrep/rg" go test -count=1 ./runnerimage/toolsrv/ ./runnerimage/confine/ -run 'TestGrep|TestAGlob|TestAnInputsSearch|TestACallsGlob|TestAPacksManifest|TestAnAnswerFits|TestTheReviewsFindings|TestReadHoldsAStaticProgram' -v
 
-  # Secret scanning (agentry-cli#165): gitleaks over the commits this event
-  # brings — a pull request's own range, or a push's before..after — with the
-  # repository's .gitleaks.toml, failing on any hit. The binary is the release
+  # Secret scanning: gitleaks over the commits this event brings (a pull
+  # request's own range, or a push's before..after) with the repository's
+  # .gitleaks.toml, failing on any hit. The binary is the release
   # tarball at the pinned version, checked against the pinned checksum before
   # it runs (the runner image's copy is not relied on). --redact: a hit names
   # the file, line and rule, never the value.

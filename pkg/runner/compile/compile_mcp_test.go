@@ -1,9 +1,9 @@
 package compile
 
-// Declared MCP servers in the compiled plan (RUNNER-PLAN-3): the catalog
-// entry IS the enforcement — image, launch argv, read-only store mount,
-// per-server egress, server-scoped secrets — so these tests pin the
-// rendered gateway files, not just the plan struct.
+// Declared MCP servers in the compiled plan: the catalog entry IS the
+// enforcement — image, launch argv, read-only store mount, per-server
+// egress, server-scoped secrets — so these tests pin the rendered gateway
+// files, not just the plan struct.
 
 import (
 	"os"
@@ -120,7 +120,7 @@ func TestCompileRendersDeclaredServer(t *testing.T) {
 	}
 	// The gateway refuses a bind source outside its allowed roots; the
 	// signature's server store must be one of them, or the server never
-	// starts anywhere but under /tmp (agentry-cli#105).
+	// starts anywhere but under /tmp.
 	allowed := ""
 	for _, ev := range plan.Gateway.Env {
 		if ev.Name == "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS" {
@@ -132,11 +132,11 @@ func TestCompileRendersDeclaredServer(t *testing.T) {
 	}
 }
 
-// TestCompileRefusesServerWildcardEgress (agentry-cli#105, DR-20): a
-// declared server's "*" is refused whatever the policy says — the gateway
-// gives such a server no relay and the run gives it no network of its
-// own, so it would land on docker's default bridge, unconstrained. The
-// agent's own "*" stays policy-gated (the llm-proxy still fronts it).
+// TestCompileRefusesServerWildcardEgress: a declared server's "*" is
+// refused whatever the policy says — the gateway gives such a server no
+// relay and the run gives it no network of its own, so it would land on
+// docker's default bridge, unconstrained. The agent's own "*" stays
+// policy-gated (the llm-proxy still fronts it).
 func TestCompileRefusesServerWildcardEgress(t *testing.T) {
 	srv := githubServerSpec()
 	srv.Egress = []string{"*"}
@@ -153,7 +153,7 @@ func TestCompileRefusesServerWildcardEgress(t *testing.T) {
 
 func TestCompileNoServersIsByteStable(t *testing.T) {
 	// A plan without declared servers must not change shape — golden
-	// compatibility for every pre-PLAN-3 agent.
+	// compatibility for every agent that declares none.
 	plan, err := Compile(mcpFixtureInputs(t, nil, policy.Default()), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +175,8 @@ func TestCompileNoServersIsByteStable(t *testing.T) {
 	}
 }
 
-// errorsAs avoids importing errors twice in this file's diff context.
+// errorsAs reports whether err is a *PolicyRefusal, and stores it in
+// target.
 func errorsAs(err error, target *(*PolicyRefusal)) bool {
 	for e := err; e != nil; {
 		if pr, ok := e.(*PolicyRefusal); ok {
@@ -191,12 +192,12 @@ func errorsAs(err error, target *(*PolicyRefusal)) bool {
 	return false
 }
 
-// TestCompileRendersDeclaredServerEnv (agentry-cli#99): a declared server's
-// plain env map lands in its catalog entry as the gateway's `env:
-// [{name, value}]` list (docker/mcp-gateway v0.43.3, pkg/catalog/types.go
-// `Server.Env []Env`, applied in pkg/gateway/clientpool.go as `-e NAME` with
-// the value), sorted by name and separate from the secrets list; the
-// enforcement line names the keys and never a value.
+// TestCompileRendersDeclaredServerEnv: a declared server's plain env map
+// lands in its catalog entry as the gateway's `env: [{name, value}]` list
+// (docker/mcp-gateway v0.43.3, pkg/catalog/types.go `Server.Env []Env`,
+// applied in pkg/gateway/clientpool.go as `-e NAME` with the value), sorted
+// by name and separate from the secrets list; the enforcement line names
+// the keys and never a value.
 func TestCompileRendersDeclaredServerEnv(t *testing.T) {
 	srv := githubServerSpec()
 	srv.Env = map[string]string{"LOGS_DIR": "/tmp/logs", "GITHUB_PERMISSION": "readonly-v7"}
@@ -252,13 +253,13 @@ func TestCompileRefusesInterpretedEnvValue(t *testing.T) {
 	}
 }
 
-// TestLiteralEnvRuleIsTheRunnersExpectation (agentry-cli#131): the runner
-// refuses `$` and `{{ }}` values through the registry's own rule,
-// manifest.LiteralEnvValue, rather than a copy. This pins that rule to
-// what the gateway would interpret: os.Expand rewrites `$` followed by a
-// name character, `{` or a special parameter, and a value holding both
-// `{{` and `}}` is evaluated as a template. A core change that loosened
-// the rule fails here before the runner inherits it.
+// TestLiteralEnvRuleIsTheRunnersExpectation: the runner refuses `$` and `{{
+// }}` values through the registry's own rule, manifest.LiteralEnvValue,
+// rather than a copy. This pins that rule to what the gateway would
+// interpret: os.Expand rewrites `$` followed by a name character, `{` or a
+// special parameter, and a value holding both `{{` and `}}` is evaluated as
+// a template. A core change that loosened the rule fails here before the
+// runner inherits it.
 func TestLiteralEnvRuleIsTheRunnersExpectation(t *testing.T) {
 	interpreted := []string{"$GITHUB_PAT", "${HOME}/x", "a$b", "$1", "$_", "$*", "$#", "$@", "$!", "$?", "$$", "$-", "{{config.dir}}", "}} and {{"}
 	for _, v := range interpreted {
@@ -286,11 +287,11 @@ func TestCompileDeclaredServerGolden(t *testing.T) {
 	checkGolden(t, "declared-server", planDir, []string{"plan.json", "gateway/catalog.yaml"})
 }
 
-// TestCompileDeclaredServerEgressIsATCPRelay (agentry-cli#105): a declared
-// host becomes "host:443/tcp" in the catalog, so the gateway fronts it
-// with its L4 relay (reached by the host's own name, TLS end to end) and
-// not the L7 CONNECT proxy, which is handed to the server as a
-// scheme-less proxy variable Node's fetch refuses and other clients ignore.
+// TestCompileDeclaredServerEgressIsATCPRelay: a declared host becomes
+// "host:443/tcp" in the catalog, so the gateway fronts it with its L4 relay
+// (reached by the host's own name, TLS end to end) and not the L7 CONNECT
+// proxy, which is handed to the server as a scheme-less proxy variable
+// Node's fetch refuses and other clients ignore.
 func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
 	planDir := t.TempDir()
 	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{githubServerSpec()}, policy.Default()), planDir); err != nil {
@@ -305,9 +306,9 @@ func TestCompileDeclaredServerEgressIsATCPRelay(t *testing.T) {
 	}
 }
 
-// TestCompileDeclaredServerWithAnEmptyEgressListHasNoNetwork
-// (agentry-cli#801): a server's own egress: [] declares no host, so its
-// catalog entry disables its network, as for a server that declares none.
+// TestCompileDeclaredServerWithAnEmptyEgressListHasNoNetwork: a server's
+// own egress: [] declares no host, so its catalog entry disables its
+// network, as for a server that declares none.
 func TestCompileDeclaredServerWithAnEmptyEgressListHasNoNetwork(t *testing.T) {
 	srv := githubServerSpec()
 	srv.Egress = []string{}
@@ -324,15 +325,15 @@ func TestCompileDeclaredServerWithAnEmptyEgressListHasNoNetwork(t *testing.T) {
 	}
 }
 
-// TestEnforcementNamesEverySecretWithWhereItGoes (agentry-cli#376): the
-// receipt's secrets line names a declared server's secrets beside the
-// release's own, each with the container it reaches, so a run that injected
-// a server's key never reads "none declared". Names only, never a value.
+// TestEnforcementNamesEverySecretWithWhereItGoes: the receipt's secrets
+// line names a declared server's secrets beside the release's own, each
+// with the container it reaches, so a run that injected a server's key
+// never reads "none declared". Names only, never a value.
 func TestEnforcementNamesEverySecretWithWhereItGoes(t *testing.T) {
 	const ownLine = "values resolved at run start (missing ⇒ refuse, exit 11), injected only into the tools container via gateway secret scoping, absent from plan and receipts: API_KEY"
 	const serverPart = "each declared server's own, injected only into that server's container via gateway secret scoping: @scope/server-x@1.2.3: GITHUB_PAT"
-	// agentry-cli#404: the gateway injects them from the run's whole secrets
-	// file, so its own container holds every value; the line says so.
+	// The gateway injects them from the run's whole secrets file, so its
+	// own container holds every value; the line says so.
 	const gatewayHolds = "; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
 	for _, tc := range []struct {
 		name    string
@@ -371,9 +372,9 @@ func TestEnforcementNamesEverySecretWithWhereItGoes(t *testing.T) {
 }
 
 // TestDeclaredServerGatewayFilesAreARunsEntries: the files the MCP server
-// survey launches a server with (agentry-cli#658) carry the same catalog
-// entry, enablement and tool filter as a compiled run's, so the survey
-// starts each server as a run would.
+// survey launches a server with carry the same catalog entry, enablement
+// and tool filter as a compiled run's, so the survey starts each server as
+// a run would.
 func TestDeclaredServerGatewayFilesAreARunsEntries(t *testing.T) {
 	srv := githubServerSpec()
 	srv.Env = map[string]string{"LOG_LEVEL": "warn"}

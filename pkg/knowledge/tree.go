@@ -14,7 +14,7 @@ import (
 )
 
 // MaxFiles caps the files in a pack's tree: the registry refuses a tree
-// with more (DEV-149), so no client keeps one either.
+// with more, so no client keeps one either.
 const MaxFiles = 2000
 
 // ExtractTree reads a canonical tree tar — what WriteTree writes, and what
@@ -184,9 +184,8 @@ func cleanup(dst string, made bool) {
 // manifest written from m with the tree's own schema, counts and digest
 // in place of whatever m said, and the pack loaded. It is how a pack kept
 // somewhere as a tree — a registry's copy downloaded, a sandbox host's
-// staged tree for a hosted build (agentry-cli#364) — becomes a directory
-// the Creator and the runner read. A refused tree or pack leaves nothing
-// in dst.
+// staged tree for a hosted build — becomes a directory the Creator and
+// the runner read. A refused tree or pack leaves nothing in dst.
 func Unpack(r io.Reader, want, dst string, m Manifest) (p *Pack, err error) {
 	d, err := ExtractTree(r, dst, want)
 	if err != nil {

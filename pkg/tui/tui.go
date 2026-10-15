@@ -1,9 +1,9 @@
-// Package tui is the terminal chat for an interactive run (DR-15, plan
-// §6.8): one full-screen conversation over a session.Session — transcript
-// pane, input line, status line, and the slash commands /add, /finish,
-// /quit, /caps. It is a view: every message goes through Session.Send,
-// every file through Session.AddInput, and the engine's budgets end the
-// session whatever the terminal does.
+// Package tui is the terminal chat for an interactive run: one full-screen
+// conversation over a session.Session — transcript pane, input line, status
+// line, and the slash commands /add, /finish, /quit, /caps. It is a view:
+// every message goes through Session.Send, every file through
+// Session.AddInput, and the engine's budgets end the session whatever the
+// terminal does.
 package tui
 
 import (
@@ -35,7 +35,7 @@ type Options struct {
 	MaxTurns   int
 	MaxCostUSD float64
 	// PlanRun says the run is paid by the person's own plan (a model
-	// sign-in, agentry-cli#738): the status line shows no dollars.
+	// sign-in): the status line shows no dollars.
 	PlanRun bool
 	// Opening is the manifest's opening line, shown when the session
 	// starts without a task.

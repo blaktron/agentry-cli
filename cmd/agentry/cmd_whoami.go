@@ -14,11 +14,11 @@ import (
 	"github.com/blaktron/agentry/pkg/apiclient"
 )
 
-// newWhoamiCmd builds the whoami command (plan subscription-tiers.md §8,
-// agentry-cli#128): the registry, the account the stored credential
-// belongs to and, where the registry mounts the billing extension, the
-// subscription tier and the credits. No client takes money: the upgrade
-// is the site's, and this command only says where the account stands.
+// newWhoamiCmd builds the whoami command: the registry, the account the
+// stored credential belongs to and, where the registry mounts the
+// billing extension, the subscription tier and the credits. No client
+// takes money: the upgrade is the site's, and this command only says
+// where the account stands.
 func newWhoamiCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
@@ -38,13 +38,11 @@ func newWhoamiCmd() *cobra.Command {
 	}
 }
 
-// billingAccount mirrors the billing extension's GET /api/v1/x/billing/account
-// (agentry-enterprise/schemas/x-billing.yaml); the route is the closed
-// build's, so it is not in the generated client. An active member of an
-// organization is answered the organization's account — its tier, its
-// standing and the pool their work spends from — with MemberOf naming it
-// (plan organization-subscriptions.md D22); their own row stands
-// underneath for the day they leave, and a pending fold-in is still
+// billingAccount mirrors the billing extension's GET /api/v1/x/billing/account; the
+// route is the closed build's, so it is not in the generated client. An active member of an
+// organization is answered the organization's account — its tier, its standing
+// and the pool their work spends from — with MemberOf naming it; their own row
+// stands underneath for the day they leave, and a pending fold-in is still
 // answered their own.
 type billingAccount struct {
 	Tier           string            `json:"tier"`
@@ -61,11 +59,11 @@ type billingAccount struct {
 	Promo          *promoView        `json:"promo,omitempty"`
 }
 
-// promoView is a promo trial on a person's own account (plan
-// promo-codes.md §4.6, agentry-enterprise#280): state "running" while
-// the trial runs, "eligible" while the account may still redeem a code.
-// During a trial the code's credits are the account's only credits, so
-// they, not the allowance (0 for Promo Pro), are what the balance is of.
+// promoView is a promo trial on a person's own account: state "running"
+// while the trial runs, "eligible" while the account may still redeem a
+// code. During a trial the code's credits are the account's only
+// credits, so they, not the allowance (0 for Promo Pro), are what the
+// balance is of.
 type promoView struct {
 	State   string `json:"state"`
 	Code    string `json:"code,omitempty"`
@@ -82,9 +80,9 @@ func (a *billingAccount) runningPromo() *promoView {
 }
 
 // privateAgentsView is the private-agent cap as the registry applies it.
-// Enabled is a pointer because a registry that predates
-// agentry-enterprise#40 does not send it, and absence must not read as
-// false: there a max of 0 meant both "none" and "no cap".
+// Enabled is a pointer because an older registry does not send it, and
+// absence must not read as false: there a max of 0 meant both "none" and
+// "no cap".
 type privateAgentsView struct {
 	Enabled *bool `json:"enabled,omitempty"`
 	Max     int64 `json:"max"`
@@ -216,7 +214,7 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 			a.Balance, a.Allowance, a.SubmissionCost, dayOf(a.PeriodEnd))
 	case promo != nil && promo.Credits > 0:
 		// Nothing resets: the promo credits expire at the trial's end and
-		// Standard's allowance starts then (plan promo-codes.md §4.5).
+		// Standard's allowance starts then.
 		_, _ = fmt.Fprintf(out, "credits:  %d of %d promo credits (a submission costs %d; they expire on %s)\n",
 			a.Balance, promo.Credits, a.SubmissionCost, dayOf(a.promoEnd()))
 	default:
@@ -240,13 +238,13 @@ func writeSubscription(out io.Writer, a *billingAccount) {
 	}
 }
 
-// privatePhrase renders the private-agent cap (agentry-cli#277). Enabled
-// is read first: false is "none", and max then says nothing (an
-// organization that is not paid for, and its members); enabled with max 0
-// is no cap; otherwise at most max. A registry that does not send enabled
-// gets the old rule, a line only when max > 0, because its 0 is ambiguous
-// and the client does not guess. Agents already held while none may be
-// added are named, so a person is not told "none" beside agents they own.
+// privatePhrase renders the private-agent cap. Enabled is read first:
+// false is "none", and max then says nothing (an organization that is not
+// paid for, and its members); enabled with max 0 is no cap; otherwise at
+// most max. A registry that does not send enabled gets the old rule, a
+// line only when max > 0, because its 0 is ambiguous and the client does
+// not guess. Agents already held while none may be added are named, so a
+// person is not told "none" beside agents they own.
 func privatePhrase(p privateAgentsView) string {
 	switch {
 	case p.Enabled == nil && p.Max <= 0:
@@ -273,8 +271,8 @@ func seatsPhrase(s seatsView) string {
 	return fmt.Sprintf("%d of %d", s.Used, s.Max)
 }
 
-// standingActive is the one standing that admits work; the extension's own
-// Paid() is the same test (agentry-enterprise/internal/billing/cycle.go).
+// standingActive is the one standing that admits work; the extension applies
+// the same test.
 const standingActive = "active"
 
 // standingPhrase glosses an organization's standing with the consequence
@@ -348,8 +346,7 @@ func (a *billingAccount) promoEnd() string {
 }
 
 // tierLabel is the product's name for a tier — the three a person may
-// hold and the two an organization may (plan organization-subscriptions.md
-// §4; Promo Pro, plan promo-codes.md §4.1).
+// hold and the two an organization may.
 func tierLabel(t string) string {
 	switch t {
 	case "pro":
