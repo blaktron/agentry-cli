@@ -62,8 +62,9 @@ type Expect struct {
 	// and the site scope. BrowserKeys is the fewest keys the line may type,
 	// each also in capabilities.secrets; a draft with fewer typed keys than
 	// that, or a line with keys where BrowserKeys is 0 and the description
-	// signs in to nothing, is off its shape. Neither is checked when
-	// Browser is false.
+	// signs in to nothing, is off its shape, unless Keys is "optional": a
+	// description that may or may not sign in takes keys only as optional
+	// ones. Neither is checked when Browser is false.
 	Browser     bool `json:"browser,omitempty"`
 	BrowserKeys int  `json:"browserKeys,omitempty"`
 	// InputKinds are kinds the draft's inputs block must declare, so the
@@ -237,7 +238,7 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 			out = append(out, "a browser with the public scope, want the site scope")
 		case len(b.Secrets) < e.BrowserKeys:
 			out = append(out, fmt.Sprintf("a browser that types %d keys, want at least %d", len(b.Secrets), e.BrowserKeys))
-		case e.BrowserKeys == 0 && len(b.Secrets) > 0:
+		case e.BrowserKeys == 0 && len(b.Secrets) > 0 && e.Keys != "optional":
 			out = append(out, fmt.Sprintf("a browser that types %v, for a test that signs in to nothing", b.Secrets))
 		}
 	}
