@@ -30,9 +30,13 @@ make clean    # remove bin/
 ```
 
 `make dist` builds `linux/amd64`, `linux/arm64`, `darwin/amd64`,
-`darwin/arm64` and `windows/amd64` with `CGO_ENABLED=0`. It reads no signing
-input. `DIST_VERSION` sets the version string and `AGENTRY_DEFAULT_REGISTRY`
-bakes in the registry the binary falls back to when none is configured.
+`darwin/arm64` and `windows/amd64` with `CGO_ENABLED=0`, unsigned.
+`DIST_VERSION` sets the version string, `AGENTRY_DEFAULT_REGISTRY` bakes in
+the registry the binary falls back to when none is configured (a source build
+falls back to `http://localhost:8080`), and `EXTRA_LDFLAGS` adds linker flags.
+A source build carries no OAuth client metadata document, so a sign-in to an
+MCP server registers a client with the vendor or asks for your own, and
+`agentry connect huggingface` needs `AGENTRY_HF_CLIENT_ID`.
 
 `make accept-runner` runs the runner acceptance scripts under
 `scripts/acceptance/`. The first two need no Docker; the third needs a Docker
@@ -48,29 +52,15 @@ daemon and `ANTHROPIC_API_KEY`, and skips itself without them.
 | `pkg/drafter`, `pkg/examiner`, `pkg/knowledge/creator`, `pkg/voice/writer` | The built-in QuickAgents the binary embeds. |
 | `pkg/trust`, `pkg/installed`, `pkg/schedule`, `pkg/tui` and the other `pkg/` packages | Key pinning, the local install store, scheduling, the terminal UI and the helpers around them. |
 | `internal/` | Packages private to the CLI. |
-| `scripts/` | Release, signing, image verification and acceptance scripts. |
-| `build/` | Release inputs: the registry URLs a build bakes in and the Windows signing root. |
+| `scripts/` | Image verification, pin and lock checks, and acceptance scripts. |
 | `testdata/` | QuickAgent fixtures the runner tests use. |
 
-## Releases
+## Downloads
 
-A tag is one of two forms:
-
-- `vX.Y.Z` on `main`'s first-parent line is a production release. Its
-  binaries bake `https://secureagentry.net` as the default registry.
-- `vX.Y.Z-dev.N` on `dev`'s first-parent line is a prerelease. Its binaries
-  bake `https://dev.secureagentry.net`.
-
-`build/release.env` names both registries. `scripts/release-registry.sh`
-picks the line from the commit's history and `scripts/release-tag.sh check`
-refuses any other tag form. The `release` workflow builds the binaries with
-`make dist`, signs the Windows executable and the macOS binaries when the
-signing inputs are configured, writes `BUILD-INFO` and `SHA256SUMS`, and
-publishes a GitHub Release. To check a download against the sums, run
-`sha256sum -c --ignore-missing SHA256SUMS` beside it; `BUILD-INFO` records the
-commit, the channel, the registry and the signatures. `agentry --version`
-prints the version and the registry the binary falls back to. The Windows
-signing setup is described in `build/windows/signing/README.md`.
+Signed builds of each release are published as this repository's GitHub
+Releases, with `SHA256SUMS`, its signature `SHA256SUMS.minisig` and
+`BUILD-INFO`. How to install and check them:
+<https://docs.secureagentry.net/agentry/downloads/>.
 
 ## Using it
 

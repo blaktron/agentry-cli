@@ -103,38 +103,6 @@ jobs:
         run: |
           scripts/acceptance/runner-r0.sh
           scripts/acceptance/runner-r1.sh
-      # A release from main bakes production's registry, one from dev
-      # bakes dev's, and no other commit is a release:
-      # scripts/release-registry.sh against a throwaway origin with the
-      # repository's branch model, then a main build's --version read back.
-      - name: release registry by branch
-        run: scripts/acceptance/release-registry.sh
-      # A tag's form must agree with the line its commit is on (vX.Y.Z on
-      # main's, vX.Y.Z-dev.N on dev's), 1.x needs AGENTRY_ALLOW_V1, and the
-      # next tag follows the scheme.
-      - name: release tags by branch
-        run: scripts/acceptance/release-tag.sh
-      # The release signs the Windows exe; a PR proves the
-      # seam with a throwaway CA instead of the key: the checker accepts a
-      # signed, timestamped binary chained to the root it is given and refuses
-      # an unsigned one, a foreign root and an unexpected CN. It timestamps
-      # against a public TSA (two tried), so it needs the network this job
-      # already needs. Nothing in make check depends on this.
-      - name: osslsigncode and openssl from Ubuntu's packages
-        run: |
-          set -euo pipefail
-          if ! command -v osslsigncode >/dev/null || ! command -v openssl >/dev/null; then
-            sudo=""; [ "$(id -u)" = 0 ] || sudo=sudo
-            $sudo apt-get update -qq
-            $sudo apt-get install -y -qq --no-install-recommends osslsigncode openssl
-          fi
-          osslsigncode --version 2>&1 | sed -n 1p
-      - name: Windows signing seam, with a throwaway CA
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/agentry-0.0.0-windows-amd64.exe ./cmd/agentry
-          scripts/acceptance/windows-signing.sh dist/agentry-0.0.0-windows-amd64.exe
       # No client takes money: the CLI shows a tier and a balance and sends
       # the person to the site to upgrade.
       - name: no payment provider in the CLI
