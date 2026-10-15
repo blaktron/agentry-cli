@@ -190,6 +190,45 @@ func sweepRunDirs(runRoot string, deadRuns map[string]bool, stderr io.Writer) {
 	}
 }
 
+// RunsInUse lists, sorted, the runs under runRoot/runs whose lock a live
+// run holds, in this process or any other: what a client asks before it
+// removes something a run of the same release may be using, such as the
+// release's profile. A directory whose lock is free, or that has none, is
+// not listed.
+func RunsInUse(runRoot string) []string {
+	if runRoot == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join(runRoot, "runs"))
+	if err != nil {
+		return nil
+	}
+	var live []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		lockPath := filepath.Join(runRoot, "runs", e.Name(), RunLockFile)
+		if fi, err := os.Lstat(lockPath); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		f, err := os.OpenFile(lockPath, os.O_RDWR, 0) //nolint:gosec // fixed name in a run directory
+		if err != nil {
+			continue
+		}
+		err = tryLockFile(f)
+		if err == nil {
+			_ = unlockFile(f)
+		}
+		_ = f.Close()
+		if errors.Is(err, errLockHeld) {
+			live = append(live, e.Name())
+		}
+	}
+	sort.Strings(live)
+	return live
+}
+
 // sweepRunDir sweeps one run directory as sweepRunDirs says, reporting
 // whether it was a dead run's and the sensitive paths it could not delete.
 func sweepRunDir(dir string, deadByContainers bool) (bool, []string) {

@@ -281,3 +281,32 @@ func TestStartSessionSweepsAKilledRunsFiles(t *testing.T) {
 		t.Error("the killed run's directory survived the session's start")
 	}
 }
+
+// TestRunsInUseNamesTheRunsALiveProcessHolds: a run another process holds
+// and one this process holds are in use; a killed run's directory and a
+// directory with no lock are not.
+func TestRunsInUseNamesTheRunsALiveProcessHolds(t *testing.T) {
+	home := t.TempDir()
+	startLockedRun(t, filepath.Join(home, "runs", "aaaa0001"), false)
+	killRun(t, startLockedRun(t, filepath.Join(home, "runs", "aaaa0002"), false))
+	own := filepath.Join(home, "runs", "aaaa0003")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := holdRunLock(own, "aaaa0003", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.release(false)
+	writeRunSecrets(own)
+	writeRunSecrets(filepath.Join(home, "runs", "aaaa0004"))
+	got := RunsInUse(home)
+	if strings.Join(got, ",") != "aaaa0001,aaaa0003" {
+		t.Errorf("RunsInUse = %v, want the two live runs", got)
+	}
+	// Asking takes nothing from the run that holds it.
+	sweepRunDirs(home, nil, nil)
+	if !pathExists(runDirsAt(own).secretsPath) {
+		t.Error("asking which runs are in use released one")
+	}
+}
