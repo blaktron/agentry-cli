@@ -140,7 +140,10 @@ func fetchRevision(cmd *cobra.Command, reg, ref, dest string) (*drafter.Revision
 	if at := strings.LastIndex(ref, "@"); at <= 0 || at == len(ref)-1 || !strings.Contains(ref[:at], "/") {
 		return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("--revise-ref takes an exact release, ns/name@version, not %q", ref))
 	}
-	token := credentialFor(reg)
+	token, err := credentialFor(reg)
+	if err != nil {
+		return nil, err
+	}
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		return nil, err

@@ -446,7 +446,12 @@ func doctorRegistry(ctx context.Context, rep *doctorReport) {
 		rep.fail("registry", "%s/healthz answered %d", reg, res.StatusCode)
 		return
 	}
-	if credentialFor(reg) == "" {
+	token, err := credentialFor(reg)
+	if err != nil {
+		rep.fail("registry", "%v", err)
+		return
+	}
+	if token == "" {
 		rep.ok("registry", "%s reachable (no credential stored; public agents only)", reg)
 		return
 	}
@@ -509,7 +514,12 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		return m, meta, installDir
 	}
 	reg := registryURL()
-	client, err := newAPIClientChecked(cmd, reg, credentialFor(reg))
+	token, err := credentialFor(reg)
+	if err != nil {
+		rep.fail("resolve", "%v", err)
+		return nil, nil, ""
+	}
+	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		rep.fail("resolve", "%v", err)
 		return nil, nil, ""

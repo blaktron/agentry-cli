@@ -40,9 +40,12 @@ func runYank(cmd *cobra.Command, ref, reason string) error {
 	}
 
 	reg := registryURL()
-	token := credentialFor(reg)
+	token, err := credentialFor(reg)
+	if err != nil {
+		return err
+	}
 	if token == "" {
-		return fmt.Errorf("no credential for %s — run `agentry login` or set %s", reg, envToken)
+		return noCredentialError(reg)
 	}
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {

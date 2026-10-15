@@ -332,10 +332,10 @@ func TestCredentialForReadsTheSealedToken(t *testing.T) {
 	}
 	t.Setenv(modelkey.EnvCredentialsDirectory, dir)
 	t.Setenv(envNoKeyring, "1")
-	if got := credentialFor("https://registry.example.com"); got != "tok-sealed" {
+	if got := mustCredential(t, "https://registry.example.com"); got != "tok-sealed" {
 		t.Fatalf("credentialFor = %q", got)
 	}
-	if got := credentialFor("https://other.example.com"); got != "" {
+	if got := mustCredential(t, "https://other.example.com"); got != "" {
 		t.Fatalf("an unsealed registry = %q", got)
 	}
 	if got := keychainTokenAccount("https://registry.example.com"); got != "registry.example.com" {

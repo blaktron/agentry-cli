@@ -1515,7 +1515,10 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v — a local install of %s/%s could not be looked for; resolving it through the registry\n", lerr, parsed.Namespace, parsed.Name)
 	}
 	reg := registryURL()
-	token := credentialFor(reg)
+	token, err := credentialFor(reg)
+	if err != nil {
+		return nil, "", err
+	}
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		return nil, "", err
