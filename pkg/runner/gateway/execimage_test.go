@@ -16,8 +16,7 @@ import (
 // versions recorded into the image, git's safe.directory when git is
 // among them, then the runner's minimize role in exec form (no shell is
 // needed after busybox is gone). It is reused when present — the recorded
-// versions read back either way — and skipped when nothing is declared
-// (agentry-cli#9, #100).
+// versions read back either way — and skipped when nothing is declared.
 func TestEnsureExecImage(t *testing.T) {
 	img := spec.ExecImageSpec{
 		Tag:      spec.ExecImageTag("agentry-runner:v1", []string{"jq", "git"}, []string{"git", "jq"}, ""),
@@ -49,7 +48,7 @@ func TestEnsureExecImage(t *testing.T) {
 				"apk add --no-cache git jq",
 				"apk list --installed git jq",
 				// Paths inside the image, spelled for its Linux shell on
-				// any host (agentry-cli#420).
+				// any host.
 				" && mkdir -p /etc/agentry && ",
 				ExecPackagesFile,
 				"git config --system --add safe.directory '/workspace'",
@@ -125,7 +124,7 @@ func TestEnsureExecImageMirrorAndPins(t *testing.T) {
 	}
 }
 
-// TestExecImageAsksApkOnlyForWhatItInstalls (agentry-cli#595): busybox is
+// TestExecImageAsksApkOnlyForWhatItInstalls: busybox is
 // the runner image's own, so an image of base commands alone fetches no
 // index; it still records busybox's version. A pinned busybox is installed
 // as written.

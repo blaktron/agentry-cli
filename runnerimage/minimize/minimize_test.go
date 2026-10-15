@@ -38,7 +38,7 @@ func TestMinimizeKeepsOnlyDeclared(t *testing.T) {
 	mk("usr/local/bin/agentry-runner", "runner")
 	mk("usr/lib/libz.so", "lib") // libraries are not touched
 	// export_pdf's renderer lives outside the bin directories, so an exec
-	// image keeps it (agentry-cli#730).
+	// image keeps it.
 	mk("opt/agentry/typst/typst", "typst")
 
 	if err := Minimize(root, []string{"jq", "ls"}, io.Discard); err != nil {

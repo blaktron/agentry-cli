@@ -31,24 +31,24 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 )
 
-// TestOnlyTheEmbeddedPackagesRunAsBuiltin (plan knowledge.md §3): the
-// attestation state builtin is set in memory by Materialize of a package
-// this binary embeds, and nowhere else — never read back from a file, never
-// had by the zero value, never verified — and the built-in's tree is the
-// embedded one on every run, whatever happened to the installed copy.
+// TestOnlyTheEmbeddedPackagesRunAsBuiltin: the attestation state builtin is set
+// in memory by Materialize of a package this binary embeds, and nowhere else —
+// never read back from a file, never had by the zero value, never verified —
+// and the built-in's tree is the embedded one on every run, whatever happened
+// to the installed copy.
 func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 	t.Run("the list is the Creator, the Drafter, the Voice Writer and the Examiner", func(t *testing.T) {
 		var refs []string
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.2.0,agentry/drafter@1.15.0,agentry/voice-writer@1.1.0,agentry/examiner@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.2.0,agentry/drafter@1.15.1,agentry/voice-writer@1.1.0,agentry/examiner@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
 	t.Run("the web tools are the Drafter's and the Creator's, registry_search the Drafter's alone", func(t *testing.T) {
-		// agentry-cli#523 (plan knowledge-and-drafter.md D6): the Knowledge
-		// Creator searches and reads the web too, never the registry.
+		// The Knowledge Creator searches and reads the web too, never the
+		// registry.
 		for _, b := range Builtins() {
 			wantWeb := b.Ref() == Drafter().Ref() || b.Ref() == KnowledgeCreator().Ref()
 			if b.web != wantWeb {
@@ -78,7 +78,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		}
 	})
 	t.Run("the review grant is the Examiner's alone", func(t *testing.T) {
-		// The Examiner carries it (agentry-cli#504) and no other built-in;
+		// The Examiner carries it and no other built-in;
 		// the zero value never does, and neither does a repair turn's copy.
 		for _, b := range Builtins() {
 			if b.review != (b.Ref() == Examiner().Ref()) {
@@ -98,7 +98,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.15.0" {
+		if meta.Attestation.State != trust.StateBuiltin || meta.Attestation.Verified || meta.Source != "builtin" || meta.Ref != "agentry/drafter@1.15.1" {
 			t.Fatalf("meta %+v", meta)
 		}
 		for _, name := range []string{"agent.yaml", "AGENT.md", "output.schema.json"} {
@@ -235,7 +235,7 @@ func TestManifestFrom(t *testing.T) {
 
 // TestEnsurePlan: the plan is reused while nothing it depends on changed,
 // recompiled when the policy or the compiling build did, and refused when
-// the installed plan changed after it was compiled (agentry-cli#266).
+// the installed plan changed after it was compiled.
 func TestEnsurePlan(t *testing.T) {
 	home := t.TempDir()
 	meta, dir, err := KnowledgeCreator().Materialize(home, "b1")
@@ -291,7 +291,7 @@ func TestEnsurePlan(t *testing.T) {
 
 // TestTheDraftersTwoPlansKeepTheirOwnDirectories: the Drafter's plan with
 // the web tools and its repair turn's without them live side by side, each
-// reused as it is, and neither is taken for the other (agentry-cli#417).
+// reused as it is, and neither is taken for the other.
 func TestTheDraftersTwoPlansKeepTheirOwnDirectories(t *testing.T) {
 	home := t.TempDir()
 	meta, dir, err := Drafter().Materialize(home, "b1")
@@ -333,11 +333,10 @@ func TestTheDraftersTwoPlansKeepTheirOwnDirectories(t *testing.T) {
 	}
 }
 
-// TestTheReviewGrantCompilesForABuiltinAlone (agentry-cli#503): a review
-// plan has a directory of its own beside the plain one, each reused as it
-// is; a package that is not a built-in asking for it is refused by policy;
-// and a run of a built-in granted it without the person's key is refused
-// before anything is laid down.
+// TestTheReviewGrantCompilesForABuiltinAlone: a review plan has a directory of
+// its own beside the plain one, each reused as it is; a package that is not a
+// built-in asking for it is refused by policy; and a run of a built-in granted
+// it without the person's key is refused before anything is laid down.
 func TestTheReviewGrantCompilesForABuiltinAlone(t *testing.T) {
 	home := t.TempDir()
 	meta, dir, err := VoiceWriter().Materialize(home, "b1")
@@ -442,7 +441,7 @@ func TestRunBuiltinRunsTheCreator(t *testing.T) {
 	}
 }
 
-// TestTheCreatorsWebRunsOnlyWithItsScanner (agentry-cli#523): the Knowledge
+// TestTheCreatorsWebRunsOnlyWithItsScanner: the Knowledge
 // Creator carrying the web tools does not start without a scanner, so nothing
 // the web brings back can reach its model unread; with the person's Jev key
 // its rendered tools spec scans with it and grants web_search and web_read,
@@ -493,11 +492,11 @@ func TestTheCreatorsWebRunsOnlyWithItsScanner(t *testing.T) {
 	}
 }
 
-// TestTheRepairRunHasNoWebToolsAndNoKey (plan builder-simplify.md §5.2
-// step 3): the Drafter's repair turn, as both clients run it, is the same
-// package without its web tools and with no web configuration, so no key
-// reaches it and it has nothing to read; it is given the turn's own task,
-// folder, budgets and run id, and the first run's home and policy.
+// TestTheRepairRunHasNoWebToolsAndNoKey: the Drafter's repair turn, as both
+// clients run it, is the same package without its web tools and with no web
+// configuration, so no key reaches it and it has nothing to read; it is given
+// the turn's own task, folder, budgets and run id, and the first run's home and
+// policy.
 func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
 	pol := policy.Default()
 	var usage []receipt.Usage
@@ -510,7 +509,7 @@ func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
 	if r.Builtin != Drafter().WithoutWebTools() || r.Web != nil {
 		t.Fatalf("the repair run has web tools %v or a web configuration %+v", r.Builtin == Drafter(), r.Web)
 	}
-	// A revision's release is the first turn's input alone (agentry-cli#526):
+	// A revision's release is the first turn's input alone:
 	// the repair turn is given its own draft and the report, nothing else.
 	if len(r.Inputs) != 0 || len(r.Knowledge) != 0 {
 		t.Fatalf("the repair run has inputs %v or knowledge %v", r.Inputs, r.Knowledge)
@@ -531,10 +530,9 @@ func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
 }
 
 // A plan the desktop compiled in Unsafe Mode, in the runner home this CLI
-// shares, integrity record and all, is not reused by a run that did not
-// ask for it: EnsurePlan never compiles Unsafe Mode (plan unsafe-mode.md
-// D5, invariant 4), so it recompiles without it, and the exec image is
-// the catalogue's again.
+// shares, integrity record and all, is not reused by a run that did not ask for
+// it: EnsurePlan never compiles Unsafe Mode, so it recompiles without it, and
+// the exec image is the catalogue's again.
 func TestEnsurePlanNeverReusesAnUnsafeModePlan(t *testing.T) {
 	home := t.TempDir()
 	meta, dir, err := KnowledgeCreator().Materialize(home, "b1")
@@ -579,8 +577,7 @@ func TestEnsurePlanNeverReusesAnUnsafeModePlan(t *testing.T) {
 	}
 }
 
-// TestABuiltinsBudgetsOnThisComputer (plan scan-and-run-tweaks.md §6.1,
-// §6.2, D13, D14; agentry-cli#500): a draft made on this computer is given
+// TestABuiltinsBudgetsOnThisComputer: a draft made on this computer is given
 // 30 minutes and a knowledge build 60, however short the runner policy's
 // run timeout is; a policy that allows more keeps its own. Nothing else
 // moves: the tool-call and cost caps are the policy's, and no budget here

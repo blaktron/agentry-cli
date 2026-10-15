@@ -1,19 +1,17 @@
-// `agentry draft` (plan builder-rework.md §7.1–§7.5, D1, D15, D22, D25;
-// agentry-cli#345): the built-in Drafter, run on this computer against the
+// `agentry draft`: the built-in Drafter, run on this computer against the
 // runner policy's model with the person's own keys, for no credits; or,
-// with --hosted, as a sandbox host runs it for a draft made in Agentry
-// (M5), with the job's credential and the registry's scan and search.
+// with --hosted, as a sandbox host runs it for a draft made in Agentry,
+// with the job's credential and the registry's scan and search.
 //
-// The order is the plan's: the description is read by AI Review first, and
-// the Drafter does not start unless it passes; the Drafter's web tools have
+// The order is fixed: the description is read by AI Review first, and the
+// Drafter does not start unless it passes; the Drafter's web tools have
 // every result read by AI Review before its model does; its answer, held to
 // output.schema.json by the runner, has its mechanical slips corrected, is
 // rendered into a package and checked by the same code as `agentry
 // validate`; AI Review checks the finished draft as the pipeline will at
-// publish (§5.2 step 4, agentry-cli#418); a draft the rules still refuse,
-// or one the check flagged for something it can fix, gets one repair turn
-// (builder-simplify.md §5.2, agentry-cli#417), and is checked again; and
-// the problems and verdicts of the answer kept are written into draft.json
+// publish; a draft the rules still refuse, or one the check flagged for
+// something it can fix, gets one repair turn, and is checked again; and the
+// problems and verdicts of the answer kept are written into draft.json
 // rather than refusing the draft.
 
 package main
@@ -48,19 +46,19 @@ import (
 )
 
 // envJobToken carries a hosted draft's job credential to `agentry draft
-// --hosted` (minted by the runs extension, M5, agentry-enterprise#183).
+// --hosted` (minted by the runs extension).
 const envJobToken = "AGENTRY_JOB_TOKEN"
 
 type draftOpts struct {
 	hints           []string
 	knowledge       []string
 	descriptionFile string
-	// A revision (agentry-cli#526): the release, as a package folder on
-	// this computer (revise) or a ref fetched from the registry
-	// (reviseRef), and the files holding the person's two texts.
-	// reviseRegistry is where reviseRef is fetched from when that is not
-	// the registry the draft scans through: a sandbox host's release
-	// prefix, which the run's grant opens (agentry-cli#550).
+	// A revision: the release, as a package folder on this computer
+	// (revise) or a ref fetched from the registry (reviseRef), and the
+	// files holding the person's two texts. reviseRegistry is where
+	// reviseRef is fetched from when that is not the registry the draft
+	// scans through: a sandbox host's release prefix, which the run's
+	// grant opens.
 	revise, reviseRef, reviseRegistry string
 	instructionsFile, problemsFile    string
 	out                               string
@@ -68,8 +66,8 @@ type draftOpts struct {
 	hosted                            bool
 	budgetFlags
 	// outputFormat json is the form a sandbox host drives for a hosted
-	// draft (agentry-cli#384): the Drafter run's envelope on stdout, with
-	// the draft's report under draft, and its usage narrated on stderr.
+	// draft: the Drafter run's envelope on stdout, with the draft's
+	// report under draft, and its usage narrated on stderr.
 	outputFormat string
 	// stage is where a draft that fails before the Drafter's run writes an
 	// envelope stopped, for that form's failure envelope.
@@ -156,7 +154,7 @@ func newDraftCmd() *cobra.Command {
 	f.StringVar(&o.problemsFile, "problems-file", "", "a revision's problems with this draft: what is wrong with the release, to be solved (at most "+strconv.Itoa(drafter.MaxRevisionTextBytes)+" bytes)")
 	f.StringVar(&o.out, "out", "", "output folder for the draft, its package and the run's receipts (default ./agentry-out/agentry-drafter-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
-	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host will for a draft made in Agentry (the hosted draft kind, blaktron/agentry-enterprise#183, with --output-format json): scans and search through the registry with the job's credential in $"+envJobToken)
+	f.BoolVar(&o.hosted, "hosted", false, "draft as a sandbox host will for a draft made in Agentry (the hosted draft kind, with --output-format json): scans and search through the registry with the job's credential in $"+envJobToken)
 	f.IntVar(&o.timeout, "timeout", 0, "the Drafter run's wall-clock budget in seconds (default: the policy's or 1800, whichever is longer; with --hosted, the policy's)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Drafter run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Drafter run once the harness reports this much cost in USD (default: the policy's)")
@@ -211,8 +209,8 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	var packs []drafter.KnowledgeIn
 	var rev *drafter.Revision
 	if o.revising() {
-		// A revision (agentry-cli#526): the release is laid down in the
-		// draft's folder, and the task is the person's two texts.
+		// A revision: the release is laid down in the draft's
+		// folder, and the task is the person's two texts.
 		if rev, err = draftRevision(cmd, *o, filepath.Join(outDir, drafter.ReviseInput)); err != nil {
 			return err
 		}
@@ -226,7 +224,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		}
 		// The packs are loaded and held to the draft's bounds before
 		// anything is scanned, and the person told which will be scanned
-		// first (D3).
+		// first.
 		var packsDone func()
 		if packs, packsDone, err = draftKnowledge(cmd, o.knowledge, o.hosted); err != nil {
 			return err
@@ -259,7 +257,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	}
 
 	// AI Review reads the description first; nothing else happens unless
-	// it passes (D22).
+	// it passes.
 	sc, err := draftScanner(web)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("AI Review cannot scan with this key: %w", err))
@@ -270,8 +268,8 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		return err
 	}
 	if rev != nil {
-		// And the release's two files, which reach the Drafter as inputs
-		// (DR-44): one AI Review does not pass stops the revision here.
+		// And the release's two files, which reach the Drafter as
+		// inputs: one AI Review does not pass stops the revision here.
 		if _, err := drafter.PrescanRelease(cmd.Context(), sc, rev); err != nil {
 			return err
 		}
@@ -290,7 +288,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	}
 
 	// A pack not scanned is scanned now, after the description and before
-	// the Drafter starts (D3).
+	// the Drafter starts.
 	read, readDone, err := readyDraftKnowledge(cmd, packs, sc)
 	if err != nil {
 		return err
@@ -476,7 +474,7 @@ func hostedWeb(what string) (*engine.WebRun, error) {
 
 // draftWeb is the run's web configuration: the person's own keys, or, with
 // --hosted, the job's credential and the registry. It refuses a draft that
-// could not have AI Review read everything first (D22, D25), and says what
+// could not have AI Review read everything first, and says what
 // search the draft has.
 func draftWeb(pol *policy.Policy, o draftOpts, packs bool) (*engine.WebRun, string, error) {
 	reg := registryURL()

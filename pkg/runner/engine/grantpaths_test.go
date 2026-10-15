@@ -9,10 +9,10 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// TestMakeGrantedPaths (agentry-cli#855): each path a paths grant binds
-// exists in the run's workspace before the gateway starts the tools
-// server, a path the release ships is left as it is, and a link the
-// release ships cannot carry a new folder outside the workspace.
+// TestMakeGrantedPaths: each path a paths grant binds exists in the
+// run's workspace before the gateway starts the tools server, a path
+// the release ships is left as it is, and a link the release ships
+// cannot carry a new folder outside the workspace.
 func TestMakeGrantedPaths(t *testing.T) {
 	ws := t.TempDir()
 	if err := os.WriteFile(filepath.Join(ws, "notes.md"), []byte("shipped\n"), 0o644); err != nil {

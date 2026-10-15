@@ -367,10 +367,9 @@ func TestSpreadsheetMarkdownPreservesSparseCellsAndBoundsRepeats(t *testing.T) {
 	}
 }
 
-// codeFixtures are the code, markup, configuration and data text of
-// agentry-cli#630, one per family, each with what libmagic calls it. The
-// HTML and XML are the issue's own cases: pandoc dropped the script and
-// the form, and Tika every tag.
+// codeFixtures are the code, markup, configuration and data text, one per
+// family, each with what libmagic calls it. The HTML and XML are the cases
+// where pandoc dropped the script and the form, and Tika every tag.
 var codeFixtures = []struct{ name, magic, body string }{
 	{"index.html", "text/html", "<!doctype html>\n<form action=\"/q\"><input name=\"q\"></form>\n<div id=\"out\"></div>\n<script>document.getElementById('out').innerHTML = location.hash.slice(1);</script>\n"},
 	{"page.xhtml", "application/xhtml+xml", "<?xml version=\"1.0\"?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><script>eval(name)</script></body></html>\n"},
@@ -393,8 +392,8 @@ var codeFixtures = []struct{ name, magic, body string }{
 
 // TestCodeAndMarkupAreReadAsUploaded: every code, markup, configuration and
 // data text is listed text and served byte for byte, never converted,
-// whatever a detector calls it, and told without starting Tika's JVM
-// (agentry-cli#630). As staged, a text file is served from /inputs itself;
+// whatever a detector calls it, and told without starting Tika's JVM.
+// As staged, a text file is served from /inputs itself;
 // as an archive's member, its text is copied out, and the copy is the
 // member's bytes.
 func TestCodeAndMarkupAreReadAsUploaded(t *testing.T) {
@@ -443,8 +442,8 @@ esac
 	}
 	for _, fx := range codeFixtures {
 		f := got[fx.name]
-		// HTML also gets pandoc's Markdown as a second view (D2,
-		// agentry-cli#631); the file itself stays text.
+		// HTML also gets pandoc's Markdown as a second view; the
+		// file itself stays text.
 		by, markdown := "", ""
 		if htmlTypes[fx.magic] {
 			by, markdown = "pandoc", fx.name+".md"
@@ -483,8 +482,7 @@ esac
 // TestTextDocumentsKeepTheirConverters: RTF and mail are documents that are
 // also UTF-8 text; they keep their converters ahead of the text fast path,
 // and so does a binary document. Text that is not UTF-8 is read by Tika,
-// which guesses its charset, as a Latin-1 CSV was by the table reader
-// before (agentry-cli#630).
+// which guesses its charset, as a Latin-1 CSV is by the table reader.
 func TestTextDocumentsKeepTheirConverters(t *testing.T) {
 	tools := fakeTools(t)
 	dir := t.TempDir()
@@ -549,7 +547,6 @@ esac
 // TestHTMLGetsAMarkdownView: an HTML file read as text also gets pandoc's
 // Markdown at <path>.md, staged or a member, and the file stays its own
 // view; a conversion that fails leaves the file text with no Markdown
-// (plan quickagents-that-run.md D2; agentry-cli#631).
 func TestHTMLGetsAMarkdownView(t *testing.T) {
 	page := "<!doctype html>\n<h1>Hi</h1><script>x()</script>\n"
 	run := func(t *testing.T, tools Tools) (map[string]File, string) {

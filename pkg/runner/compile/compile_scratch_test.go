@@ -11,12 +11,11 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// TestEveryReleaseGetsTheScratchFolder (plan scratch-and-pdf-reports.md
-// D1, D2, D5; agentry-cli#729): a release or a local package is granted the
-// scratch folder by the runner, whatever its contract, and a built-in is
-// not. The grant is no line of the contract: the plan's contract fields
-// are the manifest's, the plan says the folder is the runner's grant, and
-// the System Prompt tells the model what it is.
+// TestEveryReleaseGetsTheScratchFolder: a release or a local package is
+// granted the scratch folder by the runner, whatever its contract, and a
+// built-in is not. The grant is no line of the contract: the plan's
+// contract fields are the manifest's, the plan says the folder is the
+// runner's grant, and the System Prompt tells the model what it is.
 func TestEveryReleaseGetsTheScratchFolder(t *testing.T) {
 	scratchTools := []string{toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite}
 	for _, source := range []string{"registry", "local", "builtin"} {

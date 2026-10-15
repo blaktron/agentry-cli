@@ -18,17 +18,16 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// TestLiveUnsafeExecImage builds a real Unsafe Mode exec image on the
-// pinned base and drives its tools server (plan unsafe-mode.md invariants
-// 2, 3 and 8; agentry-cli#490). It pulls the base, builds the runner image
+// TestLiveUnsafeExecImage builds a real Unsafe Mode exec image on the pinned
+// base and drives its tools server. It pulls the base, builds the runner image
 // from this binary's embedded context, and installs from Kali's mirror and
 // PyPI, so it runs only when asked: AGENTRY_LIVE_UNSAFE=1 on a host with
-// docker (the workstation for amd64; the Mac build host for arm64).
+// docker.
 //
 // It forces one install to fail (a package Kali does not carry, held to
 // the grammar) and checks that the build goes on, the record names it,
 // and the run goes without it. Inside the image, run_command refuses an
-// undeclared bash (invariant 2), runs a declared apt command and a pip
+// undeclared bash, runs a declared apt command and a pip
 // extra, and answers "not present in image" for a declared command the
 // image could not place.
 func TestLiveUnsafeExecImage(t *testing.T) {

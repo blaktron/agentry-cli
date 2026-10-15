@@ -1,9 +1,8 @@
-// The release's default view (agentry-cli#693; plan quickagents-that-run.md
-// D1, D2; core DEV-218): the manifest's inputs.view, written into the
+// The release's default view: the manifest's inputs.view, written into the
 // inputs index as defaultView, is the view read_input and search_inputs
 // serve when the model asks for none, for every input that has it. An
 // input without it keeps its own default, a view asked for always wins, and
-// an index without a defaultView reads exactly as before (DR-76).
+// an index without a defaultView reads exactly as before.
 
 package toolsrv
 
@@ -52,7 +51,7 @@ func TestTheReleasesDefaultView(t *testing.T) {
 	for _, tc := range []struct {
 		name, release, path, asked, want string
 	}{
-		// No release default: each input's own (DR-76).
+		// No release default: each input's own.
 		{"own: html", "", "site/index.html", "", pageHTML},
 		{"own: document", "", "report.docx", "", docText},
 		// text: HTML's Markdown, a document's text, plain text as is.

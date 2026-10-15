@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# The CLI's release tags (agentry-cli#327; DEV-148): what a tag may be, and
-# the next one to cut.
+# The CLI's release tags: what a tag may be, and the next one to cut.
 #
 #   scripts/release-tag.sh check <tag> [<commit>]   (the release workflow's preflight)
-#   scripts/release-tag.sh next dev|main            (an agent cutting a release)
+#   scripts/release-tag.sh next dev|main            (cutting a release)
 #
 # The scheme. A main release is vX.Y.Z on a commit on main's first-parent
 # line (production, baking production's registry); a dev release is
 # vX.Y.Z-dev.N, N from 1, on dev's first-parent line (baking dev's). The line
-# is scripts/release-registry.sh's rule (agentry-cli#240, DR-33); a form that
-# disagrees with it, any other form, and any 1.x or later unless
-# AGENTRY_ALLOW_V1 is exactly "true" (the repository variable only the
-# operator's 1.0 step sets, agentry#522) are refused before anything is built.
+# is scripts/release-registry.sh's rule; a form that disagrees with it, any
+# other form, and any 1.x or later unless AGENTRY_ALLOW_V1 is exactly "true"
+# (a repository variable, set only to allow a 1.0 release) are refused before
+# anything is built.
 #
 # check prints, for $GITHUB_OUTPUT:
 #   version=X.Y.Z[-dev.N]   the tag without its v: what the binaries report
@@ -20,8 +19,8 @@
 #   prerelease=true|false   a -dev.N tag's GitHub Release is a prerelease
 #   latest=true|false       only the newest vX.Y.Z becomes the latest release
 #   draft=true|false        a minor or major main release from 1.0.0 on
-#                           (X.Y.0, X >= 1) is left a draft: the operator
-#                           approves its notes and publishes it; every
+#                           (X.Y.0, X >= 1) is left a draft, to be published
+#                           by hand after its notes are approved; every
 #                           release before 1.0.0, like every patch and
 #                           -dev.N, publishes at once
 # The commit defaults to the tag's own. Releases only move forward: a
@@ -30,12 +29,12 @@
 #
 # next prints the tag to cut on that branch's head. X.Y.Z, the version main
 # releases next, is:
-#   - RELEASE_VERSION when set: the operator moving the minor (or cutting
-#     1.0.0), never an agent's choice; it must be above the newest vX.Y.Z;
+#   - RELEASE_VERSION when set: moves the minor (or cuts 1.0.0); it must be
+#     above the newest vX.Y.Z;
 #   - else the highest X.Y.Z that dev has prereleased above the newest
 #     vX.Y.Z (main releases what dev has been testing);
-#   - else the newest vX.Y.Z with its patch bumped (agents mint patches);
-#   - else 0.6.0, where every component starts (DEV-148).
+#   - else the newest vX.Y.Z with its patch bumped;
+#   - else 0.6.0.
 # dev gets vX.Y.Z-dev.<one more than the highest N>, main gets vX.Y.Z. It
 # reads the local tags: `git fetch --tags origin` first.
 set -euo pipefail
@@ -47,7 +46,7 @@ stable_re="^v$n\.$n\.$n\$"
 v1_guard() { # <version>
   local major=${1%%.*}
   if [ "$major" -ge 1 ] && [ "${AGENTRY_ALLOW_V1:-}" != true ]; then
-    die "a v$major release is the operator's (set the repository variable AGENTRY_ALLOW_V1=true, agentry#522)"
+    die "a v$major release needs the repository variable AGENTRY_ALLOW_V1=true"
   fi
 }
 # The newest vX.Y.Z whose commit is on main's first-parent line: a stray
@@ -89,8 +88,8 @@ cmd_check() {
   fi
   if [ "$prerelease" = false ]; then
     latest=true
-    # Before 1.0.0 nothing is held (operator, 2026-09-25): only a minor or
-    # major from 1.0.0 on waits for the operator's notes.
+    # Before 1.0.0 nothing is held: only a minor or major from 1.0.0 on
+    # waits for its notes to be approved.
     [ "$patch" = 0 ] && [ "$major" -ge 1 ] && draft=true
   fi
   printf 'version=%s\nchannel=%s\nregistry=%s\nprerelease=%s\nlatest=%s\ndraft=%s\n' \

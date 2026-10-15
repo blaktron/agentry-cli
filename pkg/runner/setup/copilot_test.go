@@ -32,7 +32,7 @@ func (f *fakeCopilot) offer() CopilotOffer {
 
 // Choosing Copilot signs in with GitHub and writes the policy's model
 // block: no key variable, no base URL, GitHub's API and the plan's Copilot
-// host the only egress (I2); the plan is asked before the model, and auto is
+// host the only egress; the plan is asked before the model, and auto is
 // the default model.
 func TestSetupChoosesTheCopilotPlanThroughASignInWithGitHub(t *testing.T) {
 	pol := policy.Default()
@@ -92,7 +92,7 @@ func TestSetupKeepsACopilotSignInAndRefusesWhatCannotPay(t *testing.T) {
 // Setup offers the models Copilot CLI lists for the plan, auto first, and
 // takes none it does not offer (a model the plan disables is not listed);
 // a list that fails is said and the model typed instead; --yes and a model
-// named on the command line list nothing (agentry-cli#808).
+// named on the command line list nothing.
 func TestSetupOffersTheModelsTheCopilotPlanLists(t *testing.T) {
 	pol := policy.Default()
 	f := &fakeCopilot{models: []string{"claude-sonnet-5.5", "gpt-5-mini", "claude-sonnet-5.5"}}

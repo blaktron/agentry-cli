@@ -14,10 +14,9 @@ import (
 	_ "image/jpeg"
 )
 
-// The logo (plan §4 "The logo", D9, invariant 12; agentry#1025): a person's
-// own image, drawn only in the title block. It comes from the person, never
-// from the model and never from a URL: a design carries its pixels, as a
-// PNG this package wrote from them.
+// The logo: a person's own image, drawn only in the title block. It comes
+// from the person, never from the model and never from a URL: a design
+// carries its pixels, as a PNG this package wrote from them.
 //
 // An upload is a PNG or a JPEG, at most MaxLogoUploadBytes; NormalizeLogo
 // decodes it, scales it down to fit MaxLogoSide and encodes it again as PNG
@@ -26,7 +25,7 @@ import (
 // same bounds; the server stores only what NormalizeLogo wrote.
 const (
 	// MaxLogoUploadBytes caps an uploaded image before a byte of it is
-	// decoded (D9).
+	// decoded.
 	MaxLogoUploadBytes = 512 << 10
 	// MaxLogoBytes caps a design's logo, the PNG itself: a PNG encoder
 	// can write more than the upload was, and a logo too detailed for
@@ -43,7 +42,7 @@ const (
 
 // maxLogoField is the most a design's logo field may take as sent: the
 // base64 of MaxLogoBytes. Parse allows a document this much over
-// MaxDocumentBytes, and holds the rest of it to MaxDocumentBytes (D11: the
+// MaxDocumentBytes, and holds the rest of it to MaxDocumentBytes (the
 // 16 KB does not count the logo).
 var maxLogoField = base64.StdEncoding.EncodedLen(MaxLogoBytes)
 

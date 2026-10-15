@@ -8,7 +8,7 @@ import (
 )
 
 // The exec and Unsafe Mode exec images carry their own kind, over the
-// runner kind an exec image would otherwise inherit (agentry-cli#892).
+// runner kind an exec image would otherwise inherit.
 func TestExecImagesCarryTheImageLabel(t *testing.T) {
 	for _, pkgs := range [][]string{nil, {"busybox", "git"}} {
 		df := execDockerfile("agentry-runner:v1", spec.ExecImageSpec{Commands: []string{"tar"}, Packages: pkgs, APKMirror: "https://mirror.example/alpine"})

@@ -1,8 +1,8 @@
-// `agentry doctor` (agentry-cli#15): the "check my setup" verb the converted
-// agents lost with their doctor.sh. `setup` prepares a machine; `doctor`
-// reports, without changing anything, whether a scheduled `agentry run`
-// would get past its preflight — policy and model, the docker engine and
-// the pinned images, the registry, and for a specific ref the verified
+// `agentry doctor`: the "check my setup" verb the converted agents lost
+// with their doctor.sh. `setup` prepares a machine; `doctor` reports,
+// without changing anything, whether a scheduled `agentry run` would get
+// past its preflight — policy and model, the docker engine and the
+// pinned images, the registry, and for a specific ref the verified
 // install, its MCP server store, its profile and every declared secret
 // (the exit-11 refusal, predicted instead of met at 03:00).
 package main
@@ -48,7 +48,7 @@ var newDockerClient = func() dockerx.Client { return dockerx.New() }
 // returning it; a seam for tests, which have no keychain. Doctor reads
 // the entry itself (modelkey.Confirm) rather than trusting the presence
 // marker a settings page reads, so it never says ok about a key removed
-// behind the marker's back (agentry-cli#156).
+// behind the marker's back.
 var modelKeyPresent = modelkey.Confirm
 
 // doctorHTTPTimeout bounds the registry liveness probe.
@@ -187,13 +187,12 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 	return nil
 }
 
-// doctorHarness reports the installation behind a host-run adapter (plan
-// runner-m-r4-adapters §5): whether the executable resolves, which release
-// it is, and whether the endpoint the policy points it at can be reached
-// through the run's proxy at all. A scheduled `agentry run --adapter
-// claude` fails on exactly these three things. The facts come from
-// harnessprobe, which the desktop's wizard reads too (agentry-cli#147);
-// this renders them as checks.
+// doctorHarness reports the installation behind a host-run adapter: whether
+// the executable resolves, which release it is, and whether the endpoint
+// the policy points it at can be reached through the run's proxy at all. A
+// scheduled `agentry run --adapter claude` fails on exactly these three
+// things. The facts come from harnessprobe, which the desktop's wizard
+// reads too; this renders them as checks.
 func doctorHarness(ctx context.Context, rep *doctorReport, pol *policy.Policy, name string) {
 	if name == "" {
 		return
@@ -256,8 +255,8 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	case pol.Model.Provider == "" || pol.Model.Name == "":
 		rep.fail("model", "no provider/model configured — run `agentry setup`")
 	case policy.IsModelSignIn(pol.Model.APIKeyKind):
-		// A model sign-in (agentry-cli#738): the person's grant, kept in
-		// the model sign-in store; doctor asks only whether one is kept.
+		// A model sign-in: the person's grant, kept in the model sign-in
+		// store; doctor asks only whether one is kept.
 		vendor := modelsignin.VendorOf(pol.Model.APIKeyKind)
 		var r *modelsignin.Record
 		h, err := runnerHome()
@@ -272,8 +271,8 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		case r.Broken != "":
 			rep.fail("model", "%s/%s: the %s sign-in no longer works (%s) — run `agentry setup` to sign in again", pol.Model.Provider, pol.Model.Name, vendor, r.Broken)
 		case vendor == modelsignin.Claude && r.ConfigDir == "":
-			// Each Claude Code signs in where it runs (agentry-cli#740):
-			// the image, the default, is not signed in.
+			// Each Claude Code signs in where it runs: the image,
+			// the default, is not signed in.
 			rep.ok("model", "%s/%s (spends %s, signed in for the Claude Code installed on this computer only: runs need --adapter claude, or `agentry model-signins add claude` for the image, the default)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind))
 		default:
 			rep.ok("model", "%s/%s (spends %s, kept as the model sign-in %s; runs report tokens, not dollars)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), vendor)
@@ -282,7 +281,7 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		rep.fail("model", "%s/%s: no apiKeyEnv configured — run `agentry setup`", pol.Model.Provider, pol.Model.Name)
 	case os.Getenv(pol.Model.APIKeyEnv) == "" && policy.KeySource(policy.HarnessPolicy{}, pol.Model) == modelkey.SourceKeyring:
 		// The variable is unset and the policy names the keychain as the
-		// fallback (agentry-cli#148): a run would read it from there.
+		// fallback: a run would read it from there.
 		present, err := modelKeyPresent(pol.Model.Provider)
 		switch {
 		case err != nil:
@@ -298,13 +297,13 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		rep.ok("model", "%s/%s (key from $%s)", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
 	}
 	// A custom endpoint over plain http off this machine is allowed
-	// (agentry-cli#377) and is worth a warning on every check.
+	// and is worth a warning on every check.
 	if w := setup.PlainHTTPWarning(pol.Model.BaseURL); w != "" {
 		rep.warn("model:endpoint", "%s", w)
 	}
-	// A subscription token (agentry-cli#171) drives Claude Code alone; a
-	// machine whose default adapter is the container harness cannot run
-	// with it, and doctor says so before a run finds out.
+	// A subscription token drives Claude Code alone; a machine whose
+	// default adapter is the container harness cannot run with it, and
+	// doctor says so before a run finds out.
 	if policy.KeyKind(policy.HarnessPolicy{}, pol.Model) == policy.KeyKindSubscription {
 		rep.warn("model:kind", "the key is an Anthropic subscription token (apiKeyKind subscription): runs through Claude Code only (`agentry run --adapter claude`); the container harness refuses it — store a Console API key for those")
 	}
@@ -317,9 +316,8 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	} else {
 		rep.ok("secretSource", "env")
 	}
-	// The exec catalog (agentry-cli#100): what a declared exec command
-	// resolves to on this machine beyond the commands every machine
-	// provides (agentry-cli#595).
+	// The exec catalog: what a declared exec command resolves to on
+	// this machine beyond the commands every machine provides.
 	if len(pol.Exec.Packages) == 0 {
 		rep.ok("exec", "the commands every machine provides (%s); no others catalogued, so a QuickAgent declaring another is refused at plan time until exec.packages names its apk package", strings.Join(policy.BaseExecCommands(), ", "))
 	} else {
@@ -347,9 +345,9 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		return
 	}
 	if want := pol.Docker.Runtime; want != "" {
-		// The policy's runtime is enforced, never preferred (DR-23): a
-		// run on a daemon without it stops at ensure, so doctor says so
-		// here, with the fix.
+		// The policy's runtime is enforced, never preferred: a run on a
+		// daemon without it stops at ensure, so doctor says so here,
+		// with the fix.
 		table, err := d.Runtimes(ctx)
 		have := dockerx.SortedRuntimeNames(table)
 		switch {
@@ -361,17 +359,16 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 			rep.fail("docker:runtime", "policy docker.runtime is %q but the daemon has only: %s — install it and register it in the daemon's runtimes, or unset docker.runtime", want, strings.Join(have, ", "))
 		}
 		// The Drafter's web tools under a runtime resolve names only
-		// through the host's own name servers (agentry-cli#386): without
-		// them a draft is refused at compile, so doctor says so first.
-		// The llm-proxy, the install proxy and the relays take the runtime
-		// only with them (agentry-cli#337).
+		// through the host's own name servers: without them a draft is
+		// refused at compile, so doctor says so first. The llm-proxy, the
+		// install proxy and the relays take the runtime only with them.
 		if len(pol.Docker.Resolvers) == 0 {
 			rep.warn("docker:resolvers", "policy docker.runtime is %q and docker.resolvers is empty: `agentry draft` will be refused (its web tools cannot reach docker's DNS under %s), and the llm-proxy, the install proxy and the relays stay on the daemon's default — name the host's upstream name servers in docker.resolvers", want, want)
 		} else {
 			rep.ok("docker:resolvers", "under %s, the Drafter's web tools, the llm-proxy, the install proxy and, where the per-run docker filter runs, the relays resolve through %s (a host-run harness's proxy stays on the daemon's default)", want, strings.Join(pol.Docker.Resolvers, ", "))
 		}
 		// The gateway takes a runtime of its own, registered to open a
-		// host Unix socket (agentry-cli#337).
+		// host Unix socket.
 		switch gw := pol.Docker.GatewayRuntime; {
 		case gw == "":
 			rep.warn("docker:gatewayRuntime", "the gateway stays on the daemon's default: it reaches the run's docker filter through a host Unix socket, which %s opens only when registered with %s — register it again under a name of its own and set docker.gatewayRuntime", want, dockerx.HostUDSOpen)
@@ -474,8 +471,7 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		meta := &installdir.Meta{Ref: fmt.Sprintf("%s/%s@%s", m.Namespace, m.Name, m.Version),
 			Namespace: m.Namespace, Name: m.Name, Version: m.Version, Digest: digest, Source: "local"}
 		// A local tree installs under the same digest-keyed layout as a
-		// registry ref (cmd_run.go), so its cached plans are checkable too
-		// (agentry-cli#60).
+		// registry ref (cmd_run.go), so its cached plans are checkable too.
 		installDir := installdir.ReleaseDir(home, m.Namespace, m.Name, m.Version, digest)
 		if _, ierr := installdir.Inspect(installDir, digest); ierr != nil {
 			if errors.Is(ierr, installdir.ErrNotInstalled) {
@@ -496,8 +492,8 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		rep.fail("resolve", "%v", err)
 		return nil, nil, ""
 	}
-	// A local install (agentry-cli#491) is checked where a run reads it,
-	// against its integrity record, with no registry to resolve.
+	// A local install is checked where a run reads it, against
+	// its integrity record, with no registry to resolve.
 	if meta, installDir, ok, lerr := localinstall.Materialize(home, parsed.Namespace, parsed.Name, parsed.Range); ok {
 		if lerr != nil {
 			rep.fail("install", "%v", lerr)
@@ -533,7 +529,7 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	var changed *installdir.ChangedError
 	switch {
 	case errors.As(ierr, &changed):
-		// What a run refuses (agentry-cli#326), said here first.
+		// What a run refuses, said here first.
 		changed.Ref = fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version)
 		rep.fail("install", "%v", changed)
 		return nil, nil, ""
@@ -556,11 +552,8 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	return m, meta, installDir
 }
 
-// doctorAgentState checks the server store, the profile and the secrets
-// for one located QuickAgent.
 // doctorExecCatalog checks a QuickAgent's declared exec commands against
-// the machine's catalog: what the compiler will refuse, said here first
-// (agentry-cli#100).
+// the machine's catalog: what the compiler will refuse, said here first.
 func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manifest) {
 	cmds := m.Capabilities.Exec.Commands
 	if len(cmds) == 0 {
@@ -581,6 +574,8 @@ func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manife
 	rep.ok("exec", "declared commands catalogued: %s", strings.Join(mapped, ", "))
 }
 
+// doctorAgentState checks the server store, the profile and the secrets
+// for one located QuickAgent.
 func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *manifest.Manifest, meta *installdir.Meta, installDir string) {
 	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, installdir.DigestSuffix(meta.Digest))
 	if n := len(mcpinstall.Packages(m.Capabilities.MCPServers)); n > 0 {
@@ -597,8 +592,8 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		} else {
 			rep.ok("mcpServers", "%d declared server(s) installed in the signature store", n)
 		}
-		// The registry's vulnerability verdict (agentry#177): what a run
-		// would refuse on, warn about, or could not check.
+		// The registry's vulnerability verdict: what a run would
+		// refuse on, warn about, or could not check.
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		statuses := mcpinstall.CheckVulnerabilities(ctx, nil, registryURL(), m.Capabilities.MCPServers)
 		cancel()
@@ -627,8 +622,7 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 	}
 	if installDir != "" {
 		// One plan per run mode (plan/<mode>/); a plan from an older CLI
-		// is stale and `agentry run --prepare` recompiles it in place
-		// (agentry-cli#60).
+		// is stale and `agentry run --prepare` recompiles it in place.
 		for _, mode := range m.SupportedModes() {
 			b, err := os.ReadFile(filepath.Join(installDir, "plan", string(mode), "plan.json")) //nolint:gosec // our install layout
 			switch {
@@ -664,7 +658,7 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		overrides = prof.Secrets
 	}
 	// An optional secret that would not resolve is a note, not a failure:
-	// the run starts without it (DR-70). Only a required one refuses.
+	// the run starts without it. Only a required one refuses.
 	missing, absent := []string{}, []string{}
 	for _, name := range secrets {
 		switch {

@@ -142,10 +142,10 @@ func appServerOneTurn(_ context.Context, _ dockerx.RunSpec, stdin io.Reader, std
 
 // A whole `agentry run` on a ChatGPT plan, signed in through OpenAI's flow
 // (a fake): the run is the Codex image's, and nothing of the grant but an
-// access token reaches it (I3) — a probe search of the run folders, the
-// output and every docker call finds no refresh token, no ID token and not
-// the client OpenAI issued, and the access token only in the run's own
-// token file, which dies with the run.
+// access token reaches it — a probe search of the run folders, the output
+// and every docker call finds no refresh token, no ID token and not the
+// client OpenAI issued, and the access token only in the run's own token
+// file, which dies with the run.
 func TestAChatGPTPlanRunIsHandedItsAccessTokenAlone(t *testing.T) {
 	v := chatgptFixture(t)
 	home := mustRunnerHome(t)

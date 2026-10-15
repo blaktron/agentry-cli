@@ -34,8 +34,8 @@ func compileSignIn(t *testing.T, adapterName, kind string, edit func(*policy.Pol
 // A token-file sign-in: the agent container mounts the plan and the run's
 // sign-in folder read-only, and nothing else (I4); it names no key; the
 // plan records the kind, the delivery and the image's pin, and the
-// enforcement says what reaches the harness and that the run reports
-// tokens (I8, D13).
+// enforcement says what reaches the harness and that the run reports tokens
+// (I8).
 func TestATokenFileSignInMountsOneReadOnlyFolderBesideThePlan(t *testing.T) {
 	plan, err := compileSignIn(t, signintest.TokenAdapter, policy.KeyKindChatGPTPlan, nil)
 	if err != nil {
@@ -107,8 +107,7 @@ func TestAKeyPlanMountsNoSignInFolder(t *testing.T) {
 
 // An adapter that cannot spend the sign-in the policy names refuses the
 // plan by policy (exit 11), naming the adapter and the kind: docker-agent
-// for every kind (D8), and each vendor's adapters for another vendor's
-// sign-in (codex's came with agentry-cli#739, claude's with #740).
+// for every kind, and each vendor's adapters for another vendor's sign-in.
 func TestAnAdapterThatCannotSpendASignInRefusesByPolicy(t *testing.T) {
 	for _, c := range []struct{ adapter, kind string }{
 		{"docker-agent", policy.KeyKindChatGPTPlan},
@@ -184,7 +183,7 @@ func TestTheCodexImageCompilesAPlanRun(t *testing.T) {
 }
 
 // The installed Codex on a ChatGPT plan reads the token in the run's own
-// folder: no mount, no key, the host line in the receipt (D14).
+// folder: no mount, no key, the host line in the receipt.
 func TestTheInstalledCodexCompilesAPlanRun(t *testing.T) {
 	plan, err := compileCodexPlan(t, "codex", nil)
 	if err != nil {
@@ -226,12 +225,12 @@ func compileClaudePlan(t *testing.T, adapterName string, mode manifest.Mode, edi
 	}, t.TempDir())
 }
 
-// The Claude Code image on a Claude subscription (agentry-cli#740): the
-// image built on this machine, pinned by its npm integrity (I8); the plan
-// read-only and Claude Code's config directory read-write, and nothing
-// else (I4); the egress Anthropic's API and the host Claude Code refreshes
-// at, alone (I2). (The adapter's interactive form is the conformance
-// golden's; the fixture QuickAgent is autonomous.)
+// The Claude Code image on a Claude subscription: the image built on this
+// machine, pinned by its npm integrity (I8); the plan read-only and Claude
+// Code's config directory read-write, and nothing else (I4); the egress
+// Anthropic's API and the host Claude Code refreshes at, alone (I2). (The
+// adapter's interactive form is the conformance golden's; the fixture
+// QuickAgent is autonomous.)
 func TestTheClaudeCodeImageCompilesASignInRun(t *testing.T) {
 	def, _ := policy.Default().Images.HarnessImageFor("claude-image")
 	for _, mode := range []manifest.Mode{manifest.ModeAutonomous} {
@@ -275,7 +274,7 @@ func TestTheClaudeCodeImageCompilesASignInRun(t *testing.T) {
 
 // The installed Claude Code on a Claude subscription: nothing mounted, no
 // key, its config directory Agentry's own, named by the engine; the receipt
-// says so (D23).
+// says so.
 func TestTheInstalledClaudeCodeCompilesASignInRun(t *testing.T) {
 	plan, err := compileClaudePlan(t, "claude", manifest.ModeAutonomous, nil)
 	if err != nil {
@@ -308,12 +307,12 @@ func compileCopilotPlan(t *testing.T, allow []string) (*spec.Plan, error) {
 	}, t.TempDir())
 }
 
-// The Copilot image on a Copilot plan (agentry-cli#741): the image built
-// on this machine, pinned by the release's checksums and said to be not
-// signed (I8); nothing mounted, the token handed over the session (I4);
-// the egress GitHub's API and the plan's Copilot host alone, each plan's,
-// and never GitHub's telemetry or experiment hosts, the generic Copilot
-// host or a host beside them (I2).
+// The Copilot image on a Copilot plan: the image built on this machine,
+// pinned by the release's checksums and said to be not signed (I8); nothing
+// mounted, the token handed over the session (I4); the egress GitHub's API
+// and the plan's Copilot host alone, each plan's, and never GitHub's
+// telemetry or experiment hosts, the generic Copilot host or a host beside
+// them (I2).
 func TestTheCopilotImageCompilesASignInRunReachingGitHubAlone(t *testing.T) {
 	def, _ := policy.Default().Images.HarnessImageFor("copilot-image")
 	for _, plan := range policy.CopilotPlans() {

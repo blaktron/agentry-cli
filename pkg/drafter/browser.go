@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// The Drafter's rules on a browser (plan browser-testing.md M8;
-// agentry-cli#916): a website the person names is tested through a declared
-// browser (capabilities.browser), which the runner gives the run, so a draft
-// never brings a browser of its own, as a command or as an MCP server.
+// The Drafter's rules on a browser: a website the person names is tested
+// through a declared browser (capabilities.browser), which the runner gives
+// the run, so a draft never brings a browser of its own, as a command or as
+// an MCP server.
 
 // browserWords are the names, or parts of a package's name, that bring a
 // browser of their own. The match is by name alone: a browser server whose

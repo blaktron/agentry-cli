@@ -1,10 +1,9 @@
 package compile
 
-// The browser (agentry-notes plans/browser-testing.md §3 invariants 1, 4,
-// 5, 6; §7, D7, D8, D9, D12; agentry-cli#915): a release that declares
-// capabilities.browser compiles a browser server, a catalog entry of its
-// own behind one relay to the run's browse proxy, whose run-time values
-// are placeholders, and nothing else of the plan moves for it.
+// The browser: a release that declares capabilities.browser compiles a
+// browser server, a catalog entry of its own behind one relay to the run's
+// browse proxy, whose run-time values are placeholders, and nothing else of
+// the plan moves for it.
 
 import (
 	"errors"
@@ -87,13 +86,13 @@ func TestCompileRendersTheBrowserServer(t *testing.T) {
 	if got := strs(e["command"]); !slices.Equal(got, browser.Args(spec.PHBrowseProxy, false)) || slices.Contains(got, "--secrets") || slices.Contains(got, "--no-sandbox") {
 		t.Fatalf("command = %v", got)
 	}
-	// One relay, to the run's browse proxy, and no other network
-	// (invariant 2's half that is the plan's).
+	// One relay, to the run's browse proxy, and no other network (the half
+	// of the network rule that is the plan's).
 	if got := strs(e["allowHosts"]); !slices.Equal(got, []string{spec.PHBrowseProxy + ":3128/tcp"}) || e["disableNetwork"] != nil {
 		t.Fatalf("allowHosts = %v", got)
 	}
-	// Invariant 6: the output folder is its one writable bind, and no
-	// secret reaches it through the gateway (invariant 4).
+	// The output folder is its one writable bind, and no secret reaches it
+	// through the gateway.
 	wantVols := []string{
 		spec.PHCfg + "/gateway/browser.json:" + browser.ConfigMount + ":ro",
 		spec.PHCfg + "/browserout:" + browser.OutMount + ":rw",
@@ -108,8 +107,8 @@ func TestCompileRendersTheBrowserServer(t *testing.T) {
 		t.Fatalf("browser.json %s, %v", b, err)
 	}
 
-	// Invariant 5: the filter is an allowlist that never passes a tool
-	// running code in the server or uploading a host file.
+	// The filter is an allowlist that never passes a tool running code in
+	// the server or uploading a host file.
 	tools := gatewayTools(t, planDir)[browser.ServerName]
 	if !slices.Equal(tools, browser.Tools(false)) || !slices.Contains(tools, browser.ToolEvaluate) {
 		t.Fatalf("tools.yaml browser = %v", tools)
@@ -154,8 +153,8 @@ func TestCompileRendersTheBrowserServer(t *testing.T) {
 	}
 }
 
-// TestABrowserThatTypesSecretsLosesEvaluate is §7.1: the secrets reach the
-// browser server alone, as a read-only file, and browser_evaluate is gone.
+// TestABrowserThatTypesSecretsLosesEvaluate: the secrets reach the browser
+// server alone, as a read-only file, and browser_evaluate is gone.
 func TestABrowserThatTypesSecretsLosesEvaluate(t *testing.T) {
 	planDir := t.TempDir()
 	plan, err := Compile(hostInputs(t, withBrowserSecrets(browserManifest)), planDir)
@@ -182,7 +181,7 @@ func TestABrowserThatTypesSecretsLosesEvaluate(t *testing.T) {
 	}
 }
 
-// TestPublicWebNeedsThePolicy is D12: scope public is refused unless the
+// TestPublicWebNeedsThePolicy: scope public is refused unless the
 // operator's policy allows it.
 func TestPublicWebNeedsThePolicy(t *testing.T) {
 	doc := strings.Replace(browserManifest, "    sites: [site]\n", "    sites: [site]\n    scope: public\n", 1)
@@ -202,8 +201,8 @@ func TestPublicWebNeedsThePolicy(t *testing.T) {
 	}
 }
 
-// TestAReleaseWithoutABrowserHasNoBrowserServer is invariant 1: no line,
-// no browser server, no browse proxy, no browser tool.
+// TestAReleaseWithoutABrowserHasNoBrowserServer: no line, no browser
+// server, no browse proxy, no browser tool.
 func TestAReleaseWithoutABrowserHasNoBrowserServer(t *testing.T) {
 	planDir := t.TempDir()
 	plan, err := Compile(mcpFixtureInputs(t, nil, policy.Default()), planDir)

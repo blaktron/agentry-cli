@@ -18,7 +18,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 )
 
-// revising says the command drafts a revision (agentry-cli#526).
+// revising says the command drafts a revision.
 func (o draftOpts) revising() bool { return o.revise != "" || o.reviseRef != "" }
 
 // checkReviseFlags refuses a command line that mixes a revision with a new

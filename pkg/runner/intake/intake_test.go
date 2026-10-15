@@ -114,11 +114,10 @@ func TestCollectRefusals(t *testing.T) {
 	}
 }
 
-// TestCollectAnswersASecretFromTheSource (agentry-cli#402): with no
-// prompter and no preset, a secret question whose declared capability
-// secret the run's source holds is answered from it — a hosted run's
-// vault-filled envFile — and named, never valued; one the source does not
-// hold still fails as required.
+// TestCollectAnswersASecretFromTheSource: with no prompter and no preset, a
+// secret question whose declared capability secret the run's source holds is
+// answered from it — a hosted run's vault-filled envFile — and named, never
+// valued; one the source does not hold still fails as required.
 func TestCollectAnswersASecretFromTheSource(t *testing.T) {
 	qs := []manifest.IntakeQuestion{{ID: "api_token", Prompt: "API token", Type: manifest.IntakeSecret, Required: true}}
 	var looked []string
@@ -172,12 +171,10 @@ func TestCollectAnswersASecretFromTheSource(t *testing.T) {
 	}
 }
 
-// TestABlankSecretQuestionThatIsNotRequiredIsNoAnswer pins what DR-70
-// builds on rather than anything it changed: a secret question that is not
-// required, left blank with no terminal and no source holding it, is no
-// answer and no error. The refusal such a run used to meet came from the
-// engine, and with the secret optional the engine now starts the run
-// without it (its TestAMissingOptionalSecretStartsTheRun).
+// TestABlankSecretQuestionThatIsNotRequiredIsNoAnswer pins that a secret
+// question that is not required, left blank with no terminal and no source
+// holding it, is no answer and no error. With the secret optional the engine
+// starts the run without it (its TestAMissingOptionalSecretStartsTheRun).
 func TestABlankSecretQuestionThatIsNotRequiredIsNoAnswer(t *testing.T) {
 	qs := []manifest.IntakeQuestion{{ID: "github_token", Prompt: "A GitHub token, for private repositories", Type: manifest.IntakeSecret}}
 	none := func(string) bool { return false }
@@ -219,9 +216,9 @@ func TestASourceQuestionIsParsedAndNeverText(t *testing.T) {
 	}
 }
 
-// TestSourceHosts (agentry-cli#854): the hosts a scheduled run's source
-// answers fetch from, each once; an unanswered question names none, and
-// an answer a run would refuse is refused here too.
+// TestSourceHosts: the hosts a scheduled run's source answers fetch from, each
+// once; an unanswered question names none, and an answer a run would refuse is
+// refused here too.
 func TestSourceHosts(t *testing.T) {
 	qs := []manifest.IntakeQuestion{
 		{ID: "repo", Prompt: "Repository", Type: manifest.IntakeRepository},
@@ -246,7 +243,7 @@ func TestSourceHosts(t *testing.T) {
 }
 
 // A host question's answer is a target host, never text, and its document
-// names the host and the account and never a sign-in (agentry-cli#861).
+// names the host and the account and never a sign-in.
 func TestAHostQuestionIsATargetHostNeverText(t *testing.T) {
 	qs := []manifest.IntakeQuestion{{ID: "server", Prompt: "The server to set up", Type: manifest.IntakeHost, Required: true}}
 	a, err := Collect(nil, qs, map[string]string{"server": "admin@box.example:2222"}, nil)
@@ -270,10 +267,10 @@ func TestAHostQuestionIsATargetHostNeverText(t *testing.T) {
 	}
 }
 
-// TestABrowsersSiteIsAnAddressNeverASource (agentry-cli#915): a url
-// question the browser names as a site is answered as an http or https
-// address, kept in Values for intake.json, and never fetched; another url
-// question of the same release is still a source.
+// TestABrowsersSiteIsAnAddressNeverASource: a url question the browser names as
+// a site is answered as an http or https address, kept in Values for
+// intake.json, and never fetched; another url question of the same release is
+// still a source.
 func TestABrowsersSiteIsAnAddressNeverASource(t *testing.T) {
 	m := &manifest.Manifest{
 		Intake: []manifest.IntakeQuestion{

@@ -8,7 +8,7 @@ import (
 )
 
 // The links here stay inside the root, so os.Root would follow them: only
-// the check refuses them, on any host (agentry-cli#421).
+// the check refuses them, on any host.
 func TestFileAndDir(t *testing.T) {
 	dir := t.TempDir()
 	must := func(err error) {

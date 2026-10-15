@@ -246,9 +246,8 @@ func TestImproveAndEditReadTheCurrentVoice(t *testing.T) {
 	})
 }
 
-// An AI Edit takes samples beside its note (plan voice-page-redesign.md
-// D3, agentry-cli#605): they are decoded as Create's are, and the task
-// keeps the note as the change to make, not as a brief.
+// An AI Edit takes samples beside its note: they are decoded as Create's are,
+// and the task keeps the note as the change to make, not as a brief.
 func TestAnEditWithSamplesDecodesThemAndKeepsTheNoteAsTheChange(t *testing.T) {
 	const current = "# Your voice\n\nWrite plainly.\n"
 	fx := newFixture(t, Edit, written)
@@ -287,7 +286,7 @@ func TestAnEditWithSamplesDecodesThemAndKeepsTheNoteAsTheChange(t *testing.T) {
 }
 
 // An Edit's samples are held to the decoded-text cap as Create's are: a
-// hosted Edit's 1 MB (D9) cuts them in order, and the task says which.
+// hosted Edit's 1 MB cuts them in order, and the task says which.
 func TestAnEditsSamplesAreCutAtTheTextCap(t *testing.T) {
 	fx := newFixture(t, Edit, written)
 	fx.opts.Current, fx.opts.Brief = []byte("# Your voice\n\nWrite plainly.\n"), "Shorter."
@@ -390,7 +389,7 @@ func TestCapTextCutsInOrderAtARuneBoundary(t *testing.T) {
 }
 
 // A sample ClamAV finds refuses the build before the Voice Writer starts,
-// with the policy class, naming it (plan file-handling.md §7, D9).
+// with the policy class, naming it.
 func TestASampleClamAVFindsRefusesTheBuild(t *testing.T) {
 	fx := newFixture(t, Create, written)
 	writeFile(t, filepath.Join(fx.samples, "eicar.com"), "X5O EICAR")
@@ -421,7 +420,7 @@ func maliciousHA(t *testing.T) {
 }
 
 // A risky sample Hybrid Analysis calls malicious refuses the build with
-// the policy class, before the Voice Writer starts (agentry-cli#564).
+// the policy class, before the Voice Writer starts.
 func TestASampleHybridAnalysisCallsMaliciousRefusesTheBuild(t *testing.T) {
 	maliciousHA(t)
 	fx := newFixture(t, Create, written)

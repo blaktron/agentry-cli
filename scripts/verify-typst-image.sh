@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Hold the runner image's pinned Typst image to its signature, and extract
-# its files for the real-render tests (agentry-cli#730; plan
-# scratch-and-pdf-reports.md D26).
+# its files for the real-render tests.
 #
 # The runner image copies export_pdf's renderer, fonts and packages from
 # agentry-typst by digest (runnerimage/Dockerfile, ARG TYPST_IMAGE), so the

@@ -1,14 +1,13 @@
 package engine
 
-// A run paid by a model sign-in (plan model-sign-ins.md §4.2, invariants
-// I3, I4, I7, I9; agentry-cli#738, DR-86). The caller hands the engine
-// what the run may have of the person's sign-in, and nothing else of it:
-// for a token-file sign-in, a short-lived access token, which the engine
+// A run paid by a model sign-in. The caller hands the engine what the
+// run may have of the person's sign-in, and nothing else of it: for a
+// token-file sign-in, a short-lived access token, which the engine
 // writes into one file in a folder of the run's own, mounted read-only
-// into the agent container, and rewrites before it expires by asking the
-// caller again (the renewer of connections.go, DR-73 and DR-77, extended
-// to the agent container); for a config-directory sign-in, the harness's
-// own config directory, which the engine mounts and never reads.
+// into the agent container, and rewrites before it expires by asking
+// the caller again (the renewer of connections.go and extended to the
+// agent container); for a config-directory sign-in, the harness's own
+// config directory, which the engine mounts and never reads.
 
 import (
 	"context"
@@ -32,10 +31,10 @@ import (
 // ModelSignInGrant is what a run is given of the person's model sign-in.
 type ModelSignInGrant struct {
 	// Kind is the sign-in's kind (policy.IsModelSignIn), which the run
-	// holds against the kind its plan was compiled for (I7).
+	// holds against the kind its plan was compiled for.
 	Kind string
 	// Token is the access token of a token-file sign-in: an access token
-	// alone, never the refresh token or a client secret (I3).
+	// alone, never the refresh token or a client secret.
 	Token ConnectionToken
 	// ConfigDir is a config-directory sign-in's directory: an absolute
 	// host path, or the name of a docker volume, which the harness alone
@@ -65,10 +64,10 @@ func OwnSignInDir(home, dir string) bool {
 }
 
 // checkModelSignIn holds what the caller gave the run against the plan,
-// before anything touches the daemon: the kind the plan was compiled for
-// (I7), a grant of the shape its delivery needs, and no cost budget for a
-// run that reports tokens (D13). A plan compiled for a key that is handed
-// a sign-in is refused too, so a grant never rides along unasked.
+// before anything touches the daemon: the kind the plan was compiled for,
+// a grant of the shape its delivery needs, and no cost budget for a run
+// that reports tokens. A plan compiled for a key that is handed a sign-in
+// is refused too, so a grant never rides along unasked.
 func checkModelSignIn(p Params) error {
 	msi, g := p.Plan.Harness.ModelSignIn, p.ModelSignIn
 	switch {
@@ -101,13 +100,13 @@ func checkModelSignIn(p Params) error {
 	case spec.ModelSignInConfigDir:
 		// Only a directory of Agentry's own may be mounted read-write into
 		// the agent container: one under the runner home's model sign-in
-		// store, or a docker volume named agentry-…, never a person's
-		// own folder (plan D20: never their ~/.claude).
+		// store, or a docker volume named agentry-…, never a person's own
+		// folder (never their ~/.claude).
 		d := g.ConfigDir
 		switch {
 		case p.Plan.Harness.Host != nil && !filepath.IsAbs(d):
 			// A harness installed on this computer reads a directory here,
-			// not a docker volume (the image's sign-in is one; plan §4.4).
+			// not a docker volume (the image's sign-in is one).
 			return Classify(ExitPolicy, fmt.Errorf("the %s on this computer reads its sign-in from a directory of Agentry's own, and this run was given the image's docker volume %s: sign in for the installed harness, or run in the image",
 				policy.SignInSentence(msi.Kind), d))
 		case filepath.IsAbs(d):
@@ -219,10 +218,10 @@ const signInMinLife = time.Hour + 5*time.Minute
 
 // signInTokens is the run's model sign-in as a session's driver hands it
 // to the harness through the harness's token callback (spec.
-// ModelSignInCallback; plan model-sign-ins.md D25): the token held, and
-// the caller's renewal, asked when the harness asks for a refresh or the
-// token held has less than signInMinLife left. Every token it hands out is
-// masked first. Nothing of it is written anywhere.
+// ModelSignInCallback): the token held, and the caller's renewal, asked
+// when the harness asks for a refresh or the token held has less than
+// signInMinLife left. Every token it hands out is masked first. Nothing of
+// it is written anywhere.
 type signInTokens struct {
 	mu     sync.Mutex
 	cur    ConnectionToken
@@ -268,8 +267,8 @@ func (rd *runDirs) signInTokenFunc() func(context.Context, bool) (adapter.SignIn
 	return rd.signInTokens.token
 }
 
-// planLimitError is the plan-limit outcome (D12, I9): the budget class,
-// with its own reason, the vendor's words and the reset time only when the
+// planLimitError is the plan-limit outcome: the budget class, with its
+// own reason, the vendor's words and the reset time only when the
 // harness gave one. Never retried, never a success.
 func planLimitError(text string, resets time.Time) error {
 	msg := "plan limit reached: the person's plan (or this app's weekly cap on it) refused the model's calls"
@@ -282,9 +281,9 @@ func planLimitError(text string, resets time.Time) error {
 	return Classify(ExitBudget, receipt.WithReason(errors.New(msg), receipt.ReasonPlanLimit, ""))
 }
 
-// outOfCreditsError is the out-of-credits outcome (agentry-cli#742): the
-// budget class, with its own reason and the provider's words. Never
-// retried, never a success.
+// outOfCreditsError is the out-of-credits outcome: the budget class,
+// with its own reason and the provider's words. Never retried, never a
+// success.
 func outOfCreditsError(text string) error {
 	msg := "out of credits: the model's provider refused the calls because the account that pays for them has no credits left; add credits there, or pay with another account or key (agentry setup)"
 	if text != "" {
@@ -293,9 +292,9 @@ func outOfCreditsError(text string) error {
 	return Classify(ExitBudget, receipt.WithReason(errors.New(msg), receipt.ReasonOutOfCredits, ""))
 }
 
-// orgPolicyError is the organization-policy outcome (D29): the policy's
-// class, with its own reason naming which policy, and the vendor's words.
-// Never retried, never a success.
+// orgPolicyError is the organization-policy outcome: the policy's class,
+// with its own reason naming which policy, and the vendor's words. Never
+// retried, never a success.
 func orgPolicyError(ev *adapter.Event) error {
 	what := "a policy of your organization or enterprise"
 	switch ev.Policy {
@@ -314,7 +313,7 @@ func orgPolicyError(ev *adapter.Event) error {
 // credentialKind is the receipt's credential kind for a plan: the model
 // sign-in's kind, else the kind a key was compiled for, else api when the
 // harness is given a key; empty when it is given none. A word of a closed
-// list, never an account or a token (I6).
+// list, never an account or a token.
 func credentialKind(plan *spec.Plan) string {
 	if msi := plan.Harness.ModelSignIn; msi != nil {
 		return msi.Kind

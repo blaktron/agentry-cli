@@ -88,11 +88,11 @@ func layDownTestPack(t *testing.T, name, dir string) knowledge.Manifest {
 	return made.Manifest
 }
 
-// TestKnowledgeBuildOutputFormatJSON (agentry-cli#364): the form a sandbox
-// host drives for a hosted build — the Creator run's envelope as the last
-// JSON object on stdout with the build's report under knowledge, its usage
-// narrated live on stderr, and one envelope still for a build that failed
-// before the Creator ran or after it.
+// TestKnowledgeBuildOutputFormatJSON: the form a sandbox host drives for a
+// hosted build — the Creator run's envelope as the last JSON object on
+// stdout with the build's report under knowledge, its usage narrated live
+// on stderr, and one envelope still for a build that failed before the
+// Creator ran or after it.
 func TestKnowledgeBuildOutputFormatJSON(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -258,8 +258,7 @@ func runexecLastJSONObject(out string) ([]byte, bool) {
 	return nil, false
 }
 
-// TestKnowledgeBuildBriefAndWeb (agentry-cli#523; plan
-// knowledge-and-drafter.md D15, D16): a build takes documents, a brief, or
+// TestKnowledgeBuildBriefAndWeb: a build takes documents, a brief, or
 // both; the web is on by default with no documents and off with them, and
 // a build that cannot have AI Review read every result runs without it and
 // says why; a hosted build searches through the registry with the job's
@@ -353,7 +352,7 @@ func TestKnowledgeBuildBriefAndWeb(t *testing.T) {
 	})
 	t.Run("an add with a brief alone is built without the web unless asked", func(t *testing.T) {
 		// The pack being extended holds documents, which searches would
-		// carry to the search provider (D16).
+		// carry to the search provider.
 		dir := filepath.Join(t.TempDir(), "p")
 		layDownTestPack(t, "notes", dir)
 		stop := errors.New("the test stops the build here")

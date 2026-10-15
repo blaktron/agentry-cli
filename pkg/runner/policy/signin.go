@@ -1,10 +1,9 @@
 package policy
 
-// Model sign-ins and per-adapter harness images (plan model-sign-ins.md
-// §4.2, D3–D5, D13; agentry-cli#738, DR-86). A model sign-in is a person's
+// Model sign-ins and per-adapter harness images. A model sign-in is a person's
 // own grant that lets their local runs spend a model vendor's plan: a
 // ChatGPT plan, a Claude subscription through Claude Code, a Copilot plan.
-// It is a credential kind beside DR-26's api and subscription, and the
+// It is a credential kind beside the api and subscription kinds, and the
 // policy names only the kind: the grant lives in the person's model
 // sign-in store (pkg/runner/modelsignin), never in this file, a plan or a
 // receipt.
@@ -24,7 +23,7 @@ const (
 	KeyKindChatGPTPlan = "chatgpt-plan"
 	// KeyKindClaudeSignIn spends a Claude subscription through Claude
 	// Code's own sign-in, kept in a config directory Agentry owns and
-	// never reads (plan D19, D20).
+	// never reads.
 	KeyKindClaudeSignIn = "claude-signin"
 	// KeyKindCopilotSignIn spends a Copilot plan through a GitHub sign-in.
 	KeyKindCopilotSignIn = "copilot-signin"
@@ -32,7 +31,7 @@ const (
 	ProviderOpenAI  = "openai"
 	ProviderCopilot = "copilot"
 
-	// The providers whose account a person may connect (plan §4.6, D30):
+	// The providers whose account a person may connect:
 	// each is paid by an ordinary API key (or, Hugging Face, an inference
 	// token), pasted or minted by a connect.
 	ProviderOpenRouter  = "openrouter"
@@ -61,10 +60,10 @@ func SignInTokenRoute(hp HarnessPolicy) string {
 }
 
 // signInEndpoints are the endpoints a run paid by each sign-in kind may
-// reach through the egress proxy, and nothing else (invariant I2). For a
+// reach through the egress proxy, and nothing else. For a
 // token-file sign-in, the vendor's inference API alone, never its token
 // endpoint, which only the CLI talks to. Claude Code keeps and refreshes
-// its own sign-in in its directory (plan D20), so a Claude run reaches
+// its own sign-in in its directory, so a Claude run reaches
 // Anthropic's API and the host its refresh goes to (platform.claude.com,
 // Claude Code's TOKEN_URL in 2.1.296), and nothing of claude.ai.
 var signInEndpoints = map[string][]string{
@@ -74,16 +73,14 @@ var signInEndpoints = map[string][]string{
 
 // CopilotGitHubAPI is GitHub's API, where Copilot CLI reads the account's
 // entitlement and its organization's managed settings: one of the two
-// hosts a Copilot run reaches (agentry-cli#741).
+// hosts a Copilot run reaches.
 const CopilotGitHubAPI = "api.github.com:443"
 
-// The Copilot plans, by the Copilot API host each is served from, the
-// other host a Copilot run reaches (GitHub's Copilot allowlist reference:
-// *.individual, *.business and *.enterprise.githubcopilot.com; plan
-// model-sign-ins.md §4.5). Copilot's telemetry and experiment hosts are
-// hosts of their own, so the proxy denies them. Which host each plan uses
-// is read from GitHub's docs, not measured: M11 (agentry-cli#744) confirms
-// it.
+// The Copilot plans, by the Copilot API host each is served from, the other
+// host a Copilot run reaches (GitHub's Copilot allowlist reference:
+// *.individual, *.business and *.enterprise.githubcopilot.com). Copilot's
+// telemetry and experiment hosts are hosts of their own, so the proxy denies
+// them. Which host each plan uses is read from GitHub's docs, not measured.
 const (
 	CopilotPlanIndividual = "individual"
 	CopilotPlanBusiness   = "business"
@@ -164,8 +161,8 @@ var signInProviders = map[string]string{
 }
 
 // IsModelSignIn reports whether kind is a model sign-in: a plan the person
-// holds, which a hosted run never uses (plan D2) and which reports tokens,
-// never dollars (D13).
+// holds, which a hosted run never uses and which reports tokens,
+// never dollars.
 func IsModelSignIn(kind string) bool {
 	_, ok := signInProviders[kind]
 	return ok
@@ -190,7 +187,7 @@ func SignInSentence(kind string) string {
 }
 
 // MaxCostSignInSentence is why a cost budget is refused for a run paid by
-// a model sign-in (plan D13): the plan pays, so the run reports tokens.
+// a model sign-in: the plan pays, so the run reports tokens.
 const MaxCostSignInSentence = "a run paid by a model sign-in spends the person's plan and reports tokens, not dollars, so a cost budget has nothing to measure; set maxCostUsd to 0 (or leave --max-cost off) and bound the run with --max-turns and --timeout"
 
 // checkKind holds one apiKeyKind against the provider it is set beside:
@@ -205,10 +202,9 @@ func checkKind(field, kind, provider string) error {
 	return nil
 }
 
-// HarnessImage pins one adapter's harness image (agentry-cli#224's option
-// A, widened by plan D5): either a published image pinned by digest, or an
-// image built on this machine from a vendor artifact, pinned by that
-// artifact's hash. Never a bare tag.
+// HarnessImage pins one adapter's harness image: either a published image
+// pinned by digest, or an image built on this machine from a vendor artifact,
+// pinned by that artifact's hash. Never a bare tag.
 type HarnessImage struct {
 	// Ref is the image reference: <name>[:<tag>]@sha256:<digest> for a
 	// published image, the local <name>:<tag> the build tags for a built
@@ -277,24 +273,23 @@ func (h HarnessImage) validate(adapterName string) error {
 
 // DefaultHarnessImages are the CLI's pinned harness images for the
 // adapters beyond docker-agent, by adapter name, each by digest or by the
-// artifact it is built from (I8).
+// artifact it is built from.
 //
-// codex-image: agentry-dockerimages' Codex harness image (#53), OpenAI's
+// codex-image: agentry-dockerimages' Codex harness image, OpenAI's
 // Codex CLI 0.162.0 release binary verified against OpenAI's signature,
 // amd64 and arm64, signed keyless by that repository's codex workflow on
 // main (agentry-cli's CI verifies this digest against that identity,
 // scripts/verify-codex-image.sh). A Codex bump re-records the adapter's
 // conformance before this pin moves (README "Bumping Codex" there).
 //
-// claude-image: Claude Code built on this machine, never published (plan
-// D22): the artifact is the npm integrity of @anthropic-ai/claude-code at
-// the tag's version, and the build (pkg/runner/harnessbuild) holds the
-// native package it installs to the integrity it carries for that release.
-// A bump adds the release there and re-records the adapter's conformance
-// before this pin moves.
+// claude-image: Claude Code built on this machine, never published: the
+// artifact is the npm integrity of @anthropic-ai/claude-code at the tag's
+// version, and the build (pkg/runner/harnessbuild) holds the native package it
+// installs to the integrity it carries for that release. A bump adds the
+// release there and re-records the adapter's conformance before this pin moves.
 //
 // copilot-image: GitHub's Copilot CLI built on this machine, never
-// published (plan D27): the artifact is the SHA-256 of the release's
+// published: the artifact is the SHA-256 of the release's
 // SHA256SUMS.txt, which names each platform's musl download's checksum;
 // GitHub signs neither, so the receipt says the image is pinned by
 // checksum, not signed. The build (pkg/runner/harnessbuild) fetches that

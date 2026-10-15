@@ -122,33 +122,32 @@ to the repair turn. A release whose instructions call
 (`resume.md`), and `export_pdf`'s `source` names it from the output folder
 (`reports/resume.md`), so a draft no longer writes into `reports/reports/`.
 
-Since 1.13.0 the Drafter knows input sources (plan input-sources.md, M8;
-agentry-cli#835). It asks for a codebase with a `repository` intake question
-and for a file at a web address with a `url` question, which the runner
-fetches before the run, and never advises a `.zip` for a repository or
-declares egress or a key to clone one. It knows that a tool result comes a
-page at a time, that a large `fetch` body is saved in the scratch folder or
-kept whole with `saveTo`, and that `scratch_read` and `scratch_search` read
-it. A release that asks a `repository` question needs CLI v0.6.97 or later, a
-`url` question v0.6.98 or later, and v0.6.104 or later to run either hosted.
+Since 1.13.0 the Drafter knows input sources. It asks for a codebase with a
+`repository` intake question and for a file at a web address with a `url`
+question, which the runner fetches before the run, and never advises a
+`.zip` for a repository or declares egress or a key to clone one. It knows
+that a tool result comes a page at a time, that a large `fetch` body is
+saved in the scratch folder or kept whole with `saveTo`, and that
+`scratch_read` and `scratch_search` read it. A release that asks a
+`repository` question needs CLI v0.6.97 or later, a `url` question v0.6.98
+or later, and v0.6.104 or later to run either hosted.
 
-Since 1.14.0 the Drafter knows target hosts (plan runtime-hosts.md, M8;
-agentry-cli#864). For a task on a machine the person names (a server to set
-up, manage or diagnose) it asks for the machine with an intake question of
-type `host` and lists its id in `capabilities.targetHosts`; it declares no
-SSH client, no egress and no key for the machine, writes the instructions
-for the host tools and the shell, and says in the notes that such a
-QuickAgent runs only on the person's computer. The checks after a draft send
-an `exec` that names `ssh`, `scp`, `sftp` or `rsync` to the repair turn with
-a line that points to a target host. A release that declares a target host
-needs CLI v0.6.105 or later to run, v0.6.106 for the shell and v0.6.109 for a
-host on port 22; it does not run In Agentry.
+Since 1.14.0 the Drafter knows target hosts. For a task on a machine the
+person names (a server to set up, manage or diagnose) it asks for the
+machine with an intake question of type `host` and lists its id in
+`capabilities.targetHosts`; it declares no SSH client, no egress and no key
+for the machine, writes the instructions for the host tools and the shell,
+and says in the notes that such a QuickAgent runs only on the person's
+computer. The checks after a draft send an `exec` that names `ssh`, `scp`,
+`sftp` or `rsync` to the repair turn with a line that points to a target
+host. A release that declares a target host needs CLI v0.6.105 or later to
+run, v0.6.106 for the shell and v0.6.109 for a host on port 22; it does not
+run In Agentry.
 
-Since 1.15.0 the Drafter knows the browser (plan browser-testing.md, M8;
-agentry-cli#916). For a task that tests a website the person names as a
-person sees it (pages, forms, links, a phone's width) it asks for the site
-with an intake question of type `url` and lists its id in
-`capabilities.browser.sites`, adds `hosts` only for what the site's pages
+Since 1.15.0 the Drafter knows the browser. For a task that tests a website
+the person names as a person sees it (pages, forms, links, a phone's width)
+it asks for the site with an intake question of type `url` and lists its id
+in `capabilities.browser.sites`, adds `hosts` only for what the site's pages
 load, keeps the site scope, and declares a key the browser types into a
 sign-in form in `capabilities.secrets` and `capabilities.browser.secrets`,
 never with `scope: public`. It writes the instructions for the browser

@@ -1,10 +1,10 @@
 package main
 
-// Connections at Start (plan mcp-oauth-connections.md §6, agentry-cli#664),
-// against a fake vendor: consent once, then later runs without it; no
-// terminal is exit 11 naming the server; a refused refresh asks again; and
-// D8's condition, that a probe refresh token and client secret reach
-// nothing a run is given or leaves behind but the store's own secret file.
+// Connections at Start, against a fake vendor: consent once, then later
+// runs without it; no terminal is exit 11 naming the server; a refused
+// refresh asks again; and that a probe refresh token and client secret
+// reach nothing a run is given or leaves behind but the store's own secret
+// file.
 
 import (
 	"bytes"
@@ -107,8 +107,8 @@ func TestAConnectionIsAskedForOnceAndReusedByTheNextRun(t *testing.T) {
 		t.Fatalf("another version reused a connection (opened %d)", *opened)
 	}
 
-	// D8: every refresh token the vendor issued, and the client secret,
-	// reach none of what a run is given (the tokens map, the receipt line),
+	// Every refresh token the vendor issued, and the client secret, reach
+	// none of what a run is given (the tokens map, the receipt line),
 	// nothing said on the terminal, and no file under the runner home but
 	// the store's own secret files: searched raw and base64.
 	probes := append([]string{probeClientSecret}, v.Issued...)
@@ -124,7 +124,7 @@ func TestAConnectionIsAskedForOnceAndReusedByTheNextRun(t *testing.T) {
 			return err
 		}
 		if filepath.Dir(path) == connection.Dir(home) && strings.HasSuffix(path, ".secret") {
-			return nil // the store's 0600 secret half, where no keychain answers (D6)
+			return nil // the store's 0600 secret half, where no keychain answers
 		}
 		b, rerr := os.ReadFile(path) //nolint:gosec // the test's runner home
 		if rerr != nil {
@@ -138,12 +138,12 @@ func TestAConnectionIsAskedForOnceAndReusedByTheNextRun(t *testing.T) {
 	}
 }
 
-// A package server's oauth block (agentry-cli#665) is signed in to at its
-// issuer, with no resource, keyed by the package's id; the next run of the
-// same version asks nothing; the renewal the engine calls mid-run refreshes
-// the same connection, writing each rotated refresh token back; and
-// neither a refresh token nor the client secret reaches anything a run is
-// given (D8, searched raw and base64).
+// A package server's oauth block is signed in to at its issuer, with no
+// resource, keyed by the package's id; the next run of the same version
+// asks nothing; the renewal the engine calls mid-run refreshes the same
+// connection, writing each rotated refresh token back; and neither a
+// refresh token nor the client secret reaches anything a run is given
+// (searched raw and base64).
 func TestAPackageServerIsSignedInAtItsIssuerAndRenewedMidRun(t *testing.T) {
 	v, m, meta, opened := connectionFixture(t)
 	v.IssuerOnly = true
@@ -310,7 +310,7 @@ func TestConnectionsClientSetListRemove(t *testing.T) {
 }
 
 // agentry connect takes nobody through consent for a package its runs
-// would refuse (plan D25).
+// would refuse.
 func TestConnectRefusesAnUnsupportedPackage(t *testing.T) {
 	gsuite := manifest.MCPServer{PyPI: "mcp-gsuite", Version: "0.4.1", OAuth: &manifest.MCPOAuth{Issuer: "https://accounts.google.com"}}
 	err := refuseUnsupported([]manifest.MCPServer{{PyPI: "workspace-mcp", Version: "2.0.1", OAuth: gsuite.OAuth}, gsuite})
@@ -343,9 +343,9 @@ func TestGoogleGetsAgentrysOwnSteps(t *testing.T) {
 	}
 }
 
-// TestAHostedRunTakesItsTokensFromAFile: --connections-file (agentry-cli#722)
-// hands the run the access tokens a host was given, keyed as the engine
-// keys them, renews nothing and opens no store; the receipt's line says so.
+// TestAHostedRunTakesItsTokensFromAFile: --connections-file hands the run
+// the access tokens a host was given, keyed as the engine keys them, renews
+// nothing and opens no store; the receipt's line says so.
 func TestAHostedRunTakesItsTokensFromAFile(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
@@ -469,9 +469,9 @@ func connectVersion(t *testing.T, home string, meta *installdir.Meta, m *manifes
 	return &other
 }
 
-// agentry-cli#702: connecting again with the same own client overwrites the
-// connection and revokes nothing, so at a vendor that revokes the whole
-// grant neither the new connection nor another made with the client ends.
+// Connecting again with the same own client overwrites the connection and
+// revokes nothing, so at a vendor that revokes the whole grant neither
+// the new connection nor another made with the client ends.
 func TestConnectingAgainWithTheSameClientRevokesNothing(t *testing.T) {
 	v, m, meta, home := sharedClientFixture(t)
 	connectVersion(t, home, meta, m, meta.Ref)
@@ -522,8 +522,8 @@ func TestConnectingAgainWithAnotherClientRevokesTheOld(t *testing.T) {
 }
 
 // list names the connections that share a client's grant; remove and
-// uninstall still revoke (the operator, 2026-10-06) and name the kept ones
-// the vendor ended with it, which do stop refreshing there.
+// uninstall still revoke and name the kept ones the vendor ended
+// with it, which do stop refreshing there.
 func TestRemovalNamesTheConnectionsThatShareTheGrant(t *testing.T) {
 	v, m, meta, home := sharedClientFixture(t)
 	connectVersion(t, home, meta, m, meta.Ref)

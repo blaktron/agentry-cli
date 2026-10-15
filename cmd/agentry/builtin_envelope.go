@@ -13,9 +13,9 @@ import (
 )
 
 // The json output form of the commands that run a built-in package on a
-// sandbox host's behalf — `knowledge create|add` (agentry-cli#364) and
-// `draft` (agentry-cli#384): the built-in run's envelope on stdout, as
-// `agentry run` writes one, with the command's own report beside it.
+// sandbox host's behalf — `knowledge create|add` and `draft`: the
+// built-in run's envelope on stdout, as `agentry run` writes one, with
+// the command's own report beside it.
 
 // envelopePrinted marks a command's error whose envelope is already on
 // stdout, so the wrapper does not write a second.

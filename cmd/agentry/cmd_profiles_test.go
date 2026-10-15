@@ -1,4 +1,4 @@
-// `agentry profiles` (RUNNER-PLAN-2 §P2): listing shows keep/remove intent
+// `agentry profiles`: listing shows keep/remove intent
 // and secret NAMES only (values never print anywhere), a broken profile is
 // shown rather than hidden, and remove selects by ref, ref@version, or
 // --all — exactly one selector.
@@ -68,7 +68,7 @@ func TestProfilesListShowsNamesNeverValues(t *testing.T) {
 			t.Errorf("list lacks %q:\n%s", want, stdout)
 		}
 	}
-	// The §P2 invariant: values never reach any output surface.
+	// Values never reach any output surface.
 	if strings.Contains(stdout, "sekret-value") {
 		t.Error("a secret VALUE was printed by profiles list")
 	}

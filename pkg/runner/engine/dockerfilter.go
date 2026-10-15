@@ -19,16 +19,15 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// The gateway's daemon socket is a per-run filter (hosted runs in
-// production D7 a, agentry-cli#219, DR-36). The compiled plan mounts the
-// daemon's socket in the gateway, the privilege §R4 documents; on Linux
-// the engine serves a filter in the run's directory and mounts that in
-// its place, so what the gateway can reach is this run's containers,
-// networks and volumes and nothing else on the host (package sockfilter
-// says exactly what passes). Elsewhere (Docker Desktop on macOS and
-// Windows) a host socket cannot be bind-mounted into the daemon's VM, so
-// the same filter runs in a container beside the gateway instead
-// (filtersidecar.go, agentry-cli#322).
+// The gateway's daemon socket is a per-run filter. The compiled plan
+// mounts the daemon's socket in the
+// gateway, the privilege documents; on Linux the engine serves a filter
+// in the run's directory and mounts that in its place, so what the
+// gateway can reach is this run's containers, networks and volumes and
+// nothing else on the host (package sockfilter says exactly what
+// passes). Elsewhere (Docker Desktop on macOS and Windows) a host socket
+// cannot be bind-mounted into the daemon's VM, so the same filter runs
+// in a container beside the gateway instead (filtersidecar.go).
 
 // dockerFilterLog is the filter's decision log in the receipts.
 const dockerFilterLog = "docker-filter.log"
@@ -36,15 +35,14 @@ const dockerFilterLog = "docker-filter.log"
 // filterSupported says whether the gateway reaches the daemon through the
 // filter here: on Linux the CLI serves it (filterInProcess), and on Docker
 // Desktop (macOS, Windows) a container of the run's own does
-// (filtersidecar.go, agentry-cli#322).
+// (filtersidecar.go).
 var filterSupported = runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
-// The pinned gateway's two fixed relay network names (DR-22): the filter
-// gives it the run's own networks under them (agentry-cli#220). A gateway
-// outside the filter creates the shared networks of these names itself,
-// as Docker's own MCP Toolkit does; the runner did not create them, other
-// gateways use them, and so no teardown or sweep removes them
-// (agentry-cli#458).
+// The pinned gateway's two fixed relay network names: the filter gives it
+// the run's own networks under them. A gateway outside the filter creates
+// the shared networks of these names itself, as Docker's own MCP Toolkit
+// does; the runner did not create them, other gateways use them, and so
+// no teardown or sweep removes them.
 const (
 	relayNetwork       = "docker-mcp-proxies-int"
 	relayEgressNetwork = "docker-mcp-proxies-ext"
@@ -52,7 +50,7 @@ const (
 
 // relayImages are the relays of the pinned gateway (docker/mcp-gateway
 // v0.43.3 names them docker/mcp-l4proxy:v1 and docker/mcp-l7proxy:v1),
-// pinned by the digests those tags resolved to on 2026-09-25: a moved tag
+// pinned by the digests those tags resolve to: a moved tag
 // is refused, and a new gateway pin brings new digests with it.
 var relayImages = []string{
 	"docker/mcp-l4proxy@sha256:121b87decc25cda901dbd4ffbd20b116fffbd0fbeecc827c228fa45094a9934c",
@@ -67,8 +65,8 @@ const maxSocketPath = 103
 // it. Under runhost the CLI runs in a container whose /tmp the daemon
 // cannot see; the runner home is the path it shares with the host, at the
 // same place inside and out. The run's own directory is under the
-// installed QuickAgent's, too deep for a socket path there (measured on
-// dev's runhost, 2026-09-25), so the socket is <runner home>/s/<run>.sock.
+// installed QuickAgent's, too deep for a socket path there, so the
+// socket is <runner home>/s/<run>.sock.
 // A home too long even for that falls back (startDaemonFilter) to a short
 // private directory under the system's temp directory; were that ever
 // inside such a container, the daemon would bind a directory in its place
@@ -129,7 +127,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 	}
 	// The relay networks are the run's own, and exist only for a run
 	// whose servers need relays; the gateway reaches them under the fixed
-	// names it knows (agentry-cli#220).
+	// names it knows.
 	var shared []string
 	var egress map[string][]string
 	var names map[string]string
@@ -152,8 +150,8 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		}
 	}
 	// Under a runtime with the host's name servers, the relays run under
-	// it too, reading the run's own resolv.conf (agentry-cli#337); each is
-	// created with both its networks, so none is connected after start.
+	// it too, reading the run's own resolv.conf; each is created with both
+	// its networks, so none is connected after start.
 	var relayResolv string
 	if relaysSandboxed(plan) {
 		relayResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
@@ -196,9 +194,9 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 }
 
 // toolsTmpfs is what the docker filter mounts into the tools server: its
-// /tmp always (agentry-cli#599), and the scratch folder when the plan
-// grants it (agentry-cli#729), each a tmpfs of spec.ToolsTmpfsBytes that
-// anyone may write (a declared command may run as nobody).
+// /tmp always, and the scratch folder when the plan grants it, each a
+// tmpfs of spec.ToolsTmpfsBytes that anyone may write (a declared
+// command may run as nobody).
 func toolsTmpfs(plan *spec.Plan) map[string]string {
 	opts := fmt.Sprintf("size=%d,mode=1777", spec.ToolsTmpfsBytes)
 	m := map[string]string{spec.ToolsTmpMount: opts}
@@ -209,8 +207,7 @@ func toolsTmpfs(plan *spec.Plan) map[string]string {
 }
 
 // toolsShared is the one bind the tools server may have beneath its scratch
-// tmpfs: the host link's copy folder (agentry-cli#861), for a plan with a
-// host link.
+// tmpfs: the host link's copy folder, for a plan with a host link.
 func toolsShared(plan *spec.Plan, rd *runDirs) map[string]string {
 	if plan.HostLink == nil || !plan.Capabilities.Scratch {
 		return nil
@@ -219,7 +216,7 @@ func toolsShared(plan *spec.Plan, rd *runDirs) map[string]string {
 }
 
 // browserImageOf and browserTmpfsOf are the docker filter's browser class
-// for a plan with a browser server (agentry-cli#915), and nothing without.
+// for a plan with a browser server, and nothing without.
 func browserImageOf(plan *spec.Plan) string {
 	if plan.Browser == nil {
 		return ""
@@ -255,9 +252,9 @@ const gatewayOwnerLabel = "agentry.gateway.run"
 
 // relayHosts are where a relay may be pointed (sockfilter.Config.
 // RelayHosts): the run's declared servers' egress entries, the agent's own
-// egress hosts on 443, the port the compiler gives the tools server's fetch
-// (agentry-cli#346), and the review grant's TypeSafe API on 443. Empty when
-// nothing declares egress, which admits no relay.
+// egress hosts on 443, the port the compiler gives the tools server's
+// fetch, and the review grant's TypeSafe API on 443. Empty when nothing
+// declares egress, which admits no relay.
 func relayHosts(plan *spec.Plan) []string {
 	var hosts []string
 	for _, srv := range plan.MCPServers {
@@ -275,7 +272,7 @@ func relayHosts(plan *spec.Plan) []string {
 		}
 	}
 	// The review grant's one host, which the compiler gives the tools
-	// server as its allowHosts (agentry-cli#503).
+	// server as its allowHosts.
 	if plan.Capabilities.ReviewTools {
 		hosts = append(hosts, toolsrv.ReviewHost+":443")
 	}
@@ -344,7 +341,7 @@ func makeRelayNetworks(ctx context.Context, d dockerx.Client, runID string, td *
 }
 
 // webNetwork is the run's own network with a way out of the host for the
-// web tools' server (sockfilter.Config.WebNetwork, agentry-cli#345).
+// web tools' server (sockfilter.Config.WebNetwork).
 func webNetwork(runID string) string { return "agentry-" + runID + "-web" }
 
 // makeWebNetwork makes the run's web network and queues its removal, which
@@ -379,7 +376,7 @@ func daemonLine(rd *runDirs) string {
 		return "the gateway holds the docker daemon's own socket: the per-run filter runs on Linux and on Docker Desktop (macOS, Windows), not on this platform"
 	}
 	line := "the gateway reaches the docker daemon only through this run's filter: every container, network and volume it creates carries the run's label, " +
-		"it may touch no container, network, volume or exec without it (the pinned gateway's shared relay networks excepted, DR-22; only its digest-pinned relays join the one that leaves the host), " +
+		"it may touch no container, network, volume or exec without it (the pinned gateway's shared relay networks excepted; only its digest-pinned relays join the one that leaves the host), " +
 		"lists and events show only the run's, create bodies are checked as the daemon reads them, and it may not create a privileged, host-namespace, device, " +
 		"port-publishing, runtime-choosing or security-weakened container, bind a host path outside the run's directories or write outside its writable ones, " +
 		"or exceed the run's memory, CPU and process limits; every decision is in receipts/" + dockerFilterLog

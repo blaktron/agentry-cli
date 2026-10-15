@@ -3,7 +3,7 @@ name: exec-git
 namespace: fixtures
 modes: [autonomous]
 version: 1.0.0
-summary: "Runs git in the workspace — the exec catalog fixture (agentry-cli#100)"
+summary: "Runs git in the workspace — the exec catalog fixture"
 license: Apache-2.0
 capabilities:
   filesystem:

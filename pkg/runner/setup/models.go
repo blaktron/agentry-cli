@@ -35,7 +35,7 @@ type Model struct {
 // anthropicVersion is the API version header every Anthropic request
 // carries; anthropicOAuthBeta is the beta a subscription OAuth token
 // needs, the way Claude Code sends it — unverified here against a real
-// token (agentry-cli#170), reported as the endpoint's own answer.
+// token, reported as the endpoint's own answer.
 const (
 	anthropicVersion   = "2023-06-01"
 	anthropicOAuthBeta = "oauth-2025-04-20"
@@ -62,15 +62,14 @@ var httpClient = &http.Client{
 	},
 }
 
-// ListModels asks provider's models endpoint with key and returns what
-// it listed. baseURL is required for custom and ignored for the table
-// providers. A scheme other than http or https is refused before a
-// request is made; plain http off loopback, which only a custom endpoint
-// can be, is the operator's choice and is carried out with the warning
-// on the Catalog (agentry-cli#377, amending DR-25); no redirect is
-// followed; the key is scrubbed from any error, the provider's own
-// message included. An empty listing is an error: a form offering
-// nothing is worse than one saying so.
+// ListModels asks provider's models endpoint with key and returns what it
+// listed. baseURL is required for custom and ignored for the table providers. A
+// scheme other than http or https is refused before a request is made; plain
+// http off loopback, which only a custom endpoint can be, is the operator's
+// choice and is carried out with the warning on the Catalog; no redirect is
+// followed; the key is scrubbed from any error, the provider's own message
+// included. An empty listing is an error: a form offering nothing is worse than
+// one saying so.
 func ListModels(ctx context.Context, provider, baseURL, key string) (*Catalog, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	key = strings.TrimSpace(key)
@@ -147,7 +146,7 @@ func modelsEndpoint(provider, baseURL string) (string, *pager, error) {
 	}
 	if d.ModelsURL == "" {
 		// The big catalogues (OpenRouter, Poe, Hugging Face): the person
-		// types the model id (plan model-sign-ins.md D33).
+		// types the model id.
 		return "", nil, fmt.Errorf("%s's models are not listed here: type the model id", provider)
 	}
 	switch provider {
@@ -160,13 +159,12 @@ func modelsEndpoint(provider, baseURL string) (string, *pager, error) {
 	}
 }
 
-// checkScheme admits an http or https endpoint with a host and refuses
-// anything else before a request is made. Plain http off loopback is
-// admitted with PlainHTTPWarning's sentence: the key rides the request,
-// so it travels in clear, and the operator who typed the address is told
-// so rather than refused (agentry-cli#377, amending DR-25). Loopback http
-// is a server on the operator's own machine and carries no warning
-// (agentry-desktop#123).
+// checkScheme admits an http or https endpoint with a host and refuses anything
+// else before a request is made. Plain http off loopback is admitted with
+// PlainHTTPWarning's sentence: the key rides the request, so it travels in
+// clear, and the operator who typed the address is told so rather than refused.
+// Loopback http is a server on the operator's own machine and carries no
+// warning.
 func checkScheme(endpoint string) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" || u.Hostname() == "" {

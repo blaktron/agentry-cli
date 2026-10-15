@@ -138,7 +138,7 @@ func TestTheRegistryRouteNeverFollowsARedirect(t *testing.T) {
 
 // TestRegistryFailuresAreClosedWords: what a failed call says is the
 // package's own vocabulary, never the registry's body; the status is kept
-// beside it so a 429 can be told from a 401 (agentry-cli#806).
+// beside it so a 429 can be told from a 401.
 func TestRegistryFailuresAreClosedWords(t *testing.T) {
 	for _, tc := range []struct {
 		status int
@@ -171,7 +171,7 @@ func TestRegistryFailuresAreClosedWords(t *testing.T) {
 
 // TestTransientFailuresAreTheOnesWorthAskingAgain: a judge error, a
 // timeout, the route unavailable and a 429 may pass when asked again; a
-// verdict, a text too large and any other refusal never (agentry-cli#806).
+// verdict, a text too large and any other refusal never.
 func TestTransientFailuresAreTheOnesWorthAskingAgain(t *testing.T) {
 	for _, tc := range []struct {
 		res  Result

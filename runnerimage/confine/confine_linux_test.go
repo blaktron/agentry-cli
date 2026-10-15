@@ -64,10 +64,10 @@ func trampoline(t *testing.T, flags []string, script string) (string, error) {
 	return string(out), err
 }
 
-// TestExecConfinesWrites is agentry-cli#596 at the kernel: beneath the
-// writable directory a command creates, links and removes; anywhere else
-// it can create nothing, link nothing, and neither change nor truncate a
-// file it can read. /dev/null stays writable, and reading is unchanged.
+// TestExecConfinesWrites checks the write confinement at the kernel: beneath
+// the writable directory a command creates, links and removes; anywhere else
+// it can create nothing, link nothing, and neither change nor truncate a file
+// it can read. /dev/null stays writable, and reading is unchanged.
 func TestExecConfinesWrites(t *testing.T) {
 	if _, err := ABI(); err != nil {
 		t.Skipf("this kernel or runtime has no Landlock (%v); the tools server's uid fallback covers it", err)
@@ -134,9 +134,8 @@ func TestMainRefusesBadUsage(t *testing.T) {
 	}
 }
 
-// TestMaxMemoryLimitsTheAddressSpace (plan scratch-and-pdf-reports.md §5,
-// D24): the program starts with RLIMIT_AS at the limit, with or without
-// Landlock, and cannot raise it.
+// TestMaxMemoryLimitsTheAddressSpace: the program starts with RLIMIT_AS at
+// the limit, with or without Landlock, and cannot raise it.
 func TestMaxMemoryLimitsTheAddressSpace(t *testing.T) {
 	flags := [][]string{{"--limits-only", "--max-memory", "1073741824"}}
 	if _, err := ABI(); err == nil {
@@ -153,13 +152,13 @@ func TestMaxMemoryLimitsTheAddressSpace(t *testing.T) {
 	}
 }
 
-// TestMaxMemoryNeverKillsTheTrampoline (agentry-cli#887): between the
-// address-space limit and the execve no goroutine of the trampoline may
-// need memory, or the Go runtime dies of the limit, on the program's stderr
-// or in its place. Many limited runs at once load the machine as a busy
-// tools server does; each must print the program's output and nothing else.
-// Under the race detector, as `make test` runs it, it failed about one run
-// in ten before the fix; a plain build needs a busier machine to show it.
+// TestMaxMemoryNeverKillsTheTrampoline: between the address-space limit and
+// the execve no goroutine of the trampoline may need memory, or the Go
+// runtime dies of the limit, on the program's stderr or in its place. Many
+// limited runs at once load the machine as a busy tools server does; each
+// must print the program's output and nothing else. Under the race detector,
+// as `make test` runs it, an unguarded trampoline failed about one run in
+// ten; a plain build needs a busier machine to show it.
 func TestMaxMemoryNeverKillsTheTrampoline(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh on this machine")
@@ -243,7 +242,7 @@ func TestNoNetworkRefusesTCP(t *testing.T) {
 	_ = c.Close()
 }
 
-// TestReadConfinesReads is plan ripgrep-search.md §5 at the kernel: with
+// TestReadConfinesReads checks read confinement at the kernel: with
 // --read, a program reads and lists beneath the named directories and
 // nowhere else, so a link planted inside a readable directory cannot take
 // it out (grep and glob's ripgrep). Without --read, reading is unchanged

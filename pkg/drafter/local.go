@@ -16,17 +16,16 @@ import (
 )
 
 // What a client needs around a Drafter run, shared by `agentry draft` and
-// the desktop's Describe it, on this computer (plan builder-rework.md D22,
-// D25; agentry-cli#363): for a draft on this computer, the person's own keys
-// read as the runner policy says (LocalWeb); for any draft, the post-step
-// that turns the Drafter's answer into a draft with AI Review's record
-// (Finish). The order is the caller's to keep: Prescan passes before the
-// run starts. Each client words its own refusals and renders the draft its
-// own way.
+// the desktop's Describe it, on this computer: for a draft on this computer,
+// the person's own keys read as the runner policy says (LocalWeb); for any
+// draft, the post-step that turns the Drafter's answer into a draft with AI
+// Review's record (Finish). The order is the caller's to keep: Prescan passes
+// before the run starts. Each client words its own refusals and renders the
+// draft its own way.
 
 // ErrNoJevKey is LocalWeb's answer when the person has no Jev key of their
 // own: a draft on this computer does not run without AI Review reading
-// everything first (D22), and there it takes the person's key (D25).
+// everything first, and there it takes the person's key.
 var ErrNoJevKey = errors.New("no TypeSafe Jev key of your own was found")
 
 // SearchState says whether a local draft has web search, and why not.
@@ -41,8 +40,8 @@ const (
 	SearchNoKey SearchState = "no-key"
 )
 
-// LocalWeb is a local draft's web configuration from the person's own keys
-// (D25): their Jev key, which every result is scanned with, and their search
+// LocalWeb is a local draft's web configuration from the person's own keys:
+// their Jev key, which every result is scanned with, and their search
 // key when the policy names a provider and the key is found, with which of
 // those it is. Without a Jev key it is ErrNoJevKey and nothing runs. The
 // registry is the one registry_search reads. The Jev key in the answer is
@@ -70,7 +69,7 @@ func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState,
 // JevKey is the person's own TypeSafe key as work on this computer reads
 // it: the variable the policy's judge block names, else, for a keyring
 // source, the keychain entry provider:typesafe. "" is no key. A draft scans
-// with it (LocalWeb), and the Examiner reviews with it (agentry-cli#504).
+// with it (LocalWeb), and the Examiner reviews with it.
 func JevKey(pol *policy.Policy) (string, error) {
 	return personalKey(pol.Judge.KeyEnv(), pol.Judge.APIKeySource, policy.JudgeKeyProvider)
 }
@@ -111,13 +110,13 @@ func personalKey(env, source, provider string) (string, error) {
 	return v, nil
 }
 
-// Finish is the post-step's first half (plan §7.5): the Drafter's answer in
-// env as a draft, named by the Drafter's ref and the build that ran it (the
-// model and the run id are the envelope's), its long texts from the reports
-// under outDir, AI Review's record from the receipt and the run's ledger,
-// its manifest's mechanical slips corrected (Correct), and the notes
-// followed by what was corrected and a list of every text AI Review
-// withheld (its address, tool and reason, never the text). A draft whose reports were
+// Finish is the post-step's first half: the Drafter's answer in env as a
+// draft, named by the Drafter's ref and the build that ran it (the model and
+// the run id are the envelope's), its long texts from the reports under
+// outDir, AI Review's record from the receipt and the run's ledger, its
+// manifest's mechanical slips corrected (Correct), and the notes followed by
+// what was corrected and a list of every text AI Review withheld (its
+// address, tool and reason, never the text). A draft whose reports were
 // refused, or that has no instructions, carries why in ManifestError; a
 // caller renders and checks only a draft whose ManifestError is empty. An
 // answer that is not a draft is exit 17.

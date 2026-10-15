@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run.sh PKG... — run Go packages' tests as Windows binaries under Wine,
-# inside a throwaway container, never on the host (agentry-cli#421): Wine
+# inside a throwaway container, never on the host: Wine
 # maps Z: to the host's / and follows directory links when it deletes, so a
 # test that links to a system path would meet the host's files.
 #

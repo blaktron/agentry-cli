@@ -19,8 +19,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// The model list of a Copilot plan (plan model-sign-ins.md §4.1, research
-// copilot-cli.md R8; agentry-cli#808): a short-lived container per list,
+// The model list of a Copilot plan: a short-lived container per list,
 // which is a run's agent container in all but the gateway, behind a run's
 // egress proxy. Copilot CLI asks GitHub for the list itself; nothing of
 // Agentry's calls the Copilot API.
@@ -31,10 +30,10 @@ import (
 //     network of its own, nothing mounted.
 //   - The route out: the run's llm proxy (startProxy), allowing
 //     api.github.com and the Copilot API host of the person's plan alone
-//     (policy.CopilotProxyAllow, I2).
+//     (policy.CopilotProxyAllow).
 //   - The token: handed through Copilot CLI's token callback over its
 //     stdio (adapter.ListCopilotModels), never in a variable, a file or a
-//     mount (I3, I4).
+//     mount.
 //   - Its end: the list's containers and network carry a run's labels and
 //     are removed when it returns, and by the sweep if it was killed.
 
@@ -200,7 +199,7 @@ func ListCopilotModels(ctx context.Context, d dockerx.Client, p CopilotModelsPar
 		var refused *adapter.OrgPolicyRefusal
 		if errors.As(err, &refused) {
 			// Kept for what it is: an organization's policy, the setup's
-			// answer to say (D29); the vendor's words masked.
+			// answer to say; the vendor's words masked.
 			return nil, &adapter.OrgPolicyRefusal{Policy: refused.Policy, Text: rd.redact.String(refused.Text)}
 		}
 		return nil, rd.redact.Err(fmt.Errorf("copilot models: %w", err))

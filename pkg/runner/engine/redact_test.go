@@ -66,7 +66,7 @@ func TestRedactorFile(t *testing.T) {
 
 // TestShortSecretsAreDisclosedInTheReceipt: a declared secret too short for
 // the redactor to mask is named in the receipt's enforced capabilities, so
-// the receipt never implies a mask it did not apply (agentry-cli#164).
+// the receipt never implies a mask it did not apply.
 func TestShortSecretsAreDisclosedInTheReceipt(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -118,10 +118,10 @@ func TestRedactionNoteReadsServerScopedSecrets(t *testing.T) {
 	}
 }
 
-// TestRedactorMasksTheGatewaysPartialMask (agentry-cli#372): a held value's
-// first four characters followed by "****", the gateway's own listing of it,
-// is masked whole; a short value is held in neither form, and a bare "****"
-// or another value's prefix is left alone.
+// TestRedactorMasksTheGatewaysPartialMask: a held value's first four
+// characters followed by "****", the gateway's own listing of it, is masked
+// whole; a short value is held in neither form, and a bare "****" or another
+// value's prefix is left alone.
 func TestRedactorMasksTheGatewaysPartialMask(t *testing.T) {
 	r := newRedactor("tok-0123456789", map[string]string{"A": "sekret-value-1234", "B": "seven77"}, nil)
 	in := "    - A: sekr****\n    - T: tok-****\n    - B: seve****\n    - C: ****\n    - D: xyzw****\nfull sekret-value-1234\n"
@@ -131,9 +131,9 @@ func TestRedactorMasksTheGatewaysPartialMask(t *testing.T) {
 	}
 }
 
-// TestGatewaySecretListingKeepsNoCharacterOfTheValue (agentry-cli#372): the
-// gateway (docker/mcp-gateway v0.43.3, verbose by default) lists each secret
-// it injects at a server's start as "    - NAME: " + the value's first four
+// TestGatewaySecretListingKeepsNoCharacterOfTheValue: the gateway
+// (docker/mcp-gateway v0.43.3, verbose by default) lists each secret it
+// injects at a server's start as " - NAME: " + the value's first four
 // characters + "****" (pkg/gateway/clientpool.go maskSecret). That prefix is
 // no whole value, so it must be masked as one: gateway.log keeps the line and
 // the name, and no character of the value — for a declared server's secret
@@ -198,8 +198,8 @@ func TestGatewaySecretListingKeepsNoCharacterOfTheValue(t *testing.T) {
 	})
 }
 
-// A remote server's bearer (agentry-cli#663) is one of the values the run's
-// redactor masks, though it is never in the gateway's secrets file.
+// A remote server's bearer is one of the values the run's redactor masks,
+// though it is never in the gateway's secrets file.
 func TestRedactorMasksARemoteServersBearer(t *testing.T) {
 	p, _ := fixture(t)
 	p, name := withRemoteServer(p)

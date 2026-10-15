@@ -31,21 +31,21 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 )
 
-// The live target-host test (plan runtime-hosts.md invariants 1–5, 7, 11;
-// agentry-cli#861). Everything is real but the model: the runner and host
-// link images built here, the pinned gateway and its docker filter, the
-// relay, and a throwaway OpenSSH server on this machine, reached at this
-// machine's own LAN address as a person's server is. In the agent
-// container's place, on its network with its token, runs hostclient: an
-// MCP client that calls the host tools through the gateway as an agent
-// would. It runs only when asked: AGENTRY_LIVE_HOSTLINK=1 on a host with
-// docker and network (the build installs the server's packages).
+// The live target-host test. Everything is real but the
+// model: the runner and host link images built here, the pinned gateway
+// and its docker filter, the relay, and a throwaway OpenSSH server on
+// this machine, reached at this machine's own LAN address as a person's
+// server is. In the agent container's place, on its network with its
+// token, runs hostclient: an MCP client that calls the host tools through
+// the gateway as an agent would. It runs only when asked:
+// AGENTRY_LIVE_HOSTLINK=1 on a host with docker and network (the build
+// installs the server's packages).
 
 const (
 	livePassword = "Live-Host-Pass-7731-qz"
 	liveSudo     = livePassword
-	// What the host holds that the agent must get unchanged (D9): keys
-	// the gateway's secret block would refuse in any other tool result.
+	// What the host holds that the agent must get unchanged: keys the
+	// gateway's secret block would refuse in any other tool result.
 	liveAWSKey   = "AKIAQ3EGRQ5WJ2LZ7HXN"
 	liveAWSValue = "wJalrXUtnFEMIK7MDENGbPxRfiCYq3x8Nz2LkVb1"
 	liveGitHub   = "ghp_R8mZq2LkVb1x9Nw4Ty7Pc3Ha6Sd0Fg5Jk2Lp"
@@ -248,9 +248,9 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 		{"tool": hostlink.ToolPut, "args": map[string]any{"from": "/scratch/hosts/up.txt", "to": "/tmp/up.txt", "mode": "0600"}},
 		{"tool": hostlink.ToolRun, "args": map[string]any{"command": "cat /tmp/up.txt; stat -c %a /tmp/up.txt"}},
 		{"tool": hostlink.ToolRun, "args": map[string]any{"command": "sleep 30", "timeout": 2}},
-		// The shell (agentry-cli#862, D18): a sudo prompt answered with
-		// the run's sudo password, a package installed, ctrl-c, paging,
-		// the cap of four.
+		// The shell: a sudo prompt answered with the run's sudo
+		// password, a package installed, ctrl-c, paging, the cap of
+		// four.
 		{"tool": hostlink.ToolShellOpen, "args": map[string]any{}},
 		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "cat ~/pw.txt", "key": "enter"}},
 		{"tool": hostlink.ToolShellSend, "args": map[string]any{"session": 1, "text": "sudo apk add --no-cache jq", "key": "enter", "wait": 15}},
@@ -357,12 +357,12 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 			}
 		}
 	}
-	// D9: the host's keys reach the agent unchanged, past --block-secrets.
+	// The host's keys reach the agent unchanged, past --block-secrets.
 	expect(0, liveAWSKey, liveAWSValue, liveGitHub)
 	if _, _, typ := text(0); typ != "resource" {
 		t.Errorf("a host result travels as %q, not an embedded resource", typ)
 	}
-	// D19: the run's own password does not, raw or base64.
+	// The run's own password does not, raw or base64.
 	expect(1, hostlink.Redacted+"\n"+hostlink.Redacted+"\nstderr")
 	if got, _, _ := text(1); strings.Contains(got, livePassword) || strings.Contains(got, base64.StdEncoding.EncodeToString([]byte(livePassword+"\n"))) {
 		t.Errorf("the run's own password reached the agent: %q", got)
@@ -415,7 +415,7 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 		t.Errorf("the agent container reached the target host itself: %q", answer.Dial)
 	}
 
-	// Invariant 1: the sign-in is in no container's argv, environment or
+	// The sign-in is in no container's argv, environment or
 	// mounts but the host link's folder, which only it mounts.
 	hostLinks := 0
 	for _, raw := range inspected {
@@ -457,8 +457,7 @@ func TestLiveATargetHostThroughTheHostLink(t *testing.T) {
 		t.Error("no host link container was inspected")
 	}
 
-	// Invariants 1 and 7: no file left holds the sign-in; the log names
-	// every call.
+	// No file left holds the sign-in; the log names every call.
 	for _, dir := range []string{outDir, runRoot} {
 		_ = filepath.WalkDir(dir, func(p string, de fs.DirEntry, err error) error {
 			if err != nil || de.IsDir() || !de.Type().IsRegular() {

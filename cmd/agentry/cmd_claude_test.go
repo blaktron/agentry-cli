@@ -26,7 +26,7 @@ const claudeSignInURL = "https://claude.com/cai/oauth/authorize?code=true&client
 
 // claudeAutoURL is the address Claude Code 2.1.296 hands its browser
 // opener in the image: its own callback on the container's loopback, which
-// the sign-in relays (agentry-cli#848). claudeFixture sets it.
+// the sign-in relays. claudeFixture sets it.
 var claudeAutoURL string
 
 // claudeFixture points the CLI's Claude sign-in at a fake daemon on which
@@ -67,10 +67,10 @@ func claudeFixture(t *testing.T) (*dockerx.Fake, *[]string) {
 // `agentry model-signins add claude` runs the unmodified Claude Code's own
 // sign-in in the image, on its volume: Agentry opens, in the person's
 // browser, the address Claude Code hands its stand-in opener, whose answer
-// is relayed to Claude Code's callback (agentry-cli#848); the terminal still
-// reaches Claude Code's prompt, for the paste fallback; and
-// what is kept is the volume's name and the account Claude Code reports,
-// never a token. Nothing of the person's credentials reaches the container.
+// is relayed to Claude Code's callback; the terminal still reaches Claude
+// Code's prompt, for the paste fallback; and what is kept is the volume's
+// name and the account Claude Code reports, never a token. Nothing of the
+// person's credentials reaches the container.
 func TestModelSignInsAddClaudeRunsClaudeCodesOwnSignIn(t *testing.T) {
 	f, opened := claudeFixture(t)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-person-0000")

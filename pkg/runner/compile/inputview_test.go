@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// The release's default view (agentry-cli#693; core DEV-218): a manifest's
-// inputs.view of text or original reaches the plan as InputView and the
-// System Prompt's inputs paragraph says it; both, or no block, adds
-// nothing, so every plan compiled before the block is the same bytes.
+// The release's default view: a manifest's inputs.view of text or original
+// reaches the plan as InputView and the System Prompt's inputs paragraph
+// says it; both, or no block, adds nothing, so a manifest with no block
+// compiles to the same bytes.
 
 func TestTheInputViewReachesThePlan(t *testing.T) {
 	for _, tc := range []struct {
@@ -39,7 +39,7 @@ func TestTheInputViewReachesThePlan(t *testing.T) {
 }
 
 // TestNoOrBothViewCompilesTheSamePlan: a release that declares no view, or
-// both, compiles to the plan it compiled before the block existed: same
+// both, compiles to the same plan as one with no inputs.view block: same
 // hash, same rendered instruction.
 func TestNoOrBothViewCompilesTheSamePlan(t *testing.T) {
 	compileHash := func(yaml string) (string, string) {

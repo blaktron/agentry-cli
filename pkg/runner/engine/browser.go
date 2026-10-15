@@ -23,15 +23,14 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 )
 
-// The browser (agentry-notes plans/browser-testing.md §6, §7, §7.1, D1,
-// D2, D8, D9; agentry-cli#915). The compiler put the browser server in the
-// gateway's catalog with placeholders; the engine gives them their values:
-// the browse proxy it starts on the run's relay egress network, under a
-// run-unique name the browser's one relay is pointed at, holding the scope
-// (the sites the person named, the declared hosts, or the public web);
-// the user the server runs as; its output folder, copied into
-// reports/browser/ as the run ends; and, for a line that declares browser
-// secrets, the --secrets file bound into it alone.
+// The browser. The compiler put
+// the browser server in the gateway's catalog with placeholders; the
+// engine gives them their values: the browse proxy it starts on the run's
+// relay egress network, under a run-unique name the browser's one relay is
+// pointed at, holding the scope (the sites the person named, the declared
+// hosts, or the public web); the user the server runs as; its output
+// folder, copied into reports/browser/ as the run ends; and, for a line
+// that declares browser secrets, the --secrets file bound into it alone.
 
 // browserRun is a run's browser, once the engine has readied it.
 type browserRun struct {
@@ -40,8 +39,8 @@ type browserRun struct {
 	// which the docker filter pins for its relay.
 	proxy, proxyIP string
 	// sites are the run's sites as the proxy takes them, and private the
-	// ones the person typed whose address may be a LAN's (D2): every site
-	// of a local run, and none of a hosted run's.
+	// ones the person typed whose address may be a LAN's: every site of a
+	// local run, and none of a hosted run's.
 	sites, private []string
 	// hosted is a hosted run's browser, whose sites are public only.
 	hosted bool
@@ -52,8 +51,8 @@ type browserRun struct {
 // The tmpfs the docker filter gives the browser server (the owner added
 // by the filter): a home for the profile Chromium keeps in --isolated, and
 // a /tmp for its shared memory, which Playwright's --disable-dev-shm-usage
-// puts there (M1: 255-570 MiB for two tabs, a full-page screenshot and a
-// PDF).
+// puts there (it reaches 255-570 MiB for two tabs, a full-page
+// screenshot and a PDF).
 const (
 	browserHomeTmpfs = "rw,nosuid,nodev,size=268435456,mode=0700"
 	browserTmpTmpfs  = "rw,nosuid,nodev,size=1073741824,mode=1777"
@@ -104,13 +103,12 @@ var lookupSiteHost = func(ctx context.Context, host string) ([]net.IPAddr, error
 const siteLookupTimeout = 15 * time.Second
 
 // checkHostedSites refuses, before anything starts, a hosted run's site
-// that the run could never open (plan browser-testing.md D2: a private
-// address is a local run's alone; agentry-cli#941): one on a port other
-// than 80 and 443, which is all a sandbox host lets out; an address that
-// is not public; and a name that does not resolve, or resolves to any
-// address that is not public, as the browse proxy reads it. The proxy
-// still checks each connection, so a name that changes its answer later
-// is refused there.
+// that the run could never open (a private address is a local run's
+// alone): one on a port other than 80 and 443, which is all a sandbox
+// host lets out; an address that is not public; and a name that does not
+// resolve, or resolves to any address that is not public, as the browse
+// proxy reads it. The proxy still checks each connection, so a name that
+// changes its answer later is refused there.
 func checkHostedSites(ctx context.Context, p Params) error {
 	for _, id := range p.Plan.Capabilities.Browser.Sites {
 		if p.Intake == nil || p.Intake.Values[id] == "" {
@@ -209,9 +207,9 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 	b := &browserRun{proxy: rd.browseProxyName(), hosted: p.hosted()}
 	for _, s := range sites {
 		b.sites = append(b.sites, s.ProxyEntry())
-		// Every site of a local run is one the person typed (D2); the
-		// proxy still dials a public or LAN address only. A hosted run's
-		// sites are public only, whatever they resolve to later.
+		// Every site of a local run is one the person typed; the proxy
+		// still dials a public or LAN address only. A hosted run's sites
+		// are public only, whatever they resolve to later.
 		if !b.hosted && !slices.Contains(b.private, s.Host) {
 			b.private = append(b.private, s.Host)
 		}
@@ -264,7 +262,7 @@ func prepareBrowser(ctx context.Context, d dockerx.Client, p Params, rd *runDirs
 func browserScopeLine(c *spec.BrowserCap, b *browserRun) string {
 	var parts []string
 	if len(b.sites) > 0 {
-		where := " (each may be a LAN's or a tailnet's address in this local run)"
+		where := " (each may be a LAN's or another private network's address in this local run)"
 		if b.hosted {
 			where = " (each a public address, on ports 80 and 443, in this hosted run)"
 		}
@@ -354,7 +352,7 @@ func browseProxyArgs(c *spec.BrowserCap, b *browserRun) []string {
 	if len(b.sites) > 0 {
 		a = append(a, "--browse-sites", strings.Join(b.sites, ","))
 	}
-	// A hosted run has no private site (D2), so its proxy is given none.
+	// A hosted run has no private site, so its proxy is given none.
 	if len(b.private) > 0 {
 		a = append(a, "--browse-private", strings.Join(b.private, ","))
 	}
@@ -368,7 +366,7 @@ func browseProxyArgs(c *spec.BrowserCap, b *browserRun) []string {
 }
 
 // browserNetwork is the run's network for the browser server and its one
-// relay, alone (sockfilter.Config.BrowserNetwork; invariant 2).
+// relay, alone (sockfilter.Config.BrowserNetwork).
 func browserNetwork(runID string) string { return "agentry-" + runID + "-browser" }
 
 // makeBrowserNetwork makes the browser's network, internal, and queues its
@@ -389,8 +387,8 @@ func makeBrowserNetwork(ctx context.Context, d dockerx.Client, p Params, runID s
 // startBrowseProxy starts the browse proxy on the run's relay egress
 // network, where the browser's relay reaches it, on the daemon's default
 // runtime (it resolves names through Docker's DNS, which a sandboxed
-// runtime does not reach, DR-23), hardened as the source proxy is. Its
-// address is kept for the docker filter's relay pin.
+// runtime does not reach), hardened as the source proxy is. Its address
+// is kept for the docker filter's relay pin.
 func startBrowseProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td *teardown, runID string) error {
 	b := rd.browser
 	if b == nil {
@@ -444,7 +442,7 @@ func browserUser() string {
 // collectBrowseProxyLog keeps the browse proxy's decisions as
 // receipts/browser-proxy.log, masked like every receipt, and counts its
 // refusals into the receipt: the page's, and those of Chrome's own
-// services (plan §6).
+// services.
 func collectBrowseProxyLog(ctx context.Context, d dockerx.Client, rd *runDirs, env *receipt.Envelope) {
 	if rd.browser == nil {
 		return

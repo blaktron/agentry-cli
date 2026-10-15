@@ -8,15 +8,11 @@ import (
 	"strings"
 )
 
-// You.com's Web Search API (agentry#608): the provider the registry
-// brokers, chosen on its published terms — a plain REST call with a key,
-// the online MSA's "only use Customer Data as necessary to provide … the
-// Services" and no training on queries, outputs assigned to the customer,
-// no display or attribution rule. The research and the one condition it
-// left (written confirmation of which contract governs an API-key account)
-// are on agentry#608 and the operator's agentry-web#466. Since agentry#631
-// dev and production use Brave instead (DEV-157); this client stays a
-// provider a deployment may name.
+// You.com's Web Search API: a provider a deployment may name, with terms
+// that suit brokering it — a plain REST call with a key, the online MSA's
+// "only use Customer Data as necessary to provide … the Services" and no
+// training on queries, outputs assigned to the customer, no display or
+// attribution rule. The registry's own provider is Brave.
 //
 // The call is POST /v1/search with the key in X-API-Key. Only the `web`
 // results are read; `news` is ignored. Neither `extraction` (full page

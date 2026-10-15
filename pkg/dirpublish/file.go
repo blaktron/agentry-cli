@@ -11,15 +11,15 @@ import (
 
 // The file half of the package: a single file more than one process may
 // write at once (the runner home's policy.yaml, which a CLI run and a
-// desktop run started together both create on a fresh install,
-// agentry-cli#299) is written whole to a staging file beside it and put
-// in place by link or rename, so a reader finds no file, the previous
-// file or the new one, never a partly written one.
+// desktop run started together both create on a fresh install) is
+// written whole to a staging file beside it and put in place by link or
+// rename, so a reader finds no file, the previous file or the new one,
+// never a partly written one.
 
 // CreateFile puts data at dest only if nothing is there: it is written to
 // a staging file beside dest, private to this writer, and hard-linked into
-// place, which fails while dest exists, so a file another writer (or the
-// operator) put there meanwhile is never replaced and a reader never sees
+// place, which fails while dest exists, so a file another writer (or a
+// person) put there meanwhile is never replaced and a reader never sees
 // it partly written. created is false when dest was already there; either
 // way the staging file is removed.
 //

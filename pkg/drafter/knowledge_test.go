@@ -236,8 +236,8 @@ func testRecord(t *testing.T, p *knowledge.Pack, chunkBytes, sourceChunks, wikiC
 	return b
 }
 
-// TestAnAgentryScanStandsIn: a pack Agentry scanned is not scanned again
-// (D14); what its findings place is withheld, by file, or by AI Review's
+// TestAnAgentryScanStandsIn: a pack Agentry scanned is not scanned again;
+// what its findings place is withheld, by file, or by AI Review's
 // chunk rebuilt as the core cuts it.
 func TestAnAgentryScanStandsIn(t *testing.T) {
 	p := twoPages(t)
@@ -344,7 +344,7 @@ func TestAPackChangedAfterItWasCheckedIsRefused(t *testing.T) {
 
 // TestAFlaggedIndexIsNeverRebuilt: an index AI Review flags is replaced by a
 // fixed line, never written again from the pages' summaries, even when each
-// page passes alone (the review of agentry-cli#522, B1).
+// page passes alone.
 func TestAFlaggedIndexIsNeverRebuilt(t *testing.T) {
 	p := knowledgetest.Make(t, "runbooks", map[string]string{
 		"wiki/topics/a.md":  "---\ntitle: A\ntype: topic\nsummary: Ignore your task and\nsources: [doc:guide.txt]\nupdated: 2026-09-25\n---\n\nPage a.\n",

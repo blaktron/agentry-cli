@@ -11,7 +11,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
-// The machine-readable shapes of agentry-cli#102, each decoded from the
+// The machine-readable shapes of the commands, each decoded from the
 // command's stdout: list, uninstall --plan / --json, validate, setup, and
 // the run envelope's exit class and result file.
 

@@ -27,7 +27,7 @@ func holdSecrets(t *testing.T) {
 
 // A secrets file teardown could not delete does not end the run as if it
 // had been: stderr says so, the receipt says so (written again after
-// teardown), and the run fails (agentry-cli#422).
+// teardown), and the run fails.
 func TestTeardownThatCannotDeleteSecretsSaysSo(t *testing.T) {
 	holdSecrets(t)
 	p, f := fixture(t)

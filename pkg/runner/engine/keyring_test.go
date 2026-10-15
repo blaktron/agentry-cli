@@ -1,9 +1,9 @@
 package engine
 
-// The model key from the OS keychain (agentry-cli#148): the environment
-// wins when set; the keychain account the plan names is the fallback; a
-// missing entry is a refusal that names the variable and the fix; and a
-// key read from the keychain is redacted like one from the environment.
+// The model key from the OS keychain: the environment wins when set;
+// the keychain account the plan names is the fallback; a missing entry
+// is a refusal that names the variable and the fix; and a key read from
+// the keychain is redacted like one from the environment.
 
 import (
 	"context"
@@ -107,10 +107,9 @@ func TestReceiptNamesTheModelKeySource(t *testing.T) {
 }
 
 // The plan fixed the harness's argv and variable by the credential's
-// kind (agentry-cli#171); a value of another kind is refused by name
-// rather than run against the wrong plan, from the environment and from
-// the keychain alike. A shape this build does not know passes as an API
-// key.
+// kind; a value of another kind is refused by name rather than run
+// against the wrong plan, from the environment and from the keychain
+// alike. A shape this build does not know passes as an API key.
 func TestHostSecretHoldsTheValueAgainstTheKindThePlanExpects(t *testing.T) {
 	fakeKeyring(t, map[string]string{"provider:anthropic": "sk-ant-oat01-fromkeyring"})
 	expectAPI := &spec.CredentialKind{Provider: "anthropic", Kind: "api"}

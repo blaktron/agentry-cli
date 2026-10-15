@@ -45,7 +45,7 @@ func withRun(l map[string]string, run string) map[string]string {
 // TestSweepRemovesOnlyWhatADeadRunLeft: a crashed run's containers, its
 // network and its session volume go; a live sibling run's containers, a
 // container from another host or namespace, and one with no owner labels
-// (created before they existed) all stay (agentry-cli#161).
+// (created before they existed) all stay.
 func TestSweepRemovesOnlyWhatADeadRunLeft(t *testing.T) {
 	dead := deadOwner(t)
 	live := owner.Labels()
@@ -146,7 +146,7 @@ func TestStartSessionSweepsBeforeItBuilds(t *testing.T) {
 // an input source is fetched leaves the step's proxy and its network, whose
 // name no run id alone determines. The network carries the run's labels, so
 // the next run's sweep lists it by the run's label and removes it after the
-// containers (agentry-cli#852).
+// containers.
 func TestSweepRemovesTheSourceNetworkOfARunKilledMidFetch(t *testing.T) {
 	dead := deadOwner(t)
 	p, f := fixture(t)

@@ -1,30 +1,30 @@
-# The agentry-runner image (RUNNER-PLAN §R7). This file ships EMBEDDED in
+# The agentry-runner image. This file ships EMBEDDED in
 # the agentry CLI: `runnerimage.Materialize` writes this build context to
 # ~/.agentry/runner/image/ on first use, and the engine builds
 # `agentry-runner:<version>` locally from it. Treat the materialized copy
 # as generated output — the sources of record live under runnerimage/ in
 # the agentry-cli repo.
 #
-# The context is self-contained on purpose (RQ1): module sources plus a
+# The context is self-contained on purpose: module sources plus a
 # generated go.mod, no third-party imports, so the build needs no module
 # proxy. What it does fetch: the two base images below, the Typst image and
-# the ripgrep image, which since DR-32 come from Agentry's registry
+# the ripgrep image, which come from Agentry's registry
 # (ghcr.io/blaktron), and nothing else. The
 # file deliberately carries no `# syntax=` parser directive: one would make
 # BuildKit pull its frontend image (docker.io/docker/dockerfile:1, by a tag
 # that can move) before every build and let that image's code parse this
 # file, and nothing here needs more than the daemon's built-in frontend
-# (agentry-cli#281; TestDockerfileNamesNoExternalFrontend holds it).
+# (TestDockerfileNamesNoExternalFrontend holds it).
 #
 # One binary serves the `tools` (MCP stdio), `proxy` (CONNECT allowlist),
 # and `probe` roles; the gateway and the engine pick the role via argv.
 #
-# The runtime stage stays root DELIBERATELY in v1: the gateway bind-mounts
+# The runtime stage stays root DELIBERATELY: the gateway bind-mounts
 # each run's workspace/out directories with whatever ownership the host
 # gave them, and a fixed non-root UID would turn every uid-mismatched host
 # into EACCES at the first fs_write. The gateway launches tool servers
-# with no-new-privileges, the container is one-shot, and §R11's mount
-# table — not the container user — is the enforcement boundary.
+# with no-new-privileges, the container is one-shot, and the mount
+# table, not the container user, is the enforcement boundary.
 
 # Both bases come from Agentry's own mirrors (blaktron/agentry-dockerimages),
 # digest-verified equal to the upstream images they mirror, so neither base is
@@ -32,9 +32,8 @@
 # registry's header gives the window as an hour, Docker's documentation as six
 # hours; a shared address can reach either). With no `# syntax=` directive
 # (above), nothing else is either. Both bases are pinned by digest
-# (name:tag@sha256:…, the digests recorded in that repository's images.tsv;
-# agentry-cli#269, DR-32): the digest fixes the bytes, and the tag is only a
-# label for a reader.
+# (name:tag@sha256:…, the digests recorded in that repository's images.tsv):
+# the digest fixes the bytes, and the tag is only a label for a reader.
 #
 # The two arguments are NOT equally reachable. GO_IMAGE is set by the CLI on
 # every build from the policy's images.goBuilder, so an operator repoints the
@@ -45,21 +44,19 @@
 # images.runner. Nothing in policy.yaml changes it.
 ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
 ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
-# export_pdf's renderer (plan scratch-and-pdf-reports.md D23, D25, D26;
-# agentry-cli#730): agentry-dockerimages' files-only image of Typst built
-# from pinned source without its package downloader, the Noto fonts for
-# every script, since 2026.10.09.2 the report designs' fourteen open-licence
-# families (agentry-dockerimages#58, taken by agentry-cli#784) and the
-# vendored cmarker, signed by its typst workflow on main
+# export_pdf's renderer: agentry-dockerimages' files-only image of Typst
+# built from pinned source without its package downloader, the Noto fonts
+# for every script, the report designs' fourteen open-licence families and
+# the vendored cmarker, signed by its typst workflow on main
 # (scripts/verify-typst-image.sh holds the pin to that signature). Like
 # RUNTIME_IMAGE it has no policy field: repointing it means building this
 # context yourself.
 ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.09.2@sha256:da55b1dbe359c01def900853b2e65803bf783d8098b4ddcea6164ca946d38dd1
-# grep and glob's search engine (plan ripgrep-search.md D1, D3, D9;
-# agentry-cli#912): agentry-dockerimages' files-only image of ripgrep 15.2.0
-# built from pinned source with its default features (no PCRE2), static,
-# signed by its ripgrep workflow on main (scripts/verify-ripgrep-image.sh
-# holds the pin to that signature). Like TYPST_IMAGE it has no policy field.
+# grep and glob's search engine: agentry-dockerimages' files-only image of
+# ripgrep 15.2.0 built from pinned source with its default features (no
+# PCRE2), static, signed by its ripgrep workflow on main
+# (scripts/verify-ripgrep-image.sh holds the pin to that signature). Like
+# TYPST_IMAGE it has no policy field.
 ARG RIPGREP_IMAGE=ghcr.io/blaktron/agentry-ripgrep:2026.10.13.2@sha256:2891a3998ffa4877998ad7f167ea00971e09fa3c68dcafc128e609c8cabee718
 FROM ${TYPST_IMAGE} AS typst
 FROM ${RIPGREP_IMAGE} AS ripgrep
@@ -67,13 +64,13 @@ FROM ${RIPGREP_IMAGE} AS ripgrep
 FROM ${GO_IMAGE} AS build
 # Every image the runner builds carries org.agentry.image=<kind>, in every
 # stage that runs, so a stage the classic builder leaves untagged is found
-# by label too (pkg/runner/imagelabel, agentry-cli#892).
+# by label too (pkg/runner/imagelabel).
 LABEL org.agentry.image=runner
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /agentry-runner ./runnerimage
-# Assert the artefact is an executable ELF binary before anything copies it
-# (agentry-cli#235). Not redundant: in the agentry-cli repo runnerimage/main.go
+# Assert the artefact is an executable ELF binary before anything copies it.
+# Not redundant: in the agentry-cli repo runnerimage/main.go
 # carries `//go:build ignore` and runnerimage.Materialize strips it, and
 # neither is visible from here. Build this Dockerfile from the repository root
 # instead of from the materialized context and ./runnerimage is a LIBRARY

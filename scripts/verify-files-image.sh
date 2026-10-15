@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Hold the CLI's pinned files image to its signature (agentry-cli#559; plan
-# file-handling.md §3 invariant 9, as the operator decided on 2026-10-02).
+# Hold the CLI's pinned files image to its signature.
 #
 # A run pulls the files image by digest only, so the bytes it runs are the
 # bytes this pin names; this check makes sure the pin names bytes that
@@ -8,9 +7,9 @@
 # DefaultFilesImage from pkg/runner/policy/policy.go and runs
 # `cosign verify` against that workflow's keyless identity on main. CI runs
 # it on every pull request, so a pin to an unsigned or foreign digest cannot
-# merge. The sandbox hosts are to run the same verify when they pre-pull the
-# image (agentry-web#946). It checks this CLI's default only: an operator's
-# images.files is pinned by digest, and its signature is the operator's.
+# merge. Hosts that pre-pull the image are to run the same verify. It checks
+# this CLI's default only: an operator's images.files is pinned by digest,
+# and its signature is the operator's.
 #
 # Needs cosign and the network (the registry and Sigstore). Exit 0 when the
 # pin verifies, 1 otherwise.

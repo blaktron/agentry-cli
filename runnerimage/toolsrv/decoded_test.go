@@ -1,4 +1,4 @@
-// The decoded inputs (plan file-handling.md §5; agentry-cli#560): with the
+// The decoded inputs with the
 // decode step's index under InputsTextDir, list_inputs names each input's
 // type, size, outcome and text size, read_input serves the decoded text
 // (the original only when it is text), search_inputs searches that text,
@@ -99,8 +99,7 @@ func TestReadInputServesTheDecodedText(t *testing.T) {
 }
 
 // viewsSpec adds to decodedSpec an HTML page with a Markdown view, as the
-// decode step writes it for HTML (agentry-cli#631; plan
-// quickagents-that-run.md D2), and gives the .docx its detected type.
+// decode step writes it for HTML, and gives the .docx its detected type.
 func viewsSpec(t *testing.T) *Spec {
 	t.Helper()
 	s := decodedSpec(t)
@@ -124,9 +123,9 @@ const (
 )
 
 // TestReadInputViews: every input is read in the view asked for, or its
-// default: a document's text, anything else as uploaded, HTML included
-// (D2); a binary original is answered as a page of base64 with its size and
-// type, never refused (D3); a view an input lacks says why (agentry-cli#631).
+// default: a document's text, anything else as uploaded, HTML included;
+// a binary original is answered as a page of base64 with its size and
+// type, never refused; a view an input lacks says why.
 func TestReadInputViews(t *testing.T) {
 	s := newTestServer(t, viewsSpec(t))
 	read := func(args map[string]any) (string, bool) {
@@ -178,7 +177,7 @@ func TestReadInputViews(t *testing.T) {
 }
 
 // TestAnUnreadInputsOriginal: a file no reader took has no text, but is
-// still read as uploaded, by default, as base64 (D3; agentry-cli#631).
+// still read as uploaded, by default, as base64.
 func TestAnUnreadInputsOriginal(t *testing.T) {
 	s := decodedSpec(t)
 	writeIndex(t, s, []InputEntry{
@@ -441,7 +440,7 @@ func TestSearchInputsFindsAMatchAfterRunesThatChangeLengthWhenLowered(t *testing
 	}
 }
 
-// An archive's members (plan file-handling.md §6; agentry-cli#562) are
+// An archive's members are
 // entries of their own, named <archive>/<member>: list_inputs lists them
 // under the archive, read_input reads one by its member path from
 // inputs-text (decoded or read as it is, since the member is not under

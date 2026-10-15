@@ -1,11 +1,10 @@
-// Package localrun holds what a run needs besides the registry (plan
-// knowledge.md §4.2, D6; agentry-cli#318): the plan's reuse or compile for
-// any run, a release's or not (EnsurePlan, moved here from the CLI's main
-// package, D-031's move for runs); the manifest and the tree digest a local
-// package is read and keyed by; and the built-in run — a package this
-// binary embeds, run with the attestation state builtin, no registry
-// resolve and no consent prompt for a contract the application declares
-// itself. The CLI's commands, the desktop and the enterprise build share it.
+// Package localrun holds what a run needs besides the registry: the plan's
+// reuse or compile for any run, a release's or not (EnsurePlan); the manifest
+// and the tree digest a local package is read and keyed by; and the built-in
+// run — a package this binary embeds, run with the attestation state builtin,
+// no registry resolve and no consent prompt for a contract the application
+// declares itself. The CLI's commands, the desktop and the enterprise build
+// share it.
 package localrun
 
 import (
@@ -123,24 +122,22 @@ func LocalMeta(dir string) (*installdir.Meta, error) {
 // Builtin is only ever one of Builtins(): nothing else — a directory, a
 // release, a record on disk — can run with the attestation state builtin,
 // and nothing else can be granted the web tools, which ride on the Builtin
-// value itself (plan builder-rework.md D6, §7.3; the Knowledge Creator's
-// since agentry-cli#523), as does the review grant (plan
-// desktop-review-key-and-run-cards.md §6.2; agentry-cli#503).
+// value itself, as does the review grant.
 type Builtin struct {
 	namespace, name, version string
 	fsys                     fs.FS
 	// web grants the web tools, web_search and web_read: the Drafter's and
-	// the Knowledge Creator's (plan knowledge-and-drafter.md D6).
+	// the Knowledge Creator's.
 	web bool
 	// registry adds registry_search to them: the Drafter's alone.
 	registry bool
 	// searchedOnly holds web_read to the addresses the run's searches
 	// returned: the Knowledge Creator's, whose model reads documents no
-	// one scanned (agentry-cli#523).
+	// one scanned.
 	searchedOnly bool
 	// review grants ai_review and scanned reads of the inputs, with the
 	// person's own TypeSafe key (compile.Inputs.Review): the Examiner's
-	// alone (agentry-cli#504).
+	// alone.
 	review bool
 	// localTimeoutFloor is the least time, in seconds, a run of the package
 	// on this computer is given (LocalBudgets).
@@ -148,57 +145,51 @@ type Builtin struct {
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
-// granted web_search and web_read since agentry-cli#523 (plan
-// knowledge-and-drafter.md D6): a build that does not search the web runs
+// granted web_search and web_read: a build that does not search the web runs
 // it WithoutWebTools.
 func KnowledgeCreator() Builtin {
 	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS(), web: true, searchedOnly: true,
 		localTimeoutFloor: creator.LocalTimeoutFloorSeconds}
 }
 
-// Drafter is the Drafter (pkg/drafter), the second built-in package (plan
-// builder-rework.md D6), granted the web tools and registry_search, which
-// is its alone.
+// Drafter is the Drafter (pkg/drafter), the second built-in package, granted
+// the web tools and registry_search, which is its alone.
 func Drafter() Builtin {
 	return Builtin{namespace: drafter.Namespace, name: drafter.Name, version: drafter.Version, fsys: drafter.FS(), web: true, registry: true,
 		localTimeoutFloor: drafter.LocalTimeoutFloorSeconds}
 }
 
 // VoiceWriter is the Voice Writer (pkg/voice/writer), the third built-in
-// package (plan writing-voice.md §6, D8): no web tools.
+// package: no web tools.
 func VoiceWriter() Builtin {
 	return Builtin{namespace: writer.Namespace, name: writer.Name, version: writer.Version, fsys: writer.FS(),
 		localTimeoutFloor: writer.LocalTimeoutFloorSeconds}
 }
 
-// Examiner is the Examiner (pkg/examiner), the fourth built-in package
-// (plan desktop-review-key-and-run-cards.md §6, D25; agentry-cli#504), and
-// the one granted the review grant.
+// Examiner is the Examiner (pkg/examiner), the fourth built-in package, and the
+// one granted the review grant.
 func Examiner() Builtin {
 	return Builtin{namespace: examiner.Namespace, name: examiner.Name, version: examiner.Version, fsys: examiner.FS(), review: true,
 		localTimeoutFloor: examiner.LocalTimeoutFloorSeconds}
 }
 
-// WithoutWebTools is the same package with no web tools: the Drafter's
-// repair turn (plan builder-simplify.md §5.2 step 3), which reads nothing
-// from the web, and a knowledge build that does not search the web
-// (agentry-cli#523). A grant can only be taken away here, never given.
+// WithoutWebTools is the same package with no web tools: the Drafter's repair
+// turn, which reads nothing from the web, and a knowledge build that does not
+// search the web. A grant can only be taken away here, never given.
 func (b Builtin) WithoutWebTools() Builtin {
 	b.web, b.registry, b.searchedOnly = false, false, false
 	return b
 }
 
-// LocalBudgets are the budgets a run of the package on this computer
-// starts from (plan scan-and-run-tweaks.md §6.1, §6.2; agentry-cli#500,
-// DR-54): the runner policy's, with a timeout no shorter than the package's
-// own floor. This is the one place a run is given longer than the policy's
-// run timeout without the person naming it: that timeout is sized for an
-// agent answering a task, and a draft or a pack build outruns it. A caller
-// lays whatever was named for this run over them. The floor is on the
-// timeout alone: the tool-call and cost caps are the policy's, and no
-// budget of a run on this computer counts tokens. It is exported so that
-// the desktop can start a draft or a build from the same budgets
-// (agentry-desktop#458).
+// LocalBudgets are the budgets a run of the package on this computer starts
+// from: the runner policy's, with a timeout no shorter than the package's own
+// floor. This is the one place a run is given longer than the policy's run
+// timeout without the person naming it: that timeout is sized for an agent
+// answering a task, and a draft or a pack build outruns it. A caller lays
+// whatever was named for this run over them. The floor is on the timeout alone:
+// the tool-call and cost caps are the policy's, and no budget of a run on this
+// computer counts tokens. It is exported so that the desktop can start a draft
+// or a build from the same budgets.
 func (b Builtin) LocalBudgets(p policy.Budgets) spec.Budgets {
 	return spec.Budgets{TimeoutSeconds: max(p.TimeoutSeconds, b.localTimeoutFloor), MaxTurns: p.MaxTurns, MaxCostUSD: p.MaxCostUSD}
 }
@@ -219,7 +210,7 @@ func (b Builtin) Name() string { return b.name }
 func (b Builtin) Version() string { return b.version }
 
 // Stage copies the embedded tree into dir, which must not hold any of its
-// files: the workspace `agentry builtins publish` uploads (agentry-cli#470).
+// files: the workspace `agentry builtins publish` uploads.
 func (b Builtin) Stage(dir string) error {
 	if b.fsys == nil {
 		return errors.New("not a built-in package")
@@ -233,7 +224,7 @@ func (b Builtin) Stage(dir string) error {
 // ArchiveDigest is the digest of the archive PackWorkspace makes of the
 // embedded tree: the release identity the registry holds for this package,
 // since the registry publishes every built-in from these bytes and its own
-// build must equal the digest the upload claims (agentry-cli#470). It is not
+// build must equal the digest the upload claims. It is not
 // the tree digest Materialize keys the runner home and the receipt by.
 func (b Builtin) ArchiveDigest() (string, error) {
 	stage, err := os.MkdirTemp("", "agentry-builtin-*")
@@ -255,11 +246,10 @@ func (b Builtin) ArchiveDigest() (string, error) {
 	return info.Digest, nil
 }
 
-// PackWorkspace writes the deterministic archive of a package directory to
-// w, filtered by the manifest's publish.include (plan §6.5, D-15), and
-// returns its identity. `agentry publish` uploads exactly this, and a
-// built-in's ArchiveDigest is this over its embedded tree, so the two cannot
-// pack differently.
+// PackWorkspace writes the deterministic archive of a package directory to w,
+// filtered by the manifest's publish.include, and returns its identity.
+// `agentry publish` uploads exactly this, and a built-in's ArchiveDigest is
+// this over its embedded tree, so the two cannot pack differently.
 func PackWorkspace(dir string, m *manifest.Manifest, w io.Writer) (pkgarchive.ArchiveInfo, error) {
 	files, err := pkgarchive.WalkWorkspace(dir)
 	if err != nil {
@@ -347,12 +337,11 @@ type PlanInputs struct {
 	Log    io.Writer
 }
 
-// EnsurePlan reuses the installed plan when nothing it depends on changed
-// (§R6/§R9), otherwise recompiles. A reused plan.json is first checked
-// against the integrity record its compile wrote under the runner home's
-// key (agentry-cli#266): a plan with no record this home can check is
-// recompiled, and one that does not match its record — changed after it
-// was compiled — refuses the run (exit 10).
+// EnsurePlan reuses the installed plan when nothing it depends on changed,
+// otherwise recompiles. A reused plan.json is first checked against the
+// integrity record its compile wrote under the runner home's key: a plan with
+// no record this home can check is recompiled, and one that does not match its
+// record — changed after it was compiled — refuses the run (exit 10).
 func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	errOut := in.Log
 	if errOut == nil {
@@ -394,9 +383,8 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		}
 	}
 	if rerr == nil {
-		// A plan from an older CLI is recompiled in place, and says so: a
-		// cached install used to stay stale after an upgrade until its
-		// first execution failed (agentry-cli#60).
+		// A plan from an older CLI is recompiled in place, and says so, so
+		// a cached install does not stay stale after an upgrade.
 		if v := PlanVersionOf(b); v != "" && v != spec.PlanVersion {
 			_, _ = fmt.Fprintf(errOut, "installed plan was compiled by an older CLI (plan version %s, want %s) — recompiling\n", v, spec.PlanVersion)
 		}
@@ -414,16 +402,16 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
 				// Same schema, another build: the compiler's output may
-				// differ (agentry-cli#105 changed what a server's catalog
-				// entry carries without touching the schema). An unstamped
-				// build is told apart by its binary (agentry-cli#144).
+				// differ (a change to what a server's catalog entry carries
+				// need not touch the schema). An unstamped
+				// build is told apart by its binary.
 				_, _ = fmt.Fprintf(errOut, "installed plan was compiled by another CLI build (%s, this is %s) — recompiling\n", cmp.Or(plan.CompiledBy, "unknown"), in.CompiledBy)
 			case plan.Proxy.Image != runnerImage:
 				_, _ = fmt.Fprintf(errOut, "installed plan names runner image %s, this CLI builds %s — recompiling\n", plan.Proxy.Image, runnerImage)
 			case plan.ExecImage != nil && plan.ExecImage.Unsafe != nil:
-				// This path never compiles Unsafe Mode (plan unsafe-mode.md
-				// D5): a plan the desktop compiled with it on, sharing the
-				// runner home, is not reused here (invariant 4).
+				// This path never compiles Unsafe Mode: a plan the desktop
+				// compiled with it on, sharing the runner home, is not
+				// reused here.
 				_, _ = fmt.Fprintln(errOut, "installed plan was compiled in Unsafe Mode — recompiling without it")
 			default:
 				if verr := compile.VerifyFiles(plan, planDir); verr == nil {
@@ -435,7 +423,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	}
 	// Compile replaces planDir whole, in one rename, so it is not cleared
 	// first: a removal here could run into another process's compile of
-	// the same plan (agentry-cli#289).
+	// the same plan.
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest:        in.Manifest,
 		Mode:            in.Mode,
@@ -509,18 +497,17 @@ type Run struct {
 	// review grant; Execute refuses to start one without it.
 	Review *engine.ReviewRun
 	// Hosted is a sandbox host's run (a hosted draft, build or review): it
-	// never spends a model sign-in (I5), and a plan that names one is
-	// refused (agentry-cli#845).
+	// never spends a model sign-in, and a plan that names one is
+	// refused.
 	Hosted bool
 }
 
-// RepairRun is the Drafter's one repair turn after first (plan
-// builder-simplify.md §5.2 step 3; drafter.PostStep): the same package
-// without its web tools and with no web configuration, so it holds no key
-// and reads nothing from the web, given the turn's task, folder, budgets,
-// run id and usage reporter. It is given none of the person's packs; the
-// pack the Drafter ships reaches it as it reaches every run of the package
-// (withShippedPacks; agentry-cli#657). Both clients run the turn this way.
+// RepairRun is the Drafter's one repair turn after first (drafter.PostStep):
+// the same package without its web tools and with no web configuration, so it
+// holds no key and reads nothing from the web, given the turn's task, folder,
+// budgets, run id and usage reporter. It is given none of the person's packs;
+// the pack the Drafter ships reaches it as it reaches every run of the package
+// (withShippedPacks). Both clients run the turn this way.
 func RepairRun(first Run, t drafter.RepairTurn) Run {
 	budgets := t.Budgets
 	return Run{
@@ -532,8 +519,7 @@ func RepairRun(first Run, t drafter.RepairTurn) Run {
 
 // withShippedPacks is the run's knowledge: the packs the built-in ships in
 // its own embedded tree, loaded from the copy Materialize just held to the
-// tree's digest, before the caller's (agentry-cli#657; plan
-// drafter-knowledge.md D1, D12). Because it is read here, from the
+// tree's digest, before the caller's. Because it is read here, from the
 // package's own manifest, every run of the package carries them, the
 // Drafter's repair turn (RepairRun) included, whatever the caller passed.
 // The caller's packs stay the caller's: a shipped pack does not count
@@ -555,7 +541,7 @@ func (r Run) withShippedPacks(workspace string, m *manifest.Manifest, meta *inst
 // tree digest Materialize computed from the embedded bytes, before anything
 // reads it: the copy the engine stages a shipped pack and the instruction
 // from is then the embedded tree, as the receipt says, and not whatever the
-// runner home held between Materialize and the run (agentry-cli#657).
+// runner home held between Materialize and the run.
 func builtinCopyCheck(digest string) func(string) error {
 	return func(copyDir string) error {
 		got, err := TreeDigest(copyDir)
@@ -577,7 +563,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	if logw == nil {
 		logw = io.Discard
 	}
-	// A review runs only with the person's key (D28, as a draft, DR-44):
+	// A review runs only with the person's key, as a draft does:
 	// refused before anything is laid down, compiled or built.
 	if r.Builtin.review && (r.Review == nil || r.Review.JevKey == "") {
 		return nil, engine.Classify(engine.ExitPolicy, engine.ErrNoReviewKey)
@@ -617,14 +603,14 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		return nil, err
 	}
 	// A connected account's key is readied in the keychain the run reads
-	// (Hugging Face's token renewed; agentry-cli#742).
+	// (Hugging Face's token renewed).
 	signIns := modelsignin.Open(r.Home, connection.OSKeychain{})
 	if err := signIns.ReadyForRun(ctx, plan); err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
 	// A built-in compiled onto a model sign-in's harness (adapter.DefaultFor)
 	// is handed the sign-in as `agentry run` hands it, or the engine refuses
-	// it as signed out (agentry-cli#845); a hosted run is refused (I5).
+	// it as signed out; a hosted run is refused.
 	signIn, renewSignIn, err := engine.ModelSignInFor(ctx, signIns, plan, r.Hosted)
 	if err != nil {
 		return nil, err
@@ -649,8 +635,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: knowledgePacks, Decoded: r.Decoded,
 		// A built-in's inputs are staged by its own client: a package to
 		// review or revise, documents it decoded, a voice's texts. None is
-		// a person's file as given, so the run does not decode them again
-		// (agentry-cli#560).
+		// a person's file as given, so the run does not decode them again.
 		TextInputs: true,
 		Adapter:    ad, Policy: r.Policy, PolicyFile: r.PolicyFile, Budgets: budgets,
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,

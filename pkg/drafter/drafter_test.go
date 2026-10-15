@@ -37,10 +37,10 @@ func parseOwn(t *testing.T) *manifest.Manifest {
 	return m
 }
 
-// TestTheDrafterDeclaresNothing holds the embedded package to plan §7.2's
-// contract as the compiler reads it: autonomous, no egress, no filesystem,
-// no exec, no secret, no data category; its reach is the web tools alone,
-// which the compiler grants a built-in and nothing else.
+// TestTheDrafterDeclaresNothing holds the embedded package to its contract
+// as the compiler reads it: autonomous, no egress, no filesystem, no exec,
+// no secret, no data category; its reach is the web tools alone, which the
+// compiler grants a built-in and nothing else.
 func TestTheDrafterDeclaresNothing(t *testing.T) {
 	m := parseOwn(t)
 	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
@@ -79,10 +79,9 @@ func TestTheDrafterDeclaresNothing(t *testing.T) {
 }
 
 // TestTheInstructionCarriesTheRules pins what the instruction and its
-// guide must say, word for word where the draft depends on it (plan §7.2,
-// D7, D8), each by the file that carries it since the reference half of
-// the instruction moved into the guide (plan drafter-knowledge.md D11;
-// agentry-cli#659). No word of safety appears in either.
+// guide must say, word for word where the draft depends on it, each by the
+// file that carries it (the reference half of the instruction is in the
+// guide). No word of safety appears in either.
 func TestTheInstructionCarriesTheRules(t *testing.T) {
 	mustSay(t, map[string][]string{
 		instructionFile: {
@@ -283,9 +282,9 @@ func (s *scanner) Scan(_ context.Context, src webscan.Source, text string) websc
 	return s.res
 }
 
-// TestTheDescriptionIsScannedBeforeTheDrafterStarts (plan §7.3, D22): a
-// description AI Review flags, or cannot scan, refuses the draft with exit
-// 11 and the reason; what is scanned is exactly the task the model gets.
+// TestTheDescriptionIsScannedBeforeTheDrafterStarts: a description AI
+// Review flags, or cannot scan, refuses the draft with exit 11 and the
+// reason; what is scanned is exactly the task the model gets.
 func TestTheDescriptionIsScannedBeforeTheDrafterStarts(t *testing.T) {
 	task, err := Task("  Summarize my meeting notes.  ", []string{"keep it short", " ", "line\nbreak"})
 	if err != nil {
@@ -357,8 +356,8 @@ func TestTheFixtureSet(t *testing.T) {
 			t.Errorf("shape check missed %q: %s", want, got)
 		}
 	}
-	// The inputs block (agentry-cli#634): wanted and absent, the wrong
-	// kind, a view outside the ones allowed.
+	// The inputs block: wanted and absent, the wrong kind, a view
+	// outside the ones allowed.
 	m2, _ := manifest.Parse(yml)
 	inputs := Expect{Modes: []string{"autonomous"}, InputKinds: []string{"code"}, InputViews: []string{"original"}}
 	if got := strings.Join(CheckShape(m2, d, inputs), "; "); !strings.Contains(got, "no inputs block") {
@@ -375,7 +374,7 @@ func TestTheFixtureSet(t *testing.T) {
 	if got := CheckShape(m2, d, inputs); len(got) != 0 {
 		t.Errorf("the expected inputs block was flagged: %v", got)
 	}
-	// A source question wanted (agentry-cli#835): absent, then present.
+	// A source question wanted: absent, then present.
 	sourced := Expect{Modes: []string{"autonomous"}, IntakeTypes: []string{"repository"}}
 	if got := strings.Join(CheckShape(m2, d, sourced), "; "); !strings.Contains(got, "no intake question of type repository") {
 		t.Errorf("shape check missed the absent repository question: %s", got)
@@ -384,7 +383,7 @@ func TestTheFixtureSet(t *testing.T) {
 	if got := CheckShape(m2, d, sourced); len(got) != 0 {
 		t.Errorf("the expected repository question was flagged: %v", got)
 	}
-	// A target host wanted (agentry-cli#864): absent, then present.
+	// A target host wanted: absent, then present.
 	hosted := Expect{Modes: []string{"autonomous"}, IntakeTypes: []string{"host"}}
 	if got := strings.Join(CheckShape(m2, d, hosted), "; "); !strings.Contains(got, "no intake question of type host") {
 		t.Errorf("shape check missed the absent host question: %s", got)
@@ -449,11 +448,10 @@ func TestFromReports(t *testing.T) {
 	}
 }
 
-// TestTheGuideStatesTheConnectBoundByValue (agentry-cli#419): the
-// guide's page on the guide names a key's help bound as a number, and it is
-// the one the pinned core enforces, so a moved bound cannot leave the
-// Drafter writing to the old one (it went from 300 to 2,000 characters in
-// DEV-167).
+// TestTheGuideStatesTheConnectBoundByValue: the guide's page on the guide
+// names a key's help bound as a number, and it is the one the pinned core
+// enforces, so a moved bound cannot leave the Drafter writing to an old
+// one.
 func TestTheGuideStatesTheConnectBoundByValue(t *testing.T) {
 	mustSay(t, map[string][]string{
 		"manifest/intake-and-guide.md": {fmt.Sprintf("`connect`, an object with help per declared key in Markdown, each at most %s characters", thousands(manifest.MaxGuideConnectChars))},

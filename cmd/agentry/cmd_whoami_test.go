@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// whoami (agentry-cli#128): the account the credential belongs to; the
-// subscription lines only where the registry mounts the billing extension;
-// exit class 2 with no credential.
+// whoami: the account the credential belongs to; the subscription lines
+// only where the registry mounts the billing extension; exit class 2 with
+// no credential.
 func TestWhoamiShowsTheAccountAndTheSubscriptionWhereThereIsOne(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -75,10 +75,10 @@ func TestWhoamiShowsTheAccountAndTheSubscriptionWhereThereIsOne(t *testing.T) {
 	}
 }
 
-// A member of an organization (plan organization-subscriptions.md §8, M11):
-// the tier is the organization's and says so, the balance is the pool's,
-// and the seats and the standing come with it. The core's own facts — the
-// organization and the role — are shown by a registry with no tiers at all.
+// A member of an organization: the tier is the organization's and says so,
+// the balance is the pool's, and the seats and the standing come with it.
+// The core's own facts — the organization and the role — are shown by a
+// registry with no tiers at all.
 func TestWhoamiShowsTheOrganizationAndThePool(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -141,7 +141,7 @@ func TestWhoamiShowsTheOrganizationAndThePool(t *testing.T) {
 
 	// An organization that is not paid for is granted no allowance, so the
 	// pool says what is left and promises no reset: "0 of 0, resets on the
-	// 11th" would be a promise the registry will not keep (D10).
+	// 11th" would be a promise the registry will not keep.
 	fr.billingAccountDoc["unmetered"] = false
 	fr.billingAccountDoc["standing"], fr.billingAccountDoc["allowance"], fr.billingAccountDoc["balance"] = "restricted", 0, 4000
 	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "whoami")
@@ -195,10 +195,10 @@ func TestWhoamiShowsTheOrganizationAndThePool(t *testing.T) {
 	}
 }
 
-// A pending fold-in (agentry#364): the membership is reported but not in
-// force, so whoami says an admin has yet to approve them and names the
-// door — and the subscription shown is still their own, because that is
-// what they spend from until they are approved.
+// A pending fold-in: the membership is reported but not in force, so
+// whoami says an admin has yet to approve them and names the door — and
+// the subscription shown is still their own, because that is what they
+// spend from until they are approved.
 func TestWhoamiSaysAPendingFoldInIsNotYetAMembership(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -263,11 +263,11 @@ func TestPublishRendersCreditsExhausted(t *testing.T) {
 		t.Fatalf("submit attempts = %d, want 1 (no retry on a refusal)", n)
 	}
 
-	// A 402 that names an account (plan organization-subscriptions.md §8,
-	// D22): a member publishes to their own namespace but spends from the
-	// organization's pool, so the sentence says whose account it is —
-	// including for an organization whose subscription never started,
-	// which is its own refusal rather than an empty balance.
+	// A 402 that names an account: a member publishes to their own
+	// namespace but spends from the organization's pool, so the sentence
+	// says whose account it is — including for an organization whose
+	// subscription never started, which is its own refusal rather than an
+	// empty balance.
 	for _, tc := range []struct {
 		name    string
 		problem *fakeProblem
@@ -327,11 +327,10 @@ func TestPublishRendersCreditsExhausted(t *testing.T) {
 	}
 }
 
-// The private-agent line (agentry-cli#277, after agentry-enterprise#40):
-// the registry's privateAgents.enabled says which of "none" and "no cap"
-// a max of 0 means, so the line is printed for everyone it answers. A
-// registry that predates the field keeps the old rule: the line only when
-// max > 0, because 0 could mean either.
+// The private-agent line: the registry's privateAgents.enabled says which of
+// "none" and "no cap" a max of 0 means, so the line is printed for everyone
+// it answers. A registry that does not send the field keeps the fallback
+// rule: the line only when max > 0, because 0 could mean either.
 func TestWhoamiPrivateAgentLineReadsEnabled(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -373,10 +372,10 @@ func TestWhoamiPrivateAgentLineReadsEnabled(t *testing.T) {
 	}
 }
 
-// A promo trial (plan promo-codes.md §7, agentry-cli#486): the tier reads
-// Promo Pro, the credits are the code's rather than an allowance that
-// resets (Promo Pro's allowance is 0), the trial names its code and its
-// end, and the pending tier says Standard from that day.
+// A promo trial: the tier reads Promo Pro, the credits are the code's
+// rather than an allowance that resets (Promo Pro's allowance is 0),
+// the trial names its code and its end, and the pending tier says
+// Standard from that day.
 func TestWhoamiNamesAPromoTrial(t *testing.T) {
 	if got := tierLabel("promo_pro"); got != "Promo Pro" {
 		t.Errorf("tierLabel(promo_pro) = %q, want Promo Pro", got)

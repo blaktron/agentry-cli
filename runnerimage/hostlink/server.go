@@ -401,7 +401,7 @@ func (s *server) handleCall(ctx context.Context, req rpcRequest) {
 	text = s.limits.FitResult(p.Name, s.scrub.String(text))
 	// A shell tool's error can carry what the host printed (a shell that
 	// ended as it opened, the last output of one that is over), so every
-	// shell answer travels as the resource (D9), its isError kept.
+	// shell answer travels as the resource, its isError kept.
 	asResource := !isErr || slices.Contains(shellTools, p.Name)
 	s.writeResult(req.ID, map[string]any{
 		"content": []map[string]any{content(text, !asResource)},
@@ -414,9 +414,9 @@ const ResourceURI = "agentry://hosts"
 
 // content is a host tool's answer. A successful one travels as an embedded
 // text resource, which the gateway's --block-secrets does not read and the
-// harness hands the model as text (DR-78's way): what the host prints
-// reaches the agent unchanged (plan runtime-hosts.md D9), the run's own
-// host credentials alone masked (D19). An error, which is the host link's
+// harness hands the model as text: what the host prints
+// reaches the agent unchanged, the run's own
+// host credentials alone masked. An error, which is the host link's
 // own words, stays a text item the gateway scans.
 func content(text string, isErr bool) map[string]any {
 	if isErr {

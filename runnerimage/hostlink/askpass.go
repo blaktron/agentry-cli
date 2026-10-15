@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Askpass is this binary as OpenSSH's SSH_ASKPASS (DR-91: no sshpass): ssh
+// Askpass is this binary as OpenSSH's SSH_ASKPASS (no sshpass): ssh
 // runs it with its prompt as the one argument and reads a line from its
 // standard output. It prints the file AskpassFileEnv names, which must be
 // a password or a passphrase file in a target host's folder under

@@ -20,13 +20,13 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/plainpath"
 )
 
-// The apply step (plan knowledge.md §4.2): one Creator run is one bounded
-// ingest, whose output is the pages it wrote or rewrote and the sources it
-// extracted, named in a changes.json. Apply turns the current pack and that
-// output into the next pack: it lands the changes, lints the result and
-// drops what fails — a page, never the build — regenerates the index,
-// appends the log, refuses a pack past 10 MB, and records the digest. The
-// pack on disk changes only when all of that succeeded, by one rename.
+// The apply step: one Creator run is one bounded ingest, whose output is
+// the pages it wrote or rewrote and the sources it extracted, named in a
+// changes.json. Apply turns the current pack and that output into the next
+// pack: it lands the changes, lints the result and drops what fails — a
+// page, never the build — regenerates the index, appends the log, refuses a
+// pack past 10 MB, and records the digest. The pack on disk changes only
+// when all of that succeeded, by one rename.
 
 // ChangesFile is the Creator's account of one ingest, beside the files it
 // names; ChangesSchema is its format.
@@ -59,7 +59,7 @@ type ApplyOptions struct {
 	Creator Creator
 	// MaxBytes caps the pack Apply makes, documents included: MaxBytes
 	// when zero (a build In Agentry's, and any caller that names none);
-	// MaxLocalBytes for a build on this computer (agentry-cli#429).
+	// MaxLocalBytes for a build on this computer.
 	MaxBytes int64
 }
 
@@ -209,7 +209,7 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 		Schema: Schema, Name: name, Created: o.Now.UTC(), Updated: o.Now.UTC(), Creator: o.Creator,
 		Pages: pages, Bytes: d.Bytes, SHA256: d.SHA256,
 		// Anything this step writes is unscanned until a registry scans
-		// it (plan D19).
+		// it.
 		Scan: Scan{},
 	}
 	if prev != nil {
@@ -230,8 +230,8 @@ func apply(packDir, outDir string, o ApplyOptions) (*Result, error) {
 	}
 	// Windows refuses to rename a directory a handle is open on ("sharing
 	// violation"), and both roots are open on the directories the swap
-	// renames: they are closed first (agentry-cli#420). Nothing reads
-	// through them after this point.
+	// renames: they are closed first. Nothing reads through them after
+	// this point.
 	_ = stage.Close()
 	if packRoot != nil {
 		_ = packRoot.Close()
@@ -307,12 +307,12 @@ func changePath(rel string) error {
 // what remains passes or nothing this change did can be backed out. A
 // finding that a delete explains keeps that file. A page this change wrote
 // whose only findings are links to nothing in the pack is kept with those
-// links made plain text (agentry-cli#433): a run stopped at its budget has
-// pages that link to ones it had not yet written, and dropping each would
-// drop the pages linking to it in turn, leaving a stopped build nothing.
-// Any other finding on a file this change wrote reverts the file to the
-// pack's version, or removes it if it is new. Findings on files this
-// change did not touch are the pack's own, and left alone.
+// links made plain text: a run stopped at its budget has pages that link
+// to ones it had not yet written, and dropping each would drop the pages
+// linking to it in turn, leaving a stopped build nothing. Any other
+// finding on a file this change wrote reverts the file to the pack's
+// version, or removes it if it is new. Findings on files this change did
+// not touch are the pack's own, and left alone.
 func settle(stageDir string, stage, pack *os.Root, written, deleted map[string]bool, res *Result, limit int64) error {
 	// unlinked are the pages already unlinked once: a page that still fails
 	// after its unlink (a link the raw text cannot match, or one the unlink
@@ -572,7 +572,7 @@ func swapIn(stage, packDir string, hadPack bool) error {
 		// knowledge create DIR takes an existing empty DIR. os.Rename will
 		// not rename onto a directory (Go refuses on every OS, Windows
 		// itself too), so an empty one is removed first; os.Remove never
-		// removes one that holds anything (agentry-cli#426).
+		// removes one that holds anything.
 		if err := os.Remove(packDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s is not empty and holds no knowledge pack; use an empty or a new folder: %w", packDir, err)
 		}

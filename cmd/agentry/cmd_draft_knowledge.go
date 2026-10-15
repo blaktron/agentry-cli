@@ -13,10 +13,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
-// draftKnowledge loads the packs `agentry draft --knowledge` names (plan
-// knowledge-and-drafter.md §6, D3, D14; agentry-cli#522), as `agentry run
-// --knowledge` does, held to the draft's bounds before anything else
-// happens, and says for each where its scan comes from:
+// draftKnowledge loads the packs `agentry draft --knowledge` names, as
+// `agentry run --knowledge` does, held to the draft's bounds before
+// anything else happens, and says for each where its scan comes from:
 //
 //   - a pack kept on this computer that was uploaded to or downloaded
 //     from Agentry: its scan there, confirmed with the registry now
@@ -26,8 +25,8 @@ import (
 //     first. A directory's manifest may carry a record, but anyone can
 //     write one into a file, so it is never taken on this computer;
 //   - with --hosted, only a pack directory, which a sandbox host laid down
-//     from Agentry's store for this draft (agentry-enterprise#295): its
-//     manifest's record is Agentry's, as a hosted run's attached pack's is.
+//     from Agentry's store for this draft: its manifest's record is
+//     Agentry's, as a hosted run's attached pack's is.
 //
 // The packs are held to the draft's bounds before any registry is asked.
 //

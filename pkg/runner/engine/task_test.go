@@ -1,6 +1,6 @@
-// An empty task runs the agent's own instruction (agentry-cli#449): the
-// run setup promises it, and an autonomous harness refuses an empty stdin
-// (docker-agent: "no message received on stdin", exit 14).
+// An empty task runs the agent's own instruction: the run setup promises
+// it, and an autonomous harness refuses an empty stdin (docker-agent: "no
+// message received on stdin", exit 14).
 package engine
 
 import (

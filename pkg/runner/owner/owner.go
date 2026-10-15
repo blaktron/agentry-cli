@@ -1,7 +1,7 @@
 // Package owner labels the docker objects a run creates with the process that
 // created them, and tells a live owner from a dead one, so a later run on the
 // same host can remove what a crashed run left behind without touching a
-// sibling run that is still going (agentry-cli#161).
+// sibling run that is still going.
 //
 // Every run-scoped object is keyed by a random run id and nothing else, and
 // several `agentry run` processes can share one docker daemon at once (a

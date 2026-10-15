@@ -22,15 +22,14 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// AI Review's check of a finished draft (plan builder-simplify.md §5.2 step
-// 4, D6; agentry-cli#418): the rendered package read with the release
-// rubric as stage S5 will read it at publish, and with the draft question
-// set (off_task, DEV-172) against the person's description. A hosted draft
-// asks the registry's POST /api/v1/model-input/check with its job
-// credential, which the runs extension admits at most twice a draft
-// (agentry-enterprise#265); a draft on this computer asks the same thing
-// through the core's pkg/draftcheck with the person's own Jev key. The
-// verdicts are recorded in draft.json under aiReview.check.
+// AI Review's check of a finished draft: the rendered package read with the
+// release rubric as stage S5 will read it at publish, and with the draft
+// question set (off_task) against the person's description. A hosted draft
+// asks the registry's POST /api/v1/model-input/check with its job credential,
+// which the runs extension admits at most twice a draft; a draft on this
+// computer asks the same thing through the core's pkg/draftcheck with the
+// person's own Jev key. The verdicts are recorded in draft.json under
+// aiReview.check.
 
 // The check's verdicts, as the registry's route answers them.
 const (
@@ -42,10 +41,7 @@ const (
 // RubricIDUndeclared is the release rubric's C3: a capability the
 // instructions use that the manifest does not declare. Like every rubric
 // finding on a draft it is recorded and never sent to the repair turn
-// (Repairable); its note asks the person to check the manifest. Until
-// blaktron/agentry#731 the rubric read an instruction that reads its own
-// inputs and writes its report that way, which editing the draft could not
-// clear.
+// (Repairable); its note asks the person to check the manifest.
 const RubricIDUndeclared = corejudge.RubricIDUndeclaredCapability
 
 // Check is draft.json's record of the check, under aiReview.check: the
@@ -79,9 +75,9 @@ type CheckRubric struct {
 }
 
 // CheckFinding is one rubric question at 2 or more, with the severity S5
-// would record for it at publish, as the core serves it (agentry-cli#569):
-// high sends the version to a person, medium (and low) is shown on the
-// report of a version that publishes.
+// would record for it at publish, as the core serves it: high sends the
+// version to a person, medium (and low) is shown on the report of a
+// version that publishes.
 type CheckFinding struct {
 	ID       string `json:"id"`
 	Score    int    `json:"score"`
@@ -133,13 +129,12 @@ func (c *Check) Verdict() string {
 }
 
 // Repairable is what of a check the repair turn acts on, in the CLI's own
-// words: the draft question's flag (off_task), and nothing else
-// (agentry-cli#633; plan quickagents-that-run.md D6). The release rubric's
-// findings on a draft are advisory: they are recorded and named in the
-// notes, and S5 reads the submitted version again. Sending them to the
-// repair turn taught the model to clear a security QuickAgent's flags by
-// deleting the servers, hosts and background its task needs. Empty when
-// there is nothing to repair.
+// words: the draft question's flag (off_task), and nothing else. The
+// release rubric's findings on a draft are advisory: they are recorded
+// and named in the notes, and S5 reads the submitted version again.
+// Sending them to the repair turn taught the model to clear a security
+// QuickAgent's flags by deleting the servers, hosts and background its
+// task needs. Empty when there is nothing to repair.
 func (c *Check) Repairable() []string {
 	if c == nil || c.Draft == nil || !slices.Contains(c.Draft.Flagged, corejudge.DraftIDOffTask) {
 		return nil
@@ -230,7 +225,7 @@ func CheckPackage(description, dir string) (draftcheck.Package, error) {
 const localCheckTimeout = 2 * time.Minute
 
 // CoreCheck asks the check with the person's own Jev key through the core's
-// own pkg/draftcheck, exactly as the registry asks it (D25).
+// own pkg/draftcheck, exactly as the registry asks it.
 func CoreCheck(key string) (Checker, error) {
 	c, err := corejudge.New(corejudge.Config{APIKey: key})
 	if err != nil {
@@ -272,7 +267,7 @@ func (l localChecker) Check(ctx context.Context, p draftcheck.Package) (*Check, 
 // credential. It asks once and never again on a failure: the registry counts
 // a check against the draft's cap of two as it admits it, before its checker
 // answers, so a retry after a 503 would spend the check kept for after the
-// repair turn (agentry-enterprise#265).
+// repair turn.
 type RegistryChecker struct {
 	// Base is the registry's root URL; JobToken the job's credential.
 	Base     string
@@ -365,8 +360,8 @@ func (c *Check) validAnswer(p draftcheck.Package) bool {
 		return f == "" || f == corejudge.FailureTimeout || f == corejudge.FailureJudgeError || f == corejudge.FailureTooLarge
 	}
 	score := func(n int) bool { return n >= 0 && n <= 3 }
-	// The route serves medium or high (ruleset 0.3.0); low is admitted for
-	// the rating plan quickagents-that-run.md M8 adds.
+	// The route serves medium or high (ruleset 0.3.0); low is admitted
+	// for a rating the check may add.
 	severity := func(s string) bool { return s == SeverityHigh || s == SeverityMedium || s == SeverityLow }
 	short := func(s string) bool {
 		return len(s) <= 200 && utf8.ValidString(s) && !strings.ContainsFunc(s, isControl)
@@ -446,8 +441,8 @@ func (d *Draft) RecordCheck(c *Check, checks int, unanswered error) {
 }
 
 // severity is the finding's as the core served it, or, for a record that
-// carries none (a draft.json written before agentry-cli#569), the core's
-// own rule for its id and score.
+// carries none (a draft.json written before findings carried a severity), the
+// core's own rule for its id and score.
 func (f CheckFinding) severity() string {
 	if f.Severity != "" {
 		return f.Severity
@@ -456,7 +451,7 @@ func (f CheckFinding) severity() string {
 }
 
 // atPublish is what a rubric finding of a severity does at publish
-// (ruleset 0.3.0, agentry#773): a high one sends the version to a person,
+// (ruleset 0.3.0): a high one sends the version to a person,
 // any other is shown on the report of a version that publishes.
 func atPublish(severity string) string {
 	if severity == SeverityHigh {

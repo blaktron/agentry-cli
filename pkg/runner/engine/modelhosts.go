@@ -15,13 +15,13 @@ import (
 // such as systemd-resolved's, so no split DNS (Tailscale's MagicDNS). An
 // endpoint the operator reaches from this machine by such a name failed at
 // the first model call with "no such host" (a Tailscale short name on
-// Docker Desktop, agentry-cli#592). So the engine resolves each allowlisted
-// host the way this machine does and pins the answer into the proxy's
-// /etc/hosts. The allowlist is still enforced by name: a pin changes where
-// an allowed name points, never what the proxy may reach.
+// Docker Desktop). So the engine resolves each allowlisted host the way
+// this machine does and pins the answer into the proxy's /etc/hosts. The
+// allowlist is still enforced by name: a pin changes where an allowed name
+// points, never what the proxy may reach.
 
 // modelHostLookupTimeout bounds each lookup: a name the host cannot
-// resolve quickly is left to the container's DNS, as before.
+// resolve quickly is left to the container's DNS.
 const modelHostLookupTimeout = 2 * time.Second
 
 // lookupModelHost resolves a model endpoint's host with this machine's
@@ -84,6 +84,6 @@ func allowHost(entry string) string {
 
 // modelHostsLine is the receipt's account of the pins.
 func modelHostsLine(pins []string) string {
-	return fmt.Sprintf("the llm-proxy reaches %s at the address this machine resolves for it, pinned into the proxy's /etc/hosts; the allowlist is still enforced by name (agentry-cli#592)",
+	return fmt.Sprintf("the llm-proxy reaches %s at the address this machine resolves for it, pinned into the proxy's /etc/hosts; the allowlist is still enforced by name",
 		strings.Join(pins, ", "))
 }

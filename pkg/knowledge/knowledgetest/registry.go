@@ -33,7 +33,7 @@ import (
 // It also serves the Writing Voice's routes (voice.go): one voice per
 // account, put for review and decided by Review or SetReviewOnRead.
 //
-// It also serves an organization's shared packs (Knowledge M8; the core's
+// It also serves an organization's shared packs (the core's
 // /orgs/{org}/knowledge/): list, read, download, unwrap and export, for
 // the organization's members alone (404 to anyone else, as the core
 // answers), a member's export of a pack not marked exportable 403

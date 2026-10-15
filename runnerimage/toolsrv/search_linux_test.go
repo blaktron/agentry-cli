@@ -9,8 +9,8 @@ import (
 
 // TestRipgrepRunsAsItsOwnUserWithNoEnvironment: as root, the command the
 // server starts is the confine trampoline, as searchID, in the folder the
-// call named, with an empty environment (plan ripgrep-search.md invariant
-// 3), so ripgrep can read neither the server's environment nor its
+// call named, with an empty environment,
+// so ripgrep can read neither the server's environment nor its
 // /proc/<pid>/environ.
 func TestRipgrepRunsAsItsOwnUserWithNoEnvironment(t *testing.T) {
 	s := searchServer(t, scratchSpec(t), "/opt/agentry/ripgrep/rg")

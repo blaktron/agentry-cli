@@ -8,19 +8,19 @@ import (
 	"strings"
 )
 
-// Exa's search API (agentry#783): a provider a person may name for their
-// own key (agentry-desktop#301). The registry's own provider stays Brave
-// (DEV-157). Exa's terms license it to use queries to improve its products,
-// which plan builder-rework.md D7 asked of the platform's provider not to;
-// a person who names Exa chooses those terms for their own searches.
+// Exa's search API: a provider a person may name for their own key. The
+// registry's own provider stays Brave. Exa's terms license it to use
+// queries to improve its products, which the platform's own provider must
+// not allow; a person who names Exa chooses those terms for their own
+// searches.
 //
 // The call is POST /search with the key in x-api-key. It asks for Exa's
-// default search type, auto (not instant, cheaper and shallower: a draft is
-// research), and each result's highlights, the passages most
-// relevant to the query, cut by Exa to the snippet's own bound. Never a
-// summary (billed per page), a deep search, full text or subpages, and
-// never more than ten results, past which Exa bills extra. Only
-// results[] is read; the cost, the images and the favicons are ignored.
+// default search type, auto (not instant, cheaper and shallower: a draft
+// is research), and each result's highlights, the passages most relevant
+// to the query, cut by Exa to the snippet's own bound. Never a summary
+// (billed per page), a deep search, full text or subpages, and never more
+// than ten results, past which Exa bills extra. Only results[] is read;
+// the cost, the images and the favicons are ignored.
 const (
 	ExaName           = "exa"
 	ExaDefaultBaseURL = "https://api.exa.ai"

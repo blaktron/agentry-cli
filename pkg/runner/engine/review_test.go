@@ -68,10 +68,10 @@ func reviewFixture(t *testing.T) (Params, *dockerx.Fake) {
 	}, &dockerx.Fake{}
 }
 
-// TestAReviewsKeyReachesTheToolsContainerAlone (agentry-cli#503, mirroring
+// TestAReviewsKeyReachesTheToolsContainerAlone (mirroring
 // TestADraftsKeysReachTheToolsContainerAlone): no container's environment or
-// command line holds the person's TypeSafe key, the agent's names nothing
-// of it, the key is in the run's gateway secrets file for the tools server
+// command line holds the person's TypeSafe key, the agent's names nothing of
+// it, the key is in the run's gateway secrets file for the tools server
 // alone and gone at teardown, and the receipts are masked of it.
 func TestAReviewsKeyReachesTheToolsContainerAlone(t *testing.T) {
 	p, f := reviewFixture(t)
@@ -140,9 +140,9 @@ func TestAReviewsKeyReachesTheToolsContainerAlone(t *testing.T) {
 	}
 }
 
-// TestAReviewPlanRunsOnlyWithItsKey (D28): without the person's key a run
-// is refused before any container; a plan without the grant refuses a key;
-// a session never runs it.
+// TestAReviewPlanRunsOnlyWithItsKey: without the person's key a run is
+// refused before any container; a plan without the grant refuses a key; a
+// session never runs it.
 func TestAReviewPlanRunsOnlyWithItsKey(t *testing.T) {
 	for name, r := range map[string]*ReviewRun{"none": nil, "empty": {}} {
 		p, f := reviewFixture(t)

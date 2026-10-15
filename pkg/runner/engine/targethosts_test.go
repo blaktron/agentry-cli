@@ -99,12 +99,11 @@ func assertNoHostCredential(t *testing.T, dir string) {
 	})
 }
 
-// TestATargetHostIsReachedThroughTheHostLinkAlone is invariants 1 and 2 of
-// plan runtime-hosts.md: the sign-in is in no container's argv,
-// environment or mounts the runner makes (the gateway launches the host
-// link with the folder bound into it alone), in no file the run leaves,
-// raw or base64; the agent container gains no network; and the receipt
-// names the host as the run reached it.
+// TestATargetHostIsReachedThroughTheHostLinkAlone: the sign-in is
+// in no container's argv, environment or mounts the runner makes (the
+// gateway launches the host link with the folder bound into it alone),
+// in no file the run leaves, raw or base64; the agent container gains no
+// network; and the receipt names the host as the run reached it.
 func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 	p, f, h := targetHostFixture(t)
 	happyFake(f)
@@ -135,8 +134,8 @@ func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 		log := `{"time":"t","tool":"host_run","command":"echo ` + plantedHostPassword + `","exit":0}` + "\n" +
 			`{"time":"t","tool":"host_read","path":"/etc/hostname","bytes":4}` + "\n"
 		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.LogFile("server")), []byte(log), 0o600)
-		// And a shell session's transcript, where the host printed it back
-		// (agentry-cli#862); another host's name is not this run's.
+		// And a shell session's transcript, where the host printed it
+		// back; another host's name is not this run's.
 		shell := "── session 1: a login shell on server\n$ cat pw.txt\n" + plantedHostPassword + "\n── closed by the agent\n"
 		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.ShellLogFile("server", 1)), []byte(shell), 0o600)
 		_ = os.WriteFile(filepath.Join(runDir, "cfg", spec.HostLogDir, hostlink.ShellLogFile("other", 1)), []byte(shell), 0o600)
@@ -237,8 +236,8 @@ func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 	}
 }
 
-// TestAHostedRunRefusesATargetHost is invariant 10 (D11): before any
-// container starts, whatever the release declares.
+// TestAHostedRunRefusesATargetHost: before any container starts,
+// whatever the release declares.
 func TestAHostedRunRefusesATargetHost(t *testing.T) {
 	p, f, _ := targetHostFixture(t)
 	happyFake(f)
@@ -318,9 +317,9 @@ func TestTheHostLinksPasswdNamesItsUser(t *testing.T) {
 	}
 }
 
-// TestTheEngineHoldsTheAddressToTheRuleWhoeverReadiedIt (plan D8): a host
-// handed in at loopback, or at an address the policy denies, is refused
-// whatever readied it.
+// TestTheEngineHoldsTheAddressToTheRuleWhoeverReadiedIt: a host handed in
+// at loopback, or at an address the policy denies, is refused whatever
+// readied it.
 func TestTheEngineHoldsTheAddressToTheRuleWhoeverReadiedIt(t *testing.T) {
 	p, f, h := targetHostFixture(t)
 	happyFake(f)
@@ -334,12 +333,10 @@ func TestTheEngineHoldsTheAddressToTheRuleWhoeverReadiedIt(t *testing.T) {
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonHostRefused, Detail: receipt.HostAddress, Names: []string{"server"}})
 }
 
-// TestASessionTakesItsTargetHostAtStartAndKeepsItToItsEnd is plan
-// runtime-hosts.md D12 for a session (agentry-cli#863): the host is
-// readied before the session starts, as a run's is; the host link's
-// sign-in files are in place for as long as the session lasts, its turns
-// included, and gone when it ends; the host's calls and shell transcripts
-// become receipts and the receipt names the host.
+// TestASessionTakesItsTargetHostAtStartAndKeepsItToItsEnd: the host is
+// readied before the session starts, as a run's is; the host link's sign-in files are in place for as long as the session
+// lasts, its turns included, and gone when it ends; the host's calls and
+// shell transcripts become receipts and the receipt names the host.
 func TestASessionTakesItsTargetHostAtStartAndKeepsItToItsEnd(t *testing.T) {
 	p, f := sessionFixtureEdited(t, declareTargetHost)
 	h := readiedTargetHost(t)

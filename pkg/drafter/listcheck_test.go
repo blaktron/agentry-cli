@@ -14,10 +14,9 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// The post-step's list check (agentry-cli#660, plan drafter-knowledge.md
-// §4.6, D4, D10): a pin the drafting guide's Does not run here covers, or
-// one with a listed direct dependency, goes to the repair turn; install
-// scripts are notes; the notes say what admitted each server.
+// The post-step's list check: a pin the drafting guide's Does not run here
+// covers, or one with a listed direct dependency, goes to the repair turn;
+// install scripts are notes; the notes say what admitted each server.
 
 // passingDraft is postDraft without the question the rules refuse.
 var passingDraft = strings.Replace(postDraft, `"intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, "", 1)
@@ -56,9 +55,9 @@ func checked(t *testing.T, f *fakeMeta, servers string) *Draft {
 	return d
 }
 
-// The #653 case: a draft pinning markitdown-mcp@0.0.1a7 gets the repair
-// turn with the list's line, and a second answer pinning a server on Runs
-// here instead is kept, its notes saying what admitted it.
+// A draft pinning markitdown-mcp@0.0.1a7 gets the repair turn with the
+// list's line, and a second answer pinning a server on Runs here instead
+// is kept, its notes saying what admitted it.
 func TestADraftPinningADoesNotRunHereServerGetsTheRepairTurn(t *testing.T) {
 	out := t.TempDir()
 	var tasks []string
@@ -188,9 +187,9 @@ func TestKeepFirstHoldsTheListRule(t *testing.T) {
 	}
 }
 
-// What leaves the machine does not grow (DR-67): the list is embedded and
-// the dependencies come with the resolution the check already made, one
-// per pin, and a repair keeping its pins makes none.
+// What leaves the machine does not grow: the list is embedded and the
+// dependencies come with the resolution the check already made, one per
+// pin, and a repair keeping its pins makes none.
 func TestTheListCheckAddsNoRequest(t *testing.T) {
 	f := &fakeMeta{deps: map[string][]string{"unlisted-docs-mcp": {"zod"}}}
 	p := PostStep{serverChecks: map[string]serverCheck{}, Servers: f.resolve}

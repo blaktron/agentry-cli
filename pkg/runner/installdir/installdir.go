@@ -1,10 +1,9 @@
 // Package installdir is the runner home's per-release directory: where a
-// verified release is laid down for runs, and since agentry-cli#190 where
-// `agentry install` and the desktop put a QuickAgent by default (plan
-// desktop-one-click-install.md, D3/D10). One layout, one metadata file,
-// one copy of the code — a run finds an installed release by its digest
-// and skips the fetch; an install is what a run's first fetch would have
-// left behind, plus the export a coding agent would read.
+// verified release is laid down for runs, and where `agentry install` and the
+// desktop put a QuickAgent by default. One layout, one metadata file, one copy
+// of the code — a run finds an installed release by its digest and skips the
+// fetch; an install is what a run's first fetch would have left behind, plus
+// the export a coding agent would read.
 //
 //	<runner home>/agents/<ns>/<name>/            the agent's directory (installed.yaml's dir)
 //	  <version>-<12 of the digest>/              one release
@@ -34,10 +33,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
-// Meta is <release dir>/install.json: what was verified, once, so repeat
-// runs of the same digest skip the network without skipping the truth
-// about how it was admitted. The JSON shape is the one runs have read
-// since the cache existed; Export is the one addition (agentry-cli#190).
+// Meta is <release dir>/install.json: what was verified, once, so repeat runs
+// of the same digest skip the network without skipping the truth about how it
+// was admitted. Export is the one field a run does not read.
 type Meta struct {
 	Ref         string              `json:"ref"`
 	Namespace   string              `json:"namespace"`
@@ -63,10 +61,9 @@ const Target = "runner"
 // such a record.
 const ConsentRegistry = "runner"
 
-// ConsentKey is the installed.yaml key the runner's record lives under —
-// the run's consent record since agentry-cli#124, and since agentry-cli#190
-// the install's record too, so a consent given by either covers the other
-// and there is one record per QuickAgent.
+// ConsentKey is the installed.yaml key the runner's record lives under — the
+// run's consent record and the install's record too, so a consent given by
+// either covers the other and there is one record per QuickAgent.
 func ConsentKey(home, namespace, name string) installed.Key {
 	return installed.Key{
 		Registry: ConsentRegistry, Namespace: namespace, Name: name,
@@ -104,19 +101,18 @@ func DigestSuffix(digest string) string {
 	return s
 }
 
-// Write lands workspace/ and install.json under dir, sealed with the
-// integrity record (integrity.go). A half-written install must not look
-// installed, and two first installs of one release at once (a CLI run and
-// a desktop run on a fresh runner home) must not share a half-built tree
-// (agentry-cli#294): the tree is built aside and published by rename
-// (dirpublish). dir is named for the release's digest, so a whole install
-// of that digest already there that its record vouches for, whoever laid
-// it down, is the same release: it is kept, with any run's plan inside
-// it, and this copy discarded. An install that changed after it was laid
+// Write lands workspace/ and install.json under dir, sealed with the integrity
+// record (integrity.go). A half-written install must not look installed, and
+// two first installs of one release at once (a CLI run and a desktop run on a
+// fresh runner home) must not share a half-built tree: the tree is built aside
+// and published by rename (dirpublish). dir is named for the release's digest,
+// so a whole install of that digest already there that its record vouches for,
+// whoever laid it down, is the same release: it is kept, with any run's plan
+// inside it, and this copy discarded. An install that changed after it was laid
 // down is refused (*ChangedError), never replaced: that is Repair's, on the
-// person's word. Anything else at dir, an install without a record
-// included, is replaced. A local tree's .git and agentry-out are not part
-// of the release and are skipped.
+// person's word. Anything else at dir, an install without a record included, is
+// replaced. A local tree's .git and agentry-out are not part of the release and
+// are skipped.
 func Write(dir, srcTree string, meta *Meta) error {
 	return layDown(dir, srcTree, meta, keepAny, nil, false)
 }
@@ -212,11 +208,10 @@ func Load(dir, wantDigest string) (*Meta, bool) {
 	return meta, true
 }
 
-// StyleFor is the export shape an install writes beside the release (plan
-// desktop-one-click-install.md, D2): the coding agent the policy names
-// (claude before codex when both are), else the provider — Anthropic's
-// keys drive Claude Code, the rest are OpenAI-compatible or generic — else
-// AGENTS.md, the shape any coding agent reads.
+// StyleFor is the export shape an install writes beside the release: the coding
+// agent the policy names (claude before codex when both are), else the provider
+// — Anthropic's keys drive Claude Code, the rest are OpenAI-compatible or
+// generic — else AGENTS.md, the shape any coding agent reads.
 func StyleFor(pol *policy.Policy) string {
 	if pol == nil {
 		return manifest.InterfaceAgentsMD
@@ -306,8 +301,8 @@ func refuseConsent(meta *Meta) error {
 // export/agents/<name>/) — and records the style in install.json. The host
 // adapters can read it where it is; the container harness ignores it. It
 // writes into a tree being laid down, before the tree is sealed: on a
-// published release its rewrite of install.json would read as a change
-// (agentry-cli#326), which is why it is not exported.
+// published release its rewrite of install.json would read as a change,
+// which is why it is not exported.
 func writeExport(dir, style string, m *manifest.Manifest, meta *Meta) error {
 	root := filepath.Join(dir, "export")
 	if err := os.RemoveAll(root); err != nil {
@@ -342,7 +337,7 @@ func notPartOfARelease(name string) bool { return name == ".git" || name == "age
 var ErrNotARelease = errors.New("not a release of this agent")
 
 // RemoveOtherVersions removes every entry of agentDir but keep — the
-// replace rule of an update (D9): one release per QuickAgent, the older
+// replace rule of an update: one release per QuickAgent, the older
 // one's directory gone once the new one is verified and recorded, while a
 // staging or retired sibling another process is still using is left to
 // it. Runs keep their receipts in the person's output folder, not here.
@@ -363,7 +358,7 @@ func RemoveOtherVersions(agentDir, keep string) error {
 	for _, e := range entries {
 		// Another process laying a release down right now owns its
 		// staging sibling; removing it could gut the tree it is about to
-		// publish (agentry-cli#294). An abandoned one goes.
+		// publish. An abandoned one goes.
 		if e.Name() == keepName || dirpublish.InFlight(e) {
 			continue
 		}

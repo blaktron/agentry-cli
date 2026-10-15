@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Tool-plane acceptance (RUNNER-PLAN §R3/§R11): drive the companion tools
-# server over real MCP stdio — the same code path the gateway containerizes
-# — with no docker. Proves: granted-tools-only listing, report writing,
+# Tool-plane acceptance: drive the companion tools server over real MCP
+# stdio, the same code path the gateway containerizes, with no docker. Proves: granted-tools-only listing, report writing,
 # workspace reads, grant enforcement, and traversal refusal.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -11,8 +10,8 @@ AGENTRY=${AGENTRY:-bin/agentry}
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-# The consent records `agentry run` writes (§R1) go to the throwaway config
-# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+# The consent records `agentry run` writes go to the throwaway config dir,
+# not the person's ~/.config/agentry/installed.yaml.
 export AGENTRY_CONFIG_DIR="$WORK/config"
 mkdir -p "$WORK/ws" "$WORK/out"
 echo "workspace note" >"$WORK/ws/notes.txt"
@@ -63,9 +62,9 @@ OUT=$(printf '%s\n' "$REQS" | mcp)
 echo "$OUT" | grep -q '"agentry-runner-tools"'   || fail "initialize: serverInfo missing"
 echo "$OUT" | grep -q '"fs_read"'                 || fail "tools/list: fs_read missing"
 echo "$OUT" | grep -q '"write_report"'            || fail "tools/list: write_report missing"
-echo "$OUT" | grep -q '"list_inputs"'             || fail "tools/list: list_inputs missing (RUNNER-PLAN-2 §P4)"
+echo "$OUT" | grep -q '"list_inputs"'             || fail "tools/list: list_inputs missing"
 echo "$OUT" | grep -q '"read_input"'              || fail "tools/list: read_input missing"
-echo "$OUT" | grep -q '"fs_write"' && fail "tools/list: undeclared fs_write present (§R11 inv. 4)"
+echo "$OUT" | grep -q '"fs_write"' && fail "tools/list: undeclared fs_write present"
 echo "$OUT" | grep -q 'workspace note'            || fail "fs_read: content missing"
 LINE4=$(echo "$OUT" | grep '"id":4')
 echo "$LINE4" | grep -q '"isError":true'          || fail "traversal not refused: $LINE4"
@@ -77,12 +76,12 @@ echo "$OUT" | grep -q 'brief.txt'                 || fail "list_inputs: provided
 echo "$OUT" | grep -q 'provided input'            || fail "read_input: content missing"
 LINE9=$(echo "$OUT" | grep '"id":9')
 echo "$LINE9" | grep -q '"isError":true'          || fail "read_input traversal not refused: $LINE9"
-# agentry-cli#113: a number sent as a JSON string is the number it encodes.
+# A number sent as a JSON string is the number it encodes.
 LINE10=$(echo "$OUT" | grep '"id":10')
 echo "$LINE10" | grep -q '"isError":true' && fail "stringified maxBytes refused: $LINE10"
 echo "$LINE10" | grep -q 'continue with offset 9]' || fail "stringified maxBytes 9 did not cap the read: $LINE10"
 
-# agentry-cli#246 (DR-34): a catalogued exec command must not read the tools
+# A catalogued exec command must not read the tools
 # server's environment, which holds every granted secret. The server starts
 # with a planted secret in its environment block — what /proc/<pid>/environ
 # shows — and a declared `sh` tries to read it from its parent (the server).
@@ -113,7 +112,7 @@ EOF
     EOUT=$(printf '%s\n' "$EREQS" | R1_GRANTED_SECRET="$SECRET" "$AGENTRY" runner-tools --spec "$WORK/spec-exec.json" 2>/dev/null)
     ELINE=$(echo "$EOUT" | grep '"id":2')
     echo "$ELINE" | grep -q 'probed='            || fail "exec environ probe did not run: $ELINE"
-    echo "$EOUT" | grep -q "$SECRET"             && fail "an exec child read the tools server's environment (agentry-cli#246): $ELINE"
+    echo "$EOUT" | grep -q "$SECRET"             && fail "an exec child read the tools server's environment: $ELINE"
     echo "$ELINE" | grep -q 'Permission denied'  || fail "reading the tools server's environ was not refused: $ELINE"
     echo "runner-r1: exec cannot read the tools server's environment"
   fi

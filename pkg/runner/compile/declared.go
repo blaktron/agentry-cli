@@ -11,9 +11,8 @@ import (
 // each catalog entry exactly as a run renders it (mcpServerEntry), keyed by
 // file name. It is for a tool that launches declared servers the way a run
 // does with no QuickAgent around them: the MCP server survey
-// (scripts/mcp-server-survey, agentry-cli#658). The volume still names
-// spec.PHServers; the caller substitutes its server store, as the engine
-// does.
+// (scripts/mcp-server-survey). The volume still names spec.PHServers; the
+// caller substitutes its server store, as the engine does.
 func DeclaredServerGatewayFiles(servers []spec.MCPServerSpec) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	catalog := yamlMap{}

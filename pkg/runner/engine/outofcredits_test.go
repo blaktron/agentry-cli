@@ -17,7 +17,7 @@ import (
 
 // A provider out of credits (an HTTP 402, docker-agent's error event) ends
 // the run with its own outcome and the provider's words: the budget class,
-// reason out-of-credits, never a success (agentry-cli#742).
+// reason out-of-credits, never a success.
 func TestAProviderOutOfCreditsEndsTheRunWithItsReason(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -42,7 +42,7 @@ func TestAProviderOutOfCreditsEndsTheRunWithItsReason(t *testing.T) {
 }
 
 // Any other harness error keeps its words in the run's failure: docker-agent
-// puts them in the event's "error", which was read as no text before.
+// puts them in the event's "error" field.
 func TestADockerAgentErrorEventsWordsReachTheFailure(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)

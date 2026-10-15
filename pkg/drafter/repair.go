@@ -23,12 +23,11 @@ const (
 	maxNoteLine    = 200
 )
 
-// RepairReport is what sends a draft to its one repair turn (plan
-// builder-simplify.md §5.2 steps 3 and 4, as quickagents-that-run.md D6
-// narrowed it): the rules' report on it, AI Review's check flagging it as
-// not doing the task (Check.Repairable, off_task alone), or both. A draft has one repair turn whatever sent
-// it. Task is the task the Drafter's first turn was given, which a turn
-// with a flag is also given.
+// RepairReport is what sends a draft to its one repair turn: the rules'
+// report on it, AI Review's check flagging it as not doing the task
+// (Check.Repairable, off_task alone), or both. A draft has one repair turn
+// whatever sent it. Task is the task the Drafter's first turn was given,
+// which a turn with a flag is also given.
 type RepairReport struct {
 	Rules   []string
 	Flagged []string
@@ -114,16 +113,15 @@ const repairFraming = "You have no web tools this turn: fix the draft from what 
 	"- If the report names the instruction file (AGENT.md, the instructions, or a rule S1, S3 or S4), write the whole file again with `write_report`, " +
 	"`path` `AGENT.md`. Otherwise do not write it: the one you wrote before is kept. Do not write notes.md.\n"
 
-// RepairTask is the repair turn's task (plan builder-simplify.md §5.2 step
-// 3): the constant framing, the rules' own report on the draft, and the
-// draft's manifest and instructions as the Drafter wrote them (after the
-// post-step's corrections), or, for an answer the output schema refused,
-// its last message as it wrote it. Nothing else goes in: not the description, not
-// the notes, the sources, the matches or AI Review's record, and no text the
-// Drafter read. The turn runs without the web tools, so the report is the
-// only thing in it the model did not write itself, beside the drafting
-// guide the Drafter ships (agentry-cli#657), which the framing points it
-// to for the page a fix needs (agentry-cli#659).
+// RepairTask is the repair turn's task: the constant framing, the rules' own
+// report on the draft, and the draft's manifest and instructions as the
+// Drafter wrote them (after the post-step's corrections), or, for an answer
+// the output schema refused, its last message as it wrote it. Nothing else
+// goes in: not the description, not the notes, the sources, the matches or AI
+// Review's record, and no text the Drafter read. The turn runs without the
+// web tools, so the report is the only thing in it the model did not write
+// itself, beside the drafting guide the Drafter ships, which the framing
+// points it to for the page a fix needs.
 //
 // A repair with a flag of AI Review's check is also given r.Task, the task
 // the Drafter's first turn was given, which AI Review passed before that
@@ -229,16 +227,16 @@ func Unparsed(env *receipt.Envelope, outDir string, desc webscan.Result, ref, bu
 	return d
 }
 
-// Repaired is the post-step over the repair turn's answer (§5.2 step 3):
-// the first draft with the manifest the second answer returned and, when
-// the turn wrote one, its instruction file. Everything else is the first
-// answer's (the matches, the sources, the open questions, the notes, AI
-// Review's record and what made it), since the repair turn read nothing.
-// Its manifest is corrected as the first's was, and its notes say it was
-// repaired and what the rules said of the first answer. outDir is the
-// repair run's own output folder. The caller checks the result as it
-// checked the first, and keeps it whether or not it passes; an answer that
-// is not a draft is exit 17, and the caller keeps the first draft.
+// Repaired is the post-step over the repair turn's answer: the first draft
+// with the manifest the second answer returned and, when the turn wrote
+// one, its instruction file. Everything else is the first answer's (the
+// matches, the sources, the open questions, the notes, AI Review's record
+// and what made it), since the repair turn read nothing. Its manifest is
+// corrected as the first's was, and its notes say it was repaired and what
+// the rules said of the first answer. outDir is the repair run's own
+// output folder. The caller checks the result as it checked the first, and
+// keeps it whether or not it passes; an answer that is not a draft is exit
+// 17, and the caller keeps the first draft.
 func Repaired(first *Draft, env *receipt.Envelope, outDir string, r RepairReport) (*Draft, error) {
 	ans, err := Parse(env.Result)
 	if err != nil {
@@ -297,8 +295,7 @@ const maxDroppedNoted = 10
 // NoteSecondAnswerDropped says in the notes that the first answer is kept,
 // because the second left out declared capabilities the report did not
 // name (keepFirst), r being what sent the first to its repair turn. A repair
-// does not clear a report by stripping what the task needs
-// (agentry-cli#633).
+// does not clear a report by stripping what the task needs.
 func (d *Draft) NoteSecondAnswerDropped(r RepairReport, dropped []string) {
 	var b strings.Builder
 	b.WriteString("## Not repaired\n\n" + repairWordsOf[r.by()].refused + " for one more turn. " +

@@ -1,7 +1,6 @@
 package toolsrv
 
-// Fetch into the scratch folder (plan input-sources.md §4 and §6, D10;
-// agentry-cli#831, agentry-cli#832). A fetch whose body is larger than one
+// Fetch into the scratch folder. A fetch whose body is larger than one
 // result may be is saved there and answered with its first page, so nothing
 // the fetch read is lost and the harness never cuts the answer. A fetch
 // that names saveTo is saved there whole, whatever its type, binary

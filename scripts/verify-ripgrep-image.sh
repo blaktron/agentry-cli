@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Hold the runner image's pinned ripgrep image to its signature, and extract
-# its binary for the real-search tests (agentry-cli#912; plan
-# ripgrep-search.md D3).
+# its binary for the real-search tests.
 #
 # The runner image copies grep and glob's ripgrep from agentry-ripgrep by
 # digest (runnerimage/Dockerfile, ARG RIPGREP_IMAGE), so the bytes a run

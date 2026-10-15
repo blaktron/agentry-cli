@@ -1,5 +1,5 @@
 // Package intake collects a QuickAgent's up-front questions (manifest v2
-// `intake`, plan §3.5): asked before the sandbox starts, in either run
+// `intake`): asked before the sandbox starts, in either run
 // mode, through the same prompter that collects MCP profile secrets, or
 // answered non-interactively with --intake id=value. The answers are
 // staged read-only for the agent at /inputs/intake.json; non-secret
@@ -34,23 +34,23 @@ type Answers struct {
 	// Secrets are secret answers: id → value. Never written anywhere but
 	// the run's secrets file, under SecretName(id).
 	Secrets map[string]string
-	// FromSource are secret questions the run's secret source answers
-	// (agentry-cli#402): their value never passes through here, since the
-	// engine resolves the declared capability secret SecretName(id) from
-	// that source itself; only the name is recorded.
+	// FromSource are secret questions the run's secret source answers: their
+	// value never passes through here, since the engine resolves the declared
+	// capability secret SecretName(id) from that source itself; only the name
+	// is recorded.
 	FromSource map[string]bool
-	// Sources are input-source answers (plan input-sources.md §5): id →
-	// the source, fetched before the run into /inputs/<id>/. Its token,
-	// when it has one, is filled in after Collect (sources.ResolveTokens)
-	// and never written anywhere but the fetch step's stdin.
+	// Sources are input-source answers: id → the source, fetched before the run
+	// into /inputs/<id>/. Its token, when it has one, is filled in after
+	// Collect (sources.ResolveTokens) and never written anywhere but the fetch
+	// step's stdin.
 	Sources map[string]*sources.Source
 	// Fetched is each source's fetch, set by the engine before it writes
 	// intake.json, so the document names the commit and the files.
 	Fetched map[string]sources.Fetched
-	// Hosts are target-host answers (plan runtime-hosts.md §4;
-	// agentry-cli#861): id → the host, its answer read here; its address,
-	// key and sign-in are filled in after Collect (targethost.Prepare), and
-	// its sign-in is never written anywhere but the host link's files.
+	// Hosts are target-host answers: id → the host, its answer read here; its
+	// address, key and sign-in are filled in after Collect
+	// (targethost.Prepare), and its sign-in is never written anywhere but the
+	// host link's files.
 	Hosts map[string]*targethost.Host
 }
 
@@ -58,11 +58,10 @@ type Answers struct {
 // becomes: the question id, upper-cased ("api_token" → API_TOKEN).
 func SecretName(id string) string { return strings.ToUpper(id) }
 
-// SourceHosts is the host of each input source the answers name for qs:
-// what a scheduled run will fetch, so the keys saved for those hosts can
-// be sealed beside a schedule that runs while its person is signed out
-// (agentry-cli#854). A type this CLI cannot fetch, or an answer it cannot
-// read, is an error, as it is to a run.
+// SourceHosts is the host of each input source the answers name for qs: what a
+// scheduled run will fetch, so the keys saved for those hosts can be sealed
+// beside a schedule that runs while its person is signed out. A type this CLI
+// cannot fetch, or an answer it cannot read, is an error, as it is to a run.
 func SourceHosts(qs []manifest.IntakeQuestion, answers map[string]string) ([]string, error) {
 	var hosts []string
 	for _, q := range qs {
@@ -114,19 +113,19 @@ func Collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 // CollectWithSource is Collect with the run's secret source in view. fromSource
 // (nil: none) reports whether that source holds a declared secret. With no
 // preset and no terminal, a secret question it holds is answered from the
-// source rather than refused as unanswerable: a hosted run's envFile,
-// filled from the account's vault, carries the key an intake question asks
-// for (agentry-cli#402). A terminal still asks, so a person can mean
-// another value than the source holds.
+// source rather than refused as unanswerable: a hosted run's envFile, filled
+// from the account's vault, carries the key an intake question asks for. A
+// terminal still asks, so a person can mean another value than the source
+// holds.
 func CollectWithSource(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]string, declaredSecrets []string, fromSource func(name string) bool) (*Answers, error) {
 	return collect(p, qs, preset, declaredSecrets, fromSource, nil)
 }
 
 // CollectRun is CollectWithSource for a release's run, with its manifest in
 // view: a url question its browser names as a site (capabilities.browser.
-// sites, agentry-cli#915) is the browser's, not an input source. Its
-// answer is an http or https address (browser.ParseSite), kept in Values,
-// so intake.json gives it to the agent, and never downloaded.
+// sites) is the browser's, not an input source. Its answer is an http or https
+// address (browser.ParseSite), kept in Values, so intake.json gives it to the
+// agent, and never downloaded.
 func CollectRun(p setup.Prompter, m *manifest.Manifest, preset map[string]string, fromSource func(name string) bool) (*Answers, error) {
 	var sites []string
 	if b := m.Capabilities.Browser; b != nil {
@@ -157,7 +156,7 @@ func collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 		}
 		site := typ == manifest.IntakeURL && slices.Contains(sites, q.ID)
 		// A source question is answered only when this CLI can fetch its
-		// kind: an unknown type is never taken as text (agentry-cli#833).
+		// kind: an unknown type is never taken as text.
 		var kind sources.Kind
 		// The browser's site is asked and answered as an address, never
 		// as a source.
@@ -216,7 +215,7 @@ func collect(p setup.Prompter, qs []manifest.IntakeQuestion, preset map[string]s
 		}
 		if typ == manifest.IntakeHost {
 			// A target host is never text: read here, readied before the
-			// run (agentry-cli#861).
+			// run.
 			ans, err := targethost.ParseAnswer(val)
 			if err != nil {
 				return nil, fmt.Errorf("intake %s: %w", q.ID, err)

@@ -1,17 +1,16 @@
-// `agentry review <dir>` (plan desktop-review-key-and-run-cards.md §6, D2,
-// D18, D24, D28, D30; agentry-cli#504): the built-in Examiner, run on this
-// computer over a QuickAgent the person built, with their own TypeSafe key
-// and the model their runner policy names, for no credits. It is the
-// Examiner's first caller; the desktop's Review Your QuickAgents locally is
-// the second, over the same pkg/examiner.
+// `agentry review <dir>`: the built-in Examiner, run on this computer over
+// a QuickAgent the person built, with their own TypeSafe key and the model
+// their runner policy names, for no credits. It is the Examiner's first
+// caller; the desktop's Review Your QuickAgents locally is the second, over
+// the same pkg/examiner.
 //
-// The order is the plan's: the pre-step runs the registry's own rules here
-// and asks the registry for its rule bundle, its baseline policy and its
-// record of each declared server; the Examiner runs over a read-only copy of
-// the files a submission would carry, asks AI Review as stage S5 does and
-// reads the files for what no client has the registry's code for; the
-// post-step writes report.json and the command exits by the outcome the
-// gate would be expected to reach.
+// The order is fixed: the pre-step runs the registry's own rules here and
+// asks the registry for its rule bundle, its baseline policy and its record
+// of each declared server; the Examiner runs over a read-only copy of the
+// files a submission would carry, asks AI Review as stage S5 does and reads
+// the files for what no client has the registry's code for; the post-step
+// writes report.json and the command exits by the outcome the gate would be
+// expected to reach.
 
 package main
 

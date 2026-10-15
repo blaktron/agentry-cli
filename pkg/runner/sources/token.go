@@ -13,14 +13,14 @@ import (
 )
 
 // A source's access token is asked for at run start and used by the fetch
-// step alone (D5). It is taken, in order, from the environment variable an
+// step alone. It is taken, in order, from the environment variable an
 // --intake-token flag names, from the person's saved key for the source's
 // host in the system keychain, and from a prompt when there is a terminal;
 // with none, the fetch is anonymous.
 
 // keyPrefix names a saved source key's keychain account: one per host,
 // under the clients' service (modelkey.Service), so the desktop reads and
-// saves the same key (M6).
+// saves the same key.
 const keyPrefix = "source:"
 
 // KeyAccount is the keychain account of a host's saved key.
@@ -38,10 +38,9 @@ func SavedToken(host string) (string, error) {
 	return v, err
 }
 
-// savedToken is SavedToken and where it was read: a signed-out schedule's
-// fire has its saved keys sealed beside it and no keychain (DR-84,
-// agentry-cli#854), and reads them from that credential alone, as
-// modelkey does; anywhere else, the keychain.
+// savedToken is SavedToken and where it was read: a signed-out schedule's fire
+// has its saved keys sealed beside it and no keychain, and reads them from that
+// credential alone, as modelkey does; anywhere else, the keychain.
 func savedToken(host string) (val, from string, err error) {
 	v, sealed, err := modelkey.SealedAccount(KeyAccount(host))
 	if sealed {

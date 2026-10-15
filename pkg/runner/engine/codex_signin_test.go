@@ -27,8 +27,8 @@ import (
 const codexImageRef = "ghcr.io/blaktron/agentry-codex:fixture@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 
 // codexPlanFixture compiles the engine fixture for a codex adapter under a
-// ChatGPT plan and hands the run its access token (agentry-cli#739). The
-// host adapter's harness is this test binary (TestMain plays codex).
+// ChatGPT plan and hands the run its access token. The host adapter's
+// harness is this test binary (TestMain plays codex).
 func codexPlanFixture(t *testing.T, adapterName string, edit func(*policy.Policy)) (Params, *dockerx.Fake) {
 	t.Helper()
 	m, err := manifest.Parse([]byte(engineManifest))
@@ -90,8 +90,8 @@ func codexPlanFixture(t *testing.T, adapterName string, edit func(*policy.Policy
 }
 
 // playCodexRefusing is codex's app-server whose model call is refused with
-// status, as codex 0.162.0 reports it (measured against a fake Responses
-// endpoint): an error notification, then the failed turn.
+// status, as codex 0.162.0 reports it: an error notification, then the
+// failed turn.
 func playCodexRefusing(status int) func(io.Reader, io.Writer) int {
 	variant, msg := "responseTooManyFailedAttempts", "exceeded retry limit, last status: 429 Too Many Requests"
 	if status == 403 {
@@ -133,8 +133,8 @@ func playCodexRefusing(status int) func(io.Reader, io.Writer) int {
 // The Codex image on a ChatGPT plan: one app-server turn in the agent
 // container, which starts through the image's shell (the configuration
 // into its writable home), reads the access token from the one read-only
-// folder beside the plan (I4), and is pinned by digest (I8). The token is
-// in no docker call (I3).
+// folder beside the plan, and is pinned by digest. The token is in no
+// docker call.
 func TestACodexImageRunOnAChatGPTPlanIsOneAppServerTurn(t *testing.T) {
 	p, f := codexPlanFixture(t, adapter.CodexImageAdapterName, nil)
 	var seen string
@@ -183,7 +183,7 @@ func TestACodexImageRunOnAChatGPTPlanIsOneAppServerTurn(t *testing.T) {
 
 // A 429 on a plan's turn is the plan's limit: the run ends with its own
 // outcome, in the budget class, with codex's words and no reset time, and
-// the turn is never asked again (I9).
+// the turn is never asked again.
 func TestAPlanLimitEndsAnAppServerTurnWithItsOwnOutcome(t *testing.T) {
 	p, f := codexPlanFixture(t, adapter.CodexImageAdapterName, nil)
 	turns := 0
@@ -386,8 +386,8 @@ func awaitRenewal(t *testing.T, p Params) {
 	t.Fatal("the token was not renewed")
 }
 
-// The restart route (D10): codex reads its token once, so after the runner
-// renews it the next turn starts the harness again on the renewed token and
+// The restart route: codex reads its token once, so after the runner renews
+// it the next turn starts the harness again on the renewed token and
 // resumes the conversation by its thread; the session goes on, and the
 // receipt says how often. The default route never restarts: codex re-reads
 // the file itself.
@@ -450,7 +450,7 @@ func TestTheRestartRouteResumesTheConversationOnARenewedToken(t *testing.T) {
 		t.Fatalf("the default route started codex %d times", len(got))
 	}
 	// The auth-command route: the one codex read the renewed token at its
-	// second turn, from the file the runner rewrote (D9).
+	// second turn, from the file the runner rewrote.
 	if got := tokensByTurn(); len(got) != 2 || got[0] != signInAccessToken || got[1] != signInRenewedToken {
 		t.Fatalf("the turns read %q, want the first token then the renewed one, without a restart", got)
 	}
@@ -511,7 +511,7 @@ func TestTheInstalledCodexRestartsOnARenewedToken(t *testing.T) {
 }
 
 // A turn that fails without saying why is no answer: the run fails as the
-// harness's, never a success (I9).
+// harness's, never a success.
 func TestAFailedTurnThatSaysNothingIsNoSuccess(t *testing.T) {
 	p, f := codexPlanFixture(t, adapter.CodexImageAdapterName, nil)
 	play := playCodexRefusing(0)

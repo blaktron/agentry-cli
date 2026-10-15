@@ -14,11 +14,11 @@ import (
 )
 
 // openProtocolEvents is descriptor 3, where the session protocol writes its
-// events (agentry-cli#477). It must be a pipe or a socket the driver opened
-// for writing. Anything else means the driver opened nothing there: the Go
-// runtime fills the lowest free descriptor with its own files at start (the
-// cgroup's cpu.max, the netpoller's epoll), which a bare Stat accepts, and
-// events written to them would be lost without a word.
+// events. It must be a pipe or a socket the driver opened for writing.
+// Anything else means the driver opened nothing there: the Go runtime fills
+// the lowest free descriptor with its own files at start (the cgroup's
+// cpu.max, the netpoller's epoll), which a bare Stat accepts, and events
+// written to them would be lost without a word.
 func openProtocolEvents() (io.Writer, error) {
 	const fd = 3
 	var st unix.Stat_t
@@ -41,7 +41,7 @@ func openProtocolEvents() (io.Writer, error) {
 	// descriptor without it survives every exec: every process the CLI
 	// starts (the docker client, a host-run harness) would inherit the
 	// events, could write lines the driver takes as the session's, and would
-	// hold the pipe open past the CLI (agentry-cli#482).
+	// hold the pipe open past the CLI.
 	unix.CloseOnExec(fd)
 	return os.NewFile(fd, "session-events"), nil
 }

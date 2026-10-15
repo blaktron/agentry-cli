@@ -1,9 +1,9 @@
 //go:build ignore
 
-// The runner-image entrypoint (RUNNER-PLAN §R7): one stdlib-only binary
-// serving every in-container role — `tools` (the §R3 MCP stdio server the
-// gateway launches per run), `proxy` (the §R4 llm-proxy CONNECT
-// allowlist), and `probe` (the engine's gateway health check in the §R6
+// The runner-image entrypoint: one stdlib-only binary
+// serving every in-container role: `tools` (the MCP stdio server the
+// gateway launches per run), `proxy` (the llm-proxy CONNECT
+// allowlist), and `probe` (the engine's gateway health check in the
 // execute order). One binary keeps the locally built image to a single
 // `go build` and the Dockerfile short enough to audit at a glance.
 //
@@ -47,7 +47,7 @@ import (
 const usageText = `usage: agentry-runner <mode> [flags]
 
   tools --spec <path>
-        serve the §R3 MCP tools on stdio, configured by the compiled spec file
+        serve the MCP tools on stdio, configured by the compiled spec file
   proxy --allow <host[:port],...> [--addr :3128] [--forward LISTEN=TARGET] [--public-only]
         run the CONNECT egress allowlist proxy (llm-proxy); --forward adds
         a plain TCP pipe (the host's door to the gateway, which never
@@ -71,7 +71,7 @@ const usageText = `usage: agentry-runner <mode> [flags]
   minimize <command> [<command>...]
         (docker build only) delete every executable except the named commands
   docker-filter --config <file> --listen <socket> --log <file>
-        (Docker Desktop's per-run filter container, agentry-cli#322) serve the
+        (Docker Desktop's per-run filter container) serve the
         run's docker filter on --listen in front of /var/run/docker.sock
   probe --url <url> [--token-env MCP_GATEWAY_TOKEN] [--timeout 60] [--list-tools]
         wait until the MCP gateway answers an authed initialize with a 2xx
@@ -84,7 +84,7 @@ func usageExit() {
 
 func main() {
 	// As OpenSSH's SSH_ASKPASS in the host link's image (a link named
-	// agentry-askpass, agentry-cli#861): print the one password or
+	// agentry-askpass): print the one password or
 	// passphrase file the host link named, and nothing else.
 	if filepath.Base(os.Args[0]) == filepath.Base(hostlink.AskpassProgram) {
 		os.Exit(hostlink.Askpass(os.Stdout, os.Stderr))
@@ -114,11 +114,11 @@ func main() {
 	case "source":
 		err = runSource(os.Args[2:])
 	case confine.Role:
-		// agentry-cli#596: run_command's trampoline. It never returns,
+		// run_command's trampoline. It never returns,
 		// and the command never runs unconfined.
 		confine.Trampoline(os.Args[2:])
 	case "minimize":
-		// agentry-cli#9: `docker build` runs this once to strip every
+		// `docker build` runs this once to strip every
 		// executable but the declared commands from the image.
 		if len(os.Args) < 3 {
 			err = errors.New("minimize: at least one command name is required")
@@ -136,7 +136,7 @@ func main() {
 }
 
 // runDockerFilter is the filter container's role where the daemon runs in
-// a VM (Docker Desktop, agentry-cli#322): the run's docker filter, the
+// a VM (Docker Desktop): the run's docker filter, the
 // same package the CLI serves in process on Linux, read from the file the
 // engine wrote, in front of the daemon's socket, on a socket in the volume
 // the gateway mounts. It prints sockfilter.SidecarReady once it listens and
@@ -180,9 +180,9 @@ func runDockerFilter(args []string) error {
 // maxTokenBytes bounds the access token read from stdin.
 const maxTokenBytes = 16 << 10
 
-// runSource is an input source's fetch step (plan input-sources.md §5,
-// D6; agentry-cli#833): in the files container, on a network whose only
-// route is --proxy, with the token on stdin. The report is written to
+// runSource is an input source's fetch step: in the files container, on a
+// network whose only route is --proxy, with the token on stdin. The report is
+// written to
 // --work whatever happens; the exit is non-zero when the fetch could not
 // be made, and zero with a refusal in the report when a cap refused it.
 func runSource(args []string) error {
@@ -232,8 +232,8 @@ func runSource(args []string) error {
 }
 
 // runDecode turns the documents under --in into text under --out, with the
-// report beside them (plan knowledge.md §4.2), after checking each with
-// ClamAV against the signatures under --clamav (plan file-handling.md §7).
+// report beside them, after checking each with
+// ClamAV against the signatures under --clamav.
 // The caller runs it in the decode image: no network, no capabilities, --in
 // and --clamav read-only.
 func runDecode(args []string) error {
@@ -298,8 +298,7 @@ func runTools(args []string) error {
 	return toolsrv.Serve(os.Stdin, os.Stdout, os.Stderr, &spec)
 }
 
-// runBridge serves one remote MCP server on stdio (plan
-// mcp-oauth-connections.md §5, agentry-cli#663) until the gateway closes
+// runBridge serves one remote MCP server on stdio until the gateway closes
 // stdin.
 func runBridge(args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
@@ -326,10 +325,10 @@ func runBridge(args []string) error {
 func runProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	allow := fs.String("allow", "", "comma-separated host[:port] CONNECT allowlist")
-	plain := fs.String("plain-http", "", "comma-separated host[:port] plain-http model endpoints (DR-45); each must also be on --allow")
+	plain := fs.String("plain-http", "", "comma-separated host[:port] plain-http model endpoints; each must also be on --allow")
 	addr := fs.String("addr", ":3128", "listen address")
 	publicOnly := fs.Bool("public-only", false, "dial a permitted host only at a public address, refusing one that resolves to any other (an input source's fetch step)")
-	// The browse proxy's scope (agentry-cli#915): any of these makes the
+	// The browse proxy's scope: any of these makes the
 	// proxy one, and --allow, --plain-http and --public-only are refused
 	// beside them.
 	sites := fs.String("browse-sites", "", "a browse proxy: comma-separated host[:port] sites, each with its subdomains")
@@ -403,13 +402,13 @@ func splitList(v string) []string {
 // runProbe retries the initialize POST every 2s until the deadline. It
 // exists because "the gateway container started" and "the gateway is
 // accepting authed MCP traffic" are different moments, and the agent
-// container must only start after the second one (§R6 execute order).
+// container must only start after the second one.
 func runProbe(args []string) error {
 	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
 	rawURL := fs.String("url", "", "gateway MCP endpoint URL")
 	tokenEnv := fs.String("token-env", "MCP_GATEWAY_TOKEN", "env var holding the gateway Bearer token (empty sends no Authorization)")
 	timeout := fs.Int("timeout", 60, "seconds to keep retrying")
-	listTools := fs.Bool("list-tools", false, `once the gateway answers, print the tools it serves as one JSON line, {"tools":[…]} (a session's permit list, agentry-cli#578)`)
+	listTools := fs.Bool("list-tools", false, `once the gateway answers, print the tools it serves as one JSON line, {"tools":[…]} (a session's permit list)`)
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}

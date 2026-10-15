@@ -1,16 +1,13 @@
-// `agentry fork` (plan forks-and-publisher.md §5, §6; agentry-cli#752): fork
-// a public QuickAgent into the signed-in account's namespace, or an
-// organization it publishes for, over the core's POST /agents/{ns}/{name}/fork
-// (agentry#943, DEV-220). The core decides every rule: the origin public,
-// not quarantined or blocked and with a published version; the caller able
-// to create in the target; the name free; the quota and the private-agent
-// cap. The fork's first version is a submission through the pipeline,
-// charged like any. Fork needs agent:publish, which the sign-in grant
-// carries.
+// `agentry fork`: fork a public QuickAgent into the signed-in account's
+// namespace, or an organization it publishes for, over the core's POST
+// /agents/{ns}/{name}/fork. The core decides every rule: the origin public,
+// not quarantined or blocked and with a published version; the caller able to
+// create in the target; the name free; the quota and the private-agent cap.
+// The fork's first version is a submission through the pipeline, charged like
+// any. Fork needs agent:publish, which the sign-in grant carries.
 //
-// What a fork is, and every refusal, are said in the site's words
-// (agentry-web lib/fork.ts FORK_TERMS and forkRefusal), as the desktop says
-// them (services_fork.go).
+// What a fork is, and every refusal, are said in the site's words, as the
+// desktop says them (services_fork.go).
 package main
 
 import (
@@ -28,8 +25,8 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// forkTerms are what a fork is, said before it is made: the site's
-// FORK_TERMS, the third from DEV-224.
+// forkTerms are what a fork is, said before it is made, in the site's
+// words.
 var forkTerms = []string{
 	"A fork stays private for good. It can be changed and given new versions, but it can never be made public.",
 	"Its first version is a submission through the pipeline, and it costs credits as any submission does.",
@@ -233,8 +230,7 @@ func forkUnreachable() string {
 }
 
 // forkRefusal says why a fork was not made, in the site's words
-// (forkRefusal in agentry-web lib/fork.ts, as the desktop's). Never a status
-// code alone.
+// (as the desktop's). Never a status code alone.
 func forkRefusal(origin, target, name string, status int, slug, detail string) string {
 	nf := forkNotForked
 	switch {

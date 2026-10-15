@@ -1,6 +1,5 @@
 // Package connection keeps a person's OAuth connections to remote MCP
-// servers on this machine (plan mcp-oauth-connections.md §6, D4, D6, D10,
-// D17, D20, D23; agentry-cli#664): one per QuickAgent release (ref plus
+// servers on this machine: one per QuickAgent release (ref plus
 // archive digest) and server, never opened for another QuickAgent or
 // another version of the same one, always kept until the person removes it
 // or the version is uninstalled.
@@ -91,7 +90,7 @@ func (c *Connection) Key() Key { return Key{Ref: c.Ref, Digest: c.Digest, Server
 // same issuer. Such a grant replaces c by overwriting it, never by revoking
 // c's refresh token: a vendor that revokes an account's whole grant to a
 // client (Google) would end g, and every other connection made with that
-// client, with it (agentry-cli#702).
+// client, with it.
 func (c *Connection) MadeWith(g *mcpauth.Grant) bool {
 	return c.Client.ID != "" && c.Client.ID == g.Client.ID && c.Issuer == g.Discovery.Server.Issuer
 }
@@ -200,7 +199,7 @@ func (s *Store) Put(k Key, g *mcpauth.Grant, label string) (*Connection, error) 
 	sec := secrets{RefreshToken: g.Token.RefreshToken}
 	if g.Client.Kind != mcpauth.ClientOwn {
 		// A registered client's secret is this connection's; the person's
-		// own client's is kept once, with the client (D23).
+		// own client's is kept once, with the client.
 		sec.ClientSecret = g.Client.Secret
 	}
 	id := k.ID()
@@ -289,13 +288,12 @@ const (
 	secretInFile     = "file"
 )
 
-// Use is the refresh at a run's start and before its token expires mid-run
-// (D8, D24): under the connection's lock, it
-// trades the kept refresh token for an access token, writes a rotated
-// refresh token back before returning, and stamps the record. A refusal
-// that means the grant is gone marks the connection broken
-// (*BrokenError); the next Start asks again. The access token is the only
-// thing a run is given.
+// Use is the refresh at a run's start and before its token expires mid-run:
+// under the connection's lock, it trades the kept refresh token for an access
+// token, writes a rotated refresh token back before returning, and stamps the
+// record. A refusal that means the grant is gone marks the connection broken
+// (*BrokenError); the next Start asks again. The access token is the only thing
+// a run is given.
 func (s *Store) Use(ctx context.Context, k Key, httpc *http.Client, clients *Clients) (Access, *Connection, error) {
 	id := k.ID()
 	unlock, err := s.lock(id)
@@ -404,7 +402,7 @@ func (s *Store) List() ([]*Connection, error) {
 	return out, nil
 }
 
-// Revocation outcomes, as a removal records them (D17).
+// Revocation outcomes, as a removal records them.
 const (
 	RevokeDone       = "revoked"
 	RevokeNotOffered = "not offered by the vendor"

@@ -127,7 +127,7 @@ func TestTheRunnersEvidenceEndsTheRunBlocked(t *testing.T) {
 // that never touched the inputs or the reports, an unreadable line, and
 // calls that failed only on what the agent asked (a name that is not
 // there, a report too large): those are the agent's, not the runner's, and
-// asking for a missing file earns no refunded run (D5).
+// asking for a missing file earns no refunded run.
 func TestARunWhoseToolsAnsweredIsOK(t *testing.T) {
 	for _, ledger := range [][]string{
 		{startLine},
@@ -220,7 +220,7 @@ func TestAnEarlierRunsLedgerIsNotThisOnes(t *testing.T) {
 }
 
 // On an SELinux daemon the tools container can append only to a receipt the
-// engine labelled for it: the calls ledger is one (agentry-cli#617's lesson).
+// engine labelled for it: the calls ledger is one.
 func TestTheCallsLedgerIsLabelledForTheTools(t *testing.T) {
 	rd := &runDirs{callsLedger: "/out/receipts/" + CallsLedgerFile}
 	if !slices.Contains(relabelTargetsFor(rd), relabelTarget{rd.callsLedger, false}) {

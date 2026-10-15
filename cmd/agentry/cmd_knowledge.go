@@ -1,7 +1,7 @@
-// `agentry knowledge` (plan knowledge.md §4.3, §4.8; agentry-cli#318, #319):
-// make and extend knowledge packs with the built-in Knowledge Creator, on
-// this machine, against the runner policy's model, and keep them sealed in
-// the local store the desktop shares (cmd_knowledge_store.go).
+// `agentry knowledge`: make and extend knowledge packs with the built-in
+// Knowledge Creator, on this machine, against the runner policy's model,
+// and keep them sealed in the local store the desktop shares
+// (cmd_knowledge_store.go).
 
 package main
 
@@ -35,14 +35,13 @@ import (
 type knowledgeBuildOpts struct {
 	files []string
 	// brief and briefFile are the brief, what the pack should cover and for
-	// whom (agentry-cli#523): a build takes documents, a brief, or both.
+	// whom: a build takes documents, a brief, or both.
 	brief, briefFile string
-	// web and noWeb are the Search the web choice (plan
-	// knowledge-and-drafter.md D16): on by default with no documents, off
-	// with them.
+	// web and noWeb are the Search the web choice: on by default with no
+	// documents, off with them.
 	web, noWeb bool
-	// hosted is a sandbox host's build (agentry-enterprise#296): the web's
-	// scans and searches go through the registry with the job's credential.
+	// hosted is a sandbox host's build: the web's scans and searches go
+	// through the registry with the job's credential.
 	hosted     bool
 	dir        string
 	out        string
@@ -50,11 +49,11 @@ type knowledgeBuildOpts struct {
 	budgetFlags
 	// maxPackMB caps the pack, documents included, in MiB: 1024 (1 GB,
 	// knowledge.MaxLocalBytes) for a build on this machine; a sandbox host
-	// building In Agentry passes 10, Agentry's cap (agentry-cli#429).
+	// building In Agentry passes 10, Agentry's cap.
 	maxPackMB int
 	// outputFormat json is the form a sandbox host drives for a hosted
-	// build (agentry-cli#364): the Creator run's envelope on stdout, its
-	// usage narrated on stderr.
+	// build: the Creator run's envelope on stdout, its usage narrated
+	// on stderr.
 	outputFormat string
 	// stage is where a build that fails before the Creator starts stopped,
 	// for that form's failure envelope.
@@ -77,12 +76,11 @@ var creatorBuild = build.Build
 // build itself is pkg/knowledge/build's, tested there).
 var knowledgeBuilder = runKnowledgeBuild
 
-// newKnowledgeCmd is `agentry knowledge` (plan knowledge.md §4.3, §4.8): the
-// knowledge packs a run can search. create and add drive the built-in
-// Knowledge Creator on this machine (agentry-cli#318); the packs are kept
-// sealed in the store under the runner home, which the desktop shares, and
-// list, import, upload, download, export and delete work on it
-// (agentry-cli#319). Attaching one is `agentry run REF --knowledge NAME`.
+// newKnowledgeCmd is `agentry knowledge`: the knowledge packs a run can
+// search. create and add drive the built-in Knowledge Creator on this
+// machine; the packs are kept sealed in the store under the runner home,
+// which the desktop shares, and list, import, upload, download, export and
+// delete work on it. Attaching one is `agentry run REF --knowledge NAME`.
 func newKnowledgeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "knowledge",
@@ -235,8 +233,8 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 		return nil, "", engine.Classify(engine.ExitPolicy, err)
 	}
 	o.stage = receipt.StagePrepare
-	// Said before anything is built or read (plan D19): a pack made here
-	// is not scanned, and the person hears it first.
+	// Said before anything is built or read: a pack made here is
+	// not scanned, and the person hears it first.
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	_, _ = fmt.Fprintf(errOut, "The Knowledge Creator runs on this machine against the model your runner policy names (%s).\n"+
 		"It costs no credits, and neither the documents nor the pack it makes are scanned: the pack is recorded\n"+
@@ -293,7 +291,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 
 // readBrief is the build's brief, from --brief or --brief-file, checked
 // with the documents: a build takes documents, a brief, or both, and a
-// brief is at most 8 KiB (agentry-cli#523).
+// brief is at most 8 KiB.
 func (o *knowledgeBuildOpts) readBrief() (string, error) {
 	brief := o.brief
 	if o.briefFile != "" {
@@ -320,11 +318,10 @@ func (o *knowledgeBuildOpts) readBrief() (string, error) {
 	return strings.TrimSpace(brief), nil
 }
 
-// searchWeb is the Search the web choice (plan knowledge-and-drafter.md
-// D16): --web or --no-web, else on for a new pack with no documents and off
-// otherwise. A pack being extended holds documents already, and the web's
-// searches would carry what the Creator read in them to the search provider,
-// which D16 keeps off unless asked.
+// searchWeb is the Search the web choice: --web or --no-web, else on for a
+// new pack with no documents and off otherwise. A pack being extended holds
+// documents already, and the web's searches would carry what the Creator
+// read in them to the search provider, which stays off unless asked.
 func (o *knowledgeBuildOpts) searchWeb(creating bool) (bool, error) {
 	switch {
 	case o.web && o.noWeb:
@@ -336,13 +333,12 @@ func (o *knowledgeBuildOpts) searchWeb(creating bool) (bool, error) {
 }
 
 // knowledgeWeb is a build's web configuration, or nil for a build without
-// the web, and says which (agentry-cli#523). A sandbox host's build scans
-// and searches through the registry with the job's credential, as a hosted
-// draft does. On this computer the web takes the person's own Jev key,
-// which every result is scanned with, and a search key, as a draft's does;
-// without either, or under a sandboxed runtime with no name servers for
-// the tools, the build runs without the web and says why, rather than
-// failing (D16).
+// the web, and says which. A sandbox host's build scans and searches
+// through the registry with the job's credential, as a hosted draft does.
+// On this computer the web takes the person's own Jev key, which every
+// result is scanned with, and a search key, as a draft's does; without
+// either, or under a sandboxed runtime with no name servers for the tools,
+// the build runs without the web and says why, rather than failing.
 func knowledgeWeb(pol *policy.Policy, o *knowledgeBuildOpts, search bool, errOut io.Writer) (*engine.WebRun, error) {
 	if !search {
 		return nil, nil
@@ -627,9 +623,8 @@ func keptPackNamed(cmd *cobra.Command, arg string) bool {
 
 // packLimit is the pack's cap from --max-pack-mb, and says first, when the
 // documents come to more than Agentry keeps, that a build that size can
-// take a very long time and that its pack stays on this computer
-// (agentry-cli#429). A build past the cap itself is refused by the build,
-// before anything runs.
+// take a very long time and that its pack stays on this computer. A build
+// past the cap itself is refused by the build, before anything runs.
 func packLimit(maxPackMB int, files []string, errOut io.Writer) (int64, error) {
 	limit := int64(maxPackMB) << 20
 	if maxPackMB <= 0 || limit > knowledge.MaxLocalBytes {

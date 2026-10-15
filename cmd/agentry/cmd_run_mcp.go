@@ -1,8 +1,8 @@
-// Declared-MCP-server wiring for `agentry run` (RUNNER-PLAN-3): resolve
-// the manifest pins (offline when the signature's store already holds
-// matching resolutions — the recorded pin is the trust decision), install
-// into the store as part of the run's install step, and widen the guided
-// profile to the servers' secret names.
+// Declared-MCP-server wiring for `agentry run`: resolve the manifest pins
+// (offline when the signature's store already holds matching resolutions
+// — the recorded pin is the trust decision), install into the store as
+// part of the run's install step, and widen the guided profile to the
+// servers' secret names.
 package main
 
 import (
@@ -32,7 +32,7 @@ var serverResolutions = ensureServerResolutions
 func ensureServerResolutions(ctx context.Context, errOut io.Writer, serversDir string,
 	pol *policy.Policy, m *manifest.Manifest,
 ) ([]mcpinstall.Resolved, error) {
-	// A remote server (agentry-cli#663) is neither resolved nor installed.
+	// A remote server is neither resolved nor installed.
 	declared := mcpinstall.Packages(m.Capabilities.MCPServers)
 	if len(declared) == 0 {
 		return nil, nil
@@ -86,11 +86,11 @@ func allSecretNames(m *manifest.Manifest) []string {
 // vulnerabilityVerdict turns the registry's statuses into the run's
 // decision: the receipt line, and an error when a declared server carries
 // an advisory the gate rates high or critical (the advisory's own severity
-// from a registry that does not serve the gate's rating; agentry-cli#501)
-// and nothing overrides it. An override — the flag or the policy — is
-// named in the line so the receipt shows the run was allowed on purpose;
-// an unreachable registry is named too, so a clean line never hides a
-// check that did not happen.
+// from a registry that does not serve the gate's rating) and nothing
+// overrides it. An override — the flag or the policy — is named in the
+// line so the receipt shows the run was allowed on purpose; an unreachable
+// registry is named too, so a clean line never hides a check that did not
+// happen.
 func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, allowFlag, allowPolicy bool) (string, error) {
 	line := "checked against " + registry + ": " + mcpinstall.Summary(statuses)
 	var refusing []mcpinstall.VulnStatus

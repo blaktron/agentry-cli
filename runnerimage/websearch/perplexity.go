@@ -7,19 +7,18 @@ import (
 	"net/http"
 )
 
-// Perplexity's Search API (agentry#783): the raw results endpoint, not its
-// chat completions, and a provider a person may name for their own key
-// (agentry-desktop#301). The registry's own provider stays Brave (DEV-157).
-// Perplexity's published no-training statement covers its chat completions,
-// not this endpoint, so plan builder-rework.md D7's condition is not shown
-// to hold for it; a person who names Perplexity chooses its terms for their
-// own searches.
+// Perplexity's Search API: the raw results endpoint, not its chat
+// completions, and a provider a person may name for their own key. The
+// registry's own provider stays Brave. Perplexity's published no-training
+// statement covers its chat completions, not this endpoint, so the
+// platform provider's no-training condition is not shown to hold for it; a
+// person who names Perplexity chooses its terms for their own searches.
 //
 // The call is POST /search with the key as a bearer token, one query (an
 // array would be billed as several), the standard web search type (not
-// fast, cheaper and shallower: a draft is research), and a
-// small per-page budget of extracted text, since Clean cuts a snippet to a
-// thousand characters anyway. Only results[] is read.
+// fast, cheaper and shallower: a draft is research), and a small per-page
+// budget of extracted text, since Clean cuts a snippet to a thousand
+// characters anyway. Only results[] is read.
 const (
 	PerplexityName           = "perplexity"
 	PerplexityDefaultBaseURL = "https://api.perplexity.ai"

@@ -1,7 +1,6 @@
 package toolsrv
 
-// The report design and the forms (plan report-designs.md §3 invariants 1-8;
-// agentry-cli#784, DR-87). The tests named TestRealRender… run the real
+// The report design and the forms. The tests named TestRealRender… run the real
 // renderer from the pinned image, as the typst-image CI job does.
 
 import (
@@ -23,7 +22,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/reportdesign"
 )
 
-// TestTheBuiltinThemes (invariant 8): the five themes are pkg/reportdesign's,
+// TestTheBuiltinThemes: the five themes are pkg/reportdesign's,
 // Plain first, and each stamps as its canonical document, byte for byte.
 func TestTheBuiltinThemes(t *testing.T) {
 	if got := BuiltinThemes(); !slices.Equal(got, []string{"plain", "classic", "modern", "editorial", "technical"}) {
@@ -56,7 +55,7 @@ func TestTheBuiltinThemes(t *testing.T) {
 	}
 }
 
-// TestAHostileDesignNeverReachesTheTemplate (invariants 2, 3): a design is
+// TestAHostileDesignNeverReachesTheTemplate: a design is
 // held to pkg/reportdesign's rules when it is stamped and again when the
 // tools server reads the spec; markup, a path, an unknown key, a version 1
 // document and an accent that cannot carry its text are refused; a stamp
@@ -125,7 +124,7 @@ func TestAHostileDesignNeverReachesTheTemplate(t *testing.T) {
 	}
 }
 
-// TestExportPDFTakesAFormAndNothingElse (invariants 1, 9): export_pdf's
+// TestExportPDFTakesAFormAndNothingElse: export_pdf's
 // arguments are source, path and form; a call naming the look is refused,
 // not ignored; the render gets the stamped design byte for byte and the
 // form; the ledger records the form.
@@ -263,11 +262,11 @@ func TestRenderMeta(t *testing.T) {
 	}
 }
 
-// TestRealRenderEveryThemeAndForm (invariants 4-6; agentry-cli#784's
-// acceptance): each built-in theme renders the sample in each form, offline
-// under the render's confinement, every script in it, as a tagged PDF; and
-// drawn as images, no page puts ink in its left or right margin, so a long
-// line, a wide table, a long token or a band stays inside the page's text.
+// TestRealRenderEveryThemeAndForm: each built-in theme renders the sample in
+// each form, offline under the render's confinement, every script in it, as a
+// tagged PDF; and drawn as images, no page puts ink in its left or right
+// margin, so a long line, a wide table, a long token or a band stays inside
+// the page's text.
 func TestRealRenderEveryThemeAndForm(t *testing.T) {
 	typst := realTypst(t)
 	sample, err := os.ReadFile(filepath.Join("testdata", "pdf", "sample.md"))
@@ -308,7 +307,7 @@ func TestRealRenderEveryThemeAndForm(t *testing.T) {
 	}
 }
 
-// TestRealRenderTextIsNeverTypst (invariant 2): a footer line, a title and
+// TestRealRenderTextIsNeverTypst: a footer line, a title and
 // a memo's header lines that are Typst markup render as text: the render
 // succeeds and makes no link.
 func TestRealRenderTextIsNeverTypst(t *testing.T) {
@@ -363,7 +362,7 @@ func TestRealRenderACover(t *testing.T) {
 	}
 }
 
-// TestTheImageCarriesEveryDesignFamily (D13; agentry-cli#784's acceptance):
+// TestTheImageCarriesEveryDesignFamily:
 // the pinned image lists every family pkg/reportdesign names, and a render
 // in each family uses it, under the render's confinement (no network).
 func TestTheImageCarriesEveryDesignFamily(t *testing.T) {
@@ -408,8 +407,7 @@ func TestTheImageCarriesEveryDesignFamily(t *testing.T) {
 	}
 }
 
-// TestHardLineBreaks: a letter keeps each short line of a paragraph
-// (agentry-cli#731, kept for the letter form by agentry-cli#784).
+// TestHardLineBreaks: a letter keeps each short line of a paragraph.
 func TestHardLineBreaks(t *testing.T) {
 	for name, c := range map[string][2]string{
 		"an address block": {"Acme\n14 Harbour Road\nRotterdam\n\nDear Dana,", "Acme\\\n14 Harbour Road\\\nRotterdam\n\nDear Dana,"},
@@ -534,7 +532,7 @@ func inkOutside(img image.Image, w int) (int, int, bool) {
 // thumbnailPPI is the thumbnails' resolution: an A4 page is 496 by 702.
 const thumbnailPPI = 60
 
-// TestThumbnailsAreTheTemplates (D5; agentry-cli#784): each built-in
+// TestThumbnailsAreTheTemplates: each built-in
 // theme's thumbnail in pkg/reportthumbs is the first page of the sample
 // report as this template and the pinned image draw it, pixel for pixel.
 // AGENTRY_UPDATE_THUMBNAILS=1 writes them instead.
@@ -598,7 +596,7 @@ func firstDifference(a, b image.Image) (int, int, bool) {
 	return 0, 0, false
 }
 
-// TestRealRenderABandTitleIsWhite (DEV-230's AccentOnText, invariant 7): a
+// TestRealRenderABandTitleIsWhite: a
 // band title block sets the title in white on the accent, the colour the
 // core's contrast check assumed; no pixel inside the band is darker than the
 // accent itself (the near-black body text drawn there by mistake would be).

@@ -12,9 +12,9 @@ import (
 )
 
 // SectionIndexAbove is the page count past which the index lists sections
-// and each section gets an index of its own (plan knowledge.md §4.1: "past
-// a few hundred pages it lists sections whose own index.md lists their
-// pages"), so the file a query starts from stays small.
+// and each section gets an index of its own (past a few hundred pages it
+// lists sections whose own index.md lists their pages), so the file a query
+// starts from stays small.
 const SectionIndexAbove = 300
 
 // GenerateIndex returns the index files the pack at dir should hold, by

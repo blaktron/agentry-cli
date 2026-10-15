@@ -67,11 +67,10 @@ func shippedRun(t *testing.T, r Run) (*receipt.Envelope, []string, error) {
 	return env, names, nil
 }
 
-// TestEveryDrafterRunGetsItsDraftingGuide (agentry-cli#657; plan
-// drafter-knowledge.md D1, D12): the pack the Drafter ships is mounted in
-// every run of it, read from its own manifest inside Execute, so even the
-// repair turn, which RepairRun builds with no packs at all, has it. It comes
-// before the person's packs, and the receipt names it as the built-in's
+// TestEveryDrafterRunGetsItsDraftingGuide: the pack the Drafter ships is
+// mounted in every run of it, read from its own manifest inside Execute, so
+// even the repair turn, which RepairRun builds with no packs at all, has it. It
+// comes before the person's packs, and the receipt names it as the built-in's
 // own, with no scan record of its own.
 func TestEveryDrafterRunGetsItsDraftingGuide(t *testing.T) {
 	home := t.TempDir()

@@ -9,7 +9,7 @@ import (
 )
 
 // voiceReadDescription is where the model learns, at run time, that a
-// Writing Voice is attached (plan writing-voice.md §5, D4): the System
+// Writing Voice is attached: the System
 // Prompt is compiled before a run attaches one and says only what the
 // tool means if it is there.
 const voiceReadDescription = "The person's Writing Voice is attached to this run. Read it before you write anything meant for a person to read " +

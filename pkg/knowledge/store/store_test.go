@@ -195,8 +195,8 @@ func TestAPackKeptOnOneInstallOpensOnAFreshOneAfterSignIn(t *testing.T) {
 			t.Fatalf("downloaded %+v", got)
 		}
 		// The registry's record is kept as it wrote it, and read back, as
-		// every record in a file is, as one this client has not confirmed
-		// (DR-38): nothing on disk can make a pack read as scanned.
+		// every record in a file is, as one this client has not confirmed:
+		// nothing on disk can make a pack read as scanned.
 		if d := got.Manifest.Scan.Describe(); !strings.Contains(d, "not confirmed") {
 			t.Fatalf("a downloaded scan record reads %q", d)
 		}
@@ -405,8 +405,8 @@ func TestDownloadWhileScanningIsRefused(t *testing.T) {
 	}
 }
 
-// The words the clients show about who holds a key follow the plan's copy
-// rule: what holds it, never a claim of safety.
+// The words the clients show about who holds a key follow the copy rule:
+// what holds it, never a claim of safety.
 func TestKeyHolderWords(t *testing.T) {
 	banned := regexp.MustCompile(`(?i)\b(safe|secure|private)\b`)
 	for _, e := range []store.Entry{
@@ -558,8 +558,7 @@ func TestDeleteEverywhereRemovesAgentrysCopyFirst(t *testing.T) {
 }
 
 // A pack past Agentry's cap is kept and opened here, and its upload is
-// refused before anything is sent: it stays on this computer
-// (agentry-cli#429).
+// refused before anything is sent: it stays on this computer.
 func TestAPackPastAgentrysCapStaysHere(t *testing.T) {
 	ctx := context.Background()
 	reg := knowledgetest.NewRegistry(t)
@@ -621,8 +620,8 @@ func TestAPackPastAgentrysCapStaysHere(t *testing.T) {
 
 // TestAgentryScanIsConfirmedWithTheRegistry: a kept pack's scan in Agentry
 // is the registry's record, asked now, only while Agentry's copy is this
-// pack's tree (agentry-cli#522, D14); anything else says why it could not
-// be confirmed, and a pack kept here only has nothing to confirm.
+// pack's tree; anything else says why it could not be confirmed, and a
+// pack kept here only has nothing to confirm.
 func TestAgentryScanIsConfirmedWithTheRegistry(t *testing.T) {
 	ctx := context.Background()
 	reg := knowledgetest.NewRegistry(t)

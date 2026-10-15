@@ -16,11 +16,10 @@ import (
 
 // TestTheImageJudgeIsTheCores holds the runner image's copies of the core's
 // pkg/judge, pkg/websearch and pkg/reportdesign (with its built-in themes) to
-// the module this CLI builds against, byte for byte (DR-43; plan
-// builder-rework.md D25; DR-87, plan report-designs.md D22). The image compiles from
-// stdlib-only embedded sources with no module download (DR-2), so its tools
+// the module this CLI builds against, byte for byte. The image compiles
+// from stdlib-only embedded sources with no module download, so its tools
 // server cannot import the core; a copy that drifted would ask Jev something
-// the registry does not, which is the fork D20 refused; a design copy that
+// the registry does not; a design copy that
 // drifted would draw a design the core refuses, or refuse one it stored.
 // After the core dependency moves, scripts/sync-image-judge.sh refreshes
 // all three.
@@ -60,7 +59,7 @@ func TestTheImageJudgeIsTheCores(t *testing.T) {
 }
 
 // ruleset045RubricHash is the rubric hash of the shipped request shape under
-// ruleset 0.4.5 (agentry#1092, DEV-242): C3 holds only a dangerous capability
+// ruleset 0.4.5: C3 holds only a dangerous capability
 // that is undeclared and out of line with the purpose in the state, and the
 // runner grants name a declared target host. It moves only when the core's
 // rubric does, and then so must this literal.

@@ -1,8 +1,7 @@
 package compile
 
-// Model sign-ins and harness image pins in the plan (plan
-// model-sign-ins.md §4.2, invariants I4, I7 and I8; agentry-cli#738,
-// DR-86).
+// Model sign-ins and harness image pins in the plan (invariants I4, I7 and
+// I8).
 
 import (
 	"fmt"
@@ -48,10 +47,10 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 	}
 	if res.Host != nil {
 		// A harness on this machine reads what the runner hands it where it
-		// is, and nothing is mounted: the token file in the run's own folder
-		// (plan D14), or Claude Code's config directory, Agentry's own
-		// directory for the installed Claude Code (D23), which the engine
-		// names and never reads.
+		// is, and nothing is mounted: the token file in the run's own
+		// folder, or Claude Code's config directory, Agentry's own
+		// directory for the installed Claude Code, which the engine names
+		// and never reads.
 		switch {
 		case msi.Delivery == spec.ModelSignInToken && msi.Path == spec.PHModelSignIn+"/"+spec.ModelSignInTokenFile:
 		case msi.Delivery == spec.ModelSignInConfigDir && msi.Path == spec.PHModelSignIn && kind == policy.KeyKindClaudeSignIn:
@@ -70,7 +69,7 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 	switch msi.Delivery {
 	case spec.ModelSignInCallback:
 		// The harness asks the session's driver for its token over its own
-		// stdio (Copilot CLI's token callback, D25): nothing is mounted.
+		// stdio (Copilot CLI's token callback): nothing is mounted.
 		if kind != policy.KeyKindCopilotSignIn {
 			return fmt.Errorf("adapter %s: only %s is delivered through the session's token callback, not %s", adapterName, policy.KeyKindCopilotSignIn, kind)
 		}
@@ -88,7 +87,7 @@ func modelSignIn(adapterName, kind string, res *adapter.Result) error {
 		m.Target, m.ReadOnly = spec.ModelSignInMount, true
 	case spec.ModelSignInConfigDir:
 		// The harness's own config directory holds its refresh token, the
-		// one exception to I3, and only Claude Code's is allowed it (D20).
+		// one exception to I3, and only Claude Code's is allowed it.
 		if kind != policy.KeyKindClaudeSignIn {
 			return fmt.Errorf("adapter %s: only %s is delivered as a config directory, not %s", adapterName, policy.KeyKindClaudeSignIn, kind)
 		}

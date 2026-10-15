@@ -1,7 +1,6 @@
 package harnessbuild
 
-// The Copilot CLI image (plan model-sign-ins.md §4.5, D27;
-// agentry-cli#741): GitHub's Copilot CLI, unmodified, from the release's
+// The Copilot CLI image: GitHub's Copilot CLI, unmodified, from the release's
 // musl download for the daemon's platform, on agentry-dockerimages'
 // Alpine base. GitHub signs neither the download nor its checksums file,
 // so the pin is the checksums file's own SHA-256: the build fetches
@@ -42,7 +41,7 @@ const CopilotBase = "ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73ca
 // downloads, each under v<version>/.
 const CopilotReleases = "https://github.com/github/copilot-cli/releases/download"
 
-// CopilotPinNote is what the receipt says of the pin (plan D27).
+// CopilotPinNote is what the receipt says of the pin.
 const CopilotPinNote = "pinned by checksum, not signed: GitHub publishes the download's SHA-256 and no signature"
 
 // The image's layout: the binary, the unpacked package it runs from, and
@@ -62,9 +61,8 @@ type copilotRelease struct {
 	sums    string
 }
 
-// copilotReleases were read from GitHub's release on 2026-10-09: 1.0.95
-// was the latest stable release that day, its checksums file fetched and
-// hashed, and its linuxmusl-x64 download checked against it. A bump adds a
+// copilotReleases are read from GitHub's release: its checksums file is fetched
+// and hashed, and its linuxmusl-x64 download checked against it. A bump adds a
 // release here, moves policy.DefaultHarnessImages["copilot-image"], and
 // re-records the adapter's conformance.
 var copilotReleases = []copilotRelease{{

@@ -1,9 +1,9 @@
-// `agentry validate` (§11, D-12): offline parity with the server's submit
-// validation — the manifest rules via pkg/manifest, the S1 inventory subset
-// via pkg/archive's sniffers, and the S3/S4 scan via pkg/rules, run over the
-// files that publish would actually ship. The check itself is pkg/validate
-// (agentry-cli#478); the command adds the rule bundle's precedence and the
-// --rules-update fetch.
+// `agentry validate`: offline parity with the server's submit validation —
+// the manifest rules via pkg/manifest, the S1 inventory subset via
+// pkg/archive's sniffers, and the S3/S4 scan via pkg/rules, run over the
+// files that publish would actually ship. The check itself is pkg/validate;
+// the command adds the rule bundle's precedence and the --rules-update
+// fetch.
 package main
 
 import (
@@ -25,10 +25,10 @@ func newValidateCmd() *cobra.Command {
 		Use:   "validate [dir]",
 		Short: "Validate a workspace offline (manifest rules " + validate.ManifestRules() + " + S1/S3/S4 scan)",
 		Long: "Validate a workspace offline with the same code the registry runs at submit\n" +
-			"time (D-12 local/remote parity), over the files publish.include would ship:\n\n" +
+			"time (local/remote parity), over the files publish.include would ship:\n\n" +
 			"  manifest  rules " + validate.ManifestRules() + ", in a public-publish context so V7 runs\n" +
 			"  S1        content-sniffed executables and nested archives (critical),\n" +
-			"            non-UTF-8 text (low) — the checks that used to reject a\n" +
+			"            non-UTF-8 text (low) — the checks that would otherwise reject a\n" +
 			"            workspace at submit after it passed locally\n" +
 			"  S3/S4     hidden-content detectors and the injection-signature engine\n\n" +
 			"The S4 rule bundle is EMBEDDED in this binary, so validation never depends\n" +
@@ -42,7 +42,7 @@ func newValidateCmd() *cobra.Command {
 			"$AGENTRY_RULES_DIR (or ./rules) overrides both, for rule development.\n\n" +
 			"An override bundle that will not load is a hard ERROR, never a skipped scan:\n" +
 			"reporting PASSED over content the signature engine never examined is the\n" +
-			"failure mode §7 forbids on the server, so it is forbidden here too (DEV-011).\n" +
+			"failure mode the server forbids, so it is forbidden here too.\n" +
 			"A cached --rules-update bundle that will not load is skipped for the\n" +
 			"embedded one, which always loads.\n\n" +
 			"Exit code: 0 clean; 1 on manifest errors or scan findings. Manifest warnings\n" +
@@ -69,7 +69,7 @@ type validateOutput = validate.Report
 func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error {
 	out := cmd.OutOrStdout()
 	if flags.jsonOut {
-		out = cmd.ErrOrStderr() // §R8: the report on stdout, the narration on stderr
+		out = cmd.ErrOrStderr() // the report on stdout, the narration on stderr
 	}
 	if rulesUpdate {
 		if _, err := fetchRulesBundle(cmd.Context(), cmd.ErrOrStderr(), registryURL()); err != nil {
@@ -119,19 +119,19 @@ func readWorkspaceManifest(dir string) (*manifest.Manifest, error) { return vali
 //  4. the bundle EMBEDDED in this binary
 //
 // The embedded bundle is the floor, not the ceiling: it means local/remote
-// parity (D-12) never depends on where the CLI is run from, while a cached
+// parity never depends on where the CLI is run from, while a cached
 // update means it does not depend on how recently the CLI was released
 // either. A cached bundle no newer than the embedded one is passed over: it
 // was fetched by an older CLI, and preferring it would scan an upgraded
-// CLI's workspaces with the rules it replaced (agentry-cli#586). On a tie
+// CLI's workspaces with the rules it replaced. On a tie
 // the embedded copy wins, so the line names this binary's own bundle. It returns the bundle and a short description of where it came
 // from, because "which rules did this pass under" is the first question
 // anyone asks about a clean validate.
 //
 // A malformed override or cache entry from (1) or (2) is a hard error, not a
 // warning: silently skipping S4 would report "validate: PASSED" on content
-// the signature engine never examined, which is the failure mode §7 forbids
-// on the server (never pass on scanner failure) and DEV-011 forbids here.
+// the signature engine never examined, which is the failure mode the server
+// forbids (never pass on scanner failure) and this command forbids too.
 func loadRulesBundle() (*rules.Bundle, string, error) {
 	if d := os.Getenv(envRulesDir); d != "" {
 		b, err := rules.LoadBundle(os.DirFS(d), ".")

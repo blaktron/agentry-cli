@@ -7,12 +7,11 @@ import (
 	"testing"
 )
 
-// TestLoadExplainsParseErrors (agentry-cli#98): the sentence a person
-// reads when the policy will not parse names the file and the line, an
-// unknown key with both causes and the action for each, a value of the
-// wrong kind with what was found and what belongs, and malformed YAML
-// with the decoder's own detail — and never a Go type name. Strictness
-// is unchanged: every one is refused.
+// TestLoadExplainsParseErrors: the sentence a person reads when the policy will
+// not parse names the file and the line, an unknown key with both causes and
+// the action for each, a value of the wrong kind with what was found and what
+// belongs, and malformed YAML with the decoder's own detail — and never a Go
+// type name. Strictness is unchanged: every one is refused.
 func TestLoadExplainsParseErrors(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, text string) string {

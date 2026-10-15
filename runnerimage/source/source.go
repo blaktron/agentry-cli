@@ -1,13 +1,12 @@
-// Package source is the runner image's `source` role (plan input-sources.md
-// §5, D6; agentry-cli#833): the fetch step that brings a run's input source
-// in before the run, as plain files under one directory. The repository
-// kind is a depth-1 fetch of one commit over git's smart HTTP protocol,
-// spoken by this package itself (git.go, pack.go) rather than by a git
-// binary or a third-party library: the image builds with no module download
-// (DR-2), and no shell or git runs in the fetch container. The checkout
-// writes regular files only (tree.go): no link, no submodule, no .git, LFS
-// pointer files as they are. The url kind (url.go) is one https GET of a
-// file, saved as one file under a portable name.
+// Package source is the runner image's `source` role: the fetch step that
+// brings a run's input source in before the run, as plain files under one
+// directory. The repository kind is a depth-1 fetch of one commit over git's
+// smart HTTP protocol, spoken by this package itself (git.go, pack.go) rather
+// than by a git binary or a third-party library: the image builds with no
+// module download, and no shell or git runs in the fetch container. The
+// checkout writes regular files only (tree.go): no link, no submodule, no
+// .git, LFS pointer files as they are. The url kind (url.go) is one https GET
+// of a file, saved as one file under a portable name.
 //
 // The caller runs this in the files container on a network whose only
 // route is a CONNECT proxy to the source's host on port 443, with the
@@ -49,7 +48,7 @@ const (
 	headerTimeout    = 2 * time.Minute
 )
 
-// The default caps (D7): a local repository.
+// The default caps: a local repository.
 const (
 	DefaultMaxFiles = 20000
 	DefaultMaxBytes = 1 << 30
@@ -110,7 +109,7 @@ type Report struct {
 	SkippedPaths map[string][]string `json:"skippedPaths,omitempty"`
 	// Refusal says why nothing was written, when a cap refused the source:
 	// its count against the cap. Over is the same count in typed fields,
-	// which a driver that keeps no text can keep (agentry-cli#884).
+	// which a driver that keeps no text can keep.
 	Refusal string `json:"refusal,omitempty"`
 	Over    *Over  `json:"over,omitempty"`
 	// Error says why the fetch failed, in words for the person.

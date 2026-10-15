@@ -8,9 +8,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 )
 
-// TestBuiltinsListsEveryBuiltinWithItsReleaseDigest (agentry-cli#470): the
-// list is localrun.Builtins(), each with the archive digest the registry's
-// release of it holds, in text and in --json.
+// TestBuiltinsListsEveryBuiltinWithItsReleaseDigest: the list is
+// localrun.Builtins(), each with the archive digest the registry's release
+// of it holds, in text and in --json.
 func TestBuiltinsListsEveryBuiltinWithItsReleaseDigest(t *testing.T) {
 	isolateEnv(t)
 	var want []builtinEntry

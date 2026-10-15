@@ -1,10 +1,10 @@
 // Package sockfilter is the per-run filter between a run's MCP gateway and
-// the docker daemon (hosted runs in production D7 a, agentry-cli#219).
+// the docker daemon.
 //
 // The gateway launches the tool and MCP server containers, so it needs the
 // daemon's API; handed the daemon's own socket, a compromised gateway
-// commands every container on the host, which is what stops runs sharing a
-// sandbox host (plan hosted-runs-production.md D2, D7). The filter serves a
+// commands every container on the host, which is what would stop runs sharing a
+// sandbox host. The filter serves a
 // socket of its own in the run's directory, which the gateway mounts in
 // place of the daemon's, and forwards a request only when it touches this
 // run's objects in a way that stays inside the run:
@@ -80,13 +80,13 @@ type Config struct {
 	EgressNetworks map[string][]string
 	// NetworkNames maps a network name the gateway uses to the network
 	// the daemon holds for this run: the pinned gateway's two fixed relay
-	// networks become the run's own (DR-22 narrowed, agentry-cli#220). The
+	// networks become the run's own. The
 	// name is translated on the way in (paths, create bodies, endpoints)
 	// and back in what the gateway reads, so it never sees the run's
 	// names and never reaches another run's relays.
 	NetworkNames map[string]string
 	// WebNetwork, when set, is the run's own network with a way out of the
-	// host for the built-in Drafter's web tools (agentry-cli#345): the
+	// host for the built-in Drafter's web tools: the
 	// tools server has no network allowlist of its own there (its tools
 	// hold their own address rule), and the gateway asks for the daemon's
 	// default network for it, which the filter never gives. A container of
@@ -104,17 +104,17 @@ type Config struct {
 	WebSpec       string
 	WebSpecTarget string
 	// WebResolvConf, when set, is the host path of the run's own
-	// resolv.conf naming the policy's resolvers (agentry-cli#386): the
+	// resolv.conf naming the policy's resolvers: the
 	// filter binds it read-only at /etc/resolv.conf in the web tools'
 	// server, in place of docker's, whose embedded DNS a sandboxed runtime
-	// does not reach (DR-23). The gateway may not name a resolv.conf or DNS
+	// does not reach. The gateway may not name a resolv.conf or DNS
 	// settings of its own for that server.
 	WebResolvConf string
 	// RelayResolvConf, when set, is the host path of the run's own
-	// resolv.conf for the relays (agentry-cli#337): the filter binds it
+	// resolv.conf for the relays: the filter binds it
 	// read-only at /etc/resolv.conf in each relay and creates the relay
 	// under Runtime, since a relay resolves its declared host by name and
-	// a sandboxed runtime does not reach docker's embedded DNS (DR-23).
+	// a sandboxed runtime does not reach docker's embedded DNS.
 	// Empty leaves the relays on the daemon's default and docker's DNS.
 	// The gateway still names no file, DNS setting or runtime for a relay.
 	RelayResolvConf string
@@ -123,16 +123,16 @@ type Config struct {
 	// first needs it, and refuses the web network while it cannot.
 	WebImage string
 	// RelayHosts are what a relay may be pointed at: the run's declared
-	// servers' egress entries and the agent's own egress hosts on 443
-	// (agentry-cli#346), each "host" (ports 443 and 80), "host:port",
+	// servers' egress entries and the agent's own egress hosts on 443,
+	// each "host" (ports 443 and 80), "host:port",
 	// "*.domain" or "*". Empty admits no relay.
 	RelayHosts []string
 	// ToolsImage and ToolsCmd name the run's tools server: the image it
 	// runs in, by reference (resolved to its id when first needed, as
 	// WebImage is), and the one command it runs with. ToolsTmpfs is what
 	// the filter mounts into that container and no other, target to
-	// options: its /tmp and scratch folder as size-capped tmpfs
-	// (agentry-cli#599, #729), since the gateway's catalog cannot ask for
+	// options: its /tmp and scratch folder as size-capped tmpfs,
+	// since the gateway's catalog cannot ask for
 	// one. A tools server whose request names anything at or beneath one
 	// of those targets is refused. Empty adds nothing.
 	ToolsImage string
@@ -140,11 +140,11 @@ type Config struct {
 	ToolsTmpfs map[string]string
 	// ToolsShared are the binds the tools server may have beneath one of
 	// its tmpfs targets, target to host folder: the host link's copy folder
-	// at /scratch/hosts, which the run made (agentry-cli#861). The request
+	// at /scratch/hosts, which the run made. The request
 	// must name exactly that folder at exactly that target; anything else
 	// at or beneath a tmpfs target is still refused.
 	ToolsShared map[string]string
-	// BrowserImage names the run's browser server (agentry-cli#915): the
+	// BrowserImage names the run's browser server: the
 	// image a create must be of, by id (resolved when first needed, as
 	// ToolsImage is), to be held as the browser class: every capability
 	// dropped, a read-only root, BrowserTmpfs mounted, its user
@@ -159,8 +159,7 @@ type Config struct {
 	// its /tmp, where Chromium keeps its shared memory.
 	BrowserTmpfs map[string]string
 	// BrowserNetwork is the run's network for the browser server and the one
-	// relay it reaches the browse proxy through, alone (agentry-cli#915,
-	// plan browser-testing.md invariant 2): where the gateway names
+	// relay it reaches the browse proxy through, alone: where the gateway names
 	// BrowserNetworkFor (the run's internal relay network) for either, the
 	// filter gives it this one, so a page that took the browser over
 	// reaches no other server's relay; no other container may join it, and
@@ -172,7 +171,7 @@ type Config struct {
 	// RelayPins are run-time hosts the filter writes into the /etc/hosts of
 	// a relay pointed at one, host to IPv4 address: the run's browse proxy,
 	// a container of its own whose name a relay under a sandboxed runtime,
-	// on the host's name servers, could not resolve (agentry-cli#915).
+	// on the host's name servers, could not resolve.
 	RelayPins map[string]string
 	// Limits bound every container created through the filter: a request
 	// asking for more is refused, one asking for none gets these.
@@ -180,7 +179,7 @@ type Config struct {
 	// Runtime is the OCI runtime (the policy's docker.runtime) every
 	// container the gateway creates runs under, the relays excepted unless
 	// RelayResolvConf is set: a relay resolves its declared host by name,
-	// and a sandboxed runtime does not reach docker's embedded DNS (DR-23),
+	// and a sandboxed runtime does not reach docker's embedded DNS,
 	// so it runs under Runtime only with the host's name servers. For the same
 	// reason a container under it reaches what it links to through
 	// /etc/hosts entries the filter pins. Empty leaves the daemon's

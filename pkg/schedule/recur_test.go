@@ -70,8 +70,8 @@ func TestNextShapes(t *testing.T) {
 	}
 }
 
-// The DST table (plan §4): 9am stays 9am, a skipped time is the first
-// valid minute after it, a repeated time fires once at its first instance.
+// The DST table: 9am stays 9am, a skipped time is the first valid minute
+// after it, a repeated time fires once at its first instance.
 func TestNextAcrossDaylightSaving(t *testing.T) {
 	cases := []struct {
 		name, zone, time, after string

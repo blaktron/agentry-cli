@@ -13,8 +13,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/netaddr"
 )
 
-// The browse proxy (agentry-notes plans/browser-testing.md §6, D1, D2,
-// D13; agentry-cli#915): the only route out of a run's browser. Where an
+// The browse proxy: the only route out of a run's browser. Where an
 // allowlisting proxy admits exact host:port pairs, it holds a scope: the
 // sites the person named at run time with their subdomains, the hosts the
 // release declares, or any public name. Every name is resolved here and
@@ -35,15 +34,15 @@ type Scope struct {
 	// Public admits any name that resolves to public addresses only.
 	Public bool
 	// Private are a local run's sites the person typed whose addresses are
-	// a LAN's or a tailnet's (plan D2): the exact host may resolve there.
+	// a LAN's or a tailnet's: the exact host may resolve there.
 	// Loopback, link-local (cloud metadata), multicast and unspecified
 	// addresses are never dialled, for these either.
 	Private []string
 }
 
 // browserOwn are the hosts Chrome reaches for its own services whatever a
-// page does (update, sign-in, component and safe-browsing services; M1
-// saw accounts.google.com, android.clients.google.com and
+// page does (update, sign-in, component and safe-browsing services; it has
+// been seen reaching accounts.google.com, android.clients.google.com and
 // update.googleapis.com with every policy tried). A refusal of one is
 // logged as such, so a reader can tell it from a page's; a page may still
 // use one, and browser_network_requests, which lists the page's own
@@ -123,7 +122,7 @@ func (s *Scope) private(host string) bool {
 // sharedSpace is CGNAT, where a tailnet's addresses live.
 var sharedSpace = netip.MustParsePrefix("100.64.0.0/10")
 
-// lanAddress is an address a person-typed private site may have (plan D2):
+// lanAddress is an address a person-typed private site may have:
 // a private range's (RFC 1918, IPv6 ULA) or shared space's (CGNAT, where a
 // tailnet lives), never loopback, link-local, multicast or unspecified.
 func lanAddress(a netip.Addr) bool {

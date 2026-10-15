@@ -13,7 +13,7 @@ import (
 )
 
 // recordedUsage runs a harness's recorded stream (the conformance
-// recordings, real runs on the dev host) through the real adapter and the
+// recordings, real runs) through the real adapter and the
 // run's collector, and returns the collector together with the stream's
 // lines of the given type, decoded.
 func recordedUsage(t *testing.T, adapterName, lineType string) (*eventCollector, []map[string]any) {
@@ -59,8 +59,8 @@ func num(m map[string]any, path ...string) int64 {
 
 // docker-agent's token_usage.usage.input_tokens is the input of THAT model
 // request — fresh plus cached — not a running total across requests, so
-// the receipt sums it (agentry-cli#141). The recording proves it event by
-// event: usage.input_tokens = last_message.input_tokens +
+// the receipt sums it. The recording proves it event by event:
+// usage.input_tokens = last_message.input_tokens +
 // last_message.cached_input_tokens and usage.output_tokens =
 // last_message.output_tokens. A running total could not satisfy that past
 // the first event (the second would be the sum of the first two). The
@@ -96,7 +96,7 @@ func TestDockerAgentRecordedUsageIsPerRequestAndSummed(t *testing.T) {
 // (`codex exec --json`) once, on its single turn.completed. With one usage
 // event per run the collector's sum is the harness's own figure, so the
 // per-turn-or-cumulative question does not arise for either autonomous
-// path (agentry-cli#141). The recordings pin that there is exactly one.
+// path. The recordings pin that there is exactly one.
 func TestClaudeAndCodexRecordedUsageIsTheirOneFigure(t *testing.T) {
 	for _, tc := range []struct{ adapter, lineType string }{
 		{adapter.ClaudeAdapterName, "result"},

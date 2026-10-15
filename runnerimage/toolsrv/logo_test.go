@@ -1,7 +1,6 @@
 package toolsrv
 
-// The person's logo in a PDF (plan report-designs.md §4 "The logo", D9,
-// invariant 12; agentry-cli#816): it reaches the render root only as the PNG
+// The person's logo in a PDF: it reaches the render root only as the PNG
 // reportdesign.NormalizeLogo writes from its pixels, it is drawn in the
 // title block and nowhere else, and a design without one renders as before.
 
@@ -211,12 +210,11 @@ func magentaIn(img image.Image, r image.Rectangle) int {
 	return n
 }
 
-// TestRealRenderALogoInEveryTitleBlock (D9, invariant 12; agentry-cli#816's
-// acceptance): the logo is drawn in the title block of each style, at its
-// right, in the top part of page 1, and on no later page; a long report's
-// cover draws it, and a report with no title of its own draws it alone at
-// the top of page 1. The PDF stays tagged, and the logo carries its text
-// alternative.
+// TestRealRenderALogoInEveryTitleBlock: the logo is drawn in the title block
+// of each style, at its right, in the top part of page 1, and on no later
+// page; a long report's cover draws it, and a report with no title of its own
+// draws it alone at the top of page 1. The PDF stays tagged, and the logo
+// carries its text alternative.
 func TestRealRenderALogoInEveryTitleBlock(t *testing.T) {
 	typst := realTypst(t)
 	logo := craftedLogo(t, 900, 300)

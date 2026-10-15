@@ -23,14 +23,13 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
-// designRegistry is a fake of the core's /user/report-settings
-// (agentry#1024, handlers_user_report_settings.go): GET answers the stored
-// design or {}; PUT holds a design to pkg/reportdesign, refusing it 422 on
-// design.<field>, stores its canonical document, and a body without one
-// clears it. Like the core's writeJSON, the answer embeds the design
-// compacted, not as it was stored. The logo (agentry#1025) is stored beside
-// the design as NormalizeLogo writes it: a design PUT with one replaces it,
-// one without keeps it, and an answer carries it only with include=logo.
+// designRegistry is a fake of the core's /user/report-settings: GET answers
+// the stored design or {}; PUT holds a design to pkg/reportdesign, refusing
+// it 422 on design.<field>, stores its canonical document, and a body
+// without one clears it. Like the core's writeJSON, the answer embeds the
+// design compacted, not as it was stored. The logo is stored beside the
+// design as NormalizeLogo writes it: a design PUT with one replaces it, one
+// without keeps it, and an answer carries it only with include=logo.
 type designRegistry struct {
 	*httptest.Server
 	mu     sync.Mutex
@@ -160,10 +159,10 @@ func readFile(t *testing.T, path string) []byte {
 	return b
 }
 
-// Export then import round-trips byte for byte (agentry-cli#785): a
-// built-in exported is its own document; a design imported is stored as
-// the file holds it, and exported again is the same file. A valid document
-// in another layout is stored and exported in the canonical one.
+// Export then import round-trips byte for byte: a built-in exported is its
+// own document; a design imported is stored as the file holds it, and
+// exported again is the same file. A valid document in another layout is
+// stored and exported in the canonical one.
 func TestReportDesignExportImportRoundTrip(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_test")
@@ -435,12 +434,11 @@ func withLogo(t *testing.T, doc, logo []byte) []byte {
 	return d.Canonical()
 }
 
-// The logo travels in the design (agentry-cli#816): import sends a file's
-// logo as the core stores it (NormalizeLogo's encoding, so the hash the
-// CLI prints is the one saved), export asks for it and writes it, a round
-// trip is byte for byte, show says there is one, and a file without a logo
-// keeps the account's and says so. A run signed in takes the design with
-// its logo.
+// The logo travels in the design: import sends a file's logo as the core
+// stores it (NormalizeLogo's encoding, so the hash the CLI prints is the
+// one saved), export asks for it and writes it, a round trip is byte for
+// byte, show says there is one, and a file without a logo keeps the
+// account's and says so. A run signed in takes the design with its logo.
 func TestReportDesignLogo(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_test")

@@ -142,8 +142,8 @@ These servers were seen to fail in the runner, or cannot run here for the reason
 
 - **Versions:** 0.0.1a7, on Python 3.12.14.
 - **Why it does not run:** it needs a native binary built for glibc, and the runtime images are Alpine (musl) (`musl-native`).
-- **Seen:** Did not install: pip found no installable set of packages, because its markitdown[all] dependency pulls in onnxruntime (through magika), which publishes no musllinux wheel (agentry-cli#653). [src: doc:servers.yaml]
-- **Evidence:** survey 2026-10-05; agentry-cli#653.
+- **Seen:** Did not install: pip found no installable set of packages, because its markitdown[all] dependency pulls in onnxruntime (through magika), which publishes no musllinux wheel. [src: doc:servers.yaml]
+- **Evidence:** survey 2026-10-05.
 
 ## PyPI `mcp-for-blender`
 
@@ -204,6 +204,6 @@ A server whose own direct dependencies (npm's `dependencies`, PyPI's `requires_d
 - npm `simple-git`: it runs another program (a browser, git, a CLI), and its container holds only its runtime and busybox (`spawns-binary`). It runs the git program, which the container does not have. No surveyed server depends on it; listed for the cause GitPython showed. (survey 2026-10-05 (inferred).)
 - PyPI `gitpython`: it runs another program (a browser, git, a CLI), and its container holds only its runtime and busybox (`spawns-binary`). It runs the git program, which the container does not have; mcp-server-git exited at start. (survey 2026-10-05.)
 - PyPI `magika`: it needs a native binary built for glibc, and the runtime images are Alpine (musl) (`musl-native`). It depends on onnxruntime. (survey 2026-10-05.)
-- PyPI `onnxruntime`: it needs a native binary built for glibc, and the runtime images are Alpine (musl) (`musl-native`). It publishes no musllinux wheel, so no server that needs it can install (markitdown-mcp, through magika; agentry-cli#653). (survey 2026-10-05.)
+- PyPI `onnxruntime`: it needs a native binary built for glibc, and the runtime images are Alpine (musl) (`musl-native`). It publishes no musllinux wheel, so no server that needs it can install (markitdown-mcp, through magika). (survey 2026-10-05.)
 - PyPI `playwright`: it runs another program (a browser, git, a CLI), and its container holds only its runtime and busybox (`spawns-binary`). It needs a browser, which the container does not have. No surveyed server depends on it; listed for the cause the npm package showed. (survey 2026-10-05 (inferred).)
 - PyPI `scikit-learn`: it needs a native binary built for glibc, and the runtime images are Alpine (musl) (`musl-native`). It published no musllinux wheel for CPython 3.12 (1.9.1); opensearch-mcp-server-py did not install. (survey 2026-10-05.)

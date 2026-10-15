@@ -1,6 +1,5 @@
-// `agentry yank` (§11, §5.5): exact pins only, credential required before
-// the request, the recorded reason travels on the wire, and problems render
-// as errors.
+// `agentry yank`: exact pins only, credential required before the request,
+// the recorded reason travels on the wire, and problems render as errors.
 package main
 
 import (

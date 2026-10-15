@@ -76,12 +76,11 @@ func (c *postChecker) Check(_ context.Context, p draftcheck.Package) (*Check, er
 }
 
 // TestThePostStepsRepairTurnIsGivenTheRulesReportAndItsOwnDraftAlone holds,
-// at the seam both clients call, the invariant the repair turn keeps (plan
-// builder-simplify.md §3, §5.2 step 3; DR-43's addendum): a draft the rules
-// refuse gets one turn whose input is the rules' own report and the
+// at the seam both clients call, the invariant the repair turn keeps: a draft
+// the rules refuse gets one turn whose input is the rules' own report and the
 // manifest and instructions the Drafter wrote, and nothing else — not the
-// description, the task, the notes, a match, a source, an open question or
-// a withheld address; its second answer is validated and checked again.
+// description, the task, the notes, a match, a source, an open question or a
+// withheld address; its second answer is validated and checked again.
 func TestThePostStepsRepairTurnIsGivenTheRulesReportAndItsOwnDraftAlone(t *testing.T) {
 	out := t.TempDir()
 	checker := &postChecker{}
@@ -179,9 +178,9 @@ func TestAFlaggedDraftsRepairTurnIsAlsoGivenTheTask(t *testing.T) {
 }
 
 // TestAnInstructionPastTheCapGetsTheRepairTurn: a draft the rules pass
-// whose instructions are past the Drafter's cap (agentry-cli#521; plan
-// knowledge-and-drafter.md D13) gets the one repair turn, told the size and
-// the cap, and the shortened instructions it writes back are kept.
+// whose instructions are past the Drafter's cap gets the one repair turn,
+// told the size and the cap, and the shortened instructions it writes back
+// are kept.
 func TestAnInstructionPastTheCapGetsTheRepairTurn(t *testing.T) {
 	out := t.TempDir()
 	passing := strings.Replace(postDraft, `"intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, "", 1)
@@ -316,13 +315,12 @@ func TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed(t *testing.T) {
 	}
 }
 
-// TestADraftThatReadNoPageIsStillHeld (plan drafter-knowledge.md §4.3;
-// agentry-cli#659): the rules that moved from AGENT.md into the guide are
-// still the post-step's, whatever the model read. A first answer from a
-// model that called no knowledge tool (its receipts hold no gateway log)
-// and breaks a rule of each moved page (a bound of manifest/manifest.md,
-// a command off manifest/exec.md's list, a choice question without
-// choices from manifest/intake-and-guide.md, a pin whose runtime range
+// TestADraftThatReadNoPageIsStillHeld: the rules the guide carries are still
+// the post-step's, whatever the model read. A first answer from a model that
+// called no knowledge tool (its receipts hold no gateway log) and breaks a
+// rule of each such page (a bound of manifest/manifest.md, a command off
+// manifest/exec.md's list, a choice question without choices from
+// manifest/intake-and-guide.md, a pin whose runtime range
 // servers/mcp-servers.md excludes) goes to the repair turn with a line for
 // each.
 func TestADraftThatReadNoPageIsStillHeld(t *testing.T) {

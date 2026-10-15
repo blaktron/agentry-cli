@@ -1,4 +1,4 @@
-# The release identity of every built-in package (agentry-cli#470): its
+# The release identity of every built-in package: its
 # ns/name@version and the digest of the archive PackWorkspace makes of its
 # embedded tree, which is the digest the registry holds for that release.
 #
@@ -14,47 +14,49 @@ agentry/drafter@1.1.0 sha256:d926e1bd2063dc3602bb004852ae97a69f71e663219961ab540
 # carries a LICENSE) and never published; 1.1.1 adds the LICENSE.
 agentry/knowledge-creator@1.1.1 sha256:1a4f58329dfb5ff26e15bd55e32959fb695563a876b1ec8fdc5ae2621b7e982b
 agentry/drafter@1.1.1 sha256:a8d3935621212a04428738154c2e6280b94c980a824860129ffea724ef95178d
-# The Voice Writer (plan writing-voice.md, agentry-cli#531), the third built-in.
+# The Voice Writer, the third built-in.
 agentry/voice-writer@1.0.0 sha256:566ffb9688c63a3abcec32e544e56b1b2c8c2c214ee233d86fc1f39d7bc82816
-# 1.2.0: the instruction for a run with no network, Background and Checks, at most 32 KiB (agentry-cli#521).
+# 1.2.0: the instruction for a run with no network, Background and Checks, at most 32 KiB.
 agentry/drafter@1.2.0 sha256:4dd869afcc68d9466ee02b29454745d2485a5637faeb2b6c8b42d5e0e3996e97
-# The Examiner (plan desktop-review-key-and-run-cards.md §6, agentry-cli#504), the fourth built-in.
+# The Examiner, the fourth built-in.
 agentry/examiner@1.0.0 sha256:5353379617ac4850cf03e0d46a23ff45942739396abb25644f697b101e805520
-# 1.3.0: the person's knowledge packs, read first, scanned ahead; never ships a pack (agentry-cli#522).
+# 1.3.0: the person's knowledge packs, read first, scanned ahead; never ships a pack.
 agentry/drafter@1.3.0 sha256:fa3c1a720edb466c7f49d0419b2beff7328a97f084f112ace49fd32359297202
-# 1.4.0: a revision of a published release, the person's two texts, the name kept (agentry-cli#526).
+# 1.4.0: a revision of a published release, the person's two texts, the name kept.
 agentry/drafter@1.4.0 sha256:f39780659e93b4134ca28cd5f33acef2eb220a135dbc2ef64d618efcaf38ffeb
-# 1.2.0: documents optional, a brief, web_search and web_read, [src: web:] and [src: model] (agentry-cli#523).
+# 1.2.0: documents optional, a brief, web_search and web_read, [src: web:] and [src: model].
 agentry/knowledge-creator@1.2.0 sha256:f077d6f67ac018c9ab130fbfe2415ac1daa84b0b63adad217bc50560893cd4c1
-# 1.5.0: exec only from the commands every run provides; archive readers only with input files (agentry-cli#595).
+# 1.5.0: exec only from the commands every run provides; archive readers only with input files.
 agentry/drafter@1.5.0 sha256:c00b15e9e9bd1ff008e12e75caf573c1d9383950040c01ae3cf583a16097f83c
-# 1.1.0: an Edit takes more samples beside its note (plan voice-page-redesign.md D3, agentry-cli#605).
+# 1.1.0: an Edit takes more samples beside its note.
 agentry/voice-writer@1.1.0 sha256:9b301ba0657d39c1bac4103796604f607eff21ea1326d4b4d640f39911d7bcd6
-# 1.6.0: a declared MCP server's version must run on the runtime's Node or Python (engines.node, requires_python; agentry-cli#609).
+# 1.6.0: a declared MCP server's version must run on the runtime's Node or Python (engines.node, requires_python).
 agentry/drafter@1.6.0 sha256:48633e2daa5d9a6f9d10915f5e5243e64eb67e3e46701f77cab3188227e7a086
-# 1.7.0: a repair turn changes only what the report names and never drops a declared capability; rubric findings are advisory (agentry-cli#633, agentry-cli#548).
+# 1.7.0: a repair turn changes only what the report names and never drops a declared capability; rubric findings are advisory.
 agentry/drafter@1.7.0 sha256:5515a87005cda967c85c4603786ff48ad28aeb5e85e1ac3e4f65ffadbca3089f
-# 1.8.0: ships its drafting guide, the knowledge pack drafting-guide, given to every run of the Drafter (agentry-cli#657).
+# 1.8.0: ships its drafting guide, the knowledge pack drafting-guide, given to every run of the Drafter.
 agentry/drafter@1.8.0 sha256:5b728c9660472c6b814cff743be7e2c6d166f930f8fd348b313bc2a1ee139fbd
-# 1.8.1: the drafting guide gains the Runs here and Does not run here lists of declared MCP servers, from a survey of 50, and its guide to judging a server on neither (agentry-cli#658).
+# 1.8.1: the drafting guide gains the Runs here and Does not run here lists of declared MCP servers, from a survey of 50, and its guide to judging a server on neither.
 agentry/drafter@1.8.1 sha256:e37ead0ede4dba67b7fa4811736c7c32d3511929ffc4e5c57b5afa65a9444c41
-# 1.8.2: the drafting guide holds the reference half of the instruction (the manifest and its bounds, commands, network and fetch, the intake and the guide, run modes, knowledge, writing the instructions, worked drafts), and AGENT.md keeps the basics and a map of the pages (agentry-cli#659).
+# 1.8.2: the drafting guide holds the reference half of the instruction (the manifest and its bounds, commands, network and fetch, the intake and the guide, run modes, knowledge, writing the instructions, worked drafts), and AGENT.md keeps the basics and a map of the pages.
 agentry/drafter@1.8.2 sha256:c00a79a705c57956c2cce9528aede211a9e1bba95e04da22c37ba9098ac530eb
-# 1.8.3: the post-step holds each MCP server pin to the drafting guide's lists: a pin on Does not run here, or a listed direct dependency, gets the repair turn; the notes say what admitted each server (agentry-cli#660).
+# 1.8.3: the post-step holds each MCP server pin to the drafting guide's lists: a pin on Does not run here, or a listed direct dependency, gets the repair turn; the notes say what admitted each server.
 agentry/drafter@1.8.3 sha256:68f6895bc52002cb3447b16ba8686f074ea3bcd422a06583e4506e32c84d8fa7
-# 1.9.0: the drafting guide teaches the input cases, the two views and the manifest's inputs block, and drops the archive-reader how-to; the post-step corrects the block's slips and holds every archive reader to the repair turn; the how-a-run-works page says a run ends blocked (agentry-cli#634).
+# 1.9.0: the drafting guide teaches the input cases, the two views and the manifest's inputs block, and drops the archive-reader how-to; the post-step corrects the block's slips and holds every archive reader to the repair turn; the how-a-run-works page says a run ends blocked.
 agentry/drafter@1.9.0 sha256:7ea238ee336693c36cf178ea3fdaf7981cd83139fb639d189c77139b5a3a728d
-# 1.10.0: the drafting guide teaches marking each declared key optional (capabilities.optionalSecrets) or required, writing the instructions for a run without an optional key, and a secret question's required matching its key (V10); AGENT.md's step 5 says to mark each key (agentry-cli#652).
+# 1.10.0: the drafting guide teaches marking each declared key optional (capabilities.optionalSecrets) or required, writing the instructions for a run without an optional key, and a secret question's required matching its key (V10); AGENT.md's step 5 says to mark each key.
 agentry/drafter@1.10.0 sha256:cdc6c0a773e08f709f3a67883249a3e7683f04ec56919c1c50dd5acb111eafc2
-# 1.11.0: the drafting guide teaches vendors' remote MCP servers (declared by url, signed in by OAuth, a bearer key or nothing; consent at the first run of each version) and prefers one to a package for the same service; a package's oauth block is written only as copied from a sign-in the new servers/sign-ins.md lists, which the post-step holds, as it holds an OAuth remote server to naming its scopes; the notes say what a remote server's first run asks (agentry-cli#667).
+# 1.11.0: the drafting guide teaches vendors' remote MCP servers (declared by url, signed in by OAuth, a bearer key or nothing; consent at the first run of each version) and prefers one to a package for the same service; a package's oauth block is written only as copied from a sign-in the new servers/sign-ins.md lists, which the post-step holds, as it holds an OAuth remote server to naming its scopes; the notes say what a remote server's first run asks.
 agentry/drafter@1.11.0 sha256:3b5874e98c1e196aed53cbc0bce1b3c976673d4a86f98551a103cab43e559f25
-# 1.12.0: the drafting guide and AGENT.md teach the tools every run has beyond its manifest, the scratch folder and export_pdf (the only way a run makes a PDF), and the post-step sends instructions that write_report a .pdf or leave the person to print a page to PDF to the repair turn (agentry-cli#787).
+# 1.12.0: the drafting guide and AGENT.md teach the tools every run has beyond its manifest, the scratch folder and export_pdf (the only way a run makes a PDF), and the post-step sends instructions that write_report a .pdf or leave the person to print a page to PDF to the repair turn.
 agentry/drafter@1.12.0 sha256:182f1f3d6cc1d16bd8c95ec934a435f793be3ff39c7b6d9d4b4ed0222d039921
-# 1.12.1: the guide and AGENT.md say write_report's path is inside reports/ (resume.md) and export_pdf's source names it from the output folder (reports/resume.md); 1.12.0's live draft wrote reports/reports/resume.md (agentry-cli#787).
+# 1.12.1: the guide and AGENT.md say write_report's path is inside reports/ (resume.md) and export_pdf's source names it from the output folder (reports/resume.md); 1.12.0's live draft wrote reports/reports/resume.md.
 agentry/drafter@1.12.1 sha256:c4a268281ee01f9a428403a12c4e6af2a49517e946b2735dbdf0cb0225370e40
-# 1.13.0: the drafting guide and AGENT.md teach input sources: a codebase is asked for by a repository intake question and a file at an address by a url one, which the runner fetches (no egress, no key, never a .zip); tool results come a page at a time, a large fetch body is saved in the scratch folder or kept whole with saveTo, read with scratch_read and searched with scratch_search; the runtime facts state the result page size and the source caps (agentry-cli#835).
+# 1.13.0: the drafting guide and AGENT.md teach input sources: a codebase is asked for by a repository intake question and a file at an address by a url one, which the runner fetches (no egress, no key, never a .zip); tool results come a page at a time, a large fetch body is saved in the scratch folder or kept whole with saveTo, read with scratch_read and searched with scratch_search; the runtime facts state the result page size and the source caps.
 agentry/drafter@1.13.0 sha256:e9fda334ddbf2395c428cf65c23fde85a3f72990e370708067aa4bde4c55fcb3
-# 1.14.0: the drafting guide and AGENT.md teach target hosts: a machine the person names is asked for by a host intake question listed in capabilities.targetHosts, with no SSH client, egress or key for it, and instructions written for the host tools and the shell; such a QuickAgent runs only on the person's computer; the runtime facts state the host tools and their limits; the post-step sends an exec naming ssh, scp, sftp or rsync to the repair turn (agentry-cli#864).
+# 1.14.0: the drafting guide and AGENT.md teach target hosts: a machine the person names is asked for by a host intake question listed in capabilities.targetHosts, with no SSH client, egress or key for it, and instructions written for the host tools and the shell; such a QuickAgent runs only on the person's computer; the runtime facts state the host tools and their limits; the post-step sends an exec naming ssh, scp, sftp or rsync to the repair turn.
 agentry/drafter@1.14.0 sha256:ca4f4fd3e48756e2446230d8c286a574b6546170a1261fe85e5543b85cd451d8
-# 1.15.0: the drafting guide and AGENT.md teach the browser: a website the person names is asked for by a url intake question listed in capabilities.browser.sites, with hosts only for what its pages load, the site scope, and a key the browser types declared in capabilities.secrets and capabilities.browser.secrets (never with scope public); instructions for the browser tools, screenshots by bare file names into reports/browser/; the runtime facts state the browser's tools and bounds; the post-step sends a browser of its own, as a command or an MCP server, to the repair turn (agentry-cli#916).
+# 1.15.0: the drafting guide and AGENT.md teach the browser: a website the person names is asked for by a url intake question listed in capabilities.browser.sites, with hosts only for what its pages load, the site scope, and a key the browser types declared in capabilities.secrets and capabilities.browser.secrets (never with scope public); instructions for the browser tools, screenshots by bare file names into reports/browser/; the runtime facts state the browser's tools and bounds; the post-step sends a browser of its own, as a command or an MCP server, to the repair turn.
 agentry/drafter@1.15.0 sha256:1147c95155df0c115964c0f107216c886d8fd8c5ec285fe2c6faf92289a76d7c
+# 1.15.1: the drafting guide's server lists give their evidence as what was seen and when, without internal references; the README drops its plan references. No fact about a server changed.
+agentry/drafter@1.15.1 sha256:56cf111c92bf0a453f4810cdf25e6adf39bc3b2d2c5826e3c3d0bde828bbc3cc

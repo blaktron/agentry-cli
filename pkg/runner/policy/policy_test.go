@@ -166,7 +166,7 @@ func TestDefaultPath(t *testing.T) {
 func TestKeepProfilesByDefault(t *testing.T) {
 	p := &Policy{}
 	if !p.KeepProfilesByDefault() {
-		t.Error("unset keepByDefault must read as true (P2 §P8)")
+		t.Error("unset keepByDefault must read as true")
 	}
 	p.Profiles.KeepByDefault = boolPtr(true)
 	if !p.KeepProfilesByDefault() {
@@ -269,11 +269,10 @@ func TestSessionsDefaultsAndValidation(t *testing.T) {
 	}
 }
 
-// TestExecCatalog (agentry-cli#100): `exec.packages` maps a command name
-// to the apk package that provides it, optionally pinned; `exec.apkMirror`
-// is an http(s) URL or empty; a bad command name, package or mirror is
-// refused; the default policy carries no entries (the operator opts in
-// per tool, D11) but documents the key.
+// TestExecCatalog: `exec.packages` maps a command name to the apk package that
+// provides it, optionally pinned; `exec.apkMirror` is an http(s) URL or empty;
+// a bad command name, package or mirror is refused; the default policy carries
+// no entries (the operator opts in per tool) but documents the key.
 func TestExecCatalog(t *testing.T) {
 	p := Default()
 	if len(p.Exec.Packages) != 0 || p.Exec.APKMirror != "" {
@@ -318,7 +317,7 @@ func TestExecCatalog(t *testing.T) {
 	}
 }
 
-// docker.runtime is a closed-schema key (DR-23): a set value loads, is
+// docker.runtime is a closed-schema key: a set value loads, is
 // absent from the default, and a misspelling under docker is an error like
 // every other unknown key.
 func TestDockerRuntimeKey(t *testing.T) {
@@ -347,9 +346,8 @@ func TestDockerRuntimeKey(t *testing.T) {
 	}
 }
 
-// TestDefaultPathFollowsTheRunnerHome (agentry-cli#149): with the runner
-// home relocated, the policy relocates with it; without, it is under the
-// user's home.
+// TestDefaultPathFollowsTheRunnerHome: with the runner home relocated, the
+// policy relocates with it; without, it is under the user's home.
 func TestDefaultPathFollowsTheRunnerHome(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(HomeEnv, "")
@@ -369,8 +367,8 @@ func TestDefaultPathFollowsTheRunnerHome(t *testing.T) {
 	}
 }
 
-// TestAPIKeySource (agentry-cli#148): the keyring source parses on the
-// model and the harness blocks; anything else is refused by name.
+// TestAPIKeySource: the keyring source parses on the model and the harness
+// blocks; anything else is refused by name.
 func TestAPIKeySource(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "policy.yaml")
@@ -399,7 +397,7 @@ func TestAPIKeySource(t *testing.T) {
 	}
 }
 
-// apiKeyKind (agentry-cli#171): what the Anthropic credential is — an API
+// apiKeyKind: what the Anthropic credential is — an API
 // key (the default, unwritten) or a subscription OAuth token, which only
 // Claude Code may use. Round-trips, validates, and the one rule reads the
 // harness block first like apiKeyEnv and apiKeySource.
@@ -477,7 +475,7 @@ func TestCredentialKindOfReadsTheAnthropicShapesAndNothingElse(t *testing.T) {
 }
 
 // A policy that sets no limits is bounded by the defaults, and a set field
-// keeps its value (agentry-cli#163).
+// keeps its value.
 func TestLimitsDefaults(t *testing.T) {
 	if got := (Limits{}).WithDefaults(); got != (Limits{Memory: DefaultMemory, CPUs: DefaultCPUs, Pids: DefaultPids}) {
 		t.Fatalf("zero limits with defaults = %+v", got)
@@ -492,12 +490,12 @@ func TestLimitsDefaults(t *testing.T) {
 	}
 }
 
-// TestRunnerImageBasesArePinnedByDigest (agentry-cli#269, DR-32): both
-// bases of the runner image are name:tag@sha256:<64 hex>, so the bytes a
-// build starts from cannot move under a tag. The Dockerfile's GO_IMAGE
-// default and the policy's goBuilder default are the same ref (the CLI
-// always passes the policy's as the build argument, so a Dockerfile-only
-// pin would pin nothing), and the generated policy file carries it.
+// TestRunnerImageBasesArePinnedByDigest: both bases of the runner image are
+// name:tag@sha256:<64 hex>, so the bytes a build starts from cannot move under
+// a tag. The Dockerfile's GO_IMAGE default and the policy's goBuilder default
+// are the same ref (the CLI always passes the policy's as the build argument,
+// so a Dockerfile-only pin would pin nothing), and the generated policy file
+// carries it.
 func TestRunnerImageBasesArePinnedByDigest(t *testing.T) {
 	digestRef := regexp.MustCompile(`^ghcr\.io/blaktron/[a-z0-9-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$`)
 	df, err := os.ReadFile(filepath.Join("..", "..", "..", "runnerimage", "Dockerfile"))
@@ -526,9 +524,9 @@ func TestRunnerImageBasesArePinnedByDigest(t *testing.T) {
 	}
 }
 
-// Resolve says which policy file a run reads and how it was chosen, for
-// the receipt (agentry-cli#152): --policy wins, then a home relocated by
-// AGENTRY_RUNNER_HOME, then the default home; each path absolute.
+// Resolve says which policy file a run reads and how it was chosen, for the
+// receipt: --policy wins, then a home relocated by AGENTRY_RUNNER_HOME, then
+// the default home; each path absolute.
 func TestResolveNamesThePathAndHowItWasChosen(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -561,7 +559,7 @@ func TestResolveNamesThePathAndHowItWasChosen(t *testing.T) {
 // TestWebSearchNamesAProviderTheImageBuilds: webSearch.provider admits none
 // and exactly the providers the runner image's copy of the core's
 // pkg/websearch builds, so a name the policy passes is one the tools server
-// can search with (agentry-cli#369). Each reads its own variable by default,
+// can search with. Each reads its own variable by default,
 // so a You.com key never serves Brave, and the block round-trips.
 func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 	var image []string
@@ -624,13 +622,11 @@ func TestWebSearchNamesAProviderTheImageBuilds(t *testing.T) {
 	}
 }
 
-// TestDockerResolvers (agentry-cli#386): docker.resolvers takes at most
-// three name servers by address, each one a container can reach: a
-// loopback stub such as systemd-resolved's is the container's own inside
-// it, and is refused with the reason.
-// The gateway's runtime is a runtime name, and only beside the run's own:
-// the gateway is never sandboxed while the QuickAgent's code is not
-// (agentry-cli#337).
+// TestDockerResolvers: docker.resolvers takes at most three name servers by
+// address, each one a container can reach: a loopback stub such as
+// systemd-resolved's is the container's own inside it, and is refused with the
+// reason. The gateway's runtime is a runtime name, and only beside the run's
+// own: the gateway is never sandboxed while the QuickAgent's code is not.
 func TestDockerGatewayRuntime(t *testing.T) {
 	p := Default()
 	p.Docker.Runtime, p.Docker.GatewayRuntime = "runsc", "runsc-uds"
@@ -680,10 +676,10 @@ func TestDockerResolvers(t *testing.T) {
 	}
 }
 
-// images.unsafe names the Unsafe Mode base and turns nothing on (plan
-// unsafe-mode.md D5): the default is pinned by digest and resolved at use,
-// so the generated policy file never carries it, and a policy that sets
-// it only changes which image a client's Unsafe Mode builds on.
+// images.unsafe names the Unsafe Mode base and turns nothing on: the default is
+// pinned by digest and resolved at use, so the generated policy file never
+// carries it, and a policy that sets it only changes which image a client's
+// Unsafe Mode builds on.
 func TestTheUnsafeImageIsAPinnedDefaultAndSwitchesNothingOn(t *testing.T) {
 	if !strings.Contains(DefaultUnsafeImage, "@sha256:") {
 		t.Fatalf("DefaultUnsafeImage %q is not pinned by digest", DefaultUnsafeImage)
@@ -711,10 +707,9 @@ func TestTheUnsafeImageIsAPinnedDefaultAndSwitchesNothingOn(t *testing.T) {
 	}
 }
 
-// images.files names the files image the decode step builds on (agentry-cli
-// #559): the default is pinned by digest and resolved at use, and an
-// operator's value must be pinned by digest too, because the image is
-// pulled by digest only.
+// images.files names the files image the decode step builds on: the default is
+// pinned by digest and resolved at use, and an operator's value must be pinned
+// by digest too, because the image is pulled by digest only.
 func TestTheFilesImageIsPinnedByDigest(t *testing.T) {
 	if !PinnedByDigest(DefaultFilesImage) {
 		t.Fatalf("DefaultFilesImage %q is not pinned by digest", DefaultFilesImage)
@@ -750,9 +745,9 @@ func TestTheFilesImageIsPinnedByDigest(t *testing.T) {
 	}
 }
 
-// TestBaseExecCommands (agentry-cli#595, DR-64): every machine provides the
-// base commands as busybox without a catalog entry, the operator's entry
-// still wins, and nothing on the list runs other programs.
+// TestBaseExecCommands: every machine provides the base commands as busybox
+// without a catalog entry, the operator's entry still wins, and nothing on the
+// list runs other programs.
 func TestBaseExecCommands(t *testing.T) {
 	var none ExecPolicy
 	for _, c := range []string{"tar", "unzip", "gunzip", "grep", "sha256sum", "cat"} {
@@ -779,7 +774,7 @@ func TestBaseExecCommands(t *testing.T) {
 
 // A policy file written by an earlier CLI names that day's default
 // nodeRuntime explicitly; it loads as today's default, while any other
-// value is the operator's and is kept (agentry-cli#608).
+// value is the operator's and is kept.
 func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 	for _, c := range []struct{ written, want string }{
 		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine", DefaultNodeRuntime},
@@ -812,7 +807,7 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 // A policy file written by an earlier CLI names that day's goBuilder
 // explicitly, the digest-pinned go1.27.1 mirror included; it loads as
 // today's default, so a moved builder reaches machines set up before it,
-// while any other value is the operator's and is kept (agentry-cli#770).
+// while any other value is the operator's and is kept.
 func TestLoadMovesAFormerDefaultGoBuilder(t *testing.T) {
 	for _, c := range []struct{ written, want string }{
 		{"golang:1.27-alpine", DefaultGoBuilder},
@@ -844,8 +839,7 @@ func TestLoadMovesAFormerDefaultGoBuilder(t *testing.T) {
 }
 
 // The runtimes' language versions name the line their images' tags do, so
-// a moved image cannot leave the Drafter checking against the old one
-// (agentry-cli#609).
+// a moved image cannot leave the Drafter checking against the old one.
 func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {
 	for _, c := range []struct{ image, version, line string }{
 		{DefaultNodeRuntime, DefaultNodeVersion, strings.SplitN(DefaultNodeVersion, ".", 2)[0]},
@@ -857,10 +851,9 @@ func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {
 	}
 }
 
-// TestHybridAnalysisKey (agentry-cli#564): the block names a variable,
-// HYBRID_API_KEY by default, the one a sandbox host hands the platform's
-// key in, and a source of env or keyring; anything else is refused, as
-// for judge.
+// TestHybridAnalysisKey: the block names a variable, HYBRID_API_KEY by default,
+// the one a sandbox host hands the platform's key in, and a source of env or
+// keyring; anything else is refused, as for judge.
 func TestHybridAnalysisKey(t *testing.T) {
 	p := Default()
 	if got := p.HybridAnalysis.KeyEnv(); got != "HYBRID_API_KEY" {

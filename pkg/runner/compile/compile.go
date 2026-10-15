@@ -1,10 +1,10 @@
-// Package compile is the capability compiler (RUNNER-PLAN §R4): it turns
-// manifest + operator policy into the run plan — generated gateway file
-// set, tools-server spec, harness definition, and container topology.
-// This is the layer that makes the registry's declared contract mean
-// something at run time, so its two properties are non-negotiable:
-// deterministic output (golden tests pin plan bytes) and one testable
-// control per contract line (the Enforcement map states each mechanism).
+// Package compile is the capability compiler: it turns manifest + operator
+// policy into the run plan — generated gateway file set, tools-server spec,
+// harness definition, and container topology. This is the layer that makes
+// the registry's declared contract mean something at run time, so its two
+// properties are non-negotiable: deterministic output (golden tests pin
+// plan bytes) and one testable control per contract line (the Enforcement
+// map states each mechanism).
 package compile
 
 import (
@@ -44,8 +44,8 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// Inputs is everything a compile consumes. No run-scoped values belong
-// here (§R4 determinism); the engine substitutes those at execute time.
+// Inputs is everything a compile consumes. No run-scoped values belong here
+// (determinism); the engine substitutes those at execute time.
 type Inputs struct {
 	// CompiledBy is the CLI build recorded in the plan (see
 	// spec.Plan.CompiledBy); empty in tests and goldens.
@@ -70,65 +70,60 @@ type Inputs struct {
 	PolicySHA string
 	// AdapterName selects the harness adapter ("" = default).
 	AdapterName string
-	// RunnerImage is the local runner image tag (§R7).
+	// RunnerImage is the local runner image tag.
 	RunnerImage string
 	// MCPServers are the declared servers, already resolved against the
-	// trusted registries (RUNNER-PLAN-3). Resolution happens in the
-	// install step, not here: the compiler stays offline and
-	// deterministic over its inputs.
+	// trusted registries. Resolution happens in the install step, not here:
+	// the compiler stays offline and deterministic over its inputs.
 	MCPServers []spec.MCPServerSpec
-	// Web grants a built-in the web tools, web_search and web_read (plan
-	// builder-rework.md §7.3, D6; agentry-cli#345; the Knowledge Creator's
-	// since agentry-cli#523). Only a built-in package may be granted them
-	// (Source "builtin", set by pkg/runner/localrun for the Drafter and the
-	// Knowledge Creator alone), and only one that declares no egress, exec,
-	// filesystem write, secret or MCP server: their container has no
-	// network allowlist of its own, so nothing else may run beside them.
-	// Anything else asking is refused by policy (exit 11).
+	// Web grants a built-in the web tools, web_search and web_read (the
+	// Drafter's and the Knowledge Creator's). Only a built-in package may
+	// be granted them (Source "builtin", set by pkg/runner/localrun for the
+	// Drafter and the Knowledge Creator alone), and only one that declares
+	// no egress, exec, filesystem write, secret or MCP server: their
+	// container has no network allowlist of its own, so nothing else may
+	// run beside them. Anything else asking is refused by policy (exit 11).
 	Web bool
 	// RegistrySearch adds registry_search to the web tools: the Drafter's
-	// alone (plan knowledge-and-drafter.md §7). It is compiled, never the
-	// run's, so a run that hands the tools a registry for its scans (a
-	// hosted build) does not get the tool with it. Only with Web.
+	// alone. It is compiled, never the run's, so a run that hands the tools
+	// a registry for its scans (a hosted build) does not get the tool with
+	// it. Only with Web.
 	RegistrySearch bool
 	// WebSearchedOnly holds web_read to the addresses a web_search of the
 	// run returned (toolsrv.Web.SearchedOnly): the Knowledge Creator's,
 	// whose model reads documents no one scanned. Only with Web.
 	WebSearchedOnly bool
-	// Review grants a built-in the review grant (plan
-	// desktop-review-key-and-run-cards.md §6.2; agentry-cli#503): ai_review
-	// and scanned reads of its inputs, with the person's own TypeSafe key
-	// in the tools container alone, whose network reaches TypeSafe's API and
-	// nothing else. As with Web, only a built-in package may be granted it,
-	// and only one that declares no egress, exec, filesystem write, secret
-	// or MCP server; never beside the web tools, whose container reaches
-	// any public address. Anything else asking is refused by policy.
+	// Review grants a built-in the review grant: ai_review and scanned
+	// reads of its inputs, with the person's own TypeSafe key in the tools
+	// container alone, whose network reaches TypeSafe's API and nothing
+	// else. As with Web, only a built-in package may be granted it, and
+	// only one that declares no egress, exec, filesystem write, secret or
+	// MCP server; never beside the web tools, whose container reaches any
+	// public address. Anything else asking is refused by policy.
 	Review bool
 	// IntegrityKey is the runner home's plan-integrity key (IntegrityKey).
 	// It is not part of the plan: when set, the compile also writes
 	// plan.json.hmac, so a later run can reuse the plan only as compiled
-	// (ReadInstalledPlan, agentry-cli#266). Nil writes no record, and a
-	// reader then recompiles rather than trust the plan.
+	// (ReadInstalledPlan). Nil writes no record, and a reader then
+	// recompiles rather than trust the plan.
 	IntegrityKey []byte
-	// Unsafe turns on Unsafe Mode for this compile (agentry-notes
-	// plans/unsafe-mode.md §4.3; agentry-cli#490): the declared exec
-	// commands are placed through the unsafe base's extras list and
-	// command index (unsafeexec.Load) instead of the policy's exec
-	// catalogue, which is not consulted; a command neither places is
-	// named, never refused (D8). Only a client passes it — the desktop,
-	// for runs on this computer, when the person has turned Unsafe Mode
-	// on — and no policy key or CLI flag sets it (D5). Nil compiles
-	// exactly as before.
+	// Unsafe turns on Unsafe Mode for this compile: the declared exec
+	// commands are placed through the unsafe base's extras list and command
+	// index (unsafeexec.Load) instead of the policy's exec catalogue, which
+	// is not consulted; a command neither places is named, never refused.
+	// Only a client passes it — the desktop, for runs on this computer,
+	// when the person has turned Unsafe Mode on — and no policy key or CLI
+	// flag sets it. Nil compiles without Unsafe Mode.
 	Unsafe *unsafeexec.Data
 }
 
-// PolicyRefusal is a run refused by operator policy — the §R8 exit-11
-// class, distinct from a malformed package (exit 12).
+// PolicyRefusal is a run refused by operator policy — the exit-11 class,
+// distinct from a malformed package (exit 12).
 type PolicyRefusal struct{ Reason string }
 
 func (e *PolicyRefusal) Error() string { return "refused by policy: " + e.Reason }
 
-// OutputSchemaFile is the §R2 structured-output convention.
+// OutputSchemaFile is the structured-output convention.
 const OutputSchemaFile = "output.schema.json"
 
 // Compile builds the plan and writes the generated file set under planDir:
@@ -138,8 +133,8 @@ const OutputSchemaFile = "output.schema.json"
 //	planDir/harness/<adapter files>
 //
 // The returned plan's Files map hashes every generated file, so a tampered
-// installed plan is detectable before execution (§R6). planDir is replaced
-// whole: whatever it held before is gone once Compile returns.
+// installed plan is detectable before execution. planDir is replaced whole:
+// whatever it held before is gone once Compile returns.
 func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	m := in.Manifest
 	if m == nil {
@@ -187,19 +182,19 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 	// The scratch folder is the runner's grant to every release's run and
 	// session, never a line of the contract; the built-ins keep their own
-	// fixed surfaces (plan scratch-and-pdf-reports.md D2, D5).
+	// fixed surfaces.
 	caps.Scratch = in.Source != "builtin"
-	// Target hosts (agentry-cli#861): the host link and its tools. A
-	// built-in never declares one, and the grants that hold a built-in's
-	// container to one network never sit beside it.
+	// Target hosts: the host link and its tools. A built-in never declares
+	// one, and the grants that hold a built-in's container to one network
+	// never sit beside it.
 	if len(m.Capabilities.TargetHosts) > 0 {
 		if in.Web || in.Review || in.Source == "builtin" {
 			return nil, &PolicyRefusal{Reason: "a built-in is never granted a target host, nor is one granted beside the web tools or the review grant"}
 		}
 		caps.TargetHosts = append([]string(nil), m.Capabilities.TargetHosts...)
 	}
-	// The browser (agentry-cli#915): the browser server and the browse
-	// proxy that holds its scope.
+	// The browser: the browser server and the browse proxy that holds its
+	// scope.
 	if caps.Browser, err = browserCap(m.Capabilities.Browser, in); err != nil {
 		return nil, err
 	}
@@ -214,9 +209,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	tspec := toolSpec(caps, m.Capabilities.Secrets)
-	// Every tool result fits the harness's own limit (plan input-sources.md
-	// §4, agentry-cli#831): the run's adapter's budget, stamped for the
-	// tools server to page within and stated by the System Prompt.
+	// Every tool result fits the harness's own limit: the run's adapter's
+	// budget, stamped for the tools server to page within and stated by the
+	// System Prompt.
 	budget := adapter.ResultBudget(adapterName)
 	tspec.Limits.MaxResultBytes, tspec.Limits.MaxResultLines = budget.Bytes, budget.Lines
 	extraServers, extraEntries, err := dataAccessServers(caps.DataAccess, in.Policy)
@@ -225,10 +220,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	// A package server's OAuth sign-in runs on the person's connection, as
-	// a remote server's does (agentry-cli#665), except for a package known
-	// not to run on an access token alone (plan D25): refused by name here
-	// as well as at validation, so a release published before the package
-	// was listed does not run without what it needs.
+	// a remote server's does, except for a package known not to run on an
+	// access token alone: refused by name here as well as at validation, so
+	// a release published before the package was listed does not run
+	// without what it needs.
 	for _, srv := range m.Capabilities.MCPServers {
 		if srv.IsRemote() || srv.OAuth == nil {
 			continue
@@ -240,8 +235,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 	}
 
-	// Declared MCP servers (RUNNER-PLAN-3): policy-gate their egress and
-	// refuse name collisions before anything renders.
+	// Declared MCP servers: policy-gate their egress and refuse name
+	// collisions before anything renders.
 	for _, srv := range in.MCPServers {
 		if err := checkRemote(srv); err != nil {
 			return nil, err
@@ -255,13 +250,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		for _, h := range srv.Egress {
 			if h == "*" {
 				// A wildcard server would get no relay from the gateway
-				// and, with no network of the run's own to inherit, land
-				// on docker's default bridge — a route out that nothing of
+				// and, with no network of the run's own to inherit, land on
+				// docker's default bridge — a route out that nothing of
 				// ours constrains and a route to every other container
 				// there. Policy can permit the agent's own "*" (the
 				// llm-proxy still fronts it); for a declared server there
-				// is no such front, so the answer is hosts or nothing
-				// (agentry-cli#105, DR-20).
+				// is no such front, so the answer is hosts or nothing.
 				return nil, &PolicyRefusal{Reason: fmt.Sprintf(
 					`declared MCP server %s requests egress "*": the runner gives a declared server no unrestricted network, only a relay per declared host; declare the hosts it needs`, srv.Name)}
 			}
@@ -275,7 +269,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 	}
 
-	// The System Prompt, then the package's instruction (agentry-cli#520).
+	// The System Prompt, then the package's instruction.
 	declared := mcpServerNames(extraServers, in.MCPServers)
 	inputView := inputViewOf(m)
 	instruction := renderInstruction(promptFacts{
@@ -296,9 +290,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 
 	files := map[string][]byte{}
 	// The tools server runs in the shared runner image unless the agent
-	// declares exec, in which case it runs in that agent's exec image —
-	// the runner image with the operator's catalogued packages installed,
-	// minimized to the declared commands (agentry-cli#9, #100).
+	// declares exec, in which case it runs in that agent's exec image — the
+	// runner image with the operator's catalogued packages installed,
+	// minimized to the declared commands.
 	toolsImage := in.RunnerImage
 	var execImage *spec.ExecImageSpec
 	if in.Unsafe != nil {
@@ -308,8 +302,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 	if execImage != nil {
 		toolsImage = execImage.Tag
-		// Unsafe Mode's image is not minimized, and a declared command
-		// runs with its PATH (the operator's decision of 2026-09-30).
+		// Unsafe Mode's image is not minimized, and a declared command runs
+		// with its PATH.
 		tspec.Exec.ImagePath = execImage.Unsafe != nil
 	}
 	var hostLink *spec.HostLinkSpec
@@ -347,8 +341,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		GatewayURL:   spec.GatewayURL(),
 		SchemaJSON:   schemaJSON,
 		Harness:      in.Policy.Harness[adapterName],
-		// The host link's results reach the model as the host printed
-		// them (plan runtime-hosts.md D9).
+		// The host link's results reach the model as the host printed them.
 		UnchangedTools: unchangedTools(caps),
 	})
 	if err != nil {
@@ -444,19 +437,18 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if rs := in.Policy.Docker.Resolvers; len(rs) > 0 && (in.Web || in.Policy.Docker.Runtime != "") {
 		// The name servers are part of the plan too: a changed list
 		// recompiles. A run with the web tools reads them, and under a
-		// runtime so do the classes that resolve host names
-		// (agentry-cli#337).
+		// runtime so do the classes that resolve host names.
 		plan.Docker = &spec.DockerSpec{Resolvers: slices.Clone(rs)}
 	}
 	if rt := in.Policy.Docker.Runtime; rt != "" {
 		// The runtime is part of the plan and so of its hash: an operator
 		// who changes it recompiles rather than reinterpreting a stored
-		// plan (DR-23). Which container classes it holds is the run's to
-		// say (the docker filter that gives the gateway's containers the
-		// runtime runs on Linux only): the receipt's runtime line names
-		// each class, and the ones on the daemon's default and why
-		// (engine.runtimeLine, agentry-cli#221), so `runtime:` never
-		// claims more ground than the engine holds.
+		// plan. Which container classes it holds is the run's to say (the
+		// docker filter that gives the gateway's containers the runtime
+		// runs on Linux only): the receipt's runtime line names each class,
+		// and the ones on the daemon's default and why
+		// (engine.runtimeLine), so `runtime:` never claims more ground than
+		// the engine holds.
 		if plan.Docker == nil {
 			plan.Docker = &spec.DockerSpec{}
 		}
@@ -468,9 +460,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["runtime"] = rt + ": the run's containers are created with docker --runtime " + rt +
 			" where it holds; the receipt's runtime line names each container class, and each that takes the daemon's default and why"
 	}
-	// A model sign-in is the model's mechanism instead of a key (plan
-	// model-sign-ins.md §4.2): what reaches the harness, and that the run
-	// reports tokens, never dollars (D13).
+	// A model sign-in is the model's mechanism instead of a key: what
+	// reaches the harness, and that the run reports tokens, never dollars.
 	if msi := plan.Harness.ModelSignIn; msi != nil {
 		if plan.Enforcement == nil {
 			plan.Enforcement = map[string]string{}
@@ -478,8 +469,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["model.signIn"] = modelSignInLine(msi)
 		plan.Enforcement["model.cost"] = "paid by the person's own plan (" + policy.SignInSentence(msi.Kind) + "): the receipt reports tokens, not dollars, and a cost budget is refused"
 	}
-	// The model key's source is a mechanism the receipt names (§R11): the
-	// variable, or the variable else the keychain (agentry-cli#148).
+	// The model key's source is a mechanism the receipt names: the
+	// variable, or the variable else the keychain.
 	if keyEnv, account := modelKeySource(in.Policy, adapterName); keyEnv != "" && plan.Harness.ModelSignIn == nil {
 		if plan.Enforcement == nil {
 			plan.Enforcement = map[string]string{}
@@ -490,17 +481,16 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			plan.Enforcement["model.apiKey"] = "$" + keyEnv + " from the host environment, else the OS keychain entry " + account +
 				" (policy apiKeySource keyring); injected into the agent container (or the host harness process) only, never written to the plan or the receipt"
 		}
-		// A subscription token is a mechanism of its own (agentry-cli#171):
-		// the plan was rendered for it, and the run refuses a value of
-		// the other kind.
+		// A subscription token is a mechanism of its own: the plan was
+		// rendered for it, and the run refuses a value of the other kind.
 		if adapterName == adapter.ClaudeAdapterName && policy.KeyKind(in.Policy.Harness[adapterName], in.Policy.Model) == policy.KeyKindSubscription {
-			plan.Enforcement["model.apiKey"] += "; an Anthropic subscription token (policy apiKeyKind subscription), passed to Claude Code as CLAUDE_CODE_OAUTH_TOKEN without --bare (DR-26); the run checks the value it resolves is one"
+			plan.Enforcement["model.apiKey"] += "; an Anthropic subscription token (policy apiKeyKind subscription), passed to Claude Code as CLAUDE_CODE_OAUTH_TOKEN without --bare; the run checks the value it resolves is one"
 		}
 	}
 	// Write the generated files, hashing each into the plan.
 	if res.Host != nil {
-		// §R11 invariant 8: the harness's own isolation is a claim like any
-		// other, and for a host process it is a weaker one.
+		// The harness's own isolation is a claim like any other, and for a
+		// host process it is a weaker one.
 		if plan.Enforcement == nil {
 			plan.Enforcement = map[string]string{}
 		}
@@ -511,7 +501,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	// published in one rename (dirpublish.Replace), so a plan directory is
 	// only ever one compile's complete output: another process reading or
 	// compiling the same plan at the same time never sees this compile's
-	// plan.json beside another's record (agentry-cli#289).
+	// plan.json beside another's record.
 	err = dirpublish.Replace(planDir, func(staging string) error {
 		for rel, content := range files {
 			abs := filepath.Join(staging, filepath.FromSlash(rel))
@@ -542,7 +532,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 }
 
 // VerifyFiles re-hashes an installed plan's generated files, refusing a
-// tampered plan dir before anything runs (§R6).
+// tampered plan dir before anything runs.
 func VerifyFiles(p *spec.Plan, planDir string) error {
 	for rel, want := range p.Files {
 		b, err := os.ReadFile(filepath.Join(planDir, filepath.FromSlash(rel))) //nolint:gosec // paths from our own plan
@@ -557,7 +547,7 @@ func VerifyFiles(p *spec.Plan, planDir string) error {
 }
 
 // summarizeCapabilities normalizes the manifest unions and applies the
-// policy gates that refuse a run outright (§R4 wildcard row).
+// policy gates that refuse a run outright (the wildcard row).
 func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSummary, error) {
 	caps := spec.CapSummary{
 		EgressMode:  "none",
@@ -567,10 +557,10 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 	eg := m.Capabilities.Network.Egress
 	switch {
 	case eg.IsZero() || eg.None || len(eg.Hosts) == 0:
-		// undeclared = none: the registry's own reading (§5.4 empty
-		// capabilities = pure text agent). An empty list declares no host
-		// either (agentry-cli#801): read as hosts, it gave a fetch tool and
-		// a tools container on no network the gateway could start it on.
+		// undeclared = none: the registry's own reading (empty capabilities
+		// = pure text agent). An empty list declares no host either: read
+		// as hosts, it gave a fetch tool and a tools container on no
+		// network the gateway could start it on.
 	case len(eg.Hosts) == 1 && eg.Hosts[0] == "*":
 		if !pol.AllowWildcardEgress {
 			return caps, &PolicyRefusal{Reason: `manifest declares network.egress: "*" and this machine's policy has allowWildcardEgress: false`}
@@ -619,8 +609,8 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 // workspace (or names a different one). pkg/manifest.Validate refuses the
 // same shapes at publish and on the --local path, but the compiler is the
 // last thing between the manifest and the mount, and a manifest that
-// reached it unvalidated — a registry release, a cached install — is
-// judged here regardless (security review 2026-09-20 §4.2).
+// reached it unvalidated — a registry release, a cached install — is judged
+// here regardless.
 func checkWorkspacePath(p string) error {
 	switch {
 	case p == "" || p == ".":
@@ -663,8 +653,8 @@ func mcpServerNames(extra []string, declared []spec.MCPServerSpec) []string {
 	return names
 }
 
-// sessionBudgets applies plan §6.7: the operator's caps, with the idle
-// timeout tightened by the manifest's interactive hint (never loosened).
+// sessionBudgets applies the operator's caps, with the idle timeout
+// tightened by the manifest's interactive hint (never loosened).
 func sessionBudgets(m *manifest.Manifest, pol *policy.Policy) spec.SessionBudgets {
 	b := spec.SessionBudgets{
 		IdleTimeoutSeconds: pol.Sessions.IdleTimeoutSeconds,
@@ -687,16 +677,16 @@ func modeStrings(modes []manifest.Mode) []string {
 	return out
 }
 
-// deriveInstruction implements the §R2 closed rule for where the harness
+// deriveInstruction implements the closed rule for where the harness
 // instruction comes from: the manifest's own candidate list — a schema v2
 // entrypoints.instruction (AGENT.md when omitted); for v1 the skill
-// entrypoint, or AGENT.md then PROMPT.md for a prompt-agent — read in order.
-// A manifest with no candidates (the withdrawn mcp-server kind) is not
-// runnable (DR-15).
+// entrypoint, or AGENT.md then PROMPT.md for a prompt-agent — read in
+// order. A manifest with no candidates (the withdrawn mcp-server kind) is
+// not runnable.
 func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, error) {
 	candidates := m.InstructionCandidates()
 	if len(candidates) == 0 {
-		return "", "", fmt.Errorf("%s/%s declares no instruction file, so it is not a runnable QuickAgent (RUNNER-PLAN §R2; the withdrawn mcp-server kind is a tool server)", m.Namespace, m.Name)
+		return "", "", fmt.Errorf("%s/%s declares no instruction file, so it is not a runnable QuickAgent (the withdrawn mcp-server kind is a tool server)", m.Namespace, m.Name)
 	}
 	for _, rel := range candidates {
 		body, err := readInstructionFile(workspace, rel)
@@ -707,7 +697,7 @@ func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, 
 			return "", "", err
 		}
 	}
-	return "", "", fmt.Errorf("instruction file missing from the package: looked for %s (RUNNER-PLAN §R2)", strings.Join(candidates, ", "))
+	return "", "", fmt.Errorf("instruction file missing from the package: looked for %s", strings.Join(candidates, ", "))
 }
 
 // ReadInstruction reads the instruction a plan was compiled from out of a
@@ -716,9 +706,8 @@ func deriveInstruction(m *manifest.Manifest, workspace string) (string, string, 
 // digest the plan records, so what it returns is the instruction the plan
 // was built on, whichever client ran it and whether or not that client
 // checked the workspace. The engine sends it as the task of a run given
-// none (agentry-cli#449). A plan with no body digest was compiled before
-// the System Prompt (agentry-cli#520) and is refused: it is recompiled,
-// never reinterpreted.
+// none. A plan with no body digest was compiled before the System Prompt
+// and is refused: it is recompiled, never reinterpreted.
 func ReadInstruction(workspace string, in spec.InstructionSpec) (string, error) {
 	body, err := readInstructionFile(workspace, in.SourcePath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -767,7 +756,7 @@ func stripFrontmatter(s string) string {
 	return strings.TrimSpace(s) + "\n"
 }
 
-// loadOutputSchema reads the optional §R2 output convention.
+// loadOutputSchema reads the optional output convention.
 func loadOutputSchema(workspace string) ([]byte, spec.OutputSpec, error) {
 	b, err := os.ReadFile(filepath.Join(workspace, OutputSchemaFile)) //nolint:gosec // fixed name under the verified archive
 	if err != nil {
@@ -781,8 +770,8 @@ func loadOutputSchema(workspace string) ([]byte, spec.OutputSpec, error) {
 		return nil, spec.OutputSpec{}, fmt.Errorf("%s is not valid JSON: %w", OutputSchemaFile, err)
 	}
 	// The schema must itself be a valid JSON Schema: the engine validates
-	// the final message against it (DR-8 closed, agentry-cli#11), so a
-	// broken schema is a compile-time refusal, not a run-time surprise.
+	// the final message against it, so a broken schema is a compile-time
+	// refusal, not a run-time surprise.
 	if _, err := CompileOutputSchema(b); err != nil {
 		return nil, spec.OutputSpec{}, fmt.Errorf("%s is not a valid JSON Schema: %w", OutputSchemaFile, err)
 	}
@@ -805,8 +794,8 @@ func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
 }
 
 // checkWebGrant is the web tools' gate: a built-in package that declares
-// nothing their unrestricted container could widen (plan builder-rework.md
-// §7.3: "refused at compile for any release").
+// nothing their unrestricted container could widen (refused at compile for
+// any release).
 func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 	if in.Source != "builtin" {
 		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's and the Knowledge Creator's; a %s package is never granted them",
@@ -817,9 +806,9 @@ func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 		return &PolicyRefusal{Reason: "the web tools are granted only to a package that declares no egress, exec, filesystem write, secret or MCP server: their container has no network allowlist of its own"}
 	}
 	// Under a sandboxed runtime the tools server's own network stack does
-	// not reach docker's embedded DNS on the run's web network (DR-23,
-	// agentry-cli#386): with no resolvers of the host's it would resolve
-	// nothing and the draft would read nothing, so it does not run.
+	// not reach docker's embedded DNS on the run's web network: with no
+	// resolvers of the host's it would resolve nothing and the draft would
+	// read nothing, so it does not run.
 	if rt := in.Policy.Docker.Runtime; rt != "" && len(in.Policy.Docker.Resolvers) == 0 {
 		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools under the %s runtime resolve host names only through the host's own name servers: name them in the runner policy's docker.resolvers (docker's embedded DNS is not reachable from %s)", rt, rt)}
 	}
@@ -845,26 +834,26 @@ func checkReviewGrant(in Inputs, caps spec.CapSummary) error {
 	return nil
 }
 
-// toolSpec compiles the capability summary into the tools-server spec —
-// the single choke point deciding which tools exist (§R3, §R11 inv. 4).
+// toolSpec compiles the capability summary into the tools-server spec — the
+// single choke point deciding which tools exist.
 func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	return &toolsrv.Spec{
 		SpecVersion:  toolsrv.SpecVersion,
 		WorkspaceDir: spec.WorkspaceMount,
 		OutDir:       spec.OutMount,
-		// The inputs channel is always configured (RUNNER-PLAN-2 §P4):
-		// whether a given run provides files is a run-time fact, and the
-		// engine mounts an empty directory when none were.
+		// The inputs channel is always configured: whether a given run
+		// provides files is a run-time fact, and the engine mounts an empty
+		// directory when none were.
 		InputsDir: spec.InputsMount,
-		// The decoded inputs beside them (plan file-handling.md §5): the
-		// engine decodes a run's inputs before the agent starts, and
-		// mounts an empty directory when there were none.
+		// The decoded inputs beside them: the engine decodes a run's inputs
+		// before the agent starts, and mounts an empty directory when there
+		// were none.
 		InputsTextDir: spec.InputsTextMount,
 		ScratchDir:    scratchDir(caps),
 		// export_pdf goes with the scratch folder, to every release's run
-		// and session (plan scratch-and-pdf-reports.md D5, D6).
+		// and session.
 		PDF: toolsrv.PDF{Enabled: caps.Scratch},
-		// grep and glob go with it too (plan ripgrep-search.md D4).
+		// grep and glob go with it too.
 		Search: toolsrv.Search{Enabled: caps.Scratch},
 		FSRead: toolsrv.Access{
 			Enabled: caps.FSReadMode != "none",
@@ -890,9 +879,9 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	}
 }
 
-// toolResultsEnforcement is the receipt's line for the result budget
-// (agentry-cli#831, DR-89): every result of the runner's own tools is held
-// to the harness's measured limit, less a margin.
+// toolResultsEnforcement is the receipt's line for the result budget: every
+// result of the runner's own tools is held to the harness's measured limit,
+// less a margin.
 func toolResultsEnforcement(adapterName string, b adapter.Budget, caps spec.CapSummary) string {
 	line := fmt.Sprintf("every result of the runner's own tools is held to %s, the %s harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own",
 		toolsrv.BudgetWords(b.Bytes, b.Lines), adapterName)
@@ -914,37 +903,35 @@ func scratchDir(caps spec.CapSummary) string {
 // GatewayConfigDir is where the rendered gateway files are mounted inside
 // the gateway container. It must be the gateway's own catalogs directory:
 // since v0.43 a local --catalog path "must resolve within Docker MCP
-// catalogs directory" (pkg/catalog, errUntrustedLocalPath) and the
-// gateway exits at startup otherwise (agentry-cli#41). HOME is pinned to
-// /root in the container env so the directory is the same on every host.
+// catalogs directory" (pkg/catalog, errUntrustedLocalPath) and the gateway
+// exits at startup otherwise. HOME is pinned to /root in the container env
+// so the directory is the same on every host.
 const GatewayConfigDir = "/root/.docker/mcp/catalogs"
 
 // GatewayGuardFlags are the guards every gateway a run starts is given,
 // after its transport and files: --block-network, without which allowHosts
-// is advisory (§R11 invariant 1), then the guards the gateway defaults on,
-// passed explicitly so a run never inherits one it depends on from a
-// version's default. --block-secrets is default true in the pinned gateway
-// and passed anyway: the refusal of a secret-looking tool result is in the
-// enforcement table the receipts answer to (agentry#297), and a version
-// whose default flipped would drop the guard while the receipt still
-// claimed it. The MCP server survey starts its gateway with them too
-// (scripts/mcp-server-survey, agentry-cli#658).
+// is advisory, then the guards the gateway defaults on, passed explicitly
+// so a run never inherits one it depends on from a version's default.
+// --block-secrets is default true in the pinned gateway and passed anyway:
+// the refusal of a secret-looking tool result is in the enforcement table
+// the receipts answer to, and a version whose default flipped would drop
+// the guard while the receipt still claimed it. The MCP server survey
+// starts its gateway with them too (scripts/mcp-server-survey).
 func GatewayGuardFlags() []string {
 	return []string{"--block-network", "--verify-signatures", "--log-calls", "--block-secrets"}
 }
 
-// gatewaySpec builds the gateway container launch (§R4). The flag set is
+// gatewaySpec builds the gateway container launch. The flag set is
 // compiled, and --block-network is unconditional: without it allowHosts is
-// advisory, which is the sharpest foot-gun the research flagged (§R11
-// invariant 1 pins this in a test). The guards that the gateway itself
-// defaults on are passed explicitly too, so the run never inherits one it
-// depends on from a version's default.
+// advisory, which is the sharpest foot-gun here (a test pins it). The
+// guards that the gateway itself defaults on are passed explicitly too, so
+// the run never inherits one it depends on from a version's default.
 func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServers []spec.MCPServerSpec) spec.GatewaySpec {
 	withStore := spec.HasPackageServers(mcpServers)
 	writable := append([]string{spec.PHOut}, workspaceWritable(caps)...)
-	// A package server's token folder (agentry-cli#665, DR-77), each one
-	// by its exact path: never the run's cfg or its connections folder,
-	// which hold the gateway's own files and the other servers' folders.
+	// A package server's token folder, each one by its exact path: never
+	// the run's cfg or its connections folder, which hold the gateway's own
+	// files and the other servers' folders.
 	for _, srv := range mcpServers {
 		if srv.OAuth != nil && len(srv.OAuth.Files) > 0 {
 			writable = append(writable, ConnectionFolder(srv.Name))
@@ -974,10 +961,10 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 			// image sets no HOME and runs as root.
 			{Name: "HOME", Value: "/root"},
 			// Bind-mount containment (gateway v0.43.1+): sources must
-			// resolve under these roots; writable binds need exact
-			// entries. Separator ":" — verified empirically at M-R2. On a
-			// Windows host the engine spells these roots /c/… so no drive
-			// colon splits them (gatewayHostPath, agentry-cli#414).
+			// resolve under these roots; writable binds need exact entries.
+			// Separator ":" — verified empirically. On a Windows host the
+			// engine spells these roots /c/… so no drive colon splits them
+			// (gatewayHostPath).
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
 				Value: strings.Join(bindRoots(withStore), ":")},
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
@@ -987,15 +974,15 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 			{Source: spec.PHCfg + "/gateway", Target: GatewayConfigDir, ReadOnly: true},
 			// The gateway drives the host daemon: that is its documented
 			// privilege level, and the reason the agent container never
-			// sees this socket (§R4).
+			// sees this socket.
 			{Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"},
 		},
 		Servers: servers,
 	}
 }
 
-// renderGatewayFiles writes the five-file gateway config set (§R4) into
-// the files map.
+// renderGatewayFiles writes the five-file gateway config set into the files
+// map.
 func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.CapSummary,
 	secrets []string, toolsImage, runnerImage string, extraServers []string, extraEntries map[string]yaml.Node,
 	mcpServers []spec.MCPServerSpec, hostLink *spec.HostLinkSpec, browserSpec *spec.BrowserSpec,
@@ -1028,7 +1015,7 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	}
 	catalogDoc := yamlMap{}
 	catalogDoc.set("registry", catalog.node())
-	b, err := marshalYAML("# generated by agentry run — gateway server catalog (RUNNER-PLAN §R4)\n", catalogDoc.node())
+	b, err := marshalYAML("# generated by agentry run — gateway server catalog\n", catalogDoc.node())
 	if err != nil {
 		return err
 	}
@@ -1075,8 +1062,8 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	if hostLink != nil {
 		tools.set(hostlink.ServerName, strListNode(hostlink.Tools))
 	}
-	// The browser's filter is an allowlist (plan D7), without
-	// browser_evaluate where the line declares secrets (D9).
+	// The browser's filter is an allowlist, without browser_evaluate where
+	// the line declares secrets.
 	if browserSpec != nil {
 		tools.set(browser.ServerName, strListNode(browser.Tools(len(caps.Browser.Secrets) > 0)))
 	}
@@ -1098,9 +1085,9 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 // non-empty, or it is not declared.
 //
 // The `$` and `{{ }}` half is the registry's own rule,
-// manifest.LiteralEnvValue (agentry#291), called rather than copied so
-// the registry and the runner cannot drift (agentry-cli#131); the empty
-// value and the `@@` run-placeholder marker are the runner's alone.
+// manifest.LiteralEnvValue, called rather than copied so the registry and
+// the runner cannot drift; the empty value and the `@@` run-placeholder
+// marker are the runner's alone.
 func checkLiteralEnv(srv spec.MCPServerSpec) error {
 	for _, name := range slices.Sorted(maps.Keys(srv.Env)) {
 		v := srv.Env[name]
@@ -1119,9 +1106,8 @@ func checkLiteralEnv(srv spec.MCPServerSpec) error {
 	return nil
 }
 
-// execImageFor maps the declared commands onto the operator's exec
-// catalog (agentry-cli#100, plan examples-declared-servers §5.2, D1). A
-// command the catalog does not carry is a plan-time refusal — the
+// execImageFor maps the declared commands onto the operator's exec catalog.
+// A command the catalog does not carry is a plan-time refusal — the
 // operator, not the manifest, says which binaries this machine provides —
 // never a run-time "absent". Nil when nothing is declared.
 func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) (*spec.ExecImageSpec, error) {
@@ -1158,8 +1144,8 @@ func execImageFor(commands []string, runnerImage string, cat policy.ExecPolicy) 
 
 // unsafeExecImageFor is execImageFor under Unsafe Mode: the declared
 // commands placed through the unsafe base's extras list, then its index,
-// never refused (D8); this machine's exec catalogue is not consulted (D1).
-// Nil when nothing is declared.
+// never refused; this machine's exec catalogue is not consulted. Nil when
+// nothing is declared.
 func unsafeExecImageFor(commands []string, runnerImage string, data *unsafeexec.Data) *spec.ExecImageSpec {
 	if len(commands) == 0 {
 		return nil
@@ -1174,11 +1160,10 @@ func unsafeExecImageFor(commands []string, runnerImage string, data *unsafeexec.
 }
 
 // bindRoots lists the host roots the gateway may bind into the containers
-// it launches: the run's own directories, plus the signature's server
-// store when declared servers exist — each server is launched from a
-// read-only bind of that store, and the gateway refuses a source outside
-// its roots (agentry-cli#105). Left out otherwise so a plan without
-// servers keeps its pre-PLAN-3 bytes.
+// it launches: the run's own directories, plus the signature's server store
+// when declared servers exist — each server is launched from a read-only
+// bind of that store, and the gateway refuses a source outside its roots.
+// Left out otherwise so a plan without servers keeps its bytes.
 func bindRoots(withServers bool) []string {
 	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs, spec.PHInputsText, spec.PHKnowledge}
 	if withServers {
@@ -1187,11 +1172,11 @@ func bindRoots(withServers bool) []string {
 	return roots
 }
 
-// mcpServerEntry renders one declared MCP server (RUNNER-PLAN-3) as a
-// gateway catalog entry: launched from the signature's read-only server
-// store inside the pinned runtime image, with its own egress allowlist,
-// only its own secrets, and its plain env as the gateway's env list
-// (name/value pairs; catalog.Server.Env in docker/mcp-gateway).
+// mcpServerEntry renders one declared MCP server as a gateway catalog
+// entry: launched from the signature's read-only server store inside the
+// pinned runtime image, with its own egress allowlist, only its own
+// secrets, and its plain env as the gateway's env list (name/value pairs;
+// catalog.Server.Env in docker/mcp-gateway).
 func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	e := yamlMap{}
 	e.set("description", strNode(fmt.Sprintf("declared MCP server %s@%s (%s), installed per-signature", srv.Package, srv.Version, srv.Source)))
@@ -1202,25 +1187,23 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	e.set("longLived", boolNode(true))
 	volumes := []string{spec.PHServers + "/" + srv.StoreSubdir + ":" + spec.MCPStorePrefix + "/" + srv.StoreSubdir + ":ro"}
 	if srv.OAuth != nil && len(srv.OAuth.Files) > 0 {
-		// The token folder of a package server's OAuth sign-in
-		// (agentry-cli#665): a folder, never a single-file bind, so the
-		// files the runner renews mid-run are seen. Writable, unlike a
-		// bridge's: workspace-mcp, the measured Gmail server, refuses to
-		// start unless it can write a probe file there (the operator's
-		// decision of 2026-10-06, DR-77). It holds the access token alone,
-		// is the run's own and is deleted at teardown; the runner still
-		// renames each renewed file into place.
+		// The token folder of a package server's OAuth sign-in: a folder,
+		// never a single-file bind, so the files the runner renews mid-run
+		// are seen. Writable, unlike a bridge's: workspace-mcp, the
+		// measured Gmail server, refuses to start unless it can write a
+		// probe file there. It holds the access token alone, is the run's
+		// own and is deleted at teardown; the runner still renames each
+		// renewed file into place.
 		volumes = append(volumes, ConnectionFolder(srv.Name)+":"+spec.ConnectionMount)
 	}
 	e.set("volumes", strListNode(volumes))
 	switch {
 	case len(srv.Egress) > 0:
 		// "host:443/tcp": the gateway fronts each host with a TCP relay
-		// (its L4 proxy) reached by that name — TLS runs end to end and
-		// any HTTP client works. Its L7 form is an HTTP CONNECT proxy
-		// handed over as a scheme-less proxy variable, which Node's
-		// fetch cannot use and other clients ignore (agentry-cli#105,
-		// DR-20).
+		// (its L4 proxy) reached by that name — TLS runs end to end and any
+		// HTTP client works. Its L7 form is an HTTP CONNECT proxy handed
+		// over as a scheme-less proxy variable, which Node's fetch cannot
+		// use and other clients ignore.
 		hosts := make([]string, 0, len(srv.Egress))
 		for _, h := range sortedCopy(srv.Egress) {
 			hosts = append(hosts, h+":443/tcp")
@@ -1229,11 +1212,11 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	default:
 		e.set("disableNetwork", boolNode(true))
 	}
-	// A package server's OAuth sign-in (agentry-cli#665): an env entry that
-	// carries the access token is a secret of the run, which the engine
-	// renders into the gateway's secrets file under this server's key, and
-	// one naming only the token folder is plain env. Checked by oauthEnv
-	// before any entry renders.
+	// A package server's OAuth sign-in: an env entry that carries the
+	// access token is a secret of the run, which the engine renders into
+	// the gateway's secrets file under this server's key, and one naming
+	// only the token folder is plain env. Checked by oauthEnv before any
+	// entry renders.
 	plainOAuth, tokenEnv, _ := oauthEnv(srv)
 	if secretNames := append(sortedCopy(srv.Secrets), tokenEnv...); len(secretNames) > 0 {
 		var entries []*yaml.Node
@@ -1258,13 +1241,12 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	return e.node()
 }
 
-// oauthEnv splits a package server's oauth env (agentry-cli#665): the
-// entries that name only the token folder, rendered here with {dir} as the
-// folder's mount, and the names of those that carry the access token, which
-// the engine renders per run into the secrets file. A value the gateway
-// would interpret, one that spells the run placeholder marker, or one with
-// a placeholder outside the grammar is refused, as checkLiteralEnv refuses
-// the plain env.
+// oauthEnv splits a package server's oauth env: the entries that name only
+// the token folder, rendered here with {dir} as the folder's mount, and the
+// names of those that carry the access token, which the engine renders per
+// run into the secrets file. A value the gateway would interpret, one that
+// spells the run placeholder marker, or one with a placeholder outside the
+// grammar is refused, as checkLiteralEnv refuses the plain env.
 func oauthEnv(srv spec.MCPServerSpec) (plain map[string]string, tokenEnv []string, err error) {
 	if srv.OAuth == nil {
 		return nil, nil, nil
@@ -1311,9 +1293,8 @@ func mergeEnv(a, b map[string]string) map[string]string {
 	return out
 }
 
-// remoteServerEntry renders one declared remote server (plan
-// mcp-oauth-connections.md §5, D3; agentry-cli#663) as an ordinary gateway
-// catalog entry: the runner image's bridge, forwarding stdio to the
+// remoteServerEntry renders one declared remote server as an ordinary
+// gateway catalog entry: the runner image's bridge, forwarding stdio to the
 // server's address, with the address's host as its one allowed host, so it
 // runs on the relay network behind that host's relay, under the run's
 // docker filter and the policy's runtime, as a package server does. The
@@ -1410,25 +1391,25 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 
 	vols := []string{spec.PHCfg + "/gateway/toolspec.json:" + spec.ToolSpecMount + ":ro"}
 	vols = append(vols, workspaceVolumes(caps)...)
-	// The run-inputs channel (P2 §P4): read-only by mount AND by tool
-	// surface; the output/receipts volume stays separate below.
+	// The run-inputs channel: read-only by mount AND by tool surface; the
+	// output/receipts volume stays separate below.
 	vols = append(vols, spec.PHInputs+":"+spec.InputsMount+":ro")
-	// The decoded inputs (plan file-handling.md §5), read-only the same
-	// way: the decode step's index and texts, written by the host.
+	// The decoded inputs, read-only the same way: the decode step's index
+	// and texts, written by the host.
 	vols = append(vols, spec.PHInputsText+":"+spec.InputsTextMount+":ro")
-	// The knowledge channel (plan knowledge.md §4.5): one read-only mount
-	// whether or not packs are attached, so an attachment never moves the
-	// plan; the engine grants the tools only when it attaches one (DR-38).
+	// The knowledge channel: one read-only mount whether or not packs are
+	// attached, so an attachment never moves the plan; the engine grants
+	// the tools only when it attaches one.
 	vols = append(vols, spec.PHKnowledge+":"+spec.KnowledgeMount+":ro")
 	vols = append(vols, spec.PHOut+":"+spec.OutMount+":rw")
 	// The folder the host link copies through, inside the agent's scratch
-	// folder (agentry-cli#861): the docker filter admits this one bind
-	// beneath the scratch tmpfs.
+	// folder: the docker filter admits this one bind beneath the scratch
+	// tmpfs.
 	if len(caps.TargetHosts) > 0 {
 		vols = append(vols, hostFilesVolume())
 	}
 	// The browser's output folder, read-only, inside the tools server's
-	// output folder (agentry-cli#915).
+	// output folder.
 	if caps.Browser != nil {
 		vols = append(vols, browserOutVolume())
 	}
@@ -1499,12 +1480,12 @@ func (b workspaceBind) source() string {
 	return spec.PHWorkspace + "/" + b.path
 }
 
-// workspaceBinds maps the filesystem contract to binds (§R4 mount table):
-// whole-workspace modes get one bind, paths mode gets per-path binds; a
-// write grant makes its bind rw (the tools server still refuses reads the
-// read grant doesn't cover). A path inside a written path gets no bind of
-// its own: the outer rw bind already holds it, and the run's docker filter
-// refuses a bind inside a directory the run writes (agentry-cli#855).
+// workspaceBinds maps the filesystem contract to binds: whole-workspace
+// modes get one bind, paths mode gets per-path binds; a write grant makes
+// its bind rw (the tools server still refuses reads the read grant doesn't
+// cover). A path inside a written path gets no bind of its own: the outer
+// rw bind already holds it, and the run's docker filter refuses a bind
+// inside a directory the run writes.
 func workspaceBinds(caps spec.CapSummary) []workspaceBind {
 	wholeRead, wholeWrite := caps.FSReadMode == "workspace", caps.FSWriteMode == "workspace"
 	switch {
@@ -1568,11 +1549,11 @@ func workspaceVolumes(caps spec.CapSummary) []string {
 }
 
 // workspaceWritable is the gateway's writable entry for each rw bind
-// workspaceBinds gives the tools server, read off the same binds so the
-// two cannot drift: the gateway allows a writable bind only by its exact
-// host path (agentry-cli#855). A paths grant never names the whole
-// workspace, which the run's docker filter would take for a writable root
-// and refuse every per-path bind inside it.
+// workspaceBinds gives the tools server, read off the same binds so the two
+// cannot drift: the gateway allows a writable bind only by its exact host
+// path. A paths grant never names the whole workspace, which the run's
+// docker filter would take for a writable root and refuse every per-path
+// bind inside it.
 func workspaceWritable(caps spec.CapSummary) []string {
 	var out []string
 	for _, b := range workspaceBinds(caps) {
@@ -1591,7 +1572,7 @@ func SecretKey(envName string) string {
 }
 
 // dataAccessServers loads operator-cataloged server entries for the
-// declared categories (§R3). Each policy entry is a YAML file containing a
+// declared categories. Each policy entry is a YAML file containing a
 // single-key mapping {name: <server entry>} — the gateway's own
 // file://server.yaml shape.
 func dataAccessServers(categories []string, pol *policy.Policy) ([]string, map[string]yaml.Node, error) {
@@ -1625,8 +1606,8 @@ func dataAccessServers(categories []string, pol *policy.Policy) ([]string, map[s
 	return names, entries, nil
 }
 
-// enforcement writes the §R8 capabilities_enforced disclosure — each
-// mechanism named precisely, per the honest-posture rule.
+// enforcement writes the capabilities_enforced disclosure — each mechanism
+// named precisely.
 func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers []string, pol *policy.Policy, mcpServers []spec.MCPServerSpec) map[string]string {
 	e := map[string]string{}
 	switch caps.EgressMode {
@@ -1681,9 +1662,9 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	}
 	// A declared server's secrets are resolved and refused exactly as the
 	// release's own (engine.secretValues) but reach only that server's
-	// container, so the line names each with its server (agentry-cli#376):
-	// "none declared" beside a server that was handed a key would state less
-	// than the run enforced.
+	// container, so the line names each with its server: "none declared"
+	// beside a server that was handed a key would state less than the run
+	// enforced.
 	var serverSecrets, remoteSecrets, alsoOwn []string
 	for _, srv := range mcpServers {
 		if srv.SendsBearer() {
@@ -1696,9 +1677,9 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		switch {
 		case len(srv.Secrets) == 0:
 		case srv.Remote():
-			// A remote server's bearer (agentry-cli#663) is not one of the
-			// gateway's secrets: the engine writes it into the server's
-			// connection folder for its bridge alone.
+			// A remote server's bearer is not one of the gateway's secrets:
+			// the engine writes it into the server's connection folder for
+			// its bridge alone.
 			remoteSecrets = append(remoteSecrets, srv.Package+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
 		default:
 			serverSecrets = append(serverSecrets, srv.Package+"@"+srv.Version+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
@@ -1725,7 +1706,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			e["secrets"] += "; " + remotePart
 		}
 	}
-	// An optional secret (capabilities.optionalSecrets, DR-70) is the one
+	// An optional secret (capabilities.optionalSecrets) is the one
 	// exception to "missing ⇒ refuse": a run starts without it, the runner
 	// writing it empty into the secrets file, which the tools server reads
 	// as not set. The names a run went without are the receipt's
@@ -1735,8 +1716,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	}
 	// "Injected only into" is where a value is put, not every place it is:
 	// the gateway reads the whole --secrets file to inject them, so its own
-	// container holds every value, the release's and each server's
-	// (agentry-cli#404).
+	// container holds every value, the release's and each server's.
 	if len(secrets) > 0 || len(serverSecrets) > 0 {
 		e["secrets"] += "; the MCP gateway, which injects them, reads the run's whole secrets file, so its container holds every value too"
 		if len(remoteSecrets) > 0 && len(alsoOwn) == 0 {
@@ -1809,9 +1789,9 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	return e
 }
 
-// oauthDesc is the receipt's account of a package server's OAuth sign-in
-// (agentry-cli#665): where its access token goes, by file and env name,
-// and that nothing else of the connection does. Never a template.
+// oauthDesc is the receipt's account of a package server's OAuth sign-in:
+// where its access token goes, by file and env name, and that nothing else
+// of the connection does. Never a template.
 func oauthDesc(srv spec.MCPServerSpec) string {
 	o := srv.OAuth
 	d := "signed in at " + o.Issuer + " by the person's connection for this release: an access token alone, refreshed by the runner before the run"
@@ -1853,7 +1833,7 @@ func execEnforcement(commands []string, cat policy.ExecPolicy) string {
 	}
 	line := "run_command restricted to argv0 allowlist + shim PATH {" + strings.Join(commands, ", ") +
 		"}; tools container is the runner image with the operator's catalogued packages installed (" + strings.Join(from, ", ") +
-		") and minimized to exactly those binaries (per-QuickAgent exec image, agentry-cli#9, #100)"
+		") and minimized to exactly those binaries (per-QuickAgent exec image)"
 	if git {
 		// The workspace is a bind mount owned by the host user and the
 		// tools container runs as root; git refuses such a repository as
@@ -1898,7 +1878,7 @@ func unsafeExecEnforcement(img *spec.ExecImageSpec) string {
 	line := "UNSAFE MODE: run_command restricted to the argv0 allowlist {" + strings.Join(commands, ", ") +
 		"}; the tools container is the Unsafe Mode image " + u.Base + " with the declared commands installed one at a time, from Kali Linux's repository or, for a pip extra, PyPI (" +
 		strings.Join(placed, ", ") + " — apt packages: " + cmp.Or(strings.Join(img.Packages, ", "), "none") +
-		"); this machine's exec catalogue was not consulted; the image is not minimized, and a declared command runs with the image's own PATH after its shims, so it can reach every program the image holds (per-QuickAgent Unsafe Mode exec image, plan unsafe-mode.md, agentry-cli#490)"
+		"); this machine's exec catalogue was not consulted; the image is not minimized, and a declared command runs with the image's own PATH after its shims, so it can reach every program the image holds (per-QuickAgent Unsafe Mode exec image)"
 	if len(missing) > 0 {
 		line += "; not available in Unsafe Mode's image: " + strings.Join(missing, "; ")
 	}
@@ -1959,10 +1939,10 @@ func modelKeySource(pol *policy.Policy, adapterName string) (keyEnv, account str
 
 // plainHTTPTargets is the host:port of every plain-http model base URL in
 // the policy (the model's and each host harness's) that the CONNECT
-// allowlist already names: the targets the proxy may forward plain http
-// to (DR-45, agentry-cli#377). Intersecting with the allowlist means a
-// plain target never reaches a host a tunnel could not; https endpoints
-// contribute nothing, so an all-https policy compiles as before.
+// allowlist already names: the targets the proxy may forward plain http to.
+// Intersecting with the allowlist means a plain target never reaches a host
+// a tunnel could not; https endpoints contribute nothing, so an all-https
+// policy adds none.
 func plainHTTPTargets(pol *policy.Policy) []string {
 	if pol == nil {
 		return nil
@@ -1997,8 +1977,7 @@ func plainHTTPTargets(pol *policy.Policy) []string {
 }
 
 // fileQuestions are the url questions whose answer is downloaded as an
-// input: every one but a browser's site, which the browser opens instead
-// (agentry-cli#915).
+// input: every one but a browser's site, which the browser opens instead.
 func fileQuestions(m *manifest.Manifest) []string {
 	var sites []string
 	if b := m.Capabilities.Browser; b != nil {

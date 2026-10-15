@@ -12,12 +12,12 @@ import (
 	"time"
 )
 
-// Alarm is an operating system's own scheduler, which wakes
-// `agentry schedule fire <id>` when a schedule may be due. It is only an
-// alarm: a fire re-reads the store and decides (D4), so an alarm that
-// rings early, late, twice or for a removed schedule does no harm, and one
-// may ring on a superset of the occurrences when the system cannot say
-// exactly what the schedule means.
+// Alarm is an operating system's own scheduler, which wakes `agentry
+// schedule fire <id>` when a schedule may be due. It is only an alarm: a
+// fire re-reads the store and decides, so an alarm that rings early, late,
+// twice or for a removed schedule does no harm, and one may ring on a
+// superset of the occurrences when the system cannot say exactly what the
+// schedule means.
 type Alarm interface {
 	// Name is the system's scheduler, for messages ("systemd user timer").
 	Name() string
@@ -30,12 +30,12 @@ type Alarm interface {
 	// Probe runs e once now in the context the alarm will run it in (the
 	// same user manager, groups and environment) and returns its output,
 	// so a schedule is refused when made rather than failing at its first
-	// fire: a shell can reach what the scheduler cannot (D8).
+	// fire: a shell can reach what the scheduler cannot.
 	Probe(e Entry) (string, error)
 }
 
 // Entry is what every alarm runs: Binary with Args, under Env. Env holds
-// paths and names only, never a credential (invariant 7).
+// paths and names only, never a credential.
 type Entry struct {
 	// Binary is the absolute path of the agentry that wrote the entry.
 	Binary string
@@ -157,13 +157,13 @@ func (s *Systemd) Install(sc Schedule, e Entry) error {
 	return s.Systemctl("restart", n+".timer")
 }
 
-// Remove implements Alarm. The timer goes at once. The service's file
-// stays while the service runs: a fire that ends its own schedule removes
-// its alarm from inside that service, and a reload that finds a running
-// unit's file gone reloads it with the manager's defaults, among them a
-// start timeout (45 s on Fedora) that stops a run already longer than that
-// (agentry-cli#749's live check). Such a file, inert without its timer, is
-// swept by the next Install or Remove once its service has stopped.
+// Remove implements Alarm. The timer goes at once. The service's file stays
+// while the service runs: a fire that ends its own schedule removes its
+// alarm from inside that service, and a reload that finds a running unit's
+// file gone reloads it with the manager's defaults, among them a start
+// timeout (45 s on Fedora) that stops a run already longer than that. Such
+// a file, inert without its timer, is swept by the next Install or Remove
+// once its service has stopped.
 func (s *Systemd) Remove(id string) error {
 	if !ValidID(id) {
 		return fmt.Errorf("%q is not a schedule id", id)
@@ -280,7 +280,7 @@ func SystemdUnits(sc Schedule, e Entry) (service, timer string, err error) {
 			return "", "", err
 		}
 		// The keys a signed-out fire reads: systemd decrypts them into
-		// $CREDENTIALS_DIRECTORY for this service alone (D18).
+		// $CREDENTIALS_DIRECTORY for this service alone.
 		fmt.Fprintf(&b, "%s\n", strings.ReplaceAll(cred, "%", "%%"))
 	}
 	for _, kv := range e.Env {
@@ -307,7 +307,7 @@ func SystemdUnits(sc Schedule, e Entry) (service, timer string, err error) {
 		fmt.Fprintf(&b, "OnCalendar=%s\n", c)
 	}
 	// Persistent: an occurrence missed while the computer was off rings
-	// at the next boot, and fire decides whether it still runs (D5).
+	// at the next boot, and fire decides whether it still runs.
 	fmt.Fprintf(&b, "Persistent=true\nAccuracySec=1min\nUnit=%s.service\n\n[Install]\nWantedBy=timers.target\n", unitName(sc.ID))
 	return service, b.String(), nil
 }
@@ -319,7 +319,7 @@ func SystemdUnits(sc Schedule, e Entry) (service, timer string, err error) {
 //
 // systemd does not ring at a wall time the spring change skips (checked
 // with systemd-analyze 259: 02:30 New York on 2027-03-14 never elapses),
-// where the plan's rule runs the occurrence at the first valid minute
+// where the schedule's rule runs the occurrence at the first valid minute
 // after it. Each such occurrence in the three years from now gets a
 // one-off ring of its own at that instant, in UTC; every sync and every
 // add or edit writes them afresh.

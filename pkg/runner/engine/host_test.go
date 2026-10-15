@@ -1,8 +1,8 @@
 //go:build !windows
 
 // The host-harness tests are built off Windows only: the test harness they
-// put on PATH is a shell script, which Windows cannot execute
-// (agentry-cli#446). So no test covers the engine's host path on Windows.
+// put on PATH is a shell script, which Windows cannot execute. So no test
+// covers the engine's host path on Windows.
 
 package engine
 
@@ -25,15 +25,14 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// hostTestAdapter is a host-run harness (plan runner-m-r4-adapters §5)
-// whose "installation" is a shell script the test puts on PATH: it proves
-// the engine's host path — published ports, rendered addresses, the clean
-// environment, the task on stdin, receipts and the envelope — without any
-// real harness.
+// hostTestAdapter is a host-run harness whose "installation" is a shell
+// script the test puts on PATH: it proves the engine's host path —
+// published ports, rendered addresses, the clean environment, the task on
+// stdin, receipts and the envelope — without any real harness.
 type hostTestAdapter struct{}
 
 // hostTestRefuse is what the test adapter names as ambient context to
-// refuse over (agentry-cli#171); nil for every other test.
+// refuse over; nil for every other test.
 var hostTestRefuse []string
 
 func (hostTestAdapter) Name() string { return "hosttest" }
@@ -63,7 +62,7 @@ func (hostTestAdapter) Compile(in adapter.Input) (adapter.Result, error) {
 
 // The test adapter is a HostHarness too, with one usual install location
 // under the home directory, so the envelope test below can prove a run
-// names the well-known path it actually ran (agentry-cli#176).
+// names the well-known path it actually ran.
 func (hostTestAdapter) Executable() string    { return "agentry-hosttest" }
 func (hostTestAdapter) ProbeVersion() string  { return "" }
 func (hostTestAdapter) VersionArgv() []string { return []string{"--version"} }
@@ -231,8 +230,7 @@ func TestRunHostHarness(t *testing.T) {
 // The run network is internal, so docker programs a published port only
 // once the container has been connected to the bridge — a moment after
 // `docker run -d` returns. Reading it once made the gateway's address
-// fail intermittently on a real daemon (found by the first host-run
-// harness, agentry-cli#80); the engine must wait for the mapping.
+// fail intermittently on a real daemon; the engine must wait for the mapping.
 func TestRunHostHarnessWaitsForThePublishedPort(t *testing.T) {
 	p, f, _, _ := hostFixture(t)
 	f.PortFailures = 3 // the first reads find no mapping yet
@@ -281,7 +279,7 @@ func TestRunHostHarnessPolicyPath(t *testing.T) {
 
 // With nothing on PATH and no policy path, the run finds the harness in
 // its usual install location and the envelope names that path — the
-// receipt says what ran (agentry-cli#176).
+// receipt says what ran.
 func TestRunHostHarnessWellKnownLocation(t *testing.T) {
 	p, f, envFile, _ := hostFixture(t)
 	home := t.TempDir()
@@ -308,9 +306,9 @@ func TestRunHostHarnessWellKnownLocation(t *testing.T) {
 
 // A real host adapter resolves through harnessprobe.Find, so a run finds
 // the harness where doctor found it: here the native installer's
-// ~/.local/bin, with nothing on PATH (agentry-cli#167). The policy's path
-// still comes first, and a policy path that is not there is the refusal
-// it always was.
+// ~/.local/bin, with nothing on PATH. The policy's path still comes
+// first, and a policy path that is not there is the refusal it always
+// was.
 func TestResolveHostCommandUsesTheWellKnownLocations(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -343,8 +341,8 @@ func TestResolveHostCommandUsesTheWellKnownLocations(t *testing.T) {
 }
 
 // A harness that reads context from its ancestors names the files in
-// the plan; the engine refuses the run when one is there, naming it
-// (agentry-cli#171): the invariant is measured, not assumed.
+// the plan; the engine refuses the run when one is there, naming it:
+// the rule is tested, not assumed.
 func TestRunHostHarnessRefusesAmbientContextInAnAncestor(t *testing.T) {
 	if found, err := ancestorFile(t.TempDir(), nil); err != nil || found != "" {
 		t.Fatalf("nothing named: %q %v", found, err)
@@ -397,7 +395,7 @@ func TestRunHostHarnessRefusesAmbientContextInAnAncestor(t *testing.T) {
 }
 
 // The proxy is started with --plain-http only when the plan lists plain
-// targets (DR-45): an all-https plan starts it CONNECT-only, as before.
+// targets: an all-https plan starts it CONNECT-only.
 func TestProxyArgvCarriesPlainHTTPTargetsOnlyWhenPlanned(t *testing.T) {
 	p, f, _, _ := hostFixture(t)
 	if _, err := Run(context.Background(), f, p); err != nil {
@@ -420,7 +418,7 @@ func TestProxyArgvCarriesPlainHTTPTargetsOnlyWhenPlanned(t *testing.T) {
 
 // On Windows a host-run harness also inherits what a Windows program needs
 // to find its profile, its npm shims and a temporary directory — and still
-// nothing else — and the receipt names the allowlist (agentry-cli#423).
+// nothing else — and the receipt names the allowlist.
 func TestHostHarnessInheritsWindowsProfileVariablesOnWindowsOnly(t *testing.T) {
 	for _, goos := range []string{"windows", "linux"} {
 		t.Run(goos, func(t *testing.T) {
@@ -477,8 +475,8 @@ func TestHostInherit(t *testing.T) {
 }
 
 // An empty task sends the agent's own instruction to a host harness too
-// (on its stdin, agentry-cli#449). It lives here with the other
-// host-harness tests, for the reason at the top of this file.
+// (on its stdin). It lives here with the other host-harness tests, for
+// the reason at the top of this file.
 func TestAnEmptyTaskSendsTheOwnInstructionToAHostHarness(t *testing.T) {
 	p, f, _, taskFile := hostFixture(t)
 	p.Task = nil

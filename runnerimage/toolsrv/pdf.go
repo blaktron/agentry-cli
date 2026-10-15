@@ -1,10 +1,9 @@
 package toolsrv
 
-// export_pdf (plan scratch-and-pdf-reports.md §5, D6-D9, D14, D15, D17,
-// D19, D23, D24, D27; agentry-cli#730): the agent turns a Markdown file it
+// export_pdf: the agent turns a Markdown file it
 // wrote, in reports/ or the scratch folder, into a PDF in reports/, laid out
 // by the run's report design in the form the agent chose (report, letter or
-// memo; plan report-designs.md D1, D15, agentry-cli#784). Typst renders it
+// memo). Typst renders it
 // inside the tools container, from a fresh render root under the bounded
 // /tmp that holds the Markdown, the design, the server's own template and
 // copies of the local images the Markdown names, and nothing else:
@@ -16,7 +15,7 @@ package toolsrv
 //     its stdout. As root the server starts it as a user of its own
 //     (typstID), which owns nothing; where there is no Landlock (gVisor)
 //     that user is all that holds it.
-//   - Its binary was built without a package downloader (D26), and the
+//   - Its binary was built without a package downloader, and the
 //     template imports only the vendored cmarker, with raw Typst off.
 //   - Every file the server copies in is opened beneath its folder's
 //     os.Root, and a name with a link anywhere in it is refused; every name
@@ -25,7 +24,7 @@ package toolsrv
 //     root.
 //
 // The result is checked to be a PDF, copied into reports/ and recorded in
-// the PDF ledger with its SHA-256, which the receipt repeats (D15); with
+// the PDF ledger with its SHA-256, which the receipt repeats; with
 // write_report refusing a PDF, it is the only way one lands in reports/.
 
 import (
@@ -59,7 +58,7 @@ import (
 // ToolExportPDF renders a Markdown file to a PDF in reports/.
 const ToolExportPDF = "export_pdf"
 
-// The limits of one export (D24, D9).
+// The limits of one export.
 const (
 	MaxPDFSourceBytes = 1 << 20
 	MaxPDFImages      = 20
@@ -71,7 +70,7 @@ const (
 )
 
 // TypstDir is where the runner image holds the renderer (copied by digest
-// from agentry-typst, agentry-dockerimages#48): the binary, the fonts and
+// from agentry-typst): the binary, the fonts and
 // the vendored packages. It is outside every bin directory, so an exec
 // image's minimize keeps it, and no declared command finds it on a PATH.
 const TypstDir = "/opt/agentry/typst"
@@ -87,15 +86,15 @@ const TypstVersion = "0.15.1"
 const typstID = 65533
 
 // PDF is export_pdf's grant. The compiler sets Enabled with the scratch
-// folder, for every package but a built-in (D5); the engine stamps the
+// folder, for every package but a built-in; the engine stamps the
 // rest into the run's own copy of the spec, never the compiled plan.
 type PDF struct {
 	Enabled bool `json:"enabled"`
-	// Theme is the run's report design (report-designs.md D11, D12);
+	// Theme is the run's report design;
 	// without one, the built-in default, Plain.
 	Theme *ThemeStamp `json:"theme,omitempty"`
 	// Author names the QuickAgent that wrote the report,
-	// namespace/name@version, for the PDF's metadata (D14): never the
+	// namespace/name@version, for the PDF's metadata: never the
 	// person.
 	Author string `json:"author,omitempty"`
 	// Ledger is the container path each exported PDF is recorded in,
@@ -110,10 +109,9 @@ type PDFEntry struct {
 	SHA256 string `json:"sha256"`
 	Pages  int    `json:"pages"`
 	Bytes  int64  `json:"bytes"`
-	// Form is the form the agent chose for it (report-designs.md D15).
+	// Form is the form the agent chose for it.
 	Form string `json:"form,omitempty"`
-	// Logo says the person's logo was drawn in its title block
-	// (agentry-cli#816).
+	// Logo says the person's logo was drawn in its title block.
 	Logo bool `json:"logo,omitempty"`
 }
 
@@ -147,8 +145,7 @@ func exportPDFSchema() map[string]any {
 
 // exportPDFArgs are export_pdf's arguments, and nothing else: an argument
 // the model adds for the look ("theme", "accent", "font") is refused, never
-// ignored, so the model learns it cannot choose one (report-designs.md
-// invariant 1).
+// ignored, so the model learns it cannot choose one.
 var exportPDFArgs = []string{"source", "path", "form"}
 
 // typstFiles is where the renderer is; a test points it elsewhere.
@@ -158,7 +155,7 @@ func defaultTypst() typstFiles {
 	return typstFiles{bin: TypstDir + "/typst", fonts: TypstDir + "/fonts", packages: TypstDir + "/packages"}
 }
 
-// renderConfinement is how Typst is held (D24), chosen once when the
+// renderConfinement is how Typst is held, chosen once when the
 // server starts, as run_command's confinement is.
 type renderConfinement struct {
 	// landlock is the ABI when Landlock holds Typst's writes, 0 otherwise.
@@ -329,14 +326,14 @@ type pdfImage struct {
 type pdfMeta struct {
 	Title string `json:"title"`
 	// Author is the QuickAgent's ref, or empty: never the person, nor
-	// Agentry (D14).
+	// Agentry.
 	Author string              `json:"author"`
 	Images map[string]pdfImage `json:"images"`
 	// Date is the day of the render (UTC, YYYY-MM-DD), for a report's cover
 	// page: the same in every language.
 	Date string `json:"date"`
 	// Titled says the title is the report's own first heading, not its
-	// file's name (agentry-cli#731).
+	// file's name.
 	Titled bool `json:"titled"`
 	// Form is the form the agent chose: report, letter or memo.
 	Form string `json:"form"`
@@ -359,7 +356,7 @@ type pdfMeta struct {
 	NotoBody     string `json:"notoBody"`
 	NotoHeadings string `json:"notoHeadings"`
 	// Logo is the person's logo as the server wrote it into the render
-	// root, or nil when the design has none (agentry-cli#816).
+	// root, or nil when the design has none.
 	Logo *pdfLogo `json:"logo"`
 }
 
@@ -378,8 +375,7 @@ const logoFile = "logo.png"
 // normalizeLogo is reportdesign.NormalizeLogo; a test makes it fail.
 var normalizeLogo = reportdesign.NormalizeLogo
 
-// renderLogo is a design's logo as the render root gets it (plan
-// report-designs.md §4 "The logo", D9, invariant 12; agentry-cli#816): the
+// renderLogo is a design's logo as the render root gets it: the
 // PNG reportdesign.NormalizeLogo writes from its decoded pixels, never the
 // bytes the design carried. A design from a file or a flag may hold any PNG
 // within the bounds (the core's Validate does not require its own
@@ -436,7 +432,7 @@ func answerFor(err error, fail func(error) (string, bool)) (string, bool) {
 	return fail(err)
 }
 
-// imageRoots are the folders an image may come from (D9), each with the
+// imageRoots are the folders an image may come from, each with the
 // container path that names it absolutely.
 func (s *server) imageRoots() []pdfRoot {
 	roots := []pdfRoot{s.reportsRoot()}

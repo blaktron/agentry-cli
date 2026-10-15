@@ -5,20 +5,18 @@ import (
 	"fmt"
 )
 
-// The draft question set (plan builder-simplify.md D6, agentry#708): what
-// AI Review asks about a finished draft beside the release rubric — does
-// its instruction do the task the person described. The text is a
-// constant, like the other two sets' texts: the person's description, the
-// manifest and the instruction travel in the request's state, and nothing
-// of them reaches a question (DEV-113's rule). It is phrased so that yes
-// is the problem, as the rubric's are, so a score of WithholdScore or more
-// is a flag.
+// The draft question set: what AI Review asks about a finished draft
+// beside the release rubric: does its instruction do the task the
+// person described. The text is a constant, like the other two sets'
+// texts: the person's description, the manifest and the instruction
+// travel in the request's state, and nothing of them reaches a
+// question. It is phrased so that yes is the problem, as the rubric's
+// are, so a score of WithholdScore or more is a flag.
 //
-// The set was benched on the Drafter's fixture drafts before anything used
-// it (pkg/draftcheck TestDraftBench; agentry-notes
-// measurements/draft-check-bench.md): this was the one question of three
-// that flagged no good draft and every draft made for another task. It
-// misses most drafts that leave out one part of the task.
+// The set was benched on the Drafter's fixture drafts before anything
+// used it (pkg/draftcheck TestDraftBench): it was the one question of
+// three that flagged no good draft and every draft made for another
+// task. It misses most drafts that leave out one part of the task.
 const DraftOffTask = "The state holds a person's description of a task (description), the manifest of an AI agent " +
 	"drafted for it (manifest) and the instruction that agent follows (instruction). Would an agent that " +
 	"follows this instruction fail to do the task the description asks for: because it does a different " +
@@ -43,16 +41,15 @@ const VerdictFlagged Verdict = "flagged"
 // is past its bound: it is not scanned, never cut.
 const FailureTooLarge = "too-large"
 
-// The bounds of a draft scan's state. A draft asked about is one request,
-// under Jev's input window: a description the site admits, a manifest of
-// a few kilobytes, and an instruction of up to 32 KiB, since a drafted
-// instruction carries the domain knowledge a run with no network cannot
-// look up and runs 20–30 KB for a big task (plan knowledge-and-drafter.md
-// D13, agentry#789). The Drafter is to hold its own cap at this one
-// (agentry-cli#521). The three together are held to 48 KiB, the largest
-// state before the instruction bound rose, so no draft request is larger
-// than the window's figure (internal/scan's typesafe InputLimit, 50 KB
-// with the questions around it) for a long instruction to fit.
+// The bounds of a draft scan's state. A draft asked about is one
+// request, under Jev's input window: a description the site admits, a
+// manifest of a few kilobytes, and an instruction of up to 32 KiB,
+// since a drafted instruction carries the domain knowledge a run with
+// no network cannot look up and runs 20–30 KB for a big task. The
+// Drafter holds its own cap at this one. The three together are held to
+// 48 KiB, so no draft request is larger than the window's figure
+// (internal/scan's typesafe InputLimit, 50 KB with the questions around
+// it) for a long instruction to fit.
 const (
 	DraftMaxDescription = 8 << 10
 	DraftMaxManifest    = 16 << 10

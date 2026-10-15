@@ -168,12 +168,11 @@ func writeInput(t *testing.T, dir, name, body string) string {
 	return p
 }
 
-// TestEveryRunsInputsAreDecodedBeforeTheAgent pins plan file-handling.md
-// §5 (agentry-cli#560): an ordinary run's inputs are decoded before the
-// agent starts; the originals stay under /inputs, each decoded text is
-// staged under inputs-text/text/<path>, the index names every input with
-// its type, size, outcome and text size, and the receipt has the decode
-// line.
+// TestEveryRunsInputsAreDecodedBeforeTheAgent pins: an ordinary run's
+// inputs are decoded before the agent starts; the originals stay under
+// /inputs, each decoded text is staged under inputs-text/text/<path>,
+// the index names every input with its type, size, outcome and text
+// size, and the receipt has the decode line.
 func TestEveryRunsInputsAreDecodedBeforeTheAgent(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -221,8 +220,7 @@ func TestEveryRunsInputsAreDecodedBeforeTheAgent(t *testing.T) {
 			t.Errorf("%s: %+v", name, e)
 		}
 	}
-	// No reader took it, but it is still there to read as uploaded
-	// (agentry-cli#631).
+	// No reader took it, but it is still there to read as uploaded.
 	if e := got["blob.bin"]; e.Unread == "" || e.Decoded || e.Outcome() == "read" || !e.Original {
 		t.Errorf("blob.bin: %+v", e)
 	}
@@ -251,7 +249,7 @@ func TestEveryRunsInputsAreDecodedBeforeTheAgent(t *testing.T) {
 // TestAnHTMLInputIsStagedWithItsMarkdown: an HTML input stays under
 // /inputs as uploaded, its Markdown view is staged under
 // inputs-text/converted/<path>, and the index says it has both views, with
-// its detected type (agentry-cli#631; plan quickagents-that-run.md D2).
+// its detected type.
 func TestAnHTMLInputIsStagedWithItsMarkdown(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -395,10 +393,10 @@ func TestASessionsAddedFileIsDecodedBeforeItIsAnnounced(t *testing.T) {
 	}
 }
 
-// Containment (plan file-handling.md invariant 3): what the decode
-// container wrote reaches /inputs-text only through the host's checks. A
-// report that points a text at a link to a host file, or names a file
-// never staged, refuses the run, and nothing of it is staged.
+// Containment: what the decode container wrote reaches /inputs-text
+// only through the host's checks. A report that points a text at a link
+// to a host file, or names a file never staged, refuses the run, and
+// nothing of it is staged.
 func TestAHostileDecodeOutputNeverReachesTheRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks need privileges on Windows; the decode runs on Linux")
@@ -584,11 +582,10 @@ func zipInput(t *testing.T, dir, name string, members map[string]string) string 
 	return writeInput(t, dir, name, buf.String())
 }
 
-// TestAnArchivesMembersAreStagedAsInputs pins plan file-handling.md §6
-// (agentry-cli#562): a run given a .zip lists the archive as unpacked and
-// each member under <archive>/<member>, with its text staged under
-// inputs-text/text/<archive>/<member> whether it was decoded or is text,
-// and the original archive alone under /inputs.
+// TestAnArchivesMembersAreStagedAsInputs pins: a run given a .zip lists
+// the archive as unpacked and each member under <archive>/<member>, with
+// its text staged under inputs-text/text/<archive>/<member> whether it
+// was decoded or is text, and the original archive alone under /inputs.
 func TestAnArchivesMembersAreStagedAsInputs(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -659,11 +656,10 @@ func TestASessionsAddedArchiveIsUnpackedBeforeItIsAnnounced(t *testing.T) {
 	<-done
 }
 
-// The malware check (plan file-handling.md §7, D9; agentry-cli#563): a file
-// ClamAV finds, as given or inside an archive, refuses the run before any
-// container of it starts, with the policy class (which a hosted run
-// settles at nothing), naming the file and the signature, and nothing of
-// the inputs is staged for the run.
+// The malware check: a file ClamAV finds, as given or inside an archive,
+// refuses the run before any container of it starts, with the policy class
+// (which a hosted run settles at nothing), naming the file and the
+// signature, and nothing of the inputs is staged for the run.
 func TestAFileClamAVFindsRefusesTheRun(t *testing.T) {
 	for name, input := range map[string]struct {
 		file, body, want string
@@ -724,7 +720,7 @@ func TestAClearRunsReceiptNamesTheSignatures(t *testing.T) {
 }
 
 // With no signatures (a first run with no network), the run goes on and
-// its receipt says nothing was checked, and why (D15, invariant 7).
+// its receipt says nothing was checked, and why.
 func TestARunWithNoSignaturesGoesOnAndSaysSo(t *testing.T) {
 	resetDecodeCalls()
 	decodeCalls.Lock()
@@ -811,8 +807,7 @@ func fakeHybrid(t *testing.T, key, verdict string) *[]http.Header {
 }
 
 // A risky input Hybrid Analysis calls malicious refuses the run before the
-// agent starts, with the policy class, naming the file and its verdict
-// (plan file-handling.md D9, D14; agentry-cli#564).
+// agent starts, with the policy class, naming the file and its verdict.
 func TestAnInputHybridAnalysisCallsMaliciousRefusesTheRun(t *testing.T) {
 	resetDecodeCalls()
 	seen := fakeHybrid(t, "ha-test-key", "malicious")
@@ -839,9 +834,9 @@ func TestAnInputHybridAnalysisCallsMaliciousRefusesTheRun(t *testing.T) {
 	}
 }
 
-// The key is used by this process alone (plan §3 invariant 6): it never
-// reaches a container's spec, the envelope or the receipt, or stderr, and
-// a suspicious verdict is noted in the receipt while the run goes on.
+// The key is used by this process alone: it never reaches a container's
+// spec, the envelope or the receipt, or stderr, and a suspicious verdict
+// is noted in the receipt while the run goes on.
 func TestTheHybridAnalysisKeyStaysInTheCLI(t *testing.T) {
 	resetDecodeCalls()
 	const key = "ha-key-that-must-not-leak-0123456789"
@@ -869,7 +864,7 @@ func TestTheHybridAnalysisKeyStaysInTheCLI(t *testing.T) {
 }
 
 // With no key the run goes on, nothing is asked, and the receipt says the
-// risky file was not checked, no key (D8).
+// risky file was not checked, no key.
 func TestARunWithNoHybridAnalysisKeySaysSo(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -907,7 +902,7 @@ func TestASessionsFileHybridAnalysisCallsMaliciousIsRefusedAlone(t *testing.T) {
 
 // The key as a sandbox host hands it, in $HYBRID_API_KEY, read through the
 // policy as a run reads it: it reaches the lookup and nothing else — no
-// container's spec, the envelope, the receipt or stderr (invariant 6).
+// container's spec, the envelope, the receipt or stderr.
 func TestTheKeyFromTheEnvironmentStaysInTheCLI(t *testing.T) {
 	resetDecodeCalls()
 	const key = "ha-env-key-that-must-not-leak-987654321"
@@ -954,10 +949,10 @@ func TestTheKeyFromTheEnvironmentStaysInTheCLI(t *testing.T) {
 	}
 }
 
-// TestTheIndexCarriesTheReleasesView (agentry-cli#693): the plan's
-// InputView, the manifest's inputs.view, is written into the inputs index
-// as the tools' default view, through a session's added files too; a plan
-// without one writes no defaultView.
+// TestTheIndexCarriesTheReleasesView: the plan's InputView, the
+// manifest's inputs.view, is written into the inputs index as the tools'
+// default view, through a session's added files too; a plan without one
+// writes no defaultView.
 func TestTheIndexCarriesTheReleasesView(t *testing.T) {
 	for _, view := range []string{"", toolsrv.ViewOriginal, toolsrv.ViewText} {
 		t.Run("view "+view, func(t *testing.T) {

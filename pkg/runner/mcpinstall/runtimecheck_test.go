@@ -6,7 +6,7 @@ import (
 )
 
 // RuntimeMismatch admits what npm and pip would install on the runtime and
-// names what they would not (agentry-cli#609).
+// names what they would not.
 func TestRuntimeMismatch(t *testing.T) {
 	for _, c := range []struct {
 		source, runtime string

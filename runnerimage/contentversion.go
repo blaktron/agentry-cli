@@ -13,14 +13,13 @@ import (
 // first 12 hex digits of a SHA-256 over every embedded file's path and
 // bytes (tests excluded, the same set Materialize writes out) and the
 // generated go.mod, whose go line decides the oldest builder that may
-// compile the image (agentry-cli#786). Two clients
+// compile the image. Two clients
 // that embed the same context — the CLI and the desktop app at whatever
 // versions — derive the same tag and therefore share one built image; a
 // change to the context changes the tag and forces a rebuild. Deriving the
-// tag from each client's own release version instead (D-009, agentry-cli#6)
-// meant two clients on one machine built two images of identical content
-// and a plan compiled by one could fail the other's gateway probe with
-// exit 13.
+// tag from each client's own release version would have two clients on
+// one machine build two images of identical content, and a plan compiled
+// by one could fail the other's gateway probe with exit 13.
 func ContentVersion() string {
 	contentVersionOnce.Do(func() {
 		var paths []string

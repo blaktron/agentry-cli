@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Hold the CLI's pinned Codex harness image to its signature
-# (agentry-cli#739; plan model-sign-ins.md D5, D11, invariant I8).
+# Hold the CLI's pinned Codex harness image to its signature.
 #
 # A run pulls the codex-image adapter's image by digest only, so the bytes
 # it runs are the bytes this pin names; this check makes sure the pin names

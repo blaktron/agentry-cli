@@ -2,7 +2,7 @@
 
 // The model-host tests that run the engine's host path, which (as in
 // host_test.go) is built off Windows only: hostFixture puts a shell-script
-// harness on PATH (agentry-cli#446, agentry-cli#768).
+// harness on PATH.
 
 package engine
 
@@ -16,9 +16,9 @@ import (
 // The whole path: the proxy container gets the pins as --add-host
 // entries, the agent does not, and the receipt names them.
 func TestTheProxyGetsTheModelHostPinsAndTheReceiptSaysSo(t *testing.T) {
-	fakeLookup(t, map[string][]string{"maxbookpro": {"100.127.198.123"}})
+	fakeLookup(t, map[string][]string{"macmini": {"100.64.0.7"}})
 	p, f, _, _ := hostFixture(t)
-	p.Plan.Proxy.Allow = []string{"maxbookpro:8000"}
+	p.Plan.Proxy.Allow = []string{"macmini:8000"}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -27,11 +27,11 @@ func TestTheProxyGetsTheModelHostPinsAndTheReceiptSaysSo(t *testing.T) {
 	if !ok {
 		t.Fatal("no proxy container")
 	}
-	if !reflect.DeepEqual(proxy.ExtraHosts, []string{"maxbookpro:100.127.198.123"}) {
+	if !reflect.DeepEqual(proxy.ExtraHosts, []string{"macmini:100.64.0.7"}) {
 		t.Errorf("proxy ExtraHosts = %q", proxy.ExtraHosts)
 	}
 	line := env.CapabilitiesEnforced["llm-proxy.hosts"]
-	if !strings.Contains(line, "maxbookpro:100.127.198.123") || !strings.Contains(line, "enforced by name") {
+	if !strings.Contains(line, "macmini:100.64.0.7") || !strings.Contains(line, "enforced by name") {
 		t.Errorf("receipt llm-proxy.hosts = %q", line)
 	}
 }
@@ -39,7 +39,7 @@ func TestTheProxyGetsTheModelHostPinsAndTheReceiptSaysSo(t *testing.T) {
 // Nothing resolves: no pin and no receipt line, the run as it was.
 func TestNoPinWhenTheHostResolvesNothing(t *testing.T) {
 	p, f, _, _ := hostFixture(t)
-	p.Plan.Proxy.Allow = []string{"maxbookpro:8000"}
+	p.Plan.Proxy.Allow = []string{"macmini:8000"}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)

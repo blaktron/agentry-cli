@@ -1,12 +1,10 @@
-// Package authflow is the client half of browser sign-in (core DEV-058,
-// hardened per agentry#19): a one-shot loopback listener that receives a
-// single-use CODE from the registry's /ui/authorize page after
-// the user signs in (through the directory service, DEV-057) and clicks
-// Authorize, then exchanges that code for the PAT from this process —
-// POST /api/v1/auth/desktop/exchange — so the token never rides a URL or
-// lands in the browser's history. Promoted from agentry-desktop so
-// `agentry login` (agentry-cli#5) and the desktop app share one
-// implementation.
+// Package authflow is the client half of browser sign-in: a one-shot
+// loopback listener that receives a single-use CODE from the registry's
+// /ui/authorize page after the user signs in (through the directory
+// service) and clicks Authorize, then exchanges that code for the PAT
+// from this process — POST /api/v1/auth/desktop/exchange — so the token
+// never rides a URL or lands in the browser's history. `agentry login`
+// and the desktop app share this implementation.
 //
 // Trust model: the listener binds 127.0.0.1 only, accepts exactly one
 // callback, and requires the state nonce this process generated — a
@@ -17,9 +15,9 @@
 // verified against the registry (whoami) before it is stored, exactly
 // like a pasted PAT.
 //
-// Older registries (pre-#19) send ?token= directly; that is still accepted
-// so the app keeps working against them, with the history caveat D-015
-// records.
+// Older registries send ?token= directly; that is still accepted so the
+// app keeps working against them, with the caveat that the token then
+// lands in the browser's history.
 package authflow
 
 import (
@@ -105,9 +103,9 @@ func Start() (*Flow, error) {
 }
 
 // AuthorizeURL is the page to open in the system browser: the registry
-// server's own device authorize page (DR-17, agentry DEV-091) — served by
-// agentryd at /ui/authorize whether or not a site fronts it, so browser
-// sign-in works against a headless registry too.
+// server's own device authorize page — served by agentryd at
+// /ui/authorize whether or not a site fronts it, so browser sign-in
+// works against a headless registry too.
 func (f *Flow) AuthorizeURL(registry string) string {
 	f.Registry = strings.TrimRight(registry, "/")
 	return fmt.Sprintf("%s/ui/authorize?port=%d&state=%s",
@@ -120,7 +118,7 @@ func (f *Flow) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if subtle.ConstantTimeCompare([]byte(state), []byte(f.State)) != 1 {
 		// Refused, and the flow keeps waiting: anything on this machine can
 		// reach the loopback port, so a request without the nonce must not
-		// be able to end a sign-in it cannot complete (agentry-cli#164).
+		// be able to end a sign-in it cannot complete.
 		http.Error(w, "state mismatch — this is not the sign-in the app started", http.StatusForbidden)
 		return
 	}

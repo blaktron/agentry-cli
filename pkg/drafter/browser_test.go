@@ -33,8 +33,7 @@ func workedBrowserDraft(t *testing.T) json.RawMessage {
 	return nil
 }
 
-// TestADraftThatTakesABrowserPasses (browser testing M8, agentry-cli#916;
-// plan browser-testing.md D6, D9): a draft with a url question listed in
+// TestADraftThatTakesABrowserPasses: a draft with a url question listed in
 // capabilities.browser.sites goes through the post-step as any other. The
 // corrections leave both halves, the registry's rules and the local scans
 // pass it, the Drafter's rules find nothing in it, and the check reads the
@@ -155,11 +154,11 @@ func TestADraftThatBringsItsOwnBrowserGoesToTheRepairTurn(t *testing.T) {
 	}
 }
 
-// TestTheGuideTeachesTheBrowser (browser testing M8, agentry-cli#916): the
-// instruction and the guide's pages ask for a site to test by a url
-// question listed in capabilities.browser.sites, bring no browser of their
-// own, declare a key the browser types in both places and never with the
-// public scope, save screenshots by bare names, and say where it runs.
+// TestTheGuideTeachesTheBrowser: the instruction and the guide's pages ask
+// for a site to test by a url question listed in
+// capabilities.browser.sites, bring no browser of their own, declare a key
+// the browser types in both places and never with the public scope, save
+// screenshots by bare names, and say where it runs.
 func TestTheGuideTeachesTheBrowser(t *testing.T) {
 	mustSay(t, map[string][]string{
 		instructionFile: {

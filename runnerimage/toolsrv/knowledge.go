@@ -1,4 +1,4 @@
-// The knowledge tools (plan knowledge.md §4.5, agentry-cli#317): a run
+// The knowledge tools: a run
 // searches the knowledge packs the person attached — LLM wikis of at most
 // 10 MB, mounted read-only under KnowledgeDir, one directory per pack —
 // through three tools that exist only while a pack is attached. Every path

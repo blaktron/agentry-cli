@@ -1,17 +1,16 @@
-// Package unsafeexec is the data side of Unsafe Mode (agentry-notes
-// plans/unsafe-mode.md §4.3; agentry-cli#490): the unsafe base image's
+// Package unsafeexec is the data side of Unsafe Mode: the unsafe base image's
 // command index, extras list and ambiguous list, read out of the pulled
 // image and held to a grammar, and the placement of a manifest's declared
 // commands through them.
 //
 // Unsafe Mode lifts one check: this machine's exec catalogue
-// (policy exec.packages) is not consulted (D1). A client turns it on per
+// (policy exec.packages) is not consulted. A client turns it on per
 // compile by passing a *Data (compile.Inputs.Unsafe); no policy key and no
-// `agentry run` flag does (D5), so it never reaches a hosted run (D7).
+// `agentry run` flag does, so it never reaches a hosted run.
 //
 // The data files are read from an image, so they are data, not code: every
 // command name, package name, pip requirement and path is held to a grammar
-// here, and one that fails is never placed (invariant 3). The exec image
+// here, and one that fails is never placed. The exec image
 // build (pkg/runner/gateway) then hands the placed values to its install
 // script in files, never in a shell line.
 package unsafeexec
@@ -182,9 +181,9 @@ func rows(b []byte) [][]string {
 	return out
 }
 
-// Place resolves the declared commands the way the plan says (§4.3): the
+// Place resolves the declared commands in this order: the
 // extras list first, then the index. It never refuses: a command neither
-// places, or one that is not a plain command name, is unplaced (D8), with
+// places, or one that is not a plain command name, is unplaced, with
 // the packages that ship it when the index left it ambiguous. It returns
 // the Kali packages to install (each placed command's, and each link
 // extra's), sorted and deduplicated, and the Unsafe Mode part of the exec
@@ -224,7 +223,7 @@ func (d *Data) Place(commands []string) (packages []string, u spec.UnsafeExecSpe
 }
 
 // Load reads the base's data from the image, pulling it first when this
-// machine does not have it (turning Unsafe Mode on pulls it, D2; a run
+// machine does not have it (turning Unsafe Mode on pulls it; a run
 // finds it here).
 func Load(ctx context.Context, docker dockerx.Client, base string, logw io.Writer) (*Data, error) {
 	if err := ValidBase(base); err != nil {

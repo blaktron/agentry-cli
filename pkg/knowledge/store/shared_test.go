@@ -12,9 +12,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
 )
 
-// An organization's shared packs (Knowledge M8, agentry-cli#380; plan
-// §4.7, D13, D26): kept like a person's own, their keys asked for at every
-// open through the organization's route and never put in the keychain.
+// An organization's shared packs: kept like a person's own, their keys asked
+// for at every open through the organization's route and never put in the
+// keychain.
 
 var handbook = map[string]string{
 	"sources/handbook.md":     "# Handbook\nThe rota changes on Mondays.\n",

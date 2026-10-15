@@ -131,7 +131,7 @@ func TestScratchWriteRefusesARunSecretAndTheCap(t *testing.T) {
 }
 
 // TestADeclaredCommandMayWriteTheScratchFolder: confine lets a declared
-// command write the scratch folder beside /tmp (DR-63 extended).
+// command write the scratch folder beside /tmp.
 func TestADeclaredCommandMayWriteTheScratchFolder(t *testing.T) {
 	spec := scratchSpec(t)
 	c := chooseConfinement(spec, "linux", 7, nil, 0, "/usr/local/bin/agentry-runner", "/tmp")
@@ -197,7 +197,7 @@ func TestScratchWritesNeverFollowALinkOut(t *testing.T) {
 
 // TestAFullScratchFolderIsNoFault: a write past the folder's cap is the
 // agent's own doing and never counts as a fault of the run's channel in
-// the calls ledger (DR-72's lesson); another I/O error still does.
+// the calls ledger; another I/O error still does.
 func TestAFullScratchFolderIsNoFault(t *testing.T) {
 	s := newTestServer(t, scratchSpec(t))
 	if got, _ := s.scratchFailed(&os.PathError{Op: "write", Path: "x", Err: syscall.ENOSPC}); s.callFault || !strings.Contains(got, "the scratch folder is full") {

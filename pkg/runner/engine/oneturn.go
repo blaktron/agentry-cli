@@ -1,13 +1,13 @@
 package engine
 
 // An autonomous run driven as one turn of its harness's session protocol
-// (spec.HarnessSpec.OneTurn; agentry-cli#739): the codex adapters on a
-// ChatGPT plan run app-server for both modes, because OpenAI's plan usage
-// serves app-server's requests (its originator is the app's name) and not
-// exec's. The engine opens the session over the harness's stdio, sends the
-// task as its one user turn and ends the session; the driver's events go
-// through the same collector as a stdout stream's, so the budgets, the
-// result, the plan's limit and the receipts are the autonomous run's.
+// (spec.HarnessSpec.OneTurn): the codex adapters on a ChatGPT plan run
+// app-server for both modes, because OpenAI's plan usage serves
+// app-server's requests (its originator is the app's name) and not exec's.
+// The engine opens the session over the harness's stdio, sends the task as
+// its one user turn and ends the session; the driver's events go through
+// the same collector as a stdout stream's, so the budgets, the result, the
+// plan's limit and the receipts are the autonomous run's.
 
 import (
 	"context"

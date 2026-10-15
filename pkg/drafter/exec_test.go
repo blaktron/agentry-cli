@@ -25,10 +25,10 @@ func execManifest(exec string, files bool) json.RawMessage {
 		`"capabilities": {"exec": ` + exec + `}}`)
 }
 
-// TestExecProblems is the Drafter's rule on exec (agentry-cli#595): only
-// the commands every machine provides, and never an archive reader, since
-// the runner unpacks every archive before the run (agentry-cli#634, DR-64
-// amended), whether or not the QuickAgent takes input files.
+// TestExecProblems is the Drafter's rule on exec: only the commands every
+// machine provides, and never an archive reader, since the runner unpacks
+// every archive before the run, whether or not the QuickAgent takes input
+// files.
 func TestExecProblems(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -44,8 +44,8 @@ func TestExecProblems(t *testing.T) {
 		{"tar without input files", execManifest(`{"commands": ["tar", "grep"]}`, false), []string{"capabilities.exec: tar: reads archives"}},
 		{"the operator's case", execManifest(`{"commands": ["tar", "trivy", "curl"]}`, true), []string{"capabilities.exec: trivy, curl: not a command every machine provides", "capabilities.exec: tar: reads archives"}},
 		{"both", execManifest(`{"commands": ["sh", "unzip"]}`, false), []string{"capabilities.exec: sh: not a command", "capabilities.exec: unzip: reads archives"}},
-		// An SSH client points at a target host (agentry-cli#864), apart
-		// from the other commands no machine provides, whatever its path.
+		// An SSH client points at a target host, apart from the other
+		// commands no machine provides, whatever its path.
 		{"ssh", execManifest(`{"commands": ["ssh"]}`, false), []string{"capabilities.exec: ssh: makes its own SSH session, which reaches no machine from a run; for a machine the person names, ask for it with an intake question of type host, list its id in capabilities.targetHosts"}},
 		{"ssh clients and others", execManifest(`{"commands": ["grep", "/usr/bin/scp", "rsync", "curl", "tar"]}`, false), []string{"capabilities.exec: /usr/bin/scp, rsync: makes its own SSH session", "capabilities.exec: curl: not a command every machine provides", "capabilities.exec: tar: reads archives"}},
 	} {
@@ -68,9 +68,8 @@ func TestExecProblems(t *testing.T) {
 }
 
 // TestTheGuideListsTheBaseCommands: the Drafter is told exactly the
-// commands a run provides, by its guide's page on commands since the list
-// moved there (agentry-cli#659), so the list it reads and the runner's
-// cannot drift apart.
+// commands a run provides, by its guide's page on commands, so the list it
+// reads and the runner's cannot drift apart.
 func TestTheGuideListsTheBaseCommands(t *testing.T) {
 	b := heldText(t, "manifest/exec.md")
 	m := regexp.MustCompile(`which every run provides \(a run refuses any other\):(.*?)\. No shell`).FindStringSubmatch(b)
@@ -84,7 +83,6 @@ func TestTheGuideListsTheBaseCommands(t *testing.T) {
 	if want := policy.BaseExecCommands(); !slices.Equal(listed, want) {
 		t.Fatalf("manifest/exec.md lists %v,\nthe runner provides %v", listed, want)
 	}
-	// The rule on reading inputs moved with the list (agentry-cli#634).
 	mustSay(t, map[string][]string{"manifest/exec.md": {"Commands are for computation the tools cannot do, never for reading the person's files.", "never declares `tar`, `unzip`", "Only beneath `/tmp`"}})
 }
 

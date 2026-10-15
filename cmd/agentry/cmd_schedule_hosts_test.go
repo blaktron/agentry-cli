@@ -92,10 +92,9 @@ func seedHostLinkImage(t *testing.T, f *dockerx.Fake, policyPath string) {
 	f.ImageFiles[s.Tag+":"+targethost.HostlinkPackagesFile] = "openssh-client-default-10.0_p2-r0\n"
 }
 
-// TestScheduleAddReadiesItsTargetHost is plan runtime-hosts.md D12
-// (agentry-cli#863): a schedule's target host is readied when it is made,
-// with the person here, its sign-in kept in the keychain (Keep); the
-// schedule keeps the answer, the keychain account and the key's
+// TestScheduleAddReadiesItsTargetHost: a schedule's target host is readied when
+// it is made, with the person here, its sign-in kept in the keychain (Keep);
+// the schedule keeps the answer, the keychain account and the key's
 // fingerprint, never a credential; and every fire passes the pin.
 func TestScheduleAddReadiesItsTargetHost(t *testing.T) {
 	h := newSignedOutHarness(t)
@@ -161,9 +160,9 @@ func TestScheduleAddRefusesATargetHostItCannotReady(t *testing.T) {
 	}
 }
 
-// TestHostGaps: a made schedule its host was not readied for (one from
-// before agentry-cli#863) says to make it again; a check (not made) is
-// not told; a saved sign-in is no gap.
+// TestHostGaps: a made schedule whose host was not readied (one from an
+// older version) says to make it again; a check (not made) is not told; a
+// saved sign-in is no gap.
 func TestHostGaps(t *testing.T) {
 	saved := func(targethost.Answer) (bool, error) { return true, nil }
 	sc := schedule.Schedule{ID: "abcdefghij", Run: schedule.RunSpec{Intake: []string{"server=admin@box"}}}
@@ -181,9 +180,9 @@ func TestHostGaps(t *testing.T) {
 	}
 }
 
-// TestASignedOutScheduleSealsItsHostSignIn (agentry-cli#863): a schedule
-// that runs while its person is signed out seals each target host's saved
-// sign-in, as required: its runs have no other.
+// TestASignedOutScheduleSealsItsHostSignIn: a schedule that runs while
+// its person is signed out seals each target host's saved sign-in, as
+// required: its runs have no other.
 func TestASignedOutScheduleSealsItsHostSignIn(t *testing.T) {
 	h := newSignedOutHarness(t)
 	account := targethost.Answer{User: "admin", Host: "box", Port: 22}.Account()
@@ -217,7 +216,7 @@ func TestASignedOutScheduleSealsItsHostSignIn(t *testing.T) {
 	}
 }
 
-// TestARunTakesTheSchedulesPin (agentry-cli#863): `agentry run
+// TestARunTakesTheSchedulesPin: `agentry run
 // --host-key-pin id=SHA256:…`, which a fire passes, reaches the host's
 // readying as its pin, and a run that is no schedule's keeps nothing in
 // the keychain; a pin for no target host, or not a fingerprint, is a

@@ -1,8 +1,8 @@
 // Command hostclient stands in for the agent in the target-host live test
-// (targethosts_live_test.go, agentry-cli#861): in the agent container's
-// place, on its network and with its gateway token, it calls the gateway's
-// tools as an agent would, tries the target host's own address directly
-// (which must fail: the agent has no route out), and prints what it got as
+// (targethosts_live_test.go): in the agent container's place, on its
+// network and with its gateway token, it calls the gateway's tools as an
+// agent would, tries the target host's own address directly (which must
+// fail: the agent has no route out), and prints what it got as
 // docker-agent's events, the last one the answer the test reads.
 package main
 

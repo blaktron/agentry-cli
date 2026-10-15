@@ -56,7 +56,7 @@ func TestAModelSignInNeedsNoKeyVariable(t *testing.T) {
 	}
 }
 
-// A cost budget is refused beside a model sign-in, in either block (D13).
+// A cost budget is refused beside a model sign-in, in either block.
 func TestACostBudgetIsRefusedBesideAModelSignIn(t *testing.T) {
 	p := Default()
 	p.Model.Provider, p.Model.APIKeyKind = ProviderOpenAI, KeyKindChatGPTPlan
@@ -136,10 +136,10 @@ func TestTheDefaultHarnessImageIsPinnedByDigest(t *testing.T) {
 	}
 }
 
-// Claude Code's image is built on the machine, never pulled (plan D22): its
+// Claude Code's image is built on the machine, never pulled: its
 // default is a local name pinned by the npm integrity of the release it is
 // built from, and a Claude run reaches Anthropic's API and the host Claude
-// Code refreshes its own sign-in at, nothing else (I2).
+// Code refreshes its own sign-in at, nothing else.
 func TestClaudeCodesImageIsPinnedByItsNpmIntegrity(t *testing.T) {
 	h, ok := Default().Images.HarnessImageFor("claude-image")
 	if by, val := h.Pin(); !ok || by != PinArtifact || !strings.HasPrefix(val, "sha512-") || namesRegistry(h.Ref) {
@@ -153,8 +153,8 @@ func TestClaudeCodesImageIsPinnedByItsNpmIntegrity(t *testing.T) {
 	}
 }
 
-// harness.<name>.signInTokenRoute is auth-command or restart, nothing else
-// (plan model-sign-ins.md D10); unset is the auth command.
+// harness.<name>.signInTokenRoute is auth-command or restart, nothing else;
+// unset is the auth command.
 func TestASignInTokenRouteIsOneOfTwo(t *testing.T) {
 	for route, ok := range map[string]bool{"": true, TokenRouteAuthCommand: true, TokenRouteRestart: true, "env": false, "Restart": false} {
 		p := Default()

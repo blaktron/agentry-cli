@@ -14,16 +14,16 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// Container hardening (agentry-cli#163, DR-30). Every container the
-// engine starts for a run drops every capability, cannot gain privileges
-// through a setuid binary, and is bounded in memory, CPUs and processes by
-// the policy's docker.limits. The proxy and the probe are the runner's own
-// binary and write nothing, so their root is read-only; the agent's is
-// read-only when its adapter says where the harness writes instead. The
-// gateway keeps a writable root: it is a vendor image, and what it writes
-// is its own business. The tool and server containers the gateway launches
-// are not ours to shape: it gives them no-new-privileges itself, and the
-// limits pass through its --cpus and --memory flags.
+// Container hardening. Every container the engine starts for a run drops
+// every capability, cannot gain privileges through a setuid binary, and is
+// bounded in memory, CPUs and processes by the policy's docker.limits. The
+// proxy and the probe are the runner's own binary and write nothing, so
+// their root is read-only; the agent's is read-only when its adapter says
+// where the harness writes instead. The gateway keeps a writable root: it
+// is a vendor image, and what it writes is its own business. The tool and
+// server containers the gateway launches are not ours to shape: it gives
+// them no-new-privileges itself, and the limits pass through its --cpus
+// and --memory flags.
 
 // limits is the run's per-container bounds, defaults filled in.
 func (p Params) limits() policy.Limits {
@@ -75,10 +75,9 @@ func enforcedAtStart(p Params) map[string]string {
 }
 
 // launchedLine is the containers line's part for the tool and MCP server
-// containers the gateway launches. Where the run's docker filter runs it
-// sets their capabilities (agentry-cli#227, DR-95: sockfilter's
-// capabilities); without it (a platform the filter does not run on) they keep
-// what the gateway leaves them.
+// containers the gateway launches. Where the run's docker filter runs it sets
+// their capabilities (sockfilter's capabilities); without it (a platform
+// the filter does not run on) they keep what the gateway leaves them.
 func launchedLine(filtered bool) string {
 	if !filtered {
 		return "; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, their capabilities and root as it leaves them"
@@ -126,7 +125,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if p.Plan.HostLink != nil {
 		// The host link is one of the gateway's containers (below); it
 		// runs as the person's uid, its sign-ins read-only, and reaches
-		// nothing but its relays (agentry-cli#861).
+		// nothing but its relays.
 		hostLink = "; the host link (" + p.Plan.HostLink.Image + ") is one of those the gateway launches, run as the invoking user with no network but one relay a target host"
 	}
 	line := strings.Join(containers, ", ") +
@@ -139,7 +138,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	browserLine := ""
 	if p.Plan.Browser != nil {
 		// The browser server is one of the gateway's containers, held by
-		// the docker filter to its class (agentry-cli#915).
+		// the docker filter to its class.
 		seccomp := "with the seccomp profile that lets Chromium's own sandbox run (moby's default plus clone, unshare, setns and chroot)"
 		if p.Plan.Runtime() != "" {
 			seccomp = "under " + p.Plan.Runtime() + " with Docker's default seccomp profile"
@@ -155,34 +154,33 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 }
 
 // proxySandboxed says whether the run's llm-proxy runs under the plan's
-// runtime (agentry-cli#337): only with the host's name servers to read, and
-// never for a host-run harness, whose proxy publishes ports to the host.
+// runtime: only with the host's name servers to read, and never for a
+// host-run harness, whose proxy publishes ports to the host.
 func proxySandboxed(plan *spec.Plan) bool {
 	return len(plan.SandboxResolvers()) > 0 && plan.Harness.Host == nil
 }
 
-// relaysSandboxed says whether the run's relays run under its runtime
-// (agentry-cli#337): the docker filter gives it to them, with the run's
-// resolv.conf, where it runs and the host's name servers are named.
+// relaysSandboxed says whether the run's relays run under its runtime:
+// the docker filter gives it to them, with the run's resolv.conf, where
+// it runs and the host's name servers are named.
 func relaysSandboxed(plan *spec.Plan) bool {
 	return filterSupported && relaysNeeded(plan) && len(plan.SandboxResolvers()) > 0
 }
 
 // gatewaySandboxed says whether the gateway runs under
-// docker.gatewayRuntime (agentry-cli#337): only through the docker filter,
-// whose socket is the one the registration's --host-uds=open opens. Where
-// the filter does not run the gateway holds the daemon's own socket, and
-// no sandbox is claimed for it.
+// docker.gatewayRuntime: only through the docker filter, whose socket is
+// the one the registration's --host-uds=open opens. Where the filter does
+// not run the gateway holds the daemon's own socket, and no sandbox is
+// claimed for it.
 func gatewaySandboxed(plan *spec.Plan) bool {
 	return filterSupported && plan.GatewayRuntime() != ""
 }
 
-// runtimeLine is the receipt's account of the policy's runtime (DR-23,
-// agentry-cli#221): which of the run's container classes it holds, and why
-// each other one takes the daemon's default. It is written at run time,
-// not read from the plan, because two of its facts are the run's: whether
-// the filter that gives the gateway's containers the runtime runs here,
-// and what the run starts.
+// runtimeLine is the receipt's account of the policy's runtime: which of
+// the run's container classes it holds, and why each other one takes the
+// daemon's default. It is written at run time, not read from the plan,
+// because two of its facts are the run's: whether the filter that gives
+// the gateway's containers the runtime runs here, and what the run starts.
 func runtimeLine(p Params) string {
 	rt := p.Plan.Runtime()
 	servers := spec.HasPackageServers(p.Plan.MCPServers)
@@ -214,8 +212,8 @@ func runtimeLine(p Params) string {
 		line += "; " + launched + ", which the gateway launches, " + is + " given " + rt + " by the run's docker filter" +
 			" (a server's relay links pinned into its /etc/hosts at the relay's address)"
 		if rs := p.Plan.WebResolvers(); len(rs) > 0 {
-			// The web tools' server reaches past the host by name
-			// (agentry-cli#386): it resolves through the host's servers.
+			// The web tools' server reaches past the host by name: it
+			// resolves through the host's servers.
 			line += "; the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own"
 		}
 	} else {
@@ -225,7 +223,7 @@ func runtimeLine(p Params) string {
 		line += "; the harness is a host process, under no container runtime at all"
 	}
 	// The classes that resolve host names read the host's own name servers
-	// under the runtime (agentry-cli#337).
+	// under the runtime.
 	var named []string
 	if proxySandboxed(p.Plan) {
 		named = append(named, "the llm-proxy")
@@ -237,7 +235,7 @@ func runtimeLine(p Params) string {
 		named = append(named, "the relays (which the filter gives "+rt+")")
 	}
 	if len(named) > 0 {
-		// One class takes the singular, several an "each" (agentry-cli#397).
+		// One class takes the singular, several an "each".
 		verb, each := " resolve", "each "
 		if len(named) == 1 {
 			verb, each = " resolves", ""
@@ -274,14 +272,14 @@ func runtimeLine(p Params) string {
 		gaps = append(gaps, "the gateway (it reaches the daemon through a host Unix socket, which "+rt+" does not open; docker.gatewayRuntime names no registration with --host-uds=open)")
 	}
 	if p.Plan.Browser != nil {
-		// Started by the engine, not the gateway, for every browser run
-		// (DR-96): it resolves the browser's names itself.
+		// Started by the engine, not the gateway, for every browser
+		// run: it resolves the browser's names itself.
 		gaps = append(gaps, "the browse proxy (it resolves every name the browser asks for through docker's embedded DNS, which "+rt+" does not reach; it holds no secret and runs none of the run's code)")
 	}
 	if len(gaps) == 0 {
 		return line + "; no container class of the run is on the daemon's default runtime"
 	}
-	return line + "; on the daemon's default runtime, as measured under " + rt + " (DR-23): " + strings.Join(gaps, ", ")
+	return line + "; on the daemon's default runtime, as measured under " + rt + ": " + strings.Join(gaps, ", ")
 }
 
 // joinAnd lists items for a sentence: "a", "a and b", "a, b and c".

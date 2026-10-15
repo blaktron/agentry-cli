@@ -20,20 +20,19 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// The repair turn's caps (plan builder-simplify.md §5.2 step 3): at most
-// eight tool calls and, for a draft with a timeout, five minutes. A draft
-// without a timeout gives the repair turn none either (DR-54 addendum).
-// It also gets no more than the draft's remaining budgets (repairBudgets).
+// The repair turn's caps: at most eight tool calls and, for a draft with a
+// timeout, five minutes. A draft without a timeout gives the repair turn
+// none either. It also gets no more than the draft's remaining budgets
+// (repairBudgets).
 const (
 	RepairTimeoutSeconds = 300
 	RepairMaxTurns       = 8
 )
 
 // PostStep is the post-step over the Drafter's first answer, after
-// Prescan and the first turn (plan builder-rework.md §7.5;
-// builder-simplify.md §5.2, D6; agentry-cli#478): the answer finished with
-// AI Review's record and its mechanical slips corrected (Finish), rendered
-// into OutDir/package and checked by `agentry validate`'s own code
+// Prescan and the first turn: the answer finished with AI Review's record
+// and its mechanical slips corrected (Finish), rendered into
+// OutDir/package and checked by `agentry validate`'s own code
 // (pkg/validate), AI Review's check of the finished package, one repair
 // turn for a draft the rules refuse or the check flagged as not doing the
 // task, and the second answer checked again. `agentry draft` and the
@@ -73,9 +72,8 @@ type PostStep struct {
 	// turn is given none.
 	Knowledge *KnowledgeRead
 	// Revision is the release a revision was drafted from and the person's
-	// two texts (agentry-cli#526): the draft records it in Revises and
-	// keeps its name, the first answer and the repair turn's alike. Nil for
-	// a new QuickAgent.
+	// two texts: the draft records it in Revises and keeps its name, the
+	// first answer and the repair turn's alike. Nil for a new QuickAgent.
 	Revision *Revision
 	// OnUsage is the live usage reporter the first turn had; the repair
 	// turn's lines count on from the first turn's total, so a host's caps
@@ -107,7 +105,7 @@ type RepairTurn struct {
 // CheckerFor is the check of the finished draft for a run's web
 // configuration: the registry's route with the job's credential for a
 // hosted draft, the core's pkg/draftcheck with the person's own Jev key on
-// this computer (DEV-150: inside the draft's one AI Review use).
+// this computer (inside the draft's one AI Review use).
 func CheckerFor(w *engine.WebRun) (Checker, error) {
 	if w.Scan == toolsrv.WebScanRegistry {
 		return &RegistryChecker{Base: w.Registry, JobToken: w.JobToken}, nil
@@ -219,15 +217,15 @@ func (p PostStep) renderAndValidate(d *Draft) (string, json.RawMessage) {
 	return "", b
 }
 
-// repair is the post-step's third step (§5.2 step 3): a draft the rules
-// still refuse gets one more turn of the Drafter, without its web tools,
-// whose task is the rules' report on it and the draft itself (RepairTask),
-// and nothing else. The second answer is corrected and checked like the
-// first and kept whether or not it passes; a turn that returns no draft
-// leaves the first, with its problems and a note saying why. The envelope
-// that comes back carries both turns' usage, and the live usage lines the
-// repair turn narrates count from the first turn's total, so a sandbox
-// host meters the draft as a whole.
+// repair is the post-step's third step: a draft the rules still refuse
+// gets one more turn of the Drafter, without its web tools, whose task is
+// the rules' report on it and the draft itself (RepairTask), and nothing
+// else. The second answer is corrected and checked like the first and kept
+// whether or not it passes; a turn that returns no draft leaves the first,
+// with its problems and a note saying why. The envelope that comes back
+// carries both turns' usage, and the live usage lines the repair turn
+// narrates count from the first turn's total, so a sandbox host meters the
+// draft as a whole.
 //
 // r says what sent the draft to it: the rules' report, AI Review's check
 // flagging it off_task, or both; with a flag the turn is
@@ -297,22 +295,20 @@ func (p PostStep) repair(ctx context.Context, d *Draft, env *receipt.Envelope, r
 	return rd, &total
 }
 
-// repairAndCheck is the post-step's last two steps (plan builder-simplify.md
-// §5.2 steps 3 and 4, D6; agentry-cli#417, #418). AI Review checks the
-// rendered package (the release rubric as S5 will ask it at publish, and
-// the draft question set against the person's description), and the
-// verdicts go into draft.json under aiReview.check. A draft the rules
-// refuse, or one the check flagged as not doing the task
-// (Check.Repairable: off_task alone; the release rubric's findings are
-// recorded as advisory and never repaired, quickagents-that-run.md D6), is
+// repairAndCheck is the post-step's last two steps. AI Review checks the
+// rendered package (the release rubric as S5 will ask it at publish, and the
+// draft question set against the person's description), and the verdicts go
+// into draft.json under aiReview.check. A draft the rules refuse, or one the
+// check flagged as not doing the task (Check.Repairable: off_task alone; the
+// release rubric's findings are recorded as advisory and never repaired), is
 // given its one repair turn with the rules' report and what the check
-// flagged, and the second answer is checked again. So a draft asks at most two checks, the
-// runs extension's cap for a hosted one (agentry-enterprise#265), and none
-// is ever retried: the registry counts a check as it admits it. A second
-// answer that breaks rules the first passed, or drops a declared
-// capability the report did not name, is not kept (keepFirst). A draft that
-// could not be rendered is not checked; repairSpent is a draft whose turn
-// was spent before (an answer that was not a draft).
+// flagged, and the second answer is checked again. So a draft asks at most
+// two checks, the runs extension's cap for a hosted one, and none is ever
+// retried: the registry counts a check as it admits it. A second answer that
+// breaks rules the first passed, or drops a declared capability the report
+// did not name, is not kept (keepFirst). A draft that could not be rendered
+// is not checked; repairSpent is a draft whose turn was spent before (an
+// answer that was not a draft).
 func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Envelope, repairSpent bool) (*Draft, *receipt.Envelope) {
 	var checkerErr error
 	switch {
@@ -393,14 +389,14 @@ func (p PostStep) repairAndCheck(ctx context.Context, d *Draft, env *receipt.Env
 // what sent the first to the repair turn. First, dropped is what the second
 // no longer declares of the first's MCP servers, egress hosts, commands and
 // secrets and r does not name (droppedUnnamed): the task needs them, and a
-// repair never clears a report by stripping them (agentry-cli#633), even
-// when the second answer passes rules the first broke. Otherwise broke says
-// the second broke a rule its first passed: validate's, which the registry
-// enforces, or else the Drafter's cap on the instructions, which keeps them
-// within what AI Review's check reads, or its rule on exec, which keeps them
-// to what a run provides, or its rule on PDFs, which keeps a PDF to
-// export_pdf, or its rule on declared servers' runtimes (checkServers). A second answer that keeps what the first declared and
-// mends what it broke is kept whatever else it does.
+// repair never clears a report by stripping them, even when the second answer
+// passes rules the first broke. Otherwise broke says the second broke a rule
+// its first passed: validate's, which the registry enforces, or else the
+// Drafter's cap on the instructions, which keeps them within what AI Review's
+// check reads, or its rule on exec, which keeps them to what a run provides,
+// or its rule on PDFs, which keeps a PDF to export_pdf, or its rule on
+// declared servers' runtimes (checkServers). A second answer that keeps what
+// the first declared and mends what it broke is kept whatever else it does.
 func keepFirst(first, second *Draft, r RepairReport) (broke bool, dropped []string) {
 	if dropped = droppedUnnamed(first, second, r); len(dropped) > 0 {
 		return false, dropped

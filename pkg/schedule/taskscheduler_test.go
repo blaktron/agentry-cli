@@ -22,7 +22,7 @@ func windowsEntry() Entry {
 const testSID = "S-1-5-21-1111111111-2222222222-3333333333-1001"
 
 // Golden: the task holds the binary, the schedule id, paths, the person's
-// SID and the calendar, and nothing else (invariant 7).
+// SID and the calendar, and nothing else.
 func TestTaskXMLGolden(t *testing.T) {
 	sc := sample(t)
 	sc.ID = "abcdefghij"

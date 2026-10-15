@@ -1,9 +1,9 @@
 // Engine lifecycle tests against the fake docker client: ordering, env
 // and mount resolution, budget enforcement, failure classification, and
-// the §R11 invariants (teardown on every path, secrets scoping, agent
+// the invariants (teardown on every path, secrets scoping, agent
 // container topology). These run a REAL compiled plan — compile + engine
 // together — so drift between the two layers fails here, not on a docker
-// host (RUNNER-DEVIATIONS DR-7).
+// host.
 package engine
 
 import (
@@ -134,9 +134,9 @@ func happyFake(f *dockerx.Fake) {
 	f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "gateway said hi\n"}
 }
 
-// probeListing plays the gateway probe: healthy, and with --list-tools
-// (a session's, agentry-cli#578) it reports tools as the gateway's
-// catalog beyond the run's own grant, the way the runner's probe prints it.
+// probeListing plays the gateway probe: healthy, and with --list-tools (a
+// session's) it reports tools as the gateway's catalog beyond the run's own
+// grant, the way the runner's probe prints it.
 func probeListing(tools ...string) func(context.Context, dockerx.RunSpec, io.Reader, io.Writer, io.Writer) (int, error) {
 	return func(_ context.Context, r dockerx.RunSpec, _ io.Reader, stdout, _ io.Writer) (int, error) {
 		if slices.Contains(r.Argv, "--list-tools") {
@@ -167,11 +167,10 @@ func TestRunHappyPath(t *testing.T) {
 		t.Error("envelope lacks plan hash")
 	}
 
-	// Execute order (§R6): network → proxy (+bridge) → gateway → probe →
+	// Execute order: network → proxy (+bridge) → gateway → probe →
 	// agent; teardown afterwards in reverse. The gateway never joins the
 	// bridge: the MCP servers it launches inherit its networks, and a
-	// user-defined network beside the bridge is a mix docker refuses
-	// (agentry-cli#105).
+	// user-defined network beside the bridge is a mix docker refuses.
 	ops := f.Ops()
 	var idx = map[string]int{}
 	for i, op := range ops {
@@ -201,8 +200,8 @@ func TestRunHappyPath(t *testing.T) {
 		last = at
 	}
 
-	// §R11 invariant 2: the agent container joins only the internal run
-	// network, mounts only /plan, and never sees the docker socket.
+	// Topology: the agent container joins only the internal run network,
+	// mounts only /plan, and never sees the docker socket.
 	agent, ok := f.FindRun("-agent")
 	if !ok {
 		t.Fatal("agent run not recorded")
@@ -242,8 +241,8 @@ func TestRunHappyPath(t *testing.T) {
 		t.Errorf("HTTPS_PROXY = %q", got)
 	}
 
-	// §R11 invariant 3: the manifest secret's VALUE appears in no docker
-	// argv or env — it lives only in secrets.env (deleted by teardown).
+	// Secret scoping: the manifest secret's VALUE appears in no docker argv
+	// or env — it lives only in secrets.env (deleted by teardown).
 	for _, c := range f.Calls {
 		for k, v := range c.Run.Env {
 			if strings.Contains(v, "sekret-value-1234") && k != "ENGINE_TEST_TOKEN" {
@@ -269,9 +268,9 @@ func TestRunHappyPath(t *testing.T) {
 		t.Errorf("bind allowlist unresolved: %q", gw.Env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"])
 	}
 	// The gateway's daemon socket is the run's filter, never the daemon's
-	// own (agentry-cli#219), and the receipt says so. Where the filter
-	// does not run (off Linux, agentry-cli#322) the gateway holds the
-	// daemon's own socket, and the receipt says that instead.
+	// own, and the receipt says so. Where the filter does not run (off
+	// Linux) the gateway holds the daemon's own socket, and the receipt
+	// says that instead.
 	var sockMounts int
 	for _, m := range gw.Mounts {
 		if m.Target != DockerSocket {
@@ -304,7 +303,7 @@ func TestRunHappyPath(t *testing.T) {
 		t.Errorf("agent stdin = %q", got)
 	}
 
-	// §R11 invariant 6: run dir gone, secrets.env gone; receipts remain.
+	// Teardown: run dir gone, secrets.env gone; receipts remain.
 	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000")); !os.IsNotExist(err) {
 		t.Error("run dir survived teardown")
 	}
@@ -313,7 +312,7 @@ func TestRunHappyPath(t *testing.T) {
 			t.Errorf("output folder missing %s: %v", rel, err)
 		}
 	}
-	// §R11 invariant 7: no receipt file carries the token or secret.
+	// Redaction: no receipt file carries the token or secret.
 	filepath.Walk(p.OutDir, func(path string, info os.FileInfo, err error) error { //nolint:errcheck
 		if err != nil || info.IsDir() {
 			return err
@@ -341,7 +340,7 @@ func TestRunKeepRunDirStillDeletesSecrets(t *testing.T) {
 		t.Fatal("secrets.env survived --keep-run-dir")
 	}
 	// Rendered catalog must carry real paths, spelled as the gateway reads
-	// them (on Windows /c/…, agentry-cli#414).
+	// them (on Windows /c/…).
 	b, err := os.ReadFile(filepath.Join(runDir, "cfg", "gateway", "catalog.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -354,9 +353,9 @@ func TestRunKeepRunDirStillDeletesSecrets(t *testing.T) {
 	}
 }
 
-// TestInputsStagedIntoRun pins RUNNER-PLAN-2 §P4: --file items land under
-// runs/<id>/inputs, basename-rooted, and the rendered plan carries no
-// unresolved inputs placeholder.
+// TestInputsStagedIntoRun pins: --file items land under runs/<id>/inputs,
+// basename-rooted, and the rendered plan carries no unresolved inputs
+// placeholder.
 func TestInputsStagedIntoRun(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -407,8 +406,8 @@ func TestInputsDuplicateBasenameRefused(t *testing.T) {
 	}
 }
 
-// TestSecretOverridesBeatEnvironment pins the P2 §P2 resolution order: the
-// MCP profile's value (SecretOverrides) satisfies a secret the environment
+// TestSecretOverridesBeatEnvironment pins the resolution order: the MCP
+// profile's value (SecretOverrides) satisfies a secret the environment
 // does not have.
 func TestSecretOverridesBeatEnvironment(t *testing.T) {
 	p, f := fixture(t)
@@ -422,8 +421,8 @@ func TestSecretOverridesBeatEnvironment(t *testing.T) {
 	if env.Status != "ok" {
 		t.Fatalf("status = %s", env.Status)
 	}
-	// The override value must obey invariant 3 exactly like env-sourced
-	// values: never in any container env or argv.
+	// The override value is held to the same rule as env-sourced values:
+	// never in any container env or argv.
 	for _, c := range f.Calls {
 		for k, v := range c.Run.Env {
 			if strings.Contains(v, "from-profile") {
@@ -474,8 +473,7 @@ func TestGatewayProbeFailureClassifiedAndTornDown(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != ExitGateway {
 		t.Fatalf("want exit %d, got %v", ExitGateway, err)
 	}
-	// The step it stopped in, for a driver that keeps no error text
-	// (agentry-cli#332).
+	// The step it stopped in, for a driver that keeps no error text.
 	if env == nil || env.Stage != receipt.StageInfra {
 		t.Errorf("stage = %v, want %q", env, receipt.StageInfra)
 	}
@@ -492,7 +490,7 @@ func TestGatewayProbeFailureClassifiedAndTornDown(t *testing.T) {
 }
 
 // A run that fails preparing itself, before any container, names that
-// step (agentry-cli#332).
+// step.
 func TestAFailureBeforeTheContainersIsStagePrepare(t *testing.T) {
 	p, f := fixture(t)
 	p.Task = iotest.ErrReader(errors.New("the task file vanished"))
@@ -631,8 +629,8 @@ func TestJSONResultKindEnforced(t *testing.T) {
 			t.Fatalf("want exit %d, got %v", ExitOutputSchema, err)
 		}
 	})
-	// DR-8 closed (agentry-cli#11): valid JSON that violates the schema is
-	// exit 17 too, with the violation named.
+	// A schema violation: valid JSON that violates the schema is exit 17
+	// too, with the violation named.
 	t.Run("schema violation is exit 17", func(t *testing.T) {
 		line, _ := json.Marshal(map[string]any{"type": "agent_choice", "message": map[string]any{"content": `{"answer":"forty-two"}`}})
 		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
@@ -647,10 +645,10 @@ func TestJSONResultKindEnforced(t *testing.T) {
 			t.Fatalf("want exit %d naming the violation, got %v", ExitOutputSchema, err)
 		}
 	})
-	// agentry-cli#825: the shape of production run 01a1266a (docker-agent
-	// 1.128.0, qwen3.8-flash-next): every tool ran, then the model streamed
-	// its whole answer as reasoning and sent no message. The run is still
-	// refused, and the reason says where the answer went.
+	// The shape of a real run (docker-agent 1.128.0, qwen3.8-flash-next):
+	// every tool ran, then the model streamed its whole answer as
+	// reasoning and sent no message. The run is still refused, and the
+	// reason says where the answer went.
 	t.Run("an answer only in reasoning is exit 17 with its reason", func(t *testing.T) {
 		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
 			"-probe": {ExitCode: 0},
@@ -769,11 +767,11 @@ func mustManifest(t *testing.T) *manifest.Manifest {
 	return m
 }
 
-// TestDeclaredServerThatDidNotStartFailsTheRun (agentry-cli#105): the
-// gateway logs "Can't start <server>" and carries on without it; the
-// engine must not — a run without a declared server is not the run the
-// contract described, so it is the gateway/environment failure class,
-// with the gateway's own line in the error and no agent container run.
+// TestDeclaredServerThatDidNotStartFailsTheRun: the gateway logs "Can't
+// start <server>" and carries on without it; the engine must not — a
+// run without a declared server is not the run the contract described,
+// so it is the gateway/environment failure class, with the gateway's
+// own line in the error and no agent container run.
 func TestDeclaredServerThatDidNotStartFailsTheRun(t *testing.T) {
 	p, f := serverFixture(t)
 	happyFake(f)
@@ -810,10 +808,10 @@ func TestDeclaredServerStartedRunsTheAgent(t *testing.T) {
 	}
 }
 
-// TestReceiptNamesResolvedExecPackages (agentry-cli#100): the resolved
-// versions the exec image build recorded are appended to the receipt's
-// exec line, after the compiled text, so the receipt names the packages
-// as installed; a run with none appends nothing.
+// TestReceiptNamesResolvedExecPackages: the resolved versions the exec
+// image build recorded are appended to the receipt's exec line, after
+// the compiled text, so the receipt names the packages as installed; a
+// run with none appends nothing.
 func TestReceiptNamesResolvedExecPackages(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -843,11 +841,11 @@ func TestReceiptNamesResolvedExecPackages(t *testing.T) {
 	}
 }
 
-// TestRunInterruptedTearsDownAndWritesEnvelope (agentry-cli#124): a
-// cancelled context — main's SIGINT — ends the agent, runs the teardown
-// on the way out, and writes result.json with status error and the word
-// "interrupted" under the cli class, so an interrupted run leaves its
-// receipts where a process killed by the signal left nothing.
+// TestRunInterruptedTearsDownAndWritesEnvelope: a cancelled context —
+// main's SIGINT — ends the agent, runs the teardown on the way out, and
+// writes result.json with status error and the word "interrupted" under
+// the cli class, so an interrupted run leaves its receipts where a
+// process killed by the signal left nothing.
 func TestRunInterruptedTearsDownAndWritesEnvelope(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -882,12 +880,12 @@ func TestRunInterruptedTearsDownAndWritesEnvelope(t *testing.T) {
 	}
 }
 
-// TestReceiptsRedactSecretsFromLogs (agentry-cli#109): a declared server
-// that prints its environment, an agent whose stderr echoes a credential
-// and a gateway line that quotes one all leave their values out of the
-// receipts — gateway.log, proxy.log, agent-stderr.log, result.json and the
-// run's error — while a receipt that carries none is written byte for
-// byte as the container produced it.
+// TestReceiptsRedactSecretsFromLogs: a declared server that prints its
+// environment, an agent whose stderr echoes a credential and a gateway
+// line that quotes one all leave their values out of the receipts —
+// gateway.log, proxy.log, agent-stderr.log, result.json and the run's
+// error — while a receipt that carries none is written byte for byte as
+// the container produced it.
 func TestReceiptsRedactSecretsFromLogs(t *testing.T) {
 	const secret, apiKey, serverSecret = "sekret-value-1234", "sk-test-key", "server-sekret-5678"
 	t.Run("start failure quotes the server's output masked", func(t *testing.T) {
@@ -975,17 +973,17 @@ func assertReceiptsRedact(t *testing.T, p Params, f *dockerx.Fake) {
 	}
 }
 
-// A policy runtime reaches every container class that holds under it
-// (DR-23, agentry-cli#221): the agent — the stranger's code — and the
-// gateway's health probe, each with the run network's aliases pinned; the
-// runner's own proxy and gateway stay on the daemon's default, and the
-// receipt names each class and why; without one, no container is asked
-// for a runtime and the receipt says nothing.
+// A policy runtime reaches every container class that holds under it: the
+// agent — the stranger's code — and the gateway's health probe, each with
+// the run network's aliases pinned; the runner's own proxy and gateway
+// stay on the daemon's default, and the receipt names each class and why;
+// without one, no container is asked for a runtime and the receipt says
+// nothing.
 func TestRunUnderAPolicyRuntime(t *testing.T) {
 	p, f := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Runtime = "runsc" })
 	happyFake(f)
-	// A plan compiled before agentry-cli#221 says less; the receipt's line
-	// is the run's own.
+	// A plan compiled with an older line says less; the receipt's line is
+	// the run's own.
 	p.Plan.Enforcement["runtime"] = "runsc: a plan's older line"
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
@@ -1009,7 +1007,7 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 			t.Fatalf("no %s container ran", infra)
 		}
 		if c.Runtime != "" || len(c.ExtraHosts) != 0 {
-			t.Errorf("%s holds no sandbox (DR-23) and must stay on the daemon's default: runtime=%q hosts=%v", c.Name, c.Runtime, c.ExtraHosts)
+			t.Errorf("%s holds no sandbox and must stay on the daemon's default: runtime=%q hosts=%v", c.Name, c.Runtime, c.ExtraHosts)
 		}
 	}
 	line := env.CapabilitiesEnforced["runtime"]
@@ -1024,7 +1022,7 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 		}
 	}
 	// The fixture declares the agent's own egress, whose fetch reaches its
-	// host through the gateway's L7 relay (agentry-cli#346).
+	// host through the gateway's L7 relay.
 	if strings.Contains(line, "older line") || !strings.Contains(line, "the relays (") {
 		t.Errorf("receipt runtime line = %q: the plan's text, or no relays for a run whose agent declares egress", line)
 	}
@@ -1033,7 +1031,7 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 // With the host's name servers named, the llm-proxy runs under the
 // runtime too, on an egress network of the run's own joined at create and
 // reading the run's own resolv.conf; with docker.gatewayRuntime, the
-// gateway under that (agentry-cli#337). Nothing is connected after start.
+// gateway under that. Nothing is connected after start.
 func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
 	p, f := fixtureWith(t, func(pol *policy.Policy) {
 		pol.Docker.Runtime = "runsc"
@@ -1090,8 +1088,8 @@ func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
 	line := env.CapabilitiesEnforced["runtime"]
 	if !filterSupported {
 		// The gateway's runtime opens the filter's socket, and the filter
-		// gives the relays theirs: neither applies where it does not run
-		// (agentry-cli#322), and the line says so.
+		// gives the relays theirs: neither applies where it does not run,
+		// and the line says so.
 		if gw, _ := f.FindRun("-gateway"); gw.Runtime != "" {
 			t.Errorf("gateway runtime = %q without the docker filter, want the daemon's default", gw.Runtime)
 		}
@@ -1109,7 +1107,7 @@ func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
 	for _, want := range []string{"the llm-proxy (on an egress network of the run's own", "the gateway is created with docker --runtime runsc-uds",
 		"through 192.0.2.53 (docker.resolvers)", "no container class of the run is on the daemon's default runtime",
 		// Several classes: joined with "and", the relays' clause theirs
-		// alone, and "each" (agentry-cli#397).
+		// alone, and "each".
 		"; the llm-proxy and the relays (which the filter gives runsc) resolve host names through 192.0.2.53 (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, each created with every network it joins"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("receipt runtime line lacks %q: %q", want, line)
@@ -1119,7 +1117,7 @@ func TestRunUnderARuntimeWithTheHostsResolvers(t *testing.T) {
 
 // A host-run harness's proxy publishes ports to the host and stays on the
 // daemon's default even with resolvers; so does the gateway without
-// docker.gatewayRuntime, and the line names both (agentry-cli#337).
+// docker.gatewayRuntime, and the line names both.
 func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 	withFilter(t, true)
 	p, _ := fixtureWith(t, func(pol *policy.Policy) {
@@ -1136,8 +1134,8 @@ func TestTheRuntimeLineNamesWhatStaysOnTheDefault(t *testing.T) {
 	if proxySandboxed(p.Plan) {
 		t.Error("a host harness's proxy is sandboxed")
 	}
-	// One class named takes the singular (a hosted draft's line, which
-	// read "the llm-proxy resolve", agentry-cli#337).
+	// One class named takes the singular (the line must not read "the
+	// llm-proxy resolve").
 	p.Plan.Harness.Host = nil
 	servers := p.Plan.MCPServers
 	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "osv", Egress: []string{"api.osv.dev"}}}
@@ -1244,7 +1242,7 @@ func TestRunWithoutAPolicyRuntimeAsksForNone(t *testing.T) {
 // privileges and is bounded by the policy's limits, the defaults when it
 // sets none; the proxy, the probe and the agent run on a read-only root
 // (the agent's writable paths the adapter's); the gateway passes the
-// limits to what it launches; the receipt names it all (agentry-cli#163).
+// limits to what it launches; the receipt names it all.
 func TestRunContainersAreHardened(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1300,11 +1298,11 @@ func TestRunContainersAreHardened(t *testing.T) {
 	}
 }
 
-// TestRunPlanReceiptIsThePlanThatRan (agentry-cli#266): receipts/run-plan.json
-// is the plan the run executed, byte for byte the encoding runPlanSha256
-// hashes — including the run's own additions to the verified plan (the MCP
-// vulnerability verdict lands on Enforcement after the compile) — not
-// plan.json re-read from the install dir.
+// TestRunPlanReceiptIsThePlanThatRan: receipts/run-plan.json is the plan the
+// run executed, byte for byte the encoding runPlanSha256 hashes — including
+// the run's own additions to the verified plan (the MCP vulnerability verdict
+// lands on Enforcement after the compile) — not plan.json re-read from the
+// install dir.
 func TestRunPlanReceiptIsThePlanThatRan(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -1328,10 +1326,10 @@ func TestRunPlanReceiptIsThePlanThatRan(t *testing.T) {
 	}
 }
 
-// TestRunRefusesAPlanFileChangedAfterVerification (agentry-cli#266): a
-// generated plan file is held to the verified plan's hash as the run reads
-// it, so an edit made after ensurePlan verified the plan — or a file the
-// plan never listed — is refused with the verify class, not mounted.
+// TestRunRefusesAPlanFileChangedAfterVerification: a generated plan file
+// is held to the verified plan's hash as the run reads it, so an edit made
+// after ensurePlan verified the plan — or a file the plan never listed —
+// is refused with the verify class, not mounted.
 func TestRunRefusesAPlanFileChangedAfterVerification(t *testing.T) {
 	for name, edit := range map[string]func(planDir string) error{
 		"changed": func(planDir string) error {
@@ -1360,10 +1358,10 @@ func TestRunRefusesAPlanFileChangedAfterVerification(t *testing.T) {
 }
 
 // The envelope names the operator policy file the run enforced, how its
-// path was chosen, and the digest the plan recorded for it
-// (agentry-cli#152): a run under --policy and a run under a relocated
-// runner home each say so, and a caller that names no file leaves the
-// block out, so older readers see nothing new.
+// path was chosen, and the digest the plan recorded for it: a run under
+// --policy and a run under a relocated runner home each say so, and a
+// caller that names no file leaves the block out, so older readers see
+// nothing new.
 func TestEnvelopeNamesThePolicyFile(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1423,9 +1421,9 @@ func TestEnvelopeNamesThePolicyFile(t *testing.T) {
 }
 
 // An Unsafe Mode exec image build that could not install a package or an
-// extra goes on without it (plan unsafe-mode.md D8), and the receipt says
-// so apart from what did install, with the reason (invariant 8): the
-// forced failure here is the one a mirror or a vanished package gives.
+// extra goes on without it, and the receipt says so apart from what did
+// install, with the reason: the forced failure here is the one a mirror
+// or a vanished package gives.
 func TestReceiptNamesWhatAnUnsafeBuildDidNotInstall(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)

@@ -105,14 +105,13 @@ func flatten(out map[string]string, prefix string, v any) {
 	}
 }
 
-// Invariant 1 of plan unsafe-mode.md: a plan compiled in Unsafe Mode
-// differs from the one the default posture compiles for the same manifest
-// (its commands catalogued) only in the exec image spec, the lines naming
-// Unsafe Mode, and what follows from them: the tools image the gateway
-// runs, the tool spec's image PATH, and the file hashes. The gateway's
-// --block-network, the containers' posture, the agent's /plan-only mount,
-// egress, the declared servers, the budgets and every other enforcement
-// line are byte for byte the same.
+// A plan compiled in Unsafe Mode differs from the one the default posture
+// compiles for the same manifest (its commands catalogued) only in the exec
+// image spec, the lines naming Unsafe Mode, and what follows from them: the
+// tools image the gateway runs, the tool spec's image PATH, and the file
+// hashes. The gateway's --block-network, the containers' posture, the
+// agent's /plan-only mount, egress, the declared servers, the budgets and
+// every other enforcement line are byte for byte the same.
 func TestUnsafeModeChangesOnlyTheExecImage(t *testing.T) {
 	safe, unsafe, plan := compileBothWays(t, fullCapsYAML, nil)
 	if plan.ExecImage == nil || plan.ExecImage.Unsafe == nil {
@@ -172,11 +171,10 @@ func union(a, b map[string]string) []string {
 	return out
 }
 
-// Invariant 4: without the option, an uncatalogued command is refused
-// exactly as before (exit 11, naming exec.packages); with it the same
-// manifest compiles, and what the image cannot place is named in the exec
-// line rather than refused (D8). The catalogue is not consulted: an empty
-// one changes nothing.
+// Without the option, an uncatalogued command is refused (exit 11, naming
+// exec.packages); with it the same manifest compiles, and what the image
+// cannot place is named in the exec line rather than refused. The catalogue
+// is not consulted: an empty one changes nothing.
 func TestUnsafeModeNeverRefusesAndTheDefaultStillDoes(t *testing.T) {
 	m := parseManifest(t, "schemaVersion: \"2\"\nname: re\nnamespace: demo\nmodes: [autonomous]\nversion: 1.0.0\nsummary: \"r\"\n"+
 		"capabilities:\n  exec: { commands: [strings, analyzeHeadless, decompyle3, Crack, nothere] }\npublish:\n  include: [agent.yaml, AGENT.md]\n")

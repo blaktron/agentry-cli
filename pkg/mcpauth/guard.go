@@ -25,11 +25,10 @@ func (e *BlockedAddressError) Error() string {
 	return fmt.Sprintf("refused to reach %s: it resolves to %s, which is not a public address", e.Host, e.IP)
 }
 
-// Guard is the egress rule every fetch to a vendor goes through (plan
-// mcp-oauth-connections.md §3 invariant 6): https only, each candidate
-// address public unicast, the address dialled the one checked, no redirect
-// followed and no proxy taken from the environment. It holds the core's
-// webhook.Guard rules (agentry internal/webhook, T-08), which a module
+// Guard is the egress rule every fetch to a vendor goes through: https only,
+// each candidate address public unicast, the address dialled the one checked,
+// no redirect followed and no proxy taken from the environment. It holds the
+// core's webhook.Guard rules (agentry internal/webhook), which a module
 // outside the core cannot import; TestTheGuardRefusesNonPublicAddresses and
 // TestTheGuardFollowsNoRedirectAndTakesNoProxy carry its cases.
 //

@@ -10,12 +10,12 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 )
 
-// The recorded signatures (testdata): clamav-db.sigstore.json is the
-// clamav-db workflow's signature over the first bundle,
-// agentry-clamav-db:2026.10.04.1 (run 37244540966), whose manifest is
-// bundle-manifest.json; files.sigstore.json is the files workflow's over
-// agentry-files:2026.10.03.2. trusted_root.json is Sigstore's public-good
-// root as its TUF repository served it on 2026-10-04.
+// The recorded signatures (testdata): clamav-db.sigstore.json is the clamav-db
+// workflow's signature over the first bundle, agentry-clamav-db:2026.10.04.1,
+// whose manifest is bundle-manifest.json; files.sigstore.json is the files
+// workflow's over agentry-files:2026.10.03.2. trusted_root.json is Sigstore's
+// public-good root as its TUF repository served it when the signatures were
+// recorded.
 const (
 	recordedBundleDigest = "sha256:84cbc016d58b4b70b7337b78cfd01929d6ad2646ac5d773be66efab8b3e2d10c"
 	recordedFilesDigest  = "sha256:ee6b4f66fa2f30444cf9ffbac4acb83e4829baa6915963bdc322d547463d5ddd"

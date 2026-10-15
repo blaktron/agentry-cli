@@ -1,20 +1,19 @@
 // Package webscan is AI Review of what the Drafter's web tools bring back,
-// before its model reads any of it (plan builder-rework.md §7.3, D7, D20–D25;
-// agentry-cli#345). A text is scanned as model input, with the core's
-// model-input question set, in one of two places:
+// before its model reads any of it. A text is scanned as model input, with
+// the core's model-input question set, in one of two places:
 //
 //   - Registry: a hosted draft pushes the text to the registry's
 //     POST /api/v1/model-input/scan with the job's own credential, and
 //     searches through POST /api/v1/model-input/search, which scans every
-//     result before it answers (D20, D21). No sandbox host holds the
+//     result before it answers. No sandbox host holds the
 //     platform's Jev or search key.
-//   - Jev: a local draft scans with the person's own Jev key (D25), through
+//   - Jev: a local draft scans with the person's own Jev key, through
 //     this image's copy of the core's pkg/judge (runnerimage/judge, kept
 //     byte for byte by scripts/sync-image-judge.sh), so a local scan asks
 //     exactly what the registry asks.
 //
 // A text that is flagged, or that could not be scanned, is withheld: a caller
-// gives the model its address and the reason, never the text (D22). A scan
+// gives the model its address and the reason, never the text. A scan
 // never fails with an error; a failure is a verdict.
 //
 // The package is part of the embedded runner-image build context and stays
@@ -86,7 +85,7 @@ type Result struct {
 	Model       string `json:"model,omitempty"`
 	QuestionSet string `json:"questionSet,omitempty"`
 	// Requests and InputTokens are what the scan cost the judge, for the
-	// record. Never a price: AI Review is 1 credit an operation (DEV-150).
+	// record. Never a price: AI Review is 1 credit an operation.
 	Requests    int   `json:"requests,omitempty"`
 	InputTokens int64 `json:"inputTokens,omitempty"`
 }
@@ -160,7 +159,7 @@ type Searcher interface {
 
 // ---- the registry's routes (hosted) ----
 
-// JobTokenHeader carries a hosted job's credential (agentry#608).
+// JobTokenHeader carries a hosted job's credential.
 const JobTokenHeader = "X-Agentry-Job-Token"
 
 // Registry calls the registry's model-input routes with a hosted job's

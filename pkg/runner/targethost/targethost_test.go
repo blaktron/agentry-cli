@@ -135,7 +135,7 @@ func (f *fakeAsk) Confirm(p string, _ bool) (bool, error) {
 }
 
 // TestHostKeys runs on another port and on 22, which known_hosts writes
-// without a port: on 22 every host was refused before agentry-cli#898.
+// without a port: on 22 a host must not be refused.
 func TestHostKeys(t *testing.T) {
 	for _, port := range []int{2222, 22} {
 		t.Run(fmt.Sprintf("port %d", port), func(t *testing.T) { testHostKeys(t, port) })
@@ -368,7 +368,7 @@ func TestTheKeychainIsReadOnlyWhenAFlagLeavesSomethingToTake(t *testing.T) {
 
 // TestARunNoOneCanAskTakesTheSignInFirst: with no terminal, a host with no
 // sign-in is refused before any name is resolved or any address dialled
-// (found live on dev: a hosted run dialled the address to read its key).
+// (a hosted run must not dial the address to read its key).
 func TestARunNoOneCanAskTakesTheSignInFirst(t *testing.T) {
 	fakeKeychain(t)
 	defer func(l func(context.Context, string) ([]netip.Addr, error), f func(context.Context, netip.Addr, int, []string) (ssh.PublicKey, error)) {
@@ -394,11 +394,10 @@ func TestARunNoOneCanAskTakesTheSignInFirst(t *testing.T) {
 	}
 }
 
-// TestAScheduleKeepsItsSignInAndPinsItsKey is plan runtime-hosts.md D12
-// (agentry-cli#863): a schedule is readied with Keep, which saves the
-// sign-in in the keychain whatever it came from and asks nothing; its runs,
-// with no flag and no one to ask, sign in from the keychain alone and
-// refuse a host key other than the one the schedule was made with.
+// TestAScheduleKeepsItsSignInAndPinsItsKey: a schedule is readied with Keep,
+// which saves the sign-in in the keychain whatever it came from and asks
+// nothing; its runs, with no flag and no one to ask, sign in from the keychain
+// alone and refuse a host key other than the one the schedule was made with.
 func TestAScheduleKeepsItsSignInAndPinsItsKey(t *testing.T) {
 	store := fakeKeychain(t)
 	served, _ := newHostKey(t)
@@ -450,7 +449,7 @@ func TestAScheduleKeepsItsSignInAndPinsItsKey(t *testing.T) {
 	}
 }
 
-// TestASignedOutFireReadsTheSealedSignIn (agentry-cli#863): a schedule that
+// TestASignedOutFireReadsTheSealedSignIn: a schedule that
 // runs while its person is signed out reads the sign-in sealed beside it,
 // and nothing else: the keychain is not asked.
 func TestASignedOutFireReadsTheSealedSignIn(t *testing.T) {

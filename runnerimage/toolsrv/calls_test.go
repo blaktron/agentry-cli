@@ -43,7 +43,7 @@ func callLine(id int, tool string, args map[string]any) string {
 }
 
 // end_blocked exists only beside the calls ledger, which the engine stamps
-// into a release's one-shot run alone (agentry-cli#629).
+// into a release's one-shot run alone.
 func TestEndBlockedExistsOnlyWithTheLedger(t *testing.T) {
 	spec := baseSpec(t)
 	if slices.Contains(spec.GrantedTools(), ToolEndBlocked) {

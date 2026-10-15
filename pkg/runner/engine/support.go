@@ -1,7 +1,7 @@
 // Engine support: run-dir preparation, placeholder rendering, secret and
 // env resolution, teardown. This file owns exactly the run-scoped values
-// the plan must not contain (§R4/§R6): host paths, the gateway token, and
-// secret values — and the guarantee that the last two die with the run.
+// the plan must not contain: host paths, the gateway token, and secret
+// values — and the guarantee that the last two die with the run.
 package engine
 
 import (
@@ -47,22 +47,22 @@ import (
 type runDirs struct {
 	root       string // <RunRoot>/runs/<id>
 	workspace  string // root/workspace — the rw copy tools may mount
-	inputs     string // root/inputs — the :ro operator-inputs channel (P2 §P4)
-	inputsText string // root/inputs-text — the :ro decoded inputs, the host's alone to write (file-handling.md §5)
+	inputs     string // root/inputs — the :ro operator-inputs channel
+	inputsText string // root/inputs-text — the :ro decoded inputs, the host's alone to write
 	// sources are the folders under inputs that are input sources
 	// (fetchSources): decoded by the source rule.
 	sources     []string
-	knowledge   string // root/knowledge — the :ro knowledge packs, one directory each (knowledge.md §4.5)
-	session     string // the per-run volume an interactive session's harness store lives in (DR-15, agentry-cli#90)
+	knowledge   string // root/knowledge — the :ro knowledge packs, one directory each
+	session     string // the per-run volume an interactive session's harness store lives in
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/secrets.env (0600, deleted on teardown)
-	serversDir  string // the signature's server store (RUNNER-PLAN-3, :ro)
+	serversDir  string // the signature's server store, :ro
 	// targets are the run's target hosts, readied by the caller, in the
-	// plan's order (targethosts.go, agentry-cli#861): the replacer gives
-	// each relay its address and port, and the host link its user.
+	// plan's order (targethosts.go): the replacer gives each relay its
+	// address and port, and the host link its user.
 	targets []*targethost.Host
-	// browser is the run's browser once readied (browser.go,
-	// agentry-cli#915): the browse proxy's name and address, its sites.
+	// browser is the run's browser once readied (browser.go): the
+	// browse proxy's name and address, its sites.
 	browser     *browserRun
 	outDir      string
 	receiptsDir string
@@ -99,12 +99,12 @@ type runDirs struct {
 	// System Prompt's spec.PHSecretsAbsent; set once its secrets resolve.
 	secretsAbsent []string
 	// interactive says the run is a session, for the System Prompt's
-	// spec.PHRunMode (agentry-cli#717); set by StartSession before the harness
-	// files are rendered.
+	// spec.PHRunMode; set by StartSession before the harness files are
+	// rendered.
 	interactive bool
 	// conns are the run's connections as it holds them, for the renewer
-	// (writeConnectionFiles, renewConnections; agentry-cli#665), and its
-	// model sign-in's token (writeModelSignIn; agentry-cli#738).
+	// (writeConnectionFiles, renewConnections), and its model sign-in's
+	// token (writeModelSignIn).
 	conns []*heldToken
 	// modelSignIn is spec.PHModelSignIn's value: the run's token folder,
 	// or the sign-in's config directory; empty for a key.
@@ -116,15 +116,15 @@ type runDirs struct {
 	// modelHosts are the llm-proxy's pinned model endpoints ("name:ip",
 	// modelhosts.go), for the receipt.
 	modelHosts []string
-	// filter is the gateway's per-run docker socket (dockerfilter.go,
-	// agentry-cli#219), and filterLog its decision log; nil until the
-	// gateway is about to start.
+	// filter is the gateway's per-run docker socket (dockerfilter.go),
+	// and filterLog its decision log; nil until the gateway is about to
+	// start.
 	filter    *sockfilter.Filter
 	filterLog *os.File
 	filterDir string // the short fallback directory, when the run's was too long
 	// filterSidecar is the decision log of a filter served by the run's
-	// filter container (filtersidecar.go, agentry-cli#322), whose
-	// refusals are counted from it; empty where the CLI serves the filter.
+	// filter container (filtersidecar.go), whose refusals are counted from
+	// it; empty where the CLI serves the filter.
 	filterSidecar string
 	// redact masks the run's secret values out of every receipt and error
 	// (redact.go); set once the token and the secrets are known, nil-safe
@@ -132,7 +132,7 @@ type runDirs struct {
 	redact *redactor
 }
 
-// replacer substitutes the §R4 placeholders with this run's real values.
+// replacer substitutes the placeholders with this run's real values.
 func (rd *runDirs) replacer() *strings.Replacer {
 	return rd.replacerWith(nativePath)
 }
@@ -147,8 +147,8 @@ func gatewayPath(p string) string { return gatewayHostPath(p, gatewayOS) }
 // gatewayReplacer is replacer for what only the gateway reads — its env
 // and its rendered config files — where each host path is spelled as
 // gatewayHostPath has it, the form the gateway can check and hand to the
-// daemon on its socket (agentry-cli#414). The CLI's own docker calls keep
-// replacer's native paths.
+// daemon on its socket. The CLI's own docker calls keep replacer's native
+// paths.
 func (rd *runDirs) gatewayReplacer() *strings.Replacer {
 	return rd.replacerWith(gatewayPath)
 }
@@ -157,7 +157,7 @@ func (rd *runDirs) gatewayReplacer() *strings.Replacer {
 // for a bind. On Windows only a drive-letter path can: a network share
 // (\\server\share\…) or a long-form path (\\?\C:\…) would reach the
 // gateway with its backslashes, and its bind check would refuse the run
-// with nothing that names the folder (agentry-cli#425).
+// with nothing that names the folder.
 func gatewayCanMount(path, goos string) error {
 	if goos != "windows" || path == "" {
 		return nil
@@ -216,15 +216,15 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHRunMode, rd.modeForPrompt(),
 		spec.PHModelSignIn, hostPath(rd.modelSignIn),
 	}
-	// The host link's run-time values (agentry-cli#861): the user it runs
-	// as, and each target host's relay target.
+	// The host link's run-time values: the user it runs as, and each
+	// target host's relay target.
 	user, _, _ := hostLinkUser()
 	pairs = append(pairs, spec.PHHostLinkUser, user)
 	for _, h := range rd.targets {
 		pairs = append(pairs, spec.PHTargetHost(h.ID), h.RelayHost())
 	}
-	// The browser's (agentry-cli#915): the user it runs as, and the browse
-	// proxy its one relay and --proxy-server name.
+	// The browser's: the user it runs as, and the browse proxy its one
+	// relay and --proxy-server name.
 	pairs = append(pairs, spec.PHBrowserUser, browserUser(), spec.PHBrowseProxy, rd.browseProxyName())
 	return strings.NewReplacer(pairs...)
 }
@@ -252,7 +252,7 @@ func gatewayHostPath(p, goos string) string {
 }
 
 // prepareRunDirs materializes the per-run tree: a fresh workspace copy
-// (agents must not mutate the pristine install, §R1 idempotent re-runs),
+// (agents must not mutate the pristine install idempotent re-runs),
 // rendered config, and the output folder with reports/ and receipts/.
 func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	root := filepath.Join(p.RunRoot, "runs", runID)
@@ -265,8 +265,8 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		inputsText: filepath.Join(root, "inputs-text"),
 		knowledge:  filepath.Join(root, "knowledge"),
 		// The session store is a per-run named volume, not a host
-		// directory (agentry-cli#90): the harness runs unprivileged, and a
-		// host directory it could write was a world-writable one.
+		// directory: the harness runs unprivileged, and a host directory
+		// it could write was a world-writable one.
 		session: sessionVolumeName(runID),
 		cfg:     filepath.Join(root, "cfg"),
 		// secrets.env lives INSIDE cfg/gateway because that directory is
@@ -282,12 +282,12 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	if !spec.HasPackageServers(p.Plan.MCPServers) {
 		// No package server, no store: nothing mounts it, and it need not
-		// exist, so it is neither labelled nor named (agentry-cli#329; a
-		// remote server has none, agentry-cli#663).
+		// exist, so it is neither labelled nor named (a remote server has
+		// none).
 		rd.serversDir = ""
 	}
 	// Before anything is made: a folder the gateway could not be given as
-	// a /<drive>/… path is refused by name (agentry-cli#425).
+	// a /<drive>/… path is refused by name.
 	for _, f := range []struct{ what, path string }{
 		{"the runner home", p.RunRoot}, {"the output folder", p.OutDir}, {"the MCP server store", p.ServersDir},
 	} {
@@ -305,12 +305,12 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	}
 	// Registered before anything is staged into it: a failure in stageInputs
 	// or stageIntake — or a panic — otherwise leaves the run directory, and
-	// whatever was copied into it, behind for the next run to trip over
-	// (agentry-cli#161). secrets.env and the run's copies of the attached
-	// knowledge packs die unconditionally; the rest of the run dir only when
-	// not kept for debugging (§R11 invariant 6; KeepRunDir never keeps
-	// secrets, nor a pack's pages, which a pack kept sealed on the machine
-	// would otherwise leave in the clear there; DR-42).
+	// whatever was copied into it, behind for the next run to trip over.
+	// secrets.env and the run's copies of the attached knowledge packs die
+	// unconditionally; the rest of the run dir only when not kept for
+	// debugging (KeepRunDir never keeps secrets, nor a pack's
+	// pages, which a pack kept sealed on the machine would otherwise leave
+	// in the clear there).
 	td.add(func(context.Context) {
 		td.removeSensitive(rd.secretsPath, false)
 		td.removeSensitive(rd.connections(), true)
@@ -408,8 +408,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// in the canonical encoding the receipts' runPlanSha256 hashes — not
 	// plan.json re-read from disk, which could have changed since it was
 	// verified and does not carry the run's own additions (the MCP
-	// vulnerability verdict), so its hash would not be the receipt's
-	// (agentry-cli#266).
+	// vulnerability verdict), so its hash would not be the receipt's.
 	if b, err := p.Plan.MarshalCanonical(); err == nil {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "run-plan.json"), b, 0o644)
 	}
@@ -427,7 +426,7 @@ const intakeFile = "intake.json"
 
 // stageIntake writes the agent-side intake document and stages file
 // answers next to the other inputs; the non-secret document is also a
-// receipt (plan §3.5).
+// receipt.
 func stageIntake(p Params, rd *runDirs) error {
 	if p.Intake.Empty() {
 		return nil
@@ -466,7 +465,7 @@ func stageIntakeDoc(a *intake.Answers, rd *runDirs) error {
 
 // renderGatewayConfig renders cfg/gateway: the plan's gateway files and
 // what the run adds to them. The gateway alone reads them, so their host
-// paths are spelled its way (gatewayReplacer, agentry-cli#414).
+// paths are spelled its way (gatewayReplacer).
 func renderGatewayConfig(p Params, rd *runDirs) error {
 	gwRep := rd.gatewayReplacer()
 	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, gatewayPath, "gateway"); err != nil {
@@ -510,12 +509,11 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	return nil
 }
 
-// grantedTools is the tools server's grant for this run: the GrantedTools
-// of the run's own rendered tools spec, after every run-time grant
-// (knowledge, the voice, web, review, the calls ledger), the same list setAllowlist gives
-// the gateway. A session's driver permits exactly these, never the
-// compiled plan's Tools, which no run-time attachment moves
-// (agentry-cli#576).
+// grantedTools is the tools server's grant for this run: the GrantedTools of
+// the run's own rendered tools spec, after every run-time grant (knowledge, the
+// voice, web, review, the calls ledger), the same list setAllowlist gives the
+// gateway. A session's driver permits exactly these, never the compiled plan's
+// Tools, which no run-time attachment moves.
 func grantedTools(gatewayDir string) ([]string, error) {
 	b, err := os.ReadFile(filepath.Join(gatewayDir, "toolspec.json")) //nolint:gosec // our own rendered config
 	if err != nil {
@@ -531,19 +529,19 @@ func grantedTools(gatewayDir string) ([]string, error) {
 }
 
 // renderPlanFiles copies plan/{gateway,harness}/** into the run cfg dir,
-// substituting placeholders, with host paths spelled by hostPath
-// (nativePath for the harness, gatewayPath for the gateway). Rendered files, not the installed ones, are
-// what containers mount — the install stays pristine and reusable. Each
-// file is held to the plan's hash of it as it is read: the plan was
-// verified before the run started, and a file changed or added since is
-// refused rather than mounted (agentry-cli#266).
+// substituting placeholders, with host paths spelled by hostPath (nativePath
+// for the harness, gatewayPath for the gateway). Rendered files, not the
+// installed ones, are what containers mount — the install stays pristine and
+// reusable. Each file is held to the plan's hash of it as it is read: the plan
+// was verified before the run started, and a file changed or added since is
+// refused rather than mounted.
 func renderPlanFiles(plan *spec.Plan, planDir string, rd *runDirs, hostPath func(string) string, subs ...string) error {
 	rep := rd.replacerWith(hostPath)
 	// A TOML file (codex's config.toml) holds its paths in basic strings,
 	// where a Windows path's backslashes are escapes: "C:\Users\…" does
-	// not parse (agentry-cli#420). The host paths substituted into one are
-	// escaped with the adapter's own escape; the other placeholders (the
-	// run id, loopback URLs, a volume name) carry nothing to escape.
+	// not parse. The host paths substituted into one are escaped with the
+	// adapter's own escape; the other placeholders (the run id, loopback
+	// URLs, a volume name) carry nothing to escape.
 	tomlRep := rd.replacerWith(func(p string) string { return adapter.TOMLEscape(hostPath(p)) })
 	for _, sub := range subs {
 		src := filepath.Join(planDir, sub)
@@ -597,9 +595,9 @@ func sha256Hex(b []byte) string {
 }
 
 // stageInputs copies operator-named files/directories into the run's
-// read-only inputs channel, basename-rooted (P2 §P4). A named path that
-// does not exist refuses the run — a silently absent input is a debugging
-// session, not a convenience.
+// read-only inputs channel, basename-rooted. A named path that does not
+// exist refuses the run — a silently absent input is a debugging session,
+// not a convenience.
 func stageInputs(paths []string, dest string) error {
 	seen := map[string]bool{}
 	for _, src := range paths {
@@ -636,21 +634,21 @@ func stageInputs(paths []string, dest string) error {
 
 // writeSecretsFile resolves every declared secret and writes the gateway
 // secrets file. A missing required secret ⇒ refuse before any container
-// starts, naming the variable (§R4 secrets row, exit 11) — a
+// starts, naming the variable (exit 11) — a
 // silently-degraded agent is the failure mode this exists to prevent. A
-// missing optional one (the manifest's optionalSecrets, DR-70) is written
-// empty instead: the author said the run can do without it, the System
-// Prompt and the receipt say it went without, and the gateway sets the
-// variable empty rather than to a placeholder of its own (as webSecrets).
-// Resolution order: the caller's overrides (the MCP profile, P2 §P2)
-// first, then the policy source.
+// missing optional one (the manifest's optionalSecrets) is written empty
+// instead: the author said the run can do without it, the System Prompt
+// and the receipt say it went without, and the gateway sets the variable
+// empty rather than to a placeholder of its own (as webSecrets).
+// Resolution order: the caller's overrides (the MCP profile) first, then
+// the policy source.
 func writeSecretsFile(p Params, path string) error {
 	values, err := secretValues(p)
 	if err != nil {
 		return err
 	}
-	// A package server's oauth env entries that carry the access token
-	// (agentry-cli#665): the gateway sets them on the server from here.
+	// A package server's oauth env entries that carry the access token:
+	// the gateway sets them on the server from here.
 	tokenEnv, err := connectionEnvValues(p)
 	if err != nil {
 		return err
@@ -679,7 +677,7 @@ func writeSecretsFile(p Params, path string) error {
 }
 
 // remoteBearerKeys maps the secrets-file key of each remote server's
-// bearer (agentry-cli#663) to that server.
+// bearer to that server.
 func remoteBearerKeys(plan *spec.Plan) map[string]spec.MCPServerSpec {
 	out := map[string]spec.MCPServerSpec{}
 	for _, srv := range plan.MCPServers {
@@ -733,7 +731,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode, label func(stri
 
 // secretValues resolves every secret the plan needs (declared and MCP
 // server secrets) to its value, keyed the way the gateway reads them; the
-// session transcript redacts these same values (§R11 invariant 7).
+// session transcript redacts these same values.
 func secretValues(p Params) (map[string]string, error) {
 	values := map[string]string{}
 	missingSet := map[string]bool{}
@@ -744,16 +742,16 @@ func secretValues(p Params) (map[string]string, error) {
 		}
 		if !ok || v == "" {
 			if p.Plan.IsOptionalSecret(name) {
-				return "", true // written empty: the run goes without it (DR-70)
+				return "", true // written empty: the run goes without it
 			}
 			missingSet[name] = true
 			return "", false
 		}
 		return v, true
 	}
-	// Declared MCP servers' secrets (RUNNER-PLAN-3) take the same
-	// resolution order, keyed per server so each value is scoped to its own
-	// server and reaches nothing else.
+	// Declared MCP servers' secrets take the same resolution order, keyed
+	// per server so each value is scoped to its own server and reaches
+	// nothing else.
 	eachPlanSecret(p.Plan, func(name, key string) {
 		if v, ok := resolve(name); ok {
 			values[key] = v
@@ -834,7 +832,7 @@ func SecretResolvable(name string, overrides map[string]string, src policy.Secre
 	return ok && v != ""
 }
 
-// lookupSecret resolves one name from the operator source (§R9, Q-R3).
+// lookupSecret resolves one name from the operator source.
 func lookupSecret(name string, src policy.SecretSource) (string, bool) {
 	switch src.Mode {
 	case "envFile":
@@ -925,14 +923,13 @@ const containerFileType = "container_file_t"
 // than by us, so docker never relabels them on our behalf. Without this a
 // confined tool container is refused every read: the QuickAgent's fs_read
 // comes back denied, the model retries, and the run dies on the turn budget
-// instead of on anything that names the real cause (agentry-cli#85).
+// instead of on anything that names the real cause.
 //
 // Each gets the type and the level with no category, as docker's `z` labels
 // (chconArgs). The type alone kept the categories a folder inherits from its
 // parent: a runner home under a directory docker once bound with `Z` carried
 // that old container's pair, and every tool container, running under
-// categories of its own, was refused the run's inputs and output folder
-// (agentry-cli#680, agentry-cli#617).
+// categories of its own, was refused the run's inputs and output folder.
 //
 // Best effort on purpose. A host without SELinux has nothing to do here,
 // and where the relabel cannot be done the run continues and fails with the
@@ -957,13 +954,13 @@ func relabelForToolContainers(ctx context.Context, stderr io.Writer, targets ...
 	}
 }
 
-// relabelShared labels one of the run's own folders, and what it holds,
-// for every container of the run, as docker's `z` does: the type, and the
-// level with no category. A folder inherits its parent's categories (a
-// runner home under a directory once bound with docker's `Z` carries that
-// container's own), which relabelForToolContainers's type alone keeps, and
-// a connection folder's 0600 file must be read by a bridge in a container
-// of any category (agentry-cli#663). Best effort, as relabelForToolContainers.
+// relabelShared labels one of the run's own folders, and what it holds, for
+// every container of the run, as docker's `z` does: the type, and the level
+// with no category. A folder inherits its parent's categories (a runner home
+// under a directory once bound with docker's `Z` carries that container's
+// own), which relabelForToolContainers's type alone keeps, and a connection
+// folder's 0600 file must be read by a bridge in a container of any category.
+// Best effort, as relabelForToolContainers.
 func relabelShared(ctx context.Context, stderr io.Writer, dir string) {
 	if _, err := os.Stat(selinuxRoot); err != nil {
 		return
@@ -996,9 +993,9 @@ func chconArgs(t relabelTarget) []string {
 // it. Recursing is right for the directories the runner made under its own
 // run root, and wrong for the output folder: `--out` is the operator's
 // choice and may already hold files of theirs, which are none of this run's
-// business (agentry-cli#88). There, the directory itself is labelled so a
-// tool container can traverse into what it writes, and only reports/ — which
-// the runner creates — is labelled through.
+// business. There, the directory itself is labelled so a tool container can
+// traverse into what it writes, and only reports/ — which the runner creates
+// — is labelled through.
 type relabelTarget struct {
 	dir       string
 	recursive bool
@@ -1031,8 +1028,8 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 // (pdf.go) and the fetch ledger (fetchsave.go). The receipts folder itself
 // goes first, without its files: a tool container reaches a ledger through
 // it, and a folder that kept its parent's categories refused even that
-// (`mkdir /out/receipts: permission denied`, agentry-cli#617). The other
-// receipts stay as the runner wrote them.
+// (`mkdir /out/receipts: permission denied`). The other receipts stay as
+// the runner wrote them.
 func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	t := relabelTargets(rd)
 	if rd.receiptsDir != "" {
@@ -1064,7 +1061,7 @@ const DockerSocket = "/var/run/docker.sock"
 // daemon. Such a container needs SELinux labelling switched off to reach
 // the socket at all, and deriving that from the mounts rather than from a
 // container's name means the exemption follows the privilege wherever it
-// goes instead of being remembered separately (agentry-cli#85).
+// goes instead of being remembered separately.
 func mountsDockerSocket(mounts []spec.Mount) bool {
 	for _, m := range mounts {
 		if m.Source == DockerSocket {
@@ -1076,13 +1073,13 @@ func mountsDockerSocket(mounts []spec.Mount) bool {
 
 // runScopedMount says whether a plan mount's source is a directory this run
 // made — which is exactly what the run-scoped placeholders name — rather
-// than a path that belongs to the machine. Only the former may be
-// relabeled for SELinux (agentry-cli#85). The decision is taken on the
-// UNSUBSTITUTED source on purpose: after substitution a run directory and
-// a system path are both just absolute paths, and the plan's own vocabulary
-// is what tells them apart. The gateway's docker socket is the case that
-// matters — relabeling it would change a system-wide file's label for every
-// container on the host.
+// than a path that belongs to the machine. Only the former may be relabeled
+// for SELinux. The decision is taken on the UNSUBSTITUTED source on
+// purpose: after substitution a run directory and a system path are both
+// just absolute paths, and the plan's own vocabulary is what tells them
+// apart. The gateway's docker socket is the case that matters — relabeling
+// it would change a system-wide file's label for every container on the
+// host.
 func runScopedMount(source string) bool {
 	for _, ph := range []string{
 		spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs,
@@ -1124,7 +1121,7 @@ func readTask(r io.Reader, receiptsDir string) ([]byte, error) {
 // run's checked workspace copy, as its first message. The run setup
 // promises that ("its own instruction runs"), and an autonomous harness
 // refuses an empty stdin (docker-agent exits 1 on "no message received on
-// stdin"; agentry-cli#449). A task that is given is sent as it is.
+// stdin"). A task that is given is sent as it is.
 //
 // The second result is the receipt's word for what was sent in the task's
 // place, empty when the task went as given.
@@ -1152,7 +1149,7 @@ func takesStdinTask(plan *spec.Plan) bool {
 }
 
 // writeMeta records run identity and timing (timestamps live here, never
-// in the plan — determinism, §R4).
+// in the plan — determinism).
 func writeMeta(receiptsDir, runID string, p Params, start time.Time, taskSent string) {
 	meta := map[string]any{
 		"runId":   runID,
@@ -1199,13 +1196,13 @@ func stderrTail(path string) string {
 }
 
 // teardown runs cleanup functions in reverse registration order, then
-// sweeps anything still labeled with this run (§R11 invariant 6). Each
-// step is best-effort: teardown must never mask the run's own error.
+// sweeps anything still labeled with this run. Each step
+// is best-effort: teardown must never mask the run's own error.
 type teardown struct {
 	// networks are the ones the run made, removed again after the sweep.
 	networks []string
 	// leftFiles are what removeSensitive could not delete, with why:
-	// reportLeftFiles tells the person and the receipt (agentry-cli#422).
+	// reportLeftFiles tells the person and the receipt.
 	leftFiles []leftFile
 	d         dockerx.Client
 	stderr    io.Writer
@@ -1325,7 +1322,7 @@ func sessionVolumeName(runID string) string { return "agentry-" + runID + "-sess
 
 // gatewayVolumeDir is the directory the pinned gateway image declares as a
 // VOLUME (docker/mcp-gateway's /misc), mounted as a labelled anonymous
-// volume of the run (agentry-cli#458).
+// volume of the run.
 const gatewayVolumeDir = "/misc"
 
 func runLabels(runID string) map[string]string {
@@ -1379,10 +1376,10 @@ func copyTree(src, dest string) error {
 
 // stampOwner writes the invoking user's uid/gid into the per-run copy of
 // the tools spec so the tools container — root, writing into bind mounts
-// the user owns — hands back what it creates (agentry-cli#55). The
-// compiled plan is untouched: ownership is a property of the run, not of
-// the install, and the plan hash must not change per user. Hosts without
-// POSIX ids (Getuid() < 0) leave the field out.
+// the user owns — hands back what it creates. The compiled plan is
+// untouched: ownership is a property of the run, not of the install, and
+// the plan hash must not change per user. Hosts without POSIX ids
+// (Getuid() < 0) leave the field out.
 func stampOwner(specPath string) error {
 	uid, gid := os.Getuid(), os.Getgid()
 	if uid < 0 || gid < 0 {
@@ -1410,8 +1407,8 @@ func stampOwner(specPath string) error {
 // stampBoundedTmpfs tells the tools server, in the run's own copy of its
 // spec, the size the run's docker filter caps its /tmp and scratch folder
 // at (toolsTmpfs), so it refuses to serve without them, or with larger
-// ones (agentry-cli#599, #729). Only where the filter runs: the plan is the
-// same bytes on every host.
+// ones. Only where the filter runs: the plan is the same bytes on every
+// host.
 func stampBoundedTmpfs(specPath string) error {
 	b, err := os.ReadFile(specPath) //nolint:gosec // our own rendered config
 	if err != nil {
@@ -1473,13 +1470,12 @@ func resetKeyringOnce() {
 }
 
 // checkKind holds the value a plan resolved against the credential kind
-// the plan was compiled for (agentry-cli#171): the plan fixed the
-// harness's argv and variable by that kind, so a value of another kind
-// would run a plan that is wrong for it. A credential of a shape this
-// build does not know reads as an API key, the endpoint being the judge.
-// The redactor (hostSecretValues) never sees a value refused here, which
-// is fine: resolveEnv refuses on the same error before any process
-// starts.
+// the plan was compiled for: the plan fixed the harness's argv and
+// variable by that kind, so a value of another kind would run a plan
+// that is wrong for it. A credential of a shape this build does not know
+// reads as an API key, the endpoint being the judge. The redactor
+// (hostSecretValues) never sees a value refused here, which is fine:
+// resolveEnv refuses on the same error before any process starts.
 func checkKind(v spec.EnvVar, val, from string) error {
 	if v.ExpectedKind == nil {
 		return nil

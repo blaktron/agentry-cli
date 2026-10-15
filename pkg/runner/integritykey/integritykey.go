@@ -1,10 +1,9 @@
-// Package integritykey is the runner home's integrity key: 32 random
-// bytes in <runner home>/plan-integrity.key (0600), outside every install
-// directory. Two records are made under it, and a reader who can write an
-// install directory but not read the key can make neither pass after an
-// edit: the plan-integrity record beside an installed plan.json
-// (compile, agentry-cli#266) and the installed-release record beside a
-// release's install.json (installdir, agentry-cli#326).
+// Package integritykey is the runner home's integrity key: 32 random bytes in
+// <runner home>/plan-integrity.key (0600), outside every install directory. Two
+// records are made under it, and a reader who can write an install directory
+// but not read the key can make neither pass after an edit: the plan-integrity
+// record beside an installed plan.json (compile) and the installed-release
+// record beside a release's install.json (installdir).
 //
 // It is its own package so installdir, which lays releases down, and
 // compile, which compiles plans, share one key without either importing

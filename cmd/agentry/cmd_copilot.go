@@ -1,7 +1,6 @@
-// Sign in with GitHub for a Copilot plan (plan model-sign-ins.md §4.5,
-// D25–D29; agentry-cli#741): `agentry model-signins add copilot` and the
-// offer in `agentry setup`. The flow is mcpauth.GitHub, the store
-// modelsignin.SignInCopilot; this is the terminal around them.
+// Sign in with GitHub for a Copilot plan: `agentry model-signins add
+// copilot` and the offer in `agentry setup`. The flow is mcpauth.GitHub,
+// the store modelsignin.SignInCopilot; this is the terminal around them.
 package main
 
 import (
@@ -76,8 +75,8 @@ func copilotOffer(cmd *cobra.Command, home string, oauthApp bool, pol *policy.Po
 }
 
 // copilotModels asks Copilot CLI which models a plan offers the kept
-// sign-in (copilotmodels.List, agentry-cli#808): nil when setup builds no
-// images, which the list's containers need.
+// sign-in (copilotmodels.List): nil when setup builds no images,
+// which the list's containers need.
 func copilotModels(cmd *cobra.Command, home string, pol *policy.Policy, images bool) func(plan string) ([]string, error) {
 	if !images {
 		return nil

@@ -1,7 +1,7 @@
 // Support-layer tests: secret resolution plumbing, receipts helpers, run
 // identity, error classification, and the teardown leak sweep — the parts
-// of the engine that own run-scoped values (§R4/§R6) but need no full
-// lifecycle to prove.
+// of the engine that own run-scoped values but need no full lifecycle to
+// prove.
 package engine
 
 import (
@@ -247,9 +247,8 @@ func TestFailClassification(t *testing.T) {
 	})
 }
 
-// TestTeardownLeakSweep pins §R11 invariant 6's last line of defense: after
-// the ordered teardown, anything still carrying the run label is
-// force-removed.
+// TestTeardownLeakSweep pins the last line of defense: after the ordered
+// teardown, anything still carrying the run label is force-removed.
 func TestTeardownLeakSweep(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -343,9 +342,9 @@ func TestPrepareRunDirsErrors(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
-	// The client's check of the run's own copy (agentry-cli#326) refuses
-	// the run with the verify class before anything reads the copy, and is
-	// handed the copy, not the source.
+	// The client's check of the run's own copy refuses the run with the
+	// verify class before anything reads the copy, and is handed the copy,
+	// not the source.
 	t.Run("the workspace copy refused", func(t *testing.T) {
 		p, f := fixture(t)
 		var handed string
@@ -393,7 +392,7 @@ func TestPrepareRunDirsErrors(t *testing.T) {
 // run made. Only those are relabeled for an SELinux-enabled daemon; the
 // gateway's docker socket must be mounted exactly as it is, because
 // relabeling it would change a system-wide file's label for every container
-// on the host (agentry-cli#85).
+// on the host.
 func TestResolveMountsRelabelsOnlyRunDirectories(t *testing.T) {
 	rd := &runDirs{cfg: "/run/x/cfg", workspace: "/run/x/ws", session: "/run/x/session"}
 	got := resolveMounts([]spec.Mount{
@@ -429,9 +428,9 @@ func TestResolveMountsRelabelsOnlyRunDirectories(t *testing.T) {
 // What a run labels for its tool containers, and how deep. The run's own
 // directories are labelled through; the operator's --out directory is not,
 // because it is the one directory in the list they chose and it may hold
-// files that have nothing to do with this run (agentry-cli#88). The out
-// directory itself is still labelled, without recursing, so a tool
-// container can traverse into the reports folder it writes.
+// files that have nothing to do with this run. The out directory itself is
+// still labelled, without recursing, so a tool container can traverse into
+// the reports folder it writes.
 func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
 	rd := &runDirs{
 		workspace:  "/run/x/workspace",
@@ -474,16 +473,16 @@ func TestRelabelTargetsSpareTheOperatorsOutputDirectory(t *testing.T) {
 // TestChconLabelsAtTheSharedLevel pins the label every run folder gets:
 // the type and the level with no category, docker's `z`. With the type
 // alone, chcon keeps the categories a folder inherits, and a runner home
-// under a parent once bound with `Z` (the workstation's ~/scratch was
-// s0:c121,c718) left every tool container, under categories of its own,
-// refused its inputs and output folder (agentry-cli#680, agentry-cli#617).
+// under a parent once bound with `Z` (one labelled
+// s0:c121,c718, say) left every tool container, under categories of its own,
+// refused its inputs and output folder.
 func TestChconLabelsAtTheSharedLevel(t *testing.T) {
 	for _, tc := range []struct {
 		target relabelTarget
 		want   []string
 	}{
 		{relabelTarget{"/run/x/inputs-text", true}, []string{"-t", "container_file_t", "-l", "s0", "-R", "/run/x/inputs-text"}},
-		// The operator's output folder: the folder itself, never its files (agentry-cli#88).
+		// The operator's output folder: the folder itself, never its files.
 		{relabelTarget{"/home/me/out", false}, []string{"-t", "container_file_t", "-l", "s0", "/home/me/out"}},
 	} {
 		if got := chconArgs(tc.target); !slices.Equal(got, tc.want) {
@@ -495,7 +494,7 @@ func TestChconLabelsAtTheSharedLevel(t *testing.T) {
 // TestRelabelTargetsReachTheReceiptsFolder: the tools server appends its
 // ledgers under /out/receipts, so the folder is labelled for the tool
 // containers, and only the folder: the runner's own receipts in it are
-// not (agentry-cli#617).
+// not.
 func TestRelabelTargetsReachTheReceiptsFolder(t *testing.T) {
 	rd := &runDirs{outDir: "/home/me/out", receiptsDir: "/home/me/out/receipts"}
 	if !slices.Contains(relabelTargetsFor(rd), relabelTarget{"/home/me/out/receipts", false}) {

@@ -8,11 +8,11 @@ import (
 
 // LocalRings is when a scheduler that keeps only this computer's local
 // time (launchd, Task Scheduler) is to ring for a schedule. Neither can
-// name the schedule's own zone, or the plan's rules for a month's last day
-// and the daylight-saving changes, so the rings are compiled from the
-// schedule's own occurrences: a superset, never fewer, which fire narrows
-// (D4). A ring that comes late still runs its occurrence, since fire runs
-// the latest one due when no later one has fallen due (D5).
+// name the schedule's own zone, or the rules for a month's last day and
+// the daylight-saving changes, so the rings are compiled from the
+// schedule's own occurrences: a superset, never fewer, which fire narrows.
+// A ring that comes late still runs its occurrence, since fire runs the
+// latest one due when no later one has fallen due.
 type LocalRings struct {
 	// Repeat rings at a wall time on some days, every week or month.
 	Repeat []LocalRing
@@ -47,7 +47,7 @@ func LocalRingsFor(r Recurrence, loc *time.Location, now time.Time) (LocalRings,
 	var out LocalRings
 	if r.Kind == Once {
 		// The one occurrence, even when it is past: a fire then decides
-		// whether it still runs (D5).
+		// whether it still runs.
 		if t, ok := r.Next(r.Start.Add(-time.Nanosecond)); ok {
 			out.Once = []time.Time{t.In(loc)}
 		}

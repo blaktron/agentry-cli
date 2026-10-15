@@ -30,18 +30,17 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// TestABuildsWorkingCopyIsNotSweptByTheProcessThatHoldsIt (agentry-cli#507):
-// a build on this computer is given an hour (DR-54), and the store sweeps
-// private directories older than an hour as a dead process's leftovers.
-// While the Creator runs nothing moves its working copy's own modification
-// time, so past the hour any sweep took it for one and removed it under
-// the build: seen live with v0.6.29, where another process's `knowledge
-// import` ended a running build with "wrote no page". In one process the
-// sweeps are another command's (the desktop's Download beside a build), and
-// Keep's and Reseal's own, which the apply step's staging happens to spare
-// by touching the directory just before them; this holds them all off
-// whatever the age. What a dead process left is still swept, and a working
-// copy given back is no longer held. (Another process's sweep is
+// TestABuildsWorkingCopyIsNotSweptByTheProcessThatHoldsIt: a build on this
+// computer is given an hour, and the store sweeps private directories older
+// than an hour as a dead process's leftovers. While the Creator runs nothing
+// moves its working copy's own modification time, so past the hour any sweep
+// took it for one and removed it under the build: another process's
+// `knowledge import` ended a running build with "wrote no page". In one
+// process the sweeps are another command's (the desktop's Download beside a
+// build), and Keep's and Reseal's own, which the apply step's staging happens
+// to spare by touching the directory just before them; this holds them all
+// off whatever the age. What a dead process left is still swept, and a
+// working copy given back is no longer held. (Another process's sweep is
 // TestAHeldWorkingCopyIsKeptFreshForOtherProcesses.)
 func TestABuildsWorkingCopyIsNotSweptByTheProcessThatHoldsIt(t *testing.T) {
 	ctx := context.Background()

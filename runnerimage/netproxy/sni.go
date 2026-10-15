@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// The SNI check (agentry-cli#616, DR-6 as amended). A CDN front end routes
+// The SNI check. A CDN front end routes
 // a TLS connection by the server name in its ClientHello, not by the
 // address it arrived at, so a tunnel the allowlist opened to one host could
 // otherwise reach every site that front end serves. The proxy therefore

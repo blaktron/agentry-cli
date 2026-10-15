@@ -18,8 +18,8 @@ import (
 )
 
 // TestLiveReviewGrant drives the review grant's tools server in the runner
-// image this binary builds, against TypeSafe's API with a real key
-// (agentry-cli#503): tools/list grants ai_review; read_input passes a plain
+// image this binary builds, against TypeSafe's API with a real key:
+// tools/list grants ai_review; read_input passes a plain
 // file and withholds an injection, scanning each with the model-input
 // questions; ai_review answers the six rubric questions over a package and
 // never with its text; nothing it answers carries the key; and with no

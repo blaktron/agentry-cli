@@ -1,22 +1,21 @@
 # Proves that a job of this repository running in the `release` environment
 # can obtain an Azure Artifact Signing access token with nothing but the OIDC
-# token GitHub mints for it (agentry-cli#196, #197; the desktop's #151; plan cli-release-signing.md D3).
+# token GitHub mints for it.
 #
 # No Azure secret exists: the Entra app registration carries one federated
 # credential whose subject names this repository and the `release`
 # environment, and the environment's deployment policy admits only `main`
 # and `v*` tags, so a job on another branch, a pull request or a fork never
 # presents that subject. The exchange is the OAuth client-credentials grant
-# with the OIDC token as the client assertion — plain curl, no Azure CLI on
+# with the OIDC token as the client assertion: plain curl, no Azure CLI on
 # the runner. The release workflow's `build` job does the same exchange and
 # hands the token to jsign; this workflow proves the credential on its own
-# (agentry-cli#197's wizard runs it) and stays as the diagnostic.
+# and serves as the diagnostic.
 #
 # Nothing here is printed but the outcome and the OIDC token's own subject
 # claim (public by construction). Both tokens reach curl through a config on
-# standard input rather than argv — so they are in no process listing on
-# this persistent runner — the access token is masked, and both die with
-# the step. The checkout is what brings scripts/signing-token.sh; it
+# standard input rather than argv, so they are in no process listing on
+# the runner; the access token is masked, and both die with the step. The checkout is what brings scripts/signing-token.sh; it
 # persists no credential.
 name: signing-oidc-probe
 
@@ -49,8 +48,7 @@ jobs:
         with:
           persist-credentials: false
       # scripts/signing-token.sh is the exchange the release's Windows
-      # signing runs (agentry-cli#196); here it proves the credential and
-      # nothing is signed. The token it prints is masked and dropped.
+      # signing runs; here it proves the credential and nothing is signed. The token it prints is masked and dropped.
       - name: Exchange the job's OIDC token for an Artifact Signing access token
         env:
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}

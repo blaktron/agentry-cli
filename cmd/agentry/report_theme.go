@@ -1,18 +1,16 @@
 package main
 
-// Choosing a run's report design (plan scratch-and-pdf-reports.md D18, D21,
-// D22, agentry-cli#731; plan report-designs.md D11, D12, D19, D20,
-// agentry-cli#784, DR-87): how export_pdf lays a run's PDFs out is the
+// Choosing a run's report design: how export_pdf lays a run's PDFs out is the
 // person's choice, never the model's. The first that is set wins: the
 // --report-design FILE or --report-theme NAME flag, for one run; the
-// signed-in account's report design (the core's GET /user/report-settings,
-// agentry#1024); report.design (a file) or report.theme (a built-in theme)
+// signed-in account's report design (the core's GET /user/report-settings);
+// report.design (a file) or report.theme (a built-in theme)
 // in this CLI's config; Plain. What the person typed here, in a flag or the
 // config, refuses the run before anything starts when it is not a design: a
 // name no theme has, a file that does not hold one. The account's design is
 // read, never trusted to be one this CLI can draw: one it does not accept,
 // or an account it cannot reach, is a warning, and the run takes the next
-// choice, since how a PDF looks is no reason to stop a run (D20).
+// choice, since how a PDF looks is no reason to stop a run.
 
 import (
 	"bytes"
@@ -38,8 +36,8 @@ const accountThemeTimeout = 10 * time.Second
 
 // maxDesignBytes is the most a design document is read as: the 16 KB of
 // the design and, beside it, the base64 of the largest logo with room for
-// its key (agentry-cli#816). pkg/reportdesign's Parse holds the document to
-// its own exact bounds.
+// its key. pkg/reportdesign's Parse holds the document to its own exact
+// bounds.
 var maxDesignBytes = reportdesign.MaxDocumentBytes + base64.StdEncoding.EncodedLen(reportdesign.MaxLogoBytes) + 1024
 
 // accountTheme reads the signed-in account's report design: its document,
@@ -165,13 +163,12 @@ func readAccountTheme(regURL string) accountTheme {
 // answers it, with the person's logo when there is one, or nil when the
 // account never chose one.
 func getReportDesign(ctx context.Context, regURL, token string) ([]byte, error) {
-	// A plain request, not the generated client: the route is the core's
-	// since agentry#989, and a local run is not refused over a design, so
-	// for a run the minimum-version gate stays the run's own resolve's
-	// (report-design export gates before it asks). include=logo asks for
-	// the logo (agentry#1025), which the core answers only when asked so
-	// that a client built before logos still reads the design; a core
-	// before it ignores the parameter.
+	// A plain request, not the generated client: the route is the core's,
+	// and a local run is not refused over a design, so for a run the
+	// minimum-version gate stays the run's own resolve's (report-design
+	// export gates before it asks). include=logo asks for the logo, which
+	// the core answers only when asked so that a client built before logos
+	// still reads the design; an older core ignores the parameter.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(regURL, "/")+"/api/v1/user/report-settings?include=logo", nil)
 	if err != nil {
 		return nil, err
@@ -207,8 +204,8 @@ func designOfSettings(body []byte) ([]byte, error) {
 	if err := json.Unmarshal(body, &settings); err != nil {
 		return nil, fmt.Errorf("read your report design: %w", err)
 	}
-	// {} is never chosen (DEV-227's rule, kept by DEV-230); so is an answer
-	// from a core before agentry#1024, which names a theme and no design.
+	// {} is never chosen; nor is an answer from an older core, which names
+	// a theme and no design.
 	if len(settings.Design) == 0 || bytes.Equal(bytes.TrimSpace(settings.Design), []byte("null")) {
 		return nil, nil
 	}

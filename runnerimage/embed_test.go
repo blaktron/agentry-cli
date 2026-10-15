@@ -1,4 +1,4 @@
-// Tests for the build-context contract (RUNNER-PLAN §R7): Materialize
+// Tests for the build-context contract: Materialize
 // must produce exactly the standalone layout the Dockerfile builds, and
 // every embedded source must stay stdlib-only — the guard that keeps the
 // context compilable with no network beyond the base images, forever.
@@ -142,7 +142,7 @@ func TestMaterializeIsRerunnable(t *testing.T) {
 	}
 }
 
-// TestEmbeddedSourcesStdlibOnly enforces the §R7 self-containment rule at
+// TestEmbeddedSourcesStdlibOnly enforces the self-containment rule at
 // the import graph: every embedded .go file (tests included — they live
 // in the same tree) may import only the standard library and the
 // context's own runnerimage/* packages. First path element containing a
@@ -168,7 +168,7 @@ func TestEmbeddedSourcesStdlibOnly(t *testing.T) {
 			if rest, ok := strings.CutPrefix(ip, internalPrefix); ok {
 				// Part of the context itself, so it must be embedded:
 				// a package missing from the go:embed line breaks the
-				// image build and nothing else (agentry-cli#596).
+				// image build and nothing else.
 				if matches, _ := fs.Glob(contextFS, rest+"/*.go"); len(matches) == 0 {
 					t.Errorf("%s imports %q, which the embedded context does not carry; add %s/*.go to the go:embed line", p, ip, rest)
 				}
@@ -179,7 +179,7 @@ func TestEmbeddedSourcesStdlibOnly(t *testing.T) {
 				first = ip[:i]
 			}
 			if strings.Contains(first, ".") {
-				t.Errorf("%s imports %q — not stdlib; the embedded context must compile with no module downloads (§R7)", p, ip)
+				t.Errorf("%s imports %q — not stdlib; the embedded context must compile with no module downloads", p, ip)
 			}
 		}
 		return nil
@@ -215,7 +215,7 @@ func TestImageTag(t *testing.T) {
 // TestContextGoModFollowsTheModule: the runner context's go.mod names the
 // CLI's module path and its go line to the patch, so a builder older than
 // the CLI's Go refuses under the Go images' GOTOOLCHAIN=local instead of
-// building the runner with an older standard library (agentry-cli#786).
+// building the runner with an older standard library.
 func TestContextGoModFollowsTheModule(t *testing.T) {
 	directive := func(gomod, name string) string {
 		for _, line := range strings.Split(gomod, "\n") {

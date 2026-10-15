@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// The browser class (agentry-notes plans/browser-testing.md §4, §7, M1;
-// agentry-cli#915): the run's browser server keeps no capability, runs on
+// The browser class: the run's browser server keeps no capability, runs on
 // a read-only root with a tmpfs home and /tmp owned by the run's user, as
 // that user, and under runc with the seccomp profile that lets Chromium's
 // own sandbox run; under a sandboxed runtime with Docker's default.
@@ -177,11 +176,10 @@ func TestTheBrowseProxysRelayResolvesThroughItsPin(t *testing.T) {
 	g.refused(t, "a relay's own hosts entry", "POST", "/containers/create", doc, "resolves its host as the daemon does")
 }
 
-// TestTheBrowsersNetworkIsItsAndItsRelaysAlone is invariant 2 (plan
-// browser-testing.md): the browser server and the relay to the browse
-// proxy are given the run's browser network where the gateway names the
-// internal relay network; no other container joins it, the browser joins
-// no other, and nothing is connected to either afterwards.
+// TestTheBrowsersNetworkIsItsAndItsRelaysAlone: the browser server and the
+// relay to the browse proxy are given the run's browser network where the
+// gateway names the internal relay network; no other container joins it, the
+// browser joins no other, and nothing is connected to either afterwards.
 func TestTheBrowsersNetworkIsItsAndItsRelaysAlone(t *testing.T) {
 	const browserNet = "agentry-A-relays-browser"
 	g := newRig(t, Limits{}, func(c *Config) {

@@ -22,18 +22,17 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// A draft that reads the person's knowledge (plan knowledge-and-drafter.md
-// §6, D3, D4, D14; agentry-cli#522). The Drafter may be given the person's
-// packs, up to MaxKnowledgeBytes in all, and nothing of a pack reaches its
-// model unscanned (builder-rework D7):
+// A draft that reads the person's knowledge. The Drafter may be given the
+// person's packs, up to MaxKnowledgeBytes in all, and nothing of a pack
+// reaches its model unscanned:
 //
 //   - A pack Agentry scanned is not scanned again. Its scan stands in for
-//     scanning each read (DR-44's addendum) when its record is confirmed
-//     with the registry that keeps it (store.AgentryScan), or laid down by
-//     a sandbox host from Agentry's store for a hosted draft, and is
-//     complete: every stage finished and AI Review read every chunk.
-//     Every file its findings place is withheld, and every file it could
-//     not read as text.
+//     scanning each read when its record is confirmed with the registry
+//     that keeps it (store.AgentryScan), or laid down by a sandbox host
+//     from Agentry's store for a hosted draft, and is complete: every
+//     stage finished and AI Review read every chunk. Every file its
+//     findings place is withheld, and every file it could not read as
+//     text.
 //   - Any other pack is scanned first, before the draft starts, with the
 //     draft's own scanner (the person's AI Review key on this computer):
 //     every file of its tree, as model input, in pieces of at most
@@ -45,8 +44,8 @@ import (
 // tools never serve it; the draft's notes name each file under "Withheld
 // by AI Review", with why, never its text.
 
-// MaxKnowledgeBytes is the most a draft's packs may hold in all (D3),
-// whatever a pack kept on this computer may hold (DR-48): Agentry's own
+// MaxKnowledgeBytes is the most a draft's packs may hold in all,
+// whatever a pack kept on this computer may hold: Agentry's own
 // cap on one pack.
 const MaxKnowledgeBytes = knowledge.MaxBytes
 
@@ -87,8 +86,7 @@ type PackRead struct {
 	// Withheld is every file of the pack the Drafter was not given.
 	Withheld []WithheldFile `json:"withheld"`
 	// Requests counts AI Review's requests for a pack scanned for the
-	// draft, for the record (never a price: one credit an operation,
-	// DEV-150).
+	// draft, for the record (never a price: one credit an operation).
 	Requests int `json:"requests,omitempty"`
 }
 
@@ -134,7 +132,7 @@ var ErrKnowledgeNameTaken = errors.New("the Drafter ships a knowledge pack of th
 // refuses one named as the pack the Drafter ships (GuideName), which is
 // not one of the person's and counts against neither cap: what a client
 // checks before it scans anything. The runner refuses the same name again
-// when it mounts the packs (agentry-cli#657).
+// when it mounts the packs.
 func CheckKnowledgeSize(packs []*knowledge.Pack) error {
 	for _, p := range packs {
 		if p.Manifest.Name == GuideName {
@@ -298,10 +296,10 @@ type agentryReport struct {
 }
 
 // AgentryScanStandsIn says whether raw, a pack's scan record in Agentry,
-// stands in for scanning the pack for a draft (D14), and why not: it must
+// stands in for scanning the pack for a draft, and why not: it must
 // be the core's report, every stage must have finished, AI Review must have
 // read every chunk, and it must account for every file of the pack's tree.
-// A client says so before anything is scanned (D3); ReadyKnowledge asks
+// A client says so before anything is scanned; ReadyKnowledge asks
 // the same.
 func AgentryScanStandsIn(p *knowledge.Pack, raw json.RawMessage) (bool, string) {
 	files, err := knowledge.TreeFiles(p.Dir)
@@ -341,7 +339,7 @@ func agentryRecord(raw json.RawMessage, files int) (*agentryReport, string) {
 
 // fromAgentryScan is the files of the pack at dir a scan in Agentry
 // withholds, by path, with why; nil, and why not, when the record cannot
-// stand in for a scan (agentryRecord, D14). Beside what the record places,
+// stand in for a scan (agentryRecord). Beside what the record places,
 // any file this client does not read as text is withheld too.
 func fromAgentryScan(dir string, files []string, raw json.RawMessage) (map[string]string, string) {
 	r, why := agentryRecord(raw, len(files))
@@ -786,8 +784,8 @@ func (d *Draft) readKnowledge(k *KnowledgeRead) {
 }
 
 // PackSource is how a draft names a file of a pack it read, in its
-// sources and its notes (plan §6, D4): pack:<name>/<path>, the path
-// relative to the pack's wiki for a page, else to the pack.
+// sources and its notes: pack:<name>/<path>, the path relative to
+// the pack's wiki for a page, else to the pack.
 func PackSource(name, file string) string {
 	if rel, ok := strings.CutPrefix(file, knowledge.WikiDir+"/"); ok {
 		return "pack:" + name + "/" + rel

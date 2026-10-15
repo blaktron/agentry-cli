@@ -21,14 +21,13 @@ import (
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
-// TestDecodeArchivesForReal runs the real decode image over archives (plan
-// file-handling.md §6, D5; agentry-cli#562): a zip, a 7z, a tar.xz, a rar
-// and a lone .gz of documents, an archive nested in a zip, and the hostile
-// corpus: a zip slip, link members, nesting past three, a bomb past the
-// 512 MiB budget, encrypted zips and rars. Each is read or refused exactly
-// as the plan says, and nothing lands outside the decode's output. The
-// 2,000-member cap is the unit tests' (runnerimage/decode): a real decode
-// of 2,001 members spends most of an hour starting Tika. It needs a
+// TestDecodeArchivesForReal runs the real decode image over archives: a zip, a
+// 7z, a tar.xz, a rar and a lone .gz of documents, an archive nested in a zip,
+// and the hostile corpus: a zip slip, link members, nesting past three, a bomb
+// past the 512 MiB budget, encrypted zips and rars. Each is read or refused
+// exactly as the test cases expect, and nothing lands outside the decode's
+// output. The 2,000-member cap is the unit tests' (runnerimage/decode): a real
+// decode of 2,001 members spends most of an hour starting Tika. It needs a
 // docker daemon, so it runs only when AGENTRY_DECODE_E2E=1.
 func TestDecodeArchivesForReal(t *testing.T) {
 	if os.Getenv("AGENTRY_DECODE_E2E") != "1" {
@@ -47,7 +46,7 @@ func TestDecodeArchivesForReal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The real signatures too, so clamscan reads every hostile archive and
-	// member, the bomb's included, beside the decoders (agentry-cli#563).
+	// member, the bomb's included, beside the decoders.
 	img.Signatures = clamdb.Ensure(ctx, home, pol.Images.ClamAVSignaturesRef(), os.Stderr)
 	if img.Signatures.Dir == "" {
 		t.Fatalf("no signatures: %+v", img.Signatures)

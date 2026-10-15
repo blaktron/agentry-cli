@@ -23,14 +23,12 @@ func sha(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// TestTheReceiptNamesTheTheme (plan scratch-and-pdf-reports.md §3
-// invariants 9 and 10, D15, D19; agentry-cli#730; report-designs.md
-// invariant 9, agentry-cli#784): a release's run gets export_pdf's run-time
+// TestTheReceiptNamesTheTheme: a release's run gets export_pdf's run-time
 // half in its own tools spec (the design, verbatim, the release as the
 // author, the ledger), and its receipt names the design by name, theme,
 // version, SHA-256 and what chose it, and each exported PDF whose bytes are
-// still the recorded ones with its form, the last record of a path
-// exported twice; a PDF changed after its export, or gone, is not named.
+// still the recorded ones with its form, the last record of a path exported
+// twice; a PDF changed after its export, or gone, is not named.
 func TestTheReceiptNamesTheTheme(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -108,12 +106,12 @@ func TestNoExportNoPDFsBlock(t *testing.T) {
 	}
 }
 
-// TestTheRunsReportThemeIsStampedAndNamed (agentry-cli#731, #784): the
-// design the caller chose, a built-in by name or a whole document, is the
-// one the tools spec carries as its canonical document, and the receipt
-// names it and what chose it whether or not a PDF was exported; a run told
-// nothing takes Plain, chosen by the default; a design that breaks a rule
-// fails the run before it starts.
+// TestTheRunsReportThemeIsStampedAndNamed: the design the caller chose, a
+// built-in by name or a whole document, is the one the tools spec carries
+// as its canonical document, and the receipt names it and what chose it
+// whether or not a PDF was exported; a run told nothing takes Plain,
+// chosen by the default; a design that breaks a rule fails the run before
+// it starts.
 func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 	modern, err := toolsrv.BuiltinTheme("modern")
 	if err != nil {
@@ -163,8 +161,7 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 	}
 
 	// A design with the person's logo travels whole, the logo in its
-	// document and its hash, and the receipt says the logo is drawn
-	// (agentry-cli#816).
+	// document and its hash, and the receipt says the logo is drawn.
 	var logo bytes.Buffer
 	if err := png.Encode(&logo, image.NewGray(image.Rect(0, 0, 4, 2))); err != nil {
 		t.Fatal(err)

@@ -21,20 +21,18 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 )
 
-// The input sources' fetch step (plan input-sources.md §5, D4–D8, D12;
-// agentry-cli#833, agentry-cli#834), before the decode. Each source the
-// intake answered is fetched by the runner image's `source` role in the
-// files container (the decode image), on a network of its own whose only
-// route out is a CONNECT proxy to the source's host on port 443, at public
-// addresses alone. The
-// token, when there is one, reaches the step on its stdin: never in an
+// The input sources' fetch step, before the decode. Each source the intake
+// answered is fetched by the runner image's `source` role in the files
+// container (the decode image), on a network of its own whose only route out is
+// a CONNECT proxy to the source's host on port 443, at public addresses alone.
+// The token, when there is one, reaches the step on its stdin: never in an
 // environment, an argument or a file. Then the proxy and the network are
-// removed, the tree the step wrote is held to the source's rules on the
-// host (regular files and folders only, no .git, within the caps, the
-// counts the report gives), and it moves to /inputs/<id>/, where the decode
-// treats it as it treats uploads: a repository with its own cap and malware
-// rule, a url source's one file as an upload. The agent container never sees a token, a source mount of its own
-// or a route to the source's host.
+// removed, the tree the step wrote is held to the source's rules on the host
+// (regular files and folders only, no .git, within the caps, the counts the
+// report gives), and it moves to /inputs/<id>/, where the decode treats it as
+// it treats uploads: a repository with its own cap and malware rule, a url
+// source's one file as an upload. The agent container never sees a token, a
+// source mount of its own or a route to the source's host.
 
 // sourceTimeout bounds one source's fetch step.
 const sourceTimeout = 20 * time.Minute
@@ -112,8 +110,7 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 	caps := kind.Caps
 	if p.InputReview != nil {
 		// A hosted run (it is the one with AI Review): the hosted caps,
-		// and the source's Markdown read by AI Review in the decode
-		// (agentry-cli#872, D7, D9).
+		// and the source's Markdown read by AI Review in the decode.
 		caps = kind.HostedCaps
 	}
 
@@ -387,9 +384,9 @@ func reviewedWords(s sources.Source, markdown int) string {
 }
 
 // sourceIDs are the folders under /inputs that the decode holds to the
-// source rule (D8). A kind decoded as an upload (a url source) is not
-// among them: its file gets every check and every decoder, and counts
-// against the uploads' cap.
+// source rule. A kind decoded as an upload (a url source) is not among
+// them: its file gets every check and every decoder, and counts against
+// the uploads' cap.
 func sourceIDs(runs []sourceRun) []string {
 	out := make([]string, 0, len(runs))
 	for _, r := range runs {

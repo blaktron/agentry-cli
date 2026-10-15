@@ -17,7 +17,7 @@ import (
 
 // builtinsRegistry is the slice of the registry `agentry builtins publish`
 // talks to: version and agent lookups, agent creation, and the upload,
-// whose archive it hashes itself (the server's cross-check, §6.5).
+// whose archive it hashes itself (the server's cross-check).
 type builtinsRegistry struct {
 	mu sync.Mutex
 	// versions holds the digest of each ns/name@version the registry has.
@@ -166,10 +166,10 @@ func builtinDigests(t *testing.T) map[string]string {
 	return m
 }
 
-// TestBuiltinsPublishUploadsTheEmbeddedBytes (agentry-cli#470): every
-// built-in is created public and uploaded from its embedded tree, and the
-// archive the registry receives hashes to the digest `agentry builtins`
-// prints, so the release is the package the binary runs.
+// TestBuiltinsPublishUploadsTheEmbeddedBytes: every built-in is created
+// public and uploaded from its embedded tree, and the archive the
+// registry receives hashes to the digest `agentry builtins` prints, so
+// the release is the package the binary runs.
 func TestBuiltinsPublishUploadsTheEmbeddedBytes(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_testtoken")
@@ -194,8 +194,7 @@ func TestBuiltinsPublishUploadsTheEmbeddedBytes(t *testing.T) {
 		if !strings.Contains(stdout, "published "+b.Ref()) {
 			t.Errorf("no verdict for %s in %q", b.Ref(), stdout)
 		}
-		// Created, then marked built-in, so the directory labels it so
-		// (agentry-cli#474).
+		// Created, then marked built-in, so the directory labels it so.
 		key := b.Namespace() + "/" + b.Name()
 		if !br.agents[key] || !strings.Contains(stdout, "marked "+key+" built-in") {
 			t.Errorf("%s is not marked built-in: %v\n%s", key, br.agents[key], stdout)
@@ -203,9 +202,9 @@ func TestBuiltinsPublishUploadsTheEmbeddedBytes(t *testing.T) {
 	}
 }
 
-// TestBuiltinsPublishMarksWhatIsNotMarked (agentry-cli#474): an agent the
-// registry already holds, with its version, is marked when it is not, and
-// left alone when it is; nothing is uploaded either way.
+// TestBuiltinsPublishMarksWhatIsNotMarked: an agent the registry already
+// holds, with its version, is marked when it is not, and left alone when
+// it is; nothing is uploaded either way.
 func TestBuiltinsPublishMarksWhatIsNotMarked(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_testtoken")
@@ -230,8 +229,8 @@ func TestBuiltinsPublishMarksWhatIsNotMarked(t *testing.T) {
 }
 
 // TestBuiltinsPublishFailsWhenTheMarkIsRefused: the mark is platform
-// staff's alone (agentry#737), so a token without it fails every built-in
-// before anything is uploaded; the release job's token must be a staff
+// staff's alone, so a token without it fails every built-in before
+// anything is uploaded; the release job's token must be a staff
 // admin's.
 func TestBuiltinsPublishFailsWhenTheMarkIsRefused(t *testing.T) {
 	isolateEnv(t)
@@ -278,7 +277,7 @@ func TestBuiltinsPublishSkipsWhatTheRegistryHas(t *testing.T) {
 // TestBuiltinsPublishNeedsTheNamespace: an account that may not publish to
 // the built-ins' namespace is refused by the registry, and nothing is
 // uploaded — an ordinary user cannot publish a built-in on a registry they
-// do not own (the operator, 2026-09-29).
+// do not own.
 func TestBuiltinsPublishNeedsTheNamespace(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "agy_testtoken")

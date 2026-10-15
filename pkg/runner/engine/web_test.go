@@ -58,8 +58,7 @@ func webFixture(t *testing.T) (Params, *dockerx.Fake) {
 }
 
 // webFixtureFor is webFixture with registry_search granted or not: the
-// Knowledge Creator's web tools are the Drafter's without it
-// (agentry-cli#523).
+// Knowledge Creator's web tools are the Drafter's without it.
 func webFixtureFor(t *testing.T, registrySearch bool) (Params, *dockerx.Fake) {
 	t.Helper()
 	m, err := manifest.Parse([]byte(webManifest))
@@ -100,9 +99,9 @@ func webFixtureFor(t *testing.T, registrySearch bool) (Params, *dockerx.Fake) {
 	}, &dockerx.Fake{}
 }
 
-// TestADraftsKeysReachTheToolsContainerAlone is the plan's invariant (§3):
-// the agent container's environment holds no registry credential, no Jev
-// key and no search key, and neither does any container's command line; the
+// TestADraftsKeysReachTheToolsContainerAlone: the
+// agent container's environment holds no registry credential, no Jev key
+// and no search key, and neither does any container's command line; the
 // keys are in the run's gateway secrets file, scoped to the tools server,
 // and gone at teardown.
 func TestADraftsKeysReachTheToolsContainerAlone(t *testing.T) {
@@ -213,9 +212,9 @@ func TestTheRunsWebHalfIsStamped(t *testing.T) {
 	}
 }
 
-// TestACreatorsWebHasNoRegistrySearch (agentry-cli#523): the Knowledge
-// Creator's plan carries web_search and web_read and never registry_search,
-// even when its run names a registry, as a hosted build's does for its scans.
+// TestACreatorsWebHasNoRegistrySearch: the Knowledge Creator's plan carries
+// web_search and web_read and never registry_search, even when its run names
+// a registry, as a hosted build's does for its scans.
 func TestACreatorsWebHasNoRegistrySearch(t *testing.T) {
 	p, f := webFixtureFor(t, false)
 	happyFake(f)
@@ -315,12 +314,12 @@ func TestTheWebLedgerIsCountedIntoTheReceipt(t *testing.T) {
 	}
 }
 
-// TestTheWebToolsResolvConf (agentry-cli#386): a plan with the web tools
-// and name servers gets a resolv.conf of the run's own beside its tools
-// spec, one nameserver line each, readable by the tools server's user; a
-// plan without either gets none; the receipt says which servers resolve
-// the web tools' names, and where the filter cannot bind the file, that it
-// is not applied.
+// TestTheWebToolsResolvConf: a plan with the web tools and name servers
+// gets a resolv.conf of the run's own beside its tools spec, one
+// nameserver line each, readable by the tools server's user; a plan
+// without either gets none; the receipt says which servers resolve the web
+// tools' names, and where the filter cannot bind the file, that it is not
+// applied.
 func TestTheWebToolsResolvConf(t *testing.T) {
 	dir := t.TempDir()
 	plan := &spec.Plan{Capabilities: spec.CapSummary{WebTools: true}, Docker: &spec.DockerSpec{Runtime: "runsc", Resolvers: []string{"192.168.122.1", "192.0.2.53"}}}

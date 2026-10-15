@@ -1,4 +1,4 @@
-// voice_read tests (plan writing-voice.md D4, agentry-cli#531): the tool
+// voice_read tests: the tool
 // exists exactly when the engine attached a voice, returns the file whole,
 // and refuses anything that is not the regular file it was given.
 

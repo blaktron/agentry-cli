@@ -31,10 +31,10 @@ var (
 // it was built from. An unstamped build (0.0.0-dev) or a dirty one
 // (describe's -dirty suffix) carries the same version across code changes —
 // the hosted worker's CLI was built unstamped, so every worker build kept
-// the plans an older CLI had cached and ran them (agentry-cli#144). Its
-// name adds a digest of the running executable instead: another binary is
-// another build, and the same binary (a reproducible -trimpath build of the
-// same source included) is the same build. Computed once per process.
+// the plans an older CLI had cached and ran them. Its name adds a digest of
+// the running executable instead: another binary is another build, and the
+// same binary (a reproducible -trimpath build of the same source included)
+// is the same build. Computed once per process.
 func Build() string {
 	buildOnce.Do(func() { build = buildID(Version, os.Executable) })
 	return build

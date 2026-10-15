@@ -1,5 +1,4 @@
-// The review grant at run time (plan desktop-review-key-and-run-cards.md
-// §6.2, D18, D27, D28; agentry-cli#503). The compiled plan grants it
+// The review grant at run time. The compiled plan grants it
 // (spec.CapSummary.ReviewTools, toolsrv.Review.Enabled) and gives the tools
 // container TypeSafe's API as its one host; the run brings the person's key.
 // The engine refuses a run of such a plan without the key before anything
@@ -36,7 +35,7 @@ type ReviewRun struct {
 const ReviewLedgerFile = "review.ndjson"
 
 // ErrNoReviewKey is the refusal of a review-grant run without the person's
-// key (D28, as a draft on this computer is refused without one, DR-44).
+// key (as a draft on this computer is refused without one).
 var ErrNoReviewKey = errors.New("a review runs only with your own TypeSafe key, and this run has none")
 
 // checkReview holds a run to its plan: a plan with the review grant runs

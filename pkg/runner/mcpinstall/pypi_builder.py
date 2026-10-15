@@ -1,15 +1,13 @@
-# The PyPI MCP-server builder (agentry-cli#162). It runs in the policy's
-# Python runtime image as
+# The PyPI MCP-server builder. It runs in the policy's Python runtime image as
 #
 #   python -c <this file> PREFIX PACKAGE VERSION INDEX ONLY_BINARY
 #
-# so every value arrives as its own argv element and reaches pip as one,
-# never through a shell. Wheels only unless ONLY_BINARY is empty (policy
-# pypiAllowSourceDists), and the file `pip download --no-deps` picked must
-# be one the registry advertised for the pin, with that digest, before
-# anything is installed (agentry-cli#4, DR-12/DR-13). Exit 3: a file the
-# registry did not advertise; exit 4: a digest mismatch; otherwise pip's
-# own exit code.
+# so every value arrives as its own argv element and reaches pip as one, never
+# through a shell. Wheels only unless ONLY_BINARY is empty (policy
+# pypiAllowSourceDists), and the file `pip download --no-deps` picked must be
+# one the registry advertised for the pin, with that digest, before anything is
+# installed. Exit 3: a file the registry did not advertise; exit 4: a digest
+# mismatch; otherwise pip's own exit code.
 import hashlib
 import os
 import subprocess
@@ -21,7 +19,7 @@ ARTIFACT_SUMS = "artifacts.sha256"
 CONSOLE_SCRIPTS_FILE = "console-scripts"
 
 # Run by the venv's own interpreter, where the installed distribution is:
-# the console scripts it declares, one per line (agentry-cli#13).
+# the console scripts it declares, one per line.
 CONSOLE_SCRIPTS = (
     "import importlib.metadata as m, sys\n"
     "eps = sorted(e.name for e in m.distribution(sys.argv[1]).entry_points"

@@ -49,8 +49,7 @@ func TestSearchKeyRefusesAProviderThePolicyDoesNotAdmit(t *testing.T) {
 // provider:typesafe (the one the desktop writes); a keychain entry is never
 // read for an env source; no Jev key is ErrNoJevKey. Search is on only with
 // a provider named and its own key found: each provider's own variable or
-// keychain entry, never another's (plan builder-rework.md D22, D25;
-// agentry-cli#363, agentry-cli#369, agentry-cli#513).
+// keychain entry, never another's.
 func TestLocalWebReadsThePersonsKeysAsThePolicySays(t *testing.T) {
 	localKeys(t)
 	if err := modelkey.Store(policy.JudgeKeyProvider, "jev-from-the-keychain"); err != nil {
@@ -194,7 +193,7 @@ func TestAKeychainThatCannotBeReadIsARefusal(t *testing.T) {
 // TestFinish: the answer as a draft, named by what made it, with AI Review's
 // record from the receipt and the ledger (never from what the model said),
 // and the notes the Drafter wrote as its report followed by the withheld
-// list; an answer that is not a draft is exit 17 (plan §7.5).
+// list; an answer that is not a draft is exit 17.
 func TestFinish(t *testing.T) {
 	out := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(out, "receipts"), 0o755); err != nil {

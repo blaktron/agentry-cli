@@ -16,14 +16,14 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
-// The url kind (plan input-sources.md §5, D12; agentry-cli#834): one file
+// The url kind: one file
 // at a web address, fetched with one https GET through the same proxy as a
 // repository, its redirects followed only on the same host, and saved as
 // one file under Out, named from the host's Content-Disposition or the
 // address's last path segment, rewritten to a name every file system
 // takes. The host then decodes it as it decodes an upload, so it gets every
-// malware check and every decoder, and an archive is unpacked under DR-39's
-// rules.
+// malware check and every decoder, and an archive is unpacked under the
+// member-name rules.
 
 // KindURL is the url kind.
 const KindURL = "url"
@@ -174,7 +174,7 @@ func fileName(disposition string, from *url.URL) string {
 // hide text and Windows' reserved characters as "_"; no trailing dot or
 // space; a device name prefixed with "_"; not git's own folder; within
 // maxFileName bytes, its extension kept. The result passes portableName
-// and DR-39's member-name rule (decode.PlainMemberPath).
+// and the member-name rule (decode.PlainMemberPath).
 func PortableFileName(raw string) string {
 	if i := strings.LastIndexAny(raw, `/\`); i >= 0 {
 		raw = raw[i+1:]

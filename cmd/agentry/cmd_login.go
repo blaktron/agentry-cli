@@ -1,10 +1,9 @@
-// `agentry login` (§11): obtain a PAT — through the browser (the default on
-// a terminal: the registry's authorize page mints a one-time code to a
-// loopback listener and this process exchanges it, agentry-cli#5 /
-// DEV-025 closure) or pasted from stdin (`--paste`, and the default when
-// stdin is not a terminal) — verify it against GET /user, store it (OS
-// keychain first, config-file fallback for headless machines), and pin the
-// registry's signing keys (TOFU).
+// `agentry login`: obtain a PAT — through the browser (the default on a
+// terminal: the registry's authorize page mints a one-time code to a loopback
+// listener and this process exchanges it) or pasted from stdin (`--paste`, and
+// the default when stdin is not a terminal) — verify it against GET /user,
+// store it (OS keychain first, config-file fallback for headless machines), and
+// pin the registry's signing keys (TOFU).
 package main
 
 import (
@@ -55,8 +54,8 @@ func newLoginCmd() *cobra.Command {
 			"terminal). Either way the token is verified against the registry and\n" +
 			"stored: in the OS keychain when available, else in\n" +
 			"~/.config/agentry/config.yaml (chmod 600) with a warning.\n\n" +
-			"Login also PINS the registry's DSSE signing keys on first use (§8.8\n" +
-			"trust-on-first-use). Pinning here rather than at the first verify is\n" +
+			"Login also PINS the registry's DSSE signing keys on first use\n" +
+			"(trust-on-first-use). Pinning here rather than at the first verify is\n" +
 			"deliberate: login is the moment someone deliberately chose this registry\n" +
 			"and typed a credential for it, which is when a trust-on-first-use decision\n" +
 			"belongs — not at whichever download happens to come first. A registry that\n" +
@@ -169,9 +168,9 @@ func completeLogin(cmd *cobra.Command, reg, token string) (authEvent, error) {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "logged in to %s as %s (token stored in %s)\n", reg, handle, storage)
 	}
 
-	// §11: "pins signing keys (TOFU)". Never fatal — an unsigned self-host
-	// registry is a legitimate configuration, and a key-fetch hiccup must not
-	// undo a login whose credential is already stored and verified.
+	// Pins signing keys (TOFU). Never fatal — an unsigned self-host registry
+	// is a legitimate configuration, and a key-fetch hiccup must not undo a
+	// login whose credential is already stored and verified.
 	pins := trust.PinAtLoginResult(cmd.Context(), httpClient, reg)
 	if !flags.jsonOut {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "signing keys: %s\n", pins.Note)

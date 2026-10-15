@@ -8,7 +8,7 @@ import "syscall"
 // package exports SYS_PRCTL but not the option constants.
 const prSetDumpable = 4
 
-// hideEnvironment marks this process non-dumpable (agentry-cli#246, DR-34).
+// hideEnvironment marks this process non-dumpable.
 // The tools server holds every granted secret in its environment, and a
 // catalogued exec command runs as the same root in the same pid namespace:
 // without this, `cat /proc/<server pid>/environ` hands the model the
@@ -16,8 +16,8 @@ const prSetDumpable = 4
 // the block the process started with. A non-dumpable process's /proc files
 // (environ, mem, …) belong to root and pass the kernel's ptrace access check
 // only for a caller holding CAP_SYS_PTRACE, which the default docker
-// capability set the tool containers run with does not include. Measured
-// under runc and runsc (gVisor) both. Children are unaffected: execve
+// capability set the tool containers run with does not include. This holds
+// under both runc and runsc (gVisor). Children are unaffected: execve
 // resets the flag for the program it starts.
 func hideEnvironment() error {
 	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, prSetDumpable, 0, 0); errno != 0 {
