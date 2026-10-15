@@ -215,3 +215,77 @@ func TestReplaceFileKeepsLinkAndMode(t *testing.T) {
 		t.Fatalf("mode = %v, want 0600 kept", fi.Mode().Perm())
 	}
 }
+
+// refuseReplace makes a rename over an existing file fail, as Windows
+// refuses one while a scanner still maps a file that was just written,
+// for the rest of the test.
+func refuseReplace(t *testing.T) {
+	t.Helper()
+	old := replace
+	replace = func(from, to string) error {
+		if _, err := os.Lstat(to); err == nil {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: errors.New("Access is denied.")}
+		}
+		return os.Rename(from, to)
+	}
+	t.Cleanup(func() { replace = old })
+}
+
+// A file a rename may not replace is retired aside and the new file put
+// in the name it leaves free; neither the staging file nor the retired
+// one is left beside it.
+func TestReplaceFileRetiresAFileItCannotReplace(t *testing.T) {
+	refuseReplace(t)
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(dest, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceFile(dest, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "new" {
+		t.Fatalf("dest = %q", b)
+	}
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(dest); fi.Mode().Perm() != 0o600 {
+			t.Fatalf("mode = %v, want 0600 kept", fi.Mode().Perm())
+		}
+	}
+	if names := dirNames(t, dir); len(names) != 1 || names[0] != "policy.yaml" {
+		t.Fatalf("left beside it: %v", names)
+	}
+}
+
+// Only a regular file is retired: a directory at dest is refused and left
+// whole, and the staging file is removed.
+func TestReplaceFileRetiresOnlyAFile(t *testing.T) {
+	refuseReplace(t)
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "policy.yaml")
+	if err := os.MkdirAll(filepath.Join(dest, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceFile(dest, []byte("new"), 0o644); err == nil {
+		t.Fatal("a directory was replaced by a file")
+	}
+	if fi, err := os.Stat(filepath.Join(dest, "keep")); err != nil || !fi.IsDir() {
+		t.Fatalf("the directory was not left whole: %v", err)
+	}
+	if names := dirNames(t, dir); len(names) != 1 || names[0] != "policy.yaml" {
+		t.Fatalf("left beside it: %v", names)
+	}
+}
+
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}

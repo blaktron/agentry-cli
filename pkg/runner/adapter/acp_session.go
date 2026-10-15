@@ -33,6 +33,7 @@ type acpSession struct {
 
 	sessionID string
 	events    chan Event
+	eventGate eventGate // orders sends against close(events)
 	readDone  chan struct{}
 	closeOnce sync.Once
 
@@ -258,7 +259,7 @@ func (s *acpSession) Close() error {
 			delete(s.pending, id)
 		}
 		s.mu.Unlock()
-		close(s.events)
+		s.eventGate.close(s.events)
 	})
 	return err
 }
@@ -464,9 +465,7 @@ func (s *acpSession) handleRequest(m rpcMessage, line []byte) {
 	}
 }
 
-func (s *acpSession) emit(ev Event) {
-	s.events <- ev
-}
+func (s *acpSession) emit(ev Event) { s.eventGate.send(s.events, ev) }
 
 func firstLineOf(msg string) string {
 	if i := strings.IndexByte(msg, '\n'); i >= 0 {

@@ -57,12 +57,12 @@ note() { echo "ok: $*"; }
 
 # --- pure-text: I/O channels only; networkless tools container --------------
 PLAN=$(run_dry pure-text)
-echo "$PLAN" | grep -q '"planVersion": "2"' || fail "pure-text: plan version"
-echo "$PLAN" | grep -q '"write_report"'     || fail "pure-text: write_report grant"
-echo "$PLAN" | grep -q '"list_inputs"'      || fail "pure-text: inputs channel missing"
-echo "$PLAN" | grep -q '"fs_read"'          && fail "pure-text: fs_read must be absent"
-echo "$PLAN" | grep -q -- '--block-network' || fail "pure-text: gateway must always pass --block-network"
-echo "$PLAN" | grep -q '@@RUN_INPUTS@@'     || fail "pure-text: inputs placeholder missing from plan env"
+grep -q '"planVersion": "2"' <<<"$PLAN" || fail "pure-text: plan version"
+grep -q '"write_report"' <<<"$PLAN"     || fail "pure-text: write_report grant"
+grep -q '"list_inputs"' <<<"$PLAN"      || fail "pure-text: inputs channel missing"
+grep -q '"fs_read"' <<<"$PLAN"          && fail "pure-text: fs_read must be absent"
+grep -q -- '--block-network' <<<"$PLAN" || fail "pure-text: gateway must always pass --block-network"
+grep -q '@@RUN_INPUTS@@' <<<"$PLAN"     || fail "pure-text: inputs placeholder missing from plan env"
 note "pure-text plan"
 
 # --- determinism: same inputs, byte-identical plans -------------------------
@@ -73,12 +73,12 @@ note "deterministic plans"
 # --- full-caps: every tool granted; hosts pinned; secrets named only --------
 FULL=$(FIXTURE_TOKEN=should-not-leak run_dry full-caps)
 for tool in fs_read fs_list fs_write fetch run_command write_report; do
-  echo "$FULL" | grep -q "\"$tool\"" || fail "full-caps: missing tool $tool"
+  grep -q "\"$tool\"" <<<"$FULL" || fail "full-caps: missing tool $tool"
 done
-echo "$FULL" | grep -q 'api.example.com'    || fail "full-caps: egress host missing"
-echo "$FULL" | grep -q 'FIXTURE_TOKEN'      || fail "full-caps: secret NAME missing"
-echo "$FULL" | grep -q 'should-not-leak'    && fail "full-caps: secret VALUE leaked into plan"
-echo "$FULL" | grep -q '"resultKind": "json"' || fail "full-caps: output schema not wired"
+grep -q 'api.example.com' <<<"$FULL"    || fail "full-caps: egress host missing"
+grep -q 'FIXTURE_TOKEN' <<<"$FULL"      || fail "full-caps: secret NAME missing"
+grep -q 'should-not-leak' <<<"$FULL"    && fail "full-caps: secret VALUE leaked into plan"
+grep -q '"resultKind": "json"' <<<"$FULL" || fail "full-caps: output schema not wired"
 note "full-caps plan"
 
 # --- wildcard egress: refused by default policy (exit 11) -------------------
@@ -93,7 +93,7 @@ note "wildcard refused (exit 11)"
 sed 's/allowWildcardEgress: false/allowWildcardEgress: true/' "$POLICY" >"$WORK/policy-wild.yaml"
 WILD=$("$AGENTRY" run --local testdata/runner/wildcard --dry-run --allow-unsigned --yes --policy "$WORK/policy-wild.yaml" 2>/dev/null) \
   || fail "wildcard: allowing policy still refused"
-echo "$WILD" | grep -q 'UNRESTRICTED' || fail "wildcard: enforcement must disclose itself"
+grep -q 'UNRESTRICTED' <<<"$WILD" || fail "wildcard: enforcement must disclose itself"
 note "wildcard allowed by policy, loudly disclosed"
 
 # --- withdrawn v1 mcp-server package: not runnable (exit 12) -----------------
