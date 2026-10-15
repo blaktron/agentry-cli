@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Developer ID-signs and notarizes bare darwin binaries in place, on the Mac
-# runner (agentry-cli#198; plan cli-release-signing.md D6, D7, §5; the
-# custody of plan os-code-signing.md D5).
+# Developer ID-signs and notarizes bare darwin binaries in place, on a macOS
+# runner.
 #
 #   scripts/sign-darwin.sh <binary>...
 #
@@ -14,9 +13,8 @@
 # context:primary-signature`) and have codesign check Apple's ticket
 # (`--check-notarization -R=notarized`). `spctl --type execute` is for app
 # bundles and rejects every bare binary, notarized or not ("does not seem to
-# be an app"; the first dry run, agentry-cli#198). A bare Mach-O cannot be stapled, so the ticket is
-# Apple's online one, which is what Gatekeeper looks up for a quarantined
-# download.
+# be an app"). A bare Mach-O cannot be stapled, so the ticket is Apple's
+# online one, which is what Gatekeeper looks up for a quarantined download.
 #
 # Inputs come from the environment, never argv (the release job's secrets):
 #
@@ -34,11 +32,11 @@
 # directory and deletes on exit, with the .p12 and the .p8; nothing persists
 # on the runner. The keychain is on the build user's search list only while
 # codesign runs (codesign finds no identity otherwise); `security
-# delete-keychain` takes its entry off again and leaves every other entry. Headless codesign also needs Apple's Developer ID
-# G2 intermediate in the host's System keychain (installed on maxbookpro on
-# 2026-10-01, agentry-desktop#152): without it codesign fails with
-# errSecInternalComponent. Nothing in the CLI's build or tests calls this
-# (plan D5). macOS's bash is 3.2: nothing here needs bash 4.
+# delete-keychain` takes its entry off again and leaves every other entry.
+# Headless codesign also needs Apple's Developer ID G2 intermediate in the
+# host's System keychain: without it codesign fails with
+# errSecInternalComponent. Nothing in the CLI's build or tests calls this.
+# macOS's bash is 3.2: nothing here needs bash 4.
 set -euo pipefail
 
 IDENTIFIER=net.secureagentry.cli
@@ -82,7 +80,7 @@ cleanup() {
   if kc_list | grep -qF "$(basename "$W")"; then echo "sign-darwin: the signing keychain is still on the search list" >&2; return 1; fi
   return 0
 }
-# A keychain left on the list fails the run (plan os-code-signing.md M-M2 step 7).
+# A keychain left on the list fails the run.
 trap 'cleanup || exit 1' EXIT
 
 # The secrets, into the 0700 directory, never echoed.
@@ -164,10 +162,8 @@ done
 rm -f "$W/notary.p8"
 
 # Gatekeeper's verdict, from Apple's online ticket; it can take a moment to
-# be served after "Accepted". Both checks were proved against a notarized
-# binary and an unnotarized control on the Mac runner (2026-10-02): the
-# control is "rejected, source=Unnotarized Developer ID" and fails the
-# requirement.
+# be served after "Accepted". An unnotarized control binary is "rejected,
+# source=Unnotarized Developer ID" and fails the requirement.
 for f in "$@"; do
   ok=""
   for i in 1 2 3 4 5 6; do

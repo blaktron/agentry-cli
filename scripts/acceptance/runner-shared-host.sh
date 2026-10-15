@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Shared-host acceptance (hosted-runs-production D7 b, agentry-cli#220): two
-# runs whose declared MCP servers need relays run at once on one docker host,
-# as a sandbox host with capacity above one runs them. Both must succeed,
-# each run's relays must sit on that run's own two networks, and neither
-# run's relay network may resolve or reach the other run's relay. Linux
-# only: elsewhere the gateway keeps the host's one relay network (DR-22).
+# Shared-host acceptance: two runs whose declared MCP servers need relays
+# run at once on one docker host, as a sandbox host with capacity above one
+# runs them. Both must succeed, each run's relays must sit on that run's own
+# two networks, and neither run's relay network may resolve or reach the
+# other run's relay. Linux only: elsewhere the gateway keeps the host's one relay network.
 #
 # Requirements, as runner-r2.sh: a reachable docker daemon, the model key
 # the operator policy names in the environment, network access to pull.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-[ "$(uname -s)" = Linux ] || { echo "SKIP: the per-run relay networks are Linux's (DR-22 elsewhere)"; exit 0; }
+[ "$(uname -s)" = Linux ] || { echo "SKIP: the per-run relay networks are Linux's"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon"; exit 0; }
 POLICY=${AGENTRY_POLICY:-$HOME/.agentry/runner/policy.yaml}
 POLICY_FLAG=()

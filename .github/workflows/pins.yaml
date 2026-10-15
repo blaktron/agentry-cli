@@ -1,7 +1,6 @@
-# The CI supply chain, checked daily (agentry-cli#165; the desktop's pins.yaml
-# shape, agentry#419): every action SHA-pinned to the tag its comment names,
-# that tag not moved, and every action and CI tool in ci.yaml's env block
-# current within its major. A new major is a warning; see
+# The CI supply chain, checked daily: every action SHA-pinned to the tag its
+# comment names, that tag not moved, and every action and CI tool in
+# ci.yaml's env block current within its major. A new major is a warning; see
 # scripts/pins-check.sh.
 #
 # Deliberately NOT a pull-request job. A pin goes stale when upstream

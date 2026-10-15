@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# M-R4 acceptance (plan runner-m-r4-adapters §6 and §7, RUNNER-DEVIATIONS
-# DR-6): per-adapter proxy evidence, and the envelope diff that says every
-# adapter runs the same QuickAgent the same way.
+# Adapter acceptance: per-adapter proxy evidence, and the envelope diff that
+# says every adapter runs the same QuickAgent the same way.
 #
 #   scripts/acceptance/runner-r4.sh [adapter...]   (default: docker-agent)
 #
@@ -12,15 +11,15 @@
 #      budgets apply) and proxy.log shows the CONNECT denied and none
 #      allowed. For a harness that runs as a host process this is the run
 #      that matters: it has a direct route to the model, so failing here is
-#      what proves it honours the proxy variables (decision D5 — a harness
-#      that ignores them is not shipped).
+#      what proves it honours the proxy variables (a harness that ignores
+#      them is not shipped).
 # With more than one adapter it also diffs the result envelopes with the
-# model-dependent fields masked, which is §7's conformance diffing.
+# model-dependent fields masked (conformance diffing).
 #
 # Gates as runner-r2.sh: a docker daemon, the operator policy, and the key
 # the policy names. An adapter whose harness is not installed is skipped.
 #
-# This covers autonomous runs. The interactive half of decision D3 is
+# This covers autonomous runs. The interactive half is
 # runner-r4-session.py, which needs a pty and so runs on its own.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -28,7 +27,7 @@ AGENTRY=${AGENTRY:-bin/agentry}
 [ -x "$AGENTRY" ] || make build >/dev/null
 ADAPTERS=("$@"); [ ${#ADAPTERS[@]} -gt 0 ] || ADAPTERS=(docker-agent)
 if ! docker info >/dev/null 2>&1; then
-  echo "SKIP: no reachable docker daemon (RUNNER-DEVIATIONS DR-7)" >&2
+  echo "SKIP: no reachable docker daemon" >&2
   exit 0
 fi
 POLICY=${AGENTRY_POLICY:-$HOME/.agentry/runner/policy.yaml}
@@ -50,8 +49,8 @@ PY
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 export AGENTRY_RUNNER_HOME="$WORK/home"
-# The consent records `agentry run` writes (§R1) go to the throwaway config
-# dir, not the person's ~/.config/agentry/installed.yaml (agentry-cli#101).
+# The consent records `agentry run` writes go to the throwaway config dir,
+# not the person's ~/.config/agentry/installed.yaml.
 export AGENTRY_CONFIG_DIR="$WORK/config"
 # The same policy with an allowlist that names no real host.
 python3 - "$POLICY" "$WORK/denied.yaml" <<'PY'
@@ -139,7 +138,7 @@ for A in "${ADAPTERS[@]}"; do
   RAN+=("$A")
 done
 
-# §7 conformance diffing: the same QuickAgent through every adapter must
+# Conformance diffing: the same QuickAgent through every adapter must
 # produce the same envelope once the model-dependent parts are masked.
 if [ ${#RAN[@]} -gt 1 ]; then
   for A in "${RAN[@]}"; do

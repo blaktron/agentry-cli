@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Acceptance for the CLI's Windows signing seam (agentry-cli#196): proves that
+# Acceptance for the CLI's Windows signing seam: proves that
 # check-windows-binary.sh accepts a signed, timestamped binary that chains to
 # the root it is given and refuses the three ways it can be wrong — with a
 # throwaway CA and osslsigncode standing in for Artifact Signing and jsign,
 # so it runs anywhere osslsigncode does and needs no credential. The real
 # key is only ever used by the release workflow. Nothing in the CLI's build
-# or tests depends on this (plan D5); it is the release seam's own test.
+# or tests depends on this; it is the release seam's own test.
 #
 #   scripts/acceptance/windows-signing.sh <agentry-<version>-windows-amd64.exe>
 #
 # Needs osslsigncode, openssl and network for a public timestamp authority
-# (the checker insists on a timestamp, as the release must). On a workstation
-# without osslsigncode, run it in a container:
+# (the checker insists on a timestamp, as the release must). Without
+# osslsigncode installed, run it in a container:
 #
 #   docker run --rm --security-opt label=disable -v "$PWD:/w" -w /w ubuntu:24.04 bash -c \
 #     'apt-get update -qq && apt-get install -y -qq --no-install-recommends osslsigncode openssl ca-certificates >/dev/null && scripts/acceptance/windows-signing.sh dist/agentry-0.0.0-windows-amd64.exe'

@@ -7,8 +7,7 @@ summary: "Checks a Linux server the person names at run time, over SSH the runne
 license: Apache-2.0
 tags: [fixture]
 
-# A target host (agentry-cli#861): the release takes a machine at run time,
-# never which one. The runner reaches it from the host link, and the agent
+# A target host: the release takes a machine at run time, never which one. The runner reaches it from the host link, and the agent
 # works it through host_run, host_read, host_write, host_put and host_get.
 
 intake:
