@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "A Builder draft, as the Drafter returns it",
-  "description": "The Drafter's last message. The instructions and the notes may come as the reports AGENT.md and notes.md instead, which the CLI's post-step reads back. The manifest's own rules are checked after the run by that post-step, which writes any problem into draft.json rather than refusing the draft (plan builder-rework.md D15).",
+  "description": "The Drafter's last message. The instructions and the notes may come as the reports AGENT.md and notes.md instead, which the CLI's post-step reads back. The manifest's own rules are checked after the run by that post-step, which writes any problem into draft.json rather than refusing the draft.",
   "type": "object",
   "required": [
     "manifest"

@@ -59,4 +59,4 @@ agentry/drafter@1.14.0 sha256:ca4f4fd3e48756e2446230d8c286a574b6546170a1261fe85e
 # 1.15.0: the drafting guide and AGENT.md teach the browser: a website the person names is asked for by a url intake question listed in capabilities.browser.sites, with hosts only for what its pages load, the site scope, and a key the browser types declared in capabilities.secrets and capabilities.browser.secrets (never with scope public); instructions for the browser tools, screenshots by bare file names into reports/browser/; the runtime facts state the browser's tools and bounds; the post-step sends a browser of its own, as a command or an MCP server, to the repair turn.
 agentry/drafter@1.15.0 sha256:1147c95155df0c115964c0f107216c886d8fd8c5ec285fe2c6faf92289a76d7c
 # 1.15.1: the drafting guide's server lists give their evidence as what was seen and when, without internal references; the README drops its plan references. No fact about a server changed.
-agentry/drafter@1.15.1 sha256:cb2e3351c2a0e4d8a17ab909c3f14a5b4c39e1bc2ba3b95099bb18698a6e4025
+agentry/drafter@1.15.1 sha256:56cf111c92bf0a453f4810cdf25e6adf39bc3b2d2c5826e3c3d0bde828bbc3cc
