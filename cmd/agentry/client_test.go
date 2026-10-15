@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,23 +31,6 @@ func TestOrNone(t *testing.T) {
 	}
 	if got := orNone("x"); got != "x" {
 		t.Errorf("orNone(\"x\") = %q", got)
-	}
-}
-
-func TestSameHost(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want bool
-	}{
-		{"http://reg.example:8080/api", "http://reg.example:8080/other", true},
-		{"http://reg.example/api", "http://cdn.example/blob", false},
-		{"http://reg.example", "http://reg.example:8080", false}, // port is part of the host
-		{"::bad url", "http://reg.example", false},
-	}
-	for _, tt := range tests {
-		if got := sameHost(tt.a, tt.b); got != tt.want {
-			t.Errorf("sameHost(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
-		}
 	}
 }
 
@@ -176,6 +160,46 @@ func TestDownloadArchiveRelativeURLAndTokenScoping(t *testing.T) {
 	}
 	if cdnAuth != "" {
 		t.Errorf("bearer token leaked to a non-registry host: %q", cdnAuth)
+	}
+}
+
+// roundTripFunc lets a test answer requests without a server.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDownloadArchiveTokenOnlyToRegistryOrigin(t *testing.T) {
+	const registry = "https://reg.example"
+	tests := []struct {
+		name, archive, wantURL string
+		wantToken              bool
+	}{
+		{"same origin", "https://reg.example/blob/1", "https://reg.example/blob/1", true},
+		{"relative URL", "/blob/1", "https://reg.example/blob/1", true},
+		{"http spelling of the registry's host", "http://reg.example/blob/1", "http://reg.example/blob/1", false},
+		{"other port", "https://reg.example:8443/blob/1", "https://reg.example:8443/blob/1", false},
+		{"other host", "https://cdn.example/blob/1", "https://cdn.example/blob/1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotURL, gotAuth string
+			prev := httpClient
+			httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				gotURL, gotAuth = r.URL.String(), r.Header.Get("Authorization")
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("bytes")), Request: r}, nil
+			})}
+			t.Cleanup(func() { httpClient = prev })
+			if _, err := downloadArchive(context.Background(), registry, "agy_tok", &apiclient.ResolveResult{ArchiveUrl: tt.archive}); err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if tt.wantToken {
+				want = "Bearer agy_tok"
+			}
+			if gotURL != tt.wantURL || gotAuth != want {
+				t.Fatalf("requested %s with Authorization %q, want %s with %q", gotURL, gotAuth, tt.wantURL, want)
+			}
+		})
 	}
 }
 

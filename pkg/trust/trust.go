@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/attest"
 
+	"github.com/blaktron/agentry-cli/internal/origin"
 	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
 
@@ -464,8 +464,9 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 // VerifyAttestation fetches and verifies the attestation for a version.
 // archiveDigest is the digest the client computed from the downloaded bytes,
 // so a verified attestation binds the signature to what is actually on disk.
-// token, when non-empty, is attached as a bearer credential — but only to
-// requests going to the registry's own host, never to a CDN.
+// token, when non-empty, is attached as a bearer credential, but only to an
+// attestation URL on the registry's own origin: never to a CDN, another
+// port, or the registry's host over plain http.
 func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token, attestationURL, archiveDigest string) AttestationResult {
 	if attestationURL == "" {
 		return AttestationResult{State: StateUnsigned, Detail: "the registry published no attestation for this version"}
@@ -480,7 +481,7 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 	if err != nil {
 		return AttestationResult{State: StateUnverifiable, Detail: err.Error()}
 	}
-	if token != "" && sameHost(u, registryURL) {
+	if token != "" && origin.Same(u, registryURL) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	res, err := orDefault(hc).Do(req)
@@ -632,14 +633,6 @@ func SameKeyIDs(a, b KeySet) bool {
 		}
 	}
 	return true
-}
-
-// sameHost reports whether two URLs share a host, so the bearer token is
-// only ever attached to the registry itself, never to a CDN.
-func sameHost(a, b string) bool {
-	ua, err1 := url.Parse(a)
-	ub, err2 := url.Parse(b)
-	return err1 == nil && err2 == nil && ua.Host == ub.Host
 }
 
 // decodePredicate re-decodes the statement predicate into its typed form.
