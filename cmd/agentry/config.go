@@ -21,9 +21,6 @@ import (
 
 // Environment variables understood by the CLI.
 const (
-	// envToken overrides all stored credentials (CI/scripting escape hatch,
-	// used by scripts/acceptance/m3-cli.sh).
-	envToken = "AGENTRY_TOKEN"
 	// envConfigDir relocates the config directory (default ~/.config/agentry).
 	envConfigDir = configdir.EnvVar
 	// envNoKeyring forces the config-file credential fallback even when an
@@ -171,13 +168,25 @@ func keyringDisabled() bool {
 	return os.Getenv(envNoKeyring) != ""
 }
 
-// credentialFor resolves the PAT for a registry: AGENTRY_TOKEN, then a
-// config-file token, then the OS keychain (a signed-out schedule's sealed
-// keys in its place). Empty means anonymous.
-func credentialFor(regURL string) string {
-	if t := strings.TrimSpace(os.Getenv(envToken)); t != "" {
-		return t
+// credentialFor resolves the PAT for a registry: the environment token
+// scoped to it (envTokenFor), then a config-file token, then the OS
+// keychain (a signed-out schedule's sealed keys in its place). Empty means
+// anonymous. The error is an environment token refused outright.
+func credentialFor(regURL string) (string, error) {
+	_, token, notes, err := envTokenFor(regURL)
+	if err != nil {
+		return "", err
 	}
+	sayEnvNotes(notes)
+	if token != "" {
+		return token, nil
+	}
+	return storedCredential(regURL), nil
+}
+
+// storedCredential is the sign-in stored for a registry, ignoring the
+// environment.
+func storedCredential(regURL string) string {
 	if cfg, err := loadCLIConfig(); err == nil {
 		if e := cfg.findRegistry(regURL); e != nil {
 			if e.TokenRef == tokenRefNone {

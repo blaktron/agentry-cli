@@ -253,7 +253,10 @@ func runReportDesignExport(cmd *cobra.Command, file, theme string, force bool) e
 		d, from = b, "the built-in theme "+theme
 	} else {
 		reg := registryURL()
-		token := credentialFor(reg)
+		token, err := credentialFor(reg)
+		if err != nil {
+			return err
+		}
 		if token == "" {
 			return &exitError{code: 2, err: fmt.Errorf("not signed in at %s: run `agentry login`, or export a built-in theme with --theme NAME", reg)}
 		}
@@ -406,7 +409,10 @@ func runReportDesignReset(cmd *cobra.Command, _ []string) error {
 // putReportSettings writes the account's report settings and answers the
 // design the registry saved, its logo included, nil when it holds none.
 func putReportSettings(cmd *cobra.Command, reg string, body map[string]any) ([]byte, error) {
-	token := credentialFor(reg)
+	token, err := credentialFor(reg)
+	if err != nil {
+		return nil, err
+	}
 	if token == "" {
 		return nil, &exitError{code: 2, err: fmt.Errorf("not signed in at %s: run `agentry login`", reg)}
 	}

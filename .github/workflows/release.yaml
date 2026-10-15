@@ -689,7 +689,9 @@ jobs:
           export AGENTRY_CONFIG_DIR="$RUNNER_TEMP/agentry-config"
           "$bin" --registry "$REGISTRY" builtins | tee "$RUNNER_TEMP/builtins.txt"
           set +e
-          AGENTRY_TOKEN="$tok" "$bin" --registry "$REGISTRY" builtins publish 2>&1 | tee "$RUNNER_TEMP/publish.txt"
+          # The binary bakes $REGISTRY, a SecureAgentry registry, so the
+          # token goes in the variable scoped to it.
+          SECUREAGENTRY_TOKEN="$tok" "$bin" --registry "$REGISTRY" builtins publish 2>&1 | tee "$RUNNER_TEMP/publish.txt"
           st=${PIPESTATUS[0]}
           set -e
           {

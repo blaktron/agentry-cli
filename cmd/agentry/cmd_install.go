@@ -333,7 +333,10 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		return err
 	}
 	reg := registryURL()
-	token := credentialFor(reg)
+	token, err := credentialFor(reg)
+	if err != nil {
+		return err
+	}
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		return err

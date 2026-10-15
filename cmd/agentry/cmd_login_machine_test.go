@@ -49,7 +49,7 @@ func TestMachineLoginAndLogoutUseKeyring(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"storage":"keyring"`) {
 		t.Fatalf("keyring login: %s, %v", out, err)
 	}
-	if credentialFor(fr.url()) != "agy_browsertoken" {
+	if mustCredential(t, fr.url()) != "agy_browsertoken" {
 		t.Fatal("keyring login was not stored")
 	}
 	path, _ := configPath()
@@ -63,7 +63,7 @@ func TestMachineLoginAndLogoutUseKeyring(t *testing.T) {
 		}
 	}
 	host, _ := registryHost(fr.url())
-	if _, err := keyring.Get(keyringService, host); err != keyring.ErrNotFound || credentialFor(fr.url()) != "" {
+	if _, err := keyring.Get(keyringService, host); err != keyring.ErrNotFound || mustCredential(t, fr.url()) != "" {
 		t.Fatal("selected keyring login still available")
 	}
 	if token, err := keyring.Get(keyringService, "other.example"); token != "agy_other" || err != nil {
@@ -79,7 +79,7 @@ func TestMachineLoginAndLogoutUseKeyring(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"environmentCredential":true`) || strings.Contains(out+logs, "agy_environment") {
 		t.Fatalf("environment override result: %s, %v", out, err)
 	}
-	if credentialFor(fr.url()) != "agy_environment" {
+	if mustCredential(t, fr.url()) != "agy_environment" {
 		t.Fatal("child process changed environment credential")
 	}
 }
@@ -109,7 +109,7 @@ func TestMachineLoginDoesNotFollowAccountRedirect(t *testing.T) {
 	if reached.Load() != 0 {
 		t.Fatal("credential-bearing account request followed another registry's redirect")
 	}
-	if credentialFor(selected.URL) != "" {
+	if mustCredential(t, selected.URL) != "" {
 		t.Fatal("unverified redirected identity stored")
 	}
 	if strings.Contains(out+logs, "agy_browsertoken") {
@@ -143,7 +143,7 @@ func TestMachineLoginRedactsRegistryFailuresAndHandles(t *testing.T) {
 			if strings.Contains(printed, "agy_browsertoken") {
 				t.Fatal("credential echoed by registry exposed")
 			}
-			if reject && credentialFor(selected.URL) != "" {
+			if reject && mustCredential(t, selected.URL) != "" {
 				t.Fatal("rejected token stored")
 			}
 		})
@@ -207,7 +207,7 @@ func TestMachineLoginDeclineCancelAndTimeoutStoreNothing(t *testing.T) {
 			if strings.Contains(out+logs+err.Error(), "agy_never-print-this") {
 				t.Fatal("stdin value exposed")
 			}
-			if credentialFor(fr.url()) != "" {
+			if mustCredential(t, fr.url()) != "" {
 				t.Fatal("unsuccessful login stored a credential")
 			}
 		})
@@ -230,7 +230,7 @@ func TestLogoutClearsOnlySelectedRegistry(t *testing.T) {
 	if json.Unmarshal([]byte(out), &result) != nil || result["status"] != "signed_out" || result["registry"] != first.url() {
 		t.Fatalf("logout result = %s", out)
 	}
-	if credentialFor(first.url()) != "" || credentialFor(second.url()) != "agy_original" {
+	if mustCredential(t, first.url()) != "" || mustCredential(t, second.url()) != "agy_original" {
 		t.Fatal("logout did not isolate selected identity")
 	}
 	cfg, err := loadCLIConfig()
@@ -271,7 +271,7 @@ func TestMachineLoginReportsLifecycleWithoutCredential(t *testing.T) {
 	if strings.Contains(out+logs, "agy_browsertoken") || strings.Contains(out+logs, "agd_browser-code") {
 		t.Fatal("machine login exposed a credential or callback code")
 	}
-	if credentialFor(fr.url()) != "agy_browsertoken" {
+	if mustCredential(t, fr.url()) != "agy_browsertoken" {
 		t.Fatal("verified credential not stored for selected registry")
 	}
 	if result["signingKeys"] != "pinned" {

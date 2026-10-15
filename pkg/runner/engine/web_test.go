@@ -89,6 +89,7 @@ func webFixtureFor(t *testing.T, registrySearch bool) (Params, *dockerx.Fake) {
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-key")
 	t.Setenv("AGENTRY_TOKEN", testRegToken)
+	t.Setenv("SECUREAGENTRY_TOKEN", testRegToken)
 	return Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: ws, RunRoot: installDir, OutDir: t.TempDir(),
 		Task: strings.NewReader("draft this"), Adapter: ad, Policy: pol,

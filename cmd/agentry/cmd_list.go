@@ -136,7 +136,12 @@ func checkUpdate(cmd *cobra.Command, rec *listedRecord) {
 	// error on that record, not as a token sent there.
 	token := ""
 	if strings.TrimRight(reg, "/") == strings.TrimRight(registryURL(), "/") {
-		token = credentialFor(reg)
+		t, err := credentialFor(reg)
+		if err != nil {
+			rec.CheckError = err.Error()
+			return
+		}
+		token = t
 	}
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {

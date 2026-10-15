@@ -60,6 +60,7 @@ func newInstall(t *testing.T) (home, policyPath string) {
 
 func signIn(t *testing.T, reg *knowledgetest.Registry, owner string) {
 	t.Helper()
+	t.Setenv(envRegistry, reg.URL)
 	t.Setenv(envToken, reg.Token(owner))
 }
 

@@ -75,7 +75,10 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 	}
 
 	reg := registryURL()
-	token := credentialFor(reg)
+	token, err := credentialFor(reg)
+	if err != nil {
+		return err
+	}
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		return err

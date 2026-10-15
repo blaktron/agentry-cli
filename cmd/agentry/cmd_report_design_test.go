@@ -120,6 +120,9 @@ func newDesignRegistry(t *testing.T) *designRegistry {
 	})
 	dr.Server = httptest.NewServer(mux)
 	t.Cleanup(dr.Close)
+	// The fake is the self-hosted registry an AGENTRY_TOKEN a test sets
+	// authenticates to.
+	t.Setenv(envRegistry, dr.URL)
 	return dr
 }
 

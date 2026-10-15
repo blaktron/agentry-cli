@@ -150,8 +150,10 @@ func readAccountTheme(regURL string) accountTheme {
 	if os.Getenv(envRunGrant) != "" {
 		return nil
 	}
-	token := credentialFor(regURL)
-	if token == "" {
+	// A refused environment token reads as no account here; the command's
+	// own registry call reports the refusal.
+	token, err := credentialFor(regURL)
+	if err != nil || token == "" {
 		return nil
 	}
 	return func(ctx context.Context) ([]byte, error) {
