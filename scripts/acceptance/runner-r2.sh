@@ -101,7 +101,7 @@ if [ -n "$AGENT" ]; then
   [ "$(echo $NETS | wc -w)" -eq 1 ] || { echo "FAIL: agent container on more than one network: $NETS"; exit 1; }
   docker network inspect $NETS --format '{{.Internal}}' | grep -qx true || { echo "FAIL: agent network $NETS is not internal"; exit 1; }
   PORTS=$(docker inspect "$AGENT" --format '{{json .NetworkSettings.Ports}}')
-  echo "$PORTS" | grep -q 'HostPort' && { echo "FAIL: agent container publishes a port: $PORTS"; exit 1; }
+  grep -q 'HostPort' <<<"$PORTS" && { echo "FAIL: agent container publishes a port: $PORTS"; exit 1; }
   # The agent holds the model key under the provider's name by necessity
   # and the gateway token it calls the gateway with; what it must never hold
   # is a registry credential (nothing in pkg/runner reads AGENTRY_TOKEN or

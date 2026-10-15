@@ -59,21 +59,21 @@ REQS='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 OUT=$(printf '%s\n' "$REQS" | mcp)
 
-echo "$OUT" | grep -q '"agentry-runner-tools"'   || fail "initialize: serverInfo missing"
-echo "$OUT" | grep -q '"fs_read"'                 || fail "tools/list: fs_read missing"
-echo "$OUT" | grep -q '"write_report"'            || fail "tools/list: write_report missing"
-echo "$OUT" | grep -q '"list_inputs"'             || fail "tools/list: list_inputs missing"
-echo "$OUT" | grep -q '"read_input"'              || fail "tools/list: read_input missing"
-echo "$OUT" | grep -q '"fs_write"' && fail "tools/list: undeclared fs_write present"
-echo "$OUT" | grep -q 'workspace note'            || fail "fs_read: content missing"
+grep -q '"agentry-runner-tools"' <<<"$OUT"   || fail "initialize: serverInfo missing"
+grep -q '"fs_read"' <<<"$OUT"                 || fail "tools/list: fs_read missing"
+grep -q '"write_report"' <<<"$OUT"            || fail "tools/list: write_report missing"
+grep -q '"list_inputs"' <<<"$OUT"             || fail "tools/list: list_inputs missing"
+grep -q '"read_input"' <<<"$OUT"              || fail "tools/list: read_input missing"
+grep -q '"fs_write"' <<<"$OUT" && fail "tools/list: undeclared fs_write present"
+grep -q 'workspace note' <<<"$OUT"            || fail "fs_read: content missing"
 LINE4=$(echo "$OUT" | grep '"id":4')
 echo "$LINE4" | grep -q '"isError":true'          || fail "traversal not refused: $LINE4"
 [ -f "$WORK/out/reports/r1.md" ]                  || fail "write_report did not land in out/reports"
 grep -q "report body" "$WORK/out/reports/r1.md"   || fail "report content wrong"
 LINE6=$(echo "$OUT" | grep '"id":6')
 echo "$LINE6" | grep -qi 'error'                  || fail "calling an ungranted tool must error: $LINE6"
-echo "$OUT" | grep -q 'brief.txt'                 || fail "list_inputs: provided file missing"
-echo "$OUT" | grep -q 'provided input'            || fail "read_input: content missing"
+grep -q 'brief.txt' <<<"$OUT"                 || fail "list_inputs: provided file missing"
+grep -q 'provided input' <<<"$OUT"            || fail "read_input: content missing"
 LINE9=$(echo "$OUT" | grep '"id":9')
 echo "$LINE9" | grep -q '"isError":true'          || fail "read_input traversal not refused: $LINE9"
 # A number sent as a JSON string is the number it encodes.
@@ -111,9 +111,9 @@ EOF
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"sh","args":["-c","cat /proc/$PPID/environ; echo; echo probed=$PPID"]}}}'
     EOUT=$(printf '%s\n' "$EREQS" | R1_GRANTED_SECRET="$SECRET" "$AGENTRY" runner-tools --spec "$WORK/spec-exec.json" 2>/dev/null)
     ELINE=$(echo "$EOUT" | grep '"id":2')
-    echo "$ELINE" | grep -q 'probed='            || fail "exec environ probe did not run: $ELINE"
-    echo "$EOUT" | grep -q "$SECRET"             && fail "an exec child read the tools server's environment: $ELINE"
-    echo "$ELINE" | grep -q 'Permission denied'  || fail "reading the tools server's environ was not refused: $ELINE"
+    grep -q 'probed=' <<<"$ELINE"            || fail "exec environ probe did not run: $ELINE"
+    grep -q "$SECRET" <<<"$EOUT"             && fail "an exec child read the tools server's environment: $ELINE"
+    grep -q 'Permission denied' <<<"$ELINE"  || fail "reading the tools server's environ was not refused: $ELINE"
     echo "runner-r1: exec cannot read the tools server's environment"
   fi
 fi

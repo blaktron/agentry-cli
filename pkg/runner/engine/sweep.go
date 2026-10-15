@@ -31,9 +31,10 @@ import (
 // it, then sweep the dead runs' files (sweepAbandonedRun); exported so
 // `agentry run` can sweep before its MCP server installs, whose fixed
 // container names a leftover installer would collide with.
-// Not covered: a run network or volume whose containers were already gone
-// when the process died has nothing left to name it (a labelled volume's
-// owner labels are not read here).
+// A run network or volume whose containers were already gone when the
+// process died has nothing left here to name it (a labelled volume's owner
+// labels are not read); the run's directory lock does, and the sweep a run
+// or a session starts with (sweepAbandonedRun) removes them by it.
 func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 	_ = sweepAbandoned(ctx, d, stderr)
 }
@@ -42,9 +43,24 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 // containers, networks and volumes of runs whose process died
 // (SweepAbandoned), then the files they left in this install's run
 // directories (sweepRunDirs), which also takes the dead runs' ids for a
-// directory that holds no lock file.
+// directory that holds no lock file. Last, the networks and volumes of
+// every run whose free lock proved it dead and that the container sweep
+// did not already reach: a run killed before any of its containers
+// existed, or whose containers were removed before it died, leaves them
+// with nothing else to name them. Those of a live run, whose lock is held,
+// are never touched. A run whose containers still stand (the container
+// sweep could not judge their owner) keeps them too: docker refuses to
+// remove a network or a volume a container uses.
 func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot string, stderr io.Writer) {
-	sweepRunDirs(runRoot, sweepAbandoned(ctx, d, stderr), stderr)
+	byContainers := sweepAbandoned(ctx, d, stderr)
+	swept := sweepRunDirs(runRoot, byContainers, stderr)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for _, r := range swept {
+		if !byContainers[r] {
+			removeRunNetworksAndVolumes(ctx, d, r)
+		}
+	}
 }
 
 // sweepAbandoned is SweepAbandoned, returning the ids of the runs whose
@@ -76,12 +92,7 @@ func sweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) map
 		}
 	}
 	for r := range runs {
-		for _, n := range runNetworks(ctx, d, r) {
-			_ = d.NetworkRemove(ctx, n)
-		}
-		for _, v := range runVolumes(ctx, d, r) {
-			_ = d.VolumeRemove(ctx, v)
-		}
+		removeRunNetworksAndVolumes(ctx, d, r)
 	}
 	if stderr == nil {
 		return runs
@@ -95,6 +106,18 @@ func sweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) map
 		_, _ = fmt.Fprintf(stderr, "warning: could not remove %d container(s) a run whose process had died left behind: %s (docker rm -fv <name>)\n", len(failed), strings.Join(failed, ", "))
 	}
 	return runs
+}
+
+// removeRunNetworksAndVolumes removes the networks and volumes of run r,
+// whose containers are gone. Best effort: what docker will not remove
+// stays.
+func removeRunNetworksAndVolumes(ctx context.Context, d dockerx.Client, r string) {
+	for _, n := range runNetworks(ctx, d, r) {
+		_ = d.NetworkRemove(ctx, n)
+	}
+	for _, v := range runVolumes(ctx, d, r) {
+		_ = d.VolumeRemove(ctx, v)
+	}
 }
 
 // runVolumes is every volume of run r: its session volume by name, and
