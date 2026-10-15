@@ -624,6 +624,41 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 	}
 }
 
+// TestInstallReasksWhenAServerWidensAtTheSamePin: an update that keeps a
+// declared MCP server's pin and gives it a new egress host asks again,
+// naming the host and the server, against the record read back from
+// installed.yaml; the same release again does not.
+func TestInstallReasksWhenAServerWidensAtTheSamePin(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	fa := fr.addAgent("acme", "demo", "autonomous", "s")
+	osv := func(version, egress string) map[string]string {
+		f := skillFiles("demo", "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n      egress: ["+egress+"]\n")
+		f["agent.yaml"] = strings.Replace(f["agent.yaml"], "version: 1.0.0", "version: "+version, 1)
+		return f
+	}
+	fa.addVersion(t, "1.0.0", osv("1.0.0", "a.example"))
+	fa.addVersion(t, "2.0.0", osv("2.0.0", "a.example, b.example"))
+
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/demo@2.0.0", "--allow-unsigned")
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("a same-pin server widening installed without consent: %v", err)
+	}
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@2.0.0", "--allow-unsigned", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "adds network egress to b.example for MCP server npm:@acme/osv-mcp@1.2.3") {
+		t.Errorf("the server's new egress host is not named:\n%s", stdout)
+	}
+	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "install", "acme/demo@2.0.0", "--allow-unsigned"); err != nil {
+		t.Fatalf("the same server grants asked again: %v", err)
+	}
+}
+
 // TestInstallYankedWarns: an exact pin of a yanked version installs
 // but the warning must reach stderr.
 func TestInstallYankedWarns(t *testing.T) {

@@ -80,6 +80,14 @@ type CapSnapshot struct {
 	// MCPServerOAuth is each package server's OAuth sign-in, keyed like
 	// MCPServers, for the same reason.
 	MCPServerOAuth map[string]*manifest.MCPOAuth `yaml:"mcpServerOAuth,omitempty" json:"mcpServerOAuth,omitempty"`
+	// MCPServerCaps is what each declared package server's own container
+	// is given, keyed like MCPServers: the hosts it may reach, the secrets
+	// it receives and the tools the model may call on it. The runner builds
+	// the server's grants from these, so the core's diff compares them for
+	// a server kept at the same pin. Every package server has an entry,
+	// empty when it declares none of them; a server the record names with
+	// no entry has unknown grants (see DiffCapabilities).
+	MCPServerCaps map[string]ServerCapsSnapshot `yaml:"mcpServerCaps,omitempty" json:"mcpServerCaps,omitempty"`
 	// Knowledge lists the knowledge packs the release ships in its archive
 	// (the manifest's knowledge.ships, as manifest.Contract carries them):
 	// a new one is text entering the agent's context, a widening the
@@ -107,6 +115,24 @@ type RemoteSnapshot struct {
 	Scopes  []string `yaml:"scopes,omitempty" json:"scopes,omitempty"`
 	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
 	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+}
+
+// ServerCapsSnapshot is what a consent recorded of one package server's
+// own grants. Secrets are names, never values; a secret's optional marking
+// is not recorded, as it is not a capability.
+type ServerCapsSnapshot struct {
+	Egress  []string `yaml:"egress,omitempty" json:"egress,omitempty"`
+	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+}
+
+func serverCaps(srv manifest.MCPServer) ServerCapsSnapshot {
+	return ServerCapsSnapshot{Egress: slices.Clone(srv.Egress), Secrets: slices.Clone(srv.Secrets), Tools: slices.Clone(srv.Tools)}
+}
+
+// grant sets a server's own grants to the recorded ones.
+func (c ServerCapsSnapshot) grant(srv *manifest.MCPServer) {
+	srv.Egress, srv.Secrets, srv.Tools = slices.Clone(c.Egress), slices.Clone(c.Secrets), slices.Clone(c.Tools)
 }
 
 // Snapshot flattens a manifest capability block for storage.
@@ -140,6 +166,11 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 				Tools:   slices.Clone(srv.Tools),
 				Secrets: slices.Clone(srv.Secrets),
 			}
+		} else {
+			if s.MCPServerCaps == nil {
+				s.MCPServerCaps = map[string]ServerCapsSnapshot{}
+			}
+			s.MCPServerCaps[id] = serverCaps(srv)
 		}
 		if srv.OAuth != nil {
 			if s.MCPServerOAuth == nil {
@@ -163,9 +194,9 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 // capabilities is Snapshot's inverse, for the diff only: the stored
 // contract as the manifest type, so the one widening rule, the core's
 // manifest.DiffCapabilities, can compare two snapshots. For any record
-// Snapshot wrote, Snapshot(s.capabilities()) is s. It is lossy — a
-// server's tools, secrets and egress are not in the snapshot and come back
-// empty — which is why it is not exported as a contract.
+// Snapshot wrote, Snapshot(s.capabilities()) is s. It is lossy — which of
+// a server's secrets are optional is not in the snapshot — which is why it
+// is not exported as a contract.
 func (s CapSnapshot) capabilities() manifest.Capabilities {
 	c := manifest.Capabilities{
 		Network: manifest.Network{Egress: manifest.Egress{
@@ -195,6 +226,9 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 			srv.Scopes = slices.Clone(r.Scopes)
 			srv.Tools = slices.Clone(r.Tools)
 			srv.Secrets = slices.Clone(r.Secrets)
+		}
+		if own, ok := s.MCPServerCaps[id]; ok && !srv.IsRemote() {
+			own.grant(&srv)
 		}
 		if o := s.MCPServerOAuth[id]; o != nil {
 			cp := *o
@@ -433,8 +467,49 @@ type Diff = manifest.CapabilityDiff
 // by construction, not by two copies staying in step. Everything it reports
 // is phrased as a plain statement of the change: "this update adds network
 // egress to evil.example".
+//
+// A package server the old record names without its own grants (an older
+// record) has unknown grants, not empty ones: reading
+// it as empty would let a same-pin server's tool allowlist be lifted
+// unasked, and reading it as the new release's would accept whatever it
+// now declares. It widens once, with a line that says what the server is
+// given, and the consent that follows records its grants.
 func DiffCapabilities(old, next CapSnapshot) Diff {
-	return manifest.DiffCapabilities(old.capabilities(), next.capabilities())
+	prev := old.capabilities()
+	var unrecorded []string
+	for i, srv := range prev.MCPServers {
+		id := serverID(srv)
+		_, recorded := old.MCPServerCaps[id]
+		own, declared := next.MCPServerCaps[id]
+		if recorded || !declared || srv.IsRemote() {
+			continue
+		}
+		// One line says what the server is given, so the core's rule
+		// compares nothing for these fields rather than reporting each
+		// as added.
+		own.grant(&prev.MCPServers[i])
+		unrecorded = append(unrecorded, unrecordedServerLine(id, own))
+	}
+	d := manifest.DiffCapabilities(prev, next.capabilities())
+	d.Widened = append(d.Widened, unrecorded...)
+	return d
+}
+
+// unrecordedServerLine says what a package server is given when the
+// person's last consent did not record it.
+func unrecordedServerLine(id string, own ServerCapsSnapshot) string {
+	list := func(xs []string, none string) string {
+		if len(xs) == 0 {
+			return none
+		}
+		return strings.Join(xs, ", ")
+	}
+	egress := list(own.Egress, "no host")
+	if slices.Contains(own.Egress, "*") {
+		egress = "any host (UNRESTRICTED)"
+	}
+	return fmt.Sprintf("asks again for MCP server %s, whose own grants your last consent did not record: network egress to %s; secrets %s; tools %s",
+		id, egress, list(own.Secrets, "none"), list(own.Tools, "every tool it serves"))
 }
 
 // ArchiveWidenings reports what an archive's own manifest declares beyond the
@@ -443,11 +518,9 @@ func DiffCapabilities(old, next CapSnapshot) Diff {
 // archive, so a widening means the registry's resolve answer diverged from
 // the bytes it served, and an install refuses it rather than reconciling. It
 // is the core's rule, manifest.DiffCapabilities, on the two full contracts,
-// plus what that rule does not yet compare: a declared MCP server's own
-// egress, secrets and tool restriction.
+// a declared MCP server's own egress, secrets and tools included.
 func ArchiveWidenings(consented, archive manifest.Capabilities) []string {
-	widened := manifest.DiffCapabilities(consented, archive).Widened
-	return append(widened, serverWidenings(consented.MCPServers, archive.MCPServers)...)
+	return manifest.DiffCapabilities(consented, archive).Widened
 }
 
 // serverID is a declared server's key in a snapshot and in the core's
@@ -458,48 +531,4 @@ func serverID(s manifest.MCPServer) string {
 		return s.SourceID()
 	}
 	return s.SourceID() + "@" + s.Version
-}
-
-// serverWidenings reports what the archive grants a declared MCP server
-// beyond the consented declaration of the same server (same package and
-// pin); a server the consented contract lacks is the core diff's to report.
-func serverWidenings(consented, archive []manifest.MCPServer) []string {
-	byID := make(map[string]manifest.MCPServer, len(consented))
-	for _, s := range consented {
-		byID[serverID(s)] = s
-	}
-	var out []string
-	for _, s := range archive {
-		if s.IsRemote() {
-			continue // the core's diff compares a remote server's tools and secret
-		}
-		id := serverID(s)
-		c, ok := byID[id]
-		if !ok {
-			continue
-		}
-		for _, h := range s.Egress {
-			if !slices.Contains(c.Egress, h) {
-				out = append(out, fmt.Sprintf("adds network egress to %s for MCP server %s", h, id))
-			}
-		}
-		for _, n := range s.Secrets {
-			if !slices.Contains(c.Secrets, n) {
-				out = append(out, fmt.Sprintf("asks for a new secret %s for MCP server %s", n, id))
-			}
-		}
-		if len(c.Tools) == 0 {
-			continue // the consented declaration already granted the full set
-		}
-		if len(s.Tools) == 0 {
-			out = append(out, fmt.Sprintf("grants MCP server %s its full tool set (consented: %s)", id, strings.Join(c.Tools, ", ")))
-			continue
-		}
-		for _, tool := range s.Tools {
-			if !slices.Contains(c.Tools, tool) {
-				out = append(out, fmt.Sprintf("adds tool %s to MCP server %s", tool, id))
-			}
-		}
-	}
-	return out
 }
